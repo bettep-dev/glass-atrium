@@ -107,7 +107,16 @@ export interface OutcomeSearchResponse {
   // Total matching rows BEFORE pagination — drives "showing N of M" disclosure.
   total: number;
   rows: OutcomeSearchRow[];
+  // Present only when the request opts in with prior_window.
+  prior_window?: OutcomeSearchPriorWindow;
   fetched_at: string;
+}
+
+// /search opt-in prior window: the matching-row count for the N days before the current window.
+export interface OutcomeSearchPriorWindow {
+  period_start: string;
+  period_end: string;
+  total: number;
 }
 
 // /api/outcomes/:id
@@ -308,7 +317,24 @@ export interface OutcomeCrossAnalysisResponse {
   downgrade_breakdown: OutcomeDowngradeBreakdown;
   // 9-type × grader_verdict crosstab (always 9 rows, TASK_TYPES order).
   task_type_grader_breakdown: OutcomeTaskTypeGraderRow[];
+  // Present only on a `prior_window=1` request with a bounded `days`.
+  prior_window?: OutcomeCrossAnalysisPriorWindow;
   fetched_at: string;
+}
+
+/**
+ * The `days` window immediately before the current one, under the same filters, poisoned exclusion and agent scope.
+ * Bounds are the DB's own CURRENT_DATE anchor → a client labels the span without date arithmetic of its own.
+ */
+export interface OutcomeCrossAnalysisPriorWindow {
+  // YYYY-MM-DD, inclusive — CURRENT_DATE - 2 × days.
+  period_start: string;
+  // YYYY-MM-DD, exclusive — CURRENT_DATE - days, the current window's inclusive start.
+  period_end: string;
+  total: number;
+  reconstructed_total: number;
+  excluded_poisoned_count: number;
+  by_result: OutcomeCrossAnalysisByResult[];
 }
 
 // /api/outcomes/heatmap
@@ -333,6 +359,18 @@ export interface OutcomeHeatmapMeta {
   // [meta].timezone → ATRIUM_TIMEZONE), so the grid is tz-bucketed server-side — callers
   // render Sun~Sat / hours 0-23 directly, no client-side shift.
   timezone: string;
+  // Dates in `timezone` the window touches — differs from the UTC period_start/period_end when the dates disagree
+  bucket_dates: OutcomeHeatmapBucketDates;
+}
+
+/**
+ * YYYY-MM-DD in the bucket timezone; first/last inclusive, count = dates from first to last.
+ * first = the UTC-midnight window anchor seen in that tz; last = that tz's today.
+ */
+export interface OutcomeHeatmapBucketDates {
+  first: string;
+  last: string;
+  count: number;
 }
 
 export interface OutcomeHeatmapResponse {

@@ -12,15 +12,29 @@
 #
 # Interface:
 #   wiki-lock.sh acquire <name> [timeout_sec]   # exit 0 on success, 2 on timeout
-#   wiki-lock.sh release <name>                 # exit 0 always (idempotent)
+#   wiki-lock.sh release <name>                 # exit 0 once loaded (idempotent)
 #   wiki-lock.sh with <name> [timeout_sec] -- <command...>
 #     Runs <command> while holding the lock. Releases on EXIT/INT/TERM.
+#     Exits with <command>'s own status, or 2 on timeout.
+#   Every subcommand: exit 3 when lib/path-guard.sh cannot be loaded (no lock touched, never
+#   contention) · exit 64 on a usage error.
 #
 # Lock dir: /tmp/wiki-lock-<name>.lock (the directory itself is the token).
 # Contains the holder PID + an acquire timestamp for debugging.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
+
+# ga_guard_path gates both lock-dir removals; scripts/ runs in place, so lib/ sits beside this file.
+# Readability checked first: bash 3.2 under set -e exits on a failed source before any message.
+SELF_DIR="$(dirname -- "${BASH_SOURCE[0]}")"
+readonly PATH_GUARD="${SELF_DIR}/lib/path-guard.sh"
+if [[ ! -r "${PATH_GUARD}" ]]; then
+  printf 'wiki-lock: FATAL: cannot source the shared path guard %s\n' "${PATH_GUARD}" >&2
+  exit 3
+fi
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${PATH_GUARD}" || exit 3
 
 readonly LOCK_ROOT="/tmp"
 readonly DEFAULT_TIMEOUT=30
@@ -56,7 +70,10 @@ reap_if_stale() {
 
   if ! kill -0 "${owner_pid}" 2>/dev/null; then
     # Owner is dead. Clean up.
-    rm -rf -- "${lock_dir}" 2>/dev/null || true
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${lock_dir}"; then
+      rm -rf -- "${lock_dir:?}"
+    fi || true
     printf 'wiki-lock: reaped stale lock (dead pid=%s) at %s\n' \
       "${owner_pid}" "${lock_dir}" >&2
   fi
@@ -114,7 +131,10 @@ release_lock() {
     return 0
   fi
 
-  rm -rf -- "${lock_dir}" 2>/dev/null || true
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${lock_dir}"; then
+    rm -rf -- "${lock_dir:?}"
+  fi || true
   return 0
 }
 

@@ -15,6 +15,8 @@
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../advisory-context-budget.sh"
 INPUT='{"tool_name":"Agent","session_id":"t17-ctx-sess"}'
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -x "${HOOK_SH}" ]] || skip "hook not found or not executable: ${HOOK_SH}"
@@ -26,7 +28,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Fire the hook with a stubbed occupancy value. $1=tokens, $2=threshold override (optional).

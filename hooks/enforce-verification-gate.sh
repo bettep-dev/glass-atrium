@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # enforce-verification-gate.sh — PreToolUse(Agent) verification-gate hook.
 #
-# Three distinct surfaces on a DEV subagent spawn:
+# Six distinct surfaces on a DEV subagent spawn:
 #   1) reviewer-miss BLOCK (channel-a: emit_error stderr JSON + exit 2, code VGATE-REVIEWER-001) — a
 #      plan-referencing DEV spawn with no qa-code-reviewer recorded this session, surfacing the missing
 #      Stage-2 gate. Promoted from a stderr-advisory to a block so it matches its sibling attestation
@@ -20,14 +20,21 @@
 #      escape hatch for legitimate small DEV work. Non-DEV spawns exit 0; plan/token-bearing spawns
 #      clear THIS branch (but still face surface 2).
 #   4) scope-miss ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin DEV spawn whose
-#      prompt carries no [SCOPE] declaration. Advisory-first deliberately: a prompt scan cannot tell a
-#      declaration from a mention of one, so promotion to exit 2 waits on accumulated false-positive
-#      data plus an explicit user decision. Emitted on the PASS paths only, after every verdict above.
+#      prompt carries no line-opening [SCOPE] declaration. Advisory-first deliberately: a syntactic
+#      scan cannot tell a relayed line-opening declaration from the real one, so promotion to exit 2
+#      waits on accumulated false-positive data plus an explicit user decision. Emitted on the PASS
+#      paths only, after every verdict above.
 #   5) deep-review ADVISORY (stderr, exit 0 — never a block) — a carried [SCOPE] declaration listing
 #      DEEP_REVIEW_FILE_THRESHOLD or more paths, or any path under DEEP_REVIEW_SENSITIVE_PREFIXES,
 #      nudges the orchestrator to compose a Deep (4-pass) review whatever confidence the writer
 #      reports. Counts through the shared scope_decl_files parser; an unparseable declaration is
 #      silence, never a guess. The routing decision itself stays orchestrator prose (honor-system).
+#   6) implementing ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin, plan-referencing
+#      DEV spawn past the reviewer check whose cited plan (authored by glass-atrium-intel-planner) is
+#      still at doc_review is nudged to record the `implementing` stage, so the session-start open-plan
+#      list carries the plan until it closes. Another author's document is never named — a stage write
+#      would pin a reporter's standing tracker to that list for good. The hook's only monitor read;
+#      PreToolUse-only (the PostToolUse branch exits first); fails open to silence, verdict unchanged.
 #
 # Nested-spawn scope (T6): the former spawn-depth predicate is dropped, not deferred — the inner
 #   envelope exposes only an opaque agent id with no parent linkage, so such a check would land as a
@@ -71,8 +78,9 @@
 #   A spawn blocked at PreToolUse (this gate's exit 2, or a sibling hook) reaches no PostToolUse, so
 #   it leaves NO stamp — no false reviewer-present, no inflated spawn-budget counter. Sequential
 #   reviewer→DEV still passes: the reviewer's PostToolUse commits its qa-code-reviewer line before the
-#   later DEV spawn's PreToolUse read. Same-batch parallel reviewer+DEV raises the advisory (reviewer
-#   not yet completed at the DEV read) — correct, parallel is the wrong pattern.
+#   later DEV spawn's PreToolUse read. Same-batch parallel reviewer+DEV finds no reviewer line at the
+#   DEV read → an orchestrator-origin spawn blocks with VGATE-REVIEWER-001, a nested sub-worker origin
+#   gets the stderr advisory only — correct, parallel is the wrong pattern.
 # fail-open: internal error / marker absent / corrupted payload → exit 0, never interferes.
 
 set -Eeuo pipefail
@@ -106,8 +114,8 @@ fi
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# The `[SCOPE]` declaration parser is shared with validate-scope-drift.sh and track-outcome.sh — one
-# parser, so surface 5 below cannot disagree with them about what a declared path is.
+# The `[SCOPE]` declaration selector and parser are shared with validate-scope-drift.sh and
+# track-outcome.sh, so surfaces 4 and 5 cannot disagree with them about which line declares what.
 # shellcheck source=lib/scope-match.sh
 source "${BASH_SOURCE%/*}/lib/scope-match.sh"
 
@@ -128,7 +136,7 @@ fi
 # DEV-set — core-compliance-matrix.md Scope Legend canonical DEV agents. Space-separated tokens for
 # bash 3.2 (no declare -A). AUTO-SYNCED from the scope-dev.md DEV roster by agent_lifecycle (the
 # add/delete transaction + `python -m agent_lifecycle sync-gate-roster`) — do NOT hand-edit.
-readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift"
+readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift glass-atrium-dev-aws"
 
 # Deep-review override (surface 5): a declaration listing this many paths, or any path under one of
 # these prefixes, outweighs the writer-reported confidence when the review is composed. The prose SoT
@@ -136,6 +144,11 @@ readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev
 # of the same values, never a second policy.
 readonly DEEP_REVIEW_FILE_THRESHOLD=10
 readonly DEEP_REVIEW_SENSITIVE_PREFIXES='hooks/ settings*.json rules/ agents/ autoagent/'
+
+# Surface 6: the only author whose doc_review document the nudge may name, and the per-GET ceiling —
+# inside the ~1 s hook budget, same value as enforce-workflow-verify-stage.sh's chain walk.
+readonly PLANNER_AUTHOR="glass-atrium-intel-planner"
+readonly MONITOR_CURL_TIMEOUT_SEC=1
 
 # emit_gate_trace VERDICT SUBAGENT_TYPE — append one block firing-trace line, FAIL-SAFE.
 # The block verdict is ALWAYS decided and emitted before this runs. Every failure mode (unwritable
@@ -166,11 +179,12 @@ emit_gate_trace() {
     ((line_count <= trace_line_cap)) && exit 0
     local tmp_path
     tmp_path="$(mktemp "${VGATE_FIRED_LOG}.prune.XXXXXX" 2>/dev/null)" || exit 0
-    if tail -n "${trace_line_cap}" "${VGATE_FIRED_LOG}" >"${tmp_path}" 2>/dev/null; then
-      mv -f "${tmp_path}" "${VGATE_FIRED_LOG}" 2>/dev/null || rm -f "${tmp_path}" 2>/dev/null || true
-    else
-      rm -f "${tmp_path}" 2>/dev/null || true
+    if tail -n "${trace_line_cap}" "${VGATE_FIRED_LOG}" >"${tmp_path}" 2>/dev/null \
+      && mv -f "${tmp_path}" "${VGATE_FIRED_LOG}" 2>/dev/null; then
+      exit 0
     fi
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${tmp_path}"; then rm -f -- "${tmp_path:?}"; fi
   ) 2>/dev/null || true
 }
 
@@ -326,9 +340,14 @@ has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
 has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
 
 # [SCOPE] delegation-scope declaration — the orchestrator's record of the delegation's literal file
-# and deliverable scope. Anchored bracketed literal, PRESENCE only: whether the declaration matches
-# the user's instruction is honor-system, the same ceiling as its sibling tokens.
-has_scope_token() { has_token "${1}" '[SCOPE]'; }
+# and deliverable scope. PRESENCE only: whether the declaration matches the user's instruction is
+# honor-system, the same ceiling as its sibling tokens. Present = a line the shared scope_decl_select
+# accepts, so a quoted `[SCOPE]` mention alone does not silence the nudge.
+has_scope_token() {
+  local decl
+  decl="$(printf '%s\n' "${1}" | scope_decl_select)"
+  [[ -n "${decl}" ]]
+}
 
 # Prints the first sensitive prefix matched by the declared paths (empty when none). Read into an
 # array rather than word-split in place: an unquoted expansion would also glob `settings*.json`
@@ -358,7 +377,7 @@ scope_files_sensitive_prefix() {
 # guess. Only the count and the matched prefix reach stderr — the prompt itself never does.
 warn_deep_review() {
   local scope_line files count prefix prefix_note=""
-  scope_line="$(printf '%s\n' "${prompt_full}" | grep -m1 -F '[SCOPE]' || true)"
+  scope_line="$(printf '%s\n' "${prompt_full}" | scope_decl_select)"
   [[ -n "${scope_line}" ]] || return 0
   files="$(scope_decl_files "${scope_line}")"
   [[ -n "${files}" ]] || return 0
@@ -381,17 +400,74 @@ warn_scope_advisories() {
   # SC2310: has_scope_token is a pure predicate — set -e disable under `if` intended.
   # shellcheck disable=SC2310
   if ! has_scope_token "${prompt_full}"; then
-    printf '[enforce-verification-gate] DEV spawn of %s carries no [SCOPE] declaration. Record it in the canonical middot-separated grammar — [SCOPE] files=path/one, path/two · deliverable=<type> · out=none — so the delegation'"'"'s literal scope is fixed in text before the work starts (grammar SoT: orchestrator-role.md → Context Handoff Size). Advisory only — presence is checked here, fidelity to the user instruction is not.\n' \
+    printf '[enforce-verification-gate] DEV spawn of %s carries no [SCOPE] declaration — a mid-line or quoted [SCOPE] does not count, the declaration must open its own line. Record it in the canonical middot-separated grammar — [SCOPE] files=path/one, path/two · deliverable=<type> · out=none — so the delegation'"'"'s literal scope is fixed in text before the work starts (grammar SoT: orchestrator-role.md → Context Handoff Size). Advisory only — presence is checked here, fidelity to the user instruction is not.\n' \
       "${subagent_type}" >&2
     return 0
   fi
   warn_deep_review
 }
 
+# get_monitor_docs_url — the clauded-docs collection URL, or rc 1 when none resolves. A full
+# VGATE_MONITOR_URL override wins outright so a suite never reaches the live monitor; otherwise the
+# port comes from the shared wrapper, sourced lazily — this gate's own hook-utils.sh lacks it.
+get_monitor_docs_url() {
+  if [[ -n "${VGATE_MONITOR_URL:-}" ]]; then
+    printf '%s' "${VGATE_MONITOR_URL}"
+    return 0
+  fi
+  local lib port
+  lib="${BASH_SOURCE%/*}/lib/hook-utils.sh"
+  [[ -r "${lib}" ]] || return 1
+  # shellcheck source=lib/hook-utils.sh
+  source "${lib}" || return 1
+  # shellcheck disable=SC2310  # a resolver miss leaves port empty, which the integer test rejects
+  port="$(hook_monitor_port 2>/dev/null || true)"
+  [[ "${port}" =~ ^[0-9]+$ ]] || return 1
+  printf 'http://127.0.0.1:%s/api/clauded-docs' "${port}"
+}
+
+# get_unstarted_plan_id — prints the first cited plan still at doc_review, nothing otherwise. Walks the
+# prompt's clauded-docs ids in citation order; the first planner-authored document ends the walk,
+# nudged or not, and so does the first failed GET — a hung monitor costs one timeout. Always rc 0.
+get_unstarted_plan_id() {
+  local ids base id doc_tsv author stage
+  ids="$(printf '%s\n' "${prompt_full}" | grep -oE 'clauded-docs/[0-9]+' | sed 's|.*/||' | awk '!seen[$0]++' || true)"
+  [[ -n "${ids}" ]] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  # shellcheck disable=SC2310  # an unresolvable URL is this leg's silent answer, not an error
+  base="$(get_monitor_docs_url)" || return 0
+  while IFS= read -r id; do
+    doc_tsv="$(curl -sf --max-time "${MONITOR_CURL_TIMEOUT_SEC}" "${base}/${id}" \
+      | jq -r '[(.author // ""), (.doc_status // "")] | join("\u001f")')" || return 0
+    [[ -n "${doc_tsv}" ]] || return 0
+    IFS=$'\x1f' read -r author stage <<<"${doc_tsv}"
+    [[ "${author}" == "${PLANNER_AUTHOR}" ]] || continue
+    [[ "${stage}" == "doc_review" ]] && printf '%s' "${id}"
+    return 0
+  done <<<"${ids}"
+  return 0
+}
+
+# Surface 6 emitter — isolated the way emit_gate_trace is: the subshell's own stderr is discarded and
+# the enclosing statement always succeeds, so no failure here can alter the exit code; only the
+# advisory line reaches stderr, through fd 3.
+warn_unstarted_plan() {
+  [[ "${orchestrator_origin}" == true ]] || return 0
+  (
+    local plan_id
+    # shellcheck disable=SC2310  # errexit is off in this ||-guarded subshell by design; every step fails explicitly
+    plan_id="$(get_unstarted_plan_id)"
+    [[ -n "${plan_id}" ]] || exit 0
+    printf '[enforce-verification-gate] Plan clauded-docs/%s is still at doc_review while DEV agent %s starts on it — record the implementing stage before this first DEV spawn, so the session-start open-plan list carries the plan until it closes (stage write recipe: skills/glass-atrium-ops-orchestrator.md → Managed Document Completion (Direct Handling)). Advisory only — the stage is read live, and a monitor that is down or unreachable yields silence, so no nudge never means checked-and-clean.\n' \
+      "${plan_id}" "${subagent_type}" >&3
+  ) 3>&2 2>/dev/null || true
+}
+
 # 1. READ reviewer-present snapshot from PRIOR EXECUTED spawns (PostToolUse stamps only — DF-5).
 # Sequential reviewer→DEV: the reviewer's PostToolUse durably commits the qa-code-reviewer line when
 # it completes → this DEV spawn's PreToolUse read observes it → pass. Same-batch parallel reviewer+DEV:
-# the reviewer has not completed at the DEV read → snapshot absent → raise. This PreToolUse read is
+# the reviewer has not completed at the DEV read → snapshot absent → VGATE-REVIEWER-001 block on
+# orchestrator origin, stderr advisory on a nested sub-worker origin (surface 1). This PreToolUse read is
 # used only by the verdict logic below; the marker is never written on PreToolUse. (Append is
 # O_APPEND atomic per line.)
 marker_path="${spawn_dir}/${session_key}"
@@ -424,14 +500,16 @@ prune_marker_file() {
   [[ "${reviewer_lines}" =~ ^[0-9]+$ ]] || reviewer_lines=0
   budget=$((marker_line_cap - reviewer_lines))
   ((budget < 0)) && budget=0
-  {
+  if {
     grep -x 'glass-atrium-qa-code-reviewer' "${path}" 2>/dev/null || true
     grep -vx 'glass-atrium-qa-code-reviewer' "${path}" 2>/dev/null | tail -n "${budget}" || true
-  } >"${tmp_path}" 2>/dev/null || {
-    rm -f "${tmp_path}" 2>/dev/null || true
+  } >"${tmp_path}" 2>/dev/null && mv -f "${tmp_path}" "${path}" 2>/dev/null; then
     return 0
-  }
-  mv -f "${tmp_path}" "${path}" 2>/dev/null || rm -f "${tmp_path}" 2>/dev/null || true
+  fi
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${tmp_path}"; then
+    rm -f -- "${tmp_path:?}"
+  fi || true
 }
 
 # 2. Spawn-SUCCESS stamp — PostToolUse ONLY (DF-5). PreToolUse fires BEFORE the spawn runs, so
@@ -493,7 +571,7 @@ fi
 # shellcheck disable=SC2310
 if [[ "${orchestrator_origin}" == true ]] && ! has_size_est_token "${prompt_full}"; then
   size_reason="Spawning DEV agent '${subagent_type}' from the orchestrator with NO [SIZE-EST] self-attestation token — every DEV spawn MUST declare its delegation-size estimate (orchestrator-role.md ### Spawn Budget)."
-  size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. Under-estimating is the DANGEROUS error — round UP on a borderline count."
+  size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. On a borderline count, round up: an under-estimate hides an oversized delegation from the split discipline."
   block_and_exit "VGATE-SIZE-001" "${size_reason}" "${size_fix}" \
     "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"size-est-miss\"}" "block-sizeest"
 fi
@@ -523,6 +601,7 @@ if references_plan "${prompt_full}"; then
   # Reviewer durably recorded BEFORE this spawn (sequential reviewer→DEV) → gate satisfied.
   if [[ "${reviewer_present}" == true ]]; then
     warn_scope_advisories
+    warn_unstarted_plan
     exit 0
   fi
   # 4. Reviewer-miss (T6): a plan-referencing DEV spawn with no qa-code-reviewer recorded is PROMOTED
@@ -559,6 +638,6 @@ fi
 # PreToolUse block surface — mirrors block-doc-routing-leak.sh. The fail-open ERR trap above still
 # governs the hook's OWN errors → an internal failure never reaches this block.
 entry_reason="Spawning DEV agent '${subagent_type}' with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — sizable DEV work MUST enter the Document-Driven Workflow (author a plan first)."
-entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scope-dev.md Sprint Contract Gate -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this gate. NOTE: this entry token is ONE of TWO required per DEV spawn — you must ALSO carry a [SIZE-EST] bundles=N tool_uses~=N — <1-line> delegation-size token (checked separately by VGATE-SIZE-001)."
+entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scoped/maintainers/scope-dev.md -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this gate. NOTE: this entry token is ONE of TWO required per DEV spawn — you must ALSO carry a [SIZE-EST] bundles=N tool_uses~=N — <1-line> delegation-size token (checked separately by VGATE-SIZE-001)."
 block_and_exit "VGATE-ENTRY-001" "${entry_reason}" "${entry_fix}" \
   "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"entry-miss\"}" "block-entry"

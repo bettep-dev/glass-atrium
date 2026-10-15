@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SC2034: apply_lock_acquired is the result global CONSUMED by sourcing scripts
 # (daemon-apply.sh + update.sh update_serialize_begin), not this lib — structural
-# false positive, same contract daemon-lock.sh documents.
+# false positive.
 # shellcheck disable=SC2034
 #
 # apply-lock.sh — stale-reclaim guard for the shared mkdir-directory .apply-lock
@@ -19,8 +19,7 @@
 # wedge). Acquire now probes the holder before deciding held-vs-stale and
 # RECLAIMS a lock whose holder is BOTH not-live (kill -0 fails / no pid) AND aged
 # past a TTL. A genuinely LIVE holder still blocks — mutual exclusion is
-# preserved. The reclaim liveness logic mirrors daemon-lock.sh's proven
-# dead-holder probe, adapted from its symlink primitive to this mkdir-dir one.
+# preserved.
 #
 # Three hardenings on top of that reclaim design (incident #58325 defects 2-4):
 #   * recycled-PID guard — the holder record carries a `fingerprint` file (the
@@ -36,8 +35,16 @@
 #     silently degrading hard mutual exclusion to a TTL-bounded lock.
 #
 # Result is reported via the apply_lock_acquired global (NOT an exit code) so
-# set -e / ERR-trap callers can invoke apply_lock_acquire as a plain statement,
-# exactly as daemon-lock.sh reports daemon_lock_acquired.
+# set -e / ERR-trap callers can invoke apply_lock_acquire as a plain statement.
+
+# ga_guard_path gates every removal below; a missing guard fails this source, never a delete.
+# Existence checked first: bash 3.2 under set -e exits on a failed source before any message.
+if [[ ! -r "${BASH_SOURCE[0]%/*}/path-guard.sh" ]]; then
+  printf '[apply-lock] FATAL: cannot source the shared path guard beside %s\n' "${BASH_SOURCE[0]}" >&2
+  return 1
+fi
+# shellcheck source-path=SCRIPTDIR source=path-guard.sh
+source "${BASH_SOURCE[0]%/*}/path-guard.sh" || return 1
 
 # TTL (seconds) beyond which a not-live lock is treated as crashed-holder residue.
 # ATRIUM_APPLY_LOCK_TTL_SECS override; a non-positive / non-integer value falls
@@ -150,9 +157,13 @@ _apply_lock_write_pid() {
 # falls to rmdir — deliberately NOT rm -rf on this failure path, so a surprise
 # foreign file aborts the removal instead of being destroyed.
 _apply_lock_delete_partial() {
-  local lock_dir="$1"
-  rm -f -- "${lock_dir}/.pid.tmp.$$" "${lock_dir}/.fp.tmp.$$" \
-    "${lock_dir}/pid" "${lock_dir}/fingerprint" 2>/dev/null || true # GA-ABSORB[benign]: teardown of our own record files; absent is the normal case
+  local lock_dir="$1" record=""
+  for record in "${lock_dir}/.pid.tmp.$$" "${lock_dir}/.fp.tmp.$$" "${lock_dir}/pid" "${lock_dir}/fingerprint"; do
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${record}"; then
+      rm -f -- "${record:?}"
+    fi || true # GA-ABSORB[benign]: teardown of our own record files; absent is the normal case
+  done
   # GA-ABSORB[benign]: a foreign-populated dir must survive this failure path
   rmdir -- "${lock_dir}" 2>/dev/null || true
 }
@@ -221,8 +232,10 @@ _apply_lock_reclaim() {
   if ! _apply_lock_holder_live "${tomb}" \
     && age="$(apply_lock_age_secs "${tomb}")" \
     && [[ "${age}" -gt "${ttl}" ]]; then
-    # GA-ABSORB[benign]: tomb teardown; residue is re-reclaimed on a later acquire
-    rm -rf -- "${tomb}" 2>/dev/null || true
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${tomb}"; then
+      rm -rf -- "${tomb:?}"
+    fi || true # GA-ABSORB[benign]: tomb teardown; residue is re-reclaimed on a later acquire
     return 0
   fi
   # NOT stale residue after all — we displaced a winner's fresh (or live) lock
@@ -324,7 +337,9 @@ apply_lock_release() {
     held="$(cat -- "${lock_dir}/pid" 2>/dev/null || true)"
   fi
   if [[ -z "${held}" || "${held}" == "$$" ]]; then
-    # GA-ABSORB[benign]: release teardown; an already-gone dir is the idempotent case
-    rm -rf -- "${lock_dir}" 2>/dev/null || true
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${lock_dir}"; then
+      rm -rf -- "${lock_dir:?}"
+    fi || true # GA-ABSORB[benign]: release teardown; an already-gone dir is the idempotent case
   fi
 }

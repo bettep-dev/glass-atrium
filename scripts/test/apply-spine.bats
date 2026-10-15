@@ -17,6 +17,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_LIB="${GA}/scripts/lib/apply-spine.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "apply-spine.sh not found: ${REAL_LIB}"
@@ -32,7 +34,8 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # helpers
@@ -629,6 +632,19 @@ unsafe_row() {
   [[ ! -e "${LIVE}/scripts/created.sh" ]]
 }
 
+@test "rollback: a relative install root never deletes the created file and reports the refused removal" {
+  seed_file "${WORK}/rel-live" "scripts/created.sh" "FRESH"
+  run bash -c '
+    set -Eeuo pipefail
+    cd "$1"
+    source "$2"
+    spine_rollback "rel-live" "$1/no-snapshot" "scripts/created.sh"
+  ' _ "${WORK}" "${REAL_LIB}"
+  [[ "${status}" -eq 0 ]] \
+    && [[ -f "${WORK}/rel-live/scripts/created.sh" ]] \
+    && [[ "${output}" == *"rollback remove FAILED: scripts/created.sh"* ]]
+}
+
 @test "T1 link: a driven apply lands the live row as a link holding the release's target text" {
   seed_file "${NEW}" "agents/CHARTER.md" "charter-new"
   seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
@@ -1071,7 +1087,8 @@ t6_build_jqless_toolbin() {
 # the predicate has not returned within ~5s. Backgrounded so a spinning walk reads RED, never hangs the suite.
 write_target_verdict() {
   local verdict="${WORK}/verdict" pid tick
-  rm -f -- "${verdict}"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${verdict}"; then rm -f -- "${verdict:?}"; fi
   bash -c '
     set -Eeuo pipefail
     source "$1"

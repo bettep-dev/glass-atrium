@@ -36,17 +36,6 @@ Dropped as already stated in the core under `## Agent Injection Core` ("the bloc
 
 Also dropped: the applies-to membership line (above) and the two maintainer blockquotes now held in this note.
 
-## Follow-up fix pass — structure
-
-Three sections the diet pass did not reach were restructured, with no rule added or removed:
-
-- `## Comment Language & Style` — the six-rule `**Style**` bullet split one rule per bullet (form · causality · ending · JSDoc lines · decoration).
-- `## Log Message Composition` — the four packed bullets split into ten, one rule each; the error-log ELEMENT list and its STRUCTURE rule are now separate bullets.
-- `## Comments That MUST NOT Be Written` — the standalone bolded `**Positive rule**` paragraph became the section's closing bullet, so no bold lead stands in for a heading.
-- Plus the density-gate definition restored under `## Comment Principles`, recorded in the drop list above.
-
-Every edit sat outside the core under `## Agent Injection Core`, so the core text is unchanged by this pass.
-
 ## Platform-Specific Rules — kept, with the reason
 
 Each branch names its own platform, so the condition travels with the duty; only two of the three were confirmed to be restated in the body of the agent they bind, which is not enough to call the section redundant.

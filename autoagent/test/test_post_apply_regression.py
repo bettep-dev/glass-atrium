@@ -6,11 +6,12 @@ rate BEFORE the apply is compared to the rate AFTER it; degradation (delta >=
 ``POST_APPLY_REGRESSION_RATE_DELTA`` with post-window n >=
 ``POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS``) emits exactly one WARN loop
 event (``eval_result='post-apply-regression'``) naming the proposal id + its
-agents-bak before-image path — and NOTHING else (no revert, no status
-mutation, no safety-queue insert). The 'reverted' proposal status is
+agents-bak before-image path, or saying it was pruned — and NOTHING else (no
+revert, no status mutation, no safety-queue insert). A proposal whose added
+lines are all gone from the target body is skipped. The 'reverted' proposal status is
 terminal-non-resurrectable: neither status-classification branch re-arms it
 and ``drop_reverted_patterns`` excludes the covering pattern from
-re-application. No test writes PG — every PG surface is mocked.
+re-application. No test writes PG — every PG surface is mocked or sealed.
 
 Run with either runner:
     uv run --with pytest --with psycopg pytest autoagent/test/test_post_apply_regression.py -v
@@ -23,10 +24,13 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import sys
+import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -37,6 +41,9 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+_TEST_DIR = Path(__file__).resolve().parent
+if str(_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_TEST_DIR))
 
 try:
     import daemon_cycle as dc
@@ -46,22 +53,37 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     dc = None  # type: ignore[assignment]  # sentinel consumed by skipIf only
     _IMPORT_ERROR = exc
 
+from _pg_seal import seal_pg_reach  # noqa: E402 — test dir anchored above
+
 _APPLIED_TS = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
 _PROBE_AGENT = "post-apply-probe-agent"
 _PROBE_LABEL = "post-apply probe pattern"
 _PROPOSAL_ID = 123
+_LATER_AGENT = "post-apply-later-agent"
+_LATER_PROPOSAL_ID = 456
 _CYCLE_DATE = date(2026, 6, 30)
 # Unrecognized by classify_failure_rationale → a genuine QUALITY reject. The
 # cycle-level discriminators set a rejected row aside on its rationale class, so
 # a blank one here would silently drop the row the case under test needs.
 _QUALITY_RATIONALE = "quality reject — pre-verify failed"
+_ADDED_RULE = "- Keep each synthesis section under five bullets."
+_SECOND_ADDED_RULE = "- Name the source of every figure."
+_BODY = SimpleNamespace(RULE="- Cite the file a finding comes from.")
+_BODY.WITH_EDIT = f"# Probe agent\n\n{_BODY.RULE}\n{_ADDED_RULE}\n{_SECOND_ADDED_RULE}\n"
 
 
-def _marker_row() -> tuple[str, str]:
-    """(haiku_status, rationale) a production back-off marker row persists."""
+def _added_diff(*added: str) -> str:
+    """Stored proposed_diff shape: one hunk appending ``added`` after the body rule."""
+    hunk = f"@@ -3,1 +3,{1 + len(added)} @@\n {_BODY.RULE}\n"
+    return "--- a/probe.md\n+++ b/probe.md\n" + hunk + "".join(f"+{line}\n" for line in added)
+
+
+def _marker_row() -> tuple[str, str, str]:
+    """(haiku_status, rationale, status) a production back-off marker row persists."""
     return (
         dc.TIMEOUT_BACKOFF_HAIKU_STATUS,
         dc.TIMEOUT_BACKOFF_RATIONALE_TEMPLATE.format(n=3, thr=3),
+        "unadjudicated",
     )
 
 
@@ -241,25 +263,51 @@ class TestBetaSmoothedRate(unittest.TestCase):
     else "psycopg / confidence lib absent: watch dependencies unbound",
 )
 class TestAlertPostApplyRegression(unittest.TestCase):
-    """AC1-1..AC1-3: one dedup-keyed WARN loop event, detection-only, n-floor."""
+    """AC1-1..AC1-3: one dedup-keyed WARN loop event, detection-only, n-floor.
+
+    Sealed: every PG seam refuses and records, then the flags the alert gates on
+    are re-armed and its two reads are faked; every run asserts nothing reached PG.
+    """
 
     def setUp(self) -> None:
         self.emitted: list[dict] = []
         self.window_rows: list[dict] = []
-        self.pg_connect = mock.MagicMock()
-        self.reject_pattern = mock.MagicMock()
+        self.later_rows: list[tuple] = []
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.target = SimpleNamespace(path=Path(scratch.name) / "probe.md")
+        self.target.path.write_text(_BODY.WITH_EDIT, encoding="utf-8")
+        self.target.file = str(self.target.path)
+        self.diff_text = _added_diff(_ADDED_RULE)
+        self.backup_root = Path(scratch.name) / "agents-bak"
+        self.before_image = self.backup_root / f"{_CYCLE_DATE}_p{_PROPOSAL_ID}"
+        self.before_image.mkdir(parents=True)
+        env = mock.patch.dict(
+            os.environ,
+            {"AUTOAGENT_BACKUP_DIR": str(self.backup_root), "GA_DATA_ROOT": scratch.name},
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        self.pg_reach = seal_pg_reach(self)
         for target, repl in (
+            ("HAS_PG_LOOP_WRITE", True),
+            ("HAS_PG_OUTCOME_READ", True),
             ("_invoke_pg_helper", lambda env: self.emitted.append(env) or True),
             (
                 "_fetch_applied_proposals",
-                lambda: [(_PROPOSAL_ID, _PROBE_AGENT, _CYCLE_DATE, _APPLIED_TS)],
+                lambda: [
+                    (
+                        _PROPOSAL_ID,
+                        _PROBE_AGENT,
+                        _CYCLE_DATE,
+                        _APPLIED_TS,
+                        self.target.file,
+                        self.diff_text,
+                    ),
+                    *self.later_rows,
+                ],
             ),
             ("_pg_read_outcomes_since", lambda since_epoch, **kw: self.window_rows),
-            # Mocked-writer side-effect probes (AC1-2): the alert must never
-            # open its own SQL cursor (reads are behind the patched fetch) nor
-            # touch the learning_log transition writer.
-            ("_pg_connect", self.pg_connect),
-            ("_pg_reject_learning_pattern", self.reject_pattern),
         ):
             patcher = mock.patch.object(dc, target, repl)
             patcher.start()
@@ -269,11 +317,25 @@ class TestAlertPostApplyRegression(unittest.TestCase):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             dc.alert_post_apply_regression()
+        self.assertEqual(self.pg_reach, [])
         return stderr.getvalue()
 
-    def test_when_post_window_degrades_then_one_event_names_id_and_backup(
-        self,
-    ) -> None:
+    def _add_later_watched_row(self) -> None:
+        """Queue a later applied row with its edit intact — its event proves the watch went on."""
+        later_path = self.target.path.with_name("later.md")
+        later_path.write_text(_BODY.WITH_EDIT, encoding="utf-8")
+        self.later_rows = [
+            (
+                _LATER_PROPOSAL_ID,
+                _LATER_AGENT,
+                _CYCLE_DATE,
+                _APPLIED_TS,
+                str(later_path),
+                _added_diff(_ADDED_RULE),
+            )
+        ]
+
+    def test_when_post_window_degrades_then_one_event_names_id(self) -> None:
         # pre 1/10 negative (rate .167) → post 3/5 negative (rate .571): fires.
         self.window_rows = _windows(1, 10, 3, 5)
         err = self._run()
@@ -284,9 +346,92 @@ class TestAlertPostApplyRegression(unittest.TestCase):
         self.assertEqual(args["agent"], _PROBE_AGENT)
         self.assertEqual(args["event_ts"], _APPLIED_TS.isoformat())
         self.assertIn(f"id={_PROPOSAL_ID}", err)
-        self.assertIn("agents-bak", err)
-        self.assertIn(f"{_CYCLE_DATE}_p{_PROPOSAL_ID}", err)
         self.assertIn("DETECTION-ONLY", err)
+
+    def test_warn_names_the_before_image_only_while_it_exists(self) -> None:
+        # Retention prunes before-images long before the watch window ends
+        # Pruned before-image → named as pruned, never offered as a restore path
+        rows = (
+            ("before-image on disk", True),
+            ("before-image pruned", False),
+        )
+        for name, is_kept in rows:
+            with self.subTest(name):
+                self.emitted.clear()
+                if not is_kept:
+                    self.before_image.rmdir()
+                self.window_rows = _windows(1, 10, 3, 5)
+                err = self._run()
+
+                self.assertEqual(len(self.emitted), 1)
+                self.assertEqual(str(self.before_image) in err, is_kept)
+                self.assertEqual("restore the agent file from the before-image" in err, is_kept)
+                self.assertEqual("pruned" in err, not is_kept)
+
+    def test_proposal_whose_added_lines_all_left_the_body_raises_no_warn(self) -> None:
+        # WARN subject = the applied edit → no added line left in the body, nothing to point at
+        # Any surviving added line keeps the row watched
+        # A skipped row never ends the watch → the later applied row still fires
+        both = (_PROBE_AGENT, _LATER_AGENT)
+        later_only = (_LATER_AGENT,)
+        absolute = str(self.target.path)
+        rows = (
+            (
+                "every added line in the body",
+                _added_diff(_ADDED_RULE, _SECOND_ADDED_RULE),
+                absolute,
+                both,
+            ),
+            (
+                "one added line gone, one still in the body",
+                _added_diff(_ADDED_RULE, "- Gone."),
+                absolute,
+                both,
+            ),
+            (
+                "every added line gone from the body",
+                _added_diff("- Gone.", "- Also gone."),
+                absolute,
+                later_only,
+            ),
+            ("diff adds no content line", _added_diff(""), absolute, both),
+            (
+                "relative target_file read under the base root, edit intact",
+                _added_diff(_ADDED_RULE),
+                self.target.path.name,
+                both,
+            ),
+        )
+        self._add_later_watched_row()
+        for name, diff_text, target_file, warned_agents in rows:
+            with self.subTest(name):
+                self.emitted.clear()
+                self.diff_text = diff_text
+                self.target.file = target_file
+                self.window_rows = _windows(1, 10, 3, 5)
+                err = self._run()
+
+                self.assertEqual(tuple(env["args"]["agent"] for env in self.emitted), warned_agents)
+                self.assertEqual(f"id={_PROPOSAL_ID} agent=" in err, _PROBE_AGENT in warned_agents)
+
+    def test_when_target_body_unreadable_then_skipped_with_named_line(self) -> None:
+        # One unreadable body skips only its own row, never the whole watch.
+        rows = (
+            ("target file missing", lambda: self.target.path.unlink()),
+            ("target body not UTF-8", lambda: self.target.path.write_bytes(b"- \xff\xfe rule\n")),
+        )
+        self._add_later_watched_row()
+        for name, make_unreadable in rows:
+            with self.subTest(name):
+                self.emitted.clear()
+                make_unreadable()
+                self.window_rows = _windows(1, 10, 3, 5)
+                err = self._run()
+
+                self.assertEqual([env["args"]["agent"] for env in self.emitted], [_LATER_AGENT])
+                self.assertIn(f"id={_LATER_PROPOSAL_ID} agent=", err)
+                self.assertNotIn(f"id={_PROPOSAL_ID} agent=", err)
+                self.assertIn(str(self.target.path), err)
 
     def test_when_same_cycle_rerun_then_dedup_key_is_identical(self) -> None:
         # The loop-event UPSERT keys on (event_ts, agent, eval_result); the
@@ -308,11 +453,10 @@ class TestAlertPostApplyRegression(unittest.TestCase):
         self.window_rows = _windows(1, 10, 3, 5)
         self._run()
 
+        # Seal refuses _pg_connect + _pg_reject_learning_pattern → _run asserts neither reached
         self.assertEqual(
             {env.get("op") for env in self.emitted}, {"write_autoagent_loop_event"}
         )
-        self.pg_connect.assert_not_called()
-        self.reject_pattern.assert_not_called()
 
     def test_when_post_window_below_floor_then_silent(self) -> None:
         # AC1-3: 4 post outcomes (all negative) < floor 5 → no event.
@@ -367,7 +511,6 @@ class TestRevertedStatusBranches(unittest.TestCase):
                     # rejected case passing on the reverted row alone.
                     rationale=_QUALITY_RATIONALE,
                     proposed_diff="",
-                    outcomes_sampled=0,
                     haiku_status="ok",
                     status=status,
                 )
@@ -400,12 +543,12 @@ class TestRevertedStatusBranches(unittest.TestCase):
 class TestBackoffMarkerCycleRegression(unittest.TestCase):
     """A back-off marker is neither output nor a rejection for the regression exit.
 
-    The marker is recognized by the RATIONALE prefix a production back-off row
-    carries — the classifier SoT — so each fixture row pairs its haiku_status
-    with the rationale that row would really persist.
+    Each fixture row carries the haiku_status, rationale and status a production
+    row persists — the marker is set aside by its 'unadjudicated' status, the
+    quality row counted by its rationale class.
     """
 
-    def _is_regression(self, rows: list[tuple[str, str]]) -> bool:
+    def _is_regression(self, rows: list[tuple[str, str, str]]) -> bool:
         report = dc.CycleReport(
             cycle_date="2026-07-01",
             generated_at="2026-07-01T00:00:00.000Z",
@@ -420,11 +563,10 @@ class TestBackoffMarkerCycleRegression(unittest.TestCase):
                     classification="reject",
                     rationale=rationale,
                     proposed_diff="",
-                    outcomes_sampled=0,
                     haiku_status=haiku_status,
-                    status="rejected",
+                    status=status,
                 )
-                for haiku_status, rationale in rows
+                for haiku_status, rationale, status in rows
             ],
         )
         with mock.patch.object(
@@ -438,7 +580,9 @@ class TestBackoffMarkerCycleRegression(unittest.TestCase):
     def test_when_markers_beside_all_rejected_patches_then_still_a_regression(
         self,
     ) -> None:
-        self.assertTrue(self._is_regression([_marker_row(), ("ok", _QUALITY_RATIONALE)]))
+        self.assertTrue(
+            self._is_regression([_marker_row(), ("ok", _QUALITY_RATIONALE, "rejected")])
+        )
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")

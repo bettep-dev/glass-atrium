@@ -1,8 +1,8 @@
 <!-- MAINTAINER: four shapes in this file are machine-read — one heading whose POSITION is asserted,
      two pointer-clause needle sets, and one hyphenated marker phrase. Read
      scoped/maintainers/GLASS_ATRIUM_GLOBAL_RULES.md before cutting above a heading, renaming a
-     heading, or re-adding a schema constraint. A renamed heading makes its suite SKIP silently
-     rather than fail, so a rename is worse than a red. -->
+     heading, or re-adding a schema constraint. The heading-position suite is Python, which CI
+     skips on a markdown-only change: run it locally after a charter edit. -->
 
 # Agent Global Rules
 
@@ -13,8 +13,21 @@ Common rules for **all agents** (ALL scope).
 ## Role
 
 - This file is the **system charter** for all agents — it governs behaviours unconditionally common to every role.
-- **Precedence**: this file > scope-*.md > Tier-3 cross-cutting rules.
+- **Precedence**: conflicts between rule files resolve by `### Precedence Resolution` below.
 - **Inclusion test**: a rule belongs here only if it applies to every agent regardless of scope, model, or task type.
+
+### Precedence Resolution
+
+Tier numbers are the tiers `rules/glass-atrium/core-compliance-matrix.md` → `## Loading Tiers` defines.
+"The Tier 2 table" is the table under its `### Tier 2` heading.
+
+- Across tiers: Tier 1 > Tier 2 > Tier 3.
+- Within Tier 1: `rules/glass-atrium/core-security.md` overrides the other ALL rules (security-first principle).
+- Within Tier 3: the more conservative (restrictive) rule wins.
+- Within Tier 2: conflicts are impossible by ASSIGNMENT — one scope file per scope (the ORCHESTRATOR pair excepted).
+  - A subagent also holds the ORCHESTRATOR pair — on the host channel, whatever its own scope — beside its own scope file (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`).
+  - The Tier 2 table's file for its own scope still governs, because `rules/glass-atrium/orchestrator-role.md` disclaims itself for subagents in its opening line.
+- Ambiguous interpretation: the final authority is the scope file the Tier 2 table assigns to that scope — the whole file, never a named section inside it.
 
 ## Philosophy (ETHOS) [ALL]
 
@@ -40,9 +53,11 @@ Common rules for **all agents** (ALL scope).
 
 The canonical rule for what language this system writes in.
 
-- **Replies are written in the user's question language** — the response-language rule. A reply is a conversation turn, not a produced artifact: every message addressed to a human user, including status and progress notes in a long or background job, clarifying questions, and the end-of-job results summary.
+- **Replies are written in the user's question language** — the response-language rule. A reply is a conversational message, not a produced artifact: the final message of each turn addressed to a human user, clarifying questions, and the end-of-job results summary.
+  - Mid-turn progress notes between tool calls may be in English.
   - The language of the user's own prose in their most recent message decides the reply language.
   - A message with no prose of its own (a bare paste, a slash command with no text) takes the language of the most recent earlier user message that has prose of its own; until any user message in the session has prose of its own, replies are in English.
+  - A machine-written user-role message is not the user's message and never sets the reply language — examples, not a closed list: a compaction summary, a task notification, a peer or channel message, skill text, a workflow frame.
   - Nothing else decides it — not, inside the message, pasted or quoted material, code, logs, identifiers or technical terms; not, outside it, earlier replies, tool output, rule files, delegation prompts or agent results.
   - An explicit user request for a different reply language overrides it — the explicit request is what switches it, never the language the request happened to be written in.
   - A subagent's final message goes to its parent agent, not to a human user, so it is not a reply: it is authored in English under the default below.
@@ -92,17 +107,40 @@ The canonical rule for what language this system writes in.
 ## Thinking Budget Policy [ALL]
 
 - Reasoning spend is controlled by the `effort` parameter (max / xhigh / high / medium / low).
-- Default `effort=high`; lower for cost-sensitive pipelines; `xhigh` for highest-capability tasks (long-horizon agents, deep reasoning); `max` may overthink — reserve for genuinely hardest tasks.
-- **Thinking is ON by default** (Opus 5): `effort` governs thinking VOLUME, not visible response length — prompt conciseness explicitly when short output is wanted.
-  - Disabling thinking is permitted ONLY at effort ≤ high; `xhigh`/`max` with thinking disabled → 400 error (per-request enforced).
-  - Do NOT instruct agents that reasoning is off-by-default; raise `effort` when reasoning is shallow.
-- **5-family capability facts**: models version independently — Opus 5 is the newest release, Fable 5 the capability flagship (distinct axes).
-  - 128k max output (set budget starting at 64k).
-  - 1M context is default AND maximum on Opus 5 / Fable 5.
-  - Mid-conversation `role:"system"` messages are accepted (append late instructions without restating the full prompt, preserving cache); Opus 5 adds mid-conversation TOOL changes (beta).
-  - Prefill is unsupported across the 5-family — use Structured Outputs for JSON, and a direct system instruction to remove preamble.
-  - Opus 5 / Fable 5 safety classifiers may return a refusal stop reason (Mythos 5 does not) — the harness special-cases it, not a hard error.
-  - Fable 5 requests may run many minutes to autonomous hours — client timeout + async posture required; never instruct it to echo its reasoning (refusal-classifier fallback trigger).
+- **Default tier**: a spawn with neither an `agent()` option nor a frontmatter `effort:` key takes its parent session's tier, on every path.
+  - Measured for a parent tier at or above settings `effortLevel`.
+- **Tier surface and precedence, per path**:
+
+| Path | Surface an author sets a tier through | Measured precedence |
+|---|---|---|
+| Workflow spawn | the `agent()` option, per spawn | `agent()` option > frontmatter `effort:` key and parent tier; a key > a higher parent tier |
+| Manual, unnamed `Agent` call | the agent's frontmatter `effort:` key, agent-wide — the `Agent` tool takes no per-spawn tier | frontmatter `effort:` key > parent tier, in both directions |
+| Manual, named `Agent` call (in-process teammate) | none | a key did not lower a higher parent tier |
+
+- Unmeasured: whether a key alone raises a spawn above a lower parent tier — on a workflow spawn with no `agent()` option, or on a named `Agent` call.
+- **Task-class rule**: a **Task-class targets** line alone never justifies setting or changing a spawn's tier.
+  - A tier moves for a task-class reason only through a measured per-class decision, `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop` → **Retry effort escalation**, or a deliberate measurement arm listed in the run's record of its arms.
+- **Task-class targets**:
+  - Effort buys verification depth and edge-case coverage.
+  - Verification and brownfield bug fixing target high or above.
+  - xhigh or max targets autonomous end-to-end builds and other long-horizon deep reasoning; `max` may overthink — reserve it for the genuinely hardest tasks.
+  - Security review and vulnerability hunting carry no charter tier; glass-atrium-sec-guard keeps its frontmatter key.
+  - Low is for in-the-loop sketching, which delegated subagents never are.
+  - Detailed specs narrow the gap between tiers, so plan-backed implementation is the first candidate for a lower tier.
+- **Thinking is on**: `effort` governs thinking volume, not visible response length — prompt conciseness explicitly when short output is wanted.
+  - Control thinking through `effort` alone: on the main-session model, a `thinking: {type: "disabled"}` or `budget_tokens` request is a 400 at every effort level.
+  - Never write a "do not think" rule or tell an agent that reasoning is off; raise `effort` when reasoning is shallow.
+- **Request-surface facts** — for code that builds API requests. They move with each model release, so confirm each one against the current model's migration notes before relying on it:
+  - Max output is 128k.
+  - Start `max_tokens` at 64k and size it for thinking plus the reply — thinking counts toward it.
+    - A tier raise weighs the output-token cap in the same change.
+  - 1M context is the main-session model's default and maximum.
+  - Mid-conversation `role:"system"` messages are accepted — append a late instruction instead of editing the system prompt, which keeps the prompt cache and earlier thinking blocks valid.
+  - Mid-conversation tool changes are a beta.
+  - Prefill is unsupported — use Structured Outputs for JSON, and a direct system instruction to remove preamble.
+  - Safety classifiers may end a turn with `stop_reason: "refusal"` — the harness special-cases it, not a hard error.
+  - Long autonomous requests may run for many minutes — client timeout + async posture required.
+  - Never instruct a model to reproduce its reasoning in the response — it can be declined as `reasoning_extraction`; on the main-session model that decline is not retried on a fallback.
 
 ## Scope Literalism [ALL]
 
@@ -123,12 +161,28 @@ The canonical rule for what language this system writes in.
 |------|---------|
 | **Always** | Read, search, format, analyze |
 | **Confirm** | File modification, external calls, installation |
-| **Forbidden** | Deletion, security violations, sensitive files |
+| **Forbidden** | Deleting source, documents or config (move to `~/.Trash/` — File Deletion Policy), security violations, sensitive files |
 
 ### File Deletion Policy [ALL]
 
 - `rm` forbidden for source code, documents, and config files → use `mv ~/.Trash/` instead (macOS).
 - Exception: build artifacts, generated files, node_modules, and other regenerable files may use `rm`.
+- A recursive or forced delete targets only a path variable that has passed a path guard (in shell, in the `"${DIR:?}"` operand form) — never a cwd-relative glob; a target that cannot be such a variable is allowed only as a named exception.
+  - Reach: every recursive or forced delete an agent generates, in any language, inside a repository or outside one — a delete site it writes or changes in code, and a delete it runs as a command.
+  - In any language other than shell, the delete — a call such as Python `shutil.rmtree` or Node `fs.rm` / `fs.rmSync` with `recursive` or `force`, or that language's equivalent — takes the guarded variable itself as its path argument.
+  - A path guard refuses a value that is empty, not absolute, or the filesystem root, and the delete runs only when the guard passes.
+
+| Where the delete is generated | Path guard | Named exception |
+|---|---|---|
+| shell code in the Glass Atrium repository | `scripts/lib/path-guard.sh` → `ga_guard_path` | a `GA-RM` annotation at the delete site, in the grammar `scripts/audit-rm.sh` states |
+| code in any other language, and shell code anywhere else | a path guard defined in that code or its own repository | a comment at the delete site stating why the target cannot be a guarded variable |
+| a command the agent runs, anywhere | a path guard inside the command | none — a command has no site to annotate, so move the target to `~/.Trash/` instead |
+
+- Mechanical backing: `scripts/audit-rm.sh` audits this rule over the Glass Atrium repository's shell files in its scope; shell code elsewhere, code in any other language (this repository's included), and commands an agent runs are honor-system — no tool audits them against it.
+
+### Temporary Files [ALL]
+
+- Default: create temporary files and directories with bare `mktemp` / `mktemp -d` — no template path — so they land under the per-user `$TMPDIR`.
 
 ## Context Management [ALL]
 
@@ -204,13 +258,13 @@ Prevent context bloat during long sessions (10+ turns).
 
 #### Emit-before-cap
 
-- Schema/workflow agents: the StructuredOutput / `[COMPLETION]` emit IS the deliverable — a turn spent on analysis with none left to emit loses ALL the work.
-  - Under ultracode a schema-mode workflow `agent({schema})` that finishes without emitting THROWS (uncaught → crashes the run) with NO engine-layer salvage, unlike the manual Agent path, where the SubagentStop transcript-synthesis net recovers a missing block.
-  - Therefore RESERVE budget to emit BEFORE the working ceiling: on approach, STOP analysis and emit the structured result with whatever is complete (partial > nothing).
+- Schema/workflow agents: the StructuredOutput / `[COMPLETION]` emit is the deliverable — a turn spent on analysis with none left to emit loses all the work.
+  - Under ultracode a schema-mode workflow `agent({schema})` that finishes without emitting throws (uncaught → crashes the run) with no engine-layer salvage, unlike the manual Agent path, where the SubagentStop transcript-synthesis net recovers a missing block.
+  - Therefore reserve budget to emit before the working ceiling: on approach, stop analysis and emit the structured result with whatever is complete (partial > nothing).
   - Never end a schema-mode turn on prose.
-- **Second failure mode** — invalid-emission / retry-cap-exceeded: the agent DID call StructuredOutput but every payload FAILED schema validation across the engine's internal retries.
-  - This rejects the `agent()` promise IDENTICALLY to the non-emit throw — the SAME `.catch(() => null)` handles both, no separate branch.
-  - Signature: the model SHRINKS its prose on each retry instead of ADDING the missing validator-named keys (summary-collapse), reproducing the identical error.
+- **Second failure mode** — invalid-emission / retry-cap-exceeded: the agent did call StructuredOutput, but every payload failed schema validation across the engine's internal retries.
+  - This rejects the `agent()` promise exactly as the non-emit throw does — one `.catch(() => null)` handles both, no separate branch.
+  - Signature: the model shrinks its prose on each retry instead of adding the missing validator-named keys (summary-collapse), reproducing the identical error.
   - Prevent by construction — a schema authored per the canonical schema-cap rules, bulk detail handed off via a FILE, and a prompt enumerating ALL required keys; retry with a TIGHTENED re-prompt, never verbatim.
 - **Schema-cap authority is single-sited** (this charter states a pointer, not a rule): the binding cap rules live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `#### Resilient Workflow Authoring [ORCHESTRATOR]` (Absolute schema-cap rules).
   - Pointer duty: read them there before authoring any workflow output schema.
@@ -220,13 +274,16 @@ Prevent context bloat during long sessions (10+ turns).
 - **Schema-mode caveat** — the printed text turn does NOT survive: the engine consumes ONLY the StructuredOutput call, so a schema-mode run's printed `[COMPLETION]` text is never recorded.
   - The RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `#### Resilient Workflow Authoring [ORCHESTRATOR]`) carrying the full multi-line block.
   - The manual Agent path keeps the reverse-scan capture: `_last_assistant_text_from_transcript()` PREFERS the last `[COMPLETION]`-bearing assistant text, so a printed text turn is honored there.
-- Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false` + no lesson, `downgrade_origin=synthesized`) — a lesson-less row the self-improvement loop cannot learn from.
+- Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false`, `downgrade_origin=synthesized`) — a row carrying defaults in place of the writer's self-assessment.
 - Orchestrator-side resilience complement (retry-on-null / isolated-failure authoring + delegation-prompt duty): `skills/glass-atrium-ops-orchestrator.md` → `#### Resilient Workflow Authoring [ORCHESTRATOR]`.
 
 ## AI-Generated Anti-Pattern Prohibition [ALL]
 
-- Excessive politeness / parrot repetition · over-summarization / verbose explanation.
-- Out-of-scope modifications · empty apologies / excessive disclaimers · false confidence / silent acceptance (fix it or flag it).
+- Write at the length the reader needs: state each point once.
+- Add a summary, apology or disclaimer only where the content calls for one.
+- Stay inside the requested scope.
+- Report uncertainty instead of projecting confidence.
+- Fix or flag a problem you see rather than accepting it silently.
 - Main-session user-facing reply FORM (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract` — honor-system (no hook reads reply text), and the response-language rule above is unaffected by it.
 - ※ Mandatory comments per shared-comment-logging.md are exempt.
 
@@ -241,7 +298,7 @@ Prevent context bloat during long sessions (10+ turns).
 
 - **Memory persistence is user-instructed-only**: the main session MUST NOT proactively or automatically write user-facing memory (`feedback_*.md` / `MEMORY.md` in the personal memory dir); a persisted memory fires ONLY when the user explicitly instructs it (e.g. `기억해` / "remember this", judged semantically in any language).
   - Daemon auto-generation of `feedback_*.md` from clustered correction signals is FORBIDDEN — a prohibition held by the absence of that code path, not by a runtime gate.
-  - Internal CTM/EPM self-improvement learning under `memory/core-learning-log.md` is exempt: only user-facing memory writes require the explicit instruction.
+  - The learning-log aggregation that feeds self-improvement is exempt: only user-facing memory writes require the explicit instruction.
   - Detail + the 4-condition Long-Term Memory Write-Gate: `rules/glass-atrium/core-learning-log.md`.
 
 ## Hook Operation Policy [ALL]

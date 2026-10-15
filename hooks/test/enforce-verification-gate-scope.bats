@@ -13,12 +13,15 @@
 
 HOOK_SH="${VGATE_SH:-${BATS_TEST_DIRNAME}/../enforce-verification-gate.sh}"
 NUDGE_PHRASE='carries no [SCOPE] declaration'
+LINE_OPENING_PHRASE='the declaration must open its own line'
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-verification-gate.sh not found: ${HOOK_SH}"
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   DATA_DIR="${BATS_TEST_TMPDIR}/data"
   mkdir -p "${DATA_DIR}/session-spawns"
+  # Refused loopback port — the gate's monitor read (surface 6) fails open here, never reaching the live monitor.
+  export VGATE_MONITOR_URL='http://127.0.0.1:9/api/clauded-docs'
   printf '%s\n' "glass-atrium-qa-code-reviewer" >"${DATA_DIR}/session-spawns/sess-scope-001"
   SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10 — small."
   SCOPE_DECL="[SCOPE] files=hooks/a.sh · deliverable=bug-fix · out=none"
@@ -42,7 +45,7 @@ run_gate() {
 }
 
 @test "a carried [SCOPE] declaration silences the nudge" {
-  run_gate "Implement clauded-docs/3854. ${SIZE_EST} ${SCOPE_DECL}"
+  run_gate "Implement clauded-docs/3854. ${SIZE_EST}"$'\n'"${SCOPE_DECL}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged despite the declaration -- ${output}" >&2; return 1; }
 }
@@ -86,19 +89,19 @@ plain_paths() {
 }
 
 @test "a [SCOPE] under the file-count threshold stays silent about review depth" {
-  run_gate "Implement clauded-docs/3854. ${SIZE_EST} [SCOPE] files=$(plain_paths 9) · deliverable=feature · out=none"
+  run_gate "Implement clauded-docs/3854. ${SIZE_EST}"$'\n'"[SCOPE] files=$(plain_paths 9) · deliverable=feature · out=none"
   [[ "${status}" -eq 0 ]] || { echo "advisory must never block, status was ${status}" >&2; return 1; }
   [[ "${output}" != *"${DEEP_PHRASE}"* ]] || { echo "nudged below the threshold -- ${output}" >&2; return 1; }
 }
 
 @test "a [SCOPE] at the file-count threshold asks for a Deep review" {
-  run_gate "Implement clauded-docs/3854. ${SIZE_EST} [SCOPE] files=$(plain_paths 10) · deliverable=feature · out=none"
+  run_gate "Implement clauded-docs/3854. ${SIZE_EST}"$'\n'"[SCOPE] files=$(plain_paths 10) · deliverable=feature · out=none"
   [[ "${status}" -eq 0 ]] || { echo "advisory must never block, status was ${status}" >&2; return 1; }
   [[ "${output}" == *"${DEEP_PHRASE}"* ]] || { echo "no depth advisory -- ${output}" >&2; return 1; }
 }
 
 @test "a single sensitive-prefix path asks for a Deep review" {
-  run_gate "Implement clauded-docs/3854. ${SIZE_EST} [SCOPE] files=hooks/x.sh · deliverable=bug-fix · out=none"
+  run_gate "Implement clauded-docs/3854. ${SIZE_EST}"$'\n'"[SCOPE] files=hooks/x.sh · deliverable=bug-fix · out=none"
   [[ "${status}" -eq 0 ]] || { echo "advisory must never block, status was ${status}" >&2; return 1; }
   [[ "${output}" == *"${DEEP_PHRASE}"* ]] || { echo "no depth advisory -- ${output}" >&2; return 1; }
   [[ "${output}" == *"hooks/"* ]] || { echo "matched prefix not named -- ${output}" >&2; return 1; }
@@ -108,6 +111,35 @@ plain_paths() {
   run_gate "Implement clauded-docs/3854. ${SIZE_EST}"
   [[ "${status}" -eq 0 ]] || { echo "advisory must never block, status was ${status}" >&2; return 1; }
   [[ "${output}" != *"${DEEP_PHRASE}"* ]] || { echo "depth advisory without a declaration -- ${output}" >&2; return 1; }
+}
+
+@test "only a line-opening declaration counts: quoted [SCOPE] text neither silences the nudge nor sizes the review" {
+  local -a names=(
+    'a quoted mention alone still draws the missing-declaration nudge'
+    'quoted sensitive-path text ahead of a plain declaration leaves the depth advisory silent'
+    'a mid-line declaration draws a nudge naming the line-opening requirement'
+  )
+  local -a prompts=(
+    "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''> reviewer: the [SCOPE] files= list omitted hooks/test/x.bats'
+    "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''Earlier round: [SCOPE] files=hooks/old.sh · out=none'$'\n''[SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none'
+    "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''Fix it. [SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none'
+  )
+  local -a phrases=("${NUDGE_PHRASE}" "${DEEP_PHRASE}" "${LINE_OPENING_PHRASE}")
+  local -a expected=('present' 'absent' 'present')
+  local i got
+  for i in "${!names[@]}"; do
+    run_gate "${prompts[${i}]}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${names[${i}]}: advisory must never block, status ${status}" >&2
+      return 1
+    }
+    got='absent'
+    [[ "${output}" != *"${phrases[${i}]}"* ]] || got='present'
+    [[ "${got}" == "${expected[${i}]}" ]] || {
+      echo "${names[${i}]}: expected ${expected[${i}]}, got ${got} -- ${output}" >&2
+      return 1
+    }
+  done
 }
 
 # --- drift guard: the skill's prose threshold and the hook's constant are one number -----------

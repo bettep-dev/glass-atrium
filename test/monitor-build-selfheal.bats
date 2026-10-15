@@ -31,6 +31,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 TUI="${GA}/glass-atrium"
 CORE="${GA}/lib/ga-core.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${TUI}" ]] || skip "glass-atrium launcher not found: ${TUI}"
@@ -89,7 +91,7 @@ DRV
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # GA_LIB_DIR points ga_init_env's E5-lib source at the real repo (the sandbox root has none).
@@ -156,4 +158,19 @@ drive() {
   [[ "${body}" == *"node_modules/.bin/tsc"* ]] \
     && [[ "${body}" == *"npm ci"* ]] \
     && [[ "${body}" == *'exit "${BOOTSTRAP_EXIT_BUILD}"'* ]]  # CLI copy deliberately stays exit
+}
+
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local saved="${SANDBOX:-}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
+    return 1
+  }
 }

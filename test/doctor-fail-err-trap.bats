@@ -28,8 +28,15 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 TUI="${GA}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
+  # the doctor reads its drop log, rewire marker and auth reports under GA_DATA_ROOT → this test's own root
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR:?}/ga-data-root"
+  mkdir -p "${GA_DATA_ROOT}/logs" "${GA_DATA_ROOT}/data"
   [[ -f "${TUI}" ]] || skip "glass-atrium launcher not found: ${TUI}"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "launcher lib not found: ${GA}/lib/ga-core.sh"
   SANDBOX="$(mktemp -d -t ga-doctor-errtrap.XXXXXX)"
@@ -50,7 +57,7 @@ DRV
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 drive() {

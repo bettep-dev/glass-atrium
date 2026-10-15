@@ -38,15 +38,18 @@ Maintainer-facing material for that source file, plus the record of what the cut
     - the `URL + collected_at(YYYY-MM-DD)` citation form (`collected_at`: zero hits in the body);
     - the 3-year trigger for `[Dated: YYYY]` (the body's `Recency` reliability row scores `3+yr +0` but sets no labelling trigger).
 - **The Stop-RAG cap rationale** (arxiv 2510.14337) — provenance of a decision, addressed to whoever might change the cap rather than to the agent applying it.
-  - The finding: beyond 3 iterations the marginal precision gain falls below the additional token cost. That is why the cap is 3, and why the cap-reached fallback surfaces ambiguity to the caller instead of extending the loop.
+  - The finding: beyond 3 iterations the marginal precision gain falls below the additional token cost. That is why the cap is 3 (**Loop**), and why **Inconclusive exit** surfaces ambiguity to the caller instead of extending the loop.
+- **The scored loop** — the `### EVALUATE rubric` table, the per-hit mean and cycle median, the 0.7 threshold and the per-round `[ECC cycle N]` status line.
+  - Why: each made the model compute a score or narrate every round; hits are now ranked by judgment on the same four criteria (`## Iterative Codebase Retrieval [RESEARCH]` → **Judge the hits**).
+  - Kept: the entry condition, the three-round cap (**Loop**) and the `[Codebase Inconclusive]` return with its top-3 hits (**Inconclusive exit**, the former cap-reached fallback).
 
 ## Two unexecutable instruments, and how each landed
 
 - **`wiki-query.sh`** — deleted with its bullets, above.
 - **The rubric's `Recency` row** anchored on `git status touched` and on 30-day / 1-year mtime windows. The researcher's frozen grant is `[Read, Glob, Grep, WebSearch, WebFetch, Write]`: no shell, and no mtime surface.
-  - Rewritten against the one recency signal the agent does hold — `Glob` returns matching paths sorted by modification time — so the anchors are positions in that ordering rather than absolute ages.
-  - The skip-a-dimension escape was widened past its greenfield-only example to cover a hit set obtained without an ordering.
-  - **Orchestrator acceptance**: the row stands; do not revert it. The grant above was re-verified in the body frontmatter, and the old anchors were a duty the rubric's own agent could never discharge.
+  - Landed as a removal: the row went with the whole rubric (`## What the cut removed, and why` → **The scored loop**).
+  - **Judge the hits** keeps recency as a criterion with no anchor.
+  - Re-anchoring it: use the one recency signal the grant holds — `Glob` returns matching paths sorted by modification time — never `git status` or an mtime window.
 
 ## Readers and coupled tests
 

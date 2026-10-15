@@ -29,6 +29,8 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
+  # Refused loopback port → the PASS arm's monitor reads fail open; no fixture reaches the live monitor.
+  export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   : >"${TRACE_LOG}"
 }
 
@@ -174,7 +176,7 @@ size_token() { printf "log('[SIZE-EST] bundles=1 tool_uses~=10 — %s');\n" "${1
 }
 
 # ===================================================================================================
-# AC4 — the two highest-volume verdicts pinned directly (13 of the 23 measured catches).
+# AC4 — the two highest-volume verdicts pinned directly.
 # ===================================================================================================
 @test "AC4(norev): a declaration whose reviewer is never spawned blocks as block-norev" {
   run_hook_file_exec "${VERDICT_DIR}/block-norev.js"

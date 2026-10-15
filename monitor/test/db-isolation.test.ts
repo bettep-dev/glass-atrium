@@ -20,7 +20,7 @@ import { join } from "node:path";
 import pg from "pg";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
-import { LIVE_URL_ENV, isSameDatabase } from "./lib/select-test-db.js";
+import { LIVE_URL_ENV, isSameDatabase, isSameServer } from "./lib/select-test-db.js";
 
 // One nonce per run — the marker that must exist HERE and nowhere in the live store.
 const RUN_NONCE = `db-isolation-${randomUUID()}`;
@@ -210,3 +210,68 @@ test("AC-B0-2(2): an unparseable DSN falls back to the raw string comparison", (
   assert.equal(isSameDatabase("host=/tmp dbname=x", "host=/tmp dbname=x"), true);
   assert.equal(isSameDatabase("host=/tmp dbname=x", "host=/tmp dbname=y"), false);
 });
+
+// isSameServer gates a write to a second database on the test server, so its refusal
+// direction (false) is the safety direction: a blanket `return true` must go red here.
+const SERVER_IDENTITY_ROWS: ReadonlyArray<readonly [string, string, string, boolean]> = [
+  [
+    "another database in the same socket directory is the same server",
+    "postgresql://bettep@localhost/glass_atrium_test?host=/tmp",
+    "postgresql://bettep@localhost/label_absent?host=/tmp",
+    true,
+  ],
+  [
+    "localhost spelled as its loopback address is the same server",
+    "postgresql://bettep@localhost:5432/glass_atrium_test",
+    "postgresql://bettep@127.0.0.1:5432/label_absent",
+    true,
+  ],
+  [
+    "the IPv6 loopback spelling is the same server",
+    "postgresql://bettep@[::1]/glass_atrium_test",
+    "postgresql://bettep@localhost:5432/label_absent",
+    true,
+  ],
+  [
+    "the socket directory reached through a symlink is the same server",
+    `postgresql://bettep@localhost/glass_atrium_test?host=${SOCKET_DIR}`,
+    `postgresql://bettep@localhost/label_absent?host=${SOCKET_LINK}`,
+    true,
+  ],
+  [
+    "another port in the same socket directory is another server",
+    "postgresql://bettep@localhost/glass_atrium_test?host=/tmp&port=5432",
+    "postgresql://bettep@localhost/label_absent?host=/tmp&port=55999",
+    false,
+  ],
+  [
+    "another port on the same TCP host is another server",
+    "postgresql://bettep@localhost:5432/glass_atrium_test",
+    "postgresql://bettep@localhost:5433/label_absent",
+    false,
+  ],
+  [
+    "another socket directory is another server",
+    "postgresql://bettep@localhost/glass_atrium_test?host=/tmp",
+    "postgresql://bettep@localhost/label_absent?host=/var/run/postgresql",
+    false,
+  ],
+  [
+    "a side naming no database is never the same server",
+    "postgresql://bettep@localhost/glass_atrium_test?host=/tmp",
+    "postgresql://bettep@localhost/?host=/tmp",
+    false,
+  ],
+  [
+    "an unparseable side is never the same server, even spelled identically",
+    "host=/tmp dbname=x",
+    "host=/tmp dbname=x",
+    false,
+  ],
+];
+
+for (const [label, a, b, expected] of SERVER_IDENTITY_ROWS) {
+  test(`isSameServer: ${label}`, () => {
+    assert.equal(isSameServer(a, b), expected, `\n  a: ${a}\n  b: ${b}`);
+  });
+}

@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 # doctor-proposal-provenance.bats — pins run_doctor §25 (terminal proposal rows naming no actor).
 #
-# Every status writer stamps core.autoagent_proposals.reviewed_by from this release on, and nothing
-# backfills the rows written before it. This section is the standing surface that would notice the
+# Every status writer stamps core.autoagent_proposals.reviewed_by from this release on, but the
+# unadjudicated backfill, which relabels status only and keeps the stored actor; nothing backfills
+# the actor of rows written before it. This section is the standing surface that would notice the
 # gap reopening. Registration kind B (report-only): its log line only, and AC5 asserts the warning
 # total does not move — a counted warning would be red on every established install forever, and
 # scoping it by id or date to go green is the workaround class this item exists to avoid.
@@ -37,8 +38,12 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   command -v jq >/dev/null 2>&1 || skip "jq required"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
 
@@ -57,7 +62,7 @@ setup() {
 
 teardown() {
   unset GA_SKIP_DB_SETUP
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Recording psql stub: the query kind is read off the SQL on stdin, the answer and exit code come
@@ -86,7 +91,7 @@ STUB
   # Default scenario: the database exists and every terminal row names its mover. Each test
   # overrides what it is about, so a row never silently depends on a state it did not set.
   stub_out exists '1'
-  provenance_counts 271 0 0
+  provenance_counts 240 0 0
 }
 
 # $1 = query kind (exists|provenance|other), $2 = stdout the stub returns for it.
@@ -120,7 +125,11 @@ path_without_psql() {
       # a name already linked from an earlier entry loses, mirroring PATH precedence
       ln -s -- "${part}"/* "${farm}/" 2>/dev/null || true
     done
-    rm -f -- "${farm}/psql"
+    if ga_guard_path "${farm}"; then
+      rm -f -- "${farm:?}/psql"
+    else
+      return 1
+    fi
   fi
   printf '%s' "${farm}"
 }
@@ -236,17 +245,17 @@ warn_total_of_output() {
   run_doctor_sandbox
   local green
   green="$(warn_total_of_output)" || return 1
-  assert_output_has "all 271 terminal proposal row(s) name the actor that moved them" || return 1
+  assert_output_has "all 240 terminal proposal row(s) name the actor that moved them" || return 1
 
-  # The live shape this item measured: most terminal rows carry neither column, a smaller set
+  # The two-population shape: most terminal rows carry neither column, a smaller set
   # carries the stale drain's instant with no actor. Both numbers must survive into the line.
-  provenance_counts 271 84 175
+  provenance_counts 240 70 145
   run_doctor_sandbox
-  assert_output_has "259 of 271 terminal row(s) name no actor" || return 1
-  assert_output_has "84 carry a review instant with no actor" || return 1
-  assert_output_has "175 carry neither" || return 1
+  assert_output_has "215 of 240 terminal row(s) name no actor" || return 1
+  assert_output_has "70 carry a review instant with no actor" || return 1
+  assert_output_has "145 carry neither" || return 1
   assert_output_has "report-only" || return 1
-  assert_output_lacks "all 271 terminal proposal row(s) name the actor" || return 1
+  assert_output_lacks "all 240 terminal proposal row(s) name the actor" || return 1
 
   # Registration kind B: the line prints, the total does not move, the exit code does not change.
   local gap
@@ -257,7 +266,7 @@ warn_total_of_output() {
     return 1
   }
   [[ "${status}" -eq 0 ]] || {
-    echo "a 259-row provenance gap failed the doctor (exit ${status}) — it must never do that" >&2
+    echo "a 215-row provenance gap failed the doctor (exit ${status}) — it must never do that" >&2
     return 1
   }
   assert_output_lacks "provenance-gap" || return 1
@@ -266,15 +275,15 @@ warn_total_of_output() {
 # ── AC6 — one population alone still names which one it is ─────────────────────────────────────
 
 @test "AC6: a gap in one population alone keeps the split, never a bare total" {
-  provenance_counts 271 3 0
+  provenance_counts 240 3 0
   run_doctor_sandbox
-  assert_output_has "3 of 271 terminal row(s) name no actor" || return 1
+  assert_output_has "3 of 240 terminal row(s) name no actor" || return 1
   assert_output_has "3 carry a review instant with no actor" || return 1
   assert_output_has "0 carry neither" || return 1
 
-  provenance_counts 271 0 12
+  provenance_counts 240 0 12
   run_doctor_sandbox
-  assert_output_has "12 of 271 terminal row(s) name no actor" || return 1
+  assert_output_has "12 of 240 terminal row(s) name no actor" || return 1
   assert_output_has "0 carry a review instant with no actor" || return 1
   assert_output_has "12 carry neither" || return 1
 }
@@ -314,13 +323,20 @@ warn_total_of_output() {
   done
   # Terminal rows only: a pending or snoozed row has not been moved to a final state by anyone, so
   # it names no missing mover and would inflate the report with rows that are not a gap.
-  for needle in applied approved rejected reverted; do
-    grep -qF -- "'${needle}'::core.\"ProposalStatus\"" "${STUB_STATE}/calls.log" || {
+  for needle in applied approved rejected reverted unadjudicated; do
+    grep -qF -- "'${needle}'" "${STUB_STATE}/calls.log" || {
       echo "the probe's status filter omits ${needle}" >&2
       echo "${sql}" >&2
       return 1
     }
   done
+  # A schema without the unadjudicated label rejects an enum cast of it when planning the
+  # statement, so the list is compared as text (proposal-status-label-fallback.bats runs it).
+  grep -qF -- "status::text IN" "${STUB_STATE}/calls.log" || {
+    echo "the probe compares status against enum casts, which a pre-label schema cannot plan" >&2
+    echo "${sql}" >&2
+    return 1
+  }
   grep -qF -- "'pending'" "${STUB_STATE}/calls.log" && {
     echo "the probe counts non-terminal rows as a provenance gap" >&2
     return 1
@@ -339,7 +355,7 @@ warn_total_of_output() {
   local answer
   # A NOTICE riding on the row, a reply to a different question, and a short row: none of the three
   # answers THIS question, and arithmetic over any of them would abort the whole run.
-  for answer in "NOTICE: relation rebuilt" "20260101000000_alpha	2026-01-01T00:00:00Z	" "271"; do
+  for answer in "NOTICE: relation rebuilt" "20260101000000_alpha	2026-01-01T00:00:00Z	" "240"; do
     printf '%s' "${answer}" >"${STUB_STATE}/provenance.out"
     run_doctor_sandbox
     [[ "${status}" -eq 0 ]] || {

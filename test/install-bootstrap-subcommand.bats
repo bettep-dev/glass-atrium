@@ -8,7 +8,7 @@
 #   * env-port fallback: bootstrap_health_gate reads ATRIUM_MONITOR_PORT from
 #     monitor/.env, else defaults to 16145 — the curl target proves which port.
 #
-# Hermetic strategy (mirrors scripts/test/daemon-bootstrap-supervise.bats): copy
+# Hermetic strategy: copy
 # lib/ga-core.sh into a sandbox GA_ROOT (resolving the sandbox monitor/.env),
 # SOURCE the engine directly with strict mode + ERR trap, ga_init_env it, and
 # override run_install with a no-op so the bootstrap logic is isolated from the
@@ -23,6 +23,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_LIB="${GA}/lib/ga-core.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # The engine lib tree (ga-core.sh + its 7 domain siblings + the whole scripts/lib) is READ-ONLY
 # across every test — the tests only SOURCE it — so build it ONCE here. Per-test setup() symlinks
@@ -69,7 +71,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # --- PATH stubs (behavior keyed on marker env vars, exported into the run) -----
@@ -168,9 +170,12 @@ SLEEP
 # install path, and call the bootstrap function. Runs inside `bats run` so the
 # subshell exit code is captured; set -e + the ERR trap make a named-exit-code
 # path exit the subshell with that code. STUB_BIN is prepended so the stubs win.
+# The resolver's env seams are unset so the sandbox .env / 16145 default decides
+# the port, never the caller's ambient environment.
 source_and_call() {
   local fn="$1"
-  run env PATH="${STUB_BIN}:${PATH}" \
+  run env -u ATRIUM_MONITOR_PORT -u ATRIUM_MONITOR_ENV -u ATRIUM_CONFIG_TOML \
+    PATH="${STUB_BIN}:${PATH}" \
     STUB_NPM_BUILD_FAIL="${STUB_NPM_BUILD_FAIL:-0}" \
     STUB_HEALTH="${STUB_HEALTH:-fail}" \
     bash -c "
@@ -280,6 +285,7 @@ t6_build_release_fixture() {
   printf '#!/usr/bin/env bash\necho fixture-launcher\n' >"${tree}/glass-atrium"
   chmod +x "${tree}/glass-atrium"
   cp "${GA}/scripts/lib/apply-spine.sh" "${tree}/scripts/lib/apply-spine.sh"
+  cp "${GA}/scripts/lib/path-guard.sh" "${tree}/scripts/lib/path-guard.sh"
   h_launcher="$(shasum -a 256 "${tree}/glass-atrium" | awk '{print $1}')"
   h_spine="$(shasum -a 256 "${tree}/scripts/lib/apply-spine.sh" | awk '{print $1}')"
   cat >"${fix}/manifest.json" <<MANIFEST
@@ -365,7 +371,7 @@ SH
   t6_build_release_fixture 1.0.9
   t6_build_fetch_stub
   t6_build_stock_toolbin || return 1
-  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" GA_DATA_ROOT="${SANDBOX}/.glass-atrium" TMPDIR="${SANDBOX}" \
     FIXTURE_MANIFEST="${FIXTURE_MANIFEST}" FIXTURE_BUNDLE="${FIXTURE_BUNDLE}" \
     FETCH_URL_LOG="${FETCH_URL_LOG}" FETCH_ARGV_LOG="${FETCH_ARGV_LOG}" \
     GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \
@@ -382,7 +388,7 @@ SH
   t6_build_release_fixture 1.0.9
   t6_build_fetch_stub
   t6_build_stock_toolbin || return 1
-  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" GA_DATA_ROOT="${SANDBOX}/.glass-atrium" TMPDIR="${SANDBOX}" \
     FIXTURE_MANIFEST="${FIXTURE_MANIFEST}" FIXTURE_BUNDLE="${FIXTURE_BUNDLE}" \
     FETCH_URL_LOG="${FETCH_URL_LOG}" FETCH_ARGV_LOG="${FETCH_ARGV_LOG}" \
     GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \

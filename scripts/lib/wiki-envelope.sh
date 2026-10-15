@@ -63,6 +63,16 @@
 : "${WIKI_ENVELOPE_MAX_NOTE_BYTES:=524288}"
 : "${WIKI_ENVELOPE_MAX_TOTAL_BYTES:=8388608}"
 
+# ga_guard_path gates the unterminated-tail removal; a missing guard fails this source, never a delete.
+# Existence checked first: bash 3.2 under set -e exits on a failed source before any message.
+# Above the re-source guard too: an inherited WIKI_ENVELOPE_LIB_LOADED must not skip this load.
+if [[ ! -r "${BASH_SOURCE[0]%/*}/path-guard.sh" ]]; then
+  printf '[wiki-envelope] FATAL: cannot source the shared path guard beside %s\n' "${BASH_SOURCE[0]}" >&2
+  return 1
+fi
+# shellcheck source-path=SCRIPTDIR source=path-guard.sh
+source "${BASH_SOURCE[0]%/*}/path-guard.sh" || return 1
+
 if [[ -n "${WIKI_ENVELOPE_LIB_LOADED:-}" ]]; then
   return 0
 fi
@@ -278,7 +288,11 @@ wiki_envelope_parse() {
   # shape — drop it, keep every fully validated section, and name the misses so the
   # caller can log one line per basename.
   if [[ -n "${open_idx}" ]]; then
-    rm -f -- "${run_dir}/part.${open_idx}"
+    local tail_part="${run_dir}/part.${open_idx}"
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${tail_part}"; then
+      rm -f -- "${tail_part:?}"
+    fi
     WIKI_ENVELOPE_DROPPED_IDX="${open_idx}"
   fi
   i=1

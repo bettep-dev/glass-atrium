@@ -1,0 +1,1775 @@
+{
+ "/api/dashboard/kpi": {
+  "today_cost_usd": 1013.486948,
+  "yesterday_cost_usd": 1582.01014,
+  "yesterday_same_time_cost_usd": 974.210268,
+  "last_1h_fail_count": 0,
+  "fail_count_24h": 0,
+  "blocked_count_24h": 19,
+  "last_etl_at": "2026-08-19T08:34:19.659Z",
+  "today_session_count": 25,
+  "yesterday_session_count": 21,
+  "yesterday_same_time_session_count": 16,
+  "timezone": "UTC",
+  "day_bucket_timezone": "Asia/Seoul"
+ },
+ "/api/architecture/live": {
+  "computed_at": "2026-08-19T08:34:31.674Z",
+  "daemons": [
+   {
+    "daemon_name": "autoagent",
+    "effective_status": "ok",
+    "last_run_at": "2026-08-18T17:59:35.659Z",
+    "staleness_minutes": 874,
+    "node_ids": [
+     "autoagent_d"
+    ],
+    "expected_cadence_minutes": 1440
+   },
+   {
+    "daemon_name": "wiki",
+    "effective_status": "ok",
+    "last_run_at": "2026-08-18T18:32:04.659Z",
+    "staleness_minutes": 842,
+    "node_ids": [
+     "wiki_d"
+    ],
+    "expected_cadence_minutes": 1440
+   }
+  ],
+  "writers": [
+   {
+    "writer_name": "cost-tracker",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   },
+   {
+    "writer_name": "agent-tracker",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   },
+   {
+    "writer_name": "outcome-record",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   },
+   {
+    "writer_name": "learning-aggregator",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   },
+   {
+    "writer_name": "wiki-sync",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   },
+   {
+    "writer_name": "autoagent",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   }
+  ],
+  "recent_activity": {
+   "cost_events_last_hour": 594,
+   "agent_events_last_hour": 36,
+   "last_outcome_at": "2026-08-19T08:27:10.745Z"
+  },
+  "part_bindings": {
+   "pg": [
+    "pg_db"
+   ],
+   "browser": [
+    "doc_export"
+   ],
+   "daemon-cycle": [
+    "autoagent_d"
+   ],
+   "glass-atrium-wiki-curator": [
+    "wiki_d"
+   ],
+   "hook-chain": [
+    "hook_pipeline"
+   ]
+  },
+  "governance": {
+   "absent": [],
+   "sourceMissing": false
+  }
+ },
+ "/api/health": {
+  "status": "ok",
+  "db": "open",
+  "browser": "ok",
+  "browser_checked_at": "2026-08-19T04:51:06.954Z",
+  "version": "1.0.1",
+  "timezone": "Asia/Seoul"
+ },
+ "/api/health/hook-chain": {
+  "events": [
+   {
+    "event": "SubagentStop",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/agent-tracker.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/post-edit-typecheck.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/track-outcome.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "SessionStart",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-session-context.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/prune-security-warnings-state.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/prune-session-spawns.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-compliance-matrix.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "Stop",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-preedit-facts.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/cost-tracker.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/post-edit-typecheck.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "SubagentStart",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/agent-tracker.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-rules.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/telemetry-activation.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-01.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-02.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-03.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-04.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-05.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-06.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-07.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-08.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-09.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-10.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-11.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-12.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "PreToolUse",
+    "groups": [
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-context-budget.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-spawn-budget.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-spawn-cost.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-subagent-budget.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/block-dangerous-commands.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/block-doc-routing-leak.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/block-md-creation.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/block-no-verify.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-commit-guard.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-config-protection.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-delegation.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-foreground-harness.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-verification-gate.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Workflow",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-workflow-verify-stage.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Workflow",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/lint-workflow-template-literal.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/telemetry-activation.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-prompt.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-scope-drift.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-secret-scan.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-secret-scan.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-edit-syntax.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-harness-critical.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-egress-secret.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-raw-store-read.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-pre-write-raw.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit|MultiEdit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-harness-critical.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-worktree-writer-lock.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "PreCompact",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/pre-compact.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "PostToolUse",
+    "groups": [
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/detect-secret-file-write.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Edit|Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/post-edit-format.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/post-edit-outcome-sync.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Edit|Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/post-edit-typecheck.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Edit|Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-large-diff.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-output.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "WebFetch|WebSearch|mcp__.*(fetch|get|read|search).*",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-tool-response.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-verification-gate.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "UserPromptSubmit",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-reply-language.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "source_path": "~/.claude/settings.json",
+  "source_mtime": "2026-08-18T19:20:42.746Z",
+  "timezone": "UTC"
+ },
+ "/api/health/hook-failures": {
+  "days": 30,
+  "failures": [
+   {
+    "id": 1609,
+    "failure_ts": "2026-08-12T06:42:27.223Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1608,
+    "failure_ts": "2026-08-12T06:36:37.250Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1607,
+    "failure_ts": "2026-08-12T06:34:42.479Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1606,
+    "failure_ts": "2026-08-12T06:23:26.028Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1605,
+    "failure_ts": "2026-08-12T05:20:38.229Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1604,
+    "failure_ts": "2026-08-12T05:15:40.269Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1603,
+    "failure_ts": "2026-08-12T05:13:30.348Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1602,
+    "failure_ts": "2026-08-12T05:04:29.937Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1601,
+    "failure_ts": "2026-08-12T04:59:21.916Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1600,
+    "failure_ts": "2026-08-12T04:58:32.446Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   }
+  ],
+  "error_kind_breakdown": [
+   {
+    "error_kind": "unknown",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "count": 250
+   }
+  ],
+  "count_24h": 0,
+  "unretried_count_24h": 0,
+  "last_failure_ts": "2026-08-12T06:42:27.223Z",
+  "timezone": "UTC"
+ },
+ "/api/agents/summary": {
+  "agents": [
+   {
+    "agent_id": "sample-agent-iota-unit-lane-r",
+    "agent_name": "sample-agent-iota-unit-lane-r",
+    "runs": 1698,
+    "success_pct": 100,
+    "needs_context_count": 3,
+    "cost": null,
+    "p95_ms": 617855,
+    "status": "active",
+    "last_run_at": "2026-08-19T07:51:41.756Z",
+    "compatibility": null,
+    "description": "Sample agent for the density fixture \u2014 neutral description text of a fixed length,.",
+    "dual_phase": false,
+    "origin": "shipped",
+    "invocations": 1362,
+    "invocations_30d": 1362,
+    "circuit_breaker": {
+     "suspended": false,
+     "consecutive_fails": 0,
+     "suspended_at": null
+    }
+   }
+  ],
+  "meta": {
+   "days": 7,
+   "total_agents": 16,
+   "period_start": "2026-08-12",
+   "period_end": "2026-08-19",
+   "cost_attribution": "unavailable",
+   "circuit_breaker": {
+    "source": "loaded",
+    "registry_agents": 27,
+    "suspended_count": 0,
+    "streak_count": 0,
+    "alarms": []
+   }
+  },
+  "fetched_at": "2026-08-19T08:34:47.181Z"
+ },
+ "/api/dashboard/update-status": {
+  "status": "current",
+  "local_version": "1.0.1",
+  "latest_version": "1.0.1",
+  "reason": null,
+  "checked_at": "2026-08-19T08:34:31.748Z"
+ },
+ "/api/dashboard/update-job": {
+  "status": "completed",
+  "id": 1868,
+  "target_version": "1.0.1",
+  "started_at": "2026-08-19T04:50:42.556Z",
+  "heartbeat_at": "2026-08-19T04:51:05.965Z",
+  "failure_reason": null
+ },
+ "/api/cost/kpi": {
+  "today_cost_usd": 1013.486948,
+  "window_7d_cost_usd": 7744.07289,
+  "burn_rate_3h_usd_per_hour": 48.110918,
+  "cost_per_done_usd": 1.6689812262931036,
+  "done_count_7d": 4640,
+  "day_bucket_timezone": "Asia/Seoul",
+  "fetched_at": "2026-08-19T08:34:47.235Z"
+ },
+ "/api/dashboard/cost-timeseries": {
+  "days": 7,
+  "points": [
+   {
+    "date": "2026-08-13",
+    "input_tokens": 22793,
+    "output_tokens": 1816610,
+    "cache_read_tokens": 1731902307,
+    "cache_creation_tokens": 100000000,
+    "cost_usd": 800.086162,
+    "session_count": 15
+   },
+   {
+    "date": "2026-08-14",
+    "input_tokens": 40696,
+    "output_tokens": 2329389,
+    "cache_read_tokens": 3332001439,
+    "cache_creation_tokens": 173931540,
+    "cost_usd": 1532.694493,
+    "session_count": 36
+   },
+   {
+    "date": "2026-08-15",
+    "input_tokens": 12131,
+    "output_tokens": 1339917,
+    "cache_read_tokens": 1195431583,
+    "cache_creation_tokens": 71779410,
+    "cost_usd": 539.448621,
+    "session_count": 32
+   },
+   {
+    "date": "2026-08-16",
+    "input_tokens": 23464,
+    "output_tokens": 1990306,
+    "cache_read_tokens": 2281874025,
+    "cache_creation_tokens": 143321797,
+    "cost_usd": 1173.658855,
+    "session_count": 21
+   },
+   {
+    "date": "2026-08-17",
+    "input_tokens": 24613,
+    "output_tokens": 1858935,
+    "cache_read_tokens": 2479545828,
+    "cache_creation_tokens": 100000000,
+    "cost_usd": 1102.687671,
+    "session_count": 49
+   },
+   {
+    "date": "2026-08-18",
+    "input_tokens": 36642,
+    "output_tokens": 3914273,
+    "cache_read_tokens": 3158270126,
+    "cache_creation_tokens": 146339049,
+    "cost_usd": 1582.01014,
+    "session_count": 21
+   },
+   {
+    "date": "2026-08-19",
+    "input_tokens": 28873,
+    "output_tokens": 1899849,
+    "cache_read_tokens": 1910184840,
+    "cache_creation_tokens": 128194333,
+    "cost_usd": 1013.486948,
+    "session_count": 25
+   }
+  ],
+  "timezone": "UTC"
+ },
+ "/api/outcomes/cross-analysis": {
+  "filter": {
+   "days": 7,
+   "agent": null,
+   "task_type": null,
+   "result": null,
+   "confidence": null,
+   "metric_pass": "unset",
+   "review_flag": null,
+   "q": null
+  },
+  "total": 4673,
+  "reconstructed_total": 17,
+  "excluded_poisoned_count": 0,
+  "cells": [
+   {
+    "confidence": "high",
+    "metric_pass": true,
+    "count": 3683,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "high",
+    "metric_pass": false,
+    "count": 132,
+    "is_polar_mismatch": true
+   },
+   {
+    "confidence": "high",
+    "metric_pass": null,
+    "count": 0,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "medium",
+    "metric_pass": true,
+    "count": 740,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "medium",
+    "metric_pass": false,
+    "count": 99,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "medium",
+    "metric_pass": null,
+    "count": 0,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "low",
+    "metric_pass": true,
+    "count": 0,
+    "is_polar_mismatch": true
+   },
+   {
+    "confidence": "low",
+    "metric_pass": false,
+    "count": 19,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "low",
+    "metric_pass": null,
+    "count": 0,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": null,
+    "metric_pass": true,
+    "count": 0,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": null,
+    "metric_pass": false,
+    "count": 0,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": null,
+    "metric_pass": null,
+    "count": 0,
+    "is_polar_mismatch": false
+   }
+  ],
+  "by_result": [
+   {
+    "result": "done",
+    "count": 4269,
+    "reconstructed_count": 0,
+    "closed_count": 0,
+    "writer_open_count": 4269
+   },
+   {
+    "result": "done_with_concerns",
+    "count": 263,
+    "reconstructed_count": 17,
+    "closed_count": 171,
+    "writer_open_count": 75
+   },
+   {
+    "result": "needs_context",
+    "count": 82,
+    "reconstructed_count": 0,
+    "closed_count": 0,
+    "writer_open_count": 82
+   },
+   {
+    "result": "blocked",
+    "count": 59,
+    "reconstructed_count": 0,
+    "closed_count": 0,
+    "writer_open_count": 59
+   }
+  ],
+  "by_agent_top_10": [
+   {
+    "agent": "sample-agent-iota-unit-lane-r",
+    "count": 1561,
+    "reconstructed_count": 0,
+    "writer_open_count": 3
+   },
+   {
+    "agent": "sample-agent-theta-uni",
+    "count": 994,
+    "reconstructed_count": 2,
+    "writer_open_count": 7
+   },
+   {
+    "agent": "sample-agent-bravo-uni",
+    "count": 687,
+    "reconstructed_count": 0,
+    "writer_open_count": 51
+   },
+   {
+    "agent": "sample-agent-kappa-unit",
+    "count": 576,
+    "reconstructed_count": 0,
+    "writer_open_count": 4
+   },
+   {
+    "agent": "sample-agent-alpha-unit-la",
+    "count": 232,
+    "reconstructed_count": 0,
+    "writer_open_count": 9
+   },
+   {
+    "agent": "sample-agent-sigma-unit-lane-role",
+    "count": 183,
+    "reconstructed_count": 12,
+    "writer_open_count": 2
+   },
+   {
+    "agent": "sample-agent-omega-unit-lane",
+    "count": 166,
+    "reconstructed_count": 0,
+    "writer_open_count": 3
+   },
+   {
+    "agent": "sample-agent-gamma-unit-lan",
+    "count": 139,
+    "reconstructed_count": 0,
+    "writer_open_count": 6
+   },
+   {
+    "agent": "sample-agent-delta-unit-lanex",
+    "count": 60,
+    "reconstructed_count": 3,
+    "writer_open_count": 4
+   },
+   {
+    "agent": "sample-agent-tau-unit-la",
+    "count": 25,
+    "reconstructed_count": 0,
+    "writer_open_count": 2
+   }
+  ],
+  "by_agent_result": [
+   {
+    "agent": "sample-agent-alpha-unit-la",
+    "result": "blocked",
+    "count": 2,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-bravo-uni",
+    "result": "done",
+    "count": 567,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-delta-unit-lanex",
+    "result": "done_with_concerns",
+    "count": 20,
+    "reconstructed_count": 3
+   },
+   {
+    "agent": "sample-agent-gamma-unit-lan",
+    "result": "done",
+    "count": 128,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-kappa-unit",
+    "result": "needs_context",
+    "count": 12,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-sigma-unit-lane-role",
+    "result": "blocked",
+    "count": 7,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-omega-unit-lane",
+    "result": "done",
+    "count": 155,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-theta-uni",
+    "result": "blocked",
+    "count": 31,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-sigma-unit-lane-role",
+    "result": "done",
+    "count": 119,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-lambda-un",
+    "result": "needs_context",
+    "count": 2,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-zeta-u",
+    "result": "blocked",
+    "count": 3,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-theta-uni",
+    "result": "needs_context",
+    "count": 11,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-iota-unit-lane-r",
+    "result": "needs_context",
+    "count": 5,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-gamma-unit-lan",
+    "result": "done_with_concerns",
+    "count": 9,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-kappa-unit",
+    "result": "blocked",
+    "count": 6,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-alpha-unit-la",
+    "result": "done_with_concerns",
+    "count": 14,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-iota-unit-lane-r",
+    "result": "done",
+    "count": 1543,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-kappa-unit",
+    "result": "done",
+    "count": 519,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-rho-unit",
+    "result": "needs_context",
+    "count": 2,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-alpha-unit-la",
+    "result": "done",
+    "count": 213,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-delta-unit-lanex",
+    "result": "done",
+    "count": 40,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-tau-unit-la",
+    "result": "done",
+    "count": 21,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-zeta-u",
+    "result": "done",
+    "count": 13,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-omega-unit-lane",
+    "result": "done_with_concerns",
+    "count": 3,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-bravo-uni",
+    "result": "done_with_concerns",
+    "count": 75,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-phi-unit-l",
+    "result": "done",
+    "count": 4,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-tau-unit-la",
+    "result": "done_with_concerns",
+    "count": 4,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-alpha-unit-la",
+    "result": "needs_context",
+    "count": 3,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-omega-unit-lane",
+    "result": "blocked",
+    "count": 8,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-theta-uni",
+    "result": "done",
+    "count": 921,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-gamma-unit-lan",
+    "result": "needs_context",
+    "count": 2,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-rho-unit",
+    "result": "done",
+    "count": 5,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-iota-unit-lane-r",
+    "result": "done_with_concerns",
+    "count": 11,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-iota-unit-lane-r",
+    "result": "blocked",
+    "count": 2,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-lambda-un",
+    "result": "done",
+    "count": 14,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-bravo-uni",
+    "result": "needs_context",
+    "count": 45,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-psi-unitx",
+    "result": "done",
+    "count": 5,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-kappa-unit",
+    "result": "done_with_concerns",
+    "count": 39,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-sigma-unit-lane-role",
+    "result": "done_with_concerns",
+    "count": 57,
+    "reconstructed_count": 12
+   },
+   {
+    "agent": "sample-agent-theta-uni",
+    "result": "done_with_concerns",
+    "count": 31,
+    "reconstructed_count": 2
+   },
+   {
+    "agent": "sample-agent-chi-unit-lan",
+    "result": "done",
+    "count": 2,
+    "reconstructed_count": 0
+   }
+  ],
+  "grader_breakdown": {
+   "verified_pass": 24,
+   "unverified": 4614,
+   "verified_fail": 35,
+   "not_measured": 0,
+   "graded_total": 4673,
+   "verified_pass_rate": 0.00514,
+   "unverified_rate": 0.98737,
+   "verified_fail_rate": 0.00749
+  },
+  "downgrade_breakdown": {
+   "writer_true_downgraded": 35,
+   "writer_false": 227,
+   "synthesized": 17,
+   "not_recorded": 4394
+  },
+  "task_type_grader_breakdown": [
+   {
+    "task_type": "bug-fix",
+    "verified_pass": 11,
+    "unverified": 231,
+    "verified_fail": 5,
+    "not_measured": 0,
+    "total": 247,
+    "by_design_unverified": false
+   },
+   {
+    "task_type": "feature",
+    "verified_pass": 13,
+    "unverified": 376,
+    "verified_fail": 30,
+    "not_measured": 0,
+    "total": 419,
+    "by_design_unverified": false
+   },
+   {
+    "task_type": "refactor",
+    "verified_pass": 0,
+    "unverified": 481,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 481,
+    "by_design_unverified": false
+   },
+   {
+    "task_type": "research",
+    "verified_pass": 0,
+    "unverified": 335,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 335,
+    "by_design_unverified": false
+   },
+   {
+    "task_type": "plan",
+    "verified_pass": 0,
+    "unverified": 236,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 236,
+    "by_design_unverified": false
+   },
+   {
+    "task_type": "review",
+    "verified_pass": 0,
+    "unverified": 2145,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 2145,
+    "by_design_unverified": true
+   },
+   {
+    "task_type": "diagnosis",
+    "verified_pass": 0,
+    "unverified": 26,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 26,
+    "by_design_unverified": true
+   },
+   {
+    "task_type": "doc",
+    "verified_pass": 0,
+    "unverified": 403,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 403,
+    "by_design_unverified": true
+   },
+   {
+    "task_type": "cleanup",
+    "verified_pass": 0,
+    "unverified": 381,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 381,
+    "by_design_unverified": true
+   }
+  ],
+  "fetched_at": "2026-08-19T08:34:59.067Z",
+  "prior_window": {
+   "period_start": "2026-08-05",
+   "period_end": "2026-08-12",
+   "total": 3422,
+   "reconstructed_total": 11,
+   "by_result": [
+    {
+     "result": "done",
+     "count": 3820,
+     "reconstructed_count": 0,
+     "closed_count": 0,
+     "writer_open_count": 4269
+    },
+    {
+     "result": "done_with_concerns",
+     "count": 219,
+     "reconstructed_count": 17,
+     "closed_count": 171,
+     "writer_open_count": 75
+    },
+    {
+     "result": "needs_context",
+     "count": 67,
+     "reconstructed_count": 0,
+     "closed_count": 0,
+     "writer_open_count": 82
+    },
+    {
+     "result": "blocked",
+     "count": 50,
+     "reconstructed_count": 0,
+     "closed_count": 0,
+     "writer_open_count": 59
+    }
+   ]
+  }
+ },
+ "/api/outcomes/heatmap": {
+  "data": [
+   [
+    85,
+    6,
+    0,
+    0,
+    0,
+    0,
+    9,
+    93,
+    35,
+    17,
+    44,
+    10,
+    0,
+    7,
+    7,
+    23,
+    7,
+    18,
+    14,
+    35,
+    58,
+    18,
+    29,
+    46
+   ],
+   [
+    60,
+    5,
+    23,
+    7,
+    6,
+    8,
+    5,
+    7,
+    26,
+    15,
+    18,
+    18,
+    11,
+    15,
+    22,
+    5,
+    29,
+    17,
+    44,
+    43,
+    26,
+    11,
+    60,
+    22
+   ],
+   [
+    24,
+    2,
+    0,
+    0,
+    0,
+    0,
+    0,
+    13,
+    54,
+    42,
+    56,
+    73,
+    75,
+    25,
+    68,
+    75,
+    41,
+    21,
+    29,
+    34,
+    36,
+    65,
+    37,
+    57
+   ],
+   [
+    57,
+    42,
+    48,
+    13,
+    8,
+    3,
+    25,
+    7,
+    19,
+    99,
+    60,
+    14,
+    54,
+    46,
+    69,
+    31,
+    32,
+    31,
+    17,
+    26,
+    8,
+    13,
+    9,
+    6
+   ],
+   [
+    116,
+    22,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    27,
+    8,
+    43,
+    32,
+    0,
+    0,
+    0,
+    0,
+    0,
+    93,
+    46,
+    11,
+    99,
+    88,
+    117
+   ],
+   [
+    56,
+    24,
+    0,
+    0,
+    0,
+    0,
+    9,
+    79,
+    61,
+    67,
+    48,
+    38,
+    43,
+    19,
+    93,
+    34,
+    104,
+    104,
+    64,
+    47,
+    21,
+    72,
+    37,
+    16
+   ],
+   [
+    11,
+    2,
+    0,
+    0,
+    0,
+    0,
+    0,
+    12,
+    33,
+    12,
+    15,
+    17,
+    2,
+    0,
+    36,
+    55,
+    37,
+    2,
+    0,
+    17,
+    23,
+    7,
+    6,
+    29
+   ]
+  ],
+  "meta": {
+   "days": 7,
+   "result": "all",
+   "total_count": 4682,
+   "period_start": "2026-08-12",
+   "period_end": "2026-08-19",
+   "timezone": "Asia/Seoul"
+  },
+  "fetched_at": "2026-08-19T09:03:06.153Z"
+ }
+}

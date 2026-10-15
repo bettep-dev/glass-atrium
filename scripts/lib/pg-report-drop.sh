@@ -1,16 +1,25 @@
 #!/usr/bin/env bash
-# pg-report-drop.sh — terminal drop sink for the converted PG reporting channel,
-# shared by the unattended daemons that write core.daemon_runs rows
-# (daemon-daily-restart.sh, wiki-daily-compile.sh). Sourced, not executable.
+# pg-report-drop.sh — terminal drop sink for the converted PG reporting channel
+# of the unattended job that writes core.daemon_runs rows
+# (wiki-daily-compile.sh). Sourced, not executable.
 #
 # The sink is the last channel by design: it never recurses into the PG channel
 # that just failed and never aborts its caller, so every write here is
 # best-effort. The record format and the rotation ceiling are a durable contract
-# (pinned by scripts/test/absorption-conversion.bats) — a single definition keeps
-# the two daemons from drifting apart on it.
+# (pinned by scripts/test/absorption-conversion.bats, which loads this lib
+# directly) — so it stays one definition outside its caller.
 #
 # PG_DROP_TAG identifies the emitting script in both channels; sourcing scripts
 # set it BEFORE the source (it is bound here, not at call time).
+# ga_guard_path gates the drop-log rotation removal; a missing guard fails this source, never a delete.
+# Existence checked first: bash 3.2 under set -e exits on a failed source before any message.
+if [[ ! -r "${BASH_SOURCE[0]%/*}/path-guard.sh" ]]; then
+  printf '[pg-report-drop] FATAL: cannot source the shared path guard beside %s\n' "${BASH_SOURCE[0]}" >&2
+  return 1
+fi
+# shellcheck source-path=SCRIPTDIR source=path-guard.sh
+source "${BASH_SOURCE[0]%/*}/path-guard.sh" || return 1
+
 : "${PG_DROP_TAG:=unknown}"
 PG_DROP_LOG="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/pg-report-drops.log"
 PG_DROP_LOG_MAX_BYTES=65536
@@ -29,7 +38,10 @@ append_pg_drop() {
   if [[ -f "${PG_DROP_LOG}" ]]; then
     sz="$(wc -c <"${PG_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)" # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
     if [[ -n "${sz}" ]] && [[ "${sz}" -gt "${PG_DROP_LOG_MAX_BYTES}" ]]; then
-      rm -f "${PG_DROP_LOG}" 2>/dev/null || true # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
+      # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+      if ga_guard_path "${PG_DROP_LOG}"; then
+        rm -f -- "${PG_DROP_LOG:?}"
+      fi || true # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
     fi
   fi
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design

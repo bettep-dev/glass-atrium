@@ -27,10 +27,21 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 
 - **The hygiene decisions moved with the rules.** The provenance carve-out under `No history-type content`, and the reasoning that accepted it, are recorded in `scoped/maintainers/shared-authoring-hygiene.md` → `## Decisions taken, with their reasoning`.
 - **`## Absolute Rules [META]` — the precedence line was realigned to its citee, not softened.**
-  - `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` makes the assigned scope file the final authority, the whole file and never a named section inside it.
-  - The section preamble therefore states that this file governs and that the section concentrates that authority, and sends the precedence order to the matrix anchor — the shape `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]` already carries.
+  - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution` makes the assigned scope file the final authority, the whole file and never a named section inside it.
+  - The section preamble therefore states that this file governs and that the section concentrates that authority, and sends the precedence order to the charter anchor — the shape `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]` already carries.
 - **Tag**: `Absolute Rules` and `Skills Array Order` carry `[META]` only — no DEV rule file holds either heading or a matching pointer, so a DEV half would name no counterpart.
-- **Judgement recorded, not acted on**: the `Skills Array Order` bullet is an unsourced null-result preference ("order has no significant effect") that obliges nobody. Deleting the section is the stronger disposition.
+- **Skills Array Order kept as a sort rule**: the bullet obliges a readability sort (core → supplementary) and nothing more; its null-result clause is cut, not the section.
+  - Why: that clause steered where the author spends effort and changed neither the sort nor its acceptance.
+- **Add-review routing resolves every target class to an existing agent** — no owner review, no exempt class.
+  - The ORCHESTRATOR pair and `rules/glass-atrium/core-compliance-matrix.md` take the Tier-1 reviewer: the pair's only member is the main session, and the matrix is neither a Tier-1 rule nor a scope file, so neither has a member agent.
+  - A `shared-*` file with no member agent takes the same reviewer: its policy SoT is a Tier-1 rule and its text reaches several agents.
+  - Templates and references route by citer: the agent whose body cites the file is the one the added text reaches.
+- **A rejected add that carries an owner-adopted option goes back to its author, never to `flag`.**
+  - A reviewer may correct an owner decision's wording but cannot undo it, so a second rejection is the owner's call.
+- **Decided-keep records are named in the pass delegation, never pointed to from the rule file.**
+  - `## Companion-citation convention` bars rule-file prose from citing a companion; a delegation prompt is not a corpus file, so the convention stays intact.
+  - The delegation can also name the keeps a plan settled, which no corpus pointer could reach.
+  - Backing: honor-system — a record the composer leaves unnamed lets its keep be reopened.
 
 ## Heading-citation register — do not rename these
 
@@ -39,9 +50,13 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 | `Absolute Rules` | nothing cites it by name — kept because the heading names the content beneath it |
 | `CQRS Exception` | `scoped/scope-planning.md` and `scoped/scope-design.md`, both by pointer |
 | `Outcome-Driven Rewrite Policy` | `rules/glass-atrium/orchestrator-role.md` → Capability Probe |
-| `Prompt Deliverable Team Rule` | `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` · `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring |
+| `Prompt Deliverable Team Rule` | the citer list under this table |
 | `DEV Rule Inheritance` | `rules/glass-atrium/core-compliance-matrix.md` → Tier-3 META-inheritance bullet |
 
+- `Prompt Deliverable Team Rule` is cited from:
+  - `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` and step 6 of `## Document-Driven Workflow`;
+  - `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring and `##### Stage gates`;
+  - `scoped/shared-authoring-hygiene.md` → `## Prompt-Audit Overrides`.
 - `Skills Array Order` has no external citer (it occurs only in `scoped/scope-meta.md` and this note), so it stays out of the register.
 
 ## Stale material removed
@@ -50,7 +65,7 @@ Do not restore any item below.
 
 - **Loading stanza** (`> **Loading**: Tier 2 … agent_scope ∈ {…}` plus `> **Inherits**` and `> **See**`). The `agent_scope ∈ { … }` brace-list parsers (`scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster`, `autoagent/lib/roster_merge.py` → `_get_markdown_slots`) are anchored on `scoped/scope-dev.md` alone, so no reader needs it here.
 - **Pair note under `## Absolute Rules`** tying this file to `## Absolute Rules` and `## Skills Array Order` in `scoped/scope-dev.md` — that file carries neither heading, so there is no pair to maintain.
-- **`Skills Array Order` evidence claim** (what survives: `## Decisions taken on review, with their reasoning` → **Judgement recorded, not acted on**).
+- **`Skills Array Order` evidence claim and null-result clause** ("Order has no significant effect on model behaviour, so spend the effort on content quality instead."). What survives: `## Decisions taken on review, with their reasoning` → **Skills Array Order kept as a sort rule**.
 - **`## CQRS Exception` antecedent** — the "DEV CQRS separation" the heading excepts is stated in no DEV rule file. Read the positive grant in the rule file rather than inferring a DEV rule from the heading name.
 
 ## Duplicates dropped, with the delivered copy that made them redundant
@@ -63,6 +78,8 @@ Do not restore any item below.
 ## Prompt Deliverable Team Rule — the delivery gap that was NOT moved
 
 The composer-facing line stays in the rule file rather than moving here, because it changes what the delegation author does: `agents/glass-atrium-intel-reporter.md` states the verdict-only constraint nowhere, so the delegation prompt is the only channel that carries it to the reviewer. If that constraint ever lands in the reporter body, the line becomes a duplicate and should be cut then.
+
+- The add-review composer line under **Add review** follows the same reasoning for the add reviewers; cut it only once every reviewer the add-review table names carries the constraint in its own body.
 
 ## Open questions
 

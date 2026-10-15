@@ -28,6 +28,11 @@ interface AgentsHelpers {
     topN: number,
   ) => Array<{ agent: string; healthIndex: number; reviewFlagRatio: number; reviewFlaggedReconstructed: number; reviewFlaggedWriter: number }>;
 }
+interface AgentsBreakageHelpers {
+  getWriterBreakageSplit: (failure: {
+    fail_count: number; blocked_count: number; total_breakages: number; reconstructed: number;
+  }) => { breakages: number; blocked: { min: number; max: number } };
+}
 interface OutcomesHelpers {
   buildAgentStackO: (
     byAgentResult: unknown[],
@@ -83,17 +88,17 @@ const outcomes = (await loadScreen(OUTCOMES_SRC)) as unknown as OutcomesHelpers;
 // --- buildReviewFlagMap: flagged headline defaults to writer-emitted ---
 
 test("buildReviewFlagMap: synthesized-heavy agent → flagged defaults to writer-emitted, reconstructed preserved", () => {
-  // qa-code-reviewer: 27 flagged, 25 of them harness-synthesized (≈93% recording artifact).
+  // flagged mostly harness-synthesized: flagged > reconstructed > 0.
   const map = agents.buildReviewFlagMap([
-    { agent: "qa-code-reviewer", total_count: 30, review_flagged_count: 27, reconstructed_count: 25 },
+    { agent: "agent-a", total_count: 40, review_flagged_count: 34, reconstructed_count: 31 },
   ]);
-  const entry = map.get("qa-code-reviewer");
+  const entry = map.get("agent-a");
   assert.ok(entry, "agent entry present");
-  assert.strictEqual(entry.rawFlagged, 27, "rawFlagged keeps the inflated count for the sub-line");
-  assert.strictEqual(entry.reconstructed, 25, "reconstructed sub-count preserved");
-  assert.strictEqual(entry.flagged, 2, "headline flagged defaults to writer-emitted (27 - 25), NOT the inflated 27");
+  assert.strictEqual(entry.rawFlagged, 34, "rawFlagged keeps the inflated count for the sub-line");
+  assert.strictEqual(entry.reconstructed, 31, "reconstructed sub-count preserved");
+  assert.strictEqual(entry.flagged, 3, "headline flagged defaults to writer-emitted (34 - 31), NOT the inflated 34");
   // ratio uses writer-emitted flagged over total.
-  assert.ok(Math.abs(entry.ratio - 2 / 30) < 1e-9, "review_flag ratio is writer-emitted based");
+  assert.ok(Math.abs(entry.ratio - 3 / 40) < 1e-9, "review_flag ratio is writer-emitted based");
 });
 
 test("buildReviewFlagMap: backward-compat — no reconstructed_count field → writer-emitted == raw", () => {
@@ -122,22 +127,22 @@ test("buildReviewFlagMap: reconstructed > flagged is clamped (writer-emitted nev
 test("buildQualityHealthRanking: synthesized-heavy agent's health headline uses writer-emitted flags (not the inflated regression)", () => {
   // Zero reworks (all revision bucket '0') isolates the review_flag component:
   //   health = 1 - 0.4 × reviewFlagRatio.
-  const revisionRows = [{ agent: "qa-code-reviewer", revision_bucket: "0", occurrence_count: 10 }];
-  // 27 flagged, 25 synthesized → writer-emitted ratio 2/30 ≈ 0.067 (healthy),
-  // vs the inflated raw ratio 27/30 = 0.9 (looks like a severe regression).
+  const revisionRows = [{ agent: "agent-a", revision_bucket: "0", occurrence_count: 10 }];
+  // 34 flagged, 31 synthesized → writer-emitted ratio 3/40 = 0.075 (healthy),
+  // vs the inflated raw ratio 34/40 = 0.85 (looks like a severe regression).
   const reviewRows = [
-    { agent: "qa-code-reviewer", total_count: 30, review_flagged_count: 27, reconstructed_count: 25 },
+    { agent: "agent-a", total_count: 40, review_flagged_count: 34, reconstructed_count: 31 },
   ];
   const ranking = JSON.parse(JSON.stringify(
     agents.buildQualityHealthRanking(revisionRows, reviewRows, 10),
   )) as AgentsHelpers extends never ? never : Array<{ agent: string; healthIndex: number; reviewFlaggedReconstructed: number }>;
-  const entry = ranking.find((e) => e.agent === "qa-code-reviewer");
+  const entry = ranking.find((e) => e.agent === "agent-a");
   assert.ok(entry, "agent ranked");
-  // Writer-emitted health ≈ 1 - 0.4 × (2/30) ≈ 0.973 — NOT the inflated ≈ 0.64.
+  // Writer-emitted health = 1 - 0.4 × (3/40) = 0.97 — NOT the inflated 0.66.
   assert.ok(entry.healthIndex > 0.9, `writer-emitted health index is healthy (got ${entry.healthIndex})`);
   assert.ok(entry.healthIndex < 1);
   // Reconstructed count carried to the row for the artifact sub-line.
-  assert.strictEqual(entry.reviewFlaggedReconstructed, 25);
+  assert.strictEqual(entry.reviewFlaggedReconstructed, 31);
 });
 
 // --- buildAgentStackO: by_agent_result single-query accumulation (P14) ---
@@ -145,11 +150,11 @@ test("buildQualityHealthRanking: synthesized-heavy agent's health headline uses 
 test("buildAgentStackO: sums count + reconstructed across an agent's results (writer-emitted headline base)", () => {
   // Single combined by_agent_result array — one (agent, result) row each; total + reconstructed sum.
   const byAgentResult = [
-    { agent: "qa-code-reviewer", result: "done", count: 5, reconstructed_count: 1 },
-    { agent: "qa-code-reviewer", result: "done_with_concerns", count: 20, reconstructed_count: 18 },
+    { agent: "agent-a", result: "done", count: 5, reconstructed_count: 1 },
+    { agent: "agent-a", result: "done_with_concerns", count: 20, reconstructed_count: 18 },
   ];
   const stack = outcomes.buildAgentStackO(byAgentResult, ["done", "done_with_concerns"], 10);
-  const row = stack.find((r) => r.agent === "qa-code-reviewer");
+  const row = stack.find((r) => r.agent === "agent-a");
   assert.ok(row);
   assert.strictEqual(row.total, 25, "total sums all in-order results (bar distribution base)");
   assert.strictEqual(row.reconstructed, 19, "reconstructed sums per-result reconstructed_count");
@@ -180,3 +185,25 @@ test("buildAgentStackO: results outside resultOrder are excluded from total (bar
   assert.strictEqual(row.total, 10, "needs_context excluded from total");
   assert.strictEqual(row.byResult.needs_context, undefined, "off-order result not stacked");
 });
+
+// --- drawer breakage headline: the blocked part never falls outside its headline ---
+
+const breakageRows = [
+  { name: "no reconstructed rows → the blocked part is exact", blocked: 3, total: 10, reconstructed: 0, min: 3, max: 3 },
+  { name: "reconstructed rows beside a small blocked part → the part may keep its full size", blocked: 2, total: 10, reconstructed: 3, min: 0, max: 2 },
+  { name: "blocked larger than the writer headline → capped at the headline", blocked: 9, total: 10, reconstructed: 4, min: 5, max: 6 },
+  { name: "every breakage reconstructed → nothing blocked is left to state", blocked: 5, total: 5, reconstructed: 5, min: 0, max: 0 },
+];
+
+for (const row of breakageRows) {
+  test(`getWriterBreakageSplit: ${row.name}`, () => {
+    const split = (agents as unknown as AgentsBreakageHelpers).getWriterBreakageSplit({
+      fail_count: row.total - row.blocked, blocked_count: row.blocked, total_breakages: row.total, reconstructed: row.reconstructed,
+    });
+
+    assert.strictEqual(split.breakages, row.total - row.reconstructed, "headline = writer-emitted breakages");
+    assert.ok(split.blocked.max <= split.breakages, "the blocked part never exceeds its headline");
+    assert.ok(split.blocked.min <= split.blocked.max, "the blocked range never inverts");
+    assert.deepEqual({ min: split.blocked.min, max: split.blocked.max }, { min: row.min, max: row.max }, "reconstructed rows can hide at most their own count of blocked rows");
+  });
+}

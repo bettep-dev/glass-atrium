@@ -20,6 +20,9 @@
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -34,7 +37,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${BT_TMP:-}" && -d "${BT_TMP}" ]] && rm -rf "${BT_TMP}"
+  if ga_guard_path "${BT_TMP:-}"; then rm -rf -- "${BT_TMP:?}"; fi
 }
 
 # Seed the per-agent tool_use counter with an arbitrary value (empty arg ⇒ leave it absent).
@@ -51,7 +54,7 @@ seed_counter() {
 # this helper returns. The payload file must already be built by the caller.
 _bt_run_env() {
   run env \
-    HOME="${BT_TMP}/home" \
+    HOME="${BT_TMP}/home" GA_DATA_ROOT="${BT_TMP}/home/.glass-atrium" \
     PGHOST="/nonexistent-socket-xyzzy" \
     CLAUDE_GATE_INFLIGHT="" \
     SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
@@ -250,4 +253,20 @@ run_hook_transcript() {
   run_hook "$(tier2_open_block)"
   [[ "${output}" == *"attribution=truncated_completion"* ]] \
     && [[ "${output}" != *"attribution=completion-synthesized"* ]]
+}
+
+# A setup skip leaves BT_TMP unset — a failing teardown would report the skip as not ok.
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${BT_TMP}"
+  unset BT_TMP
+  run teardown
+  BT_TMP="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

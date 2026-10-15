@@ -33,6 +33,8 @@ setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v jq >/dev/null 2>&1 || skip "jq required"
 
+  # The canary directory derives from the data root: unset, it sits under FAKE_HOME.
+  unset GA_DATA_ROOT
   FAKE_HOME="${BATS_TEST_TMPDIR}/home"
   mkdir -p "${FAKE_HOME}/.glass-atrium/agents"
 
@@ -185,4 +187,31 @@ grammar_py() {
 @test "AC11 a Write inside a git checkout of this repo → pass" {
   run_hook "Write" "$(write_input "${BATS_TEST_TMPDIR}/git/glass-atrium/hooks/x.sh" 'echo x')"
   [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── the canary directory: both arms derive it from the same data root ────────
+
+@test "the Write arm and the Bash arm classify the canary corpus identically under each data root" {
+  local root probe want row
+  local relocated="${BATS_TEST_TMPDIR}/relocated/ga-data"
+  local rows=(
+    "|2|${FAKE_HOME}/.glass-atrium/data/learning/canary/a.json"
+    "|2|${FAKE_HOME}/.Glass-Atrium/data/learning/CANARY/a.json"
+    "|0|${FAKE_HOME}/.glass-atrium/data/learning/canary-old/a.json"
+    "|0|${FAKE_HOME}/.glass-atrium/data/learning/a.json"
+    "${relocated}|2|${relocated}/data/learning/canary/a.json"
+    "${relocated}|0|${relocated}/data/learning/a.json"
+  )
+  for row in "${rows[@]}"; do
+    root="${row%%|*}"
+    row="${row#*|}"
+    want="${row%%|*}"
+    probe="${row#*|}"
+    run env "HOME=${FAKE_HOME}" "GA_DATA_ROOT=${root}" "${HOOK_SH}" \
+      <<<"$(jq -cn --argjson ti "$(write_input "${probe}" x)" '{tool_name: "Write", tool_input: $ti}')"
+    [[ "${status}" -eq "${want}" ]] || { echo "Write ${probe} (root ${root:-default}): status ${status}: ${output}"; return 1; }
+    run env "HOME=${FAKE_HOME}" "GA_DATA_ROOT=${root}" "${HOOK_SH}" \
+      <<<"$(jq -cn --argjson ti "$(bash_input "cp /tmp/x ${probe}")" '{tool_name: "Bash", tool_input: $ti}')"
+    [[ "${status}" -eq "${want}" ]] || { echo "Bash cp ${probe} (root ${root:-default}): status ${status}: ${output}"; return 1; }
+  done
 }

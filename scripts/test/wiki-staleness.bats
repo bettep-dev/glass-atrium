@@ -125,3 +125,29 @@ assert_lacks() {
     assert_has "${body}" 'f-empty.md' &&
     assert_has "${body}" 'd-no-date.md'
 }
+
+@test "a finished scan leaves no scratch dir behind" {
+  seed_five_notes
+  # Recording mktemp: macOS mktemp -t ignores TMPDIR, so the scratch path is read off the real call.
+  local bin="${BATS_TEST_TMPDIR}/bin" minted="${BATS_TEST_TMPDIR}/minted"
+  mkdir -p "${bin}"
+  printf '#!/bin/sh\nout=$(/usr/bin/mktemp "$@") || exit\nprintf "%%s\\n" "$out" >>"%s"\nprintf "%%s\\n" "$out"\n' \
+    "${minted}" >"${bin}/mktemp"
+  chmod +x "${bin}/mktemp"
+  PATH="${bin}:${PATH}" run "${SCRIPT}" --notes-dir "${NOTES}"
+  [ "${status}" -eq 0 ]
+  local scratch
+  scratch="$(cat "${minted}")"
+  [ -n "${scratch}" ]
+  [ ! -e "${scratch}" ]
+}
+
+@test "a copy without the shared path guard beside it refuses to scan" {
+  seed_five_notes
+  mkdir -p "${BATS_TEST_TMPDIR}/sandbox"
+  cp "${SCRIPT}" "${BATS_TEST_TMPDIR}/sandbox/wiki-staleness.sh"
+  run bash "${BATS_TEST_TMPDIR}/sandbox/wiki-staleness.sh" --notes-dir "${NOTES}"
+  [ "${status}" -ne 0 ]
+  assert_lacks "${output}" '## Stale'
+  assert_has "${output}" 'path-guard.sh'
+}

@@ -20,7 +20,7 @@
 //
 // Runner: npx tsx --test test/improvement.loop-suppression.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -46,6 +46,15 @@ interface Sandbox {
     onRowClick?: unknown;
     onRetry?: unknown;
   }) => RecordedElement | null;
+  LedgerLiveSectionI: unknown;
+  LedgerInertSectionI: unknown;
+  LedgerHeldSectionI: unknown;
+  LedgerRecurrenceSectionI: unknown;
+  LedgerFooterI: (props: Record<string, unknown>) => RecordedElement;
+  getLedgerColumnsI: (
+    liveWeight: number,
+    sections: Array<{ key: string; weight: number }>,
+  ) => { live: Array<{ key: string }>; side: Array<{ key: string }> };
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -79,6 +88,19 @@ function textOf(node: unknown): string {
 
 // Every <details> element in the tree, paired with the text it encloses — the held
 // groups and the recurrence disclosure are the only collapsible surfaces here.
+// Rendered children only — a title tooltip is not prose on the card face.
+function faceTextOf(node: unknown): string {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(faceTextOf).join(" ");
+  if (!isElement(node)) return "";
+  if (typeof node.type === "function") {
+    const render = node.type as (props: Record<string, unknown>) => unknown;
+    return faceTextOf(render(node.props));
+  }
+  return faceTextOf(node.props.children);
+}
+
 function detailsOf(node: unknown, out: RecordedElement[]): RecordedElement[] {
   if (Array.isArray(node)) {
     for (const child of node) detailsOf(child, out);
@@ -107,6 +129,30 @@ Object.assign(sandbox.window.UI, {
   TONE_GLYPH: { ok: "\u2713", warn: "\u26a0", crit: "\u2715", info: "\u2139" },
   titleOf: (value: unknown) => value,
 });
+
+// Pass-through, so text walks still reach the columns; identity lets the split be found.
+function SplitRowStub(props: Record<string, unknown>) {
+  return props.children;
+}
+sandbox.window.UI.SplitRow = SplitRowStub;
+
+// First element of the given type, without rendering any function component.
+function findByType(node: unknown, type: unknown): RecordedElement | null {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findByType(child, type);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (!isElement(node)) return null;
+  if (node.type === type) return node;
+  for (const value of Object.values(node.props)) {
+    const hit = findByType(value, type);
+    if (hit) return hit;
+  }
+  return null;
+}
 
 const SUPPRESSION = {
   parked: [
@@ -203,6 +249,12 @@ const LEDGER_STATE = {
 const ledger = (suppression: unknown) =>
   textOf(sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression, onRowClick: () => {} }));
 
+// The ledger's "How this is counted" drawer: the header's info content, rendered only on open.
+const ledgerNotes = (suppression: unknown) => {
+  const tree = sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression, onRowClick: () => {} });
+  return textOf(findByType(tree, sandbox.window.UI.CardHead)?.props.info);
+};
+
 test("the alarm lane renders nothing when no cap is parked", () => {
   assert.strictEqual(
     sandbox.AlarmLaneI({ applyCap: { capped_patterns: 0, capped_agents: 0, rearm_hint: null } }),
@@ -242,15 +294,17 @@ test("every suppression cause is rendered on its own row", () => {
   }
 });
 
-test("each cause carries its own remedy, not one shared line", () => {
-  const text = ledger(SUPPRESSION);
+test("each cause carries its own remedy in the ledger's drawer, off the card face", () => {
+  const notes = ledgerNotes(SUPPRESSION);
+  const face = faceTextOf(sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION, onRowClick: () => {} }));
   for (const hint of [
     "cap remedy text",
     "design decision remedy text",
     "non-promptable remedy text",
     "roster remedy text",
   ]) {
-    assert.match(text, new RegExp(hint), `${hint} was dropped — a count without its remedy is a dead end`);
+    assert.match(notes, new RegExp(hint), `${hint} was dropped — a count without its remedy is a dead end`);
+    assert.doesNotMatch(face, new RegExp(hint), `${hint} is prose on the card face`);
   }
 });
 
@@ -265,7 +319,7 @@ test("the two populations are never added together", () => {
 });
 
 test("pending rows that cannot propose are shown against the backlog they hide in", () => {
-  const text = ledger(SUPPRESSION);
+  const text = ledgerNotes(SUPPRESSION);
   assert.match(text, /28/, "the unpromptable count is shown");
   assert.match(text, /47/, "and against the total it is a share of — 28 alone reads as small");
 });
@@ -288,45 +342,102 @@ test("held rows appear under their own cause, window-free", () => {
   );
 });
 
-test("the actionable held group opens and the design-decision group stays closed", () => {
-  const groups = detailsOf(sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION }), []);
-  const capGroup = groups.find((g) => textOf(g).includes("cap remedy text"));
-  const designGroup = groups.find((g) => textOf(g).includes("design decision remedy text"));
-  assert.ok(capGroup, "the repeat-apply cap group must be rendered");
-  assert.ok(designGroup, "the design-decision group must be rendered");
-  assert.equal(capGroup?.props.open, true, "a group a human can clear today is not worth a click");
-  assert.notEqual(
-    designGroup?.props.open,
-    true,
-    "opening the group nobody can act on buries the group they can",
+test("every held row list starts folded while each cause's count stays in view", () => {
+  const tree = sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION });
+  const groups = detailsOf(tree, []).filter((g) => /signature/i.test(textOf(g)));
+  assert.equal(groups.length, 2, "each held cause keeps its own row list");
+  assert.ok(
+    groups.every((g) => g.props.open !== true),
+    "row lists fold uniformly, so the largest group is never the one hidden",
   );
+  const folded = groups.map(textOf).join(" ");
+  assert.doesNotMatch(folded, /remedy text/, "a remedy inside a fold is a remedy nobody reads");
+  assert.match(textOf(tree), /7 held/, "the largest cause's count reads without opening anything");
 });
 
-test("the recurrence rates sit behind a closed disclosure", () => {
-  const groups = detailsOf(sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION }), []);
-  const disclosure = groups.find((g) => textOf(g).includes("roster remedy text"));
-  assert.ok(disclosure, "the per-cycle buckets must be rendered somewhere");
-  assert.notEqual(
-    disclosure?.props.open,
-    true,
-    "a recurrence rate is a rate, not a state change — it does not earn open space",
-  );
+test("the recurrence rates render open under the held section", () => {
+  const tree = sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION });
+  const folded = detailsOf(tree, []).map(textOf).join(" ");
+  assert.doesNotMatch(folded, /Roster mismatch/, "a loop stalling on one cause is loop health, not a drill-down");
+  assert.match(textOf(tree), /Roster mismatch/);
 });
 
-test("the ledger's footer states each figure with its gate", () => {
-  const text = ledger(SUPPRESSION);
-  assert.match(text, /63/, "the ledger total survives the removed Learned-patterns card");
-  assert.match(text, /agent-registry\.json/, "the held figures are registry-gated and must say so");
+// every component type in a subtree, fragments and columns walked through
+function typesIn(node: unknown, out: unknown[] = []): unknown[] {
+  if (Array.isArray(node)) {
+    for (const child of node) typesIn(child, out);
+    return out;
+  }
+  if (typeof node !== "object" || node === null || !("type" in node)) return out;
+  const el = node as RecordedElement;
+  out.push(el.type);
+  return typesIn(el.props.children, out);
+}
+
+describe("a ledger section joins whichever column is lighter at that point, in order", () => {
+  const sections = [
+    { key: "inert", weight: 2 },
+    { key: "held", weight: 5 },
+    { key: "recurrence", weight: 4 },
+  ];
+  const rows = [
+    { name: "a short live list takes a section once the side column outweighs it", liveWeight: 3, live: ["recurrence"], side: ["inert", "held"] },
+    { name: "a long live list leaves every section on the side", liveWeight: 20, live: [], side: ["inert", "held", "recurrence"] },
+    { name: "an empty live list still seeds the side column first", liveWeight: 0, live: ["held"], side: ["inert", "recurrence"] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const columns = sandbox.getLedgerColumnsI(row.liveWeight, sections);
+      // Array.from → a test-realm array; the sandbox realm's Array prototype fails strict deepEqual
+      assert.deepEqual(Array.from(columns.live, (section) => section.key), row.live);
+      assert.deepEqual(Array.from(columns.side, (section) => section.key), row.side);
+    });
+  }
+});
+
+test("the ledger's two columns stretch to one height, so neither ends in a ragged edge", () => {
+  const tree = sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION, onRowClick: () => {} });
+  assert.equal(findByType(tree, SplitRowStub)?.props.layout, "equal");
+});
+
+test("a short live list pairs with the side column and takes the overflow sections under it", () => {
+  const split = findByType(
+    sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION }),
+    SplitRowStub,
+  );
+  assert.ok(split, "the ledger must pair its live list with the side column");
+  const [live, side] = split.props.children as RecordedElement[];
+  const liveTypes = typesIn(live);
+  const sideTypes = typesIn(side);
+
+  assert.equal(liveTypes[1], sandbox.LedgerLiveSectionI, "the live list leads its column");
+  assert.ok(liveTypes.includes(sandbox.LedgerRecurrenceSectionI), "the lighter live column takes the last section");
+  for (const section of [sandbox.LedgerInertSectionI, sandbox.LedgerHeldSectionI]) {
+    assert.ok(sideTypes.includes(section), "the side column keeps inert and held");
+  }
+  for (const section of [sandbox.LedgerInertSectionI, sandbox.LedgerHeldSectionI, sandbox.LedgerRecurrenceSectionI]) {
+    const placements = [...liveTypes, ...sideTypes].filter((type) => type === section).length;
+    assert.equal(placements, 1, "each section renders in exactly one column");
+  }
+});
+
+test("the ledger's footer is one line of figures, each gate stated in the drawer", () => {
+  const tree = sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION, onRowClick: () => {} });
+  const foot = textOf(sandbox.LedgerFooterI({ total: 63, declined: 5, suppression: SUPPRESSION })).replace(/\s+/g, " ").trim();
+  assert.match(foot, /63/, "the ledger total survives the removed Learned-patterns card");
+  assert.ok(foot.length <= 90, `footer runs ${foot.length} chars: ${foot}`);
+  assert.ok(findByType(tree, sandbox.LedgerFooterI), "the ledger renders its footer");
+  assert.match(ledgerNotes(SUPPRESSION), /agent-registry\.json/, "the held figures are registry-gated and must say so");
 });
 
 test("registry-hidden parked patterns are called out only when they exist", () => {
   assert.match(
-    ledger({ ...SUPPRESSION, off_registry_parked: 3 }),
+    ledgerNotes({ ...SUPPRESSION, off_registry_parked: 3 }),
     /excluded/,
     "F5 — a capped row the registry gate omits is still parking that agent's loop",
   );
   assert.doesNotMatch(
-    ledger(SUPPRESSION),
+    ledgerNotes(SUPPRESSION),
     /excluded/,
     "a standing note at zero trains an operator to ignore it",
   );

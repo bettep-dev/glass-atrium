@@ -35,6 +35,8 @@
 # the per-agent streak state to a sandbox; no live DB is touched.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../advisory-subagent-budget.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
@@ -47,7 +49,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Run the hook once. $1=input JSON; $2..=extra env assignments (advisory/block
@@ -149,4 +151,20 @@ run_hook() {
 @test "a main-session call (no agent_id) never brakes" {
   run_hook '{}' SUBAGENT_NOPROGRESS_LIMIT=1 SUBAGENT_NOPROGRESS_BLOCK_LIMIT=1
   [[ "${status}" -eq 0 ]] || return 1
+}
+
+# A setup skip leaves SANDBOX unset — a failing teardown would report the skip as not ok.
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local sandbox="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${sandbox}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
+    return 1
+  }
 }

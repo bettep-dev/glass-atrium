@@ -134,7 +134,8 @@ run_pending_typechecks() {
   [[ -f "${marker_path}" ]] || return 0
 
   command -v python3 >/dev/null 2>&1 || {
-    rm -f "${marker_path}"
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${marker_path}"; then rm -f -- "${marker_path:?}"; fi
     return 0
   }
 
@@ -156,7 +157,8 @@ except Exception:
 ' 2>/dev/null)" || roots=""
 
   # Remove the marker first (self-cleaning) — prevents next-turn leak even if tsc is slow.
-  rm -f "${marker_path}"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${marker_path}"; then rm -f -- "${marker_path:?}"; fi
 
   [[ -z "${roots}" ]] && return 0
 

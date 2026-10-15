@@ -21,10 +21,16 @@
 #
 # Exit codes:
 #   0 = scan completed (staleness is a report, never a failure)
+#   1 = shared path guard (lib/path-guard.sh) missing — the scan never starts
 #   2 = usage error
 #   3 = notes directory not found
 set -Eeuo pipefail
 IFS=$'\n\t'
+
+# ga_guard_path gates the scratch-dir removal; scripts/ runs in place, so lib/ sits beside this file.
+SELF_DIR="$(dirname -- "${BASH_SOURCE[0]}")"
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${SELF_DIR}/lib/path-guard.sh"
 
 readonly SCRIPT_NAME='wiki-staleness.sh'
 # Non-whitespace record separator: a whitespace IFS collapses consecutive delimiters, which would
@@ -43,8 +49,10 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 WORK_DIR=""
 
 cleanup() {
-  if [[ -n "${WORK_DIR}" ]]; then
-    rm -rf -- "${WORK_DIR}"
+  # An exit before main minted WORK_DIR leaves it empty, which the guard skips silently.
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${WORK_DIR}"; then
+    rm -rf -- "${WORK_DIR:?}"
   fi
 }
 trap cleanup EXIT

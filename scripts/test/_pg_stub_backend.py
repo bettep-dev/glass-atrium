@@ -22,6 +22,8 @@ The helper's SQL text is never re-implemented here: two mechanical rewrites
 engine, so the conditional arms under test are the ones that ship. The attached
 file database is aliased as `core`, so the schema-qualified table name and the
 conflict arm's self-referencing `core.autoagent_proposals.<column>` run verbatim.
+A `pg_catalog` stand-in carries the enums the Prisma schema declares, so a statement
+probing an enum label runs verbatim too and sees exactly the declared labels.
 
 What it cannot see, so nothing here may claim it: the date-typed cycle_date
 column and its cast, the driver's type adaptation, and real concurrency. Those
@@ -30,14 +32,16 @@ stay live-Postgres verification steps, not acceptance criteria.
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import os
 import re
 import sqlite3
 import sys
+import tempfile
 from contextlib import closing, contextmanager
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 _SCRIPTS_ROOT = Path(__file__).resolve().parent.parent
 _HELPER = _SCRIPTS_ROOT / "_pg_dual_write_daemon.py"
@@ -59,9 +63,17 @@ _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 _LINE_COMMENT = re.compile(r"--[^\n]*")
 _CAST = re.compile(r'::(?:\w+\.)?"?\w+"?')
 _NAMED = re.compile(r"%\((\w+)\)s")
-_MODEL_BLOCK = r"^model %s \{$(.*?)^\}$"
+_MODEL = SimpleNamespace(
+    BLOCK=r"^model %s \{$(.*?)^\}$",
+    NAME=re.compile(r"^model (\w+) \{$", re.M),
+)
 _FIELD = re.compile(r"^\s+(\w+)\s+(\w+)(\?)?(\[\])?(.*)$")
 _MAPPED = re.compile(r'@map\("(\w+)"\)')
+_ENUM = SimpleNamespace(
+    BLOCK=re.compile(r"^enum (\w+) \{$(.*?)^\}$", re.M | re.S),
+    LABEL=re.compile(r'^[ \t]+(\w+)(?:[ \t]+@map\("([^"]+)"\))?[ \t]*$', re.M),
+    SCHEMA=re.compile(r'@@schema\("(\w+)"\)'),
+)
 # One alternation, so CREATE and DROP keep their relative order within a file.
 # Identifier quoting is OPTIONAL at every position: the corpus already carries an
 # unquoted `CREATE INDEX notes_ts_gin ON wiki.notes`, and a quoted-only pattern would
@@ -118,6 +130,8 @@ class _Connection:
         # ATTACH aliases the file as schema `core` → a caller's schema-qualified
         # `core.<table>` runs verbatim, with no table-name rewrite.
         self._db.execute("ATTACH DATABASE ? AS core", (str(db_path),))
+        self._db.execute("ATTACH DATABASE ':memory:' AS pg_catalog")
+        _create_enum_catalog(self._db)
 
     def __enter__(self) -> "_Connection":
         return self
@@ -134,6 +148,40 @@ class _Connection:
 
     def rollback(self) -> None:
         self._db.rollback()
+
+
+def _create_enum_catalog(db: sqlite3.Connection) -> None:
+    """pg_namespace / pg_type / pg_enum rows for every enum the Prisma schema declares.
+
+    Labels are stored as the database spells them — the `@map` value where one is
+    given — under the `@@schema` the enum names.
+    """
+    db.executescript(
+        "CREATE TABLE pg_catalog.pg_namespace (oid INTEGER PRIMARY KEY, nspname TEXT);"
+        "CREATE TABLE pg_catalog.pg_type"
+        " (oid INTEGER PRIMARY KEY, typname TEXT, typnamespace INTEGER);"
+        "CREATE TABLE pg_catalog.pg_enum (enumtypid INTEGER, enumlabel TEXT);"
+    )
+    namespaces: dict[str, int] = {}
+    schema_text = _SCHEMA.read_text(encoding="utf-8")
+    for type_oid, block in enumerate(_ENUM.BLOCK.finditer(schema_text), start=1):
+        name, body = block.groups()
+        schema = _ENUM.SCHEMA.search(body)
+        if schema is None:
+            raise AssertionError("enum %s declares no @@schema in %s" % (name, _SCHEMA))
+        namespace_oid = namespaces.setdefault(schema.group(1), len(namespaces) + 1)
+        db.execute(
+            "INSERT INTO pg_catalog.pg_type VALUES (?, ?, ?)",
+            (type_oid, name, namespace_oid),
+        )
+        db.executemany(
+            "INSERT INTO pg_catalog.pg_enum VALUES (?, ?)",
+            [(type_oid, mapped or label) for label, mapped in _ENUM.LABEL.findall(body)],
+        )
+    db.executemany(
+        "INSERT INTO pg_catalog.pg_namespace VALUES (?, ?)",
+        [(oid, nspname) for nspname, oid in namespaces.items()],
+    )
 
 
 class Error(Exception):
@@ -253,19 +301,19 @@ def _get_model_columns(model: str) -> list[str]:
     Read rather than remembered: a hand-copied list agrees with itself forever
     and drifts on the next migration.
     """
-    block = re.search(
-        _MODEL_BLOCK % model, _SCHEMA.read_text(encoding="utf-8"), re.M | re.S
-    )
+    schema_text = _SCHEMA.read_text(encoding="utf-8")
+    block = re.search(_MODEL.BLOCK % model, schema_text, re.M | re.S)
     if block is None:
         raise AssertionError("%s model not found in %s" % (model, _SCHEMA))
+    models = set(_MODEL.NAME.findall(schema_text))
 
     columns: list[str] = []
     for line in block.group(1).splitlines():
         field = _FIELD.match(line)
         if field is None or line.lstrip().startswith(("//", "@@")):
             continue
-        name, _type, _optional, is_list, tail = field.groups()
-        if is_list:
+        name, field_type, _optional, is_list, tail = field.groups()
+        if is_list or field_type in models:
             continue  # relation field, not a column
         mapped = _MAPPED.search(tail)
         columns.append(
@@ -415,3 +463,17 @@ def load_helper(db_path: Path):
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = previous
+
+
+@functools.cache
+def get_trial_ledger() -> SimpleNamespace:
+    """The helper's declared trial-ledger names, so a psycopg-free leg has them.
+
+    Loaded once per process on a throwaway sqlite file; the names are vocabulary,
+    so the file is discarded the moment they are read.
+    """
+    with (
+        tempfile.TemporaryDirectory() as scratch,
+        load_helper(Path(scratch) / "stub.sqlite") as helper,
+    ):
+        return helper.TRIAL_LEDGER

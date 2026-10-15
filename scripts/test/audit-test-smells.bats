@@ -7,18 +7,20 @@
 # signal (c) "a count over a tree or source anchor is reported exactly when it is pinned to an exact
 # census, never when it states absence, a membership floor, or a sandbox artifact's behaviour".
 # A loop whose body asserts on EVERY row is the data-driven form the conditional-test-logic carve-out
-# in scoped/shared-testing.md -> Meaningless-Test Prohibitions explicitly permits.
+# in scoped/shared-testing.md -> Detection signature per row explicitly permits.
 #
 # Every fixture is written into a per-test temp tree — no repository file is read as a fixture.
 
 AUDIT_SH="${BATS_TEST_DIRNAME}/../audit-test-smells.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 setup() {
   TS_TMP="$(mktemp -d -t audit-test-smells.XXXXXX)"
 }
 
 teardown() {
-  [[ -n "${TS_TMP:-}" && -d "${TS_TMP}" ]] && rm -rf -- "${TS_TMP}" || true
+  if ga_guard_path "${TS_TMP:-}"; then rm -rf -- "${TS_TMP:?}"; fi
 }
 
 # Writes stdin to a fixture path, creating parent directories. Bats rewrites every column-0 `@test`
@@ -54,6 +56,10 @@ audit_body() {
     'inspect_stderr|  run foo\n  [ -n "$stderr" ]|0'
     'helper_call|  run foo\n  assert_output x|0'
     'helper_custom|  run foo\n  assert_no_drop|0'
+    'helper_underscore_prefixed|  run foo\n  _assert_x|0'
+    'positive_compare_nonempty_literal|  run foo\n  [[ "$(f)" == "false" ]]|0'
+    'positive_compare_empty_literal|  run foo\n  [[ "$(f)" == "" ]]|1'
+    'negative_helper_on_substitution|  run foo\n  no x "$(f)"|1'
     'exempt_bang|  run ! foo|0'
     'exempt_status_arg|  run -0 foo|0'
     'exempt_status_arg_wide|  run -19 foo|0'
@@ -122,6 +128,35 @@ audit_body() {
     [[ "${out}" == *"count_pin=${want} "* ]] || {
       echo "row=${row}"
       echo "got=${out}"
+      return 1
+    }
+  done
+}
+
+@test "advisory ID-title and incident-header counts report exactly the files that carry an ID or date stamp" {
+  local -a table=(
+    $'a Bats title carrying a task ID is reported\x1fbats\x1f#!/usr/bin/env bats\\n%%test%% "T19: keeps the pin" {\\n  true\\n}\x1fid_title\x1f1'
+    $'a Bats title carrying a qualified task ID is reported\x1fbats\x1f#!/usr/bin/env bats\\n%%test%% "G7(static): reads the file" {\\n  true\\n}\x1fid_title\x1f1'
+    $'a Bats title carrying a hyphenated ticket ID is reported\x1fbats\x1f#!/usr/bin/env bats\\n%%test%% "AC-4: renders the label" {\\n  true\\n}\x1fid_title\x1f1'
+    $'a title whose digits are not an ID is not reported\x1fbats\x1f#!/usr/bin/env bats\\n%%test%% "runs under bash 3.2" {\\n  true\\n}\\n%%test%% "reports exit 143 on timeout" {\\n  true\\n}\\n%%test%% "hashes with sha256" {\\n  true\\n}\x1fid_title\x1f0'
+    $'a TS test title carrying an ID is reported\x1fts\x1fimport test from "node:test";\\ntest("P0-2 keeps the order", () => {});\\nit("renders the label", () => {});\x1fid_title\x1f1'
+    $'a Bats file header carrying an ID is reported\x1fbats\x1f#!/usr/bin/env bats\\n# Regression for #14 — keeps the pin.\\n%%test%% "keeps the pin" {\\n  true\\n}\x1fincident_header\x1f1'
+    $'a TS file header carrying a date stamp is reported\x1fts\x1f// Incident 2026-04-14: the label overflowed.\\nimport test from "node:test";\x1fincident_header\x1f1'
+    $'a purpose-only header is not reported\x1fbats\x1f#!/usr/bin/env bats\\n# Pins the retry budget of the poller.\\n\\n# Fixed by T19.\\n%%test%% "keeps the budget" {\\n  true\\n}\x1fincident_header\x1f0'
+    $'a shellcheck directive in the header is not an ID\x1fbats\x1f#!/usr/bin/env bats\\n# shellcheck disable=SC2034\\n# Pins the retry budget of the poller.\\n%%test%% "keeps the budget" {\\n  true\\n}\x1fincident_header\x1f0'
+  )
+  local row name ext content field want fixture out idx=0
+  for row in "${table[@]}"; do
+    IFS=$'\x1f' read -r name ext content field want <<<"${row}"
+    idx=$((idx + 1))
+    fixture="${TS_TMP}/row${idx}.${ext}"
+    printf '%b\n' "${content}" | write_fixture "${fixture}"
+    out="$(bash "${AUDIT_SH}" --path "${fixture}" --quiet)" || {
+      echo "${name}: exit $? ${out}"
+      return 1
+    }
+    [[ " ${out} " == *" ${field}=${want} "* ]] || {
+      echo "${name}: want ${field}=${want}, got ${out}"
       return 1
     }
   done
@@ -212,6 +247,8 @@ EOF
 }
 EOF
   done
+  mkdir -p "${TS_TMP}/monitor/test"
+  printf '%s\n' 'test("P0-2 keeps the order", () => {});' >"${TS_TMP}/monitor/test/sample.test.ts"
   run bash "${AUDIT_SH}" --root "${TS_TMP}" --strict
   [ "${status}" -eq 1 ] || {
     echo "exit ${status}: ${output}"
@@ -221,12 +258,39 @@ EOF
     echo "${output}"
     return 1
   }
+  [[ "${output}" == *"id_title=1 "* ]] || {
+    echo "${output}"
+    return 1
+  }
   for dir in hooks/test scripts/test autoagent/test; do
     [[ "${output}" == *"${dir}/sample.bats"* ]] || {
       echo "scope dir ${dir} not walked: ${output}"
       return 1
     }
   done
+  [[ "${output}" == *"monitor/test/sample.test.ts"* ]] || {
+    echo "TS scope dir not walked: ${output}"
+    return 1
+  }
+}
+
+@test "the advisory counts never change the exit status, --strict included" {
+  write_fixture "${TS_TMP}/ids.bats" <<'EOF'
+#!/usr/bin/env bats
+# Regression for T19.
+%%test%% "T19: keeps the pin" {
+  true
+}
+EOF
+  run bash "${AUDIT_SH}" --path "${TS_TMP}/ids.bats" --strict
+  [[ "${status}" -eq 0 ]] || {
+    echo "exit ${status}: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"id_title=1 incident_header=1"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "the ported exit convention: 2 on usage error, 3 on IO error, 0 on --help" {

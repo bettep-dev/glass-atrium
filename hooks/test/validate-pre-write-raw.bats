@@ -5,13 +5,15 @@
 # Every check `return 1`s on mismatch: bash 3.2 does not abort on a failing mid-body `[[ ]]`, bash 5.3 does.
 
 RAW_HOOK="${BATS_TEST_DIRNAME}/../validate-pre-write-raw.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   [[ -x "${RAW_HOOK}" ]] || skip "raw-write hook missing: ${RAW_HOOK}"
   # Raw store and HOME rooted in the Bats tmpdir — no real ~/.glass-atrium state is touched.
   export WIKI_ROOT="${BATS_TEST_TMPDIR}/wiki"
-  export HOME="${BATS_TEST_TMPDIR}/home"
+  export HOME="${BATS_TEST_TMPDIR}/home" GA_DATA_ROOT="${BATS_TEST_TMPDIR}/home/.glass-atrium"
 }
 
 # Valid 3-field frontmatter followed by $1 (body). Args: $1=body $2=source_url (default https://example.com/page).
@@ -319,7 +321,7 @@ conforming_doc() {
   ln -s "${root}/wiki/raw" "${root}/link-in"
   WIKI_ROOT="${root}/wiki" run bash "${RAW_HOOK}" \
     <<<"$(write_payload_at "${root}/link-in/c.md" "$(raw_doc 'no envelope')")"
-  rm -rf "${root}"
+  if ga_guard_path "${root}"; then rm -rf -- "${root:?}"; fi
   [[ "${status}" -eq 2 ]] || {
     echo "expected exit 2, got ${status}: ${output}" >&2
     return 1

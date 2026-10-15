@@ -1,8 +1,8 @@
 """Cooperative AutoAgent-daemon pause flag (Glass Atrium update system, T10).
 
 The python honor side of the cooperative update pause flag. While a Glass Atrium
-update swaps files it HOLDS a flag; the launchd-live daemon (and the
-daemon-daily-restart-spawned instance) cooperatively SUSPENDS its decision-to-run
+update swaps files it HOLDS a flag; the autoagent cycle (``daemon_cycle.py``, run
+by the autoagent-cycle launchd job) cooperatively SUSPENDS its decision-to-run
 for as long as the flag is held, so a daemon cycle write can never race the
 update's file swap.
 

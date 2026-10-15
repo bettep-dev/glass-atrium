@@ -7,12 +7,12 @@ Corpus-maintenance companion to the Tier-1 system charter. Nothing here is deliv
 - Companions ship as manifest members, so a pointer to one resolves on a live install.
 - A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
 - NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-read file — maintainer-facing, never a duty.
-  - **Sibling wording**: the other companions attach "never injected" to that clause. This file is the exception, so the qualification lives here rather than in them.
+  - **Sibling wording**: the other companions attach "never injected" to that clause; the observation under "Applied here" below extends it to this file.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
-- Applied here: the charter carries a single HTML editor comment at its head naming this note, in place of three in-body machine-checked paragraphs that were delivered to every agent while obliging none of them.
-  - **The comment sits inside the delivered bytes.** The charter reaches every agent and subagent verbatim on the host project-instructions channel, so a comment in it is not maintainer-only the way a scope file's comment is.
-  - **Whether that channel PRESERVES an HTML comment is UNVERIFIED.** No live project-instruction file carries one, so no observation settles it either way. Probe: once this comment is on the live install, read a spawned subagent's received project instructions and look for it.
-  - **Kept on the half of the trade that does not turn on that answer**: five comment lines against those three paragraphs — the cheaper side whichever way the probe lands.
+- Applied here: the charter carries a single HTML editor comment at its head naming this note.
+  - **The host project-instructions channel did not deliver it**: a spawned subagent's received copy of the live charter opened at `# Agent Global Rules`, while the live file carries the five-line comment above that heading.
+    - Observed on glass-atrium-meta-prompt-engineer and glass-atrium-qa-code-reviewer spawns, last on 2026-09-30.
+  - Re-check after a host update: read a spawned subagent's received project instructions and look for the comment.
 
 ## Status in the corpus
 
@@ -32,19 +32,19 @@ The charter's head comment names the class of shape; what binds is below.
 | Schema-cap token ABSENCE | same suite (C1/C2) | The charter must carry NO schema size-cap key name and not the old "cap every field" prescription. State any cap rule in the skill, never here. Do not paste a cap token into this note either. |
 | Emit marker phrase | `hooks/test/emit-discipline-doc-consistency.bats` (S1) | The hyphenated phrase `print-block-then-emit` present, grepped case-insensitively; the same phrase must also be present in `hooks/inject-scope-rules.sh` and `agents/glass-atrium-qa-code-reviewer.md`. |
 
-- **A renamed heading is worse than a deleted one.** `text.find` returns -1, the test calls `skipTest`, and unittest scores a skip as green — so a rename goes quiet instead of red.
+- **A renamed, deleted, demoted or indented heading fails the suite.** The test filters `_split_heading_blocks` on `startswith` the needle and asserts exactly one block, so any of these goes red.
 - **The `[ALL]` suffix is free, the rest of the heading is not**: the test's needle is the prefix `### Turn Budget & Graceful Exit`, used by `find` for the offset and by `startswith` for the block, so the suffix may change while no word before it may.
 - **Never write that heading literal anywhere ABOVE its own position**: the test resolves the offset with a first-occurrence find, so a second copy higher up reports the wrong offset.
-- **Keep it a line-start `###` heading**: the block lookup is a `next(...)` over `_split_heading_blocks` filtered on `startswith`, so a demoted or indented heading raises `StopIteration` — a test ERROR rather than a legible failure.
-- **The test reads the LIVE install** (`daemon_cycle.GLOBAL_RULES_FILE` → `HOME/.claude/agents/GLASS_ATRIUM_GLOBAL_RULES.md`), never the repo tree — re-measure the deployed copy before a PR.
+- **The test reads the tracked repo copy** (`_TRACKED_GLOBAL_RULES` → `agents/GLASS_ATRIUM_GLOBAL_RULES.md`, patched in as `daemon_cycle.GLOBAL_RULES_FILE`), so a branch run measures the branch.
+  - CI runs it only on the Python leg, which a markdown-only change skips: run `python3 -m unittest autoagent.test.test_pre_verify_section_excerpt` locally after a charter edit.
 - **Headroom — stated qualitatively, never as a number here**: the heading opens far past the 6,000-character floor, so the slack is ample rather than tight.
   - Why no pair is written: a measured offset/total drifts on the very next edit above the heading — measure the file yourself when a cut above the heading is actually planned.
 - **What spends that slack**: only deletion above the heading moves it earlier, toward the floor. Added text moves it later, away from the floor, so growth above the heading is never the risk.
 - `RULE_EXCERPT_CHAR_CAP` is 120,000 and a file at or under the cap is returned verbatim, so this file cannot reach the TRUNCATED / OVERSIZED path.
 
-## Restructure + diet pass (this wave)
+## Restructure + diet pass — dispositions
 
-Charter-specific instruction for the wave: restructure and diet, with **no rule removed**. Nothing below removes a duty.
+A record of the charter's restructure, kept so a placement or a cut below is not re-derived as an omission. No rule was removed; nothing below removes a duty.
 
 - **Topic fix — sections reparented.** `### Context Compression Strategies`, `### Parallel Tool Invocation`, `### Token Budget Allocation` and `### Handoff Context` sat under `## Cross-Session Continuity (progress.md)`, which is not their topic.
   - They now sit under `## Context Management [ALL]`, which was a one-line stub.
@@ -65,7 +65,7 @@ Charter-specific instruction for the wave: restructure and diet, with **no rule 
 - **Dropped as pointer-only stubs to delivered Tier-1 files**: `## Outcome Record [ALL]` (two blockquote pointers into `core-outcome-record.md`, including its Emit Boundary pointer) and `## Wiki Reference (Knowledge Utilization) [ALL]` (one pointer into `core-wiki-reference.md`).
   - Both targets are Tier-1 and arrive on the same host channel as the charter; every subagent also receives the compressed emit-format block from `hooks/inject-scope-rules.sh`. No corpus site cited either heading.
   - Kept: the `## Learning Log & Correction Signal [ALL]` heading, which carries the memory-persistence rule, a duty rather than a pointer.
-- **Dated and historical fragments dropped, claims kept**: "reversed from 4.8's adaptive/as-needed default", "accepted since 4.8", "128k max output unchanged", "Structured Outputs — now GA", and the "0/129 observed" count on the schema-mode caveat.
+- **Dated and historical fragments dropped, claims kept**: "reversed from 4.8's adaptive/as-needed default", "accepted since 4.8", "128k max output unchanged", "Structured Outputs — now GA", and the observed-count parenthesis on the schema-mode caveat.
   - Each stated how a fact came to be, not what to do about it; the rule each tailed is unchanged.
   - The honest-backing note on daemon auto-clustering was KEPT (it tells the reader the prohibition has no runtime gate); the `learning-aggregator.py` filename went, as detail `core-learning-log.md` already carries.
 - **Preamble merged**: the head "see bottom" sentence and the trailing per-scope-mapping blockquote were one pointer split across the file. They are now one line carrying both compliance-matrix anchors, so `rules/glass-atrium/core-compliance-matrix.md` → Headings stays true when it says the charter links to `## Scope Legend` and `## Compliance Matrix`.
@@ -75,24 +75,33 @@ Charter-specific instruction for the wave: restructure and diet, with **no rule 
 
 | Reader | Reads | Consequence of a careless edit |
 |---|---|---|
-| `autoagent/test/test_pre_verify_section_excerpt.py` | live charter, heading offset + whole-block extraction | red on a 6000-char breach; SILENT SKIP on a rename |
+| `autoagent/test/test_pre_verify_section_excerpt.py` | tracked charter, heading offset + whole-block extraction | red on a 6000-char breach or a rename; CI skips it on a markdown-only change |
 | `hooks/test/schema-cap-authority-single-site.bats` | live charter, 3 clauses present + 2 cap tokens absent | red on reword or on re-prescribing a cap |
 | `hooks/test/emit-discipline-doc-consistency.bats` | live charter + inject hook + reviewer body | red if the marker phrase leaves any of the three |
 | `scripts/test/deploy-coverage-partition.bats` | deploy partition | pins that the EDITABLE merge loop skips this basename |
 | `hooks/test/enforce-foreground-harness.bats` + `-branch.bats` | basename allowlist | the charter basename is a background-write exception; renaming the file breaks both |
 | `autoagent/daemon_cycle.py` | `GLOBAL_RULES_FILE`, sensitive-path regex, C2 prompt slot | path-keyed: a move breaks the Tier-2 safety trigger and the C2 excerpt |
 | `scripts/lib/apply-spine.sh` | basename literal | classifies the charter as a non-agent file |
+| `scripts/lib/path-guard.sh` → `ga_guard_path` | nothing of the charter — one-way: `File Deletion Policy` restates its refusal set | a guard-only refusal change splits the two sets, and no test compares them — change both in one edit |
 | `manifest.json` | two rows, one hash | regeneration required after any content edit |
 
-Prose citations INTO charter anchors, all still resolving after this pass:
+Prose citations INTO charter anchors — grep each before renaming its target:
 
 - **Spawn and budget**: `## Sub-Agent Spawn Policy` · `### Turn Budget & Graceful Exit` · `Emit-before-cap` · `Thinking Budget Policy`
 - **Absolute Rules**: `## Absolute Rules [ALL]` · `Absolute Rules → Output Language` · `Absolute Rules → the response-language rule` · `Anchor by symbol`
 - **Continuity and files**: `Cross-Session Continuity (progress.md) [ALL]` and its `[CONTINUITY]` header activation contract · `File Deletion Policy`
 - **Conduct**: `## System Prompt Protection` · `AI-Generated Anti-Pattern Prohibition` · `Philosophy (ETHOS)` · `Rationalization Rejection`
+- **Precedence**: `### Precedence Resolution`, cited by:
+  - rule prose: `scoped/scope-meta.md` · `scoped/scope-planning.md` · the `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` stub;
+  - skill: `skills/glass-atrium-ops-orchestrator.md`, two sites;
+  - maintainer notes: `scoped/maintainers/scope-meta.md` · `scoped/maintainers/scope-planning.md` · `scoped/maintainers/scope-security.md`.
 
 ## Outstanding
 
-- **Open, owner elsewhere — the live-install read named under Machine-read shapes has no branch-side counterpart**: parametrizing the corpus path of `autoagent/test/test_pre_verify_section_excerpt.py` → `test_when_real_global_rules_read_then_turn_budget_section_is_whole` would make a repo-tree run meaningful for a branch.
-  - Not taken here: that is a change to the test file, which this note does not own. Until someone takes it, the deployed-copy re-measure is a charter edit's only position coverage, and a branch copy has to be measured by hand.
+- **Open, owner elsewhere — two code comments still say every `rules/glass-atrium/` member already arrives on the host project-instructions channel**: untrue for the two path-scoped members.
+  - Their delivery: `rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)` → **Path-scoped delivery**.
+  - `hooks/lib/inject_chunk.py` → `get_membership` → the comment reading "already arrive on the host".
+  - `scripts/agent_lifecycle/scaffold.py` → module docstring → "it arrives on the host".
+  - Owner: the next lane whose `[SCOPE]` holds `hooks/lib/inject_chunk.py` / `scripts/agent_lifecycle/scaffold.py` — reword both so they exclude the path-scoped members.
+  - Not taken here: both are code files, which this note does not own.
 - Do NOT add this note to `GA_ROSTER_PATHS` (`lib/ga-symlink.sh`) or `spine_get_roster_paths` (`scripts/lib/apply-spine.sh`) — companions fall to the plain byte-swap deploy consumer, as the already-tracked ones do. `lib/ga-env.sh` needs no edit either: `SYMLINK_EXCLUDE_PREFIXES` already carries the parent `scoped/` prefix.

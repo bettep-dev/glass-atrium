@@ -76,7 +76,10 @@ teardown() {
   # Restore write perms first — a sabotage test leaves INSTALL_ROOT read-only,
   # which would otherwise block rm -rf from deleting its contents.
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+w "${WORK}" 2>/dev/null
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  # here, not at file level: a file-level guard would mask git-txn.sh failing to load its own
+  # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+  source "${GA}/scripts/lib/path-guard.sh"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Injected callbacks — the lib calls apply_fn target diff label diff_target and
@@ -139,4 +142,37 @@ _verify_fail_sabotage() {
     "${BACKUP_DIR}" _apply_ok _verify_fail_sabotage "lbl" "${TARGET}"
   [[ -f "${BACKUP_DIR}/probe.md.bak" ]] || { echo "before-image was not preserved for post-hoc recovery" >&2; return 1; }
   cmp -s "${PRISTINE}" "${BACKUP_DIR}/probe.md.bak" || { echo "preserved before-image is not the pristine pre-apply content" >&2; return 1; }
+}
+
+# --- the stray rollback temp passes the shared path guard before its removal ---
+
+# A failing rename (PATH stub) strands the sibling temp the restore copied, so the guard decides it.
+stub_failing_mv() {
+  printf '%s\n' '#!/bin/sh' 'exit 1' >"${WORK}/bin/mv"
+  chmod +x "${WORK}/bin/mv"
+}
+
+@test "restore rename FAILS on an absolute target → the stray rollback temp is removed" {
+  stub_failing_mv
+  git_txn_apply \
+    "${INSTALL_ROOT}" "${TARGET}" "${TARGET}" "the-diff" \
+    "${BACKUP_DIR}" _apply_ok _verify_fail_clean "lbl" "${TARGET}"
+  [[ "${GIT_TXN_RC}" == "${GIT_TXN_RESTORE_FAIL}" ]] || { echo "expected RESTORE_FAIL, got ${GIT_TXN_RC}" >&2; return 1; }
+  local stray=("${TARGET}".rollback.*)
+  [[ ! -e "${stray[0]}" ]] || { echo "stray rollback temp left behind: ${stray[0]}" >&2; return 1; }
+}
+
+@test "restore rename FAILS on a relative target → the stray temp is refused, never deleted" {
+  # The suite seats every test in its scratch cwd, so the relative tree lands there.
+  local rel="rel-${BATS_TEST_NUMBER}"
+  mkdir -p -- "${rel}"
+  cp -p -- "${PRISTINE}" "${rel}/probe.md"
+  stub_failing_mv
+  git_txn_apply \
+    "${rel}" "${rel}/probe.md" "${rel}/probe.md" "the-diff" \
+    "${BACKUP_DIR}" _apply_ok _verify_fail_clean "lbl" "${rel}/probe.md" 2>"${WORK}/stderr"
+  [[ "${GIT_TXN_RC}" == "${GIT_TXN_RESTORE_FAIL}" ]] || { echo "expected RESTORE_FAIL, got ${GIT_TXN_RC}" >&2; return 1; }
+  local stray=("${rel}"/probe.md.rollback.*)
+  [[ -f "${stray[0]}" ]] || { echo "the relative stray temp was deleted" >&2; return 1; }
+  grep -q 'refusing a non-absolute delete target' "${WORK}/stderr" || { cat "${WORK}/stderr" >&2; return 1; }
 }

@@ -8,7 +8,7 @@
 # it with `read -ra <arr> < <(_resolve_sha256_cmd)`. Under IFS=$'\n\t' that read does
 # NOT split on the spaces, so the array holds ONE word "shasum -a 256" → _sha_hex runs
 # it as a single command name → "command not found" (rc 127) → EVERY manifest hash
-# comparison aborts (357 false manifest-drift warnings live). Linux CI never saw it
+# comparison aborts (a false manifest-drift warning per listed file). Linux CI never saw it
 # because sha256sum (the CI-resolved tool) has no spaces to be swallowed.
 #
 # WHY THE EXISTING SUITE IS BLIND: doctor-consumer-install.bats drives run_doctor via
@@ -34,12 +34,19 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # Deterministic digest the stub emits and the manifest records — a single SoT (passed to
 # the stub via env, referenced in the manifest writer) so the two never drift out of sync.
 FIXED_HASH="0000000000000000000000000000000000000000000000000000000000000000"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
+  # the doctor reads its drop log, rewire marker and auth reports under GA_DATA_ROOT → this test's own root
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR:?}/ga-data-root"
+  mkdir -p "${GA_DATA_ROOT}/logs" "${GA_DATA_ROOT}/data"
   command -v jq >/dev/null 2>&1 || skip "jq required"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
 
@@ -72,7 +79,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # A `shasum` stub that HARD-REQUIRES the split multi-word form `shasum -a 256 -- <file>`.

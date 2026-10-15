@@ -291,7 +291,7 @@ if [[ -n "${signature}" ]]; then
   if ((noprogress_disarmed == 0 && repeat >= noprogress_block_limit)); then
     emit_error "NOPROGRESS-001" "block" \
       "No-progress loop blocked: ${repeat} consecutive identical tool calls (same tool + input) with zero forward delta" \
-      "Vary the approach or emit a terminal [COMPLETION] (result: needs_context); set SUBAGENT_NOPROGRESS_DISARM=1 to downgrade to advisory-only" \
+      "Vary the approach or emit a terminal [COMPLETION] (result: needs_context). The block is disarmed only by SUBAGENT_NOPROGRESS_DISARM=1 in Claude Code's launch environment, which the user controls" \
       "{\"consecutive_identical_calls\":${repeat},\"limit\":${noprogress_block_limit}}"
     exit 2
   elif ((repeat == noprogress_limit)); then

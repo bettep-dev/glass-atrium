@@ -9,8 +9,9 @@
 #     would otherwise hit the real ~/Library/LaunchAgents);
 #   * skip under a fake-HOME sandbox with GA_TARGET_HOME unset (the
 #     oss-e2e-bootstrap.sh style — the seam that bit the authoring machine);
-#   * keep real-home semantics byte-identical: real HOME + no override →
-#     bootout every LAUNCHD_JOBS label (8 jobs).
+#   * keep real-home semantics: real HOME + no override → bootout every
+#     LAUNCHD_JOBS and LAUNCHD_RETIRED_JOBS label (8 jobs), so an install that
+#     skipped the retiring update is still torn down.
 #
 # Run via: bats test/uninstall-launchd-sandbox-guard.bats
 # Requires: bats (brew install bats-core), bash 3.2+
@@ -25,6 +26,8 @@
 # so the decoy-plist-survives assertion stays falsifiable.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
@@ -41,7 +44,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # record-only rm stub (T1/T3 red-run safety belt — never deletes anything)
@@ -84,7 +87,7 @@ run_unload() {
   # is intentionally left on PATH — every deletion target lives in the sandbox)
   mkdir -p "${FAKEHOME}/Library/LaunchAgents"
   : >"${FAKEHOME}/Library/LaunchAgents/com.glass-atrium.monitor.plist"
-  run_unload -u GA_TARGET_HOME HOME="${FAKEHOME}"
+  run_unload -u GA_TARGET_HOME HOME="${FAKEHOME}" GA_DATA_ROOT="${FAKEHOME}/.glass-atrium"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == *"sandbox target — launchd domain untouched"* ]]
   [[ ! -e "${SANDBOX}/launchctl-args" ]]
@@ -92,7 +95,7 @@ run_unload() {
   [[ -e "${FAKEHOME}/Library/LaunchAgents/com.glass-atrium.monitor.plist" ]]
 }
 
-@test "T3: real HOME, no override -> guard does NOT trip, all 8 labels booted out" {
+@test "T3: real HOME, no override -> guard does NOT trip, all 8 active and retired labels booted out" {
   # applicability: this arm needs the bats host itself to be a REAL home
   # (HOME == passwd-db home) — a containerized runner with divergent HOME would
   # trip the guard BY DESIGN. Resolve the passwd home the same dual-tool way.
@@ -108,15 +111,16 @@ run_unload() {
     || skip "host HOME diverges from passwd home (${pw:-unresolved}) — real-home arm not runnable here"
   stub_rm # real HOME: a deployed-plist rm MUST be intercepted even on the GREEN path
   run_unload -u GA_TARGET_HOME
-  [[ "${status}" -eq 0 ]]
-  # pre-guard behavior byte-identical: no sandbox skip, teardown ran
-  [[ "${output}" != *"sandbox target"* ]]
-  [[ "${output}" == *"tearing down 8 com.glass-atrium."* ]]
-  [[ "${output}" == *"8 booted out"* ]]
-  # exactly the 8 LAUNCHD_JOBS labels, all via bootout on this uid's gui domain
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  # no sandbox skip, teardown ran (bash 3.2: a mid-body [[ ]] gates only through || return 1)
+  [[ "${output}" != *"sandbox target"* ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"tearing down 8 com.glass-atrium."* ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"8 booted out"* ]] || { echo "${output}"; return 1; }
+  # exactly the 5 active + 3 retired labels, all via bootout on this uid's gui domain;
+  # daemon-daily-restart is the retired-label pin
   MYUID="$(id -u)"
-  [[ "$(wc -l <"${SANDBOX}/launchctl-args" | tr -d ' ')" -eq 8 ]]
-  [[ "$(grep -c "^bootout gui/${MYUID}/com.glass-atrium." "${SANDBOX}/launchctl-args")" -eq 8 ]]
+  [[ "$(wc -l <"${SANDBOX}/launchctl-args" | tr -d ' ')" -eq 8 ]] || return 1
+  [[ "$(grep -c "^bootout gui/${MYUID}/com.glass-atrium." "${SANDBOX}/launchctl-args")" -eq 8 ]] || return 1
   grep -q "^bootout gui/${MYUID}/com.glass-atrium.monitor$" "${SANDBOX}/launchctl-args"
   grep -q "^bootout gui/${MYUID}/com.glass-atrium.daemon-daily-restart$" "${SANDBOX}/launchctl-args"
 }

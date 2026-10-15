@@ -9,11 +9,17 @@
 //      mechanises the cross-plan provenance guard.
 // A third control covers the population gate: a pending row is not a rejection, so a split
 // taken over all proposals moves here.
+// An unadjudicated row joins the population but never the quality bucket: no verdict was
+// reached, whatever its model status says.
 //
 // Assertions are deltas against the buckets observed BEFORE each insert, so live rows in
 // the same window cannot make the suite pass or fail by accident.
 //
-// DB: real Postgres. Skips gracefully when unreachable.
+// DB: real Postgres. Skips gracefully when unreachable. The label-absent case reads a
+// second database on the same server from MONITOR_TEST_LABEL_ABSENT_DATABASE_URL and
+// skips when it is unset. That database is shared with the loop-suppression suite: every
+// migration except 20261003000000 ('unadjudicated') and 20261005000000 (metric_key,
+// 'dormant').
 //
 // Runner: npx tsx --test test/improvement.reject-buckets.route.test.ts
 
@@ -31,6 +37,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerImprovementRoutes } from "../src/server/routes/improvement.js";
+import { LIVE_URL_ENV, TEST_URL_ENV, isSameDatabase, isSameServer } from "./lib/select-test-db.js";
 
 const SUITE_MARKER = `impr-rb-${randomUUID().slice(0, 8)}`;
 const AGENT = `${SUITE_MARKER}-agent`;
@@ -50,7 +57,10 @@ const SUPERSEDE_RATIONALE =
 
 // update_parked_proposal_status's rationale (head + rows tail), verbatim for the same reason
 const PARKED_PATTERN_RATIONALE =
-  "covering pattern parked before apply (rows 3384:rejected, 6:applied)";
+  "covering pattern parked before apply (rows 5120:rejected, 7:applied)";
+
+const LABEL_ABSENT_URL_ENV = "MONITOR_TEST_LABEL_ABSENT_DATABASE_URL";
+const labelAbsentUrl = process.env[LABEL_ABSENT_URL_ENV];
 
 const REGISTRY_FIXTURE = {
   $schema: "agent-registry",
@@ -117,7 +127,7 @@ after(async () => {
 interface ProposalFixture {
   tag: string;
   patternLabel?: string;
-  status?: "rejected" | "pending";
+  status?: "rejected" | "pending" | "unadjudicated";
   haikuStatus?: string | null;
   rationale?: string | null;
 }
@@ -278,3 +288,79 @@ test("a row under the historical updater label stays excluded", async (t) => {
     "renaming the emitted label must not recount its history as daemon activity",
   );
 });
+
+test("an unadjudicated row is never a quality reject: supersede and parked are lifecycle, the rest infra", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const start = await fetchBuckets();
+  // Every row but the quota one carries an ok model status, the shape a quality booking would take.
+  await insertProposal({ tag: "unadj-backoff", status: "unadjudicated" });
+  await insertProposal({ tag: "unadj-quota", status: "unadjudicated", haikuStatus: "skipped:quota-limit" });
+  await insertProposal({ tag: "unadj-supersede", status: "unadjudicated", rationale: SUPERSEDE_RATIONALE });
+  await insertProposal({ tag: "unadj-parked", status: "unadjudicated", rationale: PARKED_PATTERN_RATIONALE });
+  const moved = delta(await fetchBuckets(), start);
+  assert.deepStrictEqual(
+    [moved.infra_count, moved.quality_count, moved.lifecycle_count, moved.total],
+    [2, 0, 2, 4],
+    "infra 2 + lifecycle 2: no unadjudicated row reached a verdict, and each is counted once",
+  );
+});
+
+/**
+ * Points the route's one DATABASE_URL at `url` for `read`, then restores it.
+ * Same-server is not safety: the live database can share the test server, so the caller
+ * refuses a `url` naming the live handle before swapping.
+ */
+async function withDatabase<T>(url: string, read: () => Promise<T>): Promise<T> {
+  const prior = process.env.DATABASE_URL;
+  await disconnectPrisma();
+  process.env.DATABASE_URL = url;
+  try {
+    return await read();
+  } finally {
+    await disconnectPrisma();
+    process.env.DATABASE_URL = prior;
+  }
+}
+
+test(
+  "the split answers on a database migrated without the unadjudicated label",
+  { skip: labelAbsentUrl ? false : `${LABEL_ABSENT_URL_ENV} unset — no label-absent database to read` },
+  async (t) => {
+    if (!dbReady) return t.skip("DB unavailable");
+    const testUrl = process.env[TEST_URL_ENV];
+    const url = { absent: labelAbsentUrl, live: process.env[LIVE_URL_ENV] };
+    assert.ok(testUrl && url.absent, "both database URLs are set");
+    assert.ok(
+      isSameServer(url.absent, testUrl),
+      `${LABEL_ABSENT_URL_ENV} must name the server of ${TEST_URL_ENV}`,
+    );
+    assert.ok(
+      !isSameDatabase(url.absent, testUrl),
+      `${LABEL_ABSENT_URL_ENV} must name a database other than ${TEST_URL_ENV}`,
+    );
+    assert.ok(
+      url.live === undefined || url.live.length === 0 || !isSameDatabase(url.absent, url.live),
+      `${LABEL_ABSENT_URL_ENV} names the live database (${LIVE_URL_ENV}) — refusing to write there`,
+    );
+    await withDatabase(url.absent, async () => {
+      const labels = await getPrisma().$queryRaw<Array<{ present: boolean }>>`
+        SELECT 'unadjudicated' = ANY (enum_range(NULL::core."ProposalStatus")::text[]) AS present
+      `;
+      assert.strictEqual(labels[0]?.present, false, "the database under test lacks the label");
+      const start = await fetchBuckets();
+      try {
+        await insertProposal({ tag: "label-absent-quality" });
+        const moved = delta(await fetchBuckets(), start);
+        assert.deepStrictEqual(
+          [moved.quality_count, moved.total],
+          [1, 1],
+          "the rejected row is still split while the label is absent",
+        );
+      } finally {
+        await getPrisma().$executeRaw`
+          DELETE FROM core.autoagent_proposals WHERE target_agent = ${AGENT}
+        `;
+      }
+    });
+  },
+);

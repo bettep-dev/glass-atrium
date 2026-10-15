@@ -28,6 +28,10 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
   - Written as a carve-out rather than a softened prohibition so the default stays a prohibition and the exception has to be argued at the line.
 - **`Document kind decides the call` states its reach at the bullet.** Naming a plan and a handoff record is what makes the PLANNING and REPORT membership operative, so the reach past the prompt corpus is stated in the rule text rather than left for a reader to infer from the matrix row.
   - The bullet deliberately does NOT say that a plan carries no figures: `agents/glass-atrium-intel-planner.md` → `### Default Plan Shape` has a plan carrying figures that are estimates, and a prohibition on figures would contradict it. What binds a plan is the rest of the section — no computable count, no dated provenance.
+- **`## Prompt-Audit Overrides` lives in the rule file, with no membership change.**
+  - Its actor (glass-atrium-meta-prompt-engineer) and its judge (the structure verdict, glass-atrium-intel-reporter) already take the rule file, so glass-atrium-meta-agent and glass-atrium-intel-planner receive the section too.
+  - The honest-backing override points at the `No history-type content` carve-out, which stays the single site for that rule.
+  - Delta-only, so a guide update never leaves a stale copy of the guide's keep list in the rule file.
 - **`No derived values` takes the rule-plus-carve-out shape of its neighbour.** The carve-out is a judgement rather than an automatic exemption, because a bare cardinality standing beside no list can be the only signal that the list is closed.
 
 ## Readers, coupled tests, and operational constraints

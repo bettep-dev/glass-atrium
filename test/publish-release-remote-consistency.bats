@@ -35,6 +35,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 PUB="${GA}/scripts/publish-release.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${PUB}" ]] || skip "publish-release.sh not found: ${PUB}"
@@ -66,6 +68,8 @@ git() {
     if [[ "${GIT_LSREMOTE_RC:-0}" -ne 0 ]]; then return "${GIT_LSREMOTE_RC}"; fi
     printf '%b' "${GIT_LSREMOTE:-}"
     ;;
+  *"merge-base --is-ancestor"*) return "${GIT_ANCESTOR_RC:-0}" ;;
+  *"fetch"*) return "${GIT_FETCH_RC:-0}" ;;
   *"remote"*) printf '%s\n' "${GIT_REMOTES-origin}" ;;
   *) : ;;
   esac
@@ -103,7 +107,7 @@ DRV
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 drive_consistency() {
@@ -165,6 +169,18 @@ drive_replace() {
   [[ "${output}" == *"GATE_OK"* ]] || return 1
 }
 
+@test "a HEAD not reachable from the remote main refuses to publish" {
+  drive_consistency GIT_HEAD=abc123 GIT_REMOTES=origin GIT_ANCESTOR_RC=1
+  [[ "${status}" -eq 7 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"abc123 is not reachable from origin/main"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "an unfetchable remote main refuses to publish" {
+  drive_consistency GIT_HEAD=abc123 GIT_REMOTES=origin GIT_FETCH_RC=1
+  [[ "${status}" -eq 7 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"cannot fetch origin/main"* ]] || { echo "${output}"; return 1; }
+}
+
 @test "item3 regression: gate 1 (dirty tree) still fails BEFORE the remote gate → exit 7" {
   drive_consistency GIT_DIRTY=1 GIT_REMOTES=origin
   [[ "${status}" -eq 7 ]] || return 1
@@ -218,4 +234,53 @@ drive_replace() {
   drive_replace GH_ASSETS='glass-atrium-bundle-1.0.1.tar.gz'
   [[ "${status}" -eq 8 ]] || return 1
   [[ "${output}" == *"MISSING manifest.json"* ]] || return 1
+}
+
+@test "replace: the exit teardown deletes the local swap copy under an absolute out dir" {
+  local swap='glass-atrium-bundle-1.0.1.tar.gz.swap'
+
+  drive_replace GH_ASSETS='manifest.json\nglass-atrium-bundle-1.0.1.tar.gz'
+  [[ "${status}" -eq 0 ]] || { echo "absolute out: rc=${status} ${output}"; return 1; }
+  [[ ! -e "${OUT}/${swap}" ]] || { echo "absolute out: the swap copy outlived the run"; return 1; }
+}
+
+@test "publish --replace-assets deletes its local swap copy under a cwd-relative --out" {
+  local cwd="${SANDBOX}/cwd" driver="${SANDBOX}/main-driver.sh"
+  local swap='glass-atrium-bundle-1.0.1.tar.gz.swap'
+  # A one-file release: the real manifest gates run against it, only git + gh are stubbed.
+  mkdir -p "${cwd}" "${SANDBOX}/scripts"
+  printf 'payload\n' >"${SANDBOX}/payload.txt"
+  printf '{"version":"1.0.1","files":["payload.txt"]}\n' >"${SANDBOX}/manifest.json"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"${SANDBOX}/scripts/generate-manifest.sh"
+  chmod +x "${SANDBOX}/scripts/generate-manifest.sh"
+  cat >"${driver}" <<'DRV'
+#!/usr/bin/env bash
+# shellcheck disable=SC1090,SC2317
+source "$1"
+shift
+git() {
+  local IFS=' '
+  case "$*" in
+  *"rev-parse HEAD"*) printf 'HEADSHA\n' ;;
+  *) : ;;
+  esac
+}
+gh() {
+  local IFS=' '
+  case "$*" in
+  *"release view"*"--json assets"*) printf '%b' "${GH_ASSETS:-}" ;;
+  *) return 0 ;;
+  esac
+}
+main "$@"
+DRV
+
+  run env GA_ROOT="${SANDBOX}" ATRIUM_RELEASE_REPO=owner/repo \
+    GH_ASSETS='manifest.json\nglass-atrium-bundle-1.0.1.tar.gz' \
+    bash -c 'cd -- "$1" && bash "$2" "$3" publish --execute --replace-assets --out rel' \
+    _ "${cwd}" "${driver}" "${PUB}"
+  [[ "${status}" -eq 0 ]] || { echo "relative out: rc=${status} ${output}"; return 1; }
+  [[ -f "${cwd}/rel/glass-atrium-bundle-1.0.1.tar.gz" ]] \
+    || { echo "relative out: the bundle was not staged under the cwd: ${output}"; return 1; }
+  [[ ! -e "${cwd}/rel/${swap}" ]] || { echo "relative out: the swap copy outlived the run: ${output}"; return 1; }
 }

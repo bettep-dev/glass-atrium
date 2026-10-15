@@ -1,40 +1,33 @@
 # Testing Rules (Cross-Cutting Concern)
 
+- **Authoring scope** (`## Test Quality` · `## Test Structure` · `## Test Depth and Upkeep`): these rules bind the tests a change adds or edits, and the tests it makes stale, obsolete or wrong (**Coupled-test check**).
+  - Every edit stays inside the change's declared file set (`scoped/scope-dev.md` → `## Modification Scope Constraint (Surface Area Constraint) [DEV]`).
+  - A pre-existing violation in a test the change does not touch, or an owning file outside that set, goes into `concerns` and is never edited.
+
 ## Test Quality
 
 ### What makes a test a test
 
 - **Relationship over enumeration**: a test asserts a RELATIONSHIP that holds across an input class — not one hand-picked input/output pair. A test suite is sensitive to behavior change and insensitive to structure change.
-- **The one question that decides a test's worth**: "if I broke the implementation in the smallest way that matters, would THIS test fail?" No → it is not a test. A test never observed to fail has not been verified.
-- **Behavioral testing**: verify external behavior (input → output), not implementation details.
-- **Independence**: shared state between tests is FORBIDDEN · execution order MUST NOT matter.
-- **Naming**: prefer `should_expectedBehavior_when_condition` or readable `describe/it` blocks — and make the name state the RELATIONSHIP asserted, not the input value used.
+- **The one question that decides a test's worth**: "if I broke the implementation in the smallest way that matters, would THIS test fail?" No → it is not a test.
+- **Watch it fail**: write the test before the code exists, or apply the deliberate-break exception (`## Rationalization Rejection (Testing)` → **Qualifier on the last row**). A test never observed to fail has not been verified.
+  - Make the code correct for every valid input, not just the test's inputs — never hard-code a test's values.
+  - Never edit, skip or delete a failing test until you know why it failed.
+- **Behavioral testing**: verify behavior a caller can observe (input → output), not implementation details — a source-text or line-order pin is a prohibited shape (`### Meaningless-Test Prohibitions`).
+- **Independence**: shared state between tests is FORBIDDEN · execution order MUST NOT matter · the result MUST NOT depend on timing (sleeps, wall-clock races) — a flaky test stops being an oracle.
 
 ### Decision procedure — run it before writing the SECOND test of the same behavior
 
 Each step builds on the previous.
 
 1. Name the relationship in one sentence — an invariant, a round-trip, or a metamorphic relation ("output is always sorted" · "decode of encode is identity" · "total never exceeds the cap").
-2. Pick the cheapest form that expresses it: property/invariant assertion > ONE parameterized table over an equivalence class plus its boundaries > a single example.
+2. Pick the cheapest form that expresses it: a property assertion only where a real invariant exists (round-trip, idempotence, a whole-class invariant) > ONE table of named rows over the equivalence class plus its boundaries (`### Table form per stack`) > a single example.
 3. An Nth case is admissible only when it crosses an equivalence-class boundary the existing cases do not. Same class as an existing case → do NOT add it; strengthen the existing assertion instead.
 4. Cannot name the relationship → the behavior is not understood yet. Stop and clarify; enumerating cases is not a substitute for understanding.
-
-### Legitimate example tests (this is NOT a ban on examples)
-
-Each kind is legitimate when the stated purpose IS the whole reason the test exists.
-
-| Kind | Legitimate when |
-|---|---|
-| regression pin | it reproduces one reported defect and is named for that defect |
-| characterization test | it pins observed legacy behavior before a refactor — deliberately structure-sensitive, deliberately temporary, rewritten or deleted once the refactor lands |
-| executable-specification example | it is the one canonical worked example documenting the contract |
-
-- **Boundary**: an example test is never a SUBSTITUTE for the relationship test of the same behavior. Three examples of one behavior with no named relationship is enumeration, not coverage.
 
 ### Meaningless-Test Prohibitions
 
 - **Every row is reviewer-applied**: no row below is enforced by a gate — apply each one yourself. A hand-run advisory auditor reports shapes for a subset and never adjudicates whether a shape is a defect.
-- Detection signatures are ECOSYSTEM-SPECIFIC where the ecosystem changes what an assertion is.
 
 #### The prohibited shapes
 
@@ -44,31 +37,40 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 | An assertion that cannot fail | tautological test |
 | Asserting back the value a mock was configured to return | tautological test — mock-echo sub-case |
 | An expected value copied from observed output | change-detector test |
+| An assertion on the source text or line order of the code under test | change-detector test — source-pin sub-case |
 | Near-duplicate cases that one property or one parameterized table would cover | test code duplication |
 | A test whose target has no branch and no logic | trivial getter/setter/constructor test |
+| A test written per file, class or function by reflex, or to reach a count or coverage figure | coverage-driven test |
 | Control flow that can SKIP an assertion | conditional test logic |
 
-#### Detection signature per row, keyed by the Prohibited literal above
+#### Rules spanning the whole table
 
+- **DAMP carve-out (MUST — this is why duplication alone is never the trigger)**: repetition in arrange/setup is legitimate and often better than a shared helper. The prohibition targets duplicated assertion intent inside one equivalence class, never duplicated setup.
+  - The one exception is a large byte-identical fixture (`### Names, comments and test data` → **Shared fixture**).
+  - A duplication-percentage metric MUST NOT be used as the trigger.
+- **Deletion duty**: when a relationship test subsumes existing example tests of the same behavior, delete the subsumed tests in the same change. Adding without deleting is how a suite inflates — a coding agent has no deletion pressure of its own.
+  - Name every test a change removes, with its reason, in `concerns` — a subsumed test here, or a stale or obsolete one under **Coupled-test check**.
+
+### Detection signature per row, keyed by the Prohibited literal above
+
+- Detection signatures are ecosystem-specific where the ecosystem changes what an assertion is.
 - **A test with no assertion, or whose only claim is "it did not throw"**
   - **xUnit / JS**: zero assertion nodes in the test body.
-  - **Bats / shell**: a bare command whose non-zero exit fails the test IS the assertion, so "no assertion node" is meaningless here — the signature is instead `run <cmd>` invoked with neither `$status` nor `$output` / `${lines[` examined afterwards in the same body.
+  - **Bats / shell**: a bare command whose non-zero exit fails the test is the assertion — the signature is instead `run <cmd>` invoked with neither `$status` nor `$output` / `${lines[` examined afterwards in the same body.
 - **An assertion that cannot fail** — the asserted value is a literal compared to itself, or is the same variable the test set, with no call into the code under test between set and assert.
 - **Asserting back the value a mock was configured to return** — a literal or variable handed to a mock's return-configuration reappears untransformed in the same test's assertion.
   - JS/Python shapes only: the shell corpus has no mock-configuration form.
 - **An expected value copied from observed output** — full-object or snapshot equality over internal state; an expected literal nobody can derive from the spec.
-  - **Carve-out — a characterization test (Test Quality → Legitimate example tests) is EXEMPT**: copying observed output is its whole purpose, bounded by that carve-out's own expiry condition. A snapshot with no stated expiry is not a characterization test and is not exempt.
+  - **Carve-out — a characterization test (Test Depth and Upkeep → Legitimate example tests) is exempt**: copying observed output is its whole purpose, bounded by that carve-out's own expiry condition. A snapshot with no stated expiry is not exempt.
+- **An assertion on the source text or line order of the code under test** — a `grep`, regex or file read over the source file under test, or a comparison of two source lines' positions.
+  - **Carve-out — a static fact that is itself the contract** (a file listed in the manifest) is asserted, in the file that owns that contract.
 - **Near-duplicate cases that one property or one parameterized table would cover** — 3+ test bodies differing only in literals, all inside ONE equivalence class.
-  - The DAMP carve-out below decides whether a given cluster is this smell.
-- **A test whose target has no branch and no logic** — the production target is a single assignment or return with no branch, and the test only sets then gets. Resolve that target by reading it; no tool resolves it for you.
+  - **DAMP carve-out** decides whether a given cluster is this smell.
+- **A test whose target has no branch and no logic** — the production target is a single assignment or return with no branch, and the test only sets then gets. Resolve that target by reading it.
+- **A test written per file, class or function by reflex, or to reach a count or coverage figure** — its relationship cannot be stated beyond "X runs" or "X calls Y" (one test per method of each new file · only internal-collaborator call assertions).
+  - A call asserted on a boundary mock (`## Mocking Rules`) is observable behavior and is exempt.
 - **Control flow that can SKIP an assertion** — `if` / `while` / `try` inside a test body where the assertion sits on only one branch, so a run can finish having asserted nothing.
   - **Carve-out — data-driven iteration over a fixture table is NOT this smell**: a loop whose body asserts on EVERY element is the idiomatic parameterized form Decision procedure step 2 prefers. The trigger is a skippable assertion, never the presence of a loop keyword.
-
-#### Rules spanning the whole table
-
-- **DAMP carve-out (MUST — this is why duplication alone is never the trigger)**: repetition in arrange/setup is legitimate and often better than a shared helper. The prohibition targets duplicated ASSERTION intent inside one equivalence class, never duplicated setup. A duplication-percentage metric MUST NOT be used as the trigger.
-- **Deletion duty**: when a relationship test subsumes existing example tests of the same behavior, delete the subsumed tests in the SAME change. Adding without deleting is how a suite inflates — a coding agent has no deletion pressure of its own.
-- **This list is defect-risk regulation, not style preference**: smelly tests carry measurably higher defect risk than clean ones.
 
 ## Mocking Rules
 
@@ -78,8 +80,78 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 
 ## Test Structure
 
-- **Arrange-Act-Assert**: clearly separate into 3 phases
-- **One behavior per test** — one relationship per test (Test Quality above); multiple asserts are allowed only as facets of that same relationship
+- **Arrange-Act-Assert**: keep the three phases visible, and never chain a second Act — a later action and its assertion belong in their own test. No `// Arrange` comment scaffold is required.
+- **One behavior per test** — one relationship per test (`## Test Quality`); multiple asserts are allowed only as facets of that same relationship.
+  - Each failure points to one cause: split the test, or give each assertion a message.
+
+### Where a test lives
+
+- **One home file per behavior**: a new case, a regression case included, goes into the file that already owns that behavior — never into a new file per incident, plan or task.
+- **Grouping**: one `describe` block or test class per rule; each nesting level narrows exactly one condition. Split a file by behavior area, never by line count.
+- **Check before adding**: search the owning file for a test that already asserts the behavior — found → strengthen that test instead of adding a second.
+- **Fold-back**: when you edit a one-off incident file whose behavior has an owning file, fold its cases into that file — both files inside the **Authoring scope** bound at the head of this file.
+
+### Names, comments and test data
+
+- **Naming**: a readable sentence of behavior plus condition, in the form the sibling file already uses; it states the relationship asserted, not the input value used.
+  - No sibling file to mirror → write the same sentence in the stack's test-name slot, e.g. `rejects a withdrawal that exceeds the balance`; the example shows content, never a template to copy.
+- **ID ban — the one hard naming rule**: no plan, task, incident or ticket ID (`AC-…`, `T19`, `P0-2`, `#14`) in a test name, test file name or helper name. The reference goes in the commit message.
+  - Bad: `"T19/P2-T2: …"` · Good: `"update keeps a live model pin when the release omits it"`.
+- **Comments**: a test comment states what the test protects, never how the code or the test got here — `scoped/shared-comment-logging.md` binds test files like any other code. A test that calls itself vacuous is fixed or deleted.
+- **Test data**: inline the few realistic values the assertion depends on; a placeholder (`'x'`, `'a@b.c'`) hides what matters.
+- **Shared fixture**: a large fixture repeated byte-for-byte across tests or files, whose copies can drift, becomes one named fixture — or a builder with safe defaults once its variants multiply. Small readable setup stays inline.
+
+### Table form per stack
+
+Every table row carries a name stating its condition — an unnamed row fails with no meaning. Only the syntax differs per stack.
+
+| Stack | Table form | Row name |
+|---|---|---|
+| bats | an array of rows looped inside one `@test` | a row label printed on that row's failure |
+| pytest | `@pytest.mark.parametrize` | `ids=[…]` or `pytest.param(…, id=…)` — never auto-generated IDs on non-trivial values |
+| TypeScript, `node:test` | a `rows` array looped inside one `describe`, one `test()` per row | `test(row.name, …)` |
+| TypeScript, Vitest | `test.each(rows)` | `$prop` (object rows) or `%s` (array rows) in the title |
+| Kotlin, JUnit 5 | `@ParameterizedTest` + `@CsvSource` / `@ValueSource` / `@MethodSource` | `name = "…{0}…"` |
+| Swift Testing | `@Test("…", arguments: …)` — each argument reports as its own case, no loop | the display string plus the argument |
+
+- **bats — every row fails on its own iteration**: assert each row as `<check> || { echo "<row name>"; return 1; }`. A bare `[[ ]]` in the loop body is exempt from errexit on bash 3.2, so an earlier failing row goes unseen.
+- **bats — a status assertion prints the output**: a failing status check prints the output its run captured before the test fails; in a row loop, echo the row name too.
+  - bats `run`: `<status check> || { echo "${output}"; return 1; }`.
+  - bats `run --separate-stderr`: echo `${stderr}` as well — `${output}` then holds stdout only.
+  - A direct call redirected to files: print those files on a nonzero status — once in the capturing helper, or at each call site.
+  - Uncaptured output already reaches the bats failure report, so a status check on it needs nothing.
+  - Converting an existing status line to this form is never weaker, and may become stricter on bash 3.2.
+
+## Test Depth and Upkeep
+
+- **Depth follows risk**: test depth tracks what a break would cost and how likely one is — never a coverage figure or a test count.
+  - Core logic, auth, validation, data-loss and money paths → the relationship plus its boundaries (`### Decision procedure`).
+  - Glue, wiring and config → one check of the behavior a caller relies on; none only when the target has no branch and no logic.
+  - Coverage may point at an untested risky branch; it never decides that a test is needed or that testing is enough.
+  - Keep a project's existing coverage gate; never add one.
+  - Why: a coverage target buys tests that execute code without checking it.
+- **One-off disposition**: keep a one-off verification test (`### Legitimate example tests`) only when deleting it could let a real break through later; equal coverage is never the reason to keep or delete a test (**Deletion duty**).
+- **Coupled-test check**: on every change, check the tests and CI jobs that exercise or read what the change touched — a green run reveals none of the classes below.
+  - Find them by grepping the test and CI trees for each symbol, string literal, heading or path the change removed or renamed, then reading every hit.
+  - Stale: its subject remains, but it asserts or names the old text or behavior and still passes.
+  - Obsolete: exercises nothing the change left, or now skips silently.
+  - Wrong: its subject remains, but it fails because it expects the old text or behavior.
+  - Fix each inside the declared file set; outside it → name the test and its class in `concerns`.
+  - Remove only a test this change made stale or obsolete, named with its reason per **Deletion duty**; never delete, skip or loosen a test to turn a red run green.
+  - Why: agents fix what fails and miss what stays green, so a stale test survives every run.
+
+### Legitimate example tests (this is NOT a ban on examples)
+
+Each kind is legitimate when the stated purpose IS the whole reason the test exists.
+
+| Kind | Legitimate when |
+|---|---|
+| regression pin | it reproduces one reported defect, is named for the behavior it protects, and lives in that behavior's home file |
+| characterization test | it pins observed legacy behavior before a refactor — deliberately structure-sensitive, deliberately temporary, rewritten or deleted once the refactor lands |
+| executable-specification example | it is the one canonical worked example documenting the contract |
+| one-off verification test (a probe, an incident repro, a change check) | it is kept as a regression pin in the behavior's home file, or deleted in the change that wrote it |
+
+- **Boundary**: an example test is never a SUBSTITUTE for the relationship test of the same behavior. Three examples of one behavior with no named relationship is enumeration, not coverage.
 
 ## Rationalization Rejection (Testing)
 
@@ -91,7 +163,11 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 | "I verified it manually" | Manual verification ≠ validation · non-reproducible = invalid |
 | "Writing code first as a reference" | Code written before tests MUST be **deleted and rewritten** |
 
-- **Qualifier on the last row (the deliberate-break exception)**: a test written after its implementation is admissible when the implementation was deliberately broken, the test OBSERVED to fail, and the break reverted. Skip that step and the test is unproven, so the rebuttal applies unchanged.
+- **Qualifier on the last row (the deliberate-break exception)**: a test written after its implementation is admissible when it was OBSERVED to fail against a deliberately broken copy of the implementation. Skip that step and the test is unproven, so the rebuttal applies unchanged.
+  - Break a temporary copy, never the real tree: a fresh `mktemp -d` directory, with the test run's cwd inside it.
+    - Why: a broken script run from the real tree can damage that tree; a broken copy is discarded, never reverted.
+  - The copy carries everything the run loads, in its original relative layout — the implementation, the test, and its helpers, fixtures and config; for a built stack, the project and its build config.
+  - Run the test in the copy once before the break and see it pass, so the failure observed afterwards comes from the break alone.
 
 ## 3-Tier Test Hierarchy
 
@@ -109,10 +185,10 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 
 **Condition — this section binds only when you are about to RUN a suite file that executes one of two install-side shell functions**: `clear_unmanaged_pg_orphan` (`lib/ga-daemons.sh`) and its only caller `preflight_pg_utc_guard` (`lib/ga-tui-preflight.sh`) are exactly the functions that can reach a live postgres. No such run → skip to the next section. Otherwise clear the procedure below first: the steps build on each other, and a step you cannot complete is a FAIL rather than a judgement call.
 
-### Before you start: do not re-derive the retired condition
+### Before you start: shadowing is not a safety condition
 
-- **The retired condition — do not re-derive it**: "safe once `kill`, `rm` and `lsof` are shadowed" is WRONG, not merely strict.
-  - A shell-function shadow binds only in the shell that defines it, so a suite driving the function through a child shell satisfies that wording while the real command runs.
+- **Shadowing `kill`, `rm` and `lsof` does not make a suite safe** — the Step 4 questions decide safety.
+  - A shell-function shadow binds only in the shell that defines it, so a suite driving the function through a child shell can shadow all three while the real command runs.
 
 ### Step 1 — Enumerate the occurrences
 
@@ -120,7 +196,7 @@ List every occurrence and classify by READING it; a command-word pattern is FORB
 
 - `grep -rn "clear_unmanaged_pg_orphan\|preflight_pg_utc_guard" test hooks/test scripts/test autoagent/test`
 - Read every line it returns. Do not filter first: under-enumeration is the dangerous direction here, because a missed executing site is indistinguishable from a pass.
-- Worked failure, why the shortcut is forbidden: a first-command-word regex over `test/poll-wallclock-ceiling.bats` returns the `@test` TITLE and MISSES the real call, which sits at the end of a `run_bounded` child-shell command string after a `;`. The pattern reported a naming site and hid the executing one.
+- Worked failure, why the shortcut is forbidden: a first-command-word regex over `test/poll-wallclock-ceiling.bats` returns the `@test` title and misses the real call, which sits at the end of a `run_bounded` child-shell command string after a `;`.
 - Derive the site list from the run; never carry a remembered count forward.
 
 ### Step 2 — Classify each occurrence
@@ -132,7 +208,7 @@ Classify each occurrence executing, naming, or neutralized — only executing si
 - Neutralized: a shadow definition (`<fn>() { return N; }`) that both precedes EVERY call it covers and sits in the SAME shell as that call — then those calls run the shadow, not the real function. Either half unproven → treat the calls as executing.
   - **In a bats file, "the SAME shell" is the SAME test body, and this is the rule, not a nuance**: each test body runs in its own shell, so a shadow defined in one body does NOT reach a call in any later body.
   - Therefore a call with no shadow inside its OWN body is EXECUTING even when a shadow of that name appears earlier in the file.
-  - Reading the file top-down invites the opposite conclusion, which is the exact misclassification this bucket exists to prevent — it silently converts a real executing site into a pass.
+  - Reading the file top-down invites the opposite conclusion — the misclassification that silently converts a real executing site into a pass.
   - The mirror of that rule, and the reason a control installed once still counts: whatever `setup` defines DOES reach every body, because it runs inside each one. A shadow or a PATH stub installed there covers the whole file; only a body-local one stops at its own body.
 
 ### Step 3 — Read the reached function body
@@ -166,7 +242,7 @@ Answer every question below at every executing site, all of them resolving.
 ### Step 5 — Decide, and verify the decision after the run
 
 - **Pass** requires pid control AND path control, each by a mechanism that binds under Mechanism binding. Shadowing the signal or the removal command is neither necessary nor sufficient.
-- **Ambiguous means fail** — do not reason harder.
+- **Ambiguous means fail** — an ambiguous site is never argued into a pass.
   - The one escape: prepend a scratch dir of record-only stubs to the PATH of the WHOLE invocation (a PATH stub binds in every child) and run that one file under it; unavailable → stop and report.
 - **Post-condition, independent of all the reading**: record the live server's pid and its socket inode before the run and compare both after. A change in either means something reached it, whatever the file said.
 

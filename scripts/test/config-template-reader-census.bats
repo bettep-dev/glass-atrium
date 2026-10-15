@@ -11,6 +11,10 @@
 #   AC1  coverage           -> every template key has exactly one census row
 #   AC3  reader integrity   -> a claimed reader file exists and still carries its anchor literal
 #   AC5  exemption scope    -> no exemptions remain; every key names a real reader
+#        no orphan row      -> every census row names a key the template still declares
+#        daemon stanzas     -> the [daemon.*] stanzas are exactly the active launchd roster, the set the
+#                              plist renderer reads; a retired job's stanza has no reader, which AC3's
+#                              per-job anchor literal cannot see
 #
 # Anchor scope is the TEMPLATE file only: monitor test fixtures synthesize config.toml bodies of
 # their own, and pulling those into scope would red this suite on an unrelated file's fixture.
@@ -94,6 +98,30 @@ census_rows() {
   done < <(census_rows)
   [[ -z "${exemptions}" ]] || {
     echo "readerless census rows remain: '${exemptions}'" >&2
+    return 1
+  }
+}
+
+@test "every census row names a key the template still declares" {
+  local pairs orphans=""
+  pairs="$(template_pairs)"
+  while IFS='|' read -r section key _reader _anchor _exempt; do
+    [[ -n "${section}" ]] || continue
+    grep -qxF -- "${section}|${key}" <<<"${pairs}" || orphans="${orphans}${orphans:+, }${section}.${key}"
+  done < <(census_rows)
+  [[ -z "${orphans}" ]] || {
+    echo "census rows for keys the template no longer declares: ${orphans}" >&2
+    return 1
+  }
+}
+
+@test "the template's [daemon.*] stanzas are exactly the active launchd roster" {
+  local declared active
+  declared="$(template_pairs | sed -n 's/^\[daemon\.\([^]]*\)\]|.*/\1/p' | LC_ALL=C sort -u)"
+  active="$(bash -c 'set -u; source "$1/lib/ga-env.sh" && ga_init_env "$1" >/dev/null 2>&1 \
+    && printf "%s\n" "${LAUNCHD_JOBS[@]}"' _ "${GA}" | LC_ALL=C sort -u)" || active=""
+  [[ -n "${active}" && "${declared}" == "${active}" ]] || {
+    printf 'template [daemon.*] stanzas:\n%s\nLAUNCHD_JOBS:\n%s\n' "${declared}" "${active}" >&2
     return 1
   }
 }

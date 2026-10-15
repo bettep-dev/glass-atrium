@@ -30,8 +30,12 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   command -v jq >/dev/null 2>&1 || skip "jq required"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
 
@@ -45,7 +49,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Write a registry whose `agents` member carries each named key with a minimal entry.
@@ -127,7 +131,11 @@ assert_output_lacks() {
   local bodied_status="${status}"
   assert_output_lacks "registry key with no agent body" || return 1
 
-  rm -f -- "${GA_SANDBOX}/agents/glass-atrium-dev-a.md"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/agents/glass-atrium-dev-a.md"
+  else
+    return 1
+  fi
   run_doctor_sandbox
   assert_output_has "registry key with no agent body" || return 1
   [[ "${status}" -eq "${bodied_status}" ]] || {

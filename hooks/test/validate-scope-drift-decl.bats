@@ -10,6 +10,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 HOOK="${GA}/hooks/validate-scope-drift.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK}" ]] || skip "hook not found: ${HOOK}"
@@ -28,7 +30,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Write the subagent transcript. $1 = record-0 (parent delegation prompt) text,
@@ -50,7 +52,7 @@ run_hook() {
   input="$(jq -n --arg sid "${SID}" --arg aid "${AID}" --arg fp "${fp}" \
     '{session_id: $sid, agent_id: $aid, tool_input: {file_path: $fp}}')"
   run env -u PLAN_FILE \
-    HOME="${WORK}" \
+    HOME="${WORK}" GA_DATA_ROOT="${WORK}/.glass-atrium" \
     ATRIUM_MONITOR_PORT=16145 \
     SCOPE_DRIFT_CACHE_DIR="${CACHE_DIR}" \
     PLAN_FILE="${plan}" \
@@ -94,7 +96,7 @@ run_hook() {
   [[ "${output}" == *SCOPE-070* ]] || { echo "first pass silent: ${output}" >&2; return 1; }
 
   # Transcript removed: a cache hit still yields the same verdict (no re-parse per edit).
-  rm -f "${TPATH}"
+  if ga_guard_path "${TPATH}"; then rm -f -- "${TPATH:?}"; fi
   run_hook "/repo/hooks/other.sh"
   [[ "${output}" == *scope-decl* ]] || { echo "cache miss — re-parsed: ${output}" >&2; return 1; }
 

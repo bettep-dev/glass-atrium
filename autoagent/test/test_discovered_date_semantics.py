@@ -1,16 +1,9 @@
 """One column, one meaning — core.learning_log.discovered_date.
 
-Two gates used to read this column with OPPOSITE meanings, which is the defect
-class that produced the parked-pattern incident:
-
-  - ``_reobservation_reason`` reads it as LAST-observed (old ⇒ evidence went
-    quiet ⇒ snooze), which is what the live writer actually stores;
-  - ``_is_sustained`` read it as FIRST-observed (old ⇒ long-running ⇒ promote),
-    which INVERTS against that writer. A pattern re-observed every cycle is
-    restamped to today and could never sustain; one whose evidence stopped
-    arriving sustained purely by ageing.
-
-The agreed meaning is LAST-OBSERVED. Pinned here on both sides:
+The column is LAST-observed: the live writer restamps it on every re-emit. Reading
+it as FIRST-observed inverts a sustain gate — a pattern re-observed every cycle is
+restamped to today and could never sustain; one whose evidence stopped arriving
+sustained purely by ageing. Pinned here on both sides:
 
 (1) WRITER agreement — every writer that dates a row refreshes it on re-emit,
     and no terminal transition touches it. Checked against the SQL literals,
@@ -83,21 +76,26 @@ class TestWritersAgreeOnLastObserved(unittest.TestCase):
     ) -> None:
         # The dormant writer. It omitted this clause, so once its feeder is wired
         # a re-observation through it would leave the row dated at its first
-        # sighting — and _reobservation_reason would snooze a live pattern.
+        # sighting, and the column would read as first-observed for that row.
         conflict = _upsert_conflict_clause(
             self.outcome_src, "_LEARNING_LOG_UPSERT_SQL"
         )
         self.assertIn("discovered_date = EXCLUDED.discovered_date", conflict)
 
-    def test_when_row_reaches_a_terminal_state_then_its_date_is_left_alone(
+    def test_when_a_row_changes_state_or_key_then_its_date_is_left_alone(
         self,
     ) -> None:
-        # The reject/discharge transitions remove the row from intake; restamping
-        # its date there would fabricate an observation that never happened.
-        for const in ("_LEARNING_LOG_REJECT_SQL", "_LEARNING_LOG_DISCHARGE_SQL"):
+        # A status move or a key write is not an observation; restamping the date
+        # there would fabricate one that never happened.
+        for const in (
+            "_LEARNING_LOG_REJECT_SQL",
+            "_LEARNING_LOG_DISCHARGE_SQL",
+            "_LEARNING_LOG_STATUS_SQL",
+            "_LEARNING_LOG_METRIC_KEY_SQL",
+        ):
             with self.subTest(sql=const):
                 match = re.search(
-                    rf'^{re.escape(const)}\s*=\s*"""(.*?)"""',
+                    rf'^{re.escape(const)}\s*=\s*f?"""(.*?)"""',
                     self.learning_src,
                     re.DOTALL | re.MULTILINE,
                 )
@@ -105,10 +103,9 @@ class TestWritersAgreeOnLastObserved(unittest.TestCase):
                 self.assertNotIn("discovered_date", match.group(1))  # type: ignore[union-attr]
 
     def test_when_writers_are_enumerated_then_the_list_is_complete(self) -> None:
-        # The enumeration on _reobservation_reason is load-bearing: the gate's
-        # correctness argument is "no other writer dates this column". An
-        # enumeration that misses one is worth nothing, which is how the dormant
-        # UPSERT went unnoticed. Count the writers, not the prose.
+        # The last-observed meaning holds only while no other writer dates this
+        # column; a writer that appears unannounced is how the dormant UPSERT went
+        # unnoticed. Count the writers, not the prose.
         writers = []
         for path in sorted(_HOOKS.glob("*.py")):
             src = path.read_text()
@@ -122,10 +119,12 @@ class TestWritersAgreeOnLastObserved(unittest.TestCase):
                 ("_pg_learning_dualwrite.py", "INSERT INTO core.learning_log"),
                 ("_pg_learning_dualwrite.py", "UPDATE core.learning_log"),
                 ("_pg_learning_dualwrite.py", "UPDATE core.learning_log"),
+                ("_pg_learning_dualwrite.py", "UPDATE core.learning_log"),
+                ("_pg_learning_dualwrite.py", "UPDATE core.learning_log"),
                 ("_pg_outcome_dualwrite.py", "INSERT INTO core.learning_log"),
             ],
-            "a writer appeared or vanished — reconcile the enumeration on "
-            "daemon_cycle._reobservation_reason before changing this list",
+            "a writer appeared or vanished — confirm it keeps discovered_date "
+            "last-observed before changing this list",
         )
 
 
@@ -162,10 +161,6 @@ class TestSustainReadsFirstObservation(unittest.TestCase):
             dc, "_pg_read_outcomes_since", lambda *a, **k: [self._row(30)], create=True
         ), mock.patch.object(dc, "HAS_PG_OUTCOME_READ", True):
             self.assertTrue(dc._is_sustained(dc._first_observation_ts("agent-x")))
-        # And the reader that DOES own the column agrees it means last-observed:
-        # a row dated today is fresh, not stale.
-        today = datetime.now(timezone.utc).date()
-        self.assertEqual(dc._reobservation_reason(today.isoformat(), today), "")
 
     def test_when_a_pattern_went_quiet_then_it_does_not_sustain_by_ageing(self) -> None:
         # The other half of the inversion. An old discovered_date used to READ as
@@ -174,10 +169,6 @@ class TestSustainReadsFirstObservation(unittest.TestCase):
             dc, "_pg_read_outcomes_since", lambda *a, **k: [self._row(2)], create=True
         ), mock.patch.object(dc, "HAS_PG_OUTCOME_READ", True):
             self.assertFalse(dc._is_sustained(dc._first_observation_ts("agent-x")))
-        # Same row, the other gate: dated well outside the window ⇒ snoozed.
-        today = datetime.now(timezone.utc).date()
-        stale_date = (today - timedelta(days=dc.STALE_WINDOW_DAYS + 10)).isoformat()
-        self.assertIn("no aggregator re-observation", dc._reobservation_reason(stale_date, today))
 
     def test_when_the_pattern_date_is_passed_then_it_is_rejected_as_input(self) -> None:
         # A YYYY-MM-DD string is what the gate used to take. Passing one now

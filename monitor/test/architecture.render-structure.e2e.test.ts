@@ -468,11 +468,11 @@ describe("healthy live fixture", () => {
 		assert.equal(svgCount, 1, `rendered diagram svg count inside ${ctx.selectors.canvas}`);
 	});
 
-	test("the caption is a sentence-case status line over a legend, all at 12px or larger", async () => {
+	test("the caption is a sentence-case status line over a legend, all at 13px or larger", async () => {
 		await ctx.page.waitForSelector(".arch-legend li", { timeout: 10_000 });
 		// one inline mapper — tsx wraps a named inner function in __name, which the browser lacks
 		const [status, ...legend] = await ctx.page.evaluate(() =>
-			[...document.querySelectorAll(".arch-caption p, .arch-legend li")].map((el) => ({
+			[...document.querySelectorAll(".arch-caption .page-verdict-text, .arch-legend li, .arch-legend-swatch")].map((el) => ({
 				text: (el as HTMLElement).innerText,
 				transform: getComputedStyle(el).textTransform,
 				px: Number.parseFloat(getComputedStyle(el).fontSize),
@@ -483,15 +483,51 @@ describe("healthy live fixture", () => {
 		assert.ok(probe.status, "a status line renders under the page title");
 		for (const line of [probe.status, ...probe.legend]) {
 			assert.notEqual(line.transform, "uppercase", `"${line.text}" renders uppercase`);
-			assert.ok(line.px >= 12, `"${line.text}" renders at ${line.px}px`);
+			assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
 		}
 		for (const word of ["needs attention", "critical", "not verified", "Orchestrator border", "Safety checks border"])
 			assert.ok(probe.legend.some((line) => line.text.includes(word)), `legend lacks "${word}" — read: ${JSON.stringify(probe.legend)}`);
 	});
 
-	test("the Fit control shows its name and only a title repeating its one box is hidden", async () => {
-		const fit = ctx.page.getByRole("button", { name: "Fit diagram to view" });
-		assert.match(await fit.innerText(), /\bFit\b/);
+	test("each legend swatch holds its mark's line inside its border", async () => {
+		await ctx.page.waitForSelector(".arch-legend-swatch", { timeout: 10_000 });
+		const swatches = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-legend-swatch")]
+				.filter((el) => (el.textContent || "").trim() !== "")
+				.map((el) => {
+					const style = getComputedStyle(el);
+					return {
+						mark: (el.textContent || "").trim(),
+						line: Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize),
+						inner: el.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom),
+					};
+				}),
+		);
+
+		assert.ok(swatches.length > 0, "no legend swatch carries a mark");
+		for (const swatch of swatches)
+			assert.ok(swatch.line <= swatch.inner, `"${swatch.mark}" sets a ${swatch.line}px line in a ${swatch.inner}px swatch`);
+	});
+
+	test("every text in the Part health block renders at 13px or larger, each row's meta line included", async () => {
+		await ctx.page.waitForSelector(".arch-part-health .arch-part-meta", { timeout: 10_000 });
+		const texts = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-part-health *")]
+				.filter((el) => [...el.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim() !== ""))
+				.map((el) => ({
+					text: (el as HTMLElement).innerText,
+					isMeta: el.classList.contains("arch-part-meta"),
+					px: Number.parseFloat(getComputedStyle(el).fontSize),
+				})),
+		);
+
+		assert.ok(texts.some((line) => line.isMeta), `no row meta line was measured — read: ${JSON.stringify(texts)}`);
+		for (const line of texts) assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
+	});
+
+	test("the Reset control shows its name and only a title repeating its one box is hidden", async () => {
+		const reset = ctx.page.getByRole("button", { name: "Reset diagram view" });
+		assert.match(await reset.innerText(), /\bReset\b/);
 
 		const titles = await ctx.page.evaluate((canvas) =>
 			[...document.querySelectorAll(`${canvas} svg g.cluster`)].map((el) => {
@@ -499,6 +535,8 @@ describe("healthy live fixture", () => {
 				return { id: el.id, shown: label ? label.getBoundingClientRect().width > 0 : false };
 			}),
 		ctx.selectors.canvas);
+		// exactly the seven zones — the column frames the map is laid out with are gone
+		assert.equal(titles.length, 7, `drawn zones — read: ${JSON.stringify(titles)}`);
 		const hidden = titles.filter((t) => !t.shown).map((t) => t.id.replace(/^.*-/, ""));
 		// no drawn zone has a lone member whose label opens with the zone title, so every title shows
 		assert.deepEqual(hidden.sort(), [], `hidden group titles — read: ${JSON.stringify(titles)}`);
@@ -539,23 +577,40 @@ describe("healthy live fixture", () => {
 		}
 	});
 
-	test("Tab moves through the map nodes in left-to-right flow order", async () => {
-		// document order of tabindex=0 stops IS the Tab sequence; one inline mapper (tsx __name)
-		const stops = await ctx.page.evaluate((canvas) =>
-			[...document.querySelectorAll(`${canvas} svg g.node[tabindex="0"]`)].map((el) => {
-				const r = el.getBoundingClientRect();
-				return { id: el.getAttribute("data-arch-node-id"), cx: r.left + r.width / 2, top: r.top, width: r.width };
+	test("Tab reads the sources column top to bottom, then the spine top to bottom", async () => {
+		// document order of tabindex=0 stops IS the Tab sequence; inline mappers only (tsx __name)
+		const { stops, zones } = await ctx.page.evaluate(
+			(canvas) => ({
+				stops: [...document.querySelectorAll(`${canvas} svg g.node[tabindex="0"]`)].map((el) => {
+					const r = el.getBoundingClientRect();
+					return { id: el.getAttribute("data-arch-node-id"), cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+				}),
+				zones: [...document.querySelectorAll(`${canvas} svg g.cluster`)].map((el) => ({
+					id: el.id.slice(el.id.lastIndexOf("-") + 1),
+					box: el.getBoundingClientRect().toJSON() as { left: number; right: number; top: number; bottom: number },
+				})),
 			}),
-		ctx.selectors.canvas);
-		assert.ok(stops.length > 3, `focusable node count ${stops.length}`);
+			ctx.selectors.canvas,
+		);
+		// zones in reading order — the sources column (Inputs above Daemons), then the pipeline spine
+		const readingOrder = ["entry", "daemon", "orch", "agents", "hooks", "data", "export"];
+		assert.deepEqual(zones.map((z) => z.id).sort(), [...readingOrder].sort(), "the seven zones are drawn");
+		assert.ok(stops.length > readingOrder.length, `focusable node count ${stops.length}`);
 
-		const minWidth = Math.min(...stops.map((s) => s.width));
-		const leftmost = Math.min(...stops.map((s) => s.cx));
-		assert.ok(stops[0].cx - leftmost <= minWidth / 2, `first stop ${stops[0].id} is not in the entry column`);
+		const order = stops.map((s) => s.id).join(", ");
+		const getRank = (s: (typeof stops)[number]) =>
+			readingOrder.findIndex((id) => {
+				const b = zones.find((z) => z.id === id)?.box;
+				return Boolean(b && s.cx > b.left && s.cx < b.right && s.cy > b.top && s.cy < b.bottom);
+			});
+		const ranks = stops.map(getRank);
+		assert.ok(ranks.every((rank) => rank >= 0), `a stop sits in no zone: ${order}`);
 		for (let i = 1; i < stops.length; i++) {
-			const [prev, next] = [stops[i - 1], stops[i]];
-			const sameColumn = Math.abs(next.cx - prev.cx) <= minWidth / 2;
-			assert.ok(sameColumn ? next.top >= prev.top : next.cx > prev.cx, `Tab steps back from ${prev.id} to ${next.id}`);
+			const sameZone = ranks[i] === ranks[i - 1];
+			assert.ok(
+				sameZone ? stops[i].cy > stops[i - 1].cy : ranks[i] > ranks[i - 1],
+				`Tab steps against the reading order from ${stops[i - 1].id} to ${stops[i].id}: ${order}`,
+			);
 		}
 	});
 
@@ -862,10 +917,18 @@ describe("fault live fixture", () => {
 	for (const { width, height } of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
 		test(`a counted fault badge sits at most half off its own node's bottom border, clear of every label, neighbour node and other zone, at ${width}x${height}`, async () => {
 			const pattern = "**/api/health/daemons";
-			// two more faulted parts bound to one node → the badge carries its widest text, the count
+			const livePattern = "**/api/architecture/live";
+			// both daemon parts faulted, wiki-curator also lit on daemon-cycle's node → that node's badge carries its widest text, the count
+			// wiki-curator keeps its own node → the zone holds two health nodes as on the served table, so badges stay on nodes
 			const health = getDaemonHealthFixture(FAULT_VERDICT);
-			for (const daemonName of ["daily-restart-autoagent", "daily-restart-wiki"]) health.daemons.push({ ...health.daemons[0], daemon_name: daemonName });
+			health.daemons.push({ ...health.daemons[0], daemon_name: "wiki" });
+			const live = getLiveFixture(FAULT_VERDICT, 999);
+			live.part_bindings = {
+				...PART_NODE_BINDINGS,
+				"glass-atrium-wiki-curator": [...PART_NODE_BINDINGS["glass-atrium-wiki-curator"], ...PART_NODE_BINDINGS["daemon-cycle"]],
+			};
 			await ctx.page.route(pattern, (route) => route.fulfill({ json: health }));
+			await ctx.page.route(livePattern, (route) => route.fulfill({ json: live }));
 			try {
 				await ctx.page.setViewportSize({ width, height });
 				await ctx.page.reload({ waitUntil: "load" });
@@ -874,35 +937,47 @@ describe("fault live fixture", () => {
 					ctx.selectors.canvas,
 					{ timeout: 30_000 },
 				);
+				// badges are read at the default view — before the fit reaches the CTM, a member low in the left column can sit outside the canvas
+				await ctx.page.waitForFunction(
+					(sel) => {
+						const vp = document.querySelector(`${sel} .svg-pan-zoom_viewport`);
+						const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
+						const fitScale = Number(vp?.getAttribute("data-arch-fit-scale"));
+						return Boolean(m && fitScale > 0 && Math.abs(m.a - fitScale) < 1e-3);
+					},
+					ctx.selectors.canvas,
+					{ timeout: 30_000 },
+				);
 				const glyphs = await ctx.page.evaluate((sel) => {
 					// no named inner functions — tsx keepNames wraps them in __name, which the page does not define
 					const probe = document.createElement("style");
 					probe.textContent = `${sel} svg :is(rect.arch-ring, text.arch-ring-glyph, rect.arch-ring-glyph-pill) { pointer-events: auto !important; }`;
 					document.head.appendChild(probe);
-					const shapes = new Map(
-						Array.from(document.querySelectorAll(`${sel} svg :is(g.node, g.cluster)`)).map((group) => [
-							group,
-							(group.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element).getBoundingClientRect(),
-						]),
-					);
-					const zones = Array.from(document.querySelectorAll(`${sel} svg g.cluster`)).map((group) => shapes.get(group) as DOMRect);
-					// per-line text boxes, not the label's line box — the half-leading under the last line paints nothing
-					const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label)`))
-						.flatMap((label) => {
-							const rects: DOMRect[] = [];
-							const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
-							for (let text = walker.nextNode(); text; text = walker.nextNode()) {
-								const range = document.createRange();
-								range.selectNodeContents(text);
-								rects.push(...Array.from(range.getClientRects()));
-							}
-							return rects;
-						})
-						.filter((box) => box.width > 0 && box.height > 0);
 					const readings = Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`))
 						.filter((glyph) => getComputedStyle(glyph).display !== "none")
 						.map((glyph) => {
 							glyph.scrollIntoView({ block: "center", inline: "center" });
+							// every box read after this glyph's scroll — .arch-page scrolls, so boxes read earlier sit in another frame
+							const shapes = new Map(
+								Array.from(document.querySelectorAll(`${sel} svg :is(g.node, g.cluster)`)).map((group) => [
+									group,
+									(group.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element).getBoundingClientRect(),
+								]),
+							);
+							const zones = Array.from(document.querySelectorAll(`${sel} svg g.cluster`)).map((group) => shapes.get(group) as DOMRect);
+							// per-line text boxes, not the label's line box — the half-leading under the last line paints nothing
+							const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label, g.edgeLabel .edgeLabel)`))
+								.flatMap((label) => {
+									const rects: DOMRect[] = [];
+									const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+									for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+										const range = document.createRange();
+										range.selectNodeContents(text);
+										rects.push(...Array.from(range.getClientRects()));
+									}
+									return rects;
+								})
+								.filter((box) => box.width > 0 && box.height > 0);
 							const owner = glyph.parentElement as Element;
 							const pill = owner.querySelector(":scope > rect.arch-ring-glyph-pill") as Element;
 							const g = glyph.getBoundingClientRect();
@@ -931,6 +1006,7 @@ describe("fault live fixture", () => {
 								}
 							return {
 								id: owner.getAttribute("data-arch-node-id") || owner.id,
+								isNode: owner.matches("g.node"),
 								text: glyph.textContent || "",
 								// across its own node's bottom border, wholly within the node's sides → at most half the pill off the node
 								attached: p.left >= n.left && p.right <= n.right && p.top < n.bottom && p.bottom > n.bottom,
@@ -946,7 +1022,10 @@ describe("fault live fixture", () => {
 					probe.remove();
 					return readings;
 				}, ctx.selectors.canvas);
-				assert.ok(glyphs.some((glyph) => glyph.text.includes("×2")), `no counted badge drawn: ${glyphs.map((g) => g.text).join(" ")}`);
+				assert.ok(
+					glyphs.some((glyph) => glyph.isNode && glyph.text.includes("×2")),
+					`no counted node badge drawn: ${glyphs.map((g) => `${g.id} '${g.text}'`).join(" ")}`,
+				);
 				// half the pill below the border is the straddle itself; 0.55 leaves room for sub-pixel rounding only
 				const loose = glyphs.filter((glyph) => !glyph.attached || glyph.offShare > 0.55);
 				assert.deepEqual(loose, [], `badges off their node's bottom border: ${loose.map((g) => `${g.id} ${(g.offShare * 100).toFixed(0)}% off (${g.box})`).join("; ")}`);
@@ -956,6 +1035,7 @@ describe("fault live fixture", () => {
 				assert.deepEqual(hidden, [], `badge text painted over: ${hidden.map((g) => `${g.id} '${g.text}' (${g.box} · ${g.occluders.join(" ")})`).join("; ")}`);
 			} finally {
 				await ctx.page.unroute(pattern);
+				await ctx.page.unroute(livePattern);
 				await ctx.page.setViewportSize({ width: 1440, height: 900 });
 				await ctx.page.reload({ waitUntil: "load" });
 				await ctx.page.waitForSelector(`${ctx.selectors.canvas} svg g.node[data-arch-node-id]`, { timeout: 30_000 });

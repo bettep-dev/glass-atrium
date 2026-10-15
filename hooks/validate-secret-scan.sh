@@ -16,7 +16,7 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 # unscanned. A secret gate MUST refuse rather than silently allow — block here so
 # no unscanned write can proceed on a python3-less PATH.
 hook_require_python3 "SEC-017" \
-  "Secret scan unavailable: python3 is required to parse hook input / 시크릿 스캔 불가: hook 입력 파싱에 python3 필요"
+  "Secret scan unavailable: python3 is required to parse hook input"
 
 INPUT=$(hook_read_input)
 TOOL_NAME=$(hook_get_field "${INPUT}" "tool_name")
@@ -56,20 +56,6 @@ NAMES_EN=(
   "Service-account private key"
   "Service-account JSON marker"
 )
-NAMES_KO=(
-  "AWS 액세스 키"
-  "GitHub 토큰"
-  "API 키 (sk-)"
-  "JWT 토큰"
-  "DB 연결 문자열"
-  "MongoDB 연결 문자열"
-  "Google API 키"
-  "Slack 토큰"
-  "일반 자격증명 할당"
-  "PEM 개인 키"
-  "서비스 계정 개인 키"
-  "서비스 계정 JSON 마커"
-)
 
 # Scan a blob against every PATTERNS entry; exit 2 on the first match.
 # Args: $1=blob to scan
@@ -80,11 +66,9 @@ scan_content() {
     # `-i` for case-insensitive credential keys · `--` so a dash-leading PEM
     # pattern is not parsed as a grep option flag.
     if printf '%s\n' "${blob}" | grep -qiE -- "${PATTERNS[${i}]}"; then
-      # emit_error 5-param signature — bilingual EN/KO combined into one message/
-      # suggestion arg so the emitted JSON stays well-formed.
       emit_error "${CODES[${i}]}" "block" \
-        "Secret pattern detected: ${NAMES_EN[${i}]} / 시크릿 패턴 감지: ${NAMES_KO[${i}]}" \
-        "Replace hardcoded secret with environment variable / 하드코딩된 시크릿을 환경변수로 교체하세요" \
+        "Secret pattern detected: ${NAMES_EN[${i}]}" \
+        "Replace the hardcoded secret with an environment-variable reference (core-security.md -> Secret Management)" \
         "{\"pattern\":\"${CODES[${i}]}\"}"
       exit 2
     fi
@@ -155,11 +139,9 @@ scan_bash_command() {
   [[ -z "${cmd}" ]] && return 0
   if printf '%s\n' "${cmd}" | grep -qiE -- "${SECRET_TARGET}" \
     && printf '%s\n' "${cmd}" | grep -qiE -- "${CRED_VALUE}"; then
-    # emit_error 5-param signature (code, severity, message, suggestion, ctx) —
-    # bilingual EN/KO text combined into single message/suggestion args.
     emit_error "SEC-016" "block" \
-      "Secret written to a dotenv/secrets file via Bash / Bash 로 시크릿이 dotenv/secrets 파일에 기록됨" \
-      "Do not write credentials into .env/secrets files (redirect/heredoc/tee/dd/open/cp/mv/sed-i/install/ed); use env vars or a secret manager / 자격증명을 .env/secrets 파일에 기록하지 마세요; 환경변수나 시크릿 매니저를 사용하세요" \
+      "Secret written to a dotenv/secrets file via Bash" \
+      "Do not write credentials into .env/secrets files (redirect/heredoc/tee/dd/open/cp/mv/sed-i/install/ed); use env vars or a secret manager" \
       "{\"channel\":\"bash\"}"
     exit 2
   fi

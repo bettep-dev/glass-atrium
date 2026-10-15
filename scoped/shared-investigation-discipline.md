@@ -39,5 +39,5 @@ Mandatory bug fix sequence: **Confirm symptoms → Formulate cause hypothesis �
 ## Verification
 
 - [ ] **Hypothesis documented**: Bug fix PR/commit references a specific cause hypothesis (not just "fixed X")
-- [ ] **Reproduction test exists**: A test that fails before the fix and passes after exists in the test suite
+- [ ] **Reproduction test exists**: A test that fails before the fix and passes after exists as a regression pin in the behavior's home file (`scoped/shared-testing.md` → `### Where a test lives`)
 - [ ] **Root cause addressed**: Fix targets the cause, not the symptom — the same class of bug cannot recur

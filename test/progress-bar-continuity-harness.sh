@@ -27,7 +27,16 @@ set -uo pipefail
 
 HARNESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GA_DIR_ROOT="$(cd -- "${HARNESS_DIR}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA_DIR_ROOT}/scripts/lib/path-guard.sh"
 LAUNCHER="${GA_DIR_ROOT}/glass-atrium"
+
+# PG_SOCKET redirect (GA_PG_SOCKET test seam) — export BEFORE the source line, since ga_init_env
+# freezes PG_SOCKET readonly at source time. The real preflight_pg_utc_guard stays unshadowed, so
+# the redirect keeps any socket rm under a scratch dir. Does NOT cover the socket-blind
+# `lsof -ti tcp:5432` fallback in ga-daemons.sh.
+GA_PG_SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ga-pgsafe-sock.XXXXXX")"
+export GA_PG_SOCKET="${GA_PG_SOCK_DIR}"
 
 # shellcheck source=/dev/null
 source "${LAUNCHER}"
@@ -45,6 +54,8 @@ fail() {
   printf '    FAIL  %s\n' "$1"
 }
 assert_eq() { if [[ "$2" == "$3" ]]; then pass "$1 (= $3)"; else fail "$1 (expected [$2] got [$3])"; fi; }
+
+assert_eq "PG_SOCKET resolves to the scratch socket dir, never the live /tmp" "${GA_PG_SOCK_DIR}" "${PG_SOCKET}"
 
 # === render-sequence recorder ==========================================================
 # Each draw_workbox call appends one record: "<index> <total> <fill>" where fill is the REAL
@@ -474,7 +485,7 @@ while IFS=' ' read -r di dt _rest; do
   u_idxs+=("${di}")
   u_tots+=("${dt}")
 done <"${R4_DISP}"
-rm -f "${R4_DISP}"
+if ga_guard_path "${R4_DISP}"; then rm -f -- "${R4_DISP:?}"; fi
 printf '  uninstall run_plan DISPLAY sequence (idx/total): '
 for k in "${!u_idxs[@]}"; do printf '%s/%s ' "${u_idxs[${k}]}" "${u_tots[${k}]}"; done
 printf '\n'
@@ -520,7 +531,7 @@ if [[ "${#trimmed}" -le 58 && "${trimmed}" == *... ]]; then
 else
   fail "over-long line should be trimmed+ellipsized, got len=${#trimmed}"
 fi
-rm -f "${R4_LOG}"
+if ga_guard_path "${R4_LOG}"; then rm -f -- "${R4_LOG:?}"; fi
 
 echo ""
 echo "============================================================================"
@@ -762,11 +773,12 @@ printf '  boxed preflight pg-window capture: idle starts=%s stops=%s\n' "${IDLE_
 sed 's/^/    /' "${IDLE_CAP}"
 assert_window_body "pg keg/UTC-resolve" "Resolving PostgreSQL" bar
 assert_eq "pg-window idle start is matched by a stop (no leaked idle PID)" "${IDLE_STARTS}" "${IDLE_STOPS}"
-rm -f "${IDLE_CAP}"
+if ga_guard_path "${IDLE_CAP}"; then rm -f -- "${IDLE_CAP:?}"; fi
 
 echo ""
 echo "============================================================================"
 printf 'R4 HARNESS RESULT: %s passed, %s failed\n' "${PASSES}" "${FAILS}"
 echo "============================================================================"
-rm -f "${GA_SEQ}"
+if ga_guard_path "${GA_SEQ}"; then rm -f -- "${GA_SEQ:?}"; fi
+if ga_guard_path "${GA_PG_SOCK_DIR}"; then rm -rf -- "${GA_PG_SOCK_DIR:?}"; fi
 [[ "${FAILS}" -eq 0 ]]

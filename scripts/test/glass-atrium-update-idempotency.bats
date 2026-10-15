@@ -37,6 +37,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 export SKILL="${GA}/scripts/update.sh"
 export REAL_LIB_ROOT="${GA}"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${SKILL}" ]] || skip "update.sh not found: ${SKILL}"
@@ -48,6 +50,9 @@ setup() {
   NEWSRC="${WORK}/newsrc"   # the staged new-release tree (test seam source)
   STATE="${WORK}/state"     # daemon-reports + update-state (baseline, base-agents) sandbox
   mkdir -p "${INSTALL}" "${NEWSRC}" "${STATE}"
+  # Both roots the finalize retire step reads → sandboxed, so no run reaches a live store.
+  export GA_DATA_ROOT="${WORK}/data-root"
+  export GA_TARGET_HOME="${WORK}/target-home"
 }
 
 # No gate stub exists, deliberately. run_update points AUTOAGENT_CLAUDE_BIN at a
@@ -60,7 +65,7 @@ setup() {
 # reach the operator's REAL billed CLI and go green or red by the weather.
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Write file $2 (relative) with content $3 under root $1, creating parent dirs.

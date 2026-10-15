@@ -21,12 +21,13 @@
 #                  the CLI rejects the envelope, so the landed row is the assertion.
 #   T3 upsert    — the same file resolved repeatedly on one day yields ONE row whose
 #                  status tracks the LAST outcome, in BOTH directions (a same-day
-#                  decline-then-accept must not leave rejected on landed content).
+#                  decline-then-accept must not leave unadjudicated on landed content).
 #   T4 outage    — a non-zero CLI exit produces one warning and returns 0 (a database
 #                  write failure must never abort a deploy).
 #   T5 no helper — an absent dual-write helper warns and returns 0.
-#   T6 rejected  — a file that did NOT land records classification reject / status
-#                  rejected (nothing was discarded, so the row must not read applied).
+#   T6 unlanded  — a file that did NOT land records classification reject / status
+#                  unadjudicated (nothing was discarded, so the row must not read
+#                  applied; no gate verdict concluded, so it must not read rejected).
 #   T7 rationale — the rationale carries the hunk count, the dropped/added line
 #                  counts and a bounded excerpt of the dropped daemon lines.
 #   T9 multi-row — a run of two rows splits landed per row and stamps BOTH with one
@@ -36,13 +37,16 @@
 #                  skipped:no-model-call, and stays outside every LIKE 'ok%'
 #                  apply-eligibility gate. An invariant rather than one fixture:
 #                  the arbiter verdict has no non-gated complement to contrast.
-#   T10 no ledger — an empty or absent ledger PATH records rejected and still
+#   T10 no ledger — an empty or absent ledger PATH records unadjudicated and still
 #                  returns 0 (an unreadable ledger must not abort the deploy).
 #   T12 roster   — the landed lookup keys on the row's manifest-relative target, so a
 #                  path that is not an agent body splits landed by the same rule.
 #
-# T2/T3 need Postgres and skip without it; every other test is hermetic (update.sh is
-# SOURCED, the CLI is stubbed, all paths stay in a temp dir).
+# T2/T3 run on a throwaway socket-only cluster this suite provisions
+# (hooks/test/lib/ephemeral-pg.bash), its glass_atrium built from monitor/prisma/migrations;
+# they skip only without the PG tools or psycopg, and never contact the live database.
+# Every other test is hermetic (update.sh is SOURCED, the CLI is stubbed, all paths stay
+# in a temp dir).
 #
 # Gating hazard: a bare mid-body `[[ ]]` is NOT gated by errexit under bash 3.2 (the
 # macOS default) while bash 5 gates it, so an ungated conditional assertion is silently
@@ -58,8 +62,46 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 UPDATE_SH="${GA}/scripts/update.sh"
 PG_HELPER="${GA}/scripts/_pg_dual_write_daemon.py"
 
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
+
+# BATS_TEST_DIRNAME / BATS_FILE_TMPDIR are assigned by the bats runtime (SC2154 false positive).
+# shellcheck disable=SC2154
+setup_file() {
+  # Ahead of every PG tool call: an ambient value redirects libpq past the explicit -h.
+  unset PGPORT PGHOSTADDR PGSERVICE PGDATABASE PGPASSFILE ATRIUM_UPDATE_DB_NAME
+  export BATS_NO_PARALLELIZE_WITHIN_FILE=true
+  local bin
+  for bin in initdb pg_ctl createdb psql python3; do
+    if ! command -v "${bin}" >/dev/null 2>&1; then
+      export EPH_SKIP="missing required tool: ${bin}"
+      return 0
+    fi
+  done
+  if ! python3 -c 'import psycopg' >/dev/null 2>&1; then
+    export EPH_SKIP="psycopg module not importable"
+    return 0
+  fi
+
+  # shellcheck source-path=SCRIPTDIR source=../../hooks/test/lib/ephemeral-pg.bash
+  source "${BATS_TEST_DIRNAME}/../../hooks/test/lib/ephemeral-pg.bash"
+  export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata"
+  export EPH_SOCKDIR="${BATS_FILE_TMPDIR}/sock"
+  export EPH_PORT="55453"
+  eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" eph_bootstrap || return 1
+  eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" glass_atrium || return 1
+}
+
+teardown_file() {
+  [[ -n "${EPH_SKIP:-}" ]] && return 0
+  eph_pg_stop "${EPH_DATADIR}"
+}
+
 setup() {
   [[ -f "${UPDATE_SH}" ]] || skip "update.sh not found: ${UPDATE_SH}"
+  unset PGHOSTADDR PGSERVICE PGDATABASE PGPASSFILE
+  # The dual-write CLI's dbname-only conninfo resolves its server through these.
+  [[ -n "${EPH_SKIP:-}" ]] || export PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}"
   WORK="$(cd -- "$(mktemp -d -t ga-resolved-rec.XXXXXX)" && pwd -P)"
   ROOT="${WORK}/install"
   mkdir -p "${ROOT}/scripts"
@@ -130,21 +172,8 @@ sys.exit(int(os.environ.get("STUB_RC", "0")))
 PY
 }
 
-# The production-row cleanup runs HERE, not at the end of a body: an assertion that
-# fires mid-body aborts the rest of that body, so a delete placed after it strands the
-# row in the live glass_atrium. A test arms it by exporting PG_ROW_TARGET before the
-# driver runs. The pid-unique target stays the whole guard — never widen the predicate
-# to the pattern label alone, which real accountability rows also carry.
-delete_pg_row() {
-  psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -qc \
-    "DELETE FROM core.autoagent_proposals
-      WHERE pattern_label = 'editable-region-arbiter-resolved'
-        AND target_file = 'agents/${1}'" >/dev/null 2>&1 || true # GA-ABSORB[benign]: a cleanup of a row no run ever wrote is a normal outcome
-}
-
 teardown() {
-  [[ -n "${PG_ROW_TARGET:-}" ]] && delete_pg_row "${PG_ROW_TARGET}"
-  [[ -n "${WORK:-}" ]] && rm -rf -- "${WORK}"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
   return 0
 }
 
@@ -176,9 +205,25 @@ print(rows[idx - 1 if idx else -1]["args"][sys.argv[2]])
 ' "${CAPTURE}" "$1" "${2:-0}"
 }
 
+cluster_psql() {
+  psql -X -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -d glass_atrium -tA "$@"
+}
+
+# The CLI's write lands wherever libpq defaults point, so they must name the cluster before
+# it runs; a provisioned cluster that does not answer is a failure, never a skip.
 db_available() {
-  command -v psql >/dev/null 2>&1 || return 1
-  psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc 'select 1' >/dev/null 2>&1
+  [[ "${PGHOST:-}" == "${EPH_SOCKDIR}" && "${PGPORT:-}" == "${EPH_PORT}" ]] || {
+    echo "libpq defaults do not name the ephemeral cluster: PGHOST=${PGHOST:-} PGPORT=${PGPORT:-}"
+    return 1
+  }
+  [[ -z "${PGHOSTADDR:-}${PGSERVICE:-}" ]] || {
+    echo "a libpq redirect is set: PGHOSTADDR=${PGHOSTADDR:-} PGSERVICE=${PGSERVICE:-}"
+    return 1
+  }
+  cluster_psql -c 'select 1' >/dev/null || {
+    echo "ephemeral cluster unreachable at ${EPH_SOCKDIR}:${EPH_PORT}"
+    return 1
+  }
 }
 
 @test "T1 envelope carries the auto tier, the constant label and a non-empty cost guard state" {
@@ -300,17 +345,20 @@ db_available() {
   [[ "$rationale" == *"2 gap(s)"* ]] || return 1
 }
 
-@test "T6 a file that did not land records reject / rejected" {
+@test "T6 a file that did not land records reject / unadjudicated" {
   write_tsv
   : >"${LEDGER}" # no GIT_TXN_OK entry → the transaction never landed
   run run_driver
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
 
   run envelope_field classification
   [ "$output" = "reject" ]
 
   run envelope_field status
-  [ "$output" = "rejected" ]
+  [ "$output" = "unadjudicated" ]
 
   rationale="$(envelope_field rationale)"
   [[ "$rationale" == *"not applied"* ]] || return 1
@@ -386,18 +434,24 @@ roster_paths() {
   [[ "$output" == *"(${unlanded_rel}, landed=0)"* ]] || return 1
 }
 
-@test "T10 an empty or absent ledger path records rejected and still returns 0" {
+@test "T10 an empty or absent ledger path records unadjudicated and still returns 0" {
   # The guard's not-taken branch. Neither shape may abort: the emitter runs after
   # the merge landed and before the base-content capture, so an abort here strands
   # the merge at the old base.
   write_tsv
   LEDGER="" run run_driver
-  [ "$status" -eq 0 ]
-  [ "$(envelope_field status)" = "rejected" ]
+  [ "$status" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
+  [ "$(envelope_field status)" = "unadjudicated" ]
 
   LEDGER="${WORK}/never-written.ledger" run run_driver
-  [ "$status" -eq 0 ]
-  [ "$(envelope_field status)" = "rejected" ]
+  [ "$status" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
+  [ "$(envelope_field status)" = "unadjudicated" ]
 }
 
 @test "T4 a non-zero CLI exit warns once and continues the update" {
@@ -416,19 +470,24 @@ roster_paths() {
 }
 
 @test "T2 the row LANDS in core.autoagent_proposals through the real dual-write CLI" {
-  db_available || skip "postgres unavailable"
+  [[ -z "${EPH_SKIP:-}" ]] || skip "${EPH_SKIP}"
   [[ -f "${PG_HELPER}" ]] || skip "dual-write helper missing"
-  python3 -c 'import psycopg' 2>/dev/null || skip "psycopg unavailable"
+  db_available || return 1
 
-  target="ga-rec-landed-$$.md"
-  PG_ROW_TARGET="${target}"
+  target="ga-rec-landed.md"
   write_tsv "${target}"
   printf 'agents/%s\n' "${target}" >"${LEDGER}"
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"resolved-gap discard recorded"* ]] || return 1
+  ((status == 0)) || {
+    echo "${output}"
+    return 1
+  }
+  [[ "$output" == *"resolved-gap discard recorded"* ]] || {
+    echo "${output}"
+    return 1
+  }
 
-  row="$(psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
+  row="$(cluster_psql -c \
     "SELECT approval_tier || '|' || status || '|' || haiku_status || '|' || cost_guard_state
        FROM core.autoagent_proposals
       WHERE pattern_label = 'editable-region-arbiter-resolved'
@@ -437,21 +496,20 @@ roster_paths() {
 }
 
 @test "T3 the same file resolved twice on one day lands ONE row that tracks the LAST outcome" {
-  db_available || skip "postgres unavailable"
+  [[ -z "${EPH_SKIP:-}" ]] || skip "${EPH_SKIP}"
   [[ -f "${PG_HELPER}" ]] || skip "dual-write helper missing"
-  python3 -c 'import psycopg' 2>/dev/null || skip "psycopg unavailable"
+  db_available || return 1
 
-  target="ga-rec-upsert-$$.md"
-  PG_ROW_TARGET="${target}"
+  target="ga-rec-upsert.md"
   write_tsv "${target}"
 
   # Both re-runs carry a DIFFERENT ledger state, so the row's status has to
   # transition: upserting twice from one state pins the row count alone and can
   # never observe a preserved-terminal clobber. The row is one per body per day,
   # so a same-day decline-then-accept is a legitimate operator sequence — and the
-  # accept must not keep reading rejected on content that landed.
+  # accept must not keep reading unadjudicated on content that landed.
   status_now() {
-    psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
+    cluster_psql -c \
       "SELECT status FROM core.autoagent_proposals
         WHERE pattern_label = 'editable-region-arbiter-resolved'
           AND target_file = 'agents/${target}'"
@@ -459,25 +517,34 @@ roster_paths() {
 
   : >"${LEDGER}" # declined at the confirm gate → nothing landed
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
-  [ "$status" -eq 0 ]
+  ((status == 0)) || {
+    echo "${output}"
+    return 1
+  }
   first="$(status_now)"
 
   printf 'agents/%s\n' "${target}" >"${LEDGER}" # same-day re-run, accepted
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
-  [ "$status" -eq 0 ]
+  ((status == 0)) || {
+    echo "${output}"
+    return 1
+  }
   second="$(status_now)"
 
   : >"${LEDGER}" # and a later same-day decline: the reverse direction
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
-  [ "$status" -eq 0 ]
+  ((status == 0)) || {
+    echo "${output}"
+    return 1
+  }
   third="$(status_now)"
 
-  count="$(psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
+  count="$(cluster_psql -c \
     "SELECT count(*) FROM core.autoagent_proposals
       WHERE pattern_label = 'editable-region-arbiter-resolved'
         AND target_file = 'agents/${target}'")"
   [ "${count}" = "1" ]
-  [ "${first}" = "rejected" ]
+  [ "${first}" = "unadjudicated" ]
   [ "${second}" = "applied" ]
-  [ "${third}" = "rejected" ]
+  [ "${third}" = "unadjudicated" ]
 }

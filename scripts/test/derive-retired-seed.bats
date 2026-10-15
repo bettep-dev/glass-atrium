@@ -13,6 +13,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/derive-retired-seed.sh"
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # Hashes are fixed literals, not computed: the derivation copies whatever the
 # historical manifest recorded, so a literal makes the expected output exact.
@@ -39,6 +41,7 @@ setup() {
     "${WORK}/monitor/prisma/migrations/20260101000000_x"
   cp "${REAL_SCRIPT}" "${SCRIPT}"
   cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
+  cp "${REAL_SPINE%/*}/path-guard.sh" "${WORK}/scripts/lib/path-guard.sh"
 
   git -C "${WORK}" init -q
   git -C "${WORK}" config user.email bats@test.local
@@ -46,7 +49,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Write manifest.json with the given `<path>=<hash>` pairs and commit it.
@@ -86,13 +89,18 @@ seed_history() {
   write_manifest_revision 'r3' "${P2}=${HP2}"
 }
 
+# Assert $output is exactly seed_history's one dropped, unbarred path with both hashes.
+assert_seeds_p1_only() {
+  local expected
+  expected="$(jq -cn --arg p "${P1}" --arg h1 "${H1}" --arg h2 "${H2}" '{($p): [$h1, $h2]}')"
+  [[ "$(printf '%s' "${output}" | jq -cS .)" == "$(printf '%s' "${expected}" | jq -cS .)" ]]
+}
+
 @test "derive: seeds only the dropped, unbarred path — with every hash it ever shipped" {
   seed_history
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]] || return 1
-  local expected
-  expected="$(jq -cn --arg p "${P1}" --arg h1 "${H1}" --arg h2 "${H2}" '{($p): [$h1, $h2]}')"
-  [[ "$(printf '%s' "${output}" | jq -cS .)" == "$(printf '%s' "${expected}" | jq -cS .)" ]] || return 1
+  assert_seeds_p1_only || return 1
 }
 
 @test "derive: a dropped path still present on disk is not seeded" {
@@ -107,6 +115,59 @@ seed_history() {
   [[ "$(printf '%s' "${output}" | jq -c .)" == "{}" ]] || return 1
 }
 
+# Row = "<name>|<path>": one byte class default `git ls-files` C-quotes, so its quoted
+# form never equals the history key the oracle is compared against.
+TRACKED_QUOTED_ROWS=(
+  "non-ASCII byte|rules/한글.md"
+  "double quote|rules/q\"b.md"
+  "backslash|rules/back\\slash.md"
+  "control byte ESC|rules/esc"$'\x1b'"ape.md"
+)
+
+@test "derive: a still-tracked path git would quote is not seeded once it leaves the disk" {
+  local row tracked_file pairs=()
+  git -C "${WORK}" config core.quotePath true
+  seed_history
+  for row in "${TRACKED_QUOTED_ROWS[@]}"; do
+    printf '# %s\n' "${row%%|*}" >"${WORK}/${row#*|}"
+    pairs+=("${row#*|}=${H1}")
+  done
+  write_manifest_revision 'r4' "${P2}=${HP2}" "${pairs[@]}"
+  # The on-disk arm is removed so only the tracked-paths oracle can keep each row out.
+  for row in "${TRACKED_QUOTED_ROWS[@]}"; do
+    tracked_file="${WORK}/${row#*|}"
+    if ga_guard_path "${tracked_file}"; then rm -f -- "${tracked_file:?}"; fi
+  done
+
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  for row in "${TRACKED_QUOTED_ROWS[@]}"; do
+    printf '%s' "${output}" | jq -e --arg p "${row#*|}" 'has($p) | not' >/dev/null \
+      || {
+        echo "${row%%|*}: seeded while still tracked"
+        return 1
+      }
+  done
+  assert_seeds_p1_only || return 1
+}
+
+# Stage an empty blob at path $1 in the index only — the one way to track a path
+# with a newline without the filesystem round trip.
+track_index_only() {
+  local blob
+  blob="$(git -C "${WORK}" hash-object -w --stdin </dev/null)"
+  git -C "${WORK}" update-index --add --cacheinfo "100644,${blob},$1"
+}
+
+@test "derive: a dropped path stays seeded when a tracked path splits on a newline into its name" {
+  seed_history
+  track_index_only "docs/x"$'\n'"${P1}"
+
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  assert_seeds_p1_only || return 1
+}
+
 @test "derive: rejects an argument (exit 2)" {
   seed_history
   run "${SCRIPT}" --anything
@@ -117,8 +178,18 @@ seed_history() {
 @test "derive: refuses outside a git work tree (exit 3)" {
   # Without a repository the walk has no history to read at all, so the refusal
   # must be the named one rather than an empty map that reads as "nothing dropped".
-  rm -rf -- "${WORK}/.git"
+  if ga_guard_path "${WORK}"; then rm -rf -- "${WORK:?}/.git"; fi
   run "${SCRIPT}"
   [[ "${status}" -eq 3 ]] || return 1
   [[ "${output}" == *"not a git work tree"* ]] || return 1
+}
+
+@test "derive: a spine that cannot load its path guard exits 7 and prints no map" {
+  seed_history
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/scripts/lib/path-guard.sh"; fi
+  run --separate-stderr "${SCRIPT}"
+  [[ "${status}" -eq 7 ]] || return 1
+  [[ "${stderr}" == *'cannot source the shared path guard'* ]] || return 1
+  [[ "${stderr}" == *'failed to load'* ]] || return 1
+  [[ -z "${output}" ]] || return 1
 }

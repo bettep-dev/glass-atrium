@@ -38,11 +38,15 @@
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-workflow-verify-stage.sh"
 SKILL_MD="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-orchestrator.md"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-workflow-verify-stage.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
+  # Refused loopback port → the PASS arm's monitor reads fail open; no fixture reaches the live monitor.
+  export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   # The rollback marker's own override, pointed at a per-test temp path that does NOT exist: every row
   # therefore runs with the lever disarmed and none of them reads live-install state (the marker rows
   # below create the file themselves).
@@ -731,8 +735,8 @@ PYX
     echo "no schema-absent nudge -- ${output}" >&2
     return 1
   }
-  [[ "${output}" == *"16-25% depending on the window"* ]] || {
-    echo "the measured justification is missing from the nudge -- ${output}" >&2
+  [[ "${output}" == *"recurs on a share of runs that varies by window"* ]] || {
+    echo "the non-emission justification is missing from the nudge -- ${output}" >&2
     return 1
   }
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
@@ -772,6 +776,35 @@ log('[SIZE-EST] bundles=1 tool_uses~=8 — small')"
   }
   [[ "$(last_advisory)" != *"completion-channel"* ]] || {
     echo "tagged a DEV workflow: $(last_advisory)" >&2
+    return 1
+  }
+}
+
+# The cost each nudge states is what derived synthesis replaces with defaults — the writer's
+# self-assessment — never a lesson, which no prompt or self-improvement step reads.
+@test "completion-channel(cost): every nudge names the lost writer self-assessment, never a lesson" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
+  local per_site_script="const a = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: { properties: { completion_block: { type: 'string' } } } });
+const b = await agent('glass-atrium-intel-planner', { goal: 'plan', schema: { properties: { verdict: { type: 'string' } } } });"
+  local absent_script="const r = await agent('glass-atrium-intel-researcher', { goal: 'survey the landscape' });"
+  local rows=(property-absent per-site schema-absent)
+  local scripts=("${SCHEMA_SITE}" "${per_site_script}" "${absent_script}")
+  local phrases=("${NUDGE_PHRASE}" "${PER_SITE_PHRASE}" "${ABSENT_PHRASE}")
+  local fails="" i
+  for i in 0 1 2; do
+    run_hook_exec "${scripts[i]}"
+    [[ "${output}" == *"${phrases[i]}"* ]] || {
+      fails="${fails} ${rows[i]}:no-nudge"
+      echo "${rows[i]} -- ${output}"
+      continue
+    }
+    [[ "${output}" == *"loses the writer's self-assessment"* && "${output}" != *"lesson"* ]] || {
+      fails="${fails} ${rows[i]}:cost"
+      echo "${rows[i]} -- ${output}"
+    }
+  done
+  [[ -z "${fails}" ]] || {
+    echo "nudge cost rows failed:${fails}"
     return 1
   }
 }
@@ -816,7 +849,7 @@ log('[SIZE-EST] bundles=1 tool_uses~=8 — small')"
   }
 
   # Reversible mid-session: the marker is read per invocation, so removing it re-arms the next call.
-  rm -f "${ROLLBACK_MARKER}"
+  if ga_guard_path "${ROLLBACK_MARKER}"; then rm -f -- "${ROLLBACK_MARKER:?}"; fi
   run_hook_exec "${SCHEMA_SITE}"
   [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
     echo "removing the marker did not re-arm the message -- ${output}" >&2

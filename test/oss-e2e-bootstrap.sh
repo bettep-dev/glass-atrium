@@ -38,6 +38,8 @@ set -uo pipefail
 
 GA="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly GA
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 readonly REAL_HOME="${HOME}"
 readonly E2E_DB="claude_oss_e2e"
 # oss-db-setup.sh creates BOTH the main throwaway db AND its `_shadow` sibling
@@ -51,6 +53,10 @@ readonly STARTUP_WINDOW_SECS=30
 SANDBOX="${GA_E2E_SANDBOX:-}"
 if [[ -z "${SANDBOX}" ]]; then
   SANDBOX="$(mktemp -d -t ga-e2e.XXXXXX)"
+fi
+# relative knob → anchored at the launch cwd, which the main shell never leaves → cleanup deletes the same dir
+if [[ -n "${SANDBOX}" && "${SANDBOX}" != /* ]]; then
+  SANDBOX="${PWD}/${SANDBOX}"
 fi
 readonly SANDBOX
 readonly FAKE_HOME="${SANDBOX}/home"
@@ -95,9 +101,11 @@ cleanup() {
       fi
     done
   fi
-  if [[ "${GA_E2E_KEEP:-0}" != "1" && -n "${SANDBOX}" && "${SANDBOX}" != "/" && -d "${SANDBOX}" ]]; then
-    rm -rf -- "${SANDBOX}"
-    printf 'cleanup: sandbox removed (%s)\n' "${SANDBOX}" >&2
+  if [[ "${GA_E2E_KEEP:-0}" != "1" && -d "${SANDBOX}" ]]; then
+    if ga_guard_path "${SANDBOX}"; then
+      rm -rf -- "${SANDBOX:?}"
+      printf 'cleanup: sandbox removed (%s)\n' "${SANDBOX}" >&2
+    fi
   fi
   exit "${rc}"
 }
@@ -455,10 +463,19 @@ DB_AFTER_UNINST="$(psql -h "${PG_SOCKET}" -d postgres -tAc \
 # =============================================================================
 hdr "STEP 6 — launchd STATIC verify (rendered plists only — launchctl never run)"
 PLIST_DIR="${CLONE}/rendered/launchd"
+# expected = the clone's active roster (lib/ga-env.sh LAUNCHD_JOBS), which the renderer mirrors 1:1
+ROSTER_COUNT="$(
+  # subshell: sourcing the engine arms readonly globals — keep them contained
+  # shellcheck source=/dev/null
+  source "${CLONE}/lib/ga-env.sh" || exit 1
+  ga_init_env "${CLONE}" >/dev/null 2>&1
+  # shellcheck disable=SC2154 # assigned by ga_init_env in the clone lib/ga-env.sh
+  printf '%s\n' "${#LAUNCHD_JOBS[@]}"
+)"
 PLIST_COUNT="$(find "${PLIST_DIR}" -name 'com.glass-atrium.*.plist' 2>/dev/null | wc -l | tr -d ' ')"
-[[ "${PLIST_COUNT}" -eq 8 ]] \
-  && ok "8 plists rendered by install (file-write only)" \
-  || no "expected 8 rendered plists, found ${PLIST_COUNT}"
+[[ "${ROSTER_COUNT}" =~ ^[0-9]+$ && "${ROSTER_COUNT}" -gt 0 && "${PLIST_COUNT}" -eq "${ROSTER_COUNT}" ]] \
+  && ok "${PLIST_COUNT} plists rendered by install = active roster LAUNCHD_JOBS (file-write only)" \
+  || no "expected one rendered plist per active roster job (LAUNCHD_JOBS count '${ROSTER_COUNT}'), found ${PLIST_COUNT}"
 # plist validation must STILL validate on the Linux CI runner, where plutil
 # (macOS-only) is absent. Preference order, first available wins:
 #   1. xmllint --noout   — XML well-formedness (libxml2; present on most CI)

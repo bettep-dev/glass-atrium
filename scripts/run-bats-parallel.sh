@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # run-bats-parallel.sh — run the harness verification suite as three staged runs.
 #
-# Stage 1 runs all 4 bats roots (test/ hooks/test/ scripts/test/ autoagent/test/)
-# under `bats --jobs <N> --no-parallelize-within-files`: files run concurrently while
-# tests WITHIN a file stay sequential, preserving setup_file-once and ordered-
-# side-effect semantics. The job count derives from the host core count at
+# Stage 1 runs the 4 bats roots (test/ hooks/test/ scripts/test/ autoagent/test/), each
+# in its OWN `bats --jobs <N> --no-parallelize-within-files` call: files of a root run
+# concurrently while tests WITHIN a file stay sequential, preserving setup_file-once and
+# ordered-side-effect semantics. One call per root because bats runs ONE setup_suite.bash
+# per call (rationale at run_bats_roots). The job count derives from the host core count at
 # runtime (macOS sysctl first, GNU nproc fallback for Linux).
 # Stages 2 and 3 run the TWO unittest roots — hooks/test and autoagent/test — each in
 # its OWN sandbox HOME with the data-root env scrubbed alongside it (see the stages
 # themselves); stage 4 runs the scripts/test pytest suites under the SAME data-root
 # scrub but WITHOUT a sandbox HOME (measured reason at the stage), and only when pytest
-# is importable.
+# is importable. Every python stage runs on a dead PGHOST (reason at PG_ROUTING_SCRUB).
 #
 # TWO unittest roots because `unittest discover` takes a single -s — the same reason the
 # CI test-python leg loops over the identical pair. They are separate STAGES rather than
@@ -48,8 +49,10 @@
 # DAEMON_ENV_SCRUB is a deliberate divergence rather than a mirror gap: .github/workflows/
 # ci.yml sets none of those variables, so a fresh runner carries no leak to scrub there.
 #
-# Sequential fallback (to isolate a parallel-only flake):
-#   bats --recursive test/ hooks/test/ scripts/test/ autoagent/test/
+# Sequential fallback (to isolate a parallel-only flake), run from the checkout with
+# stage 1's start shape — an empty scratch cwd, absolute roots, one bats call per root:
+#   repo="${PWD}"; cd -- "$(mktemp -d)"
+#   for r in test hooks/test scripts/test autoagent/test; do bats --recursive "${repo}/${r}"; done
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -57,6 +60,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${SCRIPT_DIR}/lib/path-guard.sh"
 readonly TEST_ROOTS=(test hooks/test scripts/test autoagent/test)
 readonly HOOKS_TEST_ROOT=hooks/test
 readonly AUTOAGENT_TEST_ROOT=autoagent/test
@@ -93,7 +98,15 @@ readonly DAEMON_ENV_SCRUB=(
   -u AUTOAGENT_CLAUDE_BIN
   -u CLAUDE_BIN
 )
-readonly PYTHON_STAGE_SCRUB=("${DAEMON_ENV_SCRUB[@]}" -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR)
+# libpq names that outrank or reroute PGHOST. The python stages run with these unset and PGHOST set to a
+# path that never exists, so a host-less connection (psycopg "dbname=glass_atrium") fails there instead
+# of reaching the live server on the default /tmp socket. Stage 1 gets the same from every corpus
+# setup_suite (test/lib/bats-hermetic-env.bash, GA_BATS_PG_ROUTING_NAMES — each of those names is
+# pinned into this scrub by scripts/test/run-bats-parallel.bats (13); a name only here is not
+# pinned back). A suite that needs a DB starts its own ephemeral cluster.
+readonly PG_ROUTING_SCRUB=(-u PGPORT -u PGHOSTADDR -u PGSERVICE -u PGDATABASE -u PGPASSFILE)
+readonly PYTHON_STAGE_SCRUB=("${DAEMON_ENV_SCRUB[@]}" -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR
+  "${PG_ROUTING_SCRUB[@]}")
 
 # One parent scratch dir; each unittest stage gets its OWN sandbox HOME beneath it, so
 # stage 3 never inherits what stage 2's suites left behind. The cleanup trap still tracks
@@ -102,6 +115,8 @@ SANDBOX_ROOT=""
 # The git probe's throwaway repo, declared here so the EXIT trap below already covers
 # it when probe_git_usable creates it.
 GIT_PROBE_DIR=""
+# Stage 1's cwd, declared here for the same EXIT-trap coverage.
+BATS_CWD_DIR=""
 # The highest exit code any stage has returned so far, folded by run_stage itself. The
 # fold lives THERE rather than at each call site: a `run_stage … || rc=$?` site would
 # disable set -e for the whole call (SC2310), and the rc is data to be folded, not a
@@ -112,9 +127,11 @@ WORST_RC=0
 # shellcheck disable=SC2329
 cleanup() {
   local dir
-  for dir in "${SANDBOX_ROOT}" "${GIT_PROBE_DIR}"; do
-    if [[ -n "${dir}" && -d "${dir}" ]]; then
-      rm -rf -- "${dir}"
+  for dir in "${SANDBOX_ROOT}" "${GIT_PROBE_DIR}" "${BATS_CWD_DIR}"; do
+    # A dir the run never created is still empty, which the guard skips silently.
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${dir}"; then
+      rm -rf -- "${dir:?}"
     fi
   done
 }
@@ -135,6 +152,27 @@ run_stage() {
     "${label}" "${rc}" "$((SECONDS - t0))" >&2
 }
 
+# run_bats_roots — run each bats root in its OWN bats call under DAEMON_ENV_SCRUB and
+# return the highest call rc, so a failing root never stops a later one.
+# bats runs ONE setup_suite.bash per call — the first argument's directory's — so a single
+# call over every root hands test/'s loader to all four and drops each root's own:
+# hooks/test's database isolation (ga_bats_isolate_pg) among them. A call per root gives
+# every root the loader a per-file CI run and a single-directory run give it.
+# $1 = bats job count · $2.. = absolute bats roots
+# SC2329: invoked indirectly through run_stage's "$@" — not dead code.
+# shellcheck disable=SC2329
+run_bats_roots() {
+  local job_count="${1}" root rc worst=0
+  shift
+  for root in "$@"; do
+    rc=0
+    env "${DAEMON_ENV_SCRUB[@]}" \
+      bats --jobs "${job_count}" --no-parallelize-within-files --recursive "${root}" || rc=$?
+    if ((rc > worst)); then worst="${rc}"; fi
+  done
+  return "${worst}"
+}
+
 # probe_git_usable — exit TOOLCHAIN_PRECONDITION_RC unless git can INITIALIZE a
 # repository, not merely answer --version. An unaccepted Xcode licence leaves the
 # latter working while every `git init` fails, which reds hundreds of suite rows at
@@ -150,6 +188,31 @@ probe_git_usable() {
   printf 'run-bats-parallel: toolchain precondition FAILED (rc %s) — git cannot initialize a repository, so the suite never ran; this is NOT a red suite: %s\n' \
     "${TOOLCHAIN_PRECONDITION_RC}" "${err}" >&2
   exit "${TOOLCHAIN_PRECONDITION_RC}"
+}
+
+# raise_open_file_limit — lift the soft open-file limit to the hard limit, capped at
+# kern.maxfilesperproc where sysctl reports it, so stage 1's --jobs fan-out does not run
+# out of descriptors. A soft limit already at or above that target is kept, never lowered.
+raise_open_file_limit() {
+  local soft hard target cap=""
+  soft="$(ulimit -Sn)"
+  hard="$(ulimit -Hn)"
+  target="${hard}"
+  if command -v sysctl >/dev/null 2>&1; then
+    cap="$(sysctl -n kern.maxfilesperproc 2>/dev/null || true)" # GA-ABSORB[benign]: no such key off macOS
+  fi
+  if [[ "${cap}" =~ ^[0-9]+$ ]] && [[ "${target}" == unlimited || "${target}" -gt "${cap}" ]]; then
+    target="${cap}"
+  fi
+  if [[ "${soft}" == unlimited ]] || [[ "${target}" != unlimited && "${soft}" -ge "${target}" ]]; then
+    target="${soft}"
+  fi
+  if ulimit -Sn "${target}"; then # GA-ABSORB[handled@raise_open_file_limit WARN branch]: refusal warns, runs on
+    printf 'run-bats-parallel: open-file soft limit %s -> %s\n' "${soft}" "${target}" >&2
+  else
+    printf 'run-bats-parallel: WARN — could not raise the open-file soft limit %s -> %s; continuing at %s\n' \
+      "${soft}" "${target}" "${soft}" >&2
+  fi
 }
 
 main() {
@@ -180,6 +243,7 @@ main() {
   # Presence is not usability, and the three checks above only answer presence. Probed
   # in the same block so a toolchain verdict is reached before any stage costs time.
   probe_git_usable
+  raise_open_file_limit
 
   # macOS ships no nproc (GNU coreutils only); sysctl hw.ncpu is the BSD core source.
   local job_count=""
@@ -191,16 +255,25 @@ main() {
   fi
   [[ -n "${job_count}" ]] || job_count=4
 
-  cd -- "${REPO_ROOT}"
-
   local total_t0="${SECONDS}"
 
   printf 'run-bats-parallel: bats --jobs %s --no-parallelize-within-files over %s\n' \
     "${job_count}" "${TEST_ROOTS[*]}" >&2
 
-  run_stage 'stage 1/4 bats' \
-    env "${DAEMON_ENV_SCRUB[@]}" \
-    bats --jobs "${job_count}" --no-parallelize-within-files --recursive "${TEST_ROOTS[@]}"
+  # Stage 1 starts from an empty scratch cwd on absolute roots → a script inheriting the
+  # bats cwd resolves a cwd-relative path outside the repository. A failed mktemp or cd
+  # ends the run here under set -e, never folded into WORST_RC as a red suite.
+  local bats_roots=() root
+  for root in "${TEST_ROOTS[@]}"; do
+    bats_roots+=("${REPO_ROOT}/${root}")
+  done
+  BATS_CWD_DIR="$(mktemp -d -t run-bats-parallel-cwd.XXXXXX)"
+  cd -- "${BATS_CWD_DIR}"
+
+  run_stage 'stage 1/4 bats' run_bats_roots "${job_count}" "${bats_roots[@]}"
+
+  # The python stages name their roots relative to the repository.
+  cd -- "${REPO_ROOT}"
 
   # The unittest suites are hermetic under a sandbox HOME (they write nothing below it)
   # ONLY once GA_DATA_ROOT is scrubbed with it: ga_paths.get_base_root PREFERS
@@ -213,10 +286,12 @@ main() {
   # under conditions this stage does not share.
   SANDBOX_ROOT="$(mktemp -d -t run-bats-parallel-home.XXXXXX)"
   mkdir -p "${SANDBOX_ROOT}/hooks" "${SANDBOX_ROOT}/autoagent"
+  # never created — the dead PGHOST every python stage runs on (PG_ROUTING_SCRUB)
+  local dead_pghost="PGHOST=${SANDBOX_ROOT}/no-pg-socket"
 
   run_stage "stage 2/4 ${HOOKS_TEST_ROOT} unittest" \
     env "${PYTHON_STAGE_SCRUB[@]}" \
-    "HOME=${SANDBOX_ROOT}/hooks" \
+    "HOME=${SANDBOX_ROOT}/hooks" "${dead_pghost}" \
     python3 -m unittest discover -s "${HOOKS_TEST_ROOT}" -p 'test_*.py'
 
   # Stage 3 is the autoagent twin of stage 2 and is NOT conditional: autoagent/test is a
@@ -233,7 +308,7 @@ main() {
   # run, so the probe cannot read green under conditions this stage does not share.
   run_stage "stage 3/4 ${AUTOAGENT_TEST_ROOT} unittest" \
     env "${PYTHON_STAGE_SCRUB[@]}" \
-    "HOME=${SANDBOX_ROOT}/autoagent" \
+    "HOME=${SANDBOX_ROOT}/autoagent" "${dead_pghost}" \
     python3 -m unittest discover -s "${AUTOAGENT_TEST_ROOT}" -p 'test_*.py'
 
   # Stage 4 is conditional: the live install has no pytest, and the honest outcome
@@ -256,7 +331,7 @@ main() {
   # added later from writing under HOME, which is exactly what the sandbox would buy.
   if python3 -c 'import pytest' >/dev/null 2>&1; then
     run_stage "stage 4/4 ${SCRIPTS_TEST_ROOT} pytest" \
-      env "${PYTHON_STAGE_SCRUB[@]}" \
+      env "${PYTHON_STAGE_SCRUB[@]}" "${dead_pghost}" \
       python3 -m pytest "${SCRIPTS_TEST_ROOT}/" --color=no
   else
     local python3_path

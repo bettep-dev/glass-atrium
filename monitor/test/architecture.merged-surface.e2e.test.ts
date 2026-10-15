@@ -176,17 +176,15 @@ interface HealthFixture {
 	failedStores: HealthStore[];
 }
 
-// HEALTH_CARD_DEFS 의 daemon 카드 이름 — 이 둘만 명부에 두고 daily-restart-* 는 뺌.
-// 빠진 둘은 '못 찾음' 경로로 info 버킷에 들어가므로 분자/분모가 서로 다른 수가 됨:
-// 총계만 세는 픽스처는 버킷 배분이 뒤집혀도 초록이 됨.
+// HEALTH_CARD_DEFS 의 daemon 카드 이름 — 명부의 데몬 둘 전원.
 const HEALTH_OK_DAEMONS = ["autoagent", "wiki"];
 
 // 응답이 내는 마지막 실행 시각 — 명부에 있는 데몬만 이 값을 받고, 나머지 부품은 낼 실행이 없음.
 const DAEMON_RUN_TS = "2026-08-20T09:10:11.000Z";
 
-// 부품 명부의 크기 — HEALTH_CARD_DEFS 7종(PG · Chromium · daemon×4 · hook chain).
+// 부품 명부의 크기 — HEALTH_CARD_DEFS 5종(PG · Chromium · daemon×2 · hook chain).
 // 표의 행 수가 이 명부를 따르는지 재는 자리라 화면이 아니라 명부의 사실임.
-const HEALTH_EXPECTED_TOTAL = 7;
+const HEALTH_EXPECTED_TOTAL = 5;
 
 // 페이로드 항목 수 — 맵은 도착 건수만 한 줄로 냄(날짜·사유 펼침은 T9c 몫).
 const HEALTH_PAYLOAD_ENTRIES = 3;
@@ -710,7 +708,7 @@ const OK_DAEMON = "wiki";
 // 데몬 원천과 부품 원천이 같은 노드에서 만나는 자리 — HEALTH_CARD_DEFS 의 autoagent 카드 id.
 const DAEMON_PART_ID = "daemon-cycle";
 
-// 데몬 넷 밖의 부품 셋(PG · Chromium export · hook chain) → 그 판정을 대신 내는 존.
+// 데몬 둘 밖의 부품 셋(PG · Chromium export · hook chain) → 그 판정을 대신 내는 존.
 // 화면은 이 짝을 리터럴로 갖지 않음 — 그려지는 소스의 subgraph 멤버십과 part_bindings 를 곱해
 // "헬스 노드를 하나만 담은 존" 을 파생함. 여기 리터럴은 그 파생이 오늘 무엇을 내는지 못 박는 자리이고,
 // 집합 동등(그 셋이 전부인가)은 AC-B2-3f 가 따로 잼.
@@ -776,7 +774,7 @@ interface RingProbe {
 	ringed: string[];
 	ringClasses: string[];
 	// 노드 하나가 실제로 든 링 클래스 목록 — 총계만으로는 어느 노드가 어느 tone 인지 못 가름.
-	// 두 원천이 같은 노드를 짚는 자리(autoagent_d · cron)의 최악-우선 결과를 재는 유일한 다리임.
+	// 두 원천이 같은 노드를 짚는 자리(autoagent_d)의 최악-우선 결과를 재는 유일한 다리임.
 	classByNode: Record<string, string[]>;
 }
 
@@ -851,6 +849,10 @@ async function assertZoneRing(
 	assert.ok(
 		Object.hasOwn(probe.zoneClasses, zoneId),
 		`fixture precondition: the canvas draws no zone '${zoneId}' — the assertion below would be vacuous`,
+	);
+	assert.ok(
+		!Object.keys(probe.zoneClasses).some((id) => id.startsWith("map_row") || id.startsWith("map_col")),
+		`probe precondition: a layout frame of the map was read as a zone — probed: ${Object.keys(probe.zoneClasses).join(", ")}`,
 	);
 	assert.deepEqual(
 		probe.zoneClasses[zoneId],
@@ -1020,7 +1022,7 @@ test("AC-B2-3b a fault daemon verdict outranks the healthy part verdict on the s
 });
 
 /**
- * AC-B2-3d — 부품 판정이 자기 자리를 켬. 데몬 넷 밖의 세 부품(PG · Chromium export · hook chain)은
+ * AC-B2-3d — 부품 판정이 자기 자리를 켬. 데몬 둘 밖의 세 부품(PG · Chromium export · hook chain)은
  * 이 경로가 없으면 영영 판정 없이 남음.
  * 그 셋은 저마다 헬스 노드를 하나만 담은 존에 있어, 판정이 노드가 아니라 존 상자에 걸림 —
  * 그래서 존이 켜졌는지와 노드가 안 켜졌는지를 함께 잼. 앞만 재면 판정이 두 겹으로 읽히는 회귀가 지나감.
@@ -1176,6 +1178,9 @@ test("P0-2 every canvas edge is axis-aligned while the dagre control is not", as
 	await openMap(getLiveFixture());
 	const canvas = await getCanvasProbe();
 
+	// the three edges the screen draws — two bus edges into Orchestrator, the bypass right of the spine — are canvas links too, so the check covers them
+	const screenLinkCount = await page.evaluate((sel) => document.querySelectorAll(`${sel} path.flowchart-link[id$="_screen"]`).length, selectors.canvas);
+	assert.equal(screenLinkCount, 3, "the map's three screen-drawn edges are drawn as canvas links");
 	assertOrthogonalLinks(canvas.links, "canonical map canvas");
 
 	// 대조군은 대각을 실제로 가졌음을 양성으로 세워야 한다.
@@ -1810,6 +1815,10 @@ async function openHookHealth(needle: string): Promise<string> {
 	const deadline = Date.now() + 15_000;
 	let text = "";
 	while (Date.now() < deadline) {
+		// each hook event starts collapsed — open them so the whole served configuration is on screen
+		await page.evaluate(() => {
+			for (const details of document.querySelectorAll<HTMLDetailsElement>(".arch-hook-chain details")) details.open = true;
+		});
 		text = await getHookRowText();
 		if (text.includes(needle)) return text;
 		await new Promise((r) => setTimeout(r, 50));
@@ -1888,8 +1897,8 @@ const PAYLOAD_QUOTA_COUNT = 4;
 // health-detail.ts 의 getDoctorFailureMessage 가 rc 를 읽어 내는 문장 그대로.
 const PAYLOAD_DOCTOR_MESSAGE = "doctor verdict: fail (rc=1)";
 
-// 실패 사이클 하나 + 정상 사이클 하나 — 둘 다 날짜를 내야 확장 영역이 '실패만' 이 아니라
-// 최근 실행을 읽고 있음이 드러남.
+// 실패 사이클 하나 + 정상 사이클 하나 — 정상 사이클은 'N/M runs clean' 요약에만 세어지고
+// 목록에는 서지 않음이 드러남.
 function getFailingPayload(): Pick<HealthDaemonPayloadResponse, "entries"> {
 	return {
 		entries: [
@@ -1927,12 +1936,10 @@ interface RowExpansionProbe {
 
 // 데몬 이름 → 그 데몬을 실은 부품 id. 패널은 부품 단위이고 픽스처는 데몬 이름으로 말하므로
 // 둘 사이를 옮기는 자리가 필요함. 명부(health-model.js)와 같은 짝이지만 여기서 다시 적지 않고
-// 하네스가 쓰는 넷만 이름으로 고정함 — 유도하면 구현의 규칙을 되읽어 무엇을 세든 초록이 됨.
+// 하네스가 쓰는 둘만 이름으로 고정함 — 유도하면 구현의 규칙을 되읽어 무엇을 세든 초록이 됨.
 const DAEMON_PART_BY_NAME: Record<string, string> = {
 	autoagent: "daemon-cycle",
 	wiki: "glass-atrium-wiki-curator",
-	"daily-restart-autoagent": "daily-restart-autoagent",
-	"daily-restart-wiki": "daily-restart-wiki",
 };
 
 /**
@@ -1956,7 +1963,7 @@ async function getPanelDetailProbe(daemon: string): Promise<RowExpansionProbe> {
 }
 
 // 부품 → 그 부품을 켜는 노드를 열어 상세 패널을 세움. 표를 걷어낸 뒤로 헬스 단언은 전부 이 문을
-// 지남: 명부 일곱을 한 화면에 펴던 표 대신 부품은 제 노드의 패널에서만 보임. 짝은 서버 상수에서
+// 지남: 명부 전원을 한 화면에 펴던 표 대신 부품은 제 노드의 패널에서만 보임. 짝은 서버 상수에서
 // 뽑음 — 하네스가 부품↔노드를 다시 적으면 바인딩이 어긋나도 두 사본이 함께 틀린 채 초록이 됨.
 async function openPartHealth(partId: string): Promise<void> {
 	const [nodeId] = PART_NODE_BINDINGS[partId] ?? [];
@@ -1965,21 +1972,16 @@ async function openPartHealth(partId: string): Promise<void> {
 	const selector = `svg g.node[data-arch-node-id$=".${nodeId}"]`;
 	await page.waitForSelector(selector, { timeout: 30_000 });
 
-	// 닫기 · 맞춤 · 누르기 · 항목 대기는 openNodePanel 안에 있음 — 항목까지 한 시도로 묶어야
+	// 닫기 · 기본 보기 · 누르기 · 항목 대기는 openNodePanel 안에 있음 — 항목까지 한 시도로 묶어야
 	// 빗나간 누르기가 되풀이에 닿음.
 	await openNodePanel(selector, `${nodeId}' for part '${partId}`, {
 		confirm: `[data-health-row="${partId}"]`,
 	});
 }
 
-// 노드가 그려진 자리를 재고 그 좌표를 직접 누름 — locator.click 을 쓰지 않는 이유가 있음.
-// 드라이버는 누르기 전에 대상을 시야로 끌어오려 스크롤하는데, 캔버스의 휠 확대(svg-pan-zoom,
-// 기본 감도 0.1)가 그 스크롤을 확대로 읽어 배율이 틱마다 1.1 배씩 올라감. 한 번 커지면 노드는
-// 더 밖으로 나가 스크롤이 다시 일어나고, 상한에 걸릴 때까지 되풀이됨
-// (실측: 0.6566 → 1.7071 = 0.6566 × 1.1^10, 그 뒤 어떤 노드도 못 누름).
-// 좌표로 누르면 스크롤이 아예 없고, 노드가 정말 그 자리에 그려졌는지까지 함께 재게 됨.
-// 노드를 누르는 자리는 전부 이 문을 지남 — 한 곳이라도 locator.click 으로 남으면 그 한 번이
-// 배율을 올려 놓고, 그 뒤의 모든 누르기가 실패함.
+// 노드가 그려진 자리를 재고 그 좌표를 직접 누름 — 드라이버의 스크롤·재시도 없이 한 번만 누르고,
+// 노드가 정말 그 자리에 그려졌는지까지 함께 재게 됨.
+// 노드를 누르는 자리는 전부 이 문을 지남 — 아래 더블클릭 간격 지킴이 모든 누르기에 걸려야 함.
 async function clickNodeAt(selector: string, describe: string): Promise<void> {
 	// 노드가 트리에 들어오기를 먼저 기다림. 아래 되밀기는 '자리가 밀렸다' 만 고치고 '아직 없다' 는
 	// 못 고침 — box 가 null 이면 되밀기를 건너뛰고 바로 단언으로 감. 캔버스를 갈아끼우는 경로
@@ -1990,8 +1992,8 @@ async function clickNodeAt(selector: string, describe: string): Promise<void> {
 		.catch(() => null);
 
 	let box = await readNodeBox(selector);
-	// 자리를 못 잡았으면 맞춤을 한 번 되밀고 다시 잼. 배율은 재는 순간과 누르는 순간 사이에도
-	// 밀릴 수 있어(부하가 높으면 자동 맞춤이 늦게 앉음) 미리 재는 것만으로는 경합이 남음.
+	// 자리를 못 잡았으면 기본 보기를 한 번 되밀고 다시 잼. 배율은 재는 순간과 누르는 순간 사이에도
+	// 밀릴 수 있어(부하가 높으면 기본 보기가 늦게 앉음) 미리 재는 것만으로는 경합이 남음.
 	// 되민 뒤에도 밖이면 그때는 진짜 결함이므로 아래 단언이 붉어짐 — 자가 치유가 실패를 삼키지 않음.
 	if (box && !box.inside) {
 		await forceRefitCanvas();
@@ -2005,7 +2007,26 @@ async function clickNodeAt(selector: string, describe: string): Promise<void> {
 			`node ${box.node} · pane ${box.pane} · scale ${box.scale} · ${box.overlays} overlay(s) standing`,
 	);
 
+	await waitOutDoubleClickWindow(box.x, box.y);
 	await page.mouse.click(box.x, box.y);
+	lastNodeClick = { x: box.x, y: box.y, at: Date.now() };
+}
+
+/**
+ * svg-pan-zoom 3.6.2 reads two mousedowns under 250ms and 10px apart as a double-click and zooms x2.6 at that point (Utils.isDblClick, not the browser click count).
+ * Two parts bound to one node open it at the same coordinates ~20ms apart, so without this gap the second open zooms the map in.
+ */
+const DOUBLE_CLICK = { RADIUS_PX: 10, GAP_MS: 400 };
+let lastNodeClick: { x: number; y: number; at: number } | null = null;
+
+async function waitOutDoubleClickWindow(x: number, y: number): Promise<void> {
+	if (!lastNodeClick) return;
+
+	const distance = Math.hypot(x - lastNodeClick.x, y - lastNodeClick.y);
+	const remaining = DOUBLE_CLICK.GAP_MS - (Date.now() - lastNodeClick.at);
+	if (distance >= DOUBLE_CLICK.RADIUS_PX || remaining <= 0) return;
+
+	await page.waitForTimeout(remaining);
 }
 
 async function readNodeBox(selector: string) {
@@ -2030,36 +2051,32 @@ async function readNodeBox(selector: string) {
 	}, selector);
 }
 
-// 지도를 맞춤 배율에 세움. 노드가 그려진 것과 맞춤이 걸린 것은 다른 순간이고, openMap 은 SVG 가
-// 나타나면 돌아오므로 그 사이에 재면 원래 배율의 자리를 재게 됨 — 그 상태에서는 지도가 pane 을
-// 넘어 가장자리 노드가 아예 못 눌림(실측: 맞춤 전 1.7071 · 맞춤 후 0.6566, pane 1150x610).
-// 자동 맞춤이 앉기를 기다리는 대신 화면의 맞춤 컨트롤(캔버스 포커스 + `0` = fitToView)을 눌러
-// 결정적으로 세움 — 언제 앉는지에 기대지 않게 됨. 하네스가 변환행렬을 직접 쓰지는 않음:
-// 그러면 제품이 그리는 자리가 아니라 하네스가 정한 자리를 재게 됨.
-// 화면의 맞춤 컨트롤(캔버스 포커스 + `0` = fitToView)을 눌러 배율을 되돌림.
+// 지도를 기본 보기(개요)에 세움. 노드가 그려진 것과 기본 보기가 걸린 것은 다른 순간이고, openMap 은
+// SVG 가 나타나면 돌아오므로 그 사이에 재면 다른 배율의 자리를 재게 됨.
+// 기본 보기가 앉기를 기다리는 대신 화면의 Reset 컨트롤(캔버스 포커스 + `0` = resetView)을 눌러
+// 결정적으로 세우고, 그 배율이 CTM 에 실릴 때까지 기다림 — 라이브러리는 다음 프레임에 반영함.
 // 하네스가 변환행렬을 직접 쓰지는 않음: 그러면 제품이 그리는 자리가 아니라 하네스가 정한 자리를 재게 됨.
 async function forceRefitCanvas(): Promise<void> {
 	const canvas = page.locator(".arch-mermaid-canvas");
 	if ((await canvas.count()) === 0) return;
 	await canvas.focus();
 	await page.keyboard.press("0");
-	await page.waitForFunction(
-		() => {
-			const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
-			const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
-			return Boolean(m && m.a > 0 && m.a <= 1);
-		},
-		null,
-		{ timeout: 30_000 },
-	);
+	await page.waitForFunction(readCanvasFitted, FIT_SCALE_TOLERANCE, { timeout: 30_000 });
 }
 
+// CTM float noise around the stamped scale, same bound map-fit e2e waits on
+const FIT_SCALE_TOLERANCE = 1e-3;
+
 async function isCanvasFitted(): Promise<boolean> {
-	return await page.evaluate(() => {
-		const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
-		const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
-		return Boolean(m && m.a > 0 && m.a <= 1);
-	});
+	return await page.evaluate(readCanvasFitted, FIT_SCALE_TOLERANCE);
+}
+
+// fitted = the CTM carries the default-view scale the product stamped — any zoomed state fails, whatever its scale
+function readCanvasFitted(tolerance: number): boolean {
+	const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
+	const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
+	const fitScale = Number(vp?.getAttribute("data-arch-fit-scale"));
+	return Boolean(m && fitScale > 0 && Math.abs(m.a - fitScale) < tolerance);
 }
 
 async function waitForFittedCanvas(): Promise<void> {
@@ -2077,24 +2094,13 @@ async function waitForFittedCanvas(): Promise<void> {
 		{ timeout: 30_000 },
 	);
 
-	// 이미 맞춰져 있으면 그대로 둠 — 부품 일곱을 순회하는 절은 여기를 열네 번 지나는데, 매번
+	// 이미 맞춰져 있으면 그대로 둠 — 부품 다섯을 순회하는 절은 여기를 열 번 지나는데, 매번
 	// 포커스 + 키 + 폴링을 다시 돌리면 전체 스위트를 함께 돌릴 때 그 값이 기한을 넘겼음(실측 30.5초).
 	// 여기서 놓친 밀림은 clickNodeAt 이 누르기 직전에 다시 재어 되밀음.
 	if (await isCanvasFitted()) return;
 
+	// Reset 이 기본 보기 배율에 앉지 않으면 그 자체가 결함이라 forceRefitCanvas 의 대기가 붉어짐.
 	await forceRefitCanvas();
-
-	// 화면의 상한이 1 이므로 그것을 앵커로 씀 — 안 내려오면 맞춤이 걸리지 않은 것이고,
-	// 그 사실 자체가 결함이라 여기서 붉어져야 함.
-	await page.waitForFunction(
-		() => {
-			const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
-			const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
-			return Boolean(m && m.a > 0 && m.a <= 1);
-		},
-		null,
-		{ timeout: 30_000 },
-	);
 }
 
 async function closePanelIfOpen(): Promise<void> {
@@ -2105,7 +2111,7 @@ async function closePanelIfOpen(): Promise<void> {
 // 노드를 눌러 패널을 세우는 단 하나의 문. 자리마다 기한을 늘리던 것을 걷어내고 여는 행위 자체를
 // 되풀이함 — 기한이 다했다는 것은 누르기가 빗나갔다는 뜻이고(패널은 누르는 즉시 섬, 왕복이 없음),
 // 빗나간 누르기는 아무리 오래 기다려도 패널을 세우지 못하므로 기한을 늘리는 고침은 원리상 듣지 않음.
-// 여는 것은 멱등임 — 열려 있으면 닫고, 맞춤을 다시 세우고, 자리를 다시 재어 누름.
+// 여는 것은 멱등임 — 열려 있으면 닫고, 기본 보기를 다시 세우고, 자리를 다시 재어 누름.
 // 기한 총합은 늘리지 않음: 5 + 10 + 15 = 30초로, 이 파일이 한 번에 기다리던 30초와 같음.
 // 뒤 시도일수록 길게 잡는 이유 — 앞선 빗나감은 빨리 잡고, 정말 느린 기계에는 마지막 한 번을 길게 줌.
 const OPEN_PANEL_ATTEMPT_MS = [5_000, 10_000, 15_000];
@@ -2202,7 +2208,7 @@ async function closePanel(): Promise<void> {
 	// 헬스 구획이 아니라 오버레이의 사라짐을 기다림 — 헬스를 싣지 않은 노드를 연 경우
 	// 구획이 애초에 없어 detached 를 영원히 기다리게 됨.
 	// 기한은 파일의 다른 요소 대기와 같은 30초 — 브라우저 스위트 셋이 동시에 도는 조합 실행에서
-	// 15초는 한 번 걸렸음(맵 렌더 + 맞춤이 그만큼 늦어짐). 붉게 실패하므로 위험은 flake 뿐이지만,
+	// 15초는 한 번 걸렸음(맵 렌더 + 기본 보기가 그만큼 늦어짐). 붉게 실패하므로 위험은 flake 뿐이지만,
 	// 흔들리는 스위트는 이 시험들이 내는 신호 자체를 깎음.
 	await page.waitForSelector(".detail-overlay", { state: "detached", timeout: 30_000 });
 }
@@ -2229,9 +2235,14 @@ interface PartFacts {
 	lastRun: string;
 	alsoLights: string;
 	hasDetail: boolean;
-	// 드릴다운 응답은 한 번에 한 데몬 것임 — 한 노드에 데몬 부품이 둘이면(cron) 한쪽은 상세를,
-	// 다른 쪽은 그 상세를 불러오는 컨트롤을 냄. 둘 중 하나는 반드시 있어야 함.
+	// 데몬 부품마다 최근 실행 토글이 있음 — 드릴된 쪽은 펼쳐진 상태, 다른 쪽은 불러오는 컨트롤임.
 	hasDrill: boolean;
+	// 토글의 aria-expanded 값 — 토글이 없으면 null.
+	drillExpanded: string | null;
+	// 토글의 aria-controls 원값 — 닫힌 토글은 없어야 함(null).
+	drillControls: string | null;
+	// aria-controls 가 실재하는 이 행 자신의 상세 영역을 가리키는지.
+	drillControlsDetail: boolean;
 }
 
 async function getPartFacts(partId: string): Promise<PartFacts> {
@@ -2247,6 +2258,9 @@ async function getPartFacts(partId: string): Promise<PartFacts> {
 				alsoLights: "",
 				hasDetail: false,
 				hasDrill: false,
+				drillExpanded: null,
+				drillControls: null,
+				drillControlsDetail: false,
 			};
 
 		// 머리글이 없으므로 자리로 읽음 — 이름 · 판정 · 마지막 실행이 head 안에서 이 순서임.
@@ -2259,6 +2273,9 @@ async function getPartFacts(partId: string): Promise<PartFacts> {
 			[...row.children]
 				.map((el) => (el.textContent || "").replace(/\s+/g, " ").trim())
 				.find((t) => t.startsWith("Also lights:")) || "";
+		const drill = row.querySelector(".arch-part-drill");
+		const controls = drill ? drill.getAttribute("aria-controls") : null;
+		const region = controls ? document.getElementById(controls) : null;
 
 		return {
 			found: true,
@@ -2269,7 +2286,10 @@ async function getPartFacts(partId: string): Promise<PartFacts> {
 			lastRun: (head[2] || "").replace(/^Last run\s*/, ""),
 			alsoLights: also.replace(/^Also lights:\s*/, ""),
 			hasDetail: Boolean(row.querySelector("[data-health-detail]")),
-			hasDrill: Boolean(row.querySelector(".arch-part-drill")),
+			hasDrill: Boolean(drill),
+			drillExpanded: drill ? drill.getAttribute("aria-expanded") : null,
+			drillControls: controls,
+			drillControlsDetail: region !== null && region === row.querySelector("[data-health-detail]"),
 		};
 	}, partId);
 }
@@ -2591,7 +2611,7 @@ test("AC-T8 the keyboard alone reaches a node and opens its health detail", asyn
 	assert.equal((await getPartFacts("hook-chain")).found, true, "Space must open it too");
 });
 
-test("AC-T9 the expanded region names the failure date and the reason behind it", async () => {
+test("the expanded region counts the clean runs and lists only the failed run with its date and reasons", async () => {
 	await openMapWithHealth(getHealthFixture({ payload: getFailingPayload() }));
 	await openDaemonHealth(BOUND_DAEMON);
 
@@ -2613,9 +2633,15 @@ test("AC-T9 the expanded region names the failure date and the reason behind it"
 		text.includes(`×${PAYLOAD_QUOTA_COUNT}`),
 		`a reason repeated across the cycle must carry its count, not read as a single event — read "${text}"`,
 	);
+	const { entries } = getFailingPayload();
+	const cleanCount = entries.filter((entry) => entry.summary.verdict === "ok" && entry.summary.error_signatures.length === 0).length;
 	assert.ok(
-		text.includes(PAYLOAD_OK_DATE),
-		"a run with no signatures must still state its date — the region lists runs, not only failures",
+		text.includes(`${cleanCount}/${entries.length} runs clean`),
+		`the region must count the clean runs against every stored run — read "${text}"`,
+	);
+	assert.ok(
+		!text.includes(PAYLOAD_OK_DATE),
+		`a clean run is counted in the summary, never listed — the list names failures only — read "${text}"`,
 	);
 });
 
@@ -2730,16 +2756,10 @@ test("AC-T9 a payload response still on its way reads as loading, not as unreada
 
 // --- AC-B2-4: the health table stands on the part roster ---------------------
 
-// 확장 컨트롤을 내야 하는 행 — 데몬 넷 + Hook Chain (AC-B2-4d). 명부에서 유도하지 않고 이름으로
+// 확장 컨트롤을 내야 하는 행 — 데몬 둘 + Hook Chain (AC-B2-4d). 명부에서 유도하지 않고 이름으로
 // 고정함: 유도하면 구현의 규칙을 그대로 되읽어 무엇을 세든 초록이 됨. 부품이 하나 늘면 여기가
 // 붉어지는 것이 맞음 — 새 부품은 '펼칠 것이 있는가' 를 스스로 밝혀야 함.
-const EXPANDABLE_PART_IDS = [
-	"daemon-cycle",
-	"glass-atrium-wiki-curator",
-	"daily-restart-autoagent",
-	"daily-restart-wiki",
-	"hook-chain",
-];
+const EXPANDABLE_PART_IDS = ["daemon-cycle", "glass-atrium-wiki-curator", "hook-chain"];
 
 // 판정 앵커 — 항목의 '등장' 이 아니라 tone 이 붙은 것을 기다림. 항목은 부품 명부로 서므로 health
 // 응답 없이도 패널을 여는 순간 그려짐: 등장을 기다리면 여는 것을 기다린 것이지 판정을 기다린 것이
@@ -2853,12 +2873,12 @@ async function waitForRowCount(expected: number): Promise<number> {
 	return count;
 }
 
-// 데몬 행 — 확장 컨트롤을 갖는 다섯 중 hook 행을 뺀 넷. 이 넷만 데몬 응답을 원천으로 삼음.
+// 데몬 행 — 확장 컨트롤을 갖는 셋 중 hook 행을 뺀 둘. 이 둘만 데몬 응답을 원천으로 삼음.
 const DAEMON_PART_IDS = EXPANDABLE_PART_IDS.filter((id) => id !== "hook-chain");
 
 // 항목 하나가 내는 판정 두 갈래 — tone 속성과 판정 글자. 둘을 함께 읽는 이유는 속성만 재면
 // 글자로 지어낸 판정('Healthy')을 못 보고, 글자만 재면 앵커 계약이 안 걸리기 때문임.
-// 데몬 넷은 서로 다른 노드에 묶여 있으므로 표에서 한 번에 읽던 것을 노드 순회로 읽음.
+// 데몬 둘은 서로 다른 노드에 묶여 있으므로 표에서 한 번에 읽던 것을 노드 순회로 읽음.
 async function getDaemonRowVerdicts(): Promise<{ id: string; tone: string | null; status: string }[]> {
 	const out: { id: string; tone: string | null; status: string }[] = [];
 	for (const id of DAEMON_PART_IDS) {
@@ -2943,7 +2963,7 @@ test("AC-B2-6f a daemon part with no response carries no verdict, never a fabric
 		"a daemon part whose response never arrived must carry no tone and read 'Not loaded' — a tone or a verdict word would be invented",
 	);
 
-	// 대조군 — 응답이 오면 같은 넷이 판정을 실음. 없으면 위 절은 '항목이 없어서' 초록일 수 있음.
+	// 대조군 — 응답이 오면 같은 둘이 판정을 실음. 없으면 위 절은 '항목이 없어서' 초록일 수 있음.
 	await openMap(getLiveFixture());
 	await waitForPartVerdict("daemon-cycle");
 	await closePanel();
@@ -3034,10 +3054,10 @@ test("AC-B2-4c an unreachable database turns the PostgreSQL entry, not only the 
 
 // 확장 컨트롤은 접을 것과 함께 사라졌음 — 남은 계약은 '읽을 것이 있는 부품만 상세를 낸다' 이고,
 // 그것이 원래 그 컨트롤이 지키던 약속임(빈 영역을 여는 자리는 읽을 것이 있다고 거짓말함).
-// 다만 한 노드에 데몬 부품이 둘이면(cron) 드릴다운 응답이 한 데몬 것뿐이라 한쪽은 상세를,
+// 다만 한 노드에 데몬 부품이 둘이면 드릴다운 응답이 한 데몬 것뿐이라 한쪽은 상세를,
 // 다른 쪽은 그것을 불러오는 컨트롤을 냄 — 둘 다 '읽을 것이 있음' 이므로 함께 셈. 그 대신
 // '같은 노드에서 상세는 한 번에 하나' 를 아래 마지막 절이 따로 못 박음.
-test("AC-B2-4d only a part with something to show offers a detail or a way to load one", async () => {
+test("only a part with something to show offers a detail or a way to load one", async () => {
 	await openMap(getLiveFixture(), getQueueFixture(), getHookChainFixture());
 
 	const offering: string[] = [];
@@ -3054,12 +3074,15 @@ test("AC-B2-4d only a part with something to show offers a detail or a way to lo
 	assert.deepEqual(
 		[...offering].sort(),
 		[...EXPANDABLE_PART_IDS].sort(),
-		"exactly the four daemon parts and the hook chain part have something to show — nothing else does",
+		"exactly the daemon parts and the hook chain part have something to show — nothing else does",
 	);
 
-	// 한 노드에 묶인 데몬 부품 둘 — 상세는 한쪽에만, 컨트롤은 다른 쪽에만. 둘 다 상세를 그리면
-	// 한 데몬의 실행 목록이 다른 데몬의 것으로 읽히고, 둘 다 컨트롤이면 열자마자 비어 있음.
-	const shared = ["daily-restart-autoagent", "daily-restart-wiki"];
+	// 한 노드에 묶인 데몬 부품 둘 — 상세는 한쪽에만, 토글은 양쪽에 있되 펼쳐진 것은 상세를 그린
+	// 쪽뿐. 둘 다 상세를 그리면 한 데몬의 실행 목록이 다른 데몬의 것으로 읽힘.
+	// 명부의 데몬 부품은 노드를 따로 가지므로 응답의 part_bindings 로 둘째를 첫째의 노드에 묶음.
+	const shared = ["daemon-cycle", "glass-atrium-wiki-curator"];
+	const sharedBindings = { ...PART_NODE_BINDINGS, [shared[1]]: [...PART_NODE_BINDINGS[shared[0]]] };
+	await openMap(getLiveFixture({ part_bindings: sharedBindings }), getQueueFixture(), getHookChainFixture());
 	await openPartHealth(shared[0]);
 	const both = [await getPartFacts(shared[0]), await getPartFacts(shared[1])];
 	assert.deepEqual(
@@ -3068,9 +3091,14 @@ test("AC-B2-4d only a part with something to show offers a detail or a way to lo
 		"two daemon parts on one node must not both render a detail — the payload response carries one daemon",
 	);
 	assert.deepEqual(
-		both.map((f) => f.hasDrill),
-		[false, true],
-		"the part whose runs are not loaded must carry the control that loads them, or its log is unreachable",
+		both.map((f) => f.drillExpanded),
+		["true", "false"],
+		"each daemon part carries its runs toggle, and only the part whose runs are shown reads expanded",
+	);
+	assert.deepEqual(
+		both.map((f) => [f.drillControlsDetail, f.drillControls === null]),
+		[[true, false], [false, true]],
+		"an open toggle must name the runs region it controls; a closed one points at nothing",
 	);
 
 	// 그 컨트롤을 누르면 드릴다운이 옮겨가고 둘의 역할이 맞바뀜.
@@ -3081,6 +3109,22 @@ test("AC-B2-4d only a part with something to show offers a detail or a way to lo
 		swapped.map((f) => f.hasDetail),
 		[false, true],
 		"pressing the control must move the drilldown to that daemon, not add a second one",
+	);
+});
+
+test("Hide on an open daemon part collapses its runs and reads collapsed", async () => {
+	await openMap(getLiveFixture(), getQueueFixture(), getHookChainFixture());
+	const partId = "daemon-cycle";
+	await openPartHealth(partId);
+	assert.equal((await getPartFacts(partId)).drillExpanded, "true", "fixture precondition: the drilled part opens with its runs shown");
+
+	await page.click(`[data-health-row="${partId}"] .arch-part-drill`);
+	await page.waitForSelector(`[data-health-row="${partId}"] [data-health-detail]`, { state: "detached", timeout: 10_000 });
+	const facts = await getPartFacts(partId);
+	assert.deepEqual(
+		{ expanded: facts.drillExpanded, controls: facts.drillControls },
+		{ expanded: "false", controls: null },
+		"a collapsed toggle must read collapsed and stop naming a region that is gone",
 	);
 });
 
@@ -3144,7 +3188,7 @@ test("B2-4 guard the residual bindings come from the served part_bindings, not a
 	await openMap(getLiveFixture());
 
 	// 기대값은 서버 상수에서 뽑음 — 하네스가 목록을 다시 적으면 두 사본이 함께 틀린 채 초록이 됨.
-	// 연 노드를 뺀 나머지가 기대값이고, 오늘 일곱 부품은 모두 노드 하나에만 묶여 있으므로 전부 빔.
+	// 연 노드를 뺀 나머지가 기대값이고, 오늘 다섯 부품은 모두 노드 하나에만 묶여 있으므로 전부 빔.
 	const roster = await getRosterPartIds();
 	assert.equal(
 		roster.length,
@@ -3188,20 +3232,20 @@ test("B2-4 guard the residual bindings come from the served part_bindings, not a
 	);
 });
 
-// 응답이 실행을 실어 준 데몬 부품 — 명부에 있는 둘. 나머지 부품은 낼 실행이 없음.
-const RAN_PART_IDS = ["daemon-cycle", "glass-atrium-wiki-curator"];
+// 응답이 실행을 실어 준 데몬 부품 — autoagent 하나. wiki 는 실행 없이 답해 '—' 갈래를 채움.
+const RAN_PART_IDS = ["daemon-cycle"];
 
 // 대조 순간 — 첫 절이 실은 값과 자릿수까지 떨어뜨림. 상대시각은 버킷으로 접히므로 가까운 두 값은
 // 같은 글로 접혀 '움직였는가' 를 못 재게 됨.
 const DAEMON_RUN_ALT_TS = "2019-03-04T05:06:07.000Z";
 
-// 명부에 있는 두 데몬이 같은 순간을 보고하는 health 픽스처 — 절마다 그 순간만 갈아끼움.
+// autoagent 만 그 순간을 보고하는 health 픽스처 — 절마다 그 순간만 갈아끼움.
 function getRanDaemonFixture(runTs: string): HealthFixture {
 	return getHealthFixture({
 		daemons: HEALTH_OK_DAEMONS.map((daemon_name) => ({
 			daemon_name,
 			effective_status: "ok" as const,
-			last_run_at: runTs,
+			last_run_at: daemon_name === "autoagent" ? runTs : null,
 		})),
 	});
 }

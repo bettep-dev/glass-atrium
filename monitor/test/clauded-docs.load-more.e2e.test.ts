@@ -5,7 +5,7 @@
 // App: stripped Fastify (fastify-static + clauded-docs routes) on ephemeral port (production 16145 미간섭) · Browser: Playwright chromium headless, NO mocking.
 // Chromium 미설치 시 loud-fail — `npx playwright install chromium` 선행 필요 (in-test guard 없음).
 
-import test, { after, before } from "node:test";
+import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -18,12 +18,13 @@ import "dotenv/config";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
-import type { Browser, BrowserContext, Page } from "playwright";
+import type { Browser, BrowserContext, Locator, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerClaudedDocsRoutes } from "../src/server/routes/clauded-docs.js";
 import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
+import { getBelowFloorText } from "./lib/painted-text.js";
 
 // shared fixtures.
 
@@ -126,8 +127,7 @@ after(async () => {
   resetDocsRootCache();
 });
 
-// 60 docs 만들기 — prefix/doc_type 컬럼은 DROP 됨 (서버가 silent-ignore) → 격리는 SUITE_MARKER
-// title + created_at DESC 정렬(시드 = 최신 → 첫 page 가시)에 의존.
+// seeds isolated by SUITE_MARKER title — parallel suites' newer docs can push them past page 1 → find own rows via revealRowByTitle.
 async function seedManyDocs(count: number, label: string): Promise<number[]> {
   const ids: number[] = [];
   for (let i = 0; i < count; i++) {
@@ -187,6 +187,23 @@ function loadMoreButton(page: Page) {
   return page.getByRole("button", { name: /^Show [\d,]+ more$/ });
 }
 
+// helper — a test's own row by its unique seed title, paging with Load More until it renders.
+//   · other test files share this DB and insert newer docs concurrently → an own row can sit past page 1.
+async function revealRowByTitle(page: Page, title: string, rowSelector = "tr.doc-row"): Promise<Locator> {
+  const row = page.locator(rowSelector, { hasText: title }).first();
+  const loadMore = loadMoreButton(page);
+  while ((await row.count()) === 0 && (await loadMore.isVisible())) {
+    await clickAndWaitForListResponse(
+      page,
+      async () => { await loadMore.click(); },
+      (url) => url.includes("/groups") && url.includes("offset="),
+    );
+    await page.getByRole("button", { name: "Loading more" }).waitFor({ state: "hidden" });
+  }
+  await row.waitFor({ state: "visible" });
+  return row;
+}
+
 // helper — 'doc-row' 가시 행 수 카운트.
 async function countVisibleRows(page: Page): Promise<number> {
   return await page.locator("tr.doc-row").count();
@@ -213,9 +230,19 @@ async function waitForRowCountAtMost(page: Page, maxCount: number): Promise<void
   );
 }
 
+// helper — titles of the rendered ledger rows carrying a label (a repeated group renders its title twice)
+async function getRowTitles(page: Page, label: string): Promise<string[]> {
+  return await page.evaluate(
+    (fragment) =>
+      Array.from(document.querySelectorAll("tr.doc-row .doc-title-text"), (el) => el.textContent ?? "")
+        .filter((text) => text.includes(fragment)),
+    label,
+  );
+}
+
 // load-more: 60 seeds → initial 50 + Load More click → 60.
 
-test("load-more: 60 seeds → initial 50 visible + Load More button → click → 60 visible + button hidden", async () => {
+test("load-more: 60 seeds → initial 50 visible + Load More button → click → 60 visible", async () => {
   const ids = await seedManyDocs(60, "ac3lm");
   try {
     const context: BrowserContext = await browser.newContext();
@@ -223,7 +250,7 @@ test("load-more: 60 seeds → initial 50 visible + Load More button → click �
     try {
       // 화면 진입 — hash router screen id 'clauded-docs' (app.jsx NAV 항목 id 와 동일 · '#clauded-docs' 패턴).
       // app.jsx parseHashScreen 가 raw hash 를 그대로 NAV.id 와 비교 — '#screen-clauded-docs' 같은 prefix 사용 시 fallback=dashboard.
-      // 기본 stage filter = '열림' — 시드 60건이 doc_review 기본값 + created_at DESC 최신이라 첫 page 포함.
+      // default 'Open' filter — 60 open seeds guarantee a full page 1 plus a Load More, whoever owns its rows.
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
 
       // 최초 fetch — limit=50 → 50 행 가시 (총 group ≥ 60 → first page 50).
@@ -243,10 +270,6 @@ test("load-more: 60 seeds → initial 50 visible + Load More button → click �
       );
       // React batching → setLoadedRows 반영까지 polling.
       await waitForRowCountAtLeast(page, 60);
-
-      const afterLoadMore = await countVisibleRows(page);
-      assert.ok(afterLoadMore >= 60, `Load More 후 ≥60 rows (got ${afterLoadMore})`);
-      assert.ok(afterLoadMore > initialRowCount, `행 증가 (initial ${initialRowCount} → after ${afterLoadMore})`);
     } finally {
       await context.close();
     }
@@ -265,7 +288,7 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
 
-      // 기본 '열림' filter — 60 시드 (doc_review 기본값 · 최신) 가 첫 page 점유.
+      // default 'Open' filter — 60 open seeds guarantee a full page 1 plus a Load More, whoever owns its rows.
       await waitForRowCountAtLeast(page, 50);
 
       // Load More click → 누적 ≥60. Promise.all 로 click + offset=50 응답 동기화.
@@ -277,17 +300,66 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
         (url) => url.includes("offset=50"),
       );
       await waitForRowCountAtLeast(page, 60);
-      const afterLoadMore = await countVisibleRows(page);
-      assert.ok(afterLoadMore >= 60, `Load More 후 ≥60 rows (got ${afterLoadMore})`);
 
       // 'All' chip 으로 filter 변경 → offset 리셋 + 새 첫 50 fetch.
       // 누적된 60+ 행이 사라지고 최대 50 행만 표시되어야 (리셋 증거).
       // clickDocStatusChip 는 offset 미포함 응답 대기 → reset 완료 시그널.
+      // a reset that lands one render late still fires a stale offset=50 request first, which the row count alone cannot see
+      const offsetRequests: string[] = [];
+      page.on("request", (req) => {
+        const url = new URL(req.url());
+        if (url.pathname.endsWith("/api/clauded-docs/groups") && url.searchParams.has("offset")) {
+          offsetRequests.push(url.search);
+        }
+      });
       await clickDocStatusChip(page, "All");
       await waitForRowCountAtMost(page, 50);
-      const afterReset = await countVisibleRows(page);
-      assert.ok(afterReset <= 50,
-        `doc_status change 시 페이지 리셋 — row 수 ≤50 (got ${afterReset})`);
+      assert.deepStrictEqual(offsetRequests, [], "the chip change requests only the first page");
+    } finally {
+      await context.close();
+    }
+  } finally {
+    for (const id of ids) await deleteDoc(id);
+  }
+});
+
+// load-more under a concurrent writer: offset paging shifts by one → page 2 repeats page 1's last group
+test("load-more: a doc created between page 1 and Load More still renders every group once with no duplicate React keys", async () => {
+  const ids = await seedManyDocs(60, "ac3shift");
+  try {
+    const context: BrowserContext = await browser.newContext();
+    const page: Page = await context.newPage();
+    const keyWarnings: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.text().includes("same key")) keyWarnings.push(msg.text());
+    });
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      await waitForRowCountAtLeast(page, 50);
+
+      const interleavedDoc = await postCreate({
+        title: makeTitle("ac3shift-interleaved", 0),
+        author: "load-more-tester",
+        html_body: makeHtmlBody("ac3shift-interleaved"),
+      });
+      ids.push(interleavedDoc.id);
+
+      const loadMoreBtn = loadMoreButton(page);
+      await loadMoreBtn.waitFor({ state: "visible" });
+      await clickAndWaitForListResponse(
+        page,
+        async () => { await loadMoreBtn.click(); },
+        (url) => url.includes("offset=50"),
+      );
+      await waitForRowCountAtLeast(page, 60);
+
+      const seededTitles = await getRowTitles(page, "ac3shift");
+      assert.strictEqual(
+        new Set(seededTitles).size,
+        seededTitles.length,
+        `a group repeated across the shifted page renders once (${seededTitles.length} rows, ${new Set(seededTitles).size} unique)`,
+      );
+      assert.deepStrictEqual(keyWarnings, [], "no duplicate React keys after Load More");
     } finally {
       await context.close();
     }
@@ -320,13 +392,12 @@ test("superseded-drawer: supersedes_id 가진 doc 선택 → meta sidebar 'Versi
     const context: BrowserContext = await browser.newContext();
     const page: Page = await context.newPage();
     try {
-      // 기본 '열림' filter — successor (doc_review · 최신 created_at) 가 첫 page 포함.
+      // default 'Open' filter — the successor can sit past page 1 → revealRowByTitle below.
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
       // successor 행 클릭 → fullscreen viewer 진입 → meta sidebar 노출.
-      const succRow = page.locator("tr.doc-row", { hasText: succTitle });
-      await succRow.waitFor({ state: "visible" });
+      const succRow = await revealRowByTitle(page, succTitle);
       await succRow.click();
 
       // (a) viewer meta sidebar — DocMetaPanelCD → PredecessorPanelCD 의 'Version history' <details> 섹션 PRESENT.
@@ -434,7 +505,7 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
 
-      // 기본 '열림' filter — 시드 행 (최신 created_at) 이 첫 page 가시.
+      // default 'Open' filter — wait for the initial list before switching chips.
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
       // '종료' chip → /groups?doc_status=done 호출 → done 상태 그룹만 가시화.
@@ -446,7 +517,7 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
       const bRow = page.locator("tr.doc-row", { hasText: bTitle });
       const cRow = page.locator("tr.doc-row", { hasText: cTitle });
       // 둘 중 하나는 group representative 로 노출 (DISTINCT ON folder_id · created_at DESC) — C 가 더 최근 생성 → C 가 representative.
-      await cRow.waitFor({ state: "visible", timeout: 5000 });
+      await revealRowByTitle(page, cTitle);
       const bVisible = await bRow.count();
       const cVisible = await cRow.count();
       assert.ok(cVisible > 0,
@@ -478,8 +549,7 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
 async function checkRowByTitle(page: Page, title: string): Promise<void> {
   // group 펼침 시 representative 는 root + member 행 양쪽에 렌더 → .first() (DOM 순서 = root) 로
   // strict-mode 단일화 — selection 은 doc id 기준이라 어느 행의 checkbox 든 동일.
-  const row = page.locator("tr.doc-row", { hasText: title }).first();
-  await row.waitFor({ state: "visible" });
+  const row = await revealRowByTitle(page, title);
   // row 내 checkbox — aria-label=`Select ${title}`.
   await row.getByRole("checkbox", { name: `Select ${title}`, exact: true }).check();
 }
@@ -521,8 +591,7 @@ async function clickUngroupButton(page: Page): Promise<void> {
 // helper — group root row 의 toggle 클릭 (member rows expand) + member list fetch 대기.
 //   · expand 시 GroupMembersRowsCD 가 /api/clauded-docs?folder_id=X 호출.
 async function expandGroup(page: Page, rootTitle: string): Promise<void> {
-  const rootRow = page.locator("tr.doc-row.is-group-root", { hasText: rootTitle });
-  await rootRow.waitFor({ state: "visible" });
+  const rootRow = await revealRowByTitle(page, rootTitle, "tr.doc-row.is-group-root");
   const toggleBtn = rootRow.locator("button.doc-group-toggle").first();
   await toggleBtn.waitFor({ state: "visible" });
   await Promise.all([
@@ -563,7 +632,7 @@ async function getDocFolderId(id: number): Promise<number | null> {
 // group-create: 3 docs multi-select → POST /group → root + member_count badge.
 
 test("group-create: 격리 3 doc multi-select → 'Group' 클릭 → POST /group → folder_id 결성 + member_count badge 가시", async () => {
-  // 격리 seed 3 doc — SUITE_MARKER title (after() scrub) + 최신 created_at → 첫 page 가시.
+  // 3 isolated seeds — SUITE_MARKER title for the after() scrub; checkRowByTitle pages to each.
   const titles = [
     makeTitle("acg-grp-A", 0),
     makeTitle("acg-grp-B", 0),
@@ -610,8 +679,7 @@ test("group-create: 격리 3 doc multi-select → 'Group' 클릭 → POST /group
       await listReloaded;
 
       // C (created_at DESC 기준 최신) 가 group representative — member_count_badge 노출 확인.
-      const cRow = page.locator("tr.doc-row.is-group-root", { hasText: titles[2] });
-      await cRow.waitFor({ state: "visible", timeout: 5000 });
+      const cRow = await revealRowByTitle(page, titles[2], "tr.doc-row.is-group-root");
       // 멤버수 배지 = shared Badge(role="count") → [data-doc-member-count] wrapper 안 .pill--count.
       //   group-root row 로 scope → 페이지 내 다른 count pill 과 미충돌.
       const badge = cRow.locator("[data-doc-member-count] .pill--count");
@@ -858,12 +926,15 @@ test("cascade-toast: 3-doc group 생성 → 'Grouped 3' toast 가시 + TOAST_DUR
   try {
     const context: BrowserContext = await browser.newContext();
     const page: Page = await context.newPage();
+    // toast lifetime runs on the page clock, not wall time → deterministic under full-suite load.
+    await page.clock.install();
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
-      // 3 doc multi-select + group 결성.
+      // select 3 docs + group — with the clock paused, toast timers advance only via runFor.
       for (const t of titles) await checkRowByTitle(page, t);
+      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
       await clickGroupCreateButton(page);
 
       // 토스트 가시 — '.doc-toast.ok' 매칭 + 'role="status" aria-live="polite"'.
@@ -877,10 +948,12 @@ test("cascade-toast: 3-doc group 생성 → 'Grouped 3' toast 가시 + TOAST_DUR
       assert.strictEqual(role, "status", `토스트 role=status (WCAG 4.1.3 status messages)`);
       assert.strictEqual(ariaLive, "polite", `토스트 aria-live=polite (assertive 아님)`);
 
-      // TOAST_DURATION_MS_CD = 3200 ms 후 자동 dismiss — setToast(null) 트리거.
-      //   · 토스트 DOM 자체가 detach (`toast && (...)`).
-      //   · waitFor state=detached 로 3.5초 윈도우 안에서 dismiss 확인 (margin 0.3초).
-      await toast.waitFor({ state: "detached", timeout: 4000 });
+      // toast stays until TOAST_DURATION_MS_CD elapses, then detaches (`toast && (...)`).
+      const toastDurationMs = 3200;
+      await page.clock.runFor(toastDurationMs - 1);
+      assert.strictEqual(await toast.count(), 1, "the toast stays until its full duration elapses");
+      await page.clock.runFor(1);
+      await toast.waitFor({ state: "detached", timeout: 2000 });
     } finally {
       await context.close();
     }
@@ -930,7 +1003,7 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
     const page: Page = await context.newPage();
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-      await page.locator("tr.doc-row", { hasText: "widthpin" }).first().waitFor({ state: "visible" });
+      await revealRowByTitle(page, wideTitle);
 
       const listBox = await measureTitleBox(page, "widthpin");
       assert.strictEqual(
@@ -957,5 +1030,378 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
     }
   } finally {
     await deleteDoc(wide.id);
+  }
+});
+
+// lineage and stage actor ride the title line and the cell tooltip → every list row is one --row-h line
+test("list rows: a row with a lineage, a stage actor or both is one row-height line like a plain row", async () => {
+  const seeded: number[] = [];
+  const widestActor = "gpt_4o_mini_2024_07_18_preview";
+  const create = async (label: string, extra: Record<string, unknown>) => {
+    const title = makeTitle(`rowh-${label}`, 0);
+    const doc = await postCreate({ title, author: "load-more-tester", html_body: makeHtmlBody(title), ...extra });
+    seeded.push(doc.id);
+    return { label, title, id: doc.id };
+  };
+  try {
+    // a superseded document leaves the list → each revision gets a predecessor of its own
+    const predecessors = [await create("predecessor-a", {}), await create("predecessor-b", {})];
+    const rows = [
+      await create("plain", {}),
+      await create("lineage", { supersedes_id: predecessors[0].id }),
+      await create("actor", { doc_status: "implementing", last_status_model: widestActor }),
+      await create("both", { supersedes_id: predecessors[1].id, doc_status: "implementing", last_status_model: widestActor }),
+    ];
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      const rowHeightPx = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-h")));
+      for (const row of rows) {
+        const tr = await revealRowByTitle(page, row.title);
+        const height = (await tr.boundingBox())?.height ?? 0;
+        assert.ok(Math.abs(height - rowHeightPx) <= 1, `${row.label} row is ${height}px against the ${rowHeightPx}px row height`);
+      }
+    } finally {
+      await context.close();
+    }
+  } finally {
+    for (const id of seeded) await deleteDoc(id);
+  }
+});
+
+// open-summary rail beside the ledger: one label/count grid, the Oldest open link aligned to the labels
+test("open-summary rail: beside the ledger (1920px) labels and counts share one two-column grid and Oldest open starts at the label edge", async () => {
+  const ids = await seedManyDocs(3, "grid");
+  try {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1920, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      const rail = page.locator("aside.doc-open-summary");
+      await rail.waitFor({ state: "visible" });
+      const columns = await rail.locator(".doc-open-summary-group").first().evaluate((el) => {
+        const tracks = getComputedStyle(el).gridTemplateColumns.split(" ").filter(Boolean);
+        const [label, count] = [el.querySelector("dt"), el.querySelector("dd")].map((c) => c?.getBoundingClientRect());
+        return { tracks: tracks.length, sameRow: !!label && !!count && Math.abs(label.top - count.top) < 2 };
+      });
+      assert.equal(columns.tracks, 2, "labels and counts share one two-column grid");
+      assert.ok(columns.sameRow, "a count sits on its label's row");
+
+      const edges = await rail.evaluate((el) => ({
+        label: el.querySelector("dt")?.getBoundingClientRect().left,
+        oldest: el.querySelector(".doc-open-oldest")?.getBoundingClientRect().left,
+      }));
+      assert.ok(edges.label != null && edges.oldest != null, "rail shows a label and an Oldest open link");
+      assert.ok(Math.abs(edges.oldest - edges.label) < 1, `Oldest open starts at the label edge (${edges.oldest} vs ${edges.label})`);
+    } finally {
+      await context.close();
+    }
+  } finally {
+    for (const id of ids) await deleteDoc(id);
+  }
+});
+
+// the list card keeps tabindex=-1 after a Retry handoff → only the handoff marker may draw its ring
+test("list card: a mouse click never rings the card, a Retry handoff rings it inside the clipped edge", async () => {
+  const ids = await seedManyDocs(3, "ring");
+  try {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      const card = page.locator(".card.doc-list-card");
+      await card.waitFor({ state: "visible" });
+      const ring = () => card.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { focused: document.activeElement === el, style: style.outlineStyle, offset: parseFloat(style.outlineOffset) };
+      });
+
+      await card.evaluate((el) => el.setAttribute("tabindex", "-1"));
+      await card.click({ position: { x: 2, y: 2 } });
+      const clicked = await ring();
+      assert.ok(clicked.focused, "the click focuses the card itself");
+      assert.equal(clicked.style, "none", "a plain mouse focus draws no ring");
+
+      await card.evaluate((el) => {
+        el.blur();
+        el.setAttribute("data-focus-handoff", "true");
+        (el as HTMLElement).focus();
+      });
+      const handed = await ring();
+      assert.notEqual(handed.style, "none", "the handoff draws the ring");
+      assert.ok(handed.offset < 0, `the ring sits inside the clipped card (offset ${handed.offset})`);
+    } finally {
+      await context.close();
+    }
+  } finally {
+    for (const id of ids) await deleteDoc(id);
+  }
+});
+
+// mirrors LEDGER_CD.FLOOR in screens/clauded-docs.jsx (browser JSX, outside the test import graph) → a floor change there moves every boundary row below
+const LEDGER_FLOOR = { sum: 969, title: 434, tags: 152 };
+const WIDTH = {
+  OPEN_SUMMARY_RAIL: 200,
+  // app shell beside the card: viewport − shell = the doc-layout container width (asserted per row)
+  SHELL: 270,
+};
+// first viewport width at which each container threshold holds
+const THRESHOLD_VIEWPORT = {
+  railBeside: WIDTH.SHELL + LEDGER_FLOOR.sum + WIDTH.OPEN_SUMMARY_RAIL,
+  tagsShownBeside: WIDTH.SHELL + WIDTH.OPEN_SUMMARY_RAIL + LEDGER_FLOOR.sum + LEDGER_FLOOR.tags,
+  titleFloorStacked: WIDTH.SHELL + LEDGER_FLOOR.sum,
+};
+
+// the rail sits beside the ledger only while the ledger keeps its column floors there → never a sideways scroll
+describe("open-summary rail: placement follows the ledger's minimum width", () => {
+  const seedIds: number[] = [];
+  const mixedFormatTitle = makeTitle("rail-md", 0);
+  // formatActorCD passes an unknown id through raw → the longest stage actor a real row carries, in its Status cell tooltip
+  const widestActor = "gpt_4o_mini_2024_07_18_preview";
+
+  before(async () => {
+    seedIds.push(...(await seedManyDocs(29, "rail")));
+    // newest row in a format other than the page majority → the Tags column is on, as with real mixed data
+    const mixedFormatDoc = await postCreate({
+      title: mixedFormatTitle,
+      author: "load-more-tester",
+      md_body: "# rail-md\n\nmixed-format row",
+      doc_status: "implementing",
+      last_status_model: widestActor,
+    });
+    seedIds.push(mixedFormatDoc.id);
+  });
+
+  after(async () => {
+    for (const id of seedIds) await deleteDoc(id);
+  });
+
+  async function openLedger(width: number, font?: string): Promise<{ context: BrowserContext; page: Page }> {
+    const context: BrowserContext = await browser.newContext({ viewport: { width, height: 900 } });
+    const page: Page = await context.newPage();
+    await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+    if (font) await page.addStyleTag({ content: `.doc-ledger-scroll, .doc-ledger-scroll * { font-family: ${font} !important; }` });
+    await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
+    return { context, page };
+  }
+
+  const rows = {
+    placement: [
+      { name: "one px below the rail switch the rail stacks and the wide ledger keeps Tags", width: THRESHOLD_VIEWPORT.railBeside - 1, placement: "stacked", isTagsShown: true, isTitleFloorHeld: true },
+      { name: "at the rail switch the rail sits beside a ledger exactly its column floors wide", width: THRESHOLD_VIEWPORT.railBeside, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
+      // a font wider than the macOS default (Linux CI falls back to one) → the floors still bound every column
+      { name: "at the rail switch a ledger set in a wider font is still exactly its column floors wide", width: THRESHOLD_VIEWPORT.railBeside, placement: "beside", isTagsShown: false, isTitleFloorHeld: true, font: "Verdana, 'DejaVu Sans', sans-serif" },
+      { name: "one px below room for Tags beside the rail the ledger drops the column", width: THRESHOLD_VIEWPORT.tagsShownBeside - 1, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
+      { name: "at room for Tags beside the rail the ledger shows the column", width: THRESHOLD_VIEWPORT.tagsShownBeside, placement: "beside", isTagsShown: true, isTitleFloorHeld: true },
+      { name: "one px below the column floors a stacked ledger drops the title floor", width: THRESHOLD_VIEWPORT.titleFloorStacked - 1, placement: "stacked", isTagsShown: false, isTitleFloorHeld: false },
+      { name: "at the column floors a stacked ledger keeps the title floor", width: THRESHOLD_VIEWPORT.titleFloorStacked, placement: "stacked", isTagsShown: false, isTitleFloorHeld: true },
+      { name: "at 1220px a stacked ledger narrower than its column floors drops the title floor", width: 1220, placement: "stacked", isTagsShown: false, isTitleFloorHeld: false },
+      { name: "at 1280px the rail stacks above the ledger", width: 1280, placement: "stacked", isTagsShown: false, isTitleFloorHeld: true },
+      { name: "at 1440px the rail sits beside the ledger", width: 1440, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
+      { name: "at 1920px the rail sits beside the ledger with Tags shown", width: 1920, placement: "beside", isTagsShown: true, isTitleFloorHeld: true },
+    ] as const,
+    sticky: [
+      { name: "at 1280px the stacked rail scrolls away with the page", width: 1280, isPinned: false },
+      { name: "at 1440px the rail beside the ledger stays in view on page scroll", width: 1440, isPinned: true },
+      { name: "at 1920px the rail beside the ledger stays in view on page scroll", width: 1920, isPinned: true },
+    ] as const,
+  };
+
+  for (const row of rows.placement) {
+    test(`${row.name}, and the ledger fits without a sideways scroll`, async () => {
+      const { context, page } = await openLedger(row.width, "font" in row ? row.font : undefined);
+      try {
+        const mixedFormatRow = await revealRowByTitle(page, mixedFormatTitle);
+        await page.locator("table.tbl th.doc-col-tags").waitFor({ state: "attached" });
+        await mixedFormatRow.locator(`td[title="Set by ${widestActor}"]`).waitFor({ state: "visible" });
+
+        const layout = await page.evaluate(() => {
+          const layoutBox = document.querySelector(".doc-layout")?.getBoundingClientRect();
+          const scroller = document.querySelector("table.tbl")?.parentElement;
+          const railBox = document.querySelector("aside.doc-open-summary")?.getBoundingClientRect();
+          const titleBox = document.querySelector("table.tbl th.doc-col-title")?.getBoundingClientRect();
+          if (!layoutBox || !scroller || !railBox || !titleBox) throw new Error("layout, ledger scroller, rail or title header missing");
+          const ledgerBox = scroller.getBoundingClientRect();
+          const columns = [...document.querySelectorAll("table.tbl thead th")]
+            .map((th) => `${th.textContent?.trim() || "select"}=${Math.round(th.getBoundingClientRect().width)}`)
+            .join(" ");
+          const placement =
+            railBox.left >= ledgerBox.right - 0.5 ? "beside" : railBox.bottom <= ledgerBox.top + 0.5 ? "stacked" : "overlapping";
+          const isTagsShown = (document.querySelector("table.tbl th.doc-col-tags")?.getBoundingClientRect().width ?? 0) > 0;
+          return {
+            layoutWidth: Math.round(layoutBox.width),
+            scrollWidth: scroller.scrollWidth,
+            clientWidth: scroller.clientWidth,
+            titleWidth: titleBox.width,
+            columns,
+            placement,
+            isTagsShown,
+          };
+        });
+        assert.equal(layout.layoutWidth, row.width - WIDTH.SHELL, `doc-layout width at ${row.width}px — the shell width the boundary rows derive from`);
+        assert.ok(
+          layout.scrollWidth <= layout.clientWidth,
+          `ledger overflows its column (${layout.scrollWidth} > ${layout.clientWidth}; ${layout.columns}) → last header clipped`,
+        );
+        assert.equal(layout.placement, row.placement, `rail placement at ${row.width}px (${layout.columns})`);
+        assert.equal(layout.isTagsShown, row.isTagsShown, `Tags column shown at ${row.width}px (${layout.columns})`);
+        assert.equal(layout.titleWidth >= LEDGER_FLOOR.title - 0.5, row.isTitleFloorHeld, `title column ≥ its ${LEDGER_FLOOR.title}px floor at ${row.width}px (${layout.columns})`);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
+  for (const row of rows.sticky) {
+    test(row.name, async () => {
+      const { context, page } = await openLedger(row.width);
+      try {
+        await waitForRowCountAtLeast(page, seedIds.length);
+        const rail = page.locator("aside.doc-open-summary");
+        const restingTop = await rail.evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+        // past the rail's resting offset → only a rail pinned beside the ledger is still in view
+        const scrollBy = Math.ceil(restingTop) + 200;
+
+        await page.evaluate((y) => window.scrollTo(0, y), scrollBy);
+        await page.waitForFunction((y) => window.scrollY >= y, scrollBy);
+
+        const railTop = await rail.evaluate((el) => el.getBoundingClientRect().top);
+        assert.equal(railTop >= 0, row.isPinned, `rail top ${railTop} after page scroll at ${row.width}px`);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+});
+
+// The 13px meta floor covers every drawn text node on the Documents screen: the ledger with its open-summary rail and
+// bulk action bar, and the full-screen viewer with its metadata side, version history and stage menu open.
+describe("Type floor on the Documents screen, its viewer, version history and stage menu included", () => {
+  const title = { predecessor: makeTitle("floor-pred", 0), successor: makeTitle("floor-succ", 0) };
+  const seedIds: number[] = [];
+
+  before(async () => {
+    const predecessor = await postCreate({ title: title.predecessor, author: "load-more-tester", html_body: makeHtmlBody(title.predecessor) });
+    seedIds.push(predecessor.id);
+    const successor = await postCreate({
+      title: title.successor,
+      author: "load-more-tester",
+      html_body: makeHtmlBody(title.successor),
+      supersedes_id: predecessor.id,
+    });
+    seedIds.push(successor.id);
+  });
+
+  after(async () => {
+    for (const id of seedIds) await deleteDoc(id);
+  });
+
+  async function openLedgerWithSelection(page: Page): Promise<void> {
+    await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
+    await checkRowByTitle(page, title.successor);
+    await page.getByRole("toolbar", { name: "Bulk group actions" }).waitFor({ state: "visible" });
+  }
+
+  async function openViewerPanels(page: Page): Promise<void> {
+    await (await revealRowByTitle(page, title.successor)).click();
+    const metaSide = page.locator("aside.doc-fs-meta-side");
+    const versionHistory = metaSide.locator("details.doc-version-history");
+    await versionHistory.locator("summary").click();
+    await versionHistory.getByText(title.predecessor, { exact: false }).waitFor({ state: "visible" });
+    await metaSide.getByRole("button", { name: /change stage$/ }).first().click();
+    await page.getByRole("menu", { name: "Set stage" }).waitFor({ state: "visible" });
+  }
+
+  // every drawn text under the scope root against its composited background; the rendered document is out of scope.
+  // A source string, not a function: the test transform names inner arrows with a helper the page does not have.
+  const getContrastMissesScript = (scopeSelector: string): string => `(() => {
+    const parse = (value) => (value.match(/[\\d.]+/g) || []).map(Number);
+    const lum = ([r, g, b]) => {
+      const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const backgroundOf = (start) => {
+      const layers = [];
+      for (let el = start; el; el = el.parentElement) {
+        const [r, g, b, a = 1] = parse(getComputedStyle(el).backgroundColor);
+        if (a > 0) layers.push([r, g, b, a]);
+        if (a >= 1) break;
+      }
+      return layers.reverse().reduce((under, [r, g, b, a]) => [r, g, b].map((v, i) => v * a + under[i] * (1 - a)), [255, 255, 255]);
+    };
+    const misses = [];
+    const container = document.querySelector(${JSON.stringify(scopeSelector)});
+    for (const el of Array.from(container ? container.querySelectorAll("*") : [])) {
+      if (el.closest(".doc-body-isolation") || el.closest(".sr-only")) continue;
+      const text = Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join("");
+      if (!text || el.getBoundingClientRect().width < 1) continue;
+      const [hi, lo] = [lum(parse(getComputedStyle(el).color)), lum(backgroundOf(el))].sort((a, b) => b - a);
+      const ratio = (hi + 0.05) / (lo + 0.05);
+      if (ratio < 4.5) misses.push(ratio.toFixed(2) + " " + el.tagName.toLowerCase() + "." + String(el.className) + ": " + text.slice(0, 40));
+    }
+    return misses;
+  })()`;
+
+  for (const theme of ["light", "dark"]) {
+    test(`every drawn text in the viewer chrome of an old revision clears 4.5:1 in the ${theme} theme`, async () => {
+      const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      try {
+        const page: Page = await context.newPage();
+        await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+        // the app's mount effect writes data-theme from its tweaks → switch only once a fetched ledger row shows, a later commit than that effect
+        await revealRowByTitle(page, title.successor);
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        await openViewerPanels(page);
+        await page.keyboard.press("Escape");
+        await page.locator("aside.doc-fs-meta-side").getByRole("button", { name: /View previous revision/ }).click();
+        await page.getByRole("button", { name: /View latest revision/ }).waitFor({ state: "visible" });
+        assert.equal(await page.evaluate(() => document.documentElement.getAttribute("data-theme")), theme);
+        assert.deepEqual(await page.evaluate(getContrastMissesScript(".doc-fs-container")), []);
+      } finally {
+        await context.close();
+      }
+    });
+
+    test(`every item of the open stage menu clears 4.5:1 in the ${theme} theme, its checked item hovered and marked by a check`, async () => {
+      const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      try {
+        const page: Page = await context.newPage();
+        await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+        const row = await revealRowByTitle(page, title.successor);
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        await row.getByRole("button", { name: /change stage$/ }).click();
+        const menu = page.getByRole("menu", { name: "Set stage" });
+        await menu.waitFor({ state: "visible" });
+        const checked = menu.getByRole("menuitemradio", { checked: true });
+        await checked.hover();
+        assert.deepEqual(await page.evaluate(getContrastMissesScript('[role="menu"]')), []);
+        assert.equal(await menu.locator(".doc-stage-menu-mark").count(), 1);
+        assert.equal(await checked.locator(".doc-stage-menu-mark").count(), 1);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
+  const rows = [
+    { name: "the ledger with its rail and bulk action bar", open: openLedgerWithSelection, width: 1024 },
+    { name: "the ledger with its rail and bulk action bar", open: openLedgerWithSelection, width: 1440 },
+    { name: "the viewer with version history and the stage menu open", open: openViewerPanels, width: 1024 },
+    { name: "the viewer with version history and the stage menu open", open: openViewerPanels, width: 1440 },
+  ];
+
+  for (const row of rows) {
+    test(`no drawn text in ${row.name} sits below the 13px meta floor at ${row.width}`, async () => {
+      const context: BrowserContext = await browser.newContext({ viewport: { width: row.width, height: 900 } });
+      try {
+        const page: Page = await context.newPage();
+        await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+        await row.open(page);
+        assert.deepEqual(await getBelowFloorText(page), []);
+      } finally {
+        await context.close();
+      }
+    });
   }
 });

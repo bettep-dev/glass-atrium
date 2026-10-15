@@ -18,7 +18,9 @@
 # the same harness as track-outcome-flag-reasons.bats.
 
 HOOK_SH="${TRACK_OUTCOME_SH:-${BATS_TEST_DIRNAME}/../track-outcome.sh}"
-REASONS_LIB="${BATS_TEST_DIRNAME}/../lib/review-flag-reasons.sh"
+
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
@@ -57,9 +59,7 @@ setup() {
 }
 
 teardown() {
-  if [[ -n "${CC_TMP:-}" && -d "${CC_TMP}" ]]; then
-    rm -rf -- "${CC_TMP}"
-  fi
+  if ga_guard_path "${CC_TMP:-}"; then rm -rf -- "${CC_TMP:?}"; fi
 }
 
 # A bare intermediate `[[ ]]` assertion is silently ignored under bash 3.2 (macOS) while bash 5.3
@@ -108,12 +108,28 @@ write_payload() {
 
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     TMPDIR="${CACHE_TMP}" \
     CLAUDE_GATE_INFLIGHT="" \
     OUTCOME_SPOOL_DIR="${SPOOL_DIR}" \
     bash -c '"$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
+}
+
+# Between runs in one test: a refused guard fails the test rather than leave an earlier run's
+# envelope for the next assertion to read. The cache dir is recreated — it is the hook's TMPDIR.
+reset_run_state() {
+  if ga_guard_path "${SPOOL_DIR}"; then
+    rm -rf -- "${SPOOL_DIR:?}"
+  else
+    return 1
+  fi
+  if ga_guard_path "${CACHE_TMP}"; then
+    rm -rf -- "${CACHE_TMP:?}"
+  else
+    return 1
+  fi
+  mkdir -p -- "${CACHE_TMP}"
 }
 
 spooled_field() {
@@ -201,7 +217,7 @@ clean_block() {
 @test "the disagreement fires on every disagreeing fixture, whichever correction field carried it" {
   local emit
   for emit in 'revision_count: 3' 'evaluative_signal: -1' 'directive_hint: User asked for the other approach'; do
-    rm -rf -- "${SPOOL_DIR}" "${CACHE_TMP:?}"/*
+    reset_run_state || return 1
     write_parent_transcript "계속 진행해 주세요" 0
     write_payload "$(completion_block 'result: done' 'task_type: cleanup' 'metric_pass: true' \
       'confidence: high' "${emit}" 'summary: did the work')"
@@ -248,7 +264,7 @@ clean_block() {
   local utterance
   for utterance in '진행해' '이어서 진행해' '계속' '다시 이어서 진행해 주세요' 'resume' \
     'continue' 'status?' '계속 진행해 주세요'; do
-    rm -rf -- "${SPOOL_DIR}" "${CACHE_TMP:?}"/*
+    reset_run_state || return 1
     write_parent_transcript "${utterance}" 0
     write_payload "$(clean_block)"
     run_hook
@@ -256,6 +272,20 @@ clean_block() {
     eq "0" "$(spooled_signal_count)" || return 1
     eq "0" "$(spooled_field revision_count)" || return 1
   done
+}
+
+@test "the between-run reset keeps the detector cache inside the sandbox" {
+  local block
+  block="$(clean_block)"
+  reset_run_state || return 1
+  write_parent_transcript "다시 해줘 please redo this" 0
+  write_payload "${block}"
+  run_hook
+  eq "0" "${status}" || return 1
+  [[ -f "${CACHE_TMP}/outcome-t9-lastuser-${SESSION_ID}.json" ]] || {
+    printf 'no detector cache under %s after the reset\n' "${CACHE_TMP}" >&2
+    return 1
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -287,14 +317,18 @@ clean_block() {
   write_parent_transcript "진행해" 0
   write_payload "$(emitted_correction_block)"
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     TMPDIR="${CACHE_TMP}" \
     CLAUDE_GATE_INFLIGHT="" \
     T9_CORRECTION_DETECTION="false" \
     OUTCOME_SPOOL_DIR="${SPOOL_DIR}" \
     bash -c '"$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
-  no "correction-disagreement" "$(spooled_field review_flag_reasons)" || return 1
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  # Captured outside the `no` call: inside its argument, a missing envelope would read as empty.
+  local reasons
+  reasons="$(spooled_field review_flag_reasons)" || return 1
+  no "correction-disagreement" "${reasons}" || return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -332,9 +366,4 @@ clean_block() {
   no 'REVISION_COUNT=' "${dis_apply}" || return 1
   no 'SIG_EMIT=' "${dis_apply}" || return 1
   no 'T9_DETECTOR_VERDICT=' "${dis_apply}" || return 1
-}
-
-@test "the disagreement token is stamped by the recorder and declared in the shared registry" {
-  grep -qF 'review_flag_add_reason "correction-disagreement"' "${HOOK_SH}" || return 1
-  grep -qF 'correction-disagreement' "${REASONS_LIB}"
 }

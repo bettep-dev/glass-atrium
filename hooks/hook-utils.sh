@@ -9,6 +9,23 @@ if [[ -n "${_HOOK_UTILS_LOADED:-}" ]]; then
 fi
 readonly _HOOK_UTILS_LOADED=1
 
+# Loads ga_guard_path from the install tree's scripts/lib, found through this file's real path — a
+# symlinked copy has no scripts/ beside it. No tree → guard undefined → a gated delete is refused.
+_hook_utils_source_path_guard() {
+  local self="${BASH_SOURCE[0]}" guard=""
+  # readlink -f only on a symlink (macOS 12.3+, as cost-tracker.sh) → a direct load forks nothing.
+  if [[ -L "${self}" ]]; then
+    self="$(readlink -f -- "${self}")" || return 0
+  fi
+  if [[ "${self}" == */* ]]; then guard="${self%/*}"; else guard="."; fi
+  guard="${guard}/../scripts/lib/path-guard.sh"
+  if [[ -f "${guard}" ]]; then
+    # shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+    source "${guard}"
+  fi
+}
+_hook_utils_source_path_guard
+
 # Read hook JSON from stdin; empty read → empty JSON object.
 hook_read_input() {
   local input
@@ -378,11 +395,11 @@ hook_cache_write() {
       printf '%s\n' "${v}"
     done
   } >"${tmp}"; then
-    rm -f "${tmp}"
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     return 1
   fi
   mv -f "${tmp}" "${cache_file}" || {
-    rm -f "${tmp}"
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     return 1
   }
   return 0

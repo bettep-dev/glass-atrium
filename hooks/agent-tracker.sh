@@ -88,6 +88,18 @@ IFS=$'\t' read -r HOOK_EVENT AGENT_TYPE AGENT_ID <<<"${LOG_TUPLE}"
 # hook's 2-python3-per-fire perf invariant is pinned by agent-tracker.bats.
 live_child_dir="${HOOK_DATA_DIR}/live-children"
 marker_key="$(hook_path_safe_key "${AGENT_ID}")"
+
+# Status 0 once the marker is gone; a refused path or a failed delete counts as kept (DATA-075).
+delete_live_child_marker() {
+  local marker="${1:-}"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${marker}"; then
+    rm -f -- "${marker:?}"
+    return
+  fi
+  return 1
+}
+
 if [[ -n "${marker_key}" ]]; then
   case "${HOOK_EVENT}" in
     SubagentStart)
@@ -99,7 +111,8 @@ if [[ -n "${marker_key}" ]]; then
       fi
       ;;
     SubagentStop)
-      if [[ -e "${live_child_dir}/${marker_key}" ]] && ! rm -f "${live_child_dir}/${marker_key}" 2>/dev/null; then
+      # shellcheck disable=SC2310  # the delete's status IS the DATA-075 branch — set -e disable intended
+      if [[ -e "${live_child_dir}/${marker_key}" ]] && ! delete_live_child_marker "${live_child_dir}/${marker_key}"; then
         emit_error "DATA-075" "warn" \
           "live-child marker delete failed — a stale marker will over-report until its TTL expires" \
           "Remove ${live_child_dir}/${marker_key} manually" \

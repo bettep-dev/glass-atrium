@@ -1,0 +1,2 @@
+{"type":"user","entrypoint":"sdk-cli","message":{"role":"user","content":"Classify each correction phrase such as 다시 해줘 and 이어서 진행해 and report which regex matches it"}}
+{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}

@@ -12,11 +12,12 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 NO_GUARD='{"guarded": [], "rejected": []}'
 
-# mirror_path — symlink every PATH executable into $1 except psql, so a run without the stub dir
-# takes the report source (precedent: daemon-apply-backlog-anomaly-row.bats).
+# mirror_path — symlink every PATH executable into $1 except psql, so the stub dir's psql is the only one.
 mirror_path() {
   local dest="$1" d f name old_ifs="${IFS}"
   mkdir -p -- "${dest}"
@@ -54,16 +55,15 @@ setup() {
   install_psql_stub
   install_cycle_stub
   write_probe probe-a
-  write_probe probe-b
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # install_psql_stub — the status flip logs its bindings AND its statement text (the provenance rows
-# below read both) and returns one id; the backlog SELECT answers
-# from its fixture file. The Nth single lookup answers from single.rows.N when scripted (a
+# below read both) and returns one id; the record-table probe answers present and the record
+# INSERT returns one id. The Nth single lookup answers from single.rows.N when scripted (a
 # single.rows.N.rc file scripts a query failure instead), else from single.rows.
 install_psql_stub() {
   cat >"${STUB}/psql" <<'STUB'
@@ -75,11 +75,9 @@ case "${sql}" in
     printf 'flip-sql<<<\n%s\n>>>\n' "${sql}" >>"${STUB_PSQL_LOG}"
     printf '1\n'
     ;;
+  *"to_regclass('core.autoagent_apply_records')"*) printf 't\n' ;;
+  *"INSERT INTO core.autoagent_apply_records"*) printf '1\n' ;;
   *stale_attempt_count*) printf 'incremented\n' ;;
-  *"ORDER BY cycle_date ASC, id ASC"*)
-    printf '%s\n' "${sql}" >"${STUB_BACKLOG_ROWS:?}.sql"
-    cat -- "${STUB_BACKLOG_ROWS}"
-    ;;
   *"id::text = :'pid'"*)
     calls="${STUB_SINGLE_ROW:?}.calls"
     n=1
@@ -100,7 +98,6 @@ esac
 exit 0
 STUB
   chmod +x "${STUB}/psql"
-  : >"${WORK}/backlog.rows"
   : >"${WORK}/single.rows"
 }
 
@@ -191,18 +188,18 @@ answer_guard() {
   printf '%s' "$3" >"${GUARD_DIR}/$1.out"
 }
 
-# guarded_verdict ID REJECTED — a verdict guarding proposal ID (covering row 3384 rejected);
+# guarded_verdict ID REJECTED — a verdict guarding proposal ID (covering row 5120 rejected);
 # REJECTED is the JSON list of ids the mode transitioned.
 guarded_verdict() {
-  printf '{"guarded": [{"proposal_id": %s, "rows": [{"id": 3384, "status": "rejected"}]}], "rejected": %s}\n' \
+  printf '{"guarded": [{"proposal_id": %s, "rows": [{"id": 5120, "status": "rejected"}]}], "rejected": %s}\n' \
     "$1" "$2"
 }
 
 run_apply() {
-  run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${STUB}:${MIRROR}" HOME="${WORK}/home" \
+  run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${STUB}:${MIRROR}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
     AUTOAGENT_DAEMON_CYCLE_PY="${CYCLE_STUB}" \
-    STUB_PSQL_LOG="${PSQL_LOG}" STUB_BACKLOG_ROWS="${WORK}/backlog.rows" \
+    STUB_PSQL_LOG="${PSQL_LOG}" \
     STUB_SINGLE_ROW="${WORK}/single.rows" STUB_CYCLE_CALLS="${CALLS}" STUB_GUARD_DIR="${GUARD_DIR}" \
     bash "${REAL_SCRIPT}" --agents-dir "${AGENTS}" --report "${WORK}/report.json" "$@"
 }
@@ -238,40 +235,6 @@ dump_state() {
   cat -- "${APPLIED_LOG}" >&2 2>&1 || true
 }
 
-@test "batch: a guarded row neither lands nor flips, its unguarded neighbour applies, and the live batch passes the reject flag" {
-  {
-    proposal_row 101 probe-a "$(landing_diff probe-a)"
-    proposal_row 102 probe-b "$(landing_diff probe-b)"
-  } >"${WORK}/backlog.rows"
-  answer_guard 1 0 "$(guarded_verdict 101 '[101]')"
-  run_apply
-
-  [[ "${status}" -eq 0 ]] || {
-    dump_state
-    return 1
-  }
-  is_unchanged probe-a && ! was_flipped 101 || {
-    echo "the guarded proposal landed or had its status flipped" >&2
-    dump_state
-    return 1
-  }
-  ! is_unchanged probe-b && was_flipped 102 || {
-    echo "the unguarded proposal in the same batch did not apply" >&2
-    dump_state
-    return 1
-  }
-  [[ "$(count_calls --parked-pattern-guard --reject-parked '"stdin_ids": "101,102"')" -eq 1 ]] || {
-    echo "expected ONE live-batch guard call carrying --reject-parked and both selected rows" >&2
-    dump_state
-    return 1
-  }
-  grep '"reason":"parked_pattern"' "${APPLIED_LOG}" | grep '"proposal_id":"101"' | grep -q '"rejected":true' || {
-    echo "no skip row records the guarded proposal and its reject" >&2
-    dump_state
-    return 1
-  }
-}
-
 @test "single: a guarded proposal is refused with its own exit, names the parked rows and the Reject way out, and touches nothing" {
   single_row 201 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 0 "$(guarded_verdict 201 '[]')"
@@ -281,7 +244,7 @@ dump_state() {
     dump_state
     return 1
   }
-  [[ "${output}" == *"3384:rejected"* && "${output}" == *"Reject"* ]] || {
+  [[ "${output}" == *"5120:rejected"* && "${output}" == *"Reject"* ]] || {
     echo "the refusal names neither the parked rows nor the Reject action" >&2
     dump_state
     return 1
@@ -298,18 +261,15 @@ dump_state() {
 }
 
 @test "a guard mode that exits non-zero applies nothing, exits 17, names the interpreter, and lands an abort row" {
-  {
-    proposal_row 101 probe-a "$(landing_diff probe-a)"
-    proposal_row 102 probe-b "$(landing_diff probe-b)"
-  } >"${WORK}/backlog.rows"
+  single_row 201 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 8 ""
-  run_apply
+  run_apply --proposal-id 201
 
   [[ "${status}" -eq 17 ]] || {
     dump_state
     return 1
   }
-  is_unchanged probe-a && is_unchanged probe-b && ! was_flipped 101 && ! was_flipped 102 || {
+  is_unchanged probe-a && ! was_flipped 201 || {
     echo "a failed guard read let a row apply" >&2
     dump_state
     return 1
@@ -326,14 +286,14 @@ dump_state() {
 }
 
 @test "a guard mode that exits 0 without exactly one verdict is a failure, never 'nothing guarded'" {
-  proposal_row 101 probe-a "$(landing_diff probe-a)" >"${WORK}/backlog.rows"
+  single_row 201 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   # empty stdout (the update-pause gate's clean exit) · not JSON · a key missing · two verdict lines
   local -a replies=("" "not a verdict" '{"guarded": []}' "${NO_GUARD}"$'\n'"${NO_GUARD}")
   local i
   for i in 0 1 2 3; do
     answer_guard "$((i + 1))" 0 "${replies[i]}"
-    run_apply
-    [[ "${status}" -eq 17 ]] && is_unchanged probe-a && ! was_flipped 101 || {
+    run_apply --proposal-id 201
+    [[ "${status}" -eq 17 ]] && is_unchanged probe-a && ! was_flipped 201 || {
       echo "reply #${i} (${replies[i]}) was read as a verdict" >&2
       dump_state
       return 1
@@ -341,19 +301,16 @@ dump_state() {
   done
 }
 
-@test "no guarded rows: every selected row applies exactly as without the guard" {
-  {
-    proposal_row 101 probe-a "$(landing_diff probe-a)"
-    proposal_row 102 probe-b "$(landing_diff probe-b)"
-  } >"${WORK}/backlog.rows"
+@test "no guarded rows: the selected proposal applies exactly as without the guard" {
+  single_row 201 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 0 "${NO_GUARD}"
-  run_apply
+  run_apply --proposal-id 201
 
   [[ "${status}" -eq 0 ]] || {
     dump_state
     return 1
   }
-  ! is_unchanged probe-a && ! is_unchanged probe-b && was_flipped 101 && was_flipped 102 || {
+  ! is_unchanged probe-a && was_flipped 201 || {
     echo "an empty verdict changed the apply outcome" >&2
     dump_state
     return 1
@@ -362,29 +319,6 @@ dump_state() {
     dump_state
     return 1
   }
-}
-
-@test "batch: a '|' inside a stored label shifts no field — the backlog SELECT encodes every free-text column and the row applies under its whole label" {
-  proposal_row 103 probe-a "$(landing_diff probe-a)" 'probe|pipe|label' >"${WORK}/backlog.rows"
-  answer_guard 1 0 "${NO_GUARD}"
-  run_apply
-
-  [[ "${status}" -eq 0 ]] && ! is_unchanged probe-a && was_flipped 103 || {
-    dump_state
-    return 1
-  }
-  grep '"status":"applied"' "${APPLIED_LOG}" | grep -qF '"pattern_label":"probe|pipe|label"' || {
-    echo "the applied row does not carry the whole '|'-bearing label" >&2
-    dump_state
-    return 1
-  }
-  local column
-  for column in "pattern_label" "coalesce(target_agent, '')" "target_file"; do
-    grep -qF "encode(convert_to(${column}, 'UTF8'), 'base64')" "${WORK}/backlog.rows.sql" || {
-      echo "the backlog SELECT sends ${column} unencoded, so a '|' in it would shift every later field" >&2
-      return 1
-    }
-  done
 }
 
 @test "auto-regen: the re-attempt after a regenerate is guarded too" {
@@ -505,41 +439,12 @@ dump_state() {
   }
 }
 
-@test "report source: rows carry no proposal id, so the guard is never called and a notice says so" {
-  DIFF="$(landing_diff probe-a)" TARGET="${AGENTS}/probe-a.md" python3 -c '
-import json, os
-patch = {"classification": "body-auto", "approval_tier": "auto", "pre_verify_passed": True,
-         "haiku_status": "ok", "pattern_label": "probe-report", "pattern_agent": "probe-a",
-         "target_file": os.environ["TARGET"], "proposed_diff": os.environ["DIFF"] + "\n"}
-print(json.dumps({"patches": [patch]}))
-' >"${WORK}/report.json"
-  # No stub dir on PATH: psql is absent, so a LIVE run takes the report source.
-  run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${MIRROR}" HOME="${WORK}/home" \
-    AUTOAGENT_REPORTS_DIR="${REPORTS}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
-    AUTOAGENT_DAEMON_CYCLE_PY="${CYCLE_STUB}" STUB_CYCLE_CALLS="${CALLS}" STUB_GUARD_DIR="${GUARD_DIR}" \
-    bash "${REAL_SCRIPT}" --agents-dir "${AGENTS}" --report "${WORK}/report.json"
-
-  [[ "${status}" -eq 0 ]] && ! is_unchanged probe-a || {
-    dump_state
-    return 1
-  }
-  [[ "$(count_calls --parked-pattern-guard)" -eq 0 ]] || {
-    dump_state
-    return 1
-  }
-  [[ "${output}" == *"parked-pattern guard unavailable"* ]] || {
-    echo "the report source applied unguarded without saying so" >&2
-    dump_state
-    return 1
-  }
-}
-
 @test "provenance: the apply flip keeps its verdict instant and stamps the machine actor by default" {
-  proposal_row 104 probe-a "$(landing_diff probe-a)" >"${WORK}/backlog.rows"
+  single_row 204 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 0 "${NO_GUARD}"
-  run_apply
+  run_apply --proposal-id 204
 
-  [[ "${status}" -eq 0 ]] && was_flipped 104 || {
+  [[ "${status}" -eq 0 ]] && was_flipped 204 || {
     dump_state
     return 1
   }
@@ -585,9 +490,9 @@ print(json.dumps({"patches": [patch]}))
 }
 
 @test "provenance: an actor outside the closed token set is a named refusal before any statement" {
-  proposal_row 106 probe-a "$(landing_diff probe-a)" >"${WORK}/backlog.rows"
+  single_row 206 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 0 "${NO_GUARD}"
-  run_apply --actor daemon-apply-drain
+  run_apply --proposal-id 206 --actor daemon-apply-drain
 
   # The drain token is a real member of the schema's set but names no verdict, so the flip seam
   # refuses it exactly as it refuses a typo — the set is checked in the shell, never left to the

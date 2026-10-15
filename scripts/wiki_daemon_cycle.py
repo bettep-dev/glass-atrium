@@ -575,8 +575,8 @@ RATIONALE: <one or two sentences explaining your credibility/clarity judgment>
 PROPOSED_BODY:
 <the initial markdown body for wiki/notes/<slug>.md — keep frontmatter minimal
 (title, type: source-summary, sources: [raw/<basename>.md]); body ≤ 30 lines;
-preserve original language; no wikilinks yet (W5 handles dedup, W6 handles
-deadlinks); single H1 matching slug>
+preserve original language; no wikilinks (a later pipeline stage owns linking);
+single H1 matching slug>
 """
 
 

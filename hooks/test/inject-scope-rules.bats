@@ -57,6 +57,10 @@ setup() {
   # ~/.glass-atrium/logs — sandbox it too (exported → inherited through each run helper's `env`).
   export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
 
+  # The canary file is read under the data root; a sandbox root keeps a live install's canary out of
+  # every assembly here.
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data-root"
+
   # Hermetic BUDGET source fixture — one file, BOTH marker pairs (mirrors shared-turn-budget.md).
   # The HOME-anchored real file is absent in CI.
   BUDGET_FIXTURE="${BATS_TEST_TMPDIR}/turn-budget.md"
@@ -90,7 +94,6 @@ run_hook() {
       SUBAGENT_BUDGET_METER_OFF=1 \
       INJECT_SCOPE_RULES_BUDGET_SRC="${budget_src}" \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="${wiki_src}" \
-      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
       bash "${hook}"
   ' _ "${agent}" "${HOOK_SH}" "${budget_src}" "${wiki_src}"
 }
@@ -260,7 +263,6 @@ run_retired_case() {
       SUBAGENT_BUDGET_METER_OFF=1 \
       INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
       bash "${hook}"
   ' _ "${agent}" "${HOOK_SH}" "${home}" "${src}"
 
@@ -310,7 +312,6 @@ run_hook_no_meter() {
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
       INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
       bash "${hook}"
   ' _ "${agent}" "${HOOK_SH}"
 }
@@ -364,16 +365,16 @@ assert_ctx_max_units() {
 # (e) meter-first assembly + universal 9984-byte ceiling drop order.
 # Unlike run_hook (which suppresses the meter), these tests ENABLE it: they build a maxTurns
 # frontmatter fixture + padded block sources, then assert emit and meter lead the assembly and the
-# ceiling sheds droppable blocks in the pinned order wiki-untrusted → lesson → budget-analysis →
+# ceiling sheds droppable blocks in the pinned order wiki-untrusted → budget-analysis →
 # budget-dev while never dropping emit or meter. Distinct needles per block make each assertion
 # mutation-falsifiable.
 
 # Build the padded block sources + a maxTurns frontmatter dir, then drive the hook with the meter
 # ENABLED. The two budget blocks share ONE source file, mirroring production; a block only lands when
 # the agent is in its roster, so an out-of-roster pad is inert.
-# Args: $1=agent $2=budget_dev_pad $3=budget_analysis_pad $4=wiki_pad $5=lessons path (optional)
+# Args: $1=agent $2=budget_dev_pad $3=budget_analysis_pad $4=wiki_pad
 run_hook_full() {
-  local agent="${1}" bdpad="${2:-16}" bapad="${3:-16}" wpad="${4:-16}" lessons="${5:-/nonexistent}"
+  local agent="${1}" bdpad="${2:-16}" bapad="${3:-16}" wpad="${4:-16}"
   local budget_src="${BATS_TEST_TMPDIR}/turn-budget-full.md"
   local wiki_src="${BATS_TEST_TMPDIR}/wiki-full.md"
   local agents_dir="${BATS_TEST_TMPDIR}/agents"
@@ -403,15 +404,14 @@ run_hook_full() {
   printf 'maxTurns: 40\n' >"${agents_dir}/${agent}.md"
 
   run bash -c '
-    agent="$1"; hook="$2"; budget_src="$3"; wiki_src="$4"; agents_dir="$5"; lessons="$6"
+    agent="$1"; hook="$2"; budget_src="$3"; wiki_src="$4"; agents_dir="$5"
     payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"
     printf "%s" "${payload}" | env -u SUBAGENT_BUDGET_METER_OFF \
       INJECT_SCOPE_RULES_AGENTS_DIR="${agents_dir}" \
       INJECT_SCOPE_RULES_BUDGET_SRC="${budget_src}" \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="${wiki_src}" \
-      INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
       bash "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "${budget_src}" "${wiki_src}" "${agents_dir}" "${lessons}"
+  ' _ "${agent}" "${HOOK_SH}" "${budget_src}" "${wiki_src}" "${agents_dir}"
 }
 
 # Assert $1 appears strictly BEFORE $2 in the assembled additionalContext (both must be present).
@@ -494,36 +494,6 @@ ctx_bytes() {
   assert_ctx_max_bytes "${ceiling}"
 }
 
-@test "over the ceiling — lesson yields BEFORE budget-dev; budget-dev + meter retained (dev-front)" {
-  # The lesson-free assembly is sized to leave a 400B residual — above the 150B truncate-keep floor —
-  # while a 1200B-capped lesson overflows it, and budget-dev is far larger than the overflow. So
-  # budget-dev could restore the fit on its own, yet the lesson is what gives way.
-  local ceiling=9984 residual=400 base_bytes bdpad lessons="${BATS_TEST_TMPDIR}/lessons.json"
-  python3 -c '
-import json, sys
-json.dump({"ctm": [{"agent": "glass-atrium-dev-front", "task_type": "bug-fix", "text": "L" * 3000, "score": 5, "frequency": 9}], "epm": []}, open(sys.argv[1], "w"))
-' "${lessons}"
-  run_hook_full "glass-atrium-dev-front" 16
-  assert_status 0
-  base_bytes="$(ctx_bytes)"
-  bdpad=$((16 + ceiling - 2 - residual - base_bytes))
-  [ "${bdpad}" -gt 2000 ]
-  run_hook_full "glass-atrium-dev-front" "${bdpad}" 16 16 "${lessons}"
-  assert_status 0
-  assert_ctx_contains "${BUDGET_DEV_NEEDLE}"
-  assert_ctx_contains "${METER_NEEDLE}"
-  assert_ctx_contains "Prior-lesson recall"
-  [[ "${output}" != *"dropped budget-dev block"* ]] || {
-    echo "budget-dev shed while a lesson could still yield: ${output}" >&2
-    return 1
-  }
-  [[ "${output}" == *"lesson block truncated"* ]] || {
-    echo "expected the lesson to be the block that yields: ${output}" >&2
-    return 1
-  }
-  assert_ctx_max_bytes "${ceiling}"
-}
-
 # (f) T1 numeric preview-survival guard: EMIT + METER combined MUST fit the ~2KB persistence
 # preview (Claude Code delivers only a ~2KB preview of additionalContext, so both non-droppable
 # blocks must lead within that budget). This is the ACTUAL constraint the emit/meter-first ordering
@@ -541,7 +511,6 @@ run_hook_emit_meter_only() {
       INJECT_SCOPE_RULES_AGENTS_DIR="${agents_dir}" \
       INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
       bash "${hook}"
   ' _ "${agent}" "${HOOK_SH}" "${agents_dir}"
 }
@@ -556,6 +525,32 @@ run_hook_emit_meter_only() {
   nbytes="$(printf '%s' "${ctx}" | wc -c | tr -cd '0-9')"
   [[ "${nbytes}" -lt 2048 ]] || {
     echo "expected EMIT+METER < 2048 bytes, got ${nbytes}" >&2
+    return 1
+  }
+}
+
+# (g) The on-approach line names Write/Edit and the charter's absolute tracker dir.
+# Agents without Write/Edit (qa-code-reviewer · qa-debugger) get the summary route instead.
+@test "meter on-approach line → names Write/Edit, the tracker dir, and the Bash-only summary route" {
+  run_hook_emit_meter_only "glass-atrium-qa-debugger"
+  assert_status 0
+  local ctx line count needle
+  ctx="$(ctx_of)"
+  line="$(grep -- '^- On approach:' <<<"${ctx}" || true)"
+  count="$(grep -c -- '^- On approach:' <<<"${ctx}" || true)"
+  [[ "${count}" == 1 ]] || {
+    echo "expected exactly one on-approach line, got ${count}: [${line}]" >&2
+    return 1
+  }
+  # shellcheck disable=SC2088 # the tilde is the literal path text the meter must carry
+  for needle in 'Write/Edit' '~/.claude-personal/projects/<home-encoded>/memory/' 'Bash-only' 'needs_context'; do
+    [[ "${line}" == *"${needle}"* ]] || {
+      echo "expected the on-approach line to contain [${needle}], got: [${line}]" >&2
+      return 1
+    }
+  done
+  [[ "${line}" != *" memory/progress-"* ]] || {
+    echo "expected no relative memory/ checkpoint path, got: [${line}]" >&2
     return 1
   }
 }

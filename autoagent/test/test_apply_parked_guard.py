@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -28,12 +29,13 @@ from unittest import mock
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _HOOKS_DIR = _REPO_ROOT / "hooks"
 _AUTOAGENT_DIR = _REPO_ROOT / "autoagent"
+_STUB_DIR = _REPO_ROOT / "scripts" / "test"
 
-if str(_HOOKS_DIR) not in sys.path:
-    sys.path.insert(0, str(_HOOKS_DIR))
-if str(_AUTOAGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(_AUTOAGENT_DIR))
+for _anchor in (_HOOKS_DIR, _AUTOAGENT_DIR, _STUB_DIR):
+    if str(_anchor) not in sys.path:
+        sys.path.insert(0, str(_anchor))
 
+import _pg_stub_backend as stub  # noqa: E402
 import daemon_cycle as dc  # noqa: E402
 
 _SEALS: list = []
@@ -62,8 +64,8 @@ def tearDownModule() -> None:
     _SEALS.clear()
 
 
-# Row 3384's stored core and proposal 7497's label (verbatim); the other rows reuse
-# real stored cores under the bare-stem agent key learning_log rows carry.
+# A size-est row's stored core and its proposal's label share one core; the other rows
+# reuse stored-core shapes under the bare-stem agent key learning_log rows carry.
 _SIZE_EST_CORE = "size-est under-estimate concentration (avg overrun + tool_uses)"
 _BUDGET_CORE = "budget-overage concentration"
 _FAIL_CORE = "repeated failure by same agent"
@@ -130,7 +132,7 @@ class GuardVerdictRuleTest(unittest.TestCase):
     def test_should_guard_only_proposals_whose_covered_rows_are_all_terminal(self) -> None:
         cases = (
             # (name, label, stored rows, expected covered row ids or None = not guarded)
-            ("all-terminal", _SIZE_EST_CORE, [_row(3384, _SIZE_EST_CORE, "rejected")], [3384]),
+            ("all-terminal", _SIZE_EST_CORE, [_row(5120, _SIZE_EST_CORE, "rejected")], [5120]),
             (
                 "consolidation label, all terminal",
                 _CONSOLIDATION_LABEL,
@@ -140,8 +142,8 @@ class GuardVerdictRuleTest(unittest.TestCase):
             (
                 "prefixed row agent keys like the bare stem",
                 _SIZE_EST_CORE,
-                [_row(3384, _SIZE_EST_CORE, "rejected", agent=_AGENT)],
-                [3384],
+                [_row(5120, _SIZE_EST_CORE, "rejected", agent=_AGENT)],
+                [5120],
             ),
             (
                 "mixed",
@@ -149,14 +151,14 @@ class GuardVerdictRuleTest(unittest.TestCase):
                 [_row(8, _BUDGET_CORE, "rejected"), _row(3, _FAIL_CORE, "identified")],
                 None,
             ),
-            ("non-terminal only", _SIZE_EST_CORE, [_row(3384, _SIZE_EST_CORE, "identified")], None),
+            ("non-terminal only", _SIZE_EST_CORE, [_row(5120, _SIZE_EST_CORE, "identified")], None),
             ("no covering row", _SIZE_EST_CORE, [_row(8, _BUDGET_CORE, "rejected")], None),
         )
         for name, label, rows, expected_ids in cases:
             with self.subTest(name):
                 rc, stdout, _, _ = _run_guard(
                     ["--parked-pattern-guard"],
-                    _patch_line(7497, label) + "\n",
+                    _patch_line(8215, label) + "\n",
                     coverage=dc._index_rows_by_agent(rows),
                 )
                 self.assertEqual(rc, 0)
@@ -164,7 +166,7 @@ class GuardVerdictRuleTest(unittest.TestCase):
                 if expected_ids is None:
                     self.assertEqual(guarded, [])
                     continue
-                self.assertEqual([entry["proposal_id"] for entry in guarded], [7497])
+                self.assertEqual([entry["proposal_id"] for entry in guarded], [8215])
                 self.assertEqual(
                     sorted(row["id"] for row in guarded[0]["rows"]), sorted(expected_ids)
                 )
@@ -173,22 +175,22 @@ class GuardVerdictRuleTest(unittest.TestCase):
                 )
 
     def test_should_judge_each_selected_proposal_independently(self) -> None:
-        rows = [_row(3384, _SIZE_EST_CORE, "rejected"), _row(3, _FAIL_CORE, "identified")]
+        rows = [_row(5120, _SIZE_EST_CORE, "rejected"), _row(3, _FAIL_CORE, "identified")]
         stdin_text = "\n".join(
-            [_patch_line(7497, _SIZE_EST_CORE), _patch_line(7501, _FAIL_CORE)]
+            [_patch_line(8215, _SIZE_EST_CORE), _patch_line(8216, _FAIL_CORE)]
         )
         rc, stdout, stderr, _ = _run_guard(
             ["--parked-pattern-guard"], stdin_text, coverage=dc._index_rows_by_agent(rows)
         )
         self.assertEqual(rc, 0)
-        self.assertEqual([entry["proposal_id"] for entry in _verdict(stdout)["guarded"]], [7497])
-        self.assertIn("id=7497", stderr)
+        self.assertEqual([entry["proposal_id"] for entry in _verdict(stdout)["guarded"]], [8215])
+        self.assertIn("id=8215", stderr)
 
 
 class GuardWriteFlagTest(unittest.TestCase):
     """The guarded-reject write runs only under --reject-parked, and only for guarded rows."""
 
-    _ROWS = [_row(3384, _SIZE_EST_CORE, "rejected")]
+    _ROWS = [_row(5120, _SIZE_EST_CORE, "rejected")]
 
     def test_should_write_iff_the_explicit_flag_is_passed(self) -> None:
         for argv, expect_write in (
@@ -199,15 +201,15 @@ class GuardWriteFlagTest(unittest.TestCase):
             with self.subTest(argv=argv):
                 rc, stdout, _, write = _run_guard(
                     argv,
-                    _patch_line(7497, _SIZE_EST_CORE),
+                    _patch_line(8215, _SIZE_EST_CORE),
                     coverage=dc._index_rows_by_agent(self._ROWS),
-                    rejected_ids=[7497],
+                    rejected_ids=[8215],
                 )
                 self.assertEqual(rc, 0)
                 verdict = _verdict(stdout)
                 self.assertEqual(write.called, expect_write)
-                self.assertEqual(verdict["rejected"], [7497] if expect_write else [])
-                self.assertEqual([entry["proposal_id"] for entry in verdict["guarded"]], [7497])
+                self.assertEqual(verdict["rejected"], [8215] if expect_write else [])
+                self.assertEqual([entry["proposal_id"] for entry in verdict["guarded"]], [8215])
                 if expect_write:
                     self.assertEqual(write.call_args.args[0], verdict["guarded"])
 
@@ -223,9 +225,18 @@ class GuardWriteFlagTest(unittest.TestCase):
 class GuardedRejectWriteTest(unittest.TestCase):
     """The write is status-guarded to pending/snoozed and stamps the Python-owned head."""
 
+    def setUp(self) -> None:
+        # create=True: the fragment is bound only when psycopg imported, and the gating leg
+        # has no psycopg; the helper is loaded for its text, never connected.
+        with stub.load_helper(Path(os.devnull)) as helper:
+            fragment = helper.PROPOSAL_STATUS_SQL
+        status = mock.patch.object(dc, "_PG_PROPOSAL_STATUS_SQL", fragment, create=True)
+        status.start()
+        self.addCleanup(status.stop)
+
     def test_should_reject_only_actionable_rows_with_the_parked_rationale(self) -> None:
         executed: list[tuple[str, tuple]] = []
-        returning = {7497: [(7497,)], 7501: []}  # 7501 turned non-actionable before the write
+        returning = {8215: [(8215,)], 8216: []}  # 8216 turned non-actionable before the write
 
         cursor = mock.MagicMock()
         cursor.execute.side_effect = lambda sql, params: executed.append((sql, params))
@@ -236,9 +247,9 @@ class GuardedRejectWriteTest(unittest.TestCase):
         connect.return_value.__enter__.return_value = conn
 
         parked = [
-            {"proposal_id": 7497, "rows": [{"id": 3384, "status": "rejected"}]},
+            {"proposal_id": 8215, "rows": [{"id": 5120, "status": "rejected"}]},
             {
-                "proposal_id": 7501,
+                "proposal_id": 8216,
                 "rows": [{"id": 8, "status": "rejected"}, {"id": 3, "status": "applied"}],
             },
         ]
@@ -248,13 +259,14 @@ class GuardedRejectWriteTest(unittest.TestCase):
         ):
             rejected = dc.update_parked_proposal_status(parked)
 
-        self.assertEqual(rejected, [7497])
+        self.assertEqual(rejected, [8215])
         self.assertEqual(len(executed), 2)
         conn.commit.assert_called_once()
         for (sql, params), entry in zip(executed, parked):
             self.assertIn("status IN ('pending', 'snoozed')", sql)
-            self.assertIn("SET status = 'rejected'", sql)
-            rationale = params[0]
+            # A parked reject is a guard, never a verdict → the non-verdict status is requested.
+            requested_status, rationale = params[0], params[1]
+            self.assertEqual(requested_status, "unadjudicated")
             self.assertTrue(rationale.startswith(dc._PARKED_PATTERN_REASON))
             for row in entry["rows"]:
                 self.assertIn(f"{row['id']}:{row['status']}", rationale)
@@ -266,7 +278,7 @@ class GuardedRejectWriteTest(unittest.TestCase):
         executed: list[tuple[str, tuple]] = []
         cursor = mock.MagicMock()
         cursor.execute.side_effect = lambda sql, params: executed.append((sql, params))
-        cursor.fetchall.return_value = [(7497,)]
+        cursor.fetchall.return_value = [(8215,)]
         conn = mock.MagicMock()
         conn.cursor.return_value.__enter__.return_value = cursor
         connect = mock.MagicMock()
@@ -277,20 +289,20 @@ class GuardedRejectWriteTest(unittest.TestCase):
             mock.patch.object(dc, "_pg_connect", connect, create=True),
         ):
             dc.update_parked_proposal_status(
-                [{"proposal_id": 7497, "rows": [{"id": 3384, "status": "rejected"}]}]
+                [{"proposal_id": 8215, "rows": [{"id": 5120, "status": "rejected"}]}]
             )
 
         sql, params = executed[0]
         self.assertIn("reviewed_by = %s", sql)
         self.assertNotIn("reviewed_at", sql)
-        self.assertEqual(params[1], dc._PARKED_PATTERN_ACTOR)
+        self.assertEqual(params[2], dc._PARKED_PATTERN_ACTOR)
         # The id stays last: the positional pin above must survive the added parameter.
-        self.assertEqual(params[-1], 7497)
+        self.assertEqual(params[-1], 8215)
 
     def test_should_raise_when_the_proposal_write_helper_is_absent(self) -> None:
         with mock.patch.object(dc, "HAS_PG_LOOP_WRITE", False), self.assertRaises(RuntimeError):
             dc.update_parked_proposal_status(
-                [{"proposal_id": 7497, "rows": [{"id": 3384, "status": "rejected"}]}]
+                [{"proposal_id": 8215, "rows": [{"id": 5120, "status": "rejected"}]}]
             )
 
 
@@ -298,9 +310,9 @@ class GuardFailureTest(unittest.TestCase):
     """Any guard failure → named exit, empty stdout, stderr naming the interpreter."""
 
     def test_should_fail_closed_and_name_the_interpreter(self) -> None:
-        index = dc._index_rows_by_agent([_row(3384, _SIZE_EST_CORE, "rejected")])
+        index = dc._index_rows_by_agent([_row(5120, _SIZE_EST_CORE, "rejected")])
         cases = (
-            ("read None", ["--parked-pattern-guard"], _patch_line(7497, _SIZE_EST_CORE), None, None),
+            ("read None", ["--parked-pattern-guard"], _patch_line(8215, _SIZE_EST_CORE), None, None),
             ("malformed line", ["--parked-pattern-guard"], "{not json", index, None),
             (
                 "line without proposal id",
@@ -312,7 +324,7 @@ class GuardFailureTest(unittest.TestCase):
             (
                 "write raises",
                 ["--parked-pattern-guard", "--reject-parked"],
-                _patch_line(7497, _SIZE_EST_CORE),
+                _patch_line(8215, _SIZE_EST_CORE),
                 index,
                 RuntimeError("PG write failed"),
             ),
@@ -322,7 +334,7 @@ class GuardFailureTest(unittest.TestCase):
                 rc, stdout, stderr, write = _run_guard(
                     argv, stdin_text, coverage=coverage, write_error=write_error
                 )
-                self.assertEqual(rc, dc.PARKED_GUARD_FAILURE_EXIT_CODE)
+                self.assertEqual(rc, dc.ExitCode.PARKED_GUARD_FAILURE)
                 self.assertNotEqual(rc, 0)
                 self.assertEqual(stdout, "")
                 self.assertIn(sys.executable, stderr)
@@ -336,18 +348,18 @@ class GuardFailureTest(unittest.TestCase):
         ):
             rc, stdout, _, _ = _run_guard(
                 ["--parked-pattern-guard"],
-                _patch_line(7497, _SIZE_EST_CORE),
-                coverage=dc._index_rows_by_agent([_row(3384, _SIZE_EST_CORE, "rejected")]),
+                _patch_line(8215, _SIZE_EST_CORE),
+                coverage=dc._index_rows_by_agent([_row(5120, _SIZE_EST_CORE, "rejected")]),
             )
         self.assertEqual(rc, 0)
-        self.assertEqual([entry["proposal_id"] for entry in _verdict(stdout)["guarded"]], [7497])
+        self.assertEqual([entry["proposal_id"] for entry in _verdict(stdout)["guarded"]], [8215])
 
 
 class GuardedRejectClassifierTest(unittest.TestCase):
     """A guarded reject is non-adjudicating: the kill streak looks past it."""
 
     def test_should_not_advance_the_reject_streak_on_a_guarded_reject(self) -> None:
-        guarded_rationale = f"{dc._PARKED_PATTERN_REASON} (rows 3384:rejected)"
+        guarded_rationale = f"{dc._PARKED_PATTERN_REASON} (rows 5120:rejected)"
         self.assertIn(
             dc.classify_failure_rationale(guarded_rationale), dc._NON_ADJUDICATION_CLASSES
         )

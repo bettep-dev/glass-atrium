@@ -10,6 +10,8 @@
 # (the old Linux code would have died in the ERR trap before ever comparing).
 
 ROTATE_SH="${BATS_TEST_DIRNAME}/../monitor-log-rotate.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 setup() {
   [[ -f "${ROTATE_SH}" ]] || skip "monitor-log-rotate.sh not found"
@@ -21,7 +23,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${MR_TMP:-}" && -d "${MR_TMP}" ]] && rm -rf -- "${MR_TMP}" || true
+  if ga_guard_path "${MR_TMP:-}"; then rm -rf -- "${MR_TMP:?}"; fi
 }
 
 @test "below-threshold log: size read succeeds, no rotation, log untouched (portable wc -c)" {
@@ -33,7 +35,7 @@ line3"
   local before
   before="$(cat "${logdir}/monitor.out.log")"
 
-  run env HOME="${MR_TMP}" bash "${ROTATE_SH}"
+  run env HOME="${MR_TMP}" GA_DATA_ROOT="${MR_TMP}/.glass-atrium" bash "${ROTATE_SH}"
   # Old Linux `stat -f "%z"` would die in the ERR trap here — exit 0 is the portability proof.
   [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
 
@@ -47,24 +49,44 @@ line3"
 
 @test "missing log file: skipped silently, exit 0" {
   # No monitor.out.log / monitor.err.log present — rotate_one returns early per file.
-  run env HOME="${MR_TMP}" bash "${ROTATE_SH}"
+  run env HOME="${MR_TMP}" GA_DATA_ROOT="${MR_TMP}/.glass-atrium" bash "${ROTATE_SH}"
   [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
   [[ "${output}" != *"rotated:"* ]] || return 1
 }
 
-@test "oversized /tmp sink member: rotated, truncated in place, neighbours untouched" {
-  local sink="${MR_TMP}/tmpsink"
-  # 50 MiB threshold + 1 MiB, written once — the sink members are named, not globbed.
-  python3 -c "open('${sink}/wiki-daemon.log','wb').write(b'x'*(51*1024*1024))"
+@test "oversized /tmp sink: active job logs rotate in place, retired job logs and non-members stay untouched" {
+  local sink="${MR_TMP}/tmpsink" oversize=$((51 * 1024 * 1024))
+  # name|expected — the sink members are named, not globbed, so only active jobs' logs rotate.
+  local -a rows=(
+    "autoagent-daemon-loop.log|rotated"
+    "wiki-compile.log|rotated"
+    "autoagent-daemon.log|kept"
+    "wiki-daemon.log|kept"
+    "daemon-daily-restart.log|kept"
+    "unrelated.log|kept"
+  )
+  local row name size
+  for row in "${rows[@]}"; do
+    # sparse file 1 MiB past the fixed 50 MiB threshold
+    python3 -c "import sys; f = open(sys.argv[1], 'wb'); f.seek(int(sys.argv[2]) - 1); f.write(b'x')" \
+      "${sink}/${row%%|*}" "${oversize}"
+  done
   printf 'small\n' >"${sink}/pg-backup.log"
-  printf 'keep\n' >"${sink}/unrelated.log"
 
-  run env HOME="${MR_TMP}" bash "${ROTATE_SH}"
+  run env HOME="${MR_TMP}" GA_DATA_ROOT="${MR_TMP}/.glass-atrium" bash "${ROTATE_SH}"
   [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
 
-  [[ "${output}" == *"rotated: ${sink}/wiki-daemon.log."* ]] || { echo "sink member not rotated: ${output}"; return 1; }
-  [ ! -s "${sink}/wiki-daemon.log" ] || { echo "live log not truncated in place"; return 1; }
-  ls "${sink}"/wiki-daemon.log.*.gz >/dev/null 2>&1 || { echo "no archive produced"; return 1; }
+  for row in "${rows[@]}"; do
+    name="${row%%|*}"
+    if [[ "${row##*|}" == "rotated" ]]; then
+      [[ ! -s "${sink}/${name}" ]] && ls "${sink}/${name}".*.gz >/dev/null 2>&1 \
+        || { echo "${name}: not rotated and truncated in place: ${output}"; return 1; }
+    else
+      size="$(wc -c <"${sink}/${name}")"
+      [[ "${size}" -eq "${oversize}" ]] \
+        && ! ls "${sink}/${name}".*.gz >/dev/null 2>&1 \
+        || { echo "${name}: touched by the rotator: ${output}"; return 1; }
+    fi
+  done
   [ "$(cat "${sink}/pg-backup.log")" == "small" ] || { echo "below-threshold member mutated"; return 1; }
-  [ "$(cat "${sink}/unrelated.log")" == "keep" ] || { echo "non-member file touched"; return 1; }
 }

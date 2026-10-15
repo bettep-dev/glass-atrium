@@ -8,7 +8,7 @@
 //
 // Runner: npx tsx --test test/outcomes.attention-composition.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
@@ -24,7 +24,7 @@ type PayloadStatus = "loading" | "error" | "unavailable" | "blocked" | "ready";
 interface PayloadState<T> {
   status: PayloadStatus;
   data?: T;
-  error?: string;
+  error?: string | null;
 }
 interface BandTile {
   key: string;
@@ -55,10 +55,11 @@ interface AgentStackEntry {
   byResult: Record<string, number>;
 }
 interface OutcomesHelpers {
-  buildAttentionParamsO: (days: number | string) => URLSearchParams;
+  buildAttentionParamsO: (days: number | string, part?: Record<string, string>) => URLSearchParams;
   AlarmLaneO: (props: { channelLivenessState: PayloadState<unknown>; searchState: PayloadState<unknown> }) => RenderNode | null;
   RegionErrorO: unknown;
   BlockedBannerO: unknown;
+  SilentChannelRowO: (props: { channels: string[] }) => RenderNode;
   ResultTableBody: (props: Record<string, unknown>) => RenderNode;
   ResultTableCard: (props: Record<string, unknown>) => RenderNode;
   buildStatusBandTilesO: (data: unknown, attentionCount: number | null) => BandTile[];
@@ -74,7 +75,12 @@ interface OutcomesHelpers {
   buildAgentFailureRowsO: (
     agentStack: unknown,
     byAgentTop?: unknown,
-  ) => { agent: string; failed: number; blocked: number; openCaveats: number | null; total: number }[];
+  ) => { agent: string; failed: number; blocked: number; openCaveats: number | null; total: number; rate: number; isLowSample: boolean }[];
+  getGraderSentenceO: (breakdown: Record<string, unknown> | null | undefined) => string | null;
+  getConfidentFailedO: (crosstab: { total: number; byCell: Record<string, { count: number }> } | null) => { count: number; share: number } | null;
+  getCrosstabVisibleRowsO: (byCell: Record<string, { count: number }>) => string[];
+  PageVerdictO: (props: { analyticsState: PayloadState<unknown>; channelLivenessState: PayloadState<{ alerting?: string[] }>; windowDays: number }) => RenderNode | null;
+  buildNeedsYouReasonsO: (data: unknown, attention: unknown) => { key: string; label: string; count: number | null; tone: string }[];
   buildAnalyticsDataO: (overall: unknown) => { overall: { by_agent_top_10?: unknown }; agentStack: unknown };
   isNeedsYouRowO: (row: LedgerRow, closedAt: string | null) => boolean;
   buildLedgerSectionsO: (
@@ -83,6 +89,7 @@ interface OutcomesHelpers {
     needsYou?: { rows: LedgerRow[]; total: number; windowLabel: string } | null,
   ) => { key: string; label: string; heading: string; rows: LedgerRow[]; anchorId?: string }[];
   BandTileO: (props: { tile: BandTile; windowLabel: string }) => RenderNode;
+  VolumeTilesO: (props: { tiles: BandTile[]; windowLabel: string; info?: unknown }) => RenderNode;
   ResultTable: (props: Record<string, unknown>) => RenderNode;
   ResultTableRow: (props: { row: LedgerRow & { agent: string; task_type: string }; onRowClick: () => void; closure?: ClosureState }) => RenderNode;
   focusLedgerSectionO: (id: string, doc: { getElementById: (id: string) => unknown }) => boolean;
@@ -93,7 +100,10 @@ interface OutcomesHelpers {
   getChannelLivenessBadgeO: (state: PayloadState<{ alerting?: string[]; days?: number }>) => { tone: string; text: string };
   AgentFailureBodyO: (props: { state: PayloadState<unknown>; onRetry: () => void; stickyStyle?: unknown }) => RenderNode;
   buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
-  window: { UI: { getAgentDisplayName: (name: string) => string } };
+  buildActiveFilterEntriesO: (filter: Record<string, unknown>) => { key: string; label: string; patch: Record<string, string> | null }[];
+  ActiveFilterChips: (props: { filter: Record<string, unknown>; onRemove?: (patch: Record<string, string>) => void; onClearAll?: () => void }) => RenderNode | null;
+  getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
+  window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; PageVerdict: unknown; CardInfo: unknown } };
 }
 
 interface RenderNode {
@@ -281,7 +291,8 @@ const bannerTitles = (nodes: RenderNode[]): string[] =>
 
 test("StatusBandO: an analytics failure draws its own banner in place, never the skeleton or a text panel", () => {
   const render = (status: PayloadStatus) => flattenNodes(helpers.StatusBandO({
-    analyticsState: { status },
+    // a failed region always carries its error (putRegionFailure)
+    analyticsState: { status, error: status === "loading" ? null : "boom" },
     attentionState: { status: "loading" },
     windowDays: 30,
   }));
@@ -328,6 +339,36 @@ test("AlarmLaneO: payload failures stay at their groups — the lane holds only 
   assert.deepStrictEqual(bannerTitles(outage), [], "the lane never re-draws a group banner");
 });
 
+test("AlarmLaneO: a stopped channel keeps its lane row, which names the channel without repeating the verdict", () => {
+  const silent = { status: "ready" as const, data: { alerting: ["subagent-stop"] } };
+  const lane = flattenNodes(helpers.AlarmLaneO({ channelLivenessState: silent, searchState: { status: "ready" } }));
+  assert.ok(lane.some((n) => n.type === helpers.SilentChannelRowO), "the per-channel row stays in the lane");
+
+  const { title, body } = helpers.SilentChannelRowO({ channels: ["subagent-stop"] }).props ?? {};
+  const rowText = [title, body].filter((slot) => typeof slot === "string").join(" ");
+  assert.match(rowText, /subagent-stop/);
+  assert.doesNotMatch(rowText, /Recording stopped|understated/, "the verdict above already states the stop and its effect");
+});
+
+describe("a lane alarm is the shared page-level alert card, its tone never painted on a local tinted shell", () => {
+  const alertCard = (helpers.window.UI as unknown as Record<string, unknown>).AlertCard;
+  const rows = [
+    { name: "a silent channel is critical", tone: "crit", details: undefined, node: () => helpers.SilentChannelRowO({ channels: ["subagent-stop"] }) },
+    { name: "a sustained outage warns, its raw answer behind Details", tone: "warn", details: "HTTP 503", node: () => (helpers.BlockedBannerO as (p: unknown) => RenderNode)({ detail: "HTTP 503" }) },
+  ];
+
+  for (const row of rows) {
+    test(row.name, () => {
+      const node = row.node();
+      assert.strictEqual(node.type, alertCard, "the row renders the shared AlertCard");
+      assert.strictEqual(node.props?.tone, row.tone);
+      assert.ok(node.props?.surface === undefined || node.props.surface === "raised", "a page-level lane row is a raised card");
+      assert.strictEqual(node.props?.style, undefined, "no local tint or tone border");
+      assert.strictEqual(node.props?.details, row.details, "a raw answer rides only the card's Details");
+    });
+  }
+});
+
 test("ledger: a failed read draws one banner at the ledger and its header follows the failed state", () => {
   const body = flattenNodes(helpers.ResultTableBody({ state: { status: "error", error: "boom" }, rows: [] }));
   assert.strictEqual(bannerTitles(body).length, 1, "the ledger owns its failure banner");
@@ -349,6 +390,23 @@ test("buildStatusBandTilesO: the missing-report level honours the same low-N flo
   );
 });
 
+test("StatusBandO: the loading skeleton takes the same column spans as the loaded band", () => {
+  const spansOf = (node: RenderNode): string[] => {
+    const grid = flattenNodes(node).find((n) => String(n.props?.className ?? "").includes("grid-cols-4"))!;
+    return grid.children.flat()
+      .filter((child): child is RenderNode => child !== null && typeof child === "object")
+      .map((child) => /col-span-(\d)/.exec(String(child.props?.className ?? ""))?.[1] ?? "1");
+  };
+  const loading = spansOf(helpers.StatusBandO({ analyticsState: { status: "loading" }, attentionState: { status: "loading" }, windowDays: 30 }));
+  const loaded = spansOf(helpers.StatusBandO({
+    analyticsState: { status: "ready", data: aboveFloor({ done: 150, fail: 4 }) },
+    attentionState: { status: "ready", data: { total: 5 } },
+    windowDays: 30,
+  }));
+
+  assert.deepStrictEqual(sameRealm(loading), sameRealm(loaded), "nothing shifts when the band arrives");
+});
+
 // --- wiring: the request literal the route parses, and the lane row that covers its failure ---
 
 test("buildAttentionParamsO: emits a needs_attention literal the route's parser accepts", () => {
@@ -366,10 +424,12 @@ test("buildAttentionParamsO: emits a needs_attention literal the route's parser 
 
 // --- by-agent failures: the table exists to name who broke, so silent rows never render ---
 
-test("buildAgentFailureRowsO: keeps only rows with a failure and orders them worst-first", () => {
+test("buildAgentFailureRowsO: sampled agents lead by failure rate, low-sample agents sink below them", () => {
   const stack: AgentStackEntry[] = [
     { agent: "dev-react", total: 40, byResult: { done: 40 } },
     { agent: "dev-node", total: 30, byResult: { done: 27, fail: 3 } },
+    { agent: "dev-shell", total: 100, byResult: { done: 80, fail: 20 } },
+    { agent: "dev-python", total: 60, byResult: { done: 54, fail: 3, blocked: 3 } },
     { agent: "qa-code-reviewer", total: 20, byResult: { done: 12, fail: 5, blocked: 3 } },
     { agent: "intel-planner", total: 10, byResult: { done: 9, blocked: 1 } },
   ];
@@ -377,10 +437,167 @@ test("buildAgentFailureRowsO: keeps only rows with a failure and orders them wor
 
   assert.deepStrictEqual(
     rows.map((r) => r.agent),
-    ["qa-code-reviewer", "dev-node", "intel-planner"],
-    "clean agents drop out; the rest sort by failed+blocked descending",
+    ["dev-shell", "dev-python", "dev-node", "qa-code-reviewer", "intel-planner"],
+    "clean agents drop out; rate descending, an equal rate breaks on the larger count, a 40% rate over 20 runs never outranks a sampled agent",
   );
-  for (const row of rows) assert.ok(row.failed + row.blocked > 0, `${row.agent} earns its row`);
+  for (const row of rows) {
+    assert.strictEqual(row.rate, (row.failed + row.blocked) / row.total, `${row.agent}: rate is failed+blocked over its own runs`);
+    assert.strictEqual(row.isLowSample, row.total < 30, `${row.agent}: low-sample follows the shared LOW_N_MIN floor`);
+  }
+});
+
+// the needs-you headline and its parts come from one /search wave, split so no record is counted twice
+const attentionRead = (total: number, parts: Record<string, number>) => ({ total, parts });
+
+describe("buildNeedsYouReasonsO: the reasons are disjoint parts that add up to the needs-you headline", () => {
+  const analytics = aboveFloor({ done: 180, fail: 8, blocked: 4 });
+  const rows = [
+    { name: "a flag-dominated window adds up with no remainder", read: attentionRead(1836, { flagged: 1430, fail: 3, blocked: 91, open: 312 }), remainder: 0 },
+    { name: "a window with no flags adds up from failures and caveats alone", read: attentionRead(40, { flagged: 0, fail: 10, blocked: 5, open: 25 }), remainder: 0 },
+    { name: "records that moved between reads are a named remainder, so the sum still holds", read: attentionRead(50, { flagged: 30, fail: 2, blocked: 1, open: 10 }), remainder: 7 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const reasons = sameRealm(helpers.buildNeedsYouReasonsO(analytics, row.read));
+      const sum = reasons.reduce((acc, reason) => acc + (reason.count ?? 0), 0);
+      assert.strictEqual(sum, row.read.total, "the parts add up to the headline");
+      assert.strictEqual(reasons[0].key, "flagged", "flagged for review leads, as the part that claims a record first");
+      assert.strictEqual(reasons.find((r) => r.key === "other")?.count ?? 0, row.remainder);
+    });
+  }
+
+  test("parts that outgrew the headline between reads never surface as a negative remainder", () => {
+    const reasons = sameRealm(helpers.buildNeedsYouReasonsO(analytics, attentionRead(40, { flagged: 30, fail: 6, blocked: 4, open: 10 })));
+    assert.ok(reasons.every((r) => (r.count ?? 0) >= 0), "no part is a negative count");
+    assert.strictEqual(reasons.find((r) => r.key === "other"), undefined, "no remainder row when the parts already cover the headline");
+  });
+
+  test("an unread needs-you wave leaves every part unknown, never a resolved zero", () => {
+    const reasons = sameRealm(helpers.buildNeedsYouReasonsO(analytics, null));
+    assert.ok(reasons.length > 0 && reasons.every((r) => r.count === null));
+  });
+
+  test("the failed-or-blocked part keeps the band's breakage tone", () => {
+    const reasons = sameRealm(helpers.buildNeedsYouReasonsO(analytics, attentionRead(40, { flagged: 20, fail: 6, blocked: 4, open: 10 })));
+    const broken = reasons.find((r) => r.key === "broken")!;
+    assert.deepStrictEqual([broken.count, broken.tone], [10, "crit"], "12 of 200 breaches the 5% breakage threshold");
+  });
+});
+
+test("buildAttentionParamsO: each part narrows the needs-you query without dropping it", () => {
+  const params = helpers.buildAttentionParamsO(30, { review_flag: "false", result: "blocked" });
+  assert.deepStrictEqual(
+    [params.get("needs_attention"), params.get("review_flag"), params.get("result"), params.get("limit"), params.get("days")],
+    ["true", "false", "blocked", "1", "30"],
+  );
+});
+
+// --- page verdict: one sentence answering "is this fine?", on the Dashboard's shared rate rule ---
+
+describe("PageVerdictO: the Task results verdict follows the shared outcome-rate rule", () => {
+  const byResult = (counts: Record<string, number>, open = 0) =>
+    Object.entries(counts).map(([result, count]) => ({ result, count, writer_open_count: result === "done_with_concerns" ? open : 0 }));
+  const ready = (counts: Record<string, number>, open = 0) => {
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    return { status: "ready" as const, data: { overall: { total, reconstructed_total: 0, by_result: byResult(counts, open) }, byResultCount: counts } };
+  };
+  const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
+  const healthyWindow = ready({ done: 195, fail: 2, done_with_concerns: 3 }, 1);
+  const rows = [
+    { name: "breakage at or above 5% is crit", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: recording, tone: "crit", text: /6\.0% failed or blocked .*200 records/ },
+    { name: "open caveats at or above 10% alone are warn", state: ready({ done: 170, done_with_concerns: 30 }, 25), liveness: recording, tone: "warn", text: /12\.5% caveat open/ },
+    { name: "both shares under their steps are ok", state: healthyWindow, liveness: recording, tone: "ok", text: /1\.0% failed or blocked .*200 records/ },
+    { name: "a sample under the low-N floor claims no tone", state: ready({ fail: 10 }), liveness: recording, tone: "neutral", text: /too few to judge/ },
+    { name: "an empty window claims no tone", state: ready({}), liveness: recording, tone: "neutral", text: /No task results/ },
+    { name: "a failed read is unknown, never all-clear", state: { status: "error" as const, error: "boom" }, liveness: recording, tone: "neutral", text: /unknown/ },
+    { name: "a stopped recording channel is crit over an ok rate", state: healthyWindow, liveness: { status: "ready" as const, data: { alerting: ["subagent-stop"] } }, tone: "crit", text: /Recording stopped on subagent-stop .*understated/ },
+    { name: "an unchecked recording channel holds back the all-clear and says so in the tone word", state: healthyWindow, liveness: { status: "error" as const, error: "boom" }, tone: "neutral", text: /1\.0% failed or blocked/, label: "Couldn't check channels" },
+    { name: "a recording channel still loading holds back the all-clear and says so in the tone word", state: healthyWindow, liveness: { status: "loading" as const }, tone: "neutral", text: /1\.0% failed or blocked/, label: "Checking channels" },
+    { name: "a flagged rate stands while the recording channels are still loading", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: { status: "loading" as const }, tone: "crit", text: /failed or blocked/ },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const node = helpers.PageVerdictO({ analyticsState: row.state, channelLivenessState: row.liveness, windowDays: 30 }) as RenderNode;
+      assert.strictEqual(node.type, helpers.window.UI.PageVerdict, "renders the shared PageVerdict atom");
+      assert.strictEqual(node.props!.tone, row.tone);
+      assert.strictEqual(node.props!.label, (row as { label?: string }).label, "only an unchecked channel replaces the tone word");
+      assert.match(String(node.children.join("")), row.text);
+    });
+  }
+});
+
+// copy cap: a verdict is one line → numbers first, at most 90 characters at a five-digit window
+describe("PageVerdictO: a judged verdict leads with its shares and fits the 90-character line cap", () => {
+  const VERDICT_CAP = 90;
+  const windowOf = (counts: Record<string, number>, open: number) => {
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    return {
+      status: "ready" as const,
+      data: {
+        overall: { total, reconstructed_total: 0, by_result: Object.entries(counts).map(([result, count]) => ({ result, count, writer_open_count: result === "done_with_concerns" ? open : 0 })) },
+        byResultCount: counts,
+      },
+    };
+  };
+  const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
+  const okWindow = windowOf({ done: 11200, fail: 52, done_with_concerns: 100 }, 40);
+  const unreadHero = { status: "loading" as const };
+  const rows = [
+    { name: "a crit rate", analytics: windowOf({ done: 10500, fail: 652, done_with_concerns: 200 }, 120), attention: unreadHero, liveness: recording },
+    { name: "an ok rate", analytics: okWindow, attention: unreadHero, liveness: recording },
+    { name: "an ok rate raised by the hero", analytics: okWindow, attention: { status: "ready" as const, data: { total: 3405, parts: { flagged: 3405, fail: 0, blocked: 0, open: 0 } } }, liveness: recording },
+    { name: "an ok rate while the recording channels are still loading", analytics: okWindow, attention: unreadHero, liveness: { status: "loading" as const } },
+    { name: "an ok rate whose recording channels couldn't be checked", analytics: okWindow, attention: unreadHero, liveness: { status: "error" as const, error: "boom" } },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const node = helpers.PageVerdictO({ analyticsState: row.analytics, channelLivenessState: row.liveness, attentionState: row.attention, windowDays: 30 } as never) as RenderNode;
+      const text = String(node.children.join(""));
+      assert.match(text, /^\d+\.\d% /, `leads with a share: "${text}"`);
+      assert.ok(text.length <= VERDICT_CAP, `"${text}" is ${text.length} chars`);
+    });
+  }
+});
+
+describe("PageVerdictO: the verdict is never greener than the needs-you hero", () => {
+  const TONE_RANK: Record<string, number> = { neutral: 0, ok: 1, warn: 2, crit: 3 };
+  const counts = (c: Record<string, number>, open: number) => ({
+    status: "ready" as const,
+    data: {
+      overall: {
+        total: 200,
+        reconstructed_total: 0,
+        by_result: Object.entries(c).map(([result, count]) => ({ result, count, writer_open_count: result === "done_with_concerns" ? open : 0 })),
+      },
+      byResultCount: c,
+    },
+  });
+  const healthy = counts({ done: 195, fail: 2, done_with_concerns: 3 }, 1);
+  const broken = counts({ done: 180, fail: 12, done_with_concerns: 8 }, 2);
+  const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
+  const attention = (total: number) => ({ status: "ready" as const, data: { total, parts: { flagged: total, fail: 0, blocked: 0, open: 0 } } });
+  const rows = [
+    { name: "an ok rate under a warn hero rises to warn", analytics: healthy, attention: attention(60), tone: "warn" },
+    { name: "an ok rate under an ok hero stays ok", analytics: healthy, attention: attention(5), tone: "ok" },
+    { name: "a crit rate keeps crit over a warn hero", analytics: broken, attention: attention(60), tone: "crit" },
+    { name: "an unread hero claims nothing, so the rate stands", analytics: healthy, attention: { status: "loading" as const }, tone: "ok" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const node = helpers.PageVerdictO({ analyticsState: row.analytics, channelLivenessState: recording, attentionState: row.attention, windowDays: 30 } as never) as RenderNode;
+      const heroTone = row.attention.status === "ready"
+        ? tileOf(helpers.buildStatusBandTilesO(row.analytics.data, row.attention.data!.total), "attention").tone
+        : "neutral";
+      assert.strictEqual(node.props!.tone, row.tone);
+      assert.ok(TONE_RANK[String(node.props!.tone)] >= TONE_RANK[heroTone], `verdict ${String(node.props!.tone)} under a ${heroTone} hero`);
+    });
+  }
+
+  test("a verdict raised by the hero leads with the needs-you share and links to it", () => {
+    const node = helpers.PageVerdictO({ analyticsState: healthy, channelLivenessState: recording, attentionState: attention(60), windowDays: 30 } as never) as RenderNode;
+    assert.match(String(node.children.join("")), /^30\.0% need you · /);
+    assert.ok((node.props!.chips as { key: string }[]).some((chip) => chip.key === "needs-you"));
+  });
 });
 
 test("buildAnalyticsDataO → buildAgentFailureRowsO: every failing registry agent gets a row, however low its volume", () => {
@@ -462,7 +679,7 @@ test("buildLedgerSectionsO: Needs you reads the whole window, not the page it ha
   assert.deepStrictEqual(sameRealm(routine.rows.map((r) => r.id)), [1, 4], "routine never repeats a needs-you row");
   assert.match(needsYou.heading, /1,717/, "the header carries the window count, not the page count");
   assert.match(needsYou.heading, /30d/, "the header names its window");
-  assert.match(routine.heading, /on this page/);
+  assert.match(routine.heading, /^Routine · 2 shown$/);
 });
 
 test("buildNeedsYouUrlO: the ledger's own filter plus the attention predicate, always from the first row", () => {
@@ -586,9 +803,12 @@ test("reportingHealthSummaryO: a silent channel is named in the closed summary l
 test("selfReportSummaryO / loopEventsSummaryO: the summary counts what the section holds", () => {
   assert.strictEqual(
     helpers.selfReportSummaryO({ status: "ready", data: aboveFloor({ done: 190 }, 40) }),
-    "160 writer-emitted of 200 records",
+    "160 of 200 self-reported",
     "the closed line names both populations, so the card's all-records counts reconcile with it",
   );
+  // header meta cap → a six-digit window still fits one header line
+  const wide = helpers.selfReportSummaryO({ status: "ready", data: aboveFloor({ done: 120000 }, 4000) });
+  assert.ok(wide.length <= 32, `"${wide}" is ${wide.length} chars`);
   assert.strictEqual(helpers.loopEventsSummaryO({ status: "ready", data: { events: [{}, {}, {}] } }), "3 recent cycle events");
   assert.strictEqual(helpers.loopEventsSummaryO({ status: "ready", data: {} }), "0 recent cycle events");
 });
@@ -617,6 +837,51 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
     assert.strictEqual(asRendered({ ...attention, count }).type, "div", `count ${count} offers no jump`);
   }
   assert.strictEqual(asRendered(tileOf(tiles, "broken")).type, "div", "tiles without a target stay static");
+});
+
+// design.md copy rule: a definition over a cap opens from a focusable ⓘ, never a hover-only title
+describe("StatusBandO: the tile rules open from one focusable ⓘ described by the band label, never from a hover-only title", () => {
+  const data = aboveFloor({ done: 150, fail: 8, blocked: 4 });
+  const tiles = helpers.buildStatusBandTilesO(data, 25);
+  const band = helpers.StatusBandO({ analyticsState: { status: "ready", data }, attentionState: { status: "ready", data: { total: 25, parts: { flagged: 25, fail: 0, blocked: 0, open: 0 } } as { total: number } }, windowDays: 30 });
+  const bandNodes = flattenNodes(band);
+  const volume = bandNodes.find((n) => n.type === helpers.VolumeTilesO)!;
+  const info = volume.props!.info as RenderNode;
+  const hoverTitled = (node: RenderNode) => flattenNodes(node).filter((n) => n.props?.title != null);
+
+  test("no tile carries a hover-only title", () => {
+    const hero = tileOf(tiles, "attention");
+    const rendered = [
+      { name: "a jumpable hero", node: helpers.BandTileO({ tile: hero, windowLabel: "30d" }) },
+      { name: "a static hero", node: helpers.BandTileO({ tile: { ...hero, count: 0 }, windowLabel: "30d" }) },
+      { name: "the volume column", node: helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d" }) },
+    ];
+    for (const row of rendered) assert.deepStrictEqual(hoverTitled(row.node).length, 0, `${row.name} has no hover-only title`);
+  });
+
+  test("the hero's accessible name still carries its rule", () => {
+    const hero = tileOf(tiles, "attention");
+    assert.ok(String(helpers.BandTileO({ tile: hero, windowLabel: "30d" }).props!["aria-label"]).includes(hero.hint));
+  });
+
+  test("the ⓘ sits outside every tile button, is described by the band label, and its drawer names every tile's rule", () => {
+    assert.strictEqual(info.type, helpers.window.UI.CardInfo, "the shared ⓘ trigger");
+    const label = bandNodes.find((n) => n.props?.id === info.props!.describedBy);
+    assert.ok(label, "the ⓘ points at an element in the band");
+    assert.strictEqual(renderText(label).trim(), "Status band");
+    assert.ok(bandNodes.some((n) => n.props?.role === "group" && n.props["aria-labelledby"] === label!.props!.id), "the band is named by the same label");
+    const drawer = renderText(info.children);
+    for (const tile of tiles) {
+      assert.ok(drawer.includes(tile.label), `the drawer names ${tile.key}`);
+      assert.ok(drawer.includes(tile.hint), `the drawer states ${tile.key}'s rule`);
+    }
+  });
+
+  test("the volume column renders the ⓘ it is handed", () => {
+    const marker = { type: "marker", props: {}, children: [] };
+    const column = helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d", info: marker });
+    assert.ok(flattenNodes(column).includes(marker as RenderNode));
+  });
 });
 
 test("focusLedgerSectionO: scrolls to and focuses the target, and reports a missing one", () => {
@@ -781,7 +1046,7 @@ test("buildLedgerSectionsO: the window heading counts the rows actually shown un
   const [needsYou] = sameRealm(view.buildLedgerSectionsO([], undefined, {
     rows: needsYouRows(50), total: 1718, windowLabel: "30d",
   }, 10));
-  assert.match(needsYou.heading, /1,718 in 30d · first 10 shown/);
+  assert.match(needsYou.heading, /1,718 in 30d · 10 shown$/);
 });
 
 test("getDetailPositionLabelO: the drawer counts position in the grouped order the ledger displays", () => {
@@ -829,4 +1094,224 @@ test("AttributionLegend: an empty day's two meanings are labelled — no records
   const text = collectText(flattenNodes(view.AttributionLegend()));
   assert.match(text, /No records/);
   assert.match(text, /Not read/);
+});
+
+// --- Filters popover: the ledger's filters sit behind one head button; each active filter is one removable chip ---
+
+const FULL_FILTER = { days: 7, agent: LEDGER_AGENT, result: "fail", task_type: "feature", q: "phase" };
+const pressButton = (node: RenderNode) => (node.props!.onClick as () => void)();
+
+test("filter chips: removing one chip clears its own axis and leaves every other chip in place", () => {
+  const entries = helpers.buildActiveFilterEntriesO(FULL_FILTER);
+  const removable = entries.filter((entry) => entry.patch !== null);
+  assert.strictEqual(removable.length, 4, "agent, result, task type and keyword are removable");
+  for (const entry of removable) {
+    const remaining = helpers.buildActiveFilterChipsO({ ...FULL_FILTER, ...entry.patch });
+    const expected = entries.map((e) => e.label).filter((label) => label !== entry.label);
+    assert.deepEqual(sameRealm(remaining), sameRealm(expected), entry.label);
+  }
+});
+
+test("filter chips: the period chip is not removable — the page's period control owns that axis", () => {
+  const period = helpers.buildActiveFilterEntriesO(FULL_FILTER).find((entry) => entry.label.startsWith("Period"))!;
+  assert.strictEqual(period.patch, null);
+});
+
+test("ActiveFilterChips: each remove button names its filter and hands back that filter's patch", () => {
+  const removed: unknown[] = [];
+  const nodes = flattenNodes(helpers.ActiveFilterChips({
+    filter: { days: 30, agent: LEDGER_AGENT, q: "phase" }, onRemove: (patch) => removed.push(patch), onClearAll: () => {},
+  }));
+  const removeButtons = nodes.filter((n) => n.type === "button" && /^Remove filter /.test(String(n.props?.["aria-label"])));
+  assert.deepEqual(removeButtons.map((b) => String(b.props!["aria-label"])), [
+    `Remove filter Agent: ${helpers.window.UI.getAgentDisplayName(LEDGER_AGENT)}`,
+    'Remove filter Keyword: "phase"',
+  ]);
+  removeButtons.forEach(pressButton);
+  assert.deepEqual(sameRealm(removed), [{ agent: "" }, { q: "" }]);
+});
+
+test("ActiveFilterChips: Clear all resets every filter, and no active filter renders nothing", () => {
+  let clearCount = 0;
+  const nodes = flattenNodes(helpers.ActiveFilterChips({ filter: { days: 30, result: "fail" }, onRemove: () => {}, onClearAll: () => { clearCount += 1; } }));
+  pressButton(nodes.find((n) => n.type === "button" && n.props?.["aria-label"] === "Clear all filters")!);
+  assert.strictEqual(clearCount, 1);
+  assert.strictEqual(helpers.ActiveFilterChips({ filter: { days: 30 } }), null);
+});
+
+test("Results card: the head's Filters button counts the active filters, and Results carries no filter column", () => {
+  const rows = [
+    { name: "no active filter", filter: { days: 30 }, label: "Filters" },
+    { name: "two active filters", filter: { days: 30, agent: LEDGER_AGENT, result: "fail" }, label: "Filters · 2" },
+  ];
+  for (const row of rows) {
+    const card = flattenNodes(helpers.ResultTableCard({
+      state: { status: "ready" }, rows: [], totalMatched: 0, page: 0, limit: 50, sort: "record_ts:desc", filter: row.filter,
+      filterControls: { keywordInput: "", distinctAgents: [], includeAll: false },
+    }));
+    const headRight = flattenNodes(card.find((n) => n.props?.title === "Results")!.props!.right);
+    const popover = headRight.find((n) => n.type === helpers.window.UI.Popover);
+    assert.strictEqual(popover?.props?.label, row.label, row.name);
+    assert.ok(headRight.some((n) => n.type === "input" && n.props?.["aria-label"] === "Keyword search"), `${row.name}: keyword stays inline`);
+    assert.ok(card.some((n) => n.type === helpers.ActiveFilterChips), `${row.name}: active chips sit under the head`);
+  }
+});
+
+test("needs-you reason: a flagged or open-caveat row says why in words; a broken or routine row adds none", () => {
+  const rows = [
+    { name: "flagged overconfident", row: ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence"] }), reason: "flagged: overconfident" },
+    { name: "flagged twice", row: ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence", "scope-excess"] }), reason: "flagged: overconfident +1" },
+    { name: "open caveat", row: ledgerRowOf("done_with_concerns"), reason: "caveat open" },
+    { name: "closed caveat", row: ledgerRowOf("done_with_concerns", { closed_at: "2026-09-01T00:00:00Z" }), reason: null },
+    { name: "failed — the result column already says it", row: ledgerRowOf("fail"), reason: null },
+    { name: "routine done", row: ledgerRowOf("done"), reason: null },
+  ];
+  for (const row of rows) {
+    assert.strictEqual(helpers.getNeedsYouReasonO(row.row, row.row.closed_at), row.reason, row.name);
+  }
+});
+
+test("ledger row: the needs-you reason is written on the row and in its accessible name, beside the kept glyph", () => {
+  const rendered = renderLedgerRow(ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence"], summary: "shipped" }));
+  assert.match(textOf(rendered), /flagged: overconfident/);
+  assert.match(String(rendered.props!["aria-label"]), /flagged: overconfident/);
+  assert.ok(flattenNodes(rendered).some((n) => typeof n.type === "function" && (n.type as { name: string }).name === "SummaryFlagSlotO"), "the glyph slot stays");
+});
+
+describe("getGraderSentenceO: automatic checks read as one sentence over the checkable records", () => {
+  test("checked = passed + failed, out of every graded record", () => {
+    assert.strictEqual(
+      helpers.getGraderSentenceO({ verified_pass: 47, unverified: 8312, verified_fail: 14, not_measured: 5, graded_total: 8373 }),
+      "Checked 61 of 8,373 records: 47 passed, 14 failed",
+    );
+  });
+  test("no breakdown → no sentence, never a sentence of zeros", () => {
+    assert.strictEqual(helpers.getGraderSentenceO(null), null);
+  });
+});
+
+describe("Confidence vs. reality: the headline counts confident failures and empty rows are hidden", () => {
+  const byCell = {
+    "high|true": { count: 80 }, "high|false": { count: 12 }, "medium|true": { count: 100 },
+    "low|true": { count: 8 }, "null|true": { count: 0 }, "null|false": { count: 0 },
+  };
+  test("confident but failed = the high-confidence fail cell over all records", () => {
+    assert.deepStrictEqual(
+      sameRealm(helpers.getConfidentFailedO({ total: 200, byCell })),
+      { count: 12, share: 0.06 },
+    );
+    assert.strictEqual(helpers.getConfidentFailedO(null), null, "no crosstab → no headline");
+  });
+  test("a confidence row with no record in any column is dropped", () => {
+    assert.deepStrictEqual(sameRealm(helpers.getCrosstabVisibleRowsO(byCell)), ["high", "medium", "low"]);
+  });
+});
+
+// --- status band: each tile states its share change against the prior window ---
+
+interface PriorTrendHelpers {
+  fetchAttentionO: (days: number, signal?: AbortSignal) => Promise<{ total: number; priorTotal: number | null }>;
+  buildAnalyticsUrlO: (days: number) => string;
+  fetch: (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>;
+}
+const trendHelpers = helpers as unknown as PriorTrendHelpers;
+
+// function components expand → the text a reader sees, wherever a sub-component draws it
+const renderText = (node: unknown): string => {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(renderText).join(" ");
+  if (node === null || typeof node !== "object" || !("type" in node)) return "";
+  const el = node as RenderNode;
+  if (typeof el.type === "function") {
+    return renderText((el.type as (p: unknown) => unknown)({ ...el.props, children: el.children }));
+  }
+  return el.children.map(renderText).join(" ");
+};
+
+const buildPriorWindow = (total: number, byResult: Record<string, number>) => ({
+  period_start: "2026-08-02",
+  period_end: "2026-09-01",
+  total,
+  reconstructed_total: 0,
+  excluded_poisoned_count: 0,
+  by_result: Object.entries(byResult).map(([result, count]) => ({ result, count, reconstructed_count: 0 })),
+});
+
+const buildBand = (prior: unknown, priorTotal: number | null): unknown => helpers.StatusBandO({
+  analyticsState: {
+    status: "ready",
+    data: {
+      overall: { total: 200, reconstructed_total: 0, excluded_poisoned_count: 0, prior_window: prior } as AnalyticsData["overall"],
+      byResultCount: { done: 150, fail: 8, blocked: 4 },
+    },
+  },
+  attentionState: { status: "ready", data: { total: 30, parts: { flagged: 30, fail: 0, blocked: 0, open: 0 }, priorTotal } as { total: number } },
+  windowDays: 30,
+});
+const renderBand = (prior: unknown, priorTotal: number | null): string => renderText(buildBand(prior, priorTotal));
+
+// one tile's subtree → a change line there cannot hide behind another tile's text
+const findTile = (node: unknown, key: string): RenderNode | null => {
+  if (Array.isArray(node)) return node.map((child) => findTile(child, key)).find(Boolean) ?? null;
+  if (node === null || typeof node !== "object" || !("type" in node)) return null;
+  const el = node as RenderNode;
+  if ((el.props as { tile?: { key?: string } } | null)?.tile?.key === key) return el;
+  return findTile(el.children, key);
+};
+
+describe("StatusBandO: every tile states its share change against the prior window", () => {
+  const text = renderBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), 10);
+
+  test("the hero states the points of change, the prior share and the prior range", () => {
+    // 30/200 = 15% now vs 10/100 = 10.0% in the prior window
+    assert.match(text, /Up 5\.0 pts since 09-01 vs 10\.0% in 08-02 – 08-31/);
+  });
+  test("a volume tile whose share fell states the drop", () => {
+    // Done: 150/200 = 75% now vs 80/100 = 80.0%
+    assert.match(text, /Down 5\.0 pts since 09-01 vs 80\.0% in 08-02 – 08-31/);
+  });
+  test("an unchanged share reads as level", () => {
+    // Failed or blocked: 12/200 = 6% vs 6/100 = 6.0%
+    assert.match(text, /Level since 09-01 vs 6\.0% in 08-02 – 08-31/);
+  });
+  test("a prior window under the low-N floor claims no comparison", () => {
+    const small = renderBand(buildPriorWindow(12, { done: 10, fail: 2 }), 2);
+    assert.match(small, /No comparison — too few records in 08-02 – 08-31/);
+    assert.doesNotMatch(small, /pts since/);
+  });
+  test("a response without a prior window draws no change line", () => {
+    assert.doesNotMatch(renderBand(undefined, null), /since|No comparison/);
+  });
+  test("an unread prior attention count leaves the Needs you tile without a change line", () => {
+    const band = buildBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), null);
+    const hero = findTile(band, "attention");
+    assert.ok(hero, "the band draws a Needs you tile");
+    const heroText = renderText(hero);
+    assert.match(heroText, /Needs you/);
+    assert.doesNotMatch(heroText, /since|pts|No comparison/, "an unread prior count is never read as zero");
+    assert.match(renderText(band), /Down 5\.0 pts/);
+  });
+});
+
+describe("Task results reads opt into the prior window", () => {
+  test("the cross-analysis read asks for the prior window over the same days", () => {
+    const params = new URL(trendHelpers.buildAnalyticsUrlO(30), "http://x").searchParams;
+    assert.strictEqual(params.get("days"), "30");
+    assert.strictEqual(params.get("prior_window"), "1");
+  });
+  test("only the needs-you headline asks for the prior count, and its total is returned", async (t) => {
+    const urls: string[] = [];
+    const realFetch = trendHelpers.fetch;
+    t.after(() => {
+      trendHelpers.fetch = realFetch;
+    });
+    trendHelpers.fetch = async (url: string) => {
+      urls.push(url);
+      const isHead = !url.includes("review_flag");
+      return { ok: true, json: async () => (isHead ? { total: 30, prior_window: { total: 11 } } : { total: 1 }) };
+    };
+    const attention = await trendHelpers.fetchAttentionO(30);
+    assert.strictEqual(attention.priorTotal, 11);
+    assert.deepStrictEqual(urls.map((u) => new URL(u, "http://x").searchParams.has("prior_window")), [true, false, false, false, false]);
+  });
 });

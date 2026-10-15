@@ -4,7 +4,7 @@
 #
 #   (A) UNINSTALL never destroys a HEALTHY postgres. stop_detached_daemons (the STEP1b of
 #       run_uninstall) is EXECUTED with every destructive tool shadowed by a RECORDER; the
-#       recorder MUST show the daemon-tmux + fakechat reaps FIRING while showing ZERO
+#       recorder MUST show the retired-session tmux + fakechat reaps FIRING while showing ZERO
 #       pg-destructive actions (no brew-services-stop, no SIGINT, no socket rm, no lsof/psql).
 #       run_uninstall's OWN body is additionally verified (static) to wire stop_detached_daemons
 #       and to contain NO pg-teardown call — the heavy destructive uninstall steps (launchctl /
@@ -25,8 +25,8 @@
 # /tmp/.s.PGSQL.5432. PG_SOCKET is REDIRECTED to a per-test temp dir via the GA_PG_SOCKET seam
 # (exported BEFORE the launcher is sourced, since ga_init_env makes PG_SOCKET readonly at source
 # time), so the guard/clear socket path resolves under the temp dir and can NEVER reach the live
-# /tmp socket. On top of that, `rm`, `kill`, `lsof`, `psql`, `pg_isready`, `brew`, `tmux`, `pkill`
-# are shadowed as PURE in-process RECORDERS that NEVER exec the real tool — the guard/clear logic
+# /tmp socket. On top of that, `rm`, `kill`, `lsof`, `pgrep`, `psql`, `pg_isready`, `brew`, `tmux`, `pkill`,
+# `launchctl` are shadowed as PURE in-process RECORDERS that NEVER exec the real tool — the guard/clear logic
 # under test runs for real, but no signal is sent, no socket is removed, no brew service is touched.
 # The only real read is the `[[ -S ]]` socket-type test (read-only) — left real so the socket-rm
 # branch is exercised faithfully against the REDIRECTED temp path's socket existence. Consequence:
@@ -53,6 +53,8 @@ set -uo pipefail
 HARNESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GA_DIR_ROOT="$(cd -- "${HARNESS_DIR}/.." && pwd)"
 LAUNCHER="${GA_DIR_ROOT}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA_DIR_ROOT}/scripts/lib/path-guard.sh"
 
 # PG_SOCKET redirect (GA_PG_SOCKET test seam) — MUST be exported BEFORE sourcing the launcher,
 # because ga_init_env makes PG_SOCKET readonly at source time. Redirecting the socket dir at a temp
@@ -60,6 +62,10 @@ LAUNCHER="${GA_DIR_ROOT}/glass-atrium"
 # /tmp/.s.PGSQL.5432 by construction. Distinct mktemp subdir; cleaned up at harness exit.
 GA_PG_SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ga-pgsafe-sock.XXXXXX")"
 export GA_PG_SOCKET="${GA_PG_SOCK_DIR}"
+# HOME → a scratch home before ga_init_env: LaunchAgents, data root and target home all derive from it.
+GA_SCRATCH_HOME="$(mktemp -d "${TMPDIR:-/tmp}/ga-pgsafe-home.XXXXXX")"
+unset GA_DATA_ROOT GA_TARGET_HOME
+export HOME="${GA_SCRATCH_HOME}"
 
 # --- source the launcher as a library (main skipped by its source-guard) ----------------
 # This runs ga_init_env (PG_SOCKET → the GA_PG_SOCKET temp-dir redirect) + sources lib/ga-core.sh
@@ -161,17 +167,18 @@ kill() { # only ever `kill -INT <pid>` from clear_unmanaged_pg_orphan
   fi
   return 0
 }
+# shellcheck disable=SC2329  # invoked by the sourced clear_unmanaged_pg_orphan, never by name here
+# GA-RM[not-executed]: comment text naming the one delete this recorder intercepts
 rm() { # only ever `rm -f -- <sock>` from clear_unmanaged_pg_orphan (socket removal)
   _rec "rm_socket:$*"
   return 0 # PURE recorder — the real /tmp/.s.PGSQL.5432 (live pg) is NEVER removed
 }
 sleep() { return 0; } # collapse the bounded poll interval to instant
-lsof() {              # `lsof -t -- <sock>` and `lsof -ti tcp:5432` — report the (fake) owning pid
-  # kill_daemon_tmux_sessions now folds a STRICTLY PORT-SCOPED fakechat port-free
-  # (`lsof -iTCP:<port>`) after the tmux teardown. That probe is orthogonal to postgres,
-  # so return NO owner and do NOT record it — this harness asserts NO pg-socket probing,
-  # and the fakechat reap has its own coverage in fakechat-port-cleanup.bats.
-  case "${1:-}" in -iTCP:*) return 0 ;; esac
+export FAKECHAT_PORT_FREE_TIMEOUT_SECS=0
+lsof() { # `lsof -t -- <sock>` and `lsof -ti tcp:5432` — report the (fake) owning pid
+  # fakechat port probe (`lsof -iTCP:<port>`): no owner, unrecorded — orthogonal to postgres; the
+  # uninstall port-free is pinned by test/uninstall-detached-daemons.bats → R2(retired).
+  case "${1:-}" in -iTCP:*) return 0 ;; *) ;; esac
   _rec "lsof:$*"
   [[ -n "${GA_ORPHAN_PIDS}" ]] && printf '%s\n' "${GA_ORPHAN_PIDS}"
   return 0
@@ -204,6 +211,10 @@ pkill() {
   _rec "pkill:${2:-}"
   return 0
 }
+launchctl() { # record-only — no scenario may reach the live gui domain
+  _rec "launchctl:$*"
+  return 0
+}
 
 # === TTY / render helpers → no-op recorders (need a real TTY otherwise) ================
 log() { printf '%s\n' "$*" >>"${GA_LOG}"; }
@@ -228,6 +239,11 @@ _reset_case() {
   DRY_RUN=false
 }
 
+echo "[seal] HOME-derived paths resolve under the scratch home, never the live install"
+assert_eq "LAUNCH_AGENTS under the scratch home" "${GA_SCRATCH_HOME}/Library/LaunchAgents" "${LAUNCH_AGENTS}"
+assert_eq "GA_DATA_ROOT under the scratch home" "${GA_SCRATCH_HOME}/.glass-atrium" "${GA_DATA_ROOT}"
+assert_eq "TARGET_HOME under the scratch home" "${GA_SCRATCH_HOME}/.claude" "${TARGET_HOME}"
+
 echo "============================================================================"
 echo "(A) UNINSTALL: stop_detached_daemons leaves a HEALTHY postgres UNTOUCHED"
 echo "============================================================================"
@@ -238,8 +254,8 @@ stop_detached_daemons </dev/null
 rc=$?
 echo "    observed: $(_rec_dump)"
 assert_eq "stop_detached_daemons returns 0" "0" "${rc}"
-assert_rec_has "daemon-tmux reap FIRES (claude-wiki-daemon)" "tmux_kill:claude-wiki-daemon"
-assert_rec_has "daemon-tmux reap FIRES (claude-autoagent-daemon)" "tmux_kill:claude-autoagent-daemon"
+assert_rec_has "retired session reap FIRES (claude-wiki-daemon)" "tmux_kill:claude-wiki-daemon"
+assert_rec_has "retired session reap FIRES (claude-autoagent-daemon)" "tmux_kill:claude-autoagent-daemon"
 assert_rec_has "fakechat channel reap FIRES" "pkill:claude --channels plugin:fakechat@"
 assert_rec_has "fakechat spawn-helper reap FIRES" "pkill:spawn-unix-fd.py"
 # ZERO pg-destructive actions.
@@ -277,8 +293,9 @@ echo "  [B-static] clear_unmanaged_pg_orphan retains the layer-3 stale-socket re
 # the guard-conditional runtime checks in B3/B3b (which can only OBSERVE the rm fire when a live
 # socket happens to exist). If a regression drops layer-3, this static check fails on every host.
 CL_BODY="$(declare -f clear_unmanaged_pg_orphan)"
-if [[ "${CL_BODY}" == *'rm -f -- "${sock}"'* ]]; then
-  pass "clear_unmanaged_pg_orphan body contains the layer-3 rm -f -- \"\${sock}\" removal"
+if [[ "${CL_BODY}" == *'rm -f -- "${sock:?}"'* ]]; then # GA-RM[not-executed]: glob over the function body text
+  # GA-RM[not-executed]: PASS message text, which no shell runs
+  pass "clear_unmanaged_pg_orphan body contains the layer-3 rm -f -- \"\${sock:?}\" removal"
 else
   fail "clear_unmanaged_pg_orphan body is MISSING the layer-3 socket removal"
 fi
@@ -370,8 +387,10 @@ echo ""
 echo "============================================================================"
 printf 'HARNESS RESULT: %s passed, %s failed\n' "${PASSES}" "${FAILS}"
 echo "============================================================================"
-# `rm` is shadowed as a pure recorder above; use the real coreutils rm for temp cleanup.
-# `command` bypasses the shell-function shadow (unlike a PATH stub), reaching the real rm.
-command rm -f "${GA_REC}" "${GA_LOG}"
-command rm -rf -- "${GA_PG_SOCK_DIR}"
+# Scenarios done → drop the recorder shadow so the temp cleanup reaches the real rm.
+unset -f rm
+if ga_guard_path "${GA_REC}"; then rm -f -- "${GA_REC:?}"; fi
+if ga_guard_path "${GA_LOG}"; then rm -f -- "${GA_LOG:?}"; fi
+if ga_guard_path "${GA_PG_SOCK_DIR}"; then rm -rf -- "${GA_PG_SOCK_DIR:?}"; fi
+if ga_guard_path "${GA_SCRATCH_HOME}"; then rm -rf -- "${GA_SCRATCH_HOME:?}"; fi
 [[ "${FAILS}" -eq 0 ]]

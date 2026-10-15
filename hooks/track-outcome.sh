@@ -92,16 +92,24 @@ STOP_ACTIVE=$(printf '%s' "$INPUT" | python3 -c "import sys,json; d=json.load(sy
 
 # Field extraction + [COMPLETION] parsing + body-signal extraction (single python3 call)
 PY_SCRIPT_FILE=$(mktemp -t outcome-record-XXXXXX.py)
-trap 'rm -f "$PY_SCRIPT_FILE"' EXIT INT TERM
+# Stage 1 detection assigns the detector temp → reset here so an inherited value never reaches the teardown.
+T9_PY_FILE=""
+# shellcheck disable=SC2329  # invoked from the EXIT trap string
+delete_py_scripts() {
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${PY_SCRIPT_FILE}"; then rm -f -- "${PY_SCRIPT_FILE:?}"; fi
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${T9_PY_FILE}"; then rm -f -- "${T9_PY_FILE:?}"; fi
+}
+trap 'delete_py_scripts' EXIT INT TERM
 cat >"$PY_SCRIPT_FILE" <<'PYEOF'
 import sys, json, re
 
-# qa_score + concerns are included so an emitted `qa_score:`/`concerns:` line starts its own
-# field instead of folding into the preceding value: parse_completion_body treats any line whose
-# `key:` is NOT in this set as a continuation of the current field, so an unlisted qa_score line
-# silently corrupts (e.g.) the summary value. Both are consumed (concerns via its "## Concerns"
-# fallback below; qa_score direct from the [COMPLETION] field) and carried to the PG dual-write.
-KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal', 'qa_score', 'concerns', 'token_usage', 'duration_ms'}
+# template ⊆ KNOWN_FIELDS — drift test in track-outcome-completion-block-select.bats
+# unlisted `key:` line → folds into the current field's value
+# agent_version / grader_verdict / downgrade_origin → boundaries only, never read from `completion`
+# grader columns ← GRADER_VERDICT / DOWNGRADE_ORIGIN shell vars
+KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal', 'qa_score', 'concerns', 'token_usage', 'duration_ms', 'agent_version', 'grader_verdict', 'downgrade_origin'}
 
 # Inline single-line [COMPLETION] tolerance (schema/workflow mode). CORE fields gate the inline
 # match — >=1 must parse so prose merely mentioning [COMPLETION] with a stray delimiter is rejected.
@@ -112,7 +120,7 @@ _INLINE_CORE_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'summ
 # to mis-encode). None of the four is regex-special inside a character class.
 _INLINE_DELIM_CLASS = '[' + ''.join(chr(_c) for _c in (0x7C, 0xB7, 0x2022, 0x22C5)) + ']'
 # Schema-mode (ultracode Workflow / StructuredOutput) subagents NEVER print the text-channel
-# [COMPLETION] block — the engine consumes ONLY the StructuredOutput tool call (0/129 observed).
+# [COMPLETION] block — the engine consumes ONLY the StructuredOutput tool call.
 # But the writer's fields survive inside the terminal SO input under this OPTIONAL string property:
 # the full multi-line [COMPLETION]...[/COMPLETION] text. Pinned as a constant so the recorder and
 # the orchestrator-side schema convention name the SAME field (a divergence silently loses recovery).
@@ -229,29 +237,34 @@ def parse_completion_body(text):
 
     return result
 
-def _strip_completion_sentinels(block):
-    """Strip a leading '[COMPLETION]' opener line and a trailing '[/COMPLETION]' closer line
-    from a captured SO-input completion_block BEFORE field parsing. The SO-input block carries
-    the FULL multi-line block INCLUDING both sentinels; parse_completion_body reads the colon-less
-    '[/COMPLETION]' closer as a CONTINUATION of the last field, gluing the sentinel (and any
-    trailing whitespace) onto that value — so the last field (lesson/concerns/summary/… — whichever
-    it is) leaks the closer. The text-channel tiers never hit this: _T1/_T2 capture group(1), the
-    region strictly BETWEEN the anchors. Block-level (not per-field) → field-agnostic, cleaning
-    whatever field lands last. Tolerates surrounding blank/whitespace/CRLF lines and a MISSING
-    closer (writer truncation — the last line is then a real field, left untouched)."""
+def _get_completion_bodies(block):
+    """Split a captured SO-input completion_block into its block bodies, sentinels removed, BEFORE
+    field parsing — each body is the region _T1 captures on the text channel. parse_completion_body
+    reads every colon-less line as a continuation of the last field, so a closer left in a body, and
+    any prose after it, would fold into that field (lesson/concerns/qa_score/… — whichever is last).
+    The first body starts after one leading lone '[COMPLETION]' opener (or at the first non-blank
+    line when the opener is missing); each later body starts after a lone opener that follows a
+    closer. A body ends before its lone '[/COMPLETION]' closer; prose between blocks belongs to none.
+    Field-agnostic; tolerates blank/whitespace/CRLF lines and a MISSING closer (writer truncation —
+    the body then runs to its last non-blank line). Always returns at least one body."""
     lines = block.split('\n')
-    start, end = 0, len(lines)
-    # Leading: skip blank/whitespace lines, then drop one lone [COMPLETION] opener.
-    while start < end and not lines[start].strip():
+    bodies = []
+    start = 0
+    while start < len(lines) and not lines[start].strip():
         start += 1
-    if start < end and lines[start].strip() == '[COMPLETION]':
+    if start < len(lines) and lines[start].strip() == '[COMPLETION]':
         start += 1
-    # Trailing: skip blank/whitespace lines, then drop one lone [/COMPLETION] closer.
-    while end > start and not lines[end - 1].strip():
-        end -= 1
-    if end > start and lines[end - 1].strip() == '[/COMPLETION]':
-        end -= 1
-    return '\n'.join(lines[start:end])
+    while start is not None:
+        end = start
+        while end < len(lines) and lines[end].strip() != '[/COMPLETION]':
+            end += 1
+        if end == len(lines):
+            while end > start and not lines[end - 1].strip():
+                end -= 1
+        bodies.append('\n'.join(lines[start:end]))
+        start = next((i + 1 for i in range(end + 1, len(lines))
+                      if lines[i].strip() == '[COMPLETION]'), None)
+    return bodies
 
 try:
     d = json.load(sys.stdin)
@@ -632,8 +645,8 @@ if parse_tier == 0:
         # known fields (result/task_type/metric_pass/confidence) bind before a summary value that
         # itself carries a delimiter — a segment with no KNOWN_FIELD colon appends to the current value.
         inline_fields = parse_completion_body(re.sub(_INLINE_DELIM_CLASS, '\n', inline_body))
-        # Guard: require >=1 CORE field so prose merely mentioning [COMPLETION] with a stray
-        # delimiter does NOT match (parse_completion_body already drops unknown keys).
+        # Guard: >=1 CORE field → prose merely mentioning [COMPLETION] with a stray delimiter never matches
+        # unknown key before the first known key → dropped
         if _INLINE_CORE_FIELDS & set(inline_fields):
             parse_tier = 1
             completion = inline_fields
@@ -1036,11 +1049,19 @@ diag(f"terminal_structuredoutput={terminal_so}")
 # parse_tier 3 + an empty grader body → byte-identical today-synthesis (structuredoutput-derived).
 so_completion_block = ''
 if parse_tier == 3 and terminal_so == '1' and terminal_so_block:
-    # _strip_completion_sentinels drops the [COMPLETION]/[/COMPLETION] lines (else the colon-less
-    # closer folds into the last field — see its docstring); the cleaned block doubles as the grader
-    # body, matching the text-channel _block_text (m_tier1/m_tier2 group(1)) semantics.
-    _clean_so_block = _strip_completion_sentinels(terminal_so_block)
+    # Body selection = the text channel's tier-1 rule (_t1_matches): the LAST body, else the last
+    # earlier one whose result validates — a quoted emit-format template on either side of the real
+    # block must not bind. The selected body doubles as the grader body, matching the text-channel
+    # _block_text (m_tier1/m_tier2 group(1)) semantics.
+    _so_bodies = _get_completion_bodies(terminal_so_block)
+    _clean_so_block = _so_bodies[-1]
     _so_fields = parse_completion_body(_clean_so_block)
+    if _so_fields.get('result', '').strip() not in _VALID_RESULTS:
+        for _body in reversed(_so_bodies[:-1]):
+            _cand = parse_completion_body(_body)
+            if _cand.get('result', '').strip() in _VALID_RESULTS:
+                _clean_so_block, _so_fields = _body, _cand
+                break
     if (_INLINE_CORE_FIELDS & set(_so_fields)) \
             and _so_fields.get('result', '').strip() in _VALID_RESULTS:
         parse_tier = 1
@@ -1072,6 +1093,17 @@ def out_wide(k, v, n):
 out('agent_type', agent_type)
 out('agent_id', agent_id)
 out('session_id', session_id)
+
+
+def _envelope_text(key):
+    value = d.get(key, '')
+    return value if isinstance(value, str) else ''
+
+
+# Spawn provenance for core.outcomes: the envelope's own ids, never a placeholder label
+# ('orchestrator', 'agent_id_missing', 'unknown') → a main-session row joins no spawn.
+out('envelope_agent_id', '' if hook_event in MAIN_SESSION_HOOKS else _envelope_text('agent_id'))
+out('envelope_session_id', _envelope_text('session_id'))
 out('cwd', cwd)
 # hook_event: lets the shell side gate the T2 loud-fail marker on SubagentStop (a real
 # subagent yielding 0 records) vs a quiet main-session conversational skip.
@@ -1233,6 +1265,37 @@ def _compute_style_ref_verified(completion_d, payload_d):
 out('style_ref_verified', _compute_style_ref_verified(completion, d))
 
 
+# Effective effort tier from the row's OWN transcript (_effective_transcript_path — never the
+# parent). Assistant records only, since no other record type carries the harness tier; a
+# non-token value counts as absent. Returns (tier, 'true'|'false' mixed flag), ('', '') when
+# no assistant record carries a tier. Forward file order, so the last seen is the last written.
+_EFFORT_TOKEN_RE = re.compile(r'[a-z]{1,16}')
+
+
+def _compute_effort(payload_d):
+    tpath = _effective_transcript_path(payload_d)
+    if not tpath:
+        return '', ''
+    items, _ = _read_subagent_transcript_once(tpath)
+    last_tier = ''
+    tiers = set()
+    for rec in items or ():
+        if not isinstance(rec, dict) or rec.get('type') != 'assistant':
+            continue
+        tier = rec.get('effort')
+        if isinstance(tier, str) and _EFFORT_TOKEN_RE.fullmatch(tier):
+            last_tier = tier
+            tiers.add(tier)
+    if not last_tier:
+        return '', ''
+    return last_tier, 'true' if len(tiers) > 1 else 'false'
+
+
+_effort, _has_mixed_effort = _compute_effort(d)
+out('effort', _effort)
+out('has_mixed_effort', _has_mixed_effort)
+
+
 # Grader Step 4-5 transcript Write/Edit cross-check (plan T2, ADR-6). Scans the
 # SUBAGENT's OWN transcript for Write/Edit file_path history via the single-SoT
 # collector style_ref_match.py::collect_write_paths (the {"Write","Edit"} tool-filter,
@@ -1285,9 +1348,8 @@ else:
 # Record-0 pinned `[SCOPE]` declaration — the parent-authored delegation prompt. Pinned to the
 # FIRST transcript record on purpose: a whole-transcript scan would let the child emit a wider
 # declaration of its own and nullify a check whose whole value is sitting outside its control.
-# Two or more declarations inside record 0 → the first wins (deterministic, never merged).
-# Extraction only: the comparison itself stays on the bash side against the shared lib predicate.
-# Fail-open on every anomaly — an empty value skips the comparison entirely.
+# Extraction only: selecting the declaration and comparing against it both stay on the bash side,
+# through the shared lib. Fail-open on every anomaly — an empty value skips the comparison entirely.
 _DELEGATION_PROMPT_MEMO = {}
 
 
@@ -1318,11 +1380,25 @@ def _read_delegation_prompt(payload_d):
     return text
 
 
-def _read_scope_decl(payload_d):
+# Every `[SCOPE]`-bearing line of record 0, `\x1f`-joined for the single-line emit seam. Selecting the
+# declaration among them is the bash side's, through the shared scope_decl_select — a Python copy of
+# the selector would be a second implementation to drift. Lines past the out() clamp are dropped
+# whole, never cut: a cut declaration compares against a partial list (false excess), a dropped one
+# is skipped.
+_SCOPE_DECL_SEP = '\x1f'
+_SCOPE_DECL_MAX_CHARS = 2000
+
+
+def _read_scope_decl_lines(payload_d):
+    kept, size = [], 0
     for line in _read_delegation_prompt(payload_d).splitlines():
-        if '[SCOPE]' in line:
-            return line.strip()
-    return ''
+        if '[SCOPE]' not in line:
+            continue
+        size += len(line) + len(_SCOPE_DECL_SEP)
+        if size > _SCOPE_DECL_MAX_CHARS:
+            break
+        kept.append(line)
+    return _SCOPE_DECL_SEP.join(kept)
 
 
 # Same literal + bounded-gap shape as enforce-workflow-verify-stage.sh's SIZE_EST_TOOLUSES_RE, so the
@@ -1344,7 +1420,7 @@ def _read_size_est_declared(payload_d):
 # field — and a synthesized row takes its files: from synth_files. Neither present ⇒ no candidate
 # can exist ⇒ reading the declaration would buy one transcript open and no signal.
 if _cc_files or synth_files:
-    out('scope_decl', _read_scope_decl(d))
+    out('scope_decl', _read_scope_decl_lines(d))
 else:
     out('scope_decl', '')
 # Ungated, unlike the sibling above: the estimate-vs-actual comparison has a candidate on EVERY
@@ -1387,6 +1463,9 @@ extract_field() {
 AGENT_TYPE=$(extract_field agent_type)
 AGENT_ID=$(extract_field agent_id)
 SESSION_ID=$(extract_field session_id)
+# Raw envelope ids for the core.outcomes provenance columns; empty = NULL.
+ENVELOPE_AGENT_ID=$(extract_field envelope_agent_id)
+ENVELOPE_SESSION_ID=$(extract_field envelope_session_id)
 # HOOK_EVENT: gates the T2 loud-fail marker (SubagentStop 0-record case) vs a quiet skip.
 HOOK_EVENT=$(extract_field hook_event)
 S_RESULT=$(extract_field c_result)
@@ -1432,6 +1511,13 @@ STYLE_REF_VERIFIED=$(extract_field style_ref_verified)
 case "${STYLE_REF_VERIFIED}" in
   true | false) ;;
   *) STYLE_REF_VERIFIED="" ;;
+esac
+# Effective effort tier + mixed-tier flag from the row's own transcript; empty = JSON null.
+EFFORT=$(extract_field effort)
+HAS_MIXED_EFFORT=$(extract_field has_mixed_effort)
+case "${HAS_MIXED_EFFORT}" in
+  true | false) ;;
+  *) HAS_MIXED_EFFORT="" ;;
 esac
 # Grader Step 4-5 transcript cross-check inputs (plan T2, ADR-6), computed in the python
 # block from the subagent's OWN transcript. GRADER_WRITE_SCAN is whitelisted to the two
@@ -1531,7 +1617,7 @@ fi
 # CORRECTION_HINT_GAP (computed here where the correction vars are in scope; APPLIED in/after the
 # REVIEW_FLAG block below — an early REVIEW_FLAG set would be clobbered by REVIEW_FLAG's re-init):
 # agent emitted a correction (evaluative_signal=-1) but omitted the distilled directive_hint the
-# Correction-emission rule requires as the 3rd co-emitted element = a lesson-less correction.
+# Correction-emission rule requires as the 3rd co-emitted element = a correction gap.
 # READ-ONLY — never mutates AGENT_PROVIDED_CORRECTION or the core.correction_signals write path.
 CORRECTION_HINT_GAP=0
 if [ "${C_EVALUATIVE_SIGNAL}" = "-1" ] && [ -z "${C_DIRECTIVE_HINT}" ]; then
@@ -1651,8 +1737,8 @@ fi
 # TERMINAL_SO=1 is reachable ONLY via the python completion_block promotion: a text-channel [COMPLETION]
 # sets parse_tier 1/2 BEFORE detect_terminal_structuredoutput runs → TERMINAL_SO=0, so this pairing
 # uniquely marks a writer block recovered from the terminal StructuredOutput input. A DISTINCT literal
-# (NOT the synthesized structuredoutput-derived, which daemon_cycle carves out of SUCCESS + the monitor
-# folds as reconstructed) keeps the recovered signal a clean SUCCESS exemplar + a 'healthy' monitor row.
+# (NOT the synthesized structuredoutput-derived, which the emit-failure metric counts + the monitor
+# folds as reconstructed) keeps the recovered row out of that metric + a 'healthy' monitor row.
 if [[ "${HAS_STRUCTURED}" = "true" ]] && [[ "${TERMINAL_SO}" = "1" ]] && [[ "${ATTRIBUTION_SOURCE}" = "hook-input" ]]; then
   ATTRIBUTION_SOURCE="structuredoutput-completion"
   printf '[outcome-record] structuredoutput-completion: writer [COMPLETION] recovered from terminal StructuredOutput input (attribution=%s, agent=%s)\n' \
@@ -1919,7 +2005,8 @@ fi
 # them for the always-run scan would let the detector's prior+1 count override the agent-emitted
 # revision_count in the correction-signal sink, the one overwrite this cross-check must never do.
 # The agent's emitted fields stay authoritative; the always-run verdict feeds only the disagreement
-# review-flag reason. T9_CORRECTION_DETECTION=false disables the whole pipeline.
+# review-flag reason and its own user_correction_detected column. T9_CORRECTION_DETECTION=false
+# disables the whole pipeline.
 #
 # Cost: the bounded transcript tail read (T9_TAIL_WINDOW_BYTES, 64 KiB default) now runs on every
 # recorded stop rather than only in the no-emit window. SubagentStop has no block channel, so this is
@@ -1937,7 +2024,6 @@ if [ "${T9_CORRECTION_DETECTION}" = "true" ]; then
   if [ -n "${T9_TRANSCRIPT_PATH}" ] && [ -r "${T9_TRANSCRIPT_PATH}" ]; then
     # Run transcript parse + regex + prior-outcome lookup in one python3 call; results via @@key@@value
     T9_PY_FILE=$(mktemp -t outcome-t9-XXXXXX.py)
-    trap 'rm -f "$PY_SCRIPT_FILE" "$T9_PY_FILE"' EXIT INT TERM
     cat >"$T9_PY_FILE" <<'PYEOF'
 import sys, json, re, os, glob, time, tempfile
 from datetime import datetime, timezone, timedelta
@@ -2397,7 +2483,8 @@ if [[ "${HAS_STRUCTURED}" = "true" ]]; then
     if [[ -n "${GRADER_CROSSCHECK_STATE_FILE}" ]]; then
       # GA-ABSORB[benign]: an absent spool means the cross-check arm never ran → NULL column.
       GRADER_CROSSCHECK="$(cat "${GRADER_CROSSCHECK_STATE_FILE}" 2>/dev/null || true)"
-      rm -f "${GRADER_CROSSCHECK_STATE_FILE}"
+      # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+      if ga_guard_path "${GRADER_CROSSCHECK_STATE_FILE}"; then rm -f -- "${GRADER_CROSSCHECK_STATE_FILE:?}"; fi
     fi
     # Closed-set guard, same shape as the GRADER_WRITE_SCAN whitelist: the column is a PG enum,
     # so an off-vocabulary token would fail the whole outcome write rather than one field.
@@ -2419,8 +2506,8 @@ fi
 # (WAS_OFF_ROLE == true). The underconfidence (low+true) and EMPTY-metric_pass branches are UNCHANGED —
 # they still flag structural rows, so the consumer-side carve-out mirrors this BRANCH (structural AND
 # high AND metric_pass=false), never the structural predicate alone: _outcome_signal
-# ._is_structural_polar_mismatch. Keyed on the structural predicate alone it would discard those two
-# live signals from both lesson buckets.
+# ._is_structural_polar_mismatch. Keyed on the structural predicate alone it would drop those two
+# live signals from the negative predicate.
 # Each setter below stamps a concrete reason token into REVIEW_FLAG_REASONS, so a flagged row names
 # its own trigger instead of being re-derived against a stale taxonomy at read time. The vocabulary
 # is declared once in lib/review-flag-reasons.sh; the carrier is cleared by the final guard.
@@ -2490,12 +2577,12 @@ fi
 # Correction-gap loud flag (applied here, in/after the REVIEW_FLAG block, per the early-clobber note
 # where CORRECTION_HINT_GAP is computed): a -1 correction with an empty directive_hint only partially
 # met the 3-element co-emission → raise review_flag + a loud 1-line stderr note so the learning
-# aggregation registers the lesson-less correction. READ-ONLY vs the correction WRITE path — the
+# aggregation registers the correction gap. READ-ONLY vs the correction WRITE path — the
 # SIG_EMIT / core.correction_signals dualwrite, EVALUATIVE_SIGNAL and DIRECTIVE_HINT are untouched.
 if [[ "${CORRECTION_HINT_GAP}" -eq 1 ]]; then
   REVIEW_FLAG="true"
   review_flag_add_reason "correction-gap"
-  printf '[outcome-record] correction-gap: evaluative_signal=-1 with empty directive_hint (lesson-less correction), agent=%s\n' \
+  printf '[outcome-record] correction-gap: evaluative_signal=-1 with empty directive_hint, agent=%s\n' \
     "${AGENT_TYPE}" >&2
 fi
 
@@ -2524,14 +2611,17 @@ fi
 # files: field, metric_pass=true and result done|done_with_concerns — an excess row outside that
 # shape is compared on files: alone.
 # A delegation with no declaration skips the comparison entirely (fail-open, older delegations).
-SCOPE_DECL=$(extract_field scope_decl)
+# The emit row carries record 0's `[SCOPE]`-bearing lines `\x1f`-joined; the declaration among them
+# is chosen by the same shared selector the drift advisory and the verification gate use.
+SCOPE_DECL_LINES=$(extract_field scope_decl)
 SCOPE_EXCESS_FOUND=0
-if [[ -n "${SCOPE_DECL}" ]]; then
+if [[ -n "${SCOPE_DECL_LINES}" ]]; then
   # shellcheck source=lib/scope-match.sh
   source "${BASH_SOURCE%/*}/lib/scope-match.sh"
   # shellcheck source=lib/code-based-grader.sh
   #   Sourced for _cbg_path_is_tool_artifact — the single artifact-shape SoT, never a second copy.
   source "${BASH_SOURCE%/*}/lib/code-based-grader.sh"
+  SCOPE_DECL="$(printf '%s\n' "${SCOPE_DECL_LINES}" | tr '\037' '\n' | scope_decl_select)"
   SCOPE_ALLOWED="$(scope_decl_files "${SCOPE_DECL}")"
 
   # The files: leg runs on code task_types only: a review/plan/doc row routinely lists the paths it
@@ -2562,6 +2652,21 @@ fi
 if [[ "${SCOPE_EXCESS_FOUND}" -eq 1 ]]; then
   REVIEW_FLAG="true"
   review_flag_add_reason "scope-excess"
+fi
+
+# qa-score-malformed — a present qa_score off the cov=N,ins=N,instr=N,clar=N shape, each N 1-5.
+# The ,d8=N tail is the HTML-primary review extension (scoped/scope-qa.md → D8 Visual Decision Sub-Pass).
+# ADVISORY: the value is stored unchanged. Checked as stored — the parser trims only the ends, so
+# inner whitespace, a wrapped value or a folded non-template line is a malformed stored value.
+if [[ -n "${QA_SCORE:-}" ]]; then
+  case "${QA_SCORE}" in
+    cov=[1-5],ins=[1-5],instr=[1-5],clar=[1-5]) ;;
+    cov=[1-5],ins=[1-5],instr=[1-5],clar=[1-5],d8=[1-5]) ;;
+    *)
+      REVIEW_FLAG="true"
+      review_flag_add_reason "qa-score-malformed"
+      ;;
+  esac
 fi
 
 # DOWNGRADE_ORIGIN provenance — recorded alongside grader_verdict (NOT a metric_pass mutation).
@@ -2607,10 +2712,6 @@ if [[ -z "${TIMESTAMP}" ]]; then
   TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 fi
 
-# trap cleanup targets — PY_SCRIPT_FILE (main parser) + T9_PY_FILE (Stage 1 detector).
-# T9_PY_FILE is created by Stage 1 detection (:- fallback when unset).
-trap 'rm -f "$PY_SCRIPT_FILE" "${T9_PY_FILE:-}"' EXIT INT TERM
-
 # Build the markdown body passed to PG as the body_md column. Frontmatter is omitted — its fields are
 # stored as first-class columns in core.outcomes (record_ts, agent, task_type, ...), so embedding them
 # in body_md would be redundant; the renderer CLI re-synthesizes frontmatter from columns for output.
@@ -2644,6 +2745,13 @@ BODY_MD=$(
   fi
   if [ -n "${STYLE_REF}" ]; then
     printf '%s\n' "- **Style Ref**: ${STYLE_REF}"
+  fi
+  if [[ -n "${EFFORT}" ]]; then
+    if [[ "${HAS_MIXED_EFFORT}" == "true" ]]; then
+      printf '%s\n' "- **Effort**: ${EFFORT} (mixed tiers)"
+    else
+      printf '%s\n' "- **Effort**: ${EFFORT}"
+    fi
   fi
   if [ -n "${FILES}" ]; then
     printf '%s\n' "- **Files**: ${FILES}"
@@ -2728,7 +2836,14 @@ circuit_breaker_record() {
   else
     # Non-fail resets to zero. Skip when no state was ever written (happy-path common case).
     [ -d "${CIRCUIT_BREAKER_DIR}" ] || return 0
-    rm -f "${counter_file}" "${susp_file}" 2>/dev/null || true
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${counter_file}"; then
+      rm -f -- "${counter_file:?}"
+    fi || true
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${susp_file}"; then
+      rm -f -- "${susp_file:?}"
+    fi || true
   fi
   return 0
 }
@@ -2751,6 +2866,17 @@ _now_epoch() {
   printf '%s' "${t}"
 }
 
+# Delete one spool entry → status 0 only once it is gone; a refused target counts as kept.
+spool_delete() {
+  local entry="${1:-}"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${entry}"; then
+    rm -f -- "${entry:?}"
+    return
+  fi
+  return 1
+}
+
 # Persist one failed envelope as a spool file. The epoch-second name prefix keeps entries
 # lexically oldest-first for FIFO drain + eviction; mktemp adds the unique suffix.
 spool_write() {
@@ -2758,7 +2884,8 @@ spool_write() {
   ts="$(_now_epoch)"
   spool_file="$(mktemp "${OUTCOME_SPOOL_DIR}/${ts}-XXXXXX" 2>/dev/null)" || return 1
   printf '%s' "${1}" >"${spool_file}" 2>/dev/null || {
-    rm -f "${spool_file}" 2>/dev/null || true
+    # shellcheck disable=SC2310  # the status is the result — a failed rm returns it rather than aborting
+    spool_delete "${spool_file}" || true
     return 1
   }
   return 0
@@ -2785,7 +2912,8 @@ spool_evict() {
         continue
         ;;
     esac
-    if [ "${now}" -gt 0 ] && [ "${prefix}" -lt "${cutoff}" ] && rm -f "${f}" 2>/dev/null; then
+    # shellcheck disable=SC2310  # the status is the result — a failed rm returns it rather than aborting
+    if [ "${now}" -gt 0 ] && [ "${prefix}" -lt "${cutoff}" ] && spool_delete "${f}"; then
       aged=$((aged + 1))
     else
       entries+=("${f}")
@@ -2794,7 +2922,8 @@ spool_evict() {
   if [ "${#entries[@]}" -gt "${OUTCOME_SPOOL_MAX_ENTRIES}" ]; then
     over=$((${#entries[@]} - OUTCOME_SPOOL_MAX_ENTRIES))
     while [ "${i}" -lt "${over}" ]; do
-      rm -f "${entries[${i}]}" 2>/dev/null && evicted=$((evicted + 1))
+      # shellcheck disable=SC2310  # the status is the result — a failed rm returns it rather than aborting
+      spool_delete "${entries[${i}]}" && evicted=$((evicted + 1))
       i=$((i + 1))
     done
   fi
@@ -2847,7 +2976,8 @@ spool_drain() {
     [ -e "${f}" ] || continue
     [ "${drained}" -ge "${OUTCOME_SPOOL_DRAIN_BATCH}" ] && break
     if python3 "${PG_HELPER}" <"${f}" >/dev/null 2>&1; then
-      rm -f "${f}" 2>/dev/null && drained=$((drained + 1))
+      # shellcheck disable=SC2310  # the status is the result — a failed rm returns it rather than aborting
+      spool_delete "${f}" && drained=$((drained + 1))
     else
       break
     fi
@@ -2920,10 +3050,15 @@ if [ -x "${PG_HELPER}" ]; then
     --arg attribution_source "${ATTRIBUTION_SOURCE:-}" \
     --arg style_ref "${STYLE_REF:-}" \
     --arg style_ref_verified "${STYLE_REF_VERIFIED:-}" \
+    --arg effort "${EFFORT:-}" \
+    --arg has_mixed_effort "${HAS_MIXED_EFFORT:-}" \
     --arg grader_verdict "${GRADER_VERDICT:-}" \
     --arg downgrade_origin "${DOWNGRADE_ORIGIN:-}" \
     --arg grader_crosscheck "${GRADER_CROSSCHECK:-}" \
     --arg files_modified "${FILES:-}" \
+    --arg agent_id "${ENVELOPE_AGENT_ID:-}" \
+    --arg session_id "${ENVELOPE_SESSION_ID:-}" \
+    --arg correction_verdict "${T9_DETECTOR_VERDICT:-}" \
     --arg sig_event_ts "${TIMESTAMP}" \
     --arg sig_task_type "${TASK_TYPE}" \
     --arg sig_emit "${SIG_EMIT}" \
@@ -2944,9 +3079,14 @@ if [ -x "${PG_HELPER}" ]; then
         attribution_source: (if $attribution_source == "" then null else $attribution_source end),
         style_ref: (if $style_ref == "" then null else $style_ref end),
         style_ref_verified: (if $style_ref_verified == "" then null else ($style_ref_verified == "true") end),
+        effort: (if $effort == "" then null else $effort end),
+        has_mixed_effort: (if $effort == "" or $has_mixed_effort == "" then null else ($has_mixed_effort == "true") end),
         grader_verdict: (if $grader_verdict == "" then null else $grader_verdict end),
         downgrade_origin: (if $downgrade_origin == "" then null else $downgrade_origin end),
-        grader_crosscheck: (if $grader_crosscheck == "" then null else $grader_crosscheck end)
+        grader_crosscheck: (if $grader_crosscheck == "" then null else $grader_crosscheck end),
+        agent_id: (if $agent_id == "" then null else $agent_id end),
+        session_id: (if $session_id == "" then null else $session_id end),
+        user_correction_detected: (if $correction_verdict == "" then null else ($correction_verdict == "1") end)
       },
       signals: (
         if $sig_emit == "1" then [{

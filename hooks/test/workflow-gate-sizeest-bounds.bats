@@ -16,6 +16,8 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
+  # Refused loopback port → the PASS arm's monitor reads fail open; no fixture reaches the live monitor.
+  export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   : >"${TRACE_LOG}"
 }
 

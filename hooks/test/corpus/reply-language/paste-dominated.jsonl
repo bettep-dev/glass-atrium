@@ -1,0 +1,3 @@
+{"type":"user","entrypoint":"cli","origin":{"kind":"human"},"message":{"role":"user","content":"Check the monitor logs"}}
+{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"Which run?"}]}}
+{"type":"user","entrypoint":"cli","origin":{"kind":"human"},"message":{"role":"user","content":"왜 실패했는지 원인 찾아줘\n<pasted_content id=\"9c1d\">\nThe build failed because the module graph could not be resolved and every downstream task was cancelled by the scheduler before it started\n</pasted_content id=\"9c1d\">"}}

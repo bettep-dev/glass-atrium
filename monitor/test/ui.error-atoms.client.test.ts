@@ -1,6 +1,6 @@
 // Shared error and placeholder atoms: a plain sentence per outage, the raw answer only behind Details,
 // one Retry per shared outage, and loading slots that read as loading rather than as data.
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -108,6 +108,7 @@ test("an outage shared by two or more failed regions collapses to one cause; mix
     { name: "one failure", entries: [down("spend"), { source: "sessions", error: null }], sources: null },
     { name: "different causes", entries: [down("spend"), down("sessions", "HTTP 404 Not Found")], sources: null },
     { name: "nothing failed", entries: [{ source: "spend", error: null }], sources: null },
+    { name: "two regions fed by one source", entries: [down("agent summary"), down("agent summary")], sources: null },
   ];
   for (const row of rows) {
     const shared = getSharedFailure(row.entries);
@@ -124,6 +125,157 @@ test("the page banner announces one outage with every source named and exactly o
   assert.match(getVisibleText(tree), /Couldn't load spend, sessions, and models\./);
   assert.doesNotMatch(getVisibleText(tree), /HTTP 500/);
   assert.equal(getButtons(tree).length, 1);
+});
+
+function getByClass(tree: RenderedNode, name: string): RenderedNode[] {
+  return findNodes(tree, (n) => String(n.props.className ?? "").split(/\s+/).includes(name));
+}
+
+test("the page banner is a raised critical alert card: severity word first, Details in the content, Retry in the actions", () => {
+  const tree = render("PageErrorBanner", { sources: ["spend", "sessions"], error: SERVER_ERROR, onRetry: () => {} });
+  const [content] = getByClass(tree, "alert-card-content");
+  const [actions] = getByClass(tree, "alert-card-actions");
+
+  assert.ok(String(getByClass(tree, "alert-card")[0]?.props.className).split(/\s+/).includes("card"), "raised card shell");
+  assert.equal(getByClass(tree, "alert-card")[0]?.props["data-tone"], "crit");
+  assert.equal(collectText(getByClass(tree, "sr-only")[0]).trim(), "Critical:");
+  assert.equal(findNodes(content, (n) => n.type === "details").length, 1, "Details sit in the content column");
+  assert.equal(getButtons(actions).length, 1, "the one Retry sits in the actions slot");
+});
+
+describe("an alert card announces by placement: a standalone critical card is an alert, other tones a status, none inside a live host", () => {
+  const rows = [
+    { name: "standalone crit", props: { tone: "crit" }, role: "alert" },
+    { name: "standalone warn", props: { tone: "warn" }, role: "status" },
+    { name: "standalone info", props: { tone: "info" }, role: "status" },
+    { name: "standalone ok", props: { tone: "ok" }, role: "status" },
+    { name: "standalone neutral", props: { tone: "neutral" }, role: "status" },
+    { name: "crit inside a live host", props: { tone: "crit", hasLiveHost: true }, role: undefined },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = render("AlertCard", { title: "Spend over budget", ...row.props });
+      const roles = findNodes(tree, (n) => n.props.role != null).map((n) => n.props.role);
+
+      assert.deepEqual(roles, row.role ? [row.role] : []);
+    });
+  }
+});
+
+describe("an alert card leads its title with a visually-hidden severity word, so tone never rests on colour or glyph alone", () => {
+  const rows = [
+    { name: "a crit card reads Critical:", tone: "crit", word: "Critical:" },
+    { name: "a warn card reads Warning:", tone: "warn", word: "Warning:" },
+    { name: "a info card reads Notice:", tone: "info", word: "Notice:" },
+    { name: "a ok card reads Resolved:", tone: "ok", word: "Resolved:" },
+    { name: "a neutral card reads Notice:", tone: "neutral", word: "Notice:" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = render("AlertCard", { tone: row.tone, title: "Harness drift" });
+      const [title] = getByClass(tree, "alert-card-title");
+
+      assert.equal(collectText(getByClass(title, "sr-only")[0]).trim(), row.word, "hidden severity word");
+      assert.match(collectText(title), new RegExp(`^${row.word}\\s*Harness drift$`), "the word leads the title");
+      assert.equal(getByClass(tree, "alert-card")[0].props["data-tone"], row.tone, "tone rides on the card for its well");
+    });
+  }
+});
+
+describe("an alert card renders each optional slot only when given, on the surface the caller picked", () => {
+  const rows = [
+    { name: "title only, raised", props: { surface: "raised" }, shell: "card", subjects: 0, details: 0, actions: 0 },
+    { name: "every slot, inset", props: { surface: "inset", subjects: ["hooks", "rules"], details: "ENOENT", actions: "Retry" }, shell: "sub-card", subjects: 2, details: 1, actions: 1 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = render("AlertCard", { tone: "warn", title: "Harness drift", ...row.props });
+      const [chips] = getByClass(tree, "alert-card-subjects");
+
+      assert.ok(String(getByClass(tree, "alert-card")[0].props.className).split(/\s+/).includes(row.shell), "shell");
+      assert.equal(chips ? chips.children.length : 0, row.subjects, "subject chips");
+      assert.equal(findNodes(tree, (n) => n.type === "details").length, row.details, "details");
+      assert.equal(getByClass(tree, "alert-card-actions").length, row.actions, "actions");
+    });
+  }
+});
+
+const FAILURE_SENTENCE = /Couldn't load/g;
+const COVERED_NOTE = "Not loaded — see the notice above";
+
+function renderPage(entries: FailureEntry[]): RenderedNode {
+  const shared = getSharedFailure(entries);
+  const banner = shared && React.createElement(ui.PageErrorBanner as Component, { sources: shared.sources, error: shared.error, onRetry: () => {} });
+  const regions = entries.map((entry) => React.createElement(ui.RegionFailure as Component, { ...entry, shared, onRetry: () => {} }));
+  return renderScreen(React.createElement("div", { children: [banner, ...regions] })) as RenderedNode;
+}
+
+test("each failed region speaks once: a shared outage leaves one sentence and one Retry, anything else keeps every card", () => {
+  const rows = [
+    { name: "two same-cause failures → banner speaks, regions stay quiet", entries: [{ source: "spend", error: SERVER_ERROR }, { source: "sessions", error: SERVER_ERROR }], sentences: 1, retries: 1, quiet: 2 },
+    { name: "a lone failure keeps its own card", entries: [{ source: "spend", error: SERVER_ERROR }], sentences: 1, retries: 1, quiet: 0 },
+    { name: "a mixed-cause pair keeps both cards", entries: [{ source: "spend", error: SERVER_ERROR }, { source: "sessions", error: "HTTP 404 Not Found" }], sentences: 2, retries: 2, quiet: 0 },
+  ];
+  for (const row of rows) {
+    const tree = renderPage(row.entries);
+    const text = getVisibleText(tree);
+
+    assert.equal((text.match(FAILURE_SENTENCE) || []).length, row.sentences, row.name);
+    assert.equal(getButtons(tree).length, row.retries, row.name);
+    assert.equal(text.split(COVERED_NOTE).length - 1, row.quiet, row.name);
+  }
+});
+
+type SourceEntry = { source: string; region?: string; error: unknown };
+type SourceFailures = { banner: { sources: string[]; error: unknown } | null; speakers: Map<string, string> };
+const getSourceFailures = ui.getSourceFailures as (entries: SourceEntry[]) => SourceFailures;
+const QUIET_NOTE = /Not loaded —/g;
+
+function renderSourcePage(entries: SourceEntry[]): RenderedNode {
+  const failures = getSourceFailures(entries);
+  const banner = failures.banner && React.createElement(ui.PageErrorBanner as Component, { sources: failures.banner.sources, error: failures.banner.error, onRetry: () => {} });
+  const failed = entries.filter((entry) => entry.error != null);
+  const regions = failed.map((entry) => React.createElement(ui.RegionFailure as Component, { ...entry, failures, onRetry: () => {} }));
+  return renderScreen(React.createElement("div", { children: [banner, ...regions] })) as RenderedNode;
+}
+
+test("each failed source speaks once however many regions it feeds; one surface and one Retry per failed source", () => {
+  const summary = (region: string, error: unknown = SERVER_ERROR) => ({ source: "agent summary", region, error });
+  const runs = (region: string, error: unknown = SERVER_ERROR) => ({ source: "recent runs", region, error });
+  const rows = [
+    { name: "one source feeding three regions", entries: [summary("fleet KPIs"), summary("agent table"), summary("suspended agents")], sentences: 1, retries: 1, quiet: 2 },
+    { name: "two sources with different causes", entries: [summary("fleet KPIs"), summary("agent table"), runs("run list", "HTTP 404 Not Found"), runs("run chart", "HTTP 404 Not Found")], sentences: 2, retries: 2, quiet: 2 },
+    { name: "two sources with the same cause share one banner", entries: [summary("fleet KPIs"), summary("agent table"), runs("run list"), runs("run chart")], sentences: 1, retries: 1, quiet: 4 },
+    { name: "a healthy source beside a failed one adds nothing", entries: [summary("fleet KPIs"), runs("run list", null)], sentences: 1, retries: 1, quiet: 0 },
+  ];
+  for (const row of rows) {
+    const tree = renderSourcePage(row.entries);
+    const text = getVisibleText(tree);
+
+    assert.equal((text.match(FAILURE_SENTENCE) || []).length, row.sentences, row.name);
+    assert.equal(getButtons(tree).length, row.retries, row.name);
+    assert.equal((text.match(QUIET_NOTE) || []).length, row.quiet, row.name);
+  }
+});
+
+test("the first region a failed source feeds carries its card; the others name themselves and point at that source", () => {
+  const tree = renderSourcePage([
+    { source: "agent summary", region: "fleet KPIs", error: SERVER_ERROR },
+    { source: "agent summary", region: "suspended agents", error: SERVER_ERROR },
+  ]);
+  const [speaker, covered] = tree.children as RenderedNode[];
+
+  assert.match(getVisibleText(speaker), /Couldn't load agent summary\./);
+  assert.equal(getVisibleText(covered).replace(/\s+/g, " ").trim(), "Suspended agents Not loaded — see the agent summary notice");
+  assert.equal(findNodes(covered, (n) => n.props["data-covered-card-id"] != null).length, 0);
+});
+
+test("a covered region names itself, reserves its slot height and carries no alert, Retry or Details", () => {
+  const tree = render("RegionCovered", { source: "spend by model", minHeight: 218 });
+
+  assert.equal(getVisibleText(tree).replace(/\s+/g, " ").trim(), `Spend by model ${COVERED_NOTE}`);
+  assert.equal(((tree.children[0] as RenderedNode).props.style as { minHeight: number }).minHeight, 218);
+  assert.equal(findNodes(tree, (n) => n.type === "button" || n.type === "details" || n.props.role === "alert").length, 0);
 });
 
 test("the loading placeholder is visible text under a status role and reserves its slot height", () => {
@@ -145,4 +297,11 @@ test("skeleton rows fill the real table body at the given row height and stay hi
     assert.equal((row.props.style as { height: number }).height, 40);
     assert.equal(findNodes(row, (n) => n.type === "td").length, 4);
   }
+});
+
+test("screens reach the shared Retry control through window.UI, so their own Retry keeps the busy and focus contract", () => {
+  const exposed = (ui.window as { UI: Record<string, unknown> }).UI;
+
+  assert.equal(typeof ui.RetryButton, "function");
+  assert.equal(exposed.RetryButton, ui.RetryButton);
 });

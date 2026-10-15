@@ -18,10 +18,12 @@
 
 - **PLAN_FILE Setup Obligation**: when starting plan-based work, set the `PLAN_FILE` environment variable to the plan path.
   - Reader: `hooks/validate-scope-drift.sh` compares each Edit/Write target against the plan's target-file list and warns on a miss (`SCOPE-070`, advisory, never a block).
-  - Unset → the hook falls back to the newest in-progress clauded-doc's target-file section via the monitor API; an explicit `PLAN_FILE` takes priority.
+  - Unset → the hook binds the Target Files list of the one `implementing` plan, read in that plan's own format (the HTML target-files section or the md `## Target Files` heading).
+    - It passes silently when no plan, or more than one, is `implementing`, and on any monitor or parse failure.
+  - An explicit `PLAN_FILE` takes priority over that monitor leg.
 
 ## Detail Reference [ORCHESTRATOR]
 
 - `skills/glass-atrium-ops-orchestrator.md` holds the detail behind this file and `orchestrator-role.md`. It is a flat reference file, not a Skill-loadable SKILL.md, so it never arrives on its own: Read the path when a topic below applies.
 - Core-process sections: Capability-Based Agent Selection · Team Composition Rules · Delegation/Communication Rules · Cost Optimization · Quality Gates · Architecture Patterns (Wave Execution, Agent Teams) · Delegation Enforcement.
-- Standing policies: Entropy Management (Janitor) · Initializer Agent Pattern · Numeric Threshold Adjustment Policy · feature-dev Plugin Usage Scope · Agent Performance Metrics · Consensus Protocol · Experimental Features.
+- Standing policies: Entropy Management (Janitor) · Numeric Threshold Adjustment Policy · feature-dev Plugin Usage Scope · Agent Performance Metrics · Consensus Protocol · Experimental Features.

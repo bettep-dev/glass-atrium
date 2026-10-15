@@ -24,6 +24,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 HOOK_SH="${WFGATE_SH:-${GA}/hooks/enforce-workflow-verify-stage.sh}"
 NUDGE_PHRASE='ADVISORY (first-link question, non-blocking)'
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-workflow-verify-stage.sh not found: ${HOOK_SH}"
@@ -137,17 +139,18 @@ run_lint() {
   [[ "$(curl_count)" == "1" ]] || { echo "expected one GET, got $(curl_count)" >&2; return 1; }
 }
 
-@test "the verbatim question silences the nudge on a schema-free verify stage, before any GET" {
+@test "the verbatim question silences the nudge on a schema-free verify stage, before any predecessor GET" {
   run_hook "$(dev_script 103 "${LITERAL}")"
   [[ "${status}" -eq 0 ]] || { echo "status ${status} -- ${output}" >&2; return 1; }
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged despite the question -- ${output}" >&2; return 1; }
-  [[ "$(curl_count)" == "0" ]] || { echo "walked despite the short-circuit: $(curl_count) GETs" >&2; return 1; }
+  # At most the cited id's own read, which the `implementing` walk makes; a chain walk from 103 reads 102.
+  (("$(curl_count)" <= 1)) || { echo "walked despite the short-circuit: $(curl_count) GETs" >&2; return 1; }
 }
 
 @test "a failed GET → silent, exit 0 (fail-open on infrastructure)" {
   # Drives the HTTP-error shape (shim exit 22). A refused connection (exit 7) is the same branch: the
   # walk keeps no status, only the emptiness of the capture.
-  rm -f "${DOCS}/103.json"
+  if ga_guard_path "${DOCS}"; then rm -f -- "${DOCS:?}/103.json"; fi
   run_hook "$(dev_script 103 'judge it')"
   [[ "${status}" -eq 0 ]] || { echo "infrastructure trouble must not block, status ${status}" >&2; return 1; }
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged on a failed GET -- ${output}" >&2; return 1; }
@@ -170,7 +173,7 @@ run_lint() {
   done < <(printf '%s' "${PATH}" | tr ':' '\n')
   [[ ! -e "${nocurl}/curl" ]] || { echo "curl leaked into the farm" >&2; return 1; }
 
-  run env -i PATH="${nocurl}" HOME="${WORK}" \
+  run env -i PATH="${nocurl}" HOME="${WORK}" GA_DATA_ROOT="${WORK}/.glass-atrium" \
     WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:16145/api/clauded-docs" \
     WORKFLOW_GATE_FIRED_LOG="${TRACE_LOG}" \
     bash -c '

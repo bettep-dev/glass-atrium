@@ -93,11 +93,18 @@ function normalizeHost(host: string): string {
   return LOOPBACK_HOSTS.has(lowered) ? "localhost" : lowered;
 }
 
+/** Where a DSN's server is reached (`host`, `port`) and which database it selects there. */
+interface DsnTarget {
+  host: string;
+  port: string;
+  database: string;
+}
+
 /**
  * The (host, port, database) triple a DSN resolves to, or `null` when the string is not
  * a URL-form postgres DSN this can parse.
  */
-function dsnIdentity(dsn: string): string | null {
+function dsnTarget(dsn: string): DsnTarget | null {
   let url: URL;
   try {
     url = new URL(dsn);
@@ -119,7 +126,12 @@ function dsnIdentity(dsn: string): string | null {
   // No database name selects no database — nothing to compare.
   if (database.length === 0) return null;
 
-  return [host, port.length === 0 ? DEFAULT_PORT : port, database].join(IDENTITY_SEP);
+  return { host, port: port.length === 0 ? DEFAULT_PORT : port, database };
+}
+
+function dsnIdentity(dsn: string): string | null {
+  const target = dsnTarget(dsn);
+  return target === null ? null : [target.host, target.port, target.database].join(IDENTITY_SEP);
 }
 
 /**
@@ -138,6 +150,18 @@ export function isSameDatabase(a: string, b: string): boolean {
   if (left === null || right === null) return false;
 
   return left === right;
+}
+
+/**
+ * Whether two connection strings reach the same server — host and port — whatever
+ * database each selects there. An unparseable side is never the same server.
+ */
+export function isSameServer(a: string, b: string): boolean {
+  const left = dsnTarget(a);
+  const right = dsnTarget(b);
+  if (left === null || right === null) return false;
+
+  return left.host === right.host && left.port === right.port;
 }
 
 const liveUrl = process.env.DATABASE_URL;

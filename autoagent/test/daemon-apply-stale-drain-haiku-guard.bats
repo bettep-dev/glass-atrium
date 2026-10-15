@@ -35,6 +35,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # build_full_stub — symlink every real command into $1 EXCEPT psql. The whole-PATH
 # mirror (vs a hand-maintained allowlist) keeps the fixture robust as the git-free
@@ -87,7 +89,7 @@ setup() {
 
 teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX -- "${WORK}" 2>/dev/null || true
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # build_guard_passthrough PATH — Python stand-in for the AUTOAGENT_DAEMON_CYCLE_PY seam (run as
@@ -151,6 +153,10 @@ case "${sql}" in
     # mark_stale_attempt CTE — emit the canned verdict token.
     printf '%s\n' "${STUB_STALE_VERDICT:-incremented}"
     ;;
+  *"to_regclass('core.autoagent_apply_records')"*)
+    # the apply-record table preflight — present
+    printf 't\n'
+    ;;
   *) : ;;
 esac
 exit 0
@@ -192,8 +198,8 @@ run_single() {
   run env PATH="${STUB}" \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     STUB_PSQL_LOG="${PSQL_LOG}" \
-    STUB_ROW_ID="1022" \
-    STUB_CYCLE="2026-06-26" \
+    STUB_ROW_ID="7301" \
+    STUB_CYCLE="2026-03-09" \
     STUB_LABEL="${LABEL:-probe-stale}" \
     STUB_AGENT="probe" \
     STUB_TARGET="${AGENTS}/probe.md" \
@@ -206,7 +212,7 @@ run_single() {
     ${STUB_SINGLE_RC:+STUB_SINGLE_RC="${STUB_SINGLE_RC}"} \
     ${STUB_RAW_ROW:+STUB_RAW_ROW="${STUB_RAW_ROW}"} \
     ${ALLOW:+AUTOAGENT_ALLOW_HAIKU_SKIP="${ALLOW}"} \
-    bash "${REAL_SCRIPT}" --proposal-id 1022 --agents-dir "${AGENTS}" "$@"
+    bash "${REAL_SCRIPT}" --proposal-id 7301 --agents-dir "${AGENTS}" "$@"
 }
 
 applied_log_path() {
@@ -355,9 +361,11 @@ dryrun_log_path() {
 @test "P3b: a non-ok or NULL generation outcome exits 20, leads with Reject, names haiku_status and the carve-out, applies nothing" {
   make_probe
   STUB_STALE_VERDICT="incremented"
-  local haiku
+  local haiku applied_log
   for haiku in "skipped:chronic-timeout-backoff" ""; do
-    rm -f -- "$(applied_log_path)" "${PSQL_LOG}"
+    applied_log="$(applied_log_path)"
+    if ga_guard_path "${applied_log}"; then rm -f -- "${applied_log:?}"; fi
+    if ga_guard_path "${PSQL_LOG}"; then rm -f -- "${PSQL_LOG:?}"; fi
     run_single "${haiku}"
     [[ "${status}" -eq 20 ]] || {
       echo "haiku_status='${haiku}': expected exit 20, got ${status}: ${output}" >&2
@@ -420,7 +428,7 @@ dryrun_log_path() {
   STUB_NO_ROW="1" run_single "ok"
 
   # Exit 19 means one psql call (the lookup), so the log holds exactly its SQL.
-  [[ "${status}" -eq 19 && "${output}" == *"id=1022 not found"* && "$(grep -c '=== psql invocation ===' "${PSQL_LOG}")" -eq 1 ]] || {
+  [[ "${status}" -eq 19 && "${output}" == *"id=7301 not found"* && "$(grep -c '=== psql invocation ===' "${PSQL_LOG}")" -eq 1 ]] || {
     echo "expected exit 19 naming the id after one lookup, got ${status}: ${output}" >&2
     return 1
   }
@@ -457,7 +465,7 @@ dryrun_log_path() {
   make_probe
   STUB_STALE_VERDICT="incremented"
   local terminal
-  for terminal in applied rejected approved reverted; do
+  for terminal in applied rejected approved reverted unadjudicated; do
     STUB_STATUS="${terminal}" run_single "skipped:chronic-timeout-backoff"
     [[ "${status}" -eq 8 && "${output}" == *"already terminal (status=${terminal})"* ]] || {
       echo "status=${terminal}: expected exit 8 naming the status, got ${status}: ${output}" >&2
@@ -498,14 +506,15 @@ dryrun_log_path() {
 
 @test "exit split: a row that does not decode, or answers for another id, exits 23 before its status is read" {
   make_probe
-  local target_b64 raw
+  local target_b64 raw applied_log
   target_b64="$(printf '%s' "${AGENTS}/probe.md" | base64 | tr -d '\n')"
   for raw in \
-    "1022|2026-06-26|probe|stale|probe|${AGENTS}/probe.md|$(oor_diff_b64)|rejected|ok" \
-    "1023|2026-06-26|cHJvYmU=|cHJvYmU=|${target_b64}|$(oor_diff_b64)|rejected|ok"; do
-    rm -f -- "$(applied_log_path)"
+    "7301|2026-03-09|probe|stale|probe|${AGENTS}/probe.md|$(oor_diff_b64)|rejected|ok" \
+    "7302|2026-03-09|cHJvYmU=|cHJvYmU=|${target_b64}|$(oor_diff_b64)|rejected|ok"; do
+    applied_log="$(applied_log_path)"
+    if ga_guard_path "${applied_log}"; then rm -f -- "${applied_log:?}"; fi
     STUB_RAW_ROW="${raw}" run_single "ok"
-    [[ "${status}" -eq 23 && "${output}" == *"proposal id=1022 row is unreadable"* &&
+    [[ "${status}" -eq 23 && "${output}" == *"proposal id=7301 row is unreadable"* &&
       "${output}" != *"already terminal"* && "${output}" != *"lookup failed"* &&
       ! -f "$(applied_log_path)" ]] || {
       echo "row '${raw%%|*}|…': expected exit 23 naming the unreadable row and applying nothing, got ${status}: ${output}" >&2

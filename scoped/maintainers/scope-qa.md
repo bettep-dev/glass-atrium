@@ -37,7 +37,7 @@ A section stays when it obliges `glass-atrium-qa-code-reviewer` (delivery: **How
 | `## Regression Risk Estimation [QA]` | glass-atrium-qa-code-reviewer — the triggers that select the label its template emits live here and nowhere else | `agents/glass-atrium-qa-code-reviewer.md` |
 
 - **Heading stability — named verbatim from outside `scoped/scope-qa.md`**: every `##` heading in the table above, plus these `###` headings. Renaming one of these dangles a live citation.
-  - `### Reviewer verdict` — cited by `rules/glass-atrium/orchestrator-role.md` → `#### Team composition and verdicts`.
+  - `### Reviewer verdict` — cited by `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` → `## Team composition and verdicts`.
   - `### The four dimensions` and `### Rubric` — cited by `agents/glass-atrium-qa-code-reviewer.md` → `#### Template field notes`.
   - Open, and owned elsewhere: most of `rules/glass-atrium/orchestrator-role.md`'s pointers at `## Plan Direction Verification Gate [DEV+QA]` drop the `[DEV+QA]` suffix and so resolve by prefix. Repointing them is that file's own edit; no maintainer companion exists for it yet.
 - **Heading stability — not named from outside**: every other `###` heading in the rule file, `### Mechanical / semantic split` and `### Threshold SoT` included — each is reached through the `##` heading above it, never by a citation of its own.
@@ -50,7 +50,6 @@ Dropped outright (not moved) — each would preserve a claim a future editor cou
 - The Tier-2 loading stanza and the 2026-09-10 delivery-status block, including its three consequence bullets and the disposition rule. Self-refuting the moment the file is read by the agent it names, and superseded by the per-section condition lines now in the rule file.
 - `### Reader — why this section survives the disposition rule` — a disposition argument for a decision already taken. Its factual finding survives in the ledger row above.
 - The Sprint Contract Gate's "Heading kept, body removed" note and its Sizable-task pair note — both restated the canonical's location, which the stub line now states once.
-- "Two pointers were DELETED from this list" — deletion bookkeeping for an edit two waves old.
 - The rubric pair note, the D8 pair note and the Threshold SoT pair note — five-, three- and two-site edit registers. The linkage they carried is in the ledger table above.
 - The Regression Risk "Undelivered, and a RELOCATE candidate for the reviewer body" note — superseded: the rule file reaches the reviewer whole (**How the reviewer reaches this file** below).
 - Duplicates of text the reviewer's own body already delivers: the D8 skip list, the pass threshold, gradient localization, the `qa_score` record format, the 20-point total's restatement inside the D8 section, and the score-trend sentence.
@@ -61,7 +60,7 @@ Compressed rather than dropped: the comparand section's persist-duty and decisio
 
 ## How the three conflicts landed
 
-- **Untagged-claim rule vs. the delivered Direction-not-completeness rule** (`rules/glass-atrium/orchestrator-role.md` → `#### Team composition and verdicts`). The tag-PRESENCE revise limb was DELETED, not narrowed.
+- **Untagged-claim rule vs. the delivered Direction-not-completeness rule** (`skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` → `## Team composition and verdicts`). The tag-PRESENCE revise limb was DELETED, not narrowed.
   - It was already absorbed by "the planner's marking WIDENS your list and never shrinks it", and narrowing it to load-bearing premises would have collided with the CONFIRMED / REFUTED / UNVERIFIABLE ladder four lines above it.
   - What survives is the malformed-tag case phrased ON that ladder — a load-bearing premise whose self-checked tag names no instrument is reported UNVERIFIABLE — plus an explicit statement that tag absence is not itself a finding.
   - The direction-not-completeness limit is stated in the rule file's `### Reviewer verdict` section, in the reviewer's own terms, which is what that orchestrator clause now points at for the reviewer half.

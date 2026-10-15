@@ -17,6 +17,8 @@
 bats_require_minimum_version 1.5.0
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../validate-output.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "validate-output.sh not found: ${HOOK_SH}"
@@ -28,7 +30,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Drive the hook with JSON on stdin; stderr merged into stdout so both the advisory (SEC-072
@@ -119,7 +121,7 @@ spawn_count() {
     'DELETE FROM accounts WHERE id=1'
     'exec(malicious_code)'
     '__import__(os).system(x)'
-    'os.system(rm -rf /)'
+    'os.system(rm -rf /)' # GA-RM[not-executed]: tool_response payload the hook only pattern-matches, never runs
   )
   local body input
   for body in "${payloads[@]}"; do

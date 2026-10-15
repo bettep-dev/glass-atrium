@@ -15,7 +15,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 - The core came from `skills/glass-atrium-core-iron-laws/SKILL.md` → `### Investigation Discipline [DEV+ORCHESTRATOR]`, plus the three attachments that are dead weight once it leaves: `## Common Rationalizations` rows 1-5, `## Red Flags` bullets 1, 2, 3, 5 and 6, and `## Verification` items 1, 2 and 5.
 - The four-step sequence, its four step bullets and the hypothesis-free prohibition moved byte-identically, as did all five rationalization rows and all eight scan items. ONE line was deliberately restated — see the next section.
 - The skill carried no `AGENT-INJECT` marker of any kind, so nothing extracts from it: the move is a plain relocation with no byte budget attached.
-- Where the skill's remainder went when it retired in W7:
+- Where the skill's remainder went when it retired:
   - Debugger Escalation → `**Debugger evidence gate**` in `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop`; the rest deleted as restated.
   - Prompt Injection Refusal → `rules/glass-atrium/core-security.md` → `## Prompt & Tool Input Security [LLM01:2025]`.
   - Excessive Agency → the `core-security.md` rationalization row plus the permission-widening sub-bullet under `## Agent Tool Authorization`.

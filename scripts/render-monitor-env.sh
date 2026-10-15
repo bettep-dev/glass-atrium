@@ -2,15 +2,14 @@
 # render-monitor-env.sh — render config.toml values into monitor/.env
 # Usage: render-monitor-env.sh
 #
-# Renders six gitignored keys from config.toml (upper SoT — see config.toml header):
+# Renders five gitignored keys from config.toml (upper SoT — see config.toml header):
 #   ATRIUM_MONITOR_PORT     ← [ports].monitor          (bindable integer 1-65535)
 #   CLAUDED_DOCS_HTML_ROOT  ← [paths].monitor_docs_html_root  (absolute dir path)
 #   ATRIUM_TIMEZONE         ← [meta].timezone RESOLVED  ('auto'→host IANA; explicit verbatim)
 #   ATRIUM_SCHEDULE_AUTOAGENT     ← [daemon.autoagent-cycle].time      ("HH:MM" 24h)
 #   ATRIUM_SCHEDULE_WIKI          ← [daemon.wiki-compile].time         ("HH:MM" 24h)
-#   ATRIUM_SCHEDULE_DAILY_RESTART ← [daemon.daemon-daily-restart].time ("HH:MM" 24h)
 #
-# The three ATRIUM_SCHEDULE_* keys mirror the ATRIUM_TIMEZONE render-then-consume
+# The two ATRIUM_SCHEDULE_* keys mirror the ATRIUM_TIMEZONE render-then-consume
 # path: config.toml [daemon.*].time is SoT, the monitor reads env only, and
 # schedule-next-fire.ts builds DAEMON_CRON_SCHEDULE from these at module load — so
 # the monitor's "next due" can never drift from the launchd reality that
@@ -37,6 +36,8 @@ readonly SCRIPT_DIR
 # Shared table-scoped TOML extractor (single parser SoT for shell consumers).
 # shellcheck source=lib/atrium-config.sh
 source "${SCRIPT_DIR}/lib/atrium-config.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${SCRIPT_DIR}/lib/path-guard.sh"
 CONFIG_TOML="$(atrium_config_file)"
 readonly CONFIG_TOML
 
@@ -65,7 +66,8 @@ upsert_env() {
       index($0, key "=") == 1 { print key "=" ENVIRON["UPSERT_VAL"]; next }
       { print }
     ' "${ENV_FILE}" >"${tmp}" && cat "${tmp}" >"${ENV_FILE}"
-    rm -f "${tmp}"
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
   else
     # 마지막 줄이 개행 없이 끝나면 append 가 그 줄에 이어붙어 기존 키와 새 키가
     # 한 줄로 합쳐진다 (dotenv 양쪽 모두 유실) → 줄 경계 보장 후 추가.
@@ -151,17 +153,15 @@ if ! [[ "${TZ_VALUE}" =~ ^[A-Za-z0-9_+/-]+$ ]]; then
 fi
 
 # 4. ATRIUM_SCHEDULE_* ← [daemon.*].time
-# Validate ALL THREE schedule times BEFORE any upsert, so a missing/malformed time
+# Validate both schedule times BEFORE any upsert, so a missing/malformed time
 # loud-fails with ZERO keys written (no partial render). Distinct exit codes per
-# (key, failure-mode) continue the 5-10 ladder. schedule-next-fire.ts fans
-# ATRIUM_SCHEDULE_DAILY_RESTART to both daily-restart rows; concrete values render
-# here, the monitor never re-parses config.toml.
+# (key, failure-mode) continue the 5-10 ladder; concrete values render here, the
+# monitor never re-parses config.toml. The retired [daemon.daemon-daily-restart]
+# stanza is never read — its codes 15/16 stay retired, never reused.
 require_schedule_time "[daemon.autoagent-cycle]" 11 12
 SCHED_AUTOAGENT="${SCHEDULE_TIME}"
 require_schedule_time "[daemon.wiki-compile]" 13 14
 SCHED_WIKI="${SCHEDULE_TIME}"
-require_schedule_time "[daemon.daemon-daily-restart]" 15 16
-SCHED_DAILY_RESTART="${SCHEDULE_TIME}"
 
 # render all keys
 upsert_env "ATRIUM_MONITOR_PORT" "${PORT}"
@@ -169,4 +169,3 @@ upsert_env "CLAUDED_DOCS_HTML_ROOT" "${DOCS_HTML_ROOT}"
 upsert_env "ATRIUM_TIMEZONE" "${TZ_VALUE}"
 upsert_env "ATRIUM_SCHEDULE_AUTOAGENT" "${SCHED_AUTOAGENT}"
 upsert_env "ATRIUM_SCHEDULE_WIKI" "${SCHED_WIKI}"
-upsert_env "ATRIUM_SCHEDULE_DAILY_RESTART" "${SCHED_DAILY_RESTART}"

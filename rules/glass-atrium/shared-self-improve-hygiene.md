@@ -1,9 +1,20 @@
+---
+paths:
+  - "**/autoagent/**/*"
+  - "**/scripts/*.sh"
+  - "**/scripts/lib/*.sh"
+  - "**/com.glass-atrium.*.plist"
+  - "**/.glass-atrium/**/*"
+  - "**/scripts/agent_lifecycle/**/*.py"
+  - "**/hooks/validate-compliance-matrix.sh"
+  - "**/lib/ga-launchd.sh"
+---
 # Self-Improvement Pipeline Hygiene Rules (Cross-Cutting Concern)
 
-Applies to two audiences, each with its own load trigger:
+Applies to two audiences, both loaded on a Read whose path matches the `paths:` globs above — glob base and honest backing: `rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)` → **Path-scoped delivery**.
 
-- **ORCHESTRATOR scope** (main session / global coordinator) — loaded automatically.
-- **DEV agents that touch the autoagent self-improvement pipeline** (`~/.glass-atrium/autoagent/daemon-apply.sh`, `daemon_cycle.py`, `daemon-cycle.sh`, related launchd plists) — loaded when the change scope includes any path under `~/.glass-atrium/autoagent/` or the loop's launchd configuration.
+- **ORCHESTRATOR scope** (main session / global coordinator).
+- **DEV agents whose change scope includes** `autoagent/` paths, the self-improvement launchd configuration, the agent-lifecycle Python package (`scripts/agent_lifecycle/`), the compliance-matrix validator hook (`hooks/validate-compliance-matrix.sh`) or the launchd library (`lib/ga-launchd.sh`).
 
 ## Working Tree Hygiene Contract [ORCHESTRATOR+DEV]
 
@@ -143,6 +154,6 @@ Each path below is designed to be its own independent git repository — one rep
 | `core-git-workflow.md` | commit message rules · `--no-verify` / `--no-gpg-sign` prohibition · dangerous commands procedure |
 | `orchestrator-role.md` | Harness Path Protection |
 | `skills/glass-atrium-ops-orchestrator.md` | Self-Improvement User-Approval Trigger (safety-only) |
-| `core-learning-log.md` | Instruction Improvement Approval Tier (Tier 1 Auto + Tier 2 Safety) · CTM/EPM bucket |
+| `core-learning-log.md` | Instruction Improvement Approval Tier (Tier 1 Auto + Tier 2 Safety) |
 | `core-security.md` | LLM06 Agent Tool Authorization · reuses the High-impact actions definition |
 | monitor `/api/improvement` | SoT routes (routes/improvement.ts + types/improvement.ts + screens/improvement.jsx) |

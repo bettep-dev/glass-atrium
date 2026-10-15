@@ -37,8 +37,12 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   command -v jq >/dev/null 2>&1 || skip "jq required"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
@@ -56,7 +60,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Drive the PRODUCER: one contested gap through the plan-mode arbiter with the model seam pointed at
@@ -95,7 +99,7 @@ arbiter.get_gap_outcome(
 PY
   )
   local rc=$?
-  rm -rf -- "${scratch}"
+  if ga_guard_path "${scratch}"; then rm -rf -- "${scratch:?}"; fi
   return "${rc}"
 }
 

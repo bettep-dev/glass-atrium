@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# render-launchd-plists.sh — render the 8 com.glass-atrium.* launchd plists
+# render-launchd-plists.sh — render the active com.glass-atrium.* launchd plists
 # from the rendered config.toml (single upper SoT — see config.toml.example).
 #
 # RENDER-ONLY contract (T32): writes plist FILES into an output dir; NEVER touches
@@ -32,7 +32,10 @@ shopt -u patsub_replacement 2>/dev/null || true
 GA_ROOT_DEFAULT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd -P)"
 readonly GA_ROOT="${GA_ROOT:-${GA_ROOT_DEFAULT}}"
 readonly CONFIG_TOML="${GA_CONFIG_TOML:-${GA_ROOT}/config.toml}"
-readonly OUT_DIR="${GA_PLIST_OUT:-${GA_ROOT}/rendered/launchd}"
+OUT_DIR="${GA_PLIST_OUT:-${GA_ROOT}/rendered/launchd}"
+# Anchored to the invoking cwd once → every temp plist is absolute, so the exit guard lets it delete.
+[[ "${OUT_DIR}" == /* ]] || OUT_DIR="${PWD}/${OUT_DIR}"
+readonly OUT_DIR
 readonly LABEL_PREFIX="com.glass-atrium"
 
 # Shared timezone resolver (atrium_resolve_timezone) — resolves the 'auto' sentinel
@@ -43,23 +46,24 @@ SCRIPT_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && 
 readonly SCRIPT_SELF_DIR
 # shellcheck source=lib/atrium-config.sh
 source "${SCRIPT_SELF_DIR}/lib/atrium-config.sh"
-# job names match the [daemon.<name>] stanzas in config.toml 1:1
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${SCRIPT_SELF_DIR}/lib/path-guard.sh"
+# job names = lib/ga-env.sh LAUNCHD_JOBS (the active roster), each with a [daemon.<name>] stanza in config.toml
 readonly -a JOBS=(
   monitor
-  autoagent-daemon
-  wiki-daemon
   monitor-log-rotate
   pg-backup
   autoagent-cycle
   wiki-compile
-  daemon-daily-restart
 )
 
 # temp + cleanup
 CUR_TMP=""
 cleanup() {
   local exit_code=$?
-  [[ -n "${CUR_TMP}" && -f "${CUR_TMP}" ]] && rm -f -- "${CUR_TMP}"
+  # Empty between jobs → the guard skips it silently.
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${CUR_TMP}"; then rm -f -- "${CUR_TMP:?}"; fi
   exit "${exit_code}"
 }
 trap cleanup EXIT INT TERM
@@ -246,27 +250,6 @@ render_job() {
       out_log="${E_LOGROOT}/monitor.out.log"
       err_log="${E_LOGROOT}/monitor.err.log"
       ;;
-    autoagent-daemon)
-      args_xml="$(arg_xml /bin/bash "${E_ROOT}/scripts/autoagent-daemon-bootstrap.sh")"
-      env_xml="$(
-        env_kv HOME "${E_HOME}"
-        env_kv PATH "${E_PATH}"
-      )"
-      workdir="${E_HOME}"
-      out_log="/tmp/autoagent-daemon.log"
-      err_log="/tmp/autoagent-daemon.log"
-      ;;
-    wiki-daemon)
-      args_xml="$(arg_xml /bin/bash "${E_ROOT}/scripts/wiki-daemon-bootstrap.sh")"
-      env_xml="$(
-        env_kv HOME "${E_HOME}"
-        env_kv PATH "${E_PATH}"
-        env_kv WIKI_ROOT "${E_WIKI}"
-      )"
-      workdir="${E_HOME}"
-      out_log="/tmp/wiki-daemon.log"
-      err_log="/tmp/wiki-daemon.log"
-      ;;
     monitor-log-rotate)
       args_xml="$(arg_xml /bin/bash "${E_ROOT}/scripts/monitor-log-rotate.sh")"
       env_xml="$(
@@ -312,18 +295,6 @@ render_job() {
       workdir="${E_HOME}"
       out_log="/tmp/wiki-compile.log"
       err_log="/tmp/wiki-compile.log"
-      ;;
-    daemon-daily-restart)
-      cmd="$(xml_escape "/bin/bash ${ROOT_PATH}/scripts/daemon-daily-restart.sh autoagent; /bin/bash ${ROOT_PATH}/scripts/daemon-daily-restart.sh wiki")"
-      args_xml="$(arg_xml /bin/bash -c "${cmd}")"
-      env_xml="$(
-        env_kv HOME "${E_HOME}"
-        env_kv PATH "${E_PATH}"
-        env_kv WIKI_ROOT "${E_WIKI}"
-      )"
-      workdir="${E_HOME}"
-      out_log="/tmp/daemon-daily-restart.log"
-      err_log="/tmp/daemon-daily-restart.log"
       ;;
     *) die 4 "unknown job: ${job}" ;;
   esac

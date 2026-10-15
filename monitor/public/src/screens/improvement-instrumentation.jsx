@@ -15,23 +15,28 @@ function SymI(props) {
 const confidenceBadgeMetaI = (value) =>
 	window.ImprovementShared.confidenceBadgeMetaI(value);
 
-function ReviewReasonSegmentsI(props) {
-	return React.createElement(
-		window.ImprovementShared.ReviewReasonSegmentsI,
-		props,
-	);
-}
+// Slot wrappers outlive the error ↔ card swap → a Retry unmounting on recovery hands focus to its own slot
+const PAYLOAD_SLOT_ID_I = Object.freeze({
+	flaggedResults: "improvement-flagged-results",
+	corpusGrowth: "improvement-corpus-growth",
+	correctionSignals: "improvement-correction-signals",
+	proposalMeasurements: "improvement-proposal-measurements",
+});
 
 // One banner per failed payload, in place of the group that payload owns.
-function PayloadErrorCardI({ title, state, onRetry }) {
-	const { CardHead, RegionUnavailable } = window.UI;
+// `source` = the page's region name, so a shared outage banner naming it quiets this card
+function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTargetId }) {
+	const { CardHead, RegionFailure } = window.UI;
 	return (
 		<div className="card">
 			<CardHead title={title} />
-			<div className="p-4">
-				<RegionUnavailable
-					source={title.toLowerCase()}
+			<div className="px-5 py-4">
+				<RegionFailure
+					source={source}
 					error={state.error}
+					isBusy={state.busy}
+					failures={failures}
+					focusTargetId={focusTargetId}
 					onRetry={onRetry}
 				/>
 			</div>
@@ -50,7 +55,7 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 		return (
 			<div className="card">
 				<CardHead title={title} />
-				<div className="p-3">
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="flagged results" minHeight={60} />
 				</div>
 			</div>
@@ -61,7 +66,7 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 		<div className="card">
 			<CardHead
 				title={title}
-				sub="Outcomes flagged in the last 7 days · quarantined excluded"
+				sub="Quarantined rows excluded"
 				right={
 					<button
 						className="btn ghost sm"
@@ -74,20 +79,59 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 					</button>
 				}
 			/>
-			<div className="px-3 pb-3">
-				<div className="fs-body font-mono text-ink tnum">
+			<div className="px-5 pb-4">
+				<div className="fs-display font-mono text-ink tnum">
 					{formatIntI(Number(state.data.review_flag_last_7d ?? 0))}
 				</div>
-				{/* is-wrap 필수 — 사유 세그먼트가 잘리면 수만 남고 모집단이 사라진다. */}
-				<div className="card-sub is-wrap fs-meta mt-1">
-					<ReviewReasonSegmentsI
-						segments={reviewReasons}
-						fallback="Outcomes flagged in the last 7 days"
-					/>
-				</div>
+				<FlaggedReasonBarsI segments={reviewReasons} />
 			</div>
 		</div>
 	);
+}
+
+// Ranked reason bars — the dominant reason leads; bar length relative to the largest.
+function FlaggedReasonBarsI({ segments }) {
+	const { Bar } = window.UI;
+	const ranked = getRankedReasonsI(segments);
+
+	if (ranked.length === 0) {
+		return (
+			<div className="card-sub fs-meta mt-1">
+				Outcomes flagged in the last 7 days
+			</div>
+		);
+	}
+
+	return (
+		<ul
+			className="mt-3 space-y-1.5"
+			aria-label={`Why results were flagged — ${segments.classifiedTotal} rows classified`}
+		>
+			{ranked.map((s) => (
+				<li
+					key={s.key}
+					className="grid grid-cols-[minmax(0,14rem)_1fr_3.5rem] items-center gap-3 fs-meta"
+					title={s.title}
+				>
+					<span className="truncate">{s.label}</span>
+					<Bar
+						value={s.count}
+						max={ranked[0].count}
+						ariaLabel={`${s.label} ${formatIntI(s.count)}`}
+					/>
+					<span className="font-mono tnum text-right">
+						{formatIntI(s.count)}
+					</span>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+// Stable sort → ties keep the shared REVIEW_FLAG_REASON_ORDER the segments arrive in.
+function getRankedReasonsI(segments) {
+	if (!segments) return [];
+	return [...segments.items].sort((a, b) => b.count - a.count);
 }
 
 // 계기판 뷰 — 패널 순서는 relocate 이전 화면 순서를 그대로 보존한다.
@@ -103,57 +147,87 @@ function ImprovementInstrumentationViewI({
 	reviewReasons,
 	onNav,
 	onRetry,
+	failures,
 }) {
+	const { SplitRow, SplitColumn, getRegionView } = window.UI;
+
 	return (
 		<div className="space-sections">
-			{statsState.status === "error" ? (
-				<PayloadErrorCardI
-					title="Flagged results"
-					state={statsState}
-					onRetry={onRetry}
-				/>
-			) : (
-				<FlaggedResultsCardI
-					state={statsState}
-					reviewReasons={reviewReasons}
-					onNav={onNav}
-				/>
-			)}
-			{corpusAuditState.status === "error" ? (
-				<PayloadErrorCardI
-					title="Corpus growth"
-					state={corpusAuditState}
-					onRetry={onRetry}
-				/>
-			) : (
-				<CorpusGrowthCardI state={corpusAuditState} />
-			)}
-			{correctionState.status === "error" ? (
-				<PayloadErrorCardI
-					title="Correction signals"
-					state={correctionState}
-					onRetry={onRetry}
-				/>
-			) : (
-				<CorrectionSignalsCardI state={correctionState} />
-			)}
-			{listState.status === "error" ? (
-				<PayloadErrorCardI
-					title="Proposal measurements"
-					state={listState}
-					onRetry={onRetry}
-				/>
-			) : (
-				<>
-					<StyleRefCardI state={listState} styleRef={styleRef} />
-					<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
-					<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
-					<ConfidenceDistCardI
-						state={listState}
-						confidenceDist={confidenceDist}
+			<div id={PAYLOAD_SLOT_ID_I.flaggedResults}>
+				{getRegionView(statsState) === "error" ? (
+					<PayloadErrorCardI
+						focusTargetId={PAYLOAD_SLOT_ID_I.flaggedResults}
+						title="Flagged results"
+						source="loop stats"
+						failures={failures}
+						state={statsState}
+						onRetry={onRetry}
 					/>
-				</>
-			)}
+				) : (
+					<FlaggedResultsCardI
+						state={statsState}
+						reviewReasons={reviewReasons}
+						onNav={onNav}
+					/>
+				)}
+			</div>
+			<SplitRow ratio="1:1" layout="equal">
+				<div id={PAYLOAD_SLOT_ID_I.corpusGrowth}>
+					{getRegionView(corpusAuditState) === "error" ? (
+						<PayloadErrorCardI
+							focusTargetId={PAYLOAD_SLOT_ID_I.corpusGrowth}
+							title="Corpus growth"
+							source="corpus audits"
+							failures={failures}
+							state={corpusAuditState}
+							onRetry={onRetry}
+						/>
+					) : (
+						<CorpusGrowthCardI state={corpusAuditState} />
+					)}
+				</div>
+				<div id={PAYLOAD_SLOT_ID_I.correctionSignals}>
+					{getRegionView(correctionState) === "error" ? (
+						<PayloadErrorCardI
+							focusTargetId={PAYLOAD_SLOT_ID_I.correctionSignals}
+							title="Correction signals"
+							source="correction signals"
+							failures={failures}
+							state={correctionState}
+							onRetry={onRetry}
+						/>
+					) : (
+						<CorrectionSignalsCardI state={correctionState} />
+					)}
+				</div>
+			</SplitRow>
+			<div id={PAYLOAD_SLOT_ID_I.proposalMeasurements} className="space-sections">
+				{getRegionView(listState) === "error" ? (
+					<PayloadErrorCardI
+						focusTargetId={PAYLOAD_SLOT_ID_I.proposalMeasurements}
+						title="Proposal measurements"
+						source="suggestions"
+						failures={failures}
+						state={listState}
+						onRetry={onRetry}
+					/>
+				) : (
+					<>
+						<StyleRefCardI state={listState} styleRef={styleRef} />
+						{/* two short gauges stack → the pair fills Confidence's height instead of stretching one half-empty */}
+						<SplitRow ratio="1:1" layout="equal">
+							<SplitColumn>
+								<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
+								<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
+							</SplitColumn>
+							<ConfidenceDistCardI
+								state={listState}
+								confidenceDist={confidenceDist}
+							/>
+						</SplitRow>
+					</>
+				)}
+			</div>
 		</div>
 	);
 }
@@ -171,14 +245,16 @@ function ImprovementInstrumentationViewI({
 //   - 모든 카운트 0 → "데이터 부재" 회색 indicator (migration 미적용 OR 30d 빈 cohort)
 //   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
 
+const TIER_BREAKDOWN_SUB_I = "30 days · self-reported";
+
 function TierBreakdownCardI({ state, tierBreakdown }) {
 	const { CardHead, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !tierBreakdown) {
 		return (
 			<div className="card">
-				<CardHead title="Results by check status (30 days)" />
-				<div className="p-3">
+				<CardHead title="Results by check status" sub={TIER_BREAKDOWN_SUB_I} />
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="check-status results" minHeight={68} />
 				</div>
 			</div>
@@ -195,8 +271,8 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 	if (totalCnt === 0) {
 		return (
 			<div className="card">
-				<CardHead title="Results by check status (30 days)" />
-				<div className="px-3 pb-3">
+				<CardHead title="Results by check status" sub={TIER_BREAKDOWN_SUB_I} />
+				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -216,7 +292,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 		[
 			"✓",
 			"text-ok",
-			"Self-reported pass",
+			"Pass",
 			formatIntI(passCnt),
 			passRatePct === null
 				? "nothing checked"
@@ -225,14 +301,14 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 		[
 			"✕",
 			"text-crit",
-			"Self-reported fail",
+			"Fail",
 			formatIntI(failCnt),
 			`${formatIntI(codeBasedTotal)} checked`,
 		],
 		[
 			"ℹ",
 			"text-info",
-			"Before auto-checking (old)",
+			"Legacy",
 			formatIntI(baselineCnt),
 			"",
 		],
@@ -241,16 +317,20 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 
 	return (
 		<div className="card">
-			<CardHead title="Results by check status (30 days)" />
-			<div className="grid grid-cols-4 gap-2 p-3">
+			<CardHead
+				title="Results by check status"
+				sub={TIER_BREAKDOWN_SUB_I}
+				info="Pass and Fail are each task's self-reported result, recorded since automatic checking began; the pass rate uses these two only. Legacy counts tasks recorded before automatic checking."
+			/>
+			<div className="grid grid-cols-4 gap-2 px-5 py-4">
 				{cards.map(([sym, tone, label, value, hint]) => (
 					<div
 						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
+						className="sub-card bg-elev p-2.5 min-w-0"
 					>
 						<div className="flex items-center gap-1.5 fs-meta font-mono">
 							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
+							<span className="text-dim">{label}</span>
 						</div>
 						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 							{value}
@@ -287,8 +367,8 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 	if (state.status === "loading" || !confidenceDist) {
 		return (
 			<div className="card">
-				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
-				<div className="p-3">
+				<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="suggestion confidence" minHeight={68} />
 				</div>
 			</div>
@@ -320,8 +400,8 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 	if (buckets.length === 0 || totalProposals === 0) {
 		return (
 			<div className="card">
-				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
-				<div className="px-3 pb-3">
+				<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
+				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -364,16 +444,16 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 
 	return (
 		<div className="card">
-			<CardHead title="Suggestion confidence (measured)" sub="30 days" />
-			<div className="grid grid-cols-1 gap-2 p-3">
+			<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
+			<div className="grid grid-cols-1 gap-2 px-5 py-4">
 				{cards.map(([sym, tone, label, value, hint, bar]) => (
 					<div
 						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
+						className="sub-card bg-elev p-2.5 min-w-0"
 					>
 						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
+							<span className="text-dim">{label}</span>
 						</div>
 						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 							{value}
@@ -404,7 +484,7 @@ function laneLabelI(promotionTier) {
 // confidence_avg NULL → "—" (formatRateI null-safe).
 function ConfidenceLaneTableI({ buckets }) {
 	return (
-		<div className="px-3 pb-3">
+		<div className="px-5 pb-4">
 			<table className="w-full fs-meta font-mono">
 				<thead>
 					<tr className="text-faint uppercase tracking-wider">
@@ -425,11 +505,10 @@ function ConfidenceLaneTableI({ buckets }) {
 								<td className="text-right py-1.5 text-dim">
 									{formatIntI(Number(b.proposal_count ?? 0))}
 								</td>
-								<td
-									className={`py-1.5 pr-1.5 ${badge.tone} flex items-center justify-end gap-1.5`}
-								>
+								<td className="py-1.5 pr-1.5 text-ink flex items-center justify-end gap-1.5">
 									<SymI
 										s={avg === null || avg === undefined ? "ℹ" : badge.symbol}
+										className={badge.tone}
 										size={11}
 									/>{" "}
 									{formatRateI(avg)}
@@ -443,27 +522,41 @@ function ConfidenceLaneTableI({ buckets }) {
 	);
 }
 
+// Add-only patches stacks with Results by check status beside Suggestion confidence → a short S slot keeps that pair level
+const PROSE_ONLY_ADD_CARD_SIZE_I = "S";
+
 // prose-only-add per-agent rolling count. 카드가 항상 존재해야 하는 이유: 0 건은
 // "추가만 하는 패치가 없었다"는 판독이고, 카드 부재는 "측정하지 않는다"이다 — 다른 뜻이다.
 function ProseOnlyAddCardI({ state, summary }) {
-	const { CardHead } = window.UI;
+	const { CardHead, CARD_SLOTS, getSlotRows } = window.UI;
+	const [isShowingAll, setShowingAll] = React.useState(false);
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !summary) return null;
-	const rows = Array.isArray(summary.agents) ? summary.agents : [];
+	// server orders by agent name → rank by count before the slot cut, so the collapsed rows are the top ones
+	const agents = (Array.isArray(summary.agents) ? [...summary.agents] : []).sort(
+		(a, b) =>
+			Number(b.count ?? 0) - Number(a.count ?? 0) ||
+			String(a.agent).localeCompare(String(b.agent)),
+	);
 	const total = Number(summary.total ?? 0);
+	// S slot → the stacked column stays bounded whatever the roster length
+	const { rows: slotRows, hiddenCount } = getSlotRows(agents, PROSE_ONLY_ADD_CARD_SIZE_I);
+	const rows = isShowingAll ? agents : slotRows;
 	return (
-		<div className="card">
+		<div className={`card card--${PROSE_ONLY_ADD_CARD_SIZE_I.toLowerCase()}`}>
 			<CardHead
-				title={`Add-only patches (${formatIntI(Number(summary.window_days ?? 0))} days)`}
+				title="Add-only patches"
+				sub={`${formatIntI(Number(summary.window_days ?? 0))} days`}
+				info={summary.truncation_caveat || null}
 			/>
 			{rows.length === 0 ? (
-				<div className="px-3 pb-3">
+				<div className="px-5 pb-4">
 					<div className="placeholder">
 						No add-only patches in this window
 					</div>
 				</div>
 			) : (
-				<div className="px-3 pb-3">
+				<div className="px-5 pb-4">
 					<table className="w-full fs-meta font-mono">
 						<thead>
 							<tr className="text-faint uppercase tracking-wider">
@@ -492,9 +585,13 @@ function ProseOnlyAddCardI({ state, summary }) {
 					</table>
 				</div>
 			)}
-			<div className="px-3 pb-3 card-sub fs-meta">
-				{summary.truncation_caveat}
-			</div>
+			{(hiddenCount > 0 || isShowingAll) && (
+				<div className="card-foot">
+					<button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={() => setShowingAll((v) => !v)}>
+						{isShowingAll ? `Show top ${CARD_SLOTS[PROSE_ONLY_ADD_CARD_SIZE_I].rowCount}` : `Show all ${agents.length}`}
+					</button>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -528,10 +625,10 @@ function StyleRefCardI({ state, styleRef }) {
 		return (
 			<div className="card">
 				<CardHead
-					title="Style-check rate (7 days)"
-					sub="Agents that checked existing files before coding"
+					title="Style-check rate"
+					sub="7 days · checked before coding"
 				/>
-				<div className="p-3">
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="style-check rates" minHeight={68} />
 				</div>
 			</div>
@@ -587,7 +684,7 @@ function StyleRefCardI({ state, styleRef }) {
 		[
 			gradeBadge.symbol,
 			gradeBadge.tone,
-			"Threshold met",
+			"Graduation gate",
 			gradeBadge.label,
 			gradeBadge.hint,
 			null,
@@ -613,18 +710,18 @@ function StyleRefCardI({ state, styleRef }) {
 	return (
 		<div className="card">
 			<CardHead
-				title="Style-check rate (7 days)"
-				sub="Agents that checked existing files before coding"
+				title="Style-check rate"
+				sub="7 days · checked before coding"
 			/>
-			<div className="grid grid-cols-3 gap-2 p-3">
+			<div className="grid grid-cols-3 gap-2 px-5 py-4">
 				{headlineCards.map(([sym, tone, label, value, hint, bar]) => (
 					<div
 						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
+						className="sub-card bg-elev p-2.5 min-w-0"
 					>
 						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
+							<span className="text-dim">{label}</span>
 						</div>
 						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 							{value}
@@ -653,7 +750,7 @@ function StyleRefCardI({ state, styleRef }) {
 			{hasData ? (
 				<StyleRefAgentTableI rows={agentRows} />
 			) : (
-				<div className="px-3 pb-3">
+				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -670,7 +767,7 @@ function StyleRefAgentTableI({ rows }) {
 	// per-agent rate 열은 없다 — 세 bucket 을 하나의 비율로 접으면 adjudicated 여부가 사라진다.
 	// 헤더는 dim text + uppercase tracking · 본문은 mono.
 	return (
-		<div className="px-3 pb-3">
+		<div className="px-5 pb-4">
 			<table className="w-full fs-meta font-mono">
 				<thead>
 					<tr className="text-faint uppercase tracking-wider">
@@ -699,10 +796,10 @@ function StyleRefAgentTableI({ rows }) {
 								<td className="text-right py-1.5 text-ink">
 									{formatRateI(r.emission_rate)}
 								</td>
-								<td className="text-right py-1.5 text-ok">
+								<td className="text-right py-1.5 text-ink">
 									{formatIntI(corroborated)} / {formatIntI(eligible)}
 								</td>
-								<td className="text-right py-1.5 text-warn">
+								<td className="text-right py-1.5 text-ink">
 									{formatIntI(uncorroborated)}
 								</td>
 								<td className="text-right py-1.5 pr-1.5 text-faint">
@@ -727,17 +824,18 @@ function StyleRefSplitI({
 	uncorroboratedRate,
 }) {
 	const cells = [
-		["Corroborated", corroborated, "text-ok"],
-		["Uncorroborated", uncorroborated, "text-warn"],
-		["Unverifiable", unverifiable, "text-faint"],
-		["Greenfield", greenfield, "text-info"],
+		["Corroborated", corroborated, "✓", "text-ok"],
+		["Uncorroborated", uncorroborated, "⚠", "text-warn"],
+		["Unverifiable", unverifiable, "○", "text-faint"],
+		["Greenfield", greenfield, "ℹ", "text-info"],
 	];
 	return (
-		<div className="px-3 pb-1">
+		<div className="px-5 pb-1">
 			<div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 fs-meta font-mono">
-				{cells.map(([label, count, tone]) => (
+				{cells.map(([label, count, symbol, tone]) => (
 					<span key={label} className="inline-flex items-baseline gap-1">
-						<span className={tone}>{label}</span>
+						<SymI s={symbol} className={tone} size={11} />
+						<span className="text-dim">{label}</span>
 						<span className="text-ink font-semibold">
 							{formatIntI(Number(count ?? 0))}
 						</span>
@@ -758,11 +856,11 @@ function StyleRefSplitI({
 	);
 }
 
-// v1.1 격상 게이트 dual-encoded badge — null-safe.
+// graduation-gate verdict, null-safe — symbol = the shared severity glyph of its tone
 // PASS: emission ≥ 0.50 AND uncorroborated < 0.10 → ✓ + text-ok
 // WARN: emission ≥ 0.50 AND uncorroborated ≥ 0.10 → ⚠ + text-warn
-// BLOCK: emission < 0.50 (데이터 부족 외)              → ⛔ + text-crit
-// PEND: 전체 NULL (데이터 부재)                          → ℹ + text-info
+// BLOCK: emission < 0.50                          → ✕ + text-crit
+// PEND: no reading                                → ℹ + text-info
 function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 	if (emissionRate === null && uncorroboratedRate === null) {
 		return {
@@ -782,7 +880,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 	}
 	if (emissionRate < 0.5) {
 		return {
-			symbol: "⛔",
+			symbol: "✕",
 			tone: "text-crit",
 			label: "block",
 			hint: `emission ${formatRateI(emissionRate)} < 50%`,
@@ -827,14 +925,14 @@ function formatRateI(rate) {
 // 가짜 0 금지. error(503/테이블 부재) → 뷰가 카드 대신 재시도 가능한 오류 배너를 렌더.
 function CorrectionSignalsCardI({ state }) {
 	const { CardHead, formatKstDate, LoadingPlaceholder } = window.UI;
-	const title = "Detection agreement (correction signals)";
+	const title = "Detection agreement";
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
 			<div className="card">
-				<CardHead title={title} />
-				<div className="p-3">
+				<CardHead title={title} sub="Correction signals" />
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="correction signals" minHeight={60} />
 				</div>
 			</div>
@@ -846,8 +944,8 @@ function CorrectionSignalsCardI({ state }) {
 	if (!d.total_signals) {
 		return (
 			<div className="card">
-				<CardHead title={title} />
-				<div className="px-3 pb-3">
+				<CardHead title={title} sub="Correction signals" />
+				<div className="px-5 pb-4">
 					<div className="placeholder">
 						No correction signals recorded yet — appears once a run logs a
 						stage1/stage2 detection.
@@ -869,7 +967,7 @@ function CorrectionSignalsCardI({ state }) {
 				title={title}
 				sub={`${formatIntI(total)} signals${latest ? ` · latest ${latest}` : ""}`}
 			/>
-			<div className="px-3 pb-3 space-y-2">
+			<div className="px-5 pb-4 space-y-2">
 				<div className="fs-body">
 					<span className="font-mono text-ink">{agreePct}%</span>{" "}
 					<span className="text-faint">stage1/stage2 agreement</span>
@@ -877,20 +975,24 @@ function CorrectionSignalsCardI({ state }) {
 				{/* 4-way disjoint 분해 — both / stage1-only / stage2-only / neither. */}
 				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
 					<span>
-						<span className="text-ok">both</span> {formatIntI(agr.both_matched)}
+						<SymI s="✓" className="text-ok" size={11} /> <span className="text-dim">both</span>{" "}
+						{formatIntI(agr.both_matched)}
 					</span>
 					<span>
-						<span className="text-warn">stage1 only</span>{" "}
+						<SymI s="⚠" className="text-warn" size={11} /> <span className="text-dim">stage1 only</span>{" "}
 						{formatIntI(agr.stage1_only)}
 					</span>
 					<span>
-						<span className="text-warn">stage2 only</span>{" "}
+						<SymI s="⚠" className="text-warn" size={11} /> <span className="text-dim">stage2 only</span>{" "}
 						{formatIntI(agr.stage2_only)}
 					</span>
 					<span>
 						<span className="text-faint">neither</span>{" "}
 						{formatIntI(agr.neither_matched)}
 					</span>
+				</div>
+				<div className="card-sub is-wrap fs-meta">
+					Agreement = both + neither (the two stages concur) ÷ all signals.
 				</div>
 				<div className="fs-meta font-mono text-faint">
 					revision delta Σ {formatIntI(d.revision_delta_sum)} · peak{" "}
@@ -905,14 +1007,14 @@ function CorrectionSignalsCardI({ state }) {
 // null 은 "판독 불가", 0 은 "측정된 0" 으로 서로 다른 판독 → null 을 0 으로 접지 않는다.
 function CorpusGrowthCardI({ state }) {
 	const { CardHead, Sparkline, LoadingPlaceholder } = window.UI;
-	const title = "Corpus growth (per-cycle audit)";
+	const title = "Corpus growth";
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
 			<div className="card">
-				<CardHead title={title} />
-				<div className="p-3">
+				<CardHead title={title} sub="Per-cycle audit" />
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="corpus audits" minHeight={60} />
 				</div>
 			</div>
@@ -924,8 +1026,8 @@ function CorpusGrowthCardI({ state }) {
 	if (!latest) {
 		return (
 			<div className="card" data-testid="corpus-growth-card">
-				<CardHead title={title} />
-				<div className="px-3 pb-3">
+				<CardHead title={title} sub="Per-cycle audit" />
+				<div className="px-5 pb-4">
 					<div className="placeholder">
 						No corpus readings yet — appears once a daemon cycle writes one.
 					</div>
@@ -938,7 +1040,7 @@ function CorpusGrowthCardI({ state }) {
 	const wordSeries = rows.map((r) => Number(r.word_count ?? 0)).reverse();
 	const delta = latest.trend_delta;
 	const hasDelta = typeof delta === "number";
-	// 색 단독 인코딩 금지 — ▲/▼/= 기호가 1차 신호, tone 은 보조.
+	// ▲/▼/= glyph carries the direction and the tone · the words stay dim
 	const deltaSymbol = !hasDelta ? "·" : delta > 0 ? "▲" : delta < 0 ? "▼" : "=";
 	const deltaTone =
 		!hasDelta || delta === 0
@@ -951,25 +1053,22 @@ function CorpusGrowthCardI({ state }) {
 		: "no baseline yet";
 	const compliance = formatRateI(latest.compliance_rate);
 	const override = formatRateI(latest.override_rate);
-	const alerts = [
-		latest.trend_alert ? "trend" : null,
-		latest.absolute_alert ? "absolute" : null,
-	].filter(Boolean);
+	const verdict = getCorpusGrowthVerdictI(latest);
 
 	return (
 		<div className="card" data-testid="corpus-growth-card">
 			<CardHead
 				title={title}
-				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} readings · latest ${latest.cycle_date}`}
+				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} audits · latest ${latest.cycle_date}`}
 			/>
-			<div className="px-3 pb-3 space-y-2">
+			<div className="px-5 pb-4 space-y-2">
 				<div className="flex items-center gap-3 flex-wrap">
 					<span className="fs-display font-mono text-ink">
 						{formatIntI(Number(latest.word_count ?? 0))}
 					</span>
 					<span className="fs-meta text-faint">words</span>
-					<span className={`fs-meta font-mono ${deltaTone}`}>
-						{deltaSymbol} {deltaLabel}
+					<span className="fs-meta font-mono text-dim">
+						<SymI s={deltaSymbol} className={deltaTone} /> {deltaLabel}
 					</span>
 					{/* 스파크는 텍스트 수치의 중복 표현 → 스크린리더에서 제외. */}
 					{wordSeries.length > 1 && (
@@ -989,18 +1088,20 @@ function CorpusGrowthCardI({ state }) {
 					<span>
 						threshold {formatIntI(Number(latest.seeded_threshold ?? 0))}
 					</span>
-					{alerts.length > 0 && (
-						<span className="text-warn">⚠ {alerts.join(" + ")} alert</span>
+					{verdict.tone === "text-warn" && (
+						<span className="text-dim">
+							<SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.label}
+						</span>
 					)}
 				</div>
 				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
 					<span>
 						gate{" "}
-						<span className="text-ok">
+						<span className="text-ink">
 							{formatIntI(Number(latest.gate_pass_count ?? 0))}
 						</span>{" "}
 						pass ·{" "}
-						<span className="text-warn">
+						<span className="text-ink">
 							{formatIntI(Number(latest.gate_trip_count ?? 0))}
 						</span>{" "}
 						trip / {formatIntI(Number(latest.gate_total_count ?? 0))}
@@ -1018,4 +1119,40 @@ function CorpusGrowthCardI({ state }) {
 	);
 }
 
+// Same shape as styleRefGradeBadgeI → the Operator view renders every gauge chip alike.
+function getCorpusGrowthVerdictI(latest) {
+	if (!latest) {
+		return {
+			symbol: "ℹ",
+			tone: "text-info",
+			label: "pending",
+			hint: "No corpus reading yet",
+		};
+	}
+	const hint = `threshold ${formatIntI(Number(latest.seeded_threshold ?? 0))} words`;
+	const alerts = [
+		latest.trend_alert ? "trend" : null,
+		latest.absolute_alert ? "absolute" : null,
+	].filter(Boolean);
+	if (alerts.length > 0) {
+		return {
+			symbol: "⚠",
+			tone: "text-warn",
+			label: `${alerts.join(" + ")} alert`,
+			hint,
+		};
+	}
+	return {
+		symbol: "✓",
+		tone: "text-ok",
+		label: "within threshold",
+		hint,
+	};
+}
+
 window.ImprovementInstrumentationView = ImprovementInstrumentationViewI;
+// Per-gauge verdicts, read by improvement.jsx at render time instead of copying the rules.
+window.ImprovementInstrumentationVerdicts = Object.freeze({
+	styleRefGradeBadgeI,
+	getCorpusGrowthVerdictI,
+});

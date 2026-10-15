@@ -5,7 +5,7 @@
 # DEFECT the guard closes: post-first-install ${GA_ROOT}/agents is the daemon-edited LIVE
 # surface (symlink farm), so a bundle-refresh install re-seeded base:=live. With base==local
 # every vendor-differing EDITABLE region resolves take-release, and live-only daemon lines
-# appear as vendor deletions — the shape that trimmed 83 lines from 11 agents on 2026-08-10.
+# appear as vendor deletions — the shape that silently trims live agent bodies.
 #
 # Contracts pinned:
 #   T1 first seed      — no existing entry → copied exactly as before (unchanged behavior).
@@ -28,6 +28,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 GA_CORE_SH="${GA}/lib/ga-core.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${GA_CORE_SH}" ]] || skip "ga-core.sh not found: ${GA_CORE_SH}"
@@ -56,9 +58,7 @@ DRV
 }
 
 teardown() {
-  if [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]]; then
-    rm -rf -- "${SANDBOX}"
-  fi
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 oc() { [[ "${2}" == *"${1}"* ]] || { printf 'assert-contains FAILED: [%s] absent from:\n%s\n' "${1}" "${2}" >&2; return 1; }; }

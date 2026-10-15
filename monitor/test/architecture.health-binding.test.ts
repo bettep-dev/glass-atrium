@@ -89,7 +89,7 @@ test("AC-B2-2c the live overlay carries the server table as part_bindings", asyn
 
 test("AC-B2-2d daemon parts carry the drawn projection of the daemon binding table", () => {
 	const daemonDefs = HealthModel.HEALTH_CARD_DEFS.filter((def) => def.kind === "daemon");
-	assert.equal(daemonDefs.length, 4, "the roster must still carry four daemon parts");
+	assert.ok(daemonDefs.length >= 1, "the roster must carry a daemon part — an empty loop measures nothing");
 
 	for (const def of daemonDefs) {
 		const daemonName = def.daemonName as string;
@@ -105,4 +105,22 @@ test("AC-B2-2d daemon parts carry the drawn projection of the daemon binding tab
 			`part '${def.id}' must carry the drawn projection of DAEMON_NODE_BINDINGS['${daemonName}']`,
 		);
 	}
+});
+
+test("the health roster carries one daemon card per daemon the live overlay reports, and no other", async () => {
+	const logger: OverlayLogger = { warn: () => {}, info: () => {} };
+	resetOverlayCache();
+	const overlay = await getLiveOverlay({} as unknown as PrismaClient, logger);
+	resetOverlayCache();
+
+	const reported = overlay.daemons.map((daemon) => daemon.daemon_name).sort();
+	const carded = HealthModel.HEALTH_CARD_DEFS.filter((def) => def.kind === "daemon")
+		.map((def) => def.daemonName)
+		.sort();
+	assert.ok(reported.length >= 1, "the overlay must report a daemon — an empty pair of sets is vacuous");
+	assert.deepStrictEqual(
+		carded,
+		reported,
+		"a card with no overlay row reads 'No data' forever; an overlay row with no card is never shown",
+	);
 });

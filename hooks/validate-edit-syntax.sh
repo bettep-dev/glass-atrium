@@ -84,7 +84,14 @@ command -v python3 >/dev/null 2>&1 || {
 # Sandbox for the reconstructed source + any py_compile bytecode artifact; trap-cleaned.
 # Cleanup preserves the pending exit status (no exit in the trap) so the block path's exit 2 survives.
 work_dir="$(mktemp -d 2>/dev/null)" || exit 0
-trap 'rm -rf -- "${work_dir}" 2>/dev/null || true' EXIT
+# shellcheck disable=SC2329  # invoked from the EXIT trap string
+delete_work_dir() {
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${work_dir}"; then
+    rm -rf -- "${work_dir:?}"
+  fi
+}
+trap 'delete_work_dir || true' EXIT
 # Preserve the real extension — node --check picks CJS vs ESM module mode by it, so an
 # extensionless temp file false-fails a valid .mjs / type:module import/export as CJS.
 src_file="${work_dir}/src.${ext}"
@@ -172,7 +179,7 @@ if [[ "${BLOCK_ARMED}" -eq 1 ]]; then
   esc_ext="$(_hook_json_escape "${ext}")"
   emit_error "SYNTAX-001" "block" \
     "Invalid ${ext} syntax blocked on write to ${basename_only}" \
-    "Fix the syntax error, or unset SYNTAX_GATE_BLOCK to downgrade to advisory-only" \
+    "Fix the syntax error and retry the write${first_err:+ (checker: ${first_err})}. SYNTAX_GATE_BLOCK in Claude Code's launch environment arms this block; only the user can change it" \
     "{\"file_path\":\"${esc_path}\",\"ext\":\"${esc_ext}\"}"
   exit 2
 fi

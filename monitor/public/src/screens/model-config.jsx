@@ -1,5 +1,5 @@
 // Screen 12 — Models & budgets (/api/model-config GET 단일 fetch + 명시 Save PUT).
-// Layout: header sync token → model domain ledger → per-call budget cap ledger.
+// Layout: header sync token → page verdict → model ledger | per-call budget cap ledger (side by side at xl).
 // DB(saved target) = UI SoT · actual = 소비 지점 실측 — 차이는 drift 배지로 공시 (spec doc 36166 D2).
 // 예산 = per-call HARD CAP (claude -p --max-budget-usd) — OAuth 구독이라 월 청구 상한이 아님 (단일 폭주 호출 차단).
 // Hooks MC-suffix aliased — window-scope 충돌 방지.
@@ -28,6 +28,11 @@ const BUDGET_MAX_USD_MC = 50.0;
 // _FALLBACK 과 동일 값). 필드를 한 번도 건드리지 않은 운영자가 실제로 돌리고 있는 값이라
 // 빈 입력의 placeholder 는 이 값을 광고해야 한다.
 const BUDGET_SEED_DEFAULT_MC = "10.00";
+// Tier-knob mirrors of the server SoT (model-config-consts EFFORT_LEVELS / OUTPUT_CAP_PATTERN) — keep in sync.
+const EFFORT_LEVELS_MC = ["low", "medium", "high", "xhigh", "max"];
+const OUTPUT_CAP_RE_MC = /^[1-9][0-9]{0,5}$/;
+// What an unset knob ('inherit' → key removed) runs at: no --effort flag / no output-cap env.
+const CLI_DEFAULT_LABEL_MC = "CLI default";
 
 const CUSTOM_OPTION_MC = "__custom__";
 
@@ -50,49 +55,53 @@ const DOMAIN_META_MC = {
 	"model.dev": {
 		label: "Dev agents",
 		hint: "Code implementation across the dev fleet",
-		desc: "All development agents (React, NestJS, Python, DB, shell, and the rest of the dev fleet) — code implementation; written into every dev agent file",
+		desc: "Every dev agent file — React, NestJS, Python, DB, shell and the rest of the fleet",
 		editable: true,
 		inherit: true,
 	},
 	"model.research": {
 		label: "Research agent",
 		hint: "Web and codebase research",
-		desc: "glass-atrium-intel-researcher — web and codebase research: source collection, verification, and synthesis",
+		desc: "Source collection, verification and synthesis",
+		source: "glass-atrium-intel-researcher",
 		editable: true,
 		inherit: true,
 	},
 	"model.meta": {
 		label: "Meta agent",
 		hint: "Rewrites agent instructions",
-		desc: "glass-atrium-meta-agent — the AutoAgent self-improvement loop's instruction rewriter: regenerates agent instruction files from outcome signals, so its model quality shapes how well every agent evolves",
+		desc: "The self-improvement loop's rewriter, so its model shapes how well every agent evolves",
+		source: "glass-atrium-meta-agent",
 		editable: true,
 		inherit: true,
 	},
 	"model.wiki": {
 		label: "Wiki curator",
 		hint: "Wiki compilation and index writes",
-		desc: "glass-atrium-wiki-curator — sole owner of wiki writes: incremental compilation, index and topic-map updates, health checks, and raw-ingestion validation",
+		desc: "The sole wiki writer, also running health checks and raw-ingestion validation",
+		source: "glass-atrium-wiki-curator",
 		editable: true,
 		inherit: true,
 	},
 	"model.review": {
 		label: "Review",
 		hint: "Code review and bug diagnosis",
-		desc: "glass-atrium-qa-code-reviewer and glass-atrium-qa-debugger — code review verdicts, plan direction review, and root-cause diagnosis; written into both agent files",
+		desc: "Also plan direction review — one save writes both agent files",
 		editable: true,
 		inherit: true,
 	},
 	"model.docs": {
 		label: "Documents",
 		hint: "Reports and plans",
-		desc: "glass-atrium-intel-reporter and glass-atrium-intel-planner — report and plan authoring; written into both agent files",
+		desc: "One save writes both agent files",
 		editable: true,
 		inherit: true,
 	},
 	"model.daemon_cycle_worker": {
 		label: "Daemon cycle helper",
 		hint: "Background daemon housekeeping steps",
-		desc: "Lightweight helper for daemon housekeeping cycle steps — drafts self-improve proposals, runs pre-verify, and summarizes wiki notes in the background cycles",
+		desc: "Drafts self-improve proposals, runs pre-verify and summarizes wiki notes",
+		source: "daemon-config.json",
 		editable: true,
 		inherit: false,
 	},
@@ -109,22 +118,22 @@ const DOMAIN_ORDER_MC = [
 	"model.daemon_cycle_worker",
 ];
 
-// Take-effect labels — GET apply_mode rendered, so every row answers when its edit applies.
+// Take-effect timing — GET apply_mode → "Applies <when>" header meta; desc = the caveat the drawer carries.
 const APPLY_MODE_META_MC = {
 	"next-spawn": {
-		label: "Next spawn",
+		when: "at next spawn",
 		desc: "Saved now — a running agent keeps its current model until it next spawns",
 	},
 	"next-cycle": {
-		label: "Next cycle",
+		when: "at next cycle",
 		desc: "Saved now — the daemon picks it up on its next cycle",
 	},
 	"tmux-restart": {
-		label: "After tmux restart",
+		when: "after tmux restart",
 		desc: "Saved now — the tmux session must restart before it is used",
 	},
 	immediate: {
-		label: "Immediately",
+		when: "immediately",
 		desc: "In force as soon as the save lands",
 	},
 };
@@ -157,6 +166,11 @@ const SYNC_META_MC = {
 		tone: "warn",
 		desc: "these values are being read from the pre-rename config rows — run `glass-atrium db-setup` to complete the rename",
 	},
+	"file-invalid": {
+		label: "Rejected value",
+		tone: "warn",
+		desc: "daemon-config.json holds a call-tier value the daemon rejects — every daemon cycle stops until Save rewrites it",
+	},
 };
 
 // 예산 도메인 표시 메타 — 라벨/평이 설명. key = GET budgets[].domain (BudgetDomainKey).
@@ -165,12 +179,51 @@ const BUDGET_META_MC = {
 	"budget.worker_max_usd": {
 		label: "Self-improve + wiki call cap",
 		hint: "Caps one self-improve generation or wiki compile call",
-		desc: "Aborts a single runaway model call in the self-improve generation step and the wiki compile step (both share this cap)",
+		desc: "Shared cap: generation + wiki compile",
+		source: "daemon-config.json",
 	},
 	"budget.pre_verify_max_usd": {
 		label: "Self-improve pre-verify call cap",
 		hint: "Caps one self-improve pre-verify call",
-		desc: "Aborts a single runaway model call in the self-improve pre-verify step",
+		desc: "Read by the pre-verify step only",
+		source: "daemon-config.json",
+	},
+};
+
+// Tier-knob display meta — key = GET tiers[].domain; kind picks the control and the client check.
+// Labels name the self-improve calls only: wiki compile reads neither knob.
+const TIER_META_MC = {
+	"tier.worker_effort": {
+		label: "Self-improve generation effort",
+		hint: "--effort on one self-improve generation call",
+		desc: "Default: no --effort flag",
+		note: "With no flag, the settings or model default governs the call",
+		kind: "effort",
+		source: "daemon-config.json",
+	},
+	"tier.pre_verify_effort": {
+		label: "Self-improve pre-verify effort",
+		hint: "--effort on one self-improve pre-verify call",
+		desc: "Default: no --effort flag",
+		note: "Keep pre-verify at or above the generation level",
+		kind: "effort",
+		source: "daemon-config.json",
+	},
+	"tier.worker_max_output_tokens": {
+		label: "Self-improve generation output cap",
+		hint: "Max output tokens for one generation call",
+		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+		note: "The CLI silently lowers a value above the model's own limit",
+		kind: "output-cap",
+		source: "daemon-config.json",
+	},
+	"tier.pre_verify_max_output_tokens": {
+		label: "Self-improve pre-verify output cap",
+		hint: "Max output tokens for one pre-verify call",
+		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS for pre-verify",
+		note: "Blank = the model default",
+		kind: "output-cap",
+		source: "daemon-config.json",
 	},
 };
 
@@ -181,6 +234,23 @@ const SAVE_ERROR_BODY_MAX_MC = 300;
 
 // 테이블 행 순서 — 미지의 도메인은 뒤에 그대로 덧붙임.
 const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
+
+// Verdict chips scroll to these ledger ids.
+const MODELS_SECTION_ID_MC = "mc-models";
+const BUDGETS_SECTION_ID_MC = "mc-budgets";
+
+const MODEL_FAMILY_RE_MC = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?$/;
+
+// What the "In effect" column reads back — the targets a saved value is written to.
+const IN_EFFECT_TITLE_MC = {
+	models: "Read back from the agent files and daemon-config.json",
+	budgets: "Read back from daemon-config.json",
+	tiers: "Read back from daemon-config.json",
+};
+
+// PUT group → the GET rows carrying its saved targets; one list drives every form helper.
+const FORM_GROUP_ROWS_MC = { models: "domains", budgets: "budgets", tiers: "tiers" };
+const FORM_GROUPS_MC = Object.keys(FORM_GROUP_ROWS_MC);
 
 function ScreenModelConfig() {
 	const {
@@ -193,10 +263,15 @@ function ScreenModelConfig() {
 		putRegionRequest,
 		putRegionData,
 		putRegionFailure,
+		PageVerdict,
+		SplitRow,
+		SplitColumn,
+		formatKstTime,
+		TONE_GLYPH,
 	} = window.UI;
 
 	const [configState, setConfigState] = useStateMC(INITIAL_REGION_STATE);
-	// form = 편집 버퍼 { models: {domain→value}, budgets: {budgetKey→value} } — GET 의 desired 미러.
+	// form = edit buffer { models, budgets, tiers }, each keyed by GET domain → mirrors GET desired.
 	const [form, setForm] = useStateMC(null);
 	const [saving, setSaving] = useStateMC(false);
 	const [saveError, setSaveError] = useStateMC(null);
@@ -297,6 +372,9 @@ function ScreenModelConfig() {
 	const setBudget = (key, value) => {
 		setForm((f) => (f ? { ...f, budgets: { ...f.budgets, [key]: value } } : f));
 	};
+	const setTier = (key, value) => {
+		setForm((f) => (f ? { ...f, tiers: { ...f.tiers, [key]: value } } : f));
+	};
 	// One transport for both Save controls — the sticky bar sends the edit diff, the drift banner
 	// sends the saved targets of the rows that drifted.
 	const submit = async (body) => {
@@ -329,7 +407,7 @@ function ScreenModelConfig() {
 		if (!isDirty || saving) return;
 		setForm(
 			baseline
-				? { models: { ...baseline.models }, budgets: { ...baseline.budgets } }
+				? Object.fromEntries(FORM_GROUPS_MC.map((group) => [group, { ...baseline[group] }]))
 				: form,
 		);
 		setSaveError(null);
@@ -356,6 +434,10 @@ function ScreenModelConfig() {
 		: configState.status === "loading"
 			? "loading"
 			: "unavailable";
+	const verdict = ready ? getPageVerdictMC(data) : null;
+	const freshness = getFreshnessInputMC(asOfAt, configState);
+	// a failed reload leaves held rows on screen → their match is as of the last good read, not now
+	const isStale = configState.error != null;
 
 	return (
 		<div className="flex flex-col min-w-0">
@@ -368,8 +450,9 @@ function ScreenModelConfig() {
 							<SyncTokenMC
 								state={configState.status}
 								sync={headerSyncMC(data)}
+								freshness={freshness}
 							/>
-							<FreshnessStamp {...getFreshnessInputMC(asOfAt, configState)} />
+							<FreshnessStamp {...freshness} />
 							<RefreshButton
 								isBusy={configState.busy}
 								hasRead={asOfAt !== null}
@@ -380,6 +463,20 @@ function ScreenModelConfig() {
 					}
 				/>
 			</div>
+
+			{/* mounted in every state → a screen reader hears the Refresh/Retry outcome when the text lands */}
+			<div className="sr-only" role="status" aria-live="polite">
+				{getReadAnnouncementMC(configState, asOfAt, refreshTick)}
+			</div>
+
+			{verdict && (
+				<PageVerdict
+					{...getVerdictFreshnessMC(verdict.tone, asOfAt, configState)}
+					chips={verdict.chips}
+					className="mb-4">
+					{verdict.text}
+				</PageVerdict>
+			)}
 
 			{hasAlarm && (
 				<div
@@ -392,7 +489,15 @@ function ScreenModelConfig() {
 								source="model config"
 								error={configState.error}
 								onRetry={triggerRefresh}
+								isBusy={configState.busy}
+								focusTargetId={MODELS_SECTION_ID_MC}
 							/>
+							{data != null && asOfAt !== null && (
+								<p className="fs-meta text-dim mt-1">
+									The figures below are the last good read, from{" "}
+									{formatKstTime(asOfAt)}.
+								</p>
+							)}
 						</div>
 					)}
 					{saveError && (
@@ -422,23 +527,40 @@ function ScreenModelConfig() {
 				</div>
 			)}
 
-			<DomainsSectionMC
-				state={sectionState}
-				domains={data?.domains}
-				knownModels={knownModels}
-				form={form}
-				baseline={baseline}
-				errors={errors}
-				onModelChange={setModel}
-			/>
-			<BudgetsSectionMC
-				state={sectionState}
-				budgets={data?.budgets}
-				form={form}
-				baseline={baseline}
-				errors={errors}
-				onBudgetChange={setBudget}
-			/>
+			{/* 1:1 over 2:1 — a third-width column overflows the cap and tier fields at 1280 */}
+			<SplitRow ratio="1:1" layout="equal">
+				<DomainsSectionMC
+					state={sectionState}
+					domains={data?.domains}
+					knownModels={knownModels}
+					form={form}
+					baseline={baseline}
+					errors={errors}
+					isStale={isStale}
+					onModelChange={setModel}
+				/>
+				<SplitColumn>
+					<BudgetsSectionMC
+						state={sectionState}
+						budgets={data?.budgets}
+						form={form}
+						baseline={baseline}
+						errors={errors}
+						isStale={isStale}
+						onBudgetChange={setBudget}
+					/>
+					<TiersSectionMC
+						state={sectionState}
+						tiers={data?.tiers}
+						isFileRead={data?.daemon_config_sync !== "file-missing"}
+						form={form}
+						baseline={baseline}
+						errors={errors}
+						isStale={isStale}
+						onTierChange={setTier}
+					/>
+				</SplitColumn>
+			</SplitRow>
 
 			{ready && isDirty && (
 				<div className="save-banner" role="region" aria-label="Unsaved changes">
@@ -493,6 +615,9 @@ function ScreenModelConfig() {
 					aria-live="polite"
 					style={{ top: 24, bottom: "auto" }}
 				>
+					<span className="doc-toast-glyph" aria-hidden="true">
+						{TONE_GLYPH[toast.tone]}
+					</span>
 					{toast.message}
 				</div>
 			)}
@@ -502,12 +627,11 @@ function ScreenModelConfig() {
 
 // Header sync token — answers "is what I saved what runs?" once per screen, never per row.
 // Tone rides the glyph, text stays plain.
-function SyncTokenMC({ state, sync }) {
-	const { Icon } = window.UI;
+function SyncTokenMC({ state, sync, freshness }) {
+	const { Icon, getFreshnessVerdict } = window.UI;
 
-	if (state === "loading") {
-		return <span className="fs-meta text-faint">Checking sync…</span>;
-	}
+	// the freshness stamp beside it already reads '… loading' → one ellipsis, not two
+	if (state === "loading") return null;
 	if (state !== "ready") {
 		return <span className="fs-meta text-faint">Sync state unavailable</span>;
 	}
@@ -518,6 +642,10 @@ function SyncTokenMC({ state, sync }) {
 		tone: "neutral",
 	};
 
+	// a read the stamp calls stale takes the shared 'Last known' wording, never a settled 'In sync'
+	const label = freshness
+		? getFreshnessVerdict({ ...freshness, tone: meta.tone, label: meta.label }).label
+		: meta.label;
 	// the freshness stamp owns the one tick → only a state needing action spends a glyph
 	const glyph = sync === "ok" || sync === "empty" ? null : "warn";
 
@@ -532,7 +660,7 @@ function SyncTokenMC({ state, sync }) {
 					className={glyph === "warn" ? "text-warn" : "text-dim"}
 				/>
 			)}
-			<span>{meta.label}</span>
+			<span>{label}</span>
 		</span>
 	);
 }
@@ -541,21 +669,39 @@ function getFreshnessInputMC(asOfAt, state) {
 	return { at: asOfAt, regions: [state] };
 }
 
-// 구획 헤더 — thin rule + h2 section label (카드 박스 아님). title 좌측 라벨 + 우측 슬롯.
-function SectionHeadMC({ label, sub, right }) {
-	const { SectionLabel } = window.UI;
+// A warm error's alert already dates the last good read → the verdict settles to 'Last known' without its own age note.
+function getVerdictFreshnessMC(tone, asOfAt, state) {
+	const freshness = getFreshnessInputMC(asOfAt, state);
+	if (state.error == null) return { tone, freshness };
 
+	const verdict = window.UI.getFreshnessVerdict({ ...freshness, tone });
+	return { tone: verdict.tone, label: verdict.label };
+}
+
+/**
+ * What the live region says once a Refresh or Retry settles — silent on the first load, while busy,
+ * and after a save (its toast speaks).
+ * A warm failure mounts the role=alert card, which owns that announcement; a cold Retry failure lands
+ * in an alert already mounted by the first failure, so only this region can say it.
+ */
+function getReadAnnouncementMC(state, asOfAt, refreshTick) {
+	if (refreshTick === 0 || state.busy) return "";
+
+	if (state.error != null) return state.data != null ? "" : "Couldn't read model config.";
+
+	const time = asOfAt !== null ? window.UI.formatKstTime(asOfAt) : null;
+	return state.key === "config" && time ? `Model config reloaded — as of ${time}.` : "";
+}
+
+const SETTINGS_INFO_LABEL_MC = "About settings";
+
+// About settings drawer — the card's timing caveat, an optional lead line, then its glossary.
+function SettingsInfoMC({ caveat, lead, title, rows }) {
 	return (
-		<div className="border-t border-line pt-4 mb-3">
-			<div className="flex items-center justify-between gap-2">
-				<SectionLabel>{label}</SectionLabel>
-				{right ?? null}
-			</div>
-			{sub && (
-				<div className="card-sub mt-1" title={window.UI.titleOf(sub)}>
-					{sub}
-				</div>
-			)}
+		<div className="flex flex-col gap-3 fs-body">
+			{caveat && <p>{caveat}</p>}
+			{lead && <p>{lead}</p>}
+			<TierNotesMC title={title} rows={rows} />
 		</div>
 	);
 }
@@ -588,69 +734,81 @@ function DomainsSectionMC({
 	form,
 	baseline,
 	errors,
+	isStale,
 	onModelChange,
 }) {
-	const { SkeletonRows, TableHead } = window.UI;
+	const { Card, SkeletonRows, TableHead } = window.UI;
 	const rows = sortDomainsMC(domains || []);
-	const sharedMode = getSharedApplyModeMC(rows);
+	const mix = form ? getModelMixMC(rows.map((d) => form.models[d.domain] || d.desired)) : "";
+	const timing = getApplyTimingMC(rows);
 
 	return (
-		<div className="mb-4">
-			<SectionHeadMC
-				label="Model assignment"
-				sub={getApplyModeSubMC(sharedMode)}
+		<div id={MODELS_SECTION_ID_MC}>
+			<Card
+				size="L"
+				title="Model assignment"
+				sub={timing.meta}
+				info={
+					<SettingsInfoMC
+						caveat={timing.caveat}
+						title="Who each tier covers"
+						rows={rows.map((d) => DOMAIN_META_MC[d.domain])}
+					/>
+				}
+				infoLabel={SETTINGS_INFO_LABEL_MC}
 				right={
 					<a href="#cost" className={`fs-meta ${LINK_CLASS_MC}`}>
 						Cost & usage
 					</a>
 				}
-			/>
-			<TierNotesMC
-				summary="What each tier runs"
-				rows={rows.map((d) => DOMAIN_META_MC[d.domain])}
-			/>
-			{state === "unavailable" ? (
-				<SectionUnavailableMC />
-			) : (
-				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
-					<caption className="sr-only">Model assignment per agent tier</caption>
-					<LedgerColsMC />
-					<thead>
-						<tr>
-							<TableHead>Agent tier</TableHead>
-							<TableHead>Model</TableHead>
-							<TableHead>Live</TableHead>
-						</tr>
-					</thead>
-					<tbody aria-busy={state === "loading" ? "true" : undefined}>
-						{state === "loading" ? (
-							<SkeletonRows
-								rows={DOMAIN_ORDER_MC.length}
-								columns={LEDGER_COL_COUNT_MC}
-								rowHeight={LEDGER_ROW_HEIGHT_MC}
-							/>
-						) : rows.length === 0 ? (
-							<EmptyRowMC
-								colSpan={LEDGER_COL_COUNT_MC}
-								message="No model domains reported."
-							/>
-						) : (
-							rows.map((d) => (
-								<DomainRowMC
-									key={d.domain}
-									domain={d}
-									knownModels={knownModels}
-									value={form.models[d.domain] ?? ""}
-									defaultValue={baseline?.models[d.domain] ?? ""}
-									error={errors[d.domain]}
-									sharedMode={sharedMode}
-									onChange={(v) => onModelChange(d.domain, v)}
+				foot={mix ? <span className="truncate min-w-0" title={mix}>{mix}</span> : null}
+				isFlush={state !== "unavailable"}>
+				{state === "unavailable" ? (
+					<SectionUnavailableMC />
+				) : (
+					<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+						<caption className="sr-only">Model assignment per agent tier</caption>
+						<LedgerColsMC />
+						<thead>
+							<tr>
+								<TableHead>Agent tier</TableHead>
+								<TableHead>Model</TableHead>
+								<TableHead>
+									<span title={IN_EFFECT_TITLE_MC.models}>In effect</span>
+								</TableHead>
+							</tr>
+						</thead>
+						<tbody aria-busy={state === "loading" ? "true" : undefined}>
+							{state === "loading" ? (
+								<SkeletonRows
+									rows={DOMAIN_ORDER_MC.length}
+									columns={LEDGER_COL_COUNT_MC}
+									rowHeight={LEDGER_ROW_HEIGHT_MC}
 								/>
-							))
-						)}
-					</tbody>
-				</table>
-			)}
+							) : rows.length === 0 ? (
+								<EmptyRowMC
+									colSpan={LEDGER_COL_COUNT_MC}
+									message="No model domains reported."
+								/>
+							) : (
+								rows.map((d) => (
+									<DomainRowMC
+										key={d.domain}
+										domain={d}
+										departure={timing.departures.get(d.domain)}
+										knownModels={knownModels}
+										value={form.models[d.domain] ?? ""}
+										defaultValue={baseline?.models[d.domain] ?? ""}
+										error={errors[d.domain]}
+										isStale={isStale}
+										onChange={(v) => onModelChange(d.domain, v)}
+									/>
+								))
+							)}
+						</tbody>
+					</table>
+				)}
+			</Card>
 		</div>
 	);
 }
@@ -672,23 +830,25 @@ function RowHintMC({ hint }) {
 	return <div className="fs-meta text-faint is-wrap">{hint}</div>;
 }
 
-// Full descriptions behind one section disclosure — a disclosure per row repeats one affordance N times.
-function TierNotesMC({ summary, rows }) {
+// Full descriptions in one labelled list per section — a note per row repeats one affordance N times.
+function TierNotesMC({ title, rows }) {
+	const { SectionLabel } = window.UI;
 	const notes = rows.filter((meta) => meta?.desc && meta.desc !== meta.hint);
 	if (notes.length === 0) return null;
 
 	return (
-		<details className="fs-meta text-dim mb-2">
-			<summary>{summary}</summary>
-			<dl className="mt-1 flex flex-col gap-1">
+		<section className="text-dim" aria-label={title}>
+			<SectionLabel level={3}>{title}</SectionLabel>
+			<dl className="mt-1 flex flex-col gap-2">
 				{notes.map((meta) => (
 					<div key={meta.label}>
 						<dt className="text-ink">{meta.label}</dt>
 						<dd className="is-wrap">{meta.desc}</dd>
+						{meta.note && <dd className="is-wrap">{meta.note}</dd>}
 					</div>
 				))}
 			</dl>
-		</details>
+		</section>
 	);
 }
 
@@ -712,22 +872,44 @@ function groupFilesByModelMC(fileRows) {
 	return [...groups];
 }
 
+// Files toggle at the control radius every other pill uses, not the 12px card fold.
+const FILES_PILL_STYLE_MC = { borderRadius: "var(--radius-control)" };
+
+// source = an agent name or a config file name — kept a flat string so the meta tables stay one level deep.
+function isConfigFileMC(source) {
+	return /\.json$/.test(source);
+}
+
+// Agent file ("agents/glass-atrium-dev-react.md") → its agent name, for the shared name atom.
+function getFileAgentNameMC(file) {
+	const base = String(file ?? "").split("/").pop();
+	return base.replace(/\.md$/, "");
+}
+
 /**
- * Live value = measured at the consumption point.
- * Matching the saved target → 'Matches saved' (tooltip 'Live value: …') · differing → the value + one warn badge · absent → nothing.
+ * In effect = measured at the consumption point.
+ * Matching the saved target → ✓ 'Matches saved' (tooltip 'In effect: …') · differing → the value + one warn badge · absent → nothing.
+ * A failed reload dates the match to the last good read · no file list → names the source, or that it yielded no value.
  */
-function LiveValueMC({ value, drift, files, driftTitle }) {
-	const { Badge } = window.UI;
+function LiveValueMC({ value, drift, files, source, isStale, driftTitle }) {
+	const { AgentName, Badge, Icon } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
 	const isSteady = !drift && value != null;
 	const label = liveLabelMC(value);
 	const fileGroups = groupFilesByModelMC(fileRows);
+	// files lagging the saved model or disagreeing among themselves → the fold opens itself
+	const isFoldAlerting = drift || fileGroups.length > 1;
 
 	return (
 		<div className="flex flex-col gap-1 min-w-0">
 			<div className="flex items-center gap-2 min-w-0">
-				{isSteady ? (
-					<span className="fs-meta text-faint" title={`Live value: ${label}`}>
+				{isSteady && isStale ? (
+					<span className="fs-meta text-faint" title={`At the last good read: ${label}`}>
+						Matched at last read
+					</span>
+				) : isSteady ? (
+					<span className="fs-meta text-faint flex items-center gap-1" title={`In effect: ${label}`}>
+						<Icon name="check" size={12} className="text-ok" />
 						Matches saved
 					</span>
 				) : (
@@ -746,28 +928,44 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 				)}
 			</div>
 			{fileRows.length > 0 && (
-				<details className="fs-meta text-faint">
-					<summary>{fileRows.length} files</summary>
-					<div className="mt-1 flex flex-col gap-1">
+				<details className="fs-meta" open={isFoldAlerting || undefined}>
+					<summary
+						className="inline-flex items-center gap-1 px-2 border border-line text-dim hover:text-ink cursor-pointer"
+						style={FILES_PILL_STYLE_MC}>
+						{isFoldAlerting && <Icon name="warn" size={12} className="text-warn" />}
+						{`${fileRows.length} ${fileRows.length === 1 ? "file" : "files"}`}
+						<Icon name="chevron-down" size={12} className="chevron" />
+					</summary>
+					<div
+						className="text-faint flex flex-col gap-1 mt-1"
+						role="region"
+						aria-label={`${fileRows.length} agent files`}>
 						{fileGroups.map(([model, files]) => (
 							<div key={model}>
 								<div className="font-mono text-dim is-wrap">{model}</div>
-								{files.map((file) => (
-									<div key={file} className="font-mono truncate pl-3" title={file}>
-										{file}
-									</div>
-								))}
+								<div className="font-mono flex flex-wrap gap-x-3 pl-3">
+									{files.map((file) => (
+										<AgentName key={file} name={getFileAgentNameMC(file)} />
+									))}
+								</div>
 							</div>
 						))}
 					</div>
 				</details>
+			)}
+			{fileRows.length === 0 && source && (
+				<div className="fs-meta text-faint">
+					{/* null live value = source unreadable or key missing → never claim a read */}
+					{value != null ? "Read from" : "No value read from"}{" "}
+					{isConfigFileMC(source) ? <span className="font-mono">{source}</span> : <AgentName name={source} />}
+				</div>
 			)}
 		</div>
 	);
 }
 
 function getApplyModeMetaMC(mode) {
-	return APPLY_MODE_META_MC[mode] || { label: mode, desc: "" };
+	return APPLY_MODE_META_MC[mode] || { when: mode, desc: "" };
 }
 
 // Most rows share one apply_mode → the section states it once; rows that differ name their own.
@@ -783,31 +981,33 @@ function getSharedApplyModeMC(rows) {
 	return shared;
 }
 
-function getApplyModeSubMC(mode) {
-	if (!mode) return null;
-	const meta = getApplyModeMetaMC(mode);
-	return meta.desc ? `Takes effect: ${meta.label} · ${meta.desc}` : `Takes effect: ${meta.label}`;
+/**
+ * A card's take-effect timing: the shared mode as header meta, its caveat for the drawer,
+ * and departures (domain → that row's own "Applies …" line, rendered in the row only).
+ */
+function getApplyTimingMC(rows) {
+	const mode = getSharedApplyModeMC(rows);
+	const departures = new Map();
+	if (!mode) return { meta: null, caveat: null, departures };
+
+	for (const r of rows) {
+		if (r.apply_mode && r.apply_mode !== mode) departures.set(r.domain, getApplyLineMC(r.apply_mode));
+	}
+	return { meta: getApplyLineMC(mode), caveat: getApplyModeMetaMC(mode).desc || null, departures };
 }
 
-// Row-level take-effect note — only where the row departs from the section's shared mode.
-function ApplyModeNoteMC({ mode, sharedMode }) {
-	if (!mode || mode === sharedMode) return null;
-	const meta = getApplyModeMetaMC(mode);
-
-	return (
-		<div className="fs-meta text-dim" title={meta.desc || undefined}>
-			Takes effect: {meta.label}
-		</div>
-	);
+function getApplyLineMC(mode) {
+	return `Applies ${getApplyModeMetaMC(mode).when}`;
 }
 
 function DomainRowMC({
 	domain: d,
+	departure,
 	knownModels,
 	value,
 	defaultValue,
 	error,
-	sharedMode,
+	isStale,
 	onChange,
 }) {
 	const { Badge } = window.UI;
@@ -828,6 +1028,7 @@ function DomainRowMC({
 			<td style={cellPad}>
 				<div className="fs-body font-medium text-ink">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
+				<RowHintMC hint={departure} />
 			</td>
 			<td style={cellPad}>
 				{editable ? (
@@ -854,9 +1055,10 @@ function DomainRowMC({
 					value={d.actual}
 					drift={d.drift}
 					files={d.files}
+					source={meta.source}
+					isStale={isStale}
 					driftTitle="Live value differs from the saved target — press Save again"
 				/>
-				<ApplyModeNoteMC mode={d.apply_mode} sharedMode={sharedMode} />
 			</td>
 		</tr>
 	);
@@ -919,6 +1121,7 @@ function ModelSelectMC({
 					aria-label={`${label} custom model id`}
 				/>
 			)}
+			<ModelFamilyTagMC model={value} />
 			{error && (
 				<div className="fs-meta text-crit mt-1" role="alert">
 					<span aria-hidden="true">✕ </span>
@@ -934,12 +1137,30 @@ function ModelSelectMC({
 	);
 }
 
+// Text tag, not colour alone — the family reads without parsing the id; inherit is already worded in the select.
+function ModelFamilyTagMC({ model }) {
+	if (model === "inherit") return null;
+
+	const family = getModelFamilyMC(model);
+	if (!family) return null;
+
+	return (
+		<div data-slot="family" className="fs-meta text-dim mt-1">
+			{family}
+		</div>
+	);
+}
+
 // Unpriced tier only — the section header carries the one Cost & usage link.
 function PricingNoteMC({ pricingKnown }) {
+	const { TONE_GLYPH } = window.UI;
 	if (pricingKnown !== false) return null;
 
 	return (
-		<div className="fs-meta mt-1 text-warn">
+		<div className="fs-meta mt-1 text-dim">
+			<span className="text-warn" aria-hidden="true">
+				{TONE_GLYPH.warn}
+			</span>{" "}
 			No price listed — billed at the conservative fallback rate
 		</div>
 	);
@@ -982,63 +1203,74 @@ function BudgetsSectionMC({
 	form,
 	baseline,
 	errors,
+	isStale,
 	onBudgetChange,
 }) {
-	const { SkeletonRows, TableHead } = window.UI;
+	const { Card, SkeletonRows, TableHead } = window.UI;
 	const rows = sortBudgetsMC(budgets || []);
-	const sharedMode = getSharedApplyModeMC(rows);
+	const timing = getApplyTimingMC(rows);
 
 	return (
-		<div className="mb-4">
-			<SectionHeadMC
-				label="Per-call budget caps"
-				sub={getApplyModeSubMC(sharedMode)}
-			/>
-			<TierNotesMC
-				summary="What each cap stops"
-				rows={rows.map((b) => BUDGET_META_MC[b.domain])}
-			/>
-			{state === "unavailable" ? (
-				<SectionUnavailableMC />
-			) : (
-				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
-					<caption className="sr-only">Per-call budget cap per background call</caption>
-					<LedgerColsMC />
-					<thead>
-						<tr>
-							<TableHead>Background call</TableHead>
-							<TableHead>Per-call cap</TableHead>
-							<TableHead>Live</TableHead>
-						</tr>
-					</thead>
-					<tbody aria-busy={state === "loading" ? "true" : undefined}>
-						{state === "loading" ? (
-							<SkeletonRows
-								rows={2}
-								columns={LEDGER_COL_COUNT_MC}
-								rowHeight={LEDGER_ROW_HEIGHT_MC}
-							/>
-						) : rows.length === 0 ? (
-							<EmptyRowMC
-								colSpan={LEDGER_COL_COUNT_MC}
-								message="No budget caps reported."
-							/>
-						) : (
-							rows.map((b) => (
-								<BudgetRowMC
-									key={b.domain}
-									budget={b}
-									value={form.budgets[b.domain] ?? ""}
-									defaultValue={baseline?.budgets[b.domain] ?? ""}
-									error={errors[b.domain]}
-									sharedMode={sharedMode}
-									onChange={(v) => onBudgetChange(b.domain, v)}
+		<div id={BUDGETS_SECTION_ID_MC}>
+			<Card
+				size="M"
+				title="Per-call budget caps"
+				sub={timing.meta}
+				info={
+					<SettingsInfoMC
+						caveat={timing.caveat}
+						lead="A cap that trips aborts the runaway call."
+						title="When a cap trips"
+						rows={rows.map((b) => BUDGET_META_MC[b.domain])}
+					/>
+				}
+				infoLabel={SETTINGS_INFO_LABEL_MC}
+				isFlush={state !== "unavailable"}>
+				{state === "unavailable" ? (
+					<SectionUnavailableMC />
+				) : (
+					<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+						<caption className="sr-only">Per-call budget cap per background call</caption>
+						<LedgerColsMC />
+						<thead>
+							<tr>
+								<TableHead>Background call</TableHead>
+								<TableHead>Per-call cap</TableHead>
+								<TableHead>
+									<span title={IN_EFFECT_TITLE_MC.budgets}>In effect</span>
+								</TableHead>
+							</tr>
+						</thead>
+						<tbody aria-busy={state === "loading" ? "true" : undefined}>
+							{state === "loading" ? (
+								<SkeletonRows
+									rows={2}
+									columns={LEDGER_COL_COUNT_MC}
+									rowHeight={LEDGER_ROW_HEIGHT_MC}
 								/>
-							))
-						)}
-					</tbody>
-				</table>
-			)}
+							) : rows.length === 0 ? (
+								<EmptyRowMC
+									colSpan={LEDGER_COL_COUNT_MC}
+									message="No budget caps reported."
+								/>
+							) : (
+								rows.map((b) => (
+									<BudgetRowMC
+										key={b.domain}
+										budget={b}
+										departure={timing.departures.get(b.domain)}
+										value={form.budgets[b.domain] ?? ""}
+										defaultValue={baseline?.budgets[b.domain] ?? ""}
+										error={errors[b.domain]}
+										isStale={isStale}
+										onChange={(v) => onBudgetChange(b.domain, v)}
+									/>
+								))
+							)}
+						</tbody>
+					</table>
+				)}
+			</Card>
 		</div>
 	);
 }
@@ -1050,11 +1282,14 @@ function budgetPlaceholderMC() {
 	return BUDGET_SEED_DEFAULT_MC;
 }
 
+// Mono digits → ch is one digit; 6ch holds the widest cap ("50.00") plus the caret, beside the affix padding.
+const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
+
 /**
  * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
- * + 실측 + 섹션 공통과 다른 행만 반영 시점 표시 + ghost default/reset (T-MDL-6).
+ * + 실측 + ghost default/reset (T-MDL-6).
  */
-function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChange }) {
+function BudgetRowMC({ budget: b, departure, value, defaultValue, error, isStale, onChange }) {
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
 	const showError = Boolean(error);
@@ -1065,18 +1300,17 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChan
 			<td>
 				<div className="fs-body">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
+				<RowHintMC hint={departure} />
 			</td>
 			<td>
-				<div className="flex items-center gap-2">
-					<span
-						className={`field-affix${showError ? " is-error" : ""}`}
-						style={{ width: "6rem" }}
-					>
+				<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+					<span className={`field-affix flex-shrink-0${showError ? " is-error" : ""}`}>
 						<span className="field-affix__sym">$</span>
 						<input
 							type="text"
 							inputMode="decimal"
 							className="field field--mono text-right"
+							style={BUDGET_FIELD_STYLE_MC}
 							value={value}
 							placeholder={budgetPlaceholderMC()}
 							onChange={(e) => onChange(e.target.value)}
@@ -1084,6 +1318,13 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChan
 							aria-invalid={showError ? "true" : undefined}
 						/>
 					</span>
+					{/* cost/outcome payload carries no per-call maximum → Cost & usage is the reference point */}
+					<a
+						href="#cost"
+						className={`fs-meta ${LINK_CLASS_MC}`}
+						aria-label={`Recent ${meta.label} costs on Cost & usage`}>
+						Recent costs
+					</a>
 				</div>
 				{showError && (
 					<div className="fs-meta text-crit mt-1" role="alert">
@@ -1101,9 +1342,173 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChan
 				<LiveValueMC
 					value={b.actual ? `$${b.actual}` : null}
 					drift={b.drift}
+					source={meta.source}
+					isStale={isStale}
 					driftTitle="daemon-config.json differs from the saved cap — press Save again"
 				/>
-				<ApplyModeNoteMC mode={b.apply_mode} sharedMode={sharedMode} />
+			</td>
+		</tr>
+	);
+}
+
+// Daemon call-tier section — the --effort level and output-token cap per self-improve call.
+function TiersSectionMC({
+	state,
+	tiers,
+	isFileRead,
+	form,
+	baseline,
+	errors,
+	isStale,
+	onTierChange,
+}) {
+	const { Card, SkeletonRows, TableHead } = window.UI;
+	// server order = TIER_DOMAINS order; an unknown knob renders with fallback meta (never dropped)
+	const rows = tiers || [];
+	const timing = getApplyTimingMC(rows);
+
+	// last card of the stretched caps column → takes the slack so the column ends with the model card
+	return (
+		<Card
+			size="M"
+			className="flex-auto"
+			title="Daemon call tiers"
+			sub={timing.meta}
+			info={
+				<SettingsInfoMC
+					caveat={timing.caveat}
+					title="What each setting does"
+					rows={rows.map((t) => TIER_META_MC[t.domain])}
+				/>
+			}
+			infoLabel={SETTINGS_INFO_LABEL_MC}
+			isFlush={state !== "unavailable"}>
+			{state === "unavailable" ? (
+				<SectionUnavailableMC />
+			) : (
+				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+					<caption className="sr-only">Effort level and output-token cap per background call</caption>
+					<LedgerColsMC />
+					<thead>
+						<tr>
+							<TableHead>Background call</TableHead>
+							<TableHead>Setting</TableHead>
+							<TableHead>
+								<span title={IN_EFFECT_TITLE_MC.tiers}>In effect</span>
+							</TableHead>
+						</tr>
+					</thead>
+					<tbody aria-busy={state === "loading" ? "true" : undefined}>
+						{state === "loading" ? (
+							<SkeletonRows
+								rows={Object.keys(TIER_META_MC).length}
+								columns={LEDGER_COL_COUNT_MC}
+								rowHeight={LEDGER_ROW_HEIGHT_MC}
+							/>
+						) : rows.length === 0 ? (
+							<EmptyRowMC
+								colSpan={LEDGER_COL_COUNT_MC}
+								message="No call tiers reported."
+							/>
+						) : (
+							rows.map((t) => (
+								<TierRowMC
+									key={t.domain}
+									tier={t}
+									departure={timing.departures.get(t.domain)}
+									value={form.tiers?.[t.domain] ?? "inherit"}
+									defaultValue={baseline?.tiers?.[t.domain] ?? "inherit"}
+									error={errors[t.domain]}
+									isFileRead={isFileRead}
+									isStale={isStale}
+									onChange={(v) => onTierChange(t.domain, v)}
+								/>
+							))
+						)}
+					</tbody>
+				</table>
+			)}
+		</Card>
+	);
+}
+
+// Mono digits → 11ch holds the "CLI default" placeholder and the widest cap (6 digits) plus the caret.
+const TIER_CAP_FIELD_STYLE_MC = { width: "calc(11ch + 4px + var(--ctl-pad-x))" };
+
+/**
+ * One knob row — an effort select (CLI default + the five levels) or a token-count field where
+ * blank = unset ('inherit'), plus In effect and the saved-value reset.
+ */
+function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead, isStale, onChange }) {
+	const meta = TIER_META_MC[t.domain] || { label: t.domain, hint: "", desc: "", kind: "", source: "daemon-config.json" };
+	const showError = Boolean(error);
+	const overridden = value !== defaultValue;
+	// absent key = the unset state, not an unread one — unless the file itself was not read
+	const live = t.actual ?? (isFileRead ? CLI_DEFAULT_LABEL_MC : null);
+	const labelOf = (v) => (v === "inherit" ? CLI_DEFAULT_LABEL_MC : v);
+
+	return (
+		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
+			<td>
+				<div className="fs-body">{meta.label}</div>
+				<RowHintMC hint={meta.hint} />
+				<RowHintMC hint={departure} />
+			</td>
+			<td>
+				{meta.kind === "effort" ? (
+					<select
+						className={`field field-select field--mono${showError ? " is-error" : ""}`}
+						value={value}
+						onChange={(e) => onChange(e.target.value)}
+						aria-label={`${meta.label} level`}
+						aria-invalid={showError ? "true" : undefined}>
+						{["inherit", ...EFFORT_LEVELS_MC].map((level) => (
+							<option key={level} value={level}>
+								{level === "inherit" ? `${CLI_DEFAULT_LABEL_MC} — no --effort` : level}
+							</option>
+						))}
+					</select>
+				) : (
+					<input
+						type="text"
+						inputMode="numeric"
+						className={`field field--mono text-right${showError ? " is-error" : ""}`}
+						style={TIER_CAP_FIELD_STYLE_MC}
+						value={value === "inherit" ? "" : value}
+						placeholder={CLI_DEFAULT_LABEL_MC}
+						onChange={(e) => onChange(e.target.value === "" ? "inherit" : e.target.value)}
+						aria-label={`${meta.label} in tokens`}
+						aria-invalid={showError ? "true" : undefined}
+					/>
+				)}
+				{showError && (
+					<div className="fs-meta text-crit mt-1" role="alert">
+						<span aria-hidden="true">✕ </span>
+						{error}
+					</div>
+				)}
+				<GhostResetMC
+					overridden={overridden}
+					defaultValue={labelOf(defaultValue)}
+					onReset={() => onChange(defaultValue)}
+				/>
+			</td>
+			<td>
+				{/* a rejected file value is in effect nowhere — the daemon refuses the whole cycle */}
+				{t.file_error ? (
+					<div className="fs-meta text-crit" role="alert">
+						<span aria-hidden="true">✕ </span>
+						{`The daemon rejects the file value: ${t.file_error}`}
+					</div>
+				) : (
+					<LiveValueMC
+						value={live}
+						drift={t.drift}
+						source={meta.source}
+						isStale={isStale}
+						driftTitle="daemon-config.json differs from the saved setting — press Save again"
+					/>
+				)}
 			</td>
 		</tr>
 	);
@@ -1180,48 +1585,45 @@ function SurfaceResultRowMC({ result: r }) {
 // Config drift banner — one remedy, carried here only: file mismatch or any drifted row raises it.
 // warn-tone: 구조 정합성 신호 (info-tone 은 architecture 화면 전용).
 function DriftBannerMC({ sync, onResync, saving }) {
-	const { Icon } = window.UI;
-	// Remedies differ — Save fixes drift/file-missing, db-setup fixes pending-migration.
+	const { AlertCard } = window.UI;
+	// Remedies differ — Save fixes drift/file-missing/file-invalid, db-setup fixes pending-migration.
 	const pendingMigration = sync === "pending-migration";
+	const { title, body } = getDriftCopyMC(sync);
+	const resync =
+		!pendingMigration && onResync ? (
+			<button className="btn primary sm" onClick={onResync} disabled={saving}>
+				Save again
+			</button>
+		) : null;
 
-	return (
-		<div
-			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: "rgb(var(--warn) / 0.08)",
-				borderColor: "rgb(var(--warn) / 0.4)",
-			}}>
-			<Icon name="git" size={16} className="text-warn mt-0.5" />
-			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">
-					{pendingMigration
-						? "Config rows still carry their pre-rename names"
-						: "Saved config not yet fully live"}
-				</div>
-				<div className="fs-meta text-dim mt-1">
-					{pendingMigration ? (
-						<>
-							Values below are read from the old rows. Run{" "}
-							<span className="font-mono">glass-atrium db-setup</span> to complete
-							the rename.
-						</>
-					) : (
-						"Save again to rewrite the surfaces that consume these values."
-					)}
-				</div>
-				{!pendingMigration && onResync && (
-					<button
-						className="btn primary sm mt-2"
-						onClick={onResync}
-						disabled={saving}
-					>
-						Save again
-					</button>
-				)}
-			</div>
-		</div>
-	);
+	return <AlertCard tone="warn" title={title} body={body} actions={resync} />;
+}
+
+function getDriftCopyMC(sync) {
+	if (sync === "pending-migration") return getMigrationCopyMC();
+	if (sync === "file-invalid") {
+		return {
+			title: "The daemon rejects a value in daemon-config.json",
+			body: "Every daemon cycle stops until it is rewritten. Save again writes the saved setting over it.",
+		};
+	}
+	return {
+		title: "Saved config not yet fully live",
+		body: "Save again to rewrite the surfaces that consume these values.",
+	};
+}
+
+function getMigrationCopyMC() {
+	return {
+		title: "Config rows still carry their pre-rename names",
+		body: (
+			<>
+				Values below are read from the old rows. Run{" "}
+				<span className="font-mono">glass-atrium db-setup</span> to complete the
+				rename.
+			</>
+		),
+	};
 }
 
 // Discard 확인 다이얼로그 (T-MDL-5) — DetailSurface confirm variant. consequence 문구 명시 +
@@ -1274,32 +1676,22 @@ function DiscardConfirmMC({ onConfirm, onCancel }) {
 
 // 공통 chrome
 function ErrorBannerMC({ title, detail, onRetry }) {
-	const { Icon, getErrorCopy } = window.UI;
+	const { AlertCard, getErrorCopy } = window.UI;
 	const copy = getErrorCopy(detail, "");
+	const retry = (
+		<button className="btn sm" onClick={onRetry} aria-label="Retry">
+			Retry
+		</button>
+	);
+
 	return (
-		<div
-			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: "rgb(var(--crit) / 0.08)",
-				borderColor: "rgb(var(--crit) / 0.4)",
-			}}
-		>
-			<Icon name="warn" size={16} className="text-crit mt-0.5" />
-			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">{title}</div>
-				<div className="fs-meta text-dim mt-1">{copy.next}</div>
-				{copy.detail && (
-					<details className="fs-meta text-faint mt-1">
-						<summary className="cursor-pointer">Details</summary>
-						<code className="block mt-1 font-mono break-all">{copy.detail}</code>
-					</details>
-				)}
-			</div>
-			<button className="btn sm" onClick={onRetry} aria-label="Retry">
-				Retry
-			</button>
-		</div>
+		<AlertCard
+			tone="crit"
+			title={title}
+			body={copy.next}
+			details={copy.detail}
+			actions={retry}
+		/>
 	);
 }
 
@@ -1314,31 +1706,27 @@ function SectionUnavailableMC() {
 
 // 순수 helper
 function buildFormMC(data) {
-	const models = {};
-	for (const d of data.domains || []) {
-		models[d.domain] = d.desired ?? "";
+	const form = {};
+	for (const [group, rowsKey] of Object.entries(FORM_GROUP_ROWS_MC)) {
+		form[group] = {};
+		for (const row of data[rowsKey] || []) {
+			// unset knob = the CLI default · unset model or cap = an empty field
+			form[group][row.domain] = row.desired ?? (group === "tiers" ? "inherit" : "");
+		}
 	}
-	const budgets = {};
-	for (const b of data.budgets || []) {
-		budgets[b.domain] = b.desired ?? "";
-	}
-	return { models, budgets };
+	return form;
 }
 
 // 변경분만 PUT (partial 계약) — 변경 없음 = null (Save 비활성 근거).
 function diffFormMC(baseline, form) {
-	const models = {};
-	for (const [domain, v] of Object.entries(form.models)) {
-		if (baseline.models[domain] !== v) models[domain] = v;
-	}
-	const budgets = {};
-	for (const [key, v] of Object.entries(form.budgets)) {
-		if (baseline.budgets[key] !== v) budgets[key] = v;
-	}
-
 	const payload = {};
-	if (Object.keys(models).length > 0) payload.models = models;
-	if (Object.keys(budgets).length > 0) payload.budgets = budgets;
+	for (const group of FORM_GROUPS_MC) {
+		const changed = {};
+		for (const [key, v] of Object.entries(form[group] || {})) {
+			if ((baseline[group] || {})[key] !== v) changed[key] = v;
+		}
+		if (Object.keys(changed).length > 0) payload[group] = changed;
+	}
 	return Object.keys(payload).length > 0 ? payload : null;
 }
 
@@ -1368,6 +1756,17 @@ function validateFormMC(form, knownModels) {
 		if (n < BUDGET_MIN_USD_MC || n > BUDGET_MAX_USD_MC) {
 			errors[key] =
 				`Must be between $${BUDGET_MIN_USD_MC.toFixed(2)} and $${BUDGET_MAX_USD_MC.toFixed(2)}`;
+		}
+	}
+
+	// 'inherit' = unset on every knob; a knob this screen has no meta for is left to the server.
+	for (const [key, v] of Object.entries(form.tiers || {})) {
+		if (v === "inherit") continue;
+		const kind = TIER_META_MC[key]?.kind;
+		if (kind === "effort" && !EFFORT_LEVELS_MC.includes(v)) {
+			errors[key] = `Pick ${CLI_DEFAULT_LABEL_MC} or one of: ${EFFORT_LEVELS_MC.join(", ")}`;
+		} else if (kind === "output-cap" && !OUTPUT_CAP_RE_MC.test(v)) {
+			errors[key] = "A whole number of tokens from 1 to 999999, no leading zero — or blank";
 		}
 	}
 
@@ -1405,7 +1804,7 @@ function getRefreshedFormMC(form, prevData, data) {
 	if (!form || !prevData) return next;
 
 	const saved = buildFormMC(prevData);
-	for (const group of ["models", "budgets"]) {
+	for (const group of FORM_GROUPS_MC) {
 		for (const key of Object.keys(next[group])) {
 			const edit = form[group][key];
 			if (edit !== undefined && edit !== saved[group][key]) next[group][key] = edit;
@@ -1419,23 +1818,89 @@ function getRefreshedFormMC(form, prevData, data) {
 // buffer, so a value left out here would be discarded.
 function resyncPayloadMC(data, edits) {
 	const fileDrift = (data.daemon_config_sync ?? "ok") !== "ok";
-	const models = {};
-	for (const d of data.domains || []) {
-		if (!(d.drift || fileDrift) || !d.desired) continue;
-		models[d.domain] = d.desired;
-	}
-	const budgets = {};
-	for (const b of data.budgets || []) {
-		if (!(b.drift || fileDrift) || !b.desired) continue;
-		budgets[b.domain] = b.desired;
-	}
-	Object.assign(models, edits?.models || {});
-	Object.assign(budgets, edits?.budgets || {});
-
 	const payload = {};
-	if (Object.keys(models).length > 0) payload.models = models;
-	if (Object.keys(budgets).length > 0) payload.budgets = budgets;
+	for (const [group, rowsKey] of Object.entries(FORM_GROUP_ROWS_MC)) {
+		const targets = {};
+		for (const row of data[rowsKey] || []) {
+			// a rejected knob with no saved row is rewritten to the CLI default its row shows
+			const target = row.desired ?? (row.file_error ? "inherit" : null);
+			if ((row.drift || fileDrift) && target) targets[row.domain] = target;
+		}
+		Object.assign(targets, edits?.[group] || {});
+		if (Object.keys(targets).length > 0) payload[group] = targets;
+	}
 	return Object.keys(payload).length > 0 ? payload : null;
+}
+
+// Page verdict — answers "does what I saved run?" once, before any row is read.
+function getPageVerdictMC(data) {
+	const domains = data?.domains || [];
+	const budgets = data?.budgets || [];
+	if (domains.length + budgets.length === 0) {
+		return { tone: "neutral", text: "No model tiers or budget caps were reported.", chips: [] };
+	}
+
+	const issues = getVerdictIssuesMC(domains, budgets, data.daemon_config_sync);
+	if (issues.length > 0) {
+		return {
+			tone: "warn",
+			text: issues.map((issue) => issue.text).join(" · "),
+			chips: issues.flatMap((issue) => (issue.chip ? [issue.chip] : [])),
+		};
+	}
+	return {
+		tone: "ok",
+		text: `${domains.length}/${domains.length} tiers and ${budgets.length}/${budgets.length} caps match saved · config file in sync`,
+		chips: [],
+	};
+}
+
+// Each drifted or unread ledger names its rows + jumps to its section; a file state other than in-sync is named last.
+function getVerdictIssuesMC(domains, budgets, sync) {
+	const tierLedger = { meta: DOMAIN_META_MC, noun: "tier", chip: { label: "Model assignment", targetId: MODELS_SECTION_ID_MC } };
+	const capLedger = { meta: BUDGET_META_MC, noun: "cap", chip: { label: "Budget caps", targetId: BUDGETS_SECTION_ID_MC } };
+	const issues = [...getLedgerIssuesMC(domains, tierLedger), ...getLedgerIssuesMC(budgets, capLedger)];
+
+	if (sync !== "ok") {
+		issues.push({ text: sync ? `config file: ${SYNC_META_MC[sync]?.label ?? sync}` : "config file state not reported" });
+	}
+	return issues;
+}
+
+// A null actual (unreadable file, missing key) carries drift=false server-side, so it is named apart, never counted as a match.
+function getLedgerIssuesMC(rows, ledger) {
+	const labelOf = (row) => ledger.meta[row.domain]?.label ?? row.domain;
+	const drifted = rows.filter((row) => row.drift).map(labelOf);
+	const unread = rows.filter((row) => !row.drift && row.actual == null).map(labelOf);
+	const texts = [];
+
+	if (drifted.length > 0) texts.push(`${countNounMC(drifted.length, ledger.noun)} drifting: ${drifted.join(", ")}`);
+	if (unread.length > 0) texts.push(`${countNounMC(unread.length, ledger.noun)} not read: ${unread.join(", ")}`);
+	return texts.length > 0 ? [{ text: texts.join(" · "), chip: ledger.chip }] : [];
+}
+
+function countNounMC(n, noun) {
+	return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
+// Family + version from the id ("claude-opus-5-5" → "Opus 5.5"); an id outside the pattern has none.
+function getModelFamilyMC(model) {
+	if (model === "inherit") return "Session model";
+	const match = MODEL_FAMILY_RE_MC.exec(model ?? "");
+	if (!match) return null;
+
+	const [, family, major, minor] = match;
+	return `${family[0].toUpperCase()}${family.slice(1)} ${minor ? `${major}.${minor}` : major}`;
+}
+
+// "Opus 5.5 ×3 · Sonnet 5 ×4" in first-seen order — the mix without counting selects by eye.
+function getModelMixMC(models) {
+	const counts = new Map();
+	for (const model of models) {
+		const family = getModelFamilyMC(model) ?? "Custom";
+		counts.set(family, (counts.get(family) ?? 0) + 1);
+	}
+	return [...counts].map(([family, n]) => `${family} ×${n}`).join(" · ");
 }
 
 // Header token = file sync ∪ any row drift — the same trigger as the banner, so the two never disagree.
@@ -1447,10 +1912,9 @@ function headerSyncMC(data) {
 	return sync === "ok" && hasRowDriftMC(data) ? "drift" : sync;
 }
 
-// Row drift present — banner trigger, true on one drifted model or budget row.
+// Row drift present — banner trigger, true on one drifted row of any form group.
 function hasRowDriftMC(data) {
-	const rows = [...(data?.domains || []), ...(data?.budgets || [])];
-	return rows.some((r) => r.drift);
+	return Object.values(FORM_GROUP_ROWS_MC).some((rowsKey) => (data?.[rowsKey] || []).some((r) => r.drift));
 }
 
 function extractSurfaceResultsMC(data) {
@@ -1463,10 +1927,7 @@ function extractSurfaceResultsMC(data) {
 // Unsaved count = fields in the partial PUT payload, so the wording matches what is sent.
 function countChangesMC(payload) {
 	if (!payload) return 0;
-	return (
-		Object.keys(payload.models || {}).length +
-		Object.keys(payload.budgets || {}).length
-	);
+	return FORM_GROUPS_MC.reduce((n, group) => n + Object.keys(payload[group] || {}).length, 0);
 }
 
 async function fetchJsonMC(url, signal) {

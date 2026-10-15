@@ -22,4 +22,4 @@ Binds the authoring of new classes, functions, modules and types, any refactor u
 
 ## On-demand detail
 
-`skills/glass-atrium-dev-patterns/SKILL.md` and its `references/` keep the lookup half: the 8-category member-ordering table with accessibility, guard-clause and async prose, discriminated-union and branded-type recipes, the LCOM4 method, the barrel decision table, and the rationalization, red-flag and verification lists. Whether a subagent can still invoke that skill once its frontmatter no longer lists it is an open question this file does not settle.
+`skills/glass-atrium-dev-patterns/SKILL.md` and its `references/` keep the lookup half: the 8-category member-ordering table with accessibility, guard-clause and async prose, discriminated-union and branded-type recipes, the LCOM4 method, the barrel decision table, and the rationalization, red-flag and verification lists. No agent frontmatter preloads that skill: when a topic above applies, open the file by path with Read.

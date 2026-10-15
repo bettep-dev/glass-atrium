@@ -15,6 +15,9 @@
 
 ABSORPTION="${BATS_TEST_DIRNAME}/../audit-absorption.sh"
 TEST_SMELLS="${BATS_TEST_DIRNAME}/../audit-test-smells.sh"
+INERT_ASSERT="${BATS_TEST_DIRNAME}/../audit-inert-assert.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 setup() {
   [[ -f "${ABSORPTION}" && -f "${TEST_SMELLS}" ]] || skip "auditor scripts not found"
@@ -22,7 +25,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${AC_TMP:-}" && -d "${AC_TMP}" ]] && rm -rf -- "${AC_TMP}" || true
+  if ga_guard_path "${AC_TMP:-}"; then rm -rf -- "${AC_TMP:?}"; fi
 }
 
 # Materializes a root that satisfies BOTH scope walks: an empty stand-in for every path
@@ -53,7 +56,7 @@ seed_dual_finding() {
   printf '@test "dirty" {\n  run foo\n}\n' >>"${root}/scripts/test/clean.bats"
 }
 
-@test "the shared exit contract answers identically for both auditors" {
+@test "the shared exit contract answers identically for every auditor" {
   printf '#!/usr/bin/env bash\n:\n' >"${AC_TMP}/ok.sh"
   local -a table=(
     "--advisory --strict|2"
@@ -65,7 +68,7 @@ seed_dual_finding() {
   local row flags want script failures=""
   for row in "${table[@]}"; do
     IFS='|' read -r flags want <<<"${row}"
-    for script in "${ABSORPTION}" "${TEST_SMELLS}"; do
+    for script in "${ABSORPTION}" "${TEST_SMELLS}" "${INERT_ASSERT}"; do
       # shellcheck disable=SC2086  # the table column is a flag list, split on purpose
       run bash "${script}" --quiet ${flags}
       [ "${status}" -eq "${want}" ] || failures+="${script##*/} [${flags}] want ${want} got ${status}"$'\n'

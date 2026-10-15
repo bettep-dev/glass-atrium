@@ -8,16 +8,16 @@ FRESH under a HOME sandbox (with no GA_DATA_ROOT) and asserts:
 
 (1) the default anchors on ``$HOME/.glass-atrium`` — NOT the legacy ``.claude``;
 (2) a preserved env override still derives off the seam-anchored default
-    (learning-aggregator's CLAUDE_LESSONS_STORE_FILE default path);
+    (daemon_config's DAEMON_CONFIG default path);
 (3) GA_DATA_ROOT redirects the root (env-override parity with the shell seam).
 
-Covered: the original set (project_key.py / _pg_push_autoagent_loop_events.py /
-learning-aggregator.py / autoagent-status-backfill.py) PLUS the seam-completion
+Covered: the original set (project_key.py / learning-aggregator.py /
+autoagent-status-backfill.py) PLUS the seam-completion
 consumers that previously still resolved the legacy ``.claude`` store:
 daemon_config.py (CONFIG_PATH + the DAEMON_CONFIG override), compliance_telemetry.py
 (WORKFLOW_GATE_LOG_FILE), autoagent/daemon_cycle.py
-(DEFAULT_OUTCOMES_DIR / DEFAULT_REPORTS_DIR / HAIKU_FAILURE_LOG_DIR /
-FEATURE_FLAGS_FILE), wiki_dedup.py (DEFAULT_VERIFIED_HASHES_PATH), and
+(DEFAULT_REPORTS_DIR / HAIKU_FAILURE_LOG_DIR),
+wiki_dedup.py (DEFAULT_VERIFIED_HASHES_PATH), and
 wiki_daemon_cycle.py (DEFAULT_REPORTS_DIR). DEFAULT_LEARNING_LOG stays legacy — not
 part of the Tier-A migration and the daemon neither reads nor writes it.
 
@@ -34,8 +34,10 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -48,9 +50,11 @@ _AUTOAGENT = _REPO_ROOT / "autoagent"
 
 # The consumer trees + the hooks dir that hosts ga_paths — the same inserts the
 # consumers do at runtime, so the fresh loads below resolve the seam.
-for _p in (_HOOKS, _LIB, _SCRIPTS, _AUTOAGENT):
+for _p in (_HOOKS, _LIB, _SCRIPTS, _AUTOAGENT, Path(__file__).resolve().parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
+
+from _pg_seal import seal_pg_reach, set_install_tree  # noqa: E402 — test dir anchored above
 
 # Fixed sandbox anchor (mirrors test_ga_paths.py) — no filesystem access happens at
 # consumer import, so a non-real HOME is safe and keeps the assertion deterministic.
@@ -99,35 +103,12 @@ class DefaultResolutionTest(unittest.TestCase):
             )
             self.assertNotIn(".claude", str(m._LEARNING_ROOT))
 
-    def test_loop_events_log_under_glass_atrium(self) -> None:
-        with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
-            os.environ.pop("GA_DATA_ROOT", None)
-            m = _load_fresh(
-                _SCRIPTS / "_pg_push_autoagent_loop_events.py", "loop_events_probe"
-            )
-            self.assertEqual(
-                m.LOOP_LOG,
-                str(
-                    Path(_SANDBOX_HOME)
-                    / ".glass-atrium"
-                    / "logs"
-                    / "autoagent-loop.jsonl"
-                ),
-            )
-            self.assertNotIn(".claude", m.LOOP_LOG)
-
     def test_learning_aggregator_data_dir_under_glass_atrium(self) -> None:
         with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
             os.environ.pop("GA_DATA_ROOT", None)
-            os.environ.pop("CLAUDE_LESSONS_STORE_FILE", None)
             m = _load_fresh(_HOOKS / "learning-aggregator.py", "learning_agg_probe")
             self.assertEqual(
                 m.DATA_DIR, str(Path(_SANDBOX_HOME) / ".glass-atrium" / "data")
-            )
-            # The preserved env override defaults off the seam-anchored data root.
-            self.assertEqual(
-                m.LESSON_STORE_FILE,
-                str(Path(_SANDBOX_HOME) / ".glass-atrium" / "data" / "lessons.json"),
             )
 
     def test_status_backfill_reports_under_glass_atrium(self) -> None:
@@ -176,19 +157,13 @@ class DefaultResolutionTest(unittest.TestCase):
             os.environ.pop("GA_DATA_ROOT", None)
             m = _load_daemon_cycle()
             ga = Path(_SANDBOX_HOME) / ".glass-atrium"
-            self.assertEqual(m.DEFAULT_OUTCOMES_DIR, ga / "data" / "outcomes")
             self.assertEqual(m.DEFAULT_REPORTS_DIR, ga / "data" / "daemon-reports")
             self.assertEqual(
                 m.HAIKU_FAILURE_LOG_DIR, ga / "logs" / "autoagent-haiku-failures"
             )
-            self.assertEqual(
-                m.FEATURE_FLAGS_FILE, ga / "data" / "learning" / "feature-flags.json"
-            )
             for _c in (
-                m.DEFAULT_OUTCOMES_DIR,
                 m.DEFAULT_REPORTS_DIR,
                 m.HAIKU_FAILURE_LOG_DIR,
-                m.FEATURE_FLAGS_FILE,
             ):
                 self.assertNotIn(".claude", str(_c))
 
@@ -241,19 +216,6 @@ class OverrideParityTest(unittest.TestCase):
                 m._LEARNING_ROOT, Path("/var/atrium-alt") / "data" / "learning"
             )
 
-    def test_ga_data_root_redirects_loop_events(self) -> None:
-        with mock.patch.dict(
-            "os.environ",
-            {"GA_DATA_ROOT": "/var/atrium-alt", "HOME": _SANDBOX_HOME},
-            clear=False,
-        ):
-            m = _load_fresh(
-                _SCRIPTS / "_pg_push_autoagent_loop_events.py", "loop_override_probe"
-            )
-            self.assertEqual(
-                m.LOOP_LOG, str(Path("/var/atrium-alt") / "logs" / "autoagent-loop.jsonl")
-            )
-
     def test_ga_data_root_redirects_daemon_config(self) -> None:
         with mock.patch.dict(
             "os.environ",
@@ -304,12 +266,157 @@ class OverrideParityTest(unittest.TestCase):
         ):
             m = _load_daemon_cycle()
             self.assertEqual(
-                m.DEFAULT_OUTCOMES_DIR, Path("/var/atrium-alt") / "data" / "outcomes"
+                m.DEFAULT_REPORTS_DIR, Path("/var/atrium-alt") / "data" / "daemon-reports"
             )
             self.assertEqual(
                 m.HAIKU_FAILURE_LOG_DIR,
                 Path("/var/atrium-alt") / "logs" / "autoagent-haiku-failures",
             )
+
+
+_FLAG_PROBE_AGENT = "flag-file-probe-agent"
+
+
+class FlagFileIgnoredByCycleTest(unittest.TestCase):
+    """With generation closed, a cycle on any data root calls no generator and applies nothing."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        env = mock.patch.dict(
+            "os.environ", {"GA_DATA_ROOT": str(self.root), "HOME": str(self.root)}
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        self.dc = _load_daemon_cycle()
+        modules = mock.patch.dict(sys.modules, {"daemon_cycle": self.dc})
+        modules.start()
+        self.addCleanup(modules.stop)
+        self.flags_file = self.root / "data" / "learning" / "feature-flags.json"
+        self.agents_dir = self.root / "agents"
+        self.agents_dir.mkdir()
+        (self.agents_dir / f"{_FLAG_PROBE_AGENT}.md").write_text(
+            "# probe agent\n", encoding="utf-8"
+        )
+        pattern = self.dc.Pattern(
+            date="2026-07-01",
+            label="probe pattern",
+            frequency="9",
+            agent=_FLAG_PROBE_AGENT,
+            status="identified",
+            tier="user-pending",
+            raw_line=f"pg:learning_log:1:probe pattern|{_FLAG_PROBE_AGENT}",
+            row_id=1,
+        )
+        for target, repl in (
+            ("read_user_pending_patterns", lambda *a, **k: [pattern]),
+            ("INTER_CALL_SPACING_SEC", 0.0),
+        ):
+            patcher = mock.patch.object(self.dc, target, repl)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.pg_reach = seal_pg_reach(self)
+        set_install_tree(self)
+        # Spies go on after the seal: each replaces one seam the seal already covers.
+        self.calls: list[str] = []
+        for name in (
+            "generate_consolidated_proposal",
+            "generate_patch_proposal",
+            "run_pre_verify",
+            "update_generation_closed_proposals",
+            "alert_post_apply_regression",
+        ):
+            patcher = mock.patch.object(self.dc, name, self._get_spy(name))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _get_spy(self, name: str):
+        def _spy(*_args: object, **_kwargs: object) -> int:
+            self.calls.append(name)
+            return 0
+
+        return _spy
+
+    def _run(self, *, skip_loop_emit: bool = True) -> object:
+        """One cycle over a stored user-pending pattern → the report; reach list stays empty."""
+        self.calls.clear()
+        self.stderr = io.StringIO()
+        with contextlib.redirect_stderr(self.stderr):
+            report = self.dc.run_cycle(
+                log_path=self.root / "learning-log.md",
+                agents_dir=self.agents_dir,
+                skip_haiku=False,
+                skip_pre_verify=False,
+                skip_loop_emit=skip_loop_emit,
+            )
+        self.assertEqual(self.pg_reach, [])
+        return report
+
+    def test_each_flag_file_content_gives_the_cycle_run_without_one(self) -> None:
+        report = self._run()
+        without_file = (report.patterns_processed, report.patches, list(self.calls))
+        self.flags_file.parent.mkdir(parents=True)
+        for name, content in (
+            ("flag true", '{"confidence_filter_enabled": true}'),
+            ("flag false", '{"confidence_filter_enabled": false}'),
+            ("flag unset", "{}"),
+            ("flag non-bool", '{"confidence_filter_enabled": "true"}'),
+            ("malformed json", "{"),
+        ):
+            with self.subTest(name):
+                self.flags_file.write_text(content, encoding="utf-8")
+                report = self._run()
+                self.assertEqual(
+                    (report.patterns_processed, report.patches, self.calls),
+                    without_file,
+                )
+
+    def test_closed_cycle_calls_no_generator_and_routes_no_candidate(self) -> None:
+        for skip_loop_emit in (True, False):
+            with self.subTest(skip_loop_emit=skip_loop_emit):
+                report = self._run(skip_loop_emit=skip_loop_emit)
+                self.assertEqual(report.patches, [])
+                self.assertNotIn("generate_consolidated_proposal", self.calls)
+                self.assertNotIn("generate_patch_proposal", self.calls)
+                self.assertNotIn("run_pre_verify", self.calls)
+
+    def test_closed_cycle_still_writes_a_report_naming_its_input(self) -> None:
+        out = self.root / "report.json"
+        self.dc.emit_report(self._run(), out)
+        self.assertEqual(
+            json.loads(out.read_text(encoding="utf-8"))["patterns_processed"], 1
+        )
+
+    def test_terminalization_runs_once_only_when_the_cycle_may_write(self) -> None:
+        for skip_loop_emit, expected in ((False, 1), (True, 0)):
+            with self.subTest(skip_loop_emit=skip_loop_emit):
+                self._run(skip_loop_emit=skip_loop_emit)
+                self.assertEqual(
+                    self.calls.count("update_generation_closed_proposals"), expected
+                )
+
+    def test_closed_cycle_still_runs_the_post_apply_regression_watch(self) -> None:
+        self._run(skip_loop_emit=False)
+        self.assertEqual(self.calls.count("alert_post_apply_regression"), 1)
+
+    def test_terminalization_fault_warns_and_the_cycle_continues(self) -> None:
+        # Psycopg importable but the server down → the helper raises at run time.
+        def _raise(*_args: object, **_kwargs: object) -> int:
+            self.calls.append("update_generation_closed_proposals")
+            raise RuntimeError("connection refused")
+
+        with mock.patch.object(self.dc, "update_generation_closed_proposals", _raise):
+            report = self._run(skip_loop_emit=False)
+        self.assertEqual(report.patterns_processed, 1, "report survives the fault")
+        self.assertIn(
+            "update_generation_closed_proposals raised", self.stderr.getvalue()
+        )
+        self.assertEqual(
+            self.calls.count("alert_post_apply_regression"),
+            1,
+            "post-loop steps still run",
+        )
 
 
 if __name__ == "__main__":

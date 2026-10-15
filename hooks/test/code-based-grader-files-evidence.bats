@@ -11,7 +11,7 @@
 #     files STRING with no stat, so a NON-EXISTENT test-shaped path promotes.
 #   * W2 — a path-shaped entry that does not resolve yields unverified and
 #     NEVER verified_fail (a legitimately deleted file is indistinguishable from
-#     fabrication at this tier; live data shows 0 verified_fail in 2081 rows).
+#     fabrication at this tier, so an unresolved path never yields verified_fail).
 #   * Step 1 — a glob metacharacter entry is non-gradeable → unverified; a
 #     leading ~ expands to $HOME before stat; a no-path-shaped field (observed
 #     live prose form) is indeterminate → unverified.
@@ -41,6 +41,8 @@
 bats_require_minimum_version 1.5.0
 
 REAL_LIB="${BATS_TEST_DIRNAME}/../lib/code-based-grader.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "code-based-grader.sh not found: ${REAL_LIB}"
@@ -53,14 +55,14 @@ setup() {
   # A path that is created then DELETED — resolution must fail.
   DELETED_TEST="${SANDBOX}/gone.test.ts"
   printf '%s\n' 'x' >"${DELETED_TEST}"
-  rm -f -- "${DELETED_TEST}"
+  if ga_guard_path "${DELETED_TEST}"; then rm -f -- "${DELETED_TEST:?}"; fi
   # A $HOME-relative existing test file for the ~-expansion positive case.
   HOME_TEST="${SANDBOX}/home.test.ts"
   printf '%s\n' 'it("y", () => {})' >"${HOME_TEST}"
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Drive code_based_grader_check in a fresh bash with the six caller-scope inputs
@@ -77,7 +79,7 @@ grade() {
     GR_FILES="${6:-}" \
     GR_HOME="${7:-}" \
     bash -c '
-      [[ -n "${GR_HOME}" ]] && export HOME="${GR_HOME}"
+      [[ -n "${GR_HOME}" ]] && export HOME="${GR_HOME}" GA_DATA_ROOT="${GR_HOME}/.glass-atrium"
       source "$1"
       TASK_TYPE="${GR_TASK_TYPE}"
       METRIC_PASS="${GR_METRIC_PASS}"
@@ -168,4 +170,20 @@ grade() {
   grade feature true "done" hook-input "some prose about the work" "${SANDBOX}/never-created.test.ts"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != "verified_fail" ]] || { echo "resolution/existence failure must never be verified_fail (W2)" >&2; return 1; }
+}
+
+# A setup skip leaves SANDBOX unset — a failing teardown would report the skip as not ok.
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local sandbox="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${sandbox}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
+    return 1
+  }
 }

@@ -21,6 +21,9 @@ REGISTERED="glass-atrium-dev-shell"
 TEAMMATE_REGISTERED="glass-atrium-qa-code-reviewer"
 EPHEMERAL="ashell-impl-opus-980cfc838657ba29"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -60,7 +63,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${ID_TMP:-}" && -d "${ID_TMP}" ]] && rm -rf -- "${ID_TMP}" || true
+  if ga_guard_path "${ID_TMP:-}"; then rm -rf -- "${ID_TMP:?}"; fi
 }
 
 # Subagent transcript carrying one tool_use (deliverable-producing) and a writer [COMPLETION].
@@ -113,7 +116,7 @@ write_sidecar() {
 # $1 = registry path override (defaults to the fixture registry).
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     CLAUDE_AGENT_REGISTRY_FILE="${1:-${REGISTRY}}" \
     CLAUDE_GATE_INFLIGHT="" \
@@ -159,7 +162,7 @@ spooled_field() {
 }
 
 @test "teammate task kind WITHOUT a registered-type key falls back to agentType" {
-  # 12 such sidecars exist in the live corpus — the task kind is not a hard gate.
+  # Such sidecars exist in practice — the task kind is not a hard gate.
   "${REAL_PY3}" - "${SIDECAR}" "${REGISTERED}" <<'PY'
 import json, sys
 with open(sys.argv[1], "w", encoding="utf-8") as f:

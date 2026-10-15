@@ -348,9 +348,9 @@ const CLASSIFICATION_ORACLE: Record<
     roles: { execution: 2, feedback: 2, gateway: 1 },
   },
   "v2-loops-autoagent": {
-    edges: { control_flow: 16, escalates_to: 2 },
-    nodes: { agent: 12, daemon: 3, gateway: 1, store: 1 },
-    roles: { execution: 4, orchestration: 1 },
+    edges: { control_flow: 11 },
+    nodes: { agent: 8, daemon: 1, gateway: 1, store: 1 },
+    roles: { execution: 4 },
   },
   "v2-team-orchestration": {
     edges: { control_flow: 20, data_flow: 1, escalates_to: 1, reads_from: 1 },

@@ -2,7 +2,7 @@
 // 카드 tone 과 KPI 버킷을 단일 출처에서 결정 → '정상 N/M' 분모 == 렌더 카드 수 불변식 보장 (F02).
 // window.UI 는 호출 시점 참조 — node 테스트는 import 전 window.UI 스텁 주입으로 로드.
 
-// 컴포넌트 카드 정의 — PG / browser / daemon×4 / hook. KPI 분모 = 이 목록 중 ready 카드 수.
+// 컴포넌트 카드 정의 — PG / browser / daemon×2 / hook. KPI 분모 = 이 목록 중 ready 카드 수.
 // 의도적으로 동결하지 않음 — 참조로 내보낸 이 배열을 픽스처가 splice 로 줄였다 복원해
 // '분모가 정의 목록을 따른다'를 붉게 만들 수 있어야 함 (T14 · architecture.live-badge 픽스처).
 const HEALTH_CARD_DEFS = [
@@ -10,8 +10,6 @@ const HEALTH_CARD_DEFS = [
   { id: 'browser',       name: 'Chromium Export', icon: 'download', kind: 'browser' },
   { id: 'daemon-cycle',  name: 'autoagent',       icon: 'spark',    kind: 'daemon', daemonName: 'autoagent' },
   { id: 'glass-atrium-wiki-curator',  name: 'glass-atrium-wiki-curator',    icon: 'brain',    kind: 'daemon', daemonName: 'wiki' },
-  { id: 'daily-restart-autoagent', name: 'daily-restart-autoagent', icon: 'refresh', kind: 'daemon', daemonName: 'daily-restart-autoagent' },
-  { id: 'daily-restart-wiki',      name: 'daily-restart-wiki',      icon: 'refresh', kind: 'daemon', daemonName: 'daily-restart-wiki' },
   { id: 'hook-chain',    name: 'Hook Chain',      icon: 'pulse',    kind: 'hook' },
 ];
 
@@ -128,7 +126,7 @@ function readReady(state, pick) {
   return state && state.status === 'ready' ? pick(state.data) : null;
 }
 
-// 데몬 다운 = effective_status ≠ ok. nav 배지는 fold.daemonsDown 을 읽는다 → 여기가 단일 출처.
+// Daemon down = effective_status ≠ ok → feeds only the footer ISSUES flag (app.jsx); the nav badge reads downNames.
 function countDaemonsDown(livePayload) {
   return (livePayload?.daemons || []).filter((d) => d.effective_status !== 'ok').length;
 }

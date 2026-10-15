@@ -18,6 +18,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_LIB="${GA}/hooks/hook-utils.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 # Field-kind fixture — one tool_input object exercising every str()/rstrip value edge in one probe.
 #   plain  = ordinary path · num = number · special = spaces + escaped quote + backslash + unicode
@@ -32,7 +34,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Run the probe and split its two NUL-terminated records into the STATE + VALUE globals. A trailing

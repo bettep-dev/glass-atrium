@@ -23,6 +23,10 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/wiki-daily-compile.sh"
 
+# The extracted shim needs ga_guard_path too — the real script gets it from libs above the window.
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "wiki-daily-compile.sh not found: ${REAL_SCRIPT}"
   WORK="$(mktemp -d -t wiki-srcraw-bats.XXXXXX)"
@@ -49,7 +53,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Write bytes verbatim (no trailing-newline coercion) so CRLF / lone-CR fixtures
@@ -181,6 +185,28 @@ collisions() { _collect_collision_source_urls "${RAW_DIR}"; }
   before_sum="$(_file_md5 "${NOTES_DIR}/note.md")"
   _inject_source_raw "${NOTES_DIR}/note.md" "the-raw.md" "http://u"
   [[ "$(_file_md5 "${NOTES_DIR}/note.md")" == "${before_sum}" ]]
+}
+
+@test "_inject_source_raw: a stamp whose rename fails leaves the note untouched and no temp behind" {
+  write_raw_bytes "${NOTES_DIR}/note.md" '---\ntitle: t\n---\nbody\n'
+  local before_sum
+  before_sum="$(_file_md5 "${NOTES_DIR}/note.md")"
+  mv() { return 1; }
+  run _inject_source_raw "${NOTES_DIR}/note.md" "the-raw.md" "http://u"
+  unset -f mv
+  [ "$(_file_md5 "${NOTES_DIR}/note.md")" = "${before_sum}" ]
+  run find "${NOTES_DIR}" -name 'note.md.inject.*'
+  [ -z "${output}" ]
+}
+
+@test "_inject_source_raw: a stamp whose rewrite fails leaves no temp behind" {
+  [ "$(id -u)" -ne 0 ] || skip "root bypasses the mode bits this row depends on"
+  write_raw_bytes "${NOTES_DIR}/note.md" '---\ntitle: t\n---\nbody\n'
+  chmod 000 "${NOTES_DIR}/note.md"
+  run _inject_source_raw "${NOTES_DIR}/note.md" "the-raw.md" "http://u"
+  chmod 600 "${NOTES_DIR}/note.md"
+  run find "${NOTES_DIR}" -name 'note.md.inject.*'
+  [ -z "${output}" ]
 }
 
 @test "_inject_source_raw: an already-present source_raw is NOT overwritten with a different value" {

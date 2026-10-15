@@ -28,24 +28,33 @@ from __future__ import annotations
 
 import contextlib
 import difflib
+import errno
+import fcntl
+import hashlib
 import io
 import json
+import math
 import os
 import random
 import re
 import signal
 import socket
+import stat
+import statistics
 import subprocess
 import sys
 import tempfile
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
+from enum import IntEnum
+from fractions import Fraction
 from itertools import groupby
 from pathlib import Path, PurePosixPath
-from typing import Literal, NamedTuple
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Literal, NamedTuple, Optional
 
 # -- Constants --------------------------------------------------------------
 
@@ -60,12 +69,12 @@ HOME = Path(os.environ.get("HOME", str(Path.home())))
 DEFAULT_LEARNING_LOG = HOME / ".claude" / "data" / "learning-log.md"
 # agents/ is the harness agent farm, not a migrated data store — stays legacy.
 DEFAULT_AGENTS_DIR = HOME / ".claude" / "agents"
-# DEFAULT_OUTCOMES_DIR / DEFAULT_REPORTS_DIR now derive from the ga_paths seam —
-# defined below, AFTER the hooks-dir sys.path insert that makes ga_paths importable.
+# DEFAULT_REPORTS_DIR derives from the ga_paths seam — defined below, AFTER the
+# hooks-dir sys.path insert that makes ga_paths importable.
 
 # PG read source — _pg_learning_dualwrite is the single helper SoT (same import
 # path + fallback policy as learning-aggregator.py). Missing psycopg →
-# HAS_PG_OUTCOME_READ=False → automatic file-system fallback for outcomes;
+# HAS_PG_OUTCOME_READ=False → outcome-signal reads return empty (cold start);
 # pattern intake has NO file fallback (PG is the intake SoT — a stale MD read
 # would regenerate proposals from fossil signals) → 0 patterns + loud WARN.
 _PG_HOOKS_DIR = HOME / ".claude" / "hooks"
@@ -81,23 +90,35 @@ for _hooks_dir in (_PG_HOOKS_DIR, _REPO_HOOKS_DIR):
         sys.path.insert(0, str(_hooks_dir))
 import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
 
-# Negative-signal SoT. UNGUARDED unlike the _pg_learning_dualwrite import below:
-# _outcome_signal is stdlib-only by contract (zero import statements), so it has no
-# psycopg SystemExit path and writes no stderr — the silent bare-CLI-import contract
-# holds without a try/except, and the predicate stays defined on the psycopg-absent path.
+# Pair-window and floor-verdict SoT. UNGUARDED unlike the _pg_learning_dualwrite import
+# below: _outcome_signal is stdlib-only by contract (no psycopg), so it has no SystemExit
+# path and writes no stderr — the silent bare-CLI-import contract holds without a
+# try/except, and its functions stay defined on the psycopg-absent path.
 from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop above
-    ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
-    is_negative_signal_outcome,
-    _is_synthesized_measurement_gap as _shared_is_synthesized_measurement_gap,
+    BASELINE,
+    DESIGN_EFFECT_ROW_KEYS,
+    METRIC_BUDGET_OVERAGE,
+    METRIC_EMIT_FAILURE,
+    METRIC_KEYS,
+    METRIC_NO_SUBAGENT_STOP,
+    VERDICT_PASS,
+    FloorResult,
+    PairWindows,
+    SpawnFacts,
+    WindowCount,
+    WindowStarts,
+    get_floor_verdict,
+    get_pair_windows,
+    get_tasks,
+    get_tool_budget,
+    is_metric_event,
+    is_pending,
+    is_task_overrun,
 )
 
 # Runtime data roots via the shared ga_paths seam (.glass-atrium default,
 # GA_DATA_ROOT-overridable) — the SAME store project_key.py / learning-aggregator.py
 # resolve after the .claude→.glass-atrium data migration.
-# data/outcomes/ holds only the legacy `.md` fallback path — new records sink to
-# core.outcomes. fetch_related_outcomes() does PG-first + file-fallback. Directory
-# kept for residual `.md` + revision_count lookup (track-outcome.sh).
-DEFAULT_OUTCOMES_DIR = ga_paths.get_data_root() / "outcomes"
 DEFAULT_REPORTS_DIR = ga_paths.get_data_root() / "daemon-reports"
 # Optional-dependency import degradation is CAPTURED here, NOT written to stderr
 # at import time: a bare CLI import of this module (autoagent/lib/sensitive_patterns.py
@@ -119,11 +140,17 @@ try:
             read_coverage_learning_patterns as _pg_read_coverage_patterns,
             reject_learning_pattern as _pg_reject_learning_pattern,
             discharge_learning_pattern as _pg_discharge_learning_pattern,
+            put_learning_pattern_status as _pg_put_learning_pattern_status,
             is_negative_signal_outcome as _pg_is_negative_signal_outcome,
+            read_pattern_floors as _pg_read_pattern_floors,
+            # the spawn read behind read_pattern_floors; the power check needs its rows
+            _read_spawn_facts as _pg_read_spawn_facts,
+            read_pattern_evidence as _pg_read_pattern_evidence,
             DischargeResult,
             DISCHARGE_APPLIED,
             DISCHARGE_NOT_MATCHED,
             DISCHARGE_FAILED,
+            TRANSITION_FAILED,
         )
     HAS_PG_OUTCOME_READ = True
     HAS_PG_PATTERN_READ = True
@@ -142,9 +169,13 @@ except Exception as _pg_import_exc:  # noqa: BLE001 — psycopg or helper itself
     DISCHARGE_APPLIED = "applied"
     DISCHARGE_NOT_MATCHED = "not_matched"
     DISCHARGE_FAILED = "failed"
+    TRANSITION_FAILED = "failed"
 
     def _pg_discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
         return DischargeResult(DISCHARGE_FAILED, None)
+
+if TYPE_CHECKING:
+    from _outcome_signal import PatternEvidence, TriggeringSpawn
 
 # PG outcome lookback window — PG is the single sink, so 90 days yields enough
 # history to sample 100+ rows per agent (cost: WHERE record_ts > now()-N index
@@ -186,8 +217,14 @@ try:
     with contextlib.redirect_stderr(io.StringIO()):
         from _pg_dual_write_daemon import (
             _connect as _pg_connect,
+            PROPOSAL_STATUS_SQL as _PG_PROPOSAL_STATUS_SQL,
             write_autoagent_loop_event as _pg_write_loop_event,
             write_autoagent_corpus_audit as _pg_write_corpus_audit,
+            get_proposal_status_label_state,
+            write_spawn_manifest_rows as _pg_write_spawn_manifest,
+            get_spawn_manifest_row_count as _pg_count_spawn_manifest,
+            TRIAL_LEDGER,
+            write_trial_ledger_row as _pg_write_trial_ledger_row,
         )
     HAS_PG_LOOP_WRITE = True
 except Exception as _pg_loop_import_exc:  # noqa: BLE001 — psycopg or helper itself
@@ -231,17 +268,19 @@ from daemon_config import (  # noqa: E402 — hooks dir prepended above (repo-re
     WORKER_MAX_BUDGET_USD,
     WORKER_MODEL,
     PRE_VERIFY_MAX_BUDGET_USD,
+    TIER_KNOBS,
+    KNOB_ERRORS,
+    CONFIG_PATH as DAEMON_CONFIG_PATH,
 )
 
 # Per-cycle agent cap sentinel — 0/negative/None → unlimited (ALL agents).
 # Positive int → ceiling. cost_guard is informational only (not a gate).
 UNLIMITED_AGENTS = 1_000_000
 
-# Outcome sampling cap — bounds LLM-context-sized samples only (the posterior's
-# recency sample + fetch_related_outcomes), NEVER evidence volume: the promotion
-# ladder's observation_count comes from _count_outcome_signals (uncapped
-# COUNT(*) over the same window), so this cap cannot starve the n>=10
-# candidate floor. The GENERATION path switched to prior-day-all.
+# Outcome sampling cap — bounds the posterior's recency sample only, NEVER
+# evidence volume: the promotion ladder's observation_count comes from
+# _count_outcome_signals (uncapped COUNT(*) over the same window), so this cap
+# cannot starve the n>=10 candidate floor.
 OUTCOME_SAMPLE_LIMIT = 5
 
 # Chronic Haiku-timeout back-off (generation side) -------------------------
@@ -255,7 +294,7 @@ OUTCOME_SAMPLE_LIMIT = 5
 # GENERATION-side chronic timeout had NO back-off at all. This threshold bounds
 # it: after N CONSECUTIVE Haiku-timeouts on the SAME target_file (counted from the
 # persisted core.autoagent_proposals rows), the generation path STOPS re-invoking
-# Haiku for that target and instead emits a loud, observable 'rejected' marker row
+# Haiku for that target and instead emits a loud, observable 'unadjudicated' marker row
 # (no Haiku spend, no `error` → no spurious 'partial'). A single non-timeout row
 # (e.g. an 'ok' generation) breaks the streak and re-arms the candidate, so a
 # transiently-flaky-but-occasionally-generatable target recovers on its own.
@@ -403,17 +442,12 @@ ALL_REJECT_ALERT_THRESHOLD = int(
 )
 # eval_result stamped on the alert loop event (grep-able, monitor-surfaced).
 ALL_REJECT_ALERT_EVAL_RESULT = "all-reject-alert"
+# eval_result stamped on the credential-outage loop event (grep-able).
+AUTH_OUTAGE_EVAL_RESULT = "auth-outage"
 
-# Post-apply regression watch (C1, DETECTION-ONLY) --------------------------
-#
-# Next-cycle step beside is_systemic_regression: per APPLIED proposal, the
-# target agent's post-apply soft-negative outcome rate is compared to the
-# pre-apply rate (both windows share the learning-signal exclusion scope of
-# the PG helper — attribution failures + poisoned_window excluded).
-# Degradation → ONE WARN loop event naming the proposal id + its agents-bak
-# before-image path. NO auto-revert / agent-file write / safety-queue insert —
-# a weeks-latency revert would clobber intervening user edits, and the safety
-# queue is reserved for irreversible external-effect triggers.
+# eval_result of the post-apply regression WARN loop event (alert_post_apply_regression)
+# DETECTION-ONLY, no auto-revert → a weeks-late revert clobbers intervening user edits
+# No safety-queue insert — that queue stays reserved for irreversible external effects
 POST_APPLY_REGRESSION_EVAL_RESULT = "post-apply-regression"
 
 # Days-since-last-applied corroborating crit (FIX #4) -----------------------
@@ -427,25 +461,40 @@ POST_APPLY_REGRESSION_EVAL_RESULT = "post-apply-regression"
 DAYS_SINCE_APPLIED_CRIT_THRESHOLD = int(
     os.environ.get("AUTOAGENT_DAYS_SINCE_APPLIED_THRESHOLD", "14") or "14"
 )
-# Named non-clean _main exit code for a systemic zero-output regression. The
-# launchd wrapper (daemon-cycle.sh) folds any non-zero rc into a DEGRADED run,
-# so this stops an unattended regression reporting clean exit 0.
-CYCLE_REGRESSION_EXIT_CODE = 6
-# Named non-clean _main exit code for a PG failure during the auth-mislabel
-# backfill (P2c). Loud-fail per shared-self-improve-hygiene: a backfill PG error
-# surfaces a distinct code (NOT silent absorption) so the operator/monitor can
-# tell a backfill DB fault apart from a generation regression.
-BACKFILL_PG_EXIT_CODE = 7
-# Parked-pattern guard mode failed (read, input or write) — stdout stays empty and the
-# apply path applies nothing that run.
-PARKED_GUARD_FAILURE_EXIT_CODE = 8
+
+
+class ExitCode(IntEnum):
+    """Named non-zero `_main` exit codes, one per loud-fail its caller tells apart."""
+
+    # systemic zero-output regression — the launchd wrapper never sees a clean 0
+    CYCLE_REGRESSION = 6
+    # PG fault in the auth-mislabel backfill — distinct from a generation regression
+    BACKFILL_PG = 7
+    # parked-pattern guard failed (read, input or write) — empty stdout, nothing applies
+    PARKED_GUARD_FAILURE = 8
+    # rejected daemon-config.json tier knob — the CLI would silently run its default
+    DAEMON_CONFIG_INVALID = 9
+    # unadjudicated backfill deferred: sandbox DB, unreadable ps listing, live cycle, label absent
+    BACKFILL_DEFERRED = 10
+    # unadjudicated backfill caller holds no .apply-lock in the mode's ancestor chain
+    BACKFILL_LOCK_NOT_HELD = 11
+    # credential outage (cost guard 'infra_fault') — wins over CYCLE_REGRESSION, its consequence
+    AUTH_OUTAGE = 12
+    # unadjudicated backfill committed but its completion record or marker removal failed
+    BACKFILL_RECORD_FAILED = 13
+    # --aa-start refused, nothing written — the stderr line names the AA.REFUSAL cause
+    AA_START_REFUSED = 14
+    # writing cycle refused before any stage — the code tree is not its install
+    CYCLE_INSTALL_REFUSED = 15
+
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
 #
-# Bounded inter-call sleep between per-agent Haiku calls in the run_cycle loop
-# so the cycle does not self-contend its shared OAuth/usage window. Applied only
-# after a real call (not skip_haiku / not back-off). Small enough never to
-# materially lengthen a healthy cycle; env-overridable / 0 disables.
+# Bounded inter-call sleep between per-agent Haiku calls in _run_generation_loop
+# (no call while IS_GENERATION_CLOSED) so the cycle does not self-contend its
+# shared OAuth/usage window. Applied only after a real call (not skip_haiku /
+# not back-off). Small enough never to materially lengthen a healthy cycle;
+# env-overridable / 0 disables.
 INTER_CALL_SPACING_SEC = float(
     os.environ.get("AUTOAGENT_INTER_CALL_SPACING_SEC", "2.0") or "2.0"
 )
@@ -459,10 +508,9 @@ INTER_CALL_SPACING_SEC = float(
 #      ("LearningStatus" has no 'snoozed' value; a re-arm must first clear or
 #      scope that reject evidence — a bare status reset re-derives the streak
 #      and re-parks in the same cycle, see REJECT_STREAK_REASON_TEMPLATE).
-#   2) staleness skip — the pattern's rate recomputed from a rolling LIVE
-#      outcomes window (poisoned_window rows excluded inside read_outcomes_since)
-#      no longer meets the aggregator's emit threshold → skip this cycle only
-#      (transient: the pattern re-arms by itself when the live rate returns).
+#   2) pair re-check — the keyed pattern's S2f pair (the aggregator's UTC-day
+#      detection + confirmation windows) no longer passes its floor → skip this
+#      cycle only (transient: the pattern re-arms by itself when its pair passes).
 # Default 3 mirrors TIMEOUT_BACKOFF_THRESHOLD; env-overridable.
 REJECT_STREAK_THRESHOLD = int(
     os.environ.get("AUTOAGENT_REJECT_STREAK_THRESHOLD", "3") or "3"
@@ -474,8 +522,8 @@ REJECT_STREAK_THRESHOLD = int(
 # a covering 'applied'/'approved' row — which a parked pattern can never produce,
 # because intake selects 'identified' only and a rejected row proposes nothing.
 # So the streak is frozen and a manual status reset re-derives it and re-parks in
-# the same cycle. The "re-arms by itself when the live rate returns" clause in the
-# block comment above belongs to gate (2) staleness skip, NOT to this gate.
+# the same cycle. The "re-arms by itself when its pair passes" clause in the
+# block comment above belongs to gate (2) pair re-check, NOT to this gate.
 REJECT_STREAK_REASON_TEMPLATE = (
     "reject-streak snooze: {n} consecutive rejected proposals (threshold {thr}) "
     "— NOT self re-arming: a status reset to 'identified' does not re-arm it — "
@@ -546,23 +594,10 @@ APPLY_CAP_REASON_TEMPLATE = (
     "run, overwriting its park time and reason. A real re-arm must first clear "
     "or scope that apply evidence; until then leave the status alone."
 )
-# Rolling live-rate window. 14d = 2× the 7-day promotion sustain window — long
-# enough to smooth weekday gaps, short enough that a stale failure burst decays.
-STALE_WINDOW_DAYS = int(os.environ.get("AUTOAGENT_STALE_WINDOW_DAYS", "14") or "14")
-# Live-rate floors MIRROR the learning-aggregator.py emit conditions (pattern 1:
-# negative-signal count >= 3 · pattern 5: total >= 3 AND negative/total >= 0.5).
-# The OR-term predicate itself is IMPORTED (is_negative_signal_outcome), so the
-# emit and the recompute cannot drift on signal definition; only these floors
-# can drift, and a LOOSER floor fails open (status-quo regeneration) while a
-# TIGHTER one suppresses live patterns — keep them <= the aggregator's
-# AUTO_FAILURE_THRESHOLD / RATE_MIN_SAMPLE / RATE_FAILURE_FLOOR.
-STALE_MIN_LIVE_TRIGGERS = 3
-STALE_MIN_SAMPLE = 3
-STALE_FAILURE_RATE_FLOOR = 0.5
 # Mirrors learning-aggregator.py _NUMERIC_RE (pattern-signature normalization).
 # The proposal-history match must strip the SAME volatile numerics the aggregator
 # strips when computing pattern_signature, or legacy numeric proposal labels
-# ("failure rate 62%") never match their stripped signature ("failure rate "). Keep in sync;
+# ("failure rate 47%") never match their stripped signature ("failure rate "). Keep in sync;
 # drift fails OPEN (missed match → no snooze).
 _PATTERN_NUMERIC_RE = re.compile(
     r"\d[\d.]*%?|\d{4}-\d{2}-\d{2}|avg [\d.]+|score \d+|\d+/\d+"
@@ -574,58 +609,25 @@ _PATTERN_NUMERIC_RE = re.compile(
 # learning-aggregator.py, which daemon_cycle.py does not import).
 PATTERN1_FAIL_LABEL_EN = "repeated failure by same agent"
 PATTERN1_FAIL_LABEL_KO = "동일 에이전트 반복 실패"
-# Label families the staleness recompute understands — current English emit +
-# the legacy Korean rows still live in core.learning_log. Unknown families are
-# never skipped (fail-open). Labels were deliberately kept verbatim through the
-# AP-3 multi-signal re-key (pattern_signature stability), so these prefixes
-# match both pre- and post-re-key rows.
+# Pattern-1 signature cores — current English emit + the legacy Korean rows still live
+# in core.learning_log. Labels were deliberately kept verbatim through the AP-3
+# multi-signal re-key (pattern_signature stability), so these prefixes match both
+# pre- and post-re-key rows.
 _FAIL_COUNT_LABEL_PREFIXES = (
     PATTERN1_FAIL_LABEL_EN,
     PATTERN1_FAIL_LABEL_KO,
 )
-_FAIL_RATE_LABEL_PREFIXES = (
-    "agent instruction-improvement candidate",
-    "에이전트 지침 개선 후보",
-)
-# Loop-event token for the staleness gate's REMAINING fail-open — a pattern whose
-# label family the live-rate recompute does not understand AND whose row WAS
-# re-observed inside the window, so neither branch can speak for it. Still KEPT
-# (fail-open stays the safe direction: never suppress a pattern on ignorance), but
-# no longer SILENT. Silence is what made the gap load-bearing: covering_apply_count
-# counts applied proposals and never a re-observation, so with the staleness gate
-# mute on a family it does not know, a persisted NON-firing pattern and a
-# persistently-firing one are indistinguishable to the repeat-apply cap.
-# Its own token rather than a fold into 'stale-pattern-skip' because the two
-# populations are OPPOSITE: that one was dropped, this one was kept.
-STALE_UNKNOWN_FAMILY_EVAL = "stale-gate-unknown-family"
-# Loop-event token for the family-INDEPENDENT re-observation snooze
-# (_reobservation_reason). Separate from 'stale-pattern-skip' for the same reason
-# the sibling gates keep distinct tokens: the eval_result distribution is the only
-# place an operator can tell WHICH gate suppressed a cycle's selection.
-STALE_UNOBSERVED_EVAL = "stale-unobserved-skip"
+# Loop-event token for the intake pair re-check's skip; the monitor's suppression board
+# buckets this literal (improvement.ts → SUPPRESSION_EVAL_RESULTS).
+PAIR_FAIL_EVAL = "stale-pattern-skip"
 
-# Intake exclusion set. These families report an OPERATIONAL COUNTER — turns spent
-# past a budget, outcomes recorded as negative — not an instruction defect, so no
-# sentence added to an agent body can decrement either. That is why the applied
-# patches never abated them and the repeat-apply cap (APPLY_CAP_THRESHOLD) fired
-# and parked the rows instead. Excluding at intake stops the regeneration at its
-# source; the counters keep recording, and abating them stays a human design
-# decision, NOT another patch.
-# Membership is equality against the STABLE pattern_signature core (never remapped
-# per G2), so the SOFT display remap cannot move a row in or out of the set.
-NON_PROMPTABLE_LABELS = frozenset(
-    {
-        # learning-aggregator.py BUDGET_OVERAGE_LABEL — copied verbatim rather than
-        # imported (daemon_cycle.py does not import the aggregator); keep in sync.
-        "budget-overage concentration",
-        PATTERN1_FAIL_LABEL_EN,
-        PATTERN1_FAIL_LABEL_KO,
-    }
-)
-# Reason literal carried by the intake skip row (stderr WARN + loop event).
-NON_PROMPTABLE_REASON = (
-    "non-promptable signal: an operational counter no agent-body sentence can "
-    "abate — skipped at intake; abatement needs a human design decision"
+# Intake eligibility is the primary metric key: a row without one is a discovery
+# row (a self-reported family) that no trial can measure, so intake skips it
+# loudly every cycle (stderr WARN + loop event) instead of generating from it.
+NO_METRIC_KEY_EVAL = "no-metric-key"
+NO_METRIC_KEY_REASON = (
+    "no metric key: a discovery row with no primary metric — skipped at intake; "
+    "only a keyed pattern is eligible"
 )
 
 # Pattern-1 DISPLAY label decouple (mirror of learning-aggregator.py P3a). The
@@ -645,7 +647,7 @@ NON_PROMPTABLE_REASON = (
 # re-reading live outcomes (that would be R3, rejected for window-SoT drift). The R2
 # trigger (persist a soft/hard marker keyed on the first genuine result=fail
 # pattern-1) is documented but NOT built — premature for a signal that has never
-# once fired (0 result=fail across 4160 outcomes).
+# once fired (no result=fail row among the recorded outcomes).
 PATTERN1_SOFT_LABEL_EN = "recurring negative-signal concentration"
 PATTERN1_SOFT_LABEL_KO = "반복적 부정 신호 집중"
 # Forward DISPLAY map (FAIL literal → SOFT literal): applied to the persisted
@@ -719,7 +721,7 @@ ApprovalTier = Literal["auto", "safety", ""]
 #   - .env: credential file (LLM02 Sensitive Information)
 #   - com.claude.*.plist / com.glass-atrium.*.plist: launchctl bootstrap
 #     surface (TCC / agent loop) — this project's live LaunchAgents are named
-#     com.glass-atrium.* (autoagent-daemon, monitor, daemon-daily-restart, ...)
+#     com.glass-atrium.* (monitor, autoagent-cycle, wiki-compile, ...)
 #
 # Consumer reach, which bounds what a row here can buy: both consumers pass an
 # agent BODY path — classify_safety_tier a target_file built as
@@ -952,10 +954,10 @@ TARGET_AGENT_EXCERPT_CHAR_CAP = 120_000
 # Bound on the diff handed to the verifier. NOT a content cap: past it the
 # excerpt is cut at a LINE boundary under an explicit marker (_diff_excerpt), so
 # the verifier is never asked to judge a fragment cut mid-word. Sized from the
-# measured incident — a 5331-char single-file EDITABLE-merge diff (one 1761-char
-# removed line, one 2034-char added line) overran the former 4000 bound and was
-# rejected on C3 as "truncated mid-sentence" — at roughly twice that, so a whole
-# hunk pair over an <= 8 KB agent body fits. A bound remains, unbounded excerpt
+# incident shape — a single-file EDITABLE-merge diff a little past the former 4000
+# bound, one removed and one added line each past ~1.5k chars, rejected on C3 as
+# "truncated mid-sentence" — at more than twice that, so a whole hunk pair over
+# an <= 8 KB agent body fits. A bound remains, unbounded excerpt
 # is forbidden (LLM10 unbounded consumption).
 DIFF_EXCERPT_CHAR_CAP = 12_000
 
@@ -1009,6 +1011,7 @@ _AGENT_SCOPE_MAP: dict[str, str] = {
     "glass-atrium-dev-animator": "scope-dev.md",
     "glass-atrium-dev-shell": "scope-dev.md",
     "glass-atrium-dev-swift": "scope-dev.md",
+    "glass-atrium-dev-aws": "scope-dev.md",
     # META scope
     "glass-atrium-meta-prompt-engineer": "scope-meta.md",
     "glass-atrium-meta-agent": "scope-meta.md",
@@ -1155,16 +1158,13 @@ TURN_BUDGET_NOT_APPLICABLE = (
 # LABEL leg. Membership is containment against the STABLE pattern_signature core,
 # never the free-text label tail: learning-aggregator.py emits
 # "size-est under-estimate concentration (avg overrun +N tool_uses)", so equality
-# (the NON_PROMPTABLE_LABELS shape) would miss every live row, and a display remap
-# or a multi-signal "(a / b)" join moves the core off position 0, so startswith
-# (the _FAIL_COUNT_LABEL_PREFIXES shape) would miss those. Copied verbatim from
+# would miss every live row, and a display remap or a multi-signal "(a / b)" join
+# moves the core off position 0, so startswith (the _FAIL_COUNT_LABEL_PREFIXES
+# shape) would miss those. Copied verbatim from
 # SIZE_EST_UNDER_LABEL there (daemon_cycle.py does not import the aggregator).
 #
-# BUDGET_OVERAGE_LABEL is deliberately NOT a member. It reports a different axis —
-# an operational counter — and it is already a NON_PROMPTABLE_LABELS member, i.e.
-# an exclusion set that drops the row BEFORE proposal generation; a row carrying
-# it therefore never reaches pre-verify at all, so naming it here could only
-# suppress the very patterns this source exists to serve.
+# BUDGET_OVERAGE_LABEL is deliberately NOT a member: it reports a different axis —
+# turns spent past a budget, not a size-est under-estimate.
 BUDGET_FAMILY_SIGNATURE_CORES = frozenset({"size-est under-estimate concentration"})
 
 # SITE leg. Basename-anchored like _SAFETY_SENSITIVE_PATH_PATTERNS, matched
@@ -1435,18 +1435,23 @@ try:
         POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS,
         POST_APPLY_REGRESSION_RATE_DELTA,
         beta_smoothed_rate,
-        compute_confidence_observed,
     )
-    from project_key import resolve_project_key  # noqa: E402
 
     HAS_CONFIDENCE_LIB = True
 except Exception as _conf_import_exc:  # noqa: BLE001 — lib missing → graceful skip
     HAS_CONFIDENCE_LIB = False
     sys.stderr.write(
-        f"[daemon-cycle] WARN: confidence/project_key lib import failed — "
-        f"promotion ladder disabled: "
+        f"[daemon-cycle] WARN: confidence lib import failed — "
+        f"post-apply regression alert disabled: "
         f"{type(_conf_import_exc).__name__}: {_conf_import_exc}\n"
     )
+
+# Captured, not written: check_pattern_power reports a missing module once per cycle.
+_TRIAL_DESIGN_IMPORT_EXC: Exception | None = None
+try:
+    import trial_design  # noqa: E402
+except Exception as _trial_design_import_exc:  # noqa: BLE001 — lib missing → unchecked, loudly
+    _TRIAL_DESIGN_IMPORT_EXC = _trial_design_import_exc
 
 # Cooperative update pause-flag honor (T10) — the python twin of
 # scripts/lib/update-pause-flag.sh. While a Glass Atrium update swaps files it
@@ -1465,12 +1470,6 @@ except Exception as _pause_import_exc:  # noqa: BLE001 — lib missing → grace
         f"disabled: {type(_pause_import_exc).__name__}: {_pause_import_exc}\n"
     )
 
-# Feature-flag file — confidence_filter_enabled toggle (3-state):
-#   true → active (posterior gate ON) · false → bypass (floorless, operator OFF)
-#   · missing/malformed/unset → floor (fail-CLOSED — every row floored to 'mention').
-FEATURE_FLAGS_FILE = ga_paths.get_data_root() / "learning" / "feature-flags.json"
-_CONFIDENCE_FLAG_KEY = "confidence_filter_enabled"
-
 # Promotion ladder thresholds. The n>=MIN_OBSERVATIONS candidate floor gates on
 # the TRUE qualifying-outcome count (_count_outcome_signals — uncapped COUNT(*)
 # over the lookback window), NOT on the capped posterior sample length: tying
@@ -1487,50 +1486,17 @@ PromotionTier = Literal[
     "mention", "candidate", "proposal", "instruction-edit", "skill-candidate"
 ]
 
-# Apply-eligible promotion tiers — the SINGLE SoT shared with the apply-side
-# allowlist (daemon-apply.sh extract_backlog_patches). A row whose promotion_tier
-# is NOT in this set (only 'mention', the floor rung) is PERMANENTLY excluded by
-# auto-apply. Generation MUST NOT emit such a row as approval_tier='auto' +
-# status='pending' — that produces the auto+pending+mention limbo that fossilizes
-# as a standing "New suggestions" pile (apply excludes it; auto-tier is not a
-# human-approval candidate either). is_apply_eligible_promotion_tier() lets
-# generation terminalize a floor row to 'rejected' instead, so GENERATION and
-# APPLY can never disagree on a single row's eligibility.
-#   NULL/None → legacy pre-feature rows (eligible) · "" → operator BYPASS,
-#   floorless (eligible) · the four above-floor tiers → eligible · "mention" →
-#   the ONLY excluded value (apply-side floor).
-APPLY_ELIGIBLE_PROMOTION_TIERS = frozenset(
-    {"", "candidate", "proposal", "instruction-edit", "skill-candidate"}
-)
-# Rationale persisted on a floor row terminalized at generation (vs. emitted as
-# auto-pending limbo). Distinct from a quality reject so the board reads true.
+# Rationale persisted on an auto candidate terminalized at generation (vs. emitted
+# as auto-pending limbo). Distinct from a quality reject so the board reads true.
 # Stable head of the confidence-floor reject reason. classify_failure_rationale
-# prefix-matches THIS literal to map a floor-terminalized 'rejected' row to a
+# prefix-matches THIS literal to map a floor-terminalized row to a
 # non-adjudication class (so consecutive_reject_count looks past it) — keep the
 # reason string below derived from this prefix so the two cannot drift.
 _BELOW_FLOOR_REJECT_PREFIX = "deferred: below confidence floor"
 _BELOW_FLOOR_REJECT_REASON = (
-    f"{_BELOW_FLOOR_REJECT_PREFIX} (promotion_tier='mention') — observed only, "
-    "auto-apply ineligible this cycle; resurfaces when the pattern clears the floor"
+    f"{_BELOW_FLOOR_REJECT_PREFIX} — auto-apply closed until live trials; "
+    "the promotion tier is a label only"
 )
-
-
-def is_apply_eligible_promotion_tier(promotion_tier: str | None) -> bool:
-    """Whether a promotion_tier passes the apply-side auto-apply allowlist.
-
-    Single SoT mirroring daemon-apply.sh extract_backlog_patches' positive
-    allowlist (NULL / '' / candidate / proposal / instruction-edit /
-    skill-candidate). Only 'mention' (the floor rung) is excluded.
-
-    Args:
-        promotion_tier: the row's promotion_tier (None = legacy/pre-feature row).
-
-    Returns:
-        True when auto-apply may act on the row; False only for 'mention'.
-    """
-    if promotion_tier is None:
-        return True
-    return promotion_tier in APPLY_ELIGIBLE_PROMOTION_TIERS
 
 
 # Apply-eligible haiku_status prefix — the SINGLE SoT for the haiku-skip gate the
@@ -1619,11 +1585,11 @@ def is_apply_eligible_patch_dict(patch: dict[str, object]) -> bool:
 
 @dataclass(frozen=True)
 class FloorTerminalization:
-    """Resolved status of an auto candidate against the apply-side floor.
+    """Resolved status of a candidate while auto-apply is closed.
 
-    `terminalized` is True only when an auto+pending candidate's promotion_tier
-    is apply-ineligible — in that case the other fields carry the rewritten
-    terminal-reject values; otherwise they echo the inputs unchanged.
+    `terminalized` is True only for an auto+pending candidate — in that case the
+    routing fields carry the rewritten terminal-reject values; otherwise they echo
+    the inputs unchanged. `promotion_tier` always echoes its input (a label).
     """
 
     classification: str
@@ -1631,6 +1597,7 @@ class FloorTerminalization:
     status_value: str
     rationale: str
     terminalized: bool
+    promotion_tier: str
 
 
 def resolve_floor_terminalization(
@@ -1640,128 +1607,48 @@ def resolve_floor_terminalization(
     promotion_tier: str,
     rationale: str,
 ) -> FloorTerminalization:
-    """Terminalize an apply-ineligible auto candidate at the generation source.
+    """Terminalize every auto candidate at the generation source.
 
-    Closes the auto+pending+mention limbo: an auto candidate whose promotion_tier
-    the apply gate permanently excludes ('mention') would otherwise sit pending
-    forever — auto-apply never acts on it AND auto-tier is not a safety-queue
-    candidate. GENERATION and APPLY must agree on ONE acceptance predicate
-    (is_apply_eligible_promotion_tier), so an ineligible auto row is rewritten to
-    a terminal reject here rather than emitted as auto-pending.
+    Auto-apply is closed until live trials, so an auto+pending candidate would sit
+    pending forever — auto-apply never acts on it AND auto-tier is not a
+    safety-queue candidate. It is rewritten to a terminal 'unadjudicated' row here
+    instead — a closed-apply hold is not a gate verdict, so it never takes
+    'rejected'.
 
-    Only the (approval_tier='auto', status='pending', ineligible-tier) shape is
-    rewritten. Safety tier (approval_tier='safety') and already-terminal rows
-    (rejected / snoozed) pass through unchanged — the human approval queue and the
-    existing reject/back-off paths are preserved.
+    The posterior's promotion tier is a label only: it never decides the verdict
+    and passes through unchanged. Only the (approval_tier='auto',
+    status='pending') shape is rewritten. Safety tier (approval_tier='safety') and
+    already-terminal rows (rejected / snoozed) pass through unchanged — the human
+    approval queue and the existing reject/back-off paths are preserved.
 
     Args:
         classification: JSON-side label ('body-auto' for an auto candidate).
         approval_tier: 'auto' / 'safety' / '' as resolved upstream.
         status_value: 'pending' / 'rejected' / 'snoozed' as resolved upstream.
-        promotion_tier: the resolved promotion tier ('mention' = floor rung).
+        promotion_tier: the candidate's promotion tier label (echoed unchanged).
         rationale: the candidate's current rationale.
 
     Returns:
         FloorTerminalization — rewritten reject values when terminalized, else the
         inputs echoed unchanged.
     """
-    should_terminalize = (
-        approval_tier == "auto"
-        and status_value == "pending"
-        and not is_apply_eligible_promotion_tier(promotion_tier)
-    )
-    if not should_terminalize:
+    if approval_tier != "auto" or status_value != "pending":
         return FloorTerminalization(
             classification=classification,
             approval_tier=approval_tier,
             status_value=status_value,
             rationale=rationale,
             terminalized=False,
+            promotion_tier=promotion_tier,
         )
     return FloorTerminalization(
         classification="reject",
         approval_tier="",
-        status_value="rejected",
+        status_value="unadjudicated",
         rationale=_BELOW_FLOOR_REJECT_REASON,
         terminalized=True,
+        promotion_tier=promotion_tier,
     )
-
-# Confidence-filter resolution — 3-state, fail-CLOSED on default/failure.
-#   active : explicit flag True  → run classify_promotion_tier (floor applies).
-#   bypass : explicit flag False → floorless (operator OFF — promotion_tier="",
-#            apply-side `IS DISTINCT FROM 'mention'` passes the row).
-#   floor  : lib-import failure OR flags.json absent / malformed / key-unset
-#            (default+failure states) → conservative floor: promotion_tier='mention'
-#            for every row, so the apply-side EXCLUDES them. Absent-config = safe.
-ConfidenceFilterState = Literal["active", "bypass", "floor"]
-
-
-def confidence_filter_state(flags_path: Path | None = None) -> ConfidenceFilterState:
-    """Resolve the confidence-filter 3-state from feature-flags.json (fail-CLOSED).
-
-    Three distinct states (default/failure are SAFE, not bypass):
-      - ``"active"`` : key explicitly ``True``  → posterior gate ON, floor applies.
-      - ``"bypass"`` : key explicitly ``False`` → operator OFF, floorless (preserved).
-      - ``"floor"``  : lib-import failure OR file absent / malformed / not-a-dict /
-        key-unset / non-bool value (all default+failure states) → conservative
-        floor (every row floored to 'mention' → apply-side auto-apply excludes them).
-
-    Only a literal JSON ``true`` activates and only a literal ``false`` bypasses;
-    every other shape collapses to ``"floor"`` (absent-config is the safe state).
-    Deterministic read-only — no side effects.
-
-    Args:
-        flags_path: feature-flags.json path (None → dynamic module-global
-            FEATURE_FLAGS_FILE lookup — avoids def-time binding for monkeypatch).
-
-    Returns:
-        ConfidenceFilterState — one of "active" / "bypass" / "floor".
-    """
-    if not HAS_CONFIDENCE_LIB:
-        # lib import failure = failure state → floor conservatively (fail-CLOSED).
-        return "floor"
-    # None → dynamic module-global lookup (honors test monkeypatch of FEATURE_FLAGS_FILE).
-    if flags_path is None:
-        flags_path = FEATURE_FLAGS_FILE
-    if not flags_path.exists():
-        # Absent config = default state → floor (the day-1 floorless gap).
-        return "floor"
-    try:
-        flags = json.loads(flags_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: feature-flags.json read failed — "
-            f"confidence filter FLOOR (fail-closed): {type(exc).__name__}: {exc}\n"
-        )
-        return "floor"
-    if not isinstance(flags, dict):
-        return "floor"
-    value = flags.get(_CONFIDENCE_FLAG_KEY)
-    if value is True:
-        return "active"
-    if value is False:
-        # Explicit operator OFF — legitimate bypass, floorless (NOT a default state).
-        return "bypass"
-    # Key unset / non-bool (e.g. "true", 1) = absent-config → floor (fail-CLOSED).
-    return "floor"
-
-
-def confidence_filter_enabled(flags_path: Path | None = None) -> bool:
-    """Whether the posterior gate runs ``classify_promotion_tier`` (active state).
-
-    Thin backward-compatible wrapper over :func:`confidence_filter_state` — True
-    only in the ``"active"`` state. ``"bypass"`` and ``"floor"`` both return False
-    (no classifier run), but they diverge in promotion_tier downstream: bypass→"",
-    floor→"mention". Use :func:`confidence_filter_state` when that distinction
-    matters; use this only for the boolean "should the classifier run?" question.
-
-    Args:
-        flags_path: feature-flags.json path (None → module-global lookup).
-
-    Returns:
-        bool — True only when the resolved state is ``"active"``.
-    """
-    return confidence_filter_state(flags_path) == "active"
 
 
 def _fetch_outcome_signals(
@@ -1773,8 +1660,7 @@ def _fetch_outcome_signals(
 
     Input for the confidence.py posterior — the writer self-report ``confidence``
     enum is deliberately excluded; only the PG row's revision_count / result /
-    evaluative_signal are used (read via the raw helper dict, not the lossy
-    Outcome dataclass which drops those fields).
+    evaluative_signal are used (read via the raw helper dict).
 
     - PG unavailable → empty list → cold-start posterior 0.5 (fails the 0.7 gate
       → stays at mention, safe).
@@ -1873,8 +1759,8 @@ def _first_observation_ts(agent: str) -> datetime | None:
     """Oldest qualifying core.outcomes record_ts for `agent` — the sustain signal.
 
     core.learning_log.discovered_date CANNOT answer this question, which is why
-    this read exists. That column is a LAST-observed date (its writers, in full,
-    are enumerated on _reobservation_reason), so reading it as first-observed
+    this read exists. That column is a LAST-observed date (every writer restamps
+    it on re-emit), so reading it as first-observed
     INVERTS the sustain gate: a pattern re-observed every cycle is restamped to
     today and never sustains, while one whose evidence stopped arriving sustains
     purely by ageing. The two gates now read two columns with one meaning each,
@@ -2013,176 +1899,14 @@ class Pattern:
     # key on id — renamed rows keep a legacy signature suffix (…|nodejs-dev with
     # agent='dev-node'), so a "label|agent" reconstruction silently misses them.
     row_id: int = 0
+    metric_key: str | None = None  # one of the helper's METRIC_KEYS; None = keyless row
+    last_transition_at: datetime | None = None  # latest lifecycle move; None = never moved
 
     @property
     def freq_int(self) -> int:
         """Best-effort numeric frequency for sorting (returns 0 on failure)."""
         match = re.search(r"\d+", self.frequency)
         return int(match.group(0)) if match else 0
-
-
-@dataclass(frozen=True)
-class Outcome:
-    """A single outcome record sampled from data/outcomes/."""
-
-    path: str
-    agent: str
-    task_type: str
-    result: str
-    confidence: str
-    metric_pass: str
-    summary: str  # truncated to 240 chars
-    lesson: str   # truncated to 240 chars
-    # Polarity signals — defaulted so every pre-existing Outcome(...) call site
-    # stays valid (frozen dataclass; defaults trail the required fields). Absent
-    # source value → NEUTRAL (0), never silently bucketed as success.
-    revision_count: int = 0       # >=2 marks a correction (core-learning-log.md)
-    evaluative_signal: int = 0    # -1/0/+1; -1 = user-corrected, preserve verbatim
-    # Write-time provenance — carved out of FAILURE polarity for the synthesized
-    # measurement gap (completion-synthesized done_with_concerns). Absent → "".
-    attribution_source: str = ""
-
-
-def _coerce_evaluative_signal(raw: object) -> int:
-    """Normalize an evaluative_signal source value to the -1/0/+1 ternary.
-
-    None / missing / unparseable / out-of-range → 0 (NEUTRAL). A missing signal
-    is NOT coerced into +1 — that would mis-bucket legacy records as success and
-    poison the optimizer (core-outcome-record.md: absent and 0 are both neutral
-    here, only -1 carries failure polarity).
-    """
-    if raw is None:
-        return 0
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return 0
-    return value if value in (-1, 0, 1) else 0
-
-
-def _coerce_revision_count(raw: object) -> int:
-    """Normalize a revision_count source value to a non-negative-safe int.
-
-    None / missing / unparseable → 0; a valid int is preserved as-is. Unifies the
-    PG-row and filesystem-frontmatter coercion idioms onto one sibling helper.
-    """
-    if raw is None:
-        return 0
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return 0
-
-
-# -- AD-10 Pareto variant retention (Solution History, GEPA precedent) -------
-
-# GEPA min-occurrence floor per (agent, task_type) cell — a cell with fewer
-# attempts than this carries insufficient evidence to retain any winner.
-SOLUTION_HISTORY_MIN_OCCURRENCE = 5
-
-
-@dataclass(frozen=True)
-class SolutionAttempt:
-    """One instruction-improvement attempt in Solution History.
-
-    OPRO 3-tuple (score / applied_date + the instruction cell) plus the
-    reflective mutation signal (lesson + directive_hint) that GEPA feeds into
-    the next optimization cycle. `score` is a 1-5 scalar; `applied_date` is an
-    ISO 'YYYY-MM-DD' string (lexical order == chronological).
-    """
-
-    agent: str
-    task_type: str
-    score: float
-    applied_date: str
-    lesson: str = ""
-    directive_hint: str = ""
-
-
-def _solution_dominates(a: SolutionAttempt, b: SolutionAttempt) -> bool:
-    """Pareto domination over (score, recency).
-
-    `a` dominates `b` iff `a` is >= on BOTH objectives (higher score, newer
-    date) AND strictly greater on at least one. Ties are non-dominating, so
-    equally-good variants are BOTH retained — the diversity AD-10 preserves.
-    """
-    at_least = a.score >= b.score and a.applied_date >= b.applied_date
-    strictly = a.score > b.score or a.applied_date > b.applied_date
-    return at_least and strictly
-
-
-def retain_pareto_winners(
-    attempts: list[SolutionAttempt],
-    *,
-    min_occurrence: int = SOLUTION_HISTORY_MIN_OCCURRENCE,
-) -> dict[tuple[str, str], list[SolutionAttempt]]:
-    """Retain the per-(agent, task_type) Pareto-nondominated winner set.
-
-    AD-10 (GEPA): Solution History keeps MULTIPLE winners per cell — the
-    non-dominated frontier over (score, recency) — NOT a single scalar-best, so a
-    newer-but-lower-score variant survives alongside an older-but-higher one and
-    their lesson+directive_hint diversity feeds the next reflective mutation. A
-    cell is retained ONLY when it has >= `min_occurrence` attempts (GEPA
-    min-occurrence floor); thinner cells are dropped.
-
-    Returns dict[(agent, task_type)] -> winners, each list sorted score-desc then
-    date-desc (deterministic).
-    """
-    if min_occurrence < 1:
-        raise ValueError(f"min_occurrence must be >= 1, got {min_occurrence}")
-
-    cells: dict[tuple[str, str], list[SolutionAttempt]] = defaultdict(list)
-    for attempt in attempts:
-        cells[(attempt.agent, attempt.task_type)].append(attempt)
-
-    winners: dict[tuple[str, str], list[SolutionAttempt]] = {}
-    for cell_key, cell_attempts in cells.items():
-        if len(cell_attempts) < min_occurrence:
-            continue  # GEPA min-occurrence: insufficient evidence → drop cell
-        frontier = [
-            attempt
-            for attempt in cell_attempts
-            if not any(
-                _solution_dominates(other, attempt)
-                for other in cell_attempts
-                if other is not attempt
-            )
-        ]
-        # Stable-chain sort: date-desc first, then score-desc (score primary).
-        frontier.sort(key=lambda a: a.applied_date, reverse=True)
-        frontier.sort(key=lambda a: a.score, reverse=True)
-        winners[cell_key] = frontier
-    return winners
-
-
-def solution_attempt_from_outcome(
-    outcome: Outcome,
-    applied_date: str,
-    *,
-    directive_hint: str = "",
-) -> SolutionAttempt:
-    """Bridge an Outcome record into a SolutionAttempt (score from polarity).
-
-    Score derivation mirrors the loop's existing polarity signals: a passing
-    metric is the base, a user correction (evaluative_signal == -1 or a
-    revision) pulls it down, explicit praise (+1) lifts it. directive_hint is
-    passed in because it is not carried on the Outcome dataclass.
-    """
-    metric_true = str(outcome.metric_pass).strip().lower() == "true"
-    base = 4.0 if metric_true else 2.0
-    if outcome.evaluative_signal == 1:
-        base += 1.0
-    elif outcome.evaluative_signal == -1 or outcome.revision_count >= 2:
-        base -= 1.0
-    score = max(1.0, min(5.0, base))
-    return SolutionAttempt(
-        agent=outcome.agent,
-        task_type=outcome.task_type,
-        score=score,
-        applied_date=applied_date,
-        lesson=outcome.lesson,
-        directive_hint=directive_hint,
-    )
 
 
 @dataclass(frozen=True)
@@ -2288,7 +2012,6 @@ class PatchResult:
     classification: Classification
     rationale: str
     proposed_diff: str
-    outcomes_sampled: int
     # 'ok' | 'skipped:<reason>' | 'error:<short>'; updater-origin rows add
     # 'verified:<gate>' for a gate that ran without a model call.
     haiku_status: str
@@ -2319,10 +2042,9 @@ class PatchResult:
     # when pre-verify did not run, "auto" when verified, "user" when not.
     approval_tier: str = ""
     status: str = ""
-    # Confidence-weighted promotion ladder — filled in run_cycle when
-    # confidence_filter_enabled; left at defaults otherwise (JSON + PG push stay
-    # backward-compatible).
-    #   confidence_observed: Beta-Binomial posterior mean; None when the flag is off.
+    # Confidence-weighted promotion ladder — run_cycle sets only promotion_tier
+    # (the 'mention' floor); the other two stay at their defaults.
+    #   confidence_observed: Beta-Binomial posterior mean.
     #   project_key: resolve_project_key().key (12 hex) for project isolation.
     #   promotion_tier: mention/candidate/proposal/instruction-edit/skill-candidate.
     confidence_observed: float | None = None
@@ -2347,6 +2069,10 @@ class PatchResult:
     failure_raw_head: str = ""
     # Mirror of the proposal's successful-call duration (None on every failure path).
     generation_duration_ms: int | None = None
+    # core.learning_log id of the lead pattern (None = synthetic); the discharge link.
+    learning_pattern_id: int | None = None
+    # GENERATOR_INPUT_VERSION as build_patch_result stamps it; None on a row built elsewhere.
+    generator_input_version: str | None = None
 
 
 @dataclass
@@ -2364,14 +2090,10 @@ class CycleReport:
     # so an unattended launchd run STOPS reporting a clean exit 0. A quiet night
     # (patches=[]) leaves this 'ok'.
     cycle_status: str = "ok"
-    # AD-10 Solution History: the per-(agent, task_type) Pareto winner frontier
-    # retained THIS cycle (retain_pareto_winners over the generation outcomes).
-    # In-memory only — tuple keys are not JSON-serializable, so _report_to_dict
-    # emits a serializable count summary rather than this dict. Feeds the next
-    # reflective-mutation cycle once a durable cross-cycle store lands (deferred).
-    solution_winners: dict[tuple[str, str], list[SolutionAttempt]] = field(
-        default_factory=dict
-    )
+    # None = the ingest did not run (no-write mode).
+    manifest_ingest: ManifestIngest | None = None
+    # check_pattern_power's verdict → count; every verdict present, zero included.
+    power_check: dict[str, int] = field(default_factory=lambda: _get_power_counts())
 
 
 # -- generation step 1: intake user-pending patterns (PG) -------------------
@@ -2386,7 +2108,9 @@ _TIER_USER_PENDING = "user-pending"
 
 
 def _agent_roster(agents_dir: Path) -> frozenset[str]:
-    """Real agent names = stems of `agents/*.md` (single SoT for the roster).
+    """Real agent names = stems of the top-level `agents/*.md`, the non-agent charter excluded
+    (single SoT for the roster; the agent set of `_get_agent_body_name` and of
+    `scripts/update.sh` → `update_roster_names_from_dir`).
 
     Intake validates the `agent` column against this set so a task_type value
     (e.g. 'bug-fix') accidentally written into the agent column never yields a
@@ -2395,13 +2119,19 @@ def _agent_roster(agents_dir: Path) -> frozenset[str]:
     legitimate patterns).
     """
     try:
-        return frozenset(p.stem for p in agents_dir.glob("*.md"))
+        return frozenset(
+            p.stem for p in agents_dir.glob("*.md") if p.name != GLOBAL_RULES_FILE.name
+        )
     except OSError:
         return frozenset()
 
 
-# Canonical roster stems carry this prefix (agents/glass-atrium-<bare>.md).
-_ROSTER_STEM_PREFIX = "glass-atrium-"
+ROSTER = SimpleNamespace(
+    # canonical roster stems carry this prefix (agents/glass-atrium-<bare>.md)
+    STEM_PREFIX="glass-atrium-",
+    # opening literal the monitor's dormant-reason bucket matches (routes/improvement.ts)
+    MISMATCH_REASON="roster-mismatch",
+)
 
 
 def _get_roster_alias(agent: str, roster: frozenset[str]) -> str | None:
@@ -2414,11 +2144,11 @@ def _get_roster_alias(agent: str, roster: frozenset[str]) -> str | None:
     REAL stem so downstream target_file resolution (agents/<stem>.md) hits the
     file; no hit in either direction → None (caller keeps the loud-fail path).
     """
-    prefixed = _ROSTER_STEM_PREFIX + agent
+    prefixed = ROSTER.STEM_PREFIX + agent
     if prefixed in roster:
         return prefixed
-    if agent.startswith(_ROSTER_STEM_PREFIX):
-        bare = agent[len(_ROSTER_STEM_PREFIX):]
+    if agent.startswith(ROSTER.STEM_PREFIX):
+        bare = agent[len(ROSTER.STEM_PREFIX):]
         if bare in roster:
             return bare
     return None
@@ -2428,6 +2158,8 @@ def read_user_pending_patterns(
     log_path: Path,
     limit: int,
     agents_dir: Path = DEFAULT_AGENTS_DIR,
+    *,
+    live: bool,
 ) -> list[Pattern]:
     """Read intake rows from PG core.learning_log, sorted by frequency desc.
 
@@ -2442,9 +2174,12 @@ def read_user_pending_patterns(
     Skips:
         - rows targeting agent='전체' or 'ALL' (cross-cutting → not patchable here)
         - roster-mismatch rows — agent is not an agents/*.md stem: stderr WARN
-          + loop-event emit, never a silent drop (Precondition Loud-Fail)
-        - NON_PROMPTABLE_LABELS rows — the signal is an operational counter no
-          patch can abate: stderr WARN + loop-event emit, never a silent drop
+          + loop-event emit, never a silent drop (Precondition Loud-Fail); the
+          row moves to 'dormant' (_put_roster_dormant)
+        - keyless rows — no primary metric key, so not eligible: stderr WARN +
+          loop-event emit, never a silent drop
+
+    live: False in a no-write cycle — a roster-mismatch row's move is logged only.
 
     Returns at most `limit` entries, tier-normalized to 'user-pending'.
     """
@@ -2472,17 +2207,6 @@ def read_user_pending_patterns(
         # signature = "<label>|<agent>" (aggregator UPSERT contract).
         signature = row["pattern_signature"]
         label = signature.rsplit("|", 1)[0]
-        # Excluded before proposal generation: a proposal against a counter can
-        # only re-park, so it is dropped here loudly rather than generated.
-        if label in NON_PROMPTABLE_LABELS:
-            _warn_pattern_skip(
-                agent,
-                signature,
-                event_ts,
-                eval_result="non-promptable",
-                reason=NON_PROMPTABLE_REASON,
-            )
-            continue
         # Intake defense-in-depth — when the roster is known (glob succeeded), an
         # `agent` value that is not a real agents/*.md stem (e.g. a task_type
         # 'bug-fix' leaked into the column) cannot produce a landable patch →
@@ -2495,8 +2219,20 @@ def read_user_pending_patterns(
             alias = _get_roster_alias(agent, roster)
             if alias is None:
                 _warn_roster_mismatch(agent, row["pattern_signature"], event_ts)
+                _put_roster_dormant(row["id"], live=live)
                 continue
             agent = alias
+        # After the roster check, so a roster-absent row still reports
+        # roster-mismatch whether or not it carries a key.
+        if not row.get("metric_key"):
+            _warn_pattern_skip(
+                agent,
+                signature,
+                event_ts,
+                eval_result=NO_METRIC_KEY_EVAL,
+                reason=NO_METRIC_KEY_REASON,
+            )
+            continue
         discovered = row["discovered_date"]
         patterns.append(
             Pattern(
@@ -2508,6 +2244,8 @@ def read_user_pending_patterns(
                 tier=_TIER_USER_PENDING,
                 raw_line=f"pg:learning_log:{row['id']}:{signature}",
                 row_id=row["id"],
+                metric_key=row.get("metric_key"),
+                last_transition_at=row.get("last_transition_at"),
             )
         )
 
@@ -2545,38 +2283,26 @@ def _warn_roster_mismatch(agent: str, signature: str, event_ts: str) -> None:
     )
 
 
-# -- Generation window: previous calendar day (local tz) --------------------
-#
-# The GENERATION path uses prior-day-all (no 90-day rolling sample / 5-sample
-# cap), via an explicit day-boundary rather than trailing-24h epoch subtraction.
-# The promotion-stats path (_fetch_outcome_signals) is separate — not this function.
+def _put_roster_dormant(pattern_id: int, *, live: bool) -> None:
+    """Move an off-roster intake row to 'dormant' so it stops re-entering intake.
 
-
-def _local_day_bounds(
-    now: datetime | None = None,
-) -> tuple[float, float]:
-    """[start, end) epoch bounds of the previous calendar day, LOCAL timezone.
-
-    D = cycle run date (local). Returns [start_of(D-1), start_of(D)).
-    - lower: yesterday 00:00:00 (local) → epoch
-    - upper: today 00:00:00 (local) → epoch (exclusive)
-
-    Args:
-        now: reference time (test injection). None → datetime.now() (naive local).
-
-    Returns:
-        (yesterday_start_epoch, today_start_epoch) — both float epoch seconds.
+    'dormant' is non-terminal: the aggregator's next passing pair returns it to
+    'identified', and an agent still off the roster is moved again by the next
+    writing cycle. A not-matched answer (row moved since the read, or a schema
+    without the label) leaves the row in whatever status it holds.
     """
-    base = now if now is not None else datetime.now()
-    # tz-aware input → convert to local naive so the local-midnight boundary
-    # is computed consistently.
-    if base.tzinfo is not None:
-        base = base.astimezone().replace(tzinfo=None)
-    today_start = base.replace(hour=0, minute=0, second=0, microsecond=0)
-    # timestamp() of the shifted datetime, NOT today_start - 86400: a fixed
-    # second offset misses yesterday's local midnight on DST-change days.
-    yesterday_start = today_start - timedelta(days=1)
-    return yesterday_start.timestamp(), today_start.timestamp()
+    if not live:
+        sys.stderr.write(
+            f"[daemon-cycle] roster mismatch (no-write cycle): learning_log "
+            f"id={pattern_id} would move to dormant\n"
+        )
+        return
+    result = _pg_put_learning_pattern_status(pattern_id, "dormant", ROSTER.MISMATCH_REASON)
+    if result.outcome == TRANSITION_FAILED:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: roster mismatch — learning_log id={pattern_id} not "
+            "moved to dormant: the call never completed, retried next cycle\n"
+        )
 
 
 def _resolve_agent_limit(limit: int | None) -> int:
@@ -2592,366 +2318,7 @@ def _resolve_agent_limit(limit: int | None) -> int:
     return limit
 
 
-# -- generation step 2: sample related outcome records ----------------------
-
-
-def fetch_related_outcomes(
-    agent: str,
-    task_type: str | None,
-    limit: int = OUTCOME_SAMPLE_LIMIT,
-    outcomes_dir: Path = DEFAULT_OUTCOMES_DIR,
-) -> list[Outcome]:
-    """Sample the most-recent N outcome records for the given agent (and task_type).
-
-    - PRIMARY: core.outcomes SELECT via the _pg_read_outcomes_since helper (PG is
-      the single source). Server-side agent + optional task_type filter,
-      record_ts DESC, top-N.
-    - FALLBACK: file-system glob (residual pre-cutover `.md`). PG 0 AND file 0 →
-      empty list (normal). PG 1+ → skip file fallback (PG is the single truth).
-
-    Filename convention for fallback:
-        YYYY-MM-DD-HHMM_<agent>_<task_type>.md
-    Sorting by filename = timestamp DESC (lex order works — fixed-width prefix).
-    """
-    pg_outcomes = _fetch_outcomes_from_pg(agent, task_type, limit)
-    if pg_outcomes:
-        # PG is the single truth — skip the file fallback (mixed-source ambiguity).
-        return pg_outcomes
-
-    return _fetch_outcomes_from_filesystem(agent, task_type, limit, outcomes_dir)
-
-
-def _fetch_outcomes_from_pg(
-    agent: str,
-    task_type: str | None,
-    limit: int,
-) -> list[Outcome]:
-    """PG core.outcomes → Outcome dataclass mapping.
-
-    The read_outcomes_since helper takes agent/task_type/limit/order kwargs →
-    server-side WHERE/ORDER BY/LIMIT eliminates ~1500× over-fetch (38MB → ~25KB
-    per cycle), using the outcomes_agent_ts_idx (agent, record_ts) index. No
-    client-side filter/sort/slice. PG unavailable → empty list (caller does the
-    file fallback).
-    """
-    if not HAS_PG_OUTCOME_READ:
-        return []
-    if not agent:
-        return []
-
-    # 90-day lookback — enough per-agent sample + agent_ts_idx index scan.
-    since_epoch = time.time() - PG_OUTCOME_LOOKBACK_DAYS * 86400
-    try:
-        rows = _pg_read_outcomes_since(
-            since_epoch,
-            agent=agent,
-            task_type=task_type,
-            limit=limit,
-            order="DESC",
-        )
-    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: PG outcome read failed, falling back to "
-            f"file system: {type(exc).__name__}: {exc}\n"
-        )
-        return []
-
-    outcomes: list[Outcome] = []
-    for row in rows:
-        record_ts = row.get("record_ts")
-        # PG record identifier — pg_audit_ref for grep traceability (helper convention).
-        pg_path = row.get("pg_audit_ref") or (
-            f"pg:{record_ts.isoformat(timespec='seconds') if record_ts else ''}"
-            f":{row.get('agent', '')}:{row.get('task_type', '')}"
-        )
-        metric_pass_value = row.get("metric_pass")
-        if metric_pass_value is None:
-            metric_pass_str = ""
-        elif isinstance(metric_pass_value, bool):
-            metric_pass_str = "true" if metric_pass_value else "false"
-        else:
-            metric_pass_str = str(metric_pass_value)
-
-        outcomes.append(
-            Outcome(
-                path=pg_path,
-                agent=row.get("agent", ""),
-                task_type=row.get("task_type", ""),
-                result=row.get("result", ""),
-                confidence=row.get("confidence", ""),
-                metric_pass=metric_pass_str,
-                summary=(row.get("summary") or "")[:240],
-                lesson=(row.get("lesson") or "")[:240],
-                # provenance for the synthesized-measurement-gap FAILURE carve-out
-                attribution_source=str(row.get("attribution_source") or ""),
-            )
-        )
-    return outcomes
-
-
-def _fetch_outcomes_from_filesystem(
-    agent: str,
-    task_type: str | None,
-    limit: int,
-    outcomes_dir: Path,
-) -> list[Outcome]:
-    """Legacy file-system path (pre-Phase-5 `.md` records).
-
-    Filename convention (set by pre-Phase-5 track-outcome.sh):
-        YYYY-MM-DD-HHMM_<agent>_<task_type>.md
-    """
-    if not outcomes_dir.exists():
-        return []
-
-    # Filter by filename token to avoid reading 2000+ files.
-    matches: list[Path] = []
-    needle_agent = f"_{agent}_"
-    needle_tt = f"_{task_type}." if task_type else ""
-
-    # listdir is faster than rglob for a flat dir of ~2.5k files.
-    for name in os.listdir(outcomes_dir):
-        if not name.endswith(".md"):
-            continue
-        if needle_agent not in name:
-            continue
-        if needle_tt and needle_tt not in name:
-            continue
-        matches.append(outcomes_dir / name)
-
-    matches.sort(key=lambda p: p.name, reverse=True)
-    matches = matches[:limit]
-
-    outcomes: list[Outcome] = []
-    for path in matches:
-        try:
-            outcomes.append(_parse_outcome_file(path))
-        except OSError as exc:
-            # Log silently to stderr — one bad file shouldn't kill the cycle.
-            print(
-                f"[daemon-cycle] WARN: outcome read failed: {path.name}: {exc}",
-                file=sys.stderr,
-            )
-    return outcomes
-
-
-def fetch_generation_outcomes(
-    agent: str,
-    *,
-    day_bounds: tuple[float, float] | None = None,
-    outcomes_dir: Path = DEFAULT_OUTCOMES_DIR,
-) -> list[Outcome]:
-    """GENERATION path — return ALL of an agent's previous-calendar-day outcomes.
-
-    Window = [start_of(D-1), start_of(D)) (LOCAL tz, _local_day_bounds), no sample
-    cap (all of yesterday feeds the analysis).
-
-    - The PG read helper supports only a LOWER bound (since_epoch), no UPPER bound,
-      so over-fetch with since=yesterday_start and CLIENT-SIDE drop rows with
-      record_ts >= today_start. Over-fetch spans only 2 days → negligible cost.
-    - PG 0 AND file 0 → empty list. PG 1+ → skip file fallback (single truth).
-    - file fallback matches yesterday's YYYY-MM-DD filename prefix.
-
-    Args:
-        agent: target agent.
-        day_bounds: (yesterday_start, today_start) epoch — test injection.
-                    None → computed via _local_day_bounds().
-        outcomes_dir: file-fallback directory.
-
-    Returns:
-        list[Outcome] (record_ts DESC, all of yesterday — no cap).
-    """
-    if not agent:
-        return []
-    y_start, t_start = day_bounds if day_bounds is not None else _local_day_bounds()
-
-    pg_outcomes = _fetch_generation_outcomes_from_pg(agent, y_start, t_start)
-    if pg_outcomes:
-        return pg_outcomes
-
-    return _fetch_generation_outcomes_from_filesystem(
-        agent, y_start, t_start, outcomes_dir
-    )
-
-
-def _fetch_generation_outcomes_from_pg(
-    agent: str,
-    yesterday_start: float,
-    today_start: float,
-) -> list[Outcome]:
-    """PG core.outcomes → all of yesterday's Outcomes (no cap, today excluded).
-
-    read_outcomes_since(since=yesterday_start, limit=None) fetches yesterday+today,
-    then client-side drops record_ts >= today_start. limit=None → helper omits the
-    LIMIT clause (over-fetch bounded to 2 days).
-    """
-    if not HAS_PG_OUTCOME_READ or not agent:
-        return []
-
-    try:
-        rows = _pg_read_outcomes_since(
-            yesterday_start,
-            agent=agent,
-            task_type=None,
-            limit=None,  # no cap — all of yesterday
-            order="DESC",
-        )
-    except Exception as exc:  # noqa: BLE001 — read fallback is logged + safe
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: PG generation-outcome read failed for "
-            f"{agent}, falling back to file system: "
-            f"{type(exc).__name__}: {exc}\n"
-        )
-        return []
-
-    outcomes: list[Outcome] = []
-    for row in rows:
-        record_ts = row.get("record_ts")
-        # Exclude today (D) — helper has no UPPER bound, so cap client-side.
-        if record_ts is not None and record_ts.timestamp() >= today_start:
-            continue
-        pg_path = row.get("pg_audit_ref") or (
-            f"pg:{record_ts.isoformat(timespec='seconds') if record_ts else ''}"
-            f":{row.get('agent', '')}:{row.get('task_type', '')}"
-        )
-        metric_pass_value = row.get("metric_pass")
-        if metric_pass_value is None:
-            metric_pass_str = ""
-        elif isinstance(metric_pass_value, bool):
-            metric_pass_str = "true" if metric_pass_value else "false"
-        else:
-            metric_pass_str = str(metric_pass_value)
-        outcomes.append(
-            Outcome(
-                path=pg_path,
-                agent=row.get("agent", ""),
-                task_type=row.get("task_type", ""),
-                result=row.get("result", ""),
-                confidence=row.get("confidence", ""),
-                metric_pass=metric_pass_str,
-                summary=(row.get("summary") or "")[:240],
-                lesson=(row.get("lesson") or "")[:240],
-                # revision_count: None/missing/unparseable → neutral 0.
-                # evaluative_signal: preserve -1/0/+1 (None → neutral 0); do NOT
-                # coerce a missing signal into success polarity.
-                revision_count=_coerce_revision_count(row.get("revision_count")),
-                evaluative_signal=_coerce_evaluative_signal(
-                    row.get("evaluative_signal")
-                ),
-                # provenance for the synthesized-measurement-gap FAILURE carve-out
-                attribution_source=str(row.get("attribution_source") or ""),
-            )
-        )
-    return outcomes
-
-
-def _fetch_generation_outcomes_from_filesystem(
-    agent: str,
-    yesterday_start: float,
-    today_start: float,
-    outcomes_dir: Path,
-) -> list[Outcome]:
-    """Legacy file fallback — match yesterday only via the YYYY-MM-DD filename token.
-
-    filename: YYYY-MM-DD-HHMM_<agent>_<task_type>.md. Yesterday's date string is
-    computed in the same LOCAL tz as _local_day_bounds for prefix matching.
-    """
-    if not outcomes_dir.exists():
-        return []
-    # Yesterday's date string (LOCAL tz) — the day before today_start.
-    yesterday_date = datetime.fromtimestamp(yesterday_start).strftime("%Y-%m-%d")
-    needle_agent = f"_{agent}_"
-
-    matches: list[Path] = []
-    for name in os.listdir(outcomes_dir):
-        if not name.endswith(".md"):
-            continue
-        if needle_agent not in name:
-            continue
-        if not name.startswith(yesterday_date):
-            continue
-        matches.append(outcomes_dir / name)
-
-    matches.sort(key=lambda p: p.name, reverse=True)
-    outcomes: list[Outcome] = []
-    for path in matches:
-        try:
-            outcomes.append(_parse_outcome_file(path))
-        except OSError as exc:
-            print(
-                f"[daemon-cycle] WARN: outcome read failed: {path.name}: {exc}",
-                file=sys.stderr,
-            )
-    return outcomes
-
-
-_OUTCOME_FRONTMATTER_RE = re.compile(
-    r"^---\s*\n(.*?)\n---", re.DOTALL | re.MULTILINE
-)
-
-
-def _parse_outcome_file(path: Path) -> Outcome:
-    """Lightweight YAML frontmatter parser — enough for our known fields.
-
-    Polarity signals (revision_count / evaluative_signal) are parsed WHEN PRESENT
-    in the frontmatter; when ABSENT they default to NEUTRAL (0) — a legacy record
-    with no signal is treated as neutral polarity, never coerced into success.
-    """
-    text = path.read_text(encoding="utf-8", errors="replace")
-    m = _OUTCOME_FRONTMATTER_RE.match(text)
-    fields: dict[str, str] = {}
-    if m:
-        for line in m.group(1).splitlines():
-            if ":" not in line:
-                continue
-            k, _, v = line.partition(":")
-            fields[k.strip()] = v.strip().strip('"').strip("'")
-
-    body_after = text[m.end():] if m else text
-
-    # Best-effort summary/lesson extraction from markdown body.
-    summary = _extract_field(body_after, ["summary"])
-    lesson = _extract_field(body_after, ["lesson", "Lesson"])
-
-    # revision_count: absent/unparseable → 0. evaluative_signal: absent → 0
-    # (neutral); 0 and absent are both neutral here, only -1 is failure polarity.
-    revision_count = _coerce_revision_count(fields.get("revision_count"))
-    evaluative_signal = (
-        _coerce_evaluative_signal(fields["evaluative_signal"])
-        if "evaluative_signal" in fields
-        else 0
-    )
-
-    return Outcome(
-        path=str(path),
-        agent=fields.get("agent", ""),
-        task_type=fields.get("task_type", ""),
-        result=fields.get("result", ""),
-        confidence=fields.get("confidence", ""),
-        metric_pass=fields.get("metric_pass", ""),
-        summary=summary[:240],
-        lesson=lesson[:240],
-        revision_count=revision_count,
-        evaluative_signal=evaluative_signal,
-        # absent in legacy frontmatter → "" (neutral provenance)
-        attribution_source=fields.get("attribution_source", ""),
-    )
-
-
-def _extract_field(body: str, keys: list[str]) -> str:
-    """Return the first non-empty content under a Markdown heading matching any key."""
-    for key in keys:
-        # Match e.g. "## summary\n..." until next heading or blank-line block.
-        pat = re.compile(
-            rf"^#{{1,6}}\s+{re.escape(key)}\s*\n(.+?)(?=\n#{{1,6}}\s|\Z)",
-            re.MULTILINE | re.DOTALL,
-        )
-        match = pat.search(body)
-        if match:
-            return match.group(1).strip().replace("\n", " ")[:1000]
-    return ""
-
-
-# -- generation step 3: ask Haiku for a patch proposal ----------------------
+# -- generation step 2: ask Haiku for a patch proposal ----------------------
 
 
 _PROMPT_TEMPLATE = """You are an instruction-tuning assistant for AutoAgent.
@@ -2963,9 +2330,7 @@ PATTERN:
 - agent: {pattern_agent}
 - label: {pattern_label}
 - frequency: {pattern_freq}
-
-RECENT OUTCOMES for this agent (most-recent first):
-{outcomes_block}
+{pattern_evidence}
 
 CURRENT AGENT INSTRUCTION FILE (target for patch):
 path: {agent_path}
@@ -2998,7 +2363,7 @@ DIFF:
 +<your new line(s) — '+' prefix on each>
  <one or two context lines copied EXACTLY from the file above>
 
-Critical rules for the DIFF block:
+Rules for the DIFF block (it is applied with `git apply`, which reads these lines verbatim):
 - NO markdown fences (no ```, no ```diff). Raw lines only.
 - Context lines MUST start with a single space and match the file byte-for-byte.
 - New lines MUST start with '+' and NOT be wrapped in quotes.
@@ -3007,23 +2372,21 @@ Critical rules for the DIFF block:
 """
 
 
-# Consolidated per-AGENT prompt — takes all of an agent's prior-day failure
+# Consolidated per-AGENT prompt — takes all of an agent's pair-passing
 # signals and authors one multi-hunk unified diff. All hunks share a single
 # current-file snapshot, so one `git apply` applies them atomically (no intra-run
 # cascade). Output format identical to the single-pattern _PROMPT_TEMPLATE.
 _CONSOLIDATED_PROMPT_TEMPLATE = """You are an instruction-tuning assistant for AutoAgent.
 
-Multiple learning signals for ONE agent have been observed over the previous
-calendar day and queued for review. Author ONE consolidated patch.
+Multiple learning signals for ONE agent have each passed a detection window and
+the confirmation window that follows it, and are queued for review. Author ONE
+consolidated patch.
 
 TARGET AGENT: {pattern_agent}
 
 OBSERVED LEARNING SIGNALS (patterns flagged for this agent):
 {signals_block}
 {avoid_patterns_block}{landed_history_block}
-PRIOR-DAY OUTCOMES for this agent (most-recent first — ALL of yesterday):
-{outcomes_block}
-
 CURRENT AGENT INSTRUCTION FILE (target for patch):
 path: {agent_path}
 ---
@@ -3060,7 +2423,7 @@ DIFF:
  <context line for the SECOND location, copied EXACTLY>
 +<your new line(s) for the second hunk>
 
-Critical rules for the DIFF block:
+Rules for the DIFF block (it is applied with `git apply`, which reads these lines verbatim):
 - NO markdown fences (no ```, no ```diff). Raw lines only.
 - Context lines MUST start with a single space and match the file byte-for-byte.
 - New lines MUST start with '+' and NOT be wrapped in quotes.
@@ -3069,13 +2432,6 @@ Critical rules for the DIFF block:
 - Place additions inside an `<!-- EDITABLE:BEGIN -->` / `<!-- EDITABLE:END -->`
   section when one exists for the topic — never edit outside editable regions.
 """
-
-# Prompt-token guard for the consolidated outcomes block. With no sample cap,
-# yesterday may hold many outcomes — every signal's compact 1-line summary is
-# always included, but if the verbatim summary/lesson BODY total exceeds budget,
-# only the BODY is truncated with an explicit (loud) note (never silent-drop).
-GENERATION_OUTCOMES_BODY_BUDGET_CHARS = 8000
-
 
 # IANA tz first components (+ legacy slash-bearing links like US/Pacific) — an
 # allowlist keeps the tz-stamped reset notice detectable for ANY user timezone
@@ -3302,10 +2658,8 @@ _TRANSIENT_TIMEOUT_BACKOFF_SEC = float(
 )
 
 
-# Strict re-prompt suffix for retry-on-parse-failure. Appended to the original
-# prompt on retry; the rest of the prompt (PATTERN / OUTCOMES / CURRENT AGENT
-# FILE) is identical to preserve idempotency. Header format is the canonical
-# contract that `_parse_haiku_response` strict regex expects.
+# Parse-failure retry suffix, appended to the unchanged base prompt
+# Header tokens = the `_parse_haiku_response` strict-regex contract
 _HAIKU_STRICT_RETRY_SUFFIX = """
 
 CRITICAL — STRICT FORMAT REQUIRED (retry attempt):
@@ -3472,6 +2826,55 @@ def _build_failure_proposal(
     )
 
 
+KNOB_INVALID_RATIONALE_PREFIX = "invalid daemon-config knob:"
+
+
+def _get_knob_errors(*roles: str) -> dict[str, str]:
+    """Rejected tier knobs (key → reason) of the given roles, from the import-time load."""
+    prefixes = tuple(f"{role}_" for role in roles)
+    return {key: reason for key, reason in KNOB_ERRORS.items() if key.startswith(prefixes)}
+
+
+def _get_knob_reason(knob_errors: dict[str, str]) -> str:
+    """One-line reason naming every rejected knob — early-exit rationale + payload reason."""
+    rejected = "; ".join(f"{key}={reason}" for key, reason in knob_errors.items())
+    return flatten_log_field(f"{KNOB_INVALID_RATIONALE_PREFIX} {rejected}")
+
+
+def _write_knob_fatal_lines(knob_errors: dict[str, str]) -> None:
+    """One FATAL stderr line per rejected knob (Precondition Loud-Fail's second leg)."""
+    for key, reason in knob_errors.items():
+        sys.stderr.write(
+            f"[daemon-cycle] FATAL: daemon-config.json {key}={flatten_log_field(reason)} "
+            f"— fix it on the monitor Model Config screen (path={DAEMON_CONFIG_PATH})\n"
+        )
+
+
+def _get_tier_call(role: Literal["worker", "pre_verify"]) -> tuple[list[str], dict[str, str]]:
+    """Extra argv + child env for one `claude -p` call, from that role's tier knobs.
+
+    Unset knobs add nothing: the env stays today's, so an inherited
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS passes through unchanged. A set tier drops an
+    inherited CLAUDE_CODE_EFFORT_LEVEL — the CLI ranks that env var above
+    --effort, so the knob would otherwise lose silently.
+    """
+    knobs = TIER_KNOBS[role]
+    env = {**os.environ, "OTEL_METRICS_EXPORTER": "none"}
+    tier_argv: list[str] = []
+    if knobs.effort:
+        tier_argv = ["--effort", knobs.effort]
+        inherited = env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
+        if inherited is not None:
+            sys.stderr.write(
+                "[daemon-cycle] WARN: dropping inherited CLAUDE_CODE_EFFORT_LEVEL="
+                f"{flatten_log_field(inherited)} from the {role} call — it would "
+                f"override daemon-config.json {role}_effort={knobs.effort}\n"
+            )
+    if knobs.max_output_tokens:
+        env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = knobs.max_output_tokens
+    return tier_argv, env
+
+
 def _invoke_haiku_cli(
     *,
     prompt: str,
@@ -3488,7 +2891,23 @@ def _invoke_haiku_cli(
 
     The `error_proposal_partial` is partial — caller fills `target_file` field
     based on its scope. Returned with empty target_file/parse_mode='skipped'.
+
+    A rejected worker_* tier knob returns that early exit without a call — the
+    path the _main gate never sees (the gap arbiter, run from the updater merge).
     """
+    knob_errors = _get_knob_errors("worker")
+    if knob_errors:
+        _write_knob_fatal_lines(knob_errors)
+        return None, PatchProposal(
+            target_file="",
+            rationale=_get_knob_reason(knob_errors),
+            proposed_diff="",
+            touched_frontmatter=False,
+            estimated_added_lines=0,
+            raw_response="",
+            parse_mode="skipped",
+        ), 0
+    tier_argv, env = _get_tier_call("worker")
     started = time.perf_counter()
     try:
         completed = subprocess.run(  # nosec — list form, no shell=True
@@ -3498,12 +2917,13 @@ def _invoke_haiku_cli(
                 "--output-format", "text",
                 "--max-budget-usd", WORKER_MAX_BUDGET_USD,
                 "--model", WORKER_MODEL,
+                *tier_argv,
             ],
             capture_output=True,
             text=True,
             timeout=timeout_sec,
             check=False,
-            env={**os.environ, "OTEL_METRICS_EXPORTER": "none"},
+            env=env,
         )
         duration_ms = int((time.perf_counter() - started) * 1000)
         return completed, None, duration_ms
@@ -3533,7 +2953,6 @@ def _invoke_haiku_cli(
 
 def generate_patch_proposal(
     pattern: Pattern,
-    outcomes: list[Outcome],
     agents_dir: Path = DEFAULT_AGENTS_DIR,
     *,
     claude_bin: str = CLAUDE_BIN,
@@ -3550,7 +2969,7 @@ def generate_patch_proposal(
     worst case is 5 patterns × 2 calls, each bounded by the per-call cap (the
     cap's value lives in the daemon-config SoT, not restated here).
     Idempotency: retry prompt body is identical except for the strict suffix
-    (same PATTERN / OUTCOMES / AGENT FILE inputs → same expectations).
+    (same PATTERN / AGENT FILE inputs → same expectations).
     """
     target_file = agents_dir / f"{pattern.agent}.md"
     if not target_file.exists():
@@ -3577,14 +2996,16 @@ def generate_patch_proposal(
 
     # Whole body: a head slice hides the editable regions the model must edit into.
     agent_text = target_file.read_text(encoding="utf-8")
+    evidence_lines = _render_pattern_evidence(
+        pattern, _fetch_pattern_evidence(pattern.agent)
+    )
 
-    outcomes_block = _render_outcomes_block(outcomes) or "(no recent outcomes sampled)"
     base_prompt = _PROMPT_TEMPLATE.format(
         pattern_date=pattern.date,
         pattern_agent=pattern.agent,
         pattern_label=_neutralize_field(pattern.label),
         pattern_freq=pattern.frequency,
-        outcomes_block=outcomes_block,
+        pattern_evidence="\n".join(f"- {line}" for line in evidence_lines),
         agent_path=str(target_file),
         agent_excerpt=agent_text,
         agent_basename=target_file.name,
@@ -3602,7 +3023,6 @@ def generate_patch_proposal(
 def generate_consolidated_proposal(
     agent: str,
     patterns: list[Pattern],
-    outcomes: list[Outcome],
     agents_dir: Path = DEFAULT_AGENTS_DIR,
     *,
     claude_bin: str = CLAUDE_BIN,
@@ -3612,9 +3032,8 @@ def generate_consolidated_proposal(
     """Author ONE consolidated multi-hunk proposal from all of an agent's signals.
 
     The per-TARGET (not per-PATTERN) core. `patterns` = all Patterns grouped for
-    that agent (≥1). `outcomes` = all of yesterday (no cap). Single current-file
-    snapshot diff → all hunks apply atomically via one `git apply` (no intra-run
-    cascade).
+    that agent (≥1). Single current-file snapshot diff → all hunks apply
+    atomically via one `git apply` (no intra-run cascade).
 
     `skip_haiku=True` → empty proposal (test/preflight). The Haiku
     invoke+parse+retry core is shared with generate_patch_proposal via
@@ -3623,7 +3042,6 @@ def generate_consolidated_proposal(
     Args:
         agent: target agent.
         patterns: Pattern list grouped for that agent (≥1).
-        outcomes: all of yesterday's outcomes.
         agents_dir: agent .md directory.
         claude_bin / timeout_sec / skip_haiku: invoke options.
 
@@ -3655,8 +3073,7 @@ def generate_consolidated_proposal(
 
     # Whole body: a head slice hides the editable regions the model must edit into.
     agent_text = target_file.read_text(encoding="utf-8")
-    signals_block = _render_signals_block(patterns)
-    outcomes_block = _render_generation_outcomes_block(outcomes)
+    signals_block = _render_signals_block(patterns, _fetch_pattern_evidence(agent))
 
     # Optimizer-side memory (SkillOpt R2): prepend this agent's known-bad
     # diff shapes. PG-off / empty-history → "" → block omitted cleanly.
@@ -3686,7 +3103,6 @@ def generate_consolidated_proposal(
         signals_block=signals_block,
         avoid_patterns_block=avoid_patterns_block,
         landed_history_block=landed_history_block,
-        outcomes_block=outcomes_block,
         agent_path=str(target_file),
         agent_excerpt=agent_text,
         agent_basename=target_file.name,
@@ -4012,7 +3428,7 @@ def _run_haiku_with_retry(
 def _neutralize_field(text: str, *, cap: int = 160) -> str:
     """Flatten newlines then repr-quote agent-authored free-text for prompt injection.
 
-    Agent-authored summary/lesson/label originate from [COMPLETION] blocks that are
+    Agent-authored summary/label originate from [COMPLETION] blocks that are
     influenceable by tool outputs / fetched URLs / file content (untrusted relay).
     Flattening embedded newlines collapses any line-start RATIONALE:/DIFF:/'--- a/'
     /'+++ b/'/@@ marker so no fake diff/response anchor survives at line-start, and
@@ -4022,28 +3438,11 @@ def _neutralize_field(text: str, *, cap: int = 160) -> str:
     return repr(" ".join((text or "")[:cap].splitlines()))
 
 
-def _render_outcomes_block(outcomes: list[Outcome]) -> str:
-    if not outcomes:
-        return ""
-    lines: list[str] = []
-    for i, o in enumerate(outcomes, start=1):
-        lines.append(
-            f"{i}. result={o.result} confidence={o.confidence!r} "
-            f"metric_pass={o.metric_pass!r} task={o.task_type}"
-        )
-        if o.summary:
-            lines.append(f"   summary: {_neutralize_field(o.summary)}")
-        if o.lesson:
-            lines.append(f"   lesson: {_neutralize_field(o.lesson)}")
-    return "\n".join(lines)
-
-
-def _render_signals_block(patterns: list[Pattern]) -> str:
-    """OBSERVED LEARNING SIGNALS block — 1-line summary of the agent's pattern signals.
-
-    Each signal is always a compact 1-line (date/frequency/label) — all included
-    regardless of sample cap.
-    """
+def _render_signals_block(
+    patterns: list[Pattern], evidence: dict[str, PatternEvidence] | None
+) -> str:
+    """OBSERVED LEARNING SIGNALS block — one date/frequency/label line per signal, then
+    its evidence lines indented beneath it."""
     if not patterns:
         return "(no patterns flagged)"
     lines: list[str] = []
@@ -4051,182 +3450,71 @@ def _render_signals_block(patterns: list[Pattern]) -> str:
         lines.append(
             f"{i}. [{p.date}] freq={p.frequency} — {_neutralize_field(p.label)}"
         )
+        lines.extend(f"   {line}" for line in _render_pattern_evidence(p, evidence))
     return "\n".join(lines)
 
 
-# -- generation outcome polarity partition ----------------------------------
-#
-# Negative-signal definition is the IMPORTED shared SoT
-# (_outcome_signal.is_negative_signal_outcome), unconditionally — the module is
-# stdlib-only, so the predicate stays bound on the psycopg-absent path and no
-# hand-mirrored copy exists to drift from it. The grader_verdict / review_flag
-# OR-terms are NOT carried by Outcome, so the shared predicate sees them absent
-# over this row shape — a strict subset of its definition, never a divergent one.
+# Stamped on every proposal row; bump whenever the generation prompt's input set changes.
+GENERATOR_INPUT_VERSION = "gen-inputs-1"
+
+# Triggering spawns listed per pattern, newest first; the rest are counted.
+MACHINE_FACTS_SPAWN_LIMIT = 10
 
 
-def _is_synthesized_measurement_gap(o: Outcome) -> bool:
-    """True for a synthesized Outcome whose result is a synthesis artifact, not an
-    agent-emitted signal: completion-synthesized done_with_concerns (the synthesis
-    DEFAULT) and structuredoutput-derived done (schema-validated emit,
-    writer-unverified). Scoped to those exact provenance+result pairs so a real
-    agent's done_with_concerns still counts.
+def _fetch_pattern_evidence(agent: str) -> dict[str, PatternEvidence] | None:
+    """The agent's per-key evidence over today's pair windows; None = unavailable.
 
-    The structuredoutput-derived arm is checked HERE rather than delegated: the shared
-    predicate deliberately omits it (its docstring hands that success-side exclusion to
-    daemon_cycle), and without it such a row carrying revision_count>=2 would flip
-    NEUTRAL → FAILURE. Its attribution is disjoint from the shared arms, so checking it
-    first is order-safe; every other arm — including the budget-truncation
-    keep-clusterable guard — is the shared SoT's."""
-    if (
-        o.attribution_source == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED
-        and o.result == "done"
-    ):
-        return True
-    return _shared_is_synthesized_measurement_gap(_outcome_signal_row(o))
-
-
-def _outcome_signal_row(o: Outcome) -> dict[str, object]:
-    """Map an Outcome onto the dict shape is_negative_signal_outcome consumes."""
-    return {
-        "agent": o.agent,
-        "task_type": o.task_type,
-        "result": o.result,
-        "revision_count": o.revision_count,
-        # carries the synthesized marker so the imported SoT carve-out fires
-        "attribution_source": o.attribution_source,
-    }
-
-
-def _is_failure_outcome(o: Outcome) -> bool:
-    """FAILURE polarity: shared negative-signal predicate OR evaluative_signal==-1.
-
-    Synthesized-measurement-gap carve-out runs FIRST: a completion-synthesized
-    done_with_concerns row is never FAILURE polarity (it has no agent-emitted
-    evaluative_signal either, so the -1 short-circuit below never fires for it).
+    Fail-open like the pre-verify memory: intake already failed closed on the floor, and
+    a missing evidence read only thins the prompt.
     """
-    if _is_synthesized_measurement_gap(o):
-        return False
-    if o.evaluative_signal == -1:
-        return True
-    return bool(is_negative_signal_outcome(_outcome_signal_row(o)))
+    if not HAS_PG_PATTERN_READ:
+        return None
+    windows = get_pair_windows(_get_utc_now())
+    # judged at the day anchor, the instant the intake re-check judged the floor at
+    return _pg_read_pattern_evidence(agent, windows, windows.end)
 
 
-def _is_success_outcome(o: Outcome) -> bool:
-    """SUCCESS polarity: clean first-try done — never an absent/missing signal.
+def _render_pattern_evidence(
+    pattern: Pattern, evidence: dict[str, PatternEvidence] | None
+) -> list[str]:
+    """Metric key, confirmation rate vs the floor-half baseline, then the triggering
+    spawns' machine facts — every value through _neutralize_field (LLM01)."""
+    key_line = f"metric key: {_neutralize_field(str(pattern.metric_key))}"
+    found = None if evidence is None else evidence.get(pattern.metric_key or "")
+    if found is None:
+        return [key_line, f"evidence: {_neutralize_field('unavailable')}"]
+    confirmation, baseline = found.floor.confirmation, found.floor.baseline
+    confirmation_rate = _neutralize_field(
+        f"{confirmation.events}/{confirmation.spawns}"
+    )
+    baseline_rate = _neutralize_field(f"{baseline.events}/{baseline.spawns}")
+    lines = [
+        key_line,
+        f"confirmation rate: {confirmation_rate}"
+        f" vs floor-half baseline rate: {baseline_rate}",
+        "machine facts of the triggering spawns"
+        " (metric events in the confirmation window): "
+        f"{_neutralize_field(str(len(found.triggering)))}",
+    ]
+    listed = found.triggering[:MACHINE_FACTS_SPAWN_LIMIT]
+    lines.extend(_render_machine_facts(spawn) for spawn in listed)
+    omitted = len(found.triggering) - len(listed)
+    if omitted:
+        lines.append(f"more not listed: {_neutralize_field(str(omitted))}")
+    return lines
 
-    structuredoutput-derived carve-out: that row's done is synthesis-assigned
-    (writer-unverified, lesson-less) → NEUTRAL, never a SUCCESS exemplar."""
-    if o.attribution_source == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED:
-        return False
+
+def _render_machine_facts(spawn: TriggeringSpawn) -> str:
+    tool_use = (
+        "unrecorded" if spawn.tool_use_actual is None else str(spawn.tool_use_actual)
+    )
+    attribution = ",".join(spawn.attribution_sources) or "none recorded"
     return (
-        o.result == "done"
-        and o.revision_count == 0
-        # Defensive for standalone/test callers: the partition loop buckets
-        # failures first, so a -1 outcome never reaches here in normal flow.
-        and o.evaluative_signal != -1
+        f"spawn: overage_rows={_neutralize_field(str(spawn.overage_rows))}"
+        f" attribution_source={_neutralize_field(attribution)}"
+        f" verified_fail={_neutralize_field(str(spawn.verified_fail_rows))}"
+        f" tool_use_actual={_neutralize_field(tool_use)}"
     )
-
-
-def _outcome_header(index: int, o: Outcome) -> str:
-    return (
-        f"{index}. result={o.result} confidence={o.confidence!r} "
-        f"metric_pass={o.metric_pass!r} task={o.task_type} "
-        f"revision_count={o.revision_count} "
-        f"evaluative_signal={o.evaluative_signal}"
-    )
-
-
-def _render_outcome_section(
-    outcomes: list[Outcome],
-    *,
-    body_chars_so_far: int,
-    body_budget: int,
-) -> tuple[list[str], int, int]:
-    """Render one polarity section's lines (header always kept, body budget-aware).
-
-    Returns (lines, updated body_chars, bodies_truncated). The body budget is
-    shared ACROSS sections (passed in / accumulated out) so the total prompt
-    body never exceeds body_budget regardless of how records split.
-    """
-    lines: list[str] = []
-    body_chars = body_chars_so_far
-    bodies_truncated = 0
-    for i, o in enumerate(outcomes, start=1):
-        lines.append(_outcome_header(i, o))  # header always — preserve count
-        body_pieces: list[str] = []
-        if o.summary:
-            body_pieces.append(f"   summary: {_neutralize_field(o.summary)}")
-        if o.lesson:
-            body_pieces.append(f"   lesson: {_neutralize_field(o.lesson)}")
-        body_text = "\n".join(body_pieces)
-        if body_text and body_chars + len(body_text) <= body_budget:
-            lines.append(body_text)
-            body_chars += len(body_text)
-        elif body_text:
-            # Over budget — drop BODY only (keep header), count the loud note.
-            bodies_truncated += 1
-    return lines, body_chars, bodies_truncated
-
-
-def _render_generation_outcomes_block(
-    outcomes: list[Outcome],
-    *,
-    body_budget: int = GENERATION_OUTCOMES_BODY_BUDGET_CHARS,
-) -> str:
-    """PRIOR-DAY OUTCOMES block — partitioned by polarity, budget-aware.
-
-    Records split into THREE labeled sections so the optimizer reads failure vs
-    success as distinct prompt signal (SkillOpt R3):
-      - FAILURE  = is_negative_signal_outcome(...) OR evaluative_signal == -1
-      - SUCCESS  = result == "done" AND revision_count == 0 AND signal != -1
-      - NEUTRAL  = everything else, incl. missing-signal legacy records — NEVER
-                   silently counted as success.
-
-    Each outcome's 1-line header is always included (lossless signal count); once
-    the verbatim summary/lesson BODY total exceeds body_budget (chars, shared
-    across all sections), later BODY text is dropped with an explicit loud note.
-    Sequential rendering — sample size is small (no ThreadPoolExecutor).
-    """
-    if not outcomes:
-        return "(no prior-day outcomes sampled)"
-
-    failures: list[Outcome] = []
-    successes: list[Outcome] = []
-    neutrals: list[Outcome] = []
-    for o in outcomes:
-        if _is_failure_outcome(o):
-            failures.append(o)
-        elif _is_success_outcome(o):
-            successes.append(o)
-        else:
-            neutrals.append(o)
-
-    lines: list[str] = []
-    body_chars = 0
-    bodies_truncated = 0
-    sections = (
-        ("FAILURE / CORRECTED OUTCOMES", failures),
-        ("SUCCESS OUTCOMES (clean first-try done)", successes),
-        ("NEUTRAL OUTCOMES (no clear polarity / missing signal)", neutrals),
-    )
-    for label, bucket in sections:
-        lines.append(f"== {label} ({len(bucket)}) ==")
-        if not bucket:
-            lines.append("   (none)")
-            continue
-        section_lines, body_chars, section_truncated = _render_outcome_section(
-            bucket, body_chars_so_far=body_chars, body_budget=body_budget
-        )
-        lines.extend(section_lines)
-        bodies_truncated += section_truncated
-
-    if bodies_truncated:
-        lines.append(
-            f"   [NOTE: {bodies_truncated} outcome bodies omitted to fit the "
-            f"{body_budget}-char prompt budget — headers above are complete; "
-            f"only verbatim summary/lesson text was truncated]"
-        )
-    return "\n".join(lines)
 
 
 _HAIKU_RATIONALE_RE = re.compile(r"^RATIONALE:\s*(.+)$", re.MULTILINE)
@@ -6655,6 +5943,7 @@ def run_pre_verify(
     prompt = _build_pre_verify_prompt(patch, pattern)
     # AD-9: resolve the verifier model (warns on same-class-as-author, advisory).
     verifier_model = resolve_verifier_model()
+    tier_argv, env = _get_tier_call("pre_verify")
 
     try:
         completed = subprocess.run(  # nosec — list form, no shell=True
@@ -6664,12 +5953,13 @@ def run_pre_verify(
                 "--output-format", "text",
                 "--max-budget-usd", PRE_VERIFY_MAX_BUDGET_USD,
                 "--model", verifier_model,
+                *tier_argv,
             ],
             capture_output=True,
             text=True,
             timeout=timeout_sec,
             check=False,
-            env={**os.environ, "OTEL_METRICS_EXPORTER": "none"},
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return PreVerifyResult(
@@ -6749,14 +6039,10 @@ def _report_to_dict(report: CycleReport) -> dict:
         "patterns_processed": report.patterns_processed,
         "cost_guard": report.cost_guard,
         "patches": [asdict(p) for p in report.patches],
-        # AD-10 Solution History runtime observability — tuple-keyed
-        # solution_winners is not JSON-serializable, so emit its count summary.
-        "solution_history": {
-            "cells_retained": len(report.solution_winners),
-            "winners_retained": sum(
-                len(v) for v in report.solution_winners.values()
-            ),
-        },
+        "manifest_ingest": (
+            asdict(report.manifest_ingest) if report.manifest_ingest is not None else None
+        ),
+        "power_check": report.power_check,
     }
 
 
@@ -6967,90 +6253,110 @@ def emit_loop_events(report: CycleReport) -> int:
 
 # -- cycle-level all-reject alert --------------------------------------------
 
-# Statuses every all-reject discriminator reads as terminal-negative. Named once
+# Terminal non-output statuses every all-reject discriminator reads. Named once
 # so the in-memory and the persisted walk cannot drift apart on the set.
-_TERMINAL_NEGATIVE_STATUSES = frozenset({"rejected", "reverted"})
+# 'unadjudicated' only reaches _is_non_adjudication_reject here, never counts.
+_TERMINAL_NEGATIVE_STATUSES = frozenset({"rejected", "reverted", "unadjudicated"})
 
 
 def _is_non_adjudication_reject(status: str, rationale: str | None) -> bool:
-    """A 'rejected' row the classifier SoT says was never genuinely adjudicated.
+    """A terminal row that was never genuinely adjudicated.
 
     The single discriminator both all-reject walks and consecutive_reject_count
     set a row aside on, delegated to classify_failure_rationale — never a
     parallel rationale.startswith(...) test, and never a status/agent carve-out
     per infra class.
 
-    Status-gated deliberately: ONLY a 'rejected' row is classifiable. A
+    Status-gated deliberately: an 'unadjudicated' row is set aside by status
+    alone — its writer already classified it non-adjudicating. Of the rest ONLY
+    a 'rejected' row is classifiable. A
     'pending'/'snoozed'/'applied' row is pipeline output and is judged by status
     alone — classifying it would let a blank-rationale queued row vanish instead
     of breaking the streak, silently extending it over a night that shipped.
     'reverted' is terminal by status for the same reason, in the other direction.
     """
+    if status == "unadjudicated":
+        return True
     return (
         status == "rejected"
         and classify_failure_rationale(rationale or "") in _NON_ADJUDICATION_CLASSES
     )
 
 
-def _all_reject_streak_from_rows(rows: list[tuple[object, str, str | None]]) -> int:
-    """Leading run of all-reject dates over (cycle_date, status, rationale) rows.
+CYCLE_VERDICT = SimpleNamespace(
+    # core."CycleVerdict" labels — one cycle date's state in the all-reject walk
+    EXTENDS="extends",
+    NEUTRAL="neutral",
+    BREAKS="breaks",
+)
+_CYCLE_VERDICTS_MIGRATION = "20261008000000_add_trial_ledger_and_cycle_verdicts"
+# Walk horizon in DISTINCT DATES; the backfill reads the same horizon of reports
+_ALL_REJECT_HORIZON_DATES = 400
 
-    Rows arrive newest-date-first, so equal dates are contiguous. Per date:
-    any row that is not terminal-negative breaks the walk (a queued or applied
-    row is pipeline output); a date whose rejects ALL classify non-adjudicating
-    drops out like a quiet night — neither extending nor breaking; a date
-    carrying >=1 adjudicating reject extends.
+
+def _get_date_verdict(rows: Iterable[tuple[str, str | None]]) -> str:
+    """One cycle date's (status, rationale) rows → its CYCLE_VERDICT label.
+
+    Any row that is not terminal-negative breaks (a queued or applied row is
+    pipeline output); a date whose rejects ALL classify non-adjudicating is
+    neutral, like a quiet night; a date carrying >=1 adjudicating reject extends.
     """
+    verdict = CYCLE_VERDICT.NEUTRAL
+    for status, rationale in rows:
+        if status not in _TERMINAL_NEGATIVE_STATUSES:
+            return CYCLE_VERDICT.BREAKS
+        if not _is_non_adjudication_reject(status, rationale):
+            verdict = CYCLE_VERDICT.EXTENDS
+    return verdict
+
+
+def _get_streak_from_verdicts(verdicts: Iterable[str]) -> int:
+    """Leading run of extending dates over verdicts newest-first; neutral skips, breaks stops."""
     streak = 0
-    for _cycle_date, date_rows in groupby(rows, key=lambda row: row[0]):
-        extends = False
-        for _date, status, rationale in date_rows:
-            if status not in _TERMINAL_NEGATIVE_STATUSES:
-                return streak
-            if _is_non_adjudication_reject(status, rationale):
-                continue
-            extends = True
-        if extends:
+    for verdict in verdicts:
+        if verdict == CYCLE_VERDICT.BREAKS:
+            return streak
+        if verdict == CYCLE_VERDICT.EXTENDS:
             streak += 1
     return streak
 
 
-def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
-    """Leading run of persisted cycles whose proposals were ALL adjudicating rejects.
+def _all_reject_streak_from_rows(rows: list[tuple[object, str, str | None]]) -> int:
+    """Leading run of all-reject dates over (cycle_date, status, rationale) rows.
 
-    Reads (cycle_date, status, rationale) for every proposal on the most recent
-    cycle_dates STRICTLY BEFORE the current cycle (the current cycle is judged
-    from the in-memory report — excluding it here prevents a same-day re-run from
-    double-counting today) and hands them to _all_reject_streak_from_rows, which
-    applies the classify_failure_rationale SoT: the read cannot call it, so the
-    grouping and the classification happen in Python. A supersede / quota / auth /
-    chronic-timeout / skipped / below-floor / parked-pattern date drops out like a
-    quiet night, so a back-off marker date needs no status carve-out of its own.
-    PG unavailable / read error → 0 (fail-open: a read failure must never
-    fabricate an alert).
+    Rows arrive newest-date-first, so equal dates are contiguous; each date is
+    judged by _get_date_verdict — the same state a stored verdict row carries.
+    """
+    return _get_streak_from_verdicts(
+        _get_date_verdict((status, rationale) for _date, status, rationale in date_rows)
+        for _cycle_date, date_rows in groupby(rows, key=lambda row: row[0])
+    )
+
+
+def _has_cycle_verdicts_table(cur: object) -> bool:
+    cur.execute("SELECT to_regclass('core.autoagent_cycle_verdicts')")
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
+    """Leading run of persisted all-reject cycles STRICTLY BEFORE the current one.
+
+    Walks the stored cycle-time verdicts (core.autoagent_cycle_verdicts), so a
+    later status change on a past proposal cannot rewrite a past date. The
+    current cycle is judged from the in-memory report — excluding it here keeps
+    a same-day re-run from double-counting today. A schema without the verdict
+    table falls back to the proposals walk with a DEGRADED line naming the
+    migration. PG unavailable / read error → 0 (fail-open: a read failure must
+    never fabricate an alert).
     """
     if not HAS_PG_LOOP_WRITE or not current_cycle_date:
         return 0
-
-    select_sql = (
-        "SELECT cycle_date, status::text, rationale "
-        "FROM core.autoagent_proposals "
-        # The bound is on DISTINCT DATES, not rows — the table carries several
-        # rows per cycle_date, so a row-count LIMIT of the same size would
-        # quietly shrink the horizon and flatten a genuinely long streak. The
-        # walk still short-circuits at the first non-rejected cycle, so this
-        # only bounds the worst case (a genuinely long all-reject run).
-        "WHERE cycle_date IN ("
-        "SELECT cycle_date FROM core.autoagent_proposals "
-        "WHERE cycle_date < %s::date "
-        "GROUP BY cycle_date ORDER BY cycle_date DESC LIMIT 400) "
-        "ORDER BY cycle_date DESC"
-    )
     try:
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(select_sql, (current_cycle_date,))
-                rows = cur.fetchall()
+        with _pg_connect() as conn, conn.cursor() as cur:
+            if _has_cycle_verdicts_table(cur):
+                return _get_stored_verdict_streak(cur, current_cycle_date)
+            rows = _get_proposal_streak_rows(cur, current_cycle_date)
     except Exception as exc:  # noqa: BLE001 — fail-OPEN: read error must not alert
         sys.stderr.write(
             f"[daemon-cycle] all-reject alert: PG read failed — "
@@ -7059,6 +6365,159 @@ def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
         return 0
 
     return _all_reject_streak_from_rows(rows)
+
+
+def _get_stored_verdict_streak(cur: object, current_cycle_date: str) -> int:
+    """Leading all-reject run over the stored verdicts of the horizon dates before the current."""
+    cur.execute(
+        "SELECT verdict::text FROM core.autoagent_cycle_verdicts "
+        "WHERE cycle_date < %s::date ORDER BY cycle_date DESC LIMIT %s",
+        (current_cycle_date, _ALL_REJECT_HORIZON_DATES),
+    )
+    return _get_streak_from_verdicts(row[0] for row in cur.fetchall())
+
+
+def _get_proposal_streak_rows(
+    cur: object, current_cycle_date: str
+) -> list[tuple[object, str, str | None]]:
+    """(cycle_date, status, rationale) rows of the horizon dates before the current, newest first.
+
+    The fallback walk for a schema without the verdict table — announced by a DEGRADED line.
+    """
+    sys.stderr.write(
+        "[daemon-cycle] all-reject alert: DEGRADED — "
+        "core.autoagent_cycle_verdicts absent (apply migration "
+        f"{_CYCLE_VERDICTS_MIGRATION}); walking proposal statuses\n"
+    )
+    cur.execute(
+        "SELECT cycle_date, status::text, rationale "
+        "FROM core.autoagent_proposals "
+        # bound on DISTINCT DATES — a row LIMIT would shrink the horizon, several rows per date
+        "WHERE cycle_date IN ("
+        "SELECT cycle_date FROM core.autoagent_proposals "
+        "WHERE cycle_date < %s::date "
+        "GROUP BY cycle_date ORDER BY cycle_date DESC LIMIT %s) "
+        "ORDER BY cycle_date DESC",
+        (current_cycle_date, _ALL_REJECT_HORIZON_DATES),
+    )
+    return cur.fetchall()
+
+
+def create_cycle_verdicts(report: CycleReport, *, reports_dir: Path = DEFAULT_REPORTS_DIR) -> int:
+    """Insert this cycle's verdict plus one per earlier report date with no row → rows inserted.
+
+    Insert-only (ON CONFLICT DO NOTHING): a same-day re-run and a repeated
+    backfill write nothing. The backfill reads the status-bearing cycle reports
+    of the walk's horizon; a date with neither a row nor such a report stays
+    absent. A schema without the table skips with a line naming the migration.
+    Raises on any other PG fault — the caller logs and skips.
+    """
+    if not HAS_PG_LOOP_WRITE or not report.cycle_date:
+        return 0
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            if not _has_cycle_verdicts_table(cur):
+                sys.stderr.write(
+                    "[daemon-cycle] cycle verdicts: SKIP — core.autoagent_cycle_verdicts "
+                    f"absent (apply migration {_CYCLE_VERDICTS_MIGRATION})\n"
+                )
+                return 0
+            inserted = _create_verdict_rows(cur, report, reports_dir)
+        conn.commit()
+    return inserted
+
+
+def _create_verdict_rows(cur: object, report: CycleReport, reports_dir: Path) -> int:
+    cur.execute(
+        "SELECT cycle_date::text FROM core.autoagent_cycle_verdicts WHERE cycle_date < %s::date",
+        (report.cycle_date,),
+    )
+    stored_dates = {row[0] for row in cur.fetchall()}
+    backfill = _get_report_backfill(reports_dir, report.cycle_date, stored_dates)
+    inserted = 0
+    for cycle_date, verdict in [(report.cycle_date, _get_report_verdict(report)), *backfill]:
+        cur.execute(
+            "INSERT INTO core.autoagent_cycle_verdicts (cycle_date, verdict) "
+            'VALUES (%s::date, %s::core."CycleVerdict") ON CONFLICT (cycle_date) DO NOTHING',
+            (cycle_date, verdict),
+        )
+        inserted += cur.rowcount == 1
+    sys.stderr.write(
+        f"[daemon-cycle] cycle verdicts: inserted={inserted} backfill_candidates={len(backfill)}\n"
+    )
+    return inserted
+
+
+def _get_report_backfill(
+    reports_dir: Path, current_cycle_date: str, stored_dates: set[str]
+) -> list[tuple[str, str]]:
+    """(cycle_date, verdict) per horizon report date before the current one that has no row.
+
+    A report counts only when every patch carries a status — older reports
+    predate the field. An unreadable or malformed report is named on stderr and
+    skipped, so no report can suppress the current date's insert.
+    """
+    backfill: list[tuple[str, str]] = []
+    for day, path in _get_horizon_reports(reports_dir, current_cycle_date):
+        if day in stored_dates:
+            continue
+        rows = _get_readable_report_rows(path)
+        if rows is not None:
+            backfill.append((day, _get_date_verdict(rows)))
+    return backfill
+
+
+def _get_horizon_reports(reports_dir: Path, current_cycle_date: str) -> list[tuple[str, Path]]:
+    """(date, path) of the horizon's report dates before the current one, newest first."""
+    report_paths = {
+        path.name.removeprefix("autoagent-").removesuffix(".json"): path
+        for path in reports_dir.glob("autoagent-*.json")
+    }
+    horizon = sorted(
+        (day for day in report_paths if _is_iso_date(day) and day < current_cycle_date),
+        reverse=True,
+    )[:_ALL_REJECT_HORIZON_DATES]
+    return [(day, report_paths[day]) for day in horizon]
+
+
+def _get_readable_report_rows(path: Path) -> list[tuple[str, str | None]] | None:
+    """_get_report_rows of one report; None, named on stderr, when it is unreadable or malformed."""
+    try:
+        return _get_report_rows(path)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        sys.stderr.write(
+            f"[daemon-cycle] cycle verdicts: WARN — report {path} "
+            f"unreadable or malformed, date left absent: {type(exc).__name__}: "
+            f"{str(exc)[:200]}\n"
+        )
+        return None
+
+
+def _get_report_rows(path: Path) -> list[tuple[str, str | None]] | None:
+    """A report's (status, rationale) rows; None when a patch predates the status field.
+
+    Raises ValueError on a shape no status-bearing report has, so the caller
+    names the file instead of deriving a verdict from it.
+    """
+    patches = json.loads(path.read_text(encoding="utf-8"))["patches"]
+    if not isinstance(patches, list):
+        raise ValueError("patches is not a list")
+    rows: list[tuple[str, str | None]] = []
+    for patch in patches:
+        if not isinstance(patch, dict):
+            raise ValueError("a patch is not an object")
+        status, rationale = patch.get("status"), patch.get("rationale")
+        if not all(value is None or isinstance(value, str) for value in (status, rationale)):
+            raise ValueError("a patch status or rationale is not a string")
+        rows.append((status, rationale))
+    return rows if all(status for status, _ in rows) else None
+
+
+def _is_iso_date(text: str) -> bool:
+    try:
+        return date.fromisoformat(text).isoformat() == text
+    except ValueError:
+        return False
 
 
 def _days_since_last_applied(current_cycle_date: str | None) -> int:
@@ -7124,16 +6583,12 @@ def _all_rejected_this_cycle(report: CycleReport) -> bool:
     terminal-non-resurrectable, NOT live pipeline output, so it must never
     resurrect the healthy-output claim.
     """
-    counted_patches = [
-        patch
-        for patch in report.patches
-        if not _is_non_adjudication_reject(patch.status, patch.rationale)
-    ]
-    if not counted_patches:
-        return False
-    return all(
-        patch.status in _TERMINAL_NEGATIVE_STATUSES for patch in counted_patches
-    )
+    return _get_report_verdict(report) == CYCLE_VERDICT.EXTENDS
+
+
+def _get_report_verdict(report: CycleReport) -> str:
+    """The in-memory cycle's CYCLE_VERDICT — the state create_cycle_verdicts stores."""
+    return _get_date_verdict((patch.status, patch.rationale) for patch in report.patches)
 
 
 def is_systemic_regression(report: CycleReport) -> bool:
@@ -7201,6 +6656,40 @@ def alert_all_reject_streak(report: CycleReport) -> None:
     )
 
 
+def alert_auth_outage(report: CycleReport, *, skip_loop_emit: bool) -> None:
+    """Credential-outage CRIT — stderr line, plus one loop event unless skip_loop_emit.
+
+    Precondition Loud-Fail's second and third legs beside ExitCode.AUTH_OUTAGE;
+    the event is census class, one row per (cycle instant, daemon-cycle, cause).
+    """
+    sys.stderr.write(
+        "[daemon-cycle] CRIT: auth outage — cost guard 'infra_fault': a credential "
+        "failure (401) stopped this cycle's generation; re-authenticate the claude "
+        f"CLI; exit {int(ExitCode.AUTH_OUTAGE)}\n"
+    )
+    if skip_loop_emit:
+        return
+    try:
+        _invoke_pg_helper(
+            {
+                "op": "write_autoagent_loop_event",
+                "args": {
+                    "event_ts": report.generated_at,
+                    "agent": "daemon-cycle",
+                    "eval_result": AUTH_OUTAGE_EVAL_RESULT,
+                    "changes_added": 0,
+                    "changes_removed": 0,
+                    "rice": None,
+                    "subject": None,
+                },
+            }
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; the exit code still reports it
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: auth-outage loop event lost: {_describe_fault(exc)}\n"
+        )
+
+
 # -- post-apply regression watch (C1, detection-only) ------------------------
 
 
@@ -7208,14 +6697,13 @@ def _is_soft_negative_outcome(row: dict) -> bool:
     """Soft-negative for the post-apply regression watch — the shared trigger SoT.
 
     Thin named wrapper over _pg_learning_dualwrite.is_negative_signal_outcome,
-    the same predicate the aggregator emits on and _live_failure_stats
-    recomputes with (the generation polarity partition's sync mandate). Beyond
-    the retired hand-built composite this inherits the synthesized-measurement-
+    the same predicate the aggregator emits on, so the watch and the emit
+    cannot drift. Beyond the retired hand-built composite this inherits the synthesized-measurement-
     gap carve-out (a completion-synthesized done_with_concerns row is a
     measurement artifact, not a regression signal), the structural review_flag
     carve-out, and the grader_verdict=verified_fail term. Soft keying stays
-    deliberate: 0 result=fail rows across 4160 lifetime outcomes make
-    hard-failure keying dead. Reachable only under HAS_PG_OUTCOME_READ (the
+    deliberate: with no result=fail row among the recorded outcomes,
+    hard-failure keying is dead. Reachable only under HAS_PG_OUTCOME_READ (the
     alert gate), where the imported alias is bound.
     """
     return _pg_is_negative_signal_outcome(row)
@@ -7260,6 +6748,7 @@ def _split_outcome_windows(
 def _fetch_applied_proposals() -> list[tuple] | None:
     """Recently APPLIED proposal rows for the regression watch, newest-first.
 
+    Row: (id, target_agent, cycle_date, reviewed_at, target_file, proposed_diff).
     reviewed_at is the apply-side status-flip timestamp (daemon-apply.sh
     update_db_status) — the pre/post window boundary. Bounded to the outcome
     lookback window (an older apply has no comparable outcome history) with
@@ -7270,7 +6759,7 @@ def _fetch_applied_proposals() -> list[tuple] | None:
         return None
 
     select_sql = (
-        "SELECT id, target_agent, cycle_date, reviewed_at "
+        "SELECT id, target_agent, cycle_date, reviewed_at, target_file, proposed_diff "
         "FROM core.autoagent_proposals "
         "WHERE status::text = 'applied' AND reviewed_at IS NOT NULL "
         "AND target_agent IS NOT NULL "
@@ -7296,13 +6785,61 @@ def _backup_subdir_path(cycle_date: object, proposal_id: object) -> Path:
 
     Derivation parity with daemon-apply.sh: BACKUP_DIR
     (${AUTOAGENT_BACKUP_DIR:-<root>/agents-bak}) + '<cycle>_p<id>'. Existence
-    is NOT checked — retention prune may already have dropped the subdir; the
-    WARN names the recorded rollback anchor either way.
+    is the caller's check — retention prune may already have dropped the subdir.
     """
     backup_root = os.environ.get("AUTOAGENT_BACKUP_DIR") or str(
         Path(__file__).resolve().parent.parent / "agents-bak"
     )
     return Path(backup_root) / f"{cycle_date}_p{proposal_id}"
+
+
+def _is_applied_edit_gone(proposed_diff: str | None, target_file: str) -> bool:
+    """True iff no added content line of the applied diff remains in the target body.
+
+    Verbatim line match, blank adds ignored (`_added_content_lines`). A diff with
+    no added content stays watched — its presence is undecidable. An unreadable or
+    non-UTF-8 body holds none of the lines → True, with a named stderr line.
+    """
+    added = _added_content_lines(proposed_diff or "")
+    if not added:
+        return False
+    target_path = Path(target_file)
+    if not target_path.is_absolute():
+        target_path = ga_paths.get_base_root() / target_path
+    try:
+        body_lines = set(target_path.read_text(encoding="utf-8").splitlines())
+    except (OSError, UnicodeDecodeError) as exc:
+        sys.stderr.write(
+            f"[daemon-cycle] post-apply watch: target body unreadable — {target_path} "
+            f"({type(exc).__name__}); its applied edit counts as gone\n"
+        )
+        return True
+    return not any(line.rstrip("\n") in body_lines for line in added)
+
+
+def _get_revert_hint(cycle_date: object, proposal_id: object) -> str:
+    """WARN tail: the before-image restore path while it exists, else that it was pruned.
+
+    A pruned before-image leaves no file to restore, and a 'reverted' status
+    without a restore would record a revert that never happened — so the
+    pruned branch names no revert path.
+    """
+    detection_only = (
+        "DETECTION-ONLY — no auto-revert, no status mutation, no safety-queue insert; "
+        "loop event emitted"
+    )
+    backup_subdir = _backup_subdir_path(cycle_date, proposal_id)
+    if not backup_subdir.is_dir():
+        return (
+            "before-image: pruned by agents-bak retention — no file revert path; "
+            f"{detection_only}"
+        )
+    return (
+        f"before-image: {backup_subdir}; {detection_only}; revert path (human/CLI): "
+        "restore the agent file from the before-image, then psql: "
+        "UPDATE core.autoagent_proposals SET status='reverted' "
+        f"WHERE id={proposal_id}"
+    )
 
 
 def alert_post_apply_regression() -> None:
@@ -7315,18 +6852,22 @@ def alert_post_apply_regression() -> None:
     (attribution failures + poisoned_window excluded inside the PG helper).
     Degradation (post rate exceeding pre by >= POST_APPLY_REGRESSION_RATE_DELTA
     with post n >= POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS) emits ONE WARN
-    loop event whose stderr line names the proposal id + agents-bak
-    before-image path. event_ts keys on the proposal's apply timestamp, so the
-    loop-event UPSERT natural key (event_ts, agent, eval_result) dedups a
-    same-cycle re-run and every later re-detection into a single row.
+    loop event whose stderr line names the proposal id + the agents-bak
+    before-image path, or that retention pruned it. A proposal whose added lines
+    all left the target body is skipped (_is_applied_edit_gone): the WARN would
+    point at an edit no longer there. event_ts keys on the proposal's apply
+    timestamp, so the loop-event UPSERT natural key (event_ts, agent,
+    eval_result) dedups a same-cycle re-run and every later re-detection into
+    a single row.
 
     Detection-only invariant: zero agent-file writes, zero proposal-status
     mutations, zero safety-queue inserts — the only write is the loop event.
     A human/CLI revert (status 'reverted') is the follow-up the WARN enables,
-    never an automatic action — the stderr line names the concrete path
-    (before-image restore + the status='reverted' UPDATE), since no setter
-    exists anywhere in the pipeline. Once set, _fetch_applied_proposals'
-    status='applied' predicate drops the row, so the WARN stops re-firing.
+    never an automatic action — while the before-image exists, the stderr line
+    names the concrete path (before-image restore + the status='reverted'
+    UPDATE), since no setter exists anywhere in the pipeline. Once set,
+    _fetch_applied_proposals' status='applied' predicate drops the row, so the
+    WARN stops re-firing.
     """
     if not HAS_PG_LOOP_WRITE or not HAS_PG_OUTCOME_READ or not HAS_CONFIDENCE_LIB:
         return
@@ -7336,8 +6877,10 @@ def alert_post_apply_regression() -> None:
         return
 
     lookback_seconds = PG_OUTCOME_LOOKBACK_DAYS * 86400
-    for proposal_id, agent, cycle_date, applied_ts in applied_rows:
+    for proposal_id, agent, cycle_date, applied_ts, target_file, diff in applied_rows:
         if not agent or applied_ts is None:
+            continue
+        if _is_applied_edit_gone(diff, target_file):
             continue
         window_rows = _pg_read_outcomes_since(
             applied_ts.timestamp() - lookback_seconds, agent=agent
@@ -7350,18 +6893,12 @@ def alert_post_apply_regression() -> None:
         if post_rate - pre_rate < POST_APPLY_REGRESSION_RATE_DELTA:
             continue
 
-        backup_subdir = _backup_subdir_path(cycle_date, proposal_id)
         sys.stderr.write(
             f"[daemon-cycle] WARN: post-apply regression — proposal "
             f"id={proposal_id} agent={agent} soft-negative rate "
             f"pre={pre_rate:.3f} → post={post_rate:.3f} "
             f"(delta >= {POST_APPLY_REGRESSION_RATE_DELTA}, "
-            f"post n={len(post_rows)}); before-image: {backup_subdir}; "
-            "DETECTION-ONLY — no auto-revert, no status mutation, no "
-            "safety-queue insert; loop event emitted; revert path (human/CLI): "
-            "restore the agent file from the before-image, then psql: "
-            "UPDATE core.autoagent_proposals SET status='reverted' "
-            f"WHERE id={proposal_id}\n"
+            f"post n={len(post_rows)}); {_get_revert_hint(cycle_date, proposal_id)}\n"
         )
         _invoke_pg_helper(
             {
@@ -7877,7 +7414,7 @@ def backfill_auth_mislabeled_proposals(
 
     Loud-fail (shared-self-improve-hygiene): a PG error is logged with a named
     type and re-raised (NO 2>/dev/null / || true absorption); `_main` maps it to
-    BACKFILL_PG_EXIT_CODE. `dry_run=True` performs evidence collection + row
+    ExitCode.BACKFILL_PG. `dry_run=True` performs evidence collection + row
     selection but skips the UPDATE (returns the would-be changes for inspection).
 
     Returns per-row before/after result dicts for reporting.
@@ -7989,6 +7526,191 @@ def backfill_auth_mislabeled_proposals(
         f"{'would be ' if dry_run else ''}relabeled skipped:auth\n"
     )
     return results
+
+
+# Unadjudicated backfill: relabels stored non-verdict 'rejected' rows to 'unadjudicated' —
+# rows written before the label existed, plus the updater's unlanded rows. Writes status
+# only, so the stored actor survives; every gate before the first connection needs none.
+_UNADJUDICATED_BACKFILL_PAGE_SIZE = 500
+_UNADJUDICATED_BACKFILL_LOG = "[daemon-cycle] unadjudicated backfill"
+_INSTALL_DB_NAME = "glass_atrium"
+_OPERATOR_ACTOR = "monitor-user"
+_UPDATER_RESOLVED_GAP_ACTOR = "updater-resolved-gap"
+_CYCLE_PROCESS_PATHS = ("autoagent/daemon-cycle.sh", "autoagent/daemon_cycle.py")
+_UNADJUDICATED_SELECT_SQL = (
+    "SELECT id, rationale, reviewed_by FROM core.autoagent_proposals "
+    "WHERE status = 'rejected' AND id > %s ORDER BY id LIMIT %s"
+)
+
+
+def backfill_unadjudicated_proposals(reports_dir: Path) -> int:
+    """Relabel non-verdict 'rejected' rows once the caller-held lock and every gate allow.
+
+    Gates in order: DB target, process listing, lock held by an ancestor, no live
+    cycle process, PG helper import, label present. Returns the `_main` exit code;
+    every non-zero leaves the re-arm marker and the completion record as found.
+    """
+    deferral = _get_backfill_deferral(reports_dir)
+    if deferral is not None:
+        return deferral
+    try:
+        with _pg_connect() as conn:
+            label_state = get_proposal_status_label_state(conn)
+            if label_state != "present":
+                _write_backfill_line(f"deferred — 'unadjudicated' label {label_state}")
+                return ExitCode.BACKFILL_DEFERRED
+            relabeled = _relabel_unadjudicated_rows(conn)
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001 — any PG fault → named exit 7, nothing marked done
+        _write_backfill_line(f"aborted (PG): {type(exc).__name__}: {str(exc)[:200]}")
+        return ExitCode.BACKFILL_PG
+    return _complete_backfill(reports_dir, relabeled)
+
+
+def _get_backfill_deferral(reports_dir: Path) -> int | None:
+    """Exit code of the first connection-free gate that refuses, else None."""
+    db_name = os.environ.get("GA_DB_NAME") or _INSTALL_DB_NAME
+    if db_name != _INSTALL_DB_NAME:
+        _write_backfill_line(f"deferred — GA_DB_NAME={db_name!r} is not {_INSTALL_DB_NAME}")
+        return ExitCode.BACKFILL_DEFERRED
+    process_deferral = _get_process_deferral(reports_dir)
+    if process_deferral is not None:
+        return process_deferral
+    if not HAS_PG_LOOP_WRITE:
+        _write_backfill_line(f"aborted — PG helper import failed: {_PG_LOOP_IMPORT_EXC!r}")
+        return ExitCode.BACKFILL_PG
+    return None
+
+
+def _get_process_deferral(reports_dir: Path) -> int | None:
+    """Listing → lock held by an ancestor → no live cycle process; the first refusal's exit code."""
+    listing = _get_process_listing()
+    if listing is None:
+        return ExitCode.BACKFILL_DEFERRED
+    ancestors = _get_ancestor_pids(listing)
+    if ancestors is None:
+        _write_backfill_line("deferred — own pid absent from the ps listing")
+        return ExitCode.BACKFILL_DEFERRED
+    lock_pid = _get_lock_holder_pid(reports_dir / ".apply-lock" / "pid")
+    if lock_pid not in ancestors:
+        _write_backfill_line(f"refused — {reports_dir}/.apply-lock not held by this mode's caller")
+        return ExitCode.BACKFILL_LOCK_NOT_HELD
+    cycle_pid = _find_live_cycle_pid(listing, ancestors)
+    if cycle_pid is not None:
+        _write_backfill_line(f"deferred — live cycle process pid={cycle_pid}")
+        return ExitCode.BACKFILL_DEFERRED
+    return None
+
+
+def _get_process_listing() -> dict[int, tuple[int, str]] | None:
+    """`ps -A` as pid → (ppid, args); None, with a named line, when it fails or does not parse."""
+    ps_bin = os.environ.get("AUTOAGENT_PS_BIN", "ps")
+    try:
+        proc = subprocess.run(
+            [ps_bin, "-A", "-o", "pid=", "-o", "ppid=", "-o", "args="],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _write_backfill_line(f"deferred — ps listing failed: {type(exc).__name__}: {exc}")
+        return None
+    if proc.returncode != 0:
+        _write_backfill_line(f"deferred — ps listing failed: rc={proc.returncode}")
+        return None
+    return _parse_process_listing(proc.stdout)
+
+
+def _parse_process_listing(stdout: str) -> dict[int, tuple[int, str]] | None:
+    listing: dict[int, tuple[int, str]] = {}
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split(None, 2)
+        if len(fields) < 2 or not fields[0].isdigit() or not fields[1].isdigit():
+            _write_backfill_line(f"deferred — ps listing unparseable: {line[:80]!r}")
+            return None
+        listing[int(fields[0])] = (int(fields[1]), fields[2] if len(fields) > 2 else "")
+    return listing
+
+
+def _get_ancestor_pids(listing: dict[int, tuple[int, str]]) -> set[int] | None:
+    """This process and every ancestor the listing names; None when it lacks this process."""
+    pid = os.getpid()
+    if pid not in listing:
+        return None
+    chain: set[int] = set()
+    while pid in listing and pid not in chain:
+        chain.add(pid)
+        pid = listing[pid][0]
+    return chain
+
+
+def _get_lock_holder_pid(pid_file: Path) -> int | None:
+    try:
+        text = pid_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return int(text) if text.isdigit() else None
+
+
+def _find_live_cycle_pid(listing: dict[int, tuple[int, str]], ancestors: set[int]) -> int | None:
+    for pid, (_ppid, args) in sorted(listing.items()):
+        if pid not in ancestors and any(path in args for path in _CYCLE_PROCESS_PATHS):
+            return pid
+    return None
+
+
+def _relabel_unadjudicated_rows(conn: object) -> int:
+    """Keyset-page the 'rejected' rows by id and relabel the targets; returns the count."""
+    update_sql = (
+        f"UPDATE core.autoagent_proposals SET status = {_PG_PROPOSAL_STATUS_SQL} "
+        "WHERE id = ANY(%s) AND status = 'rejected'"
+    )
+    relabeled, after_id = 0, 0
+    while True:
+        with conn.cursor() as cur:
+            cur.execute(_UNADJUDICATED_SELECT_SQL, (after_id, _UNADJUDICATED_BACKFILL_PAGE_SIZE))
+            page = cur.fetchall()
+        if not page:
+            return relabeled
+        after_id = page[-1][0]
+        ids = [row[0] for row in page if _is_unadjudicated_backfill_target(row[1], row[2])]
+        if ids:
+            with conn.cursor() as cur:
+                cur.execute(update_sql, ("unadjudicated", ids))
+                relabeled += cur.rowcount
+
+
+def _is_unadjudicated_backfill_target(rationale: str | None, reviewed_by: str | None) -> bool:
+    """An operator verdict never; an unlanded updater row always; else a non-verdict rationale."""
+    if reviewed_by == _OPERATOR_ACTOR:
+        return False
+    if reviewed_by == _UPDATER_RESOLVED_GAP_ACTOR:
+        return True
+    return classify_failure_rationale(rationale or "") in _NON_ADJUDICATION_CLASSES
+
+
+def _complete_backfill(reports_dir: Path, relabeled: int) -> int:
+    """Record the committed run (temp + rename), then drop the re-arm marker."""
+    record = reports_dir / ".unadjudicated-backfill-done"
+    payload = {"relabeled": relabeled, "written_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        tmp = record.with_name(f"{record.name}.tmp.{os.getpid()}")
+        tmp.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        tmp.replace(record)
+        (reports_dir / ".unadjudicated-backfill-pending").unlink(missing_ok=True)
+    except OSError as exc:
+        _write_backfill_line(
+            f"committed {relabeled} row(s), but the record or marker write failed "
+            f"(re-run retries it): {type(exc).__name__}: {exc}"
+        )
+        return ExitCode.BACKFILL_RECORD_FAILED
+    _write_backfill_line(f"committed — {relabeled} row(s) relabeled unadjudicated")
+    return 0
+
+
+def _write_backfill_line(message: str) -> None:
+    sys.stderr.write(f"{_UNADJUDICATED_BACKFILL_LOG}: {message}\n")
 
 
 # -- single-proposal regen + validity gate (accept path) --------------------
@@ -8320,11 +8042,11 @@ def supersede_prior_pending_for_agent(
     cycle_date: str,
     pattern_label: str,
 ) -> int:
-    """Terminate the same agent's OTHER pending proposals → 'rejected'.
+    """Terminate the same agent's OTHER pending proposals → 'unadjudicated'.
 
     One proposal per agent per cycle — but a leftover same-agent PENDING row
     re-accumulates backlog across multiple rows. The new proposal has fresher
-    data + current-file anchoring, so supersede (transition to rejected) the
+    data + current-file anchoring, so supersede (transition to unadjudicated) the
     others to block same-agent duplicate accumulation.
 
     The run's OWN row is excluded by the (cycle_date, pattern_label, target_file)
@@ -8334,10 +8056,11 @@ def supersede_prior_pending_for_agent(
     have applied. Everything else still transitions, including a same-cycle row
     under a drifted label.
 
-    monitor has no dedicated supersede enum, so this is marked 'rejected' +
-    rationale + the supersede actor (ProposalStatus enum preserved — no schema
-    change). The stamp is per row: the run's own cycle date carries the
-    same-cycle tail, an older row the cross-day tail.
+    A supersede is not a gate verdict, so the row takes 'unadjudicated' +
+    rationale + the supersede actor; on a schema without that label the shared
+    status fragment stores 'rejected' and the backfill relabels it. The stamp is
+    per row: the run's own cycle date carries the same-cycle tail, an older row
+    the cross-day tail.
 
     Loud-fail: PG errors logged via named exception + re-raised. PG unavailable →
     return 0 (supersede skipped — the new proposal still emits normally).
@@ -8350,7 +8073,7 @@ def supersede_prior_pending_for_agent(
         pattern_label: the consolidated label the run's own push will own.
 
     Returns:
-        count of other pending rows terminated (transitioned to rejected).
+        count of other pending rows terminated.
     """
     if not HAS_PG_LOOP_WRITE:
         sys.stderr.write(
@@ -8374,7 +8097,7 @@ def supersede_prior_pending_for_agent(
     # will update, so it must survive its own supersede.
     update_sql = (
         "UPDATE core.autoagent_proposals "
-        "SET status = 'rejected', "
+        f"SET status = {_PG_PROPOSAL_STATUS_SQL}, "
         "rationale = CASE WHEN cycle_date = %s::date THEN %s ELSE %s END, "
         "reviewed_by = %s "
         "WHERE status = 'pending' "
@@ -8384,6 +8107,7 @@ def supersede_prior_pending_for_agent(
         "RETURNING id"
     )
     update_params = (
+        "unadjudicated",
         cycle_date,
         _SUPERSEDE_REASON_SAME_CYCLE,
         _SUPERSEDE_REASON_CROSS_DAY,
@@ -8411,9 +8135,74 @@ def supersede_prior_pending_for_agent(
         sys.stderr.write(
             f"[daemon-cycle] supersede: agent={target_agent} terminated "
             f"{len(superseded_ids)} other pending row(s) ids={superseded_ids} "
-            f"→ rejected (fresher per-agent proposal)\n"
+            f"→ unadjudicated (fresher per-agent proposal)\n"
         )
     return len(superseded_ids)
+
+
+# Generation closed: stored pending auto rows
+
+
+# Head of every generation-closed rationale; classify_failure_rationale
+# prefix-tests against it, so the stored rationale follows it as a tail.
+_GENERATION_CLOSED_REASON = "generation closed until live trials"
+
+# Actor token from the closed set declared at monitor/prisma/schema.prisma →
+# AutoagentProposal.reviewedBy — a mechanical close, never a review.
+_GENERATION_CLOSED_ACTOR = "daemon-cycle-generation-closed"
+
+# Generation is closed until live trials: a constant, never read from a file, env or
+# config, so every install runs run_cycle's closed branch.
+IS_GENERATION_CLOSED = True
+
+
+def update_generation_closed_proposals() -> int:
+    """Terminalize every stored pending auto proposal → 'unadjudicated'.
+
+    With generation closed no cycle re-decides a stored auto candidate, so it
+    would wait pending forever. One idempotent statement closes every such row
+    each cycle: the status fragment stores 'unadjudicated' ('rejected' on a
+    schema without that label, relabeled later by the backfill), the rationale
+    gains the closed reason as its head, the actor is the closed token, and
+    reviewed_at stays untouched — no verdict was made.
+
+    PG unavailable → named stderr line, returns 0, no connection. A PG error
+    propagates to the caller.
+
+    Returns:
+        count of rows terminalized.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        sys.stderr.write(
+            "[daemon-cycle] generation-closed terminalization: PG unavailable "
+            "(psycopg/helper import failed) — skipped\n"
+        )
+        return 0
+    # ::text → the bound head and the stored text concatenate as text on PG.
+    update_sql = (
+        "UPDATE core.autoagent_proposals "
+        f"SET status = {_PG_PROPOSAL_STATUS_SQL}, "
+        "rationale = %s::text || COALESCE(rationale, ''), "
+        "reviewed_by = %s "
+        "WHERE status = 'pending' AND approval_tier = 'auto' "
+        "RETURNING id"
+    )
+    update_params = (
+        "unadjudicated",
+        f"{_GENERATION_CLOSED_REASON}: ",
+        _GENERATION_CLOSED_ACTOR,
+    )
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(update_sql, update_params)
+            closed_ids = [row[0] for row in cur.fetchall()]
+        conn.commit()
+    if closed_ids:
+        sys.stderr.write(
+            f"[daemon-cycle] generation closed: terminalized {len(closed_ids)} "
+            f"pending auto row(s) ids={closed_ids} → unadjudicated\n"
+        )
+    return len(closed_ids)
 
 
 # -- Chronic Haiku-timeout back-off (generation side) -----------------------
@@ -8562,7 +8351,7 @@ def backoff_skip_proposal(target_file: str, streak: int) -> PatchProposal:
     No Haiku call was made — this is the loud, persisted record of the back-off
     decision (per shared-self-improve-hygiene Precondition Loud-Fail: the skip is
     surfaced in the proposal row, never silent). Empty diff + a back-off rationale
-    + parse_mode='skipped'. run_cycle maps this to a terminal 'rejected' row whose
+    + parse_mode='skipped'. run_cycle maps this to a terminal 'unadjudicated' row whose
     `error` field stays EMPTY, so the cycle does not flip to 'partial'.
 
     Args:
@@ -8644,9 +8433,9 @@ def drop_reject_streak_patterns(
     Args:
         agent: pattern target agent (group key).
         patterns: the agent's intake patterns (freq DESC).
-        rows: pre-fetched _fetch_proposal_history result — run_cycle shares one
-            fetch across both proposal-history gates (read-only here). None →
-            self-fetch (backward-compatible for direct callers).
+        rows: pre-fetched _fetch_proposal_history result — _run_generation_loop
+            shares one fetch across both proposal-history gates (read-only
+            here). None → self-fetch (backward-compatible for direct callers).
 
     Returns:
         surviving patterns, input order preserved.
@@ -8757,15 +8546,10 @@ def drop_apply_capped_patterns(
     underlying problem is discharged, which the still-accumulating live signal
     refutes. Pinned by TestApplyCapNamingBoundary.
 
-    Evidence caveat: selection-implies-emission holds only while the staleness
-    gate can actually run. drop_stale_patterns recomputes the live rate for the
-    label families it knows, and for a family it does NOT know it falls back to
-    the family-independent re-observation check (no aggregator re-emit within
-    STALE_WINDOW_DAYS → snoozed). What still fails OPEN is narrow — an unreadable
-    live-stats read, or an unknown family whose row WAS re-observed recently —
-    and that residue is no longer silent (STALE_UNKNOWN_FAMILY_EVAL loop event +
-    stderr WARN). So a high apply count is strong evidence of non-abatement, NOT
-    proof of it.
+    Evidence caveat: selection implies a passing pair — drop_pair_failing_patterns
+    keeps a keyed row only on a passing S2f pair this cycle and skips it when the
+    floor is unreadable. So a high apply count is strong evidence of
+    non-abatement, NOT proof of it.
 
     False-positive cost — NOT one manual status reset, and the threshold is not
     sized on a claim that it is. A parked row has no re-arm at all: setting its
@@ -8787,9 +8571,9 @@ def drop_apply_capped_patterns(
     Args:
         agent: pattern target agent (group key).
         patterns: the agent's intake patterns (freq DESC).
-        rows: pre-fetched _fetch_proposal_history result — run_cycle shares one
-            fetch across every proposal-history gate (read-only here). None →
-            self-fetch (backward-compatible for direct callers).
+        rows: pre-fetched _fetch_proposal_history result — _run_generation_loop
+            shares one fetch across every proposal-history gate (read-only
+            here). None → self-fetch (backward-compatible for direct callers).
 
     Returns:
         surviving patterns, input order preserved.
@@ -8860,7 +8644,7 @@ def drop_non_auto_fixable_patterns(
 
     Shares the terminal action (``_terminalize_pattern``) with
     ``drop_reject_streak_patterns`` — the sibling that also TERMINALIZES (vs.
-    ``drop_stale_patterns``, which only snoozes for a cycle).
+    ``drop_pair_failing_patterns``, which only skips for a cycle).
 
     Fail-open: proposal-diff read failure / synthetic row_id / no covering
     out-of-region MODIFY → pattern kept. A failed transition (PG write error) still
@@ -8898,145 +8682,2309 @@ def drop_non_auto_fixable_patterns(
     return kept
 
 
-def _stale_family_known(pattern_label: str) -> bool:
-    """Whether _stale_reason can recompute this label's family from live stats.
+def _get_utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
-    These two families are the ONLY ones it implements, and the aggregator emits
-    more (budget-overage / size-est concentrations, per-task_type low-success-rate
-    rows). Named so the caller can BRANCH on ignorance rather than swallow it in a
-    "" return indistinguishable from "recomputed, still live".
+
+def drop_pair_failing_patterns(agent: str, patterns: list[Pattern]) -> list[Pattern]:
+    """Intake re-check: keep a keyed pattern only while its S2f pair passes (N49).
+
+    Reads the pair the aggregator's status sweep reads — the UTC-day windows of
+    get_pair_windows and the floors of read_pattern_floors — and, like it, evaluates pending
+    at the windows' end, the day anchor: on one UTC day both actors read identical windows
+    at one instant, so a no-SubagentStop spawn started within PENDING_GRACE before the anchor
+    is pending for both all day. Intake rows are 'identified', and the aggregator's
+    last_transition_at anchor gates only a 'dormant' row's re-entry, so no anchor
+    applies here either. A failing or unreadable pair skips the pattern this cycle
+    with a named reason (fail closed — an outage is never a pass); no status write,
+    the aggregator owns the move to 'dormant'.
     """
-    label = (pattern_label or "").strip()
-    return label.startswith(_FAIL_COUNT_LABEL_PREFIXES) or label.startswith(
-        _FAIL_RATE_LABEL_PREFIXES
-    )
-
-
-def _reobservation_reason(pattern_date: str, today: date) -> str:
-    """'' when the row was re-observed inside the window, else the snooze reason.
-
-    Family-INDEPENDENT, which is the whole point: every label family the live-rate
-    recompute does not know used to fail open FOREVER, so a pattern whose evidence
-    had gone quiet stayed selectable indefinitely. The observed fossil is a
-    "size-est under-estimate concentration (...)" row whose six backing
-    observations all predated every patch applied against it — no patch could have
-    abated evidence that stopped arriving before the first one landed, and no gate
-    in the loop had a channel to notice.
-
-    Signal = core.learning_log.discovered_date, carried on Pattern.date and already
-    in hand at intake (no extra read, no projection widening). Despite the column
-    NAME it is a LAST-OBSERVED date. Every writer of the column, in full — the
-    enumeration is the claim, so an incomplete one is worth nothing:
-
-      1. _pg_learning_dualwrite._LEARNING_LOG_UPSERT_SQL — the live aggregator
-         path (learning-aggregator.py passes discovered_date=today). Sets
-         ``discovered_date = EXCLUDED.discovered_date`` on conflict, so every
-         re-emit restamps the row to today; a pattern that is not re-emitted is
-         not UPSERTed at all.
-      2. _pg_outcome_dualwrite._LEARNING_LOG_UPSERT_SQL — same refresh on
-         conflict. DORMANT today: its only producer (track-outcome.sh) emits
-         ``learning_hint: null``, so it writes nothing until that is wired. It
-         omitted the refresh until the fix that added this enumeration, which is
-         exactly the divergence this list exists to make visible.
-      3. _LEARNING_LOG_REJECT_SQL and 4. _LEARNING_LOG_DISCHARGE_SQL — the
-         TERMINAL transitions. Neither touches discovered_date, and both remove
-         the row from intake.
-
-    So a row reaching this gate at status='identified' carries the date of its
-    last aggregator re-observation, from writer 1 or (once wired) writer 2.
-
-    Unparseable / empty date → '' (fail-OPEN — never snooze on a date we cannot
-    read). SNOOZE, never a terminal transition: a future change that stopped
-    refreshing discovered_date would make every unknown-family row look unobserved,
-    which is the fail-CLOSED direction, and a snoozed row re-arms by itself on the
-    next re-observation exactly like the live-rate branch.
-    """
-    try:
-        observed = date.fromisoformat((pattern_date or "").strip()[:10])
-    except ValueError:
-        return ""
-    age = (today - observed).days
-    if age <= STALE_WINDOW_DAYS:
-        return ""
-    return (
-        f"no aggregator re-observation in {age}d (last observed "
-        f"{observed.isoformat()}, window {STALE_WINDOW_DAYS}d); the live-rate "
-        f"recompute does not know this label family"
-    )
-
-
-def drop_stale_patterns(agent: str, patterns: list[Pattern]) -> list[Pattern]:
-    """Staleness gate — skip patterns the LIVE evidence no longer supports.
-
-    core.learning_log frequency accumulates forever, so a pattern can outlive its
-    evidence (the '62%' fossil regenerated proposals weeks after the live rate
-    normalized). Branches on whether the label family is recomputable
-    (_stale_family_known); an unrecomputable one falls back to _reobservation_reason,
-    which is family-independent.
-
-    No lifecycle transition on either branch — every skip here is a one-cycle
-    snooze that re-arms by itself (live rate back over the floor, or the next
-    re-observation).
-
-    Fail-open, and what it now costs: stats unavailable (PG off / read error) →
-    every pattern kept, silently, as before — the read failure is already reported
-    by _live_failure_stats. An unknown family with a fresh or unreadable date →
-    kept, LOUDLY. That residue is the honest remaining hole: a pattern whose family
-    we cannot recompute and whose row keeps being re-observed is never dropped
-    here, and the operator learns it from the loop-event stream instead of nowhere.
-
-    Args:
-        agent: pattern target agent (group key).
-        patterns: the agent's intake patterns (freq DESC).
-
-    Returns:
-        surviving patterns, input order preserved.
-    """
-    stats = _live_failure_stats(agent)
-    if stats is None:
+    if not patterns:
         return patterns
-
-    now = datetime.now(timezone.utc)
-    event_ts = now.strftime("%Y-%m-%dT00:00:00.000Z")
-    today = now.date()
+    windows = get_pair_windows(_get_utc_now())
+    evaluated_at = windows.end
+    floors = (
+        _pg_read_pattern_floors([agent], windows, evaluated_at) if HAS_PG_PATTERN_READ else None
+    )
+    event_ts = evaluated_at.strftime("%Y-%m-%dT00:00:00.000Z")
     kept: list[Pattern] = []
     for pattern in patterns:
-        if _stale_family_known(pattern.label):
-            reason = _stale_reason(pattern.label, stats)
-            if not reason:
-                kept.append(pattern)
-                continue
-            _warn_pattern_skip(
-                agent,
-                pattern.raw_line,
-                event_ts,
-                eval_result="stale-pattern-skip",
-                reason=reason,
-            )
+        floor = None if floors is None else floors.get((agent, pattern.metric_key))
+        if floor is not None and floor.verdict == VERDICT_PASS:
+            kept.append(pattern)
             continue
-        unobserved = _reobservation_reason(pattern.date, today)
-        if unobserved:
-            _warn_pattern_skip(
-                agent,
-                pattern.raw_line,
-                event_ts,
-                eval_result=STALE_UNOBSERVED_EVAL,
-                reason=unobserved,
-            )
-            continue
-        _warn_gate_fail_open(
-            agent,
-            pattern.raw_line,
-            event_ts,
-            eval_result=STALE_UNKNOWN_FAMILY_EVAL,
-            reason=(
-                f"label family not recomputable by the live-rate gate and the row "
-                f"was re-observed within {STALE_WINDOW_DAYS}d (last "
-                f"{pattern.date or 'unknown'}) — kept unchecked this cycle"
-            ),
+        reason = _get_pair_skip_reason(pattern.metric_key, floor, windows.start.detection)
+        _warn_pattern_skip(
+            agent, pattern.raw_line, event_ts, eval_result=PAIR_FAIL_EVAL, reason=reason
         )
-        kept.append(pattern)
     return kept
+
+
+def _get_pair_skip_reason(
+    metric_key: str | None, floor: FloorResult | None, detection_start: datetime
+) -> str:
+    pair = f"{metric_key} pair from {detection_start:%Y-%m-%d}"
+    if floor is None:
+        return f"{pair}: floor unreadable — no verdict, skipped (fail closed); status unchanged"
+    confirmation, baseline = floor.confirmation, floor.baseline
+    return (
+        f"{pair}: {floor.verdict} — confirmation {confirmation.events}/{confirmation.spawns} "
+        f"vs floor-half baseline {baseline.events}/{baseline.spawns}, event sessions "
+        f"{floor.detection.sessions}/{confirmation.sessions}; status unchanged"
+    )
+
+
+POWER = SimpleNamespace(
+    VERDICT=SimpleNamespace(
+        PASSING="passing",
+        UNDERPOWERED="underpowered",
+        INSUFFICIENT_HISTORY="insufficient-history",
+        DESIGN_UNMEASURED="design-unmeasured",  # no design-effect row from a passed A/A — never passing
+        UNCHECKED="unchecked",  # history, ledger or stored design effect unusable — never passing
+    ),
+    # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
+    CHECK_EVAL_PREFIX="power-check-",
+    # latest design-effect row per agent and metric key among A/As whose aa-result passed; the start
+    # id in both dedupe keys joins them → one join for whole-roster and subset A/As alike
+    DESIGN_EFFECT_SQL=(
+        "SELECT DISTINCT ON (effect.agent, effect.payload->>'metric_key') "
+        "effect.agent, effect.payload "
+        "FROM core.autoagent_trial_ledger AS effect "
+        "JOIN core.autoagent_trial_ledger AS aa_result "
+        "ON aa_result.dedupe_key = %s::text || split_part(effect.dedupe_key, ':', 2) "
+        "AND aa_result.payload->>'overall' = %s "
+        "WHERE effect.event = %s AND effect.agent = ANY(%s) "
+        "ORDER BY effect.agent, effect.payload->>'metric_key', "
+        "effect.recorded_at DESC, effect.id DESC"
+    ),
+    LABEL=SimpleNamespace(
+        # method B = the floor-half baseline over session-mapped spawns; reported, never decides
+        METHOD_B="method B (session-mapped, information only)",
+        # the floor-half baseline runs above the projection window's rate → a smaller bound
+        EMIT_FAILURE="emit_failure baseline pass-leaning, information only",
+    ),
+)
+
+
+class PowerUnits(NamedTuple):
+    projected: float
+    # None = no finite trial size, or the design effect is unmeasured
+    required: float | None
+
+
+class PowerCheck(NamedTuple):
+    verdict: str
+    units: PowerUnits
+    design_effect: float | None  # design effect the units were sized at; None = unmeasured
+
+
+class PowerPass(NamedTuple):
+    """One power-passing pattern with the evidence its shadow trial is pre-registered on."""
+
+    pattern: Pattern
+    baseline: WindowCount
+    design_effect: float
+    required: float  # both arms' units at design_effect
+    spawns: list[SpawnFacts]
+
+
+class PowerResult(NamedTuple):
+    counts: dict[str, int]  # verdict → count, every verdict present
+    passes: list[PowerPass]
+    windows: PairWindows | None  # None = no keyed pattern, nothing judged
+
+
+class PowerInputs(NamedTuple):
+    provenance_start: datetime | None
+    spawns: dict[str, list[SpawnFacts]]
+    # (agent, metric key) → its latest passed A/A design effect; an absent pair is unmeasured
+    design_effects: dict[tuple[str, str], float]
+    # design effect unusable: every pair on a ledger fault, one pair on an invalid stored row
+    unchecked_keys: frozenset[tuple[str, str]]
+
+
+class PowerSubject(NamedTuple):
+    key: tuple[str, str]  # (agent, metric key) in the power inputs
+    floor: FloorResult
+
+
+def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> PowerResult:
+    """Intake power check: each floor-passing keyed pattern → one counted verdict.
+
+    The floor is get_floor_verdict over the spawn read the power inputs come from, so
+    both judge one history. Each verdict is a stderr line plus a census loop event
+    (none under skip_loop_emit); verdict only — no status write, no pattern parked or dropped.
+    Each fault WARNs and never passes: an unreadable history or missing trial math counts
+    every keyed pattern unchecked; an unreadable ledger counts every floor-passing one
+    unchecked, an invalid stored design effect only the patterns on that agent's metric key.
+
+    Returns:
+        verdict counts (every verdict present), the passing patterns' evidence and the
+        windows they were judged on.
+    """
+    counts = _get_power_counts()
+    passes: list[PowerPass] = []
+    keyed = [pattern for pattern in patterns if pattern.metric_key is not None]
+    if not keyed:
+        return PowerResult(counts, passes, None)
+    windows = get_pair_windows(_get_utc_now())
+    event_ts = windows.end.strftime("%Y-%m-%dT00:00:00.000Z")
+    inputs = _read_power_inputs(sorted({pattern.agent for pattern in keyed}), windows)
+    for pattern in keyed:
+        judged = _get_pattern_power_verdict(pattern, inputs, windows)
+        if judged is None:
+            continue
+        verdict, detail, power_pass = judged
+        counts[verdict] += 1
+        if power_pass is not None:
+            passes.append(power_pass)
+        _send_power_verdict(pattern, verdict, detail, event_ts, skip_loop_emit=skip_loop_emit)
+    return PowerResult(counts, passes, windows)
+
+
+def _get_pattern_power_verdict(
+    pattern: Pattern, inputs: PowerInputs | None, windows: PairWindows
+) -> tuple[str, str, PowerPass | None] | None:
+    """(verdict, detail, evidence when passing) of one keyed pattern; None when its floor does not pass."""
+    if inputs is None:
+        return POWER.VERDICT.UNCHECKED, "power inputs unavailable", None
+    spawns = inputs.spawns.get(pattern.agent, [])
+    # judged at the day anchor, the instant the intake re-check judged the floor at
+    floor = get_floor_verdict(
+        spawns, pattern.metric_key, windows, inputs.provenance_start, windows.end
+    )
+    if floor.verdict != VERDICT_PASS:
+        return None
+    subject = PowerSubject((pattern.agent, pattern.metric_key), floor)
+    if subject.key in inputs.unchecked_keys:
+        return POWER.VERDICT.UNCHECKED, "A/A design effect unusable", None
+    check = get_power_check(subject, inputs, windows)
+    power_pass = None
+    design_effect, required = check.design_effect, check.units.required
+    if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
+        power_pass = PowerPass(pattern, floor.baseline, design_effect, required, spawns)
+    method_b = _get_method_b_baseline(subject, inputs, windows)
+    return check.verdict, _get_pattern_power_detail(subject, check, method_b), power_pass
+
+
+def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWindows) -> PowerCheck:
+    """Power check of one floor-passing pattern, read from inputs at the subject's key.
+
+    Projected units = the agent's spawns per day over the 28 days before D × the 84-day
+    horizon; NULL-agent_id spawns count nowhere. Bound = 2 × the trial_design per-arm
+    maximum — the larger of the efficacy and harm samples — at the floor-half baseline rate
+    × the key's design effect from a passed A/A.
+    In order: fewer than 28 provenance-covered days → insufficient-history; no design
+    effect at the key → design-unmeasured; a rate with no finite size → underpowered.
+    """
+    history_start = windows.end - BASELINE.MIN_COVERED
+    units = sum(
+        1
+        for spawn in inputs.spawns.get(subject.key[0], [])
+        if spawn.agent_id is not None and history_start <= spawn.started_at < windows.end
+    )
+    design_effect = inputs.design_effects.get(subject.key)
+    projected = trial_design.get_projected_units(units / BASELINE.MIN_COVERED.days)
+    required = _get_required_units(subject.floor.baseline, design_effect)
+    if inputs.provenance_start is None or inputs.provenance_start > history_start:
+        verdict = POWER.VERDICT.INSUFFICIENT_HISTORY
+    elif design_effect is None:
+        verdict = POWER.VERDICT.DESIGN_UNMEASURED
+    elif required is not None and _is_bound_reached(units, required):
+        verdict = POWER.VERDICT.PASSING
+    else:
+        verdict = POWER.VERDICT.UNDERPOWERED
+    return PowerCheck(verdict, PowerUnits(projected, required), design_effect)
+
+
+def _get_required_units(baseline: WindowCount, design_effect: float | None) -> float | None:
+    """Both arms' units of the bound; None when the rate has no finite size or no design effect."""
+    maximum = _get_maximum_sample_size(baseline.events, baseline.spawns)
+    if maximum is None or design_effect is None:
+        return None
+    return trial_design.get_required_units(maximum, design_effect=design_effect)
+
+
+def _is_bound_reached(units: int, required: float) -> bool:
+    """units × horizon / window ≥ required, cross-multiplied → exact at the inclusive bound.
+
+    The float projection (units / 28) × 84 can round below an equal bound (122 → 365.99…).
+    """
+    return units * trial_design.HORIZON_DAYS >= Fraction(required) * BASELINE.MIN_COVERED.days
+
+
+def _get_power_counts() -> dict[str, int]:
+    return dict.fromkeys(vars(POWER.VERDICT).values(), 0)
+
+
+def _read_power_inputs(agents: list[str], windows: PairWindows) -> PowerInputs | None:
+    """Spawn history + latest passed A/A design effects; None (WARN) when the history is unusable.
+
+    A ledger fault keeps the history, so the floor is still judged before anything counts.
+    """
+    history = _read_power_history(agents, windows)
+    if history is None:
+        return None
+    return PowerInputs(*history, *_read_power_design_effects(agents))
+
+
+def _read_power_history(
+    agents: list[str], windows: PairWindows
+) -> tuple[datetime | None, dict[str, list[SpawnFacts]]] | None:
+    """Provenance start + each agent's spawns over the pair windows; None (WARN) when unusable."""
+    if _TRIAL_DESIGN_IMPORT_EXC is not None:
+        cause = f"trial_design import failed: {_describe_fault(_TRIAL_DESIGN_IMPORT_EXC)}"
+    elif not HAS_PG_PATTERN_READ:
+        cause = "PG pattern reads unavailable (helper import failed)"
+    else:
+        try:
+            return _pg_read_spawn_facts(agents, windows)
+        except Exception as exc:  # noqa: BLE001 — any read failure is an outage → fail closed
+            cause = f"spawn history unreadable: {_describe_fault(exc)}"
+    _warn_power_unchecked(cause, "every keyed intake pattern")
+    return None
+
+
+def _read_power_design_effects(
+    agents: list[str],
+) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]]]:
+    """((agent, metric key) → design effect of its latest passed A/A's row, unchecked pairs).
+
+    WARN per fault. A pair with no row from a passed A/A is absent (design-unmeasured). A read
+    fault — the table absent on a migrate-failed schema included — fails every pair closed.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        cause = "trial ledger unreadable: PG helper import failed"
+    else:
+        try:
+            with _pg_connect() as conn, conn.cursor() as cur:
+                event = TRIAL_LEDGER.EVENT
+                cur.execute(
+                    POWER.DESIGN_EFFECT_SQL,
+                    (f"{event.AA_RESULT}:", AA.VERDICT.PASS, event.AA_ARM_DESIGN_EFFECT, agents),
+                )
+                rows = cur.fetchall()
+        except Exception as exc:  # noqa: BLE001 — any read fault is an outage → fail closed
+            cause = f"A/A design effect unreadable: {_describe_fault(exc)}"
+        else:
+            return _get_design_effects(rows)
+    _warn_power_unchecked(cause, "every floor-passing keyed intake pattern")
+    return {}, frozenset((agent, key) for agent in agents for key in METRIC_KEYS)
+
+
+def _get_design_effects(
+    rows: list[tuple[str, dict]],
+) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]]]:
+    """((agent, metric key) → design effect read, pairs whose stored row is not a design effect).
+
+    A row keyed outside DESIGN_EFFECT_ROW_KEYS — the pre-split union-event `emit_failure` row
+    included — was measured under no current definition and sizes nothing.
+    """
+    metric_keys = {row_key: key for key, row_key in DESIGN_EFFECT_ROW_KEYS.items()}
+    design_effects: dict[tuple[str, str], float] = {}
+    invalid_keys: set[tuple[str, str]] = set()
+    for agent, payload in rows:
+        row_key = payload.get("metric_key") if isinstance(payload, dict) else None
+        if isinstance(payload, dict) and row_key not in metric_keys:
+            continue
+        metric_key = metric_keys.get(row_key)
+        try:
+            design_effects[(agent, metric_key)] = _get_stored_design_effect(payload)
+        except (ArithmeticError, AttributeError, TypeError, ValueError) as exc:
+            invalid_keys.add((agent, metric_key))
+            _warn_power_unchecked(
+                f"agent={agent} key={metric_key}: stored A/A design effect invalid: "
+                f"{_describe_fault(exc)}",
+                "every floor-passing intake pattern of the agent on that key",
+            )
+    return design_effects, frozenset(invalid_keys)
+
+
+def _get_stored_design_effect(payload: dict) -> float:
+    """One A/A row's value, a value below 1 read as 1; raises unless the declared keys carry a finite value.
+
+    A near-1 estimate below 1 by noise then sizes as independent spawns, never as more power.
+    """
+    keys = TRIAL_LEDGER.PAYLOAD_KEYS[TRIAL_LEDGER.EVENT.AA_ARM_DESIGN_EFFECT]
+    if set(payload) != set(keys):
+        raise ValueError(f"stored keys {sorted(payload)} are not {', '.join(keys)}")
+    value = float(payload["value"])
+    if not math.isfinite(value):
+        raise ValueError(f"stored design effect {value} is not finite")
+    return max(value, 1.0)
+
+
+def _warn_power_unchecked(cause: str, scope: str) -> None:
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: power check — {cause}; {scope} counts unchecked, none passing\n"
+    )
+
+
+def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
+    """trial_design per-arm trial maximum at rate events/spawns; None outside (0, 1) or unsized."""
+    if not 0 < events < spawns:
+        return None
+    return trial_design.get_trial_sample_size(events / spawns)
+
+
+def _get_method_b_baseline(
+    subject: PowerSubject, inputs: PowerInputs, windows: PairWindows
+) -> WindowCount:
+    """Method-B baseline, information only: floor read over the agent's session-mapped spawns."""
+    agent, metric_key = subject.key
+    mapped = [spawn for spawn in inputs.spawns.get(agent, []) if spawn.session_id is not None]
+    return get_floor_verdict(
+        mapped, metric_key, windows, inputs.provenance_start, windows.end
+    ).baseline
+
+
+def _get_pattern_power_detail(
+    subject: PowerSubject, check: PowerCheck, method_b: WindowCount
+) -> str:
+    """Information-only detail of one checked pattern: power figures, method-B baseline, label."""
+    detail = _get_power_detail(subject.floor, check, method_b)
+    if subject.key[1] == METRIC_EMIT_FAILURE:
+        return f"{detail} ({POWER.LABEL.EMIT_FAILURE})"
+    return detail
+
+
+def _get_power_detail(floor: FloorResult, check: PowerCheck, method_b: WindowCount) -> str:
+    baseline = floor.baseline
+    units = check.units
+    design_effect = check.design_effect
+    if design_effect is None:
+        required_label = "unknown (design effect unmeasured: no design-effect row from a passed A/A)"
+    elif units.required is None:
+        required_label = f"no finite size (design effect {design_effect:g})"
+    else:
+        required_label = f"{units.required:.0f} (design effect {design_effect:g})"
+    return (
+        f"floor-half baseline {baseline.events}/{baseline.spawns}, projected "
+        f"{units.projected:.0f} units in {trial_design.HORIZON_DAYS} d vs required "
+        f"{required_label}; {POWER.LABEL.METHOD_B} {method_b.events}/{method_b.spawns}"
+    )
+
+
+def _send_power_verdict(
+    pattern: Pattern, verdict: str, detail: str, event_ts: str, *, skip_loop_emit: bool
+) -> None:
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: power check — agent={pattern.agent} key={pattern.metric_key}: "
+        f"{verdict} — {detail}; status unchanged\n"
+    )
+    if not skip_loop_emit:
+        _emit_gate_loop_event(pattern.agent, event_ts, POWER.CHECK_EVAL_PREFIX + verdict)
+
+
+SHADOW = SimpleNamespace(
+    # latest pre-registration per (agent, pattern, metric key); DISTINCT ON keeps one row each
+    PREREGISTRATION_SQL=(
+        "SELECT DISTINCT ON (agent, learning_pattern_id, payload->>'metric_key') "
+        "agent, learning_pattern_id, payload->>'metric_key', trial_key, payload, recorded_at "
+        "FROM core.autoagent_trial_ledger WHERE event = %s AND agent = ANY(%s) "
+        "ORDER BY agent, learning_pattern_id, payload->>'metric_key', recorded_at DESC, id DESC"
+    ),
+    # W = 0 on every install → each spawn is its own task unit
+    TASK_WINDOW=timedelta(0),
+)
+
+
+class ShadowTrial(NamedTuple):
+    key: str
+    payload: dict  # the pre-registration payload, as stored
+    recorded_at: datetime
+
+
+class ArmCount(NamedTuple):
+    events: int
+    units: int
+
+
+class TrialArms(NamedTuple):
+    control: ArmCount
+    treatment: ArmCount
+
+
+class ShadowRow(NamedTuple):
+    event: str
+    payload: dict
+    dedupe_key: str
+
+
+class TrialIdentity(NamedTuple):
+    key: str
+    pattern: Pattern
+
+
+class Look(NamedTuple):
+    number: int  # 1-based, in pre-registration order
+    registration: Mapping[str, float]  # the pre-registered fraction, milestone and boundary
+
+
+class LookAccrual(NamedTuple):
+    tasks: int
+    arms: TrialArms | None = None
+
+
+def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
+    """Shadow engine: count power verdicts, pre-register passing trials, record reached looks; decides nothing.
+
+    - rows: one power-pass-count per cycle date · one pre-registration per trial key · one per reached look
+    - trial kept: pre-registration recorded at or after the row's last_transition_at (a NULL anchor keeps it);
+      otherwise the current pair starts a new one
+    - accrual: tasks from the pre-registration's recorded_at → none in its pre-registration cycle
+    - arms: no production arm source yet → look rows carry accrual only
+    - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
+    """
+    if not HAS_PG_LOOP_WRITE:
+        _warn_shadow("trial ledger unwritable: PG helper import failed", "no shadow row this cycle")
+        return
+    _write_shadow_row(
+        ShadowRow(
+            TRIAL_LEDGER.EVENT.POWER_PASS_COUNT,
+            power.counts,
+            dedupe_key=f"power-pass-count:{cycle_date}",
+        )
+    )
+    if not power.passes or power.windows is None:
+        return
+    trials = _read_shadow_trials(power.passes)
+    if trials is None:
+        return
+    for power_pass in power.passes:
+        pattern = power_pass.pattern
+        trial = trials.get((pattern.agent, pattern.row_id, pattern.metric_key))
+        _write_shadow_pass(power_pass, trial, power.windows)
+
+
+def _write_shadow_pass(
+    power_pass: PowerPass, trial: ShadowTrial | None, windows: PairWindows
+) -> None:
+    """Keep a current trial and record its reached looks; otherwise pre-register the current pair."""
+    if trial is None or not _is_trial_current(trial, power_pass.pattern.last_transition_at):
+        _write_shadow_preregistration(power_pass, windows.start.detection)
+        return
+    try:
+        _write_shadow_looks(trial, power_pass, windows.end)
+    except (KeyError, TypeError, ValueError) as exc:
+        _warn_shadow(
+            f"trial {trial.key}: stored pre-registration unusable: {_describe_fault(exc)}",
+            "no look recorded for it this cycle",
+        )
+
+
+def get_trial_key(pattern: Pattern, detection_start: datetime) -> str:
+    """64-hex sha256 of agent, learning_pattern_id, metric key and the pair's detection start."""
+    parts = (pattern.agent, str(pattern.row_id), str(pattern.metric_key), detection_start.isoformat())
+    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+
+
+def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime) -> dict:
+    """The trial's frozen sizing: trial_design's maximum and boundaries, look milestones on the required units."""
+    baseline = power_pass.baseline
+    boundaries = trial_design.get_boundaries()
+    looks = [
+        {"fraction": fraction, "milestone": fraction * power_pass.required, "boundary": boundary}
+        for fraction, boundary in zip(trial_design.LOOK_FRACTIONS, boundaries)
+    ]
+    return {
+        "metric_key": power_pass.pattern.metric_key,
+        "detection_start": detection_start.isoformat(),
+        "baseline": {"events": baseline.events, "spawns": baseline.spawns},
+        "maximum_per_arm": _get_maximum_sample_size(baseline.events, baseline.spawns),
+        "design_effect": power_pass.design_effect,
+        "required_units": power_pass.required,
+        "boundaries": list(boundaries),
+        "looks": looks,
+        "task_window_seconds": SHADOW.TASK_WINDOW.total_seconds(),
+    }
+
+
+def get_look_payload(look: Look, accrual: LookAccrual) -> dict:
+    """One reached look: accrual beside its boundary; with arm data, the pooled z too — never a decision."""
+    payload: dict = {
+        "look": look.number,
+        "fraction": look.registration["fraction"],
+        "milestone": look.registration["milestone"],
+        "boundary": look.registration["boundary"],
+        "accrued_tasks": accrual.tasks,
+    }
+    if accrual.arms is not None:
+        payload["arms"] = {name: arm._asdict() for name, arm in accrual.arms._asdict().items()}
+        payload["z"] = _get_pooled_z(accrual.arms)
+    return payload
+
+
+def _get_pooled_z(arms: TrialArms) -> float | None:
+    """Pooled two-proportion z, a reduction (control rate above treatment) positive; None without variance."""
+    control, treatment = arms
+    if control.units <= 0 or treatment.units <= 0:
+        return None
+    pooled = (control.events + treatment.events) / (control.units + treatment.units)
+    variance = pooled * (1 - pooled) * (1 / control.units + 1 / treatment.units)
+    if variance <= 0:
+        return None
+    return (control.events / control.units - treatment.events / treatment.units) / math.sqrt(variance)
+
+
+def _is_trial_current(trial: ShadowTrial, last_transition_at: datetime | None) -> bool:
+    return last_transition_at is None or trial.recorded_at >= last_transition_at
+
+
+def _read_shadow_trials(
+    passes: list[PowerPass],
+) -> dict[tuple[str, int, str | None], ShadowTrial] | None:
+    """(agent, pattern id, metric key) → latest pre-registration; None (WARN) on a read fault."""
+    agents = sorted({power_pass.pattern.agent for power_pass in passes})
+    try:
+        with _pg_connect() as conn, conn.cursor() as cur:
+            event = TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION
+            cur.execute(SHADOW.PREREGISTRATION_SQL, (event, agents))
+            rows = cur.fetchall()
+    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
+        _warn_shadow(
+            f"pre-registrations unreadable: {_describe_fault(exc)}",
+            "no pre-registration or look this cycle",
+        )
+        return None
+    return {
+        (agent, pattern_id, metric_key): ShadowTrial(key, payload, recorded_at)
+        for agent, pattern_id, metric_key, key, payload, recorded_at in rows
+    }
+
+
+def _write_shadow_preregistration(power_pass: PowerPass, detection_start: datetime) -> None:
+    """Pre-register the current pair; a taken key (a lifecycle move on the earlier pre-registration's
+    UTC day, same detection start) lands 0 rows → named WARN, re-keyed on the next UTC day."""
+    key = get_trial_key(power_pass.pattern, detection_start)
+    landed = _write_shadow_row(
+        ShadowRow(
+            TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION,
+            get_preregistration_payload(power_pass, detection_start),
+            dedupe_key=key,
+        ),
+        TrialIdentity(key, power_pass.pattern),
+    )
+    if landed == 0:
+        _warn_shadow(
+            f"trial {key}: pre-registration landed 0 rows — key taken by this UTC day's "
+            "earlier pre-registration (lifecycle move since)",
+            "no look for the pattern until the next UTC day re-keys it",
+        )
+
+
+def _write_shadow_looks(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> None:
+    accrued = _get_accrued_task_count(trial, power_pass, window_end)
+    for number, registration in enumerate(trial.payload["looks"], start=1):
+        if accrued < registration["milestone"]:
+            return
+        _write_shadow_row(
+            ShadowRow(
+                TRIAL_LEDGER.EVENT.SHADOW_LOOK,
+                get_look_payload(Look(number, registration), LookAccrual(accrued)),
+                dedupe_key=f"{trial.key}:look:{number}",
+            ),
+            TrialIdentity(trial.key, power_pass.pattern),
+        )
+
+
+def _get_accrued_task_count(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> int:
+    return len(
+        get_tasks(
+            (
+                spawn
+                for spawn in power_pass.spawns
+                if spawn.agent_id is not None and trial.recorded_at <= spawn.started_at < window_end
+            ),
+            SHADOW.TASK_WINDOW,
+        )
+    )
+
+
+def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> int | None:
+    """Rows landed (0 = dedupe key taken or ledger absent); None after a WARNed fault."""
+    try:
+        return _pg_write_trial_ledger_row(
+            row.event,
+            TRIAL_LEDGER.ACTOR.SHADOW,
+            row.payload,
+            trial_key=None if trial is None else trial.key,
+            agent=None if trial is None else trial.pattern.agent,
+            learning_pattern_id=None if trial is None else trial.pattern.row_id,
+            dedupe_key=row.dedupe_key,
+        )
+    except Exception as exc:  # noqa: BLE001 — a ledger write fault never fails the cycle
+        _warn_shadow(
+            f"{row.event} {row.dedupe_key} not written: {_describe_fault(exc)}",
+            "the stage continues",
+        )
+        return None
+
+
+def _warn_shadow(cause: str, scope: str) -> None:
+    sys.stderr.write(f"[daemon-cycle] WARN: shadow stage — {cause}; {scope}\n")
+
+
+_INSTALL_ROOT = Path(__file__).resolve().parent.parent
+
+AA = SimpleNamespace(
+    SQL=SimpleNamespace(
+        # latest aa-start → its id, whether its aa-result exists, the fingerprint and recorded_at
+        # (window start) of the newest aa-start / aa-restart row since it, the start's frozen
+        # duration, and that newest row's id (the window's arm salt)
+        LATEST_START=(
+            "SELECT s.id, EXISTS (SELECT 1 FROM core.autoagent_trial_ledger r "
+            "WHERE r.event = %(result)s AND r.dedupe_key = %(result_prefix)s::text || s.id::text), "
+            "f.payload->'fingerprint', f.recorded_at, s.payload->'duration', f.id "
+            "FROM core.autoagent_trial_ledger s CROSS JOIN LATERAL ("
+            "SELECT id, payload, recorded_at FROM core.autoagent_trial_ledger "
+            "WHERE event = ANY(%(fingerprinted)s) AND id >= s.id ORDER BY id DESC LIMIT 1) f "
+            "WHERE s.event = %(start)s ORDER BY s.id DESC LIMIT 1"
+        ),
+        # roster outcomes in the window → (all, those carrying agent_id + session_id that join a spawn)
+        JOIN_COVERAGE=(
+            "SELECT count(*), count(*) FILTER (WHERE o.agent_id IS NOT NULL "
+            "AND o.session_id IS NOT NULL AND EXISTS (SELECT 1 FROM core.spawn_manifest m "
+            "WHERE m.agent_id = o.agent_id)) FROM core.outcomes o "
+            "WHERE o.agent = ANY(%(agents)s) AND o.record_ts >= %(start)s AND o.record_ts < %(end)s"
+        ),
+        # the given salt ids that name an aa-start or aa-restart row
+        SALT_ROWS=(
+            "SELECT id FROM core.autoagent_trial_ledger "
+            "WHERE event = ANY(%(events)s) AND id = ANY(%(ids)s)"
+        ),
+        # MANIFEST spool closes recorded from the window start → (spool, lines read, lines without a row)
+        SPOOL_CLOSES=(
+            "SELECT subject, lines_read, lines_without_row FROM core.autoagent_loop_events "
+            "WHERE eval_result = %(event)s AND event_ts >= %(start)s"
+        ),
+        # whether the window's extension row (keyed on its start and salt) exists
+        EXTENSION=(
+            "SELECT EXISTS (SELECT 1 FROM core.autoagent_trial_ledger "
+            "WHERE event = %(event)s AND dedupe_key = %(dedupe_key)s)"
+        ),
+        # the window days of the start's landed instrument verdict row; no row before it lands
+        VERDICT_DAYS=(
+            "SELECT (payload->>'window_days')::int FROM core.autoagent_trial_ledger "
+            "WHERE event = %(event)s AND dedupe_key = %(dedupe_key)s"
+        ),
+    ),
+    SPOOL_CLOSE_COUNTS_MIGRATION="20261010000000_add_loop_event_spool_close_counts",
+    UNDEFINED_COLUMN_SQLSTATE="42703",
+    MINIMUM_JOIN_PERCENT=95,
+    # D2: a sample-ratio test on every agent from 200 spawns; delivery on 99% of treatment spawns
+    BALANCE=SimpleNamespace(MINIMUM_SPAWNS=200, ALPHA=0.01),
+    MINIMUM_DELIVERY_PERCENT=99,
+    TOOL_USE_GUARDRAIL="tool_use",
+    VERDICT=SimpleNamespace(
+        PASS="pass", FAIL="fail", PENDING_ARMS="pending-arms", VOID="void"
+    ),
+    # frozen in the start row: 14 days; 28 when one of the five busiest agents has < 200 spawns
+    DURATION={
+        "days": 14,
+        "extended_days": 28,
+        "busiest_agents": 5,
+        "minimum_spawns": 200,
+    },
+    # installed manifest entries a restart keys on: the spawn path, the daemon, bodies, the ledger
+    # and the files carrying the arm and outcome evidence; live file bytes are never hashed
+    SCOPE=SimpleNamespace(
+        FILES=frozenset(
+            {
+                "hooks/inject-scope-rules.sh",
+                "hooks/hook-utils.sh",
+                "hooks/enforce-harness-critical.sh",
+                "hooks/track-outcome.sh",
+                "hooks/_outcome_signal.py",
+                "hooks/_pg_learning_dualwrite.py",
+                "scripts/_pg_dual_write_daemon.py",
+            }
+        ),
+        DIRS=("autoagent/", "agents/"),
+        MIGRATION=re.compile(r"monitor/prisma/migrations/[^/]+/migration\.sql"),
+        LEDGER_NAME=re.compile(r'\bcore"?\."?autoagent_trial_ledger\b'),
+    ),
+    # an install's rendered config names the code tree it was installed as
+    INSTALL=SimpleNamespace(
+        CONFIG="config.toml",
+        SECTION="[paths]",
+        ROOT_KEY=re.compile(r'\s*root\s*=\s*"?([^"#]*)'),
+    ),
+    RESTART_REASON=SimpleNamespace(
+        CHANGED="fingerprint-changed", UNREADABLE="fingerprint-unreadable"
+    ),
+    REFUSAL=SimpleNamespace(
+        MANIFEST_UNREADABLE="manifest-unreadable",
+        ALREADY_OPEN="already-open",
+        LEDGER_UNREADABLE="ledger-unreadable",
+        LEDGER_UNWRITABLE="ledger-unwritable",
+    ),
+)
+
+
+# The per-agent canary files hooks/inject-scope-rules.sh reads at SubagentStart (set_canary_block).
+CANARY = SimpleNamespace(
+    # 3 daily intervals, one under the hook's 96 h CANARY_MAX_LEASE_MINUTES file-age bound
+    LEASE=timedelta(hours=72),
+    # the A/A's pre-registered text: an empty canary, delivered as zero bytes
+    AA_TEXT="",
+    # = the hook's CANARY_FILE_MAX_BYTES: a larger file is refused, so never delivered
+    FILE_MAX_BYTES=16384,
+    # hook_path_safe_key: every byte outside A-Za-z0-9_- dropped
+    UNSAFE_KEY=re.compile(r"[^A-Za-z0-9_-]"),
+    VOID_REASON="foreign-canary-hash",
+    # path segments below the data root
+    SEGMENTS=SimpleNamespace(
+        # the hook's CANARY_DIR, each segment opened without following a symlink
+        DIR=("learning", "canary"),
+        # a void the ledger did not take, beside the daemon's other markers until a cycle records it
+        # no .json suffix, as the other markers → outside the doctor's *.json cycle-report scan
+        PENDING_VOID=("daemon-reports", ".aa-pending-void"),
+    ),
+)
+
+
+class CanaryDirUnsafe(OSError):
+    """A canary directory segment below the data root is a symlink or not a directory."""
+
+
+class AaStateUnreadable(Exception):
+    """The open-A/A state cannot be read this cycle."""
+
+
+class AaFingerprintUnreadable(Exception):
+    """The installed manifest cannot yield the A/A fingerprint → fails closed."""
+
+
+class AaEvidenceUnreadable(Exception):
+    """A source the A/A result needs is unavailable this cycle."""
+
+
+# D1 break-even rule: the A/A's switch between injection (R1) and the switchback (R2)
+INSTRUMENT = SimpleNamespace(
+    METRIC_KEY=METRIC_BUDGET_OVERAGE,  # per spawn, tool_use half included — the binding version
+    READING=SimpleNamespace(
+        HOLDS="r1-holds", SWITCH="switch-to-r2", STRADDLE="straddle", UNDECIDED="undecided"
+    ),
+    VERDICT=SimpleNamespace(
+        HOLDS="r1-holds", SWITCH="switch-to-r2", EXTEND="extend", RELAY="relay"
+    ),
+    BREAK_EVEN=SimpleNamespace(
+        # a break-even at or below this cannot decide a trial at design effect 1 → excluded, named
+        DECIDABLE=1.0,
+        # the owner's D1 break-evens: a local {agent: number} file in the data root, never shipped
+        REFERENCE_SEGMENTS=("learning", "instrument-reference.json"),
+    ),
+)
+
+
+class AaStart(NamedTuple):
+    id: int
+    is_closed: bool
+    fingerprint: dict[str, str] | None  # None = recorded while unreadable
+    window_start: datetime  # recorded_at of the start or its newest restart
+    duration: dict  # the rule frozen in the start payload
+    salt_id: int  # id of the start or its newest restart — the window's arm salt
+
+
+class AaWindow(NamedTuple):
+    start: datetime
+    end: datetime
+    days: int
+
+
+class AaSource(NamedTuple):
+    """The cycle's non-database inputs to the result."""
+
+    manifest_ingest: ManifestIngest | None
+    agents_dir: Path
+
+
+class AaEvidence(NamedTuple):
+    window: AaWindow
+    # roster stem → its spawns started in the window
+    spawns: dict[str, list[SpawnFacts]]
+    joins: tuple[int, int]  # (roster outcomes, joined ones)
+    # spool → (lines read, lines without a row), NULL on a pre-column row; None = no count columns
+    closes: dict[str, tuple[int | None, int | None]] | None
+    is_decided: bool  # the start's instrument verdict row landed → read back, never decided again
+
+
+class AaCriterion(NamedTuple):
+    verdict: str
+    detail: dict
+
+
+class ToolUseReading(NamedTuple):
+    """A look's tool_use band input over spawns with a recorded tool_use line."""
+
+    shift: float  # mean tool uses, treatment − control
+    sd: float  # pooled within-arm sample sd
+    per_arm: int  # the smaller arm's count
+    is_overage_primary: bool  # upward-only stop when True
+
+
+class AaLook(NamedTuple):
+    """One look of a trial fed the A/A: the primary metric's arms, each rate guardrail's, the tool_use reading."""
+
+    arms: TrialArms
+    guardrails: Mapping[str, TrialArms]
+    tool_use: ToolUseReading | None = None  # None → no tool_use stop at this look
+
+
+class ArmedSpawn(NamedTuple):
+    spawn: SpawnFacts
+    arm: int  # the daemon's recomputation, the analysis authority; 1 = treatment
+
+
+class AaRestart(NamedTuple):
+    reason: str
+    fingerprint: dict[str, str] | None
+
+
+class AaVoid(NamedTuple):
+    """A detected void of one A/A — also the pending record kept while the ledger refuses it."""
+
+    start_id: int
+    agent: str
+    text_sha256: str | None  # None = no text the daemon could read
+
+
+def get_aa_fingerprint(root: Path) -> dict[str, str]:
+    """The installed manifest's `.hashes` entries in the A/A scope: the spawn- and evidence-path
+    files, `autoagent/`, `agents/`, and each migration whose installed SQL names the trial ledger.
+
+    Raises AaFingerprintUnreadable on an unreadable or malformed manifest, an unreadable
+    listed migration, or no scoped entry.
+    """
+    manifest = root / "manifest.json"
+    try:
+        hashes = json.loads(manifest.read_text(encoding="utf-8"))["hashes"]
+        fingerprint = {
+            path: digest for path, digest in hashes.items() if _is_aa_scoped(root, path)
+        }
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise AaFingerprintUnreadable(f"{manifest}: {_describe_fault(exc)}") from exc
+    if not fingerprint:
+        raise AaFingerprintUnreadable(f"{manifest}: no entry in the A/A scope")
+    return fingerprint
+
+
+def _is_aa_scoped(root: Path, path: str) -> bool:
+    if path in AA.SCOPE.FILES or path.startswith(AA.SCOPE.DIRS):
+        return True
+    if AA.SCOPE.MIGRATION.fullmatch(path) is None:
+        return False
+    # selection only: the installed SQL decides membership, its manifest hash is what is kept
+    return (
+        AA.SCOPE.LEDGER_NAME.search((root / path).read_text(encoding="utf-8"))
+        is not None
+    )
+
+
+def _read_latest_aa_start() -> AaStart | None:
+    """The latest aa-start row → AaStart; None when no A/A was ever started. Raises on a PG fault."""
+    params = {
+        "start": TRIAL_LEDGER.EVENT.AA_START,
+        "result": TRIAL_LEDGER.EVENT.AA_RESULT,
+        "result_prefix": f"{TRIAL_LEDGER.EVENT.AA_RESULT}:",
+        "fingerprinted": [TRIAL_LEDGER.EVENT.AA_START, TRIAL_LEDGER.EVENT.AA_RESTART],
+    }
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(AA.SQL.LATEST_START, params)
+        row = cur.fetchone()
+    return None if row is None else AaStart(*row)
+
+
+def start_aa(agents_dir: Path = DEFAULT_AGENTS_DIR) -> int:
+    """--aa-start: open an A/A on the installed fingerprint and write each roster agent its
+    canary → 0; refused with a named reason and nothing written → ExitCode.AA_START_REFUSED."""
+    if not HAS_PG_LOOP_WRITE:
+        return _refuse_aa_start(AA.REFUSAL.LEDGER_UNWRITABLE, "PG helper import failed")
+    try:
+        fingerprint = get_aa_fingerprint(_INSTALL_ROOT)
+    except AaFingerprintUnreadable as exc:
+        return _refuse_aa_start(AA.REFUSAL.MANIFEST_UNREADABLE, str(exc))
+    try:
+        latest = _read_latest_aa_start()
+    except Exception as exc:  # noqa: BLE001 — refused by name, never a traceback
+        return _refuse_aa_start(AA.REFUSAL.LEDGER_UNREADABLE, _describe_fault(exc))
+    if latest is not None and not latest.is_closed:
+        return _refuse_aa_start(
+            AA.REFUSAL.ALREADY_OPEN, f"A/A {latest.id} has no aa-result"
+        )
+    code = _write_aa_start(fingerprint, previous=0 if latest is None else latest.id)
+    if code == 0:
+        _start_aa_canaries(_agent_roster(agents_dir))
+    return code
+
+
+def _start_aa_canaries(roster: frozenset[str]) -> None:
+    """The salt is read back from the ledger (the writer returns a landed count, not the id)."""
+    try:
+        latest = _read_latest_aa_start()
+    except Exception as exc:  # noqa: BLE001 — the start row stands; renewal writes the files
+        _warn_aa(
+            f"canary files not written: start row unreadable: {_describe_fault(exc)}",
+            "the next writing cycle writes them",
+        )
+        return
+    if latest is not None and not latest.is_closed:
+        _put_aa_canaries(latest, roster)
+
+
+def _write_aa_start(fingerprint: dict[str, str], *, previous: int) -> int:
+    # keyed on the start it follows → of two racing starts only one lands
+    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_START}:after:{previous}"
+    payload = {
+        "fingerprint": fingerprint,
+        "started_at": _get_utc_now().isoformat(),
+        "duration": AA.DURATION,
+    }
+    try:
+        landed = _pg_write_trial_ledger_row(
+            TRIAL_LEDGER.EVENT.AA_START,
+            TRIAL_LEDGER.ACTOR.AA,
+            payload,
+            dedupe_key=dedupe_key,
+        )
+    except Exception as exc:  # noqa: BLE001 — refused by name, never a traceback
+        return _refuse_aa_start(AA.REFUSAL.LEDGER_UNWRITABLE, _describe_fault(exc))
+    if landed != 1:
+        return _refuse_aa_start(
+            AA.REFUSAL.ALREADY_OPEN,
+            f"start key {dedupe_key} taken by a concurrent --aa-start",
+        )
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: A/A started ({dedupe_key}) on {len(fingerprint)} fingerprint "
+        "entries; each writing cycle evaluates it until its aa-result\n"
+    )
+    return 0
+
+
+def _refuse_aa_start(reason: str, detail: str) -> int:
+    sys.stderr.write(
+        f"[daemon-cycle] --aa-start refused: {reason} — {detail}; nothing written\n"
+    )
+    return ExitCode.AA_START_REFUSED
+
+
+def run_aa_stage(
+    cycle_date: str,
+    *,
+    manifest_ingest: ManifestIngest | None = None,
+    agents_dir: Path = DEFAULT_AGENTS_DIR,
+) -> None:
+    """Advance the open A/A one writing cycle and keep the canary files in step with it.
+
+    Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`.
+    - No config.toml in the code tree declaring that tree as its [paths].root → refused before
+      any ledger read: no row read or written, no canary file deleted or written.
+    - No open A/A → every entry in the canary directory is deleted.
+    - Open A/A with a void an earlier ingest or sweep detected and the ledger did not take → that
+      void is retried before anything else, and the stage ends: until it lands no canary is
+      renewed and no result is decided, so the A/A cannot pass.
+    - Open A/A, sweep first → an entry not named exactly as a roster agent's canary, or one the
+      hook refuses unread, is deleted; any other roster file not confirmed to hold the A/A's text
+      voids the A/A (every entry deleted) and ends the stage.
+    - Then one aa-restart row per cycle date when the installed fingerprint moved or cannot be
+      read, with every canary rewritten on the restart row's salt; otherwise each roster
+      agent's canary lease is renewed, and once the window's duration has ended the result
+      lands — the instrument verdict row, then one design-effect row per agent and metric key,
+      then the aa-result row — and every canary file is deleted. A landed verdict is read back,
+      never decided again.
+    - A verdict straddling at the duration end writes the window's extension row instead, once
+      per window; the A/A stays open and the result lands at the extended duration.
+    - Open state unreadable → no file is deleted or renewed; each runs to its lease.
+    A ledger or evidence fault WARNs by name and never fails the cycle; the caller skips the
+    stage in no-write mode (--dry-run).
+    """
+    refusal = _get_install_refusal(_INSTALL_ROOT)
+    if refusal is not None:
+        _warn_aa(refusal, "no ledger read or write and no canary file change this cycle")
+        return
+    try:
+        latest = _read_open_aa_start()
+    except AaStateUnreadable as exc:
+        # canary files are left to their lease: an unread state deletes and renews nothing
+        _warn_aa(f"open state unreadable: {exc}", "no A/A evaluation this cycle")
+        return
+    if latest is None:
+        _delete_canaries(_get_canary_files(), "no open A/A or trial")
+        return
+    if _retry_pending_void(latest):
+        return
+    roster = _agent_roster(agents_dir)
+    if _sweep_aa_canaries(latest, roster):
+        return
+    restart = _get_aa_restart(latest)
+    if restart is not None:
+        _write_aa_restart(latest.id, restart, cycle_date)
+        _restart_aa_canaries(latest, roster)
+        return  # the restart row starts a new window
+    _put_aa_canaries(latest, roster)
+    source = AaSource(manifest_ingest, agents_dir)
+    if _evaluate_aa(latest, source):
+        _delete_canaries(_get_canary_files(), "the A/A has its result")
+
+
+class InstallRefusedError(RuntimeError):
+    """A writing run_cycle refused before any stage; message: _get_install_refusal's."""
+
+
+def _get_install_refusal(root: Path) -> str | None:
+    """None when root passes _is_install_tree; otherwise the refusal, naming only that check.
+
+    Guards exactly three entries, each as its first check:
+    - run_cycle when it writes (skip_loop_emit False): the whole cycle, reads included,
+      by raising InstallRefusedError, which _main ends with
+      ExitCode.CYCLE_INSTALL_REFUSED;
+    - run_aa_stage and ingest_manifest_log, whose own checks cover a direct call.
+    Not guarded: run_cycle in no-write mode (--dry-run, --skip-loop-emit), start_aa
+    (--aa-start, the owner's explicit command to open an A/A, never run by a cycle),
+    and a direct call to any other writing stage — run_shadow_stage among them.
+    """
+    if _is_install_tree(root):
+        return None
+    return (
+        f"no {AA.INSTALL.CONFIG} in code tree {root} declares that tree as its "
+        f"{AA.INSTALL.SECTION}.root"
+    )
+
+
+def _is_install_tree(root: Path) -> bool:
+    """True when root is the install its own rendered config.toml declares as [paths].root.
+    Compared by identity, so a symlinked path to the install matches."""
+    declared = _get_config_root(root / AA.INSTALL.CONFIG)
+    if declared is None or not Path(declared).is_absolute():
+        return False
+    try:
+        return os.path.samefile(declared, root)
+    except OSError:
+        return False
+
+
+def _get_config_root(config: Path) -> str | None:
+    """[paths].root as scripts/lib/atrium-config.sh → atrium_toml_get reads it; None when the
+    file or the key is absent or unreadable."""
+    try:
+        lines = config.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        return None
+    section = ""
+    for line in lines:
+        if line.lstrip().startswith("["):
+            section = "".join(line.split())
+        elif section == AA.INSTALL.SECTION:
+            match = AA.INSTALL.ROOT_KEY.match(line)
+            if match is not None:
+                return match.group(1).strip()
+    return None
+
+
+def _read_open_aa_start() -> AaStart | None:
+    """The open A/A; None when none is open. Raises AaStateUnreadable on a ledger read fault."""
+    if not HAS_PG_LOOP_WRITE:
+        raise AaStateUnreadable("PG helper import failed")
+    try:
+        latest = _read_latest_aa_start()
+    except Exception as exc:  # any read fault → the one state run_aa_stage WARNs on
+        raise AaStateUnreadable(_describe_fault(exc)) from exc
+    return None if latest is None or latest.is_closed else latest
+
+
+def put_canary_file(agent: str, salt: int, text: str, now: datetime) -> None:
+    """Replace one agent's canary file whole — a temp file in its directory, then a rename — so a
+    SubagentStart read sees the previous file or this one, never a partial one. Both land through a
+    descriptor on the canary directory. Raises OSError — CanaryDirUnsafe when not a real one."""
+    name = _get_canary_path(agent).name
+    body = {
+        "salt": salt,
+        "text": text,
+        "text_sha256": _get_text_sha256(text),
+        "expires_at": int((now + CANARY.LEASE).timestamp()),
+    }
+    temp = f".{Path(name).stem}.{os.urandom(6).hex()}.tmp"
+    with _open_canary_dir(should_create=True) as dir_fd:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        fd = os.open(temp, flags, 0o600, dir_fd=dir_fd)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(body, handle)
+            os.replace(temp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temp, dir_fd=dir_fd)
+            raise
+
+
+def _get_canary_dir() -> Path:
+    """The hook's CANARY_DIR: `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`."""
+    return ga_paths.get_data_root().joinpath(*CANARY.SEGMENTS.DIR)
+
+
+@contextlib.contextmanager
+def _open_canary_dir(*, should_create: bool = False) -> Iterator[int]:
+    fd = _get_canary_dir_fd(should_create=should_create)
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _get_canary_dir_fd(*, should_create: bool) -> int:
+    """An open descriptor on the canary directory — the data root as configured, each segment
+    below it opened without following a symlink, so a planted link never redirects a listing,
+    removal or write. Raises FileNotFoundError when absent and not created, CanaryDirUnsafe when a
+    segment is a symlink or not a directory, OSError on any other fault."""
+    root = ga_paths.get_data_root()
+    if should_create:
+        root.mkdir(parents=True, exist_ok=True)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    for depth, segment in enumerate(CANARY.SEGMENTS.DIR, 1):
+        try:
+            child = _open_dir_segment(fd, segment, should_create=should_create)
+        except OSError as exc:
+            # macOS refuses a symlink opened O_DIRECTORY | O_NOFOLLOW with ENOTDIR, Linux with ELOOP
+            if exc.errno not in (errno.ENOTDIR, errno.ELOOP):
+                raise
+            planted = root.joinpath(*CANARY.SEGMENTS.DIR[:depth])
+            raise CanaryDirUnsafe(
+                f"canary directory not a real directory: {planted} is a symlink or not a directory"
+            ) from exc
+        finally:
+            os.close(fd)
+        fd = child
+    return fd
+
+
+def _open_dir_segment(parent: int, segment: str, *, should_create: bool) -> int:
+    if should_create:
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(segment, dir_fd=parent)
+    return os.open(segment, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+
+
+def _get_canary_path(agent: str) -> Path:
+    return _get_canary_dir() / f"{CANARY.UNSAFE_KEY.sub('', agent)}.json"
+
+
+def _get_canary_files() -> list[Path]:
+    """Every entry in the canary directory, any name or extension case — the hook decides delivery
+    by an exact listed name, so the daemon lists by name too. Not listable, or not a real
+    directory → WARN, none."""
+    try:
+        with _open_canary_dir() as dir_fd, os.scandir(dir_fd) as entries:
+            # a real directory cannot be unlinked; a symlink to one can, and the hook refuses it
+            names = sorted(
+                entry.name for entry in entries if not entry.is_dir(follow_symlinks=False)
+            )
+    except FileNotFoundError:
+        return []
+    except CanaryDirUnsafe as exc:
+        _warn_aa(str(exc), "no canary file is swept or removed this cycle")
+        return []
+    except OSError as exc:
+        _warn_aa(
+            f"canary directory not listed: {_describe_fault(exc)}",
+            "no canary file is swept or removed this cycle",
+        )
+        return []
+    canary_dir = _get_canary_dir()
+    return [canary_dir / name for name in names]
+
+
+def _get_text_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _put_aa_canaries(latest: AaStart, roster: frozenset[str]) -> None:
+    """Rewrite each roster agent's canary from the daemon's own record: the window's salt, the
+    A/A's empty text and a lease from now. A failed write WARNs; that agent keeps its old lease."""
+    now = _get_utc_now()
+    for agent in sorted(roster):
+        try:
+            put_canary_file(agent, latest.salt_id, CANARY.AA_TEXT, now)
+        except CanaryDirUnsafe as exc:
+            _warn_aa(str(exc), "no canary file is written this cycle")
+            return
+        except OSError as exc:
+            _warn_aa(
+                f"canary for {agent} not written: {_describe_fault(exc)}",
+                "its previous file stands until its lease ends",
+            )
+
+
+def _restart_aa_canaries(previous: AaStart, roster: frozenset[str]) -> None:
+    """Rewrite the canaries on the restart row's salt, read back as the window's newest row."""
+    try:
+        latest = _read_open_aa_start()
+    except AaStateUnreadable as exc:
+        _warn_aa(
+            f"A/A {previous.id} canaries keep the previous salt: open state unreadable: {exc}",
+            "the next writing cycle rewrites them",
+        )
+        return
+    if latest is not None:
+        _put_aa_canaries(latest, roster)
+
+
+def _sweep_aa_canaries(latest: AaStart, roster: frozenset[str]) -> bool:
+    """Check the canary directory against the open A/A before any rewrite. An entry not named
+    exactly as a roster agent's canary, or one the hook refuses unread, is removed. Any other
+    roster file the hook may deliver, so one not confirmed to hold the A/A's text voids the A/A —
+    a parse the daemon's Python cannot finish included, since jq parses more — and every file is
+    removed. True = voided."""
+    # str equality on listed names = byte equality (fsdecode is reversible), never volume folding
+    roster_names = {_get_canary_path(agent).name: agent for agent in roster}
+    for path in _get_canary_files():
+        agent = roster_names.get(path.name)
+        if agent is None:
+            _delete_canaries([path], "not an open A/A roster agent's exact canary name")
+            continue
+        raw = _read_canary_bytes(path)
+        if raw is None:
+            _delete_canaries([path], "unreadable as the hook's file contract")
+            continue
+        text = _get_canary_text(raw)
+        if text != CANARY.AA_TEXT:
+            _void_aa(latest, agent, _get_foreign_text_sha256(text))
+            return True
+    return False
+
+
+def _read_canary_bytes(path: Path) -> bytes | None:
+    """The file's bytes; None when the hook refuses it unread — a symlink, not a regular file,
+    over its size bound, or no read. The open neither follows a symlink nor blocks on a FIFO, and
+    a non-regular entry is never read."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            raw = handle.read(CANARY.FILE_MAX_BYTES + 1)
+    except OSError:
+        return None
+    return raw if len(raw) <= CANARY.FILE_MAX_BYTES else None
+
+
+def _get_canary_text(raw: bytes) -> str | None:
+    """The canary object's text field as the hook reads it — the bytes as UTF-8, never an encoding
+    json guesses — or None. The hook's read drops NUL bytes, and no JSON parse admits a raw NUL, so
+    a file the two could read apart (UTF-16 or UTF-32, NUL-bearing) yields None."""
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    # ValueError spans JSONDecodeError, UnicodeError and the int digit limit; RecursionError = depth
+    except (ValueError, RecursionError):
+        return None
+    text = body.get("text") if isinstance(body, dict) else None
+    return text if isinstance(text, str) else None
+
+
+def _get_foreign_text_sha256(text: str | None) -> str | None:
+    if text is None:
+        return None
+    # surrogatepass: a lone surrogate (JSON "\ud800") is foreign text, hashed not raised
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _void_aa(latest: AaStart, agent: str, text_sha256: str | None) -> None:
+    """Close the A/A with a void result, then remove every canary file. A void the ledger does not
+    take stays pending: run_aa_stage retries it before any canary renewal, so the A/A cannot pass
+    meanwhile. text_sha256 None = no text the daemon could read."""
+    void = AaVoid(latest.id, agent, text_sha256)
+    is_recorded = _write_aa_void(void)
+    if is_recorded:
+        _delete_pending_void()
+    else:
+        _put_pending_void(void)
+    reason = "voided" if is_recorded else "void not recorded"
+    _delete_canaries(_get_canary_files(), f"A/A {latest.id} {reason}")
+
+
+def _write_aa_void(void: AaVoid) -> bool:
+    """The void aa-result row → True when it landed; a void the ledger did not take WARNs."""
+    label = void.text_sha256 or "(unreadable)"
+    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESULT}:{void.start_id}"
+    detail = {"reason": CANARY.VOID_REASON, "agent": void.agent, "text_sha256": void.text_sha256}
+    payload = {"overall": AA.VERDICT.VOID, "void": detail}
+    if _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESULT, payload, dedupe_key) == 1:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: A/A {void.start_id} voided — {void.agent}'s canary text "
+            f"{label} is not the A/A's ({dedupe_key})\n"
+        )
+        return True
+    _warn_aa(
+        f"A/A {void.start_id} void not recorded: {void.agent}'s canary text {label} is not "
+        "the A/A's",
+        "it stays pending — no canary is renewed and no result lands until a cycle records it",
+    )
+    return False
+
+
+def _retry_pending_void(latest: AaStart) -> bool:
+    """A void an earlier ingest or sweep detected and the ledger did not take → retried, True: the
+    stage ends there, so no canary is renewed and no result decided until it lands. A pending
+    record that cannot be read holds the A/A the same way."""
+    path = _get_pending_void_path()
+    try:
+        pending = _read_pending_void(path)
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
+        _warn_aa(
+            f"A/A {latest.id} pending void {path} unreadable: {_describe_fault(exc)}",
+            "no canary is renewed and no result lands while it stays unread",
+        )
+        _delete_canaries(_get_canary_files(), f"A/A {latest.id} void not recorded")
+        return True
+    if pending is None:
+        return False
+    if pending.start_id != latest.id:  # an A/A opens only after the previous one's result
+        _delete_pending_void()
+        return False
+    _void_aa(latest, pending.agent, pending.text_sha256)
+    return True
+
+
+def _get_pending_void_path() -> Path:
+    return ga_paths.get_data_root().joinpath(*CANARY.SEGMENTS.PENDING_VOID)
+
+
+def _read_pending_void(path: Path) -> AaVoid | None:
+    """None when no void is pending. Raises OSError, ValueError, TypeError or RecursionError (a
+    body nested past the parser's depth limit) on a record not readable as one."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    pending = AaVoid(**record)
+    if not (
+        isinstance(pending.start_id, int)
+        and isinstance(pending.agent, str)
+        and isinstance(pending.text_sha256, (str, type(None)))
+    ):
+        raise TypeError(f"{path.name} is not an A/A void record")
+    return pending
+
+
+def _put_pending_void(void: AaVoid) -> None:
+    """Written whole — a temp file, then a rename — so a later read sees the record or none."""
+    path = _get_pending_void_path()
+    temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp.write_text(json.dumps(void._asdict()), encoding="utf-8")
+        temp.replace(path)
+    except OSError as exc:
+        _warn_aa(
+            f"A/A {void.start_id} pending void not kept at {path}: {_describe_fault(exc)}",
+            "no later cycle retries it",
+        )
+
+
+def _delete_pending_void() -> None:
+    path = _get_pending_void_path()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        _warn_aa(
+            f"pending void {path} not removed: {_describe_fault(exc)}",
+            "it is dropped once a newer A/A opens",
+        )
+
+
+def _delete_canaries(paths: list[Path], reason: str) -> None:
+    """Remove each canary entry by name through a descriptor on the canary directory; not a real
+    directory → WARN, none removed."""
+    if not paths:
+        return
+    try:
+        with _open_canary_dir() as dir_fd:
+            for path in paths:
+                _delete_canary(dir_fd, path, reason)
+    except FileNotFoundError:
+        return  # no canary directory → no entry to remove
+    except CanaryDirUnsafe as exc:
+        _warn_aa(str(exc), "no canary file is removed this cycle")
+    except OSError as exc:
+        _warn_aa(
+            f"canary directory not opened: {_describe_fault(exc)}",
+            "the next writing cycle retries",
+        )
+
+
+def _delete_canary(dir_fd: int, path: Path, reason: str) -> None:
+    try:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path.name, dir_fd=dir_fd)
+    except OSError as exc:
+        _warn_aa(
+            f"canary {path} not removed: {_describe_fault(exc)}",
+            "the next writing cycle retries",
+        )
+        return
+    sys.stderr.write(f"[daemon-cycle] INFO: canary {path} removed — {reason}\n")
+
+
+def _get_aa_restart(latest: AaStart) -> AaRestart | None:
+    try:
+        fingerprint = get_aa_fingerprint(_INSTALL_ROOT)
+    except AaFingerprintUnreadable as exc:
+        _warn_aa(f"fingerprint unreadable: {exc}", f"A/A {latest.id} restarts")
+        return AaRestart(AA.RESTART_REASON.UNREADABLE, None)
+    if fingerprint == latest.fingerprint:
+        return None
+    return AaRestart(AA.RESTART_REASON.CHANGED, fingerprint)
+
+
+def _write_aa_restart(start_id: int, restart: AaRestart, cycle_date: str) -> None:
+    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESTART}:{start_id}:{cycle_date}"
+    payload = {"start_id": start_id, **restart._asdict()}
+    _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESTART, payload, dedupe_key)
+
+
+def _evaluate_aa(latest: AaStart, source: AaSource) -> bool:
+    """Write the result once the window has ended → True when it landed; an evidence fault WARNs
+    and waits for a later cycle."""
+    now = _get_utc_now()
+    try:
+        evidence = _read_aa_evidence(latest, source, now)
+    except Exception as exc:  # noqa: BLE001 — an evidence fault never fails the cycle
+        _warn_aa(
+            f"A/A {latest.id} evidence unreadable: {_describe_fault(exc)}",
+            "no A/A evaluation this cycle",
+        )
+        return False
+    return evidence is not None and _write_aa_result(latest, evidence, source, now)
+
+
+def _read_aa_evidence(
+    latest: AaStart, source: AaSource, now: datetime
+) -> AaEvidence | None:
+    """The ended window with its roster spawns and join counts; None while it runs. Raises on a fault."""
+    if now < latest.window_start + timedelta(days=latest.duration["days"]):
+        return None
+    if not HAS_PG_PATTERN_READ or _TRIAL_DESIGN_IMPORT_EXC is not None:
+        raise AaEvidenceUnreadable(
+            "PG pattern reads or trial_design unavailable (import failed)"
+        )
+    is_extended = _read_aa_extension(latest)
+    verdict_days = _read_aa_verdict_days(latest.id)
+    roster = _agent_roster(source.agents_dir)
+    names = _get_roster_names(roster)
+    spawns = _read_aa_spawns(roster, names, latest.window_start, now)
+    window = _get_aa_window(
+        latest, roster, spawns, now, is_extended=is_extended, verdict_days=verdict_days
+    )
+    if window is None:
+        return None
+    in_window = {
+        agent: [spawn for spawn in agent_spawns if spawn.started_at < window.end]
+        for agent, agent_spawns in spawns.items()
+    }
+    return AaEvidence(
+        window,
+        in_window,
+        _read_aa_join_counts(names, window),
+        _read_aa_spool_closes(window.start),
+        verdict_days is not None,
+    )
+
+
+def _read_aa_extension(latest: AaStart) -> bool:
+    """Whether the window was extended at its duration end. Raises on a PG fault."""
+    params = {
+        "event": TRIAL_LEDGER.EVENT.AA_INSTRUMENT_VERDICT,
+        "dedupe_key": _get_aa_extension_key(latest),
+    }
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(AA.SQL.EXTENSION, params)
+        (is_extended,) = cur.fetchone()
+    return is_extended
+
+
+def _read_aa_verdict_days(start_id: int) -> int | None:
+    """The window days the start's instrument verdict landed at; None before it lands. Raises on a
+    PG fault."""
+    params = {
+        "event": TRIAL_LEDGER.EVENT.AA_INSTRUMENT_VERDICT,
+        "dedupe_key": _get_aa_verdict_key(start_id),
+    }
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(AA.SQL.VERDICT_DAYS, params)
+        row = cur.fetchone()
+    return None if row is None else row[0]
+
+
+def _get_aa_verdict_key(start_id: int) -> str:
+    return f"{TRIAL_LEDGER.EVENT.AA_INSTRUMENT_VERDICT}:{start_id}"
+
+
+def _get_aa_extension_key(latest: AaStart) -> str:
+    """Keyed on the window's salt: a restart opens a window that may extend again."""
+    event = TRIAL_LEDGER.EVENT.AA_INSTRUMENT_VERDICT
+    return f"{event}:{latest.id}:{INSTRUMENT.VERDICT.EXTEND}:{latest.salt_id}"
+
+
+def _get_roster_names(roster: frozenset[str]) -> list[str]:
+    """Every name the roster read resolves to a stem: the stems and their bare or prefixed aliases."""
+    prefix = ROSTER.STEM_PREFIX
+    bare = {stem[len(prefix) :] for stem in roster if stem.startswith(prefix)}
+    return sorted(roster | bare | {prefix + stem for stem in roster})
+
+
+def _read_aa_spawns(
+    roster: frozenset[str], names: list[str], start: datetime, now: datetime
+) -> dict[str, list[SpawnFacts]]:
+    """Each roster stem's spawns started in [start, now), MANIFEST aliases folded onto the stem."""
+    _, spawns_by_type = _pg_read_spawn_facts(
+        names, PairWindows(WindowStarts(start, start, start), now)
+    )
+    spawns: dict[str, list[SpawnFacts]] = defaultdict(list)
+    for agent_type, agent_spawns in spawns_by_type.items():
+        stem = (
+            agent_type
+            if agent_type in roster
+            else _get_roster_alias(agent_type, roster)
+        )
+        if stem is not None:
+            spawns[stem].extend(
+                spawn for spawn in agent_spawns if spawn.started_at >= start
+            )
+    return spawns
+
+
+def _get_aa_window(
+    latest: AaStart,
+    roster: frozenset[str],
+    spawns: Mapping[str, list[SpawnFacts]],
+    now: datetime,
+    *,
+    is_extended: bool,
+    verdict_days: int | None,
+) -> AaWindow | None:
+    """The window at the days its landed verdict was decided at; before that, at its duration, or
+    at the extended one when the window was extended on a straddle or one of the busiest agents
+    was short of the minimum spawns when the duration ended; None while it runs."""
+    days = (
+        verdict_days
+        if verdict_days is not None
+        else _get_aa_days(latest, roster, spawns, is_extended=is_extended)
+    )
+    end = latest.window_start + timedelta(days=days)
+    return AaWindow(latest.window_start, end, days) if now >= end else None
+
+
+def _get_aa_days(
+    latest: AaStart,
+    roster: frozenset[str],
+    spawns: Mapping[str, list[SpawnFacts]],
+    *,
+    is_extended: bool,
+) -> int:
+    rule = latest.duration
+    cutoff = latest.window_start + timedelta(days=rule["days"])
+    counts = sorted(
+        (
+            sum(spawn.started_at < cutoff for spawn in spawns.get(stem, ()))
+            for stem in roster
+        ),
+        reverse=True,
+    )[: rule["busiest_agents"]]
+    # fewer roster agents than the rule counts → the missing ones are short too
+    if (
+        is_extended
+        or len(counts) < rule["busiest_agents"]
+        or min(counts) < rule["minimum_spawns"]
+    ):
+        return rule["extended_days"]
+    return rule["days"]
+
+
+def _read_aa_join_counts(names: list[str], window: AaWindow) -> tuple[int, int]:
+    """(roster outcomes recorded in the window, those that join their spawn). Raises on a PG fault."""
+    params = {"agents": names, "start": window.start, "end": window.end}
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(AA.SQL.JOIN_COVERAGE, params)
+        outcomes, joined = cur.fetchone()
+    return outcomes, joined
+
+
+def _read_aa_spool_closes(
+    start: datetime,
+) -> dict[str, tuple[int | None, int | None]] | None:
+    """Spool → (lines read, lines without a row) per close recorded from start; None on a schema
+    without the count columns. Raises on any other PG fault."""
+    params = {"event": MANIFEST_SPOOL_CLOSED_EVAL_RESULT, "start": start}
+    try:
+        with _pg_connect() as conn, conn.cursor() as cur:
+            cur.execute(AA.SQL.SPOOL_CLOSES, params)
+            rows = cur.fetchall()
+    except Exception as exc:
+        if getattr(exc, "sqlstate", None) != AA.UNDEFINED_COLUMN_SQLSTATE:
+            raise
+        return None
+    return {spool: (lines_read, lost) for spool, lines_read, lost in rows}
+
+
+def _write_aa_result(
+    latest: AaStart, evidence: AaEvidence, source: AaSource, now: datetime
+) -> bool:
+    """The instrument verdict row, then design-effect rows, then the aa-result row → True when
+    the aa-result landed. An unreadable break-even history, a straddle that extends the window
+    or a verdict or design-effect write fault defers the rows after it."""
+    start_id = latest.id
+    armed = get_aa_armed_spawns(evidence.spawns, latest.salt_id)
+    effects, undefined = _get_aa_design_effects(armed, now, start_id)
+    if not _write_aa_verdict_rows(
+        latest, evidence.window, effects, now, is_decided=evidence.is_decided
+    ):
+        return False
+    criteria = {
+        "join_coverage": get_aa_join_criterion(*evidence.joins),
+        "sink": _get_aa_sink_criterion(evidence.closes, source.manifest_ingest),
+        **_get_aa_arm_criteria(armed, now),
+        "design_effect": AaCriterion(
+            AA.VERDICT.PASS if effects else AA.VERDICT.FAIL,
+            {"written": sorted({agent for agent, _ in effects}), "undefined": undefined},
+        ),
+    }
+    payload = _get_aa_result_payload(evidence.window, criteria)
+    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESULT}:{start_id}"
+    landed = _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESULT, payload, dedupe_key)
+    if landed is not None:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: A/A {start_id} result {payload['overall']} ({dedupe_key})\n"
+        )
+    return landed == 1
+
+
+def _get_aa_result_payload(
+    window: AaWindow, criteria: Mapping[str, AaCriterion]
+) -> dict:
+    return {
+        "window": {
+            "start": window.start.isoformat(),
+            "end": window.end.isoformat(),
+            "days": window.days,
+        },
+        "criteria": {
+            name: {"verdict": criterion.verdict, **criterion.detail}
+            for name, criterion in criteria.items()
+        },
+        "overall": get_aa_overall(criteria),
+    }
+
+
+def _get_aa_design_effects(
+    armed: Mapping[str, Sequence[ArmedSpawn]], now: datetime, start_id: int
+) -> tuple[dict[tuple[str, str], trial_design.ArmDesignEffect], list[str]]:
+    """((agent, row key) → arm-difference reading, agents undefined on every key): one row key
+    per metric definition (DESIGN_EFFECT_ROW_KEYS), emit failure's two split legs apart."""
+    tool_budget = get_tool_budget(os.environ)
+    effects: dict[tuple[str, str], trial_design.ArmDesignEffect] = {}
+    undefined: list[str] = []
+    for agent in sorted(armed):
+        for metric_key, row_key in sorted(DESIGN_EFFECT_ROW_KEYS.items()):
+            is_event = _get_aa_event_test(metric_key, tool_budget)
+            reading = _get_arm_design_effect(
+                armed[agent], is_event, now, seed=f"{start_id}:{agent}:{row_key}"
+            )
+            if reading is not None:
+                effects[(agent, row_key)] = reading
+        if not any(key[0] == agent for key in effects):
+            undefined.append(agent)
+    return effects, undefined
+
+
+def _get_aa_event_test(metric_key: str, tool_budget: int) -> Callable[[SpawnFacts], bool]:
+    """The A/A's event per metric key: budget_overage per spawn with the tool_use half, as the engine scores it."""
+    if metric_key == METRIC_BUDGET_OVERAGE:
+        return lambda spawn: is_task_overrun((spawn,), tool_budget)
+    return lambda spawn: is_metric_event(spawn, metric_key)
+
+
+def _is_aa_emit_failure(spawn: SpawnFacts) -> bool:
+    """The engine's emit-failure harm-stop event: the pre-split union of both legs, so the A/A's
+    criteria do not move with the split."""
+    return is_metric_event(spawn, METRIC_EMIT_FAILURE) or is_metric_event(
+        spawn, METRIC_NO_SUBAGENT_STOP
+    )
+
+
+def _get_arm_design_effect(
+    items: Sequence[ArmedSpawn],
+    is_event: Callable[[SpawnFacts], bool],
+    now: datetime,
+    *,
+    seed: str,
+) -> trial_design.ArmDesignEffect | None:
+    """Arm-difference design effect over parent-session clusters; None when undefined.
+
+    Settled spawns with a session only: a NULL session_id counts on no side, a pending spawn waits.
+    """
+    clusters: dict[str, list[tuple[int, float]]] = defaultdict(list)
+    for item in items:
+        spawn = item.spawn
+        if spawn.session_id is not None and not is_pending(spawn, now):
+            clusters[spawn.session_id].append((item.arm, float(is_event(spawn))))
+    try:
+        return trial_design.get_arm_design_effect_reading(list(clusters.values()), seed=seed)
+    except ValueError:  # fewer than 2 sessions, an empty arm or no variance → no value
+        return None
+
+
+def _write_aa_design_effects(
+    start_id: int, effects: Mapping[tuple[str, str], trial_design.ArmDesignEffect]
+) -> bool:
+    """One row per agent and metric key (a taken key = written earlier); False after a WARNed fault."""
+    event = TRIAL_LEDGER.EVENT.AA_ARM_DESIGN_EFFECT
+    is_complete = True
+    for (agent, metric_key), reading in effects.items():
+        landed = _write_aa_row(
+            event,
+            {"metric_key": metric_key, **reading._asdict()},
+            f"{event}:{start_id}:{agent}:{metric_key}",
+            agent=agent,
+        )
+        is_complete = is_complete and landed is not None
+    if not is_complete:
+        _warn_aa(
+            f"A/A {start_id} design effects incomplete",
+            "aa-result deferred to a later cycle",
+        )
+    return is_complete
+
+
+def _write_aa_verdict_rows(
+    latest: AaStart,
+    window: AaWindow,
+    effects: Mapping[tuple[str, str], trial_design.ArmDesignEffect],
+    now: datetime,
+    *,
+    is_decided: bool,
+) -> bool:
+    """The verdict row lands first of the start-keyed rows, then the design-effect rows; a straddle
+    the window may still extend writes the extension row alone. A landed verdict is never decided
+    again: a later now could straddle and extend a window already decided. False when the A/A
+    stays open or after a WARNed fault."""
+    if not is_decided:
+        payload = _get_instrument_verdict_payload(latest, window, effects, now)
+        if payload is None:
+            return False
+        if payload["verdict"] == INSTRUMENT.VERDICT.EXTEND:
+            _write_aa_extension(latest, payload)
+            return False
+        if not _write_instrument_verdict(latest.id, payload):
+            return False
+    return _write_aa_design_effects(latest.id, effects)
+
+
+def _get_instrument_verdict_payload(
+    latest: AaStart,
+    window: AaWindow,
+    effects: Mapping[tuple[str, str], trial_design.ArmDesignEffect],
+    now: datetime,
+) -> dict | None:
+    """The D1 verdict row's payload on INSTRUMENT.METRIC_KEY; None after a WARNed break-even
+    history fault, the result deferred."""
+    readings = {
+        agent: reading
+        for (agent, metric_key), reading in effects.items()
+        if metric_key == INSTRUMENT.METRIC_KEY
+    }
+    try:
+        recomputed = _read_recomputed_break_evens(sorted(readings), now)
+    except Exception as exc:  # noqa: BLE001 — any read fault is an outage → the verdict waits
+        _warn_aa(
+            f"A/A {latest.id} break-even history unreadable: {_describe_fault(exc)}",
+            "aa-result deferred to a later cycle",
+        )
+        return None
+    reference = _read_reference_break_evens()
+    positions = {
+        "recomputed": get_instrument_reading(readings, recomputed),
+        "reference": None if reference is None else get_instrument_reading(readings, reference),
+    }
+    return {
+        "start_id": latest.id,
+        "metric_key": INSTRUMENT.METRIC_KEY,
+        "window_days": window.days,
+        "readings": positions,
+        "excluded": {
+            "recomputed": get_excluded_agents(readings, recomputed),
+            "reference": None if reference is None else get_excluded_agents(readings, reference),
+        },
+        "verdict": get_instrument_verdict(
+            positions["recomputed"],
+            positions["reference"],
+            window_days=window.days,
+            extended_days=latest.duration["extended_days"],
+        ),
+        "agents": {
+            agent: {
+                **reading._asdict(),
+                "break_even": {
+                    "recomputed": recomputed.get(agent),
+                    "reference": None if reference is None else reference.get(agent),
+                },
+            }
+            for agent, reading in readings.items()
+        },
+    }
+
+
+def _read_reference_break_evens() -> dict[str, float] | None:
+    """agent → the owner's D1 break-even from this install's local file; None when the file is
+    absent (INFO) or unreadable / not an agent → number object (WARN) → no reference reading."""
+    path = ga_paths.get_data_root().joinpath(*INSTRUMENT.BREAK_EVEN.REFERENCE_SEGMENTS)
+    scope = "verdict on the recomputed break-even alone"
+    try:
+        body = json.loads(path.read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: A/A instrument reference absent at {path}; {scope}\n"
+        )
+        return None
+    # ValueError spans JSONDecodeError, UnicodeError and the int digit limit; RecursionError = depth
+    except (OSError, ValueError, RecursionError) as exc:
+        _warn_aa(f"instrument reference unreadable at {path}: {_describe_fault(exc)}", scope)
+        return None
+    if not _is_break_even_map(body):
+        _warn_aa(f"instrument reference at {path} is not an agent → number object", scope)
+        return None
+    return {agent: float(value) for agent, value in body.items()}
+
+
+def _is_break_even_map(body: object) -> bool:
+    try:
+        return isinstance(body, dict) and all(
+            isinstance(agent, str)
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            for agent, value in body.items()
+        )
+    except OverflowError:  # an int past the float range → malformed, not a cycle fault
+        return False
+
+
+def _write_aa_extension(latest: AaStart, payload: dict) -> None:
+    """Durable, so later cycles read the extension instead of recomputing the verdict at a later
+    now, where it could flip and close the window early. A write fault WARNs; the next cycle retries."""
+    dedupe_key = _get_aa_extension_key(latest)
+    landed = _write_aa_row(TRIAL_LEDGER.EVENT.AA_INSTRUMENT_VERDICT, payload, dedupe_key)
+    if landed is not None:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: A/A {latest.id} straddles at {payload['window_days']} days;"
+            f" window extended to {latest.duration['extended_days']} ({dedupe_key})\n"
+        )
+
+
+def _write_instrument_verdict(start_id: int, payload: dict) -> bool:
+    """The D1 verdict row (a taken key = written earlier); False after a WARNed fault, the result
+    deferred."""
+    event = TRIAL_LEDGER.EVENT.AA_INSTRUMENT_VERDICT
+    if _write_aa_row(event, payload, _get_aa_verdict_key(start_id)) is None:
+        _warn_aa(
+            f"A/A {start_id} instrument verdict not written",
+            "aa-result deferred to a later cycle",
+        )
+        return False
+    return True
+
+
+def _read_recomputed_break_evens(agents: list[str], now: datetime) -> dict[str, float]:
+    """agent → the design effect at which the shipped power check's projection meets its bound.
+
+    The power check's own inputs at now, at design effect 1: projected units over required units.
+    No entry when the history is insufficient or the rate has no finite size. Raises on a PG fault.
+    """
+    if not agents:
+        return {}
+    windows = get_pair_windows(now)
+    inputs = PowerInputs(
+        *_pg_read_spawn_facts(agents, windows),
+        dict.fromkeys(((agent, INSTRUMENT.METRIC_KEY) for agent in agents), 1.0),
+        frozenset(),
+    )
+    break_evens: dict[str, float] = {}
+    for agent in agents:
+        key = (agent, INSTRUMENT.METRIC_KEY)
+        floor = get_floor_verdict(
+            inputs.spawns.get(agent, []), key[1], windows, inputs.provenance_start, windows.end
+        )
+        check = get_power_check(PowerSubject(key, floor), inputs, windows)
+        required = check.units.required
+        if check.verdict != POWER.VERDICT.INSUFFICIENT_HISTORY and required is not None:
+            break_evens[agent] = check.units.projected / required
+    return break_evens
+
+
+def get_instrument_reading(
+    readings: Mapping[str, trial_design.ArmDesignEffect], break_evens: Mapping[str, float]
+) -> str:
+    """D1 break-even rule over the agents with an interval and a break-even above 1.
+
+    One whole interval below its break-even → R1 holds; every interval at or above → switch to R2;
+    otherwise a straddle; no such agent → undecided. A break-even at or below 1 cannot decide a
+    trial at design effect 1, so its agent is left out (get_excluded_agents).
+    """
+    agents = [
+        agent
+        for agent in _get_instrument_agents(readings, break_evens)
+        if break_evens[agent] > INSTRUMENT.BREAK_EVEN.DECIDABLE
+    ]
+    if not agents:
+        return INSTRUMENT.READING.UNDECIDED
+    if any(readings[agent].upper < break_evens[agent] for agent in agents):
+        return INSTRUMENT.READING.HOLDS
+    if all(readings[agent].lower >= break_evens[agent] for agent in agents):
+        return INSTRUMENT.READING.SWITCH
+    return INSTRUMENT.READING.STRADDLE
+
+
+def get_excluded_agents(
+    readings: Mapping[str, trial_design.ArmDesignEffect], break_evens: Mapping[str, float]
+) -> list[str]:
+    """The agents with an interval whose break-even is at or below 1 — left out of the reading."""
+    return [
+        agent
+        for agent in _get_instrument_agents(readings, break_evens)
+        if break_evens[agent] <= INSTRUMENT.BREAK_EVEN.DECIDABLE
+    ]
+
+
+def _get_instrument_agents(
+    readings: Mapping[str, trial_design.ArmDesignEffect], break_evens: Mapping[str, float]
+) -> list[str]:
+    return [
+        agent
+        for agent in sorted(readings)
+        if agent in break_evens and readings[agent].lower is not None
+    ]
+
+
+def get_instrument_verdict(
+    recomputed: str, reference: str | None, *, window_days: int, extended_days: int
+) -> str:
+    """The D1 verdict: the readings on both break-evens agree → that reading, a straddle extending
+    once; disagreeing readings, a straddle after the extension or nothing decidable → owner relay.
+    reference None = no owner file on this install → the recomputed reading decides alone."""
+    if reference is not None and recomputed != reference:
+        return INSTRUMENT.VERDICT.RELAY
+    if recomputed in (INSTRUMENT.READING.HOLDS, INSTRUMENT.READING.SWITCH):
+        return recomputed
+    if recomputed == INSTRUMENT.READING.STRADDLE and window_days < extended_days:
+        return INSTRUMENT.VERDICT.EXTEND
+    return INSTRUMENT.VERDICT.RELAY
+
+
+def _get_aa_arm_criteria(
+    armed: Mapping[str, Sequence[ArmedSpawn]], now: datetime
+) -> dict[str, AaCriterion]:
+    looks = get_aa_looks(armed, now, tool_budget=get_tool_budget(os.environ))
+    return {
+        "balance": get_aa_balance_criterion(armed),
+        "delivery": get_aa_delivery_criterion(armed),
+        "engine": get_aa_engine_criterion(looks),
+    }
+
+
+def get_spawn_arm(salt_id: int, agent_id: str) -> int:
+    """sha256 over the decimal salt then the MANIFEST agent_id (the hook's `printf '%s%s'` bytes), mod 2."""
+    digest = hashlib.sha256(f"{salt_id}{agent_id}".encode("utf-8")).hexdigest()
+    return int(digest, 16) % 2
+
+
+def get_aa_armed_spawns(
+    spawns: Mapping[str, Sequence[SpawnFacts]], salt_id: int
+) -> dict[str, list[ArmedSpawn]]:
+    """Each agent's spawns under the recomputed arm, whatever the hook recorded; `unknown` ids excluded."""
+    return {
+        agent: [
+            ArmedSpawn(spawn, get_spawn_arm(salt_id, spawn.agent_id))
+            for spawn in agent_spawns
+            if spawn.agent_id is not None
+        ]
+        for agent, agent_spawns in spawns.items()
+    }
+
+
+def get_aa_balance_criterion(armed: Mapping[str, Sequence[ArmedSpawn]]) -> AaCriterion:
+    """Balance: every agent from BALANCE.MINIMUM_SPAWNS spawns keeps a sample-ratio p of at least
+    BALANCE.ALPHA against a 1:1 split; no agent that large fails."""
+    tested: dict[str, dict] = {}
+    for agent in sorted(armed):
+        treatment = sum(item.arm for item in armed[agent])
+        control = len(armed[agent]) - treatment
+        if control + treatment >= AA.BALANCE.MINIMUM_SPAWNS:
+            p_value = _get_sample_ratio_p(control, treatment)
+            tested[agent] = {"control": control, "treatment": treatment, "p": p_value}
+    failed = [agent for agent, split in tested.items() if split["p"] < AA.BALANCE.ALPHA]
+    return AaCriterion(
+        AA.VERDICT.PASS if tested and not failed else AA.VERDICT.FAIL,
+        {
+            "tested": tested,
+            "failed": failed,
+            "untested": sorted(set(armed) - set(tested)),
+        },
+    )
+
+
+def _get_sample_ratio_p(control: int, treatment: int) -> float:
+    """Two-sided p of a 1:1 split: chi-square goodness of fit, 1 df, no continuity correction."""
+    z = abs(treatment - control) / math.sqrt(control + treatment)
+    return 2 * (1 - statistics.NormalDist().cdf(z))
+
+
+def get_aa_delivery_criterion(armed: Mapping[str, Sequence[ArmedSpawn]]) -> AaCriterion:
+    """Delivery: the hook marked delivered on at least MINIMUM_DELIVERY_PERCENT of the treatment
+    spawns and on no control spawn; no treatment spawn fails. Hook arms that differ from the
+    recomputed arm are recorded per agent and decide nothing."""
+    items = [item for agent_items in armed.values() for item in agent_items]
+    treatment = [item for item in items if item.arm == 1]
+    delivered = sum(item.spawn.is_delivered is True for item in treatment)
+    control_delivered = sum(
+        item.spawn.is_delivered is True for item in items if item.arm == 0
+    )
+    is_met = (
+        bool(treatment)
+        and delivered * 100 >= len(treatment) * AA.MINIMUM_DELIVERY_PERCENT
+        and control_delivered == 0
+    )
+    return AaCriterion(
+        AA.VERDICT.PASS if is_met else AA.VERDICT.FAIL,
+        {
+            "treatment": len(treatment),
+            "delivered": delivered,
+            "control_delivered": control_delivered,
+            "arm_mismatches": _get_arm_mismatches(armed),
+        },
+    )
+
+
+def _get_arm_mismatches(armed: Mapping[str, Sequence[ArmedSpawn]]) -> dict[str, int]:
+    """agent → spawns whose hook-recorded arm differs from the recomputed one; no hook arm is no mismatch."""
+    counts = {
+        agent: sum(
+            item.spawn.arm is not None and item.spawn.arm != item.arm for item in items
+        )
+        for agent, items in sorted(armed.items())
+    }
+    return {agent: count for agent, count in counts.items() if count}
+
+
+def get_aa_looks(
+    armed: Mapping[str, Sequence[ArmedSpawn]], now: datetime, *, tool_budget: int
+) -> list[AaLook]:
+    """The roster's settled spawns fed the engine as one trial, a look at each LOOK_FRACTIONS share
+    in start order; primary = budget_overage per spawn, tool_use half included."""
+    settled = sorted(
+        (
+            item
+            for items in armed.values()
+            for item in items
+            if not is_pending(item.spawn, now)
+        ),
+        key=lambda item: (item.spawn.started_at, item.spawn.agent_id),
+    )
+    if not settled:
+        return []
+    return [
+        _get_aa_look(settled[: math.ceil(fraction * len(settled))], tool_budget)
+        for fraction in trial_design.LOOK_FRACTIONS
+    ]
+
+
+def _get_aa_look(items: Sequence[ArmedSpawn], tool_budget: int) -> AaLook:
+    return AaLook(
+        _get_aa_arms(items, _get_aa_event_test(METRIC_BUDGET_OVERAGE, tool_budget)),
+        {METRIC_EMIT_FAILURE: _get_aa_arms(items, _is_aa_emit_failure)},
+        get_tool_use_reading(items, is_overage_primary=True),
+    )
+
+
+def _get_aa_arms(
+    items: Sequence[ArmedSpawn], is_event: Callable[[SpawnFacts], bool]
+) -> TrialArms:
+    control, treatment = (
+        ArmCount(
+            sum(is_event(item.spawn) for item in items if item.arm == arm),
+            sum(item.arm == arm for item in items),
+        )
+        for arm in (0, 1)
+    )
+    return TrialArms(control, treatment)
+
+
+def get_tool_use_reading(
+    items: Sequence[ArmedSpawn], *, is_overage_primary: bool
+) -> ToolUseReading | None:
+    """Mean shift and pooled sd over spawns with a recorded tool_use line; None below two per arm."""
+    control, treatment = (
+        [
+            item.spawn.tool_use_actual
+            for item in items
+            if item.arm == arm and item.spawn.tool_use_actual is not None
+        ]
+        for arm in (0, 1)
+    )
+    if min(len(control), len(treatment)) < 2:
+        return None
+    pooled_variance = (
+        (len(control) - 1) * statistics.variance(control)
+        + (len(treatment) - 1) * statistics.variance(treatment)
+    ) / (len(control) + len(treatment) - 2)
+    return ToolUseReading(
+        statistics.fmean(treatment) - statistics.fmean(control),
+        math.sqrt(pooled_variance),
+        min(len(control), len(treatment)),
+        is_overage_primary,
+    )
+
+
+def get_aa_join_criterion(outcomes: int, joined: int) -> AaCriterion:
+    """Join coverage: at least MINIMUM_JOIN_PERCENT of the window's roster outcomes joined; none fails."""
+    is_covered = outcomes > 0 and joined * 100 >= outcomes * AA.MINIMUM_JOIN_PERCENT
+    return AaCriterion(
+        AA.VERDICT.PASS if is_covered else AA.VERDICT.FAIL,
+        {"outcomes": outcomes, "joined": joined},
+    )
+
+
+def _get_aa_sink_criterion(
+    closes: dict[str, tuple[int | None, int | None]] | None,
+    manifest_ingest: ManifestIngest | None,
+) -> AaCriterion:
+    """Sink: every MANIFEST spool closed since the window start kept a row per line read.
+
+    The close rows plus this cycle's ingest, each spool once; a close without its counts fails it
+    by name, and a schema without the count columns fails it with a named WARN.
+    """
+    if closes is None:
+        _warn_aa(
+            "sink: core.autoagent_loop_events has no lines_read / lines_without_row "
+            f"(apply migration {AA.SPOOL_CLOSE_COUNTS_MIGRATION})",
+            "the sink criterion fails",
+        )
+        return AaCriterion(AA.VERDICT.FAIL, {"count_columns_absent": True})
+    counts = dict(closes)
+    if manifest_ingest is not None:  # this cycle's own rows are among closes → keyed once by spool
+        counts.update(
+            (close.spool, (close.lines_read, _get_lines_without_row(close)))
+            for close in manifest_ingest.closed
+        )
+    uncounted = sorted(
+        spool for spool, (read, lost) in counts.items() if read is None or lost is None
+    )
+    lost = sum(lost for read, lost in counts.values() if read is not None and lost is not None)
+    return AaCriterion(
+        AA.VERDICT.PASS if lost == 0 and not uncounted else AA.VERDICT.FAIL,
+        {"spools": len(counts), "lines_lost": lost, "uncounted_closes": uncounted},
+    )
+
+
+def get_aa_engine_criterion(
+    looks: Sequence[AaLook] | None, *, design_effect: float = 1.0
+) -> AaCriterion:
+    """The engine fed the A/A as a trial: fails on a win or a harm stop; pending-arms without looks.
+
+    Win: a look's pooled z at or above its boundary. Harm stop: a rate guardrail whose
+    treatment rate reaches its minimum detectable fold rise over control, or a tool_use
+    reading whose shift reaches its minimum detectable shift (trial_design).
+    """
+    if not looks:
+        return AaCriterion(AA.VERDICT.PENDING_ARMS, {"looks": 0})
+    boundaries = trial_design.get_boundaries()
+    wins = [
+        number
+        for number, (look, boundary) in enumerate(zip(looks, boundaries), start=1)
+        if (z := _get_pooled_z(look.arms)) is not None and z >= boundary
+    ]
+    harms = sorted(
+        {
+            name
+            for look in looks
+            for name, arms in look.guardrails.items()
+            if _is_harm_stop(arms, design_effect)
+        }
+        | {
+            AA.TOOL_USE_GUARDRAIL
+            for look in looks
+            if _is_tool_use_harm_stop(look.tool_use, design_effect)
+        }
+    )
+    return AaCriterion(
+        AA.VERDICT.FAIL if wins or harms else AA.VERDICT.PASS,
+        {"looks": len(looks), "win_looks": wins, "harm_stops": harms},
+    )
+
+
+def _is_harm_stop(arms: TrialArms, design_effect: float) -> bool:
+    control, treatment = arms
+    per_arm = min(control.units, treatment.units)
+    if per_arm < 1:
+        return False
+    base_rate = control.events / control.units
+    try:
+        fold = trial_design.get_rate_harm(
+            base_rate, per_arm, design_effect=design_effect
+        )
+    except ValueError:  # a control rate of 0 or 1 has no fold rise
+        return False
+    return treatment.events / treatment.units >= fold * base_rate
+
+
+def _is_tool_use_harm_stop(
+    reading: ToolUseReading | None, design_effect: float
+) -> bool:
+    """Overage-primary: shift ≥ harm, upward only; two-sided: |shift| ≥ harm."""
+    if reading is None:
+        return False
+    try:
+        harm = trial_design.get_tool_use_harm(
+            reading.sd,
+            reading.per_arm,
+            is_overage_primary=reading.is_overage_primary,
+            design_effect=design_effect,
+        )
+    except ValueError:  # a zero sd has no harm value, as a rate of 0 or 1 has none
+        return False
+    shift = reading.shift if reading.is_overage_primary else abs(reading.shift)
+    return shift >= harm
+
+
+def get_aa_overall(criteria: Mapping[str, AaCriterion]) -> str:
+    """Pass only when every criterion passes; a failure outranks pending arms."""
+    verdicts = {criterion.verdict for criterion in criteria.values()}
+    if AA.VERDICT.FAIL in verdicts:
+        return AA.VERDICT.FAIL
+    if AA.VERDICT.PENDING_ARMS in verdicts:
+        return AA.VERDICT.PENDING_ARMS
+    return AA.VERDICT.PASS
+
+
+def _write_aa_row(
+    event: str, payload: dict, dedupe_key: str, *, agent: str | None = None
+) -> int | None:
+    """Rows landed (0 = key taken or ledger absent); None after a WARNed fault."""
+    try:
+        return _pg_write_trial_ledger_row(
+            event, TRIAL_LEDGER.ACTOR.AA, payload, agent=agent, dedupe_key=dedupe_key
+        )
+    except Exception as exc:  # noqa: BLE001 — a ledger write fault never fails the cycle
+        _warn_aa(
+            f"{dedupe_key} not written: {_describe_fault(exc)}", "the cycle continues"
+        )
+        return None
+
+
+def _describe_fault(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {str(exc)[:160]}"
+
+
+def _warn_aa(cause: str, scope: str) -> None:
+    sys.stderr.write(f"[daemon-cycle] WARN: A/A harness — {cause}; {scope}\n")
 
 
 def classify_failure_rationale(rationale: str) -> str:
@@ -9070,7 +11018,10 @@ def classify_failure_rationale(rationale: str) -> str:
         return FAILURE_CLASS_SUPERSEDE
     if text.startswith(_PARKED_PATTERN_REASON):
         return FAILURE_CLASS_PARKED_PATTERN
-    # Back-off marker (stored 'rejected') ran no Haiku call → no verdict, as a timeout.
+    if text.startswith(_GENERATION_CLOSED_REASON):
+        # Closed before any review side saw it — no verdict.
+        return FAILURE_CLASS_SKIPPED
+    # Back-off marker ran no Haiku call → no verdict, as a timeout.
     if text.startswith(
         (HAIKU_TIMEOUT_RATIONALE_PREFIX, TIMEOUT_BACKOFF_RATIONALE_PREFIX)
     ):
@@ -9088,10 +11039,10 @@ def classify_failure_rationale(rationale: str) -> str:
     if text.startswith("haiku transient overload"):
         return FAILURE_CLASS_TRANSIENT
     if text.startswith(_BELOW_FLOOR_REJECT_PREFIX):
-        # Confidence-floor terminalization (resolve_floor_terminalization) — a
-        # MECHANICAL, explicitly-recoverable reject ("resurfaces when the pattern
-        # clears the floor"), NOT a quality verdict. It persists status='rejected'
-        # but no review side ever adjudicated the candidate, so it MUST NOT advance
+        # Closed-apply terminalization (resolve_floor_terminalization) — a
+        # MECHANICAL hold while auto-apply is closed, NOT a quality verdict.
+        # It persists 'unadjudicated'
+        # ('rejected' on a pre-label schema) — no review side adjudicated it, so it MUST NOT advance
         # the kill streak (the exact de-conflation class for a new reject variant).
         return FAILURE_CLASS_SKIPPED
     if text.startswith("claude CLI not found"):
@@ -9164,6 +11115,18 @@ def route_failed_pre_verify(
     return "reject", "", "rejected"
 
 
+def get_reject_status(rationale: str) -> str:
+    """Terminal status for a 'reject'-classified candidate, keyed on its rationale.
+
+    'rejected' is reserved for a real gate verdict; a rationale the classifier
+    reads as non-adjudicating (infra, quota, back-off, supersede, parked) is
+    stored 'unadjudicated' — 'rejected' on a pre-label schema (N9 fragment).
+    """
+    if classify_failure_rationale(rationale) in _NON_ADJUDICATION_CLASSES:
+        return "unadjudicated"
+    return "rejected"
+
+
 def consecutive_reject_count(
     pattern_label: str,
     proposal_rows: list[tuple[str, str, str]],
@@ -9180,6 +11143,7 @@ def consecutive_reject_count(
         budget-too-low / transient-overload / empty-or-error) → looked past:
         the candidate was never genuinely adjudicated, so it MUST NOT advance
         the kill streak (the de-conflation root-cause fix);
+      - 'unadjudicated' → looked past by status, whatever its rationale;
       - 'rejected' classifying as a genuine QUALITY reject → streak += 1;
       - 'snoozed' (stale-drain, legacy back-off) / 'pending' (not yet adjudicated) /
         'reverted' (human/CLI back-out — terminal-non-resurrectable: it must
@@ -9350,7 +11314,9 @@ def _fetch_pre_verify_failures(
     diff shapes into its prompt so it learns to avoid them. SEPARATE from the
     shared ``_fetch_proposal_history`` projection (do NOT widen that one) — this
     SELECTs the pre-verify detail (``pre_verify_axes`` JSONB + ``rationale``)
-    and filters on ``pre_verify_passed = false``.
+    and filters on ``pre_verify_passed = false``, verifier verdicts only: an
+    ``error:*`` outage or a ``skipped:*`` skip judged no diff shape, so it is
+    excluded in SQL and never takes a ``limit`` slot.
 
     Mirrors ``_fetch_proposal_history``'s connection + fail-OPEN discipline:
     ``HAS_PG_LOOP_WRITE`` gate (``_pg_connect`` is unbound when psycopg is
@@ -9368,13 +11334,15 @@ def _fetch_pre_verify_failures(
         "SELECT pre_verify_axes, rationale "
         "FROM core.autoagent_proposals "
         "WHERE target_agent = %s AND pre_verify_passed = false "
+        "AND pre_verify_status NOT LIKE %s "
+        "AND pre_verify_status NOT LIKE %s "
         "ORDER BY cycle_date DESC, id DESC "
         "LIMIT %s"
     )
     try:
         with _pg_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(select_sql, (target_agent, limit))
+                cur.execute(select_sql, (target_agent, "error:%", "skipped:%", limit))
                 return [
                     (axes if isinstance(axes, dict) else {}, rationale or "")
                     for axes, rationale in cur.fetchall()
@@ -9503,70 +11471,6 @@ def _render_landed_history_block(
     return block
 
 
-def _live_failure_stats(agent: str) -> tuple[int, int] | None:
-    """(negative-signal rows, total) for the agent over the rolling live window.
-
-    A row counts when it trips ANY trigger OR-term (is_negative_signal_outcome —
-    the same predicate the aggregator emits on, imported from the shared helper).
-    read_outcomes_since applies the learning-signal exclusions server-side
-    (attribution failures + poisoned_window rows), so the recompute never
-    re-learns quarantined mis-measurements. None on PG-off / read error
-    (fail-OPEN — caller keeps the patterns).
-    """
-    if not HAS_PG_OUTCOME_READ or not agent:
-        return None
-
-    since_epoch = time.time() - STALE_WINDOW_DAYS * 86400
-    try:
-        rows = _pg_read_outcomes_since(since_epoch, agent=agent)
-    except Exception as exc:  # noqa: BLE001 — fail-OPEN: read error must not skip
-        sys.stderr.write(
-            f"[daemon-cycle] staleness: PG read failed for agent={agent} — "
-            f"fail-open: {type(exc).__name__}: {str(exc)[:200]}\n"
-        )
-        return None
-
-    triggers = sum(1 for row in rows if _pg_is_negative_signal_outcome(row))
-    return triggers, len(rows)
-
-
-def _stale_reason(pattern_label: str, stats: tuple[int, int]) -> str:
-    """'' when the live window still supports the pattern, else the skip reason.
-
-    Families mirror the learning-aggregator.py emit conditions (current English
-    labels + the legacy Korean rows still live in core.learning_log), both
-    recomputed over the shared negative-signal trigger:
-      - fail-count family (aggregator pattern 1) → live iff triggers >= 3;
-      - fail-rate family (aggregator pattern 5)  → live iff total >= 3 AND
-        triggers/total >= 0.5.
-    Unknown family → '', which no longer reads as "still live": the sole caller
-    guards on _stale_family_known first, so an unknown family never arrives here.
-    """
-    triggers, total = stats
-    label = (pattern_label or "").strip()
-    if label.startswith(_FAIL_COUNT_LABEL_PREFIXES):
-        if triggers >= STALE_MIN_LIVE_TRIGGERS:
-            return ""
-        return (
-            f"live negative-signal count {triggers} < {STALE_MIN_LIVE_TRIGGERS} "
-            f"in last {STALE_WINDOW_DAYS}d (window total {total})"
-        )
-    if label.startswith(_FAIL_RATE_LABEL_PREFIXES):
-        if total < STALE_MIN_SAMPLE:
-            return (
-                f"live sample {total} < {STALE_MIN_SAMPLE} in last "
-                f"{STALE_WINDOW_DAYS}d"
-            )
-        rate = triggers / total
-        if rate >= STALE_FAILURE_RATE_FLOOR:
-            return ""
-        return (
-            f"live negative-signal rate {rate:.0%} < {STALE_FAILURE_RATE_FLOOR:.0%} "
-            f"in last {STALE_WINDOW_DAYS}d ({triggers}/{total})"
-        )
-    return ""
-
-
 def _covers_pattern_label(pattern_label: str, proposal_label: str) -> bool:
     """Numeric-stripped containment — matches legacy numeric proposal labels and
     the consolidated multi-signal label ("<agent> multi-signal consolidation (a / b)").
@@ -9595,44 +11499,15 @@ def _warn_pattern_skip(
     *,
     eval_result: str,
     reason: str,
-    event_subject: str | None = None,
 ) -> None:
     """Skipped/snoozed pattern → stderr WARN + loop-event emit, never silent.
 
     Same observability contract as _warn_roster_mismatch (Precondition
     Loud-Fail): eval_result rows in core.autoagent_loop_events surface the drop
     to the monitor; the stderr line carries the recompute / streak detail.
-
-    Census class by default; event_subject carries the adjudicated subject when
-    the caller passes a verdict cause — the writer refuses either mismatch.
     """
     sys.stderr.write(
         f"[daemon-cycle] WARN: pattern {eval_result} — agent={agent} "
-        f"({signature[:80]!r}): {reason}\n"
-    )
-    _emit_gate_loop_event(agent, event_ts, eval_result, event_subject=event_subject)
-
-
-def _warn_gate_fail_open(
-    agent: str,
-    signature: str,
-    event_ts: str,
-    *,
-    eval_result: str,
-    reason: str,
-) -> None:
-    """Gate could not adjudicate a pattern → stderr WARN + loop event, pattern KEPT.
-
-    Separate from _warn_pattern_skip because the stderr line must say which
-    happened: that one dropped the pattern, this one kept one it could not judge.
-    Precondition Loud-Fail — an unadjudicated pattern gets a named channel rather
-    than a silent keep.
-
-    Census class only — its causes count how often the gate failed open, and no
-    single subject was adjudicated, so it takes no event_subject.
-    """
-    sys.stderr.write(
-        f"[daemon-cycle] WARN: gate fail-open {eval_result} — agent={agent} "
         f"({signature[:80]!r}): {reason}\n"
     )
     _emit_gate_loop_event(agent, event_ts, eval_result)
@@ -9649,6 +11524,9 @@ def _emit_gate_loop_event(
 
     Lives once so a schema change to core.autoagent_loop_events cannot land on the
     skip path and miss the fail-open path.
+
+    event_subject: None = census class, keyed per (day, agent, cause); a subject =
+    verdict class for a writer verdict cause — the writer refuses either mismatch.
     """
     _invoke_pg_helper(
         {
@@ -9666,31 +11544,30 @@ def _emit_gate_loop_event(
     )
 
 
-# -- Applied-proposal discharge (pattern-first coverage resolution) ----------
+# -- Applied-proposal discharge (link-keyed) ---------------------------------
 #
-# An applied proposal's patch lands but the core.learning_log rows it was
-# generated from stay 'identified', so their frequency keeps growing and the
-# same prose rule re-fires stricter every cycle. This stage resolves an applied
-# proposal to the rows it covers and discharges them to terminal 'applied'.
+# An applied proposal's patch lands but the core.learning_log row it was
+# generated from stays 'identified', so its frequency keeps growing and the
+# same prose rule re-fires stricter every cycle. This stage follows the
+# proposal's learning_pattern_id link to that row and discharges it to terminal
+# 'applied'. An unlinked (legacy) proposal discharges nothing: no label is read.
 #
-# Resolution is PATTERN-FIRST: iterate the agent's stored rows (row ids already
-# in hand) and ask _covers_pattern_label whether the proposal label covers each.
-# Nothing is reconstructed from the label, so a constituent's nested parentheses
-# sit inside the haystack instead of being parsed.
+# Coverage resolution below is PATTERN-FIRST: iterate the agent's stored rows
+# (row ids already in hand) and ask _covers_pattern_label whether a proposal
+# label covers each. Nothing is reconstructed from the label, so a constituent's
+# nested parentheses sit inside the haystack instead of being parsed.
 
-# Live transitioning is opt-in; dry-run is the default (file env convention).
-DISCHARGE_LIVE_ENV = "AUTOAGENT_DISCHARGE_LIVE"
 # Apply-side status-flip window. 2 days against a daily cycle = one cycle of
 # overlap; a re-discharge is a no-op (the SQL terminal guard reports not-matched).
 DISCHARGE_WINDOW_DAYS = int(
     os.environ.get("AUTOAGENT_DISCHARGE_WINDOW_DAYS", "2") or "2"
 )
 
+# Unlinked rows are selected too, so the stage can count the legacy rows it skips.
 _APPLIED_FOR_DISCHARGE_SELECT_SQL = (
-    "SELECT id, target_agent, pattern_label "
+    "SELECT id, learning_pattern_id "
     "FROM core.autoagent_proposals "
     "WHERE status::text = 'applied' AND reviewed_at IS NOT NULL "
-    "AND target_agent IS NOT NULL AND pattern_label IS NOT NULL "
     "AND reviewed_at > now() - make_interval(days => %s) "
     "ORDER BY reviewed_at DESC"
 )
@@ -9701,48 +11578,30 @@ PATTERN_TERMINAL_STATUSES = frozenset({"applied", "rejected"})
 
 
 def _build_row_status_text(rows: list[dict]) -> str:
-    """`3384:rejected, 6:applied` — lockstep with daemon-apply.sh's verdict heredoc copy."""
+    """`5120:rejected, 7:applied` — lockstep with daemon-apply.sh's verdict heredoc copy."""
     return ", ".join(f"{row['id']}:{row.get('status')}" for row in rows)
 
 
-# Why an applied proposal matched no intake row — one eval_result per cause.
+# _get_uncovered_cause tokens — read by the parked guard + the writer's verdict-cause set;
+# INTAKE_MISS is also the discharge stage's stranded-link event.
 DISCHARGE_EVENT_READ_FAILED = "discharge-read-failed"
 DISCHARGE_EVENT_UNRESOLVED = "discharge-unresolved"
 DISCHARGE_EVENT_COVERED_TERMINAL = "discharge-covered-terminal"
 DISCHARGE_EVENT_INTAKE_MISS = "discharge-intake-miss"
 
-_UNCOVERED_WARN_REASONS = {
-    DISCHARGE_EVENT_READ_FAILED: (
-        "applied proposal id={proposal_id} matched no intake row and the "
-        "status-agnostic pattern read failed — cause unknown, nothing discharged"
-    ),
-    DISCHARGE_EVENT_UNRESOLVED: (
-        "applied proposal id={proposal_id}: no stored pattern row matches the "
-        "label, nothing discharged"
-    ),
-    DISCHARGE_EVENT_INTAKE_MISS: (
-        "applied proposal id={proposal_id} covers non-terminal row(s) [{rows}] "
-        "absent from the intake read (intake read failed, or row outside the "
-        "intake tier band), nothing discharged"
-    ),
-}
-
-
 class DischargeReport(NamedTuple):
     """Outcome of one discharge stage — an outage is never an empty result.
 
-    The last four fields partition the proposals that matched no intake row by
-    cause; `unresolved` holds only those whose label matches no stored row.
+    The first four row lists hold learning_log ids; `unlinked` and
+    `outside_intake` hold the proposal ids skipped for that cause.
     """
 
     outage: bool
     would_discharge: list[int]
     discharged: list[int]
     failed: list[int]
-    unresolved: list[int]
-    covered_terminal: list[int]
-    intake_miss: list[int]
-    read_failed: list[int]
+    unlinked: list[int]
+    outside_intake: list[int]
 
 
 def _canon_agent_key(agent: str) -> str:
@@ -9754,8 +11613,8 @@ def _canon_agent_key(agent: str) -> str:
     string instead would silently drop the legacy bare-form rows.
     """
     stem = (agent or "").strip()
-    if stem.startswith(_ROSTER_STEM_PREFIX):
-        return stem[len(_ROSTER_STEM_PREFIX):]
+    if stem.startswith(ROSTER.STEM_PREFIX):
+        return stem[len(ROSTER.STEM_PREFIX):]
     return stem
 
 
@@ -9768,7 +11627,7 @@ def get_pattern_rows_by_agent() -> dict[str, list[dict]] | None:
 
     Deliberately NOT read_user_pending_patterns' result — that list is
     roster-filtered (cross-cutting and roster-mismatch rows skipped) and
-    agent-capped downstream, so a covered row outside it would never discharge,
+    agent-capped downstream, so a linked row outside it would never discharge,
     its frequency would keep growing, and it would re-fire.
 
     Helper import absent → None, reported by the caller as an OUTAGE. A read
@@ -9836,17 +11695,8 @@ def find_covered_pattern_rows(
     return covered
 
 
-def discharge_live_enabled() -> bool:
-    """True only on an explicit opt-in — dry-run is the default."""
-    return os.environ.get(DISCHARGE_LIVE_ENV, "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-
-
 def _fetch_applied_for_discharge() -> list[tuple] | None:
-    """(id, target_agent, pattern_label) for proposals applied inside the window.
+    """(id, learning_pattern_id) for proposals applied inside the window.
 
     Deliberately not _fetch_applied_proposals: that one carries LIMIT 50 and the
     90-day outcome-read horizon, so reusing it would re-import on the proposal
@@ -9874,19 +11724,17 @@ def discharge_applied_patterns(
     applied_rows: list[tuple] | None,
     rows_by_agent: dict[str, list[dict]] | None,
     *,
-    coverage_reader: Callable[[], dict[str, list[dict]] | None],
-    live: bool = False,
+    live: bool,
 ) -> DischargeReport:
-    """Discharge the pattern rows covered by each proposal applied this window.
+    """Discharge the pattern row each proposal applied this window links to.
 
-    Ambiguity discharges NOTHING: an unreadable input is an outage and a proposal
-    matching no intake row is a skip reported under its cause, so the stage can
-    never fall back to terminalizing an agent's whole row set. Only intake-index
-    rows are ever transitioned.
+    Only a linked row still in the intake index transitions: an unlinked proposal
+    or a row the intake read dropped (terminal, dormant, outside the intake tiers)
+    is counted and skipped, never resolved another way — a dropped row that is not
+    terminal is also WARNed (_report_outside_intake). An unreadable input is an
+    outage, so the stage can never fall back to an agent's whole row set.
 
-    coverage_reader: the status-agnostic index loader (get_coverage_rows_by_agent
-    in production) — called at most once, and only when some proposal matches no
-    intake row.
+    live: False in a no-write cycle — the rows that would transition are logged.
     """
     if applied_rows is None or rows_by_agent is None:
         sys.stderr.write(
@@ -9894,78 +11742,113 @@ def discharge_applied_patterns(
             "(applied-proposal or pattern read unavailable); this is NOT "
             "'nothing to discharge', and no row was transitioned\n"
         )
-        return DischargeReport(True, [], [], [], [], [], [], [])
+        return DischargeReport(True, [], [], [], [], [])
 
-    event_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
-    would: list[int] = []
-    discharged: list[int] = []
-    failed: list[int] = []
-    uncovered: dict[str, list[int]] = {
-        cause: []
-        for cause in (
-            DISCHARGE_EVENT_UNRESOLVED,
-            DISCHARGE_EVENT_COVERED_TERMINAL,
-            DISCHARGE_EVENT_INTAKE_MISS,
-            DISCHARGE_EVENT_READ_FAILED,
-        )
-    }
+    intake_ids = {row["id"] for rows in rows_by_agent.values() for row in rows}
+    report = DischargeReport(False, [], [], [], [], [])
+    outside_links: list[tuple[int, int]] = []
+    for proposal_id, pattern_id in applied_rows:
+        if pattern_id is None:
+            report.unlinked.append(proposal_id)
+        elif pattern_id not in intake_ids:
+            report.outside_intake.append(proposal_id)
+            outside_links.append((proposal_id, pattern_id))
+        elif not live:
+            report.would_discharge.append(pattern_id)
+        else:
+            _discharge_linked_row(proposal_id, pattern_id, report)
+    _report_outside_intake(outside_links, live=live)
 
-    matches = [
-        (proposal_id, agent or "", label or "",
-         find_covered_pattern_rows(label or "", agent or "", rows_by_agent))
-        for proposal_id, agent, label in applied_rows
-    ]
-    has_uncovered = any(not covered for _, _, _, covered in matches)
-    coverage_by_agent = coverage_reader() if has_uncovered else None
-
-    for proposal_id, agent, label, covered in matches:
-        if not covered:
-            cause, covering = _get_uncovered_cause(label, agent, coverage_by_agent)
-            uncovered[cause].append(proposal_id)
-            _report_uncovered_proposal(proposal_id, agent, label, cause, covering, event_ts)
-            continue
-        if not live:
-            would.extend(covered)
-            continue
-        for row_id in covered:
-            result = _pg_discharge_learning_pattern(
-                row_id, f"discharged by applied proposal id={proposal_id}"
-            )
-            if result.outcome == DISCHARGE_APPLIED:
-                discharged.append(row_id)
-            elif result.outcome == DISCHARGE_FAILED:
-                failed.append(row_id)
-                sys.stderr.write(
-                    f"[daemon-cycle] WARN: discharge transition failed — "
-                    f"learning_log id={row_id} (proposal id={proposal_id}); the "
-                    "call never completed, retried next cycle\n"
-                )
-
-    unresolved = uncovered[DISCHARGE_EVENT_UNRESOLVED]
-    covered_terminal = uncovered[DISCHARGE_EVENT_COVERED_TERMINAL]
-    intake_miss = uncovered[DISCHARGE_EVENT_INTAKE_MISS]
-    read_failed = uncovered[DISCHARGE_EVENT_READ_FAILED]
-    uncovered_summary = (
-        f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}, "
-        f"{len(covered_terminal)} covered-terminal {sorted(covered_terminal)}, "
-        f"{len(intake_miss)} intake-miss {sorted(intake_miss)}, "
-        f"{len(read_failed)} read-failed {sorted(read_failed)}"
+    skipped_summary = (
+        f"{len(report.unlinked)} unlinked proposal(s) skipped, "
+        f"{len(report.outside_intake)} linked to a row outside intake "
+        f"{sorted(report.outside_intake)}"
     )
     if live:
         sys.stderr.write(
-            f"[daemon-cycle] discharge: {len(discharged)} row(s) transitioned "
-            f"{sorted(discharged)}, {len(failed)} failed {sorted(failed)}, "
-            f"{uncovered_summary}\n"
+            f"[daemon-cycle] discharge: {len(report.discharged)} row(s) transitioned "
+            f"{sorted(report.discharged)}, {len(report.failed)} failed "
+            f"{sorted(report.failed)}; {skipped_summary}\n"
         )
     else:
         sys.stderr.write(
-            f"[daemon-cycle] discharge (dry-run, {DISCHARGE_LIVE_ENV} unset): "
-            f"would-discharge {len(would)} row(s) {sorted(would)}; "
-            f"{uncovered_summary}\n"
+            f"[daemon-cycle] discharge (dry-run, no-write cycle): would-discharge "
+            f"{len(report.would_discharge)} row(s) {sorted(report.would_discharge)}; "
+            f"{skipped_summary}\n"
         )
-    return DischargeReport(
-        False, would, discharged, failed, unresolved, covered_terminal, intake_miss, read_failed
+    return report
+
+
+def _discharge_linked_row(proposal_id: int, pattern_id: int, report: DischargeReport) -> None:
+    """One transition; a not-matched answer (row went terminal since the read) lands nowhere."""
+    result = _pg_discharge_learning_pattern(
+        pattern_id, f"discharged by applied proposal id={proposal_id}"
     )
+    if result.outcome == DISCHARGE_APPLIED:
+        report.discharged.append(pattern_id)
+    elif result.outcome == DISCHARGE_FAILED:
+        report.failed.append(pattern_id)
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: discharge transition failed — "
+            f"learning_log id={pattern_id} (proposal id={proposal_id}); the "
+            "call never completed, retried next cycle\n"
+        )
+
+
+def _report_outside_intake(links: list[tuple[int, int]], *, live: bool) -> None:
+    """Classify each (proposal id, row id) link the intake read dropped.
+
+    A terminal row is the benign window overlap, left to the summary count. A
+    non-terminal one is stranded once the window passes and re-fires back in
+    intake, so it is loud (Precondition Loud-Fail's third leg). The status-agnostic
+    read runs only when such a link exists.
+    """
+    if not links:
+        return
+    coverage_by_agent = get_coverage_rows_by_agent()
+    if coverage_by_agent is None:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: discharge — status-agnostic read outage; "
+            f"{len(links)} link(s) outside intake unclassified (proposals "
+            f"{sorted(proposal_id for proposal_id, _ in links)}), a stranded row "
+            "is NOT ruled out\n"
+        )
+        return
+    rows_by_id = {row["id"]: row for rows in coverage_by_agent.values() for row in rows}
+    event_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
+    for proposal_id, pattern_id in links:
+        _warn_stranded_link(
+            proposal_id, pattern_id, rows_by_id.get(pattern_id), event_ts, live=live
+        )
+
+
+def _warn_stranded_link(
+    proposal_id: int, pattern_id: int, row: dict | None, event_ts: str, *, live: bool
+) -> None:
+    """WARN for an absent or non-terminal linked row; the verdict event only in a writing cycle."""
+    if row is None:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: discharge — applied proposal id={proposal_id} links "
+            f"learning_log id={pattern_id}, absent from the status-agnostic read\n"
+        )
+        return
+    if row.get("status") in PATTERN_TERMINAL_STATUSES:
+        return
+    agent = row.get("agent") or ""
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: pattern {DISCHARGE_EVENT_INTAKE_MISS} — agent={agent} "
+        f"({(row.get('pattern_signature') or '')[:80]!r}): applied proposal "
+        f"id={proposal_id} links non-terminal row {pattern_id} ({row.get('status')}) "
+        "absent from the intake read — not discharged, stranded once the window passes\n"
+    )
+    if live:
+        # Namespaced — a learning_log row id and a proposal id collide as bare integers.
+        _emit_gate_loop_event(
+            agent,
+            event_ts,
+            DISCHARGE_EVENT_INTAKE_MISS,
+            event_subject=f"proposal:{proposal_id}",
+        )
 
 
 def _get_uncovered_cause(
@@ -9993,36 +11876,6 @@ def _get_uncovered_cause(
     return DISCHARGE_EVENT_INTAKE_MISS, covering
 
 
-def _report_uncovered_proposal(
-    proposal_id: int,
-    agent: str,
-    label: str,
-    cause: str,
-    covering: list[dict],
-    event_ts: str,
-) -> None:
-    """One stderr line + one loop event per uncovered proposal; covered-terminal is info.
-
-    All four causes are verdict-class: the row adjudicates ONE proposal, so a later
-    cause for that proposal supersedes this verdict instead of landing beside it.
-    """
-    rows = _build_row_status_text(covering)
-    # Namespaced — a learning_log row id and a proposal id collide as bare integers.
-    subject = f"proposal:{proposal_id}"
-    if cause != DISCHARGE_EVENT_COVERED_TERMINAL:
-        reason = _UNCOVERED_WARN_REASONS[cause].format(proposal_id=proposal_id, rows=rows)
-        _warn_pattern_skip(
-            agent, label, event_ts, eval_result=cause, reason=reason, event_subject=subject
-        )
-        return
-    sys.stderr.write(
-        f"[daemon-cycle] discharge: pattern {cause} — agent={agent} "
-        f"({label[:80]!r}): applied proposal id={proposal_id} covers only terminal "
-        f"row(s) [{rows}], nothing left to discharge\n"
-    )
-    _emit_gate_loop_event(agent, event_ts, cause, event_subject=subject)
-
-
 # -- Parked-pattern apply guard ----------------------------------------------
 
 # Head of every guarded-reject rationale. classify_failure_rationale prefix-tests it and
@@ -10040,8 +11893,8 @@ def find_parked_proposals(
 ) -> list[dict]:
     """Selected proposals whose covered pattern rows are all terminal, with those rows.
 
-    Same rule as discharge's covered-terminal cause, so the two cannot drift: an empty
-    covered set or any non-terminal covered row applies as before.
+    Parked = _get_uncovered_cause yields its covered-terminal cause: an empty covered
+    set or any non-terminal covered row applies as before.
     """
     parked: list[dict] = []
     for triple in triples:
@@ -10059,11 +11912,11 @@ def find_parked_proposals(
 
 
 def update_parked_proposal_status(parked: list[dict]) -> list[int]:
-    """Transition parked proposals still pending/snoozed → 'rejected'; return those ids.
+    """Transition parked proposals still pending/snoozed → 'unadjudicated'; return those ids.
 
-    Same shape as the same-agent supersede: status + rationale + actor, no enum
-    change, one transaction. A row that left pending/snoozed since selection is
-    left untouched.
+    Same shape as the same-agent supersede: status through the shared fragment +
+    rationale + actor, one transaction. A row that left pending/snoozed since
+    selection is left untouched.
     """
     if not parked:
         return []
@@ -10071,7 +11924,7 @@ def update_parked_proposal_status(parked: list[dict]) -> list[int]:
         raise RuntimeError("proposal write helper unavailable (psycopg/helper import failed)")
     update_sql = (
         "UPDATE core.autoagent_proposals "
-        "SET status = 'rejected', rationale = %s, reviewed_by = %s "
+        f"SET status = {_PG_PROPOSAL_STATUS_SQL}, rationale = %s, reviewed_by = %s "
         "WHERE status IN ('pending', 'snoozed') AND id = %s "
         "RETURNING id"
     )
@@ -10082,7 +11935,8 @@ def update_parked_proposal_status(parked: list[dict]) -> list[int]:
                 rows = _build_row_status_text(entry["rows"])
                 rationale = f"{_PARKED_PATTERN_REASON} (rows {rows})"
                 cur.execute(
-                    update_sql, (rationale, _PARKED_PATTERN_ACTOR, entry["proposal_id"])
+                    update_sql,
+                    ("unadjudicated", rationale, _PARKED_PATTERN_ACTOR, entry["proposal_id"]),
                 )
                 rejected.extend(row[0] for row in cur.fetchall())
         conn.commit()
@@ -10110,7 +11964,7 @@ def _emit_parked_pattern_guard(stdin_text: str, *, reject_parked: bool) -> int:
             f"python {sys.version.split()[0]}, pattern read import ok="
             f"{HAS_PG_PATTERN_READ}) — nothing applies this run\n"
         )
-        return PARKED_GUARD_FAILURE_EXIT_CODE
+        return ExitCode.PARKED_GUARD_FAILURE
     for entry in parked:
         rows = _build_row_status_text(entry["rows"])
         outcome = "rejected" if entry["proposal_id"] in rejected else "not applied"
@@ -10139,8 +11993,7 @@ def _emit_parked_pattern_guard(stdin_text: str, *, reject_parked: bool) -> int:
 REGRESSION_LIVENESS_ENV = "AUTOAGENT_REGRESSION_LIVENESS_DAYS"
 # How long ONE degradation observation still binds a decision — deliberately not
 # PG_OUTCOME_LOOKBACK_DAYS, which is a data-read horizon sized so a rate sample
-# has rows behind it. 14 days mirrors STALE_WINDOW_DAYS (2x the 7-day sustain
-# window) and, against a daily cycle, is 14 chances for a fresh apply to re-raise
+# has rows behind it. 14 days is 2x the 7-day sustain window and, against a daily cycle, is 14 chances for a fresh apply to re-raise
 # a warning that still deserves to bind.
 REGRESSION_LIVENESS_DAYS = int(
     os.environ.get(REGRESSION_LIVENESS_ENV, "14") or "14"
@@ -10871,27 +12724,484 @@ def _pg_import_degradation_lines() -> list[str]:
     return lines
 
 
+# -- MANIFEST ingest and rotation (core.spawn_manifest) ----------------------
+
+MANIFEST = SimpleNamespace(
+    LOG_NAME="inject-scope-rules.manifest.log",
+    # Spool name contract shared with hooks/inject-scope-rules.sh → INJECT_MANIFEST_SPOOL_SUFFIX_RE.
+    SPOOL_SUFFIX_RE=re.compile(r"[0-9]{8}T[0-9]{6}Z\.[0-9]+\.spool"),
+    # Lesson fields: the v1.0.1 hook's shape, still in upgrading installs' live logs.
+    # Exposure fields (inject-scope-rules.sh → get_canary_exposure_fields): a form no column holds → no match.
+    # Digit caps = COLUMN_MAX widths → int() never meets a run past its 4300-digit limit (Python ≥3.11).
+    LINE_RE=re.compile(
+        r"(?P<ts>\S+) \[inject-scope-rules\] MANIFEST agent_id=(?P<agent_id>\S+)"
+        r"(?: session_id=(?P<session_id>\S+))? agent=(?P<agent>\S+)"
+        r" ctx_bytes=(?P<ctx_bytes>[0-9]{1,10})(?: digest=\S+)?"
+        r"(?: lessons=\S+ lesson_truncated=[0-9]+)?"
+        r"(?: arm=(?P<arm>[01]|none) salt_id=(?P<salt_id>0|[1-9][0-9]{0,18}|none)"
+        r" delivered=(?P<delivered>[01]) delivered_hash=(?P<delivered_hash>[0-9a-f]{64}|none))?"
+        r" blocks=(?P<blocks>.*)"
+    ),
+    NONE_VALUE="none",
+    UNKNOWN_ID="unknown",
+    AGENT_TYPE_MAX_CHARS=64,
+    # PostgreSQL column types: ctx_bytes INTEGER, salt_id BIGINT.
+    COLUMN_MAX=SimpleNamespace(INTEGER=2**31 - 1, BIGINT=2**63 - 1),
+    STORED_OFFSETS_SQL="SELECT line_offset FROM core.spawn_manifest WHERE spool = %(spool)s",
+)
+MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
+
+# Optional, not `str | None`: an install's CLT python3 3.9 cannot evaluate the union.
+# arm, salt id, delivered, delivered hash — all None on a line predating the fields.
+ManifestExposure = tuple[Optional[int], Optional[int], Optional[bool], Optional[str]]  # noqa: UP045
+
+
+class ManifestRow(NamedTuple):
+    """One MANIFEST line in core.spawn_manifest column order, the spool column excluded."""
+
+    line_offset: int
+    agent_id: str | None
+    agent_type: str
+    session_id: str | None
+    started_at: datetime
+    ctx_bytes: int
+    blocks: str
+    arm: int | None
+    salt_id: int | None
+    delivered: bool | None
+    delivered_hash: str | None
+
+
+@dataclass
+class ManifestSpoolClose:
+    """One spool's final re-read, recorded at its unlink."""
+
+    spool: str
+    lines_read: int
+    rows_present: int
+
+
+@dataclass
+class DeliveryBinding:
+    """One ingest's open-A/A state for its delivered rows: read at the first, voided at most once."""
+
+    agents_dir: Path
+    is_read: bool = False
+    roster: frozenset[str] = frozenset()  # roster agents in the hook_path_safe_key form
+    latest: AaStart | None = None
+    fault: str | None = None  # set → no row is bound this ingest
+    is_voided: bool = False
+
+
+@dataclass
+class ManifestIngest:
+    """One cycle's ingest: ``status`` is ``ok`` or ``skipped:<reason>``."""
+
+    status: str
+    closed: list[ManifestSpoolClose] = field(default_factory=list)
+    rotated_to: str | None = None
+
+
+def get_manifest_log_path() -> Path:
+    """The hook's live MANIFEST log under the install log root (hooks/hook-utils.sh → HOOK_LOG_DIR)."""
+    return ga_paths.get_log_root() / MANIFEST.LOG_NAME
+
+
+def get_manifest_ingest_lock_path(live_log: Path) -> Path:
+    """The lock serializing ingests of one live log; beside it, so every install resolves it alike."""
+    return live_log.with_name(f"{live_log.name}.ingest.lock")
+
+
+def ingest_manifest_log(
+    live_log: Path, *, now: datetime, agents_dir: Path = DEFAULT_AGENTS_DIR
+) -> ManifestIngest:
+    """Store every MANIFEST line in core.spawn_manifest and rotate the live log; never raises.
+
+    Under the ingest lock: each pending spool — renamed by an earlier cycle, since a
+    rename happens only under this lock — is re-read in one transaction and unlinked
+    once that commit lands; with none left pending, the live log is renamed to a new
+    contract-named spool and ingested, staying for the next cycle's re-read.
+    Rename, never truncate: the hook appends with O_APPEND and no lock, and a rename keeps
+    the inode, so a racing append lands in the spool for that re-read.
+    (spool, line_offset) is the only position, so a crash at any step re-reads without
+    a duplicate row. PG unreachable, a table-absent schema, an insert failure or a
+    held lock → named WARN, every spool kept and the live log not renamed; the hook's
+    backstop bounds the live log meanwhile. Each delivered row binds to a trial once, at
+    the ingest that first stores it (bind_manifest_deliveries).
+    No config.toml in the code tree declaring that tree as its [paths].root → named WARN before
+    any other check, whether or not the PG layer imports: no read, no lock file, no rename, no
+    binding.
+    """
+    refusal = _get_install_refusal(_INSTALL_ROOT)
+    if refusal is not None:
+        return _skip_manifest_ingest(refusal)
+    if not HAS_PG_LOOP_WRITE:
+        return _skip_manifest_ingest("PG write layer unavailable")
+    if not live_log.parent.is_dir():
+        return ManifestIngest(status="skipped:no log root")
+    new_spool = live_log.with_name(
+        f"{live_log.name}.{now.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}.{os.getpid()}.spool"
+    )
+    # Probe before the lock file is created → an unreachable install's log root stays untouched.
+    try:
+        name_rows = _pg_count_spawn_manifest(new_spool.name)
+    except Exception as exc:  # noqa: BLE001 — psycopg and schema faults vary; named WARN below
+        return _skip_manifest_ingest(
+            f"PG unreachable or core.spawn_manifest absent: {_describe_fault(exc)}"
+        )
+    lock_path = get_manifest_ingest_lock_path(live_log)
+    event_ts = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    try:
+        lock = lock_path.open("a", encoding="utf-8")
+    except OSError as exc:
+        return _skip_manifest_ingest(f"ingest lock {lock_path} unusable: {exc}")
+    with lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return _skip_manifest_ingest(f"{lock_path.name} held by another cycle")
+        except OSError as exc:
+            return _skip_manifest_ingest(f"ingest lock {lock_path} unusable: {exc}")
+        # Released by the close below on every exit path, a crash included.
+        return _ingest_manifest_under_lock(
+            live_log,
+            new_spool,
+            is_name_free=name_rows == 0,
+            event_ts=event_ts,
+            binding=DeliveryBinding(agents_dir),
+        )
+
+
+def _skip_manifest_ingest(reason: str) -> ManifestIngest:
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: manifest ingest skipped — {reason}; "
+        "spools and the live log left as they were\n"
+    )
+    return ManifestIngest(status=f"skipped:{reason}")
+
+
+def _ingest_manifest_under_lock(
+    live_log: Path,
+    new_spool: Path,
+    *,
+    is_name_free: bool,
+    event_ts: str,
+    binding: DeliveryBinding,
+) -> ManifestIngest:
+    ingest = ManifestIngest(status="ok")
+    for spool in _find_manifest_spools(live_log):
+        try:
+            ingest.closed.append(_close_manifest_spool(spool, event_ts=event_ts, binding=binding))
+        except Exception as exc:  # noqa: BLE001 — PG or filesystem fault; named WARN below
+            ingest.status = f"skipped:spool {spool.name} kept"
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: manifest ingest: spool {spool.name} kept, live log "
+                f"not rotated — {_describe_fault(exc)}\n"
+            )
+            return ingest
+    try:
+        if not live_log.is_file() or live_log.stat().st_size == 0:
+            return ingest
+        if not is_name_free:
+            ingest.status = f"skipped:spool name {new_spool.name} already ingested"
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: manifest ingest: {new_spool.name} already holds "
+                "rows — live log not rotated this cycle\n"
+            )
+            return ingest
+        live_log.rename(new_spool)
+    except OSError as exc:  # e.g. the hook backstop removed the live log
+        ingest.status = f"skipped:rotation of {live_log.name} failed"
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: manifest ingest: live log {live_log.name} not "
+            f"rotated — stat or rename failed: {type(exc).__name__}: {exc}\n"
+        )
+        return ingest
+    ingest.rotated_to = new_spool.name
+    try:
+        rows, _ = _get_manifest_rows(new_spool.read_bytes(), is_final=False)
+        _pg_write_spawn_manifest(new_spool.name, rows)
+    except Exception as exc:  # noqa: BLE001 — the next cycle's re-read retries it; named WARN
+        ingest.status = f"skipped:spool {new_spool.name} kept"
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: manifest ingest: spool {new_spool.name} kept for the next "
+            f"cycle's re-read — {_describe_fault(exc)}\n"
+        )
+    else:
+        # is_name_free proved the spool held no row → every row read here is new
+        bind_manifest_deliveries(new_spool.name, rows, binding)
+    return ingest
+
+
+def _find_manifest_spools(live_log: Path) -> list[Path]:
+    prefix = f"{live_log.name}."
+    return sorted(
+        path
+        for path in live_log.parent.glob(f"{live_log.name}.*.spool")
+        if MANIFEST.SPOOL_SUFFIX_RE.fullmatch(path.name.removeprefix(prefix))
+    )
+
+
+def _close_manifest_spool(
+    spool: Path, *, event_ts: str, binding: DeliveryBinding
+) -> ManifestSpoolClose:
+    """Final re-read → commit → binding of the rows it added → unlink → the lines-read vs
+    rows-present record."""
+    rows, lines_read = _get_manifest_rows(spool.read_bytes(), is_final=True)
+    unstored = _get_unstored_deliveries(spool.name, rows)
+    rows_present = _pg_write_spawn_manifest(spool.name, rows)
+    bind_manifest_deliveries(spool.name, unstored, binding)
+    spool.unlink()
+    close = ManifestSpoolClose(spool=spool.name, lines_read=lines_read, rows_present=rows_present)
+    lines_without_row = _get_lines_without_row(close)
+    if lines_without_row:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: manifest spool {spool.name} closed with "
+            f"{lines_without_row} line(s) without a row (unparseable)\n"
+        )
+    _invoke_pg_helper(
+        {
+            "op": "write_autoagent_loop_event",
+            "args": {
+                "event_ts": event_ts,
+                "agent": "daemon-cycle",
+                "eval_result": MANIFEST_SPOOL_CLOSED_EVAL_RESULT,
+                # Read as rule-line changes by the monitor → spool counts stay off.
+                "changes_added": 0,
+                "changes_removed": 0,
+                "rice": None,
+                "subject": spool.name,
+                "lines_read": lines_read,
+                "lines_without_row": lines_without_row,
+            },
+        }
+    )
+    return close
+
+
+def _get_lines_without_row(close: ManifestSpoolClose) -> int:
+    return max(0, close.lines_read - close.rows_present)
+
+
+def _get_unstored_deliveries(spool: str, rows: list[ManifestRow]) -> list[ManifestRow]:
+    """Delivered rows the database does not hold yet — a re-read binds only these. Raises on a
+    PG fault, so the spool is kept."""
+    delivered = [row for row in rows if row.delivered]
+    if not delivered:
+        return []
+    stored = _read_stored_manifest_offsets(spool)
+    return [row for row in delivered if row.line_offset not in stored]
+
+
+def bind_manifest_deliveries(
+    spool: str, rows: list[ManifestRow], binding: DeliveryBinding
+) -> None:
+    """Bind each delivered row to a trial (plan → Read-side binding); never raises.
+
+    - A roster agent's row started in the open A/A's window binds to it: a delivered hash other
+      than the A/A text's voids the A/A, whatever salt the row carries.
+    - Any other row is a delivery with no open trial, and its agent's canary file is removed —
+      unless its salt names an aa-start or aa-restart row and its hash is the A/A text: the
+      racing row of an A/A closed or restarted since.
+    - The open state or the salt rows unreadable → no row bound, a named WARN with the count;
+      those rows are never bound later.
+    """
+    delivered = [row for row in rows if row.delivered]
+    if not delivered:
+        return
+    _read_binding_state(binding)
+    if binding.fault is not None:
+        _warn_unbound(spool, len(delivered), binding.fault)
+        return
+    outside = [row for row in delivered if not _bind_to_open_aa(row, binding)]
+    if outside:
+        _bind_outside_window(spool, outside)
+
+
+def _read_binding_state(binding: DeliveryBinding) -> None:
+    if binding.is_read:
+        return
+    binding.is_read = True
+    binding.roster = frozenset(
+        CANARY.UNSAFE_KEY.sub("", agent) for agent in _agent_roster(binding.agents_dir)
+    )
+    try:
+        binding.latest = _read_open_aa_start()
+    except AaStateUnreadable as exc:
+        binding.fault = f"open A/A state unreadable: {exc}"
+
+
+def _bind_to_open_aa(row: ManifestRow, binding: DeliveryBinding) -> bool:
+    """True = the row binds to the open A/A; the first foreign hash voids it."""
+    latest = binding.latest
+    if latest is None or row.agent_type not in binding.roster:
+        return False
+    # started_at is whole seconds → floored start keeps a first-second delivery in the window
+    if row.started_at < latest.window_start.replace(microsecond=0):
+        return False
+    if row.delivered_hash != _get_text_sha256(CANARY.AA_TEXT) and not binding.is_voided:
+        binding.is_voided = True
+        _void_aa(latest, row.agent_type, row.delivered_hash)
+    return True
+
+
+def _bind_outside_window(spool: str, rows: list[ManifestRow]) -> None:
+    salt_ids = frozenset(row.salt_id for row in rows if row.salt_id is not None)
+    try:
+        aa_salt_ids = _read_aa_salt_ids(salt_ids) if salt_ids else frozenset()
+    except Exception as exc:  # noqa: BLE001 — any read fault leaves the rows unbound, named
+        _warn_unbound(spool, len(rows), f"salt rows unreadable: {_describe_fault(exc)}")
+        return
+    aa_sha256 = _get_text_sha256(CANARY.AA_TEXT)
+    for row in rows:
+        if row.salt_id in aa_salt_ids and row.delivered_hash == aa_sha256:
+            continue
+        _write_unbound_delivery(spool, row)
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: manifest binding — {row.agent_type} canary delivered with no "
+            f"open trial ({spool} line {row.line_offset}, salt_id={row.salt_id}, "
+            f"delivered_hash={row.delivered_hash})\n"
+        )
+        _delete_canaries([_get_canary_path(row.agent_type)], "delivered with no open trial")
+
+
+def _write_unbound_delivery(spool: str, row: ManifestRow) -> None:
+    """The ledger row the doctor reads for a delivery bound to no trial; keyed by its spool line,
+    so a re-read adds none."""
+    event = TRIAL_LEDGER.EVENT.CANARY_UNBOUND_DELIVERY
+    payload = {
+        "agent": row.agent_type,
+        "spool": spool,
+        "line_offset": row.line_offset,
+        "salt_id": row.salt_id,
+        "delivered_hash": row.delivered_hash,
+    }
+    _write_aa_row(event, payload, f"{event}:{spool}:{row.line_offset}", agent=row.agent_type)
+
+
+def _warn_unbound(spool: str, count: int, cause: str) -> None:
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: manifest binding — {cause}; {count} delivered row(s) of {spool} "
+        "left unbound\n"
+    )
+
+
+def _get_manifest_rows(data: bytes, *, is_final: bool) -> tuple[list[ManifestRow], int]:
+    """Spool bytes → (rows, lines read); line_offset = the 0-based line ordinal.
+
+    An unterminated last line may still be mid-append, so only the final re-read takes it.
+    """
+    lines = data.split(b"\n")
+    tail = lines.pop()
+    if is_final and tail:
+        lines.append(tail)
+    rows = [
+        row
+        for offset, raw in enumerate(lines)
+        if (row := _get_manifest_row(offset, raw.decode("utf-8", "replace"))) is not None
+    ]
+    return rows, len(lines)
+
+
+def _get_manifest_row(offset: int, line: str) -> ManifestRow | None:
+    match = MANIFEST.LINE_RE.fullmatch(line)
+    # NUL: psycopg refuses it in a text field → the spool's insert fails every cycle.
+    if match is None or "\x00" in line:
+        return None
+    try:
+        started_at = datetime.strptime(match["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+    ctx_bytes = int(match["ctx_bytes"])
+    agent_type = match["agent"]
+    exposure = _get_manifest_exposure(match)
+    if not _is_manifest_row_insertable(ctx_bytes, agent_type, exposure[1]):
+        return None
+    return ManifestRow(
+        offset,
+        _get_manifest_id(match["agent_id"]),
+        agent_type,
+        _get_manifest_id(match["session_id"]),
+        started_at,
+        ctx_bytes,
+        match["blocks"],
+        *exposure,
+    )
+
+
+def _is_manifest_row_insertable(ctx_bytes: int, agent_type: str, salt_id: int | None) -> bool:
+    # Over a spawn_manifest column bound → uninsertable → no row, not a stuck spool.
+    return (
+        ctx_bytes <= MANIFEST.COLUMN_MAX.INTEGER
+        and len(agent_type) <= MANIFEST.AGENT_TYPE_MAX_CHARS
+        and (salt_id is None or salt_id <= MANIFEST.COLUMN_MAX.BIGINT)
+    )
+
+
+def _get_manifest_id(value: str | None) -> str | None:
+    return None if value in (None, MANIFEST.UNKNOWN_ID) else value
+
+
+def _get_manifest_exposure(match: re.Match[str]) -> ManifestExposure:
+    if match["delivered"] is None:
+        return (None, None, None, None)
+    return (
+        _get_manifest_number(match["arm"]),
+        _get_manifest_number(match["salt_id"]),
+        match["delivered"] == "1",
+        None if match["delivered_hash"] == MANIFEST.NONE_VALUE else match["delivered_hash"],
+    )
+
+
+def _get_manifest_number(value: str) -> int | None:
+    return None if value == MANIFEST.NONE_VALUE else int(value)
+
+
+def _read_stored_manifest_offsets(spool: str) -> frozenset[int]:
+    """The line offsets core.spawn_manifest already holds for one spool. Raises on a PG fault."""
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(MANIFEST.STORED_OFFSETS_SQL, {"spool": spool})
+        return frozenset(offset for (offset,) in cur.fetchall())
+
+
+def _read_aa_salt_ids(salt_ids: frozenset[int]) -> frozenset[int]:
+    """The given salt ids that name an aa-start or aa-restart row. Raises on a PG fault."""
+    params = {
+        "events": [TRIAL_LEDGER.EVENT.AA_START, TRIAL_LEDGER.EVENT.AA_RESTART],
+        "ids": sorted(salt_ids),
+    }
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(AA.SQL.SALT_ROWS, params)
+        return frozenset(row_id for (row_id,) in cur.fetchall())
+
+
 def run_cycle(
     *,
     limit: int = DEFAULT_PATTERN_LIMIT,
     log_path: Path = DEFAULT_LEARNING_LOG,
-    outcomes_dir: Path = DEFAULT_OUTCOMES_DIR,
     agents_dir: Path = DEFAULT_AGENTS_DIR,
     skip_haiku: bool = False,
     skip_pre_verify: bool = False,
     skip_loop_emit: bool = False,
 ) -> CycleReport:
-    """Full generation + pre-verify cycle — pattern → outcomes → patch proposal →
-    classification → pre-verify (4-axis) → routing hints.
+    """One daemon cycle — intake, gates and report; generation closed until live trials.
+
+    While IS_GENERATION_CLOSED: no generator call, no pre-verify, no patch; stored
+    pending auto rows terminalize unless skip_loop_emit; every post-loop step runs.
+    Once lifted, _run_generation_loop runs the per-agent flow — pattern → patch
+    proposal → classification → pre-verify (4-axis) → routing hints.
+
+    A writing cycle (skip_loop_emit False) from a code tree that is not its install
+    raises InstallRefusedError before any stage, reads included.
 
     Returns the in-memory CycleReport. Caller decides where to persist it.
-
-    Pre-verify:
-    Each patch classified as `body-auto` is routed through `run_pre_verify`.
-    The verdict is attached to PatchResult and used to fill `approval_tier` /
-    `status` so the PG emit layer can route unverified patches to the user
-    pending queue without needing its own LLM call.
     """
+    if not skip_loop_emit:
+        refusal = _get_install_refusal(_INSTALL_ROOT)
+        if refusal is not None:
+            raise InstallRefusedError(refusal)
     now = datetime.now(timezone.utc)
     # Optional-PG import degradation — surfaced LOUDLY once at daemon-cycle start
     # (Precondition Loud-Fail). The import-time stderr writes were removed so a
@@ -10899,10 +13209,6 @@ def run_cycle(
     # real entry, so a degraded PG layer is reported here, before the first PG op.
     for _warn_line in _pg_import_degradation_lines():
         sys.stderr.write(_warn_line)
-    # GENERATION window = previous calendar day (LOCAL tz), shared by all agents in
-    # the cycle — computed once outside the loop (cycle-invariant). Distinct from
-    # the promotion-stats window.
-    gen_day_bounds = _local_day_bounds()
     agent_cap = _resolve_agent_limit(limit)
     report = CycleReport(
         cycle_date=now.strftime("%Y-%m-%d"),
@@ -10920,55 +13226,47 @@ def run_cycle(
         },
     )
 
+    # Ahead of every metric read, so this cycle's reads see every spawn the hook logged.
+    if skip_loop_emit:
+        sys.stderr.write(
+            "[daemon-cycle] INFO: manifest ingest skipped — no-write mode (skip_loop_emit)\n"
+        )
+    else:
+        report.manifest_ingest = ingest_manifest_log(
+            get_manifest_log_path(), now=now, agents_dir=agents_dir
+        )
+
     # per-TARGET (agent) flow: 1) read all user-pending patterns (agent cap applies
     # to agents, not patterns, so no slicing here) → 2) group by .agent → 3) apply
     # agent cap → 4) one consolidated multi-hunk proposal per agent.
     # Discharge first: a pattern whose patch already landed must not seed this
-    # cycle's intake. Dry-run by default — live transitioning is opt-in.
-    # One untruncated pattern read serves both consumers — the discharge and the
-    # regression gate ask the same coverage question of the same rows.
+    # cycle's intake. One untruncated pattern read serves the discharge's intake
+    # check and the regression gate's coverage question.
     pattern_rows_by_agent = get_pattern_rows_by_agent()
     discharge_applied_patterns(
         _fetch_applied_for_discharge(),
         pattern_rows_by_agent,
-        coverage_reader=get_coverage_rows_by_agent,
-        live=discharge_live_enabled(),
+        live=not skip_loop_emit,
     )
     regression_gate = build_regression_gate_report(pattern_rows_by_agent)
     patterns = read_user_pending_patterns(
-        log_path, UNLIMITED_AGENTS, agents_dir=agents_dir
+        log_path, UNLIMITED_AGENTS, agents_dir=agents_dir, live=not skip_loop_emit
     )
     report.patterns_processed = len(patterns)
     agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)
-
-    # Confidence-weighted promotion ladder gate, 3-state (fail-CLOSED).
-    # active → run classify_promotion_tier (floor applies).
-    # bypass (explicit flag false) → floorless (promotion_tier="" — operator OFF
-    # preserved). floor (lib-fail / flags absent — default+failure states) → set
-    # promotion_tier='mention' so the apply-side `IS DISTINCT FROM 'mention'`
-    # EXCLUDES every row (absent-config = safe). project_key is
-    # cycle-invariant — resolve once outside the loop (active state only).
-    promotion_state = confidence_filter_state()
-    promotion_enabled = promotion_state == "active"
-    cycle_project_key = resolve_project_key().key if promotion_enabled else ""
-
-    # Loud-fail visibility (shared-self-improve-hygiene Precondition Loud-Fail) —
-    # once per cycle, outside the per-agent loop. Distinguish BYPASS (explicit
-    # operator OFF → genuinely floorless) from FLOOR (default/failure → rows
-    # floored to 'mention', apply-side excludes them) so the operator sees which.
-    if promotion_state == "bypass":
-        sys.stderr.write(
-            "[daemon-cycle] WARN: confidence floor BYPASS "
-            f"({_CONFIDENCE_FLAG_KEY} explicitly false) — low-confidence patterns "
-            "are NOT floored; the apply-side promotion_tier='mention' gate passes "
-            "all rows this cycle (explicit operator opt-out)\n"
+    # Both generation branches: verdict only; no pattern is parked or dropped.
+    power = check_pattern_power(patterns, skip_loop_emit=skip_loop_emit)
+    report.power_check = power.counts
+    if not skip_loop_emit:  # no-write mode (--dry-run) writes no ledger row
+        run_shadow_stage(power, report.cycle_date)
+        run_aa_stage(
+            report.cycle_date, manifest_ingest=report.manifest_ingest, agents_dir=agents_dir
         )
-    elif promotion_state == "floor":
+
+    if IS_GENERATION_CLOSED:
         sys.stderr.write(
-            "[daemon-cycle] WARN: confidence floor FLOOR "
-            f"({_CONFIDENCE_FLAG_KEY} unset / flags absent / lib unavailable) — "
-            "fail-CLOSED: every row floored to promotion_tier='mention'; the "
-            "apply-side gate EXCLUDES all rows from auto-apply this cycle\n"
+            "[daemon-cycle] INFO: generation closed until live trials — no generator "
+            "call and no auto-apply this cycle\n"
         )
 
     # T3 corpus/compliance telemetry — DETECTION-ONLY, fired ONCE per cycle.
@@ -10993,445 +13291,42 @@ def run_cycle(
             # cycle continues.
             emit_corpus_audit(corpus_signal, report.cycle_date)
 
-    seen_targets: set[str] = set()
-    # AD-10 Solution History accumulator — one SolutionAttempt per generation
-    # outcome, pruned to the Pareto frontier after the loop (retain_pareto_winners).
-    solution_attempts: list[SolutionAttempt] = []
-    for agent, agent_patterns in agent_groups:
-        # Anti-fossil lifecycle gates — BEFORE any outcome fetch / Haiku spend.
-        # All five gates write PG (learning_log transition + skip loop events),
-        # so they run only in full-real mode: skip_haiku (test/preflight) bypasses
-        # them like the timeout back-off below, skip_loop_emit (no-PG-write
-        # mode) bypasses them like the supersede. Order matters — the four
-        # terminalizing gates (reverted, reject-streak, repeat-apply-cap,
-        # non-auto-fixable) run before the transient staleness snooze; reverted
-        # runs FIRST (a human back-out outranks every generation-side verdict).
-        # repeat-apply-cap follows reject-streak because an 'applied' row RESETS
-        # that streak: the alternating apply/reject fossil is invisible to the
-        # streak gate and is exactly what the cap exists to catch.
-        if not skip_haiku and not skip_loop_emit:
-            # One shared fetch serves both proposal-history gates (neither
-            # mutates rows). None (PG off / read error) → skip both, matching
-            # each gate's own fail-open branch without a doomed re-fetch.
-            history_rows = _fetch_proposal_history(agent)
-            if history_rows is not None:
-                agent_patterns = drop_reverted_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-                agent_patterns = drop_reject_streak_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-                agent_patterns = drop_apply_capped_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-            agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)
-            agent_patterns = drop_stale_patterns(agent, agent_patterns)
-            # Non-terminalizing and reversible: the block lapses with the warning.
-            agent_patterns = drop_regression_blocked_patterns(
-                agent,
-                agent_patterns,
-                regression_gate,
-                live=regression_gate_live_enabled(),
-            )
-            if not agent_patterns:
-                continue
-        # GENERATION outcomes = all of yesterday (no sample cap) — separate from promotion stats.
-        outcomes = fetch_generation_outcomes(
-            agent,
-            day_bounds=gen_day_bounds,
-            outcomes_dir=outcomes_dir,
-        )
-        # AD-10 Solution History: bridge each generation outcome into a
-        # SolutionAttempt (OPRO 3-tuple + reflective signal). applied_date is the
-        # cycle day — the outcomes share the generation window, so recency is a
-        # per-cycle constant here; cross-cycle recency spread arrives with the
-        # durable store (deferred, see below). directive_hint is not on the
-        # Outcome dataclass, so it defaults empty.
-        solution_attempts.extend(
-            solution_attempt_from_outcome(outcome, report.cycle_date)
-            for outcome in outcomes
-        )
-        # Chronic Haiku-timeout back-off (generation side) — BEFORE the Haiku call.
-        # A target that already timed out TIMEOUT_BACKOFF_THRESHOLD consecutive
-        # times re-selects from core.learning_log every cycle with no memory of
-        # those failures; without this gate it burns a fresh HAIKU_TIMEOUT_SEC call
-        # and re-emits the 'partial'-causing error indefinitely. Skip the Haiku call
-        # entirely and emit a loud, persisted back-off record instead. skip_haiku
-        # (test/preflight) bypasses the gate — no real generation happens there.
-        target_md = agents_dir / f"{agent}.md"
-        timeout_streak = (
-            0 if skip_haiku else consecutive_timeout_count(str(target_md))
-        )
-        is_backoff_skip = timeout_streak >= TIMEOUT_BACKOFF_THRESHOLD
-        if is_backoff_skip:
-            # Self-lock guard: the streak's own break condition is produced only
-            # by the call this branch suppresses, so a bounded hold opens for one
-            # cycle and lets that call happen. Read only here — the rare path.
-            backoff_state = read_backoff_state(str(target_md))
-            if backoff_state.probe_due:
-                is_backoff_skip = False
-                sys.stderr.write(
-                    f"[daemon-cycle] timeout-backoff: agent={agent} held "
-                    f"{backoff_state.held_cycles} consecutive cycles "
-                    f"(bound {TIMEOUT_BACKOFF_PROBE_CYCLES}) — admitting ONE probe "
-                    f"generation (streak {timeout_streak}, "
-                    f"{backoff_state.superseded_skipped} row(s) looked past as "
-                    f"recorded under a superseded ceiling).\n"
-                )
-        if is_backoff_skip:
+    if IS_GENERATION_CLOSED:
+        if skip_loop_emit:
             sys.stderr.write(
-                f"[daemon-cycle] timeout-backoff: agent={agent} target={target_md.name} "
-                f"reached {timeout_streak} consecutive haiku timeouts "
-                f"(threshold {TIMEOUT_BACKOFF_THRESHOLD}) — SKIP generation "
-                f"(no Haiku call, snoozed). Recovers on the next non-timeout cycle.\n"
+                "[daemon-cycle] INFO: generation-closed terminalization skipped — "
+                "no-write mode (skip_loop_emit)\n"
             )
-            proposal = backoff_skip_proposal(str(target_md), timeout_streak)
         else:
-            proposal = generate_consolidated_proposal(
-                agent,
-                agent_patterns,
-                outcomes,
-                agents_dir=agents_dir,
-                skip_haiku=skip_haiku,
-            )
-            # Intra-cycle spacing (FIX #5): a small sleep after each REAL Haiku
-            # call so the per-agent loop does not self-contend its shared
-            # OAuth/usage window (effective concurrency cap of 1 with a gap).
-            # Bounded + cheap; skipped on test/preflight (skip_haiku) and the
-            # back-off branch (no real call there). 0 disables.
-            if not skip_haiku and INTER_CALL_SPACING_SEC > 0:
-                time.sleep(INTER_CALL_SPACING_SEC)
-        # Lead pattern = group head (freq DESC) — feeds the date / single-pattern
-        # context for pre-verify / promotion (the label is computed separately).
-        lead_pattern = agent_patterns[0]
-        consolidated_label = _consolidated_pattern_label(agent, agent_patterns)
-
-        target_path = Path(proposal.target_file)
-        classification = classify_patch_area(
-            proposal,
-            target_path,
-            seen_targets=seen_targets,
+            try:
+                update_generation_closed_proposals()
+            except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; next cycle retries
+                sys.stderr.write(
+                    "[daemon-cycle] WARN: update_generation_closed_proposals raised — "
+                    f"pending auto rows left open: {_describe_fault(exc)}\n"
+                )
+    else:
+        _run_generation_loop(
+            report,
+            agent_groups,
+            regression_gate,
             agents_dir=agents_dir,
-        )
-        # Track only successfully-resolved targets for conflict detection.
-        if classification != "reject" or proposal.proposed_diff.strip():
-            seen_targets.add(str(target_path.resolve()))
-
-        # Map proposal.parse_mode to haiku_status so cycle JSON shows the
-        # explicit recovery path. NO silent coerce — fuzzy/retried states
-        # surface distinctly from strict happy path.
-        #
-        # parse_mode='quota-limit' → haiku_status='skipped:quota-limit'. Branch
-        # ordering: quota check comes BEFORE empty-diff fallback because quota
-        # always yields empty diff (would otherwise collapse to empty-or-error
-        # and lose the budget-exhaustion signal in monitor dashboard).
-        if skip_haiku:
-            haiku_status = "skipped:test"
-        elif is_backoff_skip:
-            # Chronic-timeout back-off — distinct status so the monitor dashboard
-            # can flag a backed-off candidate vs. a generic empty/error. Branch
-            # FIRST among the non-test cases (it always yields an empty diff and
-            # must not collapse into 'skipped:empty-or-error').
-            haiku_status = TIMEOUT_BACKOFF_HAIKU_STATUS
-        elif proposal.parse_mode == "budget-too-low":
-            # Local budget-config failure — distinct from external quota. Like quota,
-            # it always yields an empty diff, so branch before empty-or-error to
-            # preserve the signal.
-            haiku_status = "skipped:budget-too-low"
-        elif proposal.parse_mode == "quota-limit":
-            haiku_status = "skipped:quota-limit"
-        elif proposal.parse_mode == "transient-overload":
-            # Transient infra blip (Overloaded / 529 / connection reset / timeout)
-            # whose bounded retries were exhausted. Always an empty diff, so branch
-            # before empty-or-error to keep the infra-blip signal distinct from a
-            # genuinely empty / parse-failed output in the monitor dashboard.
-            haiku_status = "skipped:transient"
-        elif proposal.parse_mode == "auth-failure":
-            # 401/credential failure (expired non-interactive OAuth token). Always
-            # an empty diff, so branch before empty-or-error to keep the auth
-            # signal distinct from a genuinely empty / parse-failed output — the
-            # monitor cost-guard chip reads this to show "Auth fault", not a
-            # spending warning.
-            haiku_status = "skipped:auth"
-        elif proposal.parse_mode == "timeout-stall":
-            # Escalated-retry timeout — a TRUE stall (even the longer bound
-            # produced nothing), distinct from a slow generation that completed.
-            # Always an empty diff → branch before empty-or-error so the stall
-            # stays queryable.
-            haiku_status = "skipped:timeout-stall"
-        elif not proposal.proposed_diff:
-            haiku_status = "skipped:empty-or-error"
-        elif proposal.parse_mode == "escalated":
-            # Legacy tag — no longer produced, kept so a persisted or out-of-tree
-            # shape still resolves instead of collapsing into the plain 'ok' else.
-            haiku_status = "ok:escalated"
-        elif proposal.parse_mode == "retried":
-            haiku_status = "ok:retried"
-        elif proposal.parse_mode == "fuzzy":
-            haiku_status = "ok:fuzzy-parsed"
-        else:
-            haiku_status = "ok"
-
-        # Second axis: a clean parse at the escalated bound is slow generation,
-        # not a stall. Suffix-composed so the parse path above survives it.
-        haiku_status = build_escalated_haiku_status(
-            haiku_status, escalated_timeout=proposal.escalated_timeout
-        )
-
-        # Pre-verify gate. Only body-auto candidates pay the LLM cost;
-        # frontmatter-dryrun is already user-bound, reject is a no-op.
-        #
-        # 2-tier (auto/safety) branch logic:
-        #   - safety match           → approval_tier='safety', status='pending'
-        #   - verified non-safety    → approval_tier='auto',   status='pending'
-        #   - unverified non-safety  → classification flipped to 'reject',
-        #                              approval_tier='', status='' (auto-reject;
-        #                              quality issue absorbed by the impl-retry
-        #                              upstream — user queue is NOT a fallback)
-        #
-        # A pre-verify fail without a safety match signals a quality issue, not an
-        # authorization gap.
-        if classification == "body-auto":
-            verify = run_pre_verify(
-                proposal,
-                lead_pattern,
-                skip_pre_verify=skip_pre_verify or skip_haiku,
-            )
-            safety_flag = classify_safety_tier(proposal)
-            if safety_flag == "safety":
-                # Safety override — always queue for explicit user approval,
-                # regardless of pre-verify verdict (security-first per
-                # core-security.md High-impact actions).
-                approval_tier = "safety"
-                status_value = "pending"
-                # Loud WARN when a diff-embedded hazard recipe reached the safety
-                # gate (Precondition Loud-Fail — never silent). Only a diff trigger
-                # warns: a path/frontmatter safety hit is self-evident from the
-                # target, whereas the diff pattern that caught the hazard is not.
-                diff_hit = match_sensitive_diff(proposal.proposed_diff)
-                if diff_hit is not None:
-                    sys.stderr.write(
-                        f"[daemon-cycle] WARN: safety-diff match — agent={agent} "
-                        f"target={proposal.target_file} pattern=/{diff_hit}/ → "
-                        "routed to Tier-2 user-approval queue (NOT auto-applied).\n"
-                    )
-            elif verify.passed:
-                approval_tier = "auto"
-                status_value = "pending"  # apply stage flips this to 'applied'
-            else:
-                # Pre-verify did NOT pass. Distinguish a GENUINE quality verdict
-                # (the verifier ran and refused the candidate → auto-reject) from
-                # an INFRA non-adjudication (verifier timeout / CLI-missing /
-                # non-zero exit → the candidate was never adjudicated). Recording
-                # an infra OUTAGE as a terminal 'rejected' carries the GENERATOR
-                # rationale, which the kill-streak classifier reads as a quality
-                # reject → the consecutive_reject streak fossilizes healthy agents
-                # on an infra night (DF-6). Route infra failures to 'pending'
-                # (re-verified next cycle) so the streak is untouched.
-                #
-                # For a genuine quality reject: persist 'rejected' explicitly — an
-                # empty sentinel was coerced to 'pending' downstream, fossilizing
-                # auto-reject rows at pending. The Haiku retry already absorbed the
-                # recoverable subset upstream, so this residual should NOT block
-                # user attention (the user queue is NOT a quality fallback).
-                classification, approval_tier, status_value = route_failed_pre_verify(
-                    classification, verify.status
-                )
-                if status_value == "pending":
-                    sys.stderr.write(
-                        "[daemon-cycle] WARN: pre-verify INFRA failure "
-                        f"(status={verify.status}) for agent={agent} "
-                        f"target={proposal.target_file} — row left pending, NOT a "
-                        "quality reject (consecutive_reject streak untouched)\n"
-                    )
-        elif classification == "frontmatter-dryrun":
-            # Frontmatter identity (name / tools / scope / etc.) is a safety trigger
-            # (LLM06 Excessive Agency). Surface as safety tier; pre-verify is
-            # skipped since the dryrun bucket already gates on human review.
-            verify = None
-            approval_tier = "safety"
-            status_value = "pending"
-        elif is_backoff_skip:
-            # Terminal 'rejected' — no apply or stale-drain selector re-picks a marker
-            # Told apart from a quality reject by haiku_status + the rationale prefix
-            verify = None
-            approval_tier = ""
-            status_value = "rejected"
-        else:
-            # 'reject' classification — no further gating. Persist 'rejected'
-            # explicitly (an empty sentinel was coerced to 'pending' → fossilized).
-            verify = None
-            approval_tier = ""
-            status_value = "rejected"
-
-        # Confidence-weighted promotion ladder. Gate-OFF (flag false / lib missing)
-        # → defaults preserve the pre-feature behavior. Gate-ON → Beta-Binomial
-        # posterior (empirical signal) + observation count + 7-day sustain →
-        # promotion tier. project_key tags the row for per-project isolation.
-        #
-        # The promotion-stats window is separate from the GENERATION window — the
-        # Beta-Binomial ladder needs historical depth, so it is NOT moved to
-        # yesterday-only. _fetch_promotion_stats keeps its own 90-day lookback:
-        # posterior sample capped at OUTCOME_SAMPLE_LIMIT, observation_count
-        # uncapped (decoupled — a capped n could never reach the candidate
-        # floor, silently disabling unattended auto-apply).
-        # 3-state promotion_tier (fail-CLOSED):
-        #   active → classify_promotion_tier (posterior-derived tier; floor applies).
-        #   floor  → 'mention' (default/failure → apply-side `IS DISTINCT FROM
-        #            'mention'` EXCLUDES the row → nothing low-confidence auto-applies).
-        #   bypass → "" (operator OFF → apply-side passes the row, floorless).
-        confidence_observed: float | None = None
-        if promotion_state == "active":
-            signals, observation_count = _fetch_promotion_stats(agent)
-            # record_ts is preserved in signals, but time-decay activation
-            # (lambda_per_day<1) is DEFERRED → default λ=1.0 = legacy posterior.
-            confidence_observed = compute_confidence_observed(signals)
-            promotion_tier = classify_promotion_tier(
-                confidence_observed=confidence_observed,
-                observation_count=observation_count,
-                sustained=_is_sustained(_first_observation_ts(agent)),
-                touches_frontmatter=proposal.touched_frontmatter,
-            )
-        elif promotion_state == "floor":
-            promotion_tier = "mention"
-        else:  # bypass — explicit operator OFF, floorless (preserved pre-feature).
-            promotion_tier = ""
-
-        # Floor terminalization — close the auto+pending+mention limbo at the
-        # SOURCE so every auto-tier candidate reaches a terminal state this cycle.
-        # An apply-ineligible auto candidate ('mention') would otherwise sit
-        # pending forever (apply excludes it; auto-tier is not a safety-queue
-        # candidate), fossilizing as a standing "New suggestions" pile. Safety tier
-        # is untouched (approval_tier='safety' → gate is auto-only) — the human
-        # queue is preserved.
-        terminalize = resolve_floor_terminalization(
-            classification=classification,
-            approval_tier=approval_tier,
-            status_value=status_value,
-            promotion_tier=promotion_tier,
-            rationale=proposal.rationale,
-        )
-        classification = terminalize.classification
-        approval_tier = terminalize.approval_tier
-        status_value = terminalize.status_value
-        effective_rationale = terminalize.rationale
-        if terminalize.terminalized:
-            sys.stderr.write(
-                "[daemon-cycle] INFO: floor terminalize — auto candidate for "
-                f"agent={agent} target={proposal.target_file} resolved to "
-                f"promotion_tier='{promotion_tier}' (auto-apply ineligible); "
-                "persisted status='rejected' instead of auto-pending limbo\n"
-            )
-
-        # T4 prose-only-add detection — DETECTION-ONLY WARNING per candidate patch
-        # diff (added>0, removed==0, no hook file touched). It NEVER rejects the
-        # patch; it only produces a warning verdict, PERSISTED on the proposal row.
-        prose_only_add: bool | None = None
-        if proposal.proposed_diff:
-            try:
-                prose_only_add = bool(
-                    classify_prose_only_add(
-                        proposal.proposed_diff,
-                        target_file=str(proposal.target_file),
-                    )["warning"]
-                )
-            except Exception as exc:  # noqa: BLE001 — branched below, never absorbed
-                # Same named-channel treatment as the corpus-audit emit: the lost
-                # measurement is enumerable afterwards, and the cycle continues.
-                record_sink_degradation("patch_classification", exc)
-        if not skip_loop_emit and proposal.proposed_diff:
-            # Deterministic reference-resolution guard — WARNS on an added line
-            # that cites an unresolved ~/.claude/*.md or rules/*.md pointer (the
-            # C1-C4 LLM verifier does no on-disk existence check). Detection-only.
-            try:
-                classify_dead_reference(
-                    proposal.proposed_diff, target_file=str(proposal.target_file)
-                )
-            except Exception as exc:  # noqa: BLE001 — detection must never break the cycle
-                sys.stderr.write(
-                    "[daemon-cycle] WARN: classify_dead_reference raised — reference "
-                    f"resolution lost: {type(exc).__name__}: {str(exc)[:160]}\n"
-                )
-
-        # Same-agent supersede — only when the new proposal is an actual emit
-        # target (pending), terminate the agent's OTHER pending rows (block
-        # backlog re-accumulation). The skip_loop_emit (test/preflight) path does
-        # not touch PG → supersede also skipped. A floor-terminalized row is now
-        # 'rejected', so it correctly does NOT trigger supersede as a fresh emit.
-        # The cycle date + consolidated label are the identity this run's own push
-        # will update, so they are what the supersede must spare.
-        if status_value == "pending" and not skip_loop_emit:
-            supersede_prior_pending_for_agent(
-                agent,
-                proposal.target_file,
-                cycle_date=report.cycle_date,
-                pattern_label=consolidated_label,
-            )
-
-        report.patches.append(
-            PatchResult(
-                pattern_label=consolidated_label,
-                pattern_agent=agent,
-                pattern_frequency=lead_pattern.frequency,
-                target_file=proposal.target_file,
-                classification=classification,
-                rationale=effective_rationale,
-                proposed_diff=proposal.proposed_diff,
-                outcomes_sampled=len(outcomes),
-                haiku_status=haiku_status,
-                # Accurate count from the FULL diff (proposed_diff is stored
-                # whole or, past STORED_DIFF_CHAR_LIMIT, refused and stored empty
-                # → cannot be re-derived without zeroing every refused row).
-                estimated_added_lines=proposal.estimated_added_lines,
-                estimated_removed_lines=proposal.estimated_removed_lines,
-                # error drives the cycle 'partial' status (_pg_push_autoagent_cycle.py
-                # saw_error). A chronic-timeout back-off is an INTENTIONAL bounded
-                # skip, NOT a cycle error — leave error empty so a backed-off
-                # candidate stops flipping every cycle to 'partial' (the rationale is
-                # still persisted on the proposal row + emitted to stderr for
-                # observability). The non-backoff timeout (streak < threshold) keeps
-                # surfacing as an error so the first N timeouts remain visible.
-                error=(
-                    ""
-                    if proposal.proposed_diff or skip_haiku or is_backoff_skip
-                    else proposal.rationale
-                ),
-                pre_verify_passed=verify.passed if verify is not None else None,
-                pre_verify_status=verify.status if verify is not None else "",
-                pre_verify_rationale=verify.rationale if verify is not None else "",
-                pre_verify_axes=_compose_pre_verify_axes(
-                    verify.axes if verify is not None else None, prose_only_add
-                ),
-                pre_verify_latency_ms=verify.latency_ms if verify is not None else 0,
-                approval_tier=approval_tier,
-                status=status_value,
-                confidence_observed=confidence_observed,
-                project_key=cycle_project_key,
-                promotion_tier=promotion_tier,
-                # Carry the structured Haiku-failure evidence from the proposal
-                # into the SERIALIZED row. Without this copy the dataclass
-                # defaults ('' / None) reach PG → failure_class stays empty and
-                # the cost-guard badge never lights (the live failure_class=['','']
-                # symptom). raw_response head is redacted (a 401 stream may echo a
-                # token) and bounded to 400 chars.
-                failure_class=proposal.failure_class,
-                failure_returncode=proposal.failure_returncode,
-                failure_signal=proposal.failure_signal,
-                failure_duration_ms=proposal.failure_duration_ms,
-                failure_attempt=proposal.failure_attempt,
-                failure_probe_result=proposal.failure_probe_result,
-                failure_log_path=proposal.failure_log_path,
-                failure_raw_head=redact_secrets(proposal.raw_response[:400]),
-                # Same explicit-copy duty as the failure_* block above — an omitted
-                # mirror silently reaches PG as the dataclass default.
-                generation_duration_ms=proposal.generation_duration_ms,
-            )
+            skip_haiku=skip_haiku,
+            skip_pre_verify=skip_pre_verify,
+            skip_loop_emit=skip_loop_emit,
         )
 
     # Just before cycle end, UPSERT the loop_event row directly to PG.
     # skip_loop_emit=True → block the PG call in unit-test / preflight paths.
     # patches=[] (patterns_processed=0) → _aggregate_loop_events returns [] → no-op.
     if not skip_loop_emit:
+        try:
+            create_cycle_verdicts(report)
+        except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; walk reads stored rows
+            sys.stderr.write(
+                "[daemon-cycle] WARN: create_cycle_verdicts raised — verdict not stored: "
+                f"{_describe_fault(exc)}\n"
+            )
         try:
             alert_all_reject_streak(report)
         except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip
@@ -11442,7 +13337,7 @@ def run_cycle(
         # Loud-Fail compliance: a systemic zero-output regression must NOT exit
         # clean. is_systemic_regression keeps the quiet-night discriminator
         # (patches=[] → ok), so only a real regression flips the status →
-        # _main returns CYCLE_REGRESSION_EXIT_CODE.
+        # _main returns ExitCode.CYCLE_REGRESSION.
         try:
             if is_systemic_regression(report):
                 report.cycle_status = "regression"
@@ -11500,34 +13395,443 @@ def run_cycle(
                 f"{type(exc).__name__}: {str(exc)[:160]}\n"
             )
 
-    # AD-10 Solution History Pareto retention — prune this cycle's accumulated
-    # attempts to the per-(agent, task_type) non-dominated frontier (GEPA
-    # min-occurrence 5 floor). Runs unconditionally (pure computation, no PG
-    # write) so the AC is observable even on skip_loop_emit/skip_haiku preflight.
-    #
-    # DEFERRAL NOTE (AD-10 durable store): Solution History is designed as a
-    # cross-cycle accumulation feeding the next optimizer's OPRO context. That
-    # persistence layer does not exist yet — a within-cycle window shares one
-    # applied_date, so the recency objective is constant and cells rarely reach
-    # the 5+ floor. This wiring makes retention run + observable at runtime
-    # (report.solution_winners + the serialized count); durable persistence of the
-    # frontier across cycles is the follow-up once the store lands.
-    report.solution_winners = retain_pareto_winners(solution_attempts)
-    if report.solution_winners:
-        winner_total = sum(len(v) for v in report.solution_winners.values())
-        sys.stderr.write(
-            "[daemon-cycle] INFO: Solution History Pareto retention — "
-            f"{len(report.solution_winners)} cell(s), {winner_total} winner(s) "
-            f"retained from {len(solution_attempts)} attempt(s) "
-            f"(min-occurrence {SOLUTION_HISTORY_MIN_OCCURRENCE})\n"
-        )
-
     # Derive the cost-guard state from the aggregate per-patch failure classes so
     # the serialized cost_guard carries an explicit 'state' (_pg_push reads it as
     # explicit_state). An auth-failure night → 'infra_fault' (NOT a spending warn).
     report.cost_guard["state"] = derive_cost_guard_state(report)
 
     return report
+
+
+def _run_generation_loop(
+    report: CycleReport,
+    agent_groups: list[tuple[str, list[Pattern]]],
+    regression_gate: RegressionGateReport,
+    *,
+    agents_dir: Path,
+    skip_haiku: bool,
+    skip_pre_verify: bool,
+    skip_loop_emit: bool,
+) -> None:
+    """Per-agent generation loop — gates, then one routed row per agent.
+
+    Reached only once IS_GENERATION_CLOSED is lifted.
+    Appends each row to ``report.patches``. The promotion tier is a label only and
+    resolve_floor_terminalization terminalizes every auto candidate.
+    """
+    seen_targets: set[str] = set()
+    for agent, agent_patterns in agent_groups:
+        # Anti-fossil lifecycle gates — BEFORE any Haiku spend.
+        # All five gates write PG (learning_log transition + skip loop events),
+        # so they run only in full-real mode: skip_haiku (test/preflight) bypasses
+        # them like the timeout back-off below, skip_loop_emit (no-PG-write
+        # mode) bypasses them like the supersede. Order matters — the four
+        # terminalizing gates (reverted, reject-streak, repeat-apply-cap,
+        # non-auto-fixable) run before the transient pair re-check; reverted
+        # runs FIRST (a human back-out outranks every generation-side verdict).
+        # repeat-apply-cap follows reject-streak because an 'applied' row RESETS
+        # that streak: the alternating apply/reject fossil is invisible to the
+        # streak gate and is exactly what the cap exists to catch.
+        if not skip_haiku and not skip_loop_emit:
+            # One shared fetch serves both proposal-history gates (neither
+            # mutates rows). None (PG off / read error) → skip both, matching
+            # each gate's own fail-open branch without a doomed re-fetch.
+            history_rows = _fetch_proposal_history(agent)
+            if history_rows is not None:
+                agent_patterns = drop_reverted_patterns(
+                    agent, agent_patterns, rows=history_rows
+                )
+                agent_patterns = drop_reject_streak_patterns(
+                    agent, agent_patterns, rows=history_rows
+                )
+                agent_patterns = drop_apply_capped_patterns(
+                    agent, agent_patterns, rows=history_rows
+                )
+            agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)
+            agent_patterns = drop_pair_failing_patterns(agent, agent_patterns)
+            # Non-terminalizing and reversible: the block lapses with the warning.
+            agent_patterns = drop_regression_blocked_patterns(
+                agent,
+                agent_patterns,
+                regression_gate,
+                live=regression_gate_live_enabled(),
+            )
+            if not agent_patterns:
+                continue
+        report.patches.append(
+            build_patch_result(
+                agent,
+                agent_patterns,
+                cycle_date=report.cycle_date,
+                agents_dir=agents_dir,
+                seen_targets=seen_targets,
+                skip_haiku=skip_haiku,
+                skip_pre_verify=skip_pre_verify,
+                skip_loop_emit=skip_loop_emit,
+            )
+        )
+
+
+def build_patch_result(
+    agent: str,
+    agent_patterns: list[Pattern],
+    *,
+    cycle_date: str,
+    agents_dir: Path,
+    seen_targets: set[str],
+    skip_haiku: bool,
+    skip_pre_verify: bool,
+    skip_loop_emit: bool,
+) -> PatchResult:
+    """Generation unit — one agent's gated patterns → one routed proposal row.
+
+    Runs the timeout back-off, the Haiku generation, classification, pre-verify
+    routing, closed-apply terminalization and the same-agent supersede.
+    ``seen_targets`` is the cycle's conflict set: read, then extended in place.
+    ``cycle_date`` is the identity the supersede spares.
+    """
+    # Chronic Haiku-timeout back-off (generation side) — BEFORE the Haiku call.
+    # A target that already timed out TIMEOUT_BACKOFF_THRESHOLD consecutive
+    # times re-selects from core.learning_log every cycle with no memory of
+    # those failures; without this gate it burns a fresh HAIKU_TIMEOUT_SEC call
+    # and re-emits the 'partial'-causing error indefinitely. Skip the Haiku call
+    # entirely and emit a loud, persisted back-off record instead. skip_haiku
+    # (test/preflight) bypasses the gate — no real generation happens there.
+    target_md = agents_dir / f"{agent}.md"
+    timeout_streak = 0 if skip_haiku else consecutive_timeout_count(str(target_md))
+    is_backoff_skip = timeout_streak >= TIMEOUT_BACKOFF_THRESHOLD
+    if is_backoff_skip:
+        # Self-lock guard: the streak's own break condition is produced only
+        # by the call this branch suppresses, so a bounded hold opens for one
+        # cycle and lets that call happen. Read only here — the rare path.
+        backoff_state = read_backoff_state(str(target_md))
+        if backoff_state.probe_due:
+            is_backoff_skip = False
+            sys.stderr.write(
+                f"[daemon-cycle] timeout-backoff: agent={agent} held "
+                f"{backoff_state.held_cycles} consecutive cycles "
+                f"(bound {TIMEOUT_BACKOFF_PROBE_CYCLES}) — admitting ONE probe "
+                f"generation (streak {timeout_streak}, "
+                f"{backoff_state.superseded_skipped} row(s) looked past as "
+                f"recorded under a superseded ceiling).\n"
+            )
+    if is_backoff_skip:
+        sys.stderr.write(
+            f"[daemon-cycle] timeout-backoff: agent={agent} target={target_md.name} "
+            f"reached {timeout_streak} consecutive haiku timeouts "
+            f"(threshold {TIMEOUT_BACKOFF_THRESHOLD}) — SKIP generation "
+            f"(no Haiku call, snoozed). Recovers on the next non-timeout cycle.\n"
+        )
+        proposal = backoff_skip_proposal(str(target_md), timeout_streak)
+    else:
+        proposal = generate_consolidated_proposal(
+            agent,
+            agent_patterns,
+            agents_dir=agents_dir,
+            skip_haiku=skip_haiku,
+        )
+        # Intra-cycle spacing (FIX #5): a small sleep after each REAL Haiku
+        # call so the per-agent loop does not self-contend its shared
+        # OAuth/usage window (effective concurrency cap of 1 with a gap).
+        # Bounded + cheap; skipped on test/preflight (skip_haiku) and the
+        # back-off branch (no real call there). 0 disables.
+        if not skip_haiku and INTER_CALL_SPACING_SEC > 0:
+            time.sleep(INTER_CALL_SPACING_SEC)
+    # Lead pattern = group head (freq DESC) — feeds the date / single-pattern
+    # context for pre-verify / promotion (the label is computed separately).
+    lead_pattern = agent_patterns[0]
+    consolidated_label = _consolidated_pattern_label(agent, agent_patterns)
+
+    target_path = Path(proposal.target_file)
+    classification = classify_patch_area(
+        proposal,
+        target_path,
+        seen_targets=seen_targets,
+        agents_dir=agents_dir,
+    )
+    # Track only successfully-resolved targets for conflict detection.
+    if classification != "reject" or proposal.proposed_diff.strip():
+        seen_targets.add(str(target_path.resolve()))
+
+    haiku_status = _get_haiku_status(
+        proposal, skip_haiku=skip_haiku, is_backoff_skip=is_backoff_skip
+    )
+
+    # Pre-verify gate. Only body-auto candidates pay the LLM cost;
+    # frontmatter-dryrun is already user-bound, reject is a no-op.
+    #
+    # 2-tier (auto/safety) branch logic:
+    #   - safety match           → approval_tier='safety', status='pending'
+    #   - verified non-safety    → approval_tier='auto',   status='pending'
+    #   - unverified non-safety  → classification flipped to 'reject',
+    #                              approval_tier='', status='' (auto-reject;
+    #                              quality issue absorbed by the impl-retry
+    #                              upstream — user queue is NOT a fallback)
+    #
+    # A pre-verify fail without a safety match signals a quality issue, not an
+    # authorization gap.
+    if classification == "body-auto":
+        verify = run_pre_verify(
+            proposal,
+            lead_pattern,
+            skip_pre_verify=skip_pre_verify or skip_haiku,
+        )
+        safety_flag = classify_safety_tier(proposal)
+        if safety_flag == "safety":
+            # Safety override — always queue for explicit user approval,
+            # regardless of pre-verify verdict (security-first per
+            # core-security.md High-impact actions).
+            approval_tier = "safety"
+            status_value = "pending"
+            # Loud WARN when a diff-embedded hazard recipe reached the safety
+            # gate (Precondition Loud-Fail — never silent). Only a diff trigger
+            # warns: a path/frontmatter safety hit is self-evident from the
+            # target, whereas the diff pattern that caught the hazard is not.
+            diff_hit = match_sensitive_diff(proposal.proposed_diff)
+            if diff_hit is not None:
+                sys.stderr.write(
+                    f"[daemon-cycle] WARN: safety-diff match — agent={agent} "
+                    f"target={proposal.target_file} pattern=/{diff_hit}/ → "
+                    "routed to Tier-2 user-approval queue (NOT auto-applied).\n"
+                )
+        elif verify.passed:
+            approval_tier = "auto"
+            status_value = "pending"  # apply stage flips this to 'applied'
+        else:
+            # Pre-verify did NOT pass. Distinguish a GENUINE quality verdict
+            # (the verifier ran and refused the candidate → auto-reject) from
+            # an INFRA non-adjudication (verifier timeout / CLI-missing /
+            # non-zero exit → the candidate was never adjudicated). Recording
+            # an infra OUTAGE as a terminal 'rejected' carries the GENERATOR
+            # rationale, which the kill-streak classifier reads as a quality
+            # reject → the consecutive_reject streak fossilizes healthy agents
+            # on an infra night (DF-6). Route infra failures to 'pending'
+            # (re-verified next cycle) so the streak is untouched.
+            #
+            # For a genuine quality reject: persist 'rejected' explicitly — an
+            # empty sentinel was coerced to 'pending' downstream, fossilizing
+            # auto-reject rows at pending. The Haiku retry already absorbed the
+            # recoverable subset upstream, so this residual should NOT block
+            # user attention (the user queue is NOT a quality fallback).
+            classification, approval_tier, status_value = route_failed_pre_verify(
+                classification, verify.status
+            )
+            if status_value == "pending":
+                sys.stderr.write(
+                    "[daemon-cycle] WARN: pre-verify INFRA failure "
+                    f"(status={verify.status}) for agent={agent} "
+                    f"target={proposal.target_file} — row left pending, NOT a "
+                    "quality reject (consecutive_reject streak untouched)\n"
+                )
+    elif classification == "frontmatter-dryrun":
+        # Frontmatter identity (name / tools / scope / etc.) is a safety trigger
+        # (LLM06 Excessive Agency). Surface as safety tier; pre-verify is
+        # skipped since the dryrun bucket already gates on human review.
+        verify = None
+        approval_tier = "safety"
+        status_value = "pending"
+    else:
+        # 'reject' or a back-off marker → explicit terminal status, never re-picked by
+        # apply or stale-drain (an empty sentinel was coerced to 'pending' → fossilized);
+        # a marker ran no Haiku call, so its rationale classifies non-adjudicating
+        verify = None
+        approval_tier = ""
+        status_value = get_reject_status(proposal.rationale)
+
+    promotion_tier = "mention"
+
+    # Closed-apply terminalization — close the auto+pending limbo at the SOURCE
+    # so every auto-tier candidate reaches a terminal state this cycle; it would
+    # otherwise sit pending forever, fossilizing as a standing "New
+    # suggestions" pile. Safety tier is untouched (the gate is auto-only) — the
+    # human queue is preserved.
+    terminalize = resolve_floor_terminalization(
+        classification=classification,
+        approval_tier=approval_tier,
+        status_value=status_value,
+        promotion_tier=promotion_tier,
+        rationale=proposal.rationale,
+    )
+    classification = terminalize.classification
+    approval_tier = terminalize.approval_tier
+    status_value = terminalize.status_value
+    effective_rationale = terminalize.rationale
+    if terminalize.terminalized:
+        sys.stderr.write(
+            "[daemon-cycle] INFO: closed-apply terminalize — auto candidate for "
+            f"agent={agent} target={proposal.target_file} "
+            f"(promotion_tier='{promotion_tier}', label only); "
+            "persisted status='unadjudicated' instead of auto-pending limbo\n"
+        )
+
+    # T4 prose-only-add detection — DETECTION-ONLY WARNING per candidate patch
+    # diff (added>0, removed==0, no hook file touched). It NEVER rejects the
+    # patch; it only produces a warning verdict, PERSISTED on the proposal row.
+    prose_only_add: bool | None = None
+    if proposal.proposed_diff:
+        try:
+            prose_only_add = bool(
+                classify_prose_only_add(
+                    proposal.proposed_diff,
+                    target_file=str(proposal.target_file),
+                )["warning"]
+            )
+        except Exception as exc:  # noqa: BLE001 — branched below, never absorbed
+            # Same named-channel treatment as the corpus-audit emit: the lost
+            # measurement is enumerable afterwards, and the cycle continues.
+            record_sink_degradation("patch_classification", exc)
+    if not skip_loop_emit and proposal.proposed_diff:
+        # Deterministic reference-resolution guard — WARNS on an added line
+        # that cites an unresolved ~/.claude/*.md or rules/*.md pointer (the
+        # C1-C4 LLM verifier does no on-disk existence check). Detection-only.
+        try:
+            classify_dead_reference(
+                proposal.proposed_diff, target_file=str(proposal.target_file)
+            )
+        except Exception as exc:  # noqa: BLE001 — detection must never break the cycle
+            sys.stderr.write(
+                "[daemon-cycle] WARN: classify_dead_reference raised — reference "
+                f"resolution lost: {type(exc).__name__}: {str(exc)[:160]}\n"
+            )
+
+    # Same-agent supersede — only when the new proposal is an actual emit
+    # target (pending), terminate the agent's OTHER pending rows (block
+    # backlog re-accumulation). The skip_loop_emit (test/preflight) path does
+    # not touch PG → supersede also skipped. A floor-terminalized row is not
+    # pending → never a fresh emit → never triggers supersede.
+    # The cycle date + consolidated label are the identity this run's own push
+    # will update, so they are what the supersede must spare.
+    if status_value == "pending" and not skip_loop_emit:
+        supersede_prior_pending_for_agent(
+            agent,
+            proposal.target_file,
+            cycle_date=cycle_date,
+            pattern_label=consolidated_label,
+        )
+
+    return PatchResult(
+        pattern_label=consolidated_label,
+        pattern_agent=agent,
+        pattern_frequency=lead_pattern.frequency,
+        target_file=proposal.target_file,
+        classification=classification,
+        rationale=effective_rationale,
+        proposed_diff=proposal.proposed_diff,
+        haiku_status=haiku_status,
+        # Accurate count from the FULL diff (proposed_diff is stored
+        # whole or, past STORED_DIFF_CHAR_LIMIT, refused and stored empty
+        # → cannot be re-derived without zeroing every refused row).
+        estimated_added_lines=proposal.estimated_added_lines,
+        estimated_removed_lines=proposal.estimated_removed_lines,
+        # error drives the cycle 'partial' status (_pg_push_autoagent_cycle.py
+        # saw_error). A chronic-timeout back-off is an INTENTIONAL bounded
+        # skip, NOT a cycle error — leave error empty so a backed-off
+        # candidate stops flipping every cycle to 'partial' (the rationale is
+        # still persisted on the proposal row + emitted to stderr for
+        # observability). The non-backoff timeout (streak < threshold) keeps
+        # surfacing as an error so the first N timeouts remain visible.
+        error=(
+            ""
+            if proposal.proposed_diff or skip_haiku or is_backoff_skip
+            else proposal.rationale
+        ),
+        pre_verify_passed=verify.passed if verify is not None else None,
+        pre_verify_status=verify.status if verify is not None else "",
+        pre_verify_rationale=verify.rationale if verify is not None else "",
+        pre_verify_axes=_compose_pre_verify_axes(
+            verify.axes if verify is not None else None, prose_only_add
+        ),
+        pre_verify_latency_ms=verify.latency_ms if verify is not None else 0,
+        approval_tier=approval_tier,
+        status=status_value,
+        promotion_tier=terminalize.promotion_tier,
+        # Carry the structured Haiku-failure evidence from the proposal
+        # into the SERIALIZED row. Without this copy the dataclass
+        # defaults ('' / None) reach PG → failure_class stays empty and
+        # the cost-guard badge never lights (the live failure_class=['','']
+        # symptom). raw_response head is redacted (a 401 stream may echo a
+        # token) and bounded to 400 chars.
+        failure_class=proposal.failure_class,
+        failure_returncode=proposal.failure_returncode,
+        failure_signal=proposal.failure_signal,
+        failure_duration_ms=proposal.failure_duration_ms,
+        failure_attempt=proposal.failure_attempt,
+        failure_probe_result=proposal.failure_probe_result,
+        failure_log_path=proposal.failure_log_path,
+        failure_raw_head=redact_secrets(proposal.raw_response[:400]),
+        # Same explicit-copy duty as the failure_* block above — an omitted
+        # mirror silently reaches PG as the dataclass default.
+        generation_duration_ms=proposal.generation_duration_ms,
+        # Lead pattern only: the column holds one link per proposal row.
+        learning_pattern_id=lead_pattern.row_id or None,
+        generator_input_version=GENERATOR_INPUT_VERSION,
+    )
+
+
+def _get_haiku_status(
+    proposal: PatchProposal, *, skip_haiku: bool, is_backoff_skip: bool
+) -> str:
+    """The proposal's haiku_status: its parse path, then the escalated-bound suffix."""
+    # Map proposal.parse_mode to haiku_status so cycle JSON shows the
+    # explicit recovery path. NO silent coerce — fuzzy/retried states
+    # surface distinctly from strict happy path.
+    #
+    # parse_mode='quota-limit' → haiku_status='skipped:quota-limit'. Branch
+    # ordering: quota check comes BEFORE empty-diff fallback because quota
+    # always yields empty diff (would otherwise collapse to empty-or-error
+    # and lose the budget-exhaustion signal in monitor dashboard).
+    if skip_haiku:
+        haiku_status = "skipped:test"
+    elif is_backoff_skip:
+        # Chronic-timeout back-off — distinct status so the monitor dashboard
+        # can flag a backed-off candidate vs. a generic empty/error. Branch
+        # FIRST among the non-test cases (it always yields an empty diff and
+        # must not collapse into 'skipped:empty-or-error').
+        haiku_status = TIMEOUT_BACKOFF_HAIKU_STATUS
+    elif proposal.parse_mode == "budget-too-low":
+        # Local budget-config failure — distinct from external quota. Like quota,
+        # it always yields an empty diff, so branch before empty-or-error to
+        # preserve the signal.
+        haiku_status = "skipped:budget-too-low"
+    elif proposal.parse_mode == "quota-limit":
+        haiku_status = "skipped:quota-limit"
+    elif proposal.parse_mode == "transient-overload":
+        # Transient infra blip (Overloaded / 529 / connection reset / timeout)
+        # whose bounded retries were exhausted. Always an empty diff, so branch
+        # before empty-or-error to keep the infra-blip signal distinct from a
+        # genuinely empty / parse-failed output in the monitor dashboard.
+        haiku_status = "skipped:transient"
+    elif proposal.parse_mode == "auth-failure":
+        # 401/credential failure (expired non-interactive OAuth token). Always
+        # an empty diff, so branch before empty-or-error to keep the auth
+        # signal distinct from a genuinely empty / parse-failed output — the
+        # monitor cost-guard chip reads this to show "Auth fault", not a
+        # spending warning.
+        haiku_status = "skipped:auth"
+    elif proposal.parse_mode == "timeout-stall":
+        # Escalated-retry timeout — a TRUE stall (even the longer bound
+        # produced nothing), distinct from a slow generation that completed.
+        # Always an empty diff → branch before empty-or-error so the stall
+        # stays queryable.
+        haiku_status = "skipped:timeout-stall"
+    elif not proposal.proposed_diff:
+        haiku_status = "skipped:empty-or-error"
+    elif proposal.parse_mode == "escalated":
+        # Legacy tag — no longer produced, kept so a persisted or out-of-tree
+        # shape still resolves instead of collapsing into the plain 'ok' else.
+        haiku_status = "ok:escalated"
+    elif proposal.parse_mode == "retried":
+        haiku_status = "ok:retried"
+    elif proposal.parse_mode == "fuzzy":
+        haiku_status = "ok:fuzzy-parsed"
+    else:
+        haiku_status = "ok"
+
+    # Second axis: a clean parse at the escalated bound is slow generation,
+    # not a stall. Suffix-composed so the parse path above survives it.
+    return build_escalated_haiku_status(
+        haiku_status, escalated_timeout=proposal.escalated_timeout
+    )
 
 
 # -- CLI entry --------------------------------------------------------------
@@ -11557,7 +13861,6 @@ def _main(argv: list[str]) -> int:
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--log-path", type=Path, default=DEFAULT_LEARNING_LOG)
     parser.add_argument("--agents-dir", type=Path, default=DEFAULT_AGENTS_DIR)
-    parser.add_argument("--outcomes-dir", type=Path, default=DEFAULT_OUTCOMES_DIR)
     parser.add_argument(
         "--regenerate-stale",
         action="store_true",
@@ -11615,7 +13918,38 @@ def _main(argv: list[str]) -> int:
         help="With --parked-pattern-guard: transition guarded pending/snoozed proposals "
         "to rejected.",
     )
+    parser.add_argument(
+        "--backfill-unadjudicated",
+        action="store_true",
+        help="Relabel non-verdict rejected proposal rows to unadjudicated, then exit (no "
+        "cycle). Requires --reports-dir and the caller's .apply-lock there.",
+    )
+    parser.add_argument(
+        "--reports-dir",
+        type=Path,
+        default=None,
+        help="With --backfill-unadjudicated: dir holding .apply-lock, the re-arm marker "
+        "and the completion record.",
+    )
+    parser.add_argument(
+        "--aa-start",
+        action="store_true",
+        help="Open an A/A on the installed manifest fingerprint (one aa-start ledger row), "
+        "then exit (no cycle). Refused with exit 14 and a named reason; takes no --dry-run.",
+    )
     args = parser.parse_args(argv)
+
+    if args.aa_start:
+        if args.dry_run:
+            parser.error("--aa-start writes the ledger; it takes no --dry-run")
+        # Answered BEFORE the pause gate: its clean exit 0 would read as a started A/A.
+        return start_aa(args.agents_dir)
+
+    if args.backfill_unadjudicated:
+        if args.reports_dir is None:
+            parser.error("--backfill-unadjudicated requires --reports-dir")
+        # Answered BEFORE the pause gate: its clean exit 0 would read as a committed run.
+        return backfill_unadjudicated_proposals(args.reports_dir)
 
     if args.reject_parked and not args.parked_pattern_guard:
         parser.error("--reject-parked requires --parked-pattern-guard")
@@ -11655,7 +13989,7 @@ def _main(argv: list[str]) -> int:
                 f"[daemon-cycle] P2c backfill aborted: {type(exc).__name__}: "
                 f"{str(exc)[:200]}\n"
             )
-            return BACKFILL_PG_EXIT_CODE
+            return ExitCode.BACKFILL_PG
         sys.stdout.write(json.dumps(backfilled, ensure_ascii=False, indent=2) + "\n")
         return 0
 
@@ -11665,8 +13999,24 @@ def _main(argv: list[str]) -> int:
     if args.regenerate_stale and args.proposal_id is not None:
         # Single-proposal: one structured JSON object to stdout (machine),
         # human text already went to stderr. Exit code: 0 on a clean
-        # determination (regenerated/already_applied), non-zero only on
-        # invalid/unrecoverable (caller branches on action + exit code).
+        # determination (regenerated/already_applied), 1 on
+        # invalid/unrecoverable, ExitCode.DAEMON_CONFIG_INVALID on a rejected
+        # pre_verify_* knob — checked before any PG read and still answered with
+        # the one stdout object, because the caller reads `.action`, not the code.
+        knob_errors = _get_knob_errors("pre_verify")
+        if knob_errors:
+            _write_knob_fatal_lines(knob_errors)
+            refused = SingleRegenResult(
+                proposal_id=args.proposal_id,
+                action="unrecoverable",
+                preverify_passed=None,
+                preverify_axes=None,
+                reason=_get_knob_reason(knob_errors),
+            )
+            sys.stdout.write(
+                json.dumps(refused.to_payload(), ensure_ascii=False, indent=2) + "\n"
+            )
+            return ExitCode.DAEMON_CONFIG_INVALID
         single = regenerate_single_proposal(
             args.proposal_id,
             agents_dir=args.agents_dir,
@@ -11685,15 +14035,29 @@ def _main(argv: list[str]) -> int:
         sys.stdout.write(json.dumps(results, ensure_ascii=False, indent=2) + "\n")
         return 0
 
-    report = run_cycle(
-        limit=args.limit,
-        log_path=args.log_path,
-        outcomes_dir=args.outcomes_dir,
-        agents_dir=args.agents_dir,
-        skip_haiku=args.skip_haiku or args.dry_run,
-        skip_pre_verify=args.skip_pre_verify or args.skip_haiku or args.dry_run,
-        skip_loop_emit=args.skip_loop_emit or args.dry_run,
-    )
+    # Ungated by --dry-run / --skip-haiku → a preflight dry run surfaces a rejected knob too
+    knob_errors = _get_knob_errors("worker", "pre_verify")
+    if knob_errors:
+        _write_knob_fatal_lines(knob_errors)
+        return ExitCode.DAEMON_CONFIG_INVALID
+
+    skip_loop_emit = args.skip_loop_emit or args.dry_run
+    try:
+        report = run_cycle(
+            limit=args.limit,
+            log_path=args.log_path,
+            agents_dir=args.agents_dir,
+            skip_haiku=args.skip_haiku or args.dry_run,
+            skip_pre_verify=args.skip_pre_verify or args.skip_haiku or args.dry_run,
+            skip_loop_emit=skip_loop_emit,
+        )
+    except InstallRefusedError as exc:
+        # no report emitted → the wrapper's PG push has no refused cycle to record
+        sys.stderr.write(
+            f"[daemon-cycle] FATAL: writing cycle refused before any stage — {exc}; "
+            f"exit {int(ExitCode.CYCLE_INSTALL_REFUSED)}\n"
+        )
+        return ExitCode.CYCLE_INSTALL_REFUSED
 
     payload = render_report_json(report)
 
@@ -11703,11 +14067,16 @@ def _main(argv: list[str]) -> int:
     else:
         sys.stdout.write(payload + "\n")
 
+    # Outage code wins: an auth outage rejects every patch → a co-occurring regression is its consequence
+    if derive_cost_guard_state(report) == "infra_fault":
+        alert_auth_outage(report, skip_loop_emit=skip_loop_emit)
+        return ExitCode.AUTH_OUTAGE
+
     # Non-clean exit on a systemic zero-output regression (Loud-Fail). The
     # daemon-cycle.sh wrapper folds any non-zero rc into a DEGRADED run, so an
     # unattended launchd run no longer masks a multi-day regression as success.
     if report.cycle_status == "regression":
-        return CYCLE_REGRESSION_EXIT_CODE
+        return ExitCode.CYCLE_REGRESSION
 
     return 0
 

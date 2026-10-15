@@ -66,6 +66,7 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 - MUST NOT bury a Bats assertion in a mid-body bare `[[ ]]` — use `&&` chains for compound logic and let the assertion be the final command
   - Bats bodies run under errexit (`set -e`) on both platforms; bash 3.2 alone exempts mid-body `[[ ]]`, while `[ ]`/`test`/`false`/a failing `grep` fail everywhere.
   - A macOS failure is real on both platforms; a macOS pass proves nothing about CI.
+- MUST make every Bats assertion on a run status print the output its run captured when it fails — form: `scoped/shared-testing.md` → **bats — a status assertion prints the output**
 - MUST NOT combine `python3 -c` code and a `<<'PY'` heredoc in the same command (SC2259) — see Key Patterns `python3 -c` + stdin for the capture-source form
 - MUST limit bats runs to affected test paths (never full `bats hooks/test`), reserving the comprehensive suite for final pre-commit validation rather than every incremental commit
 - MUST verify the test environment before a comprehensive Bats run — the `python3` version and any third-party dependency the suites shell out to; a locally-satisfied dependency CI lacks turns a green local run into a red pipeline
@@ -162,7 +163,8 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 ### Portability (macOS BSD vs GNU)
 
-- `sed -i`: BSD requires `''` arg → prefer `sed -i.bak ... && rm "${file}.bak"` or branch via `command -v gsed`
+- `sed -i`: BSD and GNU disagree on the flag — BSD reads the next argument as a backup suffix (`sed -i '' …`), GNU takes none (`sed -i …`) → branch via `command -v gsed` or `uname -s`, and create no backup file
+  - `perl -pi -e '…' "${file}"` edits in place the same way on both hosts, with no backup file and no branch.
 - `date`: BSD `-v-1d` vs GNU `-d '1 day ago'` → branch or use `python3 -c`
 - `readlink -f` unavailable → use `cd -- "$(dirname)" && pwd`
 - **`launchctl` service lifecycle (macOS 11+)**: prefer the modern deregistration verb `bootout` against a `gui/${UID}/<label>` service target over the legacy unload-with-`-w` form

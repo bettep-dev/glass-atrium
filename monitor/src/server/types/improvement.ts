@@ -7,7 +7,7 @@
 export type ImprovementTier = "auto" | "safety";
 
 // PG ProposalStatus enum mirror. pending/approved/snoozed = non-terminal ·
-// applied/rejected/reverted = terminal. Every non-terminal status reaches a
+// applied/rejected/reverted/unadjudicated = terminal. Every non-terminal status reaches a
 // terminal one via the daemon (auto) or the user (approve/reject); 'reverted'
 // is set ONLY by a human/CLI back-out of an applied row (the daemon-side
 // post-apply regression watch is detection-only — it never writes it).
@@ -17,15 +17,17 @@ export type ProposalStatus =
   | "rejected"
   | "applied"
   | "snoozed"
-  | "reverted";
+  | "reverted"
+  | "unadjudicated";
 
 // Terminal states — no further transition (applied = git-reversible only;
-// rejected = learning-log EPM feed candidate; reverted = human/CLI back-out).
-// approve/reject re-call → 409.
+// rejected = learning-log EPM feed candidate; reverted = human/CLI back-out;
+// unadjudicated = closed without a gate verdict). approve/reject re-call → 409.
 export const TERMINAL_PROPOSAL_STATUSES: ReadonlySet<ProposalStatus> = new Set([
   "applied",
   "rejected",
   "reverted",
+  "unadjudicated",
 ]);
 
 // Statuses the approve/reject endpoints act on. Mirrors the complement of
@@ -42,7 +44,8 @@ export const ACTIONABLE_PROPOSAL_STATUSES: ReadonlySet<ProposalStatus> = new Set
 // --auto-regen regenerates + pre-verifies + re-applies a stale diff inline, so
 // the 200 surface keys off how the change landed: direct apply (exit 0) →
 // neither flag · after-regen (exit 10) → regenerated · already-present (exit 12)
-// → already_applied. The two flags are mutually exclusive; absence = direct apply.
+// → already_applied · record not written (exit 26) → record_missing. The flags are
+// mutually exclusive; absence = direct apply.
 export interface ApproveProposalResponse {
   id: number;
   status: "applied";
@@ -50,6 +53,10 @@ export interface ApproveProposalResponse {
   regenerated?: true;
   // exit 12 — change already present in the file → row marked applied, NO new commit.
   already_applied?: true;
+  // exit 26 — bytes landed + row applied, but its core.autoagent_apply_records row was not written.
+  record_missing?: true;
+  // record_missing only — the cause token + where the record survives (the JSONL applied row).
+  reason?: string;
 }
 
 // Reject (200) — status flipped to `rejected` + reviewed_at/reviewed_by stamped.
@@ -62,7 +69,7 @@ export interface RejectProposalResponse {
 // Discriminated mutation-error envelope — `status` literal is the discriminator
 // (distinct from the GET-side ImprovementErrorBody, which keys on `error`).
 // Branch → daemon-apply exit code + HTTP status:
-//   noop (409)             ← exit 8: already terminal (applied/rejected/approved/reverted) — idempotent no-op
+//   noop (409)             ← exit 8: already terminal (applied/rejected/approved/reverted/unadjudicated) — idempotent no-op
 //   not_found (404)        ← exit 19: no proposal with that id
 //   generation_not_ok (409) ← exit 20: stored generation outcome (haiku_status) not ok-prefixed;
 //                            nothing applied, row untouched — Reject is the way out
@@ -78,6 +85,8 @@ export interface RejectProposalResponse {
 //   row_unreadable (422)   ← exit 23: stored proposal row unreadable (nothing applied);
 //                            a data problem, so no retry — Reject is the way out
 //   apply_error (503)      ← exit 21: proposal DB query failed (nothing applied; retryable)
+//   apply_error (503)      ← exit 25: apply-record table unconfirmed (nothing applied; retry after
+//                            the pending monitor migration runs)
 //   apply_error (500)      ← other infra failure (exit 2 bad-arg / 3 no-psql / 6 DB-update-fail / other)
 //   internal (500)         ← unexpected route-level failure
 export type ImprovementMutationErrorBody =
@@ -276,20 +285,23 @@ export interface ImprovementProseOnlyAddSummary {
   truncation_caveat: string;
 }
 
-// Rejected proposals split into three disjoint lifecycle buckets. An undivided reject
-// rate overstates substantive rejection: the measured population carries 40% infra
-// outcomes plus a mechanically superseded subset, and neither reached a quality verdict.
+// Rejected and unadjudicated proposals split into three disjoint lifecycle buckets. An
+// undivided reject rate overstates substantive rejection: the population carries a large
+// infra share plus a mechanically superseded subset, and neither reached a quality
+// verdict.
 //
-// Membership is ordered — a superseded row carries an 'ok' model status, so a pure
-// model-status split books it as a quality reject, which is the defect this shape exists
-// to prevent:
-//   1. lifecycle_count — superseded by a fresher same-agent proposal, terminated by the
-//      cycle rather than judged (daemon_cycle.py supersede_prior_pending_for_agent).
-//   2. infra_count     — the model call yielded no usable diff (quota-limit / transient /
+// Membership is ordered — a superseded, parked or unadjudicated row can carry an 'ok' model
+// status, so a pure model-status split books it as a quality reject, which is the defect
+// this shape exists to prevent:
+//   1. lifecycle_count — superseded by a fresher same-agent proposal or refused by a parked
+//      covering pattern, terminated by the cycle rather than judged
+//      (daemon_cycle.py supersede_prior_pending_for_agent / update_parked_proposal_status).
+//   2. infra_count     — every other unadjudicated row, whatever its model status, plus a
+//      rejected row whose model call yielded no usable diff (quota-limit / transient /
 //      auth, and any other non-'ok' status including a NULL one, which the daemon's own
 //      apply gate reads fail-closed).
-//   3. quality_count   — an 'ok' model status: a diff existed and was rejected on
-//      substance. The only bucket a reject rate may be read from.
+//   3. quality_count   — a rejected row with an 'ok' model status: a diff existed and was
+//      rejected on substance. The only bucket a reject rate may be read from.
 //
 // Updater-written merge-resolution rows sit outside all three and outside `total` —
 // release records, not daemon proposals.
@@ -308,7 +320,7 @@ export interface ImprovementProposalRow {
   id: number;
   cycle_date: string; // 'YYYY-MM-DD'
   approval_tier: ImprovementTier;
-  status: string; // ProposalStatus enum text (pending / approved / rejected / applied / snoozed / reverted)
+  status: string; // ProposalStatus enum text (pending / approved / rejected / applied / snoozed / reverted / unadjudicated)
   target_agent: string | null;
   target_file: string;
   pattern_label: string;
@@ -449,10 +461,10 @@ export interface ImprovementLearningLogRow {
   last_updated: string; // ISO8601 UTC
   last_transition_at: string | null; // ISO8601 UTC
   last_transition_reason: string | null;
-  // True when the pattern LABEL is one the daemon skips at intake
-  // (daemon_cycle.py NON_PROMPTABLE_LABELS). Label-keyed like the skip itself, so
-  // it is independent of status and of the registry gate: a marked row can never
-  // produce a proposal, whatever its lifecycle stage says.
+  // True when the row carries no metric key — the daemon's intake skips it every
+  // cycle (daemon_cycle.py NO_METRIC_KEY_EVAL). Key-only like the skip itself, so it
+  // is independent of status and of the registry gate. A schema without the
+  // metric_key column reads every row as keyless, as the intake does.
   intake_skipped: boolean;
 }
 
@@ -483,7 +495,7 @@ export interface ImprovementApplyCapState {
 }
 
 // One suppression cause, counted on its own. The buckets exist BECAUSE a single
-// number cannot carry this: the loop suppresses selections through five separate
+// number cannot carry this: the loop suppresses selections through several separate
 // mechanisms with different meanings and different remedies, and a total that adds
 // them together tells an operator something is wrong while hiding what — a worse
 // signal than the single-mechanism count it replaced, not a better one.
@@ -493,7 +505,7 @@ export interface ImprovementSuppressionBucket {
   cause: string;
   // Short operator-facing name.
   label: string;
-  // Parked buckets: learning_log rows. Per-cycle buckets: loop events in the
+  // Parked and dormant buckets: learning_log rows. Per-cycle buckets: loop events in the
   // window — a RECURRENCE count, not a row count, because these mechanisms write
   // no transition and re-suppress the same row every cycle.
   count: number;
@@ -505,13 +517,12 @@ export interface ImprovementSuppressionBucket {
 
 // How much of the improvement loop is suppressed, and by which mechanism.
 //
-// Only ONE of the five mechanisms writes a lifecycle transition (the repeat-apply
-// cap). The other four — intake non-promptable skip, staleness skip, the new
-// unknown-family fallback, and roster mismatch — leave the row at
-// status='identified' and drop it again on every cycle, so the row presents as a
-// healthy pending pattern in status_distribution while never being able to produce
-// a proposal. That asymmetry is the reason this state is reported over two
-// deliberately separate populations rather than one sum.
+// Three populations, never summed:
+//   - parked: terminal rows ('rejected'), written by the daemon's terminal gates;
+//   - dormant: non-terminal rows the aggregator's pair verdict or the daemon's roster
+//     mismatch set aside — they return to 'identified' on a new passing pair;
+//   - per-cycle: skips that write no transition (no metric key, the intake pair
+//     re-check) and leave the row at 'identified', re-suppressed every cycle.
 export interface ImprovementLoopSuppressionState {
   // Terminal core.learning_log rows, bucketed by transition-reason marker.
   // Window-independent for the same reason apply_cap_state is: a row parked weeks
@@ -523,6 +534,7 @@ export interface ImprovementLoopSuppressionState {
   // human. Registry-gated like `parked` and bounded by the request `limit`; the
   // untruncated per-cause totals stay on the buckets.
   parked_patterns: ImprovementParkedPatternRow[];
+  dormant: ImprovementDormantState;
   // Recurring per-cycle suppressions from core.autoagent_loop_events over
   // `per_cycle_window_days`. These write no transition, so a window is the only
   // way to count them at all.
@@ -531,13 +543,13 @@ export interface ImprovementLoopSuppressionState {
   per_cycle_window_days: number;
   // Distinct UTC cycle days with any loop event in the window — the coverage denominator.
   per_cycle_window_cycles: number;
-  // status='identified' rows whose pattern label is one the daemon skips at intake
-  // (NON_PROMPTABLE_LABELS). These are the rows that look like pending backlog and
+  // status='identified' rows with no metric key, which the daemon skips at intake
+  // (NO_METRIC_KEY_EVAL). These are the rows that look like pending backlog and
   // are not: no proposal can ever be generated from them.
   //
   // UNGATED — every agent, registry member or not. The intake skip keys on the
-  // label alone, so a registry-scoped count would answer a narrower question than
-  // the one the field asks. Both numbers below share that scope, so the ratio is
+  // metric key alone, so a registry-scoped count would answer a narrower question
+  // than the one the field asks. Both numbers below share that scope, so the ratio is
   // internally consistent; it does NOT agree with the registry-gated parked
   // buckets, and is not meant to.
   pending_unpromptable: number;
@@ -551,6 +563,19 @@ export interface ImprovementLoopSuppressionState {
   // field exists to fix. Registry fail-open (empty registry → no predicate) makes
   // this 0.
   off_registry_parked: number;
+}
+
+/**
+ * Dormant core.learning_log rows, bucketed by the transition-reason marker of the writer
+ * that moved them; no marker or no reason → 'other'.
+ * Window-free like `parked` → an old dormant row stays visible.
+ * UNGATED, unlike `parked`: a roster-mismatch row is dormant BECAUSE its agent is not a
+ * roster stem, so the registry gate would drop the very rows that bucket reports.
+ * `patterns` is bounded by the request `limit`; the totals stay on `buckets`.
+ */
+export interface ImprovementDormantState {
+  buckets: ImprovementSuppressionBucket[];
+  patterns: ImprovementParkedPatternRow[];
 }
 
 // A parked row carried with the bucket cause that parked it, so the ledger groups

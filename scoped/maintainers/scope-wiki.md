@@ -13,7 +13,7 @@ Maintainer-facing material for that source file, plus the record of what the cut
 ## Status in the corpus
 
 - Tier 2 (Scope), membership `agent_scope ∈ {glass-atrium-wiki-curator}`, inheriting Tier 1. Declared on the curator's registry row (`agent-registry.json` → `rules.scope`) and at `rules/glass-atrium/core-compliance-matrix.md` → the Tier 2 table and the Compliance Matrix `scope-wiki.md` row.
-- Both surviving headings are cited from `agents/glass-atrium-wiki-curator.md` and must keep their names: the health-check `Stale` bullet cites `scoped/scope-wiki.md (Staleness surface)`, and the raw-ingestion frontmatter precondition cites `per scope-wiki Operational Constraints`. `skills/glass-atrium-ops-orchestrator.md` and `scripts/wiki-daemon-entry-prompt.md` cite the file by name only.
+- Both surviving headings are cited from `agents/glass-atrium-wiki-curator.md` and must keep their names: the health-check `Stale` bullet cites `scoped/scope-wiki.md (Staleness surface)`, and the raw-ingestion frontmatter precondition cites `per scope-wiki Operational Constraints`. `skills/glass-atrium-ops-orchestrator.md` and `scoped/scope-report.md` cite the file by name only.
 - Those citations are prose references, not an instruction to Read: as the curator's `rules.scope` member, the file reaches a spawned curator whole through the part slots (`hooks/lib/inject_chunk.py`).
 - The daily-compile batch reader does not receive it: `scripts/wiki-daily-compile.sh` passes only the curator body as `--system-prompt` to a `claude -p` call, where no SubagentStart fires. A rule both readers need is stated in the body.
 

@@ -22,6 +22,8 @@
 # assertion gates at any position on every version.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../advisory-subagent-budget.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
@@ -35,7 +37,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Run the hook once. Args: $1=input JSON; $2..=extra env assignments (e.g. SUBAGENT_NOPROGRESS_BLOCK_LIMIT=3).
@@ -137,4 +139,20 @@ run_hook() {
   run_hook "${SAME}" SUBAGENT_NOPROGRESS_BLOCK_LIMIT="xyz"
   [[ "${status}" -eq 0 ]] || { echo "expected advisory + exit 0 (block degraded to default), got ${status}: ${output}" >&2; return 1; }
   [[ "${output}" == *"NO-PROGRESS"* ]] || { echo "expected a NO-PROGRESS advisory, got: ${output}" >&2; return 1; }
+}
+
+# A setup skip leaves SANDBOX unset — a failing teardown would report the skip as not ok.
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local sandbox="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${sandbox}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
+    return 1
+  }
 }

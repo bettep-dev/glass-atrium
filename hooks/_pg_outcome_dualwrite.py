@@ -51,6 +51,7 @@
 
 import json
 import os
+import re
 import sys
 import time
 
@@ -259,7 +260,10 @@ def _norm_bool_or_null(v):
     """Frontmatter strings 'true'/'false'/'' → bool/None for nullable bool col."""
     if v is True or v is False:
         return v
-    s = (v or "").strip().lower()
+    # Non-string (0/1, float, dict) → NULL; a raise here runs before the write's try → whole row lost
+    if not isinstance(v, str):
+        return None
+    s = v.strip().lower()
     if s == "true":
         return True
     if s == "false":
@@ -310,6 +314,15 @@ def _norm_varchar(v, maxlen):
     return s[:maxlen]
 
 
+# Harness-owned tier vocabulary → shape check only, never a value list: an unseen short
+# lowercase token passes, anything else NULLs instead of failing the VARCHAR(16) INSERT.
+_EFFORT_TOKEN_RE = re.compile(r"[a-z]{1,16}")
+
+
+def _norm_effort(v):
+    return v if isinstance(v, str) and _EFFORT_TOKEN_RE.fullmatch(v) else None
+
+
 # ---------------------------------------------------------------------------
 # Core write — single transaction, multi-row INSERT + optional UPSERT
 # ---------------------------------------------------------------------------
@@ -334,6 +347,9 @@ def _registry_agents():
 def _build_outcome_row(outcome):
     """Apply normalization. Returns dict ready for named-param INSERT."""
     agent = _norm_varchar(outcome.get("agent", ""), 64) or "unknown"
+    effort = _norm_effort(outcome.get("effort"))
+    agent_id = outcome.get("agent_id")
+    session_id = outcome.get("session_id")
     row = {
         "record_ts": outcome.get("timestamp") or outcome.get("record_ts"),
         "agent": agent,
@@ -384,6 +400,17 @@ def _build_outcome_row(outcome):
         # collapses into grader_verdict. Carries the withheld-versus-inapplicable split
         # that the verdict and the reason vocabulary both lose. NULL = never attempted.
         "grader_crosscheck": _norm_text_or_null(outcome.get("grader_crosscheck")),
+        # effort — the tier the row's own transcript last carried; has_mixed_effort — more than
+        # one distinct tier seen. The flag only describes a tier, so it is NULL without one.
+        "effort": effort,
+        "has_mixed_effort": (
+            _norm_bool_or_null(outcome.get("has_mixed_effort")) if effort else None),
+        # Spawn provenance — the recorder's envelope ids and its own correction-detector verdict,
+        # stored as sent; the verdict sits beside the emitted correction fields, never derived
+        # from them. A non-string id NULLs rather than failing the TEXT bind for the whole row.
+        "agent_id": _norm_text_or_null(agent_id) if isinstance(agent_id, str) else None,
+        "session_id": _norm_text_or_null(session_id) if isinstance(session_id, str) else None,
+        "user_correction_detected": _norm_bool_or_null(outcome.get("user_correction_detected")),
     }
     # Membership guard at the single write seam: DETECT, never drop or rewrite. The agent value
     # is part of the ON CONFLICT key, so rewriting it would convert the upsert into a duplicate
@@ -421,7 +448,9 @@ INSERT INTO core.outcomes (
     attribution_source, style_ref, style_ref_verified,
     grader_verdict, downgrade_origin,
     review_flag_reasons,
-    grader_crosscheck
+    grader_crosscheck,
+    effort, has_mixed_effort,
+    agent_id, session_id, user_correction_detected
 ) VALUES (
     %(record_ts)s, %(agent)s, %(task_type)s::core."TaskType",
     %(result)s::core."OutcomeResult",
@@ -434,7 +463,9 @@ INSERT INTO core.outcomes (
     %(grader_verdict)s::core."GraderVerdict",
     %(downgrade_origin)s::core."DowngradeOrigin",
     %(review_flag_reasons)s,
-    %(grader_crosscheck)s::core."GraderCrosscheck"
+    %(grader_crosscheck)s::core."GraderCrosscheck",
+    %(effort)s, %(has_mixed_effort)s,
+    %(agent_id)s, %(session_id)s, %(user_correction_detected)s
 )
 ON CONFLICT (record_ts, agent, task_type) DO UPDATE SET
     result = EXCLUDED.result,
@@ -459,7 +490,12 @@ ON CONFLICT (record_ts, agent, task_type) DO UPDATE SET
     grader_verdict = EXCLUDED.grader_verdict,
     downgrade_origin = EXCLUDED.downgrade_origin,
     review_flag_reasons = EXCLUDED.review_flag_reasons,
-    grader_crosscheck = EXCLUDED.grader_crosscheck
+    grader_crosscheck = EXCLUDED.grader_crosscheck,
+    effort = EXCLUDED.effort,
+    has_mixed_effort = EXCLUDED.has_mixed_effort,
+    agent_id = EXCLUDED.agent_id,
+    session_id = EXCLUDED.session_id,
+    user_correction_detected = EXCLUDED.user_correction_detected
 RETURNING id
 """
 
@@ -516,39 +552,87 @@ def _strip_grader_crosscheck(sql):
     return sql
 
 
-# One variant per (qa_score, review_flag_reasons, grader_crosscheck) presence triple, each
-# DERIVED from the single hand-maintained primary above so no variant drifts.
+def _strip_effort(sql):
+    """Same expand-phase shim for the effort + has_mixed_effort pair, which one migration adds
+    together — so one presence bit covers both. Comma-anchored, composing with the other
+    strips in any order."""
+    fragments = (
+        ",\n    effort = EXCLUDED.effort,\n    has_mixed_effort = EXCLUDED.has_mixed_effort",
+        ",\n    %(effort)s, %(has_mixed_effort)s",
+        ",\n    effort, has_mixed_effort",
+    )
+    for old in fragments:
+        sql = sql.replace(old, "")
+    return sql
+
+
+def _strip_provenance(sql):
+    """Same expand-phase shim for the agent_id + session_id + user_correction_detected triple,
+    which one migration adds together — so one presence bit covers all three. Comma-anchored,
+    composing with the other strips in any order."""
+    fragments = (
+        (",\n    agent_id = EXCLUDED.agent_id,\n    session_id = EXCLUDED.session_id,"
+         "\n    user_correction_detected = EXCLUDED.user_correction_detected"),
+        ",\n    %(agent_id)s, %(session_id)s, %(user_correction_detected)s",
+        ",\n    agent_id, session_id, user_correction_detected",
+    )
+    for old in fragments:
+        sql = sql.replace(old, "")
+    return sql
+
+
+# One variant per (qa_score, review_flag_reasons, grader_crosscheck, effort pair, provenance
+# triple) presence tuple, each DERIVED from the single hand-maintained primary above so no
+# variant drifts.
 _INSERT_SQL_BY_SCHEMA = {}
 for _qa_present, _qa_sql in (
         (True, _OUTCOMES_INSERT_SQL), (False, _OUTCOMES_INSERT_SQL_NO_QA)):
     for _reasons_present in (True, False):
         _sql = _qa_sql if _reasons_present else _strip_review_flag_reasons(_qa_sql)
         for _cc_present in (True, False):
-            _INSERT_SQL_BY_SCHEMA[(_qa_present, _reasons_present, _cc_present)] = (
-                _sql if _cc_present else _strip_grader_crosscheck(_sql))
-for (_qa_present, _reasons_present, _cc_present), _variant in _INSERT_SQL_BY_SCHEMA.items():
+            _cc_sql = _sql if _cc_present else _strip_grader_crosscheck(_sql)
+            for _effort_present in (True, False):
+                _effort_sql = _cc_sql if _effort_present else _strip_effort(_cc_sql)
+                for _provenance_present in (True, False):
+                    _INSERT_SQL_BY_SCHEMA[(
+                        _qa_present, _reasons_present, _cc_present, _effort_present,
+                        _provenance_present)] = (
+                        _effort_sql if _provenance_present
+                        else _strip_provenance(_effort_sql))
+for (_qa_present, _reasons_present, _cc_present, _effort_present,
+        _provenance_present), _variant in _INSERT_SQL_BY_SCHEMA.items():
     assert _reasons_present or "review_flag_reasons" not in _variant, \
         "legacy INSERT derivation failed to strip review_flag_reasons"
     assert _cc_present or "grader_crosscheck" not in _variant, \
         "legacy INSERT derivation failed to strip grader_crosscheck"
+    assert _effort_present or "effort" not in _variant, \
+        "legacy INSERT derivation failed to strip effort"
+    assert _provenance_present or "user_correction_detected" not in _variant, \
+        "legacy INSERT derivation failed to strip the provenance triple"
 
 # Per-process cache: None = unprobed, bool = column present/absent. The hook spawns one
 # helper process per outcome, so this is probed at most once per outcome write.
 _qa_score_col_present = None
 _review_flag_reasons_col_present = None
 _grader_crosscheck_col_present = None
+_effort_cols_present = None
+_provenance_cols_present = None
 
-_ADDITIVE_OUTCOME_COLS = ("qa_score", "review_flag_reasons", "grader_crosscheck")
+_PROVENANCE_OUTCOME_COLS = ("agent_id", "session_id", "user_correction_detected")
+_ADDITIVE_OUTCOME_COLS = (
+    "qa_score", "review_flag_reasons", "grader_crosscheck", "effort", "has_mixed_effort",
+    *_PROVENANCE_OUTCOME_COLS)
 
 
 def _outcomes_insert_sql(cur):
     """Outcomes INSERT SQL matching the LIVE schema, so a pre-migration DB keeps writing.
-    The three column probes share one cached catalog lookup, run inside the caller's open
+    The column probes share one cached catalog lookup, run inside the caller's open
     transaction (read-only, no lock)."""
     global _qa_score_col_present, _review_flag_reasons_col_present
-    global _grader_crosscheck_col_present
+    global _grader_crosscheck_col_present, _effort_cols_present, _provenance_cols_present
     if (_qa_score_col_present is None or _review_flag_reasons_col_present is None
-            or _grader_crosscheck_col_present is None):
+            or _grader_crosscheck_col_present is None or _effort_cols_present is None
+            or _provenance_cols_present is None):
         cur.execute(
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_schema = 'core' AND table_name = 'outcomes' "
@@ -559,10 +643,14 @@ def _outcomes_insert_sql(cur):
         _qa_score_col_present = "qa_score" in present
         _review_flag_reasons_col_present = "review_flag_reasons" in present
         _grader_crosscheck_col_present = "grader_crosscheck" in present
+        _effort_cols_present = {"effort", "has_mixed_effort"} <= present
+        _provenance_cols_present = set(_PROVENANCE_OUTCOME_COLS) <= present
     return _INSERT_SQL_BY_SCHEMA[(
         _qa_score_col_present,
         _review_flag_reasons_col_present,
-        _grader_crosscheck_col_present)]
+        _grader_crosscheck_col_present,
+        _effort_cols_present,
+        _provenance_cols_present)]
 
 
 _SIGNALS_INSERT_SQL = """
@@ -589,11 +677,9 @@ INSERT INTO core.learning_log (
 ON CONFLICT (pattern_signature) DO UPDATE SET
     -- discovered_date is a LAST-observed date, not a first-observed one: the
     -- sibling writer (_pg_learning_dualwrite._LEARNING_LOG_UPSERT_SQL) refreshes
-    -- it on every re-emit, and daemon_cycle._reobservation_reason snoozes a
-    -- pattern on the strength of that. Omitting the refresh here made this
-    -- writer disagree with the column's only reader — harmless only for as long
-    -- as this path stays dormant (its sole producer, track-outcome.sh, emits
-    -- learning_hint: null), and a silent staleness snooze the moment it is wired.
+    -- it on every re-emit, so this writer refreshes it too and the column keeps
+    -- one meaning once this dormant path is wired (its sole producer,
+    -- track-outcome.sh, emits learning_hint: null).
     discovered_date = EXCLUDED.discovered_date,
     frequency = core.learning_log.frequency + EXCLUDED.frequency,
     last_updated = now()

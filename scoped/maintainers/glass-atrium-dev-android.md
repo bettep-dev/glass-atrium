@@ -19,7 +19,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 
 ## What moved out of the body, and why
 
-- **Effort/thinking blockquote** — restated `GLASS_ATRIUM_GLOBAL_RULES.md` → Thinking Budget Policy, a Tier-1 rule that measurably reaches every subagent. Duplicate, and its tail ("no re-declaration here") was maintainer prose.
+- **Effort/thinking blockquote** — restated `GLASS_ATRIUM_GLOBAL_RULES.md` → Thinking Budget Policy, a Tier-1 rule that measurably reaches every subagent. Its `effort=high default` clause contradicts that section's parent-tier default, and its tail ("no re-declaration here") was maintainer prose.
 - **Mobile UX source-of-truth blockquote** — pointed at another agent's body for "conceptual rules". It named where rules live rather than obliging anything; the Compose mapping under that heading is self-sufficient.
 - **`## Architecture Validation`** — every clause restated Design Principles (layer roles, mixing prohibition, boundary conversion, no circular deps). The one non-duplicated fact, the per-layer membership list, was folded into Pre-Execution Layer Validation, which already names the same chain.
 - **Comment, TODO and logging restatements** in Self-Review and Red Flags — `scoped/shared-comment-logging.md` reaches this row through `rules.shared`.

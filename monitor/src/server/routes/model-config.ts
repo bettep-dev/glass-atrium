@@ -19,6 +19,8 @@ import {
   INHERIT_VALUE,
   MODEL_DOMAINS,
   RENAMED_DAEMON_CONFIG_KEYS,
+  TIER_DOMAINS,
+  getTierFileValue,
   isPricingKnown,
   loadKnownModelIds,
   normalizeModelId,
@@ -26,12 +28,14 @@ import {
   resolveRenamedKeyCarry,
   validateBudgetValue,
   validateModelValue,
+  validateTierValue,
   type BudgetDomainDef,
   type LegacyDesiredResolution,
   type ModelDomainDef,
+  type TierDomainDef,
+  type TierFileValue,
 } from "../model-config-consts.js";
 import type {
-  BudgetDomainKey,
   BudgetDomainStatus,
   DaemonConfigSyncState,
   DomainFileModel,
@@ -40,9 +44,9 @@ import type {
   ModelConfigGetResponse,
   ModelConfigPutBody,
   ModelConfigPutResponse,
-  ModelDomainKey,
   SurfaceFileResult,
   SurfaceResult,
+  TierDomainStatus,
 } from "../types/model-config.js";
 
 // updated_by audit convention — the monitor web server is the sole write origin (mirrors
@@ -63,6 +67,27 @@ const DEV_AGENT_FILE_PATTERN = /^glass-atrium-dev-[a-z0-9-]+\.md$/;
 // Display label for an absent per-daemon REPL key — the bootstrap exec carries no model
 // flag, so the tmux session inherits the settings.json model (D3).
 const INHERIT_SETTINGS_LABEL = "inherit (settings.json)";
+
+interface DomainDefByGroup {
+  models: ModelDomainDef;
+  budgets: BudgetDomainDef;
+  tiers: TierDomainDef;
+}
+type PutGroup = keyof DomainDefByGroup;
+interface PutGroupDef<D extends { key: string }> {
+  defs: ReadonlyArray<D>;
+  unknownKeyReason: string;
+  validate: (def: D, value: unknown) => string | null;
+}
+const PUT_GROUPS: { [G in PutGroup]: PutGroupDef<DomainDefByGroup[G]> } = {
+  models: { defs: MODEL_DOMAINS, unknownKeyReason: "unknown domain key", validate: validateModelValue },
+  budgets: {
+    defs: BUDGET_DOMAINS,
+    unknownKeyReason: "unknown budget key",
+    validate: (_def, value) => validateBudgetValue(value),
+  },
+  tiers: { defs: TIER_DOMAINS, unknownKeyReason: "unknown tier key", validate: validateTierValue },
+};
 
 // external-surface path resolution (env overrides = test seams)
 
@@ -156,13 +181,46 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
     buildBudgetStatus(def, desired.get(def.key) ?? null, daemonConfig),
   );
 
+  const tiers: TierDomainStatus[] = TIER_DOMAINS.map((def) =>
+    buildTierStatus(def, desired.get(def.key) ?? null, daemonConfig),
+  );
+
   return {
     fetched_at: new Date().toISOString(),
     known_models: [...knownModelIds],
     domains,
     budgets,
+    tiers,
     daemon_config_sync: computeDaemonConfigSync(resolution, daemonConfig),
   };
+}
+
+/**
+ * File side read as the daemon loader reads it → a rejected value surfaces with or without a saved row.
+ * No row / unreadable file → no drift claim.
+ */
+function buildTierStatus(
+  def: TierDomainDef,
+  desired: string | null,
+  daemonConfig: Record<string, unknown> | null,
+): TierDomainStatus {
+  const fileValue = daemonConfig === null ? null : getTierFileValue(def, daemonConfig[def.daemonConfigKey]);
+  return {
+    domain: def.key,
+    desired,
+    actual: fileValue?.state === "accepted" ? fileValue.value : null,
+    file_error: fileValue?.state === "rejected" ? fileValue.reason : null,
+    drift: desired !== null && fileValue !== null && !isTierFileMatch(desired, fileValue),
+    apply_mode: def.applyMode,
+  };
+}
+
+// 'inherit' wants the knob unset, a value wants it in effect verbatim.
+function isTierFileMatch(desired: string, fileValue: TierFileValue): boolean {
+  if (desired === INHERIT_VALUE) {
+    return fileValue.state === "unset";
+  }
+  return fileValue.state === "accepted" && fileValue.value === desired;
 }
 
 // A budget cap drifts when the DB desired value differs from the rendered daemon-config.json
@@ -285,6 +343,10 @@ export function computeDaemonConfigSync(
   if (daemonConfig === null) {
     return "file-missing";
   }
+  // Ranks above pending-migration: a rejected knob stops every daemon cycle, and db-setup does not fix it.
+  if (TIER_DOMAINS.some((def) => getTierFileValue(def, daemonConfig[def.daemonConfigKey]).state === "rejected")) {
+    return "file-invalid";
+  }
   // Reported ahead of any drift comparison, deliberately. On an un-migrated DB the file still
   // carries the pre-rename keys, so every renamed domain reads as drift and the operator is sent
   // to Save when the un-run rename is the root cause. Per-domain drift is not hidden by this —
@@ -308,6 +370,12 @@ export function computeDaemonConfigSync(
         return "drift";
       }
     } else if (have !== want) {
+      return "drift";
+    }
+  }
+  for (const def of TIER_DOMAINS) {
+    const want = desired.get(def.key);
+    if (want !== undefined && !isTierFileMatch(want, getTierFileValue(def, daemonConfig[def.daemonConfigKey]))) {
       return "drift";
     }
   }
@@ -337,48 +405,25 @@ async function handlePut(
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return reply.code(400).send(invalidBody("body", "must be a JSON object"));
   }
-  const models = body.models;
-  const budgets = body.budgets;
-  if (models === undefined && budgets === undefined) {
-    return reply.code(400).send(invalidBody("body", "must contain 'models' and/or 'budgets'"));
+  if (body.models === undefined && body.budgets === undefined && body.tiers === undefined) {
+    return reply
+      .code(400)
+      .send(invalidBody("body", "must contain 'models', 'budgets' and/or 'tiers'"));
   }
 
-  const modelChanges = new Map<ModelDomainKey, string>();
-  if (models !== undefined) {
-    if (models === null || typeof models !== "object" || Array.isArray(models)) {
-      return reply.code(400).send(invalidBody("models", "must be an object"));
-    }
-    for (const [key, value] of Object.entries(models)) {
-      const def = MODEL_DOMAINS.find((d) => d.key === key);
-      if (def === undefined) {
-        return reply.code(400).send(invalidBody(`models.${key}`, "unknown domain key"));
-      }
-      const reason = validateModelValue(def, value);
-      if (reason !== null) {
-        return reply.code(400).send(invalidBody(`models.${key}`, reason));
-      }
-      modelChanges.set(def.key, value as string);
-    }
+  const modelChanges = getGroupChanges("models", body.models);
+  if (!(modelChanges instanceof Map)) {
+    return reply.code(400).send(modelChanges);
   }
-
   // Per-call caps validate INDEPENDENTLY — no cross-field invariant (each guards a single
   // runaway `claude -p --max-budget-usd` call, not a budget pair).
-  const budgetChanges = new Map<BudgetDomainKey, string>();
-  if (budgets !== undefined) {
-    if (budgets === null || typeof budgets !== "object" || Array.isArray(budgets)) {
-      return reply.code(400).send(invalidBody("budgets", "must be an object"));
-    }
-    for (const [key, value] of Object.entries(budgets)) {
-      const def = BUDGET_DOMAINS.find((d) => d.key === key);
-      if (def === undefined) {
-        return reply.code(400).send(invalidBody(`budgets.${key}`, "unknown budget key"));
-      }
-      const reason = validateBudgetValue(value);
-      if (reason !== null) {
-        return reply.code(400).send(invalidBody(`budgets.${key}`, reason));
-      }
-      budgetChanges.set(def.key, value as string);
-    }
+  const budgetChanges = getGroupChanges("budgets", body.budgets);
+  if (!(budgetChanges instanceof Map)) {
+    return reply.code(400).send(budgetChanges);
+  }
+  const tierChanges = getGroupChanges("tiers", body.tiers);
+  if (!(tierChanges instanceof Map)) {
+    return reply.code(400).send(tierChanges);
   }
 
   try {
@@ -398,7 +443,7 @@ async function handlePut(
     }
 
     // single DB transaction over the changed rows
-    const upserts = new Map<string, string>([...modelChanges, ...budgetChanges]);
+    const upserts = new Map<string, string>([...modelChanges, ...budgetChanges, ...tierChanges]);
     const changes: Record<string, { old: string | null; new: string }> = {};
     const writes = [];
     for (const [key, value] of upserts) {
@@ -433,6 +478,7 @@ async function handlePut(
       [...upserts.keys()].some(
         (k) =>
           BUDGET_DOMAINS.some((d) => d.key === k) ||
+          TIER_DOMAINS.some((d) => d.key === k) ||
           MODEL_DOMAINS.some((d) => d.key === k && d.daemonConfigKey !== null),
       );
     if (touchesDaemonConfig) {
@@ -716,7 +762,8 @@ export async function renderDaemonConfig(desired: Map<string, string>): Promise<
     }
   }
 
-  for (const def of MODEL_DOMAINS) {
+  // Tier knobs share the model-domain render — 'inherit' deletes the key → no --effort / no output-cap env.
+  for (const def of [...MODEL_DOMAINS, ...TIER_DOMAINS]) {
     if (def.daemonConfigKey === null) {
       continue;
     }
@@ -803,6 +850,34 @@ async function pathExists(p: string): Promise<boolean> {
 
 function invalidBody(field: string, reason: string): ModelConfigErrorBody {
   return { error: "invalid_body", field, reason };
+}
+
+/** One PUT group's validated changes, or the 400 body naming its first invalid field. Absent group → no changes. */
+function getGroupChanges<G extends PutGroup>(
+  group: G,
+  raw: unknown,
+): Map<DomainDefByGroup[G]["key"], string> | ModelConfigErrorBody {
+  const { defs, unknownKeyReason, validate } = PUT_GROUPS[group];
+  const changes = new Map<DomainDefByGroup[G]["key"], string>();
+  if (raw === undefined) {
+    return changes;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return invalidBody(group, "must be an object");
+  }
+  for (const [key, value] of Object.entries(raw)) {
+    const def = defs.find((d) => d.key === key);
+    if (def === undefined) {
+      return invalidBody(`${group}.${key}`, unknownKeyReason);
+    }
+    const reason = validate(def, value);
+    if (reason !== null) {
+      return invalidBody(`${group}.${key}`, reason);
+    }
+    // validate() returned null → value is a string (every validator rejects non-strings first).
+    changes.set(def.key, value as string);
+  }
+  return changes;
 }
 
 function failWithDb(

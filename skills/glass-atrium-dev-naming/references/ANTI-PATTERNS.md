@@ -78,7 +78,9 @@ Conciseness has a floor: a name must still form a precise mental image, distingu
 
 - **Order**: evaluate domain-strip first (does the enclosing scope supply it?), verb-strip second (is the noun alone sufficient?). Apply BOTH in one step only when each passes independently.
 - **Generic-terminal ban**: never reduce to `data`·`value`·`status`·`result`·`thing`·`object`·`info`·`count` (unqualified) — these are the forbidden floor.
-- **Sibling-collision keeps the qualifier**: if two identifiers collapse to the same name after domain-strip, retain it for both (`userCount`/`projectCount`, `fileBlock`/`diskBlock` — Ousterhout's Sprite-OS `block` data-corruption bug). Different things → different names always wins over conciseness.
+- **Sibling collision groups first**: two identifiers that would collapse to one name after domain-strip group under `scoped/shared-naming.md` → **Qualifier-sibling grouping** (`fileBlock`/`diskBlock` in one scope → `block: { file, disk }`).
+  - The qualifier stays only where that rule's fallback applies (`userCount`/`projectCount`: `count` cannot name a group).
+  - Never collapse both to one bare name — Ousterhout's Sprite-OS `block` data-corruption bug. Different things → different names always wins over conciseness.
 - **Verb retained when it is the only signal** of a computation vs a stored field (`calculateTotal` ≠ stored `total`) or of operation direction (`validate`/`read`/`calculate`).
 - **Cross-boundary names keep their qualifier**: a stripped name (`New`, `Load`, `Get`) is safe only when the package/scope restores context at every reading site — opaque in a log line / error message / across a package boundary → keep the word.
 - **Abbreviation**: only universally recognized forms (HTTP, JWT, ctx), the list in `references/VARIABLES-BOOLEANS.md` → `### Allowed abbreviations`, and the short forms its `### Scope-proportional length` table allows inside a 3-5 line closure.
@@ -89,7 +91,7 @@ Conciseness has a floor: a name must still form a precise mental image, distingu
 | `processOrder()` → `process()` | `process()` only inside an `Order` type | bare `process` loses the object + is unsearchable |
 | `validatePaymentStatus()` → `status` | `validate` + scope-supplied domain | collapses to a generic-terminal anti-pattern |
 | `handleAuthenticationError()` → `err` | scope-proportional descriptive name | single-letter beyond a tiny block conveys nothing |
-| `fileBlock` → `block` (two block kinds coexist) | `fileBlock`/`diskBlock` | sibling collision → keep the disambiguator |
+| `fileBlock` → `block` (two block kinds coexist) | `block: { file, disk }` in one scope · `fileBlock`/`diskBlock` across modules | a collision groups first; different scopes are no sibling set |
 
 ## Forbidden Class/Type Suffixes
 
@@ -146,4 +148,4 @@ Conciseness has a floor: a name must still form a precise mental image, distingu
 - [ ] **Boolean audit**: `Grep` for `boolean` / `: boolean` declarations — all use approved prefixes
 - [ ] **Forbidden suffix scan**: `Grep` for `Manager|Helper|Util|Processor|Wrapper|Handler` in class/type declarations — zero matches, and every remaining suffix is on the allowlist
 - [ ] **Conciseness check**: No identifier repeats information already in its parent scope (class name, module name)
-- [ ] **Reduction floor**: No reduced name is a generic terminal (`data`/`value`/`status`/`result`/unqualified `count`); each reduced form is uniquely greppable and keeps its qualifier where a sibling would collide
+- [ ] **Reduction floor**: No reduced name is a generic terminal (`data`/`value`/`status`/`result`/unqualified `count`); each reduced form is uniquely greppable; a colliding sibling groups first (**Qualifier-sibling grouping**) and keeps its qualifier only where a fallback applies

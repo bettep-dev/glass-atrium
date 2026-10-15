@@ -38,6 +38,9 @@
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 assert_contains() {
   # $1 = needle · $2 = haystack. Non-zero (errexit-tripping) return when absent.
   case "$2" in
@@ -90,9 +93,7 @@ setup() {
 }
 
 teardown() {
-  if [[ -n "${WR_TMP:-}" && -d "${WR_TMP}" ]]; then
-    rm -rf "${WR_TMP}"
-  fi
+  if ga_guard_path "${WR_TMP:-}"; then rm -rf -- "${WR_TMP:?}"; fi
 }
 
 # A parent workflow transcript: several assistant tool_use entries (high tool_use) + a terminal
@@ -199,7 +200,7 @@ write_leaf_payload() {
 
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PGHOST="/nonexistent-socket-wr" \
     CLAUDE_GATE_INFLIGHT="" \
     SUBAGENT_TOOL_BUDGET_OFF="1" \

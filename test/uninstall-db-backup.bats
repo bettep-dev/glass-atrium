@@ -25,6 +25,8 @@
 # points the dumps at a throwaway dir — the live ~/.claude is never touched.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
@@ -46,7 +48,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Drive the REAL drop_databases against the stubs, under the entry point's strict
@@ -129,7 +131,7 @@ STUB
   # oss-db-setup.bats precedent). bash must resolve for env's exec; the
   # advisory-skip path itself runs on builtins alone (command -v / printf).
   ln -s "$(command -v bash)" "${STUB_BIN}/bash"
-  rm -f "${STUB_BIN}/dropdb"
+  if ga_guard_path "${STUB_BIN}"; then rm -f -- "${STUB_BIN:?}/dropdb"; fi
   run env GA_TARGET_HOME="${TARGET}" GA_DB_NAME=claude_oss_e2e \
     GA_DB_BACKUP_DIR="${BACKUPS}" PATH="${STUB_BIN}" \
     bash -c '

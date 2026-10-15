@@ -9,9 +9,10 @@ invariant: a row flagged ``poisoned_window = true`` (grader-gap mis-measurement
 window) never reaches pattern/posterior computation, on ANY call shape — the
 filter must live in the always-on WHERE clauses, not in a per-caller kwarg.
 
-The live-PG class exercises the real predicate against fixture rows inserted in
-an open, never-committed transaction (rolled back on teardown — the database is
-left byte-identical; no DELETE needed). The SQL-shape class needs no database.
+The live-PG class runs only on the ephemeral cluster ``live-pg-ephemeral.bats``
+builds (elsewhere it skips, never touching an install's live database) and
+exercises the real predicate against fixture rows inserted in an open,
+never-committed transaction rolled back on teardown. The SQL-shape class needs no database.
 
 Mirrors the deleted autoagent/test conventions (unittest, ``sys.path``
 insertion). Run with either runner:
@@ -36,6 +37,11 @@ from unittest import mock
 _HOOKS_DIR = Path(__file__).resolve().parent.parent.parent / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
+# unittest discover and ``-m unittest`` from another cwd leave this directory off sys.path.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _pg_seal import get_ephemeral_connection
 
 try:
     import _pg_learning_dualwrite as pgdw
@@ -138,12 +144,7 @@ class TestPoisonedRowExcludedFromLookback(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        import psycopg
-
-        try:
-            cls.conn = psycopg.connect("dbname=glass_atrium", connect_timeout=2)
-        except Exception as exc:  # noqa: BLE001 — no PG → skip the live class
-            raise unittest.SkipTest(f"PG unreachable: {type(exc).__name__}: {exc}")
+        cls.conn = get_ephemeral_connection()
         cls.addClassCleanup(cls._rollback_and_close)
 
         now = time.time()

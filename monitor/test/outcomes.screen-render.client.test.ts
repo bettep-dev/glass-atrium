@@ -3,7 +3,7 @@
 //
 // Runner: npx tsx --test test/outcomes.screen-render.client.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -15,6 +15,7 @@ import {
   renderScreen,
   type RenderedNode,
 } from "./lib/render-screen.js";
+import { getReducedMotionCss } from "./lib/css-source.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
@@ -48,11 +49,11 @@ function buildReactStub(failedRegionCount: number, setterCalls: SetterCall[]): R
   return { ...base, useState };
 }
 
-async function renderOutcomesScreen(failedRegionCount: number): Promise<ScreenHarness> {
+async function renderOutcomesScreen(failedRegionCount: number, uiOverrides: Record<string, unknown> = {}): Promise<ScreenHarness> {
   const setterCalls: SetterCall[] = [];
   const React = buildReactStub(failedRegionCount, setterCalls);
   const mod = await loadScreenModule(OUTCOMES_SRC, {
-    UI: ui.UI,
+    UI: { ...(ui.UI as Record<string, unknown>), ...uiOverrides },
     React,
     location: { hash: "" },
     URLSearchParams,
@@ -91,6 +92,27 @@ test("a shared outage shows one Retry, and pressing it re-reads the page", async
   assert.equal((refreshes[0].next as (t: number) => number)(0), 1);
 });
 
+test("a cold error shows one banner, and every region it covers is a quiet placeholder with no Retry", async () => {
+  const { tree } = await renderOutcomesScreen(8);
+  const covered = findNodes(tree, (n) => n.type === "RegionCovered").map((n) => String(n.props.source));
+
+  assert.equal(findNodes(tree, (n) => n.type === "PageErrorBanner").length, 1);
+  assert.equal(findNodes(tree, (n) => n.type === "RegionUnavailable").length, 0, "no covered region repeats the error");
+  assert.equal(getRetryButtons(tree).length, 1, "the banner holds the only Retry");
+  for (const source of ["the status band", "the record ledger", "by-agent failures", "reporting health", "recording channels", "check results", "cross table"]) {
+    assert.ok(covered.includes(source), `${source} is covered by the banner`);
+  }
+});
+
+test("a region failing alone keeps its own error card and Retry, with no page banner", async () => {
+  const { tree } = await renderOutcomesScreen(1);
+  const cards = findNodes(tree, (n) => n.type === "RegionUnavailable");
+
+  assert.equal(findNodes(tree, (n) => n.type === "PageErrorBanner").length, 0);
+  assert.deepEqual(cards.map((n) => n.props.source), ["the record ledger"]);
+  assert.equal(typeof cards[0].props.onRetry, "function", "the lone card keeps its Retry");
+});
+
 test("a failed record body reads as a plain sentence, with the raw answer only behind Details", async () => {
   const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
   const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
@@ -104,4 +126,296 @@ test("a failed record body reads as a plain sentence, with the raw answer only b
   assert.doesNotMatch(visible, /HTTP|500|—/, "no raw status or response text outside Details");
   assert.equal(details.length, 1);
   assert.match(collectText(details[0]), /HTTP 500 Internal Server Error/);
+});
+
+function getFoldButton(tree: RenderedNode, title: string): RenderedNode | undefined {
+  return findNodes(tree, (n) => n.type === "button" && "aria-expanded" in n.props && collectText(n).includes(title))[0];
+}
+
+test("status folds render open while their detail breakdowns start collapsed", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const rows = [
+    { title: "Reporting health", isOpen: true },
+    { title: "Self-report quality", isOpen: true },
+    { title: "Daily breakdown", isOpen: false },
+    { title: "By task type", isOpen: false },
+  ];
+
+  for (const row of rows) {
+    const button = getFoldButton(tree, row.title);
+    assert.ok(button, `${row.title} renders as a fold`);
+    assert.equal(button.props["aria-expanded"], row.isOpen, `${row.title} open state`);
+  }
+});
+
+// the shared SplitRow with another default layout → a row that names its own layout renders the same under either
+function withSplitRowDefault(layout: string): Record<string, unknown> {
+  const SplitRow = (ui.UI as Record<string, Component>).SplitRow;
+  return { SplitRow: (props: Record<string, unknown>) => SplitRow({ layout, ...props }) };
+}
+
+for (const sharedDefault of ["content", "equal"]) {
+  test(`paired cards sit side by side in one split row, each row naming its own layout (shared default ${sharedDefault})`, async () => {
+    const { tree } = await renderOutcomesScreen(0, withSplitRowDefault(sharedDefault));
+    const rows = [
+      // equal: peer reporting cards end level · content: each card keeps its own height
+      { name: "record attribution beside recording channels, ending level", ratio: "split-row--1-1", layout: "split-row--equal", titles: ["Record attribution", "Recording channels"] },
+      { name: "check results beside the crosstab", ratio: "split-row--1-1", layout: "split-row--content", titles: ["Automatic check results", "Confident but failed"] },
+    ];
+
+    for (const row of rows) {
+      const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes(row.ratio));
+      const pair = splitRows.find((n) => row.titles.every((title) => collectText(n).includes(title)));
+      assert.ok(pair, row.name);
+      assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
+      assert.ok(String(pair.props.className).includes(row.layout), `${row.name}: ${row.layout}`);
+    }
+  });
+}
+
+test("the per-agent table spans the full width", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes("split-row"));
+
+  // no half-width column → no empty stretch under the per-agent table beside the taller Reporting health stack
+  assert.ok(!splitRows.some((n) => collectText(n).includes("Failures by agent")), "per-agent table sits in no split row");
+});
+
+// design.md copy caps → a longer header wraps the 48px card head; the long form belongs in the card's ⓘ drawer
+const COPY_CAP = { title: 24, meta: 32 };
+
+function getHeaderCopy(tree: RenderedNode): { kind: string; title: string; sub: unknown }[] {
+  return findNodes(tree, (n) => n.type === "CardHead" || n.type === "Disclosure")
+    .map((n) => ({ kind: String(n.type), title: String(n.props.title), sub: n.props.sub }));
+}
+
+test("every card and fold header on the screen fits the title and header-meta caps, loaded or not", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const crosstab = { total: 12_000, polarTotal: 1_500, byCell: { "high|false": { count: 1_234 } } };
+  const readyCrosstab = { status: "ready", busy: false, data: { crosstab }, error: null };
+  const headers = [
+    ...getHeaderCopy((await renderOutcomesScreen(0)).tree),
+    ...getHeaderCopy(renderScreen(create(mod.CrosstabCard as Component, { state: readyCrosstab, onRetry: () => undefined })) as RenderedNode),
+  ];
+
+  assert.ok(headers.length >= 8, `the screen's headers are all collected (${headers.length})`);
+  for (const header of headers) {
+    assert.ok(header.title.length <= COPY_CAP.title, `${header.kind} title "${header.title}" is ${header.title.length} chars`);
+    const meta = typeof header.sub === "string" ? header.sub : collectText(renderScreen(header.sub) as RenderedNode | null);
+    assert.ok(meta.length <= COPY_CAP.meta, `${header.kind} "${header.title}" meta "${meta}" is ${meta.length} chars`);
+  }
+});
+
+describe("the cross-table header shows its share meta, count in the hover title, only when there are records, and always shows the mismatch badge", () => {
+  const rows = [
+    {
+      name: "a ready cross table with records",
+      crosstab: { total: 12_000, polarTotal: 1_500, byCell: { "high|false": { count: 1_234 } } },
+      metas: [{ text: "10.3%", title: "1,234 of 12,000 records · 10.3%" }],
+    },
+    { name: "a ready cross table with no records", crosstab: { total: 0, polarTotal: 0, byCell: {} }, metas: [] },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+      const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+      const state = { status: "ready", busy: false, data: { crosstab: row.crosstab }, error: null };
+      const [head] = findNodes(renderScreen(create(mod.CrosstabCard as Component, { state, onRetry: () => undefined })) as RenderedNode,
+        (n) => n.type === "CardHead");
+
+      const metas = findNodes(head, (n) => n.props.className === "card-sub").map((meta) => ({
+        text: collectText(meta),
+        title: findNodes(meta, (n) => typeof n.props.title === "string")[0]?.props.title,
+      }));
+      assert.deepEqual(metas, row.metas);
+      const badges = findNodes(head, (n) => n.type === "Badge");
+      assert.equal(badges.length, 1);
+      assert.match(collectText(badges[0]), new RegExp(`${row.crosstab.polarTotal.toLocaleString("en-US")}\\s+mismatches`));
+    });
+  }
+});
+
+// component nodes keep their name as type; the region's card is the first host element beneath them
+function getRootHost(node: RenderedNode): RenderedNode {
+  const [child] = node.children;
+  const isComponent = /^[A-Z]/.test(String(node.type));
+  return isComponent && child && typeof child !== "string" ? getRootHost(child) : node;
+}
+
+test("a region's error card hands a focused, successful Retry to that region's own card, which stays mounted", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const retrying = { status: "error", busy: true, data: null, error: SERVER_ERROR };
+  const ready = { status: "ready", busy: false, data: { overall: {} }, error: null };
+  const onRetry = () => undefined;
+  const rows = [
+    { name: "status band", component: "StatusBandO", props: { analyticsState: retrying, attentionState: ready, windowDays: 30, freshness: null, onRetry } },
+    { name: "needs-you count", component: "StatusBandO", props: { analyticsState: ready, attentionState: retrying, windowDays: 30, freshness: null, onRetry } },
+    { name: "by-agent failures", component: "AgentFailureTableO", props: { state: retrying, onRetry } },
+    { name: "record attribution", component: "AttributionHealthCard", props: { state: retrying, period: 30, onRetry } },
+    { name: "recording channels", component: "ChannelLivenessCard", props: { state: retrying, onRetry } },
+    { name: "check results", component: "GraderBreakdownCard", props: { state: retrying, onRetry } },
+    { name: "cross table", component: "CrosstabCard", props: { state: retrying, onRetry } },
+    { name: "run events", component: "LoopEventsCard", props: { state: retrying, onRetry } },
+    {
+      name: "record ledger",
+      component: "ResultTableCard",
+      props: {
+        state: retrying, rows: [], totalMatched: 0, page: 0, limit: 50, sort: "newest", filter: {}, onRetry,
+        closure: { pendingIds: new Set(), closedOverrides: new Map() }, needsYou: { rows: [], hiddenCount: 0 }, needsYouCap: 5,
+      },
+    },
+  ];
+
+  for (const row of rows) {
+    const tree = renderScreen(create(mod[row.component] as Component, row.props)) as RenderedNode;
+    const errorCards = findNodes(tree, (n) => n.type === "RegionUnavailable");
+    assert.equal(errorCards.length, 1, `${row.name}: one error card`);
+
+    const [errorCard] = errorCards;
+    const targetId = errorCard.props.focusTargetId;
+    assert.equal(errorCard.props.isBusy, true, `${row.name}: the card stays up, busy, through the Retry`);
+    assert.ok(typeof targetId === "string" && targetId.length > 0, `${row.name}: the Retry names a focus target`);
+    assert.equal(getRootHost(tree).props.id, targetId, `${row.name}: the target is the region's own card, mounted in every state`);
+  }
+});
+
+test("a closed caveat row shows its result and its closure as two separate groups", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const row = { id: 41, agent: "glass-atrium-dev-react", task_type: "feature", result: "done_with_concerns", closed_at: "2026-09-01T10:00:00.000Z", summary: "Split the ledger" };
+  const closure = { pendingIds: new Set(), closedOverrides: new Map() };
+  const tree = renderScreen(create(mod.ResultTableRow as Component, { row, onRowClick: () => undefined, closure })) as RenderedNode;
+
+  const resultGroup = findNodes(tree, (n) => n.props["data-group"] === "result")[0];
+  const closureGroup = findNodes(tree, (n) => n.props["data-group"] === "closure")[0];
+  assert.ok(resultGroup && closureGroup, "both groups render");
+  assert.equal(collectText(resultGroup).trim(), "Done with caveats");
+  assert.equal(collectText(closureGroup).trim(), "Closed");
+  assert.equal(findNodes(resultGroup, (n) => n === closureGroup).length, 0, "the closure group is not nested inside the result group");
+});
+
+test("a channel row keeps to two single lines, the detail line carrying its full text as a tooltip", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const channel = {
+    attribution_source: "structuredoutput-completion", alerting: false, eligible: true,
+    silent_hours: 3.4, recent_peak_daily_count: 171, peak_daily_count: 1204,
+  };
+  const tree = renderScreen(create(mod.ChannelLivenessRow as Component, { channel, days: 30, recencyDays: 7 })) as RenderedNode;
+
+  const lines = getRootHost(tree).children.filter((child): child is RenderedNode => typeof child !== "string");
+  assert.equal(lines.length, 2, "status line + detail line");
+  for (const line of lines) {
+    assert.match(String(line.props.className ?? ""), /whitespace-nowrap|truncate/, `"${collectText(line)}" cannot wrap`);
+  }
+  const detail = lines[1];
+  assert.match(String(detail.props.className), /truncate/);
+  assert.equal(detail.props.title, collectText(detail).trim());
+});
+
+test("the task ledger scrolls with the page, never inside a box of its own", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const [ledger] = findNodes(tree, (n) => n.type === "ResultTableCard");
+  assert.ok(ledger, "the ledger card renders");
+
+  const bodies = findNodes(ledger, (n) => String(n.props.className ?? "").split(" ").includes("card-body"));
+  assert.ok(bodies.length > 0, "the ledger has a card body");
+  for (const body of bodies) {
+    // the shared .card-body caps at 70vh with overflow-y auto → the Routine rows would sit in a nested scroller
+    const style = (body.props.style ?? {}) as Record<string, unknown>;
+    assert.equal(style.maxHeight, "none", "no height cap");
+    assert.equal(style.overflowY, "visible", "no inner vertical scroll");
+  }
+});
+
+test("each recording channel's busiest recent day is drawn against the watch floor", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const floor = 100;
+  const rows = [
+    { name: "a channel above the floor", source: "structuredoutput-completion", peak: 678 },
+    { name: "a channel just under the floor", source: "hook-input", peak: 99 },
+    { name: "a channel exactly at the floor", source: "completion-synthesized", peak: 100 },
+    { name: "a channel that wrote nothing recently", source: "budget-truncation", peak: 0 },
+  ];
+  const channels = rows.map((row) => ({
+    attribution_source: row.source, recent_peak_daily_count: row.peak, peak_daily_count: row.peak + 40,
+    silent_hours: 2, eligible: row.peak >= floor, alerting: false,
+  }));
+  const data = { days: 30, channels, alerting: [], thresholds: { eligibility_daily_floor: floor, eligibility_recency_days: 2, silence_hours: 24 } };
+  const state = { status: "ready", busy: false, data, error: null };
+  const tree = renderScreen(create(mod.ChannelLivenessBody as Component, { state, onRetry: () => undefined })) as RenderedNode;
+
+  const text = collectText(tree);
+  assert.match(text, /last 2d/, "the block names its window");
+  assert.match(text, /100\/day/, "the block names the floor");
+  const bars = findNodes(tree, (n) => n.type === "BulletBar");
+  assert.equal(bars.length, rows.length, "one bar per channel");
+  for (const row of rows) {
+    const bar = bars.find((b) => String(b.props.ariaLabel ?? "").includes(row.source));
+    assert.ok(bar, `${row.name}: has a bar`);
+    const { value, target } = bar.props as { value: number; target: number };
+    assert.ok(value >= 0 && value <= 1 && target > 0 && target <= 1, `${row.name}: bar stays on its track`);
+    assert.equal(value >= target, row.peak >= floor, `${row.name}: fill reaches the floor marker only at or above the floor`);
+  }
+});
+
+// [selector, body] for every flat rule of a stylesheet; nested @-blocks contribute their inner rules
+function getCssRules(css: string): Array<[string, string]> {
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].flatMap((m) =>
+    m[1].split(",").map((selector) => [selector.trim(), m[2]] as [string, string]),
+  );
+}
+
+function getDecl(body: string, prop: string): string | undefined {
+  return body.match(new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*([^;]+)`))?.[1].trim();
+}
+
+describe("the screen's own stylesheet keeps to the motion standard", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const css = findNodes(tree, (n) => n.type === "style").map(collectText).join("\n").replace(/\/\*[\s\S]*?\*\//g, "");
+  const reduced = getReducedMotionCss(css);
+  const moving = getCssRules(css).flatMap(([selector, body]) =>
+    (["animation", "transition"] as const)
+      .filter((prop) => !/^none\b/.test(getDecl(body, prop) ?? "none"))
+      .map((prop) => ({ selector, prop, value: getDecl(body, prop) ?? "" })),
+  );
+
+  test("the scan finds the sheet's moving rules", () => {
+    assert.ok(moving.some((m) => m.prop === "animation") && moving.some((m) => m.prop === "transition"));
+  });
+
+  for (const { selector, prop, value } of moving) {
+    test(`${selector} stops its ${prop} under reduced motion`, () => {
+      const gate = getCssRules(reduced).filter(([s]) => s === selector).map(([, body]) => body).join(";");
+      assert.match(gate, new RegExp(`${prop}:\\s*none`));
+    });
+    if (prop === "transition") {
+      test(`${selector} changes state at the 120ms standard`, () => {
+        assert.deepStrictEqual(value.match(/\d+m?s/g), ["120ms"], `transition: ${value}`);
+      });
+    }
+  }
+});
+
+test("a link in an outcome body draws in ink with a currentColor underline, never the user-picked accent", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const css = findNodes(tree, (n) => n.type === "style").map(collectText).join("\n");
+  const link = getCssRules(css).filter(([s]) => s === ".outcome-md a").map(([, body]) => body).join(";");
+
+  assert.equal(getDecl(link, "color"), "rgb(var(--ink))");
+  assert.match(getDecl(link, "text-decoration") ?? "", /^underline\b/);
+  assert.match(getDecl(link, "text-decoration-color") ?? "currentColor", /^currentColor$/);
+  assert.doesNotMatch(link, /--accent/);
+});
+
+test("a loading skeleton pulses through its gated class, never through an inline animation", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const inline = findNodes(tree, (n) => (n.props.style as Record<string, unknown> | undefined)?.animation !== undefined);
+  const pulsing = findNodes(tree, (n) => String(n.props.className ?? "").split(/\s+/).includes("skel-pulse-o"));
+
+  assert.ok(pulsing.length > 0, "the loading screen draws pulsing skeletons");
+  assert.equal(inline.length, 0, "no element animates through its own style");
 });

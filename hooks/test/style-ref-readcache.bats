@@ -25,6 +25,9 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 LIB="${GA}/hooks/lib/style_ref_match.py"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${LIB}" ]] || skip "lib not found: ${LIB}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -148,7 +151,7 @@ PY
 }
 
 teardown() {
-  [[ -n "${WORK:-}" ]] && rm -rf "${WORK}"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Extract a PREFIX:<value> line emitted by the driver from the captured $output.
@@ -280,4 +283,20 @@ field() {
   # Full read every time under the switch.
   [[ "$(field BYTES)" -gt 100000 ]] || return 1
   [[ "$(field PATHS)" == "${incr_paths}" ]] || return 1
+}
+
+# A setup skip leaves WORK unset — a failing teardown would report the skip as not ok.
+@test "teardown succeeds silently when setup skipped before creating the work dir" {
+  local saved="${WORK}"
+  unset WORK
+  run teardown
+  WORK="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a work dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a work dir wrote: ${output}" >&2
+    return 1
+  }
 }

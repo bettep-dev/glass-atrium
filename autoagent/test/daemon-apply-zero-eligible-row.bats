@@ -5,8 +5,9 @@
 # WHY THIS ROW EXISTS. doctor §14 reports an apply-preflight abort as a live condition until a LATER
 # post-gate row proves the gate re-opened. A cycle that clears the gate and finds zero eligible
 # patches used to print to stderr and exit 0 having written NOTHING, so a recovered-but-idle daemon
-# never superseded its own earlier abort: the launchd path discards that stderr, and the applied log
-# — the only durable trace — stayed silent. The row is the missing evidence, not a cosmetic log line.
+# never superseded its own earlier abort: on the launchd path that stderr survives only in the
+# rotating /tmp/autoagent-daemon-loop.log, and the applied log — the only durable trace — stayed
+# silent. The row is the missing evidence, not a cosmetic log line.
 #
 # LITERAL CHOICE. The row carries the EXISTING `skip` literal with a new `reason`, never a dedicated
 # one. The producer's status-literal set is pinned by string equality in test/doctor-apply-abort-rows
@@ -14,20 +15,20 @@
 # green-suite preflight, abort the live apply and write the very abort row this row exists to
 # supersede. AC5 below pins that the literal actually used stays inside that already-pinned set.
 #
-#   AC1  backlog source, zero eligible → exactly ONE row: status skip, reason zero_eligible
-#   AC2  report source, zero eligible  → the SAME row (the second silent exit, stated separately)
+#   closed  batch mode, whatever either source holds → exit 0 and exactly ONE row: status skip, reason
+#           zero_eligible, patch_source closed; no backlog SELECT, no report read, nothing applied
 #   AC3  preflight abort               → the abort row and NO post-gate row (never self-supersede)
-#   AC4  one eligible patch            → per-patch rows only, no extra heartbeat (no double count)
+#   AC4  one eligible --proposal-id row → per-patch rows only, no extra heartbeat (no double count)
 #   AC5  the row's status literal is inside the set §14's producer pin already fixes
-#   AC9  a failed backlog query / an unreadable backlog row / an unreadable report → exit 21 / 23 / 22,
-#        one abort row, NO heartbeat; a present-but-unreadable PATH SHAPE (a directory, a dangling
-#        link) is unreadable too, while a report absent from the filesystem is still a clean exit 0
+#
+# Batch-source cases (backlog/report selection, abort rows 21/22/23) are unreachable while batch mode
+# is closed; restore point for the reopening: git show 896d318d:autoagent/test/daemon-apply-zero-eligible-row.bats
 #
 # Hermetic: a whole-PATH mirror (precedent: daemon-apply-landing-zone.bats) with psql either MASKED
-# (report fallback) or replaced by a zero-row STUB (backlog fallback with an empty eligible set), a
-# git shim that allows only `git apply`, an echo-OK claude stub so a claude-less CI runner behaves
-# like a claude-bearing one, and AUTOAGENT_REPORTS_DIR pointed at a temp dir. No PG, no live agents
-# dir, no ~/.glass-atrium state is read or written.
+# (report fallback) or replaced by a recording STUB, a daemon_cycle.py stand-in that records every
+# call, a git shim that allows only `git apply`, an echo-OK claude stub so a claude-less CI runner
+# behaves like a claude-bearing one, and AUTOAGENT_REPORTS_DIR pointed at a temp dir. No PG, no live
+# agents dir, no ~/.glass-atrium state is read or written.
 #
 # BATS GATING NOTE: @test bodies run UNDER errexit, so a failing mid-body command aborts the test.
 #   ONE shape is platform-split: a bare `[[ ]]` / `(( ))` does not abort on macOS bash 3.2 but DOES
@@ -43,6 +44,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
 ABORT_PIN_SUITE="${GA}/test/doctor-apply-abort-rows.bats"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # mirror_path — symlink every real-PATH executable into $1 except the names in $2.. (whole-PATH
 # mirror per build_psql_masked_stub: an allowlist that misses one coreutil makes the daemon exit 127
@@ -78,7 +81,12 @@ mirror_path() {
 build_git_apply_shim() {
   local stub="$1" real_git
   real_git="$(command -v git)"
-  rm -f -- "${stub}/git" # never redirect onto an inherited symlink
+  # never redirect onto an inherited symlink
+  if ga_guard_path "${stub}"; then
+    rm -f -- "${stub:?}/git"
+  else
+    return 1
+  fi
   cat >"${stub}/git" <<EOF
 #!/usr/bin/env bash
 sub="\${1:-}"
@@ -96,49 +104,102 @@ EOF
 # and a developer machine (the fixtures below pre-set haiku_status, so no live model call is needed —
 # but a PATH without claude and one with it must not diverge silently).
 make_claude_stub() {
-  rm -f -- "${1}/claude" # never redirect onto an inherited symlink
-  cat >"${1}/claude" <<'SH'
+  local stub="$1"
+  # never redirect onto an inherited symlink
+  if ga_guard_path "${stub}"; then
+    rm -f -- "${stub:?}/claude"
+  else
+    return 1
+  fi
+  cat >"${stub}/claude" <<'SH'
 #!/usr/bin/env bash
 echo OK
 exit 0
 SH
-  chmod +x "${1}/claude"
+  chmod +x "${stub}/claude"
 }
 
-# make_empty_backlog_psql — a psql that answers EVERY query with zero rows and exits 0. Present on
-# PATH, so backlog_source_available() is true and the daemon takes the BACKLOG source with an empty
-# eligible set — the exact live shape (a drained backlog) the heartbeat row exists for.
-make_empty_backlog_psql() {
-  rm -f -- "${1}/psql" # never redirect onto an inherited symlink
-  cat >"${1}/psql" <<'SH'
+# make_recording_psql — a psql that logs every call (argv + SQL) to STUB_PSQL_LOG and answers by
+# statement. The backlog SELECT answers per STUB_BACKLOG: `empty`, `fail` (an unreachable server), or
+# N eligible rows; the single lookup answers proposal 401; the flip, record probe and record insert
+# answer healthy. Every row targets STUB_TARGET with the diff STUB_DIFF_B64.
+make_recording_psql() {
+  local dir="$1"
+  # never redirect onto an inherited symlink
+  if ga_guard_path "${dir}"; then
+    rm -f -- "${dir:?}/psql"
+  else
+    return 1
+  fi
+  cat >"${dir}/psql" <<'SH'
 #!/usr/bin/env bash
+sql="$(cat)"
+printf '=== psql %s\n%s\n' "$*" "${sql}" >>"${STUB_PSQL_LOG:?}"
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+row() {
+  printf '%s|2026-09-01|%s|%s|%s|%s' "$1" "$(b64 "probe-pattern-$1")" "$(b64 probe)" \
+    "$(b64 "${STUB_TARGET:?}")" "${STUB_DIFF_B64:?}"
+}
+case "${sql}" in
+  *"id::text = :'pid'"*) printf '%s|pending|ok\n' "$(row 401)" ;;
+  *"ORDER BY cycle_date ASC, id ASC"*)
+    case "${STUB_BACKLOG:-empty}" in
+      empty) ;;
+      fail)
+        echo 'psql: error: connection to server on socket failed: No such file or directory' >&2
+        exit 2
+        ;;
+      *) for ((i = 1; i <= STUB_BACKLOG; i++)); do printf '%s\n' "$(row "$((400 + i))")"; done ;;
+    esac
+    ;;
+  *"'applied'::core"*) printf '1\n' ;;
+  *"to_regclass('core.autoagent_apply_records')"*) printf 't\n' ;;
+  *"INSERT INTO core.autoagent_apply_records"*) printf '1\n' ;;
+  *stale_attempt_count*) printf 'incremented\n' ;;
+  *) ;;
+esac
 exit 0
 SH
-  chmod +x "${1}/psql"
+  chmod +x "${dir}/psql"
 }
 
-# make_failing_backlog_psql — a psql that fails EVERY query the way an unreachable server does. Present
-# on PATH, so the daemon still takes the BACKLOG source; the outage must never read as an empty backlog.
-make_failing_backlog_psql() {
-  rm -f -- "${1}/psql" # never redirect onto an inherited symlink
-  cat >"${1}/psql" <<'SH'
-#!/usr/bin/env bash
-echo 'psql: error: connection to server on socket failed: No such file or directory' >&2
-exit 2
-SH
-  chmod +x "${1}/psql"
+# write_cycle_stub PATH — daemon_cycle.py stand-in (run as `python3 <seam>`): records every call to
+# STUB_CYCLE_CALLS; the parked guard answers "nothing guarded", removal evidence answers none.
+write_cycle_stub() {
+  cat >"$1" <<'PY'
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+with open(os.environ["STUB_CYCLE_CALLS"], "a") as fh:
+    fh.write(json.dumps(args) + "\n")
+if "--parked-pattern-guard" in args:
+    sys.stdin.read()
+    sys.stdout.write('{"guarded": [], "rejected": []}\n')
+    sys.exit(0)
+if "--removal-evidence" in args:
+    sys.stdin.read()
+    sys.stdout.write("no_removal\t0\t0\n")
+    sys.exit(0)
+sys.exit("stub: unexpected daemon_cycle mode %s" % args)
+PY
 }
 
-# make_unreadable_backlog_psql — a psql whose backlog answer is one raw, unencoded row whose
-# '|'-bearing label splits it into 7 fields. The query succeeded, so this is not an outage.
-make_unreadable_backlog_psql() {
-  rm -f -- "${1}/psql" # never redirect onto an inherited symlink
-  cat >"${1}/psql" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' '7|2026-09-01|probe|pipe|probe|/tmp/unreadable-probe.md|'
-exit 0
-SH
-  chmod +x "${1}/psql"
+# write_probe — the agent the eligible rows target: one protected section, one editable region.
+write_probe() {
+  printf '%s\n' \
+    '# Probe Agent' '' '## Absolute Rules' '' '- protected rule line alpha' '' \
+    '## Goal' '<!-- EDITABLE:BEGIN -->' \
+    'editable goal line one' 'editable goal line two' \
+    '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
+  cp -p -- "${AGENTS}/probe.md" "${WORK}/probe.original"
+}
+
+# probe_diff — an in-region addition to probe.md that lands.
+probe_diff() {
+  printf '%s\n' '--- a/probe.md' '+++ b/probe.md' '@@ -8,2 +8,3 @@' \
+    ' editable goal line one' '+inserted editable line' ' editable goal line two'
 }
 
 setup_file() {
@@ -157,32 +218,37 @@ setup() {
   WORK="$(cd -- "$(mktemp -d -t daemon-apply-zeroelig-bats.XXXXXX)" && pwd -P)"
   AGENTS="${WORK}/agents" # PLAIN dir — the git-free daemon needs NO repo here.
   REPORTS="${WORK}/reports"
-  BACKLOG_BIN="${WORK}/bin-backlog"
-  mkdir -p -- "${AGENTS}" "${REPORTS}" "${WORK}/home" "${BACKLOG_BIN}"
+  PSQL_BIN="${WORK}/bin-psql"
+  PSQL_LOG="${WORK}/psql.log"
+  CYCLE_STUB="${WORK}/daemon_cycle_stub.py"
+  CYCLE_CALLS="${WORK}/cycle-calls.jsonl"
+  mkdir -p -- "${AGENTS}" "${REPORTS}" "${WORK}/home" "${PSQL_BIN}"
+  make_recording_psql "${PSQL_BIN}"
+  write_cycle_stub "${CYCLE_STUB}"
   printf '%s\n' '{"patches": []}' >"${WORK}/report.json"
   TODAY="$(date -u +%Y-%m-%d)"
   APPLIED_LOG="${REPORTS}/autoagent-applied-${TODAY}.jsonl"
+  DRYRUN_LOG="${REPORTS}/autoagent-applied-${TODAY}.dryrun.jsonl"
 }
 
 teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX -- "${WORK}" 2>/dev/null || true
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # run_apply — drive the REAL daemon over the fixture. AUTOAGENT_PREFLIGHT_ACTIVE=1: this suite
 # exercises the post-gate emit, not the green-suite gate, so the sentinel skips the recursive suite
-# run. $1 = the PATH to run under (mirror = psql masked → report source; a dir carrying the zero-row
-# psql stub → backlog source).
+# run. $1 = the PATH to run under (mirror = psql masked; "${PSQL_BIN}:${MIRROR}" = the recording
+# psql); the rest is forwarded to the daemon.
 run_apply() {
-  run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="$1" HOME="${WORK}/home" \
+  local path="$1"
+  shift
+  run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${path}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
-    bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
-}
-
-# backlog_path — the mirror PLUS the zero-row psql stub, ahead of it so `command -v psql` resolves.
-backlog_path() {
-  make_empty_backlog_psql "${BACKLOG_BIN}"
-  printf '%s:%s' "${BACKLOG_BIN}" "${MIRROR}"
+    AUTOAGENT_DAEMON_CYCLE_PY="${CYCLE_STUB}" STUB_CYCLE_CALLS="${CYCLE_CALLS}" \
+    STUB_PSQL_LOG="${PSQL_LOG}" STUB_TARGET="${AGENTS}/probe.md" \
+    STUB_DIFF_B64="$(probe_diff | base64 | tr -d '\n')" \
+    bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}" "$@"
 }
 
 # Count rows in today's applied log matching the grep pattern $1 (0 when the log does not exist).
@@ -200,63 +266,89 @@ dump_log() {
   echo "daemon output: ${output}" >&2
 }
 
-# ── AC1 — the backlog source drained: ONE post-gate row ────────────────────────────────────────
+# ── closed — batch mode selects nothing, whatever either source holds ─────────────────────────
 
-@test "AC1: a zero-eligible BACKLOG cycle writes exactly one skip/zero_eligible row" {
-  run_apply "$(backlog_path)"
-  [[ "${status}" -eq 0 ]] || {
-    dump_log
-    return 1
-  }
-  [[ -f "${APPLIED_LOG}" ]] || {
-    echo "no applied log written — a recovered-but-idle cycle left nothing to supersede an abort" >&2
-    echo "daemon output: ${output}" >&2
-    return 1
-  }
-  [[ "$(wc -l <"${APPLIED_LOG}" | tr -d ' ')" -eq 1 ]] || {
-    dump_log
-    return 1
-  }
-  [[ "$(row_count '"status":"skip"')" -eq 1 ]] || {
-    dump_log
-    return 1
-  }
-  [[ "$(row_count '"reason":"zero_eligible"')" -eq 1 ]] || {
-    dump_log
-    return 1
-  }
-  # the row has to name WHICH source drained, or an operator cannot tell a drained backlog from a
-  # report-fallback cycle that never had a DB at all.
-  [[ "$(row_count '"patch_source":"backlog"')" -eq 1 ]] || {
-    dump_log
-    return 1
-  }
+# write_report SHAPE — the report fixture: empty · patches (body-auto, one haiku-skipped) · truncated
+# (unreadable) · absent.
+write_report() {
+  local report="${WORK}/report.json"
+  if ga_guard_path "${report}"; then rm -f -- "${report:?}"; fi
+  case "$1" in
+    empty) printf '%s\n' '{"patches": []}' >"${report}" ;;
+    truncated) printf '%s\n' '{"patches": [' >"${report}" ;;
+    absent) ;;
+    patches)
+      DIFF="$(probe_diff)" TARGET="${AGENTS}/probe.md" python3 -c '
+import json, os
+patch = {"classification": "body-auto", "approval_tier": "auto", "pre_verify_passed": True,
+         "pattern_agent": "probe", "target_file": os.environ["TARGET"],
+         "proposed_diff": os.environ["DIFF"] + "\n"}
+rows = [dict(patch, haiku_status="skipped", pattern_label="probe-skipped"),
+        dict(patch, haiku_status="ok", pattern_label="probe-ok")]
+print(json.dumps({"patches": rows}))
+' >"${report}"
+      ;;
+    *) return 1 ;;
+  esac
 }
 
-# ── AC2 — the report fallback is the second silent exit, and gets the same row ─────────────────
-
-@test "AC2: a zero-eligible REPORT cycle writes the same single post-gate row" {
-  run_apply "${MIRROR}" # psql masked → report fallback over the empty-patches fixture
-  [[ "${status}" -eq 0 ]] || {
-    dump_log
-    return 1
-  }
-  [[ "$(wc -l <"${APPLIED_LOG}" | tr -d ' ')" -eq 1 ]] || {
-    dump_log
-    return 1
-  }
-  [[ "$(row_count '"status":"skip"')" -eq 1 ]] || {
-    dump_log
-    return 1
-  }
-  [[ "$(row_count '"reason":"zero_eligible"')" -eq 1 ]] || {
-    dump_log
-    return 1
-  }
-  [[ "$(row_count '"patch_source":"report"')" -eq 1 ]] || {
-    dump_log
-    return 1
-  }
+@test "batch mode is closed: every pre-closure source class lands one closed row, selects nothing and applies nothing" {
+  # name | psql (stub = recording psql on PATH, masked = absent) | backlog answer | report | extra flag
+  local rows=(
+    "empty backlog (was: heartbeat, backlog)|stub|empty|empty|"
+    "backlog holding eligible pending auto rows (was: apply)|stub|1|empty|"
+    "backlog above the anomaly threshold (was: exit-7 abort)|stub|3|empty|"
+    "backlog query fails (was: exit-21 abort)|stub|fail|empty|"
+    "empty report (was: heartbeat, report)|masked|empty|empty|"
+    "report carrying body-auto patches, haiku-skipped included (was: apply)|masked|empty|patches|"
+    "unreadable report (was: exit-22 abort)|masked|empty|truncated|"
+    "absent report (was: exit 0, no row)|masked|empty|absent|"
+    "dry-run batch (was: dryrun rows)|stub|1|patches|--dry-run"
+  )
+  local row name psql backlog report flag path log other
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name psql backlog report flag <<<"${row}"
+    for log in "${APPLIED_LOG}" "${DRYRUN_LOG}" "${PSQL_LOG}" "${CYCLE_CALLS}"; do
+      if ga_guard_path "${log}"; then rm -f -- "${log:?}"; fi
+    done
+    write_probe
+    write_report "${report}"
+    path="${MIRROR}"
+    [[ "${psql}" == stub ]] && path="${PSQL_BIN}:${MIRROR}"
+    log="${APPLIED_LOG}" other="${DRYRUN_LOG}"
+    [[ "${flag}" == --dry-run ]] && log="${DRYRUN_LOG}" other="${APPLIED_LOG}"
+    # the haiku override and a low threshold make the haiku guard and the tripwire speak if reached
+    STUB_BACKLOG="${backlog}" AUTOAGENT_ALLOW_HAIKU_SKIP=1 AUTOAGENT_ANOMALY_THRESHOLD=2 \
+      run_apply "${path}" ${flag:+"${flag}"}
+    [[ "${status}" -eq 0 && "${output}" == *"batch auto-apply closed until live trials"* ]] || {
+      echo "${name}: rc=${status}, or the closure is not named" >&2
+      dump_log
+      cat -- "${DRYRUN_LOG}" >&2 2>/dev/null || true
+      return 1
+    }
+    [[ -f "${log}" && "$(wc -l <"${log}" | tr -d ' ')" -eq 1 && ! -e "${other}" ]] \
+      && grep -q '"status":"skip","reason":"zero_eligible","patch_source":"closed"' "${log}" || {
+      echo "${name}: expected exactly one closed zero-eligible row in ${log##*/}" >&2
+      cat -- "${log}" "${other}" >&2 2>/dev/null || true
+      echo "daemon output: ${output}" >&2
+      return 1
+    }
+    [[ ! -f "${PSQL_LOG}" ]] || ! grep -q 'autoagent_proposals' "${PSQL_LOG}" || {
+      echo "${name}: a proposal query reached psql" >&2
+      cat -- "${PSQL_LOG}" >&2
+      return 1
+    }
+    cmp -s -- "${AGENTS}/probe.md" "${WORK}/probe.original" && [[ ! -f "${CYCLE_CALLS}" ]] || {
+      echo "${name}: a patch landed, or daemon_cycle.py (parked guard) was asked" >&2
+      echo "daemon output: ${output}" >&2
+      return 1
+    }
+    [[ "${output}" != *"haiku-skip guard"* && "${output}" != *"backlog anomaly"* ]] || {
+      echo "${name}: the haiku guard or the anomaly tripwire was reached" >&2
+      echo "daemon output: ${output}" >&2
+      return 1
+    }
+  done
 }
 
 # ── AC3 — an aborting cycle never supersedes its own abort ─────────────────────────────────────
@@ -270,8 +362,9 @@ dump_log() {
   cp -p -- "${GA}/autoagent/lib/git-txn.sh" "${sandbox}/autoagent/lib/git-txn.sh"
   cp -p -- "${GA}/autoagent/daemon_cycle.py" "${sandbox}/autoagent/daemon_cycle.py"
   cp -p -- "${GA}/scripts/lib/apply-lock.sh" "${sandbox}/scripts/lib/apply-lock.sh"
+  cp -p -- "${GA}/scripts/lib/path-guard.sh" "${sandbox}/scripts/lib/path-guard.sh"
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    PATH="${MIRROR}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    PATH="${MIRROR}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     bash "${sandbox}/autoagent/daemon-apply.sh" \
     --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -eq 16 ]] || {
@@ -292,43 +385,9 @@ dump_log() {
 
 # ── AC4 — the normal path is untouched (no double counting) ────────────────────────────────────
 
-@test "AC4: a cycle with one eligible patch writes the per-patch row only, no heartbeat" {
-  printf '%s\n' \
-    '# Probe Agent' '' '## Absolute Rules' '' '- protected rule line alpha' '' \
-    '## Goal' '<!-- EDITABLE:BEGIN -->' \
-    'editable goal line one' 'editable goal line two' \
-    '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
-  local diff='--- a/probe.md
-+++ b/probe.md
-@@ -8,2 +8,3 @@
- editable goal line one
-+inserted editable line
- editable goal line two'
-  python3 - "${AGENTS}/probe.md" "${diff}" >"${WORK}/report.json" <<'PY'
-import json
-import sys
-
-target, diff = sys.argv[1], sys.argv[2]
-print(
-    json.dumps(
-        {
-            "patches": [
-                {
-                    "classification": "body-auto",
-                    "approval_tier": "auto",
-                    "pre_verify_passed": True,
-                    "haiku_status": "ok",
-                    "pattern_label": "probe-in",
-                    "pattern_agent": "probe",
-                    "target_file": target,
-                    "proposed_diff": diff + "\n",
-                }
-            ]
-        }
-    )
-)
-PY
-  run_apply "${MIRROR}"
+@test "AC4: a --proposal-id run with one eligible row writes the per-patch row only, no heartbeat" {
+  write_probe
+  run_apply "${PSQL_BIN}:${MIRROR}" --proposal-id 401
   [[ "${status}" -eq 0 ]] || {
     dump_log
     return 1
@@ -386,11 +445,16 @@ PY
 # the four test roots the gate requires are the repo's own — the real script runs in place.
 run_apply_gate() {
   local runner="${WORK}/bats-runner-ok"
-  rm -f -- "${runner}" # a fresh file, never a redirect onto an inherited symlink
+  # a fresh file, never a redirect onto an inherited symlink
+  if ga_guard_path "${runner}"; then
+    rm -f -- "${runner:?}"
+  else
+    return 1
+  fi
   printf '#!/bin/bash\nexit 0\n' >"${runner}"
   chmod +x "${runner}"
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    PATH="${MIRROR}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    PATH="${MIRROR}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     AUTOAGENT_BATS_RUNNER="${runner}" \
     bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
 }
@@ -408,7 +472,7 @@ run_apply_gate() {
 }
 
 @test "AC7: a cycle that SKIPPED the gate via the operator override writes gate=skipped" {
-  run env PATH="${MIRROR}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+  run env PATH="${MIRROR}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     AUTOAGENT_ALLOW_UNVERIFIED=1 \
     bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -eq 0 ]] || {
@@ -438,112 +502,39 @@ run_apply_gate() {
   }
 }
 
-# ── AC9 — a patch source that could not be READ is an abort, never a zero-eligible cycle ────────
-#
-# The heartbeat supersedes an earlier abort, so writing it for a cycle that never saw its source
-# would clear a live condition with a false "nothing to do": a DB outage or a corrupt report must
-# exit non-zero with an abort row, never print "0 … patches" and write the heartbeat.
-
-# assert_one_abort_row REASON EXIT_CODE SOURCE — the log holds exactly ONE row, and it is that abort
-# (so no heartbeat rode along with it).
-assert_one_abort_row() {
-  [[ -f "${APPLIED_LOG}" && "$(wc -l <"${APPLIED_LOG}" | tr -d ' ')" -eq 1 ]] \
-    && grep '"status":"abort"' "${APPLIED_LOG}" | grep "\"reason\":\"$1\"" \
-    | grep "\"exit_code\":$2," | grep -q "\"patch_source\":\"$3\"" || {
-    echo "expected exactly one abort row: reason=$1 exit_code=$2 patch_source=$3" >&2
-    dump_log
-    return 1
-  }
-}
-
-@test "AC9: a failed BACKLOG query exits 21 with one abort row and no heartbeat" {
-  make_failing_backlog_psql "${BACKLOG_BIN}"
-  run_apply "${BACKLOG_BIN}:${MIRROR}"
-  [[ "${status}" -eq 21 ]] || {
-    dump_log
-    return 1
-  }
-  [[ "${output}" == *"backlog_query failed rc=2"* && "${output}" != *"0 pending backlog patches"* ]] || {
-    echo "the outage is not named, or still reads as an empty backlog" >&2
-    dump_log
-    return 1
-  }
-  assert_one_abort_row proposal_query_failed 21 backlog
-}
-
-@test "AC9: an unreadable BACKLOG row exits 23 with one abort row and no heartbeat, never as an outage" {
-  make_unreadable_backlog_psql "${BACKLOG_BIN}"
-  run_apply "${BACKLOG_BIN}:${MIRROR}"
-  [[ "${status}" -eq 23 ]] || {
-    dump_log
-    return 1
-  }
-  [[ "${output}" == *"FATAL: a backlog row is unreadable"* && "${output}" == *"7 fields, expected 6"* &&
-    "${output}" != *"backlog query failed"* && "${output}" != *"0 pending backlog patches"* ]] || {
-    echo "the unreadable row is not named, or reads as an outage or an empty backlog" >&2
-    dump_log
-    return 1
-  }
-  assert_one_abort_row proposal_row_unreadable 23 backlog
-}
-
-@test "AC9: an unreadable REPORT exits 22 with one abort row, no heartbeat and no traceback" {
-  printf '%s\n' '{"patches": [' >"${WORK}/report.json" # a truncated write
-  run_apply "${MIRROR}"
-  [[ "${status}" -eq 22 ]] || {
-    dump_log
-    return 1
-  }
-  [[ "${output}" == *"FATAL: report ${WORK}/report.json is unreadable"* &&
-    "${output}" != *"0 body-auto patches"* && "${output}" != *Traceback* ]] || {
-    echo "the unreadable report is not named, reads as zero patches, or leaks a traceback" >&2
-    dump_log
-    return 1
-  }
-  assert_one_abort_row report_unreadable 22 report
-}
-
-@test "AC9: every unreadable report PATH SHAPE exits 22 with one abort row, never a silent exit 0" {
-  # Absence is about presence, not file kind: each shape is AT the path and resolves to nothing
-  # readable (a dangling link exists as a link), so none may read as absent or as zero patches.
-  local shape
-  for shape in directory dangling-link; do
-    rm -rf -- "${WORK}/report.json" # removes a directory, and a link without following it
-    rm -f -- "${APPLIED_LOG}"       # a fresh log per shape: assert_one_abort_row counts rows
-    case "${shape}" in
-      directory) mkdir -- "${WORK}/report.json" ;;
-      dangling-link) ln -s -- "${WORK}/no-such-report.json" "${WORK}/report.json" ;;
-    esac
-    run_apply "${MIRROR}"
-    [[ "${status}" -eq 22 ]] || {
-      echo "report shape ${shape} exited ${status}" >&2
-      dump_log
+@test "a stub or runner builder refuses a relative dir and writes nothing through its inherited link" {
+  # A name still linked into the dir would take the builder's write through to the link's target;
+  # each builder's delete is what prevents it, so a refused dir has to fail the builder, not skip.
+  local row builder name dir noop="${WORK}/noop.sh"
+  cd -- "${WORK}"
+  printf 'real\n' >real-binary
+  cp -- real-binary pristine
+  printf '#!/bin/bash\nexit 0\n' >"${noop}"
+  for row in build_git_apply_shim:git make_claude_stub:claude make_recording_psql:psql \
+    run_apply_gate:bats-runner-ok; do
+    builder="${row%%:*}"
+    name="${row##*:}"
+    dir="rel-${builder}"
+    mkdir -- "${dir}"
+    ln -s -- "${WORK}/real-binary" "${dir}/${name}"
+    if [[ "${builder}" == run_apply_gate ]]; then
+      # the runner path derives from WORK, so the relative dir goes in as WORK; the no-op script
+      # stands in for the daemon, which this row does not exercise
+      WORK="${dir}" REAL_SCRIPT="${noop}" run run_apply_gate
+    else
+      run "${builder}" "${dir}"
+    fi
+    [[ "${status}" -ne 0 && "${output}" == *"refusing a non-absolute delete target"* ]] || {
+      echo "${builder}: a relative dir was accepted: rc=${status}: ${output}" >&2
       return 1
     }
-    [[ "${output}" == *"FATAL: report ${WORK}/report.json is unreadable"* &&
-      "${output}" != *"no report at"* && "${output}" != *"0 body-auto patches"* &&
-      "${output}" != *Traceback* ]] || {
-      echo "report shape ${shape} reads as absent, as zero patches, or leaks a traceback" >&2
-      dump_log
+    [[ -L "${dir}/${name}" ]] || {
+      echo "${builder}: the inherited link was replaced" >&2
       return 1
     }
-    assert_one_abort_row report_unreadable 22 report || {
-      echo "report shape ${shape}" >&2
+    cmp -s -- real-binary pristine || {
+      echo "${builder}: the write went through the inherited link" >&2
       return 1
     }
   done
-}
-
-@test "AC9: an ABSENT report stays a clean exit 0 with no abort row" {
-  rm -f -- "${WORK}/report.json"
-  run_apply "${MIRROR}"
-  [[ "${status}" -eq 0 && "${output}" == *"no report at ${WORK}/report.json"* ]] || {
-    dump_log
-    return 1
-  }
-  [[ "$(row_count '"status":"abort"')" -eq 0 ]] || {
-    echo "an absent report was recorded as an abort — there was nothing to read" >&2
-    dump_log
-    return 1
-  }
 }

@@ -20,6 +20,8 @@
 bats_require_minimum_version 1.5.0
 
 REAL_LIB="${BATS_TEST_DIRNAME}/../lib/code-based-grader.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "code-based-grader.sh not found: ${REAL_LIB}"
@@ -30,7 +32,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Drive code_based_grader_check exactly as track-outcome.sh does, with the state spool wired.
@@ -145,4 +147,20 @@ assert_state() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == "verified_pass" ]] || { echo "unwired verdict changed: ${output}" >&2; return 1; }
   [[ ! -f "${STATE_FILE}" ]] || { echo "unwired run must not write a state spool" >&2; return 1; }
+}
+
+# A setup skip leaves SANDBOX unset — a failing teardown would report the skip as not ok.
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local sandbox="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${sandbox}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
+    return 1
+  }
 }

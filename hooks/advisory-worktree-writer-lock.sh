@@ -25,9 +25,8 @@
 #   * Bash-authored writes (sed -i / cat > / tee) never reach the Write|Edit arm.
 #   * NotebookEdit carries notebook_path rather than file_path and is uncovered.
 #   * A crashed holder is TTL-bounded, not excluded — inside the window a free worktree still warns.
-#   * ~5.6% of workflow agents / ~2.9% of manual agents never fire SubagentStop (measured on this
-#     machine's sidecar corpus joined to core.agent_events), so the TTL is the sole release path for
-#     that tail.
+#   * A small share of agents never fire SubagentStop, so the TTL is the sole release path for that
+#     tail.
 #   * WHICH lock a path resolves to is decided TEXTUALLY. hook_normalize_path never touches the
 #     filesystem, so two spellings of one file take two independent verdicts: on this machine
 #     ~/.claude/agents/*.md are symlinks into ~/.glass-atrium/agents/, which HAS a .git while
@@ -195,7 +194,7 @@ printf '%s\n' \
   "    - NotebookEdit carries notebook_path, not file_path, and is uncovered." \
   "    - A crashed holder is TTL-bounded (${TTL_SECS}s), not excluded: inside that window a free" \
   "      worktree still warns, and past it a live holder's lock can be reclaimed." \
-  "    - ~5.6% of workflow agents and ~2.9% of manual agents never fire SubagentStop, so the" \
+  "    - A small share of agents never fire SubagentStop, so the" \
   "      release arm misses that tail and the TTL is its only release path." \
   "    - Which lock a path resolves to is decided TEXTUALLY, never by resolving the filesystem: a" \
   "      symlinked spelling and a real path take two independent verdicts, and every tree under a" \

@@ -29,6 +29,8 @@
 # point arms, WITHOUT touching ~/.claude.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -38,7 +40,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
 }
 
 # Drive the REAL retire_hook_binding against the sandboxed target under strict mode.
@@ -148,7 +150,11 @@ JSON
   run_retire "dropped-hook.sh"
   [[ "${status}" -eq 0 ]] || return 1
   # clear the first-pass backup so the no-op assertion below is unambiguous
-  find "${TARGET}" -name 'settings.json.ga-backup.*' -exec rm -f {} +
+  local backups backup
+  backups="$(find "${TARGET}" -name 'settings.json.ga-backup.*')"
+  while IFS= read -r backup; do
+    if ga_guard_path "${backup}"; then rm -f -- "${backup:?}"; fi
+  done <<<"${backups}"
   run_retire "dropped-hook.sh"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"0 binding-group(s) retired for dropped-hook.sh"* ]] || return 1
@@ -200,4 +206,20 @@ JSON
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"nothing to retire"* ]] || return 1
   [[ ! -f "${SETTINGS}" ]] || return 1
+}
+
+@test "a no-op retire under a relative target home never deletes its temp and the refusal is loud" {
+  write_sample
+  run env GA_TARGET_HOME="${TARGET##*/}" bash -c '
+    set -Eeuo pipefail
+    cd -- "$3"
+    # shellcheck source=/dev/null
+    source "$1/lib/ga-core.sh"
+    ga_init_env "$1"
+    retire_hook_binding "$2"
+  ' _ "${GA}" "never-bound-hook.sh" "${TARGET%/*}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"refusing a non-absolute delete target"* ]] || return 1
+  local left=("${SETTINGS}".ga-retire.*)
+  [[ -f "${left[0]}" ]]
 }

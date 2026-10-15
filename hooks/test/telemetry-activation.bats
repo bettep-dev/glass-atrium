@@ -26,6 +26,9 @@ HOOK_SH="${BATS_TEST_DIRNAME}/../telemetry-activation.sh"
 PRE_JSON='{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"subagent_type":"glass-atrium-dev-shell","prompt":"CID: 2026-07-11T0145_x_ab12 go"}}'
 SUB_JSON='{"hook_event_name":"SubagentStart","agent_type":"glass-atrium-dev-shell","agent_id":"deadbeefhash"}'
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/telem-bats.XXXXXX")"
   SHIM_DIR="${TEST_TMP}/bin"
@@ -54,7 +57,7 @@ SHIM
 }
 
 teardown() {
-  rm -rf "${TEST_TMP}"
+  if ga_guard_path "${TEST_TMP:-}"; then rm -rf -- "${TEST_TMP:?}"; fi
 }
 
 # Fire the hook once with stdin JSON $1; any extra NAME=VALUE args become env for the

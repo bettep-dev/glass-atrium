@@ -11,6 +11,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  DAEMON_CRON_SCHEDULE,
   buildDaemonCronSchedule,
   nextOccurrenceUtc,
   type ConfigAlarmSink,
@@ -80,7 +81,7 @@ test("daily-at NY: 롤오버가 spring-forward 경계를 가로지르면 23h 간
 
 // ── 결정론적 spring-forward GAP oracle (존재하지 않는 wall time → shifted instant) ──
 // 핵심: round-trip 이 아니라 yield 된 instant 자체를 pin. 02:30 은 실제 daemon
-// 스케줄에는 없는 합성 입력(실 스케줄 04:30/05:30 은 gap-safe)이지만, 2-pass 가
+// 스케줄에는 없는 합성 입력(실 스케줄 04:30/04:50 은 gap-safe)이지만, 2-pass 가
 // nonexistent wall time 을 결정론적 instant 로 접는다는 사실을 고정한다.
 
 test("spring-forward GAP NY: 02:30(비존재) → 결정론적 06:30Z (= 01:30 EST, 뒤로 접힘)", () => {
@@ -135,14 +136,14 @@ test("Seoul GOLDEN-PIN daily-at 04:30 == 전일 19:30:00Z (legacy KST 등가)", 
 test("Seoul GOLDEN-PIN daily-at 04:50 (wiki 정정값) == 전일 19:50:00Z", () => {
   // wiki 가 04:30→04:50 으로 정정된 값(이 fix 의 핵심). 04:50 KST = 전일 19:50Z
   // (= 04:50 − 9h). 같은 now(2025-05-31 18:00Z = 06-01 03:00 KST) 에서 미경과 →
-  // 05-31 19:50Z. autoagent(19:30Z)/daily-restart(20:30Z) 핀과 같은 now 공유.
+  // 05-31 19:50Z. autoagent(19:30Z) 핀과 같은 now 공유.
   assert.strictEqual(
     nextOccurrenceUtc(daily(4, 50), "Asia/Seoul", new Date("2025-05-31T18:00:00Z")),
     "2025-05-31T19:50:00.000Z",
   );
 });
 
-// ── buildDaemonCronSchedule: env → 4-row CronRule 맵 (injectable seam) ────────
+// ── buildDaemonCronSchedule: env → 2-row CronRule 맵 (injectable seam) ────────
 // config.toml → ATRIUM_SCHEDULE_* (.env) → buildDaemonCronSchedule. INJECTED raw
 // source 로만 검증 (ambient .env 비의존 — 모듈-로드 DAEMON_CRON_SCHEDULE 과 무관).
 // timezone.ts 의 loud-fail/last-resort 패턴 미러: present-but-malformed → throw
@@ -151,18 +152,17 @@ test("Seoul GOLDEN-PIN daily-at 04:50 (wiki 정정값) == 전일 19:50:00Z", () 
 const FULL_SOURCE: RawDaemonSchedule = {
   autoagent: "04:30",
   wiki: "04:50",
-  "daily-restart": "05:30",
 };
 
-// 정정된 wiki 04:50 + autoagent/daily-restart 불변. daily-restart 가 두 role-qualified
-// row(autoagent/wiki)로 fan-out 됨에 유의 — 한 launchd job → 두 monitor row. dev
-// fallback({04:30,04:50,05:30}) 도 같은 결과를 산출하므로 두 경로가 이 맵을 공유한다.
+// 정정된 wiki 04:50 + autoagent 불변. daily-restart 는 history-only → schedule row 없음.
+// dev fallback({04:30,04:50}) 도 같은 결과를 산출하므로 두 경로가 이 맵을 공유한다.
 const EXPECTED_SCHEDULE: Record<string, CronRule> = {
   autoagent: { type: "daily-at", hour: 4, minute: 30 },
   wiki: { type: "daily-at", hour: 4, minute: 50 },
-  "daily-restart-autoagent": { type: "daily-at", hour: 5, minute: 30 },
-  "daily-restart-wiki": { type: "daily-at", hour: 5, minute: 30 },
 };
+
+// Retired daily-restart key as an existing install's monitor/.env still renders it (valid or not).
+const RETIRED_DAILY_RESTART_VALUES = ["05:30", "not-a-time", " "];
 
 // process.stderr.write 를 일시 가로채 dev-fallback 경고를 in-process 로 단언한다
 // (러너 ambient .env 비의존, 결정론적). finally 에서 항상 원복.
@@ -181,18 +181,52 @@ function captureStderr(fn: () => void): string {
   return captured;
 }
 
-test("buildDaemonCronSchedule: 완전 주입 → 4-row 맵(wiki 04:50, autoagent 04:30, daily-restart 두 row 05:30)", () => {
+test("buildDaemonCronSchedule: 완전 주입 → 2-row 맵(autoagent 04:30, wiki 04:50)", () => {
   assert.deepStrictEqual(buildDaemonCronSchedule(FULL_SOURCE), EXPECTED_SCHEDULE);
+});
+
+test("the module-load schedule carries a row for the active daemons only — daily-restart has none", () => {
+  assert.deepStrictEqual(Object.keys(DAEMON_CRON_SCHEDULE).sort(), ["autoagent", "wiki"]);
+});
+
+// Outcome of one build — the schedule, or the thrown message — with both warning channels captured.
+function getBuildOutcome(source: Record<string, string>): { schedule?: Record<string, CronRule>; error?: string } {
+  try {
+    let schedule: Record<string, CronRule> | undefined;
+    captureStderr(() => {
+      schedule = buildDaemonCronSchedule(source, "development", captureAlarm().sink);
+    });
+    return { schedule };
+  } catch (error) {
+    return { error: (error as Error).message };
+  }
+}
+
+test("a retired daily-restart value never changes the build outcome, whatever the other keys", () => {
+  const bases: Array<[string, Record<string, string>]> = [
+    ["complete source", { ...FULL_SOURCE } as Record<string, string>],
+    ["partial source", { autoagent: "04:30" }],
+    ["absent source", {}],
+  ];
+  for (const [baseName, base] of bases) {
+    for (const retired of RETIRED_DAILY_RESTART_VALUES) {
+      assert.deepStrictEqual(
+        getBuildOutcome({ ...base, "daily-restart": retired }),
+        getBuildOutcome(base),
+        `${baseName} + daily-restart '${retired}'`,
+      );
+    }
+  }
 });
 
 test("buildDaemonCronSchedule: present-but-malformed 값 → throw (env-var 명 포함)", () => {
   assert.throws(
-    () => buildDaemonCronSchedule({ autoagent: "0430", wiki: "04:50", "daily-restart": "05:30" }),
+    () => buildDaemonCronSchedule({ autoagent: "0430", wiki: "04:50" }),
     /ATRIUM_SCHEDULE_AUTOAGENT/,
     "colon 없는 autoagent 값은 해당 env-var 명을 담아 throw",
   );
   assert.throws(
-    () => buildDaemonCronSchedule({ autoagent: "04:30", wiki: "25:00", "daily-restart": "05:30" }),
+    () => buildDaemonCronSchedule({ autoagent: "04:30", wiki: "25:00" }),
     /ATRIUM_SCHEDULE_WIKI/,
     "out-of-range wiki 값도 env-var 명을 담아 throw (never mix a rendered value with a fallback)",
   );
@@ -202,16 +236,11 @@ test("buildDaemonCronSchedule: partial 주입(일부만 존재) → throw (부�
   assert.throws(
     () => buildDaemonCronSchedule({ autoagent: "04:30" }),
     /ATRIUM_SCHEDULE_WIKI/,
-    "wiki/daily-restart 부재 시 partial loud-fail (부재 키 명 포함)",
-  );
-  assert.throws(
-    () => buildDaemonCronSchedule({ autoagent: "04:30", wiki: "04:50" }),
-    /partial daemon schedule env/,
-    "daily-restart 단일 부재도 partial loud-fail (silent fallback 금지)",
+    "wiki 부재 시 partial loud-fail (부재 키 명 포함)",
   );
 });
 
-test("buildDaemonCronSchedule: 전부 부재({}) → dev fallback {04:30,04:50,05:30} + 단일 stderr 경고", () => {
+test("buildDaemonCronSchedule: 전부 부재({}) → dev fallback {04:30,04:50} + 단일 stderr 경고", () => {
   let schedule: Record<string, CronRule> | undefined;
   const stderr = captureStderr(() => {
     schedule = buildDaemonCronSchedule({});

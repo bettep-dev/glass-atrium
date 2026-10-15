@@ -2,6 +2,14 @@
 # shellcheck disable=SC2034  # ga_init_env assigns the shared readonly globals (GA_ROOT/TARGET_HOME/MANIFEST/EXPECTED_HOOK_BINDINGS/...) consumed by sibling ga-*.sh domains after sourcing — unused within this producer file when linted standalone
 # Glass Atrium — environment init, logging, and OS-portable stat/util primitives (foundation domain). Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
+# The shared path guard every engine delete site gates on; scripts/lib holds the one copy for all trees.
+# Loud-fail guard: printf (log is defined below) + `return 1`, so the loader's own source guard fires too.
+# shellcheck source=scripts/lib/path-guard.sh
+source "${BASH_SOURCE[0]%/*}/../scripts/lib/path-guard.sh" || {
+  printf "%s\n" "FATAL: cannot source the shared path guard: ${BASH_SOURCE[0]%/*}/../scripts/lib/path-guard.sh" >&2
+  return 1
+}
+
 # [1] idempotency sentinel + ga_init_env
 # The ONLY function that runs `readonly`. Assigns ALL shared constants + run-mode flag DEFAULTS (flags stay
 # plain/non-readonly so the caller's parse_args can set them). Idempotent: a second call (re-source /
@@ -59,27 +67,31 @@ ga_init_env() {
   # from here, copies them into ~/Library/LaunchAgents, then launchctl bootstraps.
   readonly RENDERED_PLIST_DIR="${GA_PLIST_OUT:-${GA_ROOT}/rendered/launchd}"
   readonly LAUNCHD_LABEL_PREFIX="com.glass-atrium"
-  # job names mirror render-launchd-plists.sh JOBS 1:1 (8 com.glass-atrium.* stanzas); drift vs the renderer
-  # = a load gap. bash 3.2 + set -u: an in-function `readonly -a ARR=(...)` is function-local for nounset, so
+  # LAUNCHD_JOBS = the active roster; render-launchd-plists.sh JOBS mirrors it 1:1 (drift vs the renderer =
+  # a load gap). bash 3.2 + set -u: an in-function `readonly -a ARR=(...)` is function-local for nounset, so
   # a cross-function `${ARR[@]}` aborts "unbound" — use the two-step idiom (plain global assign, then
   # `readonly` WITHOUT -a) so every caller can expand it.
   LAUNCHD_JOBS=(
     monitor
-    autoagent-daemon
-    wiki-daemon
     monitor-log-rotate
     pg-backup
     autoagent-cycle
     wiki-compile
-    daemon-daily-restart
   )
   readonly LAUNCHD_JOBS
+  # LAUNCHD_RETIRED_JOBS — labels no longer rendered or loaded, disjoint from LAUNCHD_JOBS; teardown still
+  # covers them, so an install that skipped the retiring update is cleaned up.
+  LAUNCHD_RETIRED_JOBS=(
+    autoagent-daemon
+    wiki-daemon
+    daemon-daily-restart
+  )
+  readonly LAUNCHD_RETIRED_JOBS
 
-  # GA_DAEMON_SESSIONS — the DETACHED daemon tmux session names. SoT = the bootstrap scripts' `readonly
-  # SESSION=` (scripts/wiki-daemon-bootstrap.sh:15 'claude-wiki-daemon' + scripts/autoagent-daemon-bootstrap.sh:16
-  # 'claude-autoagent-daemon'). These SURVIVE `launchctl bootout` (reparented to PID 1) + `claude plugin
-  # uninstall`, so uninstall/install must kill them explicitly. Same two-step idiom as LAUNCHD_JOBS so a
-  # cross-function `${GA_DAEMON_SESSIONS[@]}` stays defined under set -u.
+  # GA_DAEMON_SESSIONS — SoT for the retired detached daemon tmux sessions; the standalone
+  # scripts/migrate-claude-to-ga-data.sh keeps a mirror → edit both. They SURVIVE `launchctl bootout`
+  # (reparented to PID 1) + `claude plugin uninstall`, so the retirement routine and uninstall kill
+  # them explicitly. Same two-step idiom as LAUNCHD_JOBS (set -u, cross-function reads).
   GA_DAEMON_SESSIONS=(
     claude-wiki-daemon
     claude-autoagent-daemon
@@ -183,11 +195,12 @@ ga_init_env() {
 
   # expected hook->event bindings the user MUST register in settings.json for the deployed hooks to fire.
   # Each entry = "<event>\t<hook-basename>\t<matcher>" (events: PreToolUse / PostToolUse / SessionStart /
-  # Stop / SubagentStart / SubagentStop / PreCompact). Matched against the live settings.json
-  # .hooks[<event>][].hooks[].command by basename, SCOPED to its matcher (command-WITHIN-matcher — the
-  # doctor binding check + wire_hooks idempotency key). The 3rd column (matcher) is BOTH the UPSERT selector
-  # AND the bound/dormant scoping key; an empty 3rd column = "no matcher key" (SessionStart/Stop are
-  # unmatched). Per-matcher, so the SAME hook may appear in TWO rows under one event with different matchers
+  # UserPromptSubmit / Stop / SubagentStart / SubagentStop / PreCompact). Matched against the live
+  # settings.json .hooks[<event>][].hooks[].command by basename, SCOPED to its matcher
+  # (command-WITHIN-matcher — the doctor binding check + wire_hooks idempotency key). The 3rd column
+  # (matcher) is BOTH the UPSERT selector AND the bound/dormant scoping key; an empty 3rd column = "no
+  # matcher key" (SessionStart/Stop/UserPromptSubmit are unmatched). Per-matcher, so the SAME hook may
+  # appear in TWO rows under one event with different matchers
   # (e.g. validate-secret-scan.sh on Write|Edit AND Bash) — each wired + tracked independently.
   # Add a row here when a new hook is deployed. SINGLE SoT — wire_hooks/run_doctor AND unwire_hooks/verify_clean
   # all read this one array (the prior per-script duplication collapsed here).
@@ -245,6 +258,7 @@ ga_init_env() {
     "SessionStart	prune-security-warnings-state.sh	"
     "SessionStart	prune-session-spawns.sh	"
     "SessionStart	validate-compliance-matrix.sh	"
+    "UserPromptSubmit	inject-reply-language.sh	"
     "Stop	advisory-preedit-facts.sh	"
     "Stop	cost-tracker.sh	"
     "Stop	post-edit-typecheck.sh	"
@@ -261,6 +275,7 @@ ga_init_env() {
     "SubagentStart	inject-scope-part-09.sh	"
     "SubagentStart	inject-scope-part-10.sh	"
     "SubagentStart	inject-scope-part-11.sh	"
+    "SubagentStart	inject-scope-part-12.sh	"
     "SubagentStart	telemetry-activation.sh	"
     "SubagentStop	agent-tracker.sh	"
     "SubagentStop	post-edit-typecheck.sh	"
@@ -270,10 +285,12 @@ ga_init_env() {
   readonly EXPECTED_HOOK_BINDINGS
 
   # prune named exit codes (loud-fail, distinct from die's generic 1): 2 = no
-  # target dir, 3 = manifest absent/unparseable. Inside the sentinel-guarded block
-  # (not file-scope) so a re-source never re-runs `readonly` → fatal under set -e.
+  # target dir, 3 = manifest absent/unparseable, 4 = an orphan survived its unlink.
+  # Inside the sentinel-guarded block (not file-scope) so a re-source never re-runs
+  # `readonly` → fatal under set -e.
   readonly PRUNE_EXIT_NO_TARGET=2
   readonly PRUNE_EXIT_NO_MANIFEST=3
+  readonly PRUNE_EXIT_UNLINK_SURVIVED=4
   # manifest files[] key escapes the install root (empty · absolute · `..` segment) or is unreadable —
   # refused before any manifest loop by install / agents-only / uninstall / prune.
   readonly MANIFEST_EXIT_ESCAPING_KEY=25
@@ -307,7 +324,7 @@ ga_init_env() {
   done
 
   # fakechat port-cleanup lib — the shared, STRICTLY PORT-SCOPED fakechat_free_port
-  # helper consumed by kill_daemon_tmux_sessions (install/uninstall teardown) to reap
+  # helper consumed by kill_daemon_tmux_sessions (retirement routine + uninstall teardown) to reap
   # the orphan bun squatting a daemon fakechat port. Loud-fail (die) on an absent lib
   # like the E5 libs — a missing lib is a broken install, never a silent skip
   # (shared-self-improve-hygiene Precondition Loud-Fail Principle).
@@ -388,6 +405,14 @@ die_step() {
   printf 'FATAL: %s\n' "$*" >&2
   [[ -n "${GA_TUI_STEP:-}" ]] && return "${code}"
   exit "${code}"
+}
+
+# delete_temp_file — removes one engine or launcher temp file; an unset path or a non-regular file is left alone.
+delete_temp_file() {
+  local path="${1}"
+  [[ -f "${path}" ]] || return 0
+  # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+  if ga_guard_path "${path}"; then rm -f -- "${path:?}"; fi
 }
 
 # never-touch guard

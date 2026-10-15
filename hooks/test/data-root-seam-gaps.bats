@@ -20,6 +20,8 @@ EGRESS_SH="${HOOKS_DIR}/advisory-egress-secret.sh"
 RAWSTORE_SH="${HOOKS_DIR}/advisory-raw-store-read.sh"
 TRACK_SH="${HOOKS_DIR}/track-outcome.sh"
 PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -35,9 +37,7 @@ setup() {
 }
 
 teardown() {
-  if [[ -n "${DS_TMP:-}" && -d "${DS_TMP}" ]]; then
-    rm -rf "${DS_TMP}"
-  fi
+  if ga_guard_path "${DS_TMP:-}"; then rm -rf -- "${DS_TMP:?}"; fi
 }
 
 # Build a Bash-tool PreToolUse envelope for a quote-free command. Args: $1=command string.

@@ -25,7 +25,9 @@ run_hook() {
   run bash "${HOOK_SH}" <<<"${1}"
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "malicious: rm -rf / → SEC-010 block (exit 2)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"SEC-010"* ]] || return 1
@@ -43,9 +45,11 @@ run_hook() {
   [[ -z "${output}" ]] || return 1
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "benign: rm -rf on a project-relative dir → pass (scope-limited pattern)" {
   # The dangerous-pattern set targets root/home/cwd wipes — a regenerable build
   # dir remove is NOT in scope and must not false-block.
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -rf build/artifacts"}}'
   [[ "${status}" -eq 0 ]] || return 1
 }
@@ -59,13 +63,17 @@ run_hook() {
 # process substitution, sudo-shell pipe, quoted-HOME — each a live bypass of the
 # fixed-string legacy rows.
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "malicious: rm -fr / (reordered flags) → SEC-010 block (exit 2)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -fr /"}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"SEC-010"* ]] || return 1
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "malicious: rm -r -f ~ (split flags) → SEC-010 block (exit 2)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -r -f ~"}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"SEC-010"* ]] || return 1
@@ -89,19 +97,25 @@ run_hook() {
   [[ "${output}" == *"SEC-010"* ]] || return 1
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "malicious: rm -rf quoted \$HOME → SEC-010 block (exit 2)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -rf \"$HOME\""}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"SEC-010"* ]] || return 1
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "malicious: rm -fR -- ~/x (end-of-options marker) → SEC-010 block (exit 2)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -fR -- ~/x"}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"SEC-010"* ]] || return 1
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "benign: rm -rf -- build/ → pass (-- marker, non-wipe target)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -rf -- build/"}}'
   [[ "${status}" -eq 0 ]] || return 1
 }
@@ -128,6 +142,42 @@ run_with_no_python3() { run_hook_with_no_python3 "${HOOK_SH}" "${1}"; }
 @test "fail-open kept: python3 absent + empty stdin → pass (exit 0)" {
   run_with_no_python3 ''
   [[ "${status}" -eq 0 ]] || return 1
+}
+
+# Block output never echoes the command: session stderr would otherwise carry commit
+# text, paths and URL userinfo. The context names the matched row only, and the
+# line stays one parseable JSON object even on the jq-less printf fallback.
+
+# Echo context.row of the block JSON; non-zero when it is not one JSON object. Args: $1=hook output
+get_block_row() {
+  printf '%s' "${1}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["context"]["row"])'
+}
+
+# Run the hook with jq off PATH (python3 kept) → hook_emit_error takes its printf fallback.
+run_hook_without_jq() {
+  local bindir
+  bindir="$(minimal_bin_without_python3 bash cat grep basename tr sed env mktemp dirname python3)"
+  # shellcheck disable=SC2016  # $1/$2 belong to the child bash
+  run env "PATH=${bindir}" bash -c 'printf "%s" "$1" | bash "$2"' _ "${1}" "${HOOK_SH}"
+}
+
+@test "block output: push URL with userinfo → row name only, no URL or token, JSON parses" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
+  run_hook '{"tool_name":"Bash","tool_input":{"command":"git push https://user:tok123@github.com/o/r.git && rm -rf /"}}'
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" != *"tok123"* && "${output}" != *"github.com"* ]] || return 1
+  local row
+  row="$(get_block_row "${output}")" || return 1
+  [[ "${row}" == "rm-wipe" ]]
+}
+
+@test "block output: double quote in the command, jq absent → row name only, JSON parses" {
+  run_hook_without_jq '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"wip note\" && chmod -R 777 /"}}'
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" != *"wip note"* ]] || return 1
+  local row
+  row="$(get_block_row "${output}")" || return 1
+  [[ "${row}" == "chmod-777" ]]
 }
 
 # Header relabel (clauded-docs/290 T18): the hook is a heuristic backstop, not a

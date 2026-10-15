@@ -73,7 +73,7 @@ _LIVE_BUDGET_SRC = _REPO_ROOT / "scoped" / "shared-turn-budget.md"
 # The operational-counter literal the predicate must never key on: it rides a
 # different axis and its exclusion set drops the row before generation.
 _FORBIDDEN_CORE = "budget-overage concentration"
-_NEIGHBOUR_LABEL = "agent instruction-improvement candidate (failure rate 62%)"
+_NEIGHBOUR_LABEL = "agent instruction-improvement candidate (failure rate 47%)"
 
 
 def _base_root(path: Path):

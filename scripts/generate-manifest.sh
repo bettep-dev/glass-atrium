@@ -78,17 +78,20 @@
 #   generate-manifest.sh --check   verify-only: exit 1 + both-direction delta on
 #                                  orphan/missing paths, VERSION mismatch, per-file
 #                                  HASH mismatch (content changed, path unchanged),
-#                                  an escaping files[] entry, a modes key set unequal
-#                                  to files, an ABSENT retired key, a retired key or
-#                                  value of invalid shape, OR a retired-map delta
+#                                  an escaping files[] entry, a modes or hashes key
+#                                  set unequal to files, an ABSENT retired key, a
+#                                  retired key or value of invalid shape, OR a
+#                                  retired-map delta
 #   generate-manifest.sh --validate FILE
 #                                  structural validation of an arbitrary manifest
 #                                  against the same invariants the regeneration
 #                                  asserts on its temp before the swap
 #
-# Named exit codes: 1=--check divergence · 3=git absent/not a work tree ·
+# Named exit codes: 1=--check divergence · 2=usage · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
-# manifest that fails structural validation · 7=apply-spine.sh not found.
+# manifest that fails structural validation · 7=apply-spine.sh missing or
+# failed to load · 8=a tracked manifest path carries a backslash, a control
+# byte (0x01-0x1f, DEL) or a non-UTF-8 byte.
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on
@@ -111,7 +114,10 @@ readonly SPINE_LIB="${GA_ROOT}/scripts/lib/apply-spine.sh"
   exit 7
 }
 # shellcheck source=/dev/null
-source "${SPINE_LIB}"
+source "${SPINE_LIB}" || {
+  echo "generate-manifest: ${SPINE_LIB} failed to load (retired-map family predicate)" >&2
+  exit 7
+}
 
 # Manifest scope — the paths hashed + bundled + integrity-verified. A new
 # top-level entry must be added here DELIBERATELY (policy change), never inferred.
@@ -170,17 +176,6 @@ command -v jq >/dev/null 2>&1 || {
   exit 4
 }
 
-# SHA-256 tool — shasum (macOS / perl-backed, also on CI ubuntu) preferred,
-# coreutils sha256sum as the Linux fallback. Both honor `--` end-of-options.
-if command -v shasum >/dev/null 2>&1; then
-  readonly -a SHA256_CMD=(shasum -a 256)
-elif command -v sha256sum >/dev/null 2>&1; then
-  readonly -a SHA256_CMD=(sha256sum)
-else
-  echo "generate-manifest: neither shasum nor sha256sum found (per-file integrity required)" >&2
-  exit 4
-fi
-
 # Octal-mode reader variant — resolve the working `stat` format string ONCE (BSD
 # `%Lp` vs GNU `%a`), same dual-tool `command -v` posture as SHA256_CMD, so mode_of
 # forks a SINGLE stat per file instead of re-probing BSD-then-GNU every call. Both
@@ -195,15 +190,28 @@ else
   readonly -a STAT_MODE_CMD=()
 fi
 
-git -C "${GA_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-  echo "generate-manifest: ${GA_ROOT} is not a git work tree (git ls-files is the file-list SoT)" >&2
-  exit 3
+# Preconditions of the modes that read the tree — --validate reads only its FILE.
+# SHA-256 tool: shasum (macOS / perl-backed, also on CI ubuntu) preferred, coreutils
+# sha256sum as the Linux fallback.
+require_tree_tools() {
+  if command -v shasum >/dev/null 2>&1; then
+    SHA256_CMD=(shasum -a 256)
+  elif command -v sha256sum >/dev/null 2>&1; then
+    SHA256_CMD=(sha256sum)
+  else
+    echo "generate-manifest: neither shasum nor sha256sum found (per-file integrity required)" >&2
+    exit 4
+  fi
+  git -C "${GA_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+    echo "generate-manifest: ${GA_ROOT} is not a git work tree (git ls-files is the file-list SoT)" >&2
+    exit 3
+  }
 }
 
-# Echo the lowercase 64-hex SHA-256 of a single file (first whitespace field of
-# the tool output, dropping the trailing filename column).
+# Echo the lowercase 64-hex SHA-256 of a single file. Content goes in on stdin so
+# the digest field never carries a filename-escape prefix.
 sha256_of() {
-  "${SHA256_CMD[@]}" -- "$1" | awk '{print $1}'
+  "${SHA256_CMD[@]}" <"$1" | awk '{print $1}'
 }
 
 # Echo the octal permission mode (e.g. 644 / 755) of a single file. `-L`
@@ -226,12 +234,41 @@ mode_of() {
   fi
 }
 
-# Emit the generated deploy file list, one path per line, sorted.
-# grep exit 1 (= every tracked file excluded) is absorbed so the empty set
-# reaches the named exit-6 guard instead of dying as an opaque pipefail.
+# NUL-delimited paths on stdin → the ones EXCLUDE_RE keeps, one per line. A kept
+# path the line pipeline (tab, newline), JSON (non-UTF-8 byte), a consumer's by-name
+# shasum (backslash → `\`-prefixed digest) or a reader assuming git never emits a
+# raw control byte cannot carry is refused by name (exit 8); an excluded one is
+# dropped whatever its bytes.
+nul_paths_to_lines() {
+  local path
+  while IFS= read -r -d '' path; do
+    if [[ "${path}" =~ ${EXCLUDE_RE} ]]; then continue; fi
+    # shellcheck disable=SC2310  # a false rc is the refusal below, not an error to abort on
+    if ! is_carriable "${path}"; then
+      printf 'generate-manifest: tracked manifest path carries a backslash, control byte or non-UTF-8 byte (unsupported): %q\n' \
+        "${path}" >&2
+      exit 8
+    fi
+    printf '%s\n' "${path}"
+  done
+}
+
+# True when $1 has no backslash, no control byte and is valid UTF-8. C locale pins
+# [[:cntrl:]] to 0x00-0x1f + DEL. jq -R swaps an invalid byte for U+FFFD, so the
+# round trip differs; jq runs only for a path carrying a byte >= 0x80.
+is_carriable() {
+  local LC_ALL=C roundtrip
+  if [[ "$1" == *[[:cntrl:]\\]* ]]; then return 1; fi
+  if [[ "$1" != *[$'\x80'-$'\xff']* ]]; then return 0; fi
+  roundtrip="$(printf '%s' "$1" | jq -Rrj .)"
+  [[ "${roundtrip}" == "$1" ]]
+}
+
+# Emit the generated deploy file list, one path per line, sorted. -z because
+# default ls-files C-quotes a path with a byte >= 0x80, `"` or `\` — naming no file.
 generate_files() {
-  git -C "${GA_ROOT}" ls-files -- "${SCOPE_PATHS[@]}" \
-    | { grep -vE "${EXCLUDE_RE}" || true; } \
+  git -C "${GA_ROOT}" ls-files -z -- "${SCOPE_PATHS[@]}" \
+    | nul_paths_to_lines \
     | LC_ALL=C sort
 }
 
@@ -289,10 +326,14 @@ read_manifest_retired_lines() {
 }
 
 # Every path git tracks anywhere in the repo, sorted — the "the vendor still ships
-# this" oracle. Deliberately unscoped and unfiltered; the rationale is the
-# retired-map contract note in the header.
+# this" oracle. Deliberately unscoped and not EXCLUDE_RE-filtered; the rationale is
+# the retired-map contract note in the header. -z as in generate_files; a newline
+# path is skipped, not refused — never a manifest key, and split it could fake a match.
 raw_tracked_paths() {
-  git -C "${GA_ROOT}" ls-files | LC_ALL=C sort
+  local path
+  git -C "${GA_ROOT}" ls-files -z | while IFS= read -r -d '' path; do
+    if [[ "${path}" != *$'\n'* ]]; then printf '%s\n' "${path}"; fi
+  done | LC_ALL=C sort
 }
 
 # Emit `<path>\t<sha256>` for each committed files[] path the vendor has dropped —
@@ -336,7 +377,8 @@ build_retired_json() {
 # non-empty array of 64-hex strings; a non-object map yields [] — the object-type clause
 # is validate's, and --check reports it as a RETIRED delta.
 # files_key_violations: sorted escaping files[] entries. modes keys are held to the same
-# rule through set equality with files; the one-sided lists name a swapped key.
+# rule through set equality with files, and so are hashes keys; the one-sided lists
+# name a swapped key.
 readonly MANIFEST_SHAPE_JQ_DEF='
 def escaping_key: . == "" or startswith("/") or any(split("/")[]; . == "..");
 def files_list: .files | if type == "array" then map(strings) else [] end;
@@ -344,6 +386,9 @@ def modes_keys: .modes | if type == "object" then keys else [] end;
 def files_key_violations: [files_list[] | select(escaping_key)] | unique;
 def modes_only_keys: modes_keys - files_list;
 def files_only_keys: (files_list | unique) - modes_keys;
+def hashes_keys: .hashes | if type == "object" then keys else [] end;
+def hashes_only_keys: hashes_keys - files_list;
+def files_only_hash_keys: (files_list | unique) - hashes_keys;
 def retired_shape_violations:
   (.retired // {})
   | if type == "object" then
@@ -363,7 +408,7 @@ def retired_shape_violations:
 # an object, disjoint from files[], free of barred migration paths, whose every key is
 # a non-empty relative path with no `..` segment (the updater removes what a key names),
 # and whose every value is a non-empty array of 64-hex strings; every files[] entry is a
-# non-escaping key and the modes key set equals the files set.
+# non-escaping key and the modes and hashes key sets each equal the files set.
 validate_manifest_file() {
   jq -e "${MANIFEST_SHAPE_JQ_DEF}"'
     (.version | type == "string" and . == "'"${ATRIUM_VERSION}"'")
@@ -383,6 +428,8 @@ validate_manifest_file() {
     and (files_key_violations | length == 0)
     and (modes_only_keys | length == 0)
     and (files_only_keys | length == 0)
+    and (hashes_only_keys | length == 0)
+    and (files_only_hash_keys | length == 0)
   ' -- "$1" >/dev/null 2>&1
 }
 
@@ -397,8 +444,9 @@ require_manifest() {
 
 run_check() {
   local orphans missing mismatches manifest_version gen_count rc=0
-  local modes_count mode_mismatches files files_invalid modes_key_delta
+  local modes_count mode_mismatches files files_invalid modes_key_delta hashes_key_delta
   local committed_retired generated_retired dropped dropped_count retired_invalid
+  require_tree_tools
   require_manifest
 
   # Single git ls-files pass — the sorted list feeds the count, both comm diffs,
@@ -469,7 +517,7 @@ run_check() {
     rc=1
   fi
 
-  # key gate — the count and join gates above both pass a modes key swapped for an
+  # key gate — the count and join gates above pass a modes or hashes key swapped for an
   # escaping one; tojson keeps an empty or whitespace key visible.
   files_invalid="$(jq -r "${MANIFEST_SHAPE_JQ_DEF}"'files_key_violations[] | tojson' \
     -- "${MANIFEST}")"
@@ -484,6 +532,14 @@ run_check() {
   if [[ -n "${modes_key_delta}" ]]; then
     echo "generate-manifest --check: MODES key set differs from files:" >&2
     printf '%s\n' "${modes_key_delta}" | sed 's/^/  /' >&2
+    rc=1
+  fi
+  hashes_key_delta="$(jq -r "${MANIFEST_SHAPE_JQ_DEF}"'
+    (hashes_only_keys[] | "+ \(tojson)"), (files_only_hash_keys[] | "- \(tojson)")' \
+    -- "${MANIFEST}")"
+  if [[ -n "${hashes_key_delta}" ]]; then
+    echo "generate-manifest --check: HASHES key set differs from files:" >&2
+    printf '%s\n' "${hashes_key_delta}" | sed 's/^/  /' >&2
     rc=1
   fi
 
@@ -537,6 +593,7 @@ announce_retired_additions() {
 
 run_generate() {
   local count tmp files files_json hashes_json modes_json retired_json retired_count
+  require_tree_tools
   require_manifest
   # Single git ls-files pass — the sorted list feeds count, files_json, and BOTH
   # emitters (one pass instead of four independent re-runs).
@@ -576,7 +633,8 @@ run_generate() {
   # manifest (the wire_hooks atomic-write contract: temp + validate + mv).
   # shellcheck disable=SC2310  # a false rc is the abort path below, which is the whole point of the guard
   validate_manifest_file "${tmp}" || {
-    rm -f -- "${tmp}"
+    # shellcheck disable=SC2310  # guard (sourced with the spine) branched on — a refusal skips the delete
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     echo "generate-manifest: generated manifest failed validation — aborting" >&2
     exit 6
   }

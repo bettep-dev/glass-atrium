@@ -4,14 +4,17 @@ Per-agent candidate selection in ``hooks/learning-aggregator.py`` now keys on
 the live-signal OR-terms (result fail/blocked/done_with_concerns ·
 grader_verdict='verified_fail' · review_flag · revision_count>=2) instead of
 result='fail' alone. The OR-term predicate is the SINGLE shared definition in
-``_pg_learning_dualwrite`` (``negative_signal_hits``), imported by BOTH the
-aggregator emit and the ``daemon_cycle.py`` staleness recompute — covered here:
+``_outcome_signal`` (``negative_signal_hits``, re-exported by
+``_pg_learning_dualwrite``), read by the aggregator emit and by ``daemon_cycle.py``'s
+post-apply regression watch. Covered here:
 (1) per-agent pattern row emitted from >=3 blocked/done_with_concerns rows;
 (2) dead-signal detector WARNs when a trigger metric has 0 occurrences over a
     non-trivial batch (and stays quiet on tiny batches / live metrics);
 (3) poisoned_window rows produce NO pattern end-to-end (real reader against
-    live PG fixtures, inserted in an open never-committed transaction —
-    rolled back on teardown, database left byte-identical).
+    fixtures on the ephemeral cluster ``live-pg-ephemeral.bats`` builds — elsewhere
+    the class skips — inserted in an open never-committed transaction —
+    rolled back on teardown, database left byte-identical);
+(4) a run over lesson-carrying rows writes no lesson store under its data root.
 
 Run with either runner:
     uv run --with pytest --with psycopg pytest autoagent/test/test_negative_signal_triggers.py -v
@@ -32,13 +35,18 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _HOOKS_DIR = _REPO_ROOT / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
+# unittest discover and ``-m unittest`` from another cwd leave this directory off sys.path.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _pg_seal import get_ephemeral_connection
 
 try:
     import _pg_learning_dualwrite as pgdw
@@ -111,8 +119,7 @@ class TestNegativeSignalPredicate(unittest.TestCase):
             _row(grader_verdict="verified_fail"),
             _row(review_flag=True),
             _row(revision_count=2),
-            # read_outcomes_since hands the integer column; the lesson-routing call site
-            # hands the frontmatter string. Both are the same user-correction signal.
+            # predicate accepts evaluative_signal as int and as its frontmatter string
             _row(evaluative_signal=-1),
             _row(evaluative_signal="-1"),
         ):
@@ -192,6 +199,7 @@ class _AggregatorRunFixture(unittest.TestCase):
 
     def setUp(self) -> None:
         self.upserts: list[dict] = []
+        self.pg_reach: list[str] = []
         self._tmpdir = tempfile.mkdtemp(prefix="ap3-agg-test-")
         self.addCleanup(self._cleanup_tmpdir)
         # Fixture roster for the registry allowlist gate — the probe agents exist ONLY
@@ -211,46 +219,75 @@ class _AggregatorRunFixture(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        # main() ingests this batch's lessons on every run → keep them off the live store
-        lessons = mock.patch.object(
-            agg, "LESSON_STORE_FILE", os.path.join(self._tmpdir, "lessons.json")
+
+    def _get_seal_patchers(self, module: ModuleType) -> tuple:
+        """Patchers for the PG seams a run leaves unstubbed, so no run reaches a database.
+
+        The aggregator's own libpq-default reads return their degrade value (``[]``; ``None``
+        for the window and floor reads); a write records its name in ``pg_reach`` and raises
+        (callers assert it empty).
+        """
+
+        def _get_refusal(name: str):  # noqa: ANN202 — seam signatures differ
+            def _refuse(*_args: object, **_kwargs: object) -> None:
+                self.pg_reach.append(name)
+                raise AssertionError(f"PG reach from a sealed aggregator run: {name}")
+
+            return _refuse
+
+        return (
+            mock.patch.object(module, "_read_budget_overages", lambda since: []),
+            mock.patch.object(module, "_read_size_est_pairs", lambda since: []),
+            mock.patch.object(module, "_read_size_est_window", lambda since: None),
+            mock.patch.object(module, "_pg_read_outcome_window", lambda since: None),
+            mock.patch.object(module, "_pg_read_pattern_floors", lambda *args: None),
+            *(
+                mock.patch.object(module, name, _get_refusal(name))
+                for name in (
+                    "_pg_insert_audit_queue_rows",
+                    "_pg_insert_liveness_observation",
+                    "_pg_put_learning_pattern_status",
+                )
+            ),
         )
-        lessons.start()
-        self.addCleanup(lessons.stop)
 
     def _cleanup_tmpdir(self) -> None:
         for name in os.listdir(self._tmpdir):
             os.unlink(os.path.join(self._tmpdir, name))
         os.rmdir(self._tmpdir)
 
-    def _run(self, rows: list[dict]) -> str:
+    def _run(self, rows: list[dict], aggregator: ModuleType | None = None) -> str:
+        """aggregator overrides the shared module, e.g. one loaded under a scratch data root."""
+        module = aggregator or agg
+
         def _record_upsert(**kwargs) -> None:
             self.upserts.append(kwargs)
 
         patchers = (
-            mock.patch.object(agg, "HAS_PG_DUALWRITE", True),
-            mock.patch.object(agg, "OUTCOMES_DIR", self._tmpdir),
+            mock.patch.object(module, "HAS_PG_DUALWRITE", True),
             mock.patch.object(
-                agg, "AUDIT_QUEUE_FILE", os.path.join(self._tmpdir, "audit-queue.txt")
+                module, "AUDIT_QUEUE_FILE", os.path.join(self._tmpdir, "audit-queue.txt")
             ),
             mock.patch.object(
-                agg,
+                module,
                 "AUDIT_QUEUE_PG_OFFSET_FILE",
                 os.path.join(self._tmpdir, "audit-queue-pg-offset"),
             ),
-            mock.patch.object(agg, "_pg_read_aggregator_watermark", lambda name: 0.0),
-            mock.patch.object(agg, "_pg_read_outcomes_since", lambda since: rows),
-            mock.patch.object(agg, "_pg_read_learning_log_signatures", lambda: {}),
-            mock.patch.object(agg, "_pg_upsert_learning_pattern", _record_upsert),
-            mock.patch.object(agg, "_pg_update_aggregator_state", lambda **kw: None),
-            mock.patch.object(agg, "_pg_batch_complete", lambda summary: None),
+            mock.patch.object(module, "_pg_read_aggregator_watermark", lambda name: 0.0),
+            mock.patch.object(module, "_pg_read_outcomes_since", lambda since: rows),
+            mock.patch.object(module, "_pg_read_learning_log_signatures", lambda: {}),
+            mock.patch.object(module, "_pg_upsert_learning_pattern", _record_upsert),
+            mock.patch.object(module, "_pg_update_aggregator_state", lambda **kw: None),
+            mock.patch.object(module, "_pg_batch_complete", lambda summary: None),
+            *self._get_seal_patchers(module),
         )
         for patcher in patchers:
             patcher.start()
             self.addCleanup(patcher.stop)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            agg.main(registry_path=self.registry_path)
+            module.main(registry_path=self.registry_path)
+        self.assertEqual(self.pg_reach, [])
         return stderr.getvalue()
 
     def _upsert_signatures(self) -> set[str]:
@@ -291,6 +328,24 @@ class TestPerAgentTriggerEmission(_AggregatorRunFixture):
         )
 
 
+class TestRunLeavesNoLessonStore(_AggregatorRunFixture):
+    """Lesson text is outcome data only — a run over lesson-carrying rows writes no store."""
+
+    def test_when_rows_carry_lessons_then_data_root_gains_no_lesson_store(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ap3-agg-root-") as base_root:
+            data_root = Path(base_root) / "data"
+            data_root.mkdir()
+            with mock.patch.dict(os.environ, {"GA_DATA_ROOT": base_root}):
+                scratch_agg = _load_aggregator()
+            self._run(
+                [_row(result="blocked", lesson="Retry the flaky step once")] * 3,
+                aggregator=scratch_agg,
+            )
+            # positive control — the run reached pattern emission over these rows
+            self.assertIn(_count_signature(_TRIGGER_AGENT), self._upsert_signatures())
+            self.assertNotIn("lessons.json", os.listdir(data_root))
+
+
 class TestDeadSignalWarn(_AggregatorRunFixture):
     """0-occurrence trigger metric over a non-trivial batch → WARN (AP-3 test 2)."""
 
@@ -323,12 +378,7 @@ class TestPoisonedRowsEmitNoPattern(_AggregatorRunFixture):
 
     @classmethod
     def setUpClass(cls) -> None:
-        import psycopg
-
-        try:
-            cls.conn = psycopg.connect("dbname=glass_atrium", connect_timeout=2)
-        except Exception as exc:  # noqa: BLE001 — no PG → skip the live class
-            raise unittest.SkipTest(f"PG unreachable: {type(exc).__name__}: {exc}")
+        cls.conn = get_ephemeral_connection()
         cls.addClassCleanup(cls._rollback_and_close)
 
         now = time.time()
@@ -390,7 +440,6 @@ class TestPoisonedRowsEmitNoPattern(_AggregatorRunFixture):
 
         patchers = (
             mock.patch.object(agg, "HAS_PG_DUALWRITE", True),
-            mock.patch.object(agg, "OUTCOMES_DIR", self._tmpdir),
             mock.patch.object(
                 agg, "AUDIT_QUEUE_FILE", os.path.join(self._tmpdir, "audit-queue.txt")
             ),
@@ -406,6 +455,7 @@ class TestPoisonedRowsEmitNoPattern(_AggregatorRunFixture):
             mock.patch.object(agg, "_pg_upsert_learning_pattern", _record_upsert),
             mock.patch.object(agg, "_pg_update_aggregator_state", lambda **kw: None),
             mock.patch.object(agg, "_pg_batch_complete", lambda summary: None),
+            *self._get_seal_patchers(agg),
         )
         for patcher in patchers:
             patcher.start()
@@ -413,6 +463,7 @@ class TestPoisonedRowsEmitNoPattern(_AggregatorRunFixture):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             agg.main(registry_path=self.registry_path)
+        self.assertEqual(self.pg_reach, [])
         return stderr.getvalue()
 
     def test_when_rows_poisoned_then_no_pattern_for_agent(self) -> None:

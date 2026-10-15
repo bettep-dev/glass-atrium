@@ -51,7 +51,7 @@ Two clauses meet here, and they are NOT one predicate — read them separately.
 
 - **First clause — DESCRIPTIVE, and it grants nothing**: a `dual_phase` DEV assigned to phase-2 analysis sorts ahead of a phase-5 reviewer, so its `dev-*` token is spawned BEFORE any verify reviewer.
   - The permission itself comes from **Execution** above, and nothing below changes it.
-- **Second clause — PROHIBITIVE, and NARROWER than that spawn order**: under ultracode, `block-order` fires only where the `dev-*` spawn preceding every reviewer is a DECLARED IMPL one (`orchestrator-role.md` → `#### Ultracode declaration contract`).
+- **Second clause — PROHIBITIVE, and NARROWER than that spawn order**: under ultracode, `block-order` fires only where the `dev-*` spawn preceding every reviewer is a DECLARED IMPL one (`skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md` → Exit-2 verdicts → `block-order`).
   - `declared impl` is the load-bearing qualifier — spawn order alone is not the offence.
 - **The fix is compositional, never declarative**: take either route of ``### Pre-verify Discovery `dev-*` order guard (ultracode)``, which also points at the 3-phase skeleton.
   - A directly-spawned pre-verify analysis DEV is truthfully an `impl:` spawn, and that is exactly what blocks — the gate working, not a false positive.
@@ -135,20 +135,20 @@ Choose the delegation form:
 - Sub-agents cannot create sub-agents (nesting forbidden).
 - Initialization token cost: 5K-50K/agent — avoid unnecessary sub-agent proliferation.
 - **File ownership separation required, and it is the floor rather than the ceiling**: concurrent modification of the same file is forbidden → ownership matrix.
-  - For concurrent INDEX MUTATORS this is necessary but NOT sufficient: the worktree is the isolation unit (`orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a)).
+  - For concurrent INDEX MUTATORS this is necessary but NOT sufficient: the worktree is the isolation unit (`rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Index-owner rule**).
   - An ownership matrix is not an alternative to worktree isolation for index mutators; it is what you do *inside* one worktree with one of them.
 
 #### Worktree Isolation [ORCHESTRATOR]
 
 - The Agent tool already isolates context; a worktree adds **filesystem isolation**, physically preventing file conflicts between sub-agents.
-- The sanctioned isolation paths, including the `background: true` + `isolation: worktree` prohibition (Issue #33045) and the unverified ultracode parity: `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a) → **Three sanctioned isolation paths**.
+- The sanctioned isolation paths, including the `background: true` + `isolation: worktree` prohibition (Issue #33045) and the unverified ultracode parity: `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → **Three sanctioned isolation paths**.
 
 #### Declarative Team Definition
 
 - **Same input = same team composition** — a routing decision is stated declaratively (the `agents` · `reason` · `order` schema above), never improvised per turn, so the same request reproduces the same team.
 - **Declare the shape, not a bespoke spec format** — the fan-out / pipeline shape is expressed in the execution vocabulary `### Architecture Patterns` defines (`parallel()` / `pipeline()` under ultracode, the equivalent Agent-tool sequencing on the manual path).
   - A hand-rolled team YAML has no consumer in this repo — nothing reads a `team.*` / `constraints.*` key — so authoring one records intent in a form no gate, engine or reader acts on.
-- **File ownership + isolation** travel with the composition: `#### Team Constraints` above (ownership matrix) and `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a) (worktree isolation for index mutators).
+- **File ownership + isolation** travel with the composition: `#### Team Constraints` above (ownership matrix) and `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Index-owner rule** (worktree isolation for index mutators).
 
 ### Delegation/Communication Rules [ORCHESTRATOR]
 
@@ -174,17 +174,17 @@ Every delegation prompt MUST declare these fields, so a sub-agent never exhausts
 
 | Field | Meaning | Default |
 |-------|---------|---------|
-| `tool_budget` | Max total tool uses; hitting the ceiling → stop + emit status | glass-atrium-intel-researcher ~15 · glass-atrium-intel-planner ~12 · glass-atrium-qa-code-reviewer ~14 · DEV: formula below |
-| `output_cap` | Max final-output size | 1500 KR chars or equivalent |
+| `tool_budget` | Max total tool uses; hitting the ceiling → stop + emit status | glass-atrium-intel-researcher ~15 · glass-atrium-intel-planner ~12 · glass-atrium-qa-code-reviewer ~14 · DEV: `[SIZE-EST]` estimate (below) |
+| `output_cap` | Final-output shape | the decision-relevant result inline; bulk to a file returned by path (`#### Resilient Workflow Authoring` → File-handoff) |
 | `reserved_output` | Emit tail reserved before work starts | Reserve-then-check (below) |
 | `scope_cap` | Explicit item/file count — no expansion without re-delegation | explicit item count |
-| `tool_preference` | Default extraction tool selection | defuddle-first for HTML ≥ 10KB · WebFetch for structured/API pages < 8KB |
+| `tool_preference` | Default extraction tool selection | HTML ≥ 10KB: WebFetch with a narrow prompt (Bash-holding agents: defuddle-first) · structured/API < 8KB: WebFetch |
 | `spawn_budget` | Max sub-agent invocations per Wave; hitting the ceiling → stop + escalate to user | glass-atrium-intel-researcher ~3 · glass-atrium-intel-planner ~2 · glass-atrium-qa-code-reviewer ~1 (per-wave soft budgets) |
 
-- **DEV `tool_budget`** `[default, adjustable]`: est ≈ reads + 3×(files to edit) + 4×(suite runs) + 5 margin.
-  - Reads not estimable (exploration-heavy or unfamiliar surface) → floor reads at 2×(files to edit).
-  - est ≳40, or borderline with unknown reads → SPLIT (`orchestrator-role.md` → Spawn Budget → Delegation-size discipline).
-- **`reserved_output`**: apply **Reserve-then-check** from `orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` analysis mode — gate the read scope against `input_budget` before work, never after.
+- **DEV `tool_budget`**: the `[SIZE-EST]` `tool_uses~=` estimate for the same delegation.
+  - Split thresholds: `orchestrator-role.md` → `#### Delegation-size discipline` → **Split triggers** (HARD SECONDARY · Empirical tool_use calibration).
+  - Token format and per-file calibration: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md`.
+- **`reserved_output`**: apply **Reserve-then-check** from `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` analysis mode** — gate the read scope against `input_budget` before work, never after.
 - **`spawn_budget`** bounds invocations only; concurrency is bounded by the engine's runtime self-cap (`orchestrator-role.md` → `### Spawn Budget`).
 - Hitting `tool_budget` before completion → the graceful exit in `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit`, carrying partial findings; never a silent exit.
 - These defaults are a **FLOOR to size against, not advisory-only prose**: `#### Analysis-Track Right-Sizing (input-side)` encodes them into the analysis skeleton by construction.
@@ -202,21 +202,8 @@ Both aids help the sub-agent self-anchor; neither is hook-enforced.
   - `TASK_TYPE: <planning|document|implementation|analysis|research|review|debug>`
   - Optional because the planner, reporter and DEV descriptions already carry prompt-level rules for it.
   - Vocabulary matches the Capability-Based Agent Selection phase labels (analysis · planning · implementation · document · research · review).
-- **English keywords (SHOULD)**: an agent invocation prompt includes the target agent's core English technical keywords, which improves self-routing accuracy.
-  - Pair the task description with the keywords (e.g., "Modify user auth logic — nestjs, jwt, guard").
-  - Keywords match the agent's `domains` field in `agent-registry.json`.
-
-Recommended keywords per agent:
-
-| Agent | Recommended domain keywords (prompt content, NOT routing keys) |
-|---------|-----------------|
-| glass-atrium-dev-nestjs | nestjs, prisma, jwt, swagger, ddd, cqrs |
-| glass-atrium-dev-react | nextjs, react, tailwind, server-component |
-| glass-atrium-dev-android | kotlin, compose, coroutine, room, hilt |
-| glass-atrium-dev-node | nodejs, cli, mcp-server, esm, stream |
-| glass-atrium-dev-db | postgresql, prisma, schema, query-optimization |
-| glass-atrium-meta-prompt-engineer | prompt, prompt-design, agent-instructions, token-optimization |
-| glass-atrium-intel-researcher | research, web-search, literature-review, trend-analysis |
+- **Domain keywords (optional)**: pair the task description with the target agent's matching `domains` terms from `agent-registry.json` (e.g., "Modify user auth logic — nestjs, jwt, passport").
+  - They anchor the sub-agent's reading of the task and are never routing keys — the spawn's typed `agentType` already fixes the agent.
 
 #### Read-Extent Discipline [ORCHESTRATOR]
 
@@ -228,7 +215,7 @@ A read allowlist bounds *which* artifacts a delegation may open; it says nothing
   - **Context case — a role body can override the extent duty on CONTEXT too, stated rather than implied**: `glass-atrium-qa-debugger` "Read related code in full" reaches supporting context, the half this duty otherwise bounds, and it still governs.
     - The override reaches only the context class that body names, for the work that body describes.
     - Every other entry in the same read scope still carries an extent, and the override never widens into the clause the **No open-ended latitude clause** bullet forbids.
-  - Why both overrides are stated: skill files sit outside `core-compliance-matrix.md`, so its Precedence Resolution adjudicates no skill-versus-agent-body conflict.
+  - Why both overrides are stated: skill files sit outside `core-compliance-matrix.md`, so the tier order in `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution` adjudicates no skill-versus-agent-body conflict.
 
 ##### Authoring rules
 
@@ -297,25 +284,24 @@ The delegation-size discipline (`orchestrator-role.md` → `### Spawn Budget`) a
 ### Quality Gates [ORCHESTRATOR]
 
 - **Output verification**: build success + existing tests passing, required before accepting team deliverables.
-  - Unit tests recommended alongside DEV implementations.
+  - Tests scale to the code's risk, never one per file (`scoped/shared-testing.md` → **Depth follows risk**).
 - **Writer/Reviewer separation**: a fresh-session review is recommended after complex implementations, to reduce same-session self-bias.
 - **Confidence-based routing**:
   - confidence=low → automatic glass-atrium-qa-code-reviewer deployment
   - confidence=medium + security code → glass-atrium-qa-code-reviewer deployment
-  - TDD absolute rules always apply regardless of confidence
+  - The test-first bar applies regardless of confidence (`rules/glass-atrium/core-outcome-record.md` → `### Field Input Guide` → `metric_pass`).
 - **Orchestrator-forced Deep-review override**: compose a glass-atrium-qa-code-reviewer **Deep (4-pass)** review, deterministically and regardless of the writer's self-reported confidence, when either trigger holds:
   - a delegation's `[SCOPE] files=` lists ≥ 10 paths;
   - any listed path starts with a sensitive-path prefix — `hooks/` · `settings*.json` · `rules/` · `agents/` (frontmatter) · `autoagent/`.
-  - The threshold and the prefix list are single-sited here (SoT).
+  - The threshold and the prefix list are single-sited here: other prose files carry a pointer, never a copy; `hooks/enforce-verification-gate.sh` holds the same values as named constants and reports counts + matched prefix only.
   - Applies to EVERY such delegation, not only the first in a cycle.
   - No doc-only skip tier exists: a rule-file change is reviewed, never exempted.
-  - Other prose files carry a pointer to this clause, never a copy of the threshold; `hooks/enforce-verification-gate.sh` holds the same values as named constants and reports counts + matched prefix only.
   - Honest backing: the routing decision is orchestrator honor-system, and the hook leg is advisory + presence-only (stderr, exit 0, silent without a `[SCOPE]` line).
   - Describing this override as "enforced" is FORBIDDEN.
   - Machine-checked repetition: `hooks/test/enforce-verification-gate-scope.bats` extracts the path-count number from this bullet and compares it with the hook's constant, so the two move together or that suite fails.
 - **Error recovery**: `orchestrator-role.md` → `### Failure Recovery Loop` (retry limits, escalation, circuit-breaker, checkpoint resumption); infinite retry forbidden.
-- **Team termination**: complete → aggregate results → **Outcome Record** → retrospective (actual vs plan) → **instruction upgrade review**.
-  - The retrospective's durable half is the Outcome Record's `lesson` field plus internal CTM/EPM accumulation.
+- **Team termination**: complete → aggregate results → **reconcile and close** each plan the team built from (`## Managed Document Completion (Direct Handling)` → Step 3) → **Outcome Record** → retrospective (actual vs plan) → **instruction upgrade review**.
+  - The retrospective's durable half is the Outcome Record's `summary` and `concerns` plus the learning-log aggregation (`core-learning-log.md` → Learning Log Auto-Aggregation).
   - A user-facing memory write (`MEMORY.md` / `feedback_*.md`) is NOT a step here — it fires only on an explicit user instruction to remember (`core-learning-log.md` → Long-Term Memory Write-Gate).
 
 ### Architecture Patterns [ORCHESTRATOR]
@@ -345,7 +331,7 @@ MANDATORY when authoring any workflow: the cap rules, the authoring idioms, and 
 - Both modes — schema non-emit, and invalid-emission / retry-cap-exceeded with its summary-collapse signature — are defined at `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap`.
   - Each rejects the `agent({schema})` promise identically, with no engine-layer salvage, so ONE `.catch(() => null)` converts both into a null the retry path handles.
   - A bare null also arises from user-skip or terminal API death.
-- **The ROOT CAUSE is a SHAPE mismatch OR an over-tight length cap** — BOTH reproduce the IDENTICAL collapse loop, which is why a verbatim retry cannot break it.
+- **The root cause is a SHAPE mismatch or an over-tight length cap** — both reproduce the same collapse loop, which is why a verbatim retry cannot break it.
   - **SHAPE**: a FLAT, all-string `additionalProperties: false` schema cannot hold rich/multi-faceted output. The model must invent an UNDECLARED key (rejected) or NEST an object where a string is declared (type violation), so it keeps shrinking prose and never resolves the error.
   - **LENGTH**: a `maxLength`/`maxItems` cap TOO TIGHT for the field's realistic content forces the same prose-shrink toward a string that never fits the impossible size.
   - A SHAPE mismatch collapses even with NO cap present, so removing caps alone does not rescue a rigid flat schema.
@@ -357,7 +343,7 @@ MANDATORY when authoring any workflow: the cap rules, the authoring idioms, and 
 MANDATORY when authoring any workflow — these bind EVERY workflow output schema you author. The failure they prevent (`StructuredOutput schema retry cap (5) exceeded`) burns all five internal retries and loses the entire delegation.
 
 - **No caps** — no `maxLength` anywhere on a workflow output schema, and no per-element `maxItems`.
-  - The failure tracks the AUTHOR, not the engine: on the same days, same engine and same models, the one session authoring UNCAPPED schemas logged ZERO cap-violation complaints while every capped sibling logged them in the thousands.
+  - Why: the failure follows the author's caps, not the engine or the models.
   - The single admitted exception is ONE top-level `maxItems` on an inherently multi-item array (Shape-tolerant schema, below) — a single constraint that does not multiply across elements.
 - **Never cap `completion_block`** — the standing rule mandates the FULL multi-line block, and real blocks have overrun every cap they were given.
   - Schema compliance and rule compliance are mutually exclusive under ANY such cap, so this one needs no threshold argument.
@@ -402,7 +388,7 @@ MANDATORY when authoring any workflow — these bind EVERY workflow output schem
 - **Never let one agent crash the run**: ALWAYS `.catch(() => null)` agent thunks and `.filter(Boolean)` parallel/pipeline results, so ONE agent's failure never rejects the whole workflow — it degrades to a surfaced-incomplete item, re-delegable in a follow-up.
 - **Self-recover, never hard-stop**: a mis-sized or failed delegation MUST self-recover (re-delegate / continue); never end the run on a missing result with lost work.
 - **Print-block-then-emit (record honesty — every schema-mode delegation MUST provide the completion channel)**: RESERVE an optional `completion_block` string property in the schema and instruct the agent to fill it with the full multi-line `[COMPLETION]` block.
-  - Why, and what the recorder does with each channel: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` — a schema-mode printed text turn is never recorded, and a run missing the property falls to lesson-less synthesis.
+  - Why, and what the recorder does with each channel: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` — a schema-mode printed text turn is never recorded, and a run missing the property falls to synthesis, which loses the writer's self-assessment.
   - Reference form — the Analysis-Track worked example's `const AnalysisSchema = { findings: 'string', completion_block: 'string' };`, where `completion_block` is a DECLARED, UNCAPPED schema member.
   - Prose telling the agent to "include a completion block" reserves nothing — an undeclared key is rejected by `additionalProperties: false`.
   - Machine-checked repetition: `hooks/test/orchestrator-skill-schema-example.bats` requires both properties UNCAPPED in this file, and the reserved property as a declared member inside the Analysis-Track fence itself — paraphrase neither away.
@@ -452,7 +438,7 @@ async function robustAgent(agentType, opts) {
       schema: { type: 'object', additionalProperties: false,
         properties: { analysis: { type: 'string' }, completion_block: { type: 'string' } },
         required: ['analysis'] },
-      goal: `${opts.goal}\nRETRY — the prior tight schema failed validation, so you now have a PERMISSIVE schema. Put ALL output prose into the single analysis free-text field (no tight caps); if the content is large or multi-item, WRITE IT TO A FILE and return the path + a compact summary in analysis. Put the full multi-line [COMPLETION] block into completion_block (the recorder reads it from the StructuredOutput input). RESERVE BUDGET to emit StructuredOutput before the working ceiling — never end on prose.`,
+      goal: `${opts.goal}\nRetry: the first attempt returned no result, so this attempt uses a permissive schema. Put all output prose in the single analysis field. If the content is large or multi-item, write it to a file and return the path plus a compact summary in analysis. Put the full multi-line [COMPLETION] block in completion_block; the recorder reads it from the StructuredOutput input. Leave enough budget to call StructuredOutput before the working ceiling, and do not end on prose.`,
     });
   }
   if (result == null || result === '') {
@@ -491,7 +477,10 @@ const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete
 
 The `robustAgent` layer in `#### Resilient Workflow Authoring` above hardens the OUTPUT side — a non-emit no longer crashes the run. This section removes the INPUT-side cause of that non-emit.
 
-- Rule SoT: `orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` analysis mode — its read allowlist (`scope`), **Effort matched to depth**, field cap and **Split trigger**, plus `#### Analysis fan-out and team cardinality` for decompose-by-domain.
+- Rule SoT, per bound:
+  - read allowlist (`scope`), **Effort matched to depth** and field cap — `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` analysis mode**;
+  - the analysis-mode split trigger — `orchestrator-role.md` → `#### Delegation-size discipline` → **Split triggers**;
+  - decompose-by-domain — `orchestrator-role.md` → `#### Analysis fan-out and team cardinality`.
 - Every schema-mode analysis delegation carries those bounds by construction, per track. This file adds three deltas:
   - **Bounded read-scope** — each allowlist entry is a `{ path, extent }` pair the skeleton renders into the prompt; a bare-path entry is the defect. Extent follows `#### Read-Extent Discipline` (this file).
   - **Output-field shape** — prefer a single free-text `analysis` field (`#### Resilient Workflow Authoring` → **Shape-tolerant schema authoring**).
@@ -522,10 +511,10 @@ const renderEntry = (a) => {
   return a.path + ' — ' + a.extent;
 };
 const budgetGuard =
-  'HARD BUDGET ~12 tool uses: reserve the emit tail — the terminal StructuredOutput IS the deliverable. ' +
-  'READ ONLY the allowlist below (no repo sweep); effort=medium (raise to high ONLY for narrow deep reasoning); ' +
-  'emit ONLY 2-3 fields, all UNCAPPED — write bulk evidence to a FILE and return its path in findings. ' +
-  'STOP and EMIT a partial cited answer when approaching the ceiling — a partial beats a lost one.';
+  'Hard budget: about 15 tool uses. The terminal StructuredOutput is the deliverable, so keep enough budget to emit it. ' +
+  'Read only the allowlist below, at the stated extent; no repo sweep; effort=medium (raise to high ONLY for narrow deep reasoning). ' +
+  'Emit only the declared fields, none of them capped; write bulk evidence to a file and return its path in findings. ' +
+  'When you near the budget, stop and emit a partial cited answer: a partial beats a lost one.';
 // bounded schema: <=2-3 fields, one free-text absorber (Shape-tolerant schema, above).
 // UNCAPPED by construction — NO maxLength/maxItems on ANY property, and completion_block is
 // NEVER capped (the recorder needs the FULL multi-line block). Bulk evidence goes to a FILE and
@@ -547,7 +536,8 @@ Binds any delegation that copies files INTO a live install: reach the destinatio
 
 ##### When in the cycle this deploy runs (pointer, not a restatement)
 
-- Order SoT — pre-merge by default, the narrow post-merge cases, the live-suite instrument and its exit-0 threshold: `orchestrator-role.md` → `## Document-Driven Workflow` step 6.
+- Order SoT — pre-merge by default, the live-suite instrument and its exit-0 threshold, the prompt-file tail: `orchestrator-role.md` → `## Document-Driven Workflow` step 6.
+  - The per-cycle order line and the narrow post-merge cases: `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md` → `## Per-cycle order` · `## Scope and backing`.
 - This section covers only HOW the copy reaches its destination safely.
 
 ##### Reach the destination through a sanctioned flow FIRST
@@ -591,8 +581,9 @@ done <<<"${FILE_LIST}"
 
 A Wave is one parallel fan-out batch of sub-tasks.
 
-- **Automatic Parallelization (standing default)**: when and how to fan out — guardrails, worktree isolation for concurrent DEV tracks, `[SIZE-EST]` sizing, the over-fragmentation caveat — is single-sited at `orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization.
-  - Skeleton `parallel()` blocks carry the per-track `// [OWNERSHIP]` attestation line that section defines.
+- **Automatic Parallelization (standing default)**: when and how to fan out — guardrails, worktree isolation for concurrent DEV tracks, `[SIZE-EST]` sizing, the over-fragmentation caveat — is stated as obligations at `orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization.
+  - Isolation detail: the isolation paths and the "at a time" check — `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`; the agent-binding worktree rules — `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**.
+  - Skeleton `parallel()` blocks carry the per-track `// [OWNERSHIP]` attestation line that `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → `## Guardrail (a) — orchestrator-side rules` defines.
   - Research/analysis fan-out is the routine case: independent domains investigate separately, then results aggregate.
 - **Commit strategy**: agents within a Wave commit their own work on their own branches from their own worktree, with hooks running → the orchestrator merges after Wave completion.
 - **Workflow-mode mapping**: under ultracode a Wave = a `parallel()` block; the engine owns the fan-out and the join.
@@ -638,13 +629,16 @@ Two families live here:
   - **Stage 2 — plan-direction verification (complex plans only)**: team composition, DEV hard gate, activation scope and the direction-not-completeness rule: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
     - The skeleton goal strings under `In-script verify-stage` below do not carry the direction-not-completeness rule, so the composer appends it to both verify members' goal text.
     - Under ultracode the gate is encoded into the workflow script: `In-script verify-stage` below.
-  - **Stage-2 revision/escalation**: a revise/infeasible verdict gets one glass-atrium-intel-planner revision (max 1 time); the escalation path: `orchestrator-role.md` → `#### Gate outcome and activation scope`.
+  - **Stage-2 revision/escalation**: a revise/infeasible verdict gets one glass-atrium-intel-planner revision (max 1 time); the escalation path: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
 - **Before glass-atrium-intel-reporter entry (domain agents output)**:
   - Assigned sections completed
   - Domain-specific accuracy verified
   - No placeholder/TODO in content
   - If unmet, request domain agent revision (max 1 time)
+- **After the prompt-audit pass (prompt-file cycles)**: accepted when its audit report exists; an empty report is valid.
+  - Position: `orchestrator-role.md` → `## Document-Driven Workflow` step 6 · contract: `scoped/scope-meta.md` → `## Prompt Deliverable Team Rule`.
 - **After implementation, before document completion — reconciliation in BOTH directions (MANDATORY)**: coverage (every planned work stream built, N/N) and excess (nothing built that the plan and `[SCOPE] files=` never authorized) both clear before `doc_status → done`.
+  - Actor and stage write: glass-atrium-qa-code-reviewer reconciles; the orchestrator's stage write follows — `## Managed Document Completion (Direct Handling)` → Step 3.
   - Procedure, the distinction from the correctness gates, and the honest backing (honor-system): `orchestrator-role.md` → `## Document-Driven Workflow` step 4.
   - An excess routes through `### Scope-Expansion Approval Protocol` (this file).
 - **Revision request protocol**:
@@ -661,7 +655,7 @@ Two families live here:
   - Detail: "Entry-class token placement" below.
 - **② `[SIZE-EST]` token** — `[SIZE-EST] bundles=N tool_uses~=N — <reason>` at EVERY `dev-*` spawn, same canonical home (sibling to `[ENTRY-CLASS]`).
   - Backstop: size-est-miss BLOCK (exit 2), PRESENCE-only.
-  - Detail: "[SIZE-EST] token placement" below; format + honesty framing = `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` bullet.
+  - Detail: "[SIZE-EST] token placement" below; format + honesty framing = `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 - **③ verify-stage** — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage preceding the first `dev-*` implementation spawn, gated on `pass`+`feasible`.
   - Backstop: the declaration contract's ordering + consistency checks (`block-order` et al., exit 2).
   - Detail: "In-script verify-stage" below + the Pre-submit self-check in `## Red Flags`.
@@ -673,14 +667,17 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
 
 ##### In-script verify-stage (ultracode)
 
-**Authoring obligation — honor-system primary, mechanically backstopped by the declaration contract.** This subsection is the home of the copy-verbatim skeletons; the declaration contract itself is canonical at `orchestrator-role.md` → `#### Ultracode declaration contract`.
+**Authoring obligation — honor-system primary, mechanically backstopped by the declaration contract.**
 
+- **Skeleton home**: this subsection holds the copy-verbatim skeletons and sentinel placement.
+- **Contract SoT**: the declaration contract itself is canonical at `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`.
+- **Standing-obligation site**: `orchestrator-role.md` → `#### Ultracode declaration contract`.
 - **What the obligation binds — the AUTHOR**: encode an in-script verify-stage that PRECEDES the first DEV implementation stage, gate it on a combined `pass`+`feasible` verdict, and declare it honestly. The Missing-verify-stage self-check lives in `## Red Flags`.
 - **Why it falls to the author**: under ultracode the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook does NOT fire for engine `agent()` spawns (`### Ultracode / Workflow-tool Mode` (this file, Orchestrator On-Demand Mechanisms)).
 - **What backstops it**: `enforce-workflow-verify-stage.sh` (`PreToolUse(Workflow)`) checks the workflow `script` against the declaration contract — presence + grammar + declaration↔code consistency.
 - **Honest scope**: the `feasible` value does not exist at static-scan time, so the gate cannot verify that a `feasible` verdict was emitted or that a gating expression consumes it; role truthfulness is honor-system (contract → HONESTY bullet).
 
-**What a DEV-spawning script MUST carry**: exactly ONE `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment (contract → Block placement).
+**What a DEV-spawning script MUST carry**: exactly ONE `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment (`orchestrator-role.md` → `#### Ultracode declaration contract`).
 
 - A bracketed sentinel in ANY comment, a `//` line included, binds the extractor; only a string-resident sentinel is inert.
   - So the worked examples below and in the gate's stderr can be quoted into delegation prompts, and the skeleton comments write the sentinel name unbracketed.
@@ -739,6 +736,7 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
   [/AGENT-COMPOSITION] */
   log('plan-ref: clauded-docs/42');   // entry signal — reference the REAL minted id; 42 is illustrative
   log('[SIZE-EST] bundles=2 tool_uses~=25 — implement + its new tests');
+  log('[PLAN-CLOSE] in-script');      // close form — this script ends in Reconcile & Close (grammar: orchestrator-role.md → Context Handoff Size)
 
   // robustAgent: retry-once-on-null, isolated failure, never crashes the workflow. MANDATORY wrapper
   // for every schema-mode agent() (rationale: #### Resilient Workflow Authoring). Copied inline here so
@@ -760,7 +758,7 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
         schema: { type: 'object', additionalProperties: false,
           properties: { analysis: { type: 'string' }, completion_block: { type: 'string' } },
           required: ['analysis'] },
-        goal: `${opts.goal}\nRETRY — the prior tight schema failed validation, so you now have a PERMISSIVE schema. Put ALL output prose into the single analysis free-text field (no tight caps); if the content is large or multi-item, WRITE IT TO A FILE and return the path + a compact summary in analysis. Put the full multi-line [COMPLETION] block into completion_block (the recorder reads it from the StructuredOutput input). RESERVE BUDGET to emit StructuredOutput before the working ceiling — never end on prose.`,
+        goal: `${opts.goal}\nRetry: the first attempt returned no result, so this attempt uses a permissive schema. Put all output prose in the single analysis field. If the content is large or multi-item, write it to a file and return the path plus a compact summary in analysis. Put the full multi-line [COMPLETION] block in completion_block; the recorder reads it from the StructuredOutput input. Leave enough budget to call StructuredOutput before the working ceiling, and do not end on prose.`,
       });
     }
     if (result == null || result === '') {
@@ -780,6 +778,8 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
   // by nothing and a paraphrase drifts it from two canonicals at once.
   const PREMISE_AUDIT_Q = 'Attack each load-bearing premise FROM THE CODE, never from the list';
   const FIRST_LINK_Q = 'name the earliest decision in the chain, state how many current tasks survive its replacement, give the cheaper replacement if one exists';
+  // Reconcile & Close goal: the verdict the orchestrator's stage write keys on (Managed Document Completion → Step 3).
+  const RECONCILE_GOAL = 'reconcile the plan against the built work → coverage N/N over its work streams, the excess (built work neither the plan nor the delegation scope authorized) and the gap list verbatim; pass only on N/N with no excess';
 
   // complex-plan workflow — verify stage gates DEV implementation. Every stage goes through
   // robustAgent (never bare agent()) so a truncated schema-mode spawn self-recovers instead of
@@ -794,8 +794,16 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
     // implementation stage runs ONLY when reviewer=pass AND DEV=feasible;
     // any revise/infeasible → glass-atrium-intel-planner revision (max 1) then re-verify, else escalate
     robustAgent('glass-atrium-dev-nestjs', { agentType: 'glass-atrium-dev-nestjs', goal: 'implement per verified plan' /* gated on verify verdict */ }),
+    // Reconcile & Close (terminal): runs after the last delivering phase; the orchestrator's stage write follows the run
+    robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: RECONCILE_GOAL }),
   )
   ```
+
+- **Reconcile & Close phase (terminal, both skeletons)**: glass-atrium-qa-code-reviewer reconciles the plan against the built work (goal: `RECONCILE_GOAL`); the script ends there.
+  - `RECONCILE_GOAL` carries no inputs, so the composer appends them to its goal text: `## Managed Document Completion (Direct Handling)` → Step 3 → **Delegation inputs**.
+  - The orchestrator's stage write follows the run: `## Managed Document Completion (Direct Handling)` → Step 3.
+  - A script ending before its plan's delivery carries the deferral form of the close token instead: `#### Workflow pre-flight (run before EVERY Workflow call)` → **close token**.
+  - Text-mode, like the verify stage; the "2-phase" / "3-phase" skeleton labels leave this terminal phase uncounted.
 
 - **Standing-question literals in the verify-stage goal text**: the two consts carry the Stage-2 standing jobs into the delegation text, quoted verbatim from the actors' own canonicals (sources named in the fence comment above).
   - `PREMISE_AUDIT_Q` goes to BOTH verify members; `FIRST_LINK_Q` goes to the DEV member only and only on a revision cycle, because it is answered in the `feasible`/`infeasible` verdict the DEV emits.
@@ -808,13 +816,13 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
 
 - **3-phase Discovery+Design variant (no `dev-*` before the reviewer — keeps a pre-verify Discovery phase lawful under the ordering check)**: the 2-phase skeleton above starts AT the verify stage; this one runs Discovery/Design analysis first.
   - Why a Discovery `dev-*` trips `block-order`, and both lawful routes: ``### Pre-verify Discovery `dev-*` order guard (ultracode)``. This skeleton shows route (a), non-DEV Discovery; route (b) is the fallback when Discovery genuinely needs a `dev-*`'s domain judgment.
-  - The skeleton reuses the `robustAgent` helper and both standing-question literals from the 2-phase skeleton, and carries the declaration plus the entry (`plan-ref`) and `[SIZE-EST]` tokens, so its pass is earned by an honest declaration and correct ordering — not a masked `BLOCK_NODECL` / `BLOCK_ENTRY` / `BLOCK_SIZEEST`:
+  - The skeleton reuses the `robustAgent` helper, both standing-question literals and `RECONCILE_GOAL` from the 2-phase skeleton, and carries the declaration plus the entry (`plan-ref`) and `[SIZE-EST]` tokens, so its pass is earned by an honest declaration and correct ordering — not a masked `BLOCK_NODECL` / `BLOCK_ENTRY` / `BLOCK_SIZEEST`:
 
   ```js
-  // 3-PHASE variant: Discovery/Design -> verify(parallel(qa, dev)) -> implement.
+  // 3-PHASE variant: Discovery/Design -> verify(parallel(qa, dev)) -> implement, then the terminal Reconcile & Close.
   // NO dev-* token precedes the reviewer (Discovery/Design uses NON-DEV agents), so BLOCK_ORDER
   // cannot fire. Reuses the robustAgent helper from the 2-phase skeleton above (#### Resilient
-  // Workflow Authoring) plus its two standing-question literals: every schema-mode agent() stays
+  // Workflow Authoring) plus its two standing-question literals and RECONCILE_GOAL: every schema-mode agent() stays
   // retry-once-on-null / isolated-failure, and any stage you convert to schema mode reserves a
   // completion_block field + instructs the agent to fill it.
   // TEXT-MODE BY DESIGN: the stages below declare NO schema, so that reservation does not apply to
@@ -828,6 +836,7 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
   [/AGENT-COMPOSITION] */
   log('plan-ref: clauded-docs/42');   // entry signal (raw-scanned) — reference the REAL minted id; 42 is illustrative
   log('[SIZE-EST] bundles=2 tool_uses~=28 — implement + its new tests; Discovery/Design is NON-DEV');
+  log('[PLAN-CLOSE] in-script');      // close form — this script ends in Reconcile & Close (grammar: orchestrator-role.md → Context Handoff Size)
   pipeline(
     // Phase 1 — Discovery + Design: NON-DEV analysis. No dev-* here, so nothing precedes the reviewer.
     robustAgent('glass-atrium-intel-researcher', { goal: 'discover constraints + prior art' }),
@@ -839,6 +848,8 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
     ),
     // Phase 3 — implement: runs ONLY on pass+feasible. This first impl dev-* is preceded by the reviewer.
     robustAgent('glass-atrium-dev-nestjs', { agentType: 'glass-atrium-dev-nestjs', goal: 'implement per verified plan' /* gated on pass+feasible */ }),
+    // Phase 4 — Reconcile & Close (terminal): the orchestrator's stage write follows the run.
+    robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: RECONCILE_GOAL }),
   )
   ```
 
@@ -878,7 +889,7 @@ A DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: 
 
 Same home and raw-scan convention as `[ENTRY-CLASS]`, but an independent presence gate: a `dev-*` spawn missing `[SIZE-EST]` BLOCKS (exit 2) even with a valid entry token.
 
-- Format, placement on both paths and honesty framing: `orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` self-attestation token bullet.
+- Format, placement on both paths and honesty framing: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 
 ##### [DOC-ROUTE] token placement (ultracode — user-requested local destination)
 
@@ -926,7 +937,7 @@ Agent Teams apply ONLY to parallelizable independent tasks; sequential dependent
 Prohibition rules > Security > Quality gates > Cost limits > Team size
 
 - Why quality outranks cost: `### Cost Optimization` never rejects a superior architecture on cost alone, and the charter orders Correctness → Safety → Quality → Speed.
-- Scope: this ordering resolves conflicts INSIDE the Agent Teams pattern. Cross-tier conflicts follow `core-compliance-matrix.md` → Precedence Resolution, where `core-security.md` overrides every other ALL-scope rule.
+- Scope: this ordering resolves conflicts INSIDE the Agent Teams pattern. Cross-tier conflicts follow `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution`, where `core-security.md` overrides every other ALL-scope rule.
 
 ### Delegation Enforcement [ORCHESTRATOR]
 
@@ -948,12 +959,6 @@ System hygiene checks — all READ-ONLY: each surfaces a candidate for the user 
 | unprocessed learning-log items | `memory/core-learning-log.md` |
 | Outcome-Record generation gaps | PostgreSQL `core.outcomes` |
 | `MEMORY.md` item freshness | user-facing memory index — report a stale item, never rewrite it |
-
-### Initializer Agent Pattern [ORCHESTRATOR]
-
-- Recommended to create context snapshot first when entering complex projects
-- Snapshot contents: project structure · core patterns · recent changes · caveats
-- Pass snapshot-based context to task agents → save initialization turns
 
 ### Numeric Threshold Adjustment Policy [ORCHESTRATOR]
 
@@ -1000,7 +1005,7 @@ Candidate practices, each carrying its own adoption trigger where one exists. Re
 
 #### Bilevel Meta-Optimization Loop
 
-- Every 10 tasks, aggregate Outcome Records → pattern analysis → generate instruction improvement candidates
+- Outcome-Record aggregation → pattern analysis → instruction-improvement candidates runs in the self-improvement daemon (`autoagent/daemon-cycle.sh`: `hooks/learning-aggregator.py` aggregates, `autoagent/daemon_cycle.py` builds the candidates); no orchestrator-side task counter drives it
 - **Self-goal-setting is forbidden** — an improvement candidate never becomes its own objective
 - **Which candidates need user approval is not decided here**: `core-learning-log.md` → Instruction Improvement Approval Tier is the canonical, and the orchestrator's operational delta is `### Self-Improvement User-Approval Trigger` below
 
@@ -1080,7 +1085,7 @@ Finished means a terminal record, never an inference. Three signals establish a 
   - **Read the tail, not the file**: sampled transcripts run 0.5-0.8 MB, so a full read is itself a budget event.
 - **(iii) The liveness ledger answers ABSENCE.**
   - `core.agent_events` (written by `hooks/agent-tracker.sh` on SubagentStart and SubagentStop) holds a Stop row per terminated agent; a Start with no Stop is a live agent.
-  - Only (iii) supports "no other writer is live" — the question `orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization guardrail (a) asks; (i) and (ii) enumerate only the terminations you observed.
+  - Only (iii) supports "no other writer is live" — the question `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → **Deciding "at a time"** asks; (i) and (ii) enumerate only the terminations you observed.
   - It carries no cwd or worktree column: it answers whether a child is live, never where.
 
 **Not completion signals** — substituting any of these is FORBIDDEN:
@@ -1164,22 +1169,29 @@ The deterministic Workflow-tool execution path: the orchestrator authors a JS wo
 
 Items 1-4 are the co-equal requirements consolidated at this file → "DEV-spawn 4-requirement pre-flight checklist"; none is a sub-clause of another.
 
+- The **`implementing` write** and **close token** items stand outside that checklist: no gate blocks on either, and each is backed by an advisory only.
+
 1. **entry-classify** — sizable → plan-ref · simple → `log('[ENTRY-CLASS] simple-task: <reason>')` / `meta.description`; the token clears ONLY the entry gate.
    - Sizable criteria: `orchestrator-role.md` → `## Delegation Workflow` Decision row · snippet: this file → "Entry-class token placement".
 2. **`[SIZE-EST]` self-attestation** — at every DEV spawn, in the same `log()` / `meta.description` home as the entry token.
-   - Format and honesty framing: `orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` bullet.
+   - Format and honesty framing: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 3. **DEV spawn** → {glass-atrium-qa-code-reviewer, dev-*} verify-stage BEFORE the first dev-* (skeleton: this file → `#### Pipeline Acceptance Criteria` · self-check: this file → `## Red Flags`).
 4. **`[AGENT-COMPOSITION]` declaration** — every DEV-spawning script carries exactly ONE declaration block in a `/* */` comment.
-   - Grammar and verdicts: `orchestrator-role.md` → `#### Ultracode declaration contract`.
+   - Grammar and verdicts: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`.
 5. **encode Decision outcomes into the script** — routed agentType per spawn, scoped target paths, the four probe verdicts.
    - The probes run before authoring; the engine executes but never substitutes for a probe.
 6. **typed agentType on every spawn**.
 7. **author within the engine's runtime self-cap** — the script sets no concurrency number of its own.
 8. **schema-mode resilience + the completion channel** — wrap schema-mode agents in `robustAgent` retry-on-null + `.filter(Boolean)`, and have every schema-mode `agent({schema})` reserve an optional `completion_block` string property, with the delegation prompt instructing the agent to fill it with the full multi-line `[COMPLETION]` block.
-   - Contract: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` · authoring detail: this file → `#### Resilient Workflow Authoring` · measured justification: `#### Completion-channel non-emission` below.
+   - Contract: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` · authoring detail: this file → `#### Resilient Workflow Authoring` · justification and re-derivation recipe: `#### Completion-channel non-emission` below.
 9. **`[DOC-ROUTE]` stamp** — the user explicitly requested a local destination → stamp the `[DOC-ROUTE] user-requested-local:` token in the script.
    - Never stamped without an actual explicit user request; snippet: this file → "[DOC-ROUTE] token placement" · self-check: `### Reflexive [DOC-ROUTE] stamping guard`.
-10. **PREVIEW before submit** — run `enforce-workflow-verify-stage.sh --lint <file>` as the final self-check.
+10. **`implementing` write** — before submitting the first DEV-spawning script that carries a plan-ref, record the plan at `implementing`; skip it when the plan is already past `doc_review`.
+    - Recipe: this file → `## Managed Document Completion (Direct Handling)` → Step 1.
+11. **close token** — a plan-referencing DEV-spawning script carries one form: the close form when it ends in the Reconcile & Close phase, or the deferral form naming the later script or step that closes the plan.
+    - A work item gated on an event (a merge, a deploy) lives in the script that performs that event, never only in a document.
+    - Grammar: `orchestrator-role.md` → `### Context Handoff Size` · phase: this file → `##### In-script verify-stage (ultracode)`.
+12. **PREVIEW before submit** — run `enforce-workflow-verify-stage.sh --lint <file>` as the final self-check.
     - It reads the raw script offline through the identical verdict dispatch: `exit 0` = passes the gate · `exit 2` prints the block reason.
     - `--lint --template` prints the canonical `[AGENT-COMPOSITION]`/entry/`[SIZE-EST]` scaffold.
     - Side-effect-free (no firing-trace line) and a convenience, not a gate — items 1-4 stay primary.
@@ -1196,15 +1208,18 @@ Boundary rule: **pre-enumerable condition → engine; semantic interpretation �
       - Why: in schema mode the engine frames StructuredOutput as the sole deliverable, so the agent does not reliably raw-save without the grant.
       - It departs from side-effect-free stages on purpose: building the wiki is glass-atrium-intel-researcher's core function.
       - Agent side: `glass-atrium-intel-researcher.md` → `### Raw Source Storage Pipeline` (Schema/Workflow-mode persistence clause).
-  - **Quality gates as explicit verify-stages** — the four serial Decision-phase probes, Plan Direction Verification (Stage-2 gate), Sprint Contract Gate, Pipeline Acceptance Criteria. The engine infers none of them; the orchestrator encodes each as a gate stage.
+  - **Quality gates as explicit verify-stages** — the four Decision-phase probes, Plan Direction Verification (Stage-2 gate), Sprint Contract Gate, Pipeline Acceptance Criteria. The engine infers none of them; the orchestrator encodes each as a gate stage.
 - **Non-brittleness**: Dynamic Workflows is a research preview — describe the layering principle, and do not hardcode preview-specific field names likely to churn.
 
 #### Hook layer split under the engine
 
 - Engine `agent()` spawns fire no `PreToolUse(Agent)` event (no `~/.claude/data/session-spawns/` trace), so `enforce-verification-gate.sh` is silently absent under ultracode.
 - The Stage-2 verify-stage is therefore authored in-script and declared in `[AGENT-COMPOSITION]`, which the `PreToolUse(Workflow)` gate backstops: this file → `#### Pipeline Acceptance Criteria` → "In-script verify-stage" · self-check: `### Missing-verify-stage guard (ultracode)`.
-- **Manual path, for contrast**: `enforce-verification-gate.sh` is a best-effort advisory, not a reliable backstop — reviewer + DEV spawned in one message race (write-after-read), giving a ~17% spurious advisory. The correct manual discipline spawns reviewer → DEV sequentially, DEV gated on the verdict.
-- Both disciplines are honor-system primary; only the ultracode side adds the fail-open `PreToolUse(Workflow)` backstop.
+- **Manual path, for contrast**: `enforce-verification-gate.sh` blocks (exit 2, `VGATE-REVIEWER-001`) an orchestrator-origin, plan-referencing DEV spawn with no glass-atrium-qa-code-reviewer spawn recorded in the session.
+  - Presence-only and fail-open: any earlier reviewer spawn in the session satisfies it, whatever plan or verdict it carried; a nested sub-worker origin gets a stderr advisory only.
+  - Reviewer + DEV spawned in one message race (write-after-read): the DEV read precedes the reviewer's completion stamp, so the DEV spawn is blocked.
+  - The correct manual discipline spawns reviewer → DEV sequentially, DEV gated on the verdict.
+- Both disciplines are honor-system primary; only the backstop KIND differs — a fail-open `PreToolUse(Agent)` reviewer-presence block on the manual path, a fail-open `PreToolUse(Workflow)` declaration check under ultracode.
 
 #### JS-authoring pitfalls (digest)
 
@@ -1219,37 +1234,34 @@ Remedies and the Bad/Good example: this file → `#### Resilient Workflow Author
 
 ##### Where the figure lives, and who may change it
 
-This sub-section is the measurement SoT for the completion-channel non-emission range: change the range here first, then propagate.
+This sub-section is the measurement SoT for the completion-channel non-emission share: change its shape here first, then propagate.
 
-- `hooks/enforce-workflow-verify-stage.sh` quotes the range so an author reading stderr needs no lookup. Each quoting site names this sub-section as the SoT:
+- `hooks/enforce-workflow-verify-stage.sh` quotes the share's shape so an author reading stderr needs no lookup. Each quoting site names this sub-section as the SoT:
   - the header's fifth-advisory-pass block
   - `print_completion_channel_advisory` (property-absent)
   - `print_completion_schema_absent_advisory` (schema-absent)
-  - A new quoting site joins this list; never fork the figure.
-  - Machine-checked: `hooks/test/workflow-gate-completion-channel.bats` asserts the range literal in that hook's stderr — change it here, then in the hook, or that suite goes red.
-- Why the SoT sits here: a hook message is a fixed nudge, whereas the dated measurement and its re-derivation recipe need a home that is re-read and re-run.
+  - A new quoting site joins this list; never fork the wording.
+  - Machine-checked: `hooks/test/workflow-gate-completion-channel.bats` asserts the shape phrase in that hook's stderr — change it here, then in the hook, or that suite goes red.
+- Why the SoT sits here: a hook message is a fixed nudge, whereas the re-derivation recipe needs a home that is re-read and re-run.
 
 ##### The figure, and the population it is measured over
 
-- **The figure ships as a range with its definitions inline, never as a bare percentage or fraction**: measured text-channel non-emission runs **16-25% depending on the window**.
+- **The figure ships as a shape with its definitions inline, never as a percentage or fraction**: text-channel non-emission **recurs on a share of runs that varies by window**.
 - **Population and non-emission are named by attribution-token membership** (`core.outcomes.attribution_source`), never by prose.
   - Why: a prose definition silently absorbs or drops a token it did not anticipate (`subagent-stop-missing` is one). A token on neither list stays outside the measurement until it is added to one.
   - **Population** = `hook-input` ∪ `completion-synthesized` ∪ `budget-truncation`.
   - **Non-emission** = `completion-synthesized` ∪ `budget-truncation` — the two synthesis arms.
   - **Excluded: `structuredoutput-derived`** — a schema-mode recording gap (the reserved property absent, or present and unfilled), not a text-channel non-emission; folding it in measures two failures as one number.
-    - The exclusion is stated, not left to inference, because it is the measurement's own subject; the figure it moves is given below.
+    - The exclusion is stated, not left to inference, because it is the measurement's own subject; to see what it moves, add the token to both of the recipe's token lists below.
   - **Excluded: `structuredoutput-completion`** (writer-emitted through the schema channel — a healthy row) and **`subagent-stop-missing`**.
 
 ##### Dated measurement, and how to re-derive it
 
-**Dated measurement — 2026-08-17, read-only against `core.outcomes`.** It is a measurement, not a maintained figure, and is not updated in place.
+**Dated measurement — kept outside the repository.** A figure read off one install's `core.outcomes` is that install's data, so none ships here; the recipe below measures yours.
 
-- Lifetime: **24.2% (660 of 2,730)**.
-- Trailing seven days: **15.3% (90 of 587)**.
-- Folding the excluded `structuredoutput-derived` arm back in gives **30.1% (890 of 2,960)** lifetime — what the exclusion is worth.
-- On that date the trailing window sits below the range's 16% floor; one window dipping under a floor is how a range behaves, not a correction to it.
+- The trailing window and the lifetime window can disagree; that is how a window-dependent share behaves, not a correction to either.
 
-**Re-derivation recipe — run this rather than trusting the figures above** (read-only, `psql -d glass_atrium -X`):
+**Re-derivation recipe — run this rather than trusting any quoted figure** (read-only, `psql -d glass_atrium -X`):
 
 ```sql
 WITH pop AS (
@@ -1273,7 +1285,7 @@ WHERE record_ts >= now() - interval '7 days';
 ```
 
 - Both windows come from one query over one membership list, so the two figures cannot disagree about the population.
-- Re-derive before quoting the range into a promotion decision, a review or a new copy — first run `SELECT attribution_source, count(*) FROM core.outcomes GROUP BY 1` to see whether a token outside both lists has appeared.
+- Re-derive before quoting the share into a promotion decision, a review or a new copy — first run `SELECT attribution_source, count(*) FROM core.outcomes GROUP BY 1` to see whether a token outside both lists has appeared.
 
 ##### Where the shipped check's claim stops
 
@@ -1313,6 +1325,7 @@ Approval is required for the delta only.
 - **On approval, record it**: stamp `[SCOPE-EXPANSION-APPROVED] <delta in one line> — user-approved <YYYY-MM-DD>` into the follow-up delegation, at the token-family placement (`orchestrator-role.md` → `### Context Handoff Size` → Attestation-token placement).
   - One-line grammar style of `[ENTRY-CLASS]` / `[SIZE-EST]` / `[DOC-ROUTE]` / `[PLAN-SUBSET]`.
   - It covers scope expansion only; a harness-path write approval is `orchestrator-role.md` → `## Harness Path Protection` → Rule 1, and neither substitutes for the other.
+- **Packaging**: an approved Decision-phase delta gets its own branch unless it needs the in-scope work for acceptance or neither landing order keeps the tree consistent; excess already built is exempt. Honor-system.
 - **Without approval**: delegating the excess is FORBIDDEN; excess already built is reported to the user and left awaiting disposition — automatic revert is FORBIDDEN (File Deletion Policy: undoing the work is itself an unapproved act).
 - **Honest backing — presence-checked only**: a hook can check that the token exists; whether an approval happened is the orchestrator's own claim, honor-system.
   - The token is emitted by the actor whose over-interpretation this protocol checks, so it never counts as an independent check — the independent axes are the reviewer's Stage-2 scope-fidelity verdict and the recorder's out-of-process scan.
@@ -1367,61 +1380,99 @@ Constraints on the whole procedure:
 
 ## Managed Document Completion (Direct Handling)
 
-The orchestrator oversees the `doc_status` completion transition for monitor-managed clauded-docs: when an agent invokes the shipped API, and the orchestrator's fallback role.
+The orchestrator records the stages of a document a DEV spawn builds from, from the first DEV spawn through its close at the delivery point.
 
-- **Shipped mechanism**: `doc_status` enum `progress` (DB default) / `done` · `PUT /api/clauded-docs/:id` for the transition · same-`folder_id` cascade · a `supersedes_id` revision chain (same-topic only; predecessor auto-transitioned to `done`).
 - **Target store and scope**: every `monitor.ClaudedDoc` managed doc (monitor-internal root); supersede and completion key on topic + `id`.
-- **Authoring-side lifecycle canonical**: `scope-report.md` → `### Document Lifecycle — completion + exposure routing` (`scope-planning.md` → `## Output Format Routing [PLANNING]` points at it).
+- **Stages** — `doc_status` takes one of these values (`monitor/src/server/routes/clauded-docs.ts` → `DOC_STAGES`); a POST without it stores `doc_review`:
+
+| Stage | Holds | Written by |
+|---|---|---|
+| `doc_review` | a document not yet built from — a plan awaiting approval, a reference, a standing tracker | its author |
+| `implementing` | a plan whose DEV work has started | the orchestrator (Step 1) |
+| `impl_review` | a plan whose reconciliation found gaps, the gap list written into it | the orchestrator (Step 3) |
+| `impl_done` | a folder member that reconciled N/N while another member is still open | the orchestrator (Step 3) |
+| `done` | a closed document | its closer (**Who closes**) |
+
+- **Only `done` cascades**: a `done` PUT on a folder member closes every member of that folder, whatever each member's stage; every other stage moves one document.
+- **Who closes** — keyed on whether a DEV spawn cites the document as its plan-ref; authoring-side canonical: `scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing`.
+
+| Document | Closer |
+|---|---|
+| a DEV spawn's plan-ref — a plan, spec, PRD, ADR or roadmap built from | the orchestrator, from the first DEV spawn through the close |
+| any other — its work ends at authoring (report, reference, research) | its author, once no work remains |
+
+- **Split of a close**: glass-atrium-qa-code-reviewer reconciles; the orchestrator performs only the stage writes and copies the reviewer's gap list into the document verbatim.
+  - Why: reconciling built work against a plan is produced content (`orchestrator-role.md` → `## Orchestrator Identity`); a stage write is coordination.
 
 ### Procedure
 
-Step 1 is the completing agent's transition, step 2 is the write-path decision that precedes any write, and step 3 is the orchestrator's fallback for a skipped step 1.
+Step 1 is the recipe every stage write uses, Step 2 the write-path decision before any new content, and Step 3 the close at the delivery point.
 
-#### Step 1 — done transition (completing agent)
+#### Step 1 — stage write recipe (orchestrator)
 
-The authoring agent that finished (glass-atrium-intel-planner / glass-atrium-intel-reporter) transitions `doc_status→done` once no work remains — it knows the completion point most precisely.
+- **`implementing`**: written before the plan's first DEV spawn, and skipped when the plan is already past `doc_review`.
+  - Manual path: before the first DEV Agent call carrying the plan-ref.
+  - Ultracode: before submitting the first DEV-spawning script.
+- **Recipe**: GET the document, then re-PUT its unchanged body with `expected_hash`, `doc_status` and `last_status_model` (the running model id); on `409 hash_conflict`, re-GET and retry once.
+  - The body goes in the field of the stored `format` (`<format>_body`): another format's field converts the document (HTML↔plain) or is rejected `400` (plain↔plain).
+  - An omitted `last_status_model` stores a null status actor.
+  - A status-only PUT (bare `{"doc_status":…}`) → `400 invalid_body`.
 
-- `PUT /api/clauded-docs/:id` requires a body field (`html_body` for HTML-primary rows) plus an optimistic-lock `expected_hash`; a bare `{"doc_status":"done"}` returns `400 invalid_body`.
-- **Two paths** satisfy that requirement:
-  - **Human path (primary UX)**: the viewer's done-toggle (`doc-status-toggle`) re-sends the stored body and hash.
-  - **Agent/CLI path**: GET, then re-PUT the unchanged body with the lock hash and the new status; the server sees body-unchanged + status-diff and fires a status-only cascade (HTTP 200):
-    ```
-    HASH=$(curl -sf http://127.0.0.1:16145/api/clauded-docs/123 | jq -r '.content_hash')
-    BODY=$(curl -sf http://127.0.0.1:16145/api/clauded-docs/123 | jq -r '.body')
-    curl -sf -X PUT http://127.0.0.1:16145/api/clauded-docs/123 -H 'content-type: application/json' \
-      --data "$(jq -n --arg b "$BODY" --arg h "$HASH" '{html_body:$b, expected_hash:$h, doc_status:"done"}')"
-    ```
+  ```sh
+  DOC=$(curl -sf http://127.0.0.1:16145/api/clauded-docs/123)
+  curl -sf -X PUT http://127.0.0.1:16145/api/clauded-docs/123 -H 'content-type: application/json' \
+    --data "$(jq -n --argjson d "$DOC" --arg s implementing --arg m '<running model id>' \
+      '{($d.format + "_body"): $d.body, expected_hash: $d.content_hash, doc_status: $s, last_status_model: $m}')"
+  ```
 
 #### Step 2 — supersede vs new document (decision tree)
 
-When new content arises, decide the path before any write. Two axes decide it: topic-sameness, and — for a same-topic `progress` predecessor — whether this is a Stage-2 revise cycle.
+When new content arises, decide the path before any write. Two axes decide it: topic sameness, and the predecessor's stage — at `doc_review`, also whether this is a Stage-2 revise cycle.
 
 | Topic | Predecessor | Path |
 |-------|-------------|------|
 | same topic | `done` | **supersede** — new POST with `supersedes_id` set |
-| same topic | `progress`, and NOT a Stage-2 revise cycle | **PUT-edit** the existing document (continue working the same doc) |
-| same topic | `progress`, and returned `revise`/`infeasible` by the Stage-2 gate | **supersede-POST** — new POST with `supersedes_id` set, NEVER a PUT-edit |
+| same topic | `doc_review`, and NOT a Stage-2 revise cycle | **PUT-edit** the existing document (continue working the same doc) |
+| same topic | `doc_review`, and returned `revise`/`infeasible` by the Stage-2 gate | **supersede-POST** — new POST with `supersedes_id` set, NEVER a PUT-edit |
+| same topic | `implementing` · `impl_review` · `impl_done` | **supersede-POST at the predecessor's stage** — the new POST carries its `doc_status` |
 | unrelated topic | any | **new-document POST** (`supersedes_id` omitted) |
 | topic-relatedness uncertain | any | default to a **new POST**, never reopen a done document |
 
 Row notes, and the rule binding every row:
 
 - **A `done` document MUST NOT be reopened or edited** — revisions reach it only via supersede.
-- **supersede** (predecessor `done`): the monitor auto-transitions the predecessor to `done`.
-- **supersede-POST** (the Stage-2 revise carve-out; gate: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`): the only branch where a `progress` predecessor is superseded.
+- **Every supersede-POST** sends `last_status_model`: the monitor sets the predecessor to `done` under that actor.
+- **supersede-POST at the predecessor's stage**: GET the predecessor for its stage; the revision stays open, so a mid-implementation revision stays on the session-start open-plan list.
+- **supersede-POST** (the Stage-2 revise carve-out; gate: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`): the only branch where a `doc_review` predecessor is superseded.
   - Why: it makes the reviewed revision an immutable, fetchable chain root the revising actor cannot rewrite, so the next pass compares against the origin rather than the declaration that actor just authored.
   - The completing agent's own duty, including what the chain root must contain: `scope-report.md` → `### Document Lifecycle — completion + exposure routing`.
-- **new POST on uncertain relatedness** breaks ties because the cost is asymmetric: a surplus new document is cheap and recoverable, whereas reopening a done document regresses progress.
-- **Residual — the per-cycle persist-path choice is honor-system and fails open silently**: no hook tells a revise-case PUT-edit from a sanctioned same-topic `progress` edit.
+- **new POST on uncertain relatedness** breaks ties because the cost is asymmetric: a surplus new document is cheap and recoverable, whereas reopening a done document undoes a close.
+- **Residual — the per-cycle persist-path choice is honor-system and fails open silently**: no hook tells a revise-case PUT-edit from a sanctioned same-topic `doc_review` edit.
   - Skipping the carve-out raises no error: no chain root is created, the next Stage-2 pass has no immutable comparand, and the scope-fidelity check degrades to the declaration it exists to replace.
   - That is why the duty sits in the completing agent's own loaded rules rather than in the delegation asking for the edit: a control the acting agent can suspend by phrasing is not a control.
 
-#### Step 3 — Monitoring-phase omission fallback (orchestrator)
+#### Step 3 — delivery-point close (orchestrator)
 
-During the Monitoring phase, verify the completed deliverable's `doc_status`.
+At the delivery point — the last phase that delivers the plan's work (merge or deploy) — glass-atrium-qa-code-reviewer reconciles, and its verdict, with the correctness gates, decides the stage write.
 
-- Still `progress` while the work is finished → apply the `done` transition as a fallback (the completing agent omitted it).
-- The completing agent remains the primary trigger; this is the orchestrator's correction role.
+- **Where it runs**:
+  - Ultracode: the script's terminal Reconcile & Close phase (`##### In-script verify-stage (ultracode)`), or the later script or step its deferral close token names.
+  - Manual path: a reviewer spawn after the delivering step.
+- **Delegation inputs**: the plan's document id and the `[SCOPE] files=` line of each DEV delegation built from it.
+- **Verdict**: coverage N/N over the plan's work streams, the excess, and the gap list.
+- **Excess**: route it through `### Scope-Expansion Approval Protocol` before any `done` or `impl_done` write; silent acceptance is forbidden.
+- **Stage write**, by the Step 1 recipe:
+
+| Verdict | Stage write |
+|---|---|
+| gaps (coverage below N/N) | `impl_review`, the gap list appended to the body verbatim |
+| N/N, no excess outstanding, correctness gates passed, no folder | `done` |
+| N/N, no excess outstanding, correctness gates passed, every other folder member at `impl_done` or `done` | `done` — the PUT closes the whole folder |
+| N/N, no excess outstanding, correctness gates passed, another folder member at any other stage | `impl_done` — the last member to pass closes the folder |
+
+- **Correctness gates** — judged outside the reviewer's verdict (`rules/glass-atrium/orchestrator-role.md` → `## Document-Driven Workflow` step 5); until they pass, write neither `done` nor `impl_done`.
+- **Folder check** — on an N/N verdict, before choosing `done` or `impl_done`: the GET returns `folder_id`; a non-null id → `GET /api/clauded-docs?folder_id=<id>&limit=200` (no slash before `?`) and read each member's `doc_status`.
+- **Gap-list write**: the one stage write that changes the body — the stored body plus the reviewer's gap list, appended verbatim in the document's own format; it is a stage write, not new content under Step 2.
 
 ## Common Rationalizations
 
@@ -1439,11 +1490,11 @@ Signals that an orchestration is defective: the scan list, then the named guards
 
 - Orchestrator session contains `Edit` or `Write` tool calls for non-exception files
 - Sub-agent invoked without every element of `#### Delegation required elements`
-- Two index-mutating agents in one worktree, regardless of file overlap (`orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization (a))
+- Two index-mutating agents in one worktree, regardless of file overlap (`rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Index-owner rule**)
 - Pipeline stage started before the prior stage's acceptance criteria are verified
 - A very large fan-out (well beyond a normal team) composed without reasoning in `reason` about synthesis value and total-session token cost
 - `background: true` + `isolation: worktree` used together (Issue #33045)
-- Free-text delegation prompt without structured format or English domain keywords
+- Free-text delegation prompt without structured format
 - Sub-agent chain depth > 2 (orchestrator → worker → sub-worker) — nesting forbidden (`orchestrator-role.md` → `### Spawn Budget`)
 - A single Wave fanning out beyond the Workflow engine's runtime concurrency self-cap — split into sequential Waves
 - Routing decided by keyword/alias match instead of `domains` semantic match
@@ -1461,9 +1512,9 @@ A DEV-spawning workflow without a `{glass-atrium-qa-code-reviewer, DEV}` verify-
 
 #### Pre-submit self-check — run before submitting ANY DEV-spawning Workflow script
 
-Covers the gate's DEV-relevant block branches plus the verdict-gating the gate cannot see; the doc-routing leak is a separate gate branch with its own stderr.
+Covers the gate's DEV-relevant block branches, the plan-stage rows its advisories back, and the verdict-gating the gate cannot see; the doc-routing leak is a separate gate branch with its own stderr.
 
-- **Run the offline lint first** (`### Ultracode / Workflow-tool Mode` → pre-flight item 10): it mechanically covers every table row marked `lint`, and none of the obligations the gate cannot verify (listed after the table).
+- **Run the offline lint first** (`#### Workflow pre-flight (run before EVERY Workflow call)` → **PREVIEW before submit**): it mechanically covers every table row marked `lint`, and none of the obligations the gate cannot verify (listed after the table).
 - Then confirm each check:
 
 | Check | Pass when | Fails as |
@@ -1475,24 +1526,30 @@ Covers the gate's DEV-relevant block branches plus the verdict-gating the gate c
 | declaration matches the code | declared roles all spawn · code dev types all declared · `impl-computed:` types have data literals | `block-declspawn` · `block-undecl` · `block-computed` · `lint` |
 | reviewer present and first | a reviewer spawn exists, and no declared impl `dev-*` spawn precedes every reviewer | `block-norev` · `block-order` · `lint` |
 | JS parse hazards | no bash `${…}` form and no nested backtick inside `${…}` in a template literal | Workflow parse error |
+| `implementing` write | the plan the plan-ref cites is at `implementing` or a later stage before submit | `implementing` advisory — stderr only |
+| close token | the close form with a terminal Reconcile & Close phase, or the deferral form naming the closing step | close-token advisory — stderr only |
 
 Each BLOCK and `block-*` verdict exits 2. Detail lives at its single site:
 
-- grammar, verdicts and the upstream waiver — `orchestrator-role.md` → `#### Ultracode declaration contract`;
+- grammar, verdicts and the upstream waiver — `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`;
 - sentinel placement and the opts `agentType:` literal a spawn needs — `##### In-script verify-stage (ultracode)`;
 - the two parse-hazard forms and their remedies — `##### JS parse hazards (a workflow script is plain JavaScript)`;
-- a pre-verify Discovery `dev-*` tripping the ordering check — ``### Pre-verify Discovery `dev-*` order guard (ultracode)``.
+- a pre-verify Discovery `dev-*` tripping the ordering check — ``### Pre-verify Discovery `dev-*` order guard (ultracode)``;
+- the stage write and the close — `## Managed Document Completion (Direct Handling)`; the close-token grammar — `orchestrator-role.md` → `### Context Handoff Size`.
 
 Obligations the gate cannot verify:
 
 - implementation is gated on the combined `pass`+`feasible` verdict, and the DEV verdict is a genuine hard gate (no pass without `feasible`);
-- the declaration is truthful — a lying declaration passes the gate and still violates this discipline.
+- the declaration is truthful — a lying declaration passes the gate and still violates this discipline;
+- the close token is truthful — a close form needs the terminal Reconcile & Close phase in the same script.
 
 ### Pre-verify Discovery `dev-*` order guard (ultracode)
 
 A `dev-*` used for Discovery/Design analysis ahead of the `glass-atrium-qa-code-reviewer` verify spawn precedes every reviewer, so it trips `block-order` although it is not the implement stage.
 
-- Fix, by either route of `orchestrator-role.md` → `#### Ultracode declaration contract` (pre-verify Discovery/Design bullet): a non-DEV Discovery agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`), or a reviewer-first `{qa,dev}` Contract phase before any Discovery `dev-*`.
+- Fix, by either route of `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md` (pre-verify Discovery/Design bullet):
+  - a non-DEV Discovery agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`);
+  - or a reviewer-first `{qa,dev}` Contract phase before any Discovery `dev-*`.
 - Skeleton: `#### Pipeline Acceptance Criteria` → "In-script verify-stage" 3-phase variant.
 
 ### Reflexive [DOC-ROUTE] stamping guard
@@ -1512,8 +1569,8 @@ A spawn without an `agentType` matching the routing decision starts a generic su
 ## Verification
 
 - [ ] **Delegation completeness**: every sub-agent invocation carries every element of `#### Delegation required elements` (spot-check 2-3 recent delegations)
-- [ ] **File ownership**: no two agents in one Wave/Team mutate the index in one worktree (`orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization (a)); within a worktree, an explicit ownership matrix
+- [ ] **File ownership**: no two agents in one Wave/Team mutate the index in one worktree (`rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Index-owner rule**); within a worktree, an explicit ownership matrix
 - [ ] **Pipeline acceptance**: each stage transition has documented acceptance-criteria verification
 - [ ] **Outcome Record**: every completed task has an Outcome Record with the minimum fields (agent, task_type, result)
-- [ ] **Domain-keyword hints (recommended, not routing keys)**: delegation prompts include the target agent's recommended domain keywords as prompt content; routing stays capability-based
+- [ ] **Domain-keyword hints (optional, not routing keys)**: where a delegation pairs keywords, they come from the target agent's registry `domains`; routing stays capability-based
 - [ ] **Compatibility precondition**: a candidate declaring a `compatibility` field had its runtime precondition confirmed pre-spawn — halt and remediate when unmet (`orchestrator-role.md` → `### Phase Notes` → Compatibility Probe)

@@ -21,6 +21,8 @@
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/pre-compact.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "pre-compact.sh not found: ${HOOK_SH}"
@@ -37,7 +39,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${PC_TMP:-}" && -d "${PC_TMP}" ]] && rm -rf -- "${PC_TMP}" || true
+  if ga_guard_path "${PC_TMP:-}"; then rm -rf -- "${PC_TMP:?}"; fi
 }
 
 # A shim that counts invocations (one byte per call, gated on the env var) then execs the real binary.
@@ -209,7 +211,8 @@ EOF
   [[ "${full}" == *"## Recent outcomes (newest 5)"* ]] || return 1
   [ "$(printf '%s\n' "${full}" | grep -c '^| ')" -eq 6 ] || return 1
   [[ "${full}" != *"old_a.md"* ]] || return 1
-  rm -f "${HOME_C}/.claude/compact-backups/"*_survival.md
+  # whole backup dir, not the packet glob: the hook recreates it, so packet_tail reads run 2 only
+  if ga_guard_path "${HOME_C}"; then rm -rf -- "${HOME_C:?}/.claude/compact-backups"; fi
 
   # Operator K=3 (< corpus): the newest 3 are all `done` → the older active CIDs are windowed OUT of
   # the CORRELATION scan (documented operator bound) — NOT a silent full drop.

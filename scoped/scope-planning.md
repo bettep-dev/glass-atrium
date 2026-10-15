@@ -6,7 +6,7 @@ Maintainer material — co-edit rosters, delivery status and the machine-read po
 
 ## Absolute Rules [PLANNING]
 
-Final authority on an ambiguous PLANNING rule is this file, whole; this section concentrates that authority rather than narrowing it to itself. Corpus-wide precedence order: `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution`.
+Final authority on an ambiguous PLANNING rule is this file, whole; this section concentrates that authority rather than narrowing it to itself. Corpus-wide precedence order: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution`.
 
 - **No code in plans**: SQL, TS, pseudocode and new function-name proposals are FORBIDDEN — code authoring is the DEV agent's domain.
   - The prohibition covers the IMPLEMENTATION a plan prescribes. The presentation carrier of a user-requested HTML primary — Tailwind classes, Mermaid source, the claim-marking tags below — is the deliverable's own form, not plan content.
@@ -17,7 +17,10 @@ Final authority on an ambiguous PLANNING rule is this file, whole; this section 
 
 The request-driven emission model — three emission modes · HTML request test · POST tuple · document lifecycle · visual floor · D8 thresholds — enters at `scoped/scope-report.md` → `## Output Format Routing [REPORT]`. Its rules are canonical at more than one site; `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` names the canonical of each.
 
-The copy the planner applies, the `[DOC-ROUTE]` exception to the turn-0 routing gate included, is `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`.
+The copy the planner applies sits in `agents/glass-atrium-intel-planner.md`:
+
+- `## Output Format Routing` — routing, including the `[DOC-ROUTE]` stamp in the turn-0 routing gate.
+- `## Document Lifecycle` — document stages and closing.
 
 ## Pre-drawing Doctrine [PLANNING]
 

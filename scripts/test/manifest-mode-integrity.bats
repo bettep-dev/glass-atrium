@@ -29,6 +29,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # Octal permission of a file — BSD stat (macOS) first, GNU coreutils fallback.
 # Output-validated: GNU `stat -f` is FILESYSTEM status (exit 0, "?p" garbage for
@@ -49,7 +51,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX:-}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Throwaway git fixture holding a COPY of the generator (GA_ROOT = the fixture), one
@@ -62,6 +64,7 @@ make_gen_fixture() {
   # the generator sources the spine for the retired-map family bar and refuses
   # (exit 7) without it, so the fixture root carries the library too.
   cp -p -- "${GA}/scripts/lib/apply-spine.sh" "${FIX}/scripts/lib/apply-spine.sh"
+  cp -p -- "${GA}/scripts/lib/path-guard.sh" "${FIX}/scripts/lib/path-guard.sh"
   printf '#!/usr/bin/env bash\nprintf ok\n' >"${FIX}/hooks/probe.sh"
   chmod 755 "${FIX}/hooks/probe.sh"
   printf 'agent body\n' >"${FIX}/agents/a.md"
@@ -89,6 +92,7 @@ make_install_fixture() {
   printf '#!/usr/bin/env bash\nexit 0\n' >"${BUNDLE_ROOT}/glass-atrium"
   chmod 755 "${BUNDLE_ROOT}/glass-atrium"
   cp -p -- "${GA}/scripts/lib/apply-spine.sh" "${BUNDLE_ROOT}/scripts/lib/apply-spine.sh"
+  cp -p -- "${GA}/scripts/lib/path-guard.sh" "${BUNDLE_ROOT}/scripts/lib/path-guard.sh"
   h_probe="$(shasum -a 256 "${BUNDLE_ROOT}/hooks/probe.sh" | awk '{print $1}')"
   h_launcher="$(shasum -a 256 "${BUNDLE_ROOT}/glass-atrium" | awk '{print $1}')"
   h_spine="$(shasum -a 256 "${BUNDLE_ROOT}/scripts/lib/apply-spine.sh" | awk '{print $1}')"
@@ -437,4 +441,19 @@ SHIM
   # function; this pins the call sites.
   [ "$(grep -c 'update_enforce_manifest_modes "${manifest}" "${root}"' \
     "${GA}/scripts/update.sh")" -eq 2 ] || return 1
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

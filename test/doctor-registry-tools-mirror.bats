@@ -40,8 +40,12 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 CONTRACT="${GA}/test/doctor-summary-contract.bats"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   # Loud, never `skip`, for the two SHIPPED tree members: their absence is a broken
   # tree rather than an unmet environment, and skipping would turn a deletion of the
   # section or its delegate into a fully-skipped GREEN suite. The daemon green gate
@@ -70,7 +74,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # One synthetic agent body. `tools:` is the frontmatter SoT the mirror is compared against; the

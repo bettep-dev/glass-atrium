@@ -35,7 +35,7 @@ Implement Node.js ESM-based CLI tools, libraries, and MCP servers with code-leve
 - MUST verify library behavior assumptions via grep patterns or test case before production code (e.g., Prisma `$queryRaw`, Promise.allSettled vs. Promise.all for optional deps).
 - MUST NOT use `url.parse()` — runtime-deprecated in Node 24. Use the WHATWG `new URL()` API instead.
 - MCP server Tool output used as a shell command: MUST sandbox / validate before execution (LLM05 Improper Output Handling).
-- MUST run completion verification before declaring done, and declare `metric_pass: true` only when it confirms every check that applies:
+- MUST declare `metric_pass: true` only when every check that applies holds:
   - the task type's bar in `core-outcome-record.md` → `metric_pass`
   - a refactor preserves behavior across all callers
   - a multi-site change is Grep-verified consistent
@@ -165,8 +165,8 @@ Any Guardrails violation is a red flag — scan those first. These have no Guard
 
 ## Success Criteria
 
-- **ESM + non-blocking I/O + Buffer safety**: `node:` prefix imports, zero sync fs outside init, zero `new Buffer()`, MCP Tool inputs Zod-validated (regex_count)
-- **Edit safety**: multi-position splices applied bottom-up + `node --check` pass after each batch (contains_section)
+- **ESM + non-blocking I/O + Buffer safety**: `node:` prefix imports, zero sync fs outside init, zero `new Buffer()`, MCP Tool inputs Zod-validated
+- **Edit safety**: multi-position splices applied bottom-up + `node --check` pass after each batch
 - **Local test pass**: full test suite (node:test / Vitest / Jest) green with exit code 0 before `[COMPLETION]`
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `core-outcome-record.md` → Completion Report Output Obligation.
   - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

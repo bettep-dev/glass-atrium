@@ -139,6 +139,18 @@ enum LearningStatus {
   approved
   applied
   rejected
+  // Non-terminal: the aggregator's failed pair verdict or the daemon's roster mismatch.
+  // Returns to identified only on a new passing detection + confirmation pair.
+  dormant
+
+  @@schema("core")
+}
+
+// Closed set of per-pattern metrics a learning_log row is measured on.
+// A row with no key has no metric → not eligible for generation.
+enum MetricKey {
+  budget_overage
+  emit_failure
 
   @@schema("core")
 }
@@ -169,6 +181,9 @@ enum ProposalStatus {
   // Never set by the daemon (post-apply regression watch is DETECTION-ONLY);
   // read by drop_reverted_patterns + the reject-streak look-past.
   reverted
+  // Terminal without a gate verdict (supersede, back-off, quota, auth, skipped,
+  // parked) — keeps `rejected` meaning a real verdict only.
+  unadjudicated
 
   @@schema("core")
 }
@@ -277,6 +292,11 @@ model CostEvent {
   numTurns            Int      @map("num_turns")
   stopReason          String?  @map("stop_reason") @db.VarChar(64)
   model               String?  @db.VarChar(128)
+  // Last non-null `effort` on the row's assistant records (transcript order); NULL = none carried it.
+  // VARCHAR, not an enum: an unseen harness tier must not reject the whole row.
+  effort              String?  @db.VarChar(16)
+  // TRUE = those records held more than one distinct tier; NULL whenever effort is NULL.
+  hasMixedEffort      Boolean? @map("has_mixed_effort")
   parseError          Boolean  @map("parse_error")
   rawInput            String?  @map("raw_input") @db.VarChar(500)
   insertedAt          DateTime @default(now()) @map("inserted_at") @db.Timestamptz(6)
@@ -307,6 +327,39 @@ model AgentEvent {
   @@index([eventTs], map: "agent_events_ts_idx")
   @@index([agentType, eventTs], map: "agent_events_type_ts_idx")
   @@map("agent_events")
+  @@schema("core")
+}
+
+/// One row per MANIFEST line (hooks/inject-scope-rules.sh → append_manifest_log), written by the
+/// daemon's MANIFEST ingest through _pg_dual_write_daemon.py. (spool, line_offset) is the ingest
+/// position and the only position state → a re-read of a spool inserts nothing twice.
+model SpawnManifest {
+  id         BigInt   @id @default(autoincrement())
+  // Spool file name, unique per rename of the live log
+  spool      String
+  // 0-based line ordinal within the spool, not a byte offset
+  lineOffset Int      @map("line_offset")
+  // NULL = the line's id was `unknown`; never unique → several NULL rows coexist
+  agentId    String?  @map("agent_id")
+  agentType  String   @map("agent_type") @db.VarChar(64)
+  // NULL = no session id recorded on the line (a line predating the field)
+  sessionId  String?  @map("session_id")
+  startedAt  DateTime @map("started_at") @db.Timestamptz(6)
+  ctxBytes   Int      @map("ctx_bytes")
+  blocks     String
+  // Canary exposure fields of the line (inject-scope-rules.sh → get_canary_exposure_fields), same writer.
+  // 1 = treatment, 0 = control; NULL = no arm (no readable salt, no digest tool, agent_id `unknown`)
+  arm           Int?     @db.SmallInt
+  // Salt read from the canary file = the core.autoagent_trial_ledger.id the daemon wrote there (open trial's start or latest restart row); NULL = none read
+  saltId        BigInt?  @map("salt_id")
+  // NULL = the line predates the exposure fields → the four are all NULL
+  delivered     Boolean?
+  // sha256 hex of the delivered canary text; NULL unless delivered
+  deliveredHash String?  @map("delivered_hash") @db.VarChar(64)
+
+  @@unique([spool, lineOffset], map: "spawn_manifest_spool_line_offset_key")
+  @@index([agentId], map: "spawn_manifest_agent_id_idx")
+  @@map("spawn_manifest")
   @@schema("core")
 }
 
@@ -342,7 +395,7 @@ model Outcome {
   //   - agent-id-missing       : Python label-clarification 분기
   //   - subagent-stop-missing  : R1 인스트루멘테이션 라벨
   //   - completion-missing     : [COMPLETION] block 부재 감지 (관측 라벨)
-  //   - conversation-only      : Tier-3 fallback — turn 0 tool_use (95.1% 노이즈 식별)
+  //   - conversation-only      : Tier-3 fallback — turn 0 tool_use (노이즈 식별)
   //   - truncated_completion   : Tier-2 fallback — open tag + close tag 부재 (실 truncation)
   //   - completion-synthesized : block 부재 → outcome-record.sh 결정론 합성 record (복구 산출물 · 2026-05-29 추가)
   //   - budget-truncation      : subagent 예산 초과 truncation 라벨 (dual-write source · 9번째 값)
@@ -395,6 +448,21 @@ model Outcome {
   // unverified), so the withheld-versus-inapplicable split has no other carrier — review_flag_reasons
   // encodes the contradiction verdict only. NULL = cross-check never attempted, distinct from `na`.
   graderCrosscheck  GraderCrosscheck? @map("grader_crosscheck")
+  // Subagent's own tier — last non-null `effort` on its transcript's assistant records, at SubagentStop.
+  // NULL = no assistant record carried it, or a row predating the carrier.
+  // VARCHAR, not an enum: an unseen harness tier must not reject the whole outcome row.
+  effort            String?       @db.VarChar(16)
+  // TRUE = the transcript held more than one distinct tier; NULL whenever effort is NULL.
+  hasMixedEffort    Boolean?      @map("has_mixed_effort")
+  // Spawn provenance, recorded by track-outcome.sh at SubagentStop. NULL = not recorded:
+  // a main-session row, or a row predating the carrier.
+  // agent_id — the raw envelope id; joins core.spawn_manifest.agent_id.
+  agentId           String?       @map("agent_id")
+  // session_id — the envelope's parent session id.
+  sessionId         String?       @map("session_id")
+  // The recorder's own correction-detector verdict, stored beside the agent-emitted
+  // correction fields and independent of them.
+  userCorrectionDetected Boolean? @map("user_correction_detected")
   // TRUE = 오염 윈도우 격리 행 (2026-05-24 .. 2026-06-06 18:04 KST · metric_pass=false ·
   // grader_verdict NULL) — 학습 파이프라인 소비자가 제외해야 할 quarantine 플래그.
   // raw-SQL 런북(maintenance/poisoned-window-quarantine)만 set — writer/grader 미기입.
@@ -458,6 +526,10 @@ model LearningLog {
   /// 2026-05-04 #26-pre: status 전이 audit 컬럼. PATCH /api/learning/patterns/:id/status 활성화 (사용자 명시 §8 권한 가드).
   lastTransitionAt     DateTime?      @map("last_transition_at") @db.Timestamptz(6)
   lastTransitionReason String?        @map("last_transition_reason") @db.VarChar(500)
+  // Written by learning-aggregator.py → upsert_learning_pattern. NULL = keyless pattern.
+  metricKey            MetricKey?     @map("metric_key")
+
+  proposals AutoagentProposal[]
 
   @@unique([patternSignature], map: "learning_log_pattern_uniq")
   @@index([discoveredDate], map: "learning_log_date_idx")
@@ -546,15 +618,19 @@ model AutoagentProposal {
   //   A row that reached its status by any other path carries no timestamp, and
   //   that absence is the defined value, not a gap.
   // reviewedBy — the actor that produced the row's CURRENT status, whatever kind
-  //   of transition it was. Every status writer stamps it. Closed token set, each
-  //   inside VarChar(64), one per writer — a shared default would file one
-  //   writer's rows under another:
+  //   of transition it was. Every status writer stamps it but the unadjudicated
+  //   backfill, which relabels status only and keeps the stored actor: a NULL stays
+  //   NULL, so lib/ga-doctor.sh → _pg_proposal_actor_probe still counts the row as
+  //   naming no actor. Closed token set, each inside VarChar(64), one per writer —
+  //   a shared default would file one writer's rows under another:
   //     `monitor-user` — operator route (kept verbatim; live rows carry it)
   //     `daemon-apply-flip` — apply flip
   //     `daemon-apply-drain` — stale drain
   //     `daemon-cycle-parked-guard` — parked guard
   //     `daemon-cycle-supersede` — machine supersede, NOT a review: an unadjudicated
   //       termination gets its own token and never the operator's
+  //     `daemon-cycle-generation-closed` — generation-closed terminalization, NOT a
+  //       review: a stored pending auto row closed while generation is off
   //     `daemon-cycle-push` — cycle push
   //     `updater-resolved-gap` — updater resolved-gap accountability row
   //     `status-backfill` — status backfill
@@ -571,6 +647,13 @@ model AutoagentProposal {
   // hasher or config lib) reads as ABSENT rather than as a recorded sample.
   appliedBodySha256 String? @map("applied_body_sha256") @db.VarChar(64)
   appliedModelId    String? @map("applied_model_id") @db.VarChar(64)
+  // Stamped at proposal insert by _pg_dual_write_daemon.py → write_autoagent_proposal.
+  // NULL = not recorded (a row predating the stamp). Changes whenever the generator's input set changes.
+  generatorInputVersion String? @map("generator_input_version") @db.VarChar(64)
+  // Pattern the proposal was generated from, same writer. NULL = no pattern recorded,
+  // or the pattern row was deleted (ON DELETE SET NULL).
+  learningPatternId BigInt? @map("learning_pattern_id")
+  learningPattern   LearningLog? @relation(fields: [learningPatternId], references: [id], onDelete: SetNull, map: "autoagent_proposals_learning_pattern_id_fkey")
   indexedAt       DateTime               @default(now()) @map("indexed_at") @db.Timestamptz(6)
 
   // Phase 3 (2026-05-02 ADR R2 step 1) — pre-verify 4-axis verdict snapshot.
@@ -625,6 +708,103 @@ model AutoagentProposal {
   @@schema("core")
 }
 
+/// Source: autoagent/daemon-apply.sh — one row per apply that landed bytes in an
+/// agent file, keyed by apply time. The queryable copy: the JSONL applied row holds
+/// the same record and survives the database drop that removes this table.
+/// An incomplete index → a flip or record-step failure, an exit-12 flip and a backfill
+/// flip leave no row here, so a watermark reader cross-checks the JSONL applied rows.
+///
+/// Append-only via migration raw SQL only (20261002000000_add_autoagent_apply_records);
+/// the Prisma DSL declares neither part, so a squash MUST carry that SQL:
+///   - trigger autoagent_apply_records_append_only → rejects UPDATE, DELETE, TRUNCATE
+///   - CHECKs → both hashes a whole 64-hex digest, landed_diff non-empty
+/// Guards app code paths, not a security boundary: the owning role can disable the
+/// trigger, session_replication_role=replica skips it, and a DROP fires nothing.
+model AutoagentApplyRecord {
+  id BigInt @id @default(autoincrement())
+
+  // Proposal identity copied in, no relation: ids get reused across database drops
+  proposalId   BigInt   @map("proposal_id")
+  cycleDate    DateTime @map("cycle_date") @db.Date
+  patternLabel String   @map("pattern_label") @db.VarChar(256)
+  targetFile   String   @map("target_file")
+  targetAgent  String?  @map("target_agent") @db.VarChar(64)
+
+  // Landing instant, same as the JSONL row's; no default → an insert omitting it fails
+  appliedAt DateTime @map("applied_at") @db.Timestamptz(6)
+  // apply_diff branch that landed: `recount` (located diff) | `eof-append` (header-less fragment)
+  strategy  String   @db.VarChar(16)
+
+  beforeSha256 String  @map("before_sha256") @db.VarChar(64)
+  afterSha256  String  @map("after_sha256") @db.VarChar(64)
+  // Before-image → verified target, never the proposal text: --recount can land at an offset
+  landedDiff   String  @map("landed_diff")
+  // Null = the worker model id was unresolvable (fail-open config helper)
+  modelId      String? @map("model_id") @db.VarChar(64)
+
+  // Watermark reads: applied_at range, id as the keyset tie-break
+  @@index([appliedAt, id], map: "autoagent_apply_records_applied_at_idx")
+  @@map("autoagent_apply_records")
+  @@schema("core")
+}
+
+/// Trial ledger — one row per trial event, plus cycle-level rows that belong to no trial.
+///
+/// Append-only via migration raw SQL only (20261008000000_add_trial_ledger_and_cycle_verdicts);
+/// the Prisma DSL declares neither part, so a squash MUST carry that SQL:
+///   - trigger autoagent_trial_ledger_append_only → rejects UPDATE, DELETE, TRUNCATE
+///   - CHECKs → trial_key a whole 64-hex digest; event, actor and dedupe_key non-empty
+/// Guards app code paths, not a security boundary (same limits as AutoagentApplyRecord).
+model AutoagentTrialLedger {
+  id         BigInt   @id @default(autoincrement())
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  // Whole 64-hex trial key composed by the ledger writer; NULL on cycle-level rows
+  trialKey          String? @map("trial_key") @db.VarChar(64)
+  agent             String? @db.VarChar(64)
+  // No relation to LearningLog: an FK action on a learning_log delete would UPDATE an append-only row
+  learningPatternId BigInt? @map("learning_pattern_id")
+
+  // Closed sets, each declared once at the ledger writer (scripts/_pg_dual_write_daemon.py)
+  // → a new value needs no migration
+  event   String @db.VarChar(64)
+  actor   String @db.VarChar(64)
+  payload Json
+
+  // Once-only events: an insert with a taken key under ON CONFLICT DO NOTHING adds nothing,
+  // since a duplicate can never be removed. NULL = a repeatable event; NULLs never conflict.
+  dedupeKey String? @unique(map: "autoagent_trial_ledger_dedupe_key_key") @map("dedupe_key")
+
+  @@map("autoagent_trial_ledger")
+  @@schema("core")
+}
+
+// The all-reject walk's state for one cycle date: extends the streak, drops out like a
+// quiet night, or breaks it.
+enum CycleVerdict {
+  extends
+  neutral
+  breaks
+
+  @@schema("core")
+}
+
+/// One immutable cycle-time verdict per cycle date, read by the all-reject streak walk.
+/// A later status change on a past proposal leaves that date's verdict as recorded.
+///
+/// Append-only via the same migration's raw SQL (trigger autoagent_cycle_verdicts_append_only
+/// → rejects UPDATE, DELETE, TRUNCATE); a squash MUST carry it.
+model AutoagentCycleVerdict {
+  id         BigInt       @id @default(autoincrement())
+  // Unique → a same-day re-run's ON CONFLICT DO NOTHING insert writes nothing
+  cycleDate  DateTime     @unique(map: "autoagent_cycle_verdicts_cycle_date_key") @map("cycle_date") @db.Date
+  verdict    CycleVerdict
+  recordedAt DateTime     @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  @@map("autoagent_cycle_verdicts")
+  @@schema("core")
+}
+
 /// Source: P3 git-free self-update pipeline — single-active-job tracker for the
 /// route-enqueued updater. A crashed updater leaves a detectably-stale row
 /// (heartbeat_at frozen), swept via the status index. Single-active-job is NOT
@@ -658,7 +838,8 @@ model UpdateJob {
   @@schema("core")
 }
 
-/// Source: autoagent-loop.jsonl (per plan §3.2 autoagent_loop_events)
+/// Source: autoagent daemon_cycle.py — every loop-event emitter writes through
+/// _pg_dual_write_daemon.py::write_autoagent_loop_event (census and verdict rows).
 model AutoagentLoopEvent {
   id             BigInt   @id @default(autoincrement())
   eventTs        DateTime @map("event_ts") @db.Timestamptz(6)
@@ -669,6 +850,11 @@ model AutoagentLoopEvent {
   changesRemoved Int      @map("changes_removed")
   // Identity token of the subject a verdict adjudicates; NULL = census class.
   subject        String?  @db.VarChar(128)
+  // Spool-close counts of a `manifest-spool-closed` row (daemon_cycle.py → _close_manifest_spool), same writer.
+  // NULL = not a spool close, or a row that predates the columns
+  linesRead       Int?    @map("lines_read")
+  // MANIFEST lines read minus the spawn_manifest rows present for the spool = lines lost unparsed
+  linesWithoutRow Int?    @map("lines_without_row")
   insertedAt     DateTime @default(now()) @map("inserted_at") @db.Timestamptz(6)
 
   // Dedup is two partial UNIQUE indexes — census (event_ts, agent, eval_result)
@@ -1027,8 +1213,8 @@ model ModelConfig {
 // Wave 2 — Telemetry baseline (계획: clauded-docs/370 v2 후보 F)
 //   F = SkillActivation — agent activation 분포 측정 (Wave m9z3 cleanup 이전 skill+agent
 //       통합이었으나, Claude Code framework 가 Skill activation event 미지원 확인 →
-//       skill_name 컬럼·인덱스 drop · agent activation 단일 sink 로 좁힘. 1703 row 중
-//       skill_name nonempty 단 1건 (smoke-test) — 회귀 영향 없음).
+//       skill_name 컬럼·인덱스 drop · agent activation 단일 sink 로 좁힘. skill_name
+//       nonempty 행은 smoke-test 잔여분뿐 — 회귀 영향 없음).
 //   적재 빈도 가정 ≈ 100+ rows/hour → BigInt id · 시간축 + 이름축 + 필터축 index 의무.
 // ============================================================================
 

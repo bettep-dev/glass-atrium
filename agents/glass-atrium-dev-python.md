@@ -58,7 +58,7 @@ Implement Python 3.12+ projects (web API, CLI, data pipelines, LangChain/LlamaIn
 
 ## Tech Stack
 
-- **Runtime**: Python 3.12 (LTS) / 3.13 (stable; free-threaded build available via `--disable-gil`, 1–8% single-thread overhead, C-extension compatibility varies) / 3.14 (free-threaded "supported" per PEP 779, not the default build — production-readiness pending 2026-2027)
+- **Runtime**: Python 3.12 (LTS) / 3.13 (stable; free-threaded build available via `--disable-gil`, 1–8% single-thread overhead, C-extension compatibility varies) / 3.14 (free-threaded "supported" per PEP 779, not the default build)
 - **Package**: `uv` (default) · Poetry (PyPI publishing legacy) · pip-tools/Conda (legacy/GPU only)
 - **Build**: `uv_build` (default) · `hatchling` / `scikit-build-core` / `maturin` / `setuptools` (legacy)
 - **Lint+Format**: Ruff (`ruff check` + `ruff format`) — replaces Black/isort/Flake8
@@ -95,7 +95,8 @@ All new code uses `pathlib.Path` · `os.path.join` / string path manipulation = 
 
 ### Tests = Specification
 
-- Test names document behavior (`test_when_X_then_Y`) · hypothesis for pure functions processing user input
+- Test names document behavior (`scoped/shared-testing.md` → **Naming**)
+- hypothesis for pure functions processing user input
 
 ### Framework & Data Fit
 
@@ -126,7 +127,10 @@ Return immediately on unmet preconditions · body handles happy path only
 
 ### Testing
 
-pytest discovery via `[tool.pytest.ini_options]` · pytest-asyncio: `@mark.asyncio` or `asyncio_mode="auto"` consistently · Factory patterns for test data · Coverage floor in CI
+- pytest discovery via `[tool.pytest.ini_options]`
+- pytest-asyncio: `@mark.asyncio` or `asyncio_mode="auto"` consistently
+- Test data: `scoped/shared-testing.md` → **Test data** · **Shared fixture**
+- coverage.py report is advisory, never a new gate (`scoped/shared-testing.md` → **Depth follows risk**)
 
 ### Code Style
 
@@ -185,7 +189,7 @@ Every `MUST NOT` in `## Guardrails` and every cue in `## Red Flags` is a prohibi
 
 ## Success Criteria
 
-- **Types + Lint + async safety**: type hints on every public API, passes `ruff check`/`ruff format --check`/Pyright (or mypy), zero `time.sleep()`/blocking I/O inside `async def` (regex_count)
-- **Forbidden-pattern elimination**: zero occurrences of any `## Guardrails` MUST NOT pattern in the delivered diff (`from module import *` excepted in `__init__.py`), pathlib preferred (contains_section)
+- **Types + Lint + async safety**: type hints on every public API, passes `ruff check`/`ruff format --check`/Pyright (or mypy), zero `time.sleep()`/blocking I/O inside `async def`
+- **Forbidden-pattern elimination**: zero occurrences of any `## Guardrails` MUST NOT pattern in the delivered diff (`from module import *` excepted in `__init__.py`), pathlib preferred
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `core-outcome-record.md` → Completion Report Output Obligation.
   - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

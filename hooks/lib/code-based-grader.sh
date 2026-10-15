@@ -25,7 +25,7 @@ readonly _CODE_BASED_GRADER_LOADED=1
 #   history from the subagent's OWN transcript). Both are OPTIONAL — an unwired ('')
 #   scan preserves the pure files-evidence path (backward-compatible; the direct unit test).
 #
-# Outputs (stdout, one token — 3-state per core-outcome-record.md T1):
+# Outputs (stdout, one token — 3-state per scoped/maintainers/core-outcome-record.md → Grader verdict):
 #   verified_pass — metric_pass=true claim corroborated by block-resident evidence.
 #   unverified    — no verification applicable (infra / non-success / non-code / metric_pass≠true /
 #                   off-surface / absent signal — the DEFAULT for every code type).
@@ -39,7 +39,7 @@ readonly _CODE_BASED_GRADER_LOADED=1
 #                   unverified, as does a field carrying nothing but recognized artifacts.
 #                   Off-surface-heading absence is neither case.
 #
-# Input-surface invariant (core-outcome-record.md grader_verdict guide): the grader reads
+# Input-surface invariant (scoped/maintainers/core-outcome-record.md → Grader verdict): the grader reads
 #   block-resident text + files: paths + the emitting session's OWN Write/Edit history (authorship
 #   corroboration for paths the block already declares) — NEVER the off-surface deliverable
 #   (plan/research doc, diff/test files). So plan/research/refactor default to unverified by
@@ -120,8 +120,8 @@ code_based_grader_check() {
     feature)
       # W1 files-evidence (Step 1-3): promotion requires ≥1 EXISTING test/spec-shaped path. A
       # non-existent / glob / no-path-shaped field resolves to unverified, NEVER verified_fail (W2 —
-      # a deleted file is indistinguishable from fabrication at this tier; live data shows 0
-      # verified_fail in 2081 rows). _cbg_gated_verdict then applies the shared Step 4-5 cross-check
+      # a deleted file is indistinguishable from fabrication at this tier, so an unresolved path
+      # never yields verified_fail). _cbg_gated_verdict then applies the shared Step 4-5 cross-check
       # routing (contradicted → verified_fail; withhold → unverified).
       local promote=0
       if _cbg_files_test_evidence "${files}"; then

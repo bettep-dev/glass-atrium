@@ -7,6 +7,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # Parallel arrays: an empty key cannot ride a whitespace-delimited table.
 KEYS=("" "/" "/abs" "//x" ".." "../x" "a/../b" "a/.." "a/b/.."
@@ -22,7 +24,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # rc 0 → escaping · rc 1 → contained · anything else (127 on a missing definition) → error

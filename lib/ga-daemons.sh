@@ -5,10 +5,9 @@
 # kill_daemon_tmux_sessions — kill the DETACHED daemon tmux sessions (GA_DAEMON_SESSIONS) that
 # run `claude --channels plugin:fakechat@...` and SURVIVE `launchctl bootout` (reparented to
 # PID 1), THEN free the daemon fakechat ports of any orphan bun reparented to PID 1 that still
-# holds them (the confirmed EADDRINUSE squatter). Shared by uninstall (stop_detached_daemons) +
-# install-start (clear a stale session); the port-free is folded HERE (not a separate step) so
-# both sites are covered by one edit — avoiding an uninstall double-free AND a new ga-tui-run.sh
-# STEP_LABEL/STEP_FN parallel-array entry. Guarded like unload_launchd_jobs: DRY_RUN report-only;
+# holds them (the confirmed EADDRINUSE squatter). Callers: uninstall (stop_detached_daemons) + the
+# retirement routine (retire_launchd_jobs, only on observed retired residue); the port-free is folded
+# HERE so both callers get it from one call. Guarded like unload_launchd_jobs: DRY_RUN report-only;
 # is_sandbox_target skips the WHOLE teardown (tmux server + fakechat ports are per-USER host
 # resources shared with the real user regardless of HOME, so a sandbox run must NEVER reap them);
 # missing tmux = loud-log skip (Precondition Loud-Fail) BUT the port-free still runs (it needs no
@@ -121,9 +120,17 @@ EOF
   fi
   # (layer-3) remove a stale socket left by the killed postmaster so a fresh install binds clean.
   if [[ -S "${sock}" ]]; then
-    if rm -f -- "${sock}" 2>/dev/null; then
-      log "removed stale postgres socket ${sock}"
-    fi
+    # A guard refusal counts as a failed removal (else false), so it takes the same warn branch.
+    # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+    if ga_guard_path "${sock}"; then
+      rm -f -- "${sock:?}"
+    else
+      false
+    fi || {
+      log "could not remove stale postgres socket ${sock} (continuing)"
+      return 0
+    }
+    log "removed stale postgres socket ${sock}"
   fi
   return 0
 }

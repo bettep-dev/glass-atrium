@@ -39,8 +39,12 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
 UPDATE_SH="${GA}/scripts/update.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   TARGET="$(mktemp -d -t ga-doctor-decline-target.XXXXXX)"
   DATA_ROOT="$(mktemp -d -t ga-doctor-decline-data.XXXXXX)"
@@ -60,9 +64,9 @@ SH
 }
 
 teardown() {
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
-  [[ -n "${DATA_ROOT:-}" && -d "${DATA_ROOT}" ]] && rm -rf -- "${DATA_ROOT}" || true
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
+  if ga_guard_path "${DATA_ROOT:-}"; then rm -rf -- "${DATA_ROOT:?}"; fi
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Drive the REAL doctor with the target, runtime-data and backup-dir seams at the sandbox. run_doctor

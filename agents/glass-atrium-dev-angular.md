@@ -126,7 +126,7 @@ Anti-patterns: nested subscribes (→ flatten) · manual subscribe for template 
 - **Animation API probe**: If component requires animation → check Angular version first:
   - v20.2+ → use `animate.enter`/`animate.leave` + CSS classes (modern, future-proof) · pre-v20.2 → check `@angular/animations` import + reuse existing `trigger/transition/animate` patterns
   - GSAP-specific features (Timeline / ScrollTrigger / Flip) → pair with glass-atrium-dev-gsap · map all timing to `motion-philosophy.md` spring family
-- **Anti-slop guardrail**: Reject component output that triggers any pattern in `~/.claude/agents/glass-atrium-design-designer.md` AI Slop Tropes; route style decisions through glass-atrium-dev-front
+- **Anti-slop (on demand — the file is not in your context, Read it)**: before shipping novel UI styling, Read `~/.claude/agents/glass-atrium-design-designer.md` → AI Slop Tropes and revise output matching any of them; route style decisions through glass-atrium-dev-front.
 
 ## Self-Review Checklist
 

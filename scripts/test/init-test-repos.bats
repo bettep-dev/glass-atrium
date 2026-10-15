@@ -7,6 +7,8 @@
 # Requires: bats (brew install bats-core), bash 3.2+, git
 
 SCRIPT="${BATS_TEST_DIRNAME}/../init-test-repos.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 setup() {
   [[ -f "${SCRIPT}" ]] || skip "init-test-repos.sh not found: ${SCRIPT}"
@@ -18,7 +20,7 @@ setup() {
   printf 'fixture-c\n' >"${GA_ROOT}/scripts/test/c.txt"
   # Hermetic git: synthetic HOME (no global config / gpgsign leakage from the
   # host) + env identity so commits work without any user config.
-  export HOME="${WORK}/home"
+  export HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium"
   mkdir -p "${HOME}"
   export GIT_CONFIG_NOSYSTEM=1
   export GIT_AUTHOR_NAME='ga-fixture' GIT_AUTHOR_EMAIL='ga@fixture.invalid'
@@ -26,7 +28,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 @test "init: creates three independent repos with one initial commit each" {
@@ -75,11 +77,26 @@ teardown() {
 }
 
 @test "missing dir: loud-fail exit 3 with zero partial side effects" {
-  rm -rf -- "${GA_ROOT}/hooks/test"
+  if ga_guard_path "${GA_ROOT}"; then rm -rf -- "${GA_ROOT:?}/hooks/test"; fi
   run bash "${SCRIPT}"
   [[ "${status}" -eq 3 ]]
   [[ "${output}" == *"corpus dir missing: ${GA_ROOT}/hooks/test"* ]]
   # Validate-all-first: nothing was initialized before the failure.
   [[ ! -e "${GA_ROOT}/test/.git" ]]
   [[ ! -e "${GA_ROOT}/scripts/test/.git" ]]
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${WORK}"
+  unset WORK
+  run teardown
+  WORK="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

@@ -160,7 +160,8 @@
 # production): ATRIUM_UPDATE_PSQL (psql) · ATRIUM_UPDATE_DB_NAME (glass_atrium) ·
 # ATRIUM_UPDATE_DB=off (disable update_job tracking only — the resolved-gap record
 # rides its own ATRIUM_UPDATE_PG_HELPER seam, not psql) ·
-# ATRIUM_UPDATE_PG_HELPER (resolved-gap dual-write CLI) · ATRIUM_UPDATE_JOB_ID (adopt a row the
+# ATRIUM_UPDATE_PG_HELPER (resolved-gap dual-write CLI) · ATRIUM_UPDATE_BACKFILL_PY (the
+# unadjudicated backfill mode, autoagent/daemon_cycle.py) · ATRIUM_UPDATE_JOB_ID (adopt a row the
 # web route pre-created instead of INSERTing) · ATRIUM_UPDATE_NPM (npm) ·
 # ATRIUM_UPDATE_LAUNCHCTL (launchctl) · ATRIUM_UPDATE_LAUNCH_AGENTS_DIR
 # (~/Library/LaunchAgents) · ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR
@@ -231,6 +232,20 @@ update_die_code() {
   shift
   printf '[glass-atrium-update] FATAL: %s\n' "$*" >&2
   exit "${code}"
+}
+
+# Delete each file operand through the shared path guard, attempting every one. rc 1 when
+# any operand is refused or its removal fails, so a refusal reads as not deleted.
+update_delete_files() {
+  local path rc=0
+  for path in "$@"; do
+    if ga_guard_path "${path}"; then
+      rm -f -- "${path:?}"
+    else
+      false
+    fi || rc=1
+  done
+  return "${rc}"
 }
 
 # ---------------------------------------------------------------------------
@@ -498,7 +513,8 @@ print(json.dumps({
         # count fold and the query builder, so an llm-tiered row would inflate
         # the operator awaiting-decision count for a row awaiting nothing.
         "approval_tier": "auto",
-        "status": "applied" if landed else "rejected",
+        # Unlanded → no gate verdict, never rejected; a label-absent schema stores rejected
+        "status": "applied" if landed else "unadjudicated",
         # Born terminal, so no later transition stamps it: the actor arrives with
         # the insert. Its own token — this row is an updater accountability
         # record, never a daemon push.
@@ -527,8 +543,8 @@ print(json.dumps({
 #
 # Equally deliberate: the emit does not read whether the body actually landed. A run
 # that offered the discard and did not apply it is itself the accountability event, so
-# it still records — as status=rejected, since the outcome ledger below supplies the
-# landed split.
+# it still records — as status=unadjudicated, since the outcome ledger below supplies
+# the landed split.
 #
 # Best-effort with a loud warning, following the conflict-decline precedent — a
 # database write failure must NEVER abort a deploy.
@@ -1057,7 +1073,7 @@ update_reset_capture_images() {
       || update_reset_copy_image "${base_entry}" "${dir}/${name}.base.bak"; }; then
     return 0
   fi
-  rm -f -- "${image}" "${dir}/${name}.base.bak" \
+  update_delete_files "${image}" "${dir}/${name}.base.bak" \
     || update_log "WARN: editable reset: could not remove the partial restore images of ${rel} from ${dir}"
   update_log "WARN: editable reset: could not write the restore images of ${rel} to ${dir}"
   return 1
@@ -1411,7 +1427,9 @@ update_cleanup() {
     if [[ ! -f "${_update_workdir}/.commit-ok" ]]; then
       update_preserve_snapshot
     fi
-    rm -rf -- "${_update_workdir}"
+    if ga_guard_path "${_update_workdir}"; then
+      rm -rf -- "${_update_workdir:?}"
+    fi
     _update_workdir=""
   fi
 }
@@ -1997,7 +2015,7 @@ _update_agent_commit_callback() {
 # before-image cannot express. Args: $1 = release file · $2 = target path ·
 # $3 = manifest-relative logical path · $4 = agent name.
 # Returns 0 applied · 1 the write did not land · 2 verify failed and the file was
-# removed.
+# removed · 3 verify failed and the file was NOT removed (delete refused or failed).
 update_create_agent_body() {
   local release_file="$1" target="$2" logical="$3" agent="$4" tmp mode
   mkdir -p -- "${target%/*}" || return 1
@@ -2006,17 +2024,17 @@ update_create_agent_body() {
   # mode then overrides it — both before the rename, so the target never exists at a
   # mode the run did not choose.
   if ! cp -p -- "${release_file}" "${tmp}"; then
-    rm -f -- "${tmp}"
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     return 1
   fi
   mode="$(jq -r --arg p "${logical}" '(.modes // {})[$p] // empty' \
     -- "${_update_modes_manifest:-/dev/null}" 2>/dev/null || true)" # GA-ABSORB[handled@the regex guard below]: a map-less release yields empty, which the guard treats as "no mapped mode"
   if [[ "${mode}" =~ ^[0-7]{3,4}$ ]] && ! chmod "${mode}" "${tmp}"; then
-    rm -f -- "${tmp}"
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     return 1
   fi
   if ! mv -f -- "${tmp}" "${target}"; then
-    rm -f -- "${tmp}"
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     return 1
   fi
   # No before-image exists, so the verify's local anchor is the release itself: the
@@ -2027,7 +2045,7 @@ update_create_agent_body() {
   _update_agent_verify_release="${release_file}"
   _update_agent_verify_agent="${agent}"
   if ! _update_agent_verify "${target}"; then
-    rm -f -- "${target}"
+    update_delete_files "${target}" || return 3
     return 2
   fi
   return 0
@@ -2132,6 +2150,10 @@ update_merge_agent_editable_regions() {
           ;;
         2)
           update_log "WARN: agent create verify FAILED for agents/${base} — the created body was DELETED (rollback)"
+          _update_agent_create_failures="${_update_agent_create_failures}${base%.md}"$'\n'
+          ;;
+        3)
+          update_log "WARN: agent create verify FAILED for agents/${base} — the created body was NOT removed (rollback delete refused or failed, see the line above); remove ${local_file} by hand"
           _update_agent_create_failures="${_update_agent_create_failures}${base%.md}"$'\n'
           ;;
         *)
@@ -2308,7 +2330,7 @@ update_merge_agent_editable_regions() {
 
   if [[ "${n_candidates}" -eq 0 ]]; then
     update_log "agent EDITABLE-region merge: no agent files to merge"
-    rm -rf -- "${merge_dir}"
+    if ga_guard_path "${merge_dir}"; then rm -rf -- "${merge_dir:?}"; fi
     return 0
   fi
 
@@ -2328,7 +2350,7 @@ update_merge_agent_editable_regions() {
   esac
   # Before merge_dir (and the captured diffs inside it) is torn down.
   update_emit_resolved_records "${root}" "${resolved_file}" "${_update_agent_outcomes_file}"
-  rm -rf -- "${merge_dir}"
+  if ga_guard_path "${merge_dir}"; then rm -rf -- "${merge_dir:?}"; fi
   return 0
 }
 
@@ -2540,7 +2562,10 @@ update_dispatch_roster_merge() {
     esac
   done <"${records}"
 
-  [[ -n "${ATRIUM_UPDATE_ROSTER_CANDIDATE_DIR:-}" ]] || rm -rf -- "${merge_dir}"
+  # A caller-supplied candidate dir is the caller's to keep; only the mktemp dir is removed.
+  if [[ -z "${ATRIUM_UPDATE_ROSTER_CANDIDATE_DIR:-}" ]]; then
+    if ga_guard_path "${merge_dir}"; then rm -rf -- "${merge_dir:?}"; fi
+  fi
   # The cycle's ONE index write, holding both iteration sites' rows.
   update_write_restore_index "${_update_agent_backup_dir}" "${_update_restore_index_rows}"
 }
@@ -2754,7 +2779,7 @@ update_persist_root_manifest() {
   if cp -p -- "${src}" "${tmp}" && mv -f -- "${tmp}" "${dst}"; then
     update_log "root manifest persisted (install-parity): ${dst}"
   else
-    rm -f -- "${tmp}" 2>/dev/null || true
+    update_delete_files "${tmp}" || true # GA-ABSORB[handled@the WARN below]: the removal failure is reported with the persist failure
     update_log "WARN: could not persist the release manifest to ${dst} — root scope stays stale until the next update"
   fi
   return 0
@@ -2907,12 +2932,16 @@ update_wire_hooks_post_apply() {
 #     migrations directory itself ships with the release, so the state is reached by
 #     updating rather than by breaking anything. An EXPLICIT ATRIUM_UPDATE_PRISMA
 #     override bypasses the branch: naming a binary means use it.
+# None of the three runs the unadjudicated backfill, and neither does a deploy whose
+# target was overridden (the DB-target skip in update_run_unadjudicated_backfill); the
+# re-arm marker written first leaves each of them to the daemon cycle head.
 update_migrate_deploy_post_apply() {
   local root monitor_dir prisma_bin rc=0
   root="$(update_ga_root)"
   monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-${root}/monitor}"
   prisma_bin="${ATRIUM_UPDATE_PRISMA:-${monitor_dir}/node_modules/.bin/prisma}"
 
+  update_rearm_unadjudicated_backfill
   if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
     update_log "migrate: SKIPPED (GA_SKIP_DB_SETUP set) — pending migrations stay pending; apply with '${root}/glass-atrium db-setup'"
     return 0
@@ -2939,6 +2968,61 @@ update_migrate_deploy_post_apply() {
     update_die_code 15 "prisma migrate deploy failed (rc=${rc}) — update files APPLIED but the database schema was NOT migrated (database unreachable, or a migration errored — see the prisma output above); the monitor was NOT restarted. Recover with '${root}/glass-atrium db-setup', then '${root}/glass-atrium doctor'"
   fi
   update_log "migrate: pending Prisma migrations applied"
+  update_run_unadjudicated_backfill "${root}"
+}
+
+# Re-arm marker the daemon cycle head reads: written on every applied update before any
+# no-op or failure can return, so the backfill still runs when the hand-off below does not.
+update_rearm_unadjudicated_backfill() {
+  local reports
+  reports="$(update_reports_dir)"
+  if ! { mkdir -p -- "${reports}" && : >"${reports}/.unadjudicated-backfill-pending"; }; then
+    update_log "WARN: could not write the unadjudicated-backfill re-arm marker under ${reports} — the update continues; the next update or '$(update_ga_root)/glass-atrium db-setup' re-arms it"
+  fi
+}
+
+# Run the unadjudicated backfill over the just-migrated schema, inside the updater's own
+# .apply-lock hold (the mode's lock gate reads it). Best-effort: no mode rc changes the
+# update rc, and every non-zero leaves the re-arm marker for the daemon cycle.
+update_run_unadjudicated_backfill() {
+  local root="$1" mode reports override rc=0
+  override="$(update_backfill_target_override)"
+  if [[ -n "${override}" ]]; then
+    update_log "migrate: unadjudicated backfill SKIPPED — ${override}; the re-arm marker leaves it to the daemon cycle"
+    return 0
+  fi
+  mode="${ATRIUM_UPDATE_BACKFILL_PY:-${root}/autoagent/daemon_cycle.py}"
+  if [[ ! -f "${mode}" ]]; then
+    update_log "WARN: unadjudicated backfill skipped — no entry point at ${mode}; the re-arm marker leaves it to the daemon cycle"
+    return 0
+  fi
+  reports="$(update_reports_dir)"
+  update_log "migrate: running the unadjudicated backfill (${reports})"
+  python3 "${mode}" --backfill-unadjudicated --reports-dir "${reports}" >&2 || rc=$?
+  update_log_backfill_rc "${rc}"
+}
+
+# Why the deploy's database may not be the one the backfill reaches (dbname=glass_atrium
+# on libpq's default target); empty when nothing overrides it. DATABASE_URL is tested
+# for set-ness only — its value is never expanded here.
+update_backfill_target_override() {
+  if [[ -n "${DATABASE_URL+set}" ]]; then
+    printf '%s\n' "DATABASE_URL is set, so the migrated database may not be glass_atrium, the only one the backfill reaches"
+  elif [[ -n "${ATRIUM_UPDATE_DB_NAME+set}" && "${ATRIUM_UPDATE_DB_NAME}" != glass_atrium ]]; then
+    printf '%s\n' "ATRIUM_UPDATE_DB_NAME=${ATRIUM_UPDATE_DB_NAME} is not glass_atrium, the only database the backfill reaches"
+  fi
+}
+
+# One named line per backfill exit code (autoagent/daemon_cycle.py → ExitCode).
+update_log_backfill_rc() {
+  local rc="$1" retry="the re-arm marker stays and the daemon cycle retries it (update continues)"
+  case "${rc}" in
+    0) update_log "migrate: unadjudicated backfill done" ;;
+    7) update_log "WARN: unadjudicated backfill hit a PostgreSQL fault (rc=7) — ${retry}" ;;
+    10) update_log "WARN: unadjudicated backfill deferred (rc=10) — a sandbox DB target, a live daemon cycle or a schema without the 'unadjudicated' label; ${retry}" ;;
+    11) update_log "WARN: unadjudicated backfill refused — apply lock not held (rc=11) — ${retry}" ;;
+    *) update_log "WARN: unadjudicated backfill failed (rc=${rc}) — ${retry}" ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -3418,8 +3502,8 @@ update_refresh_monitor_launchd() {
   # FILE tracks the current EnvironmentVariables/PATH — kickstart -k restarts the
   # service for the NEW BUILD but re-execs the ALREADY-LOADED definition (a kickstart
   # alone never picks up a plist env change), so this re-copy keeps the deployed plist
-  # current for the next full definition reload (daemon-daily-restart / reboot /
-  # --load-launchd). Guarded on the rendered SoT: a render gap warns, never aborts, and
+  # current for the next full definition reload (reboot / --load-launchd). Guarded on
+  # the rendered SoT: a render gap warns, never aborts, and
   # an unchanged plist is a no-op — the kickstart/bootstrap probe below is unchanged.
   rendered="$(update_rendered_launchd_dir)/${label}.plist"
   # Guard the mkdir so a create failure WARNs + skips the re-copy rather than aborting —
@@ -3663,9 +3747,13 @@ except OSError:
 PY
     )"
     [[ "${age_days}" =~ ^[0-9]+$ ]] || continue
-    if [[ "${age_days}" -gt "${retention}" ]] && rm -rf -- "${dir}" 2>/dev/null; then
-      update_log "agents-bak: pruned aged snapshot (${age_days}d > ${retention}d): ${dir##*/}"
-    fi
+    [[ "${age_days}" -gt "${retention}" ]] || continue
+    if ga_guard_path "${dir}"; then
+      rm -rf -- "${dir:?}"
+    else
+      false
+    fi || continue
+    update_log "agents-bak: pruned aged snapshot (${age_days}d > ${retention}d): ${dir##*/}"
   done
 }
 
@@ -3695,7 +3783,8 @@ update_write_restore_index() {
   index="$(update_restore_index_path "${cycle_dir}")"
   if ! printf '%s' "${rows}" >"${index}"; then
     update_log "WARN: restore index write failed for ${cycle_dir##*/} — --restore-agents falls back to the agents/ directory convention for this cycle"
-    rm -f -- "${index}" || true
+    # GA-ABSORB[handled@the guard or rm stderr line]: a failed removal leaves the partial index and says so there
+    update_delete_files "${index}" || true
   fi
 }
 
@@ -3796,7 +3885,7 @@ update_restore_base_entry() {
       return 1
     fi
   elif [[ -e "${base_target}" ]]; then
-    if rm -f -- "${base_target}"; then
+    if update_delete_files "${base_target}"; then
       update_log "deleted base-content store entry for ${name} (no prior base snapshot → safe gated 2-way next merge)"
     else
       update_log "WARN: base-content store delete FAILED for ${name}"
@@ -3873,7 +3962,7 @@ update_restore_agents() {
       # (a base revert without its live revert would desync the next merge anchor).
       update_restore_base_entry "${rel}" "${restore_dir}" "${store}" || fail=1
     else
-      rm -f -- "${real}.restore.$$" 2>/dev/null || true
+      update_delete_files "${real}.restore.$$" || true # GA-ABSORB[handled@the WARN below]: the restore is already marked failed
       update_log "WARN: restore FAILED for ${rel}"
       fail=1
     fi
@@ -4035,7 +4124,7 @@ update_retire_mirror_link() {
   esac
   link="$(farm_target_home)/${path}"
   [[ -L "${link}" ]] || return 0
-  if rm -f -- "${link}"; then
+  if update_delete_files "${link}"; then
     update_log "retired mirror link removed: ${link}"
   else
     update_log "WARN: retired mirror link NOT removed — ${link}"
@@ -4103,7 +4192,8 @@ update_sweep_removed_files() {
   # here so the summary row is derived from the rows rather than recomputed.
   if ! removed="$(spine_find_removed_files "${manifest}" "${root}" "${refusals_file}" 2>"${rows_file}")"; then
     update_log "WARN: retired selection failed — the retirement pass is skipped and any residue stays in place"
-    rm -f -- "${rows_file}" "${refusals_file}"
+    if ga_guard_path "${rows_file}"; then rm -f -- "${rows_file:?}"; fi
+    if ga_guard_path "${refusals_file}"; then rm -f -- "${refusals_file:?}"; fi
     return 0
   fi
   while IFS= read -r row; do
@@ -4115,7 +4205,7 @@ update_sweep_removed_files() {
       *) ;;
     esac
   done <"${rows_file}"
-  rm -f -- "${rows_file}"
+  if ga_guard_path "${rows_file}"; then rm -f -- "${rows_file:?}"; fi
 
   # A logged UNSAFE / MALFORMED row alone is never surfaced — a headless run's log is read
   # by nobody — so each refused key is counted and recorded for doctor from the spine's
@@ -4127,9 +4217,9 @@ update_sweep_removed_files() {
     cat -- "${refusals_file}" >"${refused_record}"
     update_log "WARN: ${refused_n} retired manifest key(s) refused by the sweep (UNSAFE/MALFORMED, never moved) — recorded for doctor at ${refused_record}"
   else
-    rm -f -- "${refused_record}"
+    if ga_guard_path "${refused_record}"; then rm -f -- "${refused_record:?}"; fi
   fi
-  rm -f -- "${refusals_file}"
+  if ga_guard_path "${refusals_file}"; then rm -f -- "${refusals_file:?}"; fi
 
   if [[ -n "${removed}" ]]; then
     # Per-run sink: a timestamped subdir so one run's removals form a single recovery
@@ -4162,14 +4252,37 @@ update_sweep_removed_files() {
   else
     # Rewritten each run, so a stale record from a previous run's failure must go the
     # moment the retry succeeds — otherwise doctor reports a residue that is gone.
-    rm -f -- "${record}"
+    if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
   fi
   update_log "retired sweep: removed=${removed_n} preserved=${preserved_n} family-skipped=${family_n} unmoved=${unmoved_n} refused=${refused_n}"
 }
 
-# The merge → base-content-capture → retirement-sweep → baseline-capture finalize
-# sequence, shared by the main post-apply path and the already-up-to-date early
-# return, which is how a drop-only release still sweeps. Two order constraints are
+# Move the retired lesson store into a per-run Trash sink from the data root and the
+# legacy pre-migration root (resolved as doctor's Tier-A leftover scan resolves it).
+# Runtime data has no shipped hash, so the retired map can never select it. Every run
+# re-checks, because an aggregator run that began before the apply may write it once
+# more. Absent → no-op; a failed move is one named WARN, never fatal, like the sweep.
+update_retire_lesson_store() {
+  local data_dir src sink
+  sink="$(update_trash_dir)/glass-atrium-update-retired-data-$(date +%Y%m%d-%H%M%S)_$$"
+  for data_dir in "${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data" \
+    "${GA_TARGET_HOME:-${HOME}/.claude}/data"; do
+    src="${data_dir}/lessons.json"
+    [[ -e "${src}" || -L "${src}" ]] || continue
+    # Origin path kept under the sink → the two roots' same-named stores never collide.
+    if mkdir -p -- "${sink}/${data_dir#/}" && mv -f -- "${src}" "${sink}/${data_dir#/}/"; then
+      update_log "retired lesson store moved → Trash: ${src}"
+    else
+      update_log "WARN: retired lesson store NOT moved — ${src} (mv into ${sink} failed)"
+    fi
+  done
+  return 0
+}
+
+# The merge → base-content-capture → retirement-sweep → lesson-store retirement →
+# baseline-capture finalize sequence, shared by the main post-apply path and the
+# already-up-to-date early return, which is how a drop-only release still sweeps.
+# Two order constraints are
 # load-bearing: update_capture_base_content reads the merge's own outcome ledger to
 # decide which bodies may advance, so it runs after the merge and before
 # update_capture_baseline advances the hash anchor — a base left at the OLD anchor
@@ -4194,6 +4307,7 @@ update_finalize_merge_and_anchors() {
   update_capture_base_content "${new_dir}"
   update_consume_editable_reset "${root}"
   update_sweep_removed_files "${manifest}" "${root}"
+  update_retire_lesson_store
   update_capture_baseline "${manifest}"
   update_ticker_stop
 }
@@ -4644,6 +4758,7 @@ update_main() {
   # shellcheck source-path=SCRIPTDIR
   # shellcheck source=../autoagent/lib/git-txn.sh
   source "${merge_lib_dir}/git-txn.sh"
+  # ga_guard_path, the gate on every delete in this file, arrives with the three libs above.
 
   # Register cleanup BEFORE any state is created so an early failure still unwinds.
   # A signal takes the re-raising handler rather than the bare cleanup: sharing one

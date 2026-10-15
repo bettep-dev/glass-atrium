@@ -199,7 +199,7 @@ closed_block() {
   }' >"${payload}"
 
   run env \
-    HOME="${sandbox}" \
+    HOME="${sandbox}" GA_DATA_ROOT="${sandbox}/.glass-atrium" \
     PGHOST="/nonexistent-socket-xyzzy" \
     CLAUDE_GATE_INFLIGHT="" \
     SUBAGENT_TOOL_BUDGET_DIR="${BATS_TEST_TMPDIR}/budget" \

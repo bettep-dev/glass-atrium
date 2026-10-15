@@ -23,6 +23,8 @@
 # assembled at runtime from two fragments and never appears literally here.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 # The 3 legacy-path strings in test/oss-db-setup.bats are NEGATIVE assertions
 # (the legacy dir must NOT be created) — correcting them would invert the test.
 NEGATIVE_ASSERTION_FILE="test/oss-db-setup.bats"
@@ -125,7 +127,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Copy one function definition out of a shell file into a sourceable temp file.

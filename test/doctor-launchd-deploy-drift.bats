@@ -32,20 +32,28 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_RENDERER="${GA}/scripts/render-launchd-plists.sh"
 TEMPLATE="${GA}/config.toml.example"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
-# the 8 com.glass-atrium.* jobs (mirrors LAUNCHD_JOBS / render-launchd-plists.sh JOBS)
+# the active com.glass-atrium.* jobs (mirrors LAUNCHD_JOBS / render-launchd-plists.sh JOBS)
 JOBS=(
   monitor
-  autoagent-daemon
-  wiki-daemon
   monitor-log-rotate
   pg-backup
   autoagent-cycle
   wiki-compile
+)
+
+# the retired com.glass-atrium.* labels (mirrors LAUNCHD_RETIRED_JOBS)
+RETIRED_JOBS=(
+  autoagent-daemon
+  wiki-daemon
   daemon-daily-restart
 )
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || skip "shasum/sha256sum required"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
   [[ -f "${REAL_RENDERER}" ]] || skip "renderer not found: ${REAL_RENDERER}"
@@ -75,12 +83,12 @@ setup() {
   # pre-render the reference plists with the SAME renderer + config + GA_SKIP_DEP_PROBE +
   # HOME doctor §11 uses internally, so a copied plist is byte-identical to doctor's re-render.
   GA_SKIP_DEP_PROBE=1 GA_CONFIG_TOML="${FAKE_CONFIG}" GA_PLIST_OUT="${REF}" \
-    HOME="${SANDBOX_HOME}" bash "${REAL_RENDERER}" >/dev/null 2>&1 \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" bash "${REAL_RENDERER}" >/dev/null 2>&1 \
     || skip "reference render failed (renderer/plutil unavailable in this env)"
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Copy the reference plist for <job> into the deployed LaunchAgents dir (the loaded shape).
@@ -88,11 +96,48 @@ deploy_ref() {
   cp -f -- "${REF}/com.glass-atrium.$1.plist" "${LA}/com.glass-atrium.$1.plist"
 }
 
-# Deploy byte-identical references for all 8 jobs (the healthy loaded install).
+# Deploy byte-identical references for every active job (the healthy loaded install).
 deploy_all() {
   local job
   for job in "${JOBS[@]}"; do
     deploy_ref "${job}"
+  done
+}
+
+# Leave a deployed plist for retired label <job>.
+deploy_retired_plist() {
+  printf '<plist/>\n' >"${LA}/com.glass-atrium.$1.plist"
+}
+
+# Leave a deployed plist for every retired label (the shape an install keeps until the retirement runs).
+deploy_retired() {
+  local job
+  for job in "${RETIRED_JOBS[@]}"; do
+    deploy_retired_plist "${job}"
+  done
+}
+
+# The launchd-drift term of the PASS breakdown equals $1.
+assert_drift_term() {
+  local term
+  term="$(sed -n 's/.* \([0-9][0-9]*\) launchd-drift + .*/\1/p' <<<"${output}")"
+  [[ "${term}" == "$1" ]] || {
+    echo "launchd-drift term '${term}', expected $1"
+    echo "${output}"
+    return 1
+  }
+}
+
+# Every retired label is named in its own warn line carrying the --load-launchd remedy.
+assert_retired_warns() {
+  local job
+  for job in "${RETIRED_JOBS[@]}"; do
+    [[ "${output}" == *"warn : retired launchd job still deployed: com.glass-atrium.${job} — run --load-launchd to retire it"* ]] \
+      || {
+        echo "missing retired warn: ${job}"
+        echo "${output}"
+        return 1
+      }
   done
 }
 
@@ -101,7 +146,7 @@ deploy_all() {
 # merge-decline record from GA_ROOT's sibling, so an open decline on the host would FAIL the run and
 # suppress the PASS-only warn rollup this test asserts on.
 run_doctor_sandbox() {
-  run env HOME="${SANDBOX_HOME}" GA_TARGET_HOME="${TARGET}" \
+  run env HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" GA_TARGET_HOME="${TARGET}" \
     AUTOAGENT_BACKUP_DIR="${SANDBOX}/agents-bak" \
     GA_CONFIG_TOML="${FAKE_CONFIG}" GA_MANIFEST="${FAKE_MANIFEST}" \
     GA_GENERATE_MANIFEST="${GEN_STUB}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
@@ -130,11 +175,11 @@ run_doctor_sandbox() {
   deploy_all
   # tamper ONE deployed plist so its content diverges from the current renderer output
   # (the stale-deploy shape: a renderer/PATH change that was never re-deployed).
-  printf '<!-- stale -->\n' >>"${LA}/com.glass-atrium.autoagent-daemon.plist"
+  printf '<!-- stale -->\n' >>"${LA}/com.glass-atrium.autoagent-cycle.plist"
 
   run_doctor_sandbox
 
-  [[ "${output}" == *"stale-deployed launchd plist drift: com.glass-atrium.autoagent-daemon"* ]] || return 1
+  [[ "${output}" == *"stale-deployed launchd plist drift: com.glass-atrium.autoagent-cycle"* ]] || return 1
   # advisory: the drift feeds the warn summary, never a hard FAIL banner.
   [[ "${output}" == *"stale-deployed launchd plist(s) — re-render + --load-launchd to redeploy"* ]] || return 1
   # The rollup enumerates every warn category in section order. Anchored on two terms and the
@@ -156,6 +201,61 @@ run_doctor_sandbox() {
 
   [[ "${output}" == *"no deployed com.glass-atrium launchd plists"* ]] || return 1
   [[ "${output}" != *"stale-deployed launchd plist drift"* ]] || return 1
+}
+
+# === 3b. deployed retired-label plists -> one §11 warning each =================
+
+@test "each deployed retired-label plist is one §11 warning, outside the active-roster compare" {
+  deploy_all
+  deploy_retired
+
+  run_doctor_sandbox
+
+  assert_retired_warns
+  # the active compare still sees only the active roster
+  [[ "${output}" == *"${#JOBS[@]} deployed launchd plist(s) match the current renderer output"* ]] \
+    || {
+      echo "${output}"
+      return 1
+    }
+  assert_drift_term "${#RETIRED_JOBS[@]}"
+}
+
+@test "deployed retired-label plists are counted when no active plist is deployed (skip rule unchanged)" {
+  deploy_retired
+
+  run_doctor_sandbox
+
+  [[ "${output}" == *"no deployed com.glass-atrium launchd plists"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  assert_retired_warns
+  assert_drift_term "${#RETIRED_JOBS[@]}"
+}
+
+@test "only a deployed retired-label plist is warned and counted, an absent one stays silent" {
+  local deployed="${RETIRED_JOBS[1]}" job
+  local warn="retired launchd job still deployed: com.glass-atrium."
+  deploy_all
+  deploy_retired_plist "${deployed}"
+
+  run_doctor_sandbox
+
+  [[ "${output}" == *"${warn}${deployed} — "* ]] || {
+    echo "missing retired warn: ${deployed}"
+    echo "${output}"
+    return 1
+  }
+  for job in "${RETIRED_JOBS[@]}"; do
+    [[ "${job}" == "${deployed}" ]] && continue
+    [[ "${output}" != *"${warn}${job} — "* ]] || {
+      echo "retired warn for absent plist: ${job}"
+      echo "${output}"
+      return 1
+    }
+  done
+  assert_drift_term 1
 }
 
 # === 4. mktemp failure -> loud skip, renderer NEVER invoked ====================
@@ -180,7 +280,7 @@ run_doctor_sandbox_mktemp_empty() {
   printf '#!/usr/bin/env bash\nexit 0\n' >"${stub_dir}/mktemp" # emits empty stdout, exit 0
   chmod +x "${stub_dir}/mktemp"
 
-  run env PATH="${stub_dir}:${PATH}" HOME="${SANDBOX_HOME}" GA_TARGET_HOME="${TARGET}" \
+  run env PATH="${stub_dir}:${PATH}" HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" GA_TARGET_HOME="${TARGET}" \
     GA_CONFIG_TOML="${FAKE_CONFIG}" GA_MANIFEST="${FAKE_MANIFEST}" \
     GA_GENERATE_MANIFEST="${GEN_STUB}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
     bash -c '
@@ -203,4 +303,84 @@ run_doctor_sandbox_mktemp_empty() {
   [[ "${output}" != *"match the current renderer output"* ]] || return 1
   [[ "${output}" != *"stale-deployed launchd plist"* ]] || return 1
   [[ "${output}" != *"renderer anomaly"* ]] || return 1
+}
+
+# === 5. loaded-state probe: a deployed plist launchd has not loaded ===========
+
+# Run run_doctor with a recording launchctl stub first on PATH, so no real launchd domain is asked.
+# $1 = the stub's `print` exit code · $2 = an is_sandbox_target verdict shadowed inside the doctor
+# shell (empty → the real guard runs).
+run_doctor_launchctl_stub() {
+  local stub_dir="${SANDBOX}/launchctl-bin"
+  LAUNCHCTL_LOG="${SANDBOX}/launchctl.log"
+  mkdir -p -- "${stub_dir}"
+  : >"${LAUNCHCTL_LOG}"
+  cat >"${stub_dir}/launchctl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GA_TEST_LAUNCHCTL_LOG}"
+[[ "${1:-}" == "print" ]] && exit "${GA_TEST_PRINT_RC}"
+exit 0
+STUB
+  chmod +x "${stub_dir}/launchctl"
+
+  run env PATH="${stub_dir}:${PATH}" GA_TEST_LAUNCHCTL_LOG="${LAUNCHCTL_LOG}" \
+    GA_TEST_PRINT_RC="$1" GA_TEST_SANDBOX_VERDICT="$2" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" GA_TARGET_HOME="${TARGET}" \
+    AUTOAGENT_BACKUP_DIR="${SANDBOX}/agents-bak" \
+    GA_CONFIG_TOML="${FAKE_CONFIG}" GA_MANIFEST="${FAKE_MANIFEST}" \
+    GA_GENERATE_MANIFEST="${GEN_STUB}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
+    bash -c '
+      set -Eeuo pipefail
+      source "$1/lib/ga-core.sh"
+      ga_init_env "$1"
+      if [[ -n "${GA_TEST_SANDBOX_VERDICT}" ]]; then
+        is_sandbox_target() { printf "%s\n" "${GA_TEST_SANDBOX_VERDICT}"; }
+      fi
+      run_doctor
+    ' _ "${GA}"
+}
+
+# The N of `doctor: PASS (with N warning(s)`, 0 for a bare PASS, empty when the run did not PASS.
+pass_warning_total() {
+  if [[ "${output}" == *"== doctor: PASS =="* ]]; then
+    printf '0\n'
+    return 0
+  fi
+  printf '%s\n' "${output}" | sed -n 's/.*== doctor: PASS (with \([0-9][0-9]*\) warning(s).*/\1/p' | head -1
+}
+
+@test "a deployed plist launchd has not loaded -> one counted warn naming the label and --load-launchd" {
+  deploy_ref monitor
+  local warn="warn : com.glass-atrium.monitor deployed but not loaded — run --load-launchd"
+  local rows=("deployed and loaded|0|absent" "deployed but not loaded|113|present")
+  local row name rc expect total loaded_total="" unloaded_total=""
+
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name rc expect <<<"${row}"
+    run_doctor_launchctl_stub "${rc}" no
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status}"; echo "${output}"; return 1; }
+    if [[ "${expect}" == "present" ]]; then
+      [[ "${output}" == *"${warn}"* ]] || { echo "${name}: warn missing"; echo "${output}"; return 1; }
+    else
+      [[ "${output}" != *"deployed but not loaded"* ]] || { echo "${name}: unexpected warn"; echo "${output}"; return 1; }
+    fi
+    total="$(pass_warning_total)"
+    [[ -n "${total}" ]] || { echo "${name}: no PASS warning total"; echo "${output}"; return 1; }
+    if [[ "${expect}" == "present" ]]; then unloaded_total="${total}"; else loaded_total="${total}"; fi
+  done
+
+  [[ "${unloaded_total}" -eq $((loaded_total + 1)) ]] \
+    || { echo "PASS warning total: loaded=${loaded_total} not-loaded=${unloaded_total}"; return 1; }
+}
+
+@test "a sandbox target never asks launchd for loaded state" {
+  deploy_ref monitor
+
+  run_doctor_launchctl_stub 113 ""
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  # the §26 getenv call proves the stub was on PATH, so the absence of `print` is not vacuous.
+  grep -q '^getenv ' "${LAUNCHCTL_LOG}" || { cat "${LAUNCHCTL_LOG}"; return 1; }
+  ! grep -q '^print ' "${LAUNCHCTL_LOG}" || { cat "${LAUNCHCTL_LOG}"; return 1; }
+  [[ "${output}" != *"deployed but not loaded"* ]] || { echo "${output}"; return 1; }
 }

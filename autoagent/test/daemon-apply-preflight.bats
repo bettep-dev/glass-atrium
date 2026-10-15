@@ -36,6 +36,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # mirror_path — symlink every real-PATH executable into $1 EXCEPT the names in
 # $2.. (whole-PATH mirror per build_psql_masked_stub precedent: an allowlist that
@@ -100,7 +102,7 @@ teardown() {
   # BSD chmod rejects `--` with a symbolic mode (treats it as a filename), so the
   # perm-restore uses no `--`; WORK is a controlled mktemp path (no leading dash).
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX "${WORK}" 2>/dev/null || true
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # make_sandbox — copy the daemon + its load-time libs into ${WORK}/real so the
@@ -114,6 +116,7 @@ make_sandbox() {
   cp -p -- "${GA}/autoagent/lib/git-txn.sh" "${REAL}/autoagent/lib/git-txn.sh"
   cp -p -- "${GA}/autoagent/daemon_cycle.py" "${REAL}/autoagent/daemon_cycle.py"
   cp -p -- "${GA}/scripts/lib/apply-lock.sh" "${REAL}/scripts/lib/apply-lock.sh"
+  cp -p -- "${GA}/scripts/lib/path-guard.sh" "${REAL}/scripts/lib/path-guard.sh"
   SANDBOX_SCRIPT="${REAL}/autoagent/daemon-apply.sh"
   if [[ "${want_roots}" == "roots" ]]; then
     mkdir -p -- "${REAL}/test" "${REAL}/hooks/test" \
@@ -126,7 +129,12 @@ make_sandbox() {
 # marker's ABSENCE, that it was skipped/exempt) without shelling the real suite.
 make_runner() {
   local dest="$1" code="$2"
-  rm -f -- "${dest}" # never redirect onto an inherited symlink (it truncates the far end)
+  # never redirect onto an inherited symlink (it truncates the far end)
+  if ga_guard_path "${dest}"; then
+    rm -f -- "${dest:?}"
+  else
+    return 1
+  fi
   cat >"${dest}" <<EOF
 #!/usr/bin/env bash
 : >"${MARKER}"
@@ -141,7 +149,12 @@ EOF
 # retry); a large red_calls simulates a deterministic red; 0 is always green.
 make_counting_runner() {
   local dest="$1" red_calls="$2"
-  rm -f -- "${dest}" # never redirect onto an inherited symlink (it truncates the far end)
+  # never redirect onto an inherited symlink (it truncates the far end)
+  if ga_guard_path "${dest}"; then
+    rm -f -- "${dest:?}"
+  else
+    return 1
+  fi
   cat >"${dest}" <<EOF
 #!/usr/bin/env bash
 printf 'call sentinel=%s\n' "\${AUTOAGENT_PREFLIGHT_ACTIVE:-unset}" >>"${RUNNER_LOG}"
@@ -169,14 +182,14 @@ mirrored_toolchain_rc() {
 # under the green-suite). Extra env assignments are forwarded via $@.
 run_batch() {
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     "$@" \
     bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
 }
 
 run_single() {
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     "$@" \
     bash "${SANDBOX_SCRIPT}" --proposal-id 999 --agents-dir "${AGENTS}"
 }
@@ -188,7 +201,7 @@ run_single() {
 @test "--help exits 0 (preflight runs after arg-parse)" {
   make_sandbox noroots
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" bash "${SANDBOX_SCRIPT}" --help
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" bash "${SANDBOX_SCRIPT}" --help
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != *"test root absent"* ]] || return 1
 }
@@ -227,7 +240,7 @@ run_single() {
 @test "override: AUTOAGENT_ALLOW_UNVERIFIED=1 proceeds past absent roots + logs UNVERIFIED" {
   make_sandbox noroots
   run env -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     PATH="${PSQL_MASKED}" AUTOAGENT_ALLOW_UNVERIFIED=1 \
     bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -ne 16 ]] || return 1
@@ -246,7 +259,7 @@ run_single() {
   [[ "${status}" -eq 16 ]] || return 1
   # Dry-run over the same absent roots does NOT abort.
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     bash "${SANDBOX_SCRIPT}" --dry-run --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -ne 16 ]] || return 1
   [[ "${output}" != *"test root absent"* ]] || return 1
@@ -263,7 +276,7 @@ run_single() {
   [[ "${status}" -eq 16 ]] || return 1
   # With the sentinel the gate is skipped.
   run env -u AUTOAGENT_ALLOW_UNVERIFIED \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     PATH="${PSQL_MASKED}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
     bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -ne 16 ]] || return 1
@@ -355,7 +368,7 @@ run_single() {
   [[ -f "${MARKER}" ]] || return 1
 
   # Single-proposal path: the heavy gate is exempt → marker NOT written.
-  rm -f -- "${MARKER}"
+  if ga_guard_path "${MARKER}"; then rm -f -- "${MARKER:?}"; fi
   run_single PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner.sh"
   [[ "${status}" -ne 16 ]] || return 1
   [[ ! -f "${MARKER}" ]] || return 1
@@ -375,9 +388,9 @@ run_single() {
   [[ -f "${MARKER}" ]] || return 1
 
   # Sentineled batch skips the whole gate → the runner is never shelled.
-  rm -f -- "${MARKER}"
+  if ga_guard_path "${MARKER}"; then rm -f -- "${MARKER:?}"; fi
   run env -u AUTOAGENT_ALLOW_UNVERIFIED \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     PATH="${PSQL_MASKED}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
     AUTOAGENT_BATS_RUNNER="${WORK}/runner.sh" \
     bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
@@ -470,7 +483,7 @@ count_abort_rows() {
   grep -q '"clause":"test root absent: hooks/test' "${log}" || return 1
 
   # (b) absent prerequisite tool
-  rm -f -- "${log}"
+  if ga_guard_path "${log}"; then rm -f -- "${log:?}"; fi
   make_sandbox roots
   run_batch PATH="${NOPREREQ}"
   [[ "${status}" -eq 16 ]] || return 1
@@ -478,7 +491,7 @@ count_abort_rows() {
   grep -q '"clause":"test-suite prerequisite absent: bats' "${log}" || return 1
 
   # (c) runner present but not executable
-  rm -f -- "${log}"
+  if ga_guard_path "${log}"; then rm -f -- "${log:?}"; fi
   make_sandbox roots
   printf '%s\n' '#!/usr/bin/env bash' >"${WORK}/runner-noexec.sh"
   chmod -x "${WORK}/runner-noexec.sh"
@@ -488,7 +501,7 @@ count_abort_rows() {
   grep -q 'bats runner not executable' "${log}" || return 1
 
   # (d) red suite
-  rm -f -- "${log}"
+  if ga_guard_path "${log}"; then rm -f -- "${log:?}"; fi
   make_sandbox roots
   make_runner "${WORK}/runner-red.sh" 1
   run_batch PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-red.sh"
@@ -499,7 +512,7 @@ count_abort_rows() {
   # (e) the runner refused on an unusable toolchain — the suite never ran, so this row
   # must NOT read as the red suite above. It is the row the doctor and the operator get
   # after the cycle ends, which is the whole point of separating the two causes.
-  rm -f -- "${log}"
+  if ga_guard_path "${log}"; then rm -f -- "${log:?}"; fi
   local reserved
   reserved="$(reserved_toolchain_rc)"
   [[ -n "${reserved}" ]] || return 1
@@ -546,7 +559,7 @@ print("%s|%s|%s|%s" % (row["status"], row["reason"], row["exit_code"], row["suit
   mkdir -p -- "${unwritable}"
   chmod a-w "${unwritable}"
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${unwritable}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${unwritable}" \
     PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-red.sh" \
     bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   # The gate's own named exit survives a failed persistence attempt.
@@ -590,4 +603,25 @@ print("%s|%s|%s|%s" % (row["status"], row["reason"], row["exit_code"], row["suit
   [[ "${status}" -eq 16 ]] || return 1
   [[ "${output}" == *"test suite FAILED"* ]] || return 1
   [[ "${output}" != *"toolchain precondition FAILED"* ]] || return 1
+}
+
+@test "a runner builder refuses a relative dest and writes nothing through its link" {
+  # A dest still linked elsewhere would take the heredoc write through to the far end; each
+  # builder's delete is what prevents it, so a refused dest has to fail the builder, not skip.
+  local builder
+  cd -- "${WORK}"
+  printf 'real\n' >real-binary
+  cp -- real-binary pristine
+  for builder in make_runner make_counting_runner; do
+    ln -sf -- "${WORK}/real-binary" runner.sh
+    run "${builder}" runner.sh 0
+    [[ "${status}" -ne 0 && "${output}" == *"refusing a non-absolute delete target"* ]] || {
+      echo "${builder}: a relative dest was accepted: rc=${status}: ${output}" >&2
+      return 1
+    }
+    [[ -L runner.sh ]] && cmp -s -- real-binary pristine || {
+      echo "${builder}: the linked dest or its target changed" >&2
+      return 1
+    }
+  done
 }

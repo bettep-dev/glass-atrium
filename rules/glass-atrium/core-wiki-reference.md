@@ -17,7 +17,7 @@ Applies to all agents. [ALL]
 - Verify the `collected:` field or frontmatter date on found documents → for documents older than 1 year, web cross-verification of currency is recommended.
 - Threshold roles are distinct: the 1-year rule above is a READ-time cross-verification trigger on `collected:`, while the 90-day staleness threshold (`~/.glass-atrium/scripts/wiki-staleness.sh`, read-only) is a curator re-review trigger on `updated:`.
 - Cite referenced wiki documents in your response as `Existing wiki checked: [[concept-name]]` (citation tracking).
-- When a related wiki document is found, **READ IT** and build on the existing knowledge (prevents duplicate research).
+- When a related wiki document is found, read it and build on the existing knowledge, so the research is not repeated.
 - Simple / urgent tasks MAY skip the wiki reference step.
 
 ## Wiki Raw-Store Untrusted-Data Contract [ALL] [LLM01]

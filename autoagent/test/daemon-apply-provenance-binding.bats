@@ -36,6 +36,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 DAEMON_APPLY="${GA}/autoagent/daemon-apply.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${DAEMON_APPLY}" ]] || skip "daemon-apply.sh not found: ${DAEMON_APPLY}"
@@ -66,7 +68,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
   return 0
 }
 

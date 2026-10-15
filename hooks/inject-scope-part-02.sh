@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # inject-scope-part-02.sh — the SubagentStart slot that carries part 02 of the split
-# scope-rule channel. One basename per part; slot 1 of the twelve is inject-scope-rules.sh,
+# scope-rule channel. One basename per part; the channel's slot 1 is inject-scope-rules.sh,
 # which carries the kept marker blocks and no part.
 #
 # WHY THE PART INDEX IS IN THE BASENAME: a binding row is event/basename/matcher
@@ -10,7 +10,7 @@
 # and is reported as a seam fault, never a silently wrong part.
 #
 # WHY THIS FILE IS A SHIM: selection, packing, counting and every constant live in
-# lib/inject-chunk.sh and lib/inject_chunk.py, so all twelve slots compute one plan from one
+# lib/inject-chunk.sh and lib/inject_chunk.py, so every slot computes one plan from one
 # copy. The abort logger below is the single sanctioned duplication — it has to work in the
 # state where the library does not load, so it cannot come from the library.
 set -Eeuo pipefail

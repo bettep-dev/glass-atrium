@@ -35,6 +35,8 @@
 # Requires: bats (brew install bats-core), perl (run_with_timeout), bash 3.2+
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # Fake token shapes (clearly non-real; the `sk-ant-` hyphens keep them off every secret-scan pattern).
 FULL_VAL="sk-ant-oat01batsfakevalue0000aaaa1111bbbb"
@@ -109,7 +111,7 @@ STUBEOF
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # extract_fn — eval a named function (multi-line, col-1 `}` terminated) from any of the three libs into
@@ -343,4 +345,19 @@ close_tty() { exec 9<&- 2>/dev/null || true; }
   [[ "${rc}" -eq 0 ]] || return 1
   [[ "$(stored_secret)" == "${FULL_VAL}" ]] || return 1
   [[ "$(stored_secret)" != "${stale_val}" ]] || return 1
+}
+
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local saved="${SANDBOX:-}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
+    return 1
+  }
 }

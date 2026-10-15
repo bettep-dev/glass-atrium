@@ -19,6 +19,9 @@
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -54,9 +57,7 @@ setup() {
 }
 
 teardown() {
-  if [[ -n "${DS_TMP:-}" && -d "${DS_TMP}" ]]; then
-    rm -rf "${DS_TMP}"
-  fi
+  if ga_guard_path "${DS_TMP:-}"; then rm -rf -- "${DS_TMP:?}"; fi
 }
 
 oc() { [[ "${2}" == *"${1}"* ]] || { printf 'assert-contains FAILED: [%s] absent from output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
@@ -64,7 +65,7 @@ no() { [[ "${2}" != *"${1}"* ]] || { printf 'assert-omits FAILED: [%s] present i
 
 # run_hook <extra VAR=val ...> — direct hook invocation with stderr merged.
 run_hook() {
-  run env HOME="${SANDBOX_HOME}" PGHOST="/nonexistent-socket-xyzzy" CLAUDE_GATE_INFLIGHT="" "$@" \
+  run env -u GA_DATA_ROOT HOME="${SANDBOX_HOME}" PGHOST="/nonexistent-socket-xyzzy" CLAUDE_GATE_INFLIGHT="" "$@" \
     bash -c '"$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
 }
 

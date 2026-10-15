@@ -23,6 +23,7 @@
 import json
 import sys
 import time
+from types import SimpleNamespace
 
 # psycopg lives in user site-packages, on sys.path by default (PEP 370).
 try:
@@ -38,45 +39,56 @@ except ImportError as exc:
     sys.exit(0)
 
 
-# Identifier allowlist — psycopg can bind only VALUES, not identifiers, and
-# _try_insert %-interpolates the table name and column list into the SQL string;
-# allowlisting them here blocks identifier injection before any interpolation.
-# Tables/columns mirror monitor/prisma/schema.prisma @map names and the real
-# INSERT call sites (cost-tracker.sh, agent-tracker.sh row dicts). core.hook_failures
-# is absent (written only via hardcoded SQL, never a dynamic target_table); id +
-# inserted_at are excluded (auto-assigned, never present in `row`).
-_ALLOWED_COLUMNS = {
-    "core.cost_events": frozenset(
-        {
-            "event_date",
-            "event_time",
-            "session_id",
-            # `kind` partitions turn vs subagent rows; `dedup_key` is the per-row
-            # stable identity forming the (session_id, dedup_key) UPSERT arbiter.
-            "kind",
-            "dedup_key",
-            "input_tokens",
-            "output_tokens",
-            "cache_read_tokens",
-            "cache_creation_tokens",
-            "cost_usd",
-            "duration_ms",
-            "num_turns",
-            "stop_reason",
-            "model",
-            "parse_error",
-            "raw_input",
-        }
-    ),
-    "core.agent_events": frozenset(
-        {
-            "event_ts",
-            "event_name",
-            "agent_id",
-            "agent_type",
-        }
-    ),
-}
+_COLUMNS = SimpleNamespace(
+    # Identifier allowlist — psycopg can bind only VALUES, not identifiers, and
+    # _try_insert %-interpolates the table name and column list into the SQL string;
+    # allowlisting them here blocks identifier injection before any interpolation.
+    # Tables/columns mirror monitor/prisma/schema.prisma @map names and the real
+    # INSERT call sites (cost-tracker.sh, agent-tracker.sh row dicts). core.hook_failures
+    # is absent (written only via hardcoded SQL, never a dynamic target_table); id +
+    # inserted_at are excluded (auto-assigned, never present in `row`).
+    ALLOWED={
+        "core.cost_events": frozenset(
+            {
+                "event_date",
+                "event_time",
+                "session_id",
+                # `kind` partitions turn vs subagent rows; `dedup_key` is the per-row
+                # stable identity forming the (session_id, dedup_key) UPSERT arbiter.
+                "kind",
+                "dedup_key",
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "cache_creation_tokens",
+                "cost_usd",
+                "duration_ms",
+                "num_turns",
+                "stop_reason",
+                "model",
+                "effort",
+                "has_mixed_effort",
+                "parse_error",
+                "raw_input",
+            }
+        ),
+        "core.agent_events": frozenset(
+            {
+                "event_ts",
+                "event_name",
+                "agent_id",
+                "agent_type",
+            }
+        ),
+    },
+    # Expand-phase shim: allowlisted columns a pending migration adds. Hooks deploy before
+    # `migrate deploy`, and naming an absent column fails EVERY row with UndefinedColumn, so the
+    # batch path probes the catalog once and drops the absent ones — the
+    # _pg_outcome_dualwrite.py qa_score precedent. Remove once the migration is universally applied.
+    ADDITIVE={
+        "core.cost_events": frozenset({"effort", "has_mixed_effort"}),
+    },
+)
 
 
 # Per-table ON CONFLICT policy. cost_events needs DO UPDATE so re-aggregating a
@@ -103,6 +115,8 @@ _UPSERT_POLICY = {
             "num_turns",
             "stop_reason",
             "model",
+            "effort",
+            "has_mixed_effort",
             "parse_error",
             "raw_input",
         ),
@@ -125,7 +139,7 @@ class IdentifierRejected(ValueError):
 
 def _validate_identifiers(table, cols):
     # Reject an unknown table outright — never interpolate it.
-    allowed_cols = _ALLOWED_COLUMNS.get(table)
+    allowed_cols = _COLUMNS.ALLOWED.get(table)
     if allowed_cols is None:
         raise IdentifierRejected(
             "target_table not in allowlist: %r" % table, table
@@ -272,6 +286,32 @@ def _emit_row_failure(
     _record_hook_failure(hook_name, target_table, error_kind, payload_ref, retry_attempted)
 
 
+def _get_absent_columns(conn, hook_name, table, rows):
+    """Additive columns of `table` the live schema lacks — empty when no row names one.
+
+    A failed probe counts every additive column absent, so the base token row still lands
+    and only the additive values are lost for this fire."""
+    additive = _COLUMNS.ADDITIVE.get(table)
+    if not additive or not any(isinstance(r, dict) and additive & r.keys() for r in rows):
+        return frozenset()
+    schema, _, name = table.partition(".")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = %s AND table_name = %s AND column_name = ANY(%s)",
+                (schema, name, sorted(additive)),
+            )
+            present = {row[0] for row in cur.fetchall()}
+    except Exception as exc:  # noqa: BLE001 — degrade to the base row, never abort the batch
+        sys.stderr.write(
+            "[%s] column probe failed for %s (%s: %s) — writing without %s\n"
+            % (hook_name, table, type(exc).__name__, _fmt_exc(exc), ", ".join(sorted(additive)))
+        )
+        return additive
+    return additive - present
+
+
 def _insert_batch(hook_name, target_table, payload_ref, rows, connect_timeout=1):
     """Write every row in `rows` through ONE connection.
 
@@ -330,6 +370,7 @@ def _insert_batch(hook_name, target_table, payload_ref, rows, connect_timeout=1)
 
     failed = 0
     try:
+        absent_cols = _get_absent_columns(conn, hook_name, target_table, rows)
         for row in rows:
             if not isinstance(row, dict):
                 # A non-dict row is a caller bug, not a DB fault — loud-fail and
@@ -340,7 +381,7 @@ def _insert_batch(hook_name, target_table, payload_ref, rows, connect_timeout=1)
                 )
                 failed += 1
                 continue
-            cols = list(row.keys())
+            cols = [c for c in row.keys() if c not in absent_cols]
             dedup_key = row.get("dedup_key")
             try:
                 sql = _build_insert_sql(target_table, cols)

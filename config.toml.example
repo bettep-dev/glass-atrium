@@ -36,9 +36,9 @@ timezone = "auto"
 [ports]
 # Atrium Monitor web app — single fixed port
 monitor = 16145
-# fakechat channel-plugin HTTP servers (daemon inject endpoints, 127.0.0.1-
-# bound) — consumed by the daemon bootstrap/healthcheck/inject scripts; keys
-# absent → stock defaults below
+# fakechat ports of the retired daemon layer — read only by its teardown
+# (retirement routine + uninstall, lib/ga-daemons.sh) to free a port a
+# pre-retirement install may still hold; keys absent → stock defaults below
 # ga:optional
 autoagent_fakechat = 8787
 # ga:optional
@@ -82,18 +82,13 @@ backup_dir = "${HOME}/.glass-atrium/backups/postgres"
 # ga:optional
 repo = "<owner>/<repo>"
 
-# --- daemon schedules (8 launchd jobs, com.glass-atrium.* namespace) ---
+# --- daemon schedules (one stanza per active launchd job — lib/ga-env.sh
+# LAUNCHD_JOBS; com.glass-atrium.* namespace) ---
 # `time = "HH:MM"`  → StartCalendarInterval (fires once daily at that wall time)
 # `mode = "keepalive"` → resident job (RunAtLoad + KeepAlive, no fixed wall time)
 # All wall times resolve against [meta].timezone.
 
 [daemon.monitor]
-mode = "keepalive"
-
-[daemon.autoagent-daemon]
-mode = "keepalive"
-
-[daemon.wiki-daemon]
 mode = "keepalive"
 
 [daemon.monitor-log-rotate]
@@ -107,6 +102,3 @@ time = "04:30"
 
 [daemon.wiki-compile]
 time = "04:50"
-
-[daemon.daemon-daily-restart]
-time = "05:30"

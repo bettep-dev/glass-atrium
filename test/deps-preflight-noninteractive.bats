@@ -30,7 +30,7 @@
 #     function tokens with a background+poll+kill hang guard (install-hang fix).
 #   * The passthrough path RETAINS the framed runner (preflight_run_or_bail_framed,
 #     function-local RENDER_MODE=install) + scrolling preflight_line/preflight_run_cmd.
-#   * preflight_panel_step derives STEP_LABEL_ACTIVE_CUR from its ACTIVE arg, else the resolved label; G7 pins the fakechat plugin-install panel framing + the marketplace slow-clone ACTIVE label (the marketplace-add framing itself is NOT pinned).
+#   * preflight_panel_step derives STEP_LABEL_ACTIVE_CUR from its ACTIVE arg, else the resolved label; G7 drives the boxed fakechat setup live: marketplace add (slow-clone ACTIVE label) + plugin install both run as panel steps, never through the scroll runner.
 #   * G3 python pip --user stays framed; on a PEP-668 failure the --break-system-packages retry
 #     AUTO-runs (no typed consent, no bracket) with a VISIBLE override log, non-fatal on retry-fail.
 #   * G8 sqlite is FTS5-CAPABILITY-gated (brew sqlite added only when system sqlite3 lacks
@@ -47,6 +47,8 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 DEPS_SH="${GA}/lib/ga-deps.sh"
 LAUNCHER="${GA}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${DEPS_SH}" ]] || skip "lib not found: ${DEPS_SH}"
@@ -63,7 +65,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # === D2 — ga_cmd_homebrew_install emits the in-process function token ===============
@@ -796,6 +798,26 @@ extract_launcher_fn() {
   [[ "${body}" == *'return 1'* ]] || return 1
 }
 
+# A sentinel pgrep still matched → each match (pid, parent, start, command) + every live bats run, then fail.
+print_sentinel_owners() {
+  local matched="${output-}" matched_list pid candidate_pids
+  matched_list="$(printf '%s\n' "${matched}" | paste -sd' ' -)"
+  printf 'pgrep -f %s matched pids: %s\n' "$1" "${matched_list}"
+  # a match can exit before ps reads it (ps exits 1) → name it and go on: errexit binds after the final ||.
+  while IFS= read -r pid; do
+    ps -o pid=,ppid=,lstart=,command= -p "${pid}" 2>&1 || printf '%s (exited before ps)\n' "${pid}"
+  done <<<"${matched}"
+  candidate_pids="$(pgrep -f 'bats-exec-suite|run-bats-parallel' | paste -sd, -)"
+  # macOS pgrep skips its own ancestors (this run); procps pgrep lists them → tell apart by the bats pid.
+  printf 'live bats runs (this run: bats pid %s):\n' "${BATS_ROOT_PID:-unknown}"
+  if [[ -n "${candidate_pids}" ]]; then
+    ps -o pid,ppid,lstart,command -p "${candidate_pids}" 2>&1 || printf 'none left by ps time\n'
+  else
+    printf 'none\n'
+  fi
+  return 1
+}
+
 @test "hang-guard(live): ga_fakechat_install exits 0 on stubbed-present, killing+reaping the hung bg pid" {
   local stub="${SANDBOX}/bin"
   mkdir -p "${stub}"
@@ -808,10 +830,10 @@ extract_launcher_fn() {
   PATH="${stub}:${PATH}"
   local rc=0
   ga_fakechat_install || rc=$?
-  [[ "${rc}" -eq 0 ]]
+  [[ "${rc}" -eq 0 ]] || return 1
   # the backgrounded claude was killed+reaped — no leaked child survives.
   run pgrep -f '918273645'
-  [[ "${status}" -ne 0 ]]
+  [[ "${status}" -ne 0 ]] || print_sentinel_owners '918273645'
 }
 
 @test "hang-guard(live): ga_fakechat_install is NON-FATAL (returns 1) + reaps the pid on the WALL-CLOCK ceiling" {
@@ -830,7 +852,7 @@ extract_launcher_fn() {
   GA_PLUGIN_INSTALL_TIMEOUT_SECS=1 ga_fakechat_install || rc=$?
   [[ "${rc}" -eq 1 ]] || return 1 # non-fatal failure verdict
   run pgrep -f '918273646'
-  [[ "${status}" -ne 0 ]] || return 1 # the live bg claude was killed+reaped at the ceiling
+  [[ "${status}" -ne 0 ]] || print_sentinel_owners '918273646' # the live bg claude was killed+reaped at the ceiling
 }
 
 @test "hang-guard(body): ga_marketplace_add mirrors the wall-clock ceiling + SIGTERM→SIGKILL escalation reap" {
@@ -848,18 +870,23 @@ extract_launcher_fn() {
   [[ "$(grep -c 'wait "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]] || return 1
 }
 
-@test "G7(static): _preflight_fakechat_boxed frames the plugin install as a panel step, marketplace-add carrying the slow-clone label" {
-  # BOTH claims below were TERMINAL (live) assertions in the pre-diet G7 block and went out together
-  # with a sibling that bash 3.2.57 left inert mid-body (on CI's bash 5.3.9 it gates). The first is a
-  # WIRING claim — the fakechat plugin install is engaged through preflight_panel_step at all, not a
-  # copy snapshot; the second pins the present-progressive ACTIVE cue flagging the ~30s marketplace
-  # clone. They share ONE terminal && chain so neither can be re-inerted on bash 3.2.57 by a later
-  # mid-body append.
-  local body
-  body="$(awk '/^_preflight_fakechat_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]] || return 1
-  [[ "${body}" == *'preflight_panel_step "fakechat: install plugin"'* ]] \
-    && [[ "${body}" == *'adding marketplace (git clone, may take a minute)…'* ]]
+@test "the boxed fakechat setup routes the marketplace add and the plugin install through the panel, never the scroll runner" {
+  # A scroll-runner write inside the boxed render paints over the work box; the slow marketplace
+  # clone must also announce itself through the panel's ACTIVE label. One terminal && chain → decides on bash 3.2 too.
+  ga_detect_fakechat() { printf 'absent\n'; }
+  ga_marketplace_present() { printf 'no\n'; }
+  ga_cmd_marketplace_add() { printf 'MKT_CMD\n'; }
+  ga_cmd_fakechat_install() { printf 'PLUGIN_CMD\n'; }
+  STEPS="" RAN=""
+  preflight_panel_step() { STEPS="${STEPS}[$1|$2|$3]"; }
+  preflight_run_cmd() { RAN="${RAN}[$1|$2]"; }
+  extract_launcher_fn _preflight_fakechat_boxed
+  local clone_step='\[[^]|]*\|[^]|]*clone[^]|]*\|MKT_CMD\]'
+  _preflight_fakechat_boxed
+  [[ "${STEPS}" =~ ${clone_step} ]] \
+    && [[ "${STEPS}" == *"|PLUGIN_CMD]"* ]] \
+    && [[ -z "${RAN}" ]] \
+    || { echo "steps=${STEPS} ran=${RAN}"; return 1; }
 }
 
 # === R1 — PostgreSQL @18 fresh pin + initdb fallback (uninitialized data dir) ============
@@ -1063,7 +1090,7 @@ SH
   local home="${SANDBOX}/home"
   mkdir -p "${home}/.claude" # NO creds file → creds check misses, Keychain must decide
   export GA_STUB_SEC_RC=0    # Keychain item exists
-  [[ "$(HOME="${home}" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
+  [[ "$(HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
   # security was invoked WITHOUT -w and WITH the exact service (attributes-only, no secret read).
   run cat "${SANDBOX}/security-argv"
   [[ "${output}" != *"-w"* ]]
@@ -1102,7 +1129,7 @@ SH
   # no sleep stub: the fast-exiting claude stub makes `wait` on the probe return at once;
   # the watchdog subshell's fds are redirected (>/dev/null) so its orphaned `sleep` no longer
   # holds the $() capture pipe — the verdict returns without paying the ceiling.
-  [[ "$(HOME="${home}" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "absent" ]]
+  [[ "$(HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "absent" ]]
   # the auth-status probe WAS the deciding signal (Keychain missed) — modelled specifically.
   [[ -e "${SANDBOX}/authstatus-called" ]]
 }
@@ -1130,7 +1157,7 @@ SH
   local home="${SANDBOX}/home"
   mkdir -p "${home}/.claude"
   printf '{}\n' >"${home}/.claude/.credentials.json" # PRESENCE only (contents never read)
-  [[ "$(HOME="${home}" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
+  [[ "$(HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
   # short-circuited at the creds-file check — neither Keychain nor auth-status was reached.
   [[ ! -e "${SANDBOX}/security-argv" ]]
   [[ ! -e "${SANDBOX}/authstatus-called" ]]
@@ -1161,7 +1188,7 @@ SH
   # 1.13.0 on both legs) → re-source the lib in a clean child (also the direct subshell cross-check)
   # and assert the verdict via a terminal `run`+`[ ]`, which gates on both legs.
   export GA_TEST_HOME="${home}" GA_TEST_PATH="${stub}" GA_TEST_DEPS="${DEPS_SH}"
-  run bash -c 'source "${GA_TEST_DEPS}"; HOME="${GA_TEST_HOME}" PATH="${GA_TEST_PATH}" ga_detect_claude_auth'
+  run bash -c 'source "${GA_TEST_DEPS}"; HOME="${GA_TEST_HOME}" GA_DATA_ROOT="${GA_TEST_HOME}/.glass-atrium" PATH="${GA_TEST_PATH}" ga_detect_claude_auth'
   [ "${status}" -eq 0 ] && [ "${output}" = "present-but-down" ]
 }
 
@@ -1192,7 +1219,7 @@ SH
   mkdir -p "${home}/.claude"
   export GA_STUB_SEC_RC=44 # no Keychain item → fall through to the bounded probe
   export GA_STUB_AUTH_RC=0 # auth status: authenticated
-  [[ "$(HOME="${home}" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
+  [[ "$(HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
   [[ -e "${SANDBOX}/authstatus-called" ]] # the corroboration probe was exercised
 }
 
@@ -1224,7 +1251,7 @@ SH
   mkdir -p "${home}/.claude"
   export GA_STUB_UNAME=Linux # non-Darwin → Keychain block skipped
   export GA_STUB_AUTH_RC=0   # auth status decides → present
-  [[ "$(HOME="${home}" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
+  [[ "$(HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
   # the macOS-only `security` probe was NEVER invoked on a non-Darwin host.
   [[ ! -e "${SANDBOX}/security-argv" ]]
   # the verdict came from the auth-status corroboration path instead.
@@ -1260,7 +1287,7 @@ SH
   # bash 3.2.57 leaves a mid-body [[ ]] failure inert (on CI's bash 5.3.9 it gates; measured, bats
   # 1.13.0 on both legs) → re-source the lib in a clean child (also the direct subshell cross-check)
   # with claude OFF PATH and assert the verdict via a terminal `run`+`[ ]`.
-  run bash -c 'source "${GA_TEST_DEPS}"; HOME="${GA_TEST_HOME}" PATH="${GA_TEST_PATH}" ga_detect_claude_auth'
+  run bash -c 'source "${GA_TEST_DEPS}"; HOME="${GA_TEST_HOME}" GA_DATA_ROOT="${GA_TEST_HOME}/.glass-atrium" PATH="${GA_TEST_PATH}" ga_detect_claude_auth'
   local argv
   argv="$(cat "${SANDBOX}/security-argv" 2>/dev/null || true)"
   [[ "${argv}" != *"-w"* ]]
@@ -1318,7 +1345,7 @@ SH
   bash -c '
     export GA_STUB_SEC_RC=44
     export GA_AUTH_PROBE_TIMEOUT_SECS=1
-    export HOME="${GA_TEST_HOME}"
+    export HOME="${GA_TEST_HOME}" GA_DATA_ROOT="${GA_TEST_HOME}/.glass-atrium"
     export PATH="${GA_TEST_STUB}:${PATH}"
     source "${GA_TEST_DEPS}"
     ga_detect_claude_auth
@@ -1413,7 +1440,7 @@ t6_extract_fn() {
   # deliberately slash-less slug so the run exits 12 in fetch_release — PROOF that
   # preflight (and the parser resolution) already passed without gh/jq, with zero network.
   t6_build_toolbin uname tar shasum curl python3 mktemp mkdir dirname ls cp rm mv cat || return 1
-  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" GA_DATA_ROOT="${SANDBOX}/.glass-atrium" TMPDIR="${SANDBOX}" \
     GA_DIR="${SANDBOX}/ga-dir" GA_RELEASE_REPO="no-slash-slug" \
     /bin/bash "${INSTALL_SH_T6}"
   [[ "${status}" -eq 12 ]] || return 1
@@ -1423,7 +1450,7 @@ t6_extract_fn() {
 @test "T6: neither jq nor python3 usable → loud exit 11 naming BOTH parsers + the brew remedy" {
   t6_require_install_sh
   t6_build_toolbin uname tar shasum curl mktemp mkdir dirname ls cp rm mv cat || return 1
-  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" GA_DATA_ROOT="${SANDBOX}/.glass-atrium" TMPDIR="${SANDBOX}" \
     GA_DIR="${SANDBOX}/ga-dir" GA_RELEASE_REPO="owner/repo" \
     /bin/bash "${INSTALL_SH_T6}"
   [[ "${status}" -eq 11 ]] || return 1
@@ -1548,4 +1575,19 @@ t6_seed_manifests() {
       }
     done
   done
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

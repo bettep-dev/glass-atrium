@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Wiki daemon entry.
+# Wiki cycle entry.
 #
-# Invoked once per /loop wakeup by the entry prompt. Runs three stages
+# Run by the wiki-compile launchd job after wiki-daily-compile.sh. Runs three stages
 # in sequence (each independent — failure of one logs but does not abort
 # the next):
 #
@@ -37,8 +37,8 @@
 #                                             # Accepted but redundant: the cycle
 #                                             # always invokes `wiki-sync.sh
 #                                             # --force-index` via wiki_daemon_cycle.py.
-#                                             # Kept for backward-compat with older
-#                                             # entry prompts.
+#                                             # Kept so a caller still passing it
+#                                             # does not hit the unknown-arg FATAL.
 #
 # Exits 0 even when no raws are processed (empty arrays are valid).
 # Non-zero exits indicate a tooling failure (python3 missing, bad args, etc.).
@@ -135,8 +135,8 @@ while [[ $# -gt 0 ]]; do
         --force-master-index)
             # No-op alias. wiki_daemon_cycle.py ALWAYS calls
             # `wiki-sync.sh --force-index` per cycle, so this flag is
-            # semantically already the default. Accepted to keep legacy entry
-            # prompts (wiki-daemon-entry-prompt.md) from fataling.
+            # semantically already the default. Accepted so a caller still passing
+            # it does not hit the unknown-arg FATAL below.
             shift
             ;;
         -h|--help)
@@ -256,8 +256,8 @@ run_deadlinks_stage() {
 
 # Concurrency guard (wiki-compile lock)
 #
-# Share the SAME lock name as the 04:50 cron (wiki-daily-compile.sh) so a /loop
-# tick and the cron mutually exclude: both contend for the date-keyed OUT_PATH
+# Share the SAME lock name as the 04:50 cron (wiki-daily-compile.sh) so this
+# cycle and the cron mutually exclude: both contend for the date-keyed OUT_PATH
 # JSON and the core.daemon_runs(wiki) UPSERT. (The wiki-sync stage's own
 # wiki-sync lock only serializes index regeneration, a strict subset.) Held by
 # the cron → skip this cycle (exit 0); the cron's run is authoritative for the

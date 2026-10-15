@@ -47,6 +47,8 @@
 #        generation verdict.
 #   AC22 recording provenance writes no new file into the report directory.
 #   AC23 the doctor's abort surface still FAILs on an unsuperseded abort after such a cycle.
+#   AC24 the dispatch tail runs no loop-events push: daemon_cycle.py writes those rows itself, so a
+#        push helper an older release left on the install is never invoked.
 #
 # Run via: bats autoagent/test/daemon-cycle-apply-status.bats
 # Requires: bats >= 1.5.0, bash 3.2+, python3
@@ -66,8 +68,12 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_DRIVER="${GA}/autoagent/daemon-cycle.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load '../../test/lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${REAL_DRIVER}" ]] || skip "daemon-cycle.sh not found: ${REAL_DRIVER}"
   WORK="$(cd -- "$(mktemp -d -t daemon-cycle-apply-status.XXXXXX)" && pwd -P)"
   FAKE_HOME="${WORK}/home"
@@ -76,6 +82,11 @@ setup() {
   mkdir -p -- "${FAKE_HOME}/.glass-atrium/scripts" "${WORK}/real/autoagent" "${WORK}/bin"
   DRIVER="${WORK}/real/autoagent/daemon-cycle.sh"
   cp -p -- "${REAL_DRIVER}" "${DRIVER}"
+  # The driver's backfill head stage reads its trigger files here: a completion record and no re-arm
+  # marker keep it not pending, so it loads no lock lib (this copied tree carries none) and calls nothing.
+  BACKFILL_REPORTS="${WORK}/backfill-reports"
+  mkdir -p -- "${BACKFILL_REPORTS}"
+  : >"${BACKFILL_REPORTS}/.unadjudicated-backfill-done"
   OUT_JSON="${WORK}/cycle.json"
   printf '%s\n' '{"patches": []}' >"${OUT_JSON}"
   # The driver probes the DB for the composed enum label before writing. Default the seam to a
@@ -86,7 +97,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # make_stage_stubs — the driver resolves daemon_cycle.py / daemon-apply.sh relative to its own dir,
@@ -202,8 +213,8 @@ EOF
 # AUTOAGENT_CLAUDE_BIN is unset because an ambient value short-circuits the resolution the stub feeds.
 run_driver() {
   run env -u AUTOAGENT_CLAUDE_BIN \
-    HOME="${FAKE_HOME}" AUTOAGENT_PYTHON_BIN=python3 PATH="${WORK}/bin:${PATH}" \
-    bash "${DRIVER}" --out "${OUT_JSON}" "$@"
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${BACKFILL_REPORTS}" AUTOAGENT_PYTHON_BIN=python3 \
+    PATH="${WORK}/bin:${PATH}" bash "${DRIVER}" --out "${OUT_JSON}" "$@"
 }
 
 # The apply_status value of the single compose envelope (empty when none was sent).
@@ -383,13 +394,13 @@ PY
 
 @test "AC10: an absent apply script composes the same value as a non-executable one" {
   make_stage_stubs 0
-  rm -f -- "${WORK}/real/autoagent/daemon-apply.sh"
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/real/autoagent/daemon-apply.sh"; fi
   make_helper 0
   run_driver --apply-only
   local absent_composed
   absent_composed="$(compose_status)"
   # re-run the non-executable fixture in the same case so the two are COMPARED, never assumed equal
-  rm -f -- "${ENVELOPE_LOG}"
+  if ga_guard_path "${ENVELOPE_LOG}"; then rm -f -- "${ENVELOPE_LOG:?}"; fi
   make_stage_stubs 0
   chmod 644 "${WORK}/real/autoagent/daemon-apply.sh"
   run_driver --apply-only
@@ -637,7 +648,9 @@ PY
   }
   # behavioural, not structural: whatever channel provenance moves to later, an unsuperseded abort
   # must keep failing. A structural "no file was written" assertion alone would not survive that move.
-  GA_TARGET_HOME="${target}" GA_DATA_ROOT="${data}" DOCTOR_AUTH_REPORTS_DIR="${reports}" \
+  # GA_SKIP_DB_SETUP: the doctor's DB probes run `psql -h /tmp`, which no PGHOST reaches; skipping them
+  # leaves the abort classifier, the section under test, untouched.
+  GA_SKIP_DB_SETUP=1 GA_TARGET_HOME="${target}" GA_DATA_ROOT="${data}" DOCTOR_AUTH_REPORTS_DIR="${reports}" \
     GA_GENERATE_MANIFEST="${target}/no-such-manifest-gen" GA_AUTH_CLAUDE_BIN="${target}/bin/claude" \
     run "${GA}/glass-atrium" doctor
   [[ "${output}" == *"FAIL : autoagent apply aborted"* ]] || {
@@ -645,4 +658,22 @@ PY
     return 1
   }
   [[ "${status}" -ne 0 ]] || return 1
+}
+
+# ── AC24 — the dispatch tail runs no loop-events push ─────────────────────────────────────────
+
+@test "a dispatched cycle never runs a loop-events push helper left on the install" {
+  make_stage_stubs 0
+  make_helper 0
+  cat >"${FAKE_HOME}/.glass-atrium/scripts/_pg_push_autoagent_loop_events.py" <<EOF
+open("${CALL_LOG}", "a").write("loop-push\n")
+EOF
+  run_driver --apply-only
+  local calls
+  calls="$(cat "${CALL_LOG}")"
+  [[ "${calls}" != *"loop-push"* ]] || {
+    echo "calls: ${calls}"
+    echo "driver output: ${output}"
+    return 1
+  }
 }

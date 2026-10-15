@@ -18,11 +18,18 @@ export type ModelDomainKey =
 
 export type BudgetDomainKey = "budget.worker_max_usd" | "budget.pre_verify_max_usd";
 
+export type TierDomainKey =
+  | "tier.worker_effort"
+  | "tier.pre_verify_effort"
+  | "tier.worker_max_output_tokens"
+  | "tier.pre_verify_max_output_tokens";
+
 // DB desired-state vs rendered daemon-config.json consumer view (D2 write-through).
 // 'pending-migration': a renamed domain's value was read from its PRE-rename row because the
 // rename migration has not run on this DB, so no comparison against the file can be called
 // in-sync yet — the rename is the root cause and `glass-atrium db-setup` is its remedy.
-export type DaemonConfigSyncState = "ok" | "drift" | "file-missing" | "pending-migration";
+// 'file-invalid': the file holds a tier-knob value the daemon loader rejects → every cycle stops, whatever the DB holds.
+export type DaemonConfigSyncState = "ok" | "drift" | "file-missing" | "pending-migration" | "file-invalid";
 
 export interface DomainFileModel {
   file: string;
@@ -55,6 +62,21 @@ export interface BudgetDomainStatus {
   apply_mode: ApplyMode;
 }
 
+/**
+ * Daemon `claude -p` tier knob — the --effort level or CLAUDE_CODE_MAX_OUTPUT_TOKENS.
+ * desired 'inherit' = key removed → CLI default.
+ * actual = the file value the daemon runs with; null when the key is unset or rejected.
+ */
+export interface TierDomainStatus {
+  domain: TierDomainKey;
+  desired: string | null;
+  actual: string | null;
+  // The daemon loader's reason for rejecting the file value; null when the value is unset or accepted.
+  file_error: string | null;
+  drift: boolean;
+  apply_mode: ApplyMode;
+}
+
 export interface ModelConfigGetResponse {
   fetched_at: string;
   // SoT-derived roster (pricing.json `models` keys) — the client's dropdown source.
@@ -62,6 +84,7 @@ export interface ModelConfigGetResponse {
   known_models: string[];
   domains: DomainStatus[];
   budgets: BudgetDomainStatus[];
+  tiers: TierDomainStatus[];
   daemon_config_sync: DaemonConfigSyncState;
 }
 
@@ -93,6 +116,7 @@ export interface ModelConfigPutResponse extends ModelConfigGetResponse {
 export interface ModelConfigPutBody {
   models?: Partial<Record<ModelDomainKey, string>>;
   budgets?: Partial<Record<BudgetDomainKey, string>>;
+  tiers?: Partial<Record<TierDomainKey, string>>;
 }
 
 export type ModelConfigErrorBody =

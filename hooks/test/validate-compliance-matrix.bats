@@ -33,6 +33,8 @@
 #   assertion `return 1`s on mismatch, so EACH one independently fails the test.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../validate-compliance-matrix.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -x "${HOOK_SH}" ]] || skip "hook not executable: ${HOOK_SH}"
@@ -374,7 +376,7 @@ break_layer_b() {
 }
 
 @test "AC7 Layer A still reports declared-missing and undeclared-present" {
-  rm -f "${RULES_DIR}/core-security.md"
+  if ga_guard_path "${RULES_DIR}"; then rm -f -- "${RULES_DIR:?}/core-security.md"; fi
   : >"${RULES_DIR}/undeclared-extra.md"
 
   run run_hook

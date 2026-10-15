@@ -7,7 +7,8 @@
 # `data/update` spine baseline and the deferred Tier-B monitor logs stay in place.
 #
 # Ordering (PIN-B): quiesce ALL named writers FIRST (launchctl bootout + tmux
-# kill-session — the detached daemons survive bootout), THEN migrate, THEN resume.
+# kill-session — the detached daemons survive bootout), THEN migrate, THEN resume
+# the active writers only — a retired label is never restarted.
 # Resume is registered on the EXIT trap so a mid-migration abort never leaves the
 # system quiesced.
 #
@@ -47,21 +48,27 @@ readonly SANDBOX
 DRY_RUN=0
 
 # launchd/tmux lifecycle targets. SoT = lib/ga-env.sh (LAUNCHD_LABEL_PREFIX +
-# GA_DAEMON_SESSIONS + the writer subset of LAUNCHD_JOBS); duplicated here because the
-# migration op is a standalone one-time script that does not source the ga-core libs.
+# LAUNCHD_RETIRED_JOBS + GA_DAEMON_SESSIONS + the writer subset of LAUNCHD_JOBS); duplicated
+# here because the migration op is a standalone one-time script that does not source the ga-core libs.
 readonly LAUNCHD_LABEL_PREFIX="com.glass-atrium"
-# Named writers to quiesce (plan Rollout Sequence): every job that WRITES a Tier-A store.
+# Named writers to quiesce + resume (plan Rollout Sequence): every active job that WRITES a Tier-A store.
 QUIESCE_LAUNCHD_JOBS=(
   monitor
-  autoagent-daemon
-  wiki-daemon
   monitor-log-rotate
   pg-backup
   autoagent-cycle
 )
 readonly QUIESCE_LAUNCHD_JOBS
-# Detached daemon tmux sessions — SURVIVE `launchctl bootout` (reparented to PID 1),
-# so they MUST be killed explicitly (mirror lib/ga-env.sh GA_DAEMON_SESSIONS).
+# Retired labels — quiesce boots out any still loaded (an install the cycle's retirement stage has not
+# cleaned yet keeps writing until then); resume never restarts one, as its script is gone.
+LAUNCHD_RETIRED_JOBS=(
+  autoagent-daemon
+  wiki-daemon
+  daemon-daily-restart
+)
+readonly LAUNCHD_RETIRED_JOBS
+# Retired detached daemon tmux sessions — SURVIVE `launchctl bootout` (reparented to PID 1),
+# so they MUST be killed explicitly; nothing re-creates them.
 GA_DAEMON_SESSIONS=(
   claude-wiki-daemon
   claude-autoagent-daemon
@@ -178,13 +185,13 @@ merge_move() {
 }
 
 # quiesce — STOP every named writer before touching a Tier-A path. launchctl bootout
-# each writer job, then tmux kill-session each detached daemon (they survive bootout).
+# each writer job and retired label, then tmux kill-session each detached daemon (they survive bootout).
 # Best-effort: an absent job/session is a no-op. Sets QUIESCED so the EXIT trap resumes.
 quiesce() {
   log "quiesce: stopping named writers (launchctl bootout + tmux kill-session)"
   if command -v launchctl >/dev/null 2>&1; then
     local job label
-    for job in "${QUIESCE_LAUNCHD_JOBS[@]}"; do
+    for job in "${QUIESCE_LAUNCHD_JOBS[@]}" "${LAUNCHD_RETIRED_JOBS[@]}"; do
       label="${LAUNCHD_LABEL_PREFIX}.${job}"
       _do launchctl bootout "gui/${UID}/${label}" >/dev/null 2>&1 || true
       log "quiesce: booted out ${label}"
@@ -209,10 +216,9 @@ quiesce() {
   return 0
 }
 
-# resume — restart the quiesced launchd writers (bootstrap the deployed plist, else
-# kickstart a still-loaded job). The autoagent-daemon + wiki-daemon launchd jobs
-# re-create their detached tmux sessions on bootstrap, so the tmux daemons resume with
-# them. Idempotent (runs once) + best-effort — a mid-migration abort still recovers.
+# resume — restart the quiesced active writers (bootstrap the deployed plist, else
+# kickstart a still-loaded job). Retired labels stay stopped even with a plist still
+# deployed. Idempotent (runs once) + best-effort — a mid-migration abort still recovers.
 resume() {
   [[ "${RESUMED}" -eq 1 ]] && return 0
   RESUMED=1

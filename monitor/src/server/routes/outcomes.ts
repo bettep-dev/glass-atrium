@@ -37,6 +37,8 @@ import type {
   OutcomeCrossAnalysisByResult,
   OutcomeCrossAnalysisCell,
   OutcomeCrossAnalysisFilterEcho,
+  OutcomeCrossAnalysisPriorWindow,
+  OutcomeSearchPriorWindow,
   OutcomeCloseByCidResponse,
   OutcomeCloseResponse,
   OutcomeCrossAnalysisResponse,
@@ -45,6 +47,7 @@ import type {
   OutcomeDowngradeOrigin,
   OutcomeGraderBreakdown,
   OutcomeGraderVerdict,
+  OutcomeHeatmapBucketDates,
   OutcomeHeatmapResponse,
   OutcomeHeatmapResultFilter,
   OutcomeResultLiteral,
@@ -73,6 +76,8 @@ const CLOSABLE_RESULT: OutcomeResultLiteral = "done_with_concerns";
 // attention population. The caveat half is CLOSABLE_RESULT while it stays unclosed,
 // and the flag half is review_flag; buildWhereClause ORs the three.
 const ATTENTION_RESULTS: readonly OutcomeResultLiteral[] = ["fail", "blocked"];
+
+const PRIOR_WINDOW_INVALID: OutcomesErrorBody = { error: "invalid_param", param: "prior_window", allowed: [7, 30, 90] };
 
 const CLOSE_ROUTE = "/api/outcomes/:id/close";
 const CLOSE_BY_CID_ROUTE = "/api/outcomes/close-by-cid";
@@ -129,38 +134,39 @@ const ATTRIBUTION_DAILY_DAYS_DEFAULT = 30;
 // a verdict rather than re-deriving one.
 //
 // Calibrated against the false-positive population, not against the incident alone.
-// Replaying the rule hourly over 31 days of this machine's own outcomes (749
-// evaluations, the window containing the ~29.8h outage that motivated the watchdog):
+// Replaying the rule hourly over a month of this machine's own outcomes, a window that
+// contains the outage which motivated the watchdog, separates the two candidate shapes:
 //
-//   peak-over-window eligibility + 6h bound   43 alerting spans, 1 real →   2.3%, alerting 31.0% of wall-clock
-//   recency-gated eligibility  + 24h bound     1 alerting span,  1 real → 100.0%, alerting  0.8% of wall-clock
+//   peak-over-window eligibility + 6h bound   many alerting spans, one real → low precision, often alerting
+//   recency-gated eligibility  + 24h bound    one alerting span, the real one → full precision, rarely alerting
 //
 // Two findings drove the shape, and neither is visible from the incident:
 //
-//   1. The bound alone cannot separate them. Routine whole-day idleness reached 25.7h
-//      while the outage reached 29.8h, so the flat band that catches one and not the
-//      other is under 4h wide and a single longer day off closes it; at 30h the
-//      outage itself stops alerting. Deriving the bound from each channel's own
-//      recent maximum gap scores well and is disqualified for a worse reason — the
-//      outage enters its own history and lifts the bar (measured: 19.6h → 37.2h for
-//      the 7 days after it), so the instrument mutes itself exactly once it fires.
+//   1. The bound alone cannot separate them. Routine whole-day idleness came within a
+//      few hours of the outage's own length, so the flat band that catches one and not
+//      the other is narrow and a single longer day off closes it; a bound past the
+//      outage's length stops alerting on the outage itself. Deriving the bound from each
+//      channel's own recent maximum gap scores well and is disqualified for a worse
+//      reason — the outage enters its own history and lifts the bar above its own length
+//      for the days after it, so the instrument mutes itself exactly once it fires.
 //   2. The false positives were not long silences but channels that had STOPPED BEING
 //      USED. Peak-over-the-window asks "was this channel busy at some point in 7
 //      days", which stays true for a week after a channel legitimately winds down —
-//      completion-synthesized bursts to 171/day and then goes quiet for days by
+//      completion-synthesized bursts well past the floor and then goes quiet for days by
 //      design. Gating the floor on RECENT volume asks the question that makes silence
 //      news: is the channel busy NOW and yet silent?
 //
-// With the eligibility question fixed, the bound is insensitive across 18-28h (all
-// score 1/1 over the same replay), so 24h is chosen for a reason outside the sample:
-// a silence of a full day has covered every hour of the clock, so it can never be
-// explained away by when the machine happens to be idle.
+// With the eligibility question fixed, the bound is insensitive across a wide band
+// around one day (every bound in it catches the outage and nothing else over the same
+// replay), so 24h is chosen for a reason outside the sample: a silence of a full day
+// has covered every hour of the clock, so it can never be explained away by when the
+// machine happens to be idle.
 //
 // Accepted cost, stated rather than hidden: coverage is intermittent. While a channel
 // is itself running below the floor, its silence is not watched at all — on a quiet
-// week structuredoutput-completion drops to a recent peak in the 80s and stops being
-// eligible. That is the floor's original premise (a channel not carrying volume is not
-// news) made CURRENT instead of week-stale, and it is the price of the precision above.
+// week structuredoutput-completion drops to a recent peak below the floor and stops
+// being eligible. That is the floor's original premise (a channel not carrying volume is
+// not news) made CURRENT instead of week-stale, and it is the price of the precision above.
 const CHANNEL_ELIGIBILITY_DAILY_FLOOR = 100;
 // COUPLED to the bound below, and strictly greater than it (pinned by a test): an
 // outage suppresses the very rows that keep its channel eligible, so a recency window
@@ -367,6 +373,11 @@ interface CrossCellDbRow {
   count: bigint;
 }
 
+interface PeriodBoundDbRow {
+  period_start: string;
+  period_end: string;
+}
+
 interface ByResultDbRow {
   result: string;
   count: bigint;
@@ -474,6 +485,8 @@ interface SearchQuerystring {
   // Attention filter — 'true' narrows to the rows asking for an operator action.
   // /search-only per contract.
   needs_attention?: string;
+  // '1'/'true' adds prior_window — the preceding `days` window's count; 400 with days=all.
+  prior_window?: string;
 }
 
 interface CrossAnalysisQuerystring {
@@ -490,6 +503,8 @@ interface CrossAnalysisQuerystring {
   // (siblings of by_agent_top_10, which stays independently gated regardless of
   // this toggle) can be inspected un-scoped.
   include_all?: string;
+  // '1'/'true' adds prior_window — the preceding `days` window; 400 with days=all.
+  prior_window?: string;
 }
 
 // Parsed filter set shared by /search and /cross-analysis. metric_pass is a
@@ -546,6 +561,10 @@ async function handleSearch(
     return reply.code(400).send(filtersResult.error);
   }
   const filters = filtersResult.filters;
+  const hasPriorWindow = parsePriorWindowParam(request.query.prior_window, filters.days);
+  if (hasPriorWindow === null) {
+    return reply.code(400).send(PRIOR_WINDOW_INVALID);
+  }
 
   const limit = parseLimitParam(request.query.limit);
   if (limit === null) {
@@ -579,8 +598,8 @@ async function handleSearch(
 
   const prisma = getPrisma();
   try {
-    // Two parallel queries: paginated rows + total count for pagination disclosure.
-    const [rows, countRows] = await Promise.all([
+    // Parallel queries: paginated rows + total count for pagination disclosure (+ opt-in prior-window count).
+    const [rows, total, priorWindow] = await Promise.all([
       prisma.$queryRaw<OutcomeSearchDbRow[]>`
         SELECT
           id,
@@ -611,18 +630,11 @@ async function handleSearch(
         LIMIT ${limit}
         OFFSET ${offset}
       `,
-      prisma.$queryRaw<CountRow[]>`
-        SELECT COUNT(*)::bigint AS total
-        FROM core.outcomes
-        ${whereClause}
-      `,
+      getRowCount(whereClause),
+      hasPriorWindow && filters.days !== "all"
+        ? getSearchPriorWindow({ ...filters, days: filters.days }, scopeAgentKeys)
+        : Promise.resolve(undefined),
     ]);
-
-    const totalRow = countRows[0];
-    if (totalRow === undefined) {
-      throw new Error("count query returned no row");
-    }
-    const total = bigintToNumber(totalRow.total);
 
     // Defensive: skip rows whose enum text drifted off the registered surface.
     // Should never happen given PG enum constraint, but a future migration could
@@ -678,6 +690,7 @@ async function handleSearch(
       filter: filterEcho,
       total,
       rows: mapped,
+      ...(priorWindow === undefined ? {} : { prior_window: priorWindow }),
       fetched_at: new Date().toISOString(),
     };
   } catch (error) {
@@ -918,6 +931,10 @@ async function handleCrossAnalysis(
     return reply.code(400).send(filtersResult.error);
   }
   const filters = filtersResult.filters;
+  const hasPriorWindow = parsePriorWindowParam(request.query.prior_window, filters.days);
+  if (hasPriorWindow === null) {
+    return reply.code(400).send(PRIOR_WINDOW_INVALID);
+  }
   // Registry-scoped by default (closes the by_result/cross-tab/grader gap — the
   // original 65/605 `done_with_concerns` cross-analysis miscount included
   // non-fleet agents like general-purpose/Explore); `include_all=1` lifts the
@@ -962,7 +979,8 @@ async function handleCrossAnalysis(
       downgradeRows,
       taskTypeGraderRows,
       countRows,
-      baseCountRows,
+      baseTotal,
+      priorWindow,
     ] =
       await Promise.all([
         prisma.$queryRaw<CrossCellDbRow[]>`
@@ -974,27 +992,7 @@ async function handleCrossAnalysis(
           ${analyticsWhere}
           GROUP BY confidence, metric_pass
         `,
-        prisma.$queryRaw<ByResultDbRow[]>`
-          SELECT
-            result::text     AS result,
-            COUNT(*)::bigint AS count,
-            (COUNT(*) FILTER (
-              WHERE ${buildReconstructedRowFilter()}
-            ))::bigint       AS reconstructed_count,
-            (COUNT(*) FILTER (
-              WHERE closed_at IS NOT NULL
-            ))::bigint       AS closed_count,
-            -- COALESCE: the discriminator is NULL (not FALSE) when both provenance
-            -- columns are NULL, and NOT NULL would silently drop a legacy writer row.
-            (COUNT(*) FILTER (
-              WHERE NOT COALESCE(${buildReconstructedRowFilter()}, FALSE)
-                AND closed_at IS NULL
-            ))::bigint       AS writer_open_count
-          FROM core.outcomes
-          ${analyticsWhere}
-          GROUP BY result
-          ORDER BY count DESC, result ASC
-        `,
+        findByResultRows(analyticsWhere),
         prisma.$queryRaw<ByAgentDbRow[]>`
           SELECT
             agent,
@@ -1076,21 +1074,19 @@ async function handleCrossAnalysis(
           FROM core.outcomes
           ${analyticsWhere}
         `,
-        prisma.$queryRaw<CountRow[]>`
-          SELECT COUNT(*)::bigint AS total
-          FROM core.outcomes
-          ${whereClause}
-        `,
+        getRowCount(whereClause),
+        hasPriorWindow && filters.days !== "all"
+          ? getPriorWindow({ ...filters, days: filters.days }, scopeAgentKeys)
+          : Promise.resolve(undefined),
       ]);
 
     const totalRow = countRows[0];
-    const baseTotalRow = baseCountRows[0];
-    if (totalRow === undefined || baseTotalRow === undefined) {
+    if (totalRow === undefined) {
       throw new Error("count query returned no row");
     }
     const total = bigintToNumber(totalRow.total);
     const reconstructedTotal = bigintToNumber(totalRow.reconstructed_total);
-    const excludedPoisonedCount = bigintToNumber(baseTotalRow.total) - total;
+    const excludedPoisonedCount = baseTotal - total;
 
     const graderBreakdown = buildGraderBreakdown(graderRows);
     const downgradeBreakdown = buildDowngradeBreakdown(downgradeRows);
@@ -1125,19 +1121,7 @@ async function handleCrossAnalysis(
       }
     }
 
-    // Defensive enum filter — drop rows with unrecognized result/agent values.
-    const byResult: OutcomeCrossAnalysisByResult[] = byResultRows.flatMap((row) => {
-      if (!ALLOWED_RESULTS.has(row.result as OutcomeResultLiteral)) return [];
-      return [
-        {
-          result: row.result as OutcomeResultLiteral,
-          count: bigintToNumber(row.count),
-          reconstructed_count: bigintToNumber(row.reconstructed_count),
-          closed_count: bigintToNumber(row.closed_count),
-          writer_open_count: bigintToNumber(row.writer_open_count),
-        },
-      ];
-    });
+    const byResult = toByResult(byResultRows);
     const byAgentTop10: OutcomeCrossAnalysisByAgent[] = byAgentRows.map((row) => ({
       agent: row.agent,
       count: bigintToNumber(row.count),
@@ -1184,11 +1168,119 @@ async function handleCrossAnalysis(
       grader_breakdown: graderBreakdown,
       downgrade_breakdown: downgradeBreakdown,
       task_type_grader_breakdown: taskTypeGraderBreakdown,
+      ...(priorWindow === undefined ? {} : { prior_window: priorWindow }),
       fetched_at: new Date().toISOString(),
     };
   } catch (error) {
     return failWithDb(request, reply, "/api/outcomes/cross-analysis", error);
   }
+}
+
+function findByResultRows(where: Prisma.Sql): Promise<ByResultDbRow[]> {
+  return getPrisma().$queryRaw<ByResultDbRow[]>`
+    SELECT
+      result::text     AS result,
+      COUNT(*)::bigint AS count,
+      (COUNT(*) FILTER (
+        WHERE ${buildReconstructedRowFilter()}
+      ))::bigint       AS reconstructed_count,
+      (COUNT(*) FILTER (
+        WHERE closed_at IS NOT NULL
+      ))::bigint       AS closed_count,
+      -- COALESCE: the discriminator is NULL (not FALSE) when both provenance
+      -- columns are NULL, and NOT NULL would silently drop a legacy writer row.
+      (COUNT(*) FILTER (
+        WHERE NOT COALESCE(${buildReconstructedRowFilter()}, FALSE)
+          AND closed_at IS NULL
+      ))::bigint       AS writer_open_count
+    FROM core.outcomes
+    ${where}
+    GROUP BY result
+    ORDER BY count DESC, result ASC
+  `;
+}
+
+// Defensive enum filter — drop rows with unrecognized result values.
+function toByResult(rows: readonly ByResultDbRow[]): OutcomeCrossAnalysisByResult[] {
+  return rows.flatMap((row) => {
+    if (!ALLOWED_RESULTS.has(row.result as OutcomeResultLiteral)) return [];
+    return [
+      {
+        result: row.result as OutcomeResultLiteral,
+        count: bigintToNumber(row.count),
+        reconstructed_count: bigintToNumber(row.reconstructed_count),
+        closed_count: bigintToNumber(row.closed_count),
+        writer_open_count: bigintToNumber(row.writer_open_count),
+      },
+    ];
+  });
+}
+
+/**
+ * Per-result counts for the `days` window just before the current one, under the
+ * current window's filters, poisoned exclusion and agent scope.
+ * Totals derive from by_result — result is a DB enum, so the enum filter drops nothing.
+ */
+async function getPriorWindow(
+  filters: ParsedFilters & { days: number },
+  scopeAgentKeys: string[] | undefined,
+): Promise<OutcomeCrossAnalysisPriorWindow> {
+  const priorWhere = buildWhereClause(filters, { excludePoisoned: true, scopeAgentKeys, isPriorWindow: true });
+  const baseWhere = buildWhereClause(filters, { scopeAgentKeys, isPriorWindow: true });
+  const [byResultRows, baseTotal, period] = await Promise.all([
+    findByResultRows(priorWhere),
+    getRowCount(baseWhere),
+    getPriorPeriod(filters.days),
+  ]);
+  const byResult = toByResult(byResultRows);
+  const total = byResult.reduce((sum, row) => sum + row.count, 0);
+  return {
+    ...period,
+    total,
+    reconstructed_total: byResult.reduce((sum, row) => sum + row.reconstructed_count, 0),
+    excluded_poisoned_count: baseTotal - total,
+    by_result: byResult,
+  };
+}
+
+/** Matching-row count for the `days` window just before the current one, under /search's own filters and scope. */
+async function getSearchPriorWindow(
+  filters: ParsedFilters & { days: number },
+  scopeAgentKeys: string[] | undefined,
+): Promise<OutcomeSearchPriorWindow> {
+  const priorWhere = buildWhereClause(filters, { scopeAgentKeys, isPriorWindow: true });
+  const [total, period] = await Promise.all([getRowCount(priorWhere), getPriorPeriod(filters.days)]);
+  return { ...period, total };
+}
+
+async function getRowCount(where: Prisma.Sql): Promise<number> {
+  const [row] = await getPrisma().$queryRaw<CountRow[]>`
+    SELECT COUNT(*)::bigint AS total
+    FROM core.outcomes
+    ${where}
+  `;
+  if (row === undefined) {
+    throw new Error("count query returned no row");
+  }
+  return bigintToNumber(row.total);
+}
+
+// YYYY-MM-DD bounds of the prior window: start inclusive, end exclusive.
+async function getPriorPeriod(days: number): Promise<PeriodBoundDbRow> {
+  const [period] = await getPrisma().$queryRaw<PeriodBoundDbRow[]>`
+    SELECT to_char(CURRENT_DATE - ${days * 2}::int, 'YYYY-MM-DD') AS period_start,
+           to_char(CURRENT_DATE - ${days}::int, 'YYYY-MM-DD') AS period_end
+  `;
+  if (period === undefined) {
+    throw new Error("prior-window period query returned no row");
+  }
+  return period;
+}
+
+/** `true` on '1'/'true', `false` when absent or any other value, `null` when requested on the unbounded days=all window. */
+function parsePriorWindowParam(value: string | undefined, days: OutcomesWindowDays): boolean | null {
+  const hasPriorWindow = value === "1" || value === "true";
+  return hasPriorWindow && days === "all" ? null : hasPriorWindow;
 }
 
 // GET /api/outcomes/heatmap?days={1-90}&result={all|empty|failed|done} — DOW × Hour 7×24 grid.
@@ -1280,6 +1372,7 @@ async function handleHeatmap(
     const periodEnd = formatDateOnly(now);
     const periodStartMs = now.getTime() - days * 86_400_000;
     const periodStart = formatDateOnly(new Date(periodStartMs));
+    const bucketDates = getHeatmapBucketDates(now, days, DAY_BUCKET_TIMEZONE);
 
     request.log.info(
       {
@@ -1300,12 +1393,31 @@ async function handleHeatmap(
         period_start: periodStart,
         period_end: periodEnd,
         timezone: DAY_BUCKET_TIMEZONE,
+        bucket_dates: bucketDates,
       },
       fetched_at: new Date().toISOString(),
     };
   } catch (error) {
     return failWithDb(request, reply, "/api/outcomes/heatmap", error);
   }
+}
+
+/**
+ * Bucket-tz calendar dates the heatmap window touches.
+ * The window opens at UTC midnight of (UTC today - days) — the SQL CURRENT_DATE anchor, session tz pinned UTC —
+ * so a tz ahead of UTC sees days + 2 dates before its anchor hour and days + 1 after it.
+ */
+export function getHeatmapBucketDates(now: Date, days: number, timeZone: string): OutcomeHeatmapBucketDates {
+  const anchorMs = Date.parse(`${formatDateOnly(new Date(now.getTime() - days * 86_400_000))}T00:00:00Z`);
+  const first = formatDateIn(new Date(anchorMs), timeZone);
+  const last = formatDateIn(now, timeZone);
+  const count = (Date.parse(`${last}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`)) / 86_400_000 + 1;
+  return { first, last, count };
+}
+
+// en-CA → YYYY-MM-DD wall-clock date in `timeZone`
+function formatDateIn(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
 
 function parseHeatmapDaysParam(raw: string | undefined): number | null {
@@ -1557,13 +1669,12 @@ async function handleChannelLiveness(
     // peak restricted to the recency window, which is the one eligibility reads. The
     // FILTER costs no extra scan.
     //
-    // Measured plan (EXPLAIN ANALYZE, 7d, 2026-08-17, 1102 rows scanned): Index Scan
-    // using outcomes_ts_idx on the record_ts predicate, then two HashAggregates —
-    // 1.4 ms warm. Row count and timing are point-in-time and move with the table and
-    // the cache, so read them as a date-stamped observation, not a current figure. The
-    // STRUCTURAL claim is the durable one: attribution_source is NOT indexed (no such
-    // index exists on core.outcomes), so it rides as a Filter on the time-bounded
-    // scan, which is why the window predicate is what has to stay index-covered here.
+    // Measured plan (EXPLAIN ANALYZE, 7d window): Index Scan using outcomes_ts_idx on
+    // the record_ts predicate, then two HashAggregates. Row count and timing move with
+    // the table and the cache, so none is recorded here. The STRUCTURAL claim is the
+    // durable one: attribution_source is NOT indexed (no such index exists on
+    // core.outcomes), so it rides as a Filter on the time-bounded scan, which is why the
+    // window predicate is what has to stay index-covered here.
     //
     // date_trunc('day', …) buckets in the PG session timezone, pinned to UTC in
     // db.ts — same convention as the /attribution-daily series.
@@ -2108,7 +2219,7 @@ function parseFilters(query: SearchQuerystring | CrossAnalysisQuerystring): Filt
 
 function buildWhereClause(
   filters: ParsedFilters,
-  options?: { excludePoisoned?: boolean; scopeAgentKeys?: string[] },
+  options?: { excludePoisoned?: boolean; scopeAgentKeys?: string[]; isPriorWindow?: boolean },
 ): Prisma.Sql {
   const fragments: Prisma.Sql[] = [];
 
@@ -2119,10 +2230,17 @@ function buildWhereClause(
     fragments.push(Prisma.sql`poisoned_window = FALSE`);
   }
 
-  // Day window — Prisma.empty when 'all' (no time filter).
+  // Day window — none when 'all'; the prior window ends (exclusive) where the current one starts → no gap, no overlap
   if (filters.days !== "all") {
-    const intervalLiteral = buildIntervalLiteral(filters.days);
-    fragments.push(Prisma.sql`record_ts >= CURRENT_DATE - ${intervalLiteral}`);
+    const currentStart = buildIntervalLiteral(filters.days);
+    if (options?.isPriorWindow === true) {
+      const priorStart = buildIntervalLiteral(filters.days * 2);
+      fragments.push(
+        Prisma.sql`record_ts >= CURRENT_DATE - ${priorStart} AND record_ts < CURRENT_DATE - ${currentStart}`,
+      );
+    } else {
+      fragments.push(Prisma.sql`record_ts >= CURRENT_DATE - ${currentStart}`);
+    }
   }
 
   if (filters.agent !== null) {

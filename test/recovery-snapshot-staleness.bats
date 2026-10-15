@@ -50,6 +50,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_LIB="${GA}/lib/ga-core.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # The engine lib tree is read-only across the suite (tests only source it), so stage it once.
 # ga-core.sh is a thin loader for its domain siblings, and ga_init_env hard-requires the whole
@@ -64,6 +66,8 @@ setup_file() {
 }
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${REAL_LIB}" ]] || skip "lib/ga-core.sh not found: ${REAL_LIB}"
   command -v git >/dev/null 2>&1 || skip "git required"
 
@@ -83,14 +87,14 @@ setup() {
 
   # Hermetic git: throwaway HOME (no host global config / gpgsign leakage) + env identity
   # so a fixture commit needs no user config.
-  export HOME="${WORK}/home"
+  export HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium"
   export GIT_CONFIG_NOSYSTEM=1
   export GIT_AUTHOR_NAME='ga-fixture' GIT_AUTHOR_EMAIL='ga@fixture.invalid'
   export GIT_COMMITTER_NAME='ga-fixture' GIT_COMMITTER_EMAIL='ga@fixture.invalid'
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # --- fixtures ------------------------------------------------------------------
@@ -134,7 +138,7 @@ run_scan() {
 
 # The REAL run_doctor against the sandbox GA root, so §13 scans the fixture repos.
 run_doctor_sandbox() {
-  run env HOME="${WORK}/home" GA_TARGET_HOME="${TARGET}" \
+  run env HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" GA_TARGET_HOME="${TARGET}" \
     GA_MANIFEST="${FAKE_MANIFEST}" GA_GENERATE_MANIFEST="${GEN_STUB}" \
     bash -c '
       set -Eeuo pipefail

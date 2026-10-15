@@ -27,6 +27,8 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 GA_ENV="${GA}/lib/ga-env.sh"
 HOOK="${GA}/hooks/enforce-harness-critical.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # Tool names established as live-registered on the recorded host among the tokens
 # this repo's matchers and dispatch reference. Deliberately NOT a full host
@@ -62,8 +64,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${FIXTURE:-}" && -d "${FIXTURE}" ]] && rm -rf -- "${FIXTURE}"
-  return 0
+  if ga_guard_path "${FIXTURE:-}"; then rm -rf -- "${FIXTURE:?}"; fi
 }
 
 set_contains() {

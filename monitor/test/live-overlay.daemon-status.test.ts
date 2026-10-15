@@ -18,14 +18,12 @@ import {
 } from "../src/server/architecture/live-overlay.js";
 import { STALE_MULTIPLIER } from "../src/server/schedule-next-fire.js";
 
-const DAEMON_NAMES = [
-  "autoagent",
-  "wiki",
-  "daily-restart-autoagent",
-  "daily-restart-wiki",
-] as const;
+const DAEMON_NAMES = ["autoagent", "wiki"] as const;
 
-const CADENCE_MIN = 1440; // all four daemons are daily jobs
+// Every daily-restart name — the legacy merged one and both role-qualified ones — is history-only.
+const HISTORY_ONLY_NAMES = ["daily-restart", "daily-restart-autoagent", "daily-restart-wiki"];
+
+const CADENCE_MIN = 1440; // both daemons are daily jobs
 const NOW = Date.parse("2026-07-12T12:00:00Z");
 
 function minutesAgo(min: number): Date {
@@ -109,8 +107,22 @@ test("a firing daemon is unaffected by the install anchor (only never-fired daem
   assert.strictEqual(statusOf(daemons, "autoagent").effective_status, "ok");
   // overdue firing daemon → 'stale' via the staleness path (not the never-fired anchor path)
   assert.strictEqual(statusOf(daemons, "wiki").effective_status, "stale");
-  // a daemon absent from rows (never fired) still escalates under the old anchor
-  assert.strictEqual(statusOf(daemons, "daily-restart-autoagent").effective_status, "stale");
+});
+
+test("history-only daily-restart rows surface no daemon, whatever their status or age", () => {
+  const daemons = resolveDaemonStatuses(
+    [
+      row("autoagent"),
+      ...HISTORY_ONLY_NAMES.map((name) => row(name, { last_status: "error" })),
+    ],
+    NOW,
+    minutesAgo(CADENCE_MIN * 10),
+  );
+  assert.deepStrictEqual(
+    daemons.map((d) => d.daemon_name),
+    [...DAEMON_NAMES],
+    "a daily-restart row still reached the overlay — its retired job would read 'Overdue' forever",
+  );
 });
 
 test("daemon with a NULL last_run_at row + null anchor → 'missing' (no fabricated staleness)", () => {

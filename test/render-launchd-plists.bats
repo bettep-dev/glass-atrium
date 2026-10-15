@@ -17,11 +17,23 @@ REAL_RENDERER="${GA}/scripts/render-launchd-plists.sh"
 REAL_GA="${GA}/glass-atrium"
 TEMPLATE="${GA}/config.toml.example"
 FAKE_HOME="/Users/ga-fake-user"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
+
+# Print a lib/ga-env.sh roster array (LAUNCHD_JOBS / LAUNCHD_RETIRED_JOBS), one job per line;
+# non-zero when the array is undefined.
+get_roster() {
+  bash -c 'set -u; source "$1/lib/ga-env.sh" && ga_init_env "$1" >/dev/null 2>&1 \
+    && list="$2[@]" && printf "%s\n" "${!list}"' _ "${GA}" "$1"
+}
 
 setup() {
   [[ -f "${REAL_RENDERER}" ]] || skip "renderer not found: ${REAL_RENDERER}"
   [[ -f "${TEMPLATE}" ]] || skip "config template not found: ${TEMPLATE}"
   [[ "${HOME}" != "${FAKE_HOME}" ]] || skip "real HOME collides with fixture home"
+  local active
+  active="$(get_roster LAUNCHD_JOBS)" || active=""
+  ACTIVE_COUNT="$(grep -c . <<<"${active}")" || ACTIVE_COUNT=0
   SANDBOX="$(mktemp -d -t ga-plist-bats.XXXXXX)"
   FAKE_CONFIG="${SANDBOX}/config.toml"
   OUT="${SANDBOX}/launchd"
@@ -36,25 +48,25 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 run_render() {
   GA_CONFIG_TOML="${FAKE_CONFIG}" GA_PLIST_OUT="${OUT}" run "${REAL_RENDERER}"
 }
 
-@test "fake-user render -> 8 plists, zero authoring-user paths, target paths present" {
+@test "fake-user render -> one plist per active job, zero authoring-user paths, target paths present" {
   run_render
   [[ "${status}" -eq 0 ]]
-  # all 8 daemon plists rendered
+  # one plist per active-roster job
   run find "${OUT}" -name 'com.glass-atrium.*.plist'
-  [[ "${#lines[@]}" -eq 8 ]]
+  [[ "${ACTIVE_COUNT}" -gt 0 && "${#lines[@]}" -eq "${ACTIVE_COUNT}" ]]
   # T32 AC: zero authoring-user path hits (grep -F exits 1 = no match)
   run grep -RF "${HOME}" "${OUT}"
   [[ "${status}" -eq 1 ]]
   # every plist carries the fake target home (positive control)
   run grep -RlF "${FAKE_HOME}" "${OUT}"
-  [[ "${#lines[@]}" -eq 8 ]]
+  [[ "${#lines[@]}" -eq "${ACTIVE_COUNT}" ]]
 }
 
 @test "rendered plists pass plutil -lint" {
@@ -80,6 +92,34 @@ run_render() {
   grep -qF '<true/>' "${OUT}/com.glass-atrium.monitor.plist"
   # autoagent-cycle: TZ = [meta].timezone
   grep -qF '<string>Asia/Seoul</string>' "${OUT}/com.glass-atrium.autoagent-cycle.plist"
+}
+
+@test "the renderer writes exactly the active roster's plists" {
+  # load_launchd_jobs FATALs on any LAUNCHD_JOBS label the renderer did not write
+  run_render
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  local plist job rendered="" active
+  for plist in "${OUT}"/com.glass-atrium.*.plist; do
+    job="${plist##*/com.glass-atrium.}"
+    rendered+="${job%.plist}"$'\n'
+  done
+  rendered="$(sort <<<"${rendered%$'\n'}")"
+  active="$(get_roster LAUNCHD_JOBS)" || active=""
+  active="$(sort <<<"${active}")"
+  [[ -n "${active}" && "${rendered}" == "${active}" ]] \
+    || { echo "rendered: ${rendered} | active roster: ${active}"; return 1; }
+}
+
+@test "the retired roster holds the three daemon labels and shares none with the active roster" {
+  local active retired job
+  active="$(get_roster LAUNCHD_JOBS)"
+  retired="$(get_roster LAUNCHD_RETIRED_JOBS)" || { echo "lib/ga-env.sh defines no LAUNCHD_RETIRED_JOBS"; return 1; }
+  for job in autoagent-daemon wiki-daemon daemon-daily-restart; do
+    grep -qx -- "${job}" <<<"${retired}" || { echo "${job}: missing from the retired roster"; return 1; }
+  done
+  while IFS= read -r job; do
+    ! grep -qx -- "${job}" <<<"${active}" || { echo "${job}: in both rosters"; return 1; }
+  done <<<"${retired}"
 }
 
 @test "shell redirection in wiki-compile command is XML-escaped" {
@@ -133,7 +173,7 @@ run_render() {
   [[ "${status}" -eq 0 ]] || return 1
   # every plist's PATH must carry the Homebrew bin dir (from claude_bin's dirname)
   run grep -RlF '/opt/homebrew/bin' "${OUT}"
-  [[ "${#lines[@]}" -eq 8 ]] || return 1
+  [[ "${#lines[@]}" -eq "${ACTIVE_COUNT}" ]] || return 1
   # inside the monitor plist's PATH string specifically (positive control), and the
   # configured non-brew node dir still leads the PATH (the strongest discriminator)
   run grep -A1 '<key>PATH</key>' "${OUT}/com.glass-atrium.monitor.plist"
@@ -150,7 +190,7 @@ run_render() {
   GA_SKIP_DEP_PROBE=1 GA_CONFIG_TOML="${FAKE_CONFIG}" GA_PLIST_OUT="${OUT}" run "${REAL_RENDERER}"
   [[ "${status}" -eq 0 ]] || return 1
   run grep -RlF '/opt/homebrew/bin' "${OUT}"
-  [[ "${#lines[@]}" -eq 8 ]] || return 1
+  [[ "${#lines[@]}" -eq "${ACTIVE_COUNT}" ]] || return 1
 }
 
 @test "dependency probe is WARN-only + honors same-host gate and GA_SKIP_DEP_PROBE" {
@@ -198,8 +238,30 @@ run_render() {
   GA_CONFIG_TOML="${FAKE_CONFIG}" GA_PLIST_OUT="${OUT}" run "${REAL_GA}" render-plists
   [[ "${status}" -eq 0 ]]
   run find "${OUT}" -name 'com.glass-atrium.*.plist'
-  [[ "${#lines[@]}" -eq 8 ]]
+  [[ "${#lines[@]}" -eq "${ACTIVE_COUNT}" ]]
   # the wired path inherits the leak gate: zero authoring-user paths
   run grep -RF "${HOME}" "${OUT}"
   [[ "${status}" -eq 1 ]]
+}
+
+@test "a failed render deletes its temp plist under an absolute out dir" {
+  local broken="${SANDBOX}/broken.toml"
+  # An out-of-range schedule fails the wiki-compile render after its temp plist exists.
+  sed -e 's|^time = "04:50"|time = "99:99"|' "${FAKE_CONFIG}" >"${broken}"
+
+  GA_CONFIG_TOML="${broken}" GA_PLIST_OUT="${OUT}" run "${REAL_RENDERER}"
+  [[ "${status}" -eq 4 ]] || { echo "absolute out: rc=${status} ${output}"; return 1; }
+  run find "${OUT}" -name '*.ga-render.*'
+  [[ -z "${output}" ]] || { echo "absolute out: the temp outlived the failed render: ${output}"; return 1; }
+}
+
+@test "a failed render deletes its temp plist under a cwd-relative out dir" {
+  local broken="${SANDBOX}/broken.toml" cwd="${SANDBOX}/cwd"
+  sed -e 's|^time = "04:50"|time = "99:99"|' "${FAKE_CONFIG}" >"${broken}"
+  mkdir -p "${cwd}"
+
+  run bash -c 'cd -- "$1" && GA_CONFIG_TOML="$2" GA_PLIST_OUT=rel "$3"' _ "${cwd}" "${broken}" "${REAL_RENDERER}"
+  [[ "${status}" -eq 4 ]] || { echo "relative out: rc=${status} ${output}"; return 1; }
+  run find "${cwd}/rel" -name '*.ga-render.*'
+  [[ -z "${output}" ]] || { echo "relative out: the temp outlived the failed render: ${output}"; return 1; }
 }

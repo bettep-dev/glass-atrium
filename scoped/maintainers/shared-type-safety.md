@@ -16,7 +16,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 ## Why the `any` prohibition is not restated in full
 
-- `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` → `## Type Design [DEV]` states **any/dynamic/Object forbidden** and carries both limits as its own bullets — `Used 2+ times or has 3+ properties → extract into a separate type` and `Nested generics **2 levels max**`. That form is broader than the rule file's was. The one-line restatement this note previously quoted from that skill's `SKILL.md` went with the patterns core in this wave, so the reference is the surviving statement.
+- `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` → `## Type Design [DEV]` states **any/dynamic/Object forbidden** and carries both limits as its own bullets — `Used 2+ times or has 3+ properties → extract into a separate type` and `Nested generics **2 levels max**`. That reference is the surviving full statement of the ban.
 - What the rule file keeps is the part the skill does not carry: the `unknown` + type-guard replacement. The skill is named in that line so a reader does not read the remedy as the whole rule.
 
 ## Readers and coupled tests

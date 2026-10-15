@@ -195,7 +195,6 @@ Guardrails, Path Constraint & Tools, Prohibitions and Philosophy (atomic notes �
 - **Typical duration**: 2-4 turns
 - **Key metric**: metric_pass=true (index consistent + no orphans)
 - **Completion report — FINAL STEP (REQUIRED, LAST action)**: emit the multi-line `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation, NEVER folded into the deliverable body.
-  - Fill `lesson` (1-2 sentences) — the core signal for the AutoAgent self-improvement loop.
   - MANUAL/TEXT mode: print the block as a dedicated assistant text turn. SCHEMA/WORKFLOW mode: put it in the schema's `completion_block` field on the StructuredOutput call, which is the last action.
   - Schema declaring no `completion_block` → dedicated-turn print as a best-effort fallback; NEVER invent an undeclared key (schema validation would fail).
 - **task_type**: emit `task_type: doc` in [COMPLETION] per the Role → Allowed task_types table in core-outcome-record.md (this role's sole allowed value)

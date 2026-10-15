@@ -58,7 +58,7 @@ Perform OWASP LLM Top 10-based security verification before external data insert
 - **Verdict**: PASS / WARN / BLOCK
 - **Target**: {file or data under verification}
 - **Rationale**: {OWASP LLM:2025 item number + 1-2 line explanation}
-- **Remediation Hint** (WARN / BLOCK only, max 3 bullets): defense layer to add — input validation / output validation / sandboxing / human-in-the-loop. NO code, NO specific API names — policy-level only.
+- **Remediation Hint** (WARN / BLOCK only, short bullet list): defense layer to add — input validation / output validation / sandboxing / human-in-the-loop. NO code, NO specific API names — policy-level only.
 ```
 
 - **PASS**: no security risk → proceed with the operation.

@@ -82,6 +82,7 @@ frontmatter_block() {
   # at all (contrast the redirect row below). Membership AND shape in one jq whose
   # status is the test's last command.
   run jq -e '
+    # GA-RM[not-executed]: jq string literals matched against the settings deny list, never run
     ["Bash(rm:*)", "Bash(rm -rf:*)",
      "Bash(bash -c:*)", "Bash(sh -c:*)", "Bash(zsh -c:*)", "Bash(eval:*)"] as $need
     | (($need - .permissions.deny) == [])
@@ -125,7 +126,7 @@ frontmatter_block() {
   local tin envelope
   tin="$(jq -cn --arg c "${cmd}" '{command: $c}')"
   envelope="$(jq -cn --argjson ti "${tin}" '{tool_name: "Bash", tool_input: $ti}')"
-  run env "HOME=${fake_home}" "${HOOK_SH}" <<<"${envelope}"
+  run env "HOME=${fake_home}" "GA_DATA_ROOT=${fake_home}/.glass-atrium" "${HOOK_SH}" <<<"${envelope}"
   [[ "${status}" -eq 2 ]]
 }
 

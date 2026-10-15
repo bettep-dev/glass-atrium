@@ -194,3 +194,118 @@ test("mutationErrorMessage has no branch for the retired preview_failed code", (
   assert.strictEqual(dash.mutationErrorMessage(500, { error: "preview_failed", reason: "boom" }), "boom");
   assert.strictEqual(dash.mutationErrorMessage(500, { error: "preview_failed" }), "Request failed (HTTP 500).");
 });
+
+// --- The week row: 7-day Spend strip + this week's task results ---
+
+interface WeekRowHelpers {
+  buildResultPanel: (data: unknown) => {
+    rows: Array<{ result: string; count: number }>; writerTotal: number; span: string; agents: Array<{ agent: string; count: number }>;
+  };
+  buildHourGrid: (data: unknown) => {
+    rows: Array<{ day: string; counts: number[]; fold: string | null }>; total: number; span: string;
+    peak: { day: string; hour: number; count: number; fold: string | null };
+  };
+  describeHourGrid: (grid: unknown) => string;
+  getPanelView: (state: unknown) => string;
+  buildSpendStrip: (points: unknown) => { bars: Array<{ date: string; cost: number; isPartial: boolean }>; span: string | null };
+  window: { UI: { resolveOutcomeRate: (data: unknown) => { breakage: number }; getWriterTotal: (data: unknown) => number } };
+}
+const week = dash as unknown as WeekRowHelpers;
+
+test("the results panel counts follow the tile's writer-emitted rule and name their window", () => {
+  const data = {
+    total: 120, reconstructed_total: 20,
+    by_result: [
+      { result: "done", count: 80, reconstructed_count: 15 },
+      { result: "fail", count: 25, reconstructed_count: 5 },
+      { result: "blocked", count: 10, reconstructed_count: 0 },
+      { result: "done_with_concerns", count: 5, reconstructed_count: 0 },
+    ],
+    prior_window: { period_start: "2026-09-16", period_end: "2026-09-23", total: 0, reconstructed_total: 0, by_result: [] },
+  };
+  const panel = week.buildResultPanel(data);
+  const countOf = (result: string) => panel.rows.find((row) => row.result === result)?.count ?? 0;
+  assert.equal(countOf("fail") + countOf("blocked"), week.window.UI.resolveOutcomeRate(data).breakage, "the panel's breakage is the tile's");
+  assert.equal(panel.rows.reduce((sum, row) => sum + row.count, 0), week.window.UI.getWriterTotal(data), "rows add up to the tile's denominator");
+  assert.match(panel.span, /09-23 – today/);
+});
+
+test("the results panel ranks agents by the tile's failed-or-blocked writer count", () => {
+  const byAgentResult = [
+    { agent: "a", result: "fail", count: 6, reconstructed_count: 2 },
+    { agent: "a", result: "blocked", count: 1, reconstructed_count: 0 },
+    { agent: "b", result: "fail", count: 9, reconstructed_count: 0 },
+    { agent: "b", result: "done", count: 50, reconstructed_count: 0 },
+    { agent: "c", result: "done_with_concerns", count: 30, reconstructed_count: 0 },
+    { agent: "d", result: "blocked", count: 3, reconstructed_count: 3 },
+    { agent: "e", result: "blocked", count: 1, reconstructed_count: 0 },
+    { agent: "f", result: "fail", count: 1, reconstructed_count: 0 },
+  ];
+  const panel = week.buildResultPanel({ total: 0, reconstructed_total: 0, by_result: [], by_agent_result: byAgentResult });
+  assert.deepEqual(JSON.parse(JSON.stringify(panel.agents)), [{ agent: "b", count: 9 }, { agent: "a", count: 5 }, { agent: "e", count: 1 }],
+    "writer-only fail + blocked, worst first, ties by name, done and reconstructed-only rows out, top 3");
+});
+
+test("the hour grid keeps every cell, ends on the server's today and names the server's date count", () => {
+  const data = Array.from({ length: 7 }, (_, dow) => Array.from({ length: 24 }, (_, hour) => dow * 100 + hour));
+  const sum = data.flat().reduce((a, b) => a + b, 0);
+  const meta = { period_start: "2026-09-22", bucket_dates: { first: "2026-09-23", last: "2026-09-30", count: 8 }, total_count: sum };
+  const grid = week.buildHourGrid({ data, meta });
+  assert.equal(grid.rows[grid.rows.length - 1].day, "Wed", "2026-09-30 is a Wednesday");
+  assert.equal(grid.rows[0].day, "Thu");
+  assert.equal(grid.total, sum, "rotation neither drops nor duplicates a cell");
+  assert.deepEqual([...(grid.rows.find((row) => row.day === "Mon")?.counts ?? [])], data[1], "a row keeps its own weekday's hours");
+  assert.deepEqual({ ...grid.peak }, { day: "Sat", fold: null, hour: 23, count: 623 });
+  assert.equal(grid.span, "09-23 – today, 8 calendar dates");
+});
+
+test("every weekday row that sums two of the server's bucket dates names both, and no other row is marked", () => {
+  const data = Array.from({ length: 7 }, (_, dow) => Array.from({ length: 24 }, (_, hour) => (dow === 3 && hour === 14 ? 90 : 1)));
+  const rows = [
+    { name: "8 dates, the window opens on today's weekday", first: "2026-09-23", last: "2026-09-30", count: 8,
+      folds: { Wed: "09-23 + today" } },
+    { name: "9 dates, early morning while the UTC anchor is a day behind", first: "2026-09-22", last: "2026-09-30", count: 9,
+      folds: { Tue: "09-22 + 09-29", Wed: "09-23 + today" } },
+    { name: "8 dates across a month end", first: "2026-09-24", last: "2026-10-01", count: 8,
+      folds: { Thu: "09-24 + today" } },
+  ];
+
+  for (const row of rows) {
+    const meta = { period_start: row.first, bucket_dates: { first: row.first, last: row.last, count: row.count } };
+    const grid = week.buildHourGrid({ data, meta });
+    const marked = Object.fromEntries(grid.rows.filter((r) => r.fold !== null).map((r) => [r.day, r.fold]));
+    assert.deepEqual(marked, row.folds, `${row.name}: marked rows`);
+    assert.equal(grid.rows[grid.rows.length - 1].fold, row.folds[grid.rows[grid.rows.length - 1].day as keyof typeof row.folds],
+      `${row.name}: today's row is shown last`);
+    assert.equal(grid.span, `${row.first.slice(5)} – today, ${row.count} calendar dates`, `${row.name}: span`);
+  }
+  const meta = { bucket_dates: { first: "2026-09-23", last: "2026-09-30", count: 8 } };
+  assert.match(week.describeHourGrid(week.buildHourGrid({ data, meta })), /Wed \(09-23 \+ today\) 14:00 with 90 runs/,
+    "the peak on the summed row names both dates");
+});
+
+test("a week panel whose refresh failed over held data reads last known, not fresh", () => {
+  const rows: Array<[string, unknown, string]> = [
+    ["first load", { data: null, error: null }, "loading"],
+    ["cold failure", { data: null, error: "HTTP 500" }, "error"],
+    ["fresh data", { data: {}, error: null }, "ready"],
+    ["held data, failed refresh", { data: {}, error: "HTTP 500" }, "held"],
+  ];
+  for (const [name, state, view] of rows) assert.equal(week.getPanelView(state), view, name);
+});
+
+test("the Spend strip marks only the series' last point partial, since the route always ends it on its bucket-timezone today", () => {
+  const rows = [
+    { name: "a full week", days: ["24", "25", "26", "27", "28", "29", "30"], span: "09-24 – today" },
+    { name: "a one-day series", days: ["30"], span: "09-30 – today" },
+  ];
+  for (const row of rows) {
+    const strip = week.buildSpendStrip(row.days.map((day) => ({ date: `2026-09-${day}`, cost_usd: 10, session_count: 1 })));
+    assert.deepEqual(strip.bars.map((bar) => bar.isPartial), row.days.map((_, i) => i === row.days.length - 1), row.name);
+    assert.equal(strip.span, row.span, row.name);
+  }
+  const empty = week.buildSpendStrip([]);
+  assert.equal(empty.bars.length, 0, "an empty series has no bars");
+  assert.equal(empty.span, null, "an empty series has no today");
+});
+

@@ -24,6 +24,8 @@ DEDUP_SH="${GA}/scripts/wiki-dedup.sh"
 DEADLINKS_SH="${GA}/scripts/wiki-deadlinks.sh"
 CYCLE_SH="${GA}/scripts/wiki-daemon-cycle.sh"
 AUDIT_SH="${GA}/scripts/audit-context.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   SANDBOX="$(mktemp -d -t data-root-seam-wa.XXXXXX)"
@@ -40,7 +42,7 @@ STUB
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 @test "wiki-dedup.sh: no override → daemon-reports under \$HOME/.glass-atrium" {

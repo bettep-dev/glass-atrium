@@ -167,7 +167,7 @@ case "${DETECT_OUT}" in
     reason="${DETECT_OUT#weaken:}"
     emit_error "CFG-001" "block" \
       "Config-weakening edit blocked on protected file" \
-      "Strengthen the rule, or set CONFIG_PROTECTION_APPROVE=1 for an approved weakening" \
+      "Strengthen the rule instead. An approved weakening needs Claude Code launched with CONFIG_PROTECTION_APPROVE=1 (the user sets it; an in-session export does not reach this hook)" \
       "{\"file_path\":\"${FILE_PATH}\",\"kind\":\"${config_kind}\",\"reason\":\"${reason}\"}"
     exit 2
     ;;

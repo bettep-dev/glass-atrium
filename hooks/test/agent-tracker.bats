@@ -21,17 +21,22 @@
 # ISOLATION (non-negotiable): _pg_dual_write.py connects host/port-less via
 # psycopg.connect("dbname=glass_atrium"), so PGHOST/PGPORT redirect every write in
 # the hook chain to an EPHEMERAL single-file cluster (private Unix socket, no TCP) —
-# never the production /tmp glass_atrium (23k+ live rows). The definitive proof is
-# _assert_prod_isolated: the distinctive fixture agent_id must hold ZERO rows in
-# production.
+# never the production /tmp glass_atrium. eph_assert_isolated (lib/ephemeral-pg.bash)
+# proves it without reading production: every psycopg connection the recorder logged
+# targeted this cluster, as many as the fires opened.
 #
 # HOME override: agent-tracker writes no artifact under HOME, but HOME is repointed
 # to a temp dir for parity + safety, and PYTHONPATH carries the REAL PEP 370 user
 # site-packages (captured before the override) to keep the psycopg import alive.
 
+# shellcheck source=SCRIPTDIR/lib/ephemeral-pg.bash disable=SC2154
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
+
 # BATS_TEST_DIRNAME is assigned by the bats runtime (SC2154 false positive).
 # shellcheck disable=SC2154
 setup_file() {
+  # Every test here shares the one per-file database → no parallel tests within this file.
+  export BATS_NO_PARALLELIZE_WITHIN_FILE=true
   # Required tooling — absent → skip the whole file gracefully (portable), set
   # via a marker each test's setup() reads (setup_file cannot skip directly).
   local bin
@@ -42,11 +47,9 @@ setup_file() {
     fi
   done
 
-  source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
-
   export EPH_DB="glass_atrium"
   # Distinctive fixture agent id — production agent_ids are opaque hashes, so this
-  # literal can never collide with a live row (the isolation gate keys on it).
+  # literal can never collide with a live row.
   export EPH_AID="bats-eph-agtracker-fixture-aid"
   export EPH_ATYPE="glass-atrium-dev-shell"
 
@@ -80,12 +83,6 @@ SH
   export EPH_HOOK_SH
   EPH_HOOK_SH="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)/agent-tracker.sh"
 
-  # Production baseline total (default socket; PGHOST/PGPORT are never exported,
-  # so this hits production) — informational only, reported in teardown_file.
-  export EPH_PROD_BEFORE
-  EPH_PROD_BEFORE="$(env -u PGHOST -u PGPORT psql -d "${EPH_DB}" -tAqc \
-    "SELECT count(*) FROM core.agent_events;" 2>/dev/null || echo "unavailable")"
-
   eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "${EPH_DB}" || return 1
 }
 
@@ -94,13 +91,6 @@ teardown_file() {
     return 0
   fi
   eph_pg_stop "${EPH_DATADIR}"
-  # Report the production before/after total for visibility. Any delta is ambient
-  # live-session traffic, NOT a leak — the leak gate is the per-test zero-fixture-
-  # rows assertion. Emitted on fd 3 (bats diagnostic channel).
-  local after
-  after="$(env -u PGHOST -u PGPORT psql -d "${EPH_DB}" -tAqc \
-    "SELECT count(*) FROM core.agent_events;" 2>/dev/null || echo "unavailable")"
-  echo "# production core.agent_events total: before=${EPH_PROD_BEFORE} after=${after}" >&3
 }
 
 setup() {
@@ -109,6 +99,7 @@ setup() {
   if [[ -n "${EPH_SKIP:-}" ]]; then
     skip "${EPH_SKIP}"
   fi
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR:?}/pg-connect.log"
 }
 
 # Query the EPHEMERAL cluster (explicit -h/-p override any ambient env).
@@ -133,25 +124,9 @@ _fire_agent() {
   local stdin_json
   stdin_json="$(printf '{"hook_event_name":"%s","agent_id":"%s","agent_type":"%s"}' \
     "${event_name}" "${agent_id}" "${agent_type}")"
-  env PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" PYTHONPATH="${EPH_USER_SITE}" \
+  env PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}"
-}
-
-# Definitive isolation gate: the distinctive fixture agent_id must have ZERO rows
-# in production. PGHOST/PGPORT are never exported, but unset explicitly so this can
-# only reach the production default socket. Production unreachable → isolation
-# holds by construction (the hook only ever connects to the ephemeral PGHOST).
-_assert_prod_isolated() {
-  local leaked
-  leaked="$(env -u PGHOST -u PGPORT psql -d "${EPH_DB}" -tAqc \
-    "SELECT count(*) FROM core.agent_events WHERE agent_id = '${EPH_AID}';" \
-    2>/dev/null || echo "SKIP")"
-  [[ "${leaked}" == "SKIP" ]] && return 0
-  [[ "${leaked}" -eq 0 ]] || {
-    echo "ISOLATION BREACH: ${leaked} fixture rows reached production" >&2
-    return 1
-  }
 }
 
 @test "write-contract: SubagentStart + SubagentStop each land one agent_events row with correct keys" {
@@ -172,7 +147,7 @@ _assert_prod_isolated() {
   [[ "${stops}" -eq 1 ]] || { echo "SubagentStop rows ${stops} != 1" >&2; return 1; }
   [[ "${keyed}" -eq 2 ]] || { echo "agent_id/agent_type mismatch: ${keyed} != 2" >&2; return 1; }
 
-  _assert_prod_isolated || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "UPSERT idempotency: re-firing SubagentStart with a fixed event_ts never doubles the row" {
@@ -193,7 +168,7 @@ _assert_prod_isolated() {
   rows="$(_eph_q "SELECT count(*) FROM core.agent_events;")" || return 1
   [[ "${rows}" -eq 1 ]] || { echo "rows doubled: ${rows} != 1 (arbiter DO NOTHING failed)" >&2; return 1; }
 
-  _assert_prod_isolated || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "perf-invariant: consolidated agent-tracker fires exactly 2 python3 subprocesses per fire (was 5)" {
@@ -222,7 +197,7 @@ EOF
   local stdin_json
   stdin_json="$(printf '{"hook_event_name":"SubagentStart","agent_id":"%s","agent_type":"%s"}' \
     "${EPH_AID}" "${EPH_ATYPE}")"
-  env PATH="${shimbin}:${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" PYTHONPATH="${EPH_USER_SITE}" \
+  env PATH="${shimbin}:${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}" || return 1
 
@@ -235,5 +210,59 @@ EOF
   rows="$(_eph_q "SELECT count(*) FROM core.agent_events;")" || return 1
   [[ "${rows}" -eq 1 ]] || { echo "row count ${rows} != 1 (single-row write dropped)" >&2; return 1; }
 
-  _assert_prod_isolated || return 1
+  eph_assert_isolated 1 || return 1
+}
+
+@test "the isolation check fails when the hook is pointed at the default socket" {
+  _eph_q "TRUNCATE core.agent_events;" || return 1
+  local stdin_json rows
+  local hook_env=(PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium"
+    PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}")
+  stdin_json="$(printf '{"hook_event_name":"SubagentStart","agent_id":"%s","agent_type":"%s"}' \
+    "${EPH_AID}" "${EPH_ATYPE}")"
+
+  # The break reaches no server only while the recorder refuses before connecting: prove it loads
+  # under the exact environment the break fires with.
+  run env -u PGHOST -u PGPORT "${hook_env[@]}" python3 -c \
+    'import psycopg; raise SystemExit(0 if getattr(psycopg.connect.__func__, "ga_bats_pg_recorder", False) else 1)'
+  [[ "${status}" -eq 0 ]] || {
+    echo "sandbox recorder not loaded (status ${status}): ${output}"
+    return 1
+  }
+
+  # deliberate break: no PGHOST/PGPORT → the hook's psycopg target is the default socket
+  # shellcheck disable=SC2016  # $1/$2 expand in the child shell
+  env -u PGHOST -u PGPORT "${hook_env[@]}" \
+    bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}" || true
+
+  run eph_assert_isolated 0
+  [[ "${status}" -eq 1 && "${output}" == *"ISOLATION BREACH"*"refuse host= "* ]] || {
+    echo "isolation check status ${status}, want 1 naming the refused default-socket target: ${output}"
+    return 1
+  }
+  rows="$(_eph_q "SELECT count(*) FROM core.agent_events;")" || return 1
+  [[ "${rows}" -eq 0 ]] || {
+    echo "the refused write landed ${rows} rows in the sandbox"
+    return 1
+  }
+}
+
+@test "the isolation check fails when a fire bypasses the sandbox recorder" {
+  _eph_q "TRUNCATE core.agent_events;" || return 1
+  local stdin_json foreign="${BATS_TEST_TMPDIR:?}/foreign-sock"
+  mkdir -p "${foreign}"
+  _fire_agent "SubagentStart" "${EPH_AID}" "${EPH_ATYPE}" || return 1
+  stdin_json="$(printf '{"hook_event_name":"SubagentStop","agent_id":"%s","agent_type":"%s"}' \
+    "${EPH_AID}" "${EPH_ATYPE}")"
+
+  # deliberate break: no recorder on PYTHONPATH and a foreign, server-less socket dir
+  # shellcheck disable=SC2016  # $1/$2 expand in the child shell
+  env PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium" PYTHONPATH="${EPH_USER_SITE}" PGHOST="${foreign}" \
+    bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}" || true
+
+  run eph_assert_isolated 2
+  [[ "${status}" -eq 1 && "${output}" == *"ISOLATION BREACH"*"recorded 1"* ]] || {
+    echo "isolation check status ${status}, want 1 for a fire the recorder never saw: ${output}"
+    return 1
+  }
 }

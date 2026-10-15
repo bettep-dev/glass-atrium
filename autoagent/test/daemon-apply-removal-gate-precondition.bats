@@ -32,6 +32,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # The anchor line the helper-lift mutation replaces. Asserted present before the
 # mutation runs, so an edit that moves it reddens this suite by name instead of
@@ -73,7 +75,7 @@ DRIVE
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # drive SNIPPET — run the gate against one extraction. stdout and stderr are

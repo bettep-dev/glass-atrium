@@ -40,6 +40,18 @@ export interface CostTimeseriesResponse {
   points: CostTimeseriesPoint[];
   // `points[].date` is date-only → the label documents the UTC-midnight boundary.
   timezone: "UTC";
+  // Present only on `?prior_window=1|true`.
+  prior_window?: CostTimeseriesPriorWindow;
+}
+
+/** The shown window moved back `days` days, its last day cut at the request's bucket-tz time of day. */
+export interface CostTimeseriesPriorWindow extends Omit<CostTimeseriesPoint, "date" | "session_count"> {
+  /** Inclusive — the shown first day minus `days`. */
+  period_start: string;
+  /** Exclusive — the shown first day. */
+  period_end: string;
+  /** Bucket-tz HH:MM:SS → the last prior day counts events at or before it. */
+  cut_time: string;
 }
 
 // Mirrors `core.DaemonStatus` Prisma enum — exhaustive union (not `string`) so
@@ -59,14 +71,8 @@ export type DaemonStatusValue =
   | "apply_unavailable";
 
 export interface DaemonStatusItem {
-  // Active daemons + legacy "daily-restart" (historical rows only — restart runs
-  // are role-qualified per restarted daemon; no new rows under the merged name).
-  daemon_name:
-    | "autoagent"
-    | "wiki"
-    | "daily-restart"
-    | "daily-restart-autoagent"
-    | "daily-restart-wiki";
+  // Board daemons only — every daily-restart name is history-only and carries no item.
+  daemon_name: "autoagent" | "wiki";
   last_run_at: string | null;
   last_status: DaemonStatusValue | null;
   expected_next_at: string | null;

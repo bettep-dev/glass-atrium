@@ -725,8 +725,8 @@ _LEGACY_PLIST_SOURCE = r"(^|/)com\.claude\.[^/]+\.plist$"
 # the tuple demonstrably matches, or the clause claims a control that is not there.
 _CLAUSE_PLIST_LABELS: tuple[str, ...] = (
     "monitor",
-    "autoagent-daemon",
-    "daemon-daily-restart",
+    "autoagent-cycle",
+    "wiki-compile",
 )
 
 

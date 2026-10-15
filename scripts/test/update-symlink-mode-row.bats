@@ -36,6 +36,9 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
+
 # lstat octal mode (the LINK's own mode for a symlink) — BSD first, GNU fallback.
 # Output-validated: GNU `stat -f` is FILESYSTEM status (exit 0, "?p" garbage), so
 # the exit code alone cannot select the right form.
@@ -53,7 +56,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX:-}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # DRIVER command: source update.sh, clear the inherited ERR trap, run "$@".
@@ -240,4 +243,19 @@ make_regular_fixture() {
   [ "$(lmode_of "${SANDBOX}/outside/f.sh")" = "600" ] || return 1
   # a skip, not an abort: the in-root row after it is still reconciled
   [ "$(lmode_of "${ROOT}/agents/G.md")" = "644" ] || return 1
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

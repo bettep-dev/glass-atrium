@@ -9,7 +9,9 @@ to avoid known-bad patterns. Covered here:
   (c) the HARD char cap truncates an oversized block (length bounded + loud
       truncation marker present);
   (d) empty / None history → block omitted, prompt still well-formed (no
-      empty-header noise, both neighboring blocks intact).
+      empty-header noise, both neighboring blocks intact);
+  (e) the memory holds only failures the verifier adjudicated — an ``error:*``
+      outage or a ``skipped:*`` skip never reaches it, nor takes a ``limit`` slot.
 
 The new helper is fetched through ``_pg_connect`` under the ``HAS_PG_LOOP_WRITE``
 gate. psycopg-absent means that helper is UNBOUND (not a module attr), so these
@@ -24,20 +26,27 @@ Run with either runner:
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _AUTOAGENT_DIR = _REPO_ROOT / "autoagent"
 _HOOKS_DIR = _REPO_ROOT / "hooks"
+# unittest discover puts neither root on sys.path, and scripts/test/conftest.py
+# is a pytest-only anchor this runner never loads.
+_STUB_DIR = _REPO_ROOT / "scripts" / "test"
 
-if str(_HOOKS_DIR) not in sys.path:
-    sys.path.insert(0, str(_HOOKS_DIR))
-if str(_AUTOAGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(_AUTOAGENT_DIR))
+for _anchor in (_HOOKS_DIR, _AUTOAGENT_DIR, _STUB_DIR, Path(__file__).resolve().parent):
+    if str(_anchor) not in sys.path:
+        sys.path.insert(0, str(_anchor))
+
+import _pg_stub_backend as stub  # noqa: E402 — anchors pinned by the loop above
+from _pg_seal import seal_pg_reach  # noqa: E402 — anchors pinned by the loop above
 
 try:
     import daemon_cycle as dc
@@ -74,6 +83,104 @@ class TestFetchPreVerifyFailures(unittest.TestCase):
     def test_when_agent_empty_then_returns_none(self) -> None:
         with mock.patch.object(dc, "HAS_PG_LOOP_WRITE", True):
             self.assertIsNone(dc._fetch_pre_verify_failures(""))
+
+
+_MEMORY_AGENT = "dev-python"
+_SEED_COLUMNS = (
+    "cycle_date",
+    "pattern_label",
+    "target_agent",
+    "target_file",
+    "pre_verify_passed",
+    "pre_verify_status",
+    "rationale",
+)
+# Each status a pre-verify writer stamps when the verifier gave NO verdict.
+_NON_ADJUDICATED = (
+    ("error:timeout-120s", "pre-verify timeout after 120s — conservative fail"),
+    ("error:cli-not-found", "claude CLI not found: claude — conservative fail"),
+    ("error:exit-1", "pre-verify CLI exit=1: upstream overloaded"),
+    ("skipped:flag", "skip_pre_verify=True (test/preflight)"),
+    ("skipped:empty-diff", "empty proposed_diff — nothing to verify"),
+)
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class TestFetchPreVerifyFailuresAdjudicatedOnly(unittest.TestCase):
+    """The memory holds the verifier's failed verdicts only (test e).
+
+    Backend: the stdlib sqlite stand-in runs the REAL statement text, so no
+    Postgres and no psycopg are needed.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.db = Path(tmp.name) / "proposals.sqlite"
+        stub.create_proposals_table(self.db)
+        self._seeded = 0
+
+    def _seed(self, cycle_date: str, passed: bool, status: str, rationale: str) -> None:
+        self._seeded += 1
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute(
+                "INSERT INTO autoagent_proposals (%s) VALUES (%s)"
+                % (", ".join(_SEED_COLUMNS), ", ".join("?" * len(_SEED_COLUMNS))),
+                (
+                    cycle_date,
+                    f"memory probe {self._seeded}",
+                    _MEMORY_AGENT,
+                    f"/tmp/{_MEMORY_AGENT}.md",
+                    passed,
+                    status,
+                    rationale,
+                ),
+            )
+            db.commit()
+
+    def _fetch_rationales(self, limit: int) -> list[str]:
+        # Sealed first: every other PG seam refuses, and on the import-succeeded
+        # leg a renamed _pg_connect fails here instead of staying live.
+        pg_reach = seal_pg_reach(self)
+        armed = mock.patch.object(dc, "HAS_PG_LOOP_WRITE", True)
+        seam = mock.patch.object(dc, "_pg_connect", lambda: stub.create_connection(self.db))
+        with armed, seam:
+            rows = dc._fetch_pre_verify_failures(_MEMORY_AGENT, limit)
+        self.assertEqual(pg_reach, [])
+        return [rationale for _axes, rationale in rows]
+
+    def test_when_outage_and_skip_rows_stored_then_only_verdicts_are_remembered(
+        self,
+    ) -> None:
+        self._seed("2026-08-19", False, "ok", "C3 failed: rule outside an editable region")
+        for status, rationale in _NON_ADJUDICATED:
+            self._seed("2026-08-20", False, status, rationale)
+        self._seed("2026-08-20", False, "ok", "C2 failed: edited the tools frontmatter line")
+        self._seed("2026-08-20", True, "ok", "all four axes passed")
+
+        self.assertEqual(
+            self._fetch_rationales(limit=10),
+            [
+                "C2 failed: edited the tools frontmatter line",
+                "C3 failed: rule outside an editable region",
+            ],
+        )
+
+    def test_when_newer_rows_are_not_verdicts_then_limit_still_reaches_older_verdicts(
+        self,
+    ) -> None:
+        self._seed("2026-08-18", False, "ok", "C1 failed: duplicated an existing rule")
+        self._seed("2026-08-19", False, "ok", "C4 failed: contradicts the scope rule")
+        for status, rationale in _NON_ADJUDICATED:
+            self._seed("2026-08-20", False, status, rationale)
+
+        self.assertEqual(
+            self._fetch_rationales(limit=2),
+            [
+                "C4 failed: contradicts the scope rule",
+                "C1 failed: duplicated an existing rule",
+            ],
+        )
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
@@ -116,6 +223,9 @@ class TestConsolidatedPromptInjection(unittest.TestCase):
     """
 
     def setUp(self) -> None:
+        # Builders reach PG reads (pattern evidence, landed history): sealed.
+        reach = seal_pg_reach(self)
+        self.addCleanup(lambda: self.assertEqual(reach, []))
         self._captured: dict[str, str] = {}
 
         def _capture(*, base_prompt, target_file, label_hint, claude_bin, timeout_sec):
@@ -150,7 +260,6 @@ class TestConsolidatedPromptInjection(unittest.TestCase):
             dc.generate_consolidated_proposal(
                 "dev-python",
                 [_pattern(dc)],
-                [],
                 agents_dir=self._agents_dir,
             )
         return self._captured["prompt"]
@@ -163,19 +272,19 @@ class TestConsolidatedPromptInjection(unittest.TestCase):
         self.assertIn("C2", prompt)
         # Neighboring blocks still intact.
         self.assertIn("OBSERVED LEARNING SIGNALS", prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
     def test_when_history_empty_then_block_omitted(self) -> None:
         prompt = self._run([])
         self.assertNotIn(_AVOID_HEADER, prompt)
         # Prompt is still well-formed — both neighboring blocks present.
         self.assertIn("OBSERVED LEARNING SIGNALS", prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
     def test_when_history_none_then_block_omitted(self) -> None:
         prompt = self._run(None)
         self.assertNotIn(_AVOID_HEADER, prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
     def test_when_oversized_failures_then_prompt_block_capped(self) -> None:
         rows = [({"C2": False}, "y" * 9000)]
@@ -242,6 +351,9 @@ class TestGenerationPromptWholeFile(unittest.TestCase):
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self.skipTest(f"registry corpus unreadable: {exc}")
 
+        # Builders reach PG reads (pattern evidence, landed history): sealed.
+        reach = seal_pg_reach(self)
+        self.addCleanup(lambda: self.assertEqual(reach, []))
         self._captured: dict[str, str] = {}
 
         def _capture(*, base_prompt, target_file, label_hint, claude_bin, timeout_sec):
@@ -267,11 +379,11 @@ class TestGenerationPromptWholeFile(unittest.TestCase):
     def _assemble(self, site: str, body: str) -> str:
         (self._agents_dir / "dev-python.md").write_text(body, encoding="utf-8")
         if site == "patch":
-            dc.generate_patch_proposal(_pattern(dc), [], agents_dir=self._agents_dir)
+            dc.generate_patch_proposal(_pattern(dc), agents_dir=self._agents_dir)
         else:
             with mock.patch.object(dc, "_fetch_pre_verify_failures", lambda agent: None):
                 dc.generate_consolidated_proposal(
-                    "dev-python", [_pattern(dc)], [], agents_dir=self._agents_dir
+                    "dev-python", [_pattern(dc)], agents_dir=self._agents_dir
                 )
         return self._captured["prompt"]
 
@@ -334,7 +446,6 @@ class TestLoopEventRemovedLines(unittest.TestCase):
                     classification="body-auto",
                     rationale="fixture",
                     proposed_diff=proposal.proposed_diff,
-                    outcomes_sampled=0,
                     haiku_status="ok",
                     estimated_added_lines=proposal.estimated_added_lines,
                     estimated_removed_lines=proposal.estimated_removed_lines,

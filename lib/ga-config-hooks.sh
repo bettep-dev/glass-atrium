@@ -118,7 +118,7 @@ render_config() {
   remain="$(grep -c '\${HOME}' -- "${RENDER_TMP}" || true)"
   [[ -z "${remain}" ]] && remain=0
   if [[ "${remain}" -ne 0 ]]; then
-    rm -f -- "${RENDER_TMP}"
+    delete_temp_file "${RENDER_TMP}"
     RENDER_TMP=""
     die "render_config: ${remain} \${HOME} token(s) survived render — aborting (template malformed?)"
   fi
@@ -196,7 +196,7 @@ resolve_config_binaries() {
 
   # guard: never replace a non-empty config with an empty file (awk catastrophe).
   if [[ ! -s "${RENDER_TMP}" ]]; then
-    rm -f -- "${RENDER_TMP}"
+    delete_temp_file "${RENDER_TMP}"
     RENDER_TMP=""
     die "resolve_config_binaries: rewrite produced an empty ${CONFIG_TOML} — aborting"
   fi
@@ -257,7 +257,7 @@ rewrite_hook_paths() {
   ' -- "${SETTINGS_JSON}" >"${RENDER_TMP}"
 
   if ! jq -e . -- "${RENDER_TMP}" >/dev/null 2>&1; then
-    rm -f -- "${RENDER_TMP}"
+    delete_temp_file "${RENDER_TMP}"
     RENDER_TMP=""
     die "rewrite_hook_paths: repoint produced invalid JSON — backup preserved at ${backup}"
   fi
@@ -349,7 +349,7 @@ reconcile_stale_hook_matchers() {
     ' -- "${SETTINGS_JSON}" >"${RENDER_TMP}"
 
     if ! jq -e . -- "${RENDER_TMP}" >/dev/null 2>&1; then
-      rm -f -- "${RENDER_TMP}"
+      delete_temp_file "${RENDER_TMP}"
       RENDER_TMP=""
       die "reconcile_stale_hook_matchers: edit produced invalid JSON for ${ev} -> ${base} — backup: ${backup:-(none taken — no mutation occurred)}"
     fi
@@ -359,7 +359,7 @@ reconcile_stale_hook_matchers() {
     after="$(get_event_command_count "${RENDER_TMP}" "${ev}")"
     # no change → discard WITHOUT a write/backup (keeps the no-op zero-write property).
     if [[ "${before}" -eq "${after}" ]]; then
-      rm -f -- "${RENDER_TMP}"
+      delete_temp_file "${RENDER_TMP}"
       RENDER_TMP=""
       continue
     fi
@@ -371,7 +371,8 @@ reconcile_stale_hook_matchers() {
       local pruned="${SETTINGS_JSON}.ga-stale-prune.$$"
       jq --arg ev "${ev}" 'del(.hooks[$ev])' -- "${RENDER_TMP}" >"${pruned}"
       if ! jq -e . -- "${pruned}" >/dev/null 2>&1; then
-        rm -f -- "${pruned}" "${RENDER_TMP}"
+        delete_temp_file "${pruned}"
+        delete_temp_file "${RENDER_TMP}"
         RENDER_TMP=""
         die "reconcile_stale_hook_matchers: prune produced invalid JSON for event ${ev} — backup: ${backup:-(none taken — no mutation occurred)}"
       fi
@@ -503,7 +504,7 @@ wire_hooks() {
 
     # re-validate the transform output before swapping it in — a malformed temp (jq partial write / disk error) must never replace the live file.
     if ! jq -e . -- "${RENDER_TMP}" >/dev/null 2>&1; then
-      rm -f -- "${RENDER_TMP}"
+      delete_temp_file "${RENDER_TMP}"
       RENDER_TMP=""
       die "wire_hooks: merge produced invalid JSON for ${event} -> ${hook} — backup: ${backup:-(none taken — no mutation occurred)}"
     fi
@@ -591,7 +592,7 @@ unwire_hooks() {
     ' -- "${SETTINGS_JSON}" >"${tmp}"
 
     if ! jq -e . -- "${tmp}" >/dev/null 2>&1; then
-      rm -f -- "${tmp}"
+      delete_temp_file "${tmp}"
       die "unwire_hooks: edit produced invalid JSON for event ${event} — backup preserved at ${backup}"
     fi
 
@@ -606,7 +607,8 @@ unwire_hooks() {
       pruned="${SETTINGS_JSON}.ga-prune.$$"
       jq --arg ev "${event}" 'del(.hooks[$ev])' -- "${tmp}" >"${pruned}"
       if ! jq -e . -- "${pruned}" >/dev/null 2>&1; then
-        rm -f -- "${pruned}" "${tmp}"
+        delete_temp_file "${pruned}"
+        delete_temp_file "${tmp}"
         die "unwire_hooks: prune produced invalid JSON for event ${event} — backup preserved at ${backup}"
       fi
       mv -f -- "${pruned}" "${tmp}"
@@ -697,7 +699,7 @@ retire_hook_binding() {
     ' -- "${SETTINGS_JSON}" >"${tmp}"
 
     if ! jq -e . -- "${tmp}" >/dev/null 2>&1; then
-      rm -f -- "${tmp}"
+      delete_temp_file "${tmp}"
       die "retire_hook_binding: edit produced invalid JSON for event ${event} — backup: ${backup:-(none taken — no mutation occurred)}"
     fi
 
@@ -710,7 +712,7 @@ retire_hook_binding() {
     # no-op zero-write property; a basename bound under no event leaves settings.json
     # byte-identical, no backup file).
     if [[ "${before}" -eq "${after}" ]]; then
-      rm -f -- "${tmp}"
+      delete_temp_file "${tmp}"
       continue
     fi
 
@@ -723,7 +725,8 @@ retire_hook_binding() {
       pruned="${SETTINGS_JSON}.ga-retire-prune.$$"
       jq --arg ev "${event}" 'del(.hooks[$ev])' -- "${tmp}" >"${pruned}"
       if ! jq -e . -- "${pruned}" >/dev/null 2>&1; then
-        rm -f -- "${pruned}" "${tmp}"
+        delete_temp_file "${pruned}"
+        delete_temp_file "${tmp}"
         die "retire_hook_binding: prune produced invalid JSON for event ${event} — backup: ${backup:-(none taken — no mutation occurred)}"
       fi
       mv -f -- "${pruned}" "${tmp}"

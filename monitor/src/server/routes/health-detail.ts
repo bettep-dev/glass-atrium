@@ -58,7 +58,7 @@ const DEFAULT_WIKI_DAYS = 14;
 
 // daemon-payload / hook-failures bounds. LIMIT is integer-validated then embedded
 // via Prisma.raw (parameterized LIMIT placeholder is unstable on some drivers).
-// Legacy 'daily-restart' stays allowed — historical payload rows remain readable.
+// Every daily-restart name stays allowed — history-only, its past payload rows remain readable.
 const ALLOWED_PAYLOAD_DAEMONS: ReadonlySet<string> = new Set([
   "autoagent",
   "wiki",
@@ -175,7 +175,7 @@ async function handleDaemons(
           status::text AS last_status,
           cost_guard_state::text AS cost_guard_state
         FROM core.daemon_runs
-        WHERE daemon_name IN ('autoagent', 'wiki', 'daily-restart-autoagent', 'daily-restart-wiki')
+        WHERE daemon_name IN ('autoagent', 'wiki')
         ORDER BY daemon_name, started_at DESC
       `,
       queryInstallAnchor(prisma),

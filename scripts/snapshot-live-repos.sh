@@ -35,7 +35,7 @@
 #   2  argument error
 #   3  repo dir missing (loud-fail, nothing staged)
 #   4  apply-lock held by a live writer (daemon-apply.sh parity)
-#   5  apply-lock lib missing (daemon-apply.sh parity)
+#   5  apply-lock lib missing or failed to load (daemon-apply.sh parity)
 #   6  refusal screen matched (loud-fail, nothing staged, nothing committed)
 #   7  recovery-repo roster lib missing (scope undefined, nothing staged)
 set -Eeuo pipefail
@@ -128,7 +128,7 @@ fi
 # --external-sources and see apply_lock_acquired assigned (silences SC2154).
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/apply-lock.sh
-. "${APPLY_LOCK_LIB}"
+. "${APPLY_LOCK_LIB}" || die "apply-lock lib failed to load (${APPLY_LOCK_LIB}) — writers cannot be serialized" "${EXIT_LOCK_LIB}"
 
 # Scope is EXACTLY the seven relative dirs of the shared roster leaf — the GA root
 # itself is never a candidate (it holds secrets, logs, runtime data and the
@@ -156,8 +156,10 @@ cleanup() {
   if [[ "${LOCK_HELD}" -eq 1 ]]; then
     apply_lock_release "${LOCK_DIR}"
   fi
-  if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
-    rm -rf -- "${TMP_DIR}"
+  # ga_guard_path arrives with lib/apply-lock.sh; an unset TMP_DIR is skipped silently.
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${TMP_DIR}"; then
+    rm -rf -- "${TMP_DIR:?}"
   fi
   exit "${rc}"
 }

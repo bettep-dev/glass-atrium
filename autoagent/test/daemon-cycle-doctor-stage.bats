@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # daemon-cycle-doctor-stage.bats — pins the TERMINAL DOCTOR STAGE in the cycle driver (T3-1).
 #
-# WHY: no scheduled job invokes the doctor — eight launchd jobs were enumerated and none of them runs
-# it — so a verdict exists only when an operator asks for one, and every honesty fix that landed INTO
+# WHY: no scheduled job invokes the doctor — no job in the launchd roster runs it — so a verdict
+# exists only when an operator asks for one, and every honesty fix that landed INTO
 # the doctor is read by nobody unattended. The cycle is the scheduled carrier that already writes a
 # durable per-cycle report, so the stage is terminal and its verdict is folded into that report.
 #
@@ -57,6 +57,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_DRIVER="${GA}/autoagent/daemon-cycle.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_DRIVER}" ]] || skip "daemon-cycle.sh not found: ${REAL_DRIVER}"
@@ -67,6 +69,11 @@ setup() {
   mkdir -p -- "${FAKE_HOME}/.glass-atrium/scripts" "${WORK}/real/autoagent" "${WORK}/bin"
   DRIVER="${WORK}/real/autoagent/daemon-cycle.sh"
   cp -p -- "${REAL_DRIVER}" "${DRIVER}"
+  # The driver's backfill head stage reads its trigger files here: a completion record and no re-arm
+  # marker keep it not pending, so it loads no lock lib (this copied tree carries none) and calls nothing.
+  BACKFILL_REPORTS="${WORK}/backfill-reports"
+  mkdir -p -- "${BACKFILL_REPORTS}"
+  : >"${BACKFILL_REPORTS}/.unadjudicated-backfill-done"
   # The report the cycle writes IS the durable channel the verdict lands in, so it has to exist for
   # the same reason it exists on a real cycle: the cycle stage wrote it before the terminal stage runs.
   OUT_JSON="${WORK}/cycle.json"
@@ -79,7 +86,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # make_stage_stubs — the driver resolves daemon_cycle.py / daemon-apply.sh relative to its own dir.
@@ -99,13 +106,17 @@ EOF
 }
 
 # make_doctor_stub — the harness entry point beside the driver's own root (SCRIPT_DIR is <ga>/autoagent,
-# so the doctor entry resolves to <ga>/glass-atrium). Records its invocation and exits $1, so a red
-# install is simulated by a code rather than by an actual unhealthy fixture tree.
+# so the doctor entry resolves to <ga>/glass-atrium). Records its invocation; the doctor call exits $1,
+# so a red install is simulated by a code rather than by an actual unhealthy fixture tree. The cycle's
+# retirement call exits 0, so a red row here is red for the doctor alone.
 make_doctor_stub() {
   local code="$1"
   cat >"${WORK}/real/glass-atrium" <<EOF
 #!/usr/bin/env bash
 printf 'doctor-stub %s\n' "\$*" >>"${CALL_LOG}"
+if [[ "\${1:-}" == retire-launchd-jobs ]]; then
+  exit 0
+fi
 printf '  ok   : doctor stub\n' >&2
 exit ${code}
 EOF
@@ -159,8 +170,8 @@ EOF
 # short-circuits the resolution the stub feeds.
 run_driver() {
   run env -u AUTOAGENT_CLAUDE_BIN \
-    HOME="${FAKE_HOME}" AUTOAGENT_PYTHON_BIN=python3 PATH="${WORK}/bin:${PATH}" \
-    bash "${DRIVER}" --out "${OUT_JSON}" "$@"
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${BACKFILL_REPORTS}" AUTOAGENT_PYTHON_BIN=python3 \
+    PATH="${WORK}/bin:${PATH}" bash "${DRIVER}" --out "${OUT_JSON}" "$@"
 }
 
 # Behavioural presence probe: the stage announces itself on every path it takes (verdict, skip), so
@@ -299,7 +310,7 @@ PY
 # ── AC6 — an install without the entry point is a loud skip, not a new silence ────────────────
 
 @test "AC6: an absent or non-executable doctor entry point skips loudly and keeps the cycle clean" {
-  rm -f -- "${WORK}/real/glass-atrium"
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/real/glass-atrium"; fi
   run_driver --apply-only
   require_doctor_stage
   [[ "${output}" == *"stage=doctor SKIP"* ]] || {
@@ -316,8 +327,12 @@ PY
   make_doctor_stub 0
   chmod 644 "${WORK}/real/glass-atrium"
   run_driver --apply-only
-  [[ "${output}" == *"stage=doctor SKIP"* && "${output}" == *"not executable"* ]] || {
-    echo "driver output: ${output}" >&2
+  # the reason is read from the doctor's own line: the retire stage reads the same entry point and
+  # names the same condition on its own line, which would satisfy an output-wide match alone.
+  local doctor_line
+  doctor_line="$(grep -F 'stage=doctor SKIP' <<<"${output}" || true)"
+  [[ "${doctor_line}" == *"not executable"* ]] || {
+    echo "doctor skip line: ${doctor_line:-<none>}; driver output: ${output}" >&2
     return 1
   }
   [[ "${status}" -eq 0 ]] || {
@@ -329,7 +344,7 @@ PY
 # ── AC7 — an unrecordable verdict is a durability miss, never a cycle failure ─────────────────
 
 @test "AC7: an absent or empty report keeps a clean cycle clean and names the miss" {
-  rm -f -- "${OUT_JSON}"
+  if ga_guard_path "${OUT_JSON}"; then rm -f -- "${OUT_JSON:?}"; fi
   run_driver --apply-only
   require_doctor_stage
   # the doctor still ran and still reached a verdict — only its durable landing is missing.
@@ -368,7 +383,7 @@ PY
 # ── AC8 — the anti-masking polarity: a miss never softens a red doctor ────────────────────────
 
 @test "AC8: a failing doctor still degrades the cycle when the verdict cannot be recorded" {
-  rm -f -- "${OUT_JSON}"
+  if ga_guard_path "${OUT_JSON}"; then rm -f -- "${OUT_JSON:?}"; fi
   make_doctor_stub 1
   run_driver --apply-only
   require_doctor_stage

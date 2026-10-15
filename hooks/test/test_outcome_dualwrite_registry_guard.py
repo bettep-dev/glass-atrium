@@ -2,7 +2,7 @@
 
 Teammate-class spawns reached the recorder carrying an ephemeral instance name, and the
 write seam applied a length clamp and an unknown-fallback only — so an unregistered identity
-persisted silently and the ingest allowlist then dropped the row's lesson. The guard DETECTS
+persisted silently and the aggregator's registry allowlist then dropped its patterns. The guard DETECTS
 that at the single write seam: it raises the advisory review flag and stamps its reason token,
 and it never drops or rewrites the row. The agent value is part of the ON CONFLICT key, so a
 rewrite would additionally convert the upsert into a duplicate row.
@@ -16,6 +16,8 @@ dict, which is exactly the defect surface):
     leaving the flag and carrier untouched (AC-3.6, fail-open);
 (3) a registry member's envelope is unchanged apart from the additive empty carrier (AC-3.7);
 (4) the agent value is never rewritten, on any fixture (AC-3.9).
+(5) the spawn-provenance fields reach the row as sent, NULL when absent, independent of the
+    agent-emitted correction fields.
 
 Run with either runner:
     uv run --with pytest pytest hooks/test/test_outcome_dualwrite_registry_guard.py -v
@@ -30,6 +32,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _HOOKS_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_HOOKS_ROOT))
@@ -47,6 +50,7 @@ except (SystemExit, Exception) as exc:  # noqa: BLE001 — psycopg absent → sk
 
 _REGISTERED = "glass-atrium-dev-shell"
 _EPHEMERAL = "ashell-impl-opus-980cfc838657ba29"
+_PROVENANCE_COLS = ("agent_id", "session_id", "user_correction_detected")
 
 
 def _outcome(agent, **kw):
@@ -124,15 +128,114 @@ class RegistryGuardTest(unittest.TestCase):
     # The carrier reaches the write path on every schema variant, and the pre-migration
     # variants stay well-formed — a named column on an unmigrated DB is a total write outage.
     def test_insert_variants_cover_the_carrier(self) -> None:
-        # Keys are (qa_score, review_flag_reasons, grader_crosscheck) presence.
-        for (_qa, reasons, crosscheck), sql in dw._INSERT_SQL_BY_SCHEMA.items():
+        # Keys are (qa_score, review_flag_reasons, grader_crosscheck, effort pair, provenance
+        # triple) presence.
+        for key, sql in dw._INSERT_SQL_BY_SCHEMA.items():
+            _qa, reasons, crosscheck, effort, provenance = key
             self.assertEqual(reasons, "review_flag_reasons" in sql)
             self.assertEqual(crosscheck, "grader_crosscheck" in sql)
+            self.assertEqual(effort, "has_mixed_effort" in sql)
+            for col in _PROVENANCE_COLS:
+                self.assertEqual(provenance, col in sql, (key, col))
             # A strip that shears its own separator leaves a dangling comma — malformed SQL
             # on exactly the unmigrated DB the variant exists to serve.
             self.assertNotIn(",\n)", sql)
             self.assertNotIn(",\nRETURNING", sql)
             self.assertNotIn("EXCLUDED.review_flag_reasons = ", sql)
+
+
+class _CatalogCursor:
+    """Answers the column probe from a fixed schema, filtered by the columns it asks for."""
+
+    def __init__(self, schema_cols):
+        self._schema_cols = schema_cols
+        self._asked = []
+
+    def execute(self, _sql, params):
+        self._asked = params["cols"]
+
+    def fetchall(self):
+        return [(col,) for col in self._schema_cols if col in self._asked]
+
+
+@unittest.skipIf(dw is None, f"import failed: {_IMPORT_ERROR}")
+class ProvenanceFieldsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        absent = os.path.join(self._tmp.name, "absent.json")
+        patcher = mock.patch.dict(os.environ, {"CLAUDE_AGENT_REGISTRY_FILE": absent})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_provenance_fields_sent_by_the_recorder_reach_the_row(self) -> None:
+        row = dw._build_outcome_row(_outcome(
+            _REGISTERED,
+            agent_id="a3f2c1d4e5b6f708",
+            session_id="7c1b5a9e-3d42-4f86-b0e7-25a9c4d813f6",
+            user_correction_detected=True,
+        ))
+        self.assertEqual(row["agent_id"], "a3f2c1d4e5b6f708")
+        self.assertEqual(row["session_id"], "7c1b5a9e-3d42-4f86-b0e7-25a9c4d813f6")
+        self.assertIs(row["user_correction_detected"], True)
+
+    def test_detector_verdict_keeps_its_truth_value_false_included(self) -> None:
+        for sent, want in ((True, True), (False, False), ("true", True), ("false", False)):
+            with self.subTest(sent=sent):
+                row = dw._build_outcome_row(_outcome(_REGISTERED, user_correction_detected=sent))
+                self.assertIs(row["user_correction_detected"], want)
+
+    def test_absent_or_unusable_provenance_inputs_give_null(self) -> None:
+        rows = (
+            ("keys absent", {}),
+            ("empty strings", {"agent_id": "", "session_id": "", "user_correction_detected": ""}),
+            ("whitespace", {"agent_id": "  ", "session_id": "\t", "user_correction_detected": " "}),
+            ("non-string ids, non-boolean verdict",
+             {"agent_id": 123, "session_id": ["s"], "user_correction_detected": "maybe"}),
+            ("numeric verdict", {"user_correction_detected": 1}),
+        )
+        for name, fields in rows:
+            with self.subTest(name):
+                row = dw._build_outcome_row(_outcome(_REGISTERED, **fields))
+                for col in _PROVENANCE_COLS:
+                    self.assertIsNone(row[col], col)
+
+    def test_emitted_correction_fields_persist_unchanged_beside_an_independent_verdict(
+            self) -> None:
+        rows = (
+            ("emitted correction, detector silent",
+             {"revision_count": "2", "evaluative_signal": "-1",
+              "directive_hint": "User wanted the API gate moved, not the regex removed",
+              "user_correction_detected": False},
+             (2, -1, "User wanted the API gate moved, not the regex removed", False)),
+            ("nothing emitted, detector fired",
+             {"user_correction_detected": True},
+             (0, None, None, True)),
+        )
+        for name, fields, want in rows:
+            with self.subTest(name):
+                row = dw._build_outcome_row(_outcome(_REGISTERED, **fields))
+                got = (row["revision_count"], row["evaluative_signal"],
+                       row["directive_hint"], row["user_correction_detected"])
+                self.assertEqual(got, want)
+
+    def test_column_probe_writes_the_provenance_columns_only_where_the_schema_has_them(
+            self) -> None:
+        migrated = set(dw._ADDITIVE_OUTCOME_COLS)
+        rows = (
+            ("migrated schema", migrated, True),
+            ("schema without the provenance columns",
+             migrated - set(_PROVENANCE_COLS), False),
+        )
+        for name, schema_cols, want in rows:
+            with self.subTest(name), mock.patch.multiple(
+                    dw, _qa_score_col_present=None, _review_flag_reasons_col_present=None,
+                    _grader_crosscheck_col_present=None, _effort_cols_present=None,
+                    _provenance_cols_present=None):
+                sql = dw._outcomes_insert_sql(_CatalogCursor(schema_cols))
+                for col in _PROVENANCE_COLS:
+                    self.assertEqual(col in sql, want, col)
+                self.assertIn("has_mixed_effort", sql)
 
 
 if __name__ == "__main__":

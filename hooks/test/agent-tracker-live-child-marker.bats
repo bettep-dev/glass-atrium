@@ -4,11 +4,12 @@
 #
 # The marker is ADVISORY OBSERVABILITY ONLY — it does not enforce worktree isolation, and these
 # tests assert its file-level contract, never an enforcement claim.
-# Three branches: created on Start · removed on Stop · a write malfunction is LOUD (named warn code
-# on stderr) rather than silently absorbed, with the hook staying non-blocking (exit 0).
+# Four branches: created on Start · removed on Stop · a write malfunction and a delete malfunction
+# or refusal are each LOUD (named warn code on stderr: DATA-074, DATA-075) rather than silently
+# absorbed, with the hook staying non-blocking (exit 0).
 #
-# PG-free by construction: the hook's dual-write helper is tolerated non-blocking (`|| true`), so no
-# ephemeral cluster is needed here — agent-tracker.bats owns the write-contract coverage.
+# The hook's real dual-write runs on every fire, and `|| true` only tolerates a failed write, so fire()
+# points it at a socket that cannot exist; agent-tracker.bats owns the write-contract coverage.
 # GA_DATA_ROOT sandboxes HOOK_DATA_DIR into BATS_TEST_TMPDIR so no live runtime path is touched.
 #
 # BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
@@ -16,6 +17,8 @@
 # 1.13.0 on both legs, so bash is the variable, not bats). Every assertion carries `|| return 1`.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../agent-tracker.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "agent-tracker.sh not found: ${HOOK_SH}"
@@ -26,13 +29,27 @@ setup() {
   AID="bats-live-child-aid-001"
 }
 
+teardown() {
+  eph_pg_stop "${EPH_DATADIR:-}"
+}
+
 # $1=hook_event_name $2=agent_id
 fire() {
   local payload
   payload="$(jq -n --arg e "${1}" --arg a "${2}" --arg t "glass-atrium-dev-shell" \
     '{hook_event_name:$e, agent_id:$a, agent_type:$t}')"
-  run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" bash "$3" 2>&1' \
+  run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" PGHOST="/nonexistent-socket-xyzzy" bash "$3" 2>&1' \
     _ "${payload}" "${GA_DATA}" "${HOOK_SH}"
+}
+
+# $1=hook_event_name $2=agent_id — the hook's psycopg connections go through the sandbox recorder,
+# which logs each target and refuses any outside the cluster's socket dir before it dials.
+fire_on_sandbox() {
+  local payload
+  payload="$(jq -n --arg e "${1}" --arg a "${2}" --arg t "glass-atrium-dev-shell" \
+    '{hook_event_name:$e, agent_id:$a, agent_type:$t}')"
+  printf '%s' "${payload}" | env GA_DATA_ROOT="${GA_DATA}" PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
+    PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" bash "${HOOK_SH}" >/dev/null 2>&1
 }
 
 @test "SubagentStart creates a live-child marker named after the agent id" {
@@ -62,4 +79,47 @@ fire() {
   chmod 700 "${MARKER_DIR}"
   [[ "${status}" -eq 0 ]] || { echo "hook must stay non-blocking" >&2; return 1; }
   [[ "${output}" == *'DATA-074'* ]] || { echo "silent absorption — no DATA-074 in: ${output}" >&2; return 1; }
+}
+
+@test "a marker the Stop cannot delete survives and is LOUD (DATA-075)" {
+  local row name root lockdown marker
+  local rows=("unwritable marker dir|${GA_DATA}|yes" "relative data root|ga-rel|no")
+  cd "${BATS_TEST_TMPDIR}" || return 1
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name root lockdown <<<"${row}"
+    GA_DATA="${root}"
+    marker="${root}/data/live-children/${AID}"
+    fire "SubagentStart" "${AID}"
+    [[ -f "${marker}" ]] || {
+      echo "${name}: Start wrote no marker" >&2
+      return 1
+    }
+    if [[ "${lockdown}" == yes ]]; then chmod 500 "${marker%/*}"; fi
+    fire "SubagentStop" "${AID}"
+    chmod 700 "${marker%/*}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: hook must stay non-blocking" >&2
+      return 1
+    }
+    [[ "${output}" == *'DATA-075'* ]] || {
+      echo "${name}: silent — no DATA-075 in: ${output}" >&2
+      return 1
+    }
+    [[ -f "${marker}" ]] || {
+      echo "${name}: the marker was deleted" >&2
+      return 1
+    }
+  done
+}
+
+@test "the tracker's event write reaches only the sandbox cluster, never the invoking shell's database" {
+  python3 -c 'import psycopg' 2>/dev/null || skip "psycopg not importable — the recorder sees psycopg connections only"
+  export EPH_DATADIR="${BATS_TEST_TMPDIR}/pgdata" EPH_SOCKDIR="${BATS_TEST_TMPDIR}/sock" \
+    EPH_PORT="55471" EPH_DB="glass_atrium"
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR}/pg-connect.log"
+  EPH_USER_SITE="$(python3 -m site --user-site)"
+  eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "${EPH_DB}" || return 1
+  fire_on_sandbox "SubagentStart" "${AID}"
+  fire_on_sandbox "SubagentStop" "${AID}"
+  eph_assert_isolated 2 || return 1
 }

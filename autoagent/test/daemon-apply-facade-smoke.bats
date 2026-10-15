@@ -15,8 +15,8 @@
 # plus a facade dir of per-file symlinks that DELIBERATELY omits the
 # scripts/lib/apply-lock.sh mirror — the exact live incident shape. The daemon
 # is invoked through the facade with --dry-run, which is DB-free by design
-# (backlog_source_available returns false under dry-run → deterministic JSON
-# report fallback), skips the real lock acquisition, and logs only to /tmp.
+# (the closed batch mode selects nothing), skips the real lock acquisition,
+# and logs only to /tmp.
 # A fake HOME keeps the daemon's HOME-anchored paths — the reports dir, the
 # agents dir and the backfill script — inside the sandbox, so no real user
 # state is ever read.
@@ -24,7 +24,7 @@
 # PRE-FIX behavior (this suite FAILS on it): dirname(BASH_SOURCE) =
 # facade/autoagent → APPLY_LOCK_LIB = facade/scripts/lib/apply-lock.sh
 # (absent) → exit 5. POST-FIX: realpath lands in the sandbox real tree → the
-# lib sources → the empty report drains zero patches → exit 0.
+# lib sources → the closed batch mode selects nothing → exit 0.
 #
 # Run via: bats autoagent/test/daemon-apply-facade-smoke.bats
 # Requires: bats >= 1.5.0, bash 3.2+, python3
@@ -32,6 +32,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${GA}/autoagent/daemon-apply.sh" ]] || skip "daemon-apply.sh not found: ${GA}/autoagent/daemon-apply.sh"
@@ -49,6 +51,7 @@ setup() {
   cp -p "${GA}/autoagent/daemon_cycle.py" "${REAL}/autoagent/daemon_cycle.py"
   cp -p "${GA}/autoagent/lib/git-txn.sh" "${REAL}/autoagent/lib/git-txn.sh"
   cp -p "${GA}/scripts/lib/apply-lock.sh" "${REAL}/scripts/lib/apply-lock.sh"
+  cp -p "${GA}/scripts/lib/path-guard.sh" "${REAL}/scripts/lib/path-guard.sh"
 
   # FACADE — per-file symlinks mirroring the ~/.claude layout. The mirrors that
   # existed at incident time (daemon scripts + the manually-added git-txn.sh)
@@ -73,7 +76,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -81,16 +84,20 @@ teardown() {
 # ---------------------------------------------------------------------------
 
 @test "facade-invoked daemon-apply resolves the apply-lock lib (no exit-5 FATAL)" {
-  run env HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     bash "${FACADE}/autoagent/daemon-apply.sh" --dry-run \
     --report "${WORK}/report.json" --agents-dir "${AGENTS}"
 
   # Class pin: the lib default must never resolve into the facade.
-  [[ "${output}" != *"FATAL: apply-lock lib missing"* ]]
-  [[ "${status}" -ne 5 ]]
-  # End-to-end: the lib sourced, the empty report drained zero patches, clean 0.
-  [[ "${output}" == *"0 body-auto patches"* ]]
-  [[ "${status}" -eq 0 ]]
+  [[ "${output}" != *"FATAL: apply-lock lib missing"* && "${status}" -ne 5 ]] || {
+    echo "status=${status} output: ${output}"
+    return 1
+  }
+  # End-to-end: the lib sourced and the run reached the closed batch branch, clean 0.
+  [[ "${status}" -eq 0 && "${output}" == *"batch auto-apply closed until live trials"* ]] || {
+    echo "status=${status} output: ${output}"
+    return 1
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -100,7 +107,7 @@ teardown() {
 @test "facade-invoked daemon-apply keeps the ATRIUM_APPLY_LOCK_LIB override intact" {
   # Point the override at a bogus path: the realpath default MUST NOT shadow the
   # documented env contract, so the run has to FATAL exit 5 on the bogus lib.
-  run env HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     ATRIUM_APPLY_LOCK_LIB="${WORK}/nonexistent-apply-lock.sh" \
     bash "${FACADE}/autoagent/daemon-apply.sh" --dry-run \
     --report "${WORK}/report.json" --agents-dir "${AGENTS}"
@@ -108,6 +115,34 @@ teardown() {
   [[ "${status}" -eq 5 ]]
   [[ "${output}" == *"FATAL: apply-lock lib missing"* ]]
   [[ "${output}" == *"${WORK}/nonexistent-apply-lock.sh"* ]]
+}
+
+@test "facade-invoked daemon-apply maps an apply-lock lib that fails to load to exit 5" {
+  # Present but guard-less: the lib's own source-time guard fails, which must
+  # surface as the documented lock-lib code rather than the bare errexit status.
+  mkdir -p "${WORK}/noguard"
+  cp -p "${GA}/scripts/lib/apply-lock.sh" "${WORK}/noguard/apply-lock.sh"
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    ATRIUM_APPLY_LOCK_LIB="${WORK}/noguard/apply-lock.sh" \
+    bash "${FACADE}/autoagent/daemon-apply.sh" --dry-run \
+    --report "${WORK}/report.json" --agents-dir "${AGENTS}"
+
+  [[ "${status}" -eq 5 ]] || return 1
+  [[ "${output}" == *"cannot source the shared path guard"* ]] || return 1
+  [[ "${output}" == *"FATAL: apply-lock lib failed to load (${WORK}/noguard/apply-lock.sh)"* ]]
+}
+
+@test "facade-invoked daemon-apply maps a missing path guard to exit 5 before any lock" {
+  # git-txn.sh loads the guard at the top of the run, so its failure must still surface as the
+  # documented lib code rather than the bare errexit status.
+  mv -- "${REAL}/scripts/lib/path-guard.sh" "${WORK}/path-guard.sh.moved"
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    bash "${FACADE}/autoagent/daemon-apply.sh" --dry-run \
+    --report "${WORK}/report.json" --agents-dir "${AGENTS}"
+
+  [[ "${status}" -eq 5 ]] || return 1
+  [[ "${output}" == *"cannot source the shared path guard"* ]] || return 1
+  [[ ! -e "${REPORTS}/.apply-lock" ]] || return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -120,7 +155,7 @@ teardown() {
   # pre-fix the facade SCRIPT_DIR made that check FATAL (exit 2, "missing");
   # post-fix the module resolves into the real tree and --help exits 0.
   # AUTOAGENT_CLAUDE_BIN skips the claude-binary detection (hermetic).
-  run env HOME="${FAKE_HOME}" AUTOAGENT_CLAUDE_BIN=/usr/bin/true \
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_CLAUDE_BIN=/usr/bin/true \
     bash "${FACADE}/autoagent/daemon-cycle.sh" --help
 
   [[ "${output}" != *"FATAL: missing"* ]]
