@@ -209,6 +209,30 @@ write_baseline() {
   done
 }
 
+@test "a merge-base baseline that exists but cannot be read fails loudly with exit 3, never a skipped check" {
+  local root real_git stub_dir="${WORK}/gitstub"
+  real_git="$(command -v git)"
+  root="$(make_root unreadable)"
+  git -C "${root}" init -q
+  write_baseline "${root}" ''
+  git -C "${root}" add "${BASELINE_REL}"
+  git -C "${root}" commit -q -m base
+  git -C "${root}" tag base
+  # A git whose `show` fails while `cat-file -e` still reports the blob present.
+  mkdir -p "${stub_dir}"
+  cat >"${stub_dir}/git" <<'EOF'
+#!/usr/bin/env bash
+for arg in "$@"; do [[ "${arg}" == show ]] && exit 128; done
+exec "${REAL_GIT}" "$@"
+EOF
+  chmod +x "${stub_dir}/git"
+  run env PATH="${stub_dir}:${PATH}" REAL_GIT="${real_git}" bash "${RATCHET_SH}" --root "${root}" --base base
+  [[ "${status}" -eq 3 && "${output}" == *'cannot read the baseline at merge base'* ]] || {
+    echo "unreadable base baseline: ${status} ${output}"
+    return 1
+  }
+}
+
 @test "a failed or unreadable auditor run fails loudly with exit 3" {
   local partial stub_dir="${WORK}/stub" root
   # The auditor's own scope error: its monitor/test scope dir is absent.

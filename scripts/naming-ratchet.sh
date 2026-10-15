@@ -150,7 +150,9 @@ read_base_baseline() {
     printf 'NOTICE: no baseline at merge base %s — the creating change is exempt\n' "${merge_base}" >&2
     return 1
   fi
-  git -C "${root_dir}" show "${merge_base}:${BASELINE_REL}" | normalize_baseline >"${out}"
+  # shellcheck disable=SC2310  # pipefail carries a git, sed or sort failure into the || below
+  git -C "${root_dir}" show "${merge_base}:${BASELINE_REL}" | normalize_baseline >"${out}" \
+    || die "cannot read the baseline at merge base ${merge_base}" 3
 }
 
 count_lines() {
