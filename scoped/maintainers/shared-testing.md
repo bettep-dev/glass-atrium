@@ -56,6 +56,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 - The home-file, grouping, test-data and table-form rules are reviewer-applied with no tooling at all.
 - The ID-ban and comment rules are CI-blocking for new findings only: `scripts/naming-ratchet.sh` fails the `test-naming-ratchet` job on an `id_title` or `incident_header` finding absent from its committed baseline `scripts/naming-ratchet-baseline.txt`, and on baseline growth.
   - Not blocked: a finding already in the baseline, and a stale entry's exact text until `naming-ratchet.sh --write` drops it.
+  - Not blocked: baseline growth on a push whose `github.event.before` is all-zeros or cannot be fetched — that run omits `--base`, so the growth check is skipped.
 - Extending the auditor to source-grep pins is a deferred follow-up, not a current check.
 
 ## Test-authoring delta — provenance
@@ -84,10 +85,11 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 The rule file states only that every row is reviewer-applied. The mapping below is for whoever adjudicates an auditor finding.
 
 - MECHANICAL means decidable-in-principle by a script — not that a script exists. **No row on that table is enforced.**
-- Only signals (a) and (b) of `scripts/audit-test-smells.sh` back any row, and that auditor is advisory: it exits 0 on findings, and its signals (a)-(c) — the third is below — are not wired into CI and are run by hand.
+- Only signals (a) and (b) of `scripts/audit-test-smells.sh` back any row, and that auditor is advisory: it exits 0 on findings, and nothing in CI reads its signals (a)-(c) — the third is below; the naming ratchet runs it only for its `id_title` and `incident_header` counts.
   - The auditor also reports the advisory `id_title` and `incident_header` counts. They back the **ID ban** and **Comments** rules, not a row, and never change the auditor's exit status.
   - CI blocks new findings of those two kinds through `scripts/naming-ratchet.sh` against its committed baseline; the ratchet, not the auditor, carries the failing exit (`## Backing honesty — Test Quality`).
-- That auditor carries a third signal no row states — (c) count-pin: an assertion comparing a non-zero integer literal against a census the same assertion derives by counting the tree or a source file. A signal-(c) finding therefore maps to no row, and is in particular not the tooling for the change-detector row.
+- That auditor carries a third signal no row states — (c) count-pin: an assertion comparing a non-zero integer literal against a census the same assertion derives by counting the tree or a source file.
+  - A signal-(c) finding therefore maps to no row, and is in particular not the tooling for the change-detector row.
 - A row marked `[no tooling]` below has no implementation at all and is reviewer-applied exactly like a JUDGMENT row.
 
 | Prohibited row (keyed by its literal in the rule file) | Smell source | Check |
@@ -112,7 +114,8 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 
 - **Test-first duty**: it binds at `core-outcome-record.md` → Field Input Guide → `metric_pass`, which is delivered to every agent and states the observed-failure bar; its `feature` note names the deliberate-break exception and points to the rule file for it.
   - The rule file's qualifier is the exception's one statement — when a test written after its implementation is admissible, and how and where the break is made — and it reconciles the exception with the "Writing code first as a reference" rebuttal.
-- **"Too simple to need tests" row**: the rebuttal is qualified against the prohibited shape *a test whose target has no branch and no logic*, so it does not collide with the injected minimalism carve-out that exempts a trivial one-liner. The two ends are worded alike on purpose — change them together.
+- **"Too simple to need tests" row**: the rebuttal is qualified against the prohibited shape *a test whose target has no branch and no logic*, so it does not collide with the injected minimalism carve-out that exempts a trivial one-liner.
+  - The two ends are worded alike on purpose — change them together.
 
 ## Destructive-Path Suite Safety — provenance
 
