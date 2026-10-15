@@ -1686,7 +1686,7 @@
     "scripts/test/pii-scan.bats": "8421c7152424624d4e6605427e5dbfaf2272e7c7a652020d28c2c51f0885cf63",
     "scripts/test/proposal-status-label-fallback.bats": "3414edc0bcace83dbab78b7893a85eebc2796438d9197d3d00e30e7631d8bbe1",
     "scripts/test/prune-job-scratch.bats": "cd9b78f17a704a065f3835c02cf18da21a4d86d47cc5338aebaaba8dc6119d63",
-    "scripts/test/publish-release.bats": "1906d0365ee2b541d684112a03570b8d67556139b4daa4e4047b1fe2b902b50a",
+    "scripts/test/publish-release.bats": "5b56e7c43de539b4711e47dd7974fefa16f3967fb87d624167935c404dd51859",
     "scripts/test/recovery-repos.bats": "8cb1651aa5a1cc687bd3248febd6f886060c9acc933c5d74fe49dc0643a58f92",
     "scripts/test/render-claude-auth.bats": "15fd25496a66b72a63624da9fc94bc482a9632fb0ca844b88ebbac954c1693de",
     "scripts/test/render-monitor-env.bats": "9e3887184be68d732a917dd47afe204f4d9895dbab49aaeb1f1d7e295adf8794",
