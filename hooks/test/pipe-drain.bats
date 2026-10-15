@@ -207,15 +207,14 @@ filler() { python3 -Ic 'import sys; sys.stdout.write("x" * int(sys.argv[1]))' "$
 # of that many bytes together — few long paths, as the parser's string loops are quadratic ·
 # path:<bytes> → that many bytes.
 row_padding() {
-  local kind="${1%%:*}" size="${1#*:}" stem
+  local kind="${1%%:*}" size="${1#*:}" stem index
   case "${kind}" in
     context) filler "$((size - 15 - ${#2}))" ;;
     path) filler "${size}" ;;
     scope)
       stem="$(filler "$((size / 11))")"
       printf '[SCOPE] files=src/%s0.sh' "${stem}"
-      printf ', src/%s%s.sh' "${stem}" 1 "${stem}" 2 "${stem}" 3 "${stem}" 4 "${stem}" 5 \
-        "${stem}" 6 "${stem}" 7 "${stem}" 8 "${stem}" 9 "${stem}" 10
+      for ((index = 1; index <= 10; index++)); do printf ', src/%s%s.sh' "${stem}" "${index}"; done
       printf ' · deliverable=code · out=none'
       ;;
     *) return 1 ;;
@@ -229,7 +228,7 @@ row_padding() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   local refused="${BATS_TEST_TMPDIR}/exec-refused.log" bin row name hook kind trigger spec names expected_status needle
-  local padding payload index data_root="${BATS_TEST_TMPDIR}/ga"
+  local padding payload data_root="${BATS_TEST_TMPDIR}/ga"
   local -a exported rows
   bin="$(linux_exec_limit_bin "${refused}")"
   export WIKI_ROOT="${BATS_TEST_TMPDIR}/wiki"
@@ -244,10 +243,9 @@ row_padding() {
     IFS='|' read -r name hook kind trigger spec names expected_status needle <<<"${row}"
     padding="$(row_padding "${spec}" "${trigger}")"
     IFS=' ' read -r -a exported <<<"${names}"
-    for index in "${!exported[@]}"; do exported[index]="${exported[index]}=x"; done
     payload="$(consumer_payload "${kind}" "${trigger}" "${padding}")"
     : >"${refused}"
-    run env PATH="${bin}:${PATH}" GA_DATA_ROOT="${data_root}" HOOK_DATA_DIR="${data_root}/data" "${exported[@]}" \
+    run env PATH="${bin}:${PATH}" GA_DATA_ROOT="${data_root}" HOOK_DATA_DIR="${data_root}/data" "${exported[@]/%/=x}" \
       bash "${HOOKS_DIR}/${hook}" <<<"${payload}"
     [[ "${status}" -eq "${expected_status}" && "${output}" == *"${needle}"* ]] || {
       echo "${name}: expected status ${expected_status} and ${needle}, got ${status}: ${output:0:600}"
