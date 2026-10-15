@@ -31,6 +31,8 @@
 #            + test-install-macos — the ONLY macos-latest job. Gated on the
 #            fast-gate ALONE (no `detect-changes` filter, no `if:`), so it runs
 #            on every PR; see its own comment for why.
+#            + test-naming-ratchet — likewise unfiltered, on the fast-gate
+#            alone; it gates no other job.
 #   Stage 3  test-e2e (advisory / PR-optional, continue-on-error)
 #   Stage 4  ci-pass — the SINGLE required status check; aggregates the gate.
 
@@ -208,8 +210,9 @@ jobs:
   # STAGE 2 — language jobs. Gated on the fast-gate passing AND on a per-stack
   # `detect-changes` path filter so an unrelated diff skips the irrelevant
   # stacks. A skipped job counts as OK at ci-pass (see stage 4).
-  # ONE deliberate exception: test-install-macos (end of this stage) carries no
-  # path filter and runs on every PR — its rationale is stated at the job.
+  # TWO deliberate exceptions: test-install-macos and test-naming-ratchet (end
+  # of this stage) carry no path filter and run on every PR — each rationale is
+  # stated at its job.
   # ===========================================================================
 
   # ---------------------------------------------------------------------------
@@ -1120,6 +1123,55 @@ jobs:
 
           exit "${rc}"
 
+  # ---------------------------------------------------------------------------
+  # Naming ratchet: fails on an ID test title or incident header absent from
+  # scripts/naming-ratchet-baseline.txt, and on baseline growth since the base.
+  # The auditor itself stays advisory; only this job blocks.
+  #
+  # NO path filter and NO `if:` — deliberate: the scan covers monitor/test TS,
+  # which the bash filter never claims, so a filtered placement in test-bash
+  # would skip a TS-only change. A scope scan takes seconds. Gates no other job.
+  #
+  # Growth-check base: a PR compares against its base branch; a push compares
+  # against the pushed range's `before` commit, or skips the growth check with
+  # a notice when that commit is all-zeros or unfetched (new branch, force push).
+  # The new-finding check runs on every event.
+  # ---------------------------------------------------------------------------
+  test-naming-ratchet:
+    name: "test: naming ratchet (ID titles · incident headers)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    needs: [gate-lint, gate-typecheck, gate-doctor]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: the growth check reads the baseline blob at the merge base.
+          fetch-depth: 0
+
+      # Expressions bound to env vars, never spliced into the script text.
+      - name: Run the naming ratchet
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          base=""
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            base="origin/${BASE_REF}"
+          elif [[ -n "${BEFORE_SHA}" && ! "${BEFORE_SHA}" =~ ^0+$ ]] \
+            && git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            base="${BEFORE_SHA}"
+          fi
+          if [[ -n "${base}" ]]; then
+            bash scripts/naming-ratchet.sh --base "${base}"
+          else
+            echo "::notice title=naming ratchet growth check skipped::no readable base commit on this ${EVENT_NAME} event; the new-finding check still runs"
+            bash scripts/naming-ratchet.sh
+          fi
+
   # ===========================================================================
   # STAGE 3 — E2E. Advisory / PR-optional: job-level continue-on-error so a slow
   # e2e flake surfaces as its own non-blocking check and NEVER gates ci-pass
@@ -1234,6 +1286,7 @@ jobs:
       - test-python-pytest
       - test-monitor
       - test-install-macos
+      - test-naming-ratchet
     steps:
       # SECURITY (audited-safe — expression-injection avoidance): the `${{ }}`
       # results are bound to ENV VARS (HAS_FAILURE / HAS_CANCELLED) and the run:
