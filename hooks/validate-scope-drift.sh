@@ -19,6 +19,19 @@ IFS=$'\n\t'
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 # shellcheck source=lib/hook-utils.sh
 source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
 
 # Monitor-API config — env-overridable (test isolation), loopback-pinned.
 # Default-URL port derived via the hook_monitor_port wrapper (ADR-1: env →
@@ -56,7 +69,8 @@ extract_target_files_section() {
   [[ -z "${sliced}" ]] && return 0
 
   # P1 guard: nested opening <section> → leaf violation → fail-open.
-  if printf '%s' "${sliced}" | grep -q '<section[^>]*>'; then
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if printf '%s' "${sliced}" | drain_after grep -q '<section[^>]*>'; then
     return 0
   fi
 
@@ -123,7 +137,8 @@ scope_drift_read_cache() {
 
   # Re-validate the cached list exactly as the live path does (non-empty + a path-like token).
   [[ -z "${cached_files}" ]] && return 1
-  printf '%s' "${cached_files}" | grep -q '[./]' || return 1
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  printf '%s' "${cached_files}" | drain_after grep -q '[./]' || return 1
 
   CACHED_PLAN_ID="${cached_plan_id}"
   CACHED_ALLOWED_FILES="${cached_files}"
@@ -301,7 +316,8 @@ if [[ -z "${PLAN_FILE:-}" ]]; then
   # List absent / extraction failure → fail-open. A suspect list is absorbed by the match loop.
   [[ -z "${ALLOWED_FILES}" ]] && exit 0
   # Pass if 0 path-like tokens (/ or .) — guards a whitespace/tag-residue slice.
-  if ! printf '%s' "${ALLOWED_FILES}" | grep -q '[./]'; then
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if ! printf '%s' "${ALLOWED_FILES}" | drain_after grep -q '[./]'; then
     exit 0
   fi
 

@@ -243,6 +243,24 @@ run_hook() {
     || { echo "unlisted path not flagged against the md plan: ${output}" >&2; return 1; }
 }
 
+# ~80 KiB of listed paths: above the 64 KiB pipe capacity, so a reader that stops at a line-1
+# match leaves its writer to die of SIGPIPE, which pipefail reports as "no match". Long paths keep
+# the row count low → the per-row matcher loop stays fast.
+@test "an md plan whose Target Files list exceeds the pipe buffer still warns on an unlisted path" {
+  local body dir
+  dir="src/listed/$(printf 'deeply-nested-module-directory-%02d/' 1 2 3 4 5 6)"
+  body="$(
+    printf '%s\n' '# Plan' '## Target Files'
+    seq -f "- \`${dir}padding-file-%05g.ts\`" 1 350
+    printf '%s\n' '## Open Questions' '- none'
+  )"
+  set_list_rows '{"id":7,"doc_status":"implementing","format":"md","created_at":"2026-07-01T00:00:00Z"}'
+  write_doc 7 md "${body}"
+  run_hook "/work/repo/src/other/out-of-scope.ts"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *SCOPE-070* ]] || { echo "unlisted path not flagged: ${output}" >&2; return 1; }
+}
+
 @test "an md plan binds only through its heading, never through a quoted HTML section" {
   # No Target Files heading, but the body quotes the HTML contract example (as the planner body
   # does) — a section parse here would bind placeholder paths and flag every real edit.
