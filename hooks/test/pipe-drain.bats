@@ -17,8 +17,7 @@ run_drained_reader() {
     lib="$1"
     shift
     source "${lib}"
-    text="needle-line"$'"'"'\n'"'"'"$(seq -f "filler line %05g of ordinary text" 1 5000)"
-    printf "%s\n" "${text}" | drain_after "$@" 2>/dev/null
+    { printf "needle-line\n"; seq -f "filler line %05g of ordinary text" 1 5000; } | drain_after "$@" 2>/dev/null
   ' _ "${LIB_SH}" "$@"
 }
 

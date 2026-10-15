@@ -36,8 +36,7 @@ RULES=(
 pattern_compiles() {
   local pat="$1" rc
   # Empty-input probe: grep exits 1 (no match) for a valid regex, 2 for invalid.
-  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-  printf '' | drain_after grep -qE -- "${pat}" 2>/dev/null && rc=0 || rc=$?
+  printf '' | grep -qE -- "${pat}" 2>/dev/null && rc=0 || rc=$?
   [[ "${rc}" -ne 2 ]]
 }
 
