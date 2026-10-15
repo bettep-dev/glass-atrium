@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # audit-pipe-drain.bats — pins scripts/audit-pipe-drain.sh: every early-exit pipe reader in a hooks/
-# shell file is reported unless drain_after wraps it or a trailing `|| true` discards the pipe's status,
+# shell file is reported unless drain_after wraps it or the `|| true` right after its pipeline discards its status,
 # the deferred-site allowance demotes only its two named files, and the scope run is clean on this tree.
 
 # shellcheck disable=SC2016  # fixtures are literal shell text written to files, never expanded here
@@ -45,6 +45,9 @@ assert_summary() {
     $'reader on a backslash continuation|printf "%s" "${x}" \\\n  | grep -q foo && exit 2'
     $'reader after a trailing pipe|printf "%s" "${x}" |\n  head -1'
     'helper wrapping a reader|decl="$(printf "%s\n" "${x}" | scope_decl_select)"'
+    'and-list ahead of a trailing or-true|printf "%s" "${x}" | grep -qF secret && exit 2 || true'
+    'or-true inside the then branch|if printf "%s" "${x}" | grep -q foo; then rm_tmp || true; fi'
+    'or-true in a later command|printf "%s" "${x}" | grep -q foo; v=$(cat f || true)'
   )
   local row=""
   for row in "${rows[@]}"; do
@@ -60,6 +63,7 @@ assert_summary() {
     'drained helper|drained=1 discarded=0|decl="$(printf "%s\n" "${x}" | drain_after scope_decl_select)"'
     'or-true discard|drained=0 discarded=1|v="$(printf "%s" "${x}" | grep -o y | head -1 || true)"'
     $'or-true on a continuation|drained=0 discarded=1|v="$(printf "%s" "${x}" \\\n  | head -1 || true)"'
+    'or-true after the closing subshell|drained=0 discarded=1|(printf "%s" "${x}" | head -20) || true'
     'grep reading a file|drained=0 discarded=0|if grep -q foo "${file}"; then :; fi'
     'head reading a file|drained=0 discarded=0|first="$(head -n 1 "${file}")"'
     'or-list, not a pipe|drained=0 discarded=0|[[ -z "${x}" ]] || grep -q foo "${file}"'

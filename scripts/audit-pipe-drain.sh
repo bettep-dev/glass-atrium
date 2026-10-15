@@ -11,8 +11,8 @@
 #      heredoc bodies and single-quoted text
 #   3. At every pipe stage, find a reader that can stop before EOF: grep with -q/-m (or --quiet,
 #      --silent, --max-count), head, or a helper in READER_HELPERS
-#   4. Count the reader drained when drain_after wraps it (hooks/lib/pipe-drain.sh), discarded when a
-#      `|| true` / `|| :` later on the line discards the pipe's status; report every other one UNDRAINED
+#   4. Count the reader drained when drain_after wraps it (hooks/lib/pipe-drain.sh), discarded when the
+#      list operator right after its pipeline is `|| true` / `|| :`; report every other one UNDRAINED
 #   5. Report a site in an ALLOWED_FILES file as ALLOWED, which never blocks
 #
 # Surface split: a default scope run BLOCKS, while a `--path` run stays ADVISORY; `--strict` blocks on a
@@ -51,7 +51,7 @@ readonly RE_HEREDOC="(^|[^<])<<-?[[:space:]]*[\\\\\"']?([A-Za-z_][A-Za-z0-9_]*)"
 readonly RE_TRAILING_COMMENT='(^|[[:space:]])#.*$'
 # An or-list operator, swapped out before the split on single pipes (\x01 is bash's internal quote marker).
 readonly OR_MARK=$'\x1e'
-readonly RE_DISCARD="${OR_MARK}[[:space:]]*(true|:)([^[:alnum:]_]|\$)"
+readonly RE_DISCARD='^[[:space:]]*(true|:)([^[:alnum:]_]|$)'
 
 drained=0
 discarded=0
@@ -227,7 +227,7 @@ audit_stage() {
   # shellcheck disable=SC2310  # predicate of tests and expansions only — nothing for errexit to catch
   if ((wrapped == 1)); then
     drained=$((drained + 1))
-  elif [[ "${tail}" =~ ${RE_DISCARD} ]]; then
+  elif is_status_discarded "${tail}"; then
     discarded=$((discarded + 1))
   elif is_listed "${location%:*}" "${ALLOWED_FILES[@]}"; then
     allowed=$((allowed + 1))
@@ -236,6 +236,27 @@ audit_stage() {
     undrained=$((undrained + 1))
     audit_cli_report UNDRAINED "${location}" "${stage}"
   fi
+}
+
+# 0 when the first list operator after the pipeline in $1 is `|| true` / `|| :` — a later one guards another command.
+is_status_discarded() {
+  local tail="${1}" list=""
+  tail="${tail//|&/|}"
+  tail="${tail//>&/>}"
+  tail="${tail//<&/<}"
+  tail="${tail//&>/>}"
+  # `;` / `&` end the list (a then / do word always follows one or a line end); a closing `)` / backtick
+  # hands the pipeline's status to its group or substitution, so the search goes on past it.
+  while :; do
+    list="${tail%%[;&)\`]*}"
+    if [[ "${list}" == *"${OR_MARK}"* ]]; then
+      [[ "${list#*"${OR_MARK}"}" =~ ${RE_DISCARD} ]]
+      return
+    fi
+    tail="${tail:${#list}}"
+    [[ "${tail}" == [\)\`]* ]] || return 1
+    tail="${tail:1}"
+  done
 }
 
 # 0 when the command words name a reader that can stop before EOF.
