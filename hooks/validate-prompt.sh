@@ -13,6 +13,8 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source=lib/pipe-drain.sh
+source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
 
 INPUT=$(hook_read_input)
 
@@ -112,7 +114,8 @@ LOWER_CONTENT=$(printf '%s\n' "${CONTENT}" | tr '[:upper:]' '[:lower:]')
 # SEC-070 advisory: English injection pattern hit (case-insensitive on lowercased). -i is
 # load-bearing — the \[SYSTEM\]/\[INST\]/<<SYS>> patterns carry uppercase folded against the
 # lowercased content.
-if printf '%s\n' "${LOWER_CONTENT}" | grep -qiE "${EN_ALTERNATION}"; then
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+if printf '%s\n' "${LOWER_CONTENT}" | drain_after grep -qiE "${EN_ALTERNATION}"; then
   emit_error "SEC-070" "advisory" \
     "Prompt injection pattern detected" \
     "프롬프트 인젝션 패턴 감지" \
@@ -123,7 +126,8 @@ fi
 
 # SEC-070 advisory: Korean injection pattern hit. Korean is caseless → match the
 # original content (lowercasing only folds ASCII and would not help here).
-if printf '%s\n' "${CONTENT}" | grep -qE "${KO_ALTERNATION}"; then
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+if printf '%s\n' "${CONTENT}" | drain_after grep -qE "${KO_ALTERNATION}"; then
   emit_error "SEC-070" "advisory" \
     "Prompt injection pattern detected (Korean)" \
     "프롬프트 인젝션 패턴 감지 (한국어)" \
@@ -134,7 +138,8 @@ fi
 
 # SEC-072 advisory: encoding-evasion marker. base64 is case-significant → match
 # the original content (NOT the lowercased copy) as fixed strings.
-if printf '%s\n' "${CONTENT}" | grep -qF "${b64_grep_args[@]}"; then
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+if printf '%s\n' "${CONTENT}" | drain_after grep -qF "${b64_grep_args[@]}"; then
   emit_error "SEC-072" "advisory" \
     "Encoded injection marker detected" \
     "인코딩된 인젝션 마커 감지" \
