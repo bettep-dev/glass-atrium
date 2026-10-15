@@ -28,6 +28,8 @@
 # Every assertion is gated `|| return 1` (a mid-body `[[ ]]` is exempt from errexit on macOS
 # bash 3.2.57 though CI's bash 5.3.9 gates it — measured, bats 1.13.0 on both legs).
 #
+# Repo checkout only: an install never ships publish-release.sh, so any copy there is skipped, not tested.
+#
 # Run via: bats test/publish-release-remote-consistency.bats
 # Requires: bats 1.5+, jq, bash 3.2+
 
@@ -39,6 +41,12 @@ PUB="${GA}/scripts/publish-release.sh"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  local top="" root=""
+  # GA's own toplevel, never BATS_TEST_DIRNAME's → an install's test/ is its own repo
+  top="$(git -C "${GA}" rev-parse --show-toplevel 2>/dev/null || true)"
+  root="$(cd -P -- "${GA}" && pwd)"
+  [[ "${top}" == "${root}" ]] \
+    || skip "not a repo checkout root: ${GA} — generate-manifest.sh EXCLUDE_RE keeps publish-release.sh out of every install"
   [[ -f "${PUB}" ]] || skip "publish-release.sh not found: ${PUB}"
   command -v jq >/dev/null 2>&1 || skip "jq required"
   SANDBOX="$(mktemp -d -t ga-pub-consistency.XXXXXX)"

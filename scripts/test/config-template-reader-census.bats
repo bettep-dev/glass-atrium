@@ -10,6 +10,7 @@
 # Each row asserts a property the others cannot produce:
 #   AC1  coverage           -> every template key has exactly one census row
 #   AC3  reader integrity   -> a claimed reader file exists and still carries its anchor literal
+#                              (on an install, only readers manifest.json ships are checked)
 #   AC5  exemption scope    -> no exemptions remain; every key names a real reader
 #        no orphan row      -> every census row names a key the template still declares
 #        daemon stanzas     -> the [daemon.*] stanzas are exactly the active launchd roster, the set the
@@ -66,9 +67,15 @@ census_rows() {
 }
 
 @test "AC3 a claimed reader file exists and still carries its anchor literal" {
-  local broken=""
+  local broken="" top="" root=""
+  # GA's own toplevel, never BATS_TEST_DIRNAME's → an install's scripts/test/ is its own repo
+  top="$(git -C "${GA}" rev-parse --show-toplevel 2>/dev/null || true)"
+  root="$(cd -P -- "${GA}" && pwd)"
   while IFS='|' read -r section key reader anchor _exempt; do
     [[ -n "${reader}" ]] || continue
+    [[ "${top}" == "${root}" ]] \
+      || jq -e --arg p "${reader}" '.files | index($p)' "${GA}/manifest.json" >/dev/null 2>&1 \
+      || continue
     if [[ ! -f "${GA}/${reader}" ]]; then
       broken="${broken}${broken:+, }${section}.${key}(no ${reader})"
       continue
