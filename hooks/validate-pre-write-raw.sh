@@ -113,7 +113,7 @@ if [[ "${BYTES}" -gt 51200 ]]; then
 fi
 
 # Frontmatter = lines between the first and second ---
-FM=$(printf '%s\n' "${CONTENT}" | awk '
+FM=$(printf '%s\n' "${CONTENT}" | drain_after awk '
   BEGIN { in_fm=0; cnt=0 }
   /^---[[:space:]]*$/ { cnt++; if (cnt==1) { in_fm=1; next } else if (cnt==2) { in_fm=0; exit } }
   in_fm { print }

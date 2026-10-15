@@ -169,6 +169,31 @@ conforming_doc() {
   }
 }
 
+# Content past the frontmatter is what the extraction leaves unread → large pages must still reach the V5/V6 verdict.
+@test "Write: an envelope-less raw write over the size limit blocks with SCOPE-005 and SCOPE-006 below and above the pipe capacity" {
+  local row name lines bytes content
+  # name | padding lines (~44 bytes each): one size between the 51200-byte limit and 64 KiB, one well past 64 KiB
+  local rows=("below the pipe capacity|1250" "above the pipe capacity|4000")
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name lines <<<"${row}"
+    content="$(raw_doc "$(seq -f 'padding line %05g of an ordinary fetched page' 1 "${lines}")")"
+    bytes=$(printf '%s' "${content}" | wc -c | tr -d ' ')
+    ((bytes > 51200)) || {
+      echo "${name}: fixture is ${bytes} bytes, not over the limit"
+      return 1
+    }
+    run bash "${RAW_HOOK}" <<<"$(raw_write_payload "${content}")"
+    [[ "${status}" -eq 2 ]] || {
+      echo "${name} (${bytes} bytes): expected exit 2, got ${status}: ${output}"
+      return 1
+    }
+    [[ "${output}" == *"SCOPE-005"* && "${output}" == *"SCOPE-006"* ]] || {
+      echo "${name} (${bytes} bytes): expected SCOPE-005 and SCOPE-006: ${output}"
+      return 1
+    }
+  done
+}
+
 # =========== Bypass guard for the retired content checks (SCOPE-003 / SCOPE-004) ================
 # A language signal or a bibliography cannot separate preserved content from aggregation or translation.
 # Both checks are retired; a body carrying both shapes still blocks on V6, asserted on non-empty output.

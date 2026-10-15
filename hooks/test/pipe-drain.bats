@@ -55,9 +55,8 @@ consumer_payload() {
     bash) jq -nc --arg c "${body}" '{tool_name:"Bash", tool_input:{command:$c}}' ;;
     response) jq -nc --arg r "${body}" '{tool_name:"Bash", tool_response:$r}' ;;
     raw-write)
-      # Trigger only, no padding: above the pipe capacity this hook exits 141 with the library present too.
       jq -nc --arg p "${WIKI_ROOT}/raw/page.md" \
-        --arg c "$(printf -- '---\nsource_url: https://example.com/page\ncollected: 2026-07-22\ncollector: glass-atrium-intel-researcher\n---\n\n%s' "$2")" \
+        --arg c "$(printf -- '---\nsource_url: https://example.com/page\ncollected: 2026-07-22\ncollector: glass-atrium-intel-researcher\n---\n\n%s' "${body}")" \
         '{tool_name:"Write", tool_input:{file_path:$p, content:$c}}'
       ;;
     *) return 1 ;;
