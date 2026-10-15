@@ -35,6 +35,8 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source=lib/pipe-drain.sh
+source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
 
 # fail-open ERR trap — a tripwire internal error must not perturb the session.
 trap 'exit 0' ERR
@@ -136,7 +138,8 @@ CMD="$(hook_get_tool_input "${INPUT}" "command")"
 if [[ -z "${CMD}" ]]; then
   exit 0
 fi
-if ! printf '%s\n' "${CMD}" | grep -qiE -- "${WRITE_TARGET}"; then
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+if ! printf '%s\n' "${CMD}" | drain_after grep -qiE -- "${WRITE_TARGET}"; then
   exit 0
 fi
 
