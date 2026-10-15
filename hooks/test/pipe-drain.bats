@@ -150,7 +150,8 @@ SHIM
   printf '%s\n' "${bin}"
 }
 
-@test "a consumer hook keeps its verdict on input over Linux's per-string exec limit" {
+# CMD rides in exported, as on the CI runner, whose bats install step writes CMD to GITHUB_ENV.
+@test "a consumer hook keeps its verdict on input over Linux's per-string exec limit, CMD exported by its caller" {
   command -v jq >/dev/null 2>&1 || skip "jq required"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   local refused="${BATS_TEST_TMPDIR}/exec-refused.log" bin padding row name hook kind trigger expected_status needle
@@ -159,7 +160,7 @@ SHIM
   set_consumer_rows
   for row in "${CONSUMER_ROWS[@]}"; do
     IFS='|' read -r name hook kind trigger expected_status needle <<<"${row}"
-    run env PATH="${bin}:${PATH}" bash "${HOOKS_DIR}/${hook}" <<<"$(consumer_payload "${kind}" "${trigger}" "${padding}")"
+    run env PATH="${bin}:${PATH}" CMD=sudo bash "${HOOKS_DIR}/${hook}" <<<"$(consumer_payload "${kind}" "${trigger}" "${padding}")"
     [[ "${status}" -eq "${expected_status}" && "${output}" == *"${needle}"* ]] || {
       echo "${name}: expected status ${expected_status} and ${needle}, got ${status}: ${output}"
       return 1

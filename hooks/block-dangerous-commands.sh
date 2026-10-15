@@ -38,6 +38,8 @@ INPUT=$(hook_read_input)
 hook_require_python3_unless_empty "${INPUT}" "SEC-010" \
   "Dangerous-command gate unavailable: python3 is required to parse hook input"
 
+# An inherited CMD export would put the command in every child's environment, capped per string on Linux.
+export -n CMD
 CMD=$(hook_get_tool_input "${INPUT}" "command")
 
 # Wipe-target set consumed by the order-robust rm flag-run row:

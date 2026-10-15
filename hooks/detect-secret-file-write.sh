@@ -141,6 +141,8 @@ if [[ "${TOOL_NAME}" != "Bash" ]]; then
   exit 0
 fi
 
+# An inherited CMD export would put the command in every child's environment, capped per string on Linux.
+export -n CMD
 CMD="$(hook_get_tool_input "${INPUT}" "command")"
 
 # Stage 1 — scope gate (cheap, fail-fast): require a WRITE CHANNEL to a .env-class

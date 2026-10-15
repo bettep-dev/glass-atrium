@@ -19,6 +19,8 @@ else
 fi
 
 INPUT=$(hook_read_input)
+# An inherited CMD export would put the command in every child's environment, capped per string on Linux.
+export -n CMD
 CMD=$(hook_get_tool_input "${INPUT}" "command")
 
 # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch

@@ -163,6 +163,8 @@ scan_bash_command() {
 }
 
 if [[ "${TOOL_NAME}" == "Bash" ]]; then
+  # An inherited CMD export would put the command in every child's environment, capped per string on Linux.
+  export -n CMD
   CMD=$(hook_get_tool_input "${INPUT}" "command")
   scan_bash_command "${CMD}"
   exit 0
