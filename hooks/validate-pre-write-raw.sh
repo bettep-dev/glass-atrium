@@ -16,6 +16,8 @@ IFS=$'\n\t'
 
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source=lib/pipe-drain.sh
+source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
 
 INPUT=$(hook_read_input)
 [[ "${INPUT}" == "{}" ]] && exit 0
@@ -119,9 +121,10 @@ fi
 # V2: source_url is a single URL
 SRC_LINE=$(printf '%s\n' "${FM}" | grep '^source_url:' | head -1 || true)
 if [[ -n "${SRC_LINE}" ]]; then
-  if ! printf '%s' "${SRC_LINE}" | grep -Eq '^source_url:[[:space:]]+https?://[^[:space:],]+$'; then
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if ! printf '%s' "${SRC_LINE}" | drain_after grep -Eq '^source_url:[[:space:]]+https?://[^[:space:],]+$'; then
     VIOLATIONS+=("V2: source_url is not a single URL")
-  elif printf '%s' "${SRC_LINE}" | grep -Eiq 'https?://.*https?://'; then
+  elif printf '%s' "${SRC_LINE}" | drain_after grep -Eiq 'https?://.*https?://'; then
     VIOLATIONS+=("V2: source_url carries several URLs")
   fi
 fi
