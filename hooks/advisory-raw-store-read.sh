@@ -22,6 +22,8 @@ trap 'printf "[raw-store-read-advisory] internal error at line %d: %s — fail-o
 
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source=lib/pipe-drain.sh
+source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
 
 # Durable record sink (env-overridable for hermetic tests). DATA-tier via the resolved HOOK_DATA_DIR
 # seam (hook-utils.sh) — GA_DATA_ROOT-anchored, decoupled from the legacy ~/.claude location.
@@ -60,7 +62,8 @@ command_str="$(hook_get_tool_input "${input}" "command")"
 #    `wiki/raw/` store path (belt-and-suspenders). One grep -F with two -e patterns matches EITHER
 #    token (fixed-string, so path metacharacters stay literal). No match → silent exit 0 (an ordinary
 #    command carries no note).
-if ! printf '%s\n' "${command_str}" | grep -qF -e "${WIKI_RAW_DIR}" -e 'wiki/raw/'; then
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+if ! printf '%s\n' "${command_str}" | drain_after grep -qF -e "${WIKI_RAW_DIR}" -e 'wiki/raw/'; then
   exit 0
 fi
 
