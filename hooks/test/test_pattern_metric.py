@@ -1029,6 +1029,32 @@ class TestAggregatorPairStatus(_AggregatorRun):
         for name, agent, _, expected in rows:
             self.assertEqual(self.log.get_status(f"{_PATTERN1_CORE}|{agent}"), expected, name)
 
+    def test_a_dormant_row_returns_on_a_passing_pair_only_while_its_agent_is_on_the_roster(
+        self,
+    ) -> None:
+        roster = self.registry.read_text(encoding="utf-8")
+        off_roster = "glass-atrium-not-a-roster-agent"
+        rows = [
+            ("off-roster dormant row with a new passing floor stays dormant",
+             off_roster, True, "dormant"),
+            ("roster dormant row with the same passing floor returns to identified",
+             _PYTHON, True, "identified"),
+            ("bare-form alias of a roster agent still returns to identified",
+             _PYTHON.removeprefix("glass-atrium-"), True, "identified"),
+            ("unreadable registry leaves an off-roster row free to return",
+             off_roster, False, "identified"),
+        ]
+        for name, agent, is_registry_readable, expected in rows:
+            self.log = _FakeLearningLog()
+            if is_registry_readable:
+                self.registry.write_text(roster, encoding="utf-8")
+            else:
+                self.registry.unlink()
+            signature = f"{_BUDGET_CORE}|{agent}"
+            self.log.put_row(signature, "dormant", _WINDOWS.start.detection - _DAY)
+            self._run(window=[], floors={(agent, sig.METRIC_BUDGET_OVERAGE): sig.VERDICT_PASS})
+            self.assertEqual(self.log.get_status(signature), expected, name)
+
     def test_an_empty_batch_run_sweeps_rows_it_does_not_emit(self) -> None:
         rows = [
             ("legacy keyless row failing its pair", f"{_PATTERN5_CORE[:-1]} )|{_SHELL}", "dormant"),
