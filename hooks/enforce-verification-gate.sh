@@ -294,6 +294,14 @@ is_dev_agent() {
   esac
 }
 
+# Drains stdin after the reader exits → the pipe writer never takes SIGPIPE under pipefail.
+drain_after() {
+  local rc=0
+  "$@" || rc=$?
+  cat >/dev/null || true
+  return "${rc}"
+}
+
 # Plan-reference — STRUCTURED match only: id ∪ plan-path ∪ id-bearing slug. A bare 'plan'
 # substring must NOT trip the gate (FP-storm guard), so
 # every alternation requires structure (a path separator, a .html doc shape, or digit-adjacency):
@@ -311,7 +319,7 @@ references_plan() {
   local text="${1}"
   [[ -z "${text}" ]] && return 1
   printf '%s' "${text}" \
-    | grep -qE 'clauded-docs/[0-9]+|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html|documents/[A-Za-z0-9_./-]+\.html|(^|[^A-Za-z0-9_])plan-[0-9]+([^A-Za-z0-9]|$)|(^|[^A-Za-z0-9_])[0-9]+-plan([^A-Za-z0-9]|$)' 2>/dev/null
+    | drain_after grep -qE 'clauded-docs/[0-9]+|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html|documents/[A-Za-z0-9_./-]+\.html|(^|[^A-Za-z0-9_])plan-[0-9]+([^A-Za-z0-9]|$)|(^|[^A-Za-z0-9_])[0-9]+-plan([^A-Za-z0-9]|$)' 2>/dev/null
 }
 
 # Shared attestation-token predicate: fixed-string (grep -qF) presence of an anchored bracketed
@@ -319,7 +327,7 @@ references_plan() {
 has_token() {
   local text="${1}" literal="${2}"
   [[ -z "${text}" ]] && return 1
-  printf '%s' "${text}" | grep -qF "${literal}" 2>/dev/null
+  printf '%s' "${text}" | drain_after grep -qF "${literal}" 2>/dev/null
 }
 
 # Entry-classification token — the orchestrator's conscious "this DEV task is simple/exempt"
@@ -345,7 +353,7 @@ has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
 # accepts, so a quoted `[SCOPE]` mention alone does not silence the nudge.
 has_scope_token() {
   local decl
-  decl="$(printf '%s\n' "${1}" | scope_decl_select)"
+  decl="$(printf '%s\n' "${1}" | drain_after scope_decl_select)"
   [[ -n "${decl}" ]]
 }
 
@@ -377,7 +385,7 @@ scope_files_sensitive_prefix() {
 # guess. Only the count and the matched prefix reach stderr — the prompt itself never does.
 warn_deep_review() {
   local scope_line files count prefix prefix_note=""
-  scope_line="$(printf '%s\n' "${prompt_full}" | scope_decl_select)"
+  scope_line="$(printf '%s\n' "${prompt_full}" | drain_after scope_decl_select)"
   [[ -n "${scope_line}" ]] || return 0
   files="$(scope_decl_files "${scope_line}")"
   [[ -n "${files}" ]] || return 0
