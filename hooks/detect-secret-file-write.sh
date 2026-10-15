@@ -133,6 +133,8 @@ scan_file_content() {
   return 0
 }
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT CMD input
 INPUT="$(hook_read_input)"
 TOOL_NAME="$(hook_get_field "${INPUT}" "tool_name")"
 
@@ -141,8 +143,6 @@ if [[ "${TOOL_NAME}" != "Bash" ]]; then
   exit 0
 fi
 
-# An inherited CMD export would put the command in every child's environment, capped per string on Linux.
-export -n CMD
 CMD="$(hook_get_tool_input "${INPUT}" "command")"
 
 # Stage 1 — scope gate (cheap, fail-fast): require a WRITE CHANNEL to a .env-class

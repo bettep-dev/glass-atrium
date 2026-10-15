@@ -61,6 +61,8 @@ emit_record() {
 }
 
 # 1. Read input + Bash tool gate.
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n input command_str
 input="$(hook_read_input)"
 tool_name="$(hook_get_field "${input}" "tool_name")"
 [[ "${tool_name}" != "Bash" ]] && exit 0

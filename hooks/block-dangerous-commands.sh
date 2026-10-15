@@ -30,6 +30,8 @@ else
   }
 fi
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT CMD input
 INPUT=$(hook_read_input)
 
 # Fail-closed on a python3-less PATH, but ONLY when there is real input to guard.
@@ -38,8 +40,6 @@ INPUT=$(hook_read_input)
 hook_require_python3_unless_empty "${INPUT}" "SEC-010" \
   "Dangerous-command gate unavailable: python3 is required to parse hook input"
 
-# An inherited CMD export would put the command in every child's environment, capped per string on Linux.
-export -n CMD
 CMD=$(hook_get_tool_input "${INPUT}" "command")
 
 # Wipe-target set consumed by the order-robust rm flag-run row:

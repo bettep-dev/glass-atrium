@@ -31,6 +31,8 @@ fi
 hook_require_python3 "SEC-017" \
   "Secret scan unavailable: python3 is required to parse hook input"
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT CMD CONTENT input blob cmd
 INPUT=$(hook_read_input)
 TOOL_NAME=$(hook_get_field "${INPUT}" "tool_name")
 
@@ -163,8 +165,6 @@ scan_bash_command() {
 }
 
 if [[ "${TOOL_NAME}" == "Bash" ]]; then
-  # An inherited CMD export would put the command in every child's environment, capped per string on Linux.
-  export -n CMD
   CMD=$(hook_get_tool_input "${INPUT}" "command")
   scan_bash_command "${CMD}"
   exit 0

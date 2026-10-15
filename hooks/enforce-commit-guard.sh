@@ -19,6 +19,8 @@ else
   }
 fi
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT COMMAND context input
 INPUT=$(hook_read_input)
 COMMAND=$(hook_get_tool_input "${INPUT}" "command")
 

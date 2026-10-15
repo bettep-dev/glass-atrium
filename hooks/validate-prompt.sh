@@ -27,6 +27,8 @@ else
   }
 fi
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT CONTENT LOWER_CONTENT input
 INPUT=$(hook_read_input)
 
 # Single-pass parse: extract content+new_string AND the zero-width suspect flag in ONE python3

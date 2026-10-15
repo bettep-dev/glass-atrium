@@ -30,6 +30,8 @@ else
   }
 fi
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT CONTENT FM SRC_LINE BODY ENV_OPEN ENV_CLOSE input
 INPUT=$(hook_read_input)
 [[ "${INPUT}" == "{}" ]] && exit 0
 
