@@ -53,8 +53,8 @@ run_drained_reader() {
 
 # Envelope for one consumer row, the trigger on line 1 above ~170 KiB of padding. The body reaches
 # jq on stdin → no argument nears Linux's 128 KiB per-string exec limit.
-# Args: $1 kind (bash | response | fetch | write | agent | agent-event | agent-session | raw-write |
-# raw-path | raw-link-path) · $2 trigger · $3 padding.
+# Args: $1 kind (bash | response | fetch | write | workflow | agent | agent-event | agent-session |
+# raw-write | raw-path | raw-link-path) · $2 trigger · $3 padding.
 consumer_payload() {
   local body="$2"$'\n'"$3" root="${WIKI_ROOT:-}"
   case "$1" in
@@ -62,6 +62,7 @@ consumer_payload() {
     response) printf '%s' "${body}" | jq -Rsc '{tool_name:"Bash", tool_response:.}' ;;
     fetch) printf '%s' "${body}" | jq -Rsc '{tool_name:"WebFetch", tool_response:.}' ;;
     write) printf '%s' "${body}" | jq -Rsc '{tool_name:"Write", tool_input:{file_path:"/tmp/notes.md", content:.}}' ;;
+    workflow) printf '%s' "${body}" | jq -Rsc '{tool_name:"Workflow", tool_input:{script:.}}' ;;
     agent)
       printf '%s' "${body}" \
         | jq -Rsc '{tool_name:"Agent", hook_event_name:"PreToolUse", session_id:"pipe-drain", tool_input:{subagent_type:"glass-atrium-dev-shell", prompt:.}}'
@@ -183,6 +184,7 @@ SHIM
     CMD=sudo INPUT=x COMMAND=x CONTENT=x TOOL_RESPONSE=x RESPONSE_LOWER=x LOWER_RESPONSE=x LOWER_CONTENT=x
     FM=x SRC_LINE=x BODY=x ENV_OPEN=x ENV_CLOSE=x
     input=x command_str=x cmd=x blob=x context=x gate_tsv=x prompt_b64=x prompt_full=x text=x
+    script_b64=x script_src=x
   )
   bin="$(linux_exec_limit_bin "${refused}")"
   padding="$(seq -f 'padding line %05g of an ordinary build log' 1 4000)"
@@ -192,6 +194,7 @@ SHIM
     "prompt injection|validate-prompt.sh|write|ignore previous instructions|0|SEC-070"
     "fetched-page injection|validate-tool-response.sh|fetch|ignore previous instructions|0|SEC-073"
     "DEV spawn without a size estimate|enforce-verification-gate.sh|agent|fix the parser|2|VGATE-SIZE-001"
+    "DEV workflow without a composition declaration|enforce-workflow-verify-stage.sh|workflow|agent('glass-atrium-dev-nestjs',{goal:'implement'})|2|BLOCKED (missing composition declaration)"
   )
   for row in "${CONSUMER_ROWS[@]}"; do
     IFS='|' read -r name hook kind trigger expected_status needle <<<"${row}"
@@ -267,6 +270,50 @@ row_padding() {
       bash "${HOOKS_DIR}/${hook}" <<<"${payload}"
     [[ "${status}" -eq "${expected_status}" && "${output}" == *"${needle}"* ]] || {
       echo "${name}: expected status ${expected_status} and ${needle}, got ${status}: ${output:0:600}"
+      echo "refused execs:"
+      cat "${refused}"
+      return 1
+    }
+  done
+}
+
+# The scope-drift advisory against an md plan listing one path. A long edit path rides into the
+# advisory's emit_error context, a long session id into its cache key; `ctx` and `context` are
+# emit_error's and the hook's own copies of that context. Pass: the advisory, and no jq exec refused.
+@test "the scope-drift advisory survives an edit path or session id over Linux's per-string exec limit" {
+  command -v jq >/dev/null 2>&1 || skip "jq required"
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  local refused="${BATS_TEST_TMPDIR}/exec-refused.log" bin row name field names payload
+  local -a exported rows
+  bin="$(linux_exec_limit_bin "${refused}")"
+  # Loopback stand-in: one implementing md plan whose Target Files list holds src/listed.ts.
+  cat >"${bin}/curl" <<'STUB'
+#!/bin/bash
+case "${!#}" in
+  *doc_status=implementing*) printf '%s' '{"total":1,"rows":[{"id":7,"doc_status":"implementing","format":"md"}]}' ;;
+  */7) printf '%s' '{"id":7,"format":"md","body":"## Target Files\n- `src/listed.ts`\n"}' ;;
+  *) exit 22 ;;
+esac
+STUB
+  chmod +x "${bin}/curl"
+  # Row: name | padded envelope field | exported names.
+  rows=(
+    "long edit path|path|"
+    "long edit path, payload names exported|path|INPUT FILE_PATH file_path context ctx"
+    "long session id, its derived names exported|session|SESSION_ID SAFE_SID CACHE_FILE"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name field names <<<"${row}"
+    IFS=' ' read -r -a exported <<<"${names}"
+    payload="$(filler 131100 | jq -Rsc --arg field "${field}" 'if $field == "path"
+      then {session_id:"", tool_input:{file_path:("/work/repo/src/" + . + "/out.ts")}}
+      else {session_id:., tool_input:{file_path:"/work/repo/src/out.ts"}} end')"
+    : >"${refused}"
+    run env -u PLAN_FILE PATH="${bin}:${PATH}" HOME="${BATS_TEST_TMPDIR}" GA_DATA_ROOT="${BATS_TEST_TMPDIR}/ga" \
+      SCOPE_DRIFT_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs" SCOPE_DRIFT_CACHE_DIR="${BATS_TEST_TMPDIR}/cache" \
+      ${exported[@]+"${exported[@]/%/=x}"} bash "${HOOKS_DIR}/validate-scope-drift.sh" <<<"${payload}"
+    [[ "${status}" -eq 0 && "${output}" == *SCOPE-070* ]] && ! grep -qx jq "${refused}" || {
+      echo "${name}: expected status 0, SCOPE-070 and no refused jq, got ${status}: ${output:0:600}"
       echo "refused execs:"
       cat "${refused}"
       return 1

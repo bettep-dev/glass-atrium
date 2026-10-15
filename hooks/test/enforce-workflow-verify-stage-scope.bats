@@ -29,12 +29,11 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 }
 
+# The script reaches jq and the hook on stdin → no argument nears Linux's 128 KiB per-string exec limit.
 run_hook() {
-  run bash -c '
-    script="$1"; hook="$2"; trace="$3"
-    payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
-    printf "%s" "${payload}" | WORKFLOW_GATE_FIRED_LOG="${trace}" bash "${hook}"
-  ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
+  local payload
+  payload="$(printf '%s' "${1}" | jq -Rsc '{tool_name:"Workflow",tool_input:{script:.}}')"
+  run env WORKFLOW_GATE_FIRED_LOG="${TRACE_LOG}" bash "${HOOK_SH}" <<<"${payload}"
 }
 
 run_lint() {
