@@ -46,7 +46,6 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 
 - MUST NOT use `eval` — no exceptions
 - MUST NOT leave any `$var` unquoted — every expansion MUST be `"${var}"`
-- MUST NOT use bare `set -e` — always `set -Eeuo pipefail`
 - MUST NOT write a recursive-force deletion (`rm` carrying its recursive and force flags) without explicit path validation
 - MUST NOT use `for f in $(ls ...)` — use glob directly
 - MUST NOT use `printf "$user_input"` — use `printf '%s\n' "$var"`
@@ -66,7 +65,6 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 - MUST NOT bury a Bats assertion in a mid-body bare `[[ ]]` — use `&&` chains for compound logic and let the assertion be the final command
   - Bats bodies run under errexit (`set -e`) on both platforms; bash 3.2 alone exempts mid-body `[[ ]]`, while `[ ]`/`test`/`false`/a failing `grep` fail everywhere.
   - A macOS failure is real on both platforms; a macOS pass proves nothing about CI.
-- MUST make every Bats assertion on a run status print the output its run captured when it fails — form: `scoped/shared-testing.md` → **bats — a status assertion prints the output**
 - MUST NOT combine `python3 -c` code and a `<<'PY'` heredoc in the same command (SC2259) — see Key Patterns `python3 -c` + stdin for the capture-source form
 - MUST limit bats runs to affected test paths (never full `bats hooks/test`), reserving the comprehensive suite for final pre-commit validation rather than every incremental commit
 - MUST verify the test environment before a comprehensive Bats run — the `python3` version and any third-party dependency the suites shell out to; a locally-satisfied dependency CI lacks turns a green local run into a red pipeline
@@ -105,6 +103,9 @@ Both rules below are conditional on the worktree contract the delegation states;
 ## Absolute Rules
 
 - **Strict mode mandatory**: `#!/usr/bin/env bash` + `set -Eeuo pipefail` + `IFS=$'\n\t'`
+- **Early-exit pipe readers**: in a `hooks/` shell file, a pipe whose last reader can stop before EOF (`grep -q`, `head`) runs through `drain_after` (`hooks/lib/pipe-drain.sh`), or ends in `|| true` when no branch reads its status
+  - Why: the `pipefail` of **Strict mode mandatory** turns the writer's SIGPIPE past the pipe capacity (64 KiB on macOS) into the pipe's status, so the reader's verdict is lost.
+  - Backing: `scripts/audit-pipe-drain.sh` fails CI on any other form, `hooks/test/` excluded.
 
 ## Tech Stack
 
@@ -180,8 +181,6 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 | Exit codes | 2 blocking · document any non-zero |
 | Performance | `timeout` wrapper for external calls |
 
-- Exit 0 by default and the ~1s completion target: `GLASS_ATRIUM_GLOBAL_RULES.md` → Hook Operation Policy.
-
 ### Health Check Design
 
 - Assert **transition states** (pending/processing/done/legacy) in addition to final — checking only final score creates false positives on in-progress and false negatives on retired entries
@@ -216,7 +215,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 | Bats tests (when a test file is present) | all pass |
 
 - `metric_pass=true` requires shellcheck + shfmt + `bash -n` all green; Bats is optional when no test file is present.
-- **ShellCheck DFA engine**: before adding a manual `# shellcheck disable=SC2317` (unreachable command) annotation, verify the current ShellCheck version still flags the line — the data-flow analysis engine reduced SC2317 false positives.
+- **ShellCheck DFA engine**: before adding a manual `# shellcheck disable=SC2317` (unreachable command) annotation, verify the installed ShellCheck version still flags the line — its data-flow analysis engine already rules out many SC2317 false positives.
 
 ## Prohibitions
 
