@@ -311,7 +311,7 @@ STUB
     : >"${refused}"
     run env -u PLAN_FILE PATH="${bin}:${PATH}" HOME="${BATS_TEST_TMPDIR}" GA_DATA_ROOT="${BATS_TEST_TMPDIR}/ga" \
       SCOPE_DRIFT_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs" SCOPE_DRIFT_CACHE_DIR="${BATS_TEST_TMPDIR}/cache" \
-      ${exported[@]+"${exported[@]/%/=x}"} bash "${HOOKS_DIR}/validate-scope-drift.sh" <<<"${payload}"
+      "${exported[@]/%/=x}" bash "${HOOKS_DIR}/validate-scope-drift.sh" <<<"${payload}"
     [[ "${status}" -eq 0 && "${output}" == *SCOPE-070* ]] && ! grep -qx jq "${refused}" || {
       echo "${name}: expected status 0, SCOPE-070 and no refused jq, got ${status}: ${output:0:600}"
       echo "refused execs:"
