@@ -51,6 +51,11 @@ assert_summary() {
     'or-true after the closing substitution|v="$(printf "%s" "${x}" | head -1)" || true'
     'or-true after the closing backtick substitution|v=`printf "%s" "${x}" | head -1` || true'
     'or-true after the closing process substitution|cat <(printf "%s" "${x}" | head -1) || true'
+    'or-true after a substitution closed past a nested-quoted argument|v="$(printf "%s" "${x}" | grep -qF "$(cat f)")" || true'
+    'reader in a backtick substitution inside double quotes|v="`printf "%s" "${x}" | head -1`" || true'
+    $'awk exiting before EOF|printf "%s" "${x}" | awk \'/foo/ { print; exit }\''
+    $'awk program over several lines exiting before EOF|printf "%s" "${x}" | awk -F\'|\' \'\n  $2 == "foo" { print; exit }\n\''
+    $'reader after a comment holding an apostrophe|: # it\'s a note\nprintf "%s" "${x}" | grep -q foo && exit 2'
   )
   local row=""
   for row in "${rows[@]}"; do
@@ -70,6 +75,9 @@ assert_summary() {
     'or-true after a substitution in the reader arguments|drained=0 discarded=1|printf "%s" "${x}" | grep -qF "$(cat f)" || true'
     'or-true after a backtick substitution in the reader arguments|drained=0 discarded=1|printf "%s" "${x}" | grep -qF `cat f` || true'
     'or-true after a process substitution in the reader arguments|drained=0 discarded=1|printf "%s" "${x}" | grep -qF -f <(cat f) || true'
+    $'drained awk|drained=1 discarded=0|printf "%s" "${x}" | drain_after awk \'/foo/ { exit }\''
+    $'or-true after a multi-line awk program|drained=0 discarded=1|v="$(printf "%s" "${x}" | awk \'\n  /foo/ { print; exit }\n\' || true)"'
+    $'awk reading to EOF|drained=0 discarded=0|printf "%s" "${x}" | awk \'{ print $1 }\''
     'grep reading a file|drained=0 discarded=0|if grep -q foo "${file}"; then :; fi'
     'head reading a file|drained=0 discarded=0|first="$(head -n 1 "${file}")"'
     'or-list, not a pipe|drained=0 discarded=0|[[ -z "${x}" ]] || grep -q foo "${file}"'
