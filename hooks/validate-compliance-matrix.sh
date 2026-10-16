@@ -336,7 +336,8 @@ tier1_core_rules() {
 #   HAS     — row present, ALL cell carries ✓ (consistent)
 matrix_all_cell() {
   local block="${1}" rule="${2}"
-  printf '%s\n' "${block}" | awk -F'|' -v rule="${rule}" '
+  # shellcheck disable=SC2016  # the $ fields belong to the awk program, which drain_after hides from shellcheck
+  printf '%s\n' "${block}" | drain_after awk -F'|' -v rule="${rule}" '
     {
       name = $2
       gsub(/^[ \t]+|[ \t]+$/, "", name)

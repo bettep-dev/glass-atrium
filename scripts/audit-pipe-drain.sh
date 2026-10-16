@@ -2,20 +2,20 @@
 # audit-pipe-drain.sh — audit of pipe readers that can stop before EOF in the hooks/ shell files
 # Usage: audit-pipe-drain.sh [--path <file>]... [--root <dir>] [--quiet] [--advisory|--strict]
 #
-# Why: under `set -Eeuo pipefail` a reader that exits early (grep -q, grep -m, head) leaves its writer to
+# Why: under `set -Eeuo pipefail` a reader that exits early (grep -q, grep -m, head, awk exit) leaves its writer to
 # die of SIGPIPE above the 64 KiB pipe capacity, and the pipe then reports 141 instead of the reader's verdict.
 #
 # Behavior:
 #   1. Walk the shell files under hooks/ (libraries included, hooks/test/ excluded), or the --path overrides
-#   2. Join each logical line (a trailing backslash or a trailing pipe continues it); skip comments,
-#      heredoc bodies and single-quoted text
+#   2. Join each logical line (a trailing backslash, a trailing pipe or a still-open single quote continues
+#      it); skip comments, heredoc bodies and quoted text, where quotes nest inside `$( )` and backticks
 #   3. At every pipe stage, find a reader that can stop before EOF: grep with -q/-m (or --quiet,
-#      --silent, --max-count), head, or a helper in READER_HELPERS
+#      --silent, --max-count), head, awk whose quoted program text holds the word `exit`, or a helper in
+#      READER_HELPERS
 #   4. Count the reader drained when drain_after wraps it (hooks/lib/pipe-drain.sh), discarded when the
 #      list operator right after its pipeline, or after a subshell closing it, is `|| true` / `|| :` (never
 #      one past the close of a `$( )`, backtick, `<( )` or `>( )` substitution holding the pipeline); report
 #      every other one UNDRAINED
-#   5. Report a site in an ALLOWED_FILES file as ALLOWED, which never blocks
 #
 # Surface split: a default scope run BLOCKS, while a `--path` run stays ADVISORY; `--strict` blocks on a
 # `--path` run and `--advisory` reports without failing anywhere.
@@ -40,33 +40,30 @@ readonly EXCLUDED_PREFIX=hooks/test/
 # Functions whose body ends in an early-exit reader of their stdin, so a pipe into them races the same way.
 READER_HELPERS=(scope_decl_select)
 readonly READER_HELPERS
-# Deferred sites, held for the owner's A/A 2 go: hooks/track-outcome.sh is in the A/A 2 fingerprint
-# (autoagent/daemon_cycle.py → AA.SCOPE) and sources hooks/lib/scope-match.sh, so draining either
-# changes the evidence path mid-trial. The change that drains their sites removes this list.
-ALLOWED_FILES=(hooks/track-outcome.sh hooks/lib/scope-match.sh)
-readonly ALLOWED_FILES
 
 readonly RE_COMMENT='^[[:space:]]*#'
 readonly RE_SHEBANG='^#!.*[/[:space:]](ba|da|k)?sh([[:space:]]|$)'
-readonly RE_PREFILTER='(grep|head|scope_decl_select)'
+readonly RE_PREFILTER='(grep|head|awk|scope_decl_select)'
 readonly RE_HEREDOC="(^|[^<])<<-?[[:space:]]*[\\\\\"']?([A-Za-z_][A-Za-z0-9_]*)"
-readonly RE_TRAILING_COMMENT='(^|[[:space:]])#.*$'
+readonly RE_EXIT_WORD='(^|[^[:alnum:]_])exit([^[:alnum:]_]|$)'
 # An or-list operator, swapped out before the split on single pipes (\x01 is bash's internal quote marker).
 readonly OR_MARK=$'\x1e'
 # The close of a `$( )`, `<( )`, `>( )` or backtick substitution, told apart from a subshell's `)` before the stage split.
 readonly SUB_MARK=$'\x1d'
+# Stands in for quoted text holding the word `exit` — an awk program that can stop before EOF.
+readonly EXIT_MARK=$'\x1c'
 readonly RE_DISCARD='^[[:space:]]*(true|:)([^[:alnum:]_]|$)'
 
 drained=0
 discarded=0
 undrained=0
-allowed=0
 heredoc_end=""
 in_squote=0
 logical_text=""
 logical_start=0
 logical_extra=0
 code_text=""
+is_code_current=0
 
 audit_tree() {
   local abs="${root_dir}/${SCOPE_DIR}" found="" sorted="" file="" rel=""
@@ -109,7 +106,6 @@ audit_file() {
   fi
   audit_cli_slurp "${abs}"
   heredoc_end=""
-  in_squote=0
   while ((idx < AUDIT_CLI_LINE_COUNT)); do
     line="${AUDIT_CLI_LINES[idx]:-}"
     idx=$((idx + 1))
@@ -123,7 +119,7 @@ audit_file() {
   done
 }
 
-# Sets logical_text to the code part of the line; 1 when the whole line is comment, heredoc or quoted text.
+# Sets logical_text to the line; 1 when the whole line is comment or heredoc text.
 take_code_line() {
   local line="${1}" trimmed=""
   if [[ -n "${heredoc_end}" ]]; then
@@ -131,23 +127,35 @@ take_code_line() {
     [[ "${trimmed}" == "${heredoc_end}" ]] && heredoc_end=""
     return 1
   fi
-  if ((in_squote == 1)); then
-    [[ "${line}" == *"'"* ]] || return 1
-    line="${line#*"'"}"
-    in_squote=0
-  fi
   [[ ! "${line}" =~ ${RE_COMMENT} ]] || return 1
   logical_text="${line}"
 }
 
-# Appends continuation lines (trailing backslash or trailing pipe) to logical_text, from line index $1.
+# Appends continuation lines to logical_text, from line index $1: after a trailing backslash or pipe, or while
+# a single-quoted span is still open, so a program over several lines reads with its command.
 join_logical_line() {
-  local idx="${1}" next=""
+  local idx="${1}" next="" should_strip=1
   logical_extra=0
-  # shellcheck disable=SC2310  # predicate of tests and expansions only — nothing for errexit to catch
-  while ((idx < AUDIT_CLI_LINE_COUNT)) && is_continued "${logical_text}"; do
+  is_code_current=0
+  while ((idx < AUDIT_CLI_LINE_COUNT)); do
     next="${AUDIT_CLI_LINES[idx]:-}"
-    logical_text="${logical_text%\\} ${next}"
+    # shellcheck disable=SC2310  # predicate of tests and expansions only — nothing for errexit to catch
+    if is_continued "${logical_text}"; then
+      logical_text="${logical_text%\\} ${next}"
+      should_strip=1
+    else
+      # Only a quote can open or close a span → a line without one keeps the last verdict (linear, not quadratic).
+      if ((should_strip == 1)); then
+        [[ "${logical_text}" == *\'* ]] || break
+        strip_quotes "${logical_text}"
+        is_code_current=1
+      fi
+      ((in_squote == 1)) || break
+      is_code_current=0
+      logical_text="${logical_text}"$'\n'"${next}"
+      should_strip=0
+      [[ "${next}" != *\'* ]] || should_strip=1
+    fi
     idx=$((idx + 1))
     logical_extra=$((logical_extra + 1))
   done
@@ -162,12 +170,11 @@ is_continued() {
 # Strips quoted text and comments from logical_text, then audits every pipe stage left in it.
 audit_logical_line() {
   local rel="${1}" lineno="${2}" text="${logical_text}" rest="" stage=""
-  strip_quotes "${text}"
+  ((is_code_current == 1)) || strip_quotes "${text}"
   # A `<<` left in the code part opens a heredoc; its word is read from the raw text, where quotes still name it.
   if [[ "${code_text}" == *'<<'* && "${text}" =~ ${RE_HEREDOC} ]]; then
     heredoc_end="${BASH_REMATCH[2]}"
   fi
-  [[ ! "${code_text}" =~ ${RE_TRAILING_COMMENT} ]] || code_text="${code_text%"${BASH_REMATCH[0]}"}"
   [[ "${code_text}" != *'|'* ]] || mark_substitution_closes
   text="${code_text//||/${OR_MARK}}"
   text="${text//>|/>}"
@@ -181,35 +188,62 @@ audit_logical_line() {
   done
 }
 
-# Sets code_text to $1 with quoted text replaced by Q, scanning left to right; a double-quoted span holding a
-# command substitution stays code. An unclosed single quote ends the code and opens in_squote.
+# Sets code_text to $1 with quoted text replaced by Q (EXIT_MARK when it holds the word `exit`) and comments
+# dropped. Contexts stack — d = double quotes, p = `$( )` or a subshell, b = backticks — so the code of a
+# substitution inside double quotes stays code. An unclosed single quote ends the code and sets in_squote.
 strip_quotes() {
-  local rest="${1}" pre="" quote="" body=""
+  local rest="${1}" pre="" char="" body="" stack="" top=""
   rest="${rest//\\\\/E}"
   rest="${rest//\\\"/E}"
   rest="${rest//\\\'/E}"
+  rest="${rest//\\\`/E}"
+  rest="${rest//\\\$/E}"
   code_text=""
+  in_squote=0
   while [[ -n "${rest}" ]]; do
-    pre="${rest%%[\"\']*}"
-    code_text="${code_text}${pre}"
+    top="${stack: -1}"
+    if [[ "${top}" == d ]]; then
+      pre="${rest%%[\"\`\$]*}"
+      [[ ! "${pre}" =~ ${RE_EXIT_WORD} ]] || code_text="${code_text}${EXIT_MARK}"
+    else
+      pre="${rest%%[\'\"\`()#]*}"
+      code_text="${code_text}${pre}"
+    fi
     [[ "${pre}" != "${rest}" ]] || return 0
-    quote="${rest:${#pre}:1}"
+    char="${rest:${#pre}:1}"
     rest="${rest:${#pre}+1}"
-    if [[ "${quote}" == "'" && "${rest}" != *"'"* ]]; then
-      in_squote=1
-      return 0
-    fi
-    body="${rest%%"${quote}"*}"
-    if [[ "${body}" == "${rest}" ]]; then
-      code_text="${code_text}${rest}"
-      return 0
-    fi
-    # shellcheck disable=SC2016  # the literal two characters of a command substitution opener
-    if [[ "${quote}" == '"' && "${body}" == *'$('* ]]; then
-      continue
-    fi
-    code_text="${code_text}Q"
-    rest="${rest#*"${quote}"}"
+    case "${top}${char}" in
+      d\") stack="${stack%?}" ;;
+      d\$)
+        [[ "${rest}" == \(* ]] || continue
+        rest="${rest#\(}" code_text="${code_text}\$(" stack="${stack}p"
+        ;;
+      *\')
+        if [[ "${rest}" != *\'* ]]; then
+          in_squote=1
+          return 0
+        fi
+        body="${rest%%\'*}" rest="${rest#*\'}" char=Q
+        [[ ! "${body}" =~ ${RE_EXIT_WORD} ]] || char="${EXIT_MARK}"
+        code_text="${code_text}${char}"
+        ;;
+      *\") code_text="${code_text}Q" stack="${stack}d" ;;
+      b\`) code_text="${code_text}\`" stack="${stack%?}" ;;
+      *\`) code_text="${code_text}\`" stack="${stack}b" ;;
+      *\() code_text="${code_text}(" stack="${stack}p" ;;
+      p\)) code_text="${code_text})" stack="${stack%?}" ;;
+      *\#)
+        # A word-initial `#` opens a comment to the line end; `${#x}`, `$#` and `${x#y}` stay code.
+        if [[ -n "${code_text}" && "${code_text}" != *[[:space:]] ]]; then
+          code_text="${code_text}#"
+        elif [[ "${rest}" == *$'\n'* ]]; then
+          rest="${rest#*$'\n'}" code_text="${code_text}"$'\n'
+        else
+          return 0
+        fi
+        ;;
+      *) code_text="${code_text}${char}" ;;
+    esac
   done
 }
 
@@ -255,12 +289,9 @@ audit_stage() {
     drained=$((drained + 1))
   elif is_status_discarded "${tail}"; then
     discarded=$((discarded + 1))
-  elif is_listed "${location%:*}" "${ALLOWED_FILES[@]}"; then
-    allowed=$((allowed + 1))
-    audit_cli_report ALLOWED "${location}" "deferred site: ${stage}"
   else
     undrained=$((undrained + 1))
-    audit_cli_report UNDRAINED "${location}" "${stage}"
+    audit_cli_report UNDRAINED "${location}" "${stage//${EXIT_MARK}/Q}"
   fi
 }
 
@@ -296,6 +327,10 @@ is_early_reader() {
   shift
   case "${cmd}" in
     head) return 0 ;;
+    awk | gawk | mawk | nawk)
+      [[ "$*" == *"${EXIT_MARK}"* ]]
+      return
+      ;;
     grep | egrep | fgrep) ;;
     *)
       is_listed "${cmd}" "${READER_HELPERS[@]}"
@@ -336,8 +371,7 @@ main() {
     audit_tree
   fi
 
-  printf 'drained=%d discarded=%d undrained=%d allowed=%d\n' \
-    "${drained}" "${discarded}" "${undrained}" "${allowed}"
+  printf 'drained=%d discarded=%d undrained=%d\n' "${drained}" "${discarded}" "${undrained}"
 
   printf -v fail_msg 'FAIL: %d undrained early-exit pipe reader(s) in the audited surface' "${undrained}"
   audit_cli_finish "${blocking}" "${undrained}" "${fail_msg}"

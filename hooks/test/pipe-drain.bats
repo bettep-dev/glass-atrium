@@ -321,6 +321,38 @@ STUB
   done
 }
 
+# The scope-drift matcher against an md plan listing one path over the limit. Its locals hold that
+# path, so an export a caller set on their names would carry it into every child the matcher runs.
+# Pass: the listed path matches — no advisory.
+@test "the scope-drift matcher matches a listed path over Linux's per-string exec limit, its local names exported by the caller" {
+  command -v jq >/dev/null 2>&1 || skip "jq required"
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  local refused="${BATS_TEST_TMPDIR}/exec-refused.log" bin plan="${BATS_TEST_TMPDIR}/plan.json" path payload
+  bin="$(linux_exec_limit_bin "${refused}")"
+  path="/work/repo/src/$(filler 131100)/out.ts"
+  printf '%s' "${path}" | jq -Rsc '{id:7, format:"md", body:("## Target Files\n- `" + . + "`\n")}' >"${plan}"
+  # Loopback stand-in: one implementing md plan, its body read from PLAN_JSON.
+  cat >"${bin}/curl" <<'STUB'
+#!/bin/bash
+case "${!#}" in
+  *doc_status=implementing*) printf '%s' '{"total":1,"rows":[{"id":7,"doc_status":"implementing","format":"md"}]}' ;;
+  */7) cat "${PLAN_JSON}" ;;
+  *) exit 22 ;;
+esac
+STUB
+  chmod +x "${bin}/curl"
+  payload="$(printf '%s' "${path}" | jq -Rsc '{session_id:"", tool_input:{file_path:.}}')"
+  run env -u PLAN_FILE PATH="${bin}:${PATH}" HOME="${BATS_TEST_TMPDIR}" GA_DATA_ROOT="${BATS_TEST_TMPDIR}/ga" \
+    SCOPE_DRIFT_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs" SCOPE_DRIFT_CACHE_DIR="${BATS_TEST_TMPDIR}/cache" PLAN_JSON="${plan}" \
+    file_path=x allowed_files=x line=x clean=x bash "${HOOKS_DIR}/validate-scope-drift.sh" <<<"${payload}"
+  [[ "${status}" -eq 0 && "${output}" != *SCOPE-070* ]] || {
+    echo "expected status 0 and no SCOPE-070, got ${status}: ${output:0:600}"
+    echo "refused execs:"
+    cat "${refused}"
+    return 1
+  }
+}
+
 # The two Stop hooks over a transcript-backed payload: one field padded past the limit, held under
 # `INPUT` (the payload) or `PIPELINE_OUT` (the verdict lines the parser printed) as its caller exported.
 @test "a Stop hook keeps its verdict when its payload or parser output, held under a name its caller exported, crosses Linux's per-string exec limit" {
@@ -354,6 +386,52 @@ STUB
     run env PATH="${bin}:${PATH}" "${exported[@]/%/=x}" bash "${HOOKS_DIR}/${hook}" <<<"${payload}"
     [[ "${status}" -eq "${expected_status}" && "${output}" == *"${needle}"* && ! -s "${refused}" ]] || {
       echo "${name}: expected status ${expected_status}, ${needle} and no refused exec, got ${status}: ${output:0:600}"
+      echo "refused execs:"
+      cat "${refused}"
+      return 1
+    }
+  done
+}
+
+# The outcome recorder over a writer-emitted block: `INPUT` holds a long assistant message, `PARSED`
+# the parser rows, which cross the limit once multibyte summary, files and body text fill their caps.
+@test "the outcome recorder keeps its record when its payload or parser rows, held under a name its caller exported, cross Linux's per-string exec limit" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  local refused="${BATS_TEST_TMPDIR}/exec-refused.log" bin row name fill names payload="${BATS_TEST_TMPDIR}/payload.json"
+  local record='"context":{"agent":"glass-atrium-dev-shell","task_type":"bug-fix","result":"done"}'
+  local -a exported rows
+  bin="$(linux_exec_limit_bin "${refused}")"
+  mkdir -p "${BATS_TEST_TMPDIR}/home"
+  # Row: name | fill character | exported names.
+  rows=(
+    "long assistant message, payload exported|x|INPUT"
+    "multibyte summary, files and body, parser rows exported|$(printf '\360\237\230\200')|PARSED"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name fill names <<<"${row}"
+    IFS=' ' read -r -a exported <<<"${names}"
+    python3 -I - "${fill}" >"${payload}" <<'PY'
+import json, sys
+fill = sys.argv[1]
+block = '\n'.join([
+    '[COMPLETION]', 'result: done', 'task_type: bug-fix', 'metric_pass: true', 'confidence: high',
+    'files: src/' + fill * 17000 + '.sh', 'summary: ' + fill * 2500, 'lesson: ' + fill * 2500,
+    'concerns: ' + fill * 2500, '[/COMPLETION]',
+])
+print(json.dumps({
+    'hook_event_name': 'SubagentStop', 'agent_type': 'glass-atrium-dev-shell',
+    'agent_id': 'pipedrain01', 'session_id': 'pipe-drain',
+    'last_assistant_message': block + '\n' + fill * 131100,
+    'messages': [{'role': 'user', 'content': 'run the work'},
+                 {'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Edit', 'input': {}}]}],
+}))
+PY
+    : >"${refused}"
+    run env PATH="${bin}:${PATH}" HOME="${BATS_TEST_TMPDIR}/home" GA_DATA_ROOT="${BATS_TEST_TMPDIR}/ga" \
+      PGHOST="${BATS_TEST_TMPDIR}/no-pg" CLAUDE_GATE_INFLIGHT="" "${exported[@]/%/=x}" \
+      bash "${HOOKS_DIR}/track-outcome.sh" <"${payload}"
+    [[ "${status}" -eq 0 && "${output}" == *"${record}"* && ! -s "${refused}" ]] || {
+      echo "${name}: expected status 0, ${record} and no refused exec, got ${status}: ${output:0:600}"
       echo "refused execs:"
       cat "${refused}"
       return 1

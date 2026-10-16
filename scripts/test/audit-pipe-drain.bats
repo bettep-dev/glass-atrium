@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # audit-pipe-drain.bats — pins scripts/audit-pipe-drain.sh: every early-exit pipe reader in a hooks/
 # shell file is reported unless drain_after wraps it or the `|| true` right after its pipeline discards its status,
-# the deferred-site allowance demotes only its two named files, and the scope run is clean on this tree.
+# no file is exempt, and the scope run is clean on this tree.
 
 # shellcheck disable=SC2016  # fixtures are literal shell text written to files, never expanded here
 
@@ -51,11 +51,16 @@ assert_summary() {
     'or-true after the closing substitution|v="$(printf "%s" "${x}" | head -1)" || true'
     'or-true after the closing backtick substitution|v=`printf "%s" "${x}" | head -1` || true'
     'or-true after the closing process substitution|cat <(printf "%s" "${x}" | head -1) || true'
+    'or-true after a substitution closed past a nested-quoted argument|v="$(printf "%s" "${x}" | grep -qF "$(cat f)")" || true'
+    'reader in a backtick substitution inside double quotes|v="`printf "%s" "${x}" | head -1`" || true'
+    $'awk exiting before EOF|printf "%s" "${x}" | awk \'/foo/ { print; exit }\''
+    $'awk program over several lines exiting before EOF|printf "%s" "${x}" | awk -F\'|\' \'\n  $2 == "foo" { print; exit }\n\''
+    $'reader after a comment holding an apostrophe|: # it\'s a note\nprintf "%s" "${x}" | grep -q foo && exit 2'
   )
   local row=""
   for row in "${rows[@]}"; do
     audit_fixture "${row#*|}"
-    assert_summary "${row%%|*}" "drained=0 discarded=0 undrained=1 allowed=0"
+    assert_summary "${row%%|*}" "drained=0 discarded=0 undrained=1"
   done
 }
 
@@ -70,6 +75,9 @@ assert_summary() {
     'or-true after a substitution in the reader arguments|drained=0 discarded=1|printf "%s" "${x}" | grep -qF "$(cat f)" || true'
     'or-true after a backtick substitution in the reader arguments|drained=0 discarded=1|printf "%s" "${x}" | grep -qF `cat f` || true'
     'or-true after a process substitution in the reader arguments|drained=0 discarded=1|printf "%s" "${x}" | grep -qF -f <(cat f) || true'
+    $'drained awk|drained=1 discarded=0|printf "%s" "${x}" | drain_after awk \'/foo/ { exit }\''
+    $'or-true after a multi-line awk program|drained=0 discarded=1|v="$(printf "%s" "${x}" | awk \'\n  /foo/ { print; exit }\n\' || true)"'
+    $'awk reading to EOF|drained=0 discarded=0|printf "%s" "${x}" | awk \'{ print $1 }\''
     'grep reading a file|drained=0 discarded=0|if grep -q foo "${file}"; then :; fi'
     'head reading a file|drained=0 discarded=0|first="$(head -n 1 "${file}")"'
     'or-list, not a pipe|drained=0 discarded=0|[[ -z "${x}" ]] || grep -q foo "${file}"'
@@ -85,7 +93,7 @@ assert_summary() {
     counts="${row#*|}"
     counts="${counts%%|*}"
     audit_fixture "${row#*|*|}"
-    assert_summary "${name}" "${counts} undrained=0 allowed=0"
+    assert_summary "${name}" "${counts} undrained=0"
   done
 }
 
@@ -101,13 +109,14 @@ assert_summary() {
   }
 }
 
-@test "the deferred-site allowance reports its two files' sites as allowed and blocks nothing" {
+@test "a planted site in the outcome recorder or the scope-match library blocks like any other" {
   local root="${BATS_TEST_TMPDIR}/root" file=""
   for file in hooks/track-outcome.sh hooks/lib/scope-match.sh; do
     write_fixture "${root}/${file}" '#!/usr/bin/env bash' 'printf x | grep -q x && exit 2'
   done
   run bash "${AUDIT_SH}" --root "${root}"
-  [[ "${status}" -eq 0 && "${lines[${#lines[@]} - 1]}" == "drained=0 discarded=0 undrained=0 allowed=2" ]] || {
+  [[ "${status}" -eq 1 && "${output}" == *"UNDRAINED"*"hooks/lib/scope-match.sh:2"* &&
+    "${output}" == *"UNDRAINED"*"hooks/track-outcome.sh:2"* ]] || {
     echo "${output}"
     return 1
   }
@@ -115,7 +124,7 @@ assert_summary() {
 
 @test "the scope run over this tree reports no undrained site" {
   run bash "${AUDIT_SH}"
-  [[ "${status}" -eq 0 && "${lines[${#lines[@]} - 1]}" == *" undrained=0 "* ]] || {
+  [[ "${status}" -eq 0 && "${lines[${#lines[@]} - 1]}" == *" undrained=0" ]] || {
     echo "${output}"
     return 1
   }
