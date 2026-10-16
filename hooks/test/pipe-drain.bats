@@ -321,6 +321,38 @@ STUB
   done
 }
 
+# The scope-drift matcher against an md plan listing one path over the limit. Its locals hold that
+# path, so an export a caller set on their names would carry it into every child the matcher runs.
+# Pass: the listed path matches — no advisory.
+@test "the scope-drift matcher matches a listed path over Linux's per-string exec limit, its local names exported by the caller" {
+  command -v jq >/dev/null 2>&1 || skip "jq required"
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  local refused="${BATS_TEST_TMPDIR}/exec-refused.log" bin plan="${BATS_TEST_TMPDIR}/plan.json" path payload
+  bin="$(linux_exec_limit_bin "${refused}")"
+  path="/work/repo/src/$(filler 131100)/out.ts"
+  printf '%s' "${path}" | jq -Rsc '{id:7, format:"md", body:("## Target Files\n- `" + . + "`\n")}' >"${plan}"
+  # Loopback stand-in: one implementing md plan, its body read from PLAN_JSON.
+  cat >"${bin}/curl" <<'STUB'
+#!/bin/bash
+case "${!#}" in
+  *doc_status=implementing*) printf '%s' '{"total":1,"rows":[{"id":7,"doc_status":"implementing","format":"md"}]}' ;;
+  */7) cat "${PLAN_JSON}" ;;
+  *) exit 22 ;;
+esac
+STUB
+  chmod +x "${bin}/curl"
+  payload="$(printf '%s' "${path}" | jq -Rsc '{session_id:"", tool_input:{file_path:.}}')"
+  run env -u PLAN_FILE PATH="${bin}:${PATH}" HOME="${BATS_TEST_TMPDIR}" GA_DATA_ROOT="${BATS_TEST_TMPDIR}/ga" \
+    SCOPE_DRIFT_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs" SCOPE_DRIFT_CACHE_DIR="${BATS_TEST_TMPDIR}/cache" PLAN_JSON="${plan}" \
+    file_path=x allowed_files=x line=x clean=x bash "${HOOKS_DIR}/validate-scope-drift.sh" <<<"${payload}"
+  [[ "${status}" -eq 0 && "${output}" != *SCOPE-070* ]] || {
+    echo "expected status 0 and no SCOPE-070, got ${status}: ${output:0:600}"
+    echo "refused execs:"
+    cat "${refused}"
+    return 1
+  }
+}
+
 # The two Stop hooks over a transcript-backed payload: one field padded past the limit, held under
 # `INPUT` (the payload) or `PIPELINE_OUT` (the verdict lines the parser printed) as its caller exported.
 @test "a Stop hook keeps its verdict when its payload or parser output, held under a name its caller exported, crosses Linux's per-string exec limit" {
