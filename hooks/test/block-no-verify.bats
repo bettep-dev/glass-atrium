@@ -35,6 +35,20 @@ run_hook() {
   [[ "${output}" == *"SEC-011"* ]] || return 1
 }
 
+# ~160 KiB of JSON-escaped lines: above the 64 KiB pipe capacity, so a reader that stops at a
+# line-1 match leaves its writer to die of SIGPIPE, which pipefail reports as "no match".
+pipe_overflow_padding() {
+  seq -f 'padding line %05g of an ordinary build log' 1 4000 | awk '{ printf "%s\\n", $0 }'
+}
+
+@test "malicious: --no-verify on line 1 of a command larger than the pipe buffer still blocks (exit 2)" {
+  local padding
+  padding="$(pipe_overflow_padding)"
+  run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m msg --no-verify\\n${padding}\"}}"
+  [[ "${status}" -eq 2 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"SEC-011"* ]] || { echo "${output}"; return 1; }
+}
+
 @test "benign: normal git commit → pass (exit 0, silent)" {
   run_hook '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"normal message\""}}'
   [[ "${status}" -eq 0 ]] || return 1

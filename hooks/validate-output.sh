@@ -12,7 +12,22 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT TOOL_RESPONSE RESPONSE_LOWER input
 INPUT=$(hook_read_input)
 [[ "${INPUT}" == "{}" ]] && exit 0
 
@@ -60,7 +75,8 @@ LEAK_PATTERNS=(
 )
 LEAK_ALTERNATION="$(hook_join_alt "${LEAK_PATTERNS[@]}")"
 RESPONSE_LOWER=$(printf '%s\n' "${TOOL_RESPONSE}" | tr '[:upper:]' '[:lower:]')
-if printf '%s\n' "${RESPONSE_LOWER}" | grep -Eq "${LEAK_ALTERNATION}"; then
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+if printf '%s\n' "${RESPONSE_LOWER}" | drain_after grep -Eq "${LEAK_ALTERNATION}"; then
   emit_error "SEC-072" "advisory" \
     "System prompt leak pattern detected" \
     "시스템 프롬프트 역유출 패턴 감지" \
@@ -72,7 +88,8 @@ fi
 
 # LLM05: code-injection output patterns (Bash tool only — Block)
 if [[ "${TOOL_NAME}" == "Bash" ]]; then
-  if printf '%s\n' "${TOOL_RESPONSE}" | grep -qE "(DROP TABLE|DELETE FROM\s+\w+\s*(WHERE|;)|^\s*(exec|eval)\s*\(|^\s*__import__\s*\(|^\s*os\.(system|popen)\s*\()"; then
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if printf '%s\n' "${TOOL_RESPONSE}" | drain_after grep -qE "(DROP TABLE|DELETE FROM\s+\w+\s*(WHERE|;)|^\s*(exec|eval)\s*\(|^\s*__import__\s*\(|^\s*os\.(system|popen)\s*\()"; then
     emit_error "SEC-012" "block" \
       "Dangerous code pattern in execution output" \
       "실행 결과에 위험한 코드 패턴 포함" \

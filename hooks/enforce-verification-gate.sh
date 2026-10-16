@@ -118,6 +118,19 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 # track-outcome.sh, so surfaces 4 and 5 cannot disagree with them about which line declares what.
 # shellcheck source=lib/scope-match.sh
 source "${BASH_SOURCE%/*}/lib/scope-match.sh"
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
 
 # Per-session marker line cap. The marker appends one subagent_type line per spawn with no
 # rotation; a marathon session would grow it unboundedly (the SessionStart reaper
@@ -232,6 +245,8 @@ if [[ "${1:-}" == "--block-counts" ]]; then
 fi
 
 # stdin non-interactive → drain once, otherwise fail-open.
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n input gate_tsv hook_event session_id prompt_b64 prompt_full text decl scope_line files line scan
 input=""
 if [[ ! -t 0 ]]; then
   input="$(cat 2>/dev/null)" || input=""
@@ -292,14 +307,6 @@ is_dev_agent() {
     *" ${candidate} "*) return 0 ;;
     *) return 1 ;;
   esac
-}
-
-# Drains stdin after the reader exits → the pipe writer never takes SIGPIPE under pipefail.
-drain_after() {
-  local rc=0
-  "$@" || rc=$?
-  cat >/dev/null || true
-  return "${rc}"
 }
 
 # Plan-reference — STRUCTURED match only: id ∪ plan-path ∪ id-bearing slug. A bare 'plan'
