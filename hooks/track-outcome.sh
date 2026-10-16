@@ -11,6 +11,20 @@ set -Eeuo pipefail
 # shellcheck source=hook-utils.sh
 [[ -r "${BASH_SOURCE%/*}/hook-utils.sh" ]] && source "${BASH_SOURCE%/*}/hook-utils.sh"
 
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
+
 # DF-21: the 7-param override's free-text fields (message/suggestion, EN+KO) carried the same raw
 # printf %s vulnerability as hook-utils' hook_emit_error — a " or \ in any of them yielded MALFORMED
 # JSON. Build via jq (JSON-correct escaping + ctx validated as a JSON fragment); on jq absent/failed
@@ -73,6 +87,9 @@ require_safety_marker() {
   [[ -f "${marker_path}" && -r "${marker_path}" ]] || return 1
   return 0
 }
+
+# Payload and parser-output names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT PARSED
 
 INPUT=$(cat 2>/dev/null) || exit 0
 [ -z "$INPUT" ] && exit 0
@@ -1457,7 +1474,7 @@ PARSED=$(printf '%s' "$INPUT" | STYLE_REF_MATCH_LIB="${STYLE_REF_MATCH_LIB}" pyt
 
 # Extraction helper
 extract_field() {
-  printf '%s\n' "$PARSED" | sed -n "s/^@@${1}@@//p" | head -1
+  printf '%s\n' "$PARSED" | sed -n "s/^@@${1}@@//p" | drain_after head -1
 }
 
 AGENT_TYPE=$(extract_field agent_type)
@@ -2281,7 +2298,7 @@ PYEOF
     T9_RESULT=$(T9_TRANSCRIPT="${T9_TRANSCRIPT_PATH}" T9_TASK_TYPE="${TASK_TYPE}" T9_SESSION_ID="${SESSION_ID}" python3 "$T9_PY_FILE" 2>/dev/null || true)
 
     t9_extract() {
-      printf '%s\n' "$T9_RESULT" | sed -n "s/^@@${1}@@//p" | head -1
+      printf '%s\n' "$T9_RESULT" | sed -n "s/^@@${1}@@//p" | drain_after head -1
     }
 
     T9_DETECTOR_VERDICT=$(t9_extract detector_verdict)
@@ -2621,7 +2638,7 @@ if [[ -n "${SCOPE_DECL_LINES}" ]]; then
   # shellcheck source=lib/code-based-grader.sh
   #   Sourced for _cbg_path_is_tool_artifact — the single artifact-shape SoT, never a second copy.
   source "${BASH_SOURCE%/*}/lib/code-based-grader.sh"
-  SCOPE_DECL="$(printf '%s\n' "${SCOPE_DECL_LINES}" | tr '\037' '\n' | scope_decl_select)"
+  SCOPE_DECL="$(printf '%s\n' "${SCOPE_DECL_LINES}" | tr '\037' '\n' | drain_after scope_decl_select)"
   SCOPE_ALLOWED="$(scope_decl_files "${SCOPE_DECL}")"
 
   # The files: leg runs on code task_types only: a review/plan/doc row routinely lists the paths it
