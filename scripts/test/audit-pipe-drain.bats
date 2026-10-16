@@ -48,6 +48,8 @@ assert_summary() {
     'and-list ahead of a trailing or-true|printf "%s" "${x}" | grep -qF secret && exit 2 || true'
     'or-true inside the then branch|if printf "%s" "${x}" | grep -q foo; then rm_tmp || true; fi'
     'or-true in a later command|printf "%s" "${x}" | grep -q foo; v=$(cat f || true)'
+    'or-true after the closing substitution|v="$(printf "%s" "${x}" | head -1)" || true'
+    'or-true after the closing backtick substitution|v=`printf "%s" "${x}" | head -1` || true'
   )
   local row=""
   for row in "${rows[@]}"; do

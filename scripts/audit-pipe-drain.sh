@@ -12,7 +12,8 @@
 #   3. At every pipe stage, find a reader that can stop before EOF: grep with -q/-m (or --quiet,
 #      --silent, --max-count), head, or a helper in READER_HELPERS
 #   4. Count the reader drained when drain_after wraps it (hooks/lib/pipe-drain.sh), discarded when the
-#      list operator right after its pipeline is `|| true` / `|| :`; report every other one UNDRAINED
+#      list operator right after its pipeline, or after a subshell closing it, is `|| true` / `|| :` (never
+#      one past a command substitution's close); report every other one UNDRAINED
 #   5. Report a site in an ALLOWED_FILES file as ALLOWED, which never blocks
 #
 # Surface split: a default scope run BLOCKS, while a `--path` run stays ADVISORY; `--strict` blocks on a
@@ -51,6 +52,8 @@ readonly RE_HEREDOC="(^|[^<])<<-?[[:space:]]*[\\\\\"']?([A-Za-z_][A-Za-z0-9_]*)"
 readonly RE_TRAILING_COMMENT='(^|[[:space:]])#.*$'
 # An or-list operator, swapped out before the split on single pipes (\x01 is bash's internal quote marker).
 readonly OR_MARK=$'\x1e'
+# The `)` closing a `$(` substitution, told apart from a subshell's `)` before the stage split.
+readonly SUB_MARK=$'\x1d'
 readonly RE_DISCARD='^[[:space:]]*(true|:)([^[:alnum:]_]|$)'
 
 drained=0
@@ -163,15 +166,16 @@ audit_logical_line() {
   if [[ "${code_text}" == *'<<'* && "${text}" =~ ${RE_HEREDOC} ]]; then
     heredoc_end="${BASH_REMATCH[2]}"
   fi
+  [[ ! "${code_text}" =~ ${RE_TRAILING_COMMENT} ]] || code_text="${code_text%"${BASH_REMATCH[0]}"}"
+  [[ "${code_text}" != *'|'* ]] || mark_substitution_closes
   text="${code_text}"
-  [[ ! "${text}" =~ ${RE_TRAILING_COMMENT} ]] || text="${text%"${BASH_REMATCH[0]}"}"
   text="${text//||/${OR_MARK}}"
   text="${text//>|/>}"
   rest="${text#*|}"
   while [[ "${rest}" != "${text}" ]]; do
     text="${rest}"
     stage="${text#&}"
-    stage="${stage%%[|;&)\`"${OR_MARK}"]*}"
+    stage="${stage%%[|;&)\`"${OR_MARK}""${SUB_MARK}"]*}"
     audit_stage "${rel}:${lineno}" "${stage}" "${text}"
     rest="${text#*|}"
   done
@@ -207,6 +211,26 @@ strip_quotes() {
     code_text="${code_text}Q"
     rest="${rest#*"${quote}"}"
   done
+}
+
+# Rewrites code_text so each `)` closing a `$(` substitution reads as SUB_MARK; a subshell's `)` stays.
+mark_substitution_closes() {
+  local rest="${code_text}" out="" stack="" pre="" char=""
+  while [[ "${rest}" == *[\(\)]* ]]; do
+    pre="${rest%%[()]*}"
+    char="${rest:${#pre}:1}"
+    rest="${rest:${#pre}+1}"
+    if [[ "${char}" == '(' && "${pre}" == *'$' ]]; then
+      stack="${stack}s"
+    elif [[ "${char}" == '(' ]]; then
+      stack="${stack}p"
+    else
+      [[ "${stack}" != *s ]] || char="${SUB_MARK}"
+      stack="${stack%?}"
+    fi
+    out="${out}${pre}${char}"
+  done
+  code_text="${out}${rest}"
 }
 
 # Classifies one pipe stage; $3 is the line text from this stage on, for the discard check.
@@ -245,16 +269,17 @@ is_status_discarded() {
   tail="${tail//>&/>}"
   tail="${tail//<&/<}"
   tail="${tail//&>/>}"
-  # `;` / `&` end the list (a then / do word always follows one or a line end); a closing `)` / backtick
-  # hands the pipeline's status to its group or substitution, so the search goes on past it.
+  # `;` / `&` end the list (a then / do word always follows one or a line end). A subshell's closing `)`
+  # hands the pipeline's status out, so the search goes on past it; a substitution's close does not, because
+  # an errtrace ERR trap fires inside the substitution before any outer `|| true` runs.
   while :; do
-    list="${tail%%[;&)\`]*}"
+    list="${tail%%[;&)\`"${SUB_MARK}"]*}"
     if [[ "${list}" == *"${OR_MARK}"* ]]; then
       [[ "${list#*"${OR_MARK}"}" =~ ${RE_DISCARD} ]]
       return
     fi
     tail="${tail:${#list}}"
-    [[ "${tail}" == [\)\`]* ]] || return 1
+    [[ "${tail}" == \)* ]] || return 1
     tail="${tail:1}"
   done
 }
