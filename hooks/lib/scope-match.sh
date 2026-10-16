@@ -12,10 +12,28 @@
 #                              selector of every reader (drift advisory, recorder, verification gate).
 # scope_decl_from_record0    — that declaration, read from a subagent transcript's record 0.
 
+# shellcheck disable=SC2317  # source-context-unaware false positive on this double-source guard
 if [[ -n "${_SCOPE_MATCH_LOADED:-}" ]]; then
   return 0 2>/dev/null || true
 fi
 readonly _SCOPE_MATCH_LOADED=1
+
+if [[ -r "${BASH_SOURCE[0]%/*}/pipe-drain.sh" ]]; then
+  # shellcheck source-path=SCRIPTDIR source=pipe-drain.sh
+  source "${BASH_SOURCE[0]%/*}/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the readers keep their verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
+
+# Matcher locals holding a payload path or list: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n file_path allowed_files line clean
 
 # Match file_path against the target-file list (newline-separated): full/partial path OR basename.
 # Strips markdown list prefixes (- * N.), backticks, whitespace. Deliberately LENIENT — on an
@@ -205,14 +223,14 @@ scope_concerns_exempts_path() {
   [[ -n "${path}" ]] && [[ -n "${concerns}" ]] || return 1
   while IFS= read -r phrase; do
     [[ -n "${phrase}" ]] || continue
-    if printf '%s' "${concerns}" | grep -qiF -- "${phrase}"; then
+    if printf '%s' "${concerns}" | drain_after grep -qiF -- "${phrase}"; then
       matched=0
       break
     fi
   done <<<"${SCOPE_STANDING_RULE_PHRASES}"
   [[ "${matched}" -eq 0 ]] || return 1
-  printf '%s' "${concerns}" | grep -qF -- "${path}" && return 0
-  printf '%s' "${concerns}" | grep -qF -- "$(basename "${path}")" && return 0
+  printf '%s' "${concerns}" | drain_after grep -qF -- "${path}" && return 0
+  printf '%s' "${concerns}" | drain_after grep -qF -- "$(basename "${path}")" && return 0
   return 1
 }
 
@@ -283,5 +301,5 @@ scope_decl_from_record0() {
     | jq -r 'if (.message.content | type) == "string" then .message.content
              elif (.message.content | type) == "array" then ([.message.content[]? | .text? // ""] | join("\n"))
              else "" end' 2>/dev/null \
-    | scope_decl_select
+    | drain_after scope_decl_select
 }
