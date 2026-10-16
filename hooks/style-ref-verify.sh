@@ -43,6 +43,9 @@ else
   }
 fi
 
+# Payload and parser-output names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT PIPELINE_OUT
+
 # Drain stdin. Empty payload → nothing to verify, exit silently.
 INPUT=""
 if [[ ! -t 0 ]]; then
