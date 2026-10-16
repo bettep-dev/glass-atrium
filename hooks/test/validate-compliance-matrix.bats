@@ -375,6 +375,20 @@ break_layer_b() {
   }
 }
 
+# ~105 KiB of table rows: above the 64 KiB pipe capacity, so a reader that stops at line 1 leaves
+# its writer to die of SIGPIPE, which pipefail reports as "no match".
+@test "a consistent matrix larger than the pipe buffer, marker on its first data row, exits 0" {
+  {
+    printf '| core-security.md | ✓ | † |\n'
+    awk 'BEGIN { for (i = 0; i < 4000; i++) print "| core-security.md | ✓ | |" }'
+    printf '\n> † marker footnote for the first data row\n'
+  } >>"${MATRIX}"
+
+  run run_hook
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" != *"CONFIRMED inconsistency"* ]] || { echo "${output}"; return 1; }
+}
+
 @test "AC7 Layer A still reports declared-missing and undeclared-present" {
   if ga_guard_path "${RULES_DIR}"; then rm -f -- "${RULES_DIR:?}/core-security.md"; fi
   : >"${RULES_DIR}/undeclared-extra.md"

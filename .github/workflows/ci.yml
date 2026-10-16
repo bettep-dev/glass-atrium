@@ -479,6 +479,14 @@ jobs:
         if: matrix.root == 'scripts/test'
         run: bash scripts/audit-rm.sh
 
+      # Pipe-drain audit (scripts/audit-pipe-drain.sh) → BLOCKING: an early-exit pipe reader in a hooks/
+      # shell file that neither drain_after wraps nor a `|| true` discards exits 1 (a SIGPIPE read as a verdict).
+      # Its deferred-site allowance prints as ALLOWED lines and never blocks → the scripts/audit-pipe-drain.sh header.
+      # A usage or IO error (exit 2/3) reds the step too; same leg, ordering and change filter as above.
+      - name: Audit undrained early-exit pipe readers (blocking)
+        if: matrix.root == 'scripts/test'
+        run: bash scripts/audit-pipe-drain.sh
+
       # DIAGNOSTIC (per-file timeout + filename tag): each *.bats file runs as
       # its OWN GNU parallel job instead of a single `bats --jobs` call. Why:
       # `bats --jobs` buffers a file's TAP and flushes only on file COMPLETION,
