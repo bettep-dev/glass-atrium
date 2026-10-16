@@ -16,7 +16,6 @@
 #      list operator right after its pipeline, or after a subshell closing it, is `|| true` / `|| :` (never
 #      one past the close of a `$( )`, backtick, `<( )` or `>( )` substitution holding the pipeline); report
 #      every other one UNDRAINED
-#   5. Report a site in an ALLOWED_FILES file as ALLOWED, which never blocks
 #
 # Surface split: a default scope run BLOCKS, while a `--path` run stays ADVISORY; `--strict` blocks on a
 # `--path` run and `--advisory` reports without failing anywhere.
@@ -41,11 +40,6 @@ readonly EXCLUDED_PREFIX=hooks/test/
 # Functions whose body ends in an early-exit reader of their stdin, so a pipe into them races the same way.
 READER_HELPERS=(scope_decl_select)
 readonly READER_HELPERS
-# Deferred sites, held for the owner's A/A 2 go: hooks/track-outcome.sh is in the A/A 2 fingerprint
-# (autoagent/daemon_cycle.py → AA.SCOPE) and sources hooks/lib/scope-match.sh, so draining either
-# changes the evidence path mid-trial. The change that drains their sites removes this list.
-ALLOWED_FILES=(hooks/track-outcome.sh hooks/lib/scope-match.sh)
-readonly ALLOWED_FILES
 
 readonly RE_COMMENT='^[[:space:]]*#'
 readonly RE_SHEBANG='^#!.*[/[:space:]](ba|da|k)?sh([[:space:]]|$)'
@@ -63,7 +57,6 @@ readonly RE_DISCARD='^[[:space:]]*(true|:)([^[:alnum:]_]|$)'
 drained=0
 discarded=0
 undrained=0
-allowed=0
 heredoc_end=""
 in_squote=0
 logical_text=""
@@ -296,9 +289,6 @@ audit_stage() {
     drained=$((drained + 1))
   elif is_status_discarded "${tail}"; then
     discarded=$((discarded + 1))
-  elif is_listed "${location%:*}" "${ALLOWED_FILES[@]}"; then
-    allowed=$((allowed + 1))
-    audit_cli_report ALLOWED "${location}" "deferred site: ${stage//${EXIT_MARK}/Q}"
   else
     undrained=$((undrained + 1))
     audit_cli_report UNDRAINED "${location}" "${stage//${EXIT_MARK}/Q}"
@@ -381,8 +371,7 @@ main() {
     audit_tree
   fi
 
-  printf 'drained=%d discarded=%d undrained=%d allowed=%d\n' \
-    "${drained}" "${discarded}" "${undrained}" "${allowed}"
+  printf 'drained=%d discarded=%d undrained=%d\n' "${drained}" "${discarded}" "${undrained}"
 
   printf -v fail_msg 'FAIL: %d undrained early-exit pipe reader(s) in the audited surface' "${undrained}"
   audit_cli_finish "${blocking}" "${undrained}" "${fail_msg}"
