@@ -360,3 +360,49 @@ STUB
     }
   done
 }
+
+# The outcome recorder over a writer-emitted block: `INPUT` holds a long assistant message, `PARSED`
+# the parser rows, which cross the limit once multibyte summary, files and body text fill their caps.
+@test "the outcome recorder keeps its record when its payload or parser rows, held under a name its caller exported, cross Linux's per-string exec limit" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  local refused="${BATS_TEST_TMPDIR}/exec-refused.log" bin row name fill names payload="${BATS_TEST_TMPDIR}/payload.json"
+  local record='"context":{"agent":"glass-atrium-dev-shell","task_type":"bug-fix","result":"done"}'
+  local -a exported rows
+  bin="$(linux_exec_limit_bin "${refused}")"
+  mkdir -p "${BATS_TEST_TMPDIR}/home"
+  # Row: name | fill character | exported names.
+  rows=(
+    "long assistant message, payload exported|x|INPUT"
+    "multibyte summary, files and body, parser rows exported|$(printf '\360\237\230\200')|PARSED"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name fill names <<<"${row}"
+    IFS=' ' read -r -a exported <<<"${names}"
+    python3 -I - "${fill}" >"${payload}" <<'PY'
+import json, sys
+fill = sys.argv[1]
+block = '\n'.join([
+    '[COMPLETION]', 'result: done', 'task_type: bug-fix', 'metric_pass: true', 'confidence: high',
+    'files: src/' + fill * 17000 + '.sh', 'summary: ' + fill * 2500, 'lesson: ' + fill * 2500,
+    'concerns: ' + fill * 2500, '[/COMPLETION]',
+])
+print(json.dumps({
+    'hook_event_name': 'SubagentStop', 'agent_type': 'glass-atrium-dev-shell',
+    'agent_id': 'pipedrain01', 'session_id': 'pipe-drain',
+    'last_assistant_message': block + '\n' + fill * 131100,
+    'messages': [{'role': 'user', 'content': 'run the work'},
+                 {'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Edit', 'input': {}}]}],
+}))
+PY
+    : >"${refused}"
+    run env PATH="${bin}:${PATH}" HOME="${BATS_TEST_TMPDIR}/home" GA_DATA_ROOT="${BATS_TEST_TMPDIR}/ga" \
+      PGHOST="${BATS_TEST_TMPDIR}/no-pg" CLAUDE_GATE_INFLIGHT="" "${exported[@]/%/=x}" \
+      bash "${HOOKS_DIR}/track-outcome.sh" <"${payload}"
+    [[ "${status}" -eq 0 && "${output}" == *"${record}"* && ! -s "${refused}" ]] || {
+      echo "${name}: expected status 0, ${record} and no refused exec, got ${status}: ${output:0:600}"
+      echo "refused execs:"
+      cat "${refused}"
+      return 1
+    }
+  done
+}
