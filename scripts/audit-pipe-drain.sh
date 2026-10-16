@@ -168,14 +168,13 @@ audit_logical_line() {
   fi
   [[ ! "${code_text}" =~ ${RE_TRAILING_COMMENT} ]] || code_text="${code_text%"${BASH_REMATCH[0]}"}"
   [[ "${code_text}" != *'|'* ]] || mark_substitution_closes
-  text="${code_text}"
-  text="${text//||/${OR_MARK}}"
+  text="${code_text//||/${OR_MARK}}"
   text="${text//>|/>}"
   rest="${text#*|}"
   while [[ "${rest}" != "${text}" ]]; do
     text="${rest}"
     stage="${text#&}"
-    stage="${stage%%[|;&)\`"${OR_MARK}""${SUB_MARK}"]*}"
+    stage="${stage%%[|;&)\`"${OR_MARK}${SUB_MARK}"]*}"
     audit_stage "${rel}:${lineno}" "${stage}" "${text}"
     rest="${text#*|}"
   done
