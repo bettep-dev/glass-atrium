@@ -105,7 +105,8 @@ Both rules below are conditional on the worktree contract the delegation states;
 - **Strict mode mandatory**: `#!/usr/bin/env bash` + `set -Eeuo pipefail` + `IFS=$'\n\t'`
 - **Early-exit pipe readers**: in a `hooks/` shell file, a pipe whose last reader can stop before EOF (`grep -q`, `head`) runs through `drain_after` (`hooks/lib/pipe-drain.sh`), or ends in `|| true` when no branch reads its status
   - Why: the `pipefail` of **Strict mode mandatory** turns the writer's SIGPIPE past the pipe capacity (64 KiB on macOS) into the pipe's status, so the reader's verdict is lost.
-  - Backing: `scripts/audit-pipe-drain.sh` fails CI on any other form, `hooks/test/` excluded.
+  - Backing: `scripts/audit-pipe-drain.sh` fails CI only on the readers it models — `grep` with `-q`/`-m` (or `--quiet`, `--silent`, `--max-count`), `head`, an `awk` whose quoted program holds `exit`, and the helpers in its `READER_HELPERS` list — `hooks/test/` excluded.
+    - Any other early reader is honor-system — for example `sed` with `q`, `awk -f`, or a wrapping helper missing from that list.
 
 ## Tech Stack
 
