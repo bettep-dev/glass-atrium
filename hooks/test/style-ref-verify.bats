@@ -10,13 +10,13 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
 }
 
-# Payload with a style_ref-bearing [COMPLETION] block and transcript_path $1.
+# Payload with a style_ref-bearing [COMPLETION] block and transcript_path $1. The path reaches jq and
+# the payload the hook on stdin → no argument nears Linux's 128 KiB per-string exec limit.
 run_hook() {
-  run bash -c '
-    payload="$(jq -cn --arg t "$1" --arg m "$(printf "[COMPLETION]\nresult: done\nstyle_ref: hooks/sibling.sh\n[/COMPLETION]")" \
-      "{last_assistant_message: \$m, transcript_path: \$t}")"
-    printf "%s" "${payload}" | bash "$2" 2>&1
-  ' _ "${1}" "${HOOK_SH}"
+  local payload
+  payload="$(printf '%s' "${1}" | jq -Rsc --arg m "$(printf '[COMPLETION]\nresult: done\nstyle_ref: hooks/sibling.sh\n[/COMPLETION]')" \
+    '{last_assistant_message: $m, transcript_path: .}')"
+  run bash "${HOOK_SH}" <<<"${payload}"
 }
 
 # ~160 KiB of duplicated tpath-key lines: above the 64 KiB pipe capacity, so a reader that stops at

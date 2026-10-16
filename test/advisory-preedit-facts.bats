@@ -71,11 +71,12 @@ write_large_fixture() {
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/tail/tailfile.txt"}}]}}' >>"$f"
 }
 
-# One assistant entry carrying a single Edit tool_use on $1, and no declaration.
+# One assistant entry carrying a single Edit tool_use on $1, and no declaration. The path reaches jq
+# on stdin → no argument nears Linux's 128 KiB per-string exec limit.
 write_edit_transcript() {
-  jq -cn --arg fp "${1}" \
-    '{type: "assistant", message: {content: [{type: "tool_use", name: "Edit", input: {file_path: $fp}}]}}' \
-    >"${TRANSCRIPT}"
+  printf '%s' "${1}" \
+    | jq -Rsc '{type: "assistant", message: {content: [{type: "tool_use", name: "Edit", input: {file_path: .}}]}}' \
+      >"${TRANSCRIPT}"
 }
 
 @test "current-turn declared edit -> silent (full-read-identical, start==0)" {
