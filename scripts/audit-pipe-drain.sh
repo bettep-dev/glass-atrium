@@ -13,7 +13,8 @@
 #      --silent, --max-count), head, or a helper in READER_HELPERS
 #   4. Count the reader drained when drain_after wraps it (hooks/lib/pipe-drain.sh), discarded when the
 #      list operator right after its pipeline, or after a subshell closing it, is `|| true` / `|| :` (never
-#      one past a command substitution's close); report every other one UNDRAINED
+#      one past the close of a `$( )`, backtick, `<( )` or `>( )` substitution holding the pipeline); report
+#      every other one UNDRAINED
 #   5. Report a site in an ALLOWED_FILES file as ALLOWED, which never blocks
 #
 # Surface split: a default scope run BLOCKS, while a `--path` run stays ADVISORY; `--strict` blocks on a
@@ -52,7 +53,7 @@ readonly RE_HEREDOC="(^|[^<])<<-?[[:space:]]*[\\\\\"']?([A-Za-z_][A-Za-z0-9_]*)"
 readonly RE_TRAILING_COMMENT='(^|[[:space:]])#.*$'
 # An or-list operator, swapped out before the split on single pipes (\x01 is bash's internal quote marker).
 readonly OR_MARK=$'\x1e'
-# The `)` closing a `$(` substitution, told apart from a subshell's `)` before the stage split.
+# The close of a `$( )`, `<( )`, `>( )` or backtick substitution, told apart from a subshell's `)` before the stage split.
 readonly SUB_MARK=$'\x1d'
 readonly RE_DISCARD='^[[:space:]]*(true|:)([^[:alnum:]_]|$)'
 
@@ -212,21 +213,23 @@ strip_quotes() {
   done
 }
 
-# Rewrites code_text so each `)` closing a `$(` substitution reads as SUB_MARK; a subshell's `)` stays.
+# Rewrites code_text so each substitution close reads as SUB_MARK; a subshell's `)` and an opening backtick stay.
 mark_substitution_closes() {
   local rest="${code_text}" out="" stack="" pre="" char=""
-  while [[ "${rest}" == *[\(\)]* ]]; do
-    pre="${rest%%[()]*}"
+  while [[ "${rest}" == *[\(\)\`]* ]]; do
+    pre="${rest%%[()\`]*}"
     char="${rest:${#pre}:1}"
     rest="${rest:${#pre}+1}"
-    if [[ "${char}" == '(' && "${pre}" == *'$' ]]; then
-      stack="${stack}s"
-    elif [[ "${char}" == '(' ]]; then
-      stack="${stack}p"
-    else
-      [[ "${stack}" != *s ]] || char="${SUB_MARK}"
-      stack="${stack%?}"
-    fi
+    # stack letters: s = `$(` / `<(` / `>(` substitution, b = backtick substitution, p = subshell
+    case "${char}${stack: -1}" in
+      ')s' | '`b') char="${SUB_MARK}" stack="${stack%?}" ;;
+      ')'*) stack="${stack%?}" ;;
+      '`'*) stack="${stack}b" ;;
+      *)
+        stack="${stack}p"
+        [[ "${pre}" != *[\$\<\>] ]] || stack="${stack%p}s"
+        ;;
+    esac
     out="${out}${pre}${char}"
   done
   code_text="${out}${rest}"
@@ -263,24 +266,28 @@ audit_stage() {
 
 # 0 when the first list operator after the pipeline in $1 is `|| true` / `|| :` — a later one guards another command.
 is_status_discarded() {
-  local tail="${1}" list=""
+  local tail="${1}" pre="" char="" depth=0
   tail="${tail//|&/|}"
   tail="${tail//>&/>}"
   tail="${tail//<&/<}"
   tail="${tail//&>/>}"
-  # `;` / `&` end the list (a then / do word always follows one or a line end). A subshell's closing `)`
-  # hands the pipeline's status out, so the search goes on past it; a substitution's close does not, because
-  # an errtrace ERR trap fires inside the substitution before any outer `|| true` runs.
+  # `;` / `&` end the list (a then / do word always follows one or a line end). A subshell's `)`, and a
+  # substitution both opened and closed in the tail, hand the pipeline's status out, so the search goes on past
+  # them; the close of a substitution holding the pipeline does not — errtrace fires the ERR trap inside it first.
   while :; do
-    list="${tail%%[;&)\`"${SUB_MARK}"]*}"
-    if [[ "${list}" == *"${OR_MARK}"* ]]; then
-      [[ "${list#*"${OR_MARK}"}" =~ ${RE_DISCARD} ]]
-      return
-    fi
-    tail="${tail:${#list}}"
-    [[ "${tail}" == \)* ]] || return 1
-    tail="${tail:1}"
+    pre="${tail%%[;&\$<>\`"${SUB_MARK}${OR_MARK}"]*}"
+    [[ "${pre}" != "${tail}" ]] || return 1
+    char="${tail:${#pre}:1}"
+    tail="${tail:${#pre}+1}"
+    case "${char}" in
+      "${OR_MARK}") ((depth > 0)) || break ;;
+      ';' | '&') ((depth > 0)) || return 1 ;;
+      "${SUB_MARK}") ((depth-- > 0)) || return 1 ;;
+      '`') depth=$((depth + 1)) ;;
+      *) [[ "${tail}" != \(* ]] || depth=$((depth + 1)) ;;
+    esac
   done
+  [[ "${tail}" =~ ${RE_DISCARD} ]]
 }
 
 # 0 when the command words name a reader that can stop before EOF.

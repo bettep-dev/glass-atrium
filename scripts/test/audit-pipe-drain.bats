@@ -50,6 +50,7 @@ assert_summary() {
     'or-true in a later command|printf "%s" "${x}" | grep -q foo; v=$(cat f || true)'
     'or-true after the closing substitution|v="$(printf "%s" "${x}" | head -1)" || true'
     'or-true after the closing backtick substitution|v=`printf "%s" "${x}" | head -1` || true'
+    'or-true after the closing process substitution|cat <(printf "%s" "${x}" | head -1) || true'
   )
   local row=""
   for row in "${rows[@]}"; do
@@ -66,6 +67,9 @@ assert_summary() {
     'or-true discard|drained=0 discarded=1|v="$(printf "%s" "${x}" | grep -o y | head -1 || true)"'
     $'or-true on a continuation|drained=0 discarded=1|v="$(printf "%s" "${x}" \\\n  | head -1 || true)"'
     'or-true after the closing subshell|drained=0 discarded=1|(printf "%s" "${x}" | head -20) || true'
+    'or-true after a substitution in the reader arguments|drained=0 discarded=1|printf "%s" "${x}" | grep -qF "$(cat f)" || true'
+    'or-true after a backtick substitution in the reader arguments|drained=0 discarded=1|printf "%s" "${x}" | grep -qF `cat f` || true'
+    'or-true after a process substitution in the reader arguments|drained=0 discarded=1|printf "%s" "${x}" | grep -qF -f <(cat f) || true'
     'grep reading a file|drained=0 discarded=0|if grep -q foo "${file}"; then :; fi'
     'head reading a file|drained=0 discarded=0|first="$(head -n 1 "${file}")"'
     'or-list, not a pipe|drained=0 discarded=0|[[ -z "${x}" ]] || grep -q foo "${file}"'
