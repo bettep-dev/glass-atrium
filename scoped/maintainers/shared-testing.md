@@ -126,7 +126,10 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 - **Step 5 collision list, measured**: each entry was reproduced by a run under the whole-invocation escape; add a suite only on a reproduced run.
   - `GA_PG_SOCKET`: `test/run-step-fail-return.bats` with only an off-/tmp `GA_PG_SOCKET` exported failed its `drive_db` rows, and passed every row with the name unset.
   - `psql`: `hooks/test/ephemeral-pg-locale.bats` failed its two rows asserting on `psql` output under record-only `psql` and `lsof` stubs, and passed all four without them; a `createdb` stub changed nothing.
-  - Not named because measured clean: `test/ga-db-sql-binding.bats`. Not measured: the other `hooks/test/lib/ephemeral-pg.bash` consumers.
+  - Not named because measured clean: `test/ga-db-sql-binding.bats`.
+  - Not named although they collide: a whole-tree run under the escape also failed rows in `hooks/test/agent-tracker.bats`, `hooks/test/cost-tracker-dualwrite.bats` and `hooks/test/ephemeral-pg-recorder-schema.bats`, each of which passes unsealed.
+    - Why not named: their failures are attributed to the empty `psql` stub output by inference from rows that read `psql` output, with no per-suite stub comparison like the locale entry's `createdb` run.
+    - Whether Step 5 names them is the rule owner's decision.
 - **Kept on purpose**: the never-`GA_DB_NAME` clause — the guard's FATAL text offers `GA_DB_NAME`, but `lib/ga-db.sh` → `_require_db_setup_ready` tests only `PG_SOCKET`.
 - **Naming**: Step 5's escape is not the per-suite Live-DB seal (`test/lib/bats-db-seal.bash`); name it by Step 5's own wording, never as "the seal".
 
