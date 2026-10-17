@@ -123,6 +123,12 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 - The section is single-sited here by `orchestrator-role.md` → Document-Driven Workflow step 6, which calls it "pointer only, the procedure is single-sited there". Splitting it across a second heading would move content out from under that pointer.
 - It is the largest section in the rule file and the only task-conditional one; its condition is stated in its own opening line.
   - It sits just under the 8 KB H2 shape-cap guide, with little room to grow while the procedure stays single-sited under its inbound pointer.
+- **Step 5 collision list, measured**: each entry was reproduced by a run under the whole-invocation escape; add a suite only on a reproduced run.
+  - `GA_PG_SOCKET`: `test/run-step-fail-return.bats` with only an off-/tmp `GA_PG_SOCKET` exported failed its `drive_db` rows, and passed every row with the name unset.
+  - `psql`: `hooks/test/ephemeral-pg-locale.bats` failed its two rows asserting on `psql` output under record-only `psql` and `lsof` stubs, and passed all four without them; a `createdb` stub changed nothing.
+  - Not named because measured clean: `test/ga-db-sql-binding.bats`. Not measured: the other `hooks/test/lib/ephemeral-pg.bash` consumers.
+- **Kept on purpose**: the never-`GA_DB_NAME` clause — the guard's FATAL text offers `GA_DB_NAME`, but `lib/ga-db.sh` → `_require_db_setup_ready` tests only `PG_SOCKET`.
+- **Naming**: Step 5's escape is not the per-suite Live-DB seal (`test/lib/bats-db-seal.bash`); name it by Step 5's own wording, never as "the seal".
 
 ## Mechanical Success Metrics — code pointer
 
