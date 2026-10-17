@@ -307,7 +307,6 @@ EOF
 @test "an absent monitor/test is skipped with a note and the scope run still prints its summary" {
   local dir
   for dir in hooks/test scripts/test autoagent/test; do
-    mkdir -p "${TS_TMP}/${dir}"
     write_fixture "${TS_TMP}/${dir}/sample.bats" <<'EOF'
 #!/usr/bin/env bats
 %%test%% "sample" {
@@ -336,7 +335,6 @@ EOF
     root="${TS_TMP}/without-${absent%%/*}"
     for dir in hooks/test scripts/test autoagent/test monitor/test; do
       if [[ "${dir}" != "${absent}" ]]; then
-        mkdir -p "${root}/${dir}"
         write_fixture "${root}/${dir}/sample.bats" <<'EOF'
 #!/usr/bin/env bats
 %%test%% "sample" {
