@@ -235,8 +235,8 @@ EOF
 
 @test "a failed or unreadable auditor run fails loudly with exit 3" {
   local partial stub_dir="${WORK}/stub" root
-  # The auditor's own scope error: its monitor/test scope dir is absent.
-  partial="$(make_root partial hooks/test scripts/test autoagent/test)"
+  # The auditor's own scope error: a bundled scope dir is absent.
+  partial="$(make_root partial hooks/test scripts/test monitor/test)"
   write_baseline "${partial}" ''
   run bash "${RATCHET_SH}" --root "${partial}"
   [[ "${status}" -eq 3 && "${output}" == *'scope directory missing'*'exited 3'* ]] || {
