@@ -1844,3 +1844,40 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
     return 1
   }
 }
+
+@test "norev: an advisory write interrupted ahead of the block still exits 2, advisory and reason once each" {
+  # row = name|advisory label|line that trips only that advisory, prepended to a DEV script with no reviewer spawn
+  local rows=(
+    "resilience|ADVISORY (resilience|agent('glass-atrium-dev-nestjs',{goal:'draft with a schema output'})"
+    "schema-cap|ADVISORY (schema-cap|const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 1200 } } };"
+  )
+  local row name label lead script rest trace
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name label lead <<<"${row}"
+    script="${lead}
+/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+    jq -n --arg s "${script}" '{tool_name:"Workflow",tool_input:{script:$s}}' >"${BATS_TEST_TMPDIR}/envelope"
+    TRACE_LOG="${BATS_TEST_TMPDIR}/trace-${name}.log"
+    run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope" "WORKFLOW_GATE_FIRED_LOG=${TRACE_LOG}"
+    assert_forced_block "BLOCKED (no reviewer" || {
+      echo "row ${name}"
+      return 1
+    }
+    rest="${output#*"${label}"}"
+    [[ "${output}" == *"${label}"* && "${rest}" != *"${label}"* ]] || {
+      echo "row ${name}: advisory not exactly once: ${output}"
+      return 1
+    }
+    trace="$(cat -- "${TRACE_LOG}")"
+    [[ "${trace}" == *"verdict=block-norev"* && "${trace}" == *"advisory=${name}"* && "${trace}" != *$'\n'* && "${trace}" != *"ADVISORY"* ]] || {
+      echo "row ${name}: trace log: ${trace}"
+      return 1
+    }
+  done
+}

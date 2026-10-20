@@ -208,10 +208,8 @@ verdict="${helper_out%%$'\n'*}"
 # findings = every line after the verdict token (pre-formatted "  line N: ${...}" by the scanner).
 findings="${helper_out#*$'\n'}"
 
-# Block reason on STDERR (PreToolUse block surface), then exit 2. Printed directly (NOT a captured
-# $(...) heredoc) so the backticks / \$ in the body are parse-safe on bash 3.2.
-# Subshell → no SIGCHLD reaches its builtin writes (bash 3.2 EINTR): its only child, cat, starts after them.
-# Status ignored → exit 2 stands.
+# Block reason on STDERR (PreToolUse block surface), then exit 2 — printed directly, not as a captured $(...) heredoc → body backticks / \$ parse-safe on bash 3.2.
+# Subshell → no SIGCHLD reaches its builtin writes (bash 3.2 EINTR): its only child, cat, starts after them; status ignored → exit 2 stands.
 (
   printf '%s\n\n' "[lint-workflow-template-literal] BLOCKED (bash parameter-expansion inside a JS template literal):"
   printf 'Offending expressions (source line -> expression):\n%s\n\n' "${findings}"
