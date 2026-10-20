@@ -531,7 +531,9 @@ ADDITIONALLY (entry classification / plan-reference also required): beyond the b
 EOF
     )"
   fi
-  printf '%s\n' "${reason}" >&2
+  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → exit 2 stands.
+  # An interrupted in-shell write would hold the reason and flush it later into emit_trace's log.
+  (printf '%s\n' "${reason}") >&2 || true
   emit_trace "${2}" "${script_len}"
   exit 2
 }

@@ -101,7 +101,8 @@ if [[ "${TOOL_NAME}" == "Bash" ]]; then
       "실행 결과에 위험한 코드 패턴 포함" \
       "Review and sanitize the command output before proceeding" \
       "진행 전 명령 출력을 검토하고 정제하세요"
-    printf '%s\n' '{"decision":"block","reason":"[output-validator] LLM05: Dangerous code pattern in execution output"}'
+    # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → exit 2 stands.
+    (printf '%s\n' '{"decision":"block","reason":"[output-validator] LLM05: Dangerous code pattern in execution output"}') || true
     exit 2
   fi
 fi

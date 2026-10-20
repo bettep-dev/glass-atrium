@@ -19,6 +19,8 @@ bats_require_minimum_version 1.5.0
 HOOK_SH="${BATS_TEST_DIRNAME}/../validate-output.sh"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
+source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "validate-output.sh not found: ${HOOK_SH}"
@@ -298,4 +300,12 @@ spawn_count() {
   [[ "${output}" == *"SEC-072"* ]] || return 1
   [[ "$(spawn_count python3)" -eq 1 ]] || return 1
   [[ "$(spawn_count grep)" -eq 1 ]] || return 1
+}
+
+@test "LLM05 interrupted block write still exits 2 with the block JSON once on stdout" {
+  printf '%s' '{"tool_name":"Bash","tool_input":{"command":"x"},"tool_response":"DROP TABLE users;"}' \
+    >"${BATS_TEST_TMPDIR}/envelope"
+  FORCED_CHANNEL=stdout run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope"
+  # stderr carries the SEC-012 emitter line by design, never the block JSON
+  assert_forced_block '"decision":"block"' '{"hook":"validate-output","error_code":"SEC-012",*}'
 }

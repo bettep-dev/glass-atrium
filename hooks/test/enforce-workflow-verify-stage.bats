@@ -22,6 +22,8 @@
 #   `[[ ... ]] || return 1` so it gates on both legs regardless of position (`return` runs in the
 #   test-body function scope → fails the test immediately). Never leave a bare intermediate `[[ ]]`.
 
+bats_require_minimum_version 1.5.0
+
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-workflow-verify-stage.sh"
 CORPUS_DIR="${BATS_TEST_DIRNAME}/corpus"
@@ -1819,4 +1821,26 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
       return 1
     }
   done
+}
+
+# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
+source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
+
+@test "nodecl: an interrupted block write still exits 2, the reason once on stderr and not in the trace" {
+  local script trace
+  script="log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+log('[SCOPE] files=a.sh · deliverable=fix · out=none')
+log('[PLAN-CLOSE] in-script')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  jq -n --arg s "${script}" '{tool_name:"Workflow",tool_input:{script:$s}}' >"${BATS_TEST_TMPDIR}/envelope"
+  run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope" "WORKFLOW_GATE_FIRED_LOG=${TRACE_LOG}"
+  assert_forced_block "BLOCKED (missing composition declaration)" || return 1
+  # a held reason flushed by the trace append would land in the log ahead of the trace line
+  trace="$(cat -- "${TRACE_LOG}")"
+  [[ "${trace}" == *"verdict=block-nodecl"* && "${trace}" != *$'\n'* && "${trace}" != *"composition declaration"* ]] || {
+    echo "trace log: ${trace}"
+    return 1
+  }
 }
