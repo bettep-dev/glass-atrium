@@ -48,6 +48,21 @@ Its operative content, restated once here so the decision is auditable: every de
   - The body still keys its `### Concurrent-worktree contract` table on the delegation's worktree-contract line: only that line says which contract holds for a given run.
   - The body's barrier note under that heading restates the canonical's **Whole-tree regeneration** and **Regeneration barrier**, so it is a removable mirror (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)` → **Standing consequence**).
     - Removing it also removes the table's "(see the barrier note below)".
+- **Early-exit pipe readers — the premise in its Why**: the race is keyed on the writer's write count, not on output past the pipe capacity.
+  - Mechanism: bash line-buffers builtin stdout (one write per line) and an external stdio writer writes once per buffer, so a multi-line builtin value races an early reader at any size.
+  - The same premise sits in the `hooks/lib/pipe-drain.sh` header and the `scripts/audit-pipe-drain.sh` header Why — canonical + mirror: keep the three in step and report drift.
+  - The Backing line lists what `scripts/audit-pipe-drain.sh` models (`is_early_reader`, `READER_HELPERS`, `EXCLUDED_PREFIX`); edit it whenever the auditor's model changes.
+  - The rule's own reach stays `hooks/`, the auditor's scope; the sibling **Interrupted builtin writes** bullet is the one that binds every shell file.
+- **Interrupted builtin writes — the decided keeps**:
+  - Reach is every shell file: the fault needs only errexit and an un-waited child, and the `lib/ga-env.sh` logger (`log`, `die`) is an instance outside `hooks/`.
+  - The "In a hook" sub-bullet withholds the lead's "or its shell owns no un-waited child" alternative on a hook's block path: a child inherited through `exec` or an external sender delivers SIGCHLD to a shell that starts none, the case the self-written block-write hardening covers.
+    - The Condition's source list is what an author checks that alternative against, so it names both sources; keep it in step with the lead.
+  - No write-size threshold in the body: the size at which status-ignore alone loses or misroutes a message is platform-dependent, so the body says only "can lose a long message".
+  - Retry is not a sanctioned form: a held small write flushes later and double-prints, and a large one is lost whatever the retry does.
+  - The verdict-pipe writer-side clause is the condition behind not converting the hooks' `drain_after` verdict pipes to in-shell matches: a pipeline-child writer receives SIGCHLD only from its own children.
+    - A writer side that starts a child it does not wait on reopens that decision; a waited `$( )` does not.
+  - The bullet names no hook that owns an un-waited child: several block-path hooks read through `< <( )` (the `hooks/hook-utils.sh` field idiom), so a list would go stale; the rule is stated on the condition instead.
+  - Key Patterns **Subshell scope** (`done < <(cmd)`) composes with it rather than conflicting: that loop owns an un-waited child, so a later verdict or exit write in the same shell takes the bullet's write form.
 
 ## What moved out of the body
 
