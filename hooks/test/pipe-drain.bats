@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # pipe-drain.bats — unit pin for `drain_after`: under pipefail, a pipe-end reader wrapped in it
-# yields its OWN exit status and output even when the writer still has data past the 64 KiB pipe
-# capacity — the size at which an early-exiting reader otherwise turns its verdict into SIGPIPE 141.
+# yields its OWN exit status and output even when the writer still has a write to make after the
+# reader stops — a multi-write writer races an early reader at any size and otherwise turns its
+# verdict into SIGPIPE 141; one write within the pipe capacity is the safe case.
 # The consumer-hook tables hold each hook to its verdict on such inputs — with the library absent,
 # and under Linux's per-string exec limit.
 
@@ -114,21 +115,41 @@ set_consumer_rows() {
   )
 }
 
+# PATH dir whose mktemp records each path it creates in $1, so a row can check that none outlives its hook.
+# Args: $1 record file. Echoes the dir.
+mktemp_recording_bin() {
+  local bin="${BATS_TEST_TMPDIR}/mktemp-record-bin" real
+  real="$(command -v mktemp)"
+  mkdir -p "${bin}"
+  : >"$1"
+  {
+    printf '#!/bin/bash\n'
+    # shellcheck disable=SC2016  # ${made} expands in the stub, not here
+    printf 'made="$(%q "$@")" || exit\nprintf "%%s\\n" "${made}" >>%q\nprintf "%%s\\n" "${made}"\n' "${real}" "$1"
+  } >"${bin}/mktemp"
+  chmod +x "${bin}/mktemp"
+  printf '%s\n' "${bin}"
+}
+
 @test "a consumer hook keeps its verdict on input over the pipe buffer when the library is absent" {
   command -v jq >/dev/null 2>&1 || skip "jq required"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
-  local copy="${BATS_TEST_TMPDIR}/hooks" padding row name hook kind trigger expected_status needle
+  local copy="${BATS_TEST_TMPDIR}/hooks" made="${BATS_TEST_TMPDIR}/mktemp-made" bin padding row name hook kind trigger expected_status needle path
   cp -R "${HOOKS_DIR}" "${copy}"
   if ga_guard_path "${copy}"; then
     rm -f -- "${copy:?}/lib/pipe-drain.sh"
   else
     return 1
   fi
+  # path guard beside the copy, as in the install tree → a hook's guarded scratch delete still runs
+  mkdir -p "${BATS_TEST_TMPDIR}/scripts/lib"
+  cp -- "${HOOKS_DIR}/../scripts/lib/path-guard.sh" "${BATS_TEST_TMPDIR}/scripts/lib/"
+  bin="$(mktemp_recording_bin "${made}")"
   padding="$(seq -f 'padding line %05g of an ordinary build log' 1 4000)"
   set_consumer_rows
   for row in "${CONSUMER_ROWS[@]}"; do
     IFS='|' read -r name hook kind trigger expected_status needle <<<"${row}"
-    run bash "${copy}/${hook}" <<<"$(consumer_payload "${kind}" "${trigger}" "${padding}")"
+    run env "PATH=${bin}:${PATH}" bash "${copy}/${hook}" <<<"$(consumer_payload "${kind}" "${trigger}" "${padding}")"
     [[ "${status}" -eq "${expected_status}" ]] || {
       echo "${name}: expected status ${expected_status}, got ${status}: ${output}"
       return 1
@@ -138,6 +159,17 @@ set_consumer_rows() {
       return 1
     }
   done
+  # every scratch path a hook made is gone after it exits; the dangerous-output row makes one
+  [[ -s "${made}" ]] || {
+    echo "no hook made a scratch path"
+    return 1
+  }
+  while IFS= read -r path; do
+    [[ ! -e "${path}" ]] || {
+      echo "left behind by a hook: ${path}"
+      return 1
+    }
+  done <"${made}"
 }
 
 # PATH dir whose commands refuse what a Linux exec refuses — one argv or environment string of
