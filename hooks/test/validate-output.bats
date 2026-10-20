@@ -302,7 +302,7 @@ spawn_count() {
   [[ "$(spawn_count grep)" -eq 1 ]] || return 1
 }
 
-@test "LLM05 interrupted block write still exits 2 with the block JSON once on stdout" {
+@test "an interrupted dangerous-output block write still exits 2 with the block JSON once on stdout" {
   printf '%s' '{"tool_name":"Bash","tool_input":{"command":"x"},"tool_response":"DROP TABLE users;"}' \
     >"${BATS_TEST_TMPDIR}/envelope"
   FORCED_CHANNEL=stdout run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope"
