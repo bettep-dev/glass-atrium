@@ -216,7 +216,7 @@ spawn_count() {
   [[ "${output}" == *"SEC-072"* ]] || return 1
 }
 
-@test "LLM05 block is written only after the parse child has exited, leaving no scratch file" {
+@test "the dangerous-output block is written only after the parse child has exited, leaving no scratch file" {
   # An un-waited parse child can exit mid block write → its SIGCHLD interrupts that builtin write on bash 3.2.
   # The reader samples the shim's exit marker the moment the block line arrives on stdout.
   make_lingering_python_shim

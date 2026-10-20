@@ -54,7 +54,7 @@ pipe_overflow_padding() {
   [[ "${output}" == *"SEC-011"* ]] || { echo "${output}"; return 1; }
 }
 
-@test "malicious: an interrupted block write still exits 2 with SEC-011 once on stderr" {
+@test "malicious: an interrupted block write still exits 2 with the bypass block once on stderr" {
   printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m msg --no-verify"}}' >"${BATS_TEST_TMPDIR}/envelope"
   run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope"
   assert_forced_block "SEC-011"

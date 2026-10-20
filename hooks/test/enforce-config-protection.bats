@@ -48,7 +48,7 @@ source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
   [[ "${output}" == *"CFG-001"* ]] || return 1
 }
 
-@test "weakening: an interrupted block write still exits 2 with CFG-001 once on stderr, not the ERR trap's allow" {
+@test "weakening: an interrupted block write still exits 2 with the weakening block once on stderr, not the ERR trap's allow" {
   jq -cn --arg body '{"rules":{"no-unused-vars":"off"}}' \
     '{tool_name: "Write", tool_input: {file_path: "/tmp/proj/.eslintrc.json", content: $body}}' \
     >"${BATS_TEST_TMPDIR}/envelope"
