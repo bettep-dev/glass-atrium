@@ -134,23 +134,80 @@ path_without_psql() {
   printf '%s' "${farm}"
 }
 
-# Run the REAL run_doctor against the sandbox GA_ROOT in a fresh strict-mode subprocess. GA_DB_NAME
-# points the whole DB path at a throwaway name and PATH puts the stub first, so no live database
-# name is ever spoken and no real psql is ever reached.
+# Strict-mode driver: $1 = GA checkout, $2 = sandbox GA_ROOT, the rest = the lib call to make.
+DOCTOR_DRIVER='
+  set -Eeuo pipefail
+  source "$1/lib/ga-core.sh"
+  ga_init_env "$2"
+  shift 2
+  "$@"
+'
+
+# The sandbox environment every driver runs in. GA_DB_NAME points the whole DB path at a throwaway
+# name and PATH puts the stub first, so no live database name is ever spoken and no real psql is
+# ever reached. $1 = PATH override.
+set_sandbox_env() {
+  SANDBOX_ENV=(PATH="${1:-${STUB}:${PATH}}"
+    GA_LIB_DIR="${GA}/scripts/lib" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}"
+    GA_GENERATE_MANIFEST="${SANDBOX}/no-such-manifest-gen"
+    GA_DATA_ROOT="${SANDBOX}/data" ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/state"
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT:-9}"
+    GA_DB_NAME="ga_doctor_provenance_sandbox"
+    GA_MIGRATIONS_DIR="${MIGRATIONS}" GA_STUB_STATE="${STUB_STATE}")
+}
+
+# Run the REAL run_doctor against the sandbox GA_ROOT in a fresh strict-mode subprocess.
 run_doctor_sandbox() {
-  run env PATH="${1:-${STUB}:${PATH}}" \
-    GA_LIB_DIR="${GA}/scripts/lib" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" \
-    GA_GENERATE_MANIFEST="${SANDBOX}/no-such-manifest-gen" \
-    GA_DATA_ROOT="${SANDBOX}/data" ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/state" \
-    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT:-9}" \
-    GA_DB_NAME="ga_doctor_provenance_sandbox" \
-    GA_MIGRATIONS_DIR="${MIGRATIONS}" GA_STUB_STATE="${STUB_STATE}" \
-    bash -c '
-      set -Eeuo pipefail
-      source "$1/lib/ga-core.sh"
-      ga_init_env "$2"
-      run_doctor
-    ' _ "${GA}" "${GA_SANDBOX}"
+  set_sandbox_env "${1:-}"
+  run env "${SANDBOX_ENV[@]}" bash -c "${DOCTOR_DRIVER}" _ "${GA}" "${GA_SANDBOX}" run_doctor
+}
+
+# Forced-interrupt harness: the driver's shell owns one late child (kept through exec), its stderr
+# pipe is full before the first write, and the reader drains only after that child has exited → on
+# bash 3.2 the child's SIGCHLD interrupts a builtin write blocked in the driver's shell.
+FORCED_HARNESS_PY="$(
+  cat <<'PY'
+import fcntl, os, subprocess, sys, time
+
+stdout_path = sys.argv[1]
+read_fd, write_fd = os.pipe()
+flags = fcntl.fcntl(write_fd, fcntl.F_GETFL)
+fcntl.fcntl(write_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+filler = 0
+try:
+    while True:
+        os.write(write_fd, b".")
+        filler += 1
+except BlockingIOError:
+    pass
+fcntl.fcntl(write_fd, fcntl.F_SETFL, flags)
+with open(os.devnull, "rb") as stdin, open(stdout_path, "wb") as stdout:
+    proc = subprocess.Popen(
+        ["/bin/bash", "-c", '( sleep 0.6 ) & exec /bin/bash "$@"', "_"] + sys.argv[2:],
+        stdin=stdin, stdout=stdout, stderr=write_fd)
+os.close(write_fd)
+time.sleep(1.5)
+drained = b""
+while True:
+    chunk = os.read(read_fd, 65536)
+    if not chunk:
+        break
+    drained += chunk
+sys.stdout.buffer.write(drained[filler:])
+sys.exit(proc.wait())
+PY
+)"
+
+# Run one lib call through DOCTOR_DRIVER under the forced harness. Args: the lib call.
+# Sets status · output = the driver's stderr · FORCED_STDOUT = the file holding its stdout.
+run_forced_driver() {
+  local python_bin
+  python_bin="$(command -v python3)"
+  # shellcheck disable=SC2154  # BATS_TEST_TMPDIR is assigned by the Bats runner
+  FORCED_STDOUT="$(mktemp "${BATS_TEST_TMPDIR}/forced-stdout.XXXXXX")"
+  set_sandbox_env
+  run --separate-stderr env "${SANDBOX_ENV[@]}" "${python_bin}" -c "${FORCED_HARNESS_PY}" \
+    "${FORCED_STDOUT}" -c "${DOCTOR_DRIVER}" _ "${GA}" "${GA_SANDBOX}" "$@"
 }
 
 assert_output_has() {
@@ -366,5 +423,39 @@ warn_total_of_output() {
     assert_output_has "answered something other than three counts" || return 1
     assert_output_lacks "name the actor that moved them" || return 1
     assert_output_lacks "name no actor" || return 1
+  done
+}
+
+# ── Forced write: a log or die line blocked by an interrupt never decides the exit ─────────────
+
+# The doctor's shell owns a late child, so its SIGCHLD lands while a log/die write is blocked on a
+# full stderr pipe. A builtin write in that shell fails, and under errexit that failure becomes the
+# exit, dropping the rest of the report. Each row asserts the fixed state: its own exit, the line
+# exactly once on stderr, nothing on stdout. The doctor keeps no trace log, so stderr is the only
+# channel to check.
+@test "a log or die line blocked under an interrupt still arrives once and leaves the exit to the code path" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  local row name expected needle call_line rest
+  local -a call
+  for row in \
+    'doctor report|0|== doctor: Glass Atrium preflight ==|run_doctor' \
+    'die|1|FATAL: forced die probe|die forced die probe'; do
+    IFS='|' read -r name expected needle call_line <<<"${row}"
+    IFS=' ' read -r -a call <<<"${call_line}"
+    run_forced_driver "${call[@]}"
+    [[ "${status}" -eq "${expected}" ]] || {
+      echo "${name}: status ${status}, expected ${expected}: ${output} ${stderr}"
+      return 1
+    }
+    rest="${output#*"${needle}"}"
+    [[ "${output}" == *"${needle}"* && "${rest}" != *"${needle}"* ]] || {
+      echo "${name}: '${needle}' not exactly once on stderr: ${output}"
+      return 1
+    }
+    [[ ! -s "${FORCED_STDOUT}" ]] || {
+      echo "${name}: stdout not empty:"
+      cat -- "${FORCED_STDOUT}"
+      return 1
+    }
   done
 }

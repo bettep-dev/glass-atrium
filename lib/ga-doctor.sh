@@ -63,17 +63,17 @@ run_doctor() {
         log "  FAIL : manifest carries escaping or unreadable files[] key(s) (listed above) — install/uninstall/prune refuse it"
         fail=1
       fi
-      local rel missing=0
-      # read_manifest_files dies on its own failure → masked exit is benign;
-      # process substitution keeps the loop in the current shell (var-safe).
-      # shellcheck disable=SC2312
+      local rel missing=0 rels
+      # Waited capture, not a process substitution → no late SIGCHLD lands on a later write.
+      # A producer die only empties the capture (|| true) → the run continues, as before.
+      rels="$(read_manifest_files)" || true
       while IFS= read -r rel; do
         [[ -n "${rel}" ]] || continue
         [[ -e "${GA_ROOT}/${rel}" ]] || {
           log "  FAIL : manifest source missing: ${rel}"
           missing=$((missing + 1))
         }
-      done < <(read_manifest_files)
+      done <<<"${rels}"
       [[ "${missing}" -eq 0 ]] || fail=1
     else
       log "  FAIL : manifest .files not an array"
@@ -86,17 +86,16 @@ run_doctor() {
 
   # 5. no dangling GA symlinks under target (existing install health)
   if [[ -d "${TARGET_HOME}" ]]; then
-    local dangling=0 link
-    # find ends with `|| true` → masked exit is benign; process substitution
-    # keeps the loop in the current shell (var-safe).
-    # shellcheck disable=SC2312
+    local dangling=0 link links
+    # Waited capture (see §4); an empty capture yields one empty line, skipped by the guard.
+    links="$(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r link; do
       [[ -n "${link}" ]] || continue
       [[ -e "${link}" ]] || {
         log "  warn : dangling GA symlink: ${link}"
         dangling=$((dangling + 1))
       }
-    done < <(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+    done <<<"${links}"
     [[ "${dangling}" -eq 0 ]] && log "  ok   : no dangling GA symlinks"
   fi
 
@@ -206,14 +205,13 @@ run_doctor() {
     #       counts GA-pointing symlinks under TARGET_HOME; zero ⇒ nothing deployed ⇒ every entry
     #       reports undeployed. The hard-FAIL is RESERVED for genuine PARTIAL drift (some deployed,
     #       some missing) on an established install.
-    local ga_links=0 lk
-    # find ends with `|| true` → masked exit is benign; process substitution
-    # keeps the loop in the current shell (var-safe).
-    # shellcheck disable=SC2312
+    local ga_links=0 lk lks
+    # Waited capture (see §4).
+    lks="$(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r lk; do
       [[ -n "${lk}" ]] || continue
       ga_links=$((ga_links + 1))
-    done < <(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+    done <<<"${lks}"
 
     local sev="FAIL" fresh=0
     if [[ "${mode}" == "preflight" ]]; then
@@ -223,10 +221,9 @@ run_doctor() {
       sev="warn"
       fresh=1
     fi
-    local rel total=0 undeployed=0 dst cur
-    # read_manifest_files dies on its own failure → masked exit is benign;
-    # process substitution keeps the loop in the current shell (var-safe).
-    # shellcheck disable=SC2312
+    local rel total=0 undeployed=0 dst cur rels
+    # Waited capture (see §4).
+    rels="$(read_manifest_files)" || true
     while IFS= read -r rel; do
       [[ -n "${rel}" ]] || continue
       # install-internal payload (is_symlink_excluded: lib/ monitor/ hooks/ scoped/ scripts/ autoagent/
@@ -252,7 +249,7 @@ run_doctor() {
         log "  ${sev} : manifest entry not installed: ${rel} — run 'glass-atrium agents-only' to deploy"
         undeployed=$((undeployed + 1))
       fi
-    done < <(read_manifest_files)
+    done <<<"${rels}"
     if [[ "${undeployed}" -eq 0 ]]; then
       log "  ok   : all manifest entries deployed to target (symlinks into GA root)"
     elif [[ "${mode}" == "preflight" ]]; then
