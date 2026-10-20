@@ -59,7 +59,7 @@ Its operative content, restated once here so the decision is auditable: every de
     - The Condition's source list is what an author checks that alternative against, so it names both sources; keep it in step with the lead.
   - No write-size threshold in the body: the size at which status-ignore alone loses or misroutes a message is platform-dependent, so the body says only "can lose a long message".
   - Retry is not a sanctioned form: a held small write flushes later and double-prints, and a large one is lost whatever the retry does.
-  - The verdict-pipe writer-side clause is the condition behind not converting the hooks' `drain_after` verdict pipes to in-shell matches: a pipeline-child writer receives SIGCHLD only from its own children.
+  - The verdict-pipe writer-side clause is the condition behind not converting the hooks' `drain_after` verdict pipes to in-shell matches: a pipeline-child writer receives SIGCHLD from its own children, or from an external sender that could kill the hook outright anyway.
     - A writer side that starts a child it does not wait on reopens that decision; a waited `$( )` does not.
   - The bullet names no hook that owns an un-waited child: several block-path hooks read through `< <( )` (the `hooks/hook-utils.sh` field idiom), so a list would go stale; the rule is stated on the condition instead.
   - Key Patterns **Subshell scope** (`done < <(cmd)`) composes with it rather than conflicting: that loop owns an un-waited child, so a later verdict or exit write in the same shell takes the bullet's write form.
