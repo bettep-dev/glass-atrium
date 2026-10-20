@@ -369,7 +369,7 @@ run_prune() {
 
   # STEP2 — build the manifest set ONCE (read-set-then-act: a mid-loop manifest
   # change cannot flip a removal decision). Newline-delimited TARGET_HOME-rel
-  # paths for the criterion-d grep -Fxq lookup (bash 3.2 — no declare -A).
+  # paths for the criterion-d whole-line lookup (bash 3.2 — no declare -A).
   local manifest_set
   # read_manifest_files dies on its own failure (already precondition-guarded
   # above); the command-substitution masks its rc, which is benign here.
@@ -394,7 +394,8 @@ run_prune() {
     rel="${link#"${TARGET_HOME}"/}"
     # (d) NOT-IN-MANIFEST — a broken link that IS in the manifest means its
     # source is transiently missing (a should-exist file): preserve + flag.
-    if printf '%s\n' "${manifest_set}" | grep -Fxq -- "${rel}"; then
+    # whole-line match in-shell — the manifest list piped to `grep -q` races its early exit
+    if [[ $'\n'"${manifest_set}"$'\n' == *$'\n'"${rel}"$'\n'* ]]; then
       log "  flag : broken GA symlink in manifest (source transiently missing, preserved): ${link}"
       flagged=$((flagged + 1))
       continue
