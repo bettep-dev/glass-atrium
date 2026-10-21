@@ -304,6 +304,53 @@ EOF
   }
 }
 
+@test "an absent monitor/test is skipped with a note and the scope run still prints its summary" {
+  local dir
+  for dir in hooks/test scripts/test autoagent/test; do
+    write_fixture "${TS_TMP}/${dir}/sample.bats" <<'EOF'
+#!/usr/bin/env bats
+%%test%% "sample" {
+  true
+}
+EOF
+  done
+  run bash "${AUDIT_SH}" --root "${TS_TMP}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "exit ${status}: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"NOTICE: optional scope directory absent, skipped: ${TS_TMP}/monitor/test"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"tests_scanned=3 "* ]] || {
+    echo "${output}"
+    return 1
+  }
+}
+
+@test "a missing bundled scope root still exits 3 with the ERROR line" {
+  local absent root dir
+  for absent in hooks/test scripts/test autoagent/test; do
+    root="${TS_TMP}/without-${absent%%/*}"
+    for dir in hooks/test scripts/test autoagent/test monitor/test; do
+      if [[ "${dir}" != "${absent}" ]]; then
+        write_fixture "${root}/${dir}/sample.bats" <<'EOF'
+#!/usr/bin/env bats
+%%test%% "sample" {
+  true
+}
+EOF
+      fi
+    done
+    run bash "${AUDIT_SH}" --root "${root}"
+    [[ "${status}" -eq 3 && "${output}" == *"ERROR: scope directory missing or unreadable: ${root}/${absent}"* ]] || {
+      echo "absent=${absent} exit ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
 @test "the advisory counts never change the exit status, --strict included" {
   write_fixture "${TS_TMP}/ids.bats" <<'EOF'
 #!/usr/bin/env bats

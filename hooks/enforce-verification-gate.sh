@@ -610,8 +610,9 @@ if references_plan "${prompt_full}"; then
   # SC2310: has_plan_subset_token is a pure predicate — set -e disable under `if` intended.
   # shellcheck disable=SC2310
   if [[ "${orchestrator_origin}" == true ]] && ! has_plan_subset_token "${prompt_full}"; then
-    printf '[enforce-verification-gate] Plan-referencing spawn of %s carries no [PLAN-SUBSET] token. If this delegation is a strict subset of the plan, classify each included task'"'"'s declared predecessors first and record [PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=<edges|n/a>. Advisory only — absence is correct for a whole-plan delegation.\n' \
-      "${subagent_type}" >&2
+    # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → the reviewer-miss block keeps exit 2.
+    (printf '[enforce-verification-gate] Plan-referencing spawn of %s carries no [PLAN-SUBSET] token. If this delegation is a strict subset of the plan, classify each included task'"'"'s declared predecessors first and record [PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=<edges|n/a>. Advisory only — absence is correct for a whole-plan delegation.\n' \
+      "${subagent_type}") >&2 || true
   fi
   # Reviewer durably recorded BEFORE this spawn (sequential reviewer→DEV) → gate satisfied.
   if [[ "${reviewer_present}" == true ]]; then

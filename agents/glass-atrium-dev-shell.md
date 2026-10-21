@@ -104,9 +104,21 @@ Both rules below are conditional on the worktree contract the delegation states;
 
 - **Strict mode mandatory**: `#!/usr/bin/env bash` + `set -Eeuo pipefail` + `IFS=$'\n\t'`
 - **Early-exit pipe readers**: in a `hooks/` shell file, a pipe whose last reader can stop before EOF (`grep -q`, `head`) runs through `drain_after` (`hooks/lib/pipe-drain.sh`), or ends in `|| true` when no branch reads its status
-  - Why: the `pipefail` of **Strict mode mandatory** turns the writer's SIGPIPE past the pipe capacity (64 KiB on macOS) into the pipe's status, so the reader's verdict is lost.
-  - Backing: `scripts/audit-pipe-drain.sh` fails CI only on the readers it models — `grep` with `-q`/`-m` (or `--quiet`, `--silent`, `--max-count`), `head`, an `awk` whose quoted program holds `exit`, and the helpers in its `READER_HELPERS` list — `hooks/test/` excluded.
+  - Why: under `pipefail`, a writer with a write left when the reader exits dies of SIGPIPE, and 141 replaces the reader's verdict — a multi-write writer (a multi-line builtin value is one) races at any size; one write within the 64 KiB pipe capacity is safe.
+  - Backing: `scripts/audit-pipe-drain.sh` fails CI only on the readers it models — `grep` (or `egrep`, `fgrep`) with `-q`/`-m` (or `--quiet`, `--silent`, `--max-count`), `head`, an `awk` whose quoted program holds `exit`, and the helpers in its `READER_HELPERS` list — `hooks/test/` excluded.
     - Any other early reader is honor-system — for example `sed` with `q`, `awk -f`, or a wrapping helper missing from that list.
+- **Interrupted builtin writes**: in every shell file, a write that carries a verdict or decides the exit is one an interrupt cannot reach, or its shell owns no un-waited child
+  - In a hook, every write on the block path, the block write included, is one an interrupt cannot reach.
+    - A hook's block path gets no alternative: reading the hook rules out neither an inherited nor an external SIGCHLD.
+  - Condition: under bash 3.2, a builtin write (`printf`, `echo`) that is blocked when SIGCHLD arrives fails with EINTR and returns 1.
+    - SIGCHLD reaches a shell from a child it owns — an un-waited `<( )` or `&` job, or one inherited through `exec` — and from a sender outside it.
+  - Why: under errexit that 1 decides the exit, so in a hook whose ERR trap ends in exit 0 an interrupted write anywhere on the block path turns the block into an allow.
+  - Write form, status ignored in both: a subshell that owns no child while it writes, `( printf '%s\n' "${msg}" ) >&2 || true`, or an external writer (`/usr/bin/printf`, a `cat` heredoc) with the same `|| true`; the exit then comes from the code path, never from the write.
+  - Child removal instead, outside a hook's block path: capture the producer first, then loop over the capture — bash 3.2 cannot wait on a process substitution.
+  - `|| true` on an in-shell write alone keeps the exit but can lose a long message, or flush it later onto another channel.
+  - A verdict pipe's writer side owns no un-waited child: a builtin write of a variable forks nothing; a writer side that starts a child it does not wait on (a backgrounded `&` job or a `<( )`) before it writes is exposed, while a `$( )` is waited, so it is not.
+  - Reach: every shell file, not only `hooks/` — the fault needs only errexit and an un-waited child, which `lib/` and `scripts/` code owns as well.
+  - Backing: honor-system — no auditor models this class; `hooks/test/lib/forced-write.bash` drives a forced interrupt for a red-first row.
 
 ## Tech Stack
 

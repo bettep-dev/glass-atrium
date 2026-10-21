@@ -2,8 +2,9 @@
 # audit-pipe-drain.sh — audit of pipe readers that can stop before EOF in the hooks/ shell files
 # Usage: audit-pipe-drain.sh [--path <file>]... [--root <dir>] [--quiet] [--advisory|--strict]
 #
-# Why: under `set -Eeuo pipefail` a reader that exits early (grep -q, grep -m, head, awk exit) leaves its writer to
-# die of SIGPIPE above the 64 KiB pipe capacity, and the pipe then reports 141 instead of the reader's verdict.
+# Why: under `set -Eeuo pipefail` a reader that exits early (grep -q, grep -m, head, awk exit) leaves a writer with
+# a write still to make to die of SIGPIPE, and the pipe then reports 141 instead of the reader's verdict.
+# A multi-write writer races at any output size; a single write within the 64 KiB pipe capacity is the safe case.
 #
 # Behavior:
 #   1. Walk the shell files under hooks/ (libraries included, hooks/test/ excluded), or the --path overrides

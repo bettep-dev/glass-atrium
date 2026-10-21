@@ -76,8 +76,9 @@ fi
 config_dirs_lib="${BASH_SOURCE%/*}/lib/claude-config-dirs.sh"
 # shellcheck source=lib/claude-config-dirs.sh
 if [[ ! -r "${config_dirs_lib}" ]] || ! source "${config_dirs_lib}"; then
-  printf '[enforce-foreground-harness] lib/claude-config-dirs.sh unreadable; blocking (fail-closed)\n' >&2
-  printf '%s\n' '{"decision":"block","reason":"Harness Path Protection Rule 2 gate degraded: lib/claude-config-dirs.sh is unreadable, so harness paths cannot be classified. Set run_in_background=false (or omit) and repair the hook install."}'
+  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → exit 2 stands.
+  (printf '[enforce-foreground-harness] lib/claude-config-dirs.sh unreadable; blocking (fail-closed)\n') >&2 || true
+  (printf '%s\n' '{"decision":"block","reason":"Harness Path Protection Rule 2 gate degraded: lib/claude-config-dirs.sh is unreadable, so harness paths cannot be classified. Set run_in_background=false (or omit) and repair the hook install."}') || true
   exit 2
 fi
 
@@ -178,5 +179,6 @@ if [[ "${all_exempt}" == "true" ]]; then
 fi
 
 # Non-exempt harness path with run_in_background=true → BLOCK (JSON decision on stdout, exit 2).
-printf '%s\n' '{"decision":"block","reason":"Harness Path Protection Rule 2: foreground MANDATORY for an Agent call that writes under ~/.claude/ or any ~/.claude-* profile branch config dir, so the user can watch the harness change as it happens. Set run_in_background=false (or omit it). Source: rules/glass-atrium/orchestrator-role.md -> Harness Path Protection."}'
+# Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → exit 2 stands.
+(printf '%s\n' '{"decision":"block","reason":"Harness Path Protection Rule 2: foreground MANDATORY for an Agent call that writes under ~/.claude/ or any ~/.claude-* profile branch config dir, so the user can watch the harness change as it happens. Set run_in_background=false (or omit it). Source: rules/glass-atrium/orchestrator-role.md -> Harness Path Protection."}') || true
 exit 2

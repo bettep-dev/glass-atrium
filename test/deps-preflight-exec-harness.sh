@@ -333,7 +333,8 @@ scenario_assert() {
     assert_absent "role-create SKIPS (role == present)" "pg_create_role" "${rec}"
   fi
   # readiness wait must precede role-create whenever a service start occurred.
-  if printf '%s' "${rec}" | grep -q '^pg_service$'; then
+  # in-shell whole-line match — a `grep -q` reader under pipefail loses its verdict to the writer's SIGPIPE
+  if [[ $'\n'"${rec}"$'\n' == *$'\n''pg_service'$'\n'* ]]; then
     local svc_ln wait_ln role_ln seq
     seq="$(printf '%s' "${rec}" | grep -nE '^(pg_service|pg_wait_ready|pg_create_role)$')"
     svc_ln="$(printf '%s\n' "${seq}" | grep ':pg_service$' | head -1 | cut -d: -f1)"

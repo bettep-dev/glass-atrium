@@ -32,8 +32,12 @@
 # 5.3.9; a plain command or `[ ]` gates on both. Every assertion is routed through a
 # helper that `return 1`s on mismatch, so each independently fails the test anywhere.
 
+bats_require_minimum_version 1.5.0
+
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-verification-gate.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
+source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-verification-gate.sh not found: ${HOOK_SH}"
@@ -214,4 +218,23 @@ run_hook_sink() {
   assert_status 2
   assert_contains "VGATE-REVIEWER-001"
   assert_contains "reviewer-miss"
+}
+
+@test "reviewer-miss: a nudge write interrupted ahead of the block still exits 2, nudge and block once each" {
+  local nudge="carries no [PLAN-SUBSET] token" rest trace
+  mk_payload "glass-atrium-dev-react" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=15 — impl" \
+    >"${BATS_TEST_TMPDIR}/envelope"
+  run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope" "HOOK_DATA_DIR=${DATA_DIR}" "VGATE_FIRED_LOG=${SINK}"
+  assert_forced_block "VGATE-REVIEWER-001" || return 1
+  rest="${output#*"${nudge}"}"
+  [[ "${output}" == *"${nudge}"* && "${rest}" != *"${nudge}"* ]] || {
+    echo "nudge not exactly once on the block channel: ${output}"
+    return 1
+  }
+  # a held nudge flushed by the trace append would land in the sink ahead of the trace line
+  trace="$(cat -- "${SINK}")"
+  [[ "${trace}" == *"verdict=block-reviewer" && "${trace}" != *$'\n'* && "${trace}" != *"PLAN-SUBSET"* ]] || {
+    echo "trace sink: ${trace}"
+    return 1
+  }
 }

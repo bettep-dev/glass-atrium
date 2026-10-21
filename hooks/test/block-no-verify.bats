@@ -11,6 +11,8 @@
 # Hermetic strategy: the hook reads ONLY stdin — no git repo is touched; the
 # command string is never executed, only pattern-scanned.
 
+bats_require_minimum_version 1.5.0
+
 HOOK_SH="${BATS_TEST_DIRNAME}/../block-no-verify.sh"
 
 setup() {
@@ -22,6 +24,9 @@ setup() {
 run_hook() {
   run bash "${HOOK_SH}" <<<"${1}"
 }
+
+# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
+source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
 
 @test "malicious: git commit --no-verify → SEC-011 block (exit 2)" {
   run_hook '{"tool_name":"Bash","tool_input":{"command":"git commit -m msg --no-verify"}}'
@@ -47,6 +52,12 @@ pipe_overflow_padding() {
   run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m msg --no-verify\\n${padding}\"}}"
   [[ "${status}" -eq 2 ]] || { echo "${output}"; return 1; }
   [[ "${output}" == *"SEC-011"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "malicious: an interrupted block write still exits 2 with the bypass block once on stderr" {
+  printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m msg --no-verify"}}' >"${BATS_TEST_TMPDIR}/envelope"
+  run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope"
+  assert_forced_block "SEC-011"
 }
 
 @test "benign: normal git commit → pass (exit 0, silent)" {

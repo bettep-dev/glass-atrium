@@ -1607,7 +1607,10 @@ assert_removal_evidence() {
     # deletion power without the guard that detects a wrong deletion is privilege
     # escalation, not a feature. If this file is ever split from the marker check,
     # the live path refuses loudly instead of removing unwatched.
-    if ! declare -f verify_patched | grep -q 'EDITABLE:BEGIN'; then
+    # Captured, not piped: a multi-line declare -f into an early-exit grep can read as absent.
+    local verify_body
+    verify_body="$(declare -f verify_patched)" || verify_body=""
+    if [[ "${verify_body}" != *'EDITABLE:BEGIN'* ]]; then
         REMOVAL_VERDICT="marker_guard_absent"
         printf '[daemon-apply] FATAL removal_gate_precondition: verify_patched carries NO editable-region marker check — refusing live removal for target=%s pattern=%s (row kept pending)\n' \
             "${target}" "${label}" >&2

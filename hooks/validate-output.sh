@@ -40,16 +40,18 @@ INPUT=$(hook_read_input)
 # `read -r -d ''` consumer mid-value and silently disarm the detector (block bypass); stripping it
 # AFTER [:2000] mirrors the old $()-capture (bash drops NUL bytes), so os.system( reassembles across
 # the NUL instead of splitting into a harmless "os." fragment.
-# No fail-open handler by design: malformed /
-# non-object JSON, or python3 absent → python3 exits non-zero → the reads hit EOF → set -e
-# exits non-zero, preserving the prior fail-hard (loud-fail) behavior on bad input exactly.
-# SC2312: the reads deliberately propagate that python3 failure through set -e — the <( )
-# boundary hides the exit code from ShellCheck, so the check is silenced (not a masked bug).
-# shellcheck disable=SC2312
-{
-  IFS= read -r -d '' TOOL_NAME
-  IFS= read -r -d '' TOOL_RESPONSE
-} < <(python3 -c '
+# No fail-open handler by design: malformed / non-object JSON, or python3 absent → the parse
+# command fails → set -e exits non-zero, the fail-hard (loud-fail) behavior on bad input.
+# Waited file capture, not <( ): bash 3.2 cannot wait on a process substitution, and its late exit
+# SIGCHLD can interrupt the block write below. $( ) would drop the NUL framing.
+PARSED_FIELDS="$(mktemp)"
+# shellcheck disable=SC2329  # invoked from the EXIT trap string
+delete_parsed_fields() {
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${PARSED_FIELDS}"; then rm -f -- "${PARSED_FIELDS:?}"; fi
+}
+trap 'delete_parsed_fields || true' EXIT
+python3 -c '
 import sys, json
 d = json.load(sys.stdin)
 o = sys.stdout
@@ -57,7 +59,11 @@ o.write(str(d.get("tool_name", "")).rstrip("\n").replace("\x00", ""))
 o.write("\0")
 o.write(str(d.get("tool_response", ""))[:2000].rstrip("\n").replace("\x00", ""))
 o.write("\0")
-' <<<"${INPUT}" 2>/dev/null)
+' <<<"${INPUT}" >"${PARSED_FIELDS}" 2>/dev/null
+{
+  IFS= read -r -d '' TOOL_NAME
+  IFS= read -r -d '' TOOL_RESPONSE
+} <"${PARSED_FIELDS}"
 
 # LLM07: system-prompt reverse-leak patterns. Joined into one ERE alternation so a single
 # grep -E pass replaces the former per-pattern loop (1 grep instead of up to 8). Every pattern
@@ -95,7 +101,8 @@ if [[ "${TOOL_NAME}" == "Bash" ]]; then
       "실행 결과에 위험한 코드 패턴 포함" \
       "Review and sanitize the command output before proceeding" \
       "진행 전 명령 출력을 검토하고 정제하세요"
-    printf '%s\n' '{"decision":"block","reason":"[output-validator] LLM05: Dangerous code pattern in execution output"}'
+    # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → exit 2 stands.
+    (printf '%s\n' '{"decision":"block","reason":"[output-validator] LLM05: Dangerous code pattern in execution output"}') || true
     exit 2
   fi
 fi
