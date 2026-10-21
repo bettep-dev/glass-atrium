@@ -404,7 +404,7 @@ exit_step() {
 die_step() {
   local code="${1:-1}"
   shift
-  printf 'FATAL: %s\n' "$*" >&2
+  (printf 'FATAL: %s\n' "$*") >&2 || true
   [[ -n "${GA_TUI_STEP:-}" ]] && return "${code}"
   exit "${code}"
 }

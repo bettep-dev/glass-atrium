@@ -243,9 +243,9 @@ run_hook() {
     || { echo "unlisted path not flagged against the md plan: ${output}" >&2; return 1; }
 }
 
-# ~80 KiB of listed paths: above the 64 KiB pipe capacity, so a reader that stops at a line-1
-# match leaves its writer to die of SIGPIPE, which pipefail reports as "no match". Long paths keep
-# the row count low → the per-row matcher loop stays fast.
+# ~80 KiB of listed paths → a multi-write writer, which races a reader that stops at a line-1 match at
+# any size; a writer left with a write dies of SIGPIPE, which pipefail reports as "no match". Long paths
+# keep the row count low → the per-row matcher loop stays fast.
 @test "an md plan whose Target Files list exceeds the pipe buffer still warns on an unlisted path" {
   local body dir
   dir="src/listed/$(printf 'deeply-nested-module-directory-%02d/' 1 2 3 4 5 6)"

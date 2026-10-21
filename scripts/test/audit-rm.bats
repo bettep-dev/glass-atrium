@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # audit-rm.bats — pins scripts/audit-rm.sh: exactly one converted delete shape, the three named unsafe
 # kinds, the closed two-label annotation vocabulary, the scope (five trees plus two root scripts, no file
-# exempt), the blocking exit contract, and the NOT_READ disclosure of every tracked shell file it skips.
+# exempt, an absent install.sh skipped), the blocking exit contract, and the NOT_READ disclosure of every
+# tracked shell file it skips.
 #
 # Every fixture line is test data the auditor reads and no shell runs.
 # This file is in the auditor's own scope, so each such line it flags is annotated not-executed in one of two ways:
@@ -9,6 +10,8 @@
 #   - a GA-RM token following the site inside the fixture text itself.
 
 # shellcheck disable=SC2016  # fixtures are literal shell text written to files, never expanded here
+
+bats_require_minimum_version 1.5.0
 
 AUDIT_SH="${BATS_TEST_DIRNAME}/../audit-rm.sh"
 # Physical path → a symlinked scripts/ dir cannot re-aim the root at the symlink's parent.
@@ -274,9 +277,36 @@ get_unread_shell_files() {
   }
 }
 
+@test "a scope run on a root without install.sh notes the absence and still completes with its summary" {
+  local root="${BATS_TEST_TMPDIR}/root" summary="converted=0 annotated=0 unconverted=0 quality_reject=0"
+  make_scope_root "${root}" install.sh
+  run --separate-stderr bash "${AUDIT_SH}" --root "${root}"
+  [[ "${status}" -eq 0 && "${lines[${#lines[@]} - 1]}" == "${summary}" &&
+    "${stderr}" == *"NOTICE"*"absent"*"/install.sh"* ]] || {
+    echo "exit ${status}, expected 0 with '${summary}' and an absence note"
+    echo "--- stdout ---"
+    echo "${output}"
+    echo "--- stderr ---"
+    echo "${stderr}"
+    return 1
+  }
+}
+
+@test "a present but unreadable install.sh is still an IO error (exit 3)" {
+  local root="${BATS_TEST_TMPDIR}/root"
+  make_scope_root "${root}"
+  chmod 000 "${root}/install.sh"
+  run bash "${AUDIT_SH}" --root "${root}"
+  chmod 644 "${root}/install.sh"
+  [[ "${status}" -eq 3 && "${output}" == *"unreadable"*"/install.sh"* ]] || {
+    echo "unreadable install.sh: exit ${status}: ${output}"
+    return 1
+  }
+}
+
 @test "a missing scope tree or scope file is an IO error (exit 3)" {
   local entry="" root=""
-  for entry in lib install.sh; do
+  for entry in lib glass-atrium; do
     root="${BATS_TEST_TMPDIR}/${entry}"
     make_scope_root "${root}" "${entry}"
     run bash "${AUDIT_SH}" --root "${root}"
