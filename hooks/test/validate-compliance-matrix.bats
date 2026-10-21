@@ -375,8 +375,8 @@ break_layer_b() {
   }
 }
 
-# ~105 KiB of table rows: above the 64 KiB pipe capacity, so a reader that stops at line 1 leaves
-# its writer to die of SIGPIPE, which pipefail reports as "no match".
+# ~105 KiB of table rows → a multi-write writer, which races a reader that stops at line 1 at any size;
+# a writer left with a write dies of SIGPIPE, which pipefail reports as "no match".
 @test "a consistent matrix larger than the pipe buffer, marker on its first data row, exits 0" {
   {
     printf '| core-security.md | ✓ | † |\n'

@@ -291,8 +291,8 @@ record0_entries() {
 }
 
 # --- readers over the pipe buffer -------------------------------------------------------------
-# Under the consumers' `set -Eeuo pipefail`, an early-exit reader whose writer still holds data past
-# the 64 KiB pipe capacity reports the writer's SIGPIPE 141 instead of its own verdict.
+# Under the consumers' `set -Eeuo pipefail`, an early-exit reader whose writer still has a write to make
+# reports the writer's SIGPIPE 141 instead of its own verdict — a multi-write writer races it at any size.
 
 # $1 = first line → a ~140 KB file of that line plus filler lines; prints its path.
 big_text_file() {
