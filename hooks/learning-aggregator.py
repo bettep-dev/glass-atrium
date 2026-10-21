@@ -1114,13 +1114,18 @@ def _get_pair_target(row: dict, verdict: str, windows: PairWindows) -> str | Non
 def _put_pair_statuses(
     stored: dict, pair_keys: set[tuple[str, str]] | None,
     floors: dict[tuple[str, str], FloorResult], windows: PairWindows,
+    *, registry: frozenset[str] | None = None,
 ) -> None:
     """Set every identified/dormant family row's status from its pair verdict, written or
-    not this run — a row the aggregator no longer emits leaves 'identified' too (39701 → E5)."""
+    not this run — a row the aggregator no longer emits leaves 'identified' too (39701 → E5).
+    A dormant row whose agent is off a readable registry stays dormant (roster hold)."""
     moves: dict[str, int] = defaultdict(int)
     detection = f"{windows.start.detection:%Y-%m-%d}"
     for (stored_core, agent), row in stored.items():
         if row.get("status") not in _PAIR_STATUSES:
+            continue
+        is_off_roster = registry is not None and _canonical_agent(agent) not in registry
+        if row.get("status") == "dormant" and is_off_roster:
             continue
         core = _get_signature_core(stored_core)
         verdict = _get_pair_verdict(core, agent, pair_keys, floors)
@@ -1335,7 +1340,9 @@ def main(registry_path: str | None = None) -> None:
                 "read failed; keyless rows keep their status",
                 file=sys.stderr,
             )
-        _put_pair_statuses(_pg_read_learning_log_signatures(), pair_keys, floors, windows)
+        _put_pair_statuses(
+            _pg_read_learning_log_signatures(), pair_keys, floors, windows, registry=registry
+        )
 
     _emit_exclusion_summary(aggregated_count, exclusion_counts)
     if not new_records:

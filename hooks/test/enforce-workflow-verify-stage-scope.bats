@@ -29,12 +29,11 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 }
 
+# The script reaches jq and the hook on stdin → no argument nears Linux's 128 KiB per-string exec limit.
 run_hook() {
-  run bash -c '
-    script="$1"; hook="$2"; trace="$3"
-    payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
-    printf "%s" "${payload}" | WORKFLOW_GATE_FIRED_LOG="${trace}" bash "${hook}"
-  ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
+  local payload
+  payload="$(printf '%s' "${1}" | jq -Rsc '{tool_name:"Workflow",tool_input:{script:.}}')"
+  run env WORKFLOW_GATE_FIRED_LOG="${TRACE_LOG}" bash "${HOOK_SH}" <<<"${payload}"
 }
 
 run_lint() {
@@ -57,6 +56,19 @@ ${DEV_BODY}"
 log('[SCOPE] files=hooks/a.sh · deliverable=bug-fix · out=none')
 ${DEV_BODY}"
   [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged despite the declaration -- ${output}" >&2; return 1; }
+}
+
+# ~130 KiB of comment lines: above the 64 KiB pipe capacity, so a reader that stops at a line-1
+# match leaves its writer to die of SIGPIPE, which pipefail reports as "no match".
+@test "a [SCOPE] declaration on line 1 of a script larger than the pipe buffer silences the advisory" {
+  local padding
+  padding="$(seq -f '// padding line %05g of an ordinary workflow script body' 1 2500)"
+  run_hook "log('[SCOPE] files=hooks/a.sh · deliverable=bug-fix · out=none')
+${DECL_TEAM}
+${DEV_BODY}
+${padding}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged despite the declaration -- ${output}" >&2; return 1; }
 }
 

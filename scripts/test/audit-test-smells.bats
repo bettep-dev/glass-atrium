@@ -162,6 +162,36 @@ audit_body() {
   done
 }
 
+@test "an incident-header finding names the header line that triggered it, at that line" {
+  # The ratchet keys a header finding on this detail text, so a generic detail would collapse every
+  # header into one key.
+  local -a table=(
+    $'the first trigger below a purpose line\x1fbats\x1f#!/usr/bin/env bats\\n# Pins the retry budget.\\n# Fixed by T19 on 2026-04-14.\\n# Also #14.\\n%%test%% "keeps the budget" {\\n  true\\n}\x1f3\x1f# Fixed by T19 on 2026-04-14.'
+    $'a date in a TS line-comment header\x1fts\x1f// Incident 2026-04-14: the label overflowed.\\nimport test from "node:test";\x1f1\x1f// Incident 2026-04-14: the label overflowed.'
+    $'an indented line inside a block comment\x1fts\x1f/**\\n * Renders the label.\\n   * Regression for AC-4.\\n */\\nimport test from "node:test";\x1f3\x1f* Regression for AC-4.'
+  )
+  local row name ext content want_line want_text fixture out hit idx=0
+  for row in "${table[@]}"; do
+    IFS=$'\x1f' read -r name ext content want_line want_text <<<"${row}"
+    idx=$((idx + 1))
+    fixture="${TS_TMP}/hdr${idx}.${ext}"
+    printf '%b\n' "${content}" | write_fixture "${fixture}"
+    out="$(bash "${AUDIT_SH}" --path "${fixture}")" || {
+      echo "${name}: exit $? ${out}"
+      return 1
+    }
+    hit="$(printf '%s\n' "${out}" | grep '^INCIDENT_HEADER')" || true
+    [[ "${hit}" == *"hdr${idx}.${ext}:${want_line}: ${want_text}" ]] || {
+      echo "${name}: want line ${want_line} '${want_text}', got ${out}"
+      return 1
+    }
+    [[ "${out}" == *" incident_header=1"* ]] || {
+      echo "${name}: the count must stay one per file, got ${out}"
+      return 1
+    }
+  done
+}
+
 @test "heredoc awareness: heredoc lines feed neither signal and a column-0 brace does not end the body" {
   write_fixture "${TS_TMP}/heredoc.bats" <<'OUTER'
 #!/usr/bin/env bats
@@ -272,6 +302,53 @@ EOF
     echo "TS scope dir not walked: ${output}"
     return 1
   }
+}
+
+@test "an absent monitor/test is skipped with a note and the scope run still prints its summary" {
+  local dir
+  for dir in hooks/test scripts/test autoagent/test; do
+    write_fixture "${TS_TMP}/${dir}/sample.bats" <<'EOF'
+#!/usr/bin/env bats
+%%test%% "sample" {
+  true
+}
+EOF
+  done
+  run bash "${AUDIT_SH}" --root "${TS_TMP}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "exit ${status}: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"NOTICE: optional scope directory absent, skipped: ${TS_TMP}/monitor/test"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"tests_scanned=3 "* ]] || {
+    echo "${output}"
+    return 1
+  }
+}
+
+@test "a missing bundled scope root still exits 3 with the ERROR line" {
+  local absent root dir
+  for absent in hooks/test scripts/test autoagent/test; do
+    root="${TS_TMP}/without-${absent%%/*}"
+    for dir in hooks/test scripts/test autoagent/test monitor/test; do
+      if [[ "${dir}" != "${absent}" ]]; then
+        write_fixture "${root}/${dir}/sample.bats" <<'EOF'
+#!/usr/bin/env bats
+%%test%% "sample" {
+  true
+}
+EOF
+      fi
+    done
+    run bash "${AUDIT_SH}" --root "${root}"
+    [[ "${status}" -eq 3 && "${output}" == *"ERROR: scope directory missing or unreadable: ${root}/${absent}"* ]] || {
+      echo "absent=${absent} exit ${status}: ${output}"
+      return 1
+    }
+  done
 }
 
 @test "the advisory counts never change the exit status, --strict included" {

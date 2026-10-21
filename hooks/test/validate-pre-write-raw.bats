@@ -34,10 +34,11 @@ edit_payload() {
     '{tool_name:"Edit", tool_input:{file_path:$fp, old_string:$o, new_string:$n}}'
 }
 
-# A Write-tool envelope for a wiki/raw/ path carrying $1 as content. Args: $1=content.
+# A Write-tool envelope for a wiki/raw/ path carrying $1 as content, read by jq on stdin so a page
+# over Linux's 128 KiB per-string exec limit never becomes an argument. Args: $1=content.
 raw_write_payload() {
-  jq -nc --arg fp "${WIKI_ROOT}/raw/page.md" --arg c "${1}" \
-    '{tool_name:"Write", tool_input:{file_path:$fp, content:$c}}'
+  printf '%s' "${1}" | jq -Rsc --arg fp "${WIKI_ROOT}/raw/page.md" \
+    '{tool_name:"Write", tool_input:{file_path:$fp, content:.}}'
 }
 
 # A Write-tool envelope for an explicit destination. Args: $1=file_path $2=content.
@@ -167,6 +168,31 @@ conforming_doc() {
     echo "expected SCOPE-006 block: ${output}" >&2
     return 1
   }
+}
+
+# Content past the frontmatter is what the extraction leaves unread → large pages must still reach the V5/V6 verdict.
+@test "Write: an envelope-less raw write over the size limit blocks on both its size and its missing envelope below and above the pipe capacity" {
+  local row name lines bytes content
+  # name | padding lines (~47 bytes each): one size between the 51200-byte limit and 64 KiB, one well past 64 KiB
+  local rows=("below the pipe capacity|1250" "above the pipe capacity|4000")
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name lines <<<"${row}"
+    content="$(raw_doc "$(seq -f 'padding line %05g of an ordinary fetched page' 1 "${lines}")")"
+    bytes=$(printf '%s' "${content}" | wc -c | tr -d ' ')
+    ((bytes > 51200)) || {
+      echo "${name}: fixture is ${bytes} bytes, not over the limit"
+      return 1
+    }
+    run bash "${RAW_HOOK}" <<<"$(raw_write_payload "${content}")"
+    [[ "${status}" -eq 2 ]] || {
+      echo "${name} (${bytes} bytes): expected exit 2, got ${status}: ${output}"
+      return 1
+    }
+    [[ "${output}" == *"SCOPE-005"* && "${output}" == *"SCOPE-006"* ]] || {
+      echo "${name} (${bytes} bytes): expected SCOPE-005 and SCOPE-006: ${output}"
+      return 1
+    }
+  done
 }
 
 # =========== Bypass guard for the retired content checks (SCOPE-003 / SCOPE-004) ================

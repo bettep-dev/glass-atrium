@@ -16,7 +16,22 @@ IFS=$'\n\t'
 
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT CONTENT FILE_PATH PARENT_DIR PHYS_FILE FM SRC_LINE BODY ENV_OPEN ENV_CLOSE input ctx
 INPUT=$(hook_read_input)
 [[ "${INPUT}" == "{}" ]] && exit 0
 
@@ -100,7 +115,7 @@ if [[ "${BYTES}" -gt 51200 ]]; then
 fi
 
 # Frontmatter = lines between the first and second ---
-FM=$(printf '%s\n' "${CONTENT}" | awk '
+FM=$(printf '%s\n' "${CONTENT}" | drain_after awk '
   BEGIN { in_fm=0; cnt=0 }
   /^---[[:space:]]*$/ { cnt++; if (cnt==1) { in_fm=1; next } else if (cnt==2) { in_fm=0; exit } }
   in_fm { print }
@@ -119,9 +134,10 @@ fi
 # V2: source_url is a single URL
 SRC_LINE=$(printf '%s\n' "${FM}" | grep '^source_url:' | head -1 || true)
 if [[ -n "${SRC_LINE}" ]]; then
-  if ! printf '%s' "${SRC_LINE}" | grep -Eq '^source_url:[[:space:]]+https?://[^[:space:],]+$'; then
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if ! printf '%s' "${SRC_LINE}" | drain_after grep -Eq '^source_url:[[:space:]]+https?://[^[:space:],]+$'; then
     VIOLATIONS+=("V2: source_url is not a single URL")
-  elif printf '%s' "${SRC_LINE}" | grep -Eiq 'https?://.*https?://'; then
+  elif printf '%s' "${SRC_LINE}" | drain_after grep -Eiq 'https?://.*https?://'; then
     VIOLATIONS+=("V2: source_url carries several URLs")
   fi
 fi

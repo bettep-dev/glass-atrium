@@ -22,6 +22,8 @@
 #   `[[ ... ]] || return 1` so it gates on both legs regardless of position (`return` runs in the
 #   test-body function scope → fails the test immediately). Never leave a bare intermediate `[[ ]]`.
 
+bats_require_minimum_version 1.5.0
+
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-workflow-verify-stage.sh"
 CORPUS_DIR="${BATS_TEST_DIRNAME}/corpus"
@@ -1816,6 +1818,65 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
     run_hook_file "${outdir}/fence_${i}.js"
     [[ "${status}" -eq 0 ]] || {
       echo "SKILL SKELETON ${i} did NOT PASS (exit ${status})" >&2
+      return 1
+    }
+  done
+}
+
+# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
+source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
+
+@test "nodecl: an interrupted block write still exits 2, the reason once on stderr and not in the trace" {
+  local script trace
+  script="log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+log('[SCOPE] files=a.sh · deliverable=fix · out=none')
+log('[PLAN-CLOSE] in-script')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  jq -n --arg s "${script}" '{tool_name:"Workflow",tool_input:{script:$s}}' >"${BATS_TEST_TMPDIR}/envelope"
+  run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope" "WORKFLOW_GATE_FIRED_LOG=${TRACE_LOG}"
+  assert_forced_block "BLOCKED (missing composition declaration)" || return 1
+  # a held reason flushed by the trace append would land in the log ahead of the trace line
+  trace="$(cat -- "${TRACE_LOG}")"
+  [[ "${trace}" == *"verdict=block-nodecl"* && "${trace}" != *$'\n'* && "${trace}" != *"composition declaration"* ]] || {
+    echo "trace log: ${trace}"
+    return 1
+  }
+}
+
+@test "norev: an advisory write interrupted ahead of the block still exits 2, advisory and reason once each" {
+  # row = name|advisory label|line that trips only that advisory, prepended to a DEV script with no reviewer spawn
+  local rows=(
+    "resilience|ADVISORY (resilience|agent('glass-atrium-dev-nestjs',{goal:'draft with a schema output'})"
+    "schema-cap|ADVISORY (schema-cap|const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 1200 } } };"
+  )
+  local row name label lead script rest trace
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name label lead <<<"${row}"
+    script="${lead}
+/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+    jq -n --arg s "${script}" '{tool_name:"Workflow",tool_input:{script:$s}}' >"${BATS_TEST_TMPDIR}/envelope"
+    TRACE_LOG="${BATS_TEST_TMPDIR}/trace-${name}.log"
+    run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope" "WORKFLOW_GATE_FIRED_LOG=${TRACE_LOG}"
+    assert_forced_block "BLOCKED (no reviewer" || {
+      echo "row ${name}"
+      return 1
+    }
+    rest="${output#*"${label}"}"
+    [[ "${output}" == *"${label}"* && "${rest}" != *"${label}"* ]] || {
+      echo "row ${name}: advisory not exactly once: ${output}"
+      return 1
+    }
+    trace="$(cat -- "${TRACE_LOG}")"
+    [[ "${trace}" == *"verdict=block-norev"* && "${trace}" == *"advisory=${name}"* && "${trace}" != *$'\n'* && "${trace}" != *"ADVISORY"* ]] || {
+      echo "row ${name}: trace log: ${trace}"
       return 1
     }
   done

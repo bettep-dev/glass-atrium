@@ -4,7 +4,8 @@
 # Usage: audit-test-smells.sh [--path <file>]... [--root <dir>] [--quiet] [--advisory|--strict]
 #
 # Behavior:
-#   1. Walk the in-script SCOPE_DIRS list (its single source of truth) or the --path overrides
+#   1. Walk the in-script SCOPE_DIRS list (its single source of truth) or the --path overrides;
+#      an absent OPTIONAL_SCOPE_DIR is skipped with a stderr NOTICE
 #   2. Split each Bats file into @test bodies with a heredoc-aware extractor
 #   3. Report signal (a) — a body whose last non-exempt `run` result is never inspected
 #   4. Report signal (b) — a comparison whose two operands are the same literal or variable token
@@ -22,12 +23,16 @@
 #     or `it(` call in a `.ts` file, that carries an ID.
 #   - incident_header: a file whose leading comment block — `#`, `//` or `/* */` lines after an
 #     optional shebang and leading blank lines, ending at the first blank or code line — carries an
-#     ID or a `YYYY-MM-DD` date. A `# shellcheck` directive line is tooling and is skipped.
-#   - Scope: every `.bats` and `.ts` file under SCOPE_DIRS; monitor/test is the only TS root.
+#     ID or a `YYYY-MM-DD` date. A `# shellcheck` directive line is tooling and is skipped. The
+#     finding names the first such line, at its own line number.
+#   - Scope: every `.bats` and `.ts` file under SCOPE_DIRS; monitor/test is the only TS root, and
+#     the only optional one.
 #
 # Surface: ADVISORY by default — findings still exit 0 on every surface, including the scope-list
 # run. Only `--strict` applies blocking exit semantics; `--advisory` reports without failing
-# anywhere. The findings print identically in every mode. Promotion to blocking (and to CI wiring)
+# anywhere. The findings print identically in every mode. CI runs this auditor only through the
+# naming ratchet under scripts/, which compares the id_title and incident_header findings against a
+# committed baseline and leaves this exit contract as it is — no promotion. Promotion to blocking
 # follows the in-house precedent set by scripts/audit-absorption.sh, and the promotion condition it
 # must meet is stated ONCE, in rules/glass-atrium/shared-self-improve-hygiene.md → Auditor. Read it
 # there; a copy here is the drift this repo names. A day-one blocking gate is forbidden.
@@ -36,7 +41,8 @@
 #   0 = audit completed with no blocking findings (or an advisory run)
 #   1 = blocking run reporting findings
 #   2 = usage error
-#   3 = IO/scope error (a scope directory or --path file is missing or unreadable)
+#   3 = IO/scope error (a bundled scope directory or a --path file is missing, or any scope
+#       directory is unreadable)
 #
 # Measured baseline — a measured quantity, never a target band, and deliberately NOT quoted here:
 # a hand-copied census re-drifts on the next edit exactly as a hand-copied file count does (the
@@ -117,6 +123,9 @@ SCOPE_DIRS=(
   monitor/test
 )
 readonly SCOPE_DIRS
+# The release bundle drops monitor/test (scripts/generate-manifest.sh → EXCLUDE_RE), so an install
+# root lacks it; only its absence is skipped — present but unreadable still exits 3.
+readonly OPTIONAL_SCOPE_DIR='monitor/test'
 
 readonly RE_TEST_OPEN='^@test[[:space:]]+(.*[^[:space:]])[[:space:]]*\{[[:space:]]*$'
 readonly RE_TEST_CLOSE='^\}[[:space:]]*$'
@@ -156,6 +165,8 @@ count_pin=0
 tests_scanned=0
 id_title=0
 incident_header=0
+HEADER_HIT_LINE=0
+HEADER_HIT_TEXT=""
 LINE_CODE=""
 LINE_TEXT=""
 
@@ -255,7 +266,8 @@ line_pins_count() {
   return 1
 }
 
-# True when the slurped file's leading comment block carries an ID or a date stamp.
+# True when the slurped file's leading comment block carries an ID or a date stamp; the first such
+# line lands in HEADER_HIT_LINE (1-based) and HEADER_HIT_TEXT (leading whitespace trimmed).
 header_is_incident() {
   local idx=0 trimmed="" started=0 in_block=0
   for ((idx = 0; idx < AUDIT_CLI_LINE_COUNT; idx++)); do
@@ -282,6 +294,8 @@ header_is_incident() {
       continue
     fi
     if [[ "${trimmed}" =~ ${RE_ID_TAG} || "${trimmed}" =~ ${RE_DATE_STAMP} ]]; then
+      HEADER_HIT_LINE=$((idx + 1))
+      HEADER_HIT_TEXT="${trimmed}"
       return 0
     fi
   done
@@ -309,7 +323,7 @@ audit_file() {
   # shellcheck disable=SC2310  # a false predicate is the unreported outcome, not an error
   if header_is_incident; then
     incident_header=$((incident_header + 1))
-    audit_cli_report INCIDENT_HEADER "${rel}:1" "leading comment block carries an ID or a date stamp"
+    audit_cli_report INCIDENT_HEADER "${rel}:${HEADER_HIT_LINE}" "${HEADER_HIT_TEXT}"
   fi
   if [[ "${abs}" == *.ts ]]; then
     audit_ts_titles "${rel}"
@@ -431,6 +445,10 @@ main() {
   else
     for dir in "${SCOPE_DIRS[@]}"; do
       abs="${root_dir}/${dir}"
+      if [[ "${dir}" == "${OPTIONAL_SCOPE_DIR}" && ! -e "${abs}" ]]; then
+        printf 'NOTICE: optional scope directory absent, skipped: %s\n' "${abs}" >&2
+        continue
+      fi
       if [[ ! -d "${abs}" || ! -r "${abs}" ]]; then
         printf 'ERROR: scope directory missing or unreadable: %s\n' "${abs}" >&2
         exit 3

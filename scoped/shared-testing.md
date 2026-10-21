@@ -8,8 +8,8 @@
 
 ### What makes a test a test
 
-- **Relationship over enumeration**: a test asserts a RELATIONSHIP that holds across an input class — not one hand-picked input/output pair. A test suite is sensitive to behavior change and insensitive to structure change.
-- **The one question that decides a test's worth**: "if I broke the implementation in the smallest way that matters, would THIS test fail?" No → it is not a test.
+- **Relationship over enumeration**: a test asserts a relationship that holds across an input class — not one hand-picked input/output pair. A test suite is sensitive to behavior change and insensitive to structure change.
+- **The one question that decides a test's worth**: "if I broke the implementation in the smallest way that matters, would this test fail?" No → it is not a test.
 - **Watch it fail**: write the test before the code exists, or apply the deliberate-break exception (`## Rationalization Rejection (Testing)` → **Qualifier on the last row**). A test never observed to fail has not been verified.
   - Make the code correct for every valid input, not just the test's inputs — never hard-code a test's values.
   - Never edit, skip or delete a failing test until you know why it failed.
@@ -21,7 +21,7 @@
 Each step builds on the previous.
 
 1. Name the relationship in one sentence — an invariant, a round-trip, or a metamorphic relation ("output is always sorted" · "decode of encode is identity" · "total never exceeds the cap").
-2. Pick the cheapest form that expresses it: a property assertion only where a real invariant exists (round-trip, idempotence, a whole-class invariant) > ONE table of named rows over the equivalence class plus its boundaries (`### Table form per stack`) > a single example.
+2. Pick the cheapest form that expresses it: a property assertion only where a real invariant exists (round-trip, idempotence, a whole-class invariant) > one table of named rows over the equivalence class plus its boundaries (`### Table form per stack`) > a single example.
 3. An Nth case is admissible only when it crosses an equivalence-class boundary the existing cases do not. Same class as an existing case → do NOT add it; strengthen the existing assertion instead.
 4. Cannot name the relationship → the behavior is not understood yet. Stop and clarify; enumerating cases is not a substitute for understanding.
 
@@ -70,7 +70,7 @@ Each step builds on the previous.
 - **A test written per file, class or function by reflex, or to reach a count or coverage figure** — its relationship cannot be stated beyond "X runs" or "X calls Y" (one test per method of each new file · only internal-collaborator call assertions).
   - A call asserted on a boundary mock (`## Mocking Rules`) is observable behavior and is exempt.
 - **Control flow that can SKIP an assertion** — `if` / `while` / `try` inside a test body where the assertion sits on only one branch, so a run can finish having asserted nothing.
-  - **Carve-out — data-driven iteration over a fixture table is NOT this smell**: a loop whose body asserts on EVERY element is the idiomatic parameterized form Decision procedure step 2 prefers. The trigger is a skippable assertion, never the presence of a loop keyword.
+  - **Carve-out — data-driven iteration over a fixture table is not this smell**: a loop whose body asserts on EVERY element is the idiomatic parameterized form Decision procedure step 2 prefers. The trigger is a skippable assertion, never the presence of a loop keyword.
 
 ## Mocking Rules
 
@@ -151,7 +151,7 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 | executable-specification example | it is the one canonical worked example documenting the contract |
 | one-off verification test (a probe, an incident repro, a change check) | it is kept as a regression pin in the behavior's home file, or deleted in the change that wrote it |
 
-- **Boundary**: an example test is never a SUBSTITUTE for the relationship test of the same behavior. Three examples of one behavior with no named relationship is enumeration, not coverage.
+- **Boundary**: an example test is never a substitute for the relationship test of the same behavior. Three examples of one behavior with no named relationship is enumeration, not coverage.
 
 ## Rationalization Rejection (Testing)
 
@@ -183,7 +183,7 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 
 ## Destructive-Path Suite Safety (live-postgres reach)
 
-**Condition — this section binds only when you are about to RUN a suite file that executes one of two install-side shell functions**: `clear_unmanaged_pg_orphan` (`lib/ga-daemons.sh`) and its only caller `preflight_pg_utc_guard` (`lib/ga-tui-preflight.sh`) are exactly the functions that can reach a live postgres. No such run → skip to the next section. Otherwise clear the procedure below first: the steps build on each other, and a step you cannot complete is a FAIL rather than a judgement call.
+**Condition — this section binds only when you are about to RUN a suite file that executes one of two install-side shell functions**: `clear_unmanaged_pg_orphan` (`lib/ga-daemons.sh`) and its only caller `preflight_pg_utc_guard` (`lib/ga-tui-preflight.sh`) are the functions that can reach a live postgres. Clear the procedure below first: the steps build on each other, and a step you cannot complete is a FAIL rather than a judgement call.
 
 ### Before you start: shadowing is not a safety condition
 
@@ -195,21 +195,20 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 List every occurrence and classify by READING it; a command-word pattern is FORBIDDEN as the enumeration step.
 
 - `grep -rn "clear_unmanaged_pg_orphan\|preflight_pg_utc_guard" test hooks/test scripts/test autoagent/test`
-- Read every line it returns. Do not filter first: under-enumeration is the dangerous direction here, because a missed executing site is indistinguishable from a pass.
-- Worked failure, why the shortcut is forbidden: a first-command-word regex over `test/poll-wallclock-ceiling.bats` returns the `@test` title and misses the real call, which sits at the end of a `run_bounded` child-shell command string after a `;`.
+- Read every line it returns, unfiltered: a missed executing site is indistinguishable from a pass.
+- Why: a first-command-word regex over `test/poll-wallclock-ceiling.bats` returns the `@test` title and misses the real call at the end of a `run_bounded` child-shell command string, after a `;`.
 - Derive the site list from the run; never carry a remembered count forward.
 
 ### Step 2 — Classify each occurrence
 
 Classify each occurrence executing, naming, or neutralized — only executing sites continue.
 
-- Executing: the name is a command word — bare at the start of a statement, after `run`, or after ANY command separator (`;`, `&&`, `||`, `|`, newline) INCLUDING inside a child-shell command string, where it is most often mid-string rather than leading.
+- Executing: the name is a command word — bare at the start of a statement, after `run`, or after ANY command separator (`;`, `&&`, `||`, `|`, newline) INCLUDING inside a child-shell command string.
 - Naming: it sits inside `grep`, `awk`, `declare -f`, a `[[ ]]` comparison, a `@test` title, a comment, a string literal in a non-shell file, or an argument to a helper (`extract_launcher_fn <name>`); or it is the definition itself.
 - Neutralized: a shadow definition (`<fn>() { return N; }`) that both precedes EVERY call it covers and sits in the SAME shell as that call — then those calls run the shadow, not the real function. Either half unproven → treat the calls as executing.
   - **In a bats file, "the SAME shell" is the SAME test body, and this is the rule, not a nuance**: each test body runs in its own shell, so a shadow defined in one body does NOT reach a call in any later body.
   - Therefore a call with no shadow inside its OWN body is EXECUTING even when a shadow of that name appears earlier in the file.
-  - Reading the file top-down invites the opposite conclusion — the misclassification that silently converts a real executing site into a pass.
-  - The mirror of that rule, and the reason a control installed once still counts: whatever `setup` defines DOES reach every body, because it runs inside each one. A shadow or a PATH stub installed there covers the whole file; only a body-local one stops at its own body.
+  - Mirror: whatever `setup` defines DOES reach every body, because it runs inside each one — a shadow or a PATH stub installed there covers the whole file, a body-local one only its own body.
 
 ### Step 3 — Read the reached function body
 
@@ -217,24 +216,24 @@ Read the reached function body BEFORE answering — the pid question is not answ
 
 - Every lookup that feeds the signal, and how each is reached: a socket-scoped lookup, plus a socket-blind port fallback that runs only when the first returns nothing.
   - COUNT them rather than assuming one — a substitute must cover every one, which a stub ignoring its arguments does in a single file.
-- Which layer consumes each answer: the pid feeds the signal, and the resolved socket path feeds the removal. That mapping is what makes the Step 4 questions answerable rather than a guess.
-- Then resolve the SITE's own controls the same way: a test file usually installs its stub through a helper defined elsewhere in that file, so follow the helper's definition — the call site shows only its name, which answers nothing.
-- This READ is required, and it relaxes no criterion below.
+- Which layer consumes each answer: the pid feeds the signal, and the resolved socket path feeds the removal.
+- Then resolve the SITE's own controls the same way: a test file usually installs its stub through a helper defined elsewhere in that file, so follow the helper's definition — the call site shows only its name.
+- The READ relaxes no criterion below.
 
 ### Step 4 — Answer the questions at every executing site
 
 Answer every question below at every executing site, all of them resolving.
 
 - **Pid control** — can every `lsof` the function reaches return a live postgres pid? It MUST NOT. No environment seam substitutes for this.
-  - It is the load-bearing half: when the socket lookup returns nothing, the function falls back to a socket-BLIND `lsof -ti tcp:5432` port lookup that finds the live server wherever the socket path points.
+  - It is the load-bearing half: the socket-BLIND `lsof -ti tcp:5432` fallback finds the live server wherever the socket path points.
   - Two substitute shapes resolve it: one reporting NO owner, and one reporting a pid that provably cannot name a live process (a literal above the platform pid ceiling — macOS wraps pids below 100000). A real `lsof` on PATH resolves neither, whatever the socket redirect says.
   - The fake-pid shape leaves `kill -INT <pid>` running the REAL `kill`; it is safe only because the pid cannot exist. A fake pid inside the live range fails this question.
 - **Path control** — does `${PG_SOCKET}/.s.PGSQL.5432` resolve to a path OTHER than the live server's socket?
   - The object is that ONE path, not the tree containing it.
-  - A unique per-run `mktemp -d` directory PASSES even when it sits under `/tmp`, and one suite is FORCED there — `test/uninstall-detached-daemons.bats`, because the AF_UNIX `sun_path` cap (~104 bytes on macOS) makes a `$TMPDIR` base (`/var/folders/…`, ~91 bytes) unbindable.
+  - A unique per-run `mktemp -d` directory PASSES even when it sits under `/tmp`, and the AF_UNIX `sun_path` cap (~104 bytes on macOS) forces `test/uninstall-detached-daemons.bats` there.
   - What FAILS is `PG_SOCKET` resolving to the live socket's OWN directory — unset (defaults to `/tmp`), or an explicit `/tmp`.
   - Which seam sets it depends on how the file loads the code:
-    - `GA_PG_SOCKET`, read ONLY by `ga_init_env` (`lib/ga-env.sh`), which is where the `readonly PG_SOCKET="${GA_PG_SOCKET:-/tmp}"` sits. The freeze fires when `ga_init_env` is CALLED — as the launcher source does — NOT when `lib/ga-env.sh` is sourced.
+    - `GA_PG_SOCKET`, read ONLY by `ga_init_env` (`lib/ga-env.sh`), where `readonly PG_SOCKET="${GA_PG_SOCKET:-/tmp}"` sits. The freeze fires when `ga_init_env` is CALLED — as the launcher source does — NOT when `lib/ga-env.sh` is sourced.
     - a plain `PG_SOCKET=` assignment, which WORKS in a file that sources a domain lib directly and so never calls `ga_init_env`: nothing made the name readonly there, and exporting `GA_PG_SOCKET` in such a file is inert.
 - **Mechanism binding** — which shell actually runs the function?
   - A same-shell `run <fn>` is bound by shell functions AND by PATH stubs; a child-shell driver is bound ONLY by PATH stubs and EXPORTED environment.
@@ -244,11 +243,16 @@ Answer every question below at every executing site, all of them resolving.
 - **Pass** requires pid control AND path control, each by a mechanism that binds under Mechanism binding. Shadowing the signal or the removal command is neither necessary nor sufficient.
 - **Ambiguous means fail** — an ambiguous site is never argued into a pass.
   - The one escape: prepend a scratch dir of record-only stubs to the PATH of the WHOLE invocation (a PATH stub binds in every child) and run that one file under it; unavailable → stop and report.
+    - Known collisions of that whole-invocation run — a not-ok row one causes is an artifact, not a regression:
+      - an exported off-/tmp `GA_PG_SOCKET` trips the fail-closed seam guard `lib/ga-db.sh` → `_require_db_setup_ready` in a suite driving DB setup through `ga_init_env`;
+        - such a suite strips the name from its driver's environment, as `test/run-step-fail-return.bats` → `drive_db` does — never relying on `GA_DB_NAME`, which the guard ignores;
+      - a record-only `psql` stub prints nothing, so `hooks/test/ephemeral-pg-locale.bats` fails its rows asserting on its ephemeral cluster's `psql` output.
+    - A colliding suite that executes neither function runs without the escape; one that executes either stays under this procedure.
 - **Post-condition, independent of all the reading**: record the live server's pid and its socket inode before the run and compare both after. A change in either means something reached it, whatever the file said.
 
 ### What this procedure does NOT cover
 
-The hazard is a live pid plus a live path reaching a real signal or a real removal, so these shapes still slip past:
+These shapes still let a live pid or path reach a real signal or removal:
 
 - a stub dir prepended inside a child command string while an earlier statement in that same child already ran the real tool;
 - `GA_PG_SOCKET` set but never exported, so a child that calls `ga_init_env` itself freezes `PG_SOCKET` to the live default;
@@ -259,4 +263,4 @@ The hazard is a live pid plus a live path reaching a real signal or a real remov
 ## Mechanical Success Metrics
 
 - Per-task-type pass conditions are canonical in `core-outcome-record.md` → Field Input Guide → `metric_pass` (`bug-fix` adds an exit-code-0 check); the result is recorded there as the `metric_pass` boolean.
-- `grader_verdict: verified_pass` on a code-type row is a PRESENCE signal, never a quality signal.
+- `grader_verdict: verified_pass` on a code-type row is a presence signal, never a quality signal.

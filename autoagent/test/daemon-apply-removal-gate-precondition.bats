@@ -4,11 +4,12 @@
 #
 # `assert_removal_evidence` refuses a live removal unless it can see an
 # editable-region marker check inside `verify_patched`, and it looks by
-# introspection: `declare -f verify_patched | grep -q 'EDITABLE:BEGIN'`. That
+# introspection: it captures `declare -f verify_patched` and matches
+# 'EDITABLE:BEGIN' against that body in-shell. That
 # coupling is invisible to every other suite — nothing calls the check, so a
 # rename of the verify function or a move of the marker loop into a helper
 # leaves the deletion power armed while the guard that detects a wrong deletion
-# is no longer reachable by the string the gate greps for.
+# is no longer reachable by the string the gate matches.
 #
 # What is pinned:
 #   * the live tree satisfies the precondition — the gate is reached, finds the

@@ -265,3 +265,17 @@ bytelen() { wc -c | tr -cd '0-9'; }
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != *"[raw-store-read-advisory]"* ]] || return 1
 }
+
+# ~160 KiB of JSON-escaped lines: above the 64 KiB pipe capacity, so a reader that stops at a
+# line-1 match leaves its writer to die of SIGPIPE, which pipefail reports as "no match".
+pipe_overflow_padding() {
+  seq -f 'padding line %05g of an ordinary build log' 1 4000 | awk '{ printf "%s\\n", $0 }'
+}
+
+@test "a raw-store path on line 1 of a command larger than the pipe buffer still gets the note" {
+  local padding
+  padding="$(pipe_overflow_padding)"
+  run bash "${READ_HOOK}" <<<"{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat ${WIKI_ROOT}/raw/page.md\\n${padding}\"}}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"[raw-store-read-advisory]"* ]] || { echo "${output}"; return 1; }
+}
