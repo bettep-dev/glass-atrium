@@ -161,7 +161,7 @@ open(sys.argv[2], "w").write(src)' "${HOOK_SH}" "${dir}/enforce-commit-guard.sh"
   [[ -z "${GUARD_ERR}" ]] || return 1
 }
 
-# --- Input above the 64 KiB pipe capacity: a line-1 match must not read as "no match" ---
+# --- Multi-line input, a multi-write writer racing an early reader: a line-1 match must not read as "no match" ---
 
 @test "git reset --hard on line 1 of a command larger than the pipe buffer is still blocked as a hard reset" {
   local padding
