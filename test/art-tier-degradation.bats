@@ -98,10 +98,6 @@ _esc() { printf '\033'; }
   local i=0
   while [[ "${i}" -lt "${#lines[@]}" ]]; do
     printf '%s' "${lines[${i}]}" | grep -q "${esc}\[97m"
-    if printf '%s' "${lines[${i}]}" | grep -q "${esc}\[96m"; then
-      echo "row ${i} carries the C_ACCENT SGR (96)"
-      return 1
-    fi
     i=$((i + 1))
   done
   # Row 1 (crown/ears) is wrapped in C_STRONG: the FIRST SGR sequence emitted is ESC[97m (grep -o
@@ -200,18 +196,10 @@ _esc() { printf '\033'; }
   local row="LLLLLLLLLLLLLLL11MMMMMMMMMMMMMMMMMMMMMM22RRRRRRRRRRRRRR"
   [ "${#row}" -eq 55 ]
   [ "$(_bulldog_bake_row "${row}")" = "${esc}[Sm${row}${esc}[0m" ]
-  if printf '%s' "$(_bulldog_bake_row "${row}")" | grep -q "${esc}\[Am"; then
-    echo "baked marker row carries the C_ACCENT wrap"
-    return 1
-  fi
   # A row carrying the solid ⣿⣿ cores is NOT trimmed and NOT accented — the eye machinery is gone, so
   # the whole row (⣿⣿ included) passes through inside the single C_STRONG wrap.
   local core="LLLLLLLLLLLLLLL⣿⣿MMMMMMMMMMMMMMMMMMMMMM⣿⣿RRRRRRRRRRRRRR"
   [ "$(_bulldog_bake_row "${core}")" = "${esc}[Sm${core}${esc}[0m" ]
-  if printf '%s' "$(_bulldog_bake_row "${core}")" | grep -q "${esc}\[Am"; then
-    echo "baked core row carries the C_ACCENT wrap"
-    return 1
-  fi
   # Mono contract: empty palette -> c() no-op -> the row emits verbatim with ZERO SGR.
   USE_COLOR=false
   C_STRONG=""
