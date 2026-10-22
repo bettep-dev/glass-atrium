@@ -167,13 +167,7 @@ readonly RE_TS_TITLE='(^|[^[:alnum:]_.$])(test|it)\([[:space:]]*("[^"]*"|'"'"'[^
 readonly RE_SHELLCHECK_DIRECTIVE='^#[[:space:]]*shellcheck[[:space:]]'
 
 # The emitters live under hooks/; an absent root (a fixture tree, a partial install) defines nothing.
-PRODUCT_DIRS=(
-  hooks
-  lib
-  scripts
-  autoagent
-)
-readonly PRODUCT_DIRS
+readonly PRODUCT_DIRS=(hooks lib scripts autoagent)
 readonly EMITTERS_FIRST='emit_error|block_critical|block_and_exit|hook_require_python3'
 readonly RE_CODE='^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+$'
 readonly RE_CODE_HEAD='(^|[^[:alnum:]_])(([A-Z][A-Z0-9]*-)+)$'
@@ -397,17 +391,14 @@ product_grep() {
 
 # Registers the code argument of every emitter call on one comment-stripped line.
 register_line_codes() {
-  local file="${1}" rest="${2}" arg=""
-  while [[ "${rest}" =~ ${RE_EMIT_FIRST} ]]; do
-    arg="${BASH_REMATCH[3]}"
-    rest="${rest#*"${BASH_REMATCH[0]}"}"
-    register_code_arg "${file}" "${arg}"
-  done
-  rest="${2}"
-  while [[ "${rest}" =~ ${RE_EMIT_SECOND} ]]; do
-    arg="${BASH_REMATCH[3]}"
-    rest="${rest#*"${BASH_REMATCH[0]}"}"
-    register_code_arg "${file}" "${arg}"
+  local file="${1}" re="" rest="" arg=""
+  for re in "${RE_EMIT_FIRST}" "${RE_EMIT_SECOND}"; do
+    rest="${2}"
+    while [[ "${rest}" =~ ${re} ]]; do
+      arg="${BASH_REMATCH[3]}"
+      rest="${rest#*"${BASH_REMATCH[0]}"}"
+      register_code_arg "${file}" "${arg}"
+    done
   done
 }
 
