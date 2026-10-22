@@ -2061,7 +2061,7 @@ update_merge_agent_editable_regions() {
   local merge_dir records_file resolved_file
   local file base local_file candidate plan_err plan_line plan_rc
   local verdict reason changed n_candidates=0 rc=0 create_rc=0 plan_reset is_reset
-  local backup_base cycle_date version
+  local backup_base run_stamp cycle_date version
 
   _update_merge_lib_dir="${ATRIUM_UPDATE_MERGE_LIB_DIR:-${_update_merge_lib_dir}}"
   _update_state_dir="$(spine_baseline_dir)"
@@ -2084,8 +2084,8 @@ update_merge_agent_editable_regions() {
   : >"${_update_agent_outcomes_file}"
 
   # Per-run before-image sink for the git-free transaction: a ROOT-SIBLING
-  # agents-bak/<cycle_date>_update-<version> dir (env override shares the daemon's
-  # AUTOAGENT_BACKUP_DIR base var). Root-sibling so git ls-files never lists it and
+  # agents-bak/<cycle_date>_update-<version>_<HHMMSS>_<pid> dir (env override
+  # shares the daemon's AUTOAGENT_BACKUP_DIR base var). Root-sibling so git ls-files never lists it and
   # tar merge-extract never clobbers it; the per-run subdir groups this run's
   # <basename>.bak images for retention prune. git_txn_apply captures + restores
   # from here (never commits). The base is derived by the shared
@@ -2096,10 +2096,16 @@ update_merge_agent_editable_regions() {
   # dispatch captures into the same cycle dir and writes the shared index, and the
   # no-candidate early return below must not leave it either unset or carrying the
   # previous run's rows.
+  #
+  # The _<HHMMSS>_<pid> suffix makes the dir per-RUN: a same-day re-run of one
+  # version (a re-published release) would otherwise rewrite the earlier run's
+  # .bak / .base.bak. Named, not mkdir-claimed — the dir stays lazily created, so a
+  # run that applies nothing leaves no empty dir to become prune's newest anchor.
   backup_base="$(update_agents_bak_base "${root}")"
-  cycle_date="$(date +%Y-%m-%d)"
+  run_stamp="$(date +%Y-%m-%d_%H%M%S)"
+  cycle_date="${run_stamp%_*}"
   version="$(jq -r '.version // "unknown"' "${manifest}")"
-  _update_agent_backup_dir="${backup_base}/${cycle_date}_update-${version}"
+  _update_agent_backup_dir="${backup_base}/${cycle_date}_update-${version}_${run_stamp#*_}_$$"
   _update_agent_install_root="${root}"
   _update_restore_index_rows=""
   _update_agent_create_failures=""
@@ -3910,7 +3916,7 @@ update_restore_agents() {
   # SECURITY: reject path separators / traversal in the request-supplied cycle-id.
   case "${cycle_id}" in
     */* | *'..'*) update_die_code 10 "invalid cycle-id (no path separators): ${cycle_id}" ;;
-    *) ;; # a plain <cycle_date>_update-<version> token — safe
+    *) ;; # a plain <cycle_date>_update-<version>_<HHMMSS>_<pid> token — safe
   esac
   root="$(update_ga_root)"
   update_require_tools python3
