@@ -227,6 +227,10 @@ PY
   _assert_live_module test_aa_harness AaJoinCoverageReadLivePgTest
 }
 
+@test "the A/A harness's spawn-unit read runs against the migrated cluster, none skipped" {
+  _assert_live_module test_aa_harness AaSpawnUnitReadLivePgTest
+}
+
 @test "the spool-close count writer and the sink's close read run against the migrated cluster, none skipped" {
   _assert_live_module test_aa_harness AaSpoolCloseLivePgTest
 }
