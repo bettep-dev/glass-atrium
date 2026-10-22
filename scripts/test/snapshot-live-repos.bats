@@ -81,10 +81,10 @@ teardown() {
 # content plus never-tracked bundled release directories.
 dirty_autoagent() {
   printf 'deployed\n' >"${GA_ROOT}/autoagent/tracked.txt"
-  mkdir -p "${GA_ROOT}/autoagent/test" "${GA_ROOT}/autoagent/baseline"
+  mkdir -p "${GA_ROOT}/autoagent/test" "${GA_ROOT}/autoagent/migrations"
   printf 'suite\n' >"${GA_ROOT}/autoagent/test/git-txn-gitfree.bats"
   printf 'suite\n' >"${GA_ROOT}/autoagent/test/test_daemon_cycle.py"
-  printf 'doc\n' >"${GA_ROOT}/autoagent/baseline/baseline-2026-07-22.md"
+  printf 'migration\n' >"${GA_ROOT}/autoagent/migrations/relabel_pattern1_soft.sql"
 }
 
 @test "snapshot: dirty repo ends clean with HEAD content parity and bundled dirs tracked" {
@@ -94,7 +94,7 @@ dirty_autoagent() {
   [[ -z "$(git -C "${GA_ROOT}/autoagent" status --porcelain --untracked-files=all)" ]] || return 1
   [[ "$(git -C "${GA_ROOT}/autoagent" show HEAD:tracked.txt)" == 'deployed' ]] || return 1
   [[ "$(git -C "${GA_ROOT}/autoagent" ls-files test | wc -l | tr -d ' ')" -eq 2 ]] || return 1
-  [[ "$(git -C "${GA_ROOT}/autoagent" ls-files baseline | wc -l | tr -d ' ')" -eq 1 ]] || return 1
+  [[ "$(git -C "${GA_ROOT}/autoagent" ls-files migrations | wc -l | tr -d ' ')" -eq 1 ]] || return 1
   # Clean members stay untouched at one commit each.
   [[ "$(git -C "${GA_ROOT}/rules" rev-list --count HEAD)" -eq 1 ]] || return 1
   [[ "${output}" == *"clean, no-op: rules"* ]] || return 1
@@ -162,7 +162,7 @@ dirty_autoagent() {
   [[ "${report_at}" -lt "${commit_at}" ]] || return 1
   # Untracked additions are listed too — diff --stat alone would not show them.
   [[ "${output}" == *'untracked paths to be added'* ]] || return 1
-  [[ "${output}" == *'baseline/baseline-2026-07-22.md'* ]] || return 1
+  [[ "${output}" == *'migrations/relabel_pattern1_soft.sql'* ]] || return 1
 }
 
 @test "refusal: a planted env file refuses the whole run with zero commits and zero staged residue" {

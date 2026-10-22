@@ -39,7 +39,6 @@
     "agents/templates/progress.md",
     "autoagent/.gitignore",
     "autoagent/autoagents-eval.sh",
-    "autoagent/baseline/baseline-2026-07-22.md",
     "autoagent/daemon-apply.sh",
     "autoagent/daemon-cycle.sh",
     "autoagent/daemon_cycle.py",
@@ -1001,7 +1000,6 @@
     "agents/templates/progress.md": "eb2384023d481529c3e63422ae8518b3fb6401cec2a5e6c648e0612a940a7619",
     "autoagent/.gitignore": "35a6fdc1e0e35bcc2fefa9aacfe6bcc5d98347ed75e7ac0c0b64f9f2b2ee638c",
     "autoagent/autoagents-eval.sh": "523d5412515653bb0932748b67d26043c8242ea103a9d94d1f55482600582d3a",
-    "autoagent/baseline/baseline-2026-07-22.md": "0245801bb318346197bb3a06619d47f9d73f9d818f1b605d39f39fb125d75b85",
     "autoagent/daemon-apply.sh": "c0fe8ba3a31a7f12775655a0cbe83ad9e73544dc308d1916eec8618ad5d952b2",
     "autoagent/daemon-cycle.sh": "a6a623e536979168c24b7fd62e10523ff66b538ee2abd551fea8ab936f819579",
     "autoagent/daemon_cycle.py": "539b17a5de35b467d1bedb8d57705b3f00f8d1a9fa373f56787fb7cd6fb1d118",
@@ -1712,7 +1710,7 @@
     "scripts/test/run-bats-parallel.bats": "bc434c6758f06a526b8c9bc54cd0134892f5f81175508b6feedfac579f77e55d",
     "scripts/test/setup_suite.bash": "1b60bce1b36e8e413b63bf07a427ba6a6e1270e70d0164ee19cbb50b60762366",
     "scripts/test/skill-registry-retired.bats": "513ad1ab4f6d2fea6bddcbcfa86e01df979a9c4a95074d8463393aae97dd3c8c",
-    "scripts/test/snapshot-live-repos.bats": "8de77f20cc3cf381d7283f5bdca1a0399580857c738e26e03b0dbfba92e74348",
+    "scripts/test/snapshot-live-repos.bats": "6bcb7abb7c5eed8a6374b467dd3f276613d47657390a48e20dc4d4fcb676f9b6",
     "scripts/test/suite-hermeticity.bats": "4adc7a7e6a0e2ffde677095b2c7f3de7dfe4bcffb282cae18465e910c5e9bd0a",
     "scripts/test/swap-symlink-collision.bats": "bd4dcaf21ce24b678041de38f137fb75b9a679728781b2aa6ac7ea2144b53142",
     "scripts/test/sync-registry-tools.bats": "36791aaf36082160739dacb05daecdb8cbd6b7848256ee2e89c6baa79af82440",
@@ -1963,7 +1961,6 @@
     "agents/templates/progress.md": "644",
     "autoagent/.gitignore": "644",
     "autoagent/autoagents-eval.sh": "755",
-    "autoagent/baseline/baseline-2026-07-22.md": "644",
     "autoagent/daemon-apply.sh": "755",
     "autoagent/daemon-cycle.sh": "755",
     "autoagent/daemon_cycle.py": "644",
@@ -2887,6 +2884,9 @@
     "test/workbox-bar-count-visible-during-resolve.bats": "644"
   },
   "retired": {
+    "autoagent/baseline/baseline-2026-07-22.md": [
+      "0245801bb318346197bb3a06619d47f9d73f9d818f1b605d39f39fb125d75b85"
+    ],
     "autoagent/test/daemon-apply-backlog-anomaly-row.bats": [
       "50125fc8f722a5188c35908a892281631e7010b9e32358ef50ad71c367765e85"
     ],
