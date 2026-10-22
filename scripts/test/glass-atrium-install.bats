@@ -292,10 +292,11 @@ run_install() {
     "${repo}/agents-bak/2026-01-01_p1" "${repo}/wiki" "${repo}/secrets" \
     "${repo}/rendered" "${repo}/data"
   cp "${REAL_GENMAN}" "${repo}/scripts/generate-manifest.sh"
-  # the generator sources the spine for the retired-map family bar and refuses
-  # (exit 7) without it, so the sandbox repo carries the library too.
+  # the generator sources the spine (retired-map family bar) and the tracked-path
+  # oracle and refuses (exit 7) without either, so the sandbox repo carries both.
   cp "${GA}/scripts/lib/apply-spine.sh" "${repo}/scripts/lib/apply-spine.sh"
   cp "${GA}/scripts/lib/path-guard.sh" "${repo}/scripts/lib/path-guard.sh"
+  cp "${GA}/scripts/lib/tracked-paths.sh" "${repo}/scripts/lib/tracked-paths.sh"
   printf '{"files":[],"hashes":{}}\n' \
     >"${repo}/manifest.json"
   printf '# agent alpha\n' >"${repo}/agents/alpha.md"
