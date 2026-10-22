@@ -325,14 +325,8 @@ def _get_tracked() -> frozenset[str]:
 
 
 def _get_tracked_in(root: Path) -> frozenset[str]:
-    """The tracked set; a root that is not its own git work tree skips the asking test."""
-    toplevel = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if toplevel.returncode != 0 or Path(toplevel.stdout.strip()).resolve() != root.resolve():
+    """The tracked set; a root with no ``.git`` of its own skips the asking test."""
+    if not (root / ".git").exists():  # a worktree's .git is a file, a clone's a dir
         raise unittest.SkipTest(
             f"not a git work tree: {root} (consumer install — the tracked set needs the GA repo)"
         )
@@ -340,7 +334,7 @@ def _get_tracked_in(root: Path) -> frozenset[str]:
         ["git", "-C", str(root), "ls-files", "-z"],
         capture_output=True,
         text=True,
-        check=True,
+        check=True,  # a broken checkout of the repo fails, never skips
     ).stdout
     return frozenset(path for path in listing.split("\0") if path)
 
@@ -1989,12 +1983,8 @@ class RetireStopTest(unittest.TestCase):
         self.assertEqual(creators, [], "code that creates a tmux session")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TrackedTreeTest(unittest.TestCase):
-    def test_a_root_that_is_not_its_own_git_work_tree_skips_with_the_reason(self) -> None:
+    def test_a_root_without_its_own_git_dir_skips_with_the_reason(self) -> None:
         with tempfile.TemporaryDirectory() as scratch:
             rows = (
                 ("a directory outside any work tree", Path(scratch)),
@@ -2005,3 +1995,22 @@ class TrackedTreeTest(unittest.TestCase):
                     _get_tracked_in(root)
 
                 self.assertIn("not a git work tree", str(raised.exception))
+
+    def test_a_root_whose_own_git_dir_is_broken_fails_loudly(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            subprocess.run(["git", "init", "-q", scratch], check=True)
+            (Path(scratch) / ".git" / "HEAD").write_text("not a ref\n", encoding="utf-8")
+
+            with self.assertRaises(subprocess.CalledProcessError):
+                self._get_tracked_unskipped(Path(scratch))
+
+    def _get_tracked_unskipped(self, root: Path) -> frozenset[str]:
+        try:
+            return _get_tracked_in(root)
+        except unittest.SkipTest as skipped:
+            self.fail(f"a broken checkout skipped as a consumer install: {skipped}")
+
+
+
+if __name__ == "__main__":
+    unittest.main()
