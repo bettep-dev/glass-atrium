@@ -1284,7 +1284,7 @@
     "hooks/test/inject-scope-rules-canary.bats": "73639acb6aa4ff63d7770ff74c963cc2178c0ee28ec2da560b4a792e13a0e209",
     "hooks/test/inject-scope-rules-dropsink.bats": "bbb30fa13bc33908761d872ff45a37c3623fd851987775241b759b5b4be4685d",
     "hooks/test/inject-scope-rules-manifest.bats": "d6c5fb48e9ce8c325655d2b9c9314e87da42362ad5fdb2f149b3758b52e5f61c",
-    "hooks/test/inject-scope-rules-marker.bats": "25199ff8a678fe4fe7898fc31784960d5f398ddcdef3216d53390d3d883ecf66",
+    "hooks/test/inject-scope-rules-marker.bats": "4999b7a760ce3c43ae91a7324bc96ce6b5f5100209e07afd43b56b5193a991d8",
     "hooks/test/inject-scope-rules-nodrop.bats": "ab18836842f9f2ceab096e3aecb279512ac0264f85457aea2e5c1459f2fb7547",
     "hooks/test/inject-scope-rules.bats": "c5496c4d1d5a4b41e524a304272c41ee6f98a118dc29f959b2954c2d36b91608",
     "hooks/test/inject-scope-single-delivery.bats": "be2312eb015d6a6beb4e109815dda1f6475e72f2b2cb9926fae244d9005523db",
