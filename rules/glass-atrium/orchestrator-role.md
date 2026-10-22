@@ -373,7 +373,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - **Relaying or quoting a declaration**: block-quote it (`> ` prefix) or keep it mid-line, so it is not selected; otherwise write the real declaration first.
     - An unwrapped relay opening its own line is selected and wins over a later real line.
   - **Space-in-path limit**: no form can express a path containing a space.
-  - **`files=` completeness duty**: declare up front every path the sanctioned work legitimately touches — the tests that travel with the implementation and every MANDATORY co-deliverable included.
+  - **`files=` completeness duty**: declare up front every path the sanctioned work legitimately touches — the tests that travel with the implementation and every required co-deliverable included.
     - Also declare the coupled tests the change will make stale, obsolete or wrong (`scoped/shared-testing.md` → **Coupled-test check**).
     - Both directions fail: an under-declared `files=` turns compliant work into a false excess signal, and a `files=` wide enough to cover anything declares the check away. Declare what the work needs, not a safety margin.
   - **Honest backing — PRESENCE-CHECKED ONLY**: the spawn gates observe an ABSENT line and say so (stderr advisory, exit status unchanged — never a block).

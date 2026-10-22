@@ -1418,9 +1418,9 @@ safe local line
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]
   # the persistent per-run before-image holds the pre-merge local body byte-for-byte
-  # (glob over the <cycle_date>_update-<version> dir — date computed in the child)
+  # (glob over the per-run cycle dir — date and run suffix computed in the child)
   local bak
-  bak="$(printf '%s\n' "${INSTALL}/agents-bak/"*"_update-1.0.0/dev-a.md.bak" | head -1)"
+  bak="$(printf '%s\n' "${INSTALL}/agents-bak/"*"_update-1.0.0_"*"/dev-a.md.bak" | head -1)"
   [[ -f "${bak}" ]]
   [[ "$(cat "${bak}")" == "${GOAL_LOCAL}" ]]
 }
@@ -1437,7 +1437,7 @@ safe local line
   run_update
   [ "$status" -eq 0 ] || return 1
   local index
-  index="$(printf '%s\n' "${INSTALL}/agents-bak/"*"_update-1.0.0/restore-index.tsv" | head -1)"
+  index="$(printf '%s\n' "${INSTALL}/agents-bak/"*"_update-1.0.0_"*"/restore-index.tsv" | head -1)"
   [[ -f "${index}" ]] || return 1
   grep -qF "$(printf 'dev-a.md.bak\tagents/dev-a.md')" "${index}" || return 1
 }
@@ -1942,7 +1942,7 @@ PLIST
 }
 
 @test "P3: --restore-agents restores agent bodies from the agents-bak before-image (git-revert replacement)" {
-  local cyc="2026-07-01_update-1.0.0"
+  local cyc="2026-07-01_update-1.0.0_093000_4242"
   mkdir -p "${WORK}/agents-bak/${cyc}"
   printf 'BEFORE IMAGE BODY' >"${WORK}/agents-bak/${cyc}/dev-a.md.bak"
   seed_file "${INSTALL}" "agents/dev-a.md" "corrupted-by-a-bad-update"
@@ -2897,7 +2897,8 @@ safe local line
 
 # Seed the four declared roster paths under one root, each slot carrying $2.. as
 # its members. $1 = root. Shapes per the module's suffix map: .json registry,
-# .md brace list, .sh space-padded readonly array.
+# .md brace list, .sh space-padded readonly array — two in the inject hook, which
+# ships several, so the merge is driven over a multi-array file.
 seed_roster_quartet() {
   local root="$1" marker="$2"
   shift 2
@@ -2914,7 +2915,8 @@ seed_roster_quartet() {
   seed_file "${root}" "hooks/inject-scope-rules.sh" \
     "#!/usr/bin/env bash
 # ${marker}
-readonly INJECT_AGENTS=\" ${names} \"
+readonly BUDGET_DEV_AGENTS=\" ${names} \"
+readonly WIKI_UNTRUSTED_AGENTS=\" ${names} \"
 "
   seed_file "${root}" "hooks/lib/styleref-roster.sh" \
     "#!/usr/bin/env bash
@@ -3088,7 +3090,8 @@ assert_withheld_from_every_roster() {
 
   # A shell roster's slot is selected by the array NAME, so a second declaration
   # of the same name is valid shell the reader cannot see; only a count catches it.
-  [ "$(grep -c '^readonly INJECT_AGENTS=' "${INSTALL}/hooks/inject-scope-rules.sh")" -eq 1 ] || return 1
+  [ "$(grep -c '^readonly BUDGET_DEV_AGENTS=' "${INSTALL}/hooks/inject-scope-rules.sh")" -eq 1 ] || return 1
+  [ "$(grep -c '^readonly WIKI_UNTRUSTED_AGENTS=' "${INSTALL}/hooks/inject-scope-rules.sh")" -eq 1 ] || return 1
   [ "$(grep -c '^readonly STYLEREF_AGENTS=' "${INSTALL}/hooks/lib/styleref-roster.sh")" -eq 1 ] || return 1
   # Each rewritten array stays ONE physical line however many members resolved.
   [ "$(grep -c '^readonly STYLEREF_AGENTS=" dev-a user-x "$' "${INSTALL}/hooks/lib/styleref-roster.sh")" -eq 1 ] || {
