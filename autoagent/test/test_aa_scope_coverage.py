@@ -482,7 +482,7 @@ class RootsTest(unittest.TestCase):
 def _join(base: str, tail: str) -> str | None:
     if tail.startswith("/"):
         return tail
-    joined = posixpath.normpath(posixpath.join(base, tail)) if base else posixpath.normpath(tail)
+    joined = posixpath.normpath(posixpath.join(base, tail))
     return None if joined.startswith("..") else joined
 
 
@@ -587,7 +587,7 @@ class _ShellParser:
             if closer and char == closer and not word.endswith("\\"):
                 self.index += 1
                 break
-            if char in " \t" or char in "\n;&|" or (char == ")" and closer is None):
+            if char in " \t\n;&|" or (char == ")" and closer is None):
                 words, word = self._end_word(words, word, char)
                 continue
             if char == "#" and not word:
@@ -663,7 +663,7 @@ class _ShellParser:
                 self.index = self._find_close(start + 1, "(", ")", 1)
                 return text[start : self.index]
             self.index += 1
-            self._parse_nested(")")
+            self.parse(")")
             return ""
         if text.startswith("[[", start) and at_command:
             end = re.compile(r"\s\]\](?=[\s;&|)]|$)").search(text, start)
@@ -697,11 +697,8 @@ class _ShellParser:
         start = self.index
         closer = "`" if self.text[start] == "`" else ")"
         self.index += 1 if closer == "`" else 2
-        self._parse_nested(closer)
-        return self.text[start : self.index]
-
-    def _parse_nested(self, closer: str) -> None:
         self.parse(closer)
+        return self.text[start : self.index]
 
     def _find_close(self, index: int, opener: str, closer: str, width: int) -> int:
         depth = 1
@@ -815,7 +812,7 @@ def _get_shell_edges(path: str) -> list[Edge]:
         scope.current = position
         edges.extend(_get_command_edges(scope, words, inline))
     for heredoc in scope.heredocs:
-        if _is_inline_python(scope, heredoc, inline):
+        if _is_inline_python(scope, heredoc):
             edges.extend(_get_python_edges(path, heredoc.body, search_dirs=[]))
     return edges
 
@@ -839,7 +836,7 @@ def _get_inline_programs(scope: _ShellScope) -> set[str]:
     return {name for h in scope.heredocs if (name := _get_heredoc_variable(h.opener))}
 
 
-def _is_inline_python(scope: _ShellScope, heredoc: Heredoc, inline: set[str]) -> bool:
+def _is_inline_python(scope: _ShellScope, heredoc: Heredoc) -> bool:
     if any(word in _INTERPRETERS for word in heredoc.opener):
         return True
     name = _get_heredoc_variable(heredoc.opener)
@@ -918,9 +915,11 @@ def _get_interpreter_edges(scope: _ShellScope, words: list[str], inline: set[str
     if "-c" in words[1:2] and len(words) > 2:
         return _get_inline_code_edges(scope, words[2], inline)
     operands = [word for word in words[1:] if not word.startswith("-")]
-    if "-" in words[1:2] or not operands:
-        return [] if "-" in words[1:2] else [Edge(scope.path, " ".join(words), None, None)]
-    if re.fullmatch(r'"?\$\{?(' + "|".join(inline or {"_"}) + r')\}?"?', operands[0]):
+    if "-" in words[1:2]:
+        return []
+    if not operands:
+        return [Edge(scope.path, " ".join(words), None, None)]
+    if _is_inline_ref(operands[0], inline):
         return []  # a heredoc's body, scanned as Python where it is written
     subcommand = scope.get_subcommand(operands[1]) if len(operands) > 1 else None
     return _get_target_edges(scope, operands[:1], subcommand)
@@ -928,7 +927,7 @@ def _get_interpreter_edges(scope: _ShellScope, words: list[str], inline: set[str
 
 def _get_inline_code_edges(scope: _ShellScope, word: str, inline: set[str]) -> list[Edge]:
     """A ``python3 -c`` program: a literal or heredoc body scans as Python, else unresolved."""
-    if re.fullmatch(r'"?\$\{?(' + "|".join(inline or {"_"}) + r')\}?"?', word):
+    if _is_inline_ref(word, inline):
         return []
     if word[:1] not in "'\"" or "$" in (word if word[0] == '"' else ""):
         return [Edge(scope.path, f"python3 -c {word}", None, None)]
@@ -937,6 +936,10 @@ def _get_inline_code_edges(scope: _ShellScope, word: str, inline: set[str]) -> l
         return _get_python_edges(scope.path, code, search_dirs=[])
     except SyntaxError:
         return [Edge(scope.path, f"python3 -c {word}", None, None)]
+
+
+def _is_inline_ref(word: str, inline: set[str]) -> bool:
+    return re.fullmatch(r'"?\$\{?(' + "|".join(inline or {"_"}) + r')\}?"?', word) is not None
 
 
 def _get_target_edges(scope: _ShellScope, words: list[str], subcommand: str | None) -> list[Edge]:
@@ -1011,8 +1014,6 @@ class _PythonScope:
             case ast.Attribute(value=inner, attr="parent"):
                 value = self.evaluate(inner, seen)
                 return None if value is None else _get_parent(value)
-            case ast.Attribute(value=inner, attr="parents") | ast.Attribute(value=inner):
-                return None
             case ast.Subscript(
                 value=ast.Attribute(value=inner, attr="parents"),
                 slice=ast.Constant(value=int() as n),
@@ -1181,8 +1182,10 @@ def _get_argv_edges(scope: _PythonScope, elements: list[ast.expr]) -> list[Edge]
         bound = scope.values.get(elements[0].value.id, [])
         if len(bound) == 1 and isinstance(bound[0], (ast.List, ast.Tuple)):
             elements = [*bound[0].elts, *elements[1:]]
-    if not elements or isinstance(elements[0], ast.Starred):
-        return [Edge(scope.path, ast.unparse(elements[0]), None, None)] if elements else []
+    if not elements:
+        return []
+    if isinstance(elements[0], ast.Starred):
+        return [Edge(scope.path, ast.unparse(elements[0]), None, None)]
     program = ast.unparse(elements[0])
     value = "python3" if program == "sys.executable" else scope.evaluate(elements[0])
     if value in _INTERPRETERS:
