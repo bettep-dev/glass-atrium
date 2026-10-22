@@ -593,7 +593,9 @@ class CostTierRuleTextTest(unittest.TestCase):
             "daemon_config.py", section, "must cite the daemon config-read mechanism"
         )
         self.assertIn(
-            "session default", section, "must state the unpinned session-default fallback"
+            "falls back to a pinned worker-model id",
+            section,
+            "must state the pinned worker-model-id fallback",
         )
 
 
