@@ -197,7 +197,7 @@ _BINDINGS = (
         "the env override is a test seam; the default is the sibling _pg-write.py",
     ),
 )
-_DECLARED_EDGES = (
+_DECLARED_EDGES: tuple[DeclaredEdge, ...] = (
     DeclaredEdge(
         "hooks/hook-utils.sh",
         '"${guard}"',
@@ -234,6 +234,48 @@ _DECLARED_EDGES = (
         None,
         "ps or its AUTOAGENT_PS_BIN override, not a repo file",
     ),
+)
+# env hand-offs the row cannot evaluate; each passes data, never a code path
+_DATA_HANDOFFS = {
+    "hooks/track-outcome.sh": (
+        ('T9_TRANSCRIPT="${T9_TRANSCRIPT_PATH}"', "the transcript the T9 program reads"),
+        ('T9_TASK_TYPE="${TASK_TYPE}"', "the outcome's task_type"),
+        ('T9_SESSION_ID="${SESSION_ID}"', "the session id"),
+    ),
+    "hooks/enforce-harness-critical.sh": (
+        ('HARNESS_CANARY_DIR="${CANARY_DIR}"', "the live canary data dir the guard matches"),
+    ),
+    "hooks/agent-tracker.sh": (
+        ('TIMESTAMP="${TIMESTAMP}"', "the event timestamp"),
+        ("IFS=$'\\t'", "a tab field separator for read"),
+    ),
+    "hooks/advisory-subagent-budget.sh": tuple(
+        (f'{name}="${{{value}}}"', "a field of the overage row")
+        for name, value in (
+            ("AID", "a_id"),
+            ("ATYPE", "a_type"),
+            ("CNT", "count"),
+            ("BUD", "budget"),
+            ("PCT", "pct"),
+        )
+    ),
+    "autoagent/daemon-cycle.sh": (
+        ('CLAUDE_BIN="${AUTOAGENT_CLAUDE_BIN}"', "the claude CLI (LLM setup), not a repo file"),
+        (
+            'AUTOAGENT_AGENTS_DIR="${AUTOAGENT_AGENTS_DIR:-${HOME}/.glass-atrium/agents}"',
+            "the roster dir, agents/ in AA.SCOPE.DIRS",
+        ),
+        ('AUTOAGENT_GIT_ROOT="${AUTOAGENT_GIT_ROOT:-${HOME}/.glass-atrium}"', "the git root dir"),
+        ('AUTOAGENT_GIT_PATHSPEC="${AUTOAGENT_GIT_PATHSPEC:-agents/}"', "a git pathspec"),
+        ('OUT_PATH="${OUT_PATH}"', "the cycle report's output file"),
+        ('CYCLE_DATE="${CYCLE_DATE}"', "the cycle date"),
+        ('CYCLE_STARTED_AT="${CYCLE_STARTED_AT}"', "the cycle start time"),
+    ),
+}
+_DECLARED_EDGES += tuple(
+    DeclaredEdge(source, raw, None, reason)
+    for source, rows in _DATA_HANDOFFS.items()
+    for raw, reason in rows
 )
 _USED_BINDINGS: set[Binding] = set()
 
@@ -725,6 +767,11 @@ def _get_raw_value(word: str) -> str:
     return word[1:-1] if len(word) > 1 and word[0] == word[-1] and word[0] in "'\"" else word
 
 
+def _is_self_reference(match: re.Match[str]) -> bool:
+    name = match.group(1)
+    return not match.group(2) and _get_raw_value(match.group(3)) in {f"${{{name}}}", f"${name}"}
+
+
 class _ShellScope:
     def __init__(self, path: str, text: str) -> None:
         self.path = path
@@ -742,6 +789,8 @@ class _ShellScope:
                 match = _ASSIGNMENT.match(word)
                 if match is None:
                     break
+                if _is_self_reference(match):
+                    continue  # NAME="${NAME}" re-passes the value it already holds
                 self.assignments.setdefault(match.group(1), set()).add(
                     match.group(2) + match.group(3)
                 )
@@ -858,20 +907,23 @@ def _get_command_edges(scope: _ShellScope, words: list[str], inline: set[str]) -
 
 
 def _get_handoff_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
-    """An env hand-off: a command-prefix or exported assignment whose value names a code file."""
+    """An env hand-off: a command-prefix or exported assignment; an unevaluable value fails."""
     exported = words[:1] == ["export"]
-    assignments = []
+    assignments: list[re.Match[str]] = []
     for word in words[1:] if exported else words:
         match = _ASSIGNMENT.match(word)
         if match is None:
             break
-        assignments.append(match.group(3))
+        assignments.append(match)
     if not exported and len(assignments) == len(words):
         return []
     edges: list[Edge] = []
-    for raw in assignments:
+    for match in assignments:
+        raw = match.group(3)
         value = scope.evaluate(raw)
-        if (value or _get_raw_value(raw)).endswith((".py", ".sh", ".bash")):
+        if value is None:
+            edges.append(Edge(scope.path, match.group(0), None, None))
+        elif value.endswith((".py", ".sh", ".bash")):
             edges.extend(_get_target_edges(scope, [raw], None))
     return edges
 
@@ -1305,6 +1357,16 @@ class ClosureTest(unittest.TestCase):
             sorted(set(_DECLARED_EDGES) - closure.used_edges), [], "edges no walk meets"
         )
         self.assertEqual(sorted(set(_BINDINGS) - _USED_BINDINGS), [], "bindings no edge reads")
+
+    def test_every_aa_scope_file_is_reached_by_the_walk(self) -> None:
+        unreached = sorted(dc.AA.SCOPE.FILES - _get_closure().walked)
+
+        self.assertEqual(unreached, [], "members only the hand list holds")
+
+    def test_every_reader_the_walk_starts_from_is_aa_scoped(self) -> None:
+        unscoped = [path for path in _READERS if not _is_scoped(path)]
+
+        self.assertEqual(unscoped, [])
 
     def test_every_stop_names_a_category_from_the_closed_list(self) -> None:
         categories = sorted({stop.category for stop in _STOPS} - _STOP_CATEGORIES)
