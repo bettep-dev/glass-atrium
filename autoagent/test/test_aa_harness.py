@@ -1050,6 +1050,7 @@ def _exposed(spawn: SpawnFacts, salt_id: int = 1) -> SpawnFacts:
         arm=arm,
         salt_id=salt_id,
         is_delivered=arm == 1,
+        is_any_delivered=arm == 1,
         delivered_hash=hashlib.sha256(b"").hexdigest() if arm == 1 else None,
     )
 
@@ -1662,7 +1663,9 @@ class AaResultFailTest(_AaResultFixture):
             index = next(
                 index for index, spawn in enumerate(spawns) if spawn.arm == arm
             )
-            spawns[index] = spawns[index]._replace(is_delivered=is_delivered)
+            spawns[index] = spawns[index]._replace(
+                is_delivered=is_delivered, is_any_delivered=is_delivered
+            )
             self.spawns["glass-atrium-dev-python"] = tuple(spawns)
 
         lost_now = dc.ManifestIngest(
@@ -2888,10 +2891,12 @@ class AaCriterionTest(unittest.TestCase):
 
 
 def _armed(spawns: list[tuple[int, bool | None]], agent: str = "a") -> list[object]:
-    """(daemon arm, hook-recorded delivery) per spawn → armed spawns of `agent`."""
+    """(daemon arm, hook-recorded delivery) per single-activation spawn → armed spawns of `agent`."""
     return [
         dc.ArmedSpawn(
-            _spawn(f"{agent}{index}", "s", 1)._replace(arm=arm, is_delivered=delivered),
+            _spawn(f"{agent}{index}", "s", 1)._replace(
+                arm=arm, is_delivered=delivered, is_any_delivered=delivered
+            ),
             arm,
         )
         for index, (arm, delivered) in enumerate(spawns)
@@ -3381,6 +3386,89 @@ class AaJoinCoverageReadLivePgTest(_AaLivePgFixture):
         )
 
         self.assertEqual(counts, (4, 2))
+
+
+class AaSpawnUnitReadLivePgTest(_AaLivePgFixture):
+    """The A/A consumers over the shared spawn read: one unit per agent_id, resumes folded in."""
+
+    _SALT_ID = 7
+    _HASH = hashlib.sha256(b"").hexdigest()
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._use_database(self._TEMPLATE.FULL)
+        import _pg_learning_dualwrite as pgdw
+
+        self._patch("_pg_read_spawn_facts", pgdw._read_spawn_facts)
+        connect = functools.partial(
+            self.psycopg.connect, dbname=self.dbname, connect_timeout=2, autocommit=True
+        )
+        patcher = mock.patch.object(
+            pgdw, "psycopg", SimpleNamespace(connect=lambda *a, **k: connect())
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.offset = 0
+
+    def _put_activations(self, agent_id: str, deliveries: list[bool]) -> None:
+        arm = _get_arm(self._SALT_ID, agent_id)
+        with self._connect() as conn:
+            for index, is_delivered in enumerate(deliveries):
+                self.offset += 1
+                conn.execute(
+                    "INSERT INTO core.spawn_manifest (spool, line_offset, agent_id, agent_type,"
+                    " session_id, started_at, ctx_bytes, blocks, arm, salt_id, delivered,"
+                    " delivered_hash) VALUES ('s.spool', %s, %s, 'glass-atrium-dev-python', 's1',"
+                    " %s, 1, '', %s, %s, %s, %s)",
+                    (
+                        self.offset, agent_id, _START + timedelta(days=1, hours=index), arm,
+                        self._SALT_ID, is_delivered, self._HASH if is_delivered else None,
+                    ),
+                )
+
+    def _get_armed(self) -> dict[str, list[dc.ArmedSpawn]]:
+        roster = frozenset(_ROSTER)
+        spawns = dc._read_aa_spawns(roster, dc._get_roster_names(roster), _START, _NOW)
+        return dc.get_aa_armed_spawns(spawns, self._SALT_ID)
+
+    def _get_agent_ids(self, arm: int, count: int) -> list[str]:
+        return [f"u{index}" for index in range(100) if _get_arm(self._SALT_ID, f"u{index}") == arm][:count]
+
+    def test_a_resumed_agent_counts_once_in_the_armed_spawns(self) -> None:
+        resumed, single = self._get_agent_ids(1, 2)
+        self._put_activations(resumed, [True, True, True])
+        self._put_activations(single, [True])
+
+        armed = self._get_armed()
+
+        self.assertEqual(
+            sorted(item.spawn.agent_id for item in armed["glass-atrium-dev-python"]),
+            sorted([resumed, single]),
+        )
+
+    def test_a_control_unit_with_any_delivered_activation_fails_the_delivery_criterion(
+        self,
+    ) -> None:
+        rows = (
+            ("no control activation delivered", [False, False], ("pass", 0)),
+            ("one delivered resume activation", [False, True], ("fail", 1)),
+        )
+        (treated,) = self._get_agent_ids(1, 1)
+        (control,) = self._get_agent_ids(0, 1)
+        for name, deliveries, expected in rows:
+            with self.subTest(name):
+                self.setUp()
+                self._put_activations(treated, [True, True])
+                self._put_activations(control, deliveries)
+
+                delivery = dc.get_aa_delivery_criterion(self._get_armed())
+
+                self.assertEqual(
+                    (delivery.verdict, delivery.detail["control_delivered"]), expected
+                )
+                self.assertEqual(
+                    (delivery.detail["treatment"], delivery.detail["delivered"]), (1, 1)
+                )
 
 
 class AaSpoolCloseLivePgTest(_AaLivePgFixture):

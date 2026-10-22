@@ -8,7 +8,8 @@
 #     JSON, non-object root) where both degrade to empty.
 #   * PERF INVARIANT: the batch path spawns ONE python3, N sequential hook_get_field calls spawn N —
 #     measured with a counting python3 PATH shim that execs the real interpreter.
-# Plus behavior-parity for the two migrated callers (post-edit-typecheck.sh, advisory-subagent-budget.sh).
+# Plus behavior-parity for the two migrated callers (post-edit-typecheck.sh, advisory-subagent-budget.sh),
+# and the hook_is_subagent origin read: an unreadable envelope is never read as an absent agent_id.
 #
 # Run via: bats hooks/test/hook-utils-fields.bats
 # Hermetic: a WORK sandbox holds the shim + fixtures; no live monitor/DB/~/.claude state is touched.
@@ -46,6 +47,42 @@ make_counting_python3() {
     printf 'exec %q "$@"\n' "${REAL_PY}"
   } >"${WORK}/bin/python3"
   chmod +x "${WORK}/bin/python3"
+}
+
+# A python3 on PATH that fails before reading anything — the interpreter-present misread.
+make_failing_python3() {
+  mkdir -p "${WORK}/failpy"
+  printf '#!/usr/bin/env bash\nexit 1\n' >"${WORK}/failpy/python3"
+  chmod +x "${WORK}/failpy/python3"
+}
+
+# hook_is_subagent's exit status on $2, run with python3 per $1: real · absent · failing.
+is_subagent_status() {
+  local python="${1}" json="${2}" path="${PATH}"
+  case "${python}" in
+    absent)
+      mkdir -p "${WORK}/nopy"
+      path="${WORK}/nopy"
+      ;;
+    failing)
+      make_failing_python3
+      path="${WORK}/failpy:${PATH}"
+      ;;
+    *) : ;;
+  esac
+  # Strict mode + an ERR trap, as in a hook: a misread must not fire the caller's trap.
+  # PATH narrows after bash is found, as in the python3-absent row above.
+  # SC2016: the inner $1/$2/$3 are the child bash's own positionals — no expansion here.
+  # shellcheck disable=SC2016
+  bash -c '
+    set -Eeuo pipefail
+    trap "printf \"ERR trap fired\\n\" >&2" ERR
+    # shellcheck source=/dev/null
+    source "$1"
+    export PATH="$2"
+    if hook_is_subagent "$3"; then status=0; else status=$?; fi
+    printf "%s\n" "${status}"
+  ' _ "${REAL_LIB}" "${path}" "${json}" 2>&1
 }
 
 # Byte count of the spawn-counter file (0 when absent — avoids the grep -c zero trap).
@@ -202,6 +239,29 @@ py_spawn_count() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"len=0"* ]] || return 1
   [[ "$(py_spawn_count)" -eq 0 ]] || return 1
+}
+
+@test "origin: only a readable envelope without agent_id reads as main session, never a misread one" {
+  # Row: name|python3|envelope|expected status (0 = not main session, 1 = main session).
+  local -a cases=(
+    'agent_id present|real|{"agent_id":"a1","session_id":"s"}|0'
+    'agent_id absent from a readable object|real|{"session_id":"s"}|1'
+    'agent_id empty|real|{"agent_id":"","session_id":"s"}|1'
+    'empty object, the hook_read_input fallback|real|{}|1'
+    'malformed JSON|real|{"session_id":"s"|0'
+    'non-object root|real|[{"session_id":"s"}]|0'
+    'python3 absent|absent|{"session_id":"s"}|0'
+    'python3 failing|failing|{"session_id":"s"}|0'
+  )
+  local row name python json want got
+  for row in "${cases[@]}"; do
+    IFS='|' read -r name python json want <<<"${row}"
+    got="$(is_subagent_status "${python}" "${json}")"
+    [[ "${got}" == "${want}" ]] || {
+      echo "${name}: status ${got}, want ${want}"
+      return 1
+    }
+  done
 }
 
 @test "migrated post-edit-typecheck.sh: batch EVENT+SESSION_ID still drive marker + Stop routing" {
