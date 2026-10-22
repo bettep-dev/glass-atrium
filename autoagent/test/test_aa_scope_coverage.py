@@ -1984,32 +1984,53 @@ class RetireStopTest(unittest.TestCase):
 
 
 class TrackedTreeTest(unittest.TestCase):
+    """Every fixture is scratch-built: the real tree's layout differs per install."""
+
+    def setUp(self) -> None:
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.scratch = Path(scratch.name)
+
     def test_a_root_without_its_own_git_dir_skips_with_the_reason(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
-            rows = (
-                ("a directory outside any work tree", Path(scratch)),
-                ("a subdirectory of a work tree", _REPO_ROOT / "autoagent"),
-            )
-            for name, root in rows:
-                with self.subTest(name), self.assertRaises(unittest.SkipTest) as raised:
+        repo = self._get_repo("repo")
+        (repo / "sub").mkdir()
+        (self.scratch / "plain").mkdir()
+        rows = (
+            ("a directory outside any work tree", self.scratch / "plain"),
+            ("a subdirectory of a work tree", repo / "sub"),
+        )
+        for name, root in rows:
+            with self.subTest(name):
+                with self.assertRaises(unittest.SkipTest) as raised:
                     _get_tracked_in(root)
 
                 self.assertIn("not a git work tree", str(raised.exception))
 
-    def test_a_root_whose_own_git_dir_is_broken_fails_loudly(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
-            subprocess.run(["git", "init", "-q", scratch], check=True)
-            (Path(scratch) / ".git" / "HEAD").write_text("not a ref\n", encoding="utf-8")
+    def test_a_root_with_its_own_git_dir_lists_its_index(self) -> None:
+        repo = self._get_repo("repo")
+        (repo / "kept.sh").write_text("true\n", encoding="utf-8")
+        (repo / "untracked.sh").write_text("true\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "kept.sh"], check=True)
 
-            with self.assertRaises(subprocess.CalledProcessError):
-                self._get_tracked_unskipped(Path(scratch))
+        self.assertEqual(_get_tracked_in(repo), {"kept.sh"})
+
+    def test_a_root_whose_own_git_dir_is_broken_fails_loudly(self) -> None:
+        repo = self._get_repo("broken")
+        (repo / ".git" / "HEAD").write_text("not a ref\n", encoding="utf-8")
+
+        with self.assertRaises(subprocess.CalledProcessError):
+            self._get_tracked_unskipped(repo)
+
+    def _get_repo(self, name: str) -> Path:
+        repo = self.scratch / name
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        return repo
 
     def _get_tracked_unskipped(self, root: Path) -> frozenset[str]:
         try:
             return _get_tracked_in(root)
         except unittest.SkipTest as skipped:
             self.fail(f"a broken checkout skipped as a consumer install: {skipped}")
-
 
 
 if __name__ == "__main__":
