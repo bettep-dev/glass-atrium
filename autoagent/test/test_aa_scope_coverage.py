@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import functools
+import itertools
 import posixpath
 import re
 import subprocess
@@ -229,6 +230,18 @@ _DECLARED_EDGES: tuple[DeclaredEdge, ...] = (
         "the claude CLI (LLM setup), not a repo file",
     ),
     DeclaredEdge(
+        "autoagent/daemon-cycle.sh",
+        "export AUTOAGENT_CLAUDE_BIN",
+        None,
+        "the claude CLI daemon_cycle.py runs (LLM setup): command -v or a fixed install path",
+    ),
+    DeclaredEdge(
+        "autoagent/daemon-cycle.sh",
+        'CLAUDE_BIN="${AUTOAGENT_CLAUDE_BIN}"',
+        None,
+        "the claude CLI (LLM setup), not a repo file",
+    ),
+    DeclaredEdge(
         "autoagent/daemon_cycle.py",
         "ps_bin",
         None,
@@ -241,6 +254,11 @@ _DATA_HANDOFFS = {
         ('T9_TRANSCRIPT="${T9_TRANSCRIPT_PATH}"', "the transcript the T9 program reads"),
         ('T9_TASK_TYPE="${TASK_TYPE}"', "the outcome's task_type"),
         ('T9_SESSION_ID="${SESSION_ID}"', "the session id"),
+        ("export GRADER_BODY_TEXT", "the completion body the grader reads"),
+        ("export GRADER_FILES_FIELD", "the completion's files field"),
+        ("export GRADER_WRITE_SCAN", "a closed scan token: verifiable, unverifiable or empty"),
+        ("export GRADER_WRITE_PATHS", "the transcript's Write/Edit paths"),
+        ("export GRADER_CROSSCHECK_STATE_FILE", "a mktemp file the grader writes its token to"),
     ),
     "hooks/enforce-harness-critical.sh": (
         ('HARNESS_CANARY_DIR="${CANARY_DIR}"', "the live canary data dir the guard matches"),
@@ -260,7 +278,6 @@ _DATA_HANDOFFS = {
         )
     ),
     "autoagent/daemon-cycle.sh": (
-        ('CLAUDE_BIN="${AUTOAGENT_CLAUDE_BIN}"', "the claude CLI (LLM setup), not a repo file"),
         (
             'AUTOAGENT_AGENTS_DIR="${AUTOAGENT_AGENTS_DIR:-${HOME}/.glass-atrium/agents}"',
             "the roster dir, agents/ in AA.SCOPE.DIRS",
@@ -599,6 +616,12 @@ _SELF_DIR = re.compile(
 )
 _ASSIGNMENT = re.compile(r"^([A-Za-z_]\w*)(?:\[[^]]*\])?(\+?)=(.*)$", re.S)
 _DECLARATION_WORDS = frozenset({"local", "readonly", "export", "declare", "typeset"})
+_EXPORT_VERBS = _DECLARATION_WORDS - {"readonly"}
+_ENV_FLAGS = frozenset({"-", "-i", "--ignore-environment", "-v", "--"})
+_RESERVED_WORDS = frozenset(
+    {"if", "then", "else", "elif", "do", "while", "until", "!", "time", "{"}
+)
+_NAME = re.compile(r"[A-Za-z_]\w*")
 _REDIRECT = re.compile(r"^\d*(?:&>>?|[<>]{1,3})&?\d*")
 _VARIABLE_REF = re.compile(
     r"\$\{([A-Za-z_]\w*)(?:\[0\])?(%/\*|:-[^}]*)?\}|\$([A-Za-z_]\w*|0)(?![\w\[])"
@@ -907,25 +930,76 @@ def _get_command_edges(scope: _ShellScope, words: list[str], inline: set[str]) -
 
 
 def _get_handoff_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
-    """An env hand-off: a command-prefix or exported assignment; an unevaluable value fails."""
-    exported = words[:1] == ["export"]
-    assignments: list[re.Match[str]] = []
-    for word in words[1:] if exported else words:
-        match = _ASSIGNMENT.match(word)
-        if match is None:
+    """A value a child's environment receives; one the row cannot evaluate is unresolved."""
+    words = list(itertools.dropwhile(_RESERVED_WORDS.__contains__, words))
+    if words[:1] == ["set"]:
+        allexport = any(re.fullmatch(r"-\w*a\w*", w) for w in words) or "allexport" in words
+        return [Edge(scope.path, " ".join(words), None, None)] if allexport else []
+    if words[:1] and words[0] in _EXPORT_VERBS:
+        return _get_export_edges(scope, words)
+    return _get_prefix_edges(scope, words)
+
+
+def _get_prefix_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
+    """Assignments and ``env`` operands before a command word; with no command, none."""
+    handed: list[str] = []
+    unread: list[Edge] = []
+    in_env = False
+    rest = iter(words)
+    for word in rest:
+        if _ASSIGNMENT.match(word):
+            handed.append(word)
+        elif word == "env":
+            in_env = True
+        elif in_env and word == "-u":
+            next(rest, None)
+        elif in_env and word.startswith("-") and word not in _ENV_FLAGS:
+            unread.append(Edge(scope.path, f"env {word}", None, None))  # -S, -C … reshape argv
+        elif not (in_env and word in _ENV_FLAGS):
             break
-        assignments.append(match)
-    if not exported and len(assignments) == len(words):
-        return []
+    else:
+        if not in_env:
+            return []
+    return [edge for word in handed for edge in _get_assignment_edges(scope, word)] + unread
+
+
+def _get_export_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
+    """``export`` operands, or ``declare``/``typeset``/``local`` operands under ``-x``."""
+    flags = list(itertools.takewhile(lambda word: word[0] in "-+", words[1:]))
+    letters = "".join(flag for flag in flags if flag.startswith("-"))
+    if (words[0] != "export" and "x" not in letters) or set(letters) & {"n", "f", "p"}:
+        return []  # not exported, export removed, a function of this file, or a listing
+    verb = " ".join(words[: 1 + len(flags)])
     edges: list[Edge] = []
-    for match in assignments:
-        raw = match.group(3)
-        value = scope.evaluate(raw)
-        if value is None:
-            edges.append(Edge(scope.path, match.group(0), None, None))
-        elif value.endswith((".py", ".sh", ".bash")):
-            edges.extend(_get_target_edges(scope, [raw], None))
+    for word in words[1 + len(flags) :]:
+        if _ASSIGNMENT.match(word):
+            edges.extend(_get_assignment_edges(scope, word))
+        elif _NAME.fullmatch(word):
+            edges.extend(_get_value_edges(scope, f"{verb} {word}", f"${{{word}}}"))
+        else:
+            edges.append(Edge(scope.path, word, None, None))
     return edges
+
+
+def _get_assignment_edges(scope: _ShellScope, word: str) -> list[Edge]:
+    match = _ASSIGNMENT.match(word)
+    if match is None or match.group(2):
+        return [Edge(scope.path, word, None, None)]  # += hands off a value the row never sees
+    return _get_value_edges(scope, word, match.group(3))
+
+
+def _get_value_edges(scope: _ShellScope, raw: str, word: str) -> list[Edge]:
+    value = scope.evaluate(word)
+    if value is None:
+        return [Edge(scope.path, raw, None, None)]
+    if value.endswith((".py", ".sh", ".bash")):
+        return [edge._replace(raw=raw) for edge in _get_target_edges(scope, [word], None)]
+    path = _get_repo_path(value) if "/" in value else None
+    if path in _get_tracked():
+        return [Edge(scope.path, raw, path, None)]
+    if path and any(tracked.startswith(f"{path}/") for tracked in _get_tracked()):
+        return [Edge(scope.path, raw, None, None)]  # a dir: the child may load any file in it
+    return []
 
 
 def _get_run_edges_of(scope: _ShellScope, words: list[str], inline: set[str]) -> list[Edge]:
@@ -1372,6 +1446,78 @@ class ClosureTest(unittest.TestCase):
         categories = sorted({stop.category for stop in _STOPS} - _STOP_CATEGORIES)
 
         self.assertEqual(categories, [])
+
+
+_UNKNOWN = '"$(pick)"'
+_CODE_VALUE = '"${HOME}/.glass-atrium/hooks/lib/style_ref_match.py"'
+_HANDOFF_ROWS = (
+    ("command-prefix assignment", f"A={_UNKNOWN} ./run.sh", [(f"A={_UNKNOWN}", None)]),
+    (
+        "prefix after a reserved word",
+        f"if A={_UNKNOWN} ./run.sh; then :; fi",
+        [(f"A={_UNKNOWN}", None)],
+    ),
+    ("export with its assignment", f"export A={_UNKNOWN}", [(f"A={_UNKNOWN}", None)]),
+    ("bare export of an earlier assignment", f"A={_UNKNOWN}\nexport A", [("export A", None)]),
+    (
+        "bare export resolves the assigned code path",
+        f"LIB={_CODE_VALUE}\nexport LIB",
+        [("export LIB", "hooks/lib/style_ref_match.py")],
+    ),
+    (
+        "one export of several names",
+        f"A={_UNKNOWN}\nB={_UNKNOWN}\nexport A B",
+        [("export A", None), ("export B", None)],
+    ),
+    ("env operand", f"env A={_UNKNOWN} ./run.sh", [(f"A={_UNKNOWN}", None)]),
+    ("env operand after an option", f"env -i A={_UNKNOWN} ./run.sh", [(f"A={_UNKNOWN}", None)]),
+    ("env option the row cannot read", "env -S 'A=1 ./run.sh'", [("env -S", None)]),
+    ("declare -x", f"declare -x A={_UNKNOWN}", [(f"A={_UNKNOWN}", None)]),
+    ("local -x", f"local -x A={_UNKNOWN}", [(f"A={_UNKNOWN}", None)]),
+    ("typeset -x", f"typeset -x A={_UNKNOWN}", [(f"A={_UNKNOWN}", None)]),
+    ("combined -gx flags", f"declare -gx A={_UNKNOWN}", [(f"A={_UNKNOWN}", None)]),
+    (
+        "bare declare -x of an earlier assignment",
+        f"A={_UNKNOWN}\ndeclare -x A",
+        [("declare -x A", None)],
+    ),
+    (
+        "a suffixless tracked file",
+        'export E="${HOME}/.glass-atrium/glass-atrium"',
+        [('E="${HOME}/.glass-atrium/glass-atrium"', "glass-atrium")],
+    ),
+    (
+        "a tracked directory a child may load any file from",
+        'export D="${HOME}/.glass-atrium/hooks/lib"',
+        [('D="${HOME}/.glass-atrium/hooks/lib"', None)],
+    ),
+    ("a data path outside the tree", 'export F="${HOME}/.glass-atrium/data/x.json"', []),
+    ("a plain word value", "LC_ALL=C sort", []),
+    ("set -a exports every later assignment", "set -a", [("set -a", None)]),
+    ("set -o allexport", "set -o allexport", [("set -o allexport", None)]),
+    ("plain assignment", f"A={_UNKNOWN}", []),
+    ("local without -x", f"local A={_UNKNOWN}", []),
+    ("export -n removes the export", f"A={_UNKNOWN}\nexport -n A", []),
+    ("declare +x removes the export", f"A={_UNKNOWN}\ndeclare +x A", []),
+    ("export -f hands off a function of this file", "export -f helper", []),
+    ("set +a", "set +a", []),
+)
+
+
+class HandoffShapeTest(unittest.TestCase):
+    def test_every_value_a_child_environment_receives_is_an_edge_and_an_unknown_one_unresolved(
+        self,
+    ) -> None:
+        for name, text, expected in _HANDOFF_ROWS:
+            with self.subTest(name):
+                scope = _ShellScope("hooks/fixture.sh", text)
+                edges = [
+                    (edge.raw, edge.target)
+                    for words in scope.commands
+                    for edge in _get_handoff_edges(scope, words)
+                ]
+
+                self.assertEqual(edges, expected)
 
 
 # -- the retire stop's reason ------------------------------------------------------------------
