@@ -41,6 +41,7 @@ setup() {
   cp "${REAL_SCRIPT}" "${SCRIPT}"
   cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
   cp "${REAL_SPINE%/*}/path-guard.sh" "${WORK}/scripts/lib/path-guard.sh"
+  cp "${REAL_SPINE%/*}/tracked-paths.sh" "${WORK}/scripts/lib/tracked-paths.sh"
   seed_manifest
   printf '# agent alpha\n' >"${WORK}/agents/alpha.md"
   printf '# rule beta\n' >"${WORK}/rules/beta.md"
@@ -406,6 +407,27 @@ SHIM
   done
 }
 
+@test "generate and --check: an absent tracked-path oracle exits 7 and leaves the manifest unwritten" {
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/scripts/lib/tracked-paths.sh"; fi
+  local before mode
+  before="$(cat "${MANIFEST}")"
+  for mode in "" "--check"; do
+    run "${SCRIPT}" ${mode:+"${mode}"}
+    [[ "${status}" -eq 7 ]] || {
+      echo "row ${mode:-generate}: status ${status}: ${output}"
+      return 1
+    }
+    [[ "${output}" == *'tracked-paths.sh required'* ]] || {
+      echo "row ${mode:-generate}: no oracle message: ${output}"
+      return 1
+    }
+    [[ "$(cat "${MANIFEST}")" == "${before}" ]] || {
+      echo "row ${mode:-generate}: manifest rewritten"
+      return 1
+    }
+  done
+}
+
 # T1b — the four executable-suite roots must bundle so the daemon-apply preflight
 # can run the suite from the installed tree; monitor/test must stay out. Seeds one
 # .bats per root (+ a test_*.py under autoagent) and a monitor/test .test.ts decoy —
@@ -727,7 +749,8 @@ readonly HASHES_KEY_SWAP_JQ='.hashes["manifest.json"] = .hashes["LICENSE"] | del
   BARE="$(mktemp -d)"
   mkdir -p "${BARE}/scripts/lib"
   cp "${SCRIPT}" "${BARE}/scripts/generate-manifest.sh"
-  cp "${WORK}/scripts/lib/apply-spine.sh" "${WORK}/scripts/lib/path-guard.sh" "${BARE}/scripts/lib/"
+  cp "${WORK}/scripts/lib/apply-spine.sh" "${WORK}/scripts/lib/path-guard.sh" \
+    "${WORK}/scripts/lib/tracked-paths.sh" "${BARE}/scripts/lib/"
   cp "${MANIFEST}" "${BARE}/manifest.json"
   run git -C "${BARE}" rev-parse --is-inside-work-tree
   [[ "${status}" -ne 0 ]] || {

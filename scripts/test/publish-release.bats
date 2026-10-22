@@ -51,6 +51,7 @@ setup() {
   cp "${REAL_CONFIG}" "${WORK}/scripts/lib/atrium-config.sh"
   cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
   cp "${REAL_SPINE%/*}/path-guard.sh" "${WORK}/scripts/lib/path-guard.sh"
+  cp "${REAL_SPINE%/*}/tracked-paths.sh" "${WORK}/scripts/lib/tracked-paths.sh"
 
   # An in-scope tracked file (feeds the manifest) + an out-of-scope tracked file
   # (root, absent from generate-manifest SCOPE_PATHS) used to dirty the tree
