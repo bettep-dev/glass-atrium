@@ -2287,9 +2287,10 @@ def _put_roster_dormant(pattern_id: int, *, live: bool) -> None:
     """Move an off-roster intake row to 'dormant' so it stops re-entering intake.
 
     'dormant' is non-terminal: the aggregator's next passing pair returns it to
-    'identified', and an agent still off the roster is moved again by the next
-    writing cycle. A not-matched answer (row moved since the read, or a schema
-    without the label) leaves the row in whatever status it holds.
+    'identified' only once its agent is on the agent registry, or while that
+    registry is unreadable; an agent still off the roster is then moved again by
+    the next writing cycle. A not-matched answer (row moved since the read, or a
+    schema without the label) leaves the row in whatever status it holds.
     """
     if not live:
         sys.stderr.write(
