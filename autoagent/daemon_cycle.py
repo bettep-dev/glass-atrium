@@ -488,6 +488,9 @@ class ExitCode(IntEnum):
     CYCLE_INSTALL_REFUSED = 15
     # --aa-invalidate refused, nothing written — the stderr line names the AA.REFUSAL cause
     AA_INVALIDATION_REFUSED = 16
+    # --aa-invalidate on the open start without --confirm-open-aa, nothing written — the closure
+    # of the running A/A is irreversible
+    AA_INVALIDATION_UNCONFIRMED = 17
 
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
@@ -9480,6 +9483,7 @@ AA = SimpleNamespace(
         LEDGER_UNWRITABLE="ledger-unwritable",
         UNKNOWN_START="unknown-start",
         CAUSE_MISSING="cause-missing",
+        OPEN_UNCONFIRMED="open-unconfirmed",
     ),
 )
 
@@ -9733,13 +9737,14 @@ def _refuse_aa_start(reason: str, detail: str) -> int:
     return ExitCode.AA_START_REFUSED
 
 
-def invalidate_aa(start_id: int, cause: str) -> int:
+def invalidate_aa(start_id: int, cause: str, *, is_confirmed: bool = False) -> int:
     """--aa-invalidate: record one A/A start void-by-defect → 0, a repeat reporting the recorded
     cause; refused with a named reason and nothing written → ExitCode.AA_INVALIDATION_REFUSED.
 
-    The record closes an open start, and its passed result's design effects size nothing. An open
-    and a closed start are accepted alike: closure is not what makes a start invalid. Readers
-    honour the record only on installed code that carries them.
+    The record closes an open start, and its passed result's design effects size nothing. The open
+    start carries the running A/A and its closure is irreversible (the ledger is append-only), so
+    it needs is_confirmed — unconfirmed → ExitCode.AA_INVALIDATION_UNCONFIRMED; a closed start
+    needs none. Readers honour the record only on installed code that carries them.
     """
     cause = cause.strip()
     if not cause:
@@ -9748,14 +9753,28 @@ def invalidate_aa(start_id: int, cause: str) -> int:
         return _refuse_aa_invalidation(AA.REFUSAL.LEDGER_UNWRITABLE, "PG helper import failed")
     try:
         is_started, _ = _read_aa_invalidation(start_id)
+        latest = _read_latest_aa_start()
     except Exception as exc:  # noqa: BLE001 — refused by name, never a traceback
         return _refuse_aa_invalidation(AA.REFUSAL.LEDGER_UNREADABLE, _describe_fault(exc))
     if not is_started:
         return _refuse_aa_invalidation(AA.REFUSAL.UNKNOWN_START, f"no aa-start row {start_id}")
-    return _write_aa_invalidation(start_id, cause)
+    # only the latest start can be open — the one _read_open_aa_start would return
+    is_open = latest is not None and latest.id == start_id and not latest.is_closed
+    if is_open and not is_confirmed:
+        return _refuse_unconfirmed_aa_invalidation(start_id)
+    return _write_aa_invalidation(start_id, cause, is_open=is_open)
 
 
-def _write_aa_invalidation(start_id: int, cause: str) -> int:
+def _refuse_unconfirmed_aa_invalidation(start_id: int) -> int:
+    sys.stderr.write(
+        f"[daemon-cycle] --aa-invalidate refused: {AA.REFUSAL.OPEN_UNCONFIRMED} — A/A {start_id} "
+        "is the running A/A (its start reads as open), and invalidating it closes it "
+        "irreversibly; rerun with --confirm-open-aa to close it; nothing written\n"
+    )
+    return ExitCode.AA_INVALIDATION_UNCONFIRMED
+
+
+def _write_aa_invalidation(start_id: int, cause: str, *, is_open: bool) -> int:
     try:
         landed = _pg_write_trial_ledger_row(
             TRIAL_LEDGER.EVENT.AA_INVALIDATION,
@@ -9767,9 +9786,10 @@ def _write_aa_invalidation(start_id: int, cause: str) -> int:
         return _refuse_aa_invalidation(AA.REFUSAL.LEDGER_UNWRITABLE, _describe_fault(exc))
     if landed != 1:
         return _report_aa_invalidation(start_id)
+    closure = "it was the open A/A, now closed irreversibly" if is_open else "it reads as closed"
     sys.stderr.write(
-        f"[daemon-cycle] INFO: A/A {start_id} invalidated (cause: {cause!r}); it reads as "
-        "closed, and its result sizes nothing\n"
+        f"[daemon-cycle] INFO: A/A {start_id} invalidated (cause: {cause!r}); {closure}, "
+        "and its result sizes nothing\n"
     )
     return 0
 
@@ -14093,12 +14113,19 @@ def _main(argv: list[str]) -> int:
         metavar="START_ID",
         help="Record the A/A of START_ID void-by-defect (one aa-invalidation ledger row naming "
         "--cause), then exit (no cycle): an open start reads as closed, and its result's design "
-        "effects size nothing. Refused with exit 16 and a named reason; takes no --dry-run.",
+        "effects size nothing. Refused with exit 16 and a named reason; the open start without "
+        "--confirm-open-aa refused with exit 17; takes no --dry-run.",
     )
     parser.add_argument(
         "--cause",
         default=None,
         help="With --aa-invalidate: the defect that voids the A/A.",
+    )
+    parser.add_argument(
+        "--confirm-open-aa",
+        action="store_true",
+        help="With --aa-invalidate: confirm invalidating the OPEN start, which irreversibly "
+        "closes the running A/A. A closed start needs no confirmation.",
     )
     args = parser.parse_args(argv)
 
@@ -14112,7 +14139,9 @@ def _main(argv: list[str]) -> int:
         if args.dry_run:
             parser.error("--aa-invalidate writes the ledger; it takes no --dry-run")
         # Answered BEFORE the pause gate: its clean exit 0 would read as a recorded invalidation.
-        return invalidate_aa(args.aa_invalidate, args.cause or "")
+        return invalidate_aa(
+            args.aa_invalidate, args.cause or "", is_confirmed=args.confirm_open_aa
+        )
 
     if args.backfill_unadjudicated:
         if args.reports_dir is None:

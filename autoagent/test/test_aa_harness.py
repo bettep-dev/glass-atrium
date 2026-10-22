@@ -543,6 +543,7 @@ class AaStartRefusalTest(_AaFixture):
 
 class AaInvalidationTest(_AaFixture):
     _CAUSE = "duplicate exposure in the shared spawn read"
+    _CONFIRM = "--confirm-open-aa"
 
     def _invalidate(self, *args: str) -> tuple[int, str]:
         stderr = io.StringIO()
@@ -558,7 +559,7 @@ class AaInvalidationTest(_AaFixture):
     def test_an_invalidation_records_the_start_and_its_cause_once_per_start_id(self) -> None:
         self._open()
 
-        code, _ = self._invalidate("1", "--cause", self._CAUSE)
+        code, _ = self._invalidate("1", "--cause", self._CAUSE, self._CONFIRM)
 
         self.assertEqual(code, 0)
         self.assertEqual(
@@ -570,7 +571,7 @@ class AaInvalidationTest(_AaFixture):
         self,
     ) -> None:
         self._open()
-        self._invalidate("1", "--cause", self._CAUSE)
+        self._invalidate("1", "--cause", self._CAUSE, self._CONFIRM)
         self._set_hash(next(iter(_SCOPED)), "f" * 64)
 
         self._cycle()
@@ -597,14 +598,20 @@ class AaInvalidationTest(_AaFixture):
                 "ledger-unreadable",
             ),
             (
+                "the open-state read faults",
+                ("1", "--cause", self._CAUSE, self._CONFIRM),
+                lambda: self.ledger.faulted.add(dc.AA.SQL.LATEST_START),
+                "ledger-unreadable",
+            ),
+            (
                 "the ledger write faults",
-                ("1", "--cause", self._CAUSE),
+                ("1", "--cause", self._CAUSE, self._CONFIRM),
                 lambda: setattr(self.ledger, "write_fault", ConnectionError("PG unreachable")),
                 "ledger-unwritable",
             ),
             (
                 "the write lands nothing and no record reads back",
-                ("1", "--cause", self._CAUSE),
+                ("1", "--cause", self._CAUSE, self._CONFIRM),
                 lambda: setattr(self.ledger, "is_key_taken", True),
                 "ledger-unwritable",
             ),
@@ -3165,34 +3172,14 @@ class AaOpenReadLivePgTest(_AaLivePgFixture):
         self._insert("aa-result", {"overall": "pass"}, f"aa-result:{latest}")
         self.assertEqual(dc._read_latest_aa_start()[:3], (latest, True, {"a": "4"}))
 
-    def test_an_invalidation_closes_its_start_and_voids_a_passed_result(self) -> None:
-        agent = _ROSTER[0]
-        row_key = dc.DESIGN_EFFECT_ROW_KEYS[dc.METRIC_BUDGET_OVERAGE]
-        effect = trial_design.ArmDesignEffect(1.5, 20, 200, 1.3, 1.8, 2000)
-        rows = (
-            ("a start with no result", None),
-            ("a start whose result passed", dc.AA.VERDICT.PASS),
-        )
-        for name, overall in rows:
-            with self.subTest(name):
-                self._use_database(self._TEMPLATE.FULL)
-                start = self._insert_start({"a": "1"}, 0)
-                self._insert(
-                    "aa-arm-design-effect",
-                    {"metric_key": row_key, **effect._asdict()},
-                    f"aa-arm-design-effect:{start}:{agent}:{row_key}",
-                    agent,
-                )
-                if overall is not None:
-                    self._insert("aa-result", {"overall": overall}, f"aa-result:{start}")
-                payload = {"start_id": start, "cause": "duplicate exposure"}
-                self._insert("aa-invalidation", payload, f"aa-invalidation:{start}")
+    def test_an_invalidation_closes_its_open_start(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        start = self._insert_start({"a": "1"}, 0)
+        payload = {"start_id": start, "cause": "duplicate exposure"}
+        self._insert("aa-invalidation", payload, f"aa-invalidation:{start}")
 
-                self.assertEqual(dc._read_latest_aa_start()[:2], (start, True))
-                self.assertIsNone(dc._read_open_aa_start())
-                self.assertEqual(
-                    dc._read_power_design_effects([agent]), ({}, frozenset(), {})
-                )
+        self.assertEqual(dc._read_latest_aa_start()[:2], (start, True))
+        self.assertIsNone(dc._read_open_aa_start())
 
     def test_the_window_runs_from_the_newest_start_or_restart_under_the_frozen_duration(
         self,
@@ -3272,47 +3259,49 @@ class AaInvalidationLivePgTest(_AaLivePgFixture):
                 (event, actor, json.dumps(payload), dedupe_key),
             ).rowcount
 
-    def test_a_second_run_on_one_start_writes_no_row_and_reports_the_recorded_cause(
-        self,
-    ) -> None:
-        start_id = self._insert_start({"a": "1"}, 0)
+    def _invalidate(
+        self, start_id: int, causes: tuple[str, ...], flags: tuple[str, ...] = ()
+    ) -> tuple[list[int], str]:
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             codes = [
-                dc._main(["--aa-invalidate", str(start_id), "--cause", cause])
-                for cause in ("duplicate exposure", "a later cause")
+                dc._main(["--aa-invalidate", str(start_id), "--cause", cause, *flags])
+                for cause in causes
             ]
+        return codes, stderr.getvalue()
 
+    def _get_invalidations(self) -> list[tuple]:
         with self._connect() as conn:
-            stored = conn.execute(
-                "SELECT payload FROM core.autoagent_trial_ledger WHERE event = 'aa-invalidation'"
+            return conn.execute(
+                "SELECT payload, dedupe_key FROM core.autoagent_trial_ledger"
+                " WHERE event = 'aa-invalidation'"
             ).fetchall()
-        self.assertEqual(codes, [0, 0])
-        self.assertEqual(stored, [({"start_id": start_id, "cause": "duplicate exposure"},)])
-        self.assertIn("already invalidated", stderr.getvalue())
-        self.assertIn("duplicate exposure", stderr.getvalue())
 
-    def test_a_closed_start_is_invalidated_once_whatever_its_result(self) -> None:
-        verdict = dc.AA.VERDICT
-        for overall in (verdict.PASS, verdict.FAIL):
-            with self.subTest(f"a start whose result is {overall}"):
+    def test_a_start_is_invalidated_once_whatever_its_state(self) -> None:
+        # one closed row: closure reads the aa-result key, never its pass/fail value
+        rows = (
+            (
+                "the open start, confirmed",
+                False,
+                ("--confirm-open-aa",),
+                "it was the open A/A, now closed irreversibly",
+            ),
+            ("a closed start, unconfirmed", True, (), "it reads as closed"),
+        )
+        for name, is_closed, flags, first_line in rows:
+            with self.subTest(name):
                 self._use_database(self._TEMPLATE.FULL)
                 start_id = self._insert_start({"a": "1"}, 0)
-                self._insert("aa-result", {"overall": overall}, f"aa-result:{start_id}")
-                with contextlib.redirect_stderr(io.StringIO()):
-                    codes = [
-                        dc._main(["--aa-invalidate", str(start_id), "--cause", cause])
-                        for cause in ("duplicate exposure", "a later cause")
-                    ]
+                if is_closed:
+                    self._insert("aa-result", {"overall": "pass"}, f"aa-result:{start_id}")
 
-                with self._connect() as conn:
-                    stored = conn.execute(
-                        "SELECT payload, dedupe_key FROM core.autoagent_trial_ledger"
-                        " WHERE event = 'aa-invalidation'"
-                    ).fetchall()
+                codes, stderr_text = self._invalidate(
+                    start_id, ("duplicate exposure", "a later cause"), flags
+                )
+
                 self.assertEqual(codes, [0, 0])
                 self.assertEqual(
-                    stored,
+                    self._get_invalidations(),
                     [
                         (
                             {"start_id": start_id, "cause": "duplicate exposure"},
@@ -3320,6 +3309,22 @@ class AaInvalidationLivePgTest(_AaLivePgFixture):
                         )
                     ],
                 )
+                self.assertIn(first_line, stderr_text)
+                self.assertIn("already invalidated (cause: 'duplicate exposure')", stderr_text)
+
+    def test_the_open_start_unconfirmed_is_refused_and_stays_open(self) -> None:
+        start_id = self._insert_start({"a": "1"}, 0)
+
+        codes, stderr_text = self._invalidate(start_id, ("duplicate exposure",))
+
+        self.assertEqual(self._get_invalidations(), [])
+        self.assertEqual(dc._read_open_aa_start().id, start_id)
+        self.assertEqual(codes, [dc.ExitCode.AA_INVALIDATION_UNCONFIRMED])
+        self.assertIn(
+            f"--aa-invalidate refused: open-unconfirmed — A/A {start_id} is the running A/A",
+            stderr_text,
+        )
+        self.assertIn("irreversibl", stderr_text)
 
 
 class AaJoinCoverageReadLivePgTest(_AaLivePgFixture):
