@@ -22,6 +22,7 @@ import posixpath
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from collections.abc import Iterator
 from pathlib import Path
@@ -320,8 +321,23 @@ class Edge(NamedTuple):
 
 @functools.cache
 def _get_tracked() -> frozenset[str]:
+    return _get_tracked_in(_REPO_ROOT)
+
+
+def _get_tracked_in(root: Path) -> frozenset[str]:
+    """The tracked set; a root that is not its own git work tree skips the asking test."""
+    toplevel = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if toplevel.returncode != 0 or Path(toplevel.stdout.strip()).resolve() != root.resolve():
+        raise unittest.SkipTest(
+            f"not a git work tree: {root} (consumer install — the tracked set needs the GA repo)"
+        )
     listing = subprocess.run(
-        ["git", "-C", str(_REPO_ROOT), "ls-files", "-z"],
+        ["git", "-C", str(root), "ls-files", "-z"],
         capture_output=True,
         text=True,
         check=True,
@@ -1975,3 +1991,17 @@ class RetireStopTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TrackedTreeTest(unittest.TestCase):
+    def test_a_root_that_is_not_its_own_git_work_tree_skips_with_the_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            rows = (
+                ("a directory outside any work tree", Path(scratch)),
+                ("a subdirectory of a work tree", _REPO_ROOT / "autoagent"),
+            )
+            for name, root in rows:
+                with self.subTest(name), self.assertRaises(unittest.SkipTest) as raised:
+                    _get_tracked_in(root)
+
+                self.assertIn("not a git work tree", str(raised.exception))
