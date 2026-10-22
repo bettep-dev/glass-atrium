@@ -1002,7 +1002,7 @@
     "autoagent/autoagents-eval.sh": "523d5412515653bb0932748b67d26043c8242ea103a9d94d1f55482600582d3a",
     "autoagent/daemon-apply.sh": "c0fe8ba3a31a7f12775655a0cbe83ad9e73544dc308d1916eec8618ad5d952b2",
     "autoagent/daemon-cycle.sh": "a6a623e536979168c24b7fd62e10523ff66b538ee2abd551fea8ab936f819579",
-    "autoagent/daemon_cycle.py": "539b17a5de35b467d1bedb8d57705b3f00f8d1a9fa373f56787fb7cd6fb1d118",
+    "autoagent/daemon_cycle.py": "27ab5788acfb3959c2890ed968ec6ca51708e592496e315c0214a2766612cd4e",
     "autoagent/lib/autoagent_pause.py": "95a2596480760334b163219b80384d48d1a58ccc86bcc9825562aba10800be75",
     "autoagent/lib/confidence.py": "6ff631f4b55c8a3051cac7b87dcaecdbcdbbd9c1ed894ed5cf43f0f5af9bde10",
     "autoagent/lib/editable_merge.py": "6b18096d9667ac2807ee51b828068076434d08b376955185766b4c2e3e477320",
