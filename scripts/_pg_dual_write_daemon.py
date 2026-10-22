@@ -1171,6 +1171,9 @@ _TRIAL_LEDGER_EVENT = SimpleNamespace(
     AA_INSTRUMENT_VERDICT="aa-instrument-verdict",
     # a canary bound to no trial; dedupe_key = canary-unbound-delivery:<spool>:<line offset>
     CANARY_UNBOUND_DELIVERY="canary-unbound-delivery",
+    # the owner's void-by-defect record of one A/A start: it closes the start, and its result
+    # sizes nothing; dedupe_key = aa-invalidation:<start id>
+    AA_INVALIDATION="aa-invalidation",
 )
 
 # The ledger's closed sets, declared once: event and actor are VARCHAR columns, so nothing
@@ -1203,6 +1206,7 @@ TRIAL_LEDGER = SimpleNamespace(
         ),
         _TRIAL_LEDGER_EVENT.AA_START: ("fingerprint", "started_at", "duration"),
         _TRIAL_LEDGER_EVENT.AA_RESTART: ("start_id", "reason", "fingerprint"),
+        _TRIAL_LEDGER_EVENT.AA_INVALIDATION: ("start_id", "cause"),
         _TRIAL_LEDGER_EVENT.CANARY_UNBOUND_DELIVERY: (
             "agent",
             "spool",

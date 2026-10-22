@@ -223,6 +223,10 @@ PY
   _assert_live_module test_aa_harness AaOpenReadLivePgTest
 }
 
+@test "the A/A invalidation command's once-only record runs against the migrated cluster, none skipped" {
+  _assert_live_module test_aa_harness AaInvalidationLivePgTest
+}
+
 @test "the A/A harness's join-coverage read runs against the migrated cluster, none skipped" {
   _assert_live_module test_aa_harness AaJoinCoverageReadLivePgTest
 }

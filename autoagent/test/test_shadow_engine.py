@@ -131,6 +131,8 @@ def _get_spawns_after(start: datetime, count: int) -> list[SpawnFacts]:
     ]
 
 
+_AA_START_ID = 4
+
 class _LedgerRow(NamedTuple):
     id: int
     recorded_at: datetime
@@ -217,12 +219,12 @@ class _LedgerCursor:
         elif statement == dc.POWER.DESIGN_EFFECT_SQL:
             agents = params[-1]
             self.result = [
-                (agent, self.ledger.design_effects[agent])
+                (agent, self.ledger.design_effects[agent], _AA_START_ID)
                 for agent in agents
                 if agent in self.ledger.design_effects
             ]
         elif statement == dc.SHADOW.PREREGISTRATION_SQL:
-            event, agents = params
+            event, agents = params[:2]
             latest: dict[tuple, _LedgerRow] = {}
             for row in self.ledger.rows:
                 if row.event == event and row.agent in agents:
@@ -581,6 +583,7 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
         *,
         agent: str = _AGENT,
         pattern_id: int = _PATTERN_ID,
+        sizing: dict | None = None,
     ) -> str:
         """One ledger row for (agent, pattern_id, budget_overage) → its trial key."""
         key = hashlib.sha256(
@@ -598,11 +601,28 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
                     pattern_id,
                     event,
                     stub.get_trial_ledger().ACTOR.SHADOW,
-                    json.dumps({"metric_key": _BUDGET_KEY}),
+                    json.dumps({"metric_key": _BUDGET_KEY, **(sizing or {})}),
                     key,
                 ),
             )
         return key
+
+    def _insert_aa_row(
+        self, recorded_at: datetime, event: str, payload: dict, dedupe_key: str
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO core.autoagent_trial_ledger"
+                " (recorded_at, event, actor, payload, dedupe_key)"
+                " VALUES (%s, %s, %s, %s::jsonb, %s)",
+                (
+                    recorded_at,
+                    event,
+                    stub.get_trial_ledger().ACTOR.AA,
+                    json.dumps(payload),
+                    dedupe_key,
+                ),
+            )
 
     def _check_power(self) -> dc.PowerResult:
         with contextlib.redirect_stderr(io.StringIO()):
@@ -641,6 +661,42 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
         self.assertIsNotNone(trial.recorded_at.tzinfo)
         self.assertEqual(trial.recorded_at, latest_at)
         self.assertEqual(trial.payload, {"metric_key": _BUDGET_KEY})
+
+    def test_a_preregistration_sized_on_an_invalidated_aa_is_not_current(self) -> None:
+        power = self._check_power()
+        event = stub.get_trial_ledger().EVENT
+        rows = [
+            ("sized on the invalidated start", {"aa_start_id": 2}, 1, False),
+            ("sized on another start", {"aa_start_id": 1}, 1, True),
+            ("no start recorded, written after the invalidated pass", {}, 1, False),
+            ("no start recorded, written before the invalidated pass", {}, 3, True),
+        ]
+        for name, sizing, days_ago, is_current in rows:
+            with self.subTest(name):
+                self._use_database(self._TEMPLATE.FULL)
+                self._insert_aa_row(
+                    _NOW - timedelta(days=2), event.AA_RESULT, {"overall": "pass"}, "aa-result:2"
+                )
+                self._insert_aa_row(
+                    _NOW - timedelta(hours=1),
+                    event.AA_INVALIDATION,
+                    {"start_id": 2, "cause": "duplicate exposure"},
+                    "aa-invalidation:2",
+                )
+                key = self._insert(
+                    _NOW - timedelta(days=days_ago), event.SHADOW_PREREGISTRATION, sizing=sizing
+                )
+                trials = dc._read_shadow_trials(power.passes)
+                self.assertEqual(key in {trial.key for trial in trials.values()}, is_current)
+
+    def test_a_preregistration_records_the_start_its_design_effect_came_from(self) -> None:
+        power = self._check_power()
+        self._use_database(self._TEMPLATE.FULL)
+        with contextlib.redirect_stderr(io.StringIO()):
+            dc.run_shadow_stage(power, f"{_NOW:%Y-%m-%d}")
+        self.assertEqual(
+            [row.payload["aa_start_id"] for row in self._get_preregistrations()], [_AA_START_ID]
+        )
 
     def test_a_schema_without_the_ledger_warns_on_the_read_and_preregisters_nothing(
         self,
