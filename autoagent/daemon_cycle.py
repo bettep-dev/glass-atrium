@@ -9386,8 +9386,9 @@ AA = SimpleNamespace(
         "busiest_agents": 5,
         "minimum_spawns": 200,
     },
-    # installed manifest entries a restart keys on: the spawn path, the daemon, bodies, the ledger
-    # and the files carrying the arm and outcome evidence; live file bytes are never hashed
+    # installed manifest entries a restart keys on: the code that writes or reads the A/A evidence,
+    # bodies and each migration on a criterion table; live file bytes are never hashed. A closed
+    # list, kept closed by autoagent/test/test_aa_scope_coverage.py
     SCOPE=SimpleNamespace(
         FILES=frozenset(
             {
@@ -9398,11 +9399,39 @@ AA = SimpleNamespace(
                 "hooks/_outcome_signal.py",
                 "hooks/_pg_learning_dualwrite.py",
                 "scripts/_pg_dual_write_daemon.py",
+                # evidence writers
+                "hooks/agent-tracker.sh",
+                "hooks/advisory-subagent-budget.sh",
+                "hooks/_pg_dual_write.py",
+                "hooks/_pg-write.py",
+                "hooks/_pg_outcome_dualwrite.py",
+                # what the evidence path sources, imports or runs
+                "hooks/lib/pipe-drain.sh",
+                "hooks/lib/code-based-grader.sh",
+                "hooks/lib/review-flag-reasons.sh",
+                "hooks/lib/scope-match.sh",
+                "hooks/lib/style-ref-consts.sh",
+                "hooks/lib/styleref-roster.sh",
+                "hooks/lib/hook-utils.sh",
+                "hooks/lib/worktree-lock.sh",
+                "hooks/lib/claude-config-dirs.sh",
+                "hooks/lib/style_ref_match.py",
+                "hooks/_learning_log_limits.py",
+                "hooks/ga_paths.py",
+                "hooks/daemon_config.py",
+                "hooks/compliance_telemetry.py",
+                "scripts/lib/atrium-config.sh",
+                "scripts/lib/apply-lock.sh",
+                "scripts/lib/path-guard.sh",
             }
         ),
         DIRS=("autoagent/", "agents/"),
         MIGRATION=re.compile(r"monitor/prisma/migrations/[^/]+/migration\.sql"),
-        LEDGER_NAME=re.compile(r'\bcore"?\."?autoagent_trial_ledger\b'),
+        # the six tables the A/A criteria read
+        TABLE_NAME=re.compile(
+            r'\bcore"?\."?(?:spawn_manifest|agent_events|budget_overages|outcomes'
+            r'|autoagent_loop_events|autoagent_trial_ledger)\b'
+        ),
     ),
     # an install's rendered config names the code tree it was installed as
     INSTALL=SimpleNamespace(
@@ -9551,8 +9580,8 @@ class AaVoid(NamedTuple):
 
 
 def get_aa_fingerprint(root: Path) -> dict[str, str]:
-    """The installed manifest's `.hashes` entries in the A/A scope: the spawn- and evidence-path
-    files, `autoagent/`, `agents/`, and each migration whose installed SQL names the trial ledger.
+    """The installed manifest's `.hashes` entries in the A/A scope: the evidence-path files,
+    `autoagent/`, `agents/`, and each migration whose installed SQL names a criterion table.
 
     Raises AaFingerprintUnreadable on an unreadable or malformed manifest, an unreadable
     listed migration, or no scoped entry.
@@ -9577,7 +9606,7 @@ def _is_aa_scoped(root: Path, path: str) -> bool:
         return False
     # selection only: the installed SQL decides membership, its manifest hash is what is kept
     return (
-        AA.SCOPE.LEDGER_NAME.search((root / path).read_text(encoding="utf-8"))
+        AA.SCOPE.TABLE_NAME.search((root / path).read_text(encoding="utf-8"))
         is not None
     )
 
