@@ -1048,7 +1048,7 @@
     "autoagent/test/setup_suite.bash": "1b60bce1b36e8e413b63bf07a427ba6a6e1270e70d0164ee19cbb50b60762366",
     "autoagent/test/suite-hermeticity.bats": "a073bfb63cee00274ffa9aaddca3ee5aeba903caedef1cadc1a0fa9ef706e2b6",
     "autoagent/test/test_aa_harness.py": "b755d1558d4c2a19bb3e68b17ab7bd9f64b35bf47ce107c5f97a4ee719df82e5",
-    "autoagent/test/test_aa_scope_coverage.py": "bba9ebe6c62c2c9ff96519d63419592378d0088638a5383c423f59cdde19ddf0",
+    "autoagent/test/test_aa_scope_coverage.py": "1b5d9a3327b74be2a272d32b53f98bcd879903611f199d262aaaa2cd9bbdfc94",
     "autoagent/test/test_all_reject_alert.py": "67fe9022ae092bebc2d1b7c3d85f2cd19693d2da48c9f5ee5a6c389224977807",
     "autoagent/test/test_apply_parked_guard.py": "72179c4825d526d4bd97f20ba3fe0e0c3c069a7c3eb1102361432a1cd9165fb1",
     "autoagent/test/test_c3_scope_resolution.py": "8b8c68ed4103872a9aacc9da363e8021a0cc3983b845767450bd3272628feb21",
