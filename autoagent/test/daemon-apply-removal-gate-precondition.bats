@@ -103,8 +103,7 @@ FATAL_LINE='FATAL removal_gate_precondition'
 }
 
 @test "a verify_patched body past one pipe buffer still satisfies the gate's precondition" {
-  # About 1 MB of no-op lines after the marker loop: an early-exit reader of `declare -f` would
-  # stop at the marker while the body is still being written, and read the check as absent.
+  # ~1 MB of no-op lines past the marker loop → an early-exit `declare -f` reader misses the check
   local padded="${WORK}/padded.sh" padded_bytes
   awk '/^verify_patched\(\)[[:space:]]*\{/ { f = 1 }
        f && /^\}/ { for (i = 1; i <= 20000; i++) printf "    : pad line %d after the marker loop, behaviour unchanged\n", i; f = 0 }

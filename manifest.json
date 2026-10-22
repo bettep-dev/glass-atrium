@@ -1035,7 +1035,7 @@
     "autoagent/test/daemon-apply-preflight.bats": "cf88f565d7bd46e8e6a3047f3da7407758b68301ca079cbfd7cfad0f7d7767c8",
     "autoagent/test/daemon-apply-preservation-verify.bats": "e452bed20834dc7328a0983b54cbb0fc19f9447aa6aab7da4491a785d7c0e78e",
     "autoagent/test/daemon-apply-provenance-binding.bats": "4b5df1654a12f8c02798fcf7a22fc661679a8312f41b1767df5d2f1986592a8c",
-    "autoagent/test/daemon-apply-removal-gate-precondition.bats": "aac0a84162b4e882a1179a4bfd3ba1eb992ca9d89635475abc12134223fc3ab5",
+    "autoagent/test/daemon-apply-removal-gate-precondition.bats": "ef2633f42f7133453fd0c6c024449eed36da011a2438f60a8df7199fcdeff5b7",
     "autoagent/test/daemon-apply-stale-drain-haiku-guard.bats": "1b253f2fab90b227f33861dec3aa37c6edf52dfeb2ccaef17da3047a43247ab4",
     "autoagent/test/daemon-apply-zero-eligible-row.bats": "63baf07830fdbfc7a207ed6f0c8feece07fb6a8449c61749aee8c8049c2d30f7",
     "autoagent/test/daemon-cycle-apply-status.bats": "93f1c9a91687a546fa4ff83bbb91d487cc37ff734ef41a1f97e1ccc483d45cb2",
