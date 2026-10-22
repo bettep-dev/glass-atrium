@@ -3283,17 +3283,26 @@ class AaInvalidationLivePgTest(_AaLivePgFixture):
             (
                 "the open start, confirmed",
                 False,
+                False,
                 ("--confirm-open-aa",),
                 "it was the open A/A, now closed irreversibly",
             ),
-            ("a closed start, unconfirmed", True, (), "it reads as closed"),
+            ("a closed start, unconfirmed", True, False, (), "it reads as closed"),
+            (
+                "an older closed start beside a newer open one, unconfirmed",
+                True,
+                True,
+                (),
+                "it reads as closed",
+            ),
         )
-        for name, is_closed, flags, first_line in rows:
+        for name, is_closed, has_newer_start, flags, first_line in rows:
             with self.subTest(name):
                 self._use_database(self._TEMPLATE.FULL)
                 start_id = self._insert_start({"a": "1"}, 0)
                 if is_closed:
                     self._insert("aa-result", {"overall": "pass"}, f"aa-result:{start_id}")
+                open_id = self._insert_start({"a": "2"}, start_id) if has_newer_start else None
 
                 codes, stderr_text = self._invalidate(
                     start_id, ("duplicate exposure", "a later cause"), flags
@@ -3311,6 +3320,8 @@ class AaInvalidationLivePgTest(_AaLivePgFixture):
                 )
                 self.assertIn(first_line, stderr_text)
                 self.assertIn("already invalidated (cause: 'duplicate exposure')", stderr_text)
+                open_start = dc._read_open_aa_start()
+                self.assertEqual(None if open_start is None else open_start.id, open_id)
 
     def test_the_open_start_unconfirmed_is_refused_and_stays_open(self) -> None:
         start_id = self._insert_start({"a": "1"}, 0)

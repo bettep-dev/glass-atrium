@@ -488,8 +488,7 @@ class ExitCode(IntEnum):
     CYCLE_INSTALL_REFUSED = 15
     # --aa-invalidate refused, nothing written — the stderr line names the AA.REFUSAL cause
     AA_INVALIDATION_REFUSED = 16
-    # --aa-invalidate on the open start without --confirm-open-aa, nothing written — the closure
-    # of the running A/A is irreversible
+    # --aa-invalidate on the open start without --confirm-open-aa, nothing written — irreversible
     AA_INVALIDATION_UNCONFIRMED = 17
 
 
