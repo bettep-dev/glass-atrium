@@ -8,7 +8,7 @@ Reword around what these consumers read, never through it.
 
 | Consumer | Reads | Breaks when |
 |---|---|---|
-| `hooks/test/test_daemon_config_loader.py` → `CostTierRuleTextTest` (repo-tree copy) | the Cost-Tier Selection heading, then the text up to the NEXT `###` substring, for three phrases: the heuristic label on the table · the daemon config-reader module name · the unpinned session-default fallback | the heading is renamed · one of the three phrases is reworded · any `###` substring — a `###` or `####` heading, or a hash-prefixed heading name in prose — lands ahead of them, truncating the parsed span · that heading's exact literal is written a second time ANYWHERE ABOVE it, re-aiming the split at the wrong copy |
+| `hooks/test/test_daemon_config_loader.py` → `CostTierRuleTextTest` (repo-tree copy) | the Cost-Tier Selection heading, then the text up to the NEXT `###` substring, for three phrases: the heuristic label on the table · the daemon config-reader module name · the pinned worker-model-id fallback | the heading is renamed · one of the three phrases is reworded · any `###` substring — a `###` or `####` heading, or a hash-prefixed heading name in prose — lands ahead of them, truncating the parsed span · that heading's exact literal is written a second time ANYWHERE ABOVE it, re-aiming the split at the wrong copy |
 | `hooks/test/inject-session-context.bats` → "the workflow pre-flight carries both close-token forms of the grammar SoT" | the `in-script` and `deferred:` close-token form literals, token included, counted across the file: exactly one of each | either form literal is reworded · either form literal is written a second time anywhere in the file, quoted or not |
 | `hooks/enforce-verification-gate.sh` · `hooks/enforce-workflow-verify-stage.sh` · `hooks/enforce-foreground-harness.sh` · `hooks/inject-session-context.sh` · `hooks/inject-scope-rules.sh` | heading names, quoted into operator-facing block and advisory text | a cited heading is renamed, sending a blocked operator to a section that no longer exists |
 | `scoped/scope-dev.md` · `scope-qa.md` · `scope-planning.md` · `scope-report.md` · `skills/glass-atrium-ops-orchestrator.md` · `skills/glass-atrium-ops-delegation-contracts/` · `agents/glass-atrium-intel-reporter.md` · `agents/glass-atrium-dev-front.md` | the same heading names, plus the bolded leads reserved below | a cited heading or bolded lead is renamed |
@@ -268,7 +268,18 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 ### Cost-Tier Selection
 
 - The table below is a **judgment heuristic** for LLM-led routing, not a mechanism: no tier-selecting code reads a per-agent tier field, so the orchestrator assigns a tier by task complexity before spawning.
-- The daemon's own automation reads its model from `~/.claude/data/daemon-config.json` via `hooks/daemon_config.py`; with that config absent it falls back to the session default (an unpinned family alias), never a pinned version.
+- The daemon's own automation reads its model through `hooks/daemon_config.py`: the `DAEMON_CONFIG` path override first, else `daemon-config.json` under the data root (`hooks/ga_paths.py` → `get_data_root`, whose base `GA_DATA_ROOT` overrides).
+- `load_daemon_config` falls back to a pinned worker-model id, never a bare family alias, when the file is missing, unreadable, corrupt or not a JSON object, or when neither `worker_model` nor the legacy `haiku_model` key holds a non-empty string.
+  - Why: the monitor rejects a bare alias for the worker model, and `hooks/pricing.json` cannot price one.
+- That id sits in every seam holding the fallback:
+  - `hooks/daemon_config.py` → `_FALLBACK`;
+  - `scripts/lib/atrium-config.sh` → `atrium_resolve_worker_model`;
+  - `monitor/src/server/model-config-consts.ts` → `RETIRED_WORKER_MODEL_REPLACEMENT`;
+  - `monitor/prisma/migrations/20260901000000_rename_haiku_model_config_keys_to_worker/migration.sql` → both `model.daemon_cycle_worker` values.
+- Moving the id:
+  - the migration's values move only through a new migration, never by editing the applied file.
+    - Why: `migrate deploy` never re-applies an applied migration, so an edit reaches fresh installs only (`migration.sql` → "WHY a new migration rather than an edit").
+  - every other seam is edited together, deliberately.
 - This wording is pinned — `## Machine-Read Structure`.
 
 | Task type | Model tier | Trigger |
@@ -277,16 +288,19 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 | Implementation / review / design | default (settings.json `model`) | Default for DEV · QA · PLANNING agents |
 | Strategic decisions (cascade effect) | Opus | Orchestrator itself only |
 
-**Tier-escalation heuristic (observability, NOT a mechanism)**:
+**Tier-escalation heuristic (observability, not a mechanism)**:
 
 - `fail_rate` (computed read-only in monitor `agents.ts` for the dashboard) is a cue the orchestrator MAY consult: a Haiku sub-agent persistently failing a task type (> ~20%) hints at the default model next time.
 - No code consumes `fail_rate` to switch a tier, so the escalation is not enforced.
 
 **Model pins**:
 
-- The repo default and daemon proposals follow settings.json `model` and MUST NOT hardcode a tier/version string.
+- Repo `agents/*.md` and daemon body proposals:
+  - carry no `model:` key.
+  - MUST NOT hardcode a tier/version string — they follow settings.json `model`.
 - A live-environment operator MAY pin a model in an agent's frontmatter as local-only config, never ported to git — a sanctioned override, not a violation.
-- Repo `agents/*.md` carry ZERO `model:` keys: every pin is LIVE-ONLY, and the updater preserves it across updates.
+- In agent frontmatter every pin is LIVE-ONLY, and the updater preserves it across updates.
+- Pinned ids are sanctioned in the worker-model fallback seams above and in the monitor's model-config seed values for the domains it renders into live agent frontmatter.
 - A delegation never authors a `model:` pin.
 
 ### Spawn Budget
