@@ -1870,7 +1870,7 @@
     "test/hook-matcher-shape-invariant.bats": "fd1a08a8b605be0abc49c6ec8d1b22c4ad2f0dc6f22cdcc747b142ce914e4bac",
     "test/hook-repoint-dualdir.bats": "95e9cda8a46d6b3434ce80ac3688d4268eb71586d1a718105b6b9ac9898ea3c0",
     "test/install-acceptance-untracked-listed.bats": "7ef5bf4b1bb0ba4901feb99de17927a58c6369226512c2a4d8ce52a690018ee7",
-    "test/install-acceptance.sh": "62c28e0ff6569f6850701c9caba67e1d9839117078dff0b5d5d6f0b1344634ae",
+    "test/install-acceptance.sh": "774822182e9e982723ce744da4882d42966085d916e1d45d5e57454a6574d3a5",
     "test/install-bootstrap-subcommand.bats": "5510b5b34bf54d869f8c55768ae89018819c6d84755642a75709f2ab6b702453",
     "test/install-orphan-ownership-exec-harness.sh": "ec322d0dcfb3e92dbbdc92900603f77a80c19f736b85becd7ad13ad5a11f7558",
     "test/install-orphan-ownership.bats": "e30dc7926eb2dce56afc530c14d8fa830162520c0123bc6fbdcc74d20843bc68",
