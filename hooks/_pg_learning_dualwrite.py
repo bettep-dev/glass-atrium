@@ -1350,15 +1350,18 @@ def count_outcomes_since(
 # unit = every MANIFEST row of one agent_id (SubagentStart fires per activation, resumes included)
 # → formed over all time before the type + window filters: a resume never enters as a new spawn
 # NULL (`unknown`) ids are never grouped → each such row stays a unit of its own
-# delivered = every activation delivered with one hash · any_delivered = at least one delivered
+# activation_delivered = one activation delivered with its hash, read by both unit kinds
+# delivered = every activation so, with one hash · any_delivered = at least one marked delivered
 # joined tables pre-grouped by agent_id → a spawn with N overage / outcome rows counts once
 # outside [baseline, end) task members only: up to evaluation + earlier ones stopped ≥ baseline − W
 # tool_use_actual: the recorder's header line, read as _OUTCOME.FACTS_SELECT_SQL reads it
 _SPAWN_FACTS_SELECT_SQL = SimpleNamespace(
     TEMPLATE="""
 WITH manifest AS (
-    SELECT id, agent_id, agent_type, session_id, started_at, {exposure_columns}
-    FROM core.spawn_manifest
+    SELECT *, CASE WHEN delivered IS NOT NULL THEN delivered AND delivered_hash IS NOT NULL END
+                  AS activation_delivered
+    FROM (SELECT id, agent_id, agent_type, session_id, started_at, {exposure_columns}
+          FROM core.spawn_manifest) exposed
 ),
 firsts AS (
     SELECT DISTINCT ON (agent_id) id, agent_id, agent_type, session_id, started_at, arm, salt_id
@@ -1367,9 +1370,8 @@ firsts AS (
 ),
 deliveries AS (
     SELECT agent_id, count(*) AS activations,
-           CASE WHEN bool_and(delivered IS NULL) THEN NULL
-                ELSE bool_and(delivered IS TRUE) AND count(delivered_hash) = count(*)
-                     AND count(DISTINCT delivered_hash) = 1
+           CASE WHEN bool_and(activation_delivered IS NULL) THEN NULL
+                ELSE bool_and(activation_delivered IS TRUE) AND count(DISTINCT delivered_hash) = 1
            END AS delivered,
            bool_or(delivered) AS any_delivered,
            CASE WHEN count(DISTINCT delivered_hash) = 1 THEN min(delivered_hash) END
@@ -1382,7 +1384,7 @@ units AS (
     FROM firsts f JOIN deliveries d ON d.agent_id = f.agent_id
     UNION ALL
     SELECT id, agent_id, agent_type, session_id, started_at, arm, salt_id,
-           delivered, delivered_hash, delivered, 1
+           activation_delivered, delivered_hash, delivered, 1
     FROM manifest WHERE agent_id IS NULL
 ),
 spawns AS (

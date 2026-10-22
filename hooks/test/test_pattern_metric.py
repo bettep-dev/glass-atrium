@@ -1525,6 +1525,29 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
                     (spawn.is_delivered, spawn.is_any_delivered, spawn.delivered_hash), expected
                 )
 
+    def test_an_unknown_id_activation_reads_delivered_as_a_one_activation_known_unit_does(
+        self,
+    ) -> None:
+        rows = [
+            ("delivered with its hash", _TREATED),
+            ("delivered without a hash", (1, _SALT_ID, True, None)),
+            ("not delivered", _CONTROL),
+            ("pre-field", None),
+        ]
+        started = self.windows.start.confirmation + _DAY
+        for name, exposure in rows:
+            with self.subTest(name), self.conn.transaction(force_rollback=True):
+                self._put_spawn(0, "live-single", started, exposure=exposure)
+                self._put_spawn(1, None, started + _MINUTE, exposure=exposure)
+
+                _, spawns = pgdw._read_spawn_facts([self._AGENT], self.windows)
+
+                known, unknown = (
+                    (s.is_delivered, s.is_any_delivered, s.delivered_hash)
+                    for s in spawns[self._AGENT]
+                )
+                self.assertEqual(unknown, known)
+
     def test_a_schema_without_the_exposure_columns_reads_its_spawns_unexposed(self) -> None:
         import psycopg
 
