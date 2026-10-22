@@ -3113,12 +3113,15 @@ class _AaLivePgFixture(_AaFixture):
     def _connect(self):
         return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
 
-    def _insert(self, event: str, payload: dict, dedupe_key: str | None) -> int:
+    def _insert(
+        self, event: str, payload: dict, dedupe_key: str | None, agent: str | None = None
+    ) -> int:
         with self._connect() as conn:
             return conn.execute(
-                "INSERT INTO core.autoagent_trial_ledger (event, actor, payload, dedupe_key)"
-                " VALUES (%s, %s, %s::jsonb, %s) RETURNING id",
-                (event, stub.get_trial_ledger().ACTOR.AA, json.dumps(payload), dedupe_key),
+                "INSERT INTO core.autoagent_trial_ledger"
+                " (event, actor, payload, dedupe_key, agent)"
+                " VALUES (%s, %s, %s::jsonb, %s, %s) RETURNING id",
+                (event, stub.get_trial_ledger().ACTOR.AA, json.dumps(payload), dedupe_key, agent),
             ).fetchone()[0]
 
     def _insert_start(self, fingerprint: dict, previous: int) -> int:
@@ -3162,14 +3165,34 @@ class AaOpenReadLivePgTest(_AaLivePgFixture):
         self._insert("aa-result", {"overall": "pass"}, f"aa-result:{latest}")
         self.assertEqual(dc._read_latest_aa_start()[:3], (latest, True, {"a": "4"}))
 
-    def test_an_invalidation_closes_its_start_whatever_its_result(self) -> None:
-        self._use_database(self._TEMPLATE.FULL)
-        start = self._insert_start({"a": "1"}, 0)
-        payload = {"start_id": start, "cause": "duplicate exposure"}
-        self._insert("aa-invalidation", payload, f"aa-invalidation:{start}")
+    def test_an_invalidation_closes_its_start_and_voids_a_passed_result(self) -> None:
+        agent = _ROSTER[0]
+        row_key = dc.DESIGN_EFFECT_ROW_KEYS[dc.METRIC_BUDGET_OVERAGE]
+        effect = trial_design.ArmDesignEffect(1.5, 20, 200, 1.3, 1.8, 2000)
+        rows = (
+            ("a start with no result", None),
+            ("a start whose result passed", dc.AA.VERDICT.PASS),
+        )
+        for name, overall in rows:
+            with self.subTest(name):
+                self._use_database(self._TEMPLATE.FULL)
+                start = self._insert_start({"a": "1"}, 0)
+                self._insert(
+                    "aa-arm-design-effect",
+                    {"metric_key": row_key, **effect._asdict()},
+                    f"aa-arm-design-effect:{start}:{agent}:{row_key}",
+                    agent,
+                )
+                if overall is not None:
+                    self._insert("aa-result", {"overall": overall}, f"aa-result:{start}")
+                payload = {"start_id": start, "cause": "duplicate exposure"}
+                self._insert("aa-invalidation", payload, f"aa-invalidation:{start}")
 
-        self.assertEqual(dc._read_latest_aa_start()[:2], (start, True))
-        self.assertIsNone(dc._read_open_aa_start())
+                self.assertEqual(dc._read_latest_aa_start()[:2], (start, True))
+                self.assertIsNone(dc._read_open_aa_start())
+                self.assertEqual(
+                    dc._read_power_design_effects([agent]), ({}, frozenset(), {})
+                )
 
     def test_the_window_runs_from_the_newest_start_or_restart_under_the_frozen_duration(
         self,
@@ -3268,6 +3291,35 @@ class AaInvalidationLivePgTest(_AaLivePgFixture):
         self.assertEqual(stored, [({"start_id": start_id, "cause": "duplicate exposure"},)])
         self.assertIn("already invalidated", stderr.getvalue())
         self.assertIn("duplicate exposure", stderr.getvalue())
+
+    def test_a_closed_start_is_invalidated_once_whatever_its_result(self) -> None:
+        verdict = dc.AA.VERDICT
+        for overall in (verdict.PASS, verdict.FAIL):
+            with self.subTest(f"a start whose result is {overall}"):
+                self._use_database(self._TEMPLATE.FULL)
+                start_id = self._insert_start({"a": "1"}, 0)
+                self._insert("aa-result", {"overall": overall}, f"aa-result:{start_id}")
+                with contextlib.redirect_stderr(io.StringIO()):
+                    codes = [
+                        dc._main(["--aa-invalidate", str(start_id), "--cause", cause])
+                        for cause in ("duplicate exposure", "a later cause")
+                    ]
+
+                with self._connect() as conn:
+                    stored = conn.execute(
+                        "SELECT payload, dedupe_key FROM core.autoagent_trial_ledger"
+                        " WHERE event = 'aa-invalidation'"
+                    ).fetchall()
+                self.assertEqual(codes, [0, 0])
+                self.assertEqual(
+                    stored,
+                    [
+                        (
+                            {"start_id": start_id, "cause": "duplicate exposure"},
+                            f"aa-invalidation:{start_id}",
+                        )
+                    ],
+                )
 
 
 class AaJoinCoverageReadLivePgTest(_AaLivePgFixture):
