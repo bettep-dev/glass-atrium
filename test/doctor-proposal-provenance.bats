@@ -143,6 +143,19 @@ DOCTOR_DRIVER='
   "$@"
 '
 
+# Step driver: the doctor driver plus a mode word ($3, cli|tui; tui sets GA_TUI_STEP as run_step
+# does) and an ERR trap that ends a call RETURNING N with 100+N. A call that exits N ends the
+# shell with N without firing the trap, so the status alone tells a return from an exit.
+STEP_DRIVER='
+  set -Eeuo pipefail
+  source "$1/lib/ga-core.sh"
+  ga_init_env "$2"
+  if [[ "$3" == tui ]]; then GA_TUI_STEP=1; fi
+  shift 3
+  trap "exit \$(( \$? + 100 ))" ERR
+  "$@"
+'
+
 # The sandbox environment every driver runs in. GA_DB_NAME points the whole DB path at a throwaway
 # name and PATH puts the stub first, so no live database name is ever spoken and no real psql is
 # ever reached. $1 = PATH override.
@@ -198,16 +211,17 @@ sys.exit(proc.wait())
 PY
 )"
 
-# Run one lib call through DOCTOR_DRIVER under the forced harness. Args: the lib call.
+# Run one lib call through a driver under the forced harness. Args: the driver text, the lib call.
 # Sets status · output = the driver's stderr · FORCED_STDOUT = the file holding its stdout.
 run_forced_driver() {
-  local python_bin
+  local python_bin driver="${1}"
+  shift
   python_bin="$(command -v python3)"
   # shellcheck disable=SC2154  # BATS_TEST_TMPDIR is assigned by the Bats runner
   FORCED_STDOUT="$(mktemp "${BATS_TEST_TMPDIR}/forced-stdout.XXXXXX")"
   set_sandbox_env
   run --separate-stderr env "${SANDBOX_ENV[@]}" "${python_bin}" -c "${FORCED_HARNESS_PY}" \
-    "${FORCED_STDOUT}" -c "${DOCTOR_DRIVER}" _ "${GA}" "${GA_SANDBOX}" "$@"
+    "${FORCED_STDOUT}" -c "${driver}" _ "${GA}" "${GA_SANDBOX}" "$@"
 }
 
 assert_output_has() {
@@ -432,17 +446,25 @@ warn_total_of_output() {
 # full stderr pipe. A builtin write in that shell fails, and under errexit that failure becomes the
 # exit, dropping the rest of the report. Each row asserts the fixed state: its own exit, the line
 # exactly once on stderr, nothing on stdout. The doctor keeps no trace log, so stderr is the only
-# channel to check.
+# channel to check. The die_step rows use a code other than 1, so a failed write's errexit status
+# cannot pass for the code; the step driver reports a return as 100+N, so the CLI row must exit
+# its code and the TUI row must return it.
 @test "a log or die line blocked under an interrupt still arrives once and leaves the exit to the code path" {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
-  local row name expected needle call_line rest
+  local row name expected needle driver_name call_line driver rest
   local -a call
   for row in \
-    'doctor report|0|== doctor: Glass Atrium preflight ==|run_doctor' \
-    'die|1|FATAL: forced die probe|die forced die probe'; do
-    IFS='|' read -r name expected needle call_line <<<"${row}"
+    'doctor report|0|== doctor: Glass Atrium preflight ==|doctor|run_doctor' \
+    'die|1|FATAL: forced die probe|doctor|die forced die probe' \
+    'die_step on the CLI exits its code|3|FATAL: forced die_step probe|step|cli die_step 3 forced die_step probe' \
+    'die_step under the TUI returns its code|103|FATAL: forced die_step probe|step|tui die_step 3 forced die_step probe'; do
+    IFS='|' read -r name expected needle driver_name call_line <<<"${row}"
     IFS=' ' read -r -a call <<<"${call_line}"
-    run_forced_driver "${call[@]}"
+    case "${driver_name}" in
+      step) driver="${STEP_DRIVER}" ;;
+      *) driver="${DOCTOR_DRIVER}" ;;
+    esac
+    run_forced_driver "${driver}" "${call[@]}"
     [[ "${status}" -eq "${expected}" ]] || {
       echo "${name}: status ${status}, expected ${expected}: ${output} ${stderr}"
       return 1

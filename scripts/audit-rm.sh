@@ -4,8 +4,9 @@
 #
 # Behavior:
 #   1. Walk the shell files of the SCOPE_DIRS trees plus the SCOPE_FILES root scripts, or the --path
-#      overrides. A scope run then prints a NOT_READ line for every tracked shell file it skips — the
-#      UNREAD_FILES list — so a green run never reads as full coverage.
+#      overrides; an absent OPTIONAL_SCOPE_FILE is skipped with a stderr NOTICE. A scope run then
+#      prints a NOT_READ line for every tracked shell file it skips — the UNREAD_FILES list — so a
+#      green run never reads as full coverage.
 #   2. Find each recursive or forced delete on a non-comment physical line (one line is one site)
 #   3. Count the one converted shape: an `if ga_guard_path "${V}"; then` whose first command deletes
 #      the single operand "${V:?}" (a literal sub-path allowed), on one line or under that if line
@@ -21,7 +22,8 @@
 #   0 = audit completed with no blocking findings (or an advisory-surface run)
 #   1 = blocking run reporting findings (an unconverted site or a grammar reject)
 #   2 = usage error
-#   3 = IO/scope error (a scope tree, scope file or --path target is missing or unreadable)
+#   3 = IO/scope error (a scope tree, scope file or --path target is missing or unreadable; an absent
+#       OPTIONAL_SCOPE_FILE is the one exception)
 #
 # Rule: agents/GLASS_ATRIUM_GLOBAL_RULES.md → File Deletion Policy.
 set -Eeuo pipefail
@@ -40,6 +42,9 @@ readonly SCOPE_DIRS
 # Shell entry points at the repository root, which no scope tree reaches.
 SCOPE_FILES=(glass-atrium install.sh)
 readonly SCOPE_FILES
+# The release bundle omits install.sh (scripts/generate-manifest.sh → SCOPE_PATHS), so an install root
+# lacks it; only its absence is skipped — present but unreadable still exits 3.
+readonly OPTIONAL_SCOPE_FILE='install.sh'
 # Tracked shell files no scope entry reaches — the scope itself is the owner's decision:
 #   - monitor/scripts/*: the monitor session's area;
 #   - build-glass-atrium.sh and the two skills scripts: widening the scope to them is the owner's call.
@@ -244,6 +249,10 @@ audit_scope() {
   done
   for rel in "${SCOPE_FILES[@]}"; do
     abs="${root_dir}/${rel}"
+    if [[ "${rel}" == "${OPTIONAL_SCOPE_FILE}" && ! -e "${abs}" ]]; then
+      printf 'NOTICE: optional scope file absent, skipped: %s\n' "${abs}" >&2
+      continue
+    fi
     if [[ ! -f "${abs}" || ! -r "${abs}" ]]; then
       printf 'ERROR: scope file missing or unreadable: %s\n' "${abs}" >&2
       exit 3

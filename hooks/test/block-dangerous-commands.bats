@@ -180,8 +180,8 @@ run_hook_without_jq() {
   [[ "${row}" == "chmod-777" ]]
 }
 
-# ~160 KiB of JSON-escaped lines: above the 64 KiB pipe capacity, so a reader that stops at a
-# line-1 match leaves its writer to die of SIGPIPE, which pipefail reports as "no match".
+# ~160 KiB of JSON-escaped lines → a multi-write writer, which races a reader that stops at a line-1
+# match at any size; a writer left with a write dies of SIGPIPE, which pipefail reports as "no match".
 pipe_overflow_padding() {
   seq -f 'padding line %05g of an ordinary build log' 1 4000 | awk '{ printf "%s\\n", $0 }'
 }

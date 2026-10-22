@@ -19,8 +19,8 @@ run_hook() {
   run bash "${HOOK_SH}" <<<"${payload}"
 }
 
-# ~160 KiB of duplicated tpath-key lines: above the 64 KiB pipe capacity, so a reader that stops at
-# line 1 leaves its writer to die of SIGPIPE, which pipefail turns into an ERR-trap internal error.
+# ~160 KiB of duplicated tpath-key lines → a multi-write writer, which races a reader that stops at line 1
+# at any size; a writer left with a write dies of SIGPIPE, which pipefail turns into an ERR-trap internal error.
 @test "an unreadable transcript loud-fails with no internal error when its reported path exceeds the pipe buffer" {
   local padding
   padding="$(seq -f '@@tpath@@padding line %05g of a duplicated tpath key' 1 3000)"

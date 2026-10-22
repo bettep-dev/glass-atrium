@@ -114,8 +114,8 @@ write_edit_transcript() {
   [[ "${output}" != *"ADVISORY"* ]] || return 1
 }
 
-# ~160 KiB of duplicated files-key lines: above the 64 KiB pipe capacity, so a reader that stops at
-# line 1 leaves its writer to die of SIGPIPE, which pipefail turns into an ERR-trap internal error.
+# ~160 KiB of duplicated files-key lines → a multi-write writer, which races a reader that stops at line 1
+# at any size; a writer left with a write dies of SIGPIPE, which pipefail turns into an ERR-trap internal error.
 @test "an undeclared edit is reported with no internal error when its extracted field exceeds the pipe buffer" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   local padding

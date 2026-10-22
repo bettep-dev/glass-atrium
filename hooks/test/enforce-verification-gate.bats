@@ -340,7 +340,7 @@ mint_bad_sink() {
   assert_empty
 }
 
-# Above the 64 KiB pipe capacity, an early-exiting token reader would SIGPIPE its writer on every run.
+# Multi-line prompt → a multi-write writer, which an early-exiting token reader races at any size and can SIGPIPE.
 @test "a prompt larger than the pipe buffer with both tokens on its first lines passes, exit 0" {
   local filler
   filler="$(seq -f 'context line %05g describing the change in realistic prose' 1 1300)"

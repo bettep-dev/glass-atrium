@@ -59,8 +59,8 @@ ${DEV_BODY}"
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged despite the declaration -- ${output}" >&2; return 1; }
 }
 
-# ~130 KiB of comment lines: above the 64 KiB pipe capacity, so a reader that stops at a line-1
-# match leaves its writer to die of SIGPIPE, which pipefail reports as "no match".
+# ~130 KiB of comment lines → a multi-write writer, which races a reader that stops at a line-1
+# match at any size; a writer left with a write dies of SIGPIPE, which pipefail reports as "no match".
 @test "a [SCOPE] declaration on line 1 of a script larger than the pipe buffer silences the advisory" {
   local padding
   padding="$(seq -f '// padding line %05g of an ordinary workflow script body' 1 2500)"
