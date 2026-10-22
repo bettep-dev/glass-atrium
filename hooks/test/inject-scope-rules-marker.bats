@@ -4,7 +4,7 @@
 #   A dropped scope block is silent to the subagent — it learns nothing about what it is missing.
 #   T16: one terse marker line, appended after the shed loop, names each shed block.
 #   Marker budget: loop ceiling = full ceiling − join − rendered marker, re-derived after every shed.
-#   Marker still over the full ceiling → withdrawn from context + one MARKERLOST drop-log row.
+#   Assembly + marker still over the full ceiling → marker withdrawn + one MARKERLOST drop-log row.
 #   AM-T16: each rule-doc-sourced shed entry carries its Read-resolvable source path.
 #
 #   ACs pinned here (T16):
