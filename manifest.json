@@ -1056,7 +1056,7 @@
     "autoagent/test/test_corpus_audit_pg_sink.py": "8af0c2a8cc21f9577a931f2d99ab445e5c5b9d4ba0b4b05036fa6fc84b1168ca",
     "autoagent/test/test_coverage_read_contract.py": "fab1046c664f413c8ed555847544e4c9a39143d7ecf4d2012f3186d4eac801fe",
     "autoagent/test/test_cycle_status_classification.py": "916605ac57ef3d7b475a32e37b0da194897c7d34681f8705e8e4c87120eb4d2b",
-    "autoagent/test/test_daemon_tier_knobs.py": "7e65e9d7e461f7f776d2ccf211d40c40845bce6eccc3164561289468edb7623f",
+    "autoagent/test/test_daemon_tier_knobs.py": "a9950bdd88796c83b5fedb537ca30883ad41f7b571a10a11d8c40c5f8e321531",
     "autoagent/test/test_dead_reference_guard.py": "48450ec057da9d68e0e80bf7790e2cba16145362eeaed55f56297e2a8a34c1c5",
     "autoagent/test/test_diff_body_parity.py": "a48d5ca8dc5290a1fafccb8a03113f1fc60059dc2b0556dbc7234a2f3f6adead",
     "autoagent/test/test_diff_target_basename.py": "5036e4b8f075c7a31acc2c9c547e585a03347964459c0d8a254c4da9dba6971c",
