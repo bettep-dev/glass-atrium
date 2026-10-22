@@ -3,6 +3,10 @@
 # Self-contained: seeds its own sandbox, runs install/uninstall, asserts AC1-AC7.
 # NEVER touches the real ~/.claude or the real GA config.toml (uses GA_TARGET_HOME
 # + GA_CONFIG_TOML overrides pointed at a mktemp sandbox).
+# Real-HOME mode: HOME stays the user's, so doctor's read-only checks read the live machine —
+# §26 OAuth token-leak check (tmux list-sessions + show-environment -g, launchctl getenv) and
+# the monitor liveness GET; names and counts only, value never shown. Doctor's metered
+# `claude -p` self-test runs a sandbox stub through GA_AUTH_CLAUDE_BIN, never the real CLI.
 set -uo pipefail
 
 # Repo root = parent of this script's test/ dir (portable: no hardcoded $HOME path).
@@ -83,6 +87,16 @@ export ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/update-state"
 # empty dir → trivial scan (the DOCTOR_AUTH_REPORTS_DIR seam the bats suites already use)
 mkdir -p "${SANDBOX}/empty-reports"
 export DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}/empty-reports"
+# metered-call seam — the stub logs each argv line so STEP 1 can prove the self-test ran it
+CLAUDE_STUB_CALLS="${SANDBOX}/claude-stub.calls"
+mkdir -p "${SANDBOX}/bin"
+cat >"${SANDBOX}/bin/claude" <<SH
+#!/bin/bash
+printf '%s\n' "\$*" >>'${CLAUDE_STUB_CALLS}'
+echo OK
+SH
+chmod +x "${SANDBOX}/bin/claude"
+export GA_AUTH_CLAUDE_BIN="${SANDBOX}/bin/claude"
 # shellcheck disable=SC2329 # run by the EXIT trap; 0.11 misses a trap reached through the final exit
 delete_sandbox() {
   if ga_guard_path "${SANDBOX}"; then rm -rf -- "${SANDBOX:?}"; fi
@@ -159,6 +173,11 @@ hdr "STEP 1 — doctor preflight (sandbox)"
 DOCTOR_RC=$?
 tail -3 "${SANDBOX}/doctor1.log"
 [[ "${DOCTOR_RC}" -eq 0 ]] && ok "doctor exits 0 (PASS or PASS-with-warnings)" || no "doctor rc=${DOCTOR_RC}"
+if grep -q '^-p ' "${CLAUDE_STUB_CALLS}" 2>/dev/null; then
+  ok "doctor's metered 'claude -p' self-test ran the sandbox stub, not the real CLI"
+else
+  no "doctor's 'claude -p' self-test never reached the sandbox stub (GA_AUTH_CLAUDE_BIN unrouted)"
+fi
 
 # =============================================================================
 hdr "STEP 2 — install run #1 (config render + symlink farm + wire_hooks)"
