@@ -168,15 +168,17 @@ _git_txn_count_file_headers() {
 # timestamp git/unified diffs may append becomes $3 and is dropped cleanly. The
 # leading a//b/ prefix is stripped; the final path component is echoed. Arg: $1
 # diff text.
+# awk latches the first header and reads on to EOF: an early `exit` lets the
+# line-at-a-time printf take SIGPIPE, and pipefail turns that into rc 141.
 _git_txn_diff_header_basename() {
   local diff="$1"
   printf '%s\n' "${diff}" | awk '
-    /^\+\+\+ / {
+    !seen && /^\+\+\+ / {
       p = $2
       sub(/^[ab]\//, "", p)
       n = split(p, parts, "/")
       print parts[n]
-      exit
+      seen = 1
     }
   '
 }
