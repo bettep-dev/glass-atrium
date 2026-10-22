@@ -15,6 +15,7 @@ Run with either runner:
 from __future__ import annotations
 
 import ast
+import collections
 import functools
 import itertools
 import posixpath
@@ -166,6 +167,7 @@ class DeclaredEdge(NamedTuple):
     raw: str
     target: str | None
     reason: str
+    sites: int = 1  # the walk must meet it exactly this often; a new site fails the row
 
 
 _BINDINGS = (
@@ -222,12 +224,14 @@ _DECLARED_EDGES: tuple[DeclaredEdge, ...] = (
         '"${cmd}"',
         None,
         "the manifest digest tool: shasum, sha256sum or its override, a binary on PATH",
+        2,
     ),
     DeclaredEdge(
         "autoagent/daemon_cycle.py",
         "claude_bin",
         None,
         "the claude CLI (LLM setup), not a repo file",
+        2,
     ),
     DeclaredEdge(
         "autoagent/daemon-cycle.sh",
@@ -246,6 +250,7 @@ _DECLARED_EDGES: tuple[DeclaredEdge, ...] = (
         "env=env",
         None,
         "_get_tier_call's os.environ plus data knobs (OTEL_METRICS_EXPORTER, output-token cap)",
+        2,
     ),
     DeclaredEdge(
         "autoagent/daemon_cycle.py",
@@ -812,7 +817,7 @@ class _ShellScope:
         self.array_sites: list[tuple[int, str, str]] = []
         self.current = 0
         for position, words in enumerate(self.commands):
-            for word in words:
+            for word in _get_command_start(_get_unredirected(words)):
                 if word in _DECLARATION_WORDS or word.startswith("-"):
                     continue
                 match = _ASSIGNMENT.match(word)
@@ -939,13 +944,23 @@ def _get_handoff_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
     """A value a child's environment receives; one the row cannot evaluate is unresolved."""
     words = _get_command_start(_get_unredirected(words))
     if words[:1] == ["set"]:
-        allexport = any(re.fullmatch(r"-\w*a\w*", w) for w in words) or any(
-            pair == ("-o", "allexport") for pair in zip(words, words[1:])
-        )
-        return [Edge(scope.path, " ".join(words), None, None)] if allexport else []
+        return [Edge(scope.path, " ".join(words), None, None)] if _is_allexport(words) else []
     if words[:1] and words[0] in _EXPORT_VERBS:
         return _get_export_edges(scope, words)
     return _get_prefix_edges(scope, words)
+
+
+def _is_allexport(words: list[str]) -> bool:
+    """``set`` turns allexport on: ``-…a…``, or an ``o`` in a flag word naming it next."""
+    rest = iter(words[1:])
+    for word in rest:
+        if word in {"-", "--"} or word[0] not in "-+":
+            return False  # the rest are positional parameters
+        for letter in word[1:]:
+            option = next(rest, "") if letter == "o" else letter
+            if word[0] == "-" and option in {"a", "allexport"}:
+                return True
+    return False
 
 
 def _get_command_start(words: list[str]) -> list[str]:
@@ -987,9 +1002,9 @@ def _is_env(word: str) -> bool:
 
 
 def _get_env_operands(scope: _ShellScope, words: list[str]) -> tuple[list[str], list[Edge]]:
-    """``env``'s assignments up to its command, and an option that reshapes argv as unresolved."""
+    """``env``'s assignments up to its command; an unreadable option or expansion is unresolved."""
     handed: list[str] = []
-    unread: list[Edge] = []
+    edges: list[Edge] = []
     rest = iter(words)
     for word in rest:
         if _ASSIGNMENT.match(word):
@@ -997,10 +1012,17 @@ def _get_env_operands(scope: _ShellScope, words: list[str]) -> tuple[list[str], 
         elif word == "-u":
             next(rest, None)
         elif word.startswith("-") and word not in _ENV_FLAGS:
-            unread.append(Edge(scope.path, f"env {word}", None, None))  # -S, -C … reshape argv
+            edges.append(Edge(scope.path, f"env {word}", None, None))  # -S, -C … reshape argv
+        elif word.startswith(("$", '"$')):
+            value = scope.evaluate(word)  # env reads an expanded NAME=value as an assignment
+            if value is None or _ASSIGNMENT.match(value) is None:
+                edges += [] if value is not None else [Edge(scope.path, f"env {word}", None, None)]
+                break
+            assigned = _get_assignment_edges(scope, value)
+            edges += [edge._replace(raw=f"env {word}") for edge in assigned]
         elif word not in _ENV_FLAGS:
             break
-    return handed, unread
+    return handed, edges
 
 
 def _get_export_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
@@ -1036,15 +1058,17 @@ def _get_value_edges(scope: _ShellScope, raw: str, word: str) -> list[Edge]:
 
 
 def _get_handed_value_edges(source: str, raw: str, value: str) -> list[Edge]:
-    """A known value a child receives: a code file is an edge, a tree dir unresolved, data none."""
-    if "/" in value and value.endswith((".py", ".sh", ".bash")):
+    """A known value a child receives: code is an edge; a dir or bare code name unresolved."""
+    if "/" not in value:
+        bare = value.endswith(_CODE_SUFFIXES)  # resolved against the child's cwd, never known
+        return [Edge(source, raw, None, None)] if bare else []
+    if value.endswith(_CODE_SUFFIXES):
         return [Edge(source, raw, _get_repo_path(value), None)]
-    path = _get_repo_path(f"{value.rstrip('/')}/") if "/" in value else value
+    path = _get_repo_path(f"{value.rstrip('/')}/")
     if path in _get_tracked():
         return [Edge(source, raw, path, None)] if _get_language(path) else []
-    if "/" in value and path is not None:
-        if path == "." or any(tracked.startswith(f"{path}/") for tracked in _get_tracked()):
-            return [Edge(source, raw, None, None)]  # a dir: the child may load any file in it
+    if path is not None and (path == "." or any(t.startswith(f"{path}/") for t in _get_tracked())):
+        return [Edge(source, raw, None, None)]  # a dir: the child may load any file in it
     return []
 
 
@@ -1140,6 +1164,11 @@ _RUN_CALLS = frozenset(
 )
 _LOAD_CALLS = frozenset({"spec_from_file_location", "run_path"})
 _ENVIRONS = frozenset({"os.environ", "environ"})
+_ENV_POSITIONS = {  # the argument an os process call takes its child's environment from
+    **dict.fromkeys(("execve", "execvpe", "posix_spawn", "posix_spawnp"), 2),
+    **dict.fromkeys(("spawnve", "spawnvpe"), 3),
+    **dict.fromkeys(("execle", "execlpe", "spawnle", "spawnlpe"), -1),
+}
 
 
 class _PythonScope:
@@ -1370,6 +1399,9 @@ def _get_python_handoff_edges(scope: _PythonScope, node: ast.AST) -> list[Edge]:
             env = next((k.value for k in keywords if k.arg == "env"), None)
             if env is not None and _is_run_call(node):
                 return _get_mapping_edges(scope, "env", env)
+            position = _ENV_POSITIONS.get(name.removeprefix("os."))
+            if position is not None and len(args) > max(position, 2):
+                return _get_mapping_edges(scope, name, args[position])
             if name in {f"{e}.update" for e in _ENVIRONS}:
                 pairs = [*args, *(ast.Dict([ast.Constant(k.arg)], [k.value]) for k in keywords)]
                 return [edge for arg in pairs for edge in _get_mapping_edges(scope, name, arg)]
@@ -1451,7 +1483,7 @@ def _get_python_target(scope: _PythonScope, node: ast.expr, subcommand: str | No
 class Closure(NamedTuple):
     failures: list[str]
     used_stops: set[Stop]
-    used_edges: set[DeclaredEdge]
+    used_edges: collections.Counter[DeclaredEdge]
     walked: set[str]
 
 
@@ -1481,7 +1513,7 @@ def _get_stop(edge: Edge, target: str) -> Stop | str | None:
 
 @functools.cache
 def _get_closure() -> Closure:
-    closure = Closure([], set(), set(), set())
+    closure = Closure([], set(), collections.Counter(), set())
     pending = sorted({path for paths in _ROOTS.values() for path in paths} | set(_READERS))
     while pending:
         path = pending.pop()
@@ -1499,6 +1531,17 @@ def _get_closure() -> Closure:
     return closure
 
 
+def _get_site_mismatches(
+    used: collections.Counter[DeclaredEdge],
+) -> dict[tuple[str, str], tuple[int, int]]:
+    """Declared edges the walk meets at a site count other than the declared one."""
+    return {
+        (edge.source, edge.raw): (edge.sites, used[edge])
+        for edge in _DECLARED_EDGES
+        if used[edge] != edge.sites
+    }
+
+
 def _get_resolved_target(closure: Closure, edge: Edge) -> str | None:
     if edge.target is not None:
         return edge.target
@@ -1506,7 +1549,7 @@ def _get_resolved_target(closure: Closure, edge: Edge) -> str | None:
     if declared is None:
         closure.failures.append(f"{edge.source}: unresolved edge {edge.raw!r}")
         return None
-    closure.used_edges.add(declared)
+    closure.used_edges[declared] += 1
     return declared.target
 
 
@@ -1537,9 +1580,7 @@ class ClosureTest(unittest.TestCase):
         closure = _get_closure()
 
         self.assertEqual(sorted(set(_STOPS) - closure.used_stops), [], "stops no edge reaches")
-        self.assertEqual(
-            sorted(set(_DECLARED_EDGES) - closure.used_edges), [], "edges no walk meets"
-        )
+        self.assertEqual(_get_site_mismatches(closure.used_edges), {}, "edges met off count")
         self.assertEqual(sorted(set(_BINDINGS) - _USED_BINDINGS), [], "bindings no edge reads")
 
     def test_every_aa_scope_file_is_reached_by_the_walk(self) -> None:
@@ -1645,6 +1686,44 @@ _HANDOFF_ROWS = (
     ("an assignment after a wrapper is its command name", f"exec A={_UNKNOWN} ./run.sh", []),
     ("env as a plain argument", "grep env notes.txt", []),
     ("set +o allexport", "set +o allexport", []),
+    (
+        "prefix self-assignment re-passes the file value",
+        'LIB="${BASH_SOURCE%/*}/lib/style_ref_match.py"\nLIB="${LIB}" python3 x.py',
+        [('LIB="${LIB}"', "hooks/lib/style_ref_match.py")],
+    ),
+    (
+        "bare export of conditional assignments",
+        f'if c; then\n  B={_UNKNOWN}\nelse\n  B="/opt/homebrew/bin/claude"\nfi\nexport B',
+        [("export B", None)],
+    ),
+    (
+        "an assignment after a reserved word is a second value",
+        f"B={_CODE_VALUE}\nif c; then B={_UNKNOWN}; fi\nexport B",
+        [("export B", None)],
+    ),
+    (
+        "an assignment after a redirect is a second value",
+        f"B={_CODE_VALUE}\n2>/dev/null B={_UNKNOWN}\nexport B",
+        [("export B", None)],
+    ),
+    ("env operand from an array", 'env "${ARR[@]}" ./run.sh', [('env "${ARR[@]}"', None)]),
+    (
+        "env operand from a variable holding an assignment",
+        'PAIR="LIB=${HOME}/.glass-atrium/hooks/lib/style_ref_match.py"\nenv "${PAIR}" ./run.sh',
+        [('env "${PAIR}"', "hooks/lib/style_ref_match.py")],
+    ),
+    ("env operand from a variable naming the command", 'CMD="./run.sh"\nenv "${CMD}" -x', []),
+    ("set -euo allexport", "set -euo allexport", [("set -euo allexport", None)]),
+    ("set -eo allexport", "set -eo allexport", [("set -eo allexport", None)]),
+    ("set -euo pipefail", "set -euo pipefail", []),
+    ("set -o pipefail", "set -o pipefail", []),
+    ("set -- after which -a is an argument", "set -- -a", []),
+    (
+        "a tracked JS file",
+        'export M="${HOME}/.glass-atrium/monitor/public/src/app.jsx"',
+        [('M="${HOME}/.glass-atrium/monitor/public/src/app.jsx"', "monitor/public/src/app.jsx")],
+    ),
+    ("a bare code filename the child resolves", "export L=helper.py", [("L=helper.py", None)]),
     ("plain assignment", f"A={_UNKNOWN}", []),
     ("local without -x", f"local A={_UNKNOWN}", []),
     ("export -n removes the export", f"A={_UNKNOWN}\nexport -n A", []),
@@ -1667,8 +1746,8 @@ _PYTHON_HANDOFF_ROWS = (
     ),
     (
         "env= a mapping the row cannot read",
-        'subprocess.run(["x"], env=child_env)',
-        [("env=child_env", None)],
+        'tier_argv, env = _get_tier_call("worker")\nsubprocess.run(tier_argv, env=env)',
+        [("env=env", None)],
     ),
     ("os.environ item write", 'os.environ["A"] = pick()', [("os.environ['A']", None)]),
     (
@@ -1682,6 +1761,29 @@ _PYTHON_HANDOFF_ROWS = (
         [("os.environ.setdefault('A', pick())", None)],
     ),
     ("os.putenv", 'os.putenv("A", pick())', [("os.putenv('A', pick())", None)]),
+    ("os.execve", 'os.execve("/bin/sh", ["sh"], {"A": pick()})', [("os.execve['A']", None)]),
+    ("os.execvpe", 'os.execvpe("sh", ["sh"], child_env)', [("os.execvpe=child_env", None)]),
+    (
+        "os.execle",
+        'os.execle("/bin/sh", "sh", "-c", ":", child_env)',
+        [("os.execle=child_env", None)],
+    ),
+    (
+        "os.spawnve",
+        'os.spawnve(os.P_WAIT, "/bin/sh", ["sh"], {"A": pick()})',
+        [("os.spawnve['A']", None)],
+    ),
+    (
+        "os.spawnlpe",
+        'os.spawnlpe(os.P_WAIT, "sh", "sh", child_env)',
+        [("os.spawnlpe=child_env", None)],
+    ),
+    (
+        "os.posix_spawn",
+        'os.posix_spawn("/bin/sh", ["sh"], child_env)',
+        [("os.posix_spawn=child_env", None)],
+    ),
+    ("os.execv takes no env", 'os.execv("/bin/sh", ["sh"])', []),
     ("an environ read", 'value = os.environ["A"]', []),
     ("a run call with no env=", 'subprocess.run(["x"])', []),
     ("env= on a call that runs no child", 'render(env={"A": pick()})', []),
@@ -1702,6 +1804,20 @@ class HandoffShapeTest(unittest.TestCase):
                 ]
 
                 self.assertEqual(edges, expected)
+
+    def test_a_declared_edge_met_at_any_other_site_count_is_reported(self) -> None:
+        declared = {edge: edge.sites for edge in _DECLARED_EDGES}
+        env = next(edge for edge in _DECLARED_EDGES if edge.raw == "env=env")
+        rows = (
+            ("every declared site met", {}, {}),
+            ("a third site of a two-site declaration", {env: 3}, {(env.source, env.raw): (2, 3)}),
+            ("a declared site no walk meets", {env: 0}, {(env.source, env.raw): (2, 0)}),
+        )
+        for name, change, expected in rows:
+            with self.subTest(name):
+                used = collections.Counter({**declared, **change})
+
+                self.assertEqual(_get_site_mismatches(used), expected)
 
     def test_every_value_a_python_child_environment_receives_is_an_edge(self) -> None:
         for name, text, expected in _PYTHON_HANDOFF_ROWS:
