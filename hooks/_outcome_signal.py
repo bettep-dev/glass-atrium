@@ -329,7 +329,11 @@ class PairWindows(NamedTuple):
 
 
 class SpawnFacts(NamedTuple):
-    """One core.spawn_manifest row plus the daemon-recorded facts joined by its agent_id."""
+    """One spawn unit — every core.spawn_manifest row of one agent_id, each row one activation
+    (first start or resume) — plus the daemon-recorded facts joined by that agent_id.
+
+    The earliest row fixes session_id, started_at, arm and salt_id; an `unknown` id row is a
+    unit of its own."""
 
     agent_id: str | None  # None = an `unknown` MANIFEST id → unjoinable
     session_id: str | None
@@ -342,8 +346,10 @@ class SpawnFacts(NamedTuple):
     # canary exposure (core.spawn_manifest column comments); all None = older line or schema
     arm: int | None = None  # 1 = treatment, 0 = control
     salt_id: int | None = None
-    is_delivered: bool | None = None  # column `delivered`
-    delivered_hash: str | None = None
+    is_delivered: bool | None = None  # every activation delivered, all with one hash
+    delivered_hash: str | None = None  # the one hash its activations carried; None = none or several
+    is_any_delivered: bool | None = None  # at least one activation delivered
+    activations: int = 1
 
 
 class WindowCount(NamedTuple):
