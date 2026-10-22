@@ -64,13 +64,15 @@ _NOW = datetime(2026, 10, 7, 4, 30, tzinfo=timezone.utc)
 _CYCLE_DATE = "2026-10-07"
 _MIGRATION = SimpleNamespace(
     LEDGER="monitor/prisma/migrations/20261008000000_add_trial_ledger_and_cycle_verdicts/migration.sql",
-    OTHER="monitor/prisma/migrations/20260611000000_init_squashed/migration.sql",
+    CRITERION="monitor/prisma/migrations/20260611000000_init_squashed/migration.sql",
+    OTHER="monitor/prisma/migrations/20260620000000_add_cost_events/migration.sql",
 )
 _SCOPED = {
     "hooks/inject-scope-rules.sh": "1" * 64,
     "autoagent/daemon_cycle.py": "2" * 64,
     "agents/glass-atrium-dev-python.md": "3" * 64,
     _MIGRATION.LEDGER: "4" * 64,
+    _MIGRATION.CRITERION: "8" * 64,
 }
 _UNSCOPED = {
     "hooks/enforce-commit-guard.sh": "5" * 64,
@@ -356,7 +358,7 @@ class _AaFixture(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _install(self) -> None:
-        """A fresh install root: manifest at the root, the two migrations, live scoped files."""
+        """A fresh install root: manifest at the root, the migrations, live scoped files."""
         if self.root.exists():
             self.root.rename(self.scratch / f"retired-{uuid.uuid4().hex[:8]}")
         self.ledger = _Ledger()
@@ -365,7 +367,8 @@ class _AaFixture(unittest.TestCase):
                 _MIGRATION.LEDGER,
                 'CREATE TABLE IF NOT EXISTS "core"."autoagent_trial_ledger" (',
             ),
-            (_MIGRATION.OTHER, 'CREATE TABLE "core"."outcomes" ('),
+            (_MIGRATION.CRITERION, 'CREATE TABLE "core"."outcomes" ('),
+            (_MIGRATION.OTHER, 'CREATE TABLE "core"."cost_events" ('),
             ("agents/glass-atrium-dev-python.md", "# body\n"),
             ("autoagent/daemon_cycle.py", "# module\n"),
         ):
@@ -669,7 +672,8 @@ class AaRestartTest(_AaFixture):
                 )
             ),
             ("an unscoped hook hash changes", "hooks/enforce-commit-guard.sh", False),
-            ("a migration not naming the ledger changes", _MIGRATION.OTHER, False),
+            ("a migration on another criterion table changes", _MIGRATION.CRITERION, True),
+            ("a migration naming no criterion table changes", _MIGRATION.OTHER, False),
             ("a rule file hash changes", "rules/glass-atrium/core-security.md", False),
         )
         for name, path, is_restart in rows:
