@@ -87,32 +87,9 @@ class ClusterBudgetOverages(unittest.TestCase):
         self.assertEqual(agg._cluster_budget_overages([]), {})
 
 
-class EmitFloorAndIntake(unittest.TestCase):
-    """The min-occurrence floor + _emit_xc intake gate, mirroring the pattern-7
-    emit block in main()."""
-
-    def _emit(self, counts):
-        entries: list[str] = []
-        today = "2026-07-05"
-        for agent, overages in counts.items():
-            if overages >= agg.BUDGET_OVERAGE_MIN_OCCURRENCE:
-                agg._emit_xc(
-                    entries,
-                    agg._build_entry(
-                        today, agg.BUDGET_OVERAGE_LABEL, str(overages), agent, overages
-                    ),
-                    agent,
-                )
-        return entries
-
-    def test_when_below_floor_then_no_entry(self):
-        self.assertEqual(self._emit({"glass-atrium-dev-python": 2}), [])
-
-    def test_when_at_floor_then_one_entry_with_label_and_agent(self):
-        entries = self._emit({"glass-atrium-dev-python": 3})
-        self.assertEqual(len(entries), 1)
-        self.assertIn(agg.BUDGET_OVERAGE_LABEL, entries[0])
-        self.assertIn("glass-atrium-dev-python", entries[0])
+class EmitLabelAndIntake(unittest.TestCase):
+    """The pattern-7 entry's signature shape + the _emit_xc intake gate. Its emit gate is the
+    S2f floor, pinned in test_pattern_metric.py → TestAggregatorKeyedEmit."""
 
     def test_when_signature_core_derived_then_matches_plan_label_shape(self):
         # signature = "<pat_core>|<agent>" — the label carries no numerics, so
@@ -173,7 +150,7 @@ class EmitRosterGate(unittest.TestCase):
 
     def test_when_registry_unavailable_then_fail_open_emits(self):
         # FORBIDDEN SHORTCUT guard: registry=None (missing/malformed) must SKIP
-        # validation, mirroring the lesson path — a fail-closed gate would silently
+        # validation, per the loader's fail-open contract — a fail-closed gate would silently
         # drop every real pattern the moment the registry is unreadable.
         entries, reason = self._emit("glass-atrium-dev-python", None)
         self.assertEqual(reason, "")
@@ -191,7 +168,7 @@ class EmitRosterGate(unittest.TestCase):
 
 
 class RegistryLoaderFailOpen(unittest.TestCase):
-    """_load_registry_agents (reused from the lesson path) — every unusable shape
+    """_load_registry_agents — every unusable shape
     returns None, which _emit_xc reads as 'skip validation'."""
 
     def _write(self, text):

@@ -46,6 +46,8 @@ PRESENT_PATH="scripts/update.sh"
 GONE_PATH="scripts/lib/no-such-retired-file.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   [[ -f "${GA}/${PRESENT_PATH}" ]] || skip "fixture path absent: ${PRESENT_PATH}"
   [[ ! -e "${GA}/${GONE_PATH}" ]] || skip "fixture path unexpectedly present: ${GONE_PATH}"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# _pg_dual_write_daemon.py — Shared PG dual-write helper for the daemons
-# (wiki + autoagent). Sister of ~/.claude/hooks/_pg_dual_write.py.
+# _pg_dual_write_daemon.py — Shared PG dual-write helper for the wiki and
+# autoagent cycles. Sister of ~/.claude/hooks/_pg_dual_write.py.
 #
 # Envelope = daemon-table-aware operations (op-routed):
 #       - write_wiki_note            -> wiki.notes UPSERT keyed by path
@@ -14,6 +14,10 @@
 #                                       row, (event_ts, agent, subject) for a verdict row
 #       - write_autoagent_corpus_audit -> core.autoagent_corpus_audits UPSERT
 #                                       key (cycle_date)
+#       - write_spawn_manifest_rows  -> core.spawn_manifest INSERT ... DO NOTHING
+#                                       key (spool, line_offset); import-only, no op
+#       - write_trial_ledger_row     -> core.autoagent_trial_ledger INSERT ... DO NOTHING
+#                                       key (dedupe_key); import-only, no op
 #
 # Retry/error/elapsed_ms convention:
 #   * 1 retry with 100ms backoff before giving up (fail-loud-and-skip).
@@ -60,6 +64,8 @@
 import json
 import sys
 import time
+from dataclasses import dataclass
+from types import SimpleNamespace
 
 # psycopg-absent must surface to an IMPORTER as a CATCHABLE ImportError so its
 # `except Exception` degrades gracefully — a module-scope sys.exit() raises
@@ -265,10 +271,17 @@ DECLINED_PREFIX = "declined:"
 # actually took has no other way back to the driver.
 _COMPOSE_PROVENANCE = None
 
-# The migration that adds apply_status_provenance, named in the degradation notice so one
-# stderr line tells an operator exactly what to apply — the same shape the driver's enum
-# probe uses when a core."DaemonStatus" label is missing.
-PROVENANCE_MIGRATION = "20260803000001_add_daemon_run_apply_status_provenance"
+# Migrations a DEGRADED notice names, so one stderr line tells an operator exactly what to
+# apply — the same shape the driver's enum probe uses when a core."DaemonStatus" label is missing.
+# PROVENANCE → apply_status_provenance · PATTERN_EVIDENCE → the two proposal link columns ·
+# TRIAL_LEDGER → core.autoagent_trial_ledger.
+MIGRATION = SimpleNamespace(
+    PROVENANCE="20260803000001_add_daemon_run_apply_status_provenance",
+    PATTERN_EVIDENCE="20261005000000_add_pattern_evidence_provenance",
+    TRIAL_LEDGER="20261008000000_add_trial_ledger_and_cycle_verdicts",
+    SPAWN_MANIFEST_EXPOSURE="20261009000000_add_spawn_manifest_arm_fields",
+    SPOOL_CLOSE_COUNTS="20261010000000_add_loop_event_spool_close_counts",
+)
 
 
 def compose_daemon_run_apply_status(daemon_name, run_date, apply_status):
@@ -386,7 +399,7 @@ def compose_daemon_run_apply_status(daemon_name, run_date, apply_status):
             "[%s-daemon] op=compose_daemon_run_apply_status DEGRADED "
             "column=apply_status_provenance absent (run_date=%s) — status composed, provenance "
             "NOT recorded; apply migration %s and the next cycle records it\n"
-            % (daemon_name, run_date, PROVENANCE_MIGRATION)
+            % (daemon_name, run_date, MIGRATION.PROVENANCE)
         )
     # RETURNING rows, never the matched-row count: the count is 1 on BOTH arms because the row
     # is selected by key and not by the CASE condition, so it reports a hit for a compose that
@@ -464,6 +477,14 @@ _CLASSIFICATION_TO_ENUM = {
     "reject": ("reject", "auto"),
 }
 
+# 'safety' (human-approval route; no enum label) → 'user', never the 'auto' backlog
+_APPROVAL_TIER_TO_ENUM = {
+    "auto": "auto",
+    "llm": "llm",
+    "user": "user",
+    "safety": "user",
+}
+
 
 def _coerce_classification(raw):
     """Return (classification_enum, approval_tier_enum) from daemon-emitted label.
@@ -476,9 +497,9 @@ def _coerce_classification(raw):
     return _CLASSIFICATION_TO_ENUM.get(str(raw), ("reject", "auto"))
 
 
-# Statuses a re-push must not downgrade. The freeze WHERE below carries its own
-# 4-member set including 'reverted' — a different set, deliberately not this one.
-_TERMINAL_STATUS_SQL = "('applied', 'approved', 'rejected')"
+# Terminal statuses for both conflict arms: never downgraded by a re-push, frozen once reviewed.
+# Compared as status::text → the 'unadjudicated' literal still plans on a schema lacking the label.
+_TERMINAL_STATUS_SQL = "('applied', 'approved', 'rejected', 'reverted', 'unadjudicated')"
 _BACKOFF_MARKER = "skipped:chronic-timeout-backoff"
 
 # Preserve-the-stored-verdict predicate: stored terminal AND incoming non-terminal,
@@ -487,8 +508,8 @@ _BACKOFF_MARKER = "skipped:chronic-timeout-backoff"
 # Status, its rationale and its actor move together, so all three CASE arms read it
 # from here — identical by construction, not by a comment asking for it.
 _PRESERVE_STORED_VERDICT_SQL = f"""
-                            core.autoagent_proposals.status IN {_TERMINAL_STATUS_SQL}
-                            AND EXCLUDED.status NOT IN {_TERMINAL_STATUS_SQL}
+                            core.autoagent_proposals.status::text IN {_TERMINAL_STATUS_SQL}
+                            AND EXCLUDED.status::text NOT IN {_TERMINAL_STATUS_SQL}
                             AND NOT (
                                 COALESCE(core.autoagent_proposals.haiku_status, '')
                                     = '{_BACKOFF_MARKER}'
@@ -496,72 +517,57 @@ _PRESERVE_STORED_VERDICT_SQL = f"""
                                     <> '{_BACKOFF_MARKER}')"""
 
 
-def write_autoagent_proposal(
-    cycle_date,
-    pattern_label,
-    target_file,
-    target_agent,
-    classification,
-    rationale,
-    haiku_status,
-    approval_tier,
-    status,
-    proposed_diff,
-    cost_guard_state,
-    source_file,
-    source_file_mtime,
-    indexed_at=None,
-    pre_verify_passed=None,
-    pre_verify_status="",
-    pre_verify_rationale="",
-    pre_verify_axes=None,
-    confidence_observed=None,
-    project_key="",
-    promotion_tier="",
-    reviewed_by="",
-):
-    """UPSERT core.autoagent_proposals on (cycle_date, pattern_label, target_file).
+# Label test shared by the status fragment and the probe → one text, one answer.
+_UNADJUDICATED_LABEL_SQL = """
+    SELECT 1
+      FROM pg_catalog.pg_enum AS e
+      JOIN pg_catalog.pg_type AS t ON t.oid = e.enumtypid
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = t.typnamespace
+     WHERE n.nspname = 'core'
+       AND t.typname = 'ProposalStatus'
+       AND e.enumlabel = 'unadjudicated'"""
 
-    Returns elapsed_ms. Parameter names mirror the SQL column names 1:1 and
-    the CLI envelope keys 1:1. `classification` and `approval_tier` accept
-    free-form daemon labels; the helper coerces via _coerce_classification when
-    one of them is unknown to the schema enum — caller MAY pass already-coerced
-    values, in which case the coercion is a no-op identity.
+# Status value for every proposals.status writer; its one %s is the requested status.
+# Label absent (code ahead of its migration) → 'unadjudicated' stores 'rejected'; backfill relabels.
+# Text in the subquery, cast once outside at run time → probe + write in one statement.
+PROPOSAL_STATUS_SQL = f"""(
+    SELECT CASE
+             WHEN r.requested = 'unadjudicated'
+                  AND NOT EXISTS ({_UNADJUDICATED_LABEL_SQL})
+             THEN 'rejected'
+             ELSE r.requested
+           END
+      FROM (SELECT %s::text AS requested) AS r
+)::core."ProposalStatus"
+"""
 
-    Pre-verify dual-write: 4 fields (pre_verify_passed/status/rationale/axes)
-    carry the daemon's pre-verification verdict; pre_verify_axes is JSONB (dict
-    serialized via Jsonb adapter), the other three are scalars.
 
-    Confidence-weighted promotion ladder: 3 fields —
-    confidence_observed (REAL, Beta-Binomial posterior; None → NULL when the
-    feature flag is off), project_key (TEXT, 12-hex isolation key; ""→NULL),
-    promotion_tier (TEXT, mention/candidate/proposal/instruction-edit/
-    skill-candidate; ""→NULL). All NULLable — older rows omit them.
+@dataclass(frozen=True)
+class _LinkSql:
+    """Per-clause UPSERT fragments for the pattern-evidence columns; empty → columns absent."""
 
-    Provenance: `reviewed_by` names the actor that produced the row's status, from
-    the closed token set declared at monitor/prisma/schema.prisma → AutoagentProposal.
-    Each envelope source passes its own token; ""→NULL, and a NULL incoming value
-    never clears a stored actor. No arm here writes `reviewed_at`: a push is not a
-    verdict.
-    """
-    start_ns = time.monotonic_ns()
-    if indexed_at is None:
-        # PG default is CURRENT_TIMESTAMP; pass NULL by omission of the column
-        # rather than computing wall-clock here. Sentinel sticks for explicit
-        # backfill timestamps (caller-supplied).
-        pass
+    columns: str = ""
+    values: str = ""
+    set: str = ""
 
-    cls_enum, tier_enum = _coerce_classification(classification)
-    # Caller-provided approval_tier overrides the coerced one (only when valid)
-    if approval_tier in ("auto", "llm", "user"):
-        tier_enum = approval_tier
-    if status not in ("pending", "approved", "rejected", "applied", "snoozed"):
-        # A reject-classification row with an empty/invalid status MUST settle as
-        # 'rejected', not 'pending' — else auto-reject proposals fossilize in the
-        # pending queue.
-        status = "rejected" if cls_enum == "reject" else "pending"
 
-    sql = f"""
+# Pattern-evidence proposal columns; absent where MIGRATION.PATTERN_EVIDENCE did not land.
+_PROPOSAL_LINK = _LinkSql(
+    columns=",\n             learning_pattern_id, generator_input_version",
+    values=",\n                %s, %s",
+    # COALESCE → an envelope naming no link (an older report, another writer) never unlinks a row.
+    set=""",
+            learning_pattern_id = COALESCE(EXCLUDED.learning_pattern_id,
+                                           core.autoagent_proposals.learning_pattern_id),
+            generator_input_version = COALESCE(EXCLUDED.generator_input_version,
+                                               core.autoagent_proposals.generator_input_version)""",
+)
+
+
+def _get_proposal_upsert_sql(has_link_columns):
+    """The proposal UPSERT, with or without the two pattern-evidence columns."""
+    link = _PROPOSAL_LINK if has_link_columns else _LinkSql()
+    return f"""
         INSERT INTO core.autoagent_proposals
             (cycle_date, pattern_label, target_file, target_agent,
              classification, rationale, haiku_status, approval_tier, status,
@@ -570,16 +576,16 @@ def write_autoagent_proposal(
              indexed_at,
              pre_verify_passed, pre_verify_status, pre_verify_rationale,
              pre_verify_axes,
-             confidence_observed, project_key, promotion_tier)
+             confidence_observed, project_key, promotion_tier{link.columns})
         VALUES (%s, %s, %s, %s,
                 %s::core."ProposalClassification", %s, %s,
                 %s::core."ApprovalTier",
-                %s::core."ProposalStatus",
+                {PROPOSAL_STATUS_SQL},
                 %s, %s, %s,
                 %s, %s,
                 COALESCE(%s, CURRENT_TIMESTAMP),
                 %s, %s, %s, %s,
-                %s, %s, %s)
+                %s, %s, %s{link.values})
         ON CONFLICT (cycle_date, pattern_label, target_file) DO UPDATE SET
             target_agent = EXCLUDED.target_agent,
             classification = EXCLUDED.classification,
@@ -636,13 +642,115 @@ def write_autoagent_proposal(
             pre_verify_axes = EXCLUDED.pre_verify_axes,
             confidence_observed = EXCLUDED.confidence_observed,
             project_key = EXCLUDED.project_key,
-            promotion_tier = EXCLUDED.promotion_tier
+            promotion_tier = EXCLUDED.promotion_tier{link.set}
         -- Reviewed terminal row (apply flip or reject route) → frozen, all columns.
-        WHERE NOT (core.autoagent_proposals.status
-                       IN ('applied', 'approved', 'rejected', 'reverted')
+        WHERE NOT (core.autoagent_proposals.status::text IN {_TERMINAL_STATUS_SQL}
                    AND core.autoagent_proposals.reviewed_at IS NOT NULL)
         RETURNING id
     """
+
+
+def get_proposal_status_label_state(conn):
+    """Whether core."ProposalStatus" carries the 'unadjudicated' label on `conn`.
+
+    Returns "present" or "absent" when the catalog answers, "unknown" when the query
+    cannot run (closed connection, server fault) — the caller decides what an unknown
+    schema means; the fault itself is named on stderr.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT EXISTS ({_UNADJUDICATED_LABEL_SQL})")
+            row = cur.fetchone()
+    except psycopg.Error as exc:
+        sys.stderr.write(
+            json.dumps(
+                {
+                    "hook": "_pg_dual_write_daemon",
+                    "op": "get_proposal_status_label_state",
+                    "error_kind": _classify_error(exc),
+                    "message": str(exc),
+                }
+            )
+            + "\n"
+        )
+        return "unknown"
+    return "present" if row and row[0] else "absent"
+
+
+def write_autoagent_proposal(
+    cycle_date,
+    pattern_label,
+    target_file,
+    target_agent,
+    classification,
+    rationale,
+    haiku_status,
+    approval_tier,
+    status,
+    proposed_diff,
+    cost_guard_state,
+    source_file,
+    source_file_mtime,
+    indexed_at=None,
+    pre_verify_passed=None,
+    pre_verify_status="",
+    pre_verify_rationale="",
+    pre_verify_axes=None,
+    confidence_observed=None,
+    project_key="",
+    promotion_tier="",
+    reviewed_by="",
+    learning_pattern_id=None,
+    generator_input_version=None,
+):
+    """UPSERT core.autoagent_proposals on (cycle_date, pattern_label, target_file).
+
+    Returns elapsed_ms. Parameter names mirror the SQL column names 1:1 and
+    the CLI envelope keys 1:1. `classification` and `approval_tier` accept
+    free-form daemon labels; the helper coerces via _coerce_classification when
+    one of them is unknown to the schema enum — caller MAY pass already-coerced
+    values, in which case the coercion is a no-op identity.
+
+    Pre-verify dual-write: 4 fields (pre_verify_passed/status/rationale/axes)
+    carry the daemon's pre-verification verdict; pre_verify_axes is JSONB (dict
+    serialized via Jsonb adapter), the other three are scalars.
+
+    Confidence-weighted promotion ladder: 3 fields —
+    confidence_observed (REAL, Beta-Binomial posterior; None → NULL when the
+    feature flag is off), project_key (TEXT, 12-hex isolation key; ""→NULL),
+    promotion_tier (TEXT, mention/candidate/proposal/instruction-edit/
+    skill-candidate; ""→NULL). All NULLable — older rows omit them.
+
+    Provenance: `reviewed_by` names the actor that produced the row's status, from
+    the closed token set declared at monitor/prisma/schema.prisma → AutoagentProposal.
+    Each envelope source passes its own token; ""→NULL, and a NULL incoming value
+    never clears a stored actor. No arm here writes `reviewed_at`: a push is not a
+    verdict.
+
+    Pattern evidence: `learning_pattern_id` (core.learning_log id) and
+    `generator_input_version`; None/""→NULL for both, and a 0 id (the daemon's
+    no-pattern sentinel) →NULL too. A NULL incoming value never clears a stored one.
+    A schema without the two columns still gets the row, without them, and the
+    missing migration is named on stderr.
+    """
+    start_ns = time.monotonic_ns()
+    if indexed_at is None:
+        # PG default is CURRENT_TIMESTAMP; pass NULL by omission of the column
+        # rather than computing wall-clock here. Sentinel sticks for explicit
+        # backfill timestamps (caller-supplied).
+        pass
+
+    cls_enum, tier_enum = _coerce_classification(classification)
+    # Caller-provided approval_tier overrides the coerced one (only when known)
+    tier_enum = _APPROVAL_TIER_TO_ENUM.get(approval_tier, tier_enum)
+    if status not in (
+        "pending", "approved", "rejected", "applied", "snoozed", "unadjudicated"
+    ):
+        # A reject-classification row with an empty/invalid status MUST settle as
+        # 'rejected', not 'pending' — else auto-reject proposals fossilize in the
+        # pending queue.
+        status = "rejected" if cls_enum == "reject" else "pending"
+
     # pre_verify_axes is JSONB. None / empty dict both pass through Jsonb() —
     # psycopg serializes {} as "{}" (valid JSON object), None as NULL.
     axes_param = Jsonb(pre_verify_axes) if pre_verify_axes is not None else None
@@ -652,38 +760,65 @@ def write_autoagent_proposal(
     promotion_tier_param = promotion_tier or None
     # ""→NULL: an unnamed actor is ABSENT, and the conflict arm coalesces it away.
     reviewed_by_param = reviewed_by or None
+    params = (
+        cycle_date,
+        pattern_label,
+        target_file,
+        target_agent,
+        cls_enum,
+        rationale,
+        haiku_status,
+        tier_enum,
+        status,
+        proposed_diff,
+        cost_guard_state,
+        reviewed_by_param,
+        source_file,
+        source_file_mtime,
+        indexed_at,
+        pre_verify_passed,
+        pre_verify_status,
+        pre_verify_rationale,
+        axes_param,
+        confidence_observed,
+        project_key_param,
+        promotion_tier_param,
+    )
+    link_params = (learning_pattern_id or None, generator_input_version or None)
     with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                sql,
-                (
-                    cycle_date,
-                    pattern_label,
-                    target_file,
-                    target_agent,
-                    cls_enum,
-                    rationale,
-                    haiku_status,
-                    tier_enum,
-                    status,
-                    proposed_diff,
-                    cost_guard_state,
-                    reviewed_by_param,
-                    source_file,
-                    source_file_mtime,
-                    indexed_at,
-                    pre_verify_passed,
-                    pre_verify_status,
-                    pre_verify_rationale,
-                    axes_param,
-                    confidence_observed,
-                    project_key_param,
-                    promotion_tier_param,
-                ),
-            )
-            cur.fetchone()  # None when the reviewed-row freeze skips the update
+        is_degraded = _run_with_column_fallback(
+            conn,
+            lambda: _execute_upsert(conn, _get_proposal_upsert_sql(True), params + link_params),
+            fallback=lambda: _execute_upsert(conn, _get_proposal_upsert_sql(False), params),
+        )
         conn.commit()
+    if is_degraded:
+        sys.stderr.write(
+            "[autoagent-daemon] op=write_autoagent_proposal DEGRADED "
+            "columns=learning_pattern_id,generator_input_version absent "
+            "(cycle_date=%s, pattern_label=%s) — row written without its pattern link and "
+            "input version; apply migration %s and the next push records them\n"
+            % (cycle_date, pattern_label, MIGRATION.PATTERN_EVIDENCE)
+        )
     return (time.monotonic_ns() - start_ns) // 1_000_000
+
+
+def _run_with_column_fallback(conn, run, *, fallback):
+    """run(); on SQLSTATE 42703 (by class, as in compose_daemon_run_apply_status) roll back
+    and run fallback() → True. A 42703 from fallback() propagates."""
+    try:
+        run()
+    except pg_errors.UndefinedColumn:
+        conn.rollback()
+        fallback()
+        return True
+    return False
+
+
+def _execute_upsert(conn, sql, params):
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        cur.fetchone()  # None when a conflict arm's WHERE skips the update
 
 
 class VerdictSubjectMissing(CallerContractViolation):
@@ -701,13 +836,15 @@ class SubjectTooLong(CallerContractViolation):
 # Cause tokens whose row adjudicates ONE subject, so a correction of that subject
 # supersedes its predecessor. Declared here, not in daemon_cycle.py: that module
 # imports this one, so the reverse edge would be circular — and it does NOT read
-# this tuple, restating the same four tokens as its own DISCHARGE_EVENT_* names.
+# this tuple, restating each token as its own constant.
 # Sole reader outside this module: autoagent/test/test_discharge_wiring.py.
 LOOP_EVENT_VERDICT_CAUSES = (
     "discharge-read-failed",
     "discharge-unresolved",
     "discharge-covered-terminal",
     "discharge-intake-miss",
+    # Subject = the spool name.
+    "manifest-spool-closed",
 )
 
 # The column whose presence selects the row class. Both arms' predicates, the verdict
@@ -719,6 +856,10 @@ _LOOP_EVENT_CENSUS_PREDICATE = "%s IS NULL" % _LOOP_EVENT_SUBJECT_COLUMN
 _LOOP_EVENT_VERDICT_PREDICATE = "%s IS NOT NULL" % _LOOP_EVENT_SUBJECT_COLUMN
 # Declared width of that column in the split migration — the refusal boundary below.
 _LOOP_EVENT_SUBJECT_MAX_CHARS = 128
+_LOOP_EVENT = SimpleNamespace(
+    # A MANIFEST spool close's counts; NULL on every other row.
+    COUNT_COLUMNS=("lines_read", "lines_without_row"),
+)
 
 
 def _check_loop_event_class(eval_result, subject):
@@ -747,7 +888,25 @@ def _check_loop_event_class(eval_result, subject):
         )
 
 
-def _get_loop_event_conflict_arm(eval_result):
+def _get_loop_event_upsert_sql(eval_result, has_counts):
+    """The INSERT … ON CONFLICT for one row class, with the count columns when the row has counts."""
+    columns = (
+        "event_ts",
+        "agent",
+        "rice",
+        "eval_result",
+        "changes_added",
+        "changes_removed",
+        _LOOP_EVENT_SUBJECT_COLUMN,
+    ) + (_LOOP_EVENT.COUNT_COLUMNS if has_counts else ())
+    return "INSERT INTO core.autoagent_loop_events (%s) VALUES (%s) %s RETURNING id" % (
+        ", ".join(columns),
+        ", ".join(["%s"] * len(columns)),
+        _get_loop_event_conflict_arm(eval_result, has_counts),
+    )
+
+
+def _get_loop_event_conflict_arm(eval_result, has_counts):
     """The ON CONFLICT arm for one row class, named by the cause token.
 
     Each arm carries the predicate of the partial unique index it targets: both
@@ -762,6 +921,7 @@ def _get_loop_event_conflict_arm(eval_result):
         key = ("event_ts", "agent", "eval_result")
         predicate = _LOOP_EVENT_CENSUS_PREDICATE
         updated = ("rice", "changes_added", "changes_removed")
+    updated += _LOOP_EVENT.COUNT_COLUMNS if has_counts else ()
     return "ON CONFLICT (%s) WHERE %s DO UPDATE SET %s" % (
         ", ".join(key),
         predicate,
@@ -777,6 +937,8 @@ def write_autoagent_loop_event(
     changes_removed,
     rice=None,
     subject=None,
+    lines_read=None,
+    lines_without_row=None,
 ):
     """UPSERT core.autoagent_loop_events under the identity class `subject` selects.
 
@@ -784,8 +946,8 @@ def write_autoagent_loop_event(
     idempotency key. A census row (subject absent) records one cause for one agent
     at one event_ts, keyed on (event_ts, agent, eval_result) at whatever instant the
     caller stamps — never a day unless the caller truncates to one. A re-emission
-    overwrites that row rather than incrementing it, which is what covers the
-    append-only autoagent-loop.jsonl replaying a line on log-rotation overlap.
+    overwrites that row rather than incrementing it, so emitting the same cycle
+    report twice lands one row.
     A verdict row adjudicates ONE subject, keyed on (event_ts, agent, subject),
     so a correction carrying a new cause supersedes the verdict it corrects
     instead of landing beside it.
@@ -793,6 +955,9 @@ def write_autoagent_loop_event(
     The cause token names the class and the subject must agree with it, either way
     round: a mismatch is REFUSED before connecting (CLI exit 6) rather than filed
     under the other class — see _check_loop_event_class.
+
+    A MANIFEST spool close carries lines_read / lines_without_row; a schema without those
+    columns still gets the row, without its counts, under a named DEGRADED line.
     """
     start_ns = time.monotonic_ns()
     # Trim before classing → a subject differing only by surrounding space is ONE
@@ -809,36 +974,30 @@ def write_autoagent_loop_event(
                 % (len(subject), _LOOP_EVENT_SUBJECT_MAX_CHARS, subject[:80])
             )
     _check_loop_event_class(eval_result, subject)
-    columns = (
-        "event_ts",
-        "agent",
-        "rice",
-        "eval_result",
-        "changes_added",
-        "changes_removed",
-        _LOOP_EVENT_SUBJECT_COLUMN,
-    )
-    sql = "INSERT INTO core.autoagent_loop_events (%s) VALUES (%s) %s RETURNING id" % (
-        ", ".join(columns),
-        ", ".join(["%s"] * len(columns)),
-        _get_loop_event_conflict_arm(eval_result),
-    )
+    params = (event_ts, agent, rice, eval_result, changes_added, changes_removed, subject)
+    counts = (lines_read, lines_without_row)
+    countless_sql = _get_loop_event_upsert_sql(eval_result, False)
+    is_degraded = False
     with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                sql,
-                (
-                    event_ts,
-                    agent,
-                    rice,
-                    eval_result,
-                    changes_added,
-                    changes_removed,
-                    subject,
+        if counts == (None, None):
+            # names no count column → its 42703 is another fault and propagates
+            _execute_upsert(conn, countless_sql, params)
+        else:
+            is_degraded = _run_with_column_fallback(
+                conn,
+                lambda: _execute_upsert(
+                    conn, _get_loop_event_upsert_sql(eval_result, True), params + counts
                 ),
+                fallback=lambda: _execute_upsert(conn, countless_sql, params),
             )
-            cur.fetchone()
         conn.commit()
+    if is_degraded:
+        sys.stderr.write(
+            "[autoagent-daemon] op=write_autoagent_loop_event DEGRADED "
+            "columns=lines_read,lines_without_row absent (subject=%s) — close row written "
+            "without its counts; apply migration %s and later closes record them\n"
+            % (subject, MIGRATION.SPOOL_CLOSE_COUNTS)
+        )
     return (time.monotonic_ns() - start_ns) // 1_000_000
 
 
@@ -918,6 +1077,218 @@ def write_autoagent_corpus_audit(
             cur.fetchone()
         conn.commit()
     return (time.monotonic_ns() - start_ns) // 1_000_000
+
+
+_SPAWN_MANIFEST_SQL = SimpleNamespace(
+    COUNT="SELECT count(*) FROM core.spawn_manifest WHERE spool = %s",
+    INSERT=SimpleNamespace(
+        FULL="""
+            INSERT INTO core.spawn_manifest
+                (spool, line_offset, agent_id, agent_type, session_id, started_at,
+                 ctx_bytes, blocks, arm, salt_id, delivered, delivered_hash)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (spool, line_offset) DO NOTHING
+        """,
+        # A schema before MIGRATION.SPAWN_MANIFEST_EXPOSURE.
+        PRE_EXPOSURE="""
+            INSERT INTO core.spawn_manifest
+                (spool, line_offset, agent_id, agent_type, session_id, started_at,
+                 ctx_bytes, blocks)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (spool, line_offset) DO NOTHING
+        """,
+    ),
+)
+
+
+def write_spawn_manifest_rows(spool, rows):
+    """INSERT one spool's MANIFEST lines in one transaction → the rows the spool now has.
+
+    rows: (line_offset, agent_id, agent_type, session_id, started_at, ctx_bytes,
+    blocks, arm, salt_id, delivered, delivered_hash) tuples. (spool, line_offset) is
+    the ingest position, so a re-read of the same spool adds only lines appended since
+    and a crash re-read adds nothing. The count is read inside the same transaction:
+    the caller unlinks the spool on it. A schema without the exposure columns stores
+    the row without them and names the migration on stderr. Raises on any other PG
+    fault, a schema without the table included.
+    """
+    with _connect() as conn:
+        is_degraded = _run_with_column_fallback(
+            conn,
+            lambda: _insert_spawn_manifest_rows(conn, spool, rows, has_exposure=True),
+            fallback=lambda: _insert_spawn_manifest_rows(conn, spool, rows, has_exposure=False),
+        )
+        with conn.cursor() as cur:
+            cur.execute(_SPAWN_MANIFEST_SQL.COUNT, (spool,))
+            rows_present = cur.fetchone()[0]
+        conn.commit()
+    if is_degraded:
+        sys.stderr.write(
+            "[autoagent-daemon] op=write_spawn_manifest_rows DEGRADED "
+            f"columns=arm,salt_id,delivered,delivered_hash absent (spool={spool}) — rows "
+            "written without their canary exposure fields; apply migration "
+            f"{MIGRATION.SPAWN_MANIFEST_EXPOSURE} and later lines record them\n"
+        )
+    return rows_present
+
+
+def _insert_spawn_manifest_rows(conn, spool, rows, *, has_exposure):
+    if not rows:
+        return
+    if has_exposure:
+        sql, params = _SPAWN_MANIFEST_SQL.INSERT.FULL, [(spool, *row) for row in rows]
+    else:
+        sql = _SPAWN_MANIFEST_SQL.INSERT.PRE_EXPOSURE
+        params = [(spool, *row[:7]) for row in rows]
+    with conn.cursor() as cur:
+        cur.executemany(sql, params)
+
+
+def get_spawn_manifest_row_count(spool):
+    """Rows stored for one spool; raises on any PG fault, a schema without the table included."""
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_SPAWN_MANIFEST_SQL.COUNT, (spool,))
+            return cur.fetchone()[0]
+
+
+class TrialLedgerValueUndeclared(CallerContractViolation):
+    """An event, actor or declared payload shape outside TRIAL_LEDGER."""
+
+
+_TRIAL_LEDGER_EVENT = SimpleNamespace(
+    SHADOW_PREREGISTRATION="shadow-preregistration",  # dedupe_key = <trial key>
+    SHADOW_LOOK="shadow-look",  # dedupe_key = <trial key>:look:<n>
+    POWER_PASS_COUNT="power-pass-count",  # dedupe_key = power-pass-count:<cycle date>
+    AA_START="aa-start",  # opens the A/A; dedupe_key = aa-start:after:<latest start id | 0>
+    AA_RESTART="aa-restart",  # dedupe_key = aa-restart:<start id>:<cycle date>
+    AA_RESULT="aa-result",  # closes the A/A; dedupe_key = aa-result:<start id>
+    # Arm-difference design effect per agent and metric key, clustered by parent session;
+    # dedupe_key = aa-arm-design-effect:<start id>:<agent>:<metric key>
+    AA_ARM_DESIGN_EFFECT="aa-arm-design-effect",
+    # the D1 break-even verdict at the A/A result; dedupe_key = aa-instrument-verdict:<start id>,
+    # or aa-instrument-verdict:<start id>:extend:<salt id> for a straddle's window extension
+    AA_INSTRUMENT_VERDICT="aa-instrument-verdict",
+    # a canary bound to no trial; dedupe_key = canary-unbound-delivery:<spool>:<line offset>
+    CANARY_UNBOUND_DELIVERY="canary-unbound-delivery",
+)
+
+# The ledger's closed sets, declared once: event and actor are VARCHAR columns, so nothing
+# below this writer refuses a misspelling, and an append-only row can never be corrected.
+# Writers and readers import these names; a second spelling elsewhere is a drift.
+TRIAL_LEDGER = SimpleNamespace(
+    EVENT=_TRIAL_LEDGER_EVENT,
+    ACTOR=SimpleNamespace(SHADOW="daemon-cycle-shadow", AA="daemon-cycle-aa"),
+    # Payload keys readers rely on; an event absent here carries a free-form object.
+    # aa-arm-design-effect: metric_key + the trial_design.ArmDesignEffect fields; readers take value.
+    # aa-start / aa-restart: fingerprint = the installed manifest's scoped path → sha256 map.
+    PAYLOAD_KEYS={
+        _TRIAL_LEDGER_EVENT.AA_ARM_DESIGN_EFFECT: (
+            "metric_key",
+            "value",
+            "sessions",
+            "spawns",
+            "lower",
+            "upper",
+            "replicates",
+        ),
+        _TRIAL_LEDGER_EVENT.AA_INSTRUMENT_VERDICT: (
+            "start_id",
+            "metric_key",
+            "window_days",
+            "readings",
+            "excluded",
+            "verdict",
+            "agents",
+        ),
+        _TRIAL_LEDGER_EVENT.AA_START: ("fingerprint", "started_at", "duration"),
+        _TRIAL_LEDGER_EVENT.AA_RESTART: ("start_id", "reason", "fingerprint"),
+        _TRIAL_LEDGER_EVENT.CANARY_UNBOUND_DELIVERY: (
+            "agent",
+            "spool",
+            "line_offset",
+            "salt_id",
+            "delivered_hash",
+        ),
+    },
+)
+
+
+def _check_trial_ledger_values(event, actor, payload):
+    """Refuse a row outside the declared sets, before any connection."""
+    if event not in vars(TRIAL_LEDGER.EVENT).values():
+        raise TrialLedgerValueUndeclared(
+            f"op=write_trial_ledger_row refused event={event!r} — undeclared "
+            "(TRIAL_LEDGER.EVENT), nothing written"
+        )
+    if actor not in vars(TRIAL_LEDGER.ACTOR).values():
+        raise TrialLedgerValueUndeclared(
+            f"op=write_trial_ledger_row refused actor={actor!r} — undeclared "
+            "(TRIAL_LEDGER.ACTOR), nothing written"
+        )
+    keys = TRIAL_LEDGER.PAYLOAD_KEYS.get(event)
+    if keys is not None and not (
+        isinstance(payload, dict) and set(payload) == set(keys)
+    ):
+        raise TrialLedgerValueUndeclared(
+            f"op=write_trial_ledger_row refused event={event!r} payload={payload!r} — keys "
+            f"must be exactly {', '.join(keys)}, nothing written"
+        )
+
+
+_TRIAL_LEDGER_INSERT_SQL = """
+    INSERT INTO core.autoagent_trial_ledger
+        (trial_key, agent, learning_pattern_id, event, actor, payload, dedupe_key)
+    VALUES (%s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (dedupe_key) DO NOTHING
+"""
+
+
+def write_trial_ledger_row(
+    event,
+    actor,
+    payload,
+    *,
+    trial_key=None,
+    agent=None,
+    learning_pattern_id=None,
+    dedupe_key=None,
+):
+    """INSERT one append-only ledger row → 1 when it landed, 0 when it did not.
+
+    dedupe_key: a once-only event's identity — a taken key adds no row and raises
+    nothing, the stored row stays; None = a repeatable event. A schema without the table
+    (migrate-failed install) → named WARN on stderr, 0. Refuses (TrialLedgerValueUndeclared)
+    before connecting on a value outside TRIAL_LEDGER; raises on any other PG fault.
+    """
+    _check_trial_ledger_values(event, actor, payload)
+    row = (
+        trial_key,
+        agent,
+        learning_pattern_id,
+        event,
+        actor,
+        Jsonb(payload),
+        dedupe_key,
+    )
+    try:
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_TRIAL_LEDGER_INSERT_SQL, row)
+                inserted = cur.rowcount
+            conn.commit()
+    except pg_errors.UndefinedTable:
+        _warn_trial_ledger_absent(event, dedupe_key)
+        return 0
+    return inserted
+
+
+def _warn_trial_ledger_absent(event, dedupe_key):
+    sys.stderr.write(
+        "[autoagent-daemon] op=write_trial_ledger_row WARN table=core.autoagent_trial_ledger "
+        f"absent (event={event}, dedupe_key={dedupe_key}) — nothing recorded; "
+        f"apply migration {MIGRATION.TRIAL_LEDGER}\n"
+    )
 
 
 # --- Failure observability -------------------------------------------------
@@ -1001,6 +1372,7 @@ def main():
     # hook_name: prefer args.daemon_name when present (write_daemon_run/payload
     # carry it explicitly); fall back to op-string heuristic for wiki-only ops
     # (write_wiki_note / bump_wiki_dirty / clear_wiki_dirty).
+    # "<name>-daemon": stored hook_failures label, kept as-is — names the cycle, not a launchd job
     daemon_arg = args.get("daemon_name") if isinstance(args, dict) else None
     if daemon_arg:
         hook_name = "%s-daemon" % daemon_arg

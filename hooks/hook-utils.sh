@@ -165,6 +165,7 @@ _hook_json_escape() {
 # fragment); on jq absent (or a jq parse failure) fall back to the pure-bash escaper so the object
 # stays valid. ctx is a caller-supplied JSON fragment → --argjson (parsed, not re-quoted); an
 # unparseable ctx degrades to {} rather than dropping the whole error.
+# Returns 0 whatever the write did: the caller's exit code comes from its path (_hook_emit_line).
 hook_emit_error() {
   local hook_name code="${1}" severity="${2}" message="${3}"
   local suggestion="${4:-}" ctx="${5:-"{}"}"
@@ -177,25 +178,33 @@ hook_emit_error() {
       --arg hook "${hook_name}" --arg code "${code}" --arg severity "${severity}" \
       --arg message "${message}" --arg suggestion "${suggestion}" --argjson context "${ctx}" \
       '{hook:$hook,error_code:$code,severity:$severity,message:$message,suggestion:$suggestion,context:$context}' 2>/dev/null)"; then
-      printf '%s\n' "${_json}" >&2
+      _hook_emit_line "${_json}"
       return 0
     fi
     if _json="$(jq -cn \
       --arg hook "${hook_name}" --arg code "${code}" --arg severity "${severity}" \
       --arg message "${message}" --arg suggestion "${suggestion}" \
       '{hook:$hook,error_code:$code,severity:$severity,message:$message,suggestion:$suggestion,context:{}}' 2>/dev/null)"; then
-      printf '%s\n' "${_json}" >&2
+      _hook_emit_line "${_json}"
       return 0
     fi
   fi
-  local e_hook e_code e_sev e_msg e_sug
+  local e_hook e_code e_sev e_msg e_sug line
   e_hook="$(_hook_json_escape "${hook_name}")"
   e_code="$(_hook_json_escape "${code}")"
   e_sev="$(_hook_json_escape "${severity}")"
   e_msg="$(_hook_json_escape "${message}")"
   e_sug="$(_hook_json_escape "${suggestion}")"
-  printf '{"hook":"%s","error_code":"%s","severity":"%s","message":"%s","suggestion":"%s","context":%s}\n' \
-    "${e_hook}" "${e_code}" "${e_sev}" "${e_msg}" "${e_sug}" "${ctx}" >&2
+  printf -v line '{"hook":"%s","error_code":"%s","severity":"%s","message":"%s","suggestion":"%s","context":%s}' \
+    "${e_hook}" "${e_code}" "${e_sev}" "${e_msg}" "${e_sug}" "${ctx}"
+  _hook_emit_line "${line}"
+}
+
+# Write one line to stderr in a subshell, status ignored. The subshell owns no child → no SIGCHLD
+# can interrupt the write (bash 3.2 EINTR) → a blocked write still lands once and never decides
+# the caller's exit. Retry is wrong: a held short write is flushed later and prints twice.
+_hook_emit_line() {
+  (printf '%s\n' "${1}") >&2 || true
 }
 
 # Log a diagnostic message to stderr with the caller's hook name.

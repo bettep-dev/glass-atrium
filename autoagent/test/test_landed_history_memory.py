@@ -37,6 +37,11 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+_TEST_DIR = Path(__file__).resolve().parent
+if str(_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_TEST_DIR))
+
+from _pg_seal import seal_pg_reach  # noqa: E402 — anchors pinned above
 
 try:
     import daemon_cycle as dc
@@ -154,6 +159,9 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
     """
 
     def setUp(self) -> None:
+        # Builders reach PG reads (pattern evidence, landed history): sealed.
+        reach = seal_pg_reach(self)
+        self.addCleanup(lambda: self.assertEqual(reach, []))
         self._captured: dict[str, str] = {}
 
         def _capture(*, base_prompt, target_file, label_hint, claude_bin, timeout_sec):
@@ -184,7 +192,7 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
         with mock.patch.object(dc, "_fetch_landed_proposals", lambda agent: landed), \
              mock.patch.object(dc, "_fetch_pre_verify_failures", lambda agent: failures):
             dc.generate_consolidated_proposal(
-                _AGENT, [_pattern()], [], agents_dir=self._agents_dir
+                _AGENT, [_pattern()], agents_dir=self._agents_dir
             )
         return self._captured["prompt"]
 
@@ -196,7 +204,7 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
         self.assertIn(_LANDED_SENTINEL, prompt)
         # Neighboring blocks still intact.
         self.assertIn("OBSERVED LEARNING SIGNALS", prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
     def test_when_only_a_rejected_proposal_exists_then_its_text_is_absent(self) -> None:
         failures = [({"C2": False}, "rejected: added an unrelated rule")]
@@ -208,13 +216,13 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
         # Well-formed: the failure block and both neighbors survive the omission.
         self.assertIn("rejected: added an unrelated rule", prompt)
         self.assertIn("OBSERVED LEARNING SIGNALS", prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
     def test_when_pg_off_then_block_omitted_without_placeholder(self) -> None:
         prompt = self._run(None)
         self.assertNotIn(_LANDED_HEADER, prompt)
         self.assertNotIn("{landed_history_block}", prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
 
 if __name__ == "__main__":

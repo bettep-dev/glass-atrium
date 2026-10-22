@@ -463,6 +463,7 @@ def test_run_add_auto_wires_gate_roster_sync(
     checks the PREFIXED name — a bare-name birth would fail them all.
     """
     from agent_lifecycle import add as add_mod
+    from agent_lifecycle import db_utils
     from agent_lifecycle.add import AddRequest, run_add
 
     bare = "dev-newbie"
@@ -480,6 +481,8 @@ def test_run_add_auto_wires_gate_roster_sync(
     monkeypatch.setattr(add_mod, "git_unstage", lambda *_a, **_k: None)
     monkeypatch.setattr(add_mod, "regenerate_manifest", lambda *_a, **_k: None)
     monkeypatch.setattr(add_mod, "swap_symlinks", lambda *_a, **_k: None)
+    # model-config read connects on libpq defaults → its fail-soft None, no database
+    monkeypatch.setattr(db_utils, "get_model_config", lambda _k: None)
 
     req = AddRequest(
         name=bare,  # bare in, prefixed out — the born-prefixed proof

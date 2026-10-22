@@ -19,6 +19,8 @@ bats_require_minimum_version 1.5.0
 HOOK_SH="${BATS_TEST_DIRNAME}/../validate-output.sh"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
+source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "validate-output.sh not found: ${HOOK_SH}"
@@ -27,6 +29,7 @@ setup() {
   WORK="$(mktemp -d -t validate-output-bats.XXXXXX)"
   REAL_PY="$(command -v python3)"
   REAL_GREP="$(command -v grep)"
+  REAL_MKTEMP="$(command -v mktemp)"
 }
 
 teardown() {
@@ -55,6 +58,47 @@ make_counting_shim() {
     printf 'exec %q "$@"\n' "${real}"
   } >"${WORK}/bin/${name}"
   chmod +x "${WORK}/bin/${name}"
+}
+
+# python3 shim that outlives its output: real parse → stdout closed → linger → exit marker → real status.
+# shellcheck disable=SC2016  # single quotes keep the generated script's expansions for it to run
+make_lingering_python_shim() {
+  mkdir -p "${WORK}/bin"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf '%q "$@"\n' "${REAL_PY}"
+    printf 'rc=$?\n'
+    printf 'exec 1>&-\n'
+    printf 'sleep 1\n'
+    printf ': >%q\n' "${WORK}/python3-exited"
+    printf 'exit "${rc}"\n'
+  } >"${WORK}/bin/python3"
+  chmod +x "${WORK}/bin/python3"
+}
+
+# mktemp shim recording each created path — bare mktemp on macOS ignores TMPDIR, so no redirect observes it.
+# shellcheck disable=SC2016  # single quotes keep the generated script's expansions for it to run
+make_recording_mktemp_shim() {
+  mkdir -p "${WORK}/bin"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'path="$(%q "$@")" || exit\n' "${REAL_MKTEMP}"
+    printf 'printf "%%s\\n" "${path}" >>%q\n' "${WORK}/mktemp-paths"
+    printf 'printf "%%s\\n" "${path}"\n'
+  } >"${WORK}/bin/mktemp"
+  chmod +x "${WORK}/bin/mktemp"
+}
+
+# Fails when any scratch file the hook made through mktemp still exists.
+assert_scratch_removed() {
+  local path
+  [[ -f "${WORK}/mktemp-paths" ]] || return 0
+  while IFS= read -r path; do
+    [[ ! -e "${path}" ]] || {
+      printf 'scratch file left behind: %s\n' "${path}"
+      return 1
+    }
+  done <"${WORK}/mktemp-paths"
 }
 
 # Byte count of a counter file (0 when absent — avoids the grep -c zero-match trap).
@@ -174,6 +218,32 @@ spawn_count() {
   [[ "${output}" == *"SEC-072"* ]] || return 1
 }
 
+@test "the dangerous-output block is written only after the parse child has exited, leaving no scratch file" {
+  # An un-waited parse child can exit mid block write → its SIGCHLD interrupts that builtin write on bash 3.2.
+  # The reader samples the shim's exit marker the moment the block line arrives on stdout.
+  make_lingering_python_shim
+  make_recording_mktemp_shim
+  # shellcheck disable=SC2016  # the child shell expands its own positional parameters
+  run env PATH="${WORK}/bin:${PATH}" bash -c '
+    printf "%s" "$1" | bash "$2" 2>"$3" | {
+      IFS= read -r line
+      if [[ -e "$4" ]]; then state=exited; else state=running; fi
+      printf "%s %s\n" "${state}" "${line}"
+    }
+    exit "${PIPESTATUS[1]}"' _ '{"tool_name":"Bash","tool_response":"DROP TABLE users"}' \
+    "${HOOK_SH}" "${WORK}/stderr" "${WORK}/python3-exited"
+  [[ "${status}" -eq 2 ]] || {
+    printf '%s\n' "${output}"
+    cat "${WORK}/stderr"
+    return 1
+  }
+  [[ "${output}" == 'exited {"decision":"block"'* ]] || {
+    printf 'block line written while the parse child ran: %s\n' "${output}"
+    return 1
+  }
+  assert_scratch_removed
+}
+
 @test "LLM05 clean Bash output → exit 0, not blocked" {
   run_hook '{"tool_name":"Bash","tool_response":"ok: 3 files formatted, nothing dangerous"}'
   [[ "${status}" -eq 0 ]] || return 1
@@ -188,10 +258,13 @@ spawn_count() {
   [[ "${status}" -ne 2 ]] || return 1 # not a block — an input-parse fail-hard
 }
 
-@test "fail-hard parity: malformed JSON → exit non-zero (loud-fail kept)" {
-  run_hook '{not valid json'
+@test "fail-hard parity: malformed JSON → exit non-zero (loud-fail kept), no scratch file left" {
+  make_recording_mktemp_shim
+  # shellcheck disable=SC2016  # the child shell expands its own positional parameters
+  run env PATH="${WORK}/bin:${PATH}" bash -c 'printf "%s" "$1" | bash "$2" 2>&1' _ '{not valid json' "${HOOK_SH}"
   [[ "${status}" -ne 0 ]] || return 1
   [[ "${status}" -ne 2 ]] || return 1
+  assert_scratch_removed
 }
 
 # --- PERF INVARIANT (b): single python3 + single grep on the non-match path ----
@@ -227,4 +300,12 @@ spawn_count() {
   [[ "${output}" == *"SEC-072"* ]] || return 1
   [[ "$(spawn_count python3)" -eq 1 ]] || return 1
   [[ "$(spawn_count grep)" -eq 1 ]] || return 1
+}
+
+@test "an interrupted dangerous-output block write still exits 2 with the block JSON once on stdout" {
+  printf '%s' '{"tool_name":"Bash","tool_input":{"command":"x"},"tool_response":"DROP TABLE users;"}' \
+    >"${BATS_TEST_TMPDIR}/envelope"
+  FORCED_CHANNEL=stdout run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope"
+  # stderr carries the SEC-012 emitter line by design, never the block JSON
+  assert_forced_block '"decision":"block"' '{"hook":"validate-output","error_code":"SEC-012",*}'
 }

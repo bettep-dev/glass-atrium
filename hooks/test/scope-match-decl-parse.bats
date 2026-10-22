@@ -289,3 +289,40 @@ record0_entries() {
     return 1
   }
 }
+
+# --- readers over the pipe buffer -------------------------------------------------------------
+# Under the consumers' `set -Eeuo pipefail`, an early-exit reader whose writer still has a write to make
+# reports the writer's SIGPIPE 141 instead of its own verdict — a multi-write writer races it at any size.
+
+# $1 = first line → a ~140 KB file of that line plus filler lines; prints its path.
+big_text_file() {
+  local path="${BATS_TEST_TMPDIR}/big.txt"
+  {
+    printf '%s\n' "${1}"
+    seq -f 'filler line %05g of ordinary delegation text' 1 3000
+  } >"${path}"
+  printf '%s' "${path}"
+}
+
+@test "record 0 over the pipe buffer yields its line-1 declaration under pipefail" {
+  local real='[SCOPE] files=hooks/real.sh · deliverable=fix · out=none' text
+  local tpath="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  text="$(big_text_file "${real}")"
+  jq -Rsc '{type:"user", message:{role:"user", content:.}}' <"${text}" >"${tpath}"
+  run bash -c 'set -Eeuo pipefail; source "$1"; scope_decl_from_record0 "$2"' _ "${LIB_SH}" "${tpath}"
+  [[ "${status}" -eq 0 && "${output}" == "${real}" ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
+}
+
+@test "a standing-rule disclosure on line 1 of concerns over the pipe buffer exempts its path under pipefail" {
+  local text
+  text="$(big_text_file 'shellcheck fix in hooks/side.sh')"
+  run bash -c 'set -Eeuo pipefail; source "$1"; scope_concerns_exempts_path hooks/side.sh "$(cat "$2")"' \
+    _ "${LIB_SH}" "${text}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
+}

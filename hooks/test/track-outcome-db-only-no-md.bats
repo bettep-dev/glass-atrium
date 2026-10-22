@@ -123,7 +123,7 @@ write_payload() {
 
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     CLAUDE_GATE_INFLIGHT="" \
     T9_CORRECTION_DETECTION="false" \
@@ -229,7 +229,7 @@ PY
 # $@ = extra env assignments. The python3 shim's argv log names every temp the run executed.
 run_hook_teardown() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     CLAUDE_GATE_INFLIGHT="" \
     "$@" \

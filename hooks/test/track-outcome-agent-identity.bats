@@ -116,7 +116,7 @@ write_sidecar() {
 # $1 = registry path override (defaults to the fixture registry).
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     CLAUDE_AGENT_REGISTRY_FILE="${1:-${REGISTRY}}" \
     CLAUDE_GATE_INFLIGHT="" \
@@ -162,7 +162,7 @@ spooled_field() {
 }
 
 @test "teammate task kind WITHOUT a registered-type key falls back to agentType" {
-  # 12 such sidecars exist in the live corpus — the task kind is not a hard gate.
+  # Such sidecars exist in practice — the task kind is not a hard gate.
   "${REAL_PY3}" - "${SIDECAR}" "${REGISTERED}" <<'PY'
 import json, sys
 with open(sys.argv[1], "w", encoding="utf-8") as f:

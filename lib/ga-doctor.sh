@@ -63,17 +63,17 @@ run_doctor() {
         log "  FAIL : manifest carries escaping or unreadable files[] key(s) (listed above) — install/uninstall/prune refuse it"
         fail=1
       fi
-      local rel missing=0
-      # read_manifest_files dies on its own failure → masked exit is benign;
-      # process substitution keeps the loop in the current shell (var-safe).
-      # shellcheck disable=SC2312
+      local rel missing=0 rels
+      # Waited capture, not a process substitution → no late SIGCHLD lands on a later write.
+      # A producer die only empties the capture (|| true) → the run continues, as before.
+      rels="$(read_manifest_files)" || true
       while IFS= read -r rel; do
         [[ -n "${rel}" ]] || continue
         [[ -e "${GA_ROOT}/${rel}" ]] || {
           log "  FAIL : manifest source missing: ${rel}"
           missing=$((missing + 1))
         }
-      done < <(read_manifest_files)
+      done <<<"${rels}"
       [[ "${missing}" -eq 0 ]] || fail=1
     else
       log "  FAIL : manifest .files not an array"
@@ -86,17 +86,16 @@ run_doctor() {
 
   # 5. no dangling GA symlinks under target (existing install health)
   if [[ -d "${TARGET_HOME}" ]]; then
-    local dangling=0 link
-    # find ends with `|| true` → masked exit is benign; process substitution
-    # keeps the loop in the current shell (var-safe).
-    # shellcheck disable=SC2312
+    local dangling=0 link links
+    # Waited capture (see §4); an empty capture yields one empty line, skipped by the guard.
+    links="$(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r link; do
       [[ -n "${link}" ]] || continue
       [[ -e "${link}" ]] || {
         log "  warn : dangling GA symlink: ${link}"
         dangling=$((dangling + 1))
       }
-    done < <(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+    done <<<"${links}"
     [[ "${dangling}" -eq 0 ]] && log "  ok   : no dangling GA symlinks"
   fi
 
@@ -206,14 +205,13 @@ run_doctor() {
     #       counts GA-pointing symlinks under TARGET_HOME; zero ⇒ nothing deployed ⇒ every entry
     #       reports undeployed. The hard-FAIL is RESERVED for genuine PARTIAL drift (some deployed,
     #       some missing) on an established install.
-    local ga_links=0 lk
-    # find ends with `|| true` → masked exit is benign; process substitution
-    # keeps the loop in the current shell (var-safe).
-    # shellcheck disable=SC2312
+    local ga_links=0 lk lks
+    # Waited capture (see §4).
+    lks="$(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r lk; do
       [[ -n "${lk}" ]] || continue
       ga_links=$((ga_links + 1))
-    done < <(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+    done <<<"${lks}"
 
     local sev="FAIL" fresh=0
     if [[ "${mode}" == "preflight" ]]; then
@@ -223,10 +221,9 @@ run_doctor() {
       sev="warn"
       fresh=1
     fi
-    local rel total=0 undeployed=0 dst cur
-    # read_manifest_files dies on its own failure → masked exit is benign;
-    # process substitution keeps the loop in the current shell (var-safe).
-    # shellcheck disable=SC2312
+    local rel total=0 undeployed=0 dst cur rels
+    # Waited capture (see §4).
+    rels="$(read_manifest_files)" || true
     while IFS= read -r rel; do
       [[ -n "${rel}" ]] || continue
       # install-internal payload (is_symlink_excluded: lib/ monitor/ hooks/ scoped/ scripts/ autoagent/
@@ -252,7 +249,7 @@ run_doctor() {
         log "  ${sev} : manifest entry not installed: ${rel} — run 'glass-atrium agents-only' to deploy"
         undeployed=$((undeployed + 1))
       fi
-    done < <(read_manifest_files)
+    done <<<"${rels}"
     if [[ "${undeployed}" -eq 0 ]]; then
       log "  ok   : all manifest entries deployed to target (symlinks into GA root)"
     elif [[ "${mode}" == "preflight" ]]; then
@@ -394,28 +391,23 @@ run_doctor() {
     log "  warn : no base@install baseline — run 'glass-atrium install' to capture it (next update falls back to a wider merge base)"
   fi
   # 10. inject-scope-rules shed surface. inject-scope-rules.sh assembles its droppable AGENT-INJECT
-  #     marker blocks (budget + wiki-untrusted) and the lesson under INJECT_CTX_MAX_BYTES; when the
-  #     assembly still overruns, a block is shed SILENTLY (Claude Code discards SubagentStart hook stderr), so the
+  #     marker blocks (budget + wiki-untrusted) under INJECT_CTX_MAX_BYTES; when the assembly still
+  #     overruns, a block is shed SILENTLY (Claude Code discards SubagentStart hook stderr), so the
   #     hook persists each shed to a HOME-relative diag log. Two properties of that log decide the
   #     verdict shape here, and getting either wrong emits an unclearable imperative:
   #       · APPEND-ONLY + lifetime-scoped — a count over the whole file asserts a condition that may
   #         have ended months ago, so the verdict is computed over a DATE WINDOW only.
-  #       · the shed classes have DIFFERENT remedies, and only one has any remedy at all:
-  #           non-lesson DROP    → warn. A scope block stopped reaching subagents; recompressing the
-  #                                AGENT-INJECT source blocks clears it.
-  #           lesson DROP/PARTIAL → info, NO remedy. The lesson block is assembled at runtime from the
-  #                                CTM/EPM store (build_lesson_block), not extracted from an
-  #                                AGENT-INJECT source, so recompression cannot affect it — and lesson
-  #                                is the designed lowest-priority first-shed block, i.e. the ceiling
-  #                                mechanism working as specified.
-  #     PARTIAL is surfaced rather than merely excluded so a future mechanism shift cannot move the
-  #     live signal outside the monitored token unnoticed. Verdict shape mirrors §9e (age vs TTL,
-  #     three outcomes). Mutation-free.
-  local inject_drop_warns=0
+  #       · only a scope-block DROP has a remedy (recompress the AGENT-INJECT source blocks), so only
+  #         it warns. block=lesson rows (DROP + PARTIAL) in an existing log come from no current
+  #         producer path and have no remedy → lifetime total only (_inject_drop_scan).
+  #       · a block=canary DROP costs a trial its delivery, not a rule its reach → counted apart, on
+  #         the canary-trial term (§28 reads the ledger half of that surface).
+  #     Verdict shape mirrors §9e (age vs TTL, three outcomes). Mutation-free.
+  local inject_drop_warns=0 canary_warns=0
   # Must read the SAME root inject-scope-rules.sh writes to: GA_DATA_ROOT/logs (the migrated
   # Tier-A seam = the producer's INJECT_DROP_LOG = HOOK_LOG_DIR) — reader + producer share one root.
   local inject_drop_log="${GA_DATA_ROOT}/logs/inject-scope-rules.diag.log"
-  local drop_cutoff="" drop_counts="" win_drop=0 win_lesson=0 win_partial=0 life_events=0
+  local drop_cutoff="" drop_counts="" win_drop=0 win_canary=0 life_events=0
   # A missing window boundary is the §9e un-ageable case: the condition cannot be ESTABLISHED, so the
   # elif below says so loudly instead of falling back to the lifetime total (which would restate the
   # defect this section exists to remove). SC2310/SC2311 disabled for the whole compound — the
@@ -428,10 +420,10 @@ run_doctor() {
     log "  warn : inject-scope-rules drop log present but un-windowable (${inject_drop_log}) — neither 'date -u -v-Nd' nor 'date -u -d \"N days ago\"' works here, so live sheds cannot be separated from history; install a BSD- or GNU-compatible date(1)"
     inject_drop_warns=1
   else
-    # Single stdout line, field order `<non-lesson-drop> <lesson-drop> <partial> <lifetime>` — the
+    # Single stdout line, field order `<scope-block-drop> <canary-shed> <lifetime>` — the
     # multi-field verdict-line precedent already used by snapshot_staleness_scan. A failed scan
     # (no awk, unreadable log) or a malformed line is LOUD, never zeroed into a clean OK.
-    local drop_counts_re='^[0-9]+ [0-9]+ [0-9]+ [0-9]+$'
+    local drop_counts_re='^[0-9]+ [0-9]+ [0-9]+$'
     # shellcheck disable=SC2310,SC2311
     if ! drop_counts="$(_inject_drop_scan "${inject_drop_log}" "${drop_cutoff}")" \
       || [[ ! "${drop_counts}" =~ ${drop_counts_re} ]]; then
@@ -439,8 +431,8 @@ run_doctor() {
       inject_drop_warns=1
     else
       # Explicit IFS: the entry point runs under IFS=$'\n\t', which would NOT split this
-      # space-separated verdict line into its four fields.
-      IFS=' ' read -r win_drop win_lesson win_partial life_events <<<"${drop_counts}"
+      # space-separated verdict line into its three fields.
+      IFS=' ' read -r win_drop win_canary life_events <<<"${drop_counts}"
       if [[ "${win_drop}" -gt 0 ]]; then
         log "  warn : ${win_drop} inject-scope-rules scope-block drop(s) in the last ${INJECT_DROP_WINDOW_DAYS}d (${inject_drop_log}) — a scope block exceeded INJECT_CTX_MAX_BYTES and was NOT injected into subagents; recompress the AGENT-INJECT source blocks"
         inject_drop_warns="${win_drop}"
@@ -448,18 +440,20 @@ run_doctor() {
         # Latest ACTIONABLE row: win_drop > 0 guarantees one exists inside the window, and the newest
         # non-lesson row is at least that recent. SC2312 — the lib carries no file-scope set -e.
         # shellcheck disable=SC2312
-        last_drop="$(grep 'inject-scope-rules] DROP ' "${inject_drop_log}" 2>/dev/null | grep -v 'block=lesson ' | tail -n1 || true)"
+        last_drop="$(grep 'inject-scope-rules] DROP ' "${inject_drop_log}" 2>/dev/null | grep -v -e 'block=lesson ' -e 'block=canary ' | tail -n1 || true)"
         [[ -n "${last_drop}" ]] && log "         latest: ${last_drop}"
+      elif [[ "${life_events}" -gt 0 ]]; then
+        log "  ok   : no inject-scope-rules scope-block drops in the last ${INJECT_DROP_WINDOW_DAYS}d (${life_events} historical event(s) on record in ${inject_drop_log})"
+      else
+        log "  ok   : no inject-scope-rules block-shed events recorded"
       fi
-      if [[ "${win_lesson}" -gt 0 || "${win_partial}" -gt 0 ]]; then
-        log "  info : ${win_lesson} lesson-block drop(s) + ${win_partial} lesson truncation(s) in the last ${INJECT_DROP_WINDOW_DAYS}d — designed shedding of the lowest-priority block; no action (recompression cannot affect a runtime-assembled block)"
-      fi
-      if [[ "${win_drop}" -eq 0 && "${win_lesson}" -eq 0 && "${win_partial}" -eq 0 ]]; then
-        if [[ "${life_events}" -gt 0 ]]; then
-          log "  ok   : no inject-scope-rules shed events in the last ${INJECT_DROP_WINDOW_DAYS}d (${life_events} historical event(s) on record in ${inject_drop_log})"
-        else
-          log "  ok   : no inject-scope-rules block-shed events recorded"
-        fi
+      if [[ "${win_canary}" -gt 0 ]]; then
+        log "  warn : ${win_canary} canary shed(s) in the last ${INJECT_DROP_WINDOW_DAYS}d (${inject_drop_log}) — a treatment-arm spawn lost its canary block, so the trial lost delivery on it; every droppable rule block was already out of the assembly, so the emit and meter blocks, the capped canary and the drop marker alone exceeded the injection ceiling — check for a lowered INJECT_SCOPE_RULES_CTX_MAX_BYTES or grown emit/meter text in hooks/inject-scope-rules.sh"
+        canary_warns=$((canary_warns + win_canary))
+        local last_canary=""
+        # shellcheck disable=SC2312
+        last_canary="$(grep 'inject-scope-rules] DROP .*block=canary ' "${inject_drop_log}" 2>/dev/null | tail -n1 || true)"
+        [[ -n "${last_canary}" ]] && log "         latest: ${last_canary}"
       fi
     fi
   fi
@@ -661,7 +655,7 @@ run_doctor() {
     [[ -f "${LAUNCH_AGENTS}/${ld_label}.plist" ]] && deployed_count=$((deployed_count + 1))
   done
   if [[ "${deployed_count}" -eq 0 ]]; then
-    log "  ok   : no deployed com.glass-atrium launchd plists (not-yet-loaded install — deploy-drift check skipped)"
+    log "  ok   : no deployed com.glass-atrium launchd plists in the active roster (not-yet-loaded install — deploy-drift check skipped)"
   elif [[ ! -f "${PLIST_RENDERER}" ]]; then
     log "  warn : launchd deploy-drift check skipped — plist renderer missing (${PLIST_RENDERER})"
   else
@@ -705,6 +699,17 @@ run_doctor() {
       # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
       if ga_guard_path "${ld_tmp}"; then rm -rf -- "${ld_tmp:?}"; fi
     fi
+  fi
+  # retired labels: presence-only, outside the skips above — the renderer no longer writes their plists
+  local launchd_retired
+  # launchd_retired_deployed logs each deployed retired plist to stderr + echoes the count (stdout verdict).
+  # shellcheck disable=SC2311
+  launchd_retired="$(launchd_retired_deployed)"
+  launchd_drift=$((launchd_drift + launchd_retired))
+  local launchd_unloaded=0
+  if [[ "${deployed_count}" -gt 0 ]]; then
+    # shellcheck disable=SC2311
+    launchd_unloaded="$(launchd_unloaded_probe)"
   fi
 
   # 12. domain-data separation (D6) — relocation correctness. Asserts the new HOME-anchored runtime
@@ -758,16 +763,12 @@ run_doctor() {
     log "  ---- ${snapshot_path_anomaly} live recovery repo(s) carry a control-character path (file-less pathological tree) — NOT staleness: a snapshot run would no-op; inspect the path named above and remove the empty tree once verified ----"
   fi
 
-  # 14. autoagent apply-abort surface. daemon-apply.sh loud-fails on two terminal paths and persists
-  #     ONE abort row per abort into the daily applied-log JSONL: PRE-gate (exit 16) when the
-  #     green-suite gate cannot certify the harness, and POST-gate (exit 7) when the eligible-pending
-  #     backlog exceeds the anomaly threshold and the apply loop refuses to drain it. Both carry the
-  #     same `abort` literal (why: _apply_abort_scan below); the row's `reason` names which, and the
-  #     verdict line reads it to print the matching remedy. That row is the only durable trace of
-  #     either: the launchd path discards the daemon's stderr, so without this section an aborted
+  # 14. autoagent apply-abort surface. daemon-apply.sh persists ONE abort row per abort into the
+  #     daily applied-log JSONL; every such row carries the same `abort` literal (why:
+  #     _apply_abort_scan below) and its own `reason`. That row is the only durable trace of an
+  #     abort: stderr survives only in a rotated launchd log, so without this section an aborted
   #     apply stage is invisible once the cycle ends. FAIL rather than warn — an install whose daemon
-  #     has stopped applying is a live condition with a concrete remedy (fix the red suite / drain
-  #     the flooded proposal table), not an advisory.
+  #     has stopped applying is a live condition with a concrete remedy, not an advisory.
   #     SUPERSESSION, not counting: a later row that is neither an abort nor gate-skipped means a
   #     subsequent cycle got far enough to write one, so the older abort is history. Supersession is
   #     that set rather than a landed patch, because a recovered daemon with nothing eligible to apply
@@ -791,11 +792,17 @@ run_doctor() {
     abort_row="$(printf '%s\n' "${abort_scan}" | sed -n '2p')"
     case "${abort_state}" in
       abort)
-        # The two producers need opposite remedies, so the row's `reason` picks the clause: naming
-        # the gate on a backlog anomaly sends the operator at a suite that was never red.
+        # The row's `reason` picks the clause; the generic one blames a gate or loop that did run.
+        # Exit 26's row names no cause, so its clause points at the producer's stderr line.
         case "${abort_row}" in
           *'"reason":"backlog_anomaly"'*)
             abort_cause="the apply loop refused to drain an eligible-pending backlog above the anomaly threshold; drain or correct core.autoagent_proposals (a generation runaway floods it), then let the next cycle apply"
+            ;;
+          *'"reason":"apply_record_table_unconfirmed"'*)
+            abort_cause="the apply-record table core.autoagent_apply_records could not be confirmed, so nothing was applied; run the pending monitor migration ('glass-atrium db-setup'), then let the next cycle apply"
+            ;;
+          *'"reason":"apply_record_failed"'*)
+            abort_cause="a patch landed and its row is applied, but its database record was not written — the JSONL applied row holds the record, so nothing re-applies; the cause is only on the daemon's 'apply record NOT written cause=' stderr line (patch_source backlog: /tmp/autoagent-daemon-loop.log · single: the monitor log for an Approve), fix it, then let the next cycle drain the rest"
             ;;
           *)
             abort_cause="the daemon has not reached its apply loop since; fix the named cause, then let the next cycle re-open the gate"
@@ -1162,6 +1169,8 @@ run_doctor() {
   #     `note :` line. Prisma leaves such a row behind after `migrate resolve --rolled-back` plus a
   #     re-apply, so it can accompany a fully-applied set — the prefix keeps an `ok` verdict beside
   #     a `0 pending-migration` breakdown readable as one report, not as an unowned warning.
+  #     A rolled-back row whose migration ALSO has an applied row is that re-apply finished — it
+  #     gets its own kind-B `superseded` note without the inspect-by-hand advice.
   #     The existence probe is called in the rc-CAPTURING form: setup_database's `|| true` form
   #     would fold an unreachable server into "database absent" and report a healthy install as
   #     fully pending forever.
@@ -1169,6 +1178,7 @@ run_doctor() {
   local mig_dir="${GA_MIGRATIONS_DIR:-${GA_ROOT}/monitor/prisma/migrations}"
   local mig_entry mig_name mig_state mig_probe="" mig_table="" mig_rows=""
   local mig_expected="" mig_applied="" mig_missing="" mig_failed="" mig_total=0 mig_failed_count=0
+  local mig_rolled_back="" mig_superseded="" mig_superseded_count=0
   if [[ -d "${mig_dir}" ]]; then
     # Directories only: migration_lock.toml sits beside them and is not a migration.
     for mig_entry in "${mig_dir}"/*/; do
@@ -1203,6 +1213,8 @@ run_doctor() {
       [[ -n "${mig_name}" ]] || continue
       if [[ "${mig_state}" == "applied" ]]; then
         mig_applied="${mig_applied}${mig_name}"$'\n'
+      elif [[ "${mig_state}" == "rolled_back" ]]; then
+        mig_rolled_back="${mig_rolled_back}${mig_name}"$'\n'
       else
         mig_failed="${mig_failed}${mig_failed:+, }${mig_name}"
         mig_failed_count=$((mig_failed_count + 1))
@@ -1210,6 +1222,16 @@ run_doctor() {
     done < <(get_migration_states <<<"${mig_rows}")
     # Newline-fenced haystack, so one applied name cannot match another's suffix.
     mig_applied=$'\n'"${mig_applied}"
+    while IFS= read -r mig_name; do
+      [[ -n "${mig_name}" ]] || continue
+      if [[ "${mig_applied}" == *$'\n'"${mig_name}"$'\n'* ]]; then
+        mig_superseded="${mig_superseded}${mig_superseded:+, }${mig_name}"
+        mig_superseded_count=$((mig_superseded_count + 1))
+      else
+        mig_failed="${mig_failed}${mig_failed:+, }${mig_name}"
+        mig_failed_count=$((mig_failed_count + 1))
+      fi
+    done <<<"${mig_rolled_back}"
     while IFS= read -r mig_name; do
       [[ -n "${mig_name}" ]] || continue
       [[ "${mig_applied}" == *$'\n'"${mig_name}"$'\n'* ]] && continue
@@ -1224,6 +1246,9 @@ run_doctor() {
     fi
     if [[ "${mig_failed_count}" -gt 0 ]]; then
       log "  note : failed/rolled-back history row(s): ${mig_failed_count} — ${mig_failed} (a re-apply does not clear these; inspect ${mig_table} by hand)"
+    fi
+    if [[ "${mig_superseded_count}" -gt 0 ]]; then
+      log "  note : superseded rolled-back history row(s): ${mig_superseded_count} — ${mig_superseded} (each migration also has an applied row)"
     fi
   fi
 
@@ -1488,6 +1513,17 @@ run_doctor() {
   #     Branches come from the owner's shell setup, not from Atrium → report, never write into one.
   _doctor_report_profile_links
 
+  # 28. canary trial surface — registration kind A, on the canary_warns counter §10 opened with its
+  #     shed count. Read-only: a digest-tool probe and one ledger SELECT; the daemon owns every repair.
+  #     Branch states mirror §25: opt-out, psql-less mode, a database not there yet and a failed read
+  #     are notes, never a clean zero and never a warning.
+  # shellcheck disable=SC2310  # the helper rc IS the digest verdict
+  _doctor_report_canary_digest || canary_warns=$((canary_warns + 1))
+  local canary_ledger_warns=0
+  # shellcheck disable=SC2311  # stdout-only count; every branch inside prints one
+  canary_ledger_warns="$(_doctor_report_canary_ledger)"
+  canary_warns=$((canary_warns + canary_ledger_warns))
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -1495,7 +1531,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + token_leak))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + launchd_unloaded + token_leak + canary_warns))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -1503,7 +1539,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${token_leak} token-leak — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${launchd_unloaded} launchd-unloaded + ${token_leak} token-leak + ${canary_warns} canary-trial — see above) =="
     fi
     return 0
   fi
@@ -1526,6 +1562,7 @@ INJECT_DROP_WINDOW_DAYS="${INJECT_DROP_WINDOW_DAYS:-7}"
 # capture reports the coverage unread instead of a clean zero.
 # The status list is the terminal set the upsert freeze already uses; a row that is still pending
 # or snoozed has not been moved to a final state by anyone, so it names no missing mover.
+# Compared as status::text → the 'unadjudicated' literal still plans on a schema lacking the label.
 _pg_proposal_actor_probe() {
   # GA-ABSORB[handled@the terminal-row-read unread branch of doctor section 25]: stderr only — the rc is captured and branched on there
   psql -h "${PG_SOCKET}" -d "$1" -tA -F $'\x1f' 2>/dev/null <<'SQL'
@@ -1533,9 +1570,87 @@ SELECT count(*),
        count(*) FILTER (WHERE reviewed_at IS NOT NULL AND reviewed_by IS NULL),
        count(*) FILTER (WHERE reviewed_at IS NULL AND reviewed_by IS NULL)
 FROM core.autoagent_proposals
-WHERE status IN ('applied'::core."ProposalStatus", 'approved'::core."ProposalStatus",
-                 'rejected'::core."ProposalStatus", 'reverted'::core."ProposalStatus")
+WHERE status::text IN ('applied', 'approved', 'rejected', 'reverted', 'unadjudicated')
 SQL
+}
+
+# §28 ledger window (days) over core.autoagent_trial_ledger. Sized like §14's: the rows land once per
+# daily ingest, so a week of silence holds too few cycles to call a condition ended. Env-overridable
+# so a test can pin either side of the boundary.
+CANARY_TRIAL_WINDOW_DAYS="${CANARY_TRIAL_WINDOW_DAYS:-14}"
+
+# Canary trial rows of the last $2 days in database $1, one unit-separator line: void count for a
+# foreign canary hash, unbound-delivery count, then each population's agents. The literals are the
+# daemon's (CANARY.VOID_REASON, TRIAL_LEDGER.EVENT.CANARY_UNBOUND_DELIVERY). $2 rides as a quoted
+# psql literal cast to int, so a malformed window fails the read instead of entering the statement.
+_pg_canary_ledger_probe() {
+  # GA-ABSORB[handled@the read-failed unread branch of _doctor_report_canary_ledger]: stderr only — the rc is captured and branched on there
+  psql -h "${PG_SOCKET}" -d "$1" -v ON_ERROR_STOP=1 -v days="$2" -tA -F $'\x1f' 2>/dev/null <<'SQL'
+SELECT count(*) FILTER (WHERE payload->'void'->>'reason' = 'foreign-canary-hash'),
+       count(*) FILTER (WHERE event = 'canary-unbound-delivery'),
+       coalesce(string_agg(DISTINCT payload->'void'->>'agent', ',')
+         FILTER (WHERE payload->'void'->>'reason' = 'foreign-canary-hash'), ''),
+       coalesce(string_agg(DISTINCT agent, ',') FILTER (WHERE event = 'canary-unbound-delivery'), '')
+FROM core.autoagent_trial_ledger
+WHERE recorded_at >= now() - make_interval(days => :'days'::int)
+SQL
+}
+
+# §28 digest leg: rc 1 (after its warn line) when neither tool the hook's manifest_digest probes is
+# on PATH — the hook then assigns no arm and delivers no canary, so every trial voids for low
+# delivery only after its generator call.
+_doctor_report_canary_digest() {
+  local tool=""
+  # shellcheck disable=SC2311  # stdout-only resolver; empty output IS the absent case
+  tool="$(_resolve_sha256_cmd)"
+  if [[ -n "${tool}" ]]; then
+    log "  ok   : canary digest tool present (${tool%% *})"
+    return 0
+  fi
+  log "  warn : no canary digest tool — neither shasum nor sha256sum is on PATH, so the inject hook assigns no canary arm and every canary trial voids for low delivery; install either tool"
+  return 1
+}
+
+# §28 ledger leg: logs its verdict, stdout = the warning count it adds (0 on every unread branch).
+_doctor_report_canary_ledger() {
+  local probe="" answer="" voids="" unbound="" void_agents="" unbound_agents=""
+  local days="${CANARY_TRIAL_WINDOW_DAYS}"
+  # shellcheck disable=SC2310,SC2311  # rc-capturing probe calls: an unreachable server must stay distinguishable
+  if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
+    log "  note : canary trial ledger check skipped (GA_SKIP_DB_SETUP set)"
+  elif ! command -v psql >/dev/null 2>&1; then
+    log "  note : canary trial ledger check skipped — psql not found (supported mode; install PostgreSQL to see canary voids)"
+  elif ! probe="$(_pg_database_exists_probe "${DB_NAME}")"; then
+    log "  note : canary trial ledger unread — the '${DB_NAME}' existence probe failed (server down, or socket ${PG_SOCKET} unreachable); this run read no rows"
+  elif [[ "${probe}" != "1" ]]; then
+    log "  note : database '${DB_NAME}' absent — no canary trial rows to check"
+  elif ! answer="$(_pg_canary_ledger_probe "${DB_NAME}" "${days}")"; then
+    log "  note : canary trial ledger unread — the read against '${DB_NAME}' failed"
+  else
+    # Unit separator, never whitespace: an empty agent list is a field the split must keep.
+    IFS=$'\x1f' read -r voids unbound void_agents unbound_agents <<<"${answer}"
+    if ! [[ "${voids}" =~ ^[0-9]+$ ]] || ! [[ "${unbound}" =~ ^[0-9]+$ ]]; then
+      log "  note : canary trial ledger unread — the read against '${DB_NAME}' answered something other than two counts"
+    else
+      _log_canary_ledger_verdict "${voids}" "${unbound}" "${void_agents}" "${unbound_agents}" "${days}"
+      printf '%s' "$((voids + unbound))"
+      return 0
+    fi
+  fi
+  printf '0'
+}
+
+# Args: $1=void count $2=unbound count $3=void agents $4=unbound agents $5=window days.
+_log_canary_ledger_verdict() {
+  if [[ "$1" -gt 0 ]]; then
+    log "  warn : $1 canary trial void(s) for a foreign canary hash in the last $5d (agents: $3) — a delivered canary text was not the open trial's, so the daemon voided the trial and removed its canary files"
+  fi
+  if [[ "$2" -gt 0 ]]; then
+    log "  warn : $2 canary delivery(ies) bound to no open trial in the last $5d (agents: $4) — a spawn delivered canary text while no trial was open; the daemon removed those canary files"
+  fi
+  if [[ "$1" -eq 0 && "$2" -eq 0 ]]; then
+    log "  ok   : no canary void or unbound canary delivery in the last $5d"
+  fi
 }
 
 # Emit the UTC calendar date $1 days ago as YYYY-MM-DD, or NOTHING with rc 1 when neither date(1)
@@ -1725,11 +1840,14 @@ _doctor_report_profile_link_defect() {
 
 # Classify the inject-scope-rules shed log against a YYYY-MM-DD cutoff. Producer line grammar
 # (hooks/inject-scope-rules.sh append_drop_log):
-#   <ISO8601Z> [inject-scope-rules] <DROP|PARTIAL> agent=<t> block=<label> pre_drop_bytes=N ceiling=N overage_bytes=N[ kept_bytes=N]
+#   <ISO8601Z> [inject-scope-rules] <DROP|MARKERLOST> agent=<t> block=<label> pre_drop_bytes=N ceiling=N overage_bytes=N
+# An existing log may also hold block=lesson rows (DROP, and PARTIAL with a trailing kept_bytes=N)
+# that no current producer path writes → lifetime total only, never an in-window drop.
 # ISO-8601 dates compare correctly as strings, so the window needs no date arithmetic per row.
 # A row whose timestamp field is EMPTY (the producer's date(1) failed, and its ts is fail-open) is
 # counted as IN-window: an un-ageable row is surfaced, never silently aged out.
-# Args: $1=log path $2=cutoff date · stdout: `<non-lesson-drop> <lesson-drop> <partial> <lifetime>`.
+# A block=canary DROP is counted apart from the scope-block drops: its cost is a trial's delivery.
+# Args: $1=log path $2=cutoff date · stdout: `<scope-block-drop> <canary-shed> <lifetime>`.
 _inject_drop_scan() {
   awk -v cutoff="${2}" '
     index($0, "[inject-scope-rules]") == 0 { next }
@@ -1745,11 +1863,10 @@ _inject_drop_scan() {
         if (substr($i, 1, 6) == "block=") { block = substr($i, 7) }
       }
       life++
-      if (!in_window) { next }
-      if (event == "PARTIAL") { partial++ }
-      else if (event == "DROP") { if (block == "lesson") { lesson++ } else { actionable++ } }
+      if (in_window && event == "DROP" && block == "canary") { canary++ }
+      else if (in_window && event == "DROP" && block != "lesson") { actionable++ }
     }
-    END { printf "%d %d %d %d\n", actionable + 0, lesson + 0, partial + 0, life + 0 }
+    END { printf "%d %d %d\n", actionable + 0, canary + 0, life + 0 }
   ' "${1}"
 }
 
@@ -1764,10 +1881,9 @@ APPLY_ABORT_WINDOW_DAYS="${APPLY_ABORT_WINDOW_DAYS:-14}"
 # Classify the daily applied-log JSONL files under $1 against the YYYY-MM-DD cutoff $2. Producer
 # grammar (autoagent/daemon-apply.sh): one JSON object per line carrying a `"status":"<literal>"`
 # field. `abort` is the sole abort-class literal, and the axis is the literal itself rather than
-# which gate stage produced it: the pre-gate preflight abort (exit 16) and the post-gate
-# backlog-anomaly tripwire (exit 7) both write it — two different producer sites, one literal (why
-# the tripwire reuses it rather than taking its own: the backlog_anomaly_row header in
-# autoagent/daemon-apply.sh). Their `reason` fields separate them for the verdict line.
+# which gate stage produced it: every abort producer in autoagent/daemon-apply.sh writes it (why one
+# literal rather than one per producer: the backlog_anomaly_row header there), and the row's `reason`
+# picks the remedy on the §14 verdict line.
 # Every other literal (applied · skip · reject · needs_regen · dryrun · error) is a non-abort
 # literal, and the classifier treats them alike — it keys on the abort/non-abort split rather than
 # on `applied` alone: `applied` fires only when a patch actually LANDS, so a recovered daemon with
@@ -2053,6 +2169,44 @@ launchd_deploy_drift() {
     fi
   done
   printf '%d\n' "${drift}"
+}
+
+# deployed retired-label scan — run_doctor §11 helper. Each LAUNCHD_RETIRED_JOBS label whose plist is still
+# deployed under ${LAUNCH_AGENTS} is residue the retirement has not reached: logged as a warn (stderr) with the
+# --load-launchd remedy, and the total is the stdout verdict. Read-only — no launchctl, no file change.
+launchd_retired_deployed() {
+  local ld_job label retired=0
+  for ld_job in "${LAUNCHD_RETIRED_JOBS[@]}"; do
+    label="${LAUNCHD_LABEL_PREFIX}.${ld_job}"
+    [[ -f "${LAUNCH_AGENTS}/${label}.plist" ]] || continue
+    log "  warn : retired launchd job still deployed: ${label} — run --load-launchd to retire it"
+    retired=$((retired + 1))
+  done
+  printf '%d\n' "${retired}"
+}
+
+# launchd loaded-state probe — run_doctor §11 helper. Asks launchd about each DEPLOYED com.glass-atrium
+# plist, since a plist booted out after deploy still sha-matches its render. Each not-loaded job is logged
+# to stderr; the count is the stdout verdict. A sandbox target or a missing launchctl skips with a note.
+launchd_unloaded_probe() {
+  local ld_job label unloaded=0
+  # is_sandbox_target returns 0 by contract (stdout verdict) → masking is intentional
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ "$(is_sandbox_target)" == "yes" ]]; then
+    log "  note : launchd loaded-state probe skipped — sandbox target (launchd domain is per-UID, not per-HOME)"
+  elif ! command -v launchctl >/dev/null 2>&1; then
+    log "  note : launchd loaded-state probe skipped — launchctl not found"
+  else
+    for ld_job in "${LAUNCHD_JOBS[@]}"; do
+      label="${LAUNCHD_LABEL_PREFIX}.${ld_job}"
+      [[ -f "${LAUNCH_AGENTS}/${label}.plist" ]] || continue
+      if ! launchctl print "gui/${UID}/${label}" >/dev/null 2>&1; then
+        log "  warn : ${label} deployed but not loaded — run --load-launchd"
+        unloaded=$((unloaded + 1))
+      fi
+    done
+  fi
+  printf '%d\n' "${unloaded}"
 }
 
 # domain-data separation leftover scan (run_doctor §12 helper — D6). For each Tier-A ENUMERATED

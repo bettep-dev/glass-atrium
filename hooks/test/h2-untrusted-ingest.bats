@@ -56,6 +56,10 @@ setup() {
   export INJECT_SCOPE_RULES_SPAWN_COUNTER="${BATS_TEST_TMPDIR}/inject-spawns.count"
   # C03: the positive-injection manifest sink writes on EVERY spawn — sandbox it likewise.
   export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
+
+  # The canary file is read under the data root; a sandbox root keeps a live install's canary out of
+  # every assembly here.
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data-root"
 }
 
 # ---- raw-write fixtures (frontmatter + optional envelope) --------------------------------------
@@ -90,7 +94,6 @@ inject_ctx() {
     INJECT_SCOPE_RULES_DROP_LOG="${INJECT_SCOPE_RULES_DROP_LOG}" \
     INJECT_SCOPE_RULES_SPAWN_COUNTER="${INJECT_SCOPE_RULES_SPAWN_COUNTER}" \
     INJECT_SCOPE_RULES_MANIFEST_LOG="${INJECT_SCOPE_RULES_MANIFEST_LOG}" \
-    INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
     bash "${INJECT_HOOK}" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // ""'
 }
 
@@ -212,7 +215,7 @@ bytelen() { wc -c | tr -cd '0-9'; }
       printf "%s" "$(jq -nc --arg a "$1" '\''{agent_type:$a}'\'')" | env \
         INJECT_SCOPE_RULES_BUDGET_SRC="$2" INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="$3" \
         INJECT_SCOPE_RULES_AGENTS_DIR="$4" INJECT_SCOPE_RULES_DROP_LOG="$5" \
-        INJECT_SCOPE_RULES_SPAWN_COUNTER="$6" INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
+        INJECT_SCOPE_RULES_SPAWN_COUNTER="$6" \
         bash "$7" 2>&1
     ' _ "${agent}" "${BUDGET_SRC}" "${WIKI_UNTRUSTED_SRC}" "${AGENTS_DIR}" \
       "${INJECT_SCOPE_RULES_DROP_LOG}" "${INJECT_SCOPE_RULES_SPAWN_COUNTER}" "${INJECT_HOOK}"
@@ -261,4 +264,18 @@ bytelen() { wc -c | tr -cd '0-9'; }
   run bash "${READ_HOOK}" <<<'{"tool_name":"Read","tool_input":{"file_path":"/x/wiki/raw/y.md"}}'
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != *"[raw-store-read-advisory]"* ]] || return 1
+}
+
+# ~160 KiB of JSON-escaped lines → a multi-write writer, which races a reader that stops at a line-1
+# match at any size; a writer left with a write dies of SIGPIPE, which pipefail reports as "no match".
+pipe_overflow_padding() {
+  seq -f 'padding line %05g of an ordinary build log' 1 4000 | awk '{ printf "%s\\n", $0 }'
+}
+
+@test "a raw-store path on line 1 of a command larger than the pipe buffer still gets the note" {
+  local padding
+  padding="$(pipe_overflow_padding)"
+  run bash "${READ_HOOK}" <<<"{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat ${WIKI_ROOT}/raw/page.md\\n${padding}\"}}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"[raw-store-read-advisory]"* ]] || { echo "${output}"; return 1; }
 }

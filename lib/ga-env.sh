@@ -67,27 +67,31 @@ ga_init_env() {
   # from here, copies them into ~/Library/LaunchAgents, then launchctl bootstraps.
   readonly RENDERED_PLIST_DIR="${GA_PLIST_OUT:-${GA_ROOT}/rendered/launchd}"
   readonly LAUNCHD_LABEL_PREFIX="com.glass-atrium"
-  # job names mirror render-launchd-plists.sh JOBS 1:1 (8 com.glass-atrium.* stanzas); drift vs the renderer
-  # = a load gap. bash 3.2 + set -u: an in-function `readonly -a ARR=(...)` is function-local for nounset, so
+  # LAUNCHD_JOBS = the active roster; render-launchd-plists.sh JOBS mirrors it 1:1 (drift vs the renderer =
+  # a load gap). bash 3.2 + set -u: an in-function `readonly -a ARR=(...)` is function-local for nounset, so
   # a cross-function `${ARR[@]}` aborts "unbound" — use the two-step idiom (plain global assign, then
   # `readonly` WITHOUT -a) so every caller can expand it.
   LAUNCHD_JOBS=(
     monitor
-    autoagent-daemon
-    wiki-daemon
     monitor-log-rotate
     pg-backup
     autoagent-cycle
     wiki-compile
-    daemon-daily-restart
   )
   readonly LAUNCHD_JOBS
+  # LAUNCHD_RETIRED_JOBS — labels no longer rendered or loaded, disjoint from LAUNCHD_JOBS; teardown still
+  # covers them, so an install that skipped the retiring update is cleaned up.
+  LAUNCHD_RETIRED_JOBS=(
+    autoagent-daemon
+    wiki-daemon
+    daemon-daily-restart
+  )
+  readonly LAUNCHD_RETIRED_JOBS
 
-  # GA_DAEMON_SESSIONS — the DETACHED daemon tmux session names. SoT = the bootstrap scripts' `readonly
-  # SESSION=` (scripts/wiki-daemon-bootstrap.sh:15 'claude-wiki-daemon' + scripts/autoagent-daemon-bootstrap.sh:16
-  # 'claude-autoagent-daemon'). These SURVIVE `launchctl bootout` (reparented to PID 1) + `claude plugin
-  # uninstall`, so uninstall/install must kill them explicitly. Same two-step idiom as LAUNCHD_JOBS so a
-  # cross-function `${GA_DAEMON_SESSIONS[@]}` stays defined under set -u.
+  # GA_DAEMON_SESSIONS — SoT for the retired detached daemon tmux sessions; the standalone
+  # scripts/migrate-claude-to-ga-data.sh keeps a mirror → edit both. They SURVIVE `launchctl bootout`
+  # (reparented to PID 1) + `claude plugin uninstall`, so the retirement routine and uninstall kill
+  # them explicitly. Same two-step idiom as LAUNCHD_JOBS (set -u, cross-function reads).
   GA_DAEMON_SESSIONS=(
     claude-wiki-daemon
     claude-autoagent-daemon
@@ -320,7 +324,7 @@ ga_init_env() {
   done
 
   # fakechat port-cleanup lib — the shared, STRICTLY PORT-SCOPED fakechat_free_port
-  # helper consumed by kill_daemon_tmux_sessions (install/uninstall teardown) to reap
+  # helper consumed by kill_daemon_tmux_sessions (retirement routine + uninstall teardown) to reap
   # the orphan bun squatting a daemon fakechat port. Loud-fail (die) on an absent lib
   # like the E5 libs — a missing lib is a broken install, never a silent skip
   # (shared-self-improve-hygiene Precondition Loud-Fail Principle).
@@ -369,10 +373,12 @@ ga_init_env() {
 # [2] leaf logging
 # Prose-prefix coupling: the launcher's classify_step_log (glass-atrium) keys severity
 # classes (LOUD/DIM/SUPPRESS) on these `log` message prefixes — keep them in sync.
-log() { printf '%s\n' "$*" >&2; }
+# Write in a childless subshell → no SIGCHLD can interrupt it (bash 3.2 EINTR).
+# Write status ignored → the caller's code path, never the write, decides the exit.
+log() { (printf '%s\n' "$*") >&2 || true; }
 
 die() {
-  printf 'FATAL: %s\n' "$*" >&2
+  (printf 'FATAL: %s\n' "$*") >&2 || true
   exit 1
 }
 
@@ -398,7 +404,7 @@ exit_step() {
 die_step() {
   local code="${1:-1}"
   shift
-  printf 'FATAL: %s\n' "$*" >&2
+  (printf 'FATAL: %s\n' "$*") >&2 || true
   [[ -n "${GA_TUI_STEP:-}" ]] && return "${code}"
   exit "${code}"
 }

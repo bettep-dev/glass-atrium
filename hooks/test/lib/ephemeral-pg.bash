@@ -12,6 +12,17 @@
 # No test row can reach production.
 #
 # Bash 3.2+ (macOS stock). Callers source this and use the eph_* functions.
+#
+# Isolation is asserted without reading production: eph_pg_start seals the file's postgres clients to
+# this cluster's socket dir (test/lib/bats-db-seal.bash), and eph_assert_isolated checks the psycopg
+# targets the sandbox recorder (pg-sandbox-recorder/usercustomize.py) logged, and their count.
+
+# shellcheck source=SCRIPTDIR/../../../test/lib/bats-db-seal.bash
+source "${BASH_SOURCE[0]%/*}/../../../test/lib/bats-db-seal.bash"
+
+# Prepend to a hook's PYTHONPATH; the recorder logs to GA_BATS_PG_RECORD (exported per test).
+# shellcheck disable=SC2034  # read by the suites that source this file
+EPH_PG_RECORDER_DIR="${BASH_SOURCE[0]%/*}/pg-sandbox-recorder"
 
 # Expected fixture totals — SINGLE SOURCE OF TRUTH shared with the .bats asserts.
 # Derived from the token values eph_build_fixture writes below:
@@ -146,7 +157,10 @@ eph_pg_start() {
   # locale-independent while -E UTF8 keeps the data encoding explicit.
   LC_ALL=C initdb -D "${datadir}" -A trust -U "${osuser}" --locale=C -E UTF8 \
     >>"${log}" 2>&1 \
-    || { eph_pg_fail "initdb" "${log}"; return 1; }
+    || {
+      eph_pg_fail "initdb" "${log}"
+      return 1
+    }
   # listen_addresses='' → no TCP bind (zero port-collision risk); the socket
   # lives at ${sockdir}/.s.PGSQL.${port}, addressed by PGHOST/PGPORT.
   # -w -t 120: generous readiness window — the gate context runs many suites
@@ -154,14 +168,80 @@ eph_pg_start() {
   LC_ALL=C pg_ctl -D "${datadir}" \
     -o "-p ${port} -k ${sockdir} -c listen_addresses=''" \
     -w -t 120 start >>"${log}" 2>&1 \
-    || { eph_pg_fail "pg_ctl start" "${log}"; return 1; }
+    || {
+      eph_pg_fail "pg_ctl start" "${log}"
+      return 1
+    }
   LC_ALL=C createdb -h "${sockdir}" -p "${port}" "${dbname}" >>"${log}" 2>&1 \
-    || { eph_pg_fail "createdb" "${log}"; return 1; }
+    || {
+      eph_pg_fail "createdb" "${log}"
+      return 1
+    }
   # Capture the DDL first (assignment preserves the generator's exit) so the
   # psql exit is the checked one — no pipe masking.
   schema="$(eph_pg_schema_sql)" || return 1
   LC_ALL=C psql -h "${sockdir}" -p "${port}" -d "${dbname}" -v ON_ERROR_STOP=1 -q \
     <<<"${schema}" || return 1
+  # From here on a postgres client reaches only this cluster, and the recorder allows only its socket.
+  ga_bats_db_seal "${sockdir}" || return 1
+  export GA_BATS_PG_SANDBOX="${sockdir}"
+}
+
+# Isolation gate that never reads production. Arg: $1=sandbox connections the test's fires opened —
+# one per DB-writing fire, plus one per hook_failures record a failed row writes. Passes only when
+# every postgres client on PATH is the sandbox seal, and the recorder logged exactly $1 psycopg
+# connections, each to this cluster (EPH_SOCKDIR/EPH_PORT/EPH_DB) — a refused or foreign target fails
+# it, and so does a fire the recorder never saw.
+# Bound: the recorder sees psycopg 3 only — a psycopg2 connection (hooks/_pg-write.py) beside the
+# expected ones passes unseen.
+# shellcheck disable=SC2154  # EPH_SOCKDIR/EPH_PORT/EPH_DB are the calling suite's cluster identity
+eph_assert_isolated() {
+  local want_count="${1:?eph_assert_isolated needs the sandbox connection count}" count
+  local record="${GA_BATS_PG_RECORD:-}" client resolved
+  local want="allow host=${EPH_SOCKDIR} port=${EPH_PORT} dbname=${EPH_DB} hostaddr= service="
+  for client in "${GA_BATS_DB_CLIENTS[@]}"; do
+    resolved="$(command -v "${client}" || true)"
+    [[ "${resolved}" == */db-seal-bin/"${client}" ]] || {
+      echo "ISOLATION: ${client} resolves outside the sandbox seal: ${resolved:-<none>}" >&2
+      return 1
+    }
+  done
+  [[ -s "${record}" ]] || {
+    echo "ISOLATION: no psycopg connection recorded in ${record:-<GA_BATS_PG_RECORD unset>}" >&2
+    return 1
+  }
+  count="$(grep -c '' -- "${record}")"
+  if grep -qvxF -- "${want}" "${record}" || [[ "${count}" -ne "${want_count}" ]]; then
+    echo "ISOLATION BREACH: want ${want_count} connections, each '${want}'; recorded ${count}:" >&2
+    cat -- "${record}" >&2
+    return 1
+  fi
+}
+
+# Create $3 on a running cluster and apply every monitor/prisma/migrations/*/migration.sql
+# in order. Args: $1=sockdir $2=port $3=dbname [$4=migration dir name to stop before — a schema
+# where that migration never landed, so no later one did either]. Start the cluster on another
+# bootstrap DB: eph_pg_start's hand DDL on its own dbname collides with the migrations.
+eph_pg_create_migrated_db() {
+  local sockdir="${1}" port="${2}" dbname="${3}" absent="${4:-}" migration
+  local migrations="${BASH_SOURCE[0]%/*}/../../../monitor/prisma/migrations"
+  # A misspelt name would silently build the full chain → every "migration absent" row passes vacuously.
+  if [[ -n "${absent}" && ! -f "${migrations}/${absent}/migration.sql" ]]; then
+    echo "eph_pg_create_migrated_db: no migration named ${absent} under ${migrations}" >&2
+    return 1
+  fi
+  LC_ALL=C createdb -h "${sockdir}" -p "${port}" "${dbname}" || {
+    echo "eph_pg_create_migrated_db: createdb ${dbname} failed on ${sockdir}:${port}" >&2
+    return 1
+  }
+  for migration in "${migrations}"/*/migration.sql; do
+    [[ -n "${absent}" && "${migration}" == "${migrations}/${absent}/migration.sql" ]] && break
+    LC_ALL=C psql -h "${sockdir}" -p "${port}" -d "${dbname}" -v ON_ERROR_STOP=1 -q \
+      -f "${migration}" >/dev/null || {
+      echo "eph_pg_create_migrated_db: ${migration} failed on ${dbname}" >&2
+      return 1
+    }
+  done
 }
 
 # Stop + reap the cluster. Arg: $1=datadir. Immediate mode — no graceful drain

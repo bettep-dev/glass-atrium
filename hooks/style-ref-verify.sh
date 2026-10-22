@@ -29,6 +29,23 @@ IFS=$'\n\t'
 # Fail-open ERR trap (stderr only) — never break the session on internal error.
 trap 'printf "[style-ref-verify] internal error at line %d: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
+
+# Payload and parser-output names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT PIPELINE_OUT
+
 # Drain stdin. Empty payload → nothing to verify, exit silently.
 INPUT=""
 if [[ ! -t 0 ]]; then
@@ -165,7 +182,7 @@ PIPELINE_OUT=""
 PIPELINE_OUT="$(printf '%s' "${INPUT}" | STYLE_REF_MATCH_LIB="${STYLE_REF_MATCH_LIB}" python3 -c "${PIPELINE_PY}" 2>/dev/null)" || PIPELINE_OUT=""
 
 extract_field() {
-  printf '%s\n' "${PIPELINE_OUT}" | sed -n "s/^@@${1}@@//p" | head -1
+  printf '%s\n' "${PIPELINE_OUT}" | sed -n "s/^@@${1}@@//p" | drain_after head -1
 }
 
 VERDICT="$(extract_field verdict)"

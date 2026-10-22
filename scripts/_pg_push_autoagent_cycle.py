@@ -216,7 +216,8 @@ def main():
         patch_classification = patch.get("classification") or "reject"
         # Status fallback derives from classification — a reject patch with an
         # absent/empty status settles as 'rejected', not the blanket 'pending'
-        # (which would fossilize auto-reject rows).
+        # (which would fossilize auto-reject rows). A status-less reject is the
+        # gate's verdict, so never 'unadjudicated': non-verdicts carry their status.
         status_fallback = (
             "rejected" if patch_classification == "reject" else "pending"
         )
@@ -253,6 +254,9 @@ def main():
                 "confidence_observed": patch.get("confidence_observed"),
                 "project_key": patch.get("project_key") or "",
                 "promotion_tier": patch.get("promotion_tier") or "",
+                # Absent → None; the helper stores NULL and a re-push keeps a stored pair.
+                "learning_pattern_id": patch.get("learning_pattern_id"),
+                "generator_input_version": patch.get("generator_input_version"),
             },
         }
         all_writes_ok &= _invoke_helper(proposal_env)

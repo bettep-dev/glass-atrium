@@ -24,6 +24,7 @@ import { chromium } from "playwright";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerClaudedDocsRoutes } from "../src/server/routes/clauded-docs.js";
 import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
+import { getBelowFloorText } from "./lib/painted-text.js";
 
 // shared fixtures.
 
@@ -1032,6 +1033,43 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
   }
 });
 
+// lineage and stage actor ride the title line and the cell tooltip → every list row is one --row-h line
+test("list rows: a row with a lineage, a stage actor or both is one row-height line like a plain row", async () => {
+  const seeded: number[] = [];
+  const widestActor = "gpt_4o_mini_2024_07_18_preview";
+  const create = async (label: string, extra: Record<string, unknown>) => {
+    const title = makeTitle(`rowh-${label}`, 0);
+    const doc = await postCreate({ title, author: "load-more-tester", html_body: makeHtmlBody(title), ...extra });
+    seeded.push(doc.id);
+    return { label, title, id: doc.id };
+  };
+  try {
+    // a superseded document leaves the list → each revision gets a predecessor of its own
+    const predecessors = [await create("predecessor-a", {}), await create("predecessor-b", {})];
+    const rows = [
+      await create("plain", {}),
+      await create("lineage", { supersedes_id: predecessors[0].id }),
+      await create("actor", { doc_status: "implementing", last_status_model: widestActor }),
+      await create("both", { supersedes_id: predecessors[1].id, doc_status: "implementing", last_status_model: widestActor }),
+    ];
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      const rowHeightPx = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-h")));
+      for (const row of rows) {
+        const tr = await revealRowByTitle(page, row.title);
+        const height = (await tr.boundingBox())?.height ?? 0;
+        assert.ok(Math.abs(height - rowHeightPx) <= 1, `${row.label} row is ${height}px against the ${rowHeightPx}px row height`);
+      }
+    } finally {
+      await context.close();
+    }
+  } finally {
+    for (const id of seeded) await deleteDoc(id);
+  }
+});
+
 // open-summary rail beside the ledger: one label/count grid, the Oldest open link aligned to the labels
 test("open-summary rail: beside the ledger (1920px) labels and counts share one two-column grid and Oldest open starts at the label edge", async () => {
   const ids = await seedManyDocs(3, "grid");
@@ -1102,7 +1140,7 @@ test("list card: a mouse click never rings the card, a Retry handoff rings it in
 });
 
 // mirrors LEDGER_CD.FLOOR in screens/clauded-docs.jsx (browser JSX, outside the test import graph) → a floor change there moves every boundary row below
-const LEDGER_FLOOR = { sum: 969, title: 394, tags: 152 };
+const LEDGER_FLOOR = { sum: 969, title: 434, tags: 152 };
 const WIDTH = {
   OPEN_SUMMARY_RAIL: 200,
   // app shell beside the card: viewport − shell = the doc-layout container width (asserted per row)
@@ -1119,8 +1157,7 @@ const THRESHOLD_VIEWPORT = {
 describe("open-summary rail: placement follows the ledger's minimum width", () => {
   const seedIds: number[] = [];
   const mixedFormatTitle = makeTitle("rail-md", 0);
-  // formatActorCD passes an unknown id through raw, and a raw id with no break opportunity is the widest
-  // "set by" line a real row can show — wider than any family name with a two-digit minor ("Sonnet 4.10")
+  // formatActorCD passes an unknown id through raw → the longest stage actor a real row carries, in its Status cell tooltip
   const widestActor = "gpt_4o_mini_2024_07_18_preview";
 
   before(async () => {
@@ -1177,7 +1214,7 @@ describe("open-summary rail: placement follows the ledger's minimum width", () =
       try {
         const mixedFormatRow = await revealRowByTitle(page, mixedFormatTitle);
         await page.locator("table.tbl th.doc-col-tags").waitFor({ state: "attached" });
-        await mixedFormatRow.locator(".doc-stage-actor", { hasText: `set by ${widestActor}` }).waitFor({ state: "visible" });
+        await mixedFormatRow.locator(`td[title="Set by ${widestActor}"]`).waitFor({ state: "visible" });
 
         const layout = await page.evaluate(() => {
           const layoutBox = document.querySelector(".doc-layout")?.getBoundingClientRect();
@@ -1231,6 +1268,137 @@ describe("open-summary rail: placement follows the ledger's minimum width", () =
 
         const railTop = await rail.evaluate((el) => el.getBoundingClientRect().top);
         assert.equal(railTop >= 0, row.isPinned, `rail top ${railTop} after page scroll at ${row.width}px`);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+});
+
+// The 13px meta floor covers every drawn text node on the Documents screen: the ledger with its open-summary rail and
+// bulk action bar, and the full-screen viewer with its metadata side, version history and stage menu open.
+describe("Type floor on the Documents screen, its viewer, version history and stage menu included", () => {
+  const title = { predecessor: makeTitle("floor-pred", 0), successor: makeTitle("floor-succ", 0) };
+  const seedIds: number[] = [];
+
+  before(async () => {
+    const predecessor = await postCreate({ title: title.predecessor, author: "load-more-tester", html_body: makeHtmlBody(title.predecessor) });
+    seedIds.push(predecessor.id);
+    const successor = await postCreate({
+      title: title.successor,
+      author: "load-more-tester",
+      html_body: makeHtmlBody(title.successor),
+      supersedes_id: predecessor.id,
+    });
+    seedIds.push(successor.id);
+  });
+
+  after(async () => {
+    for (const id of seedIds) await deleteDoc(id);
+  });
+
+  async function openLedgerWithSelection(page: Page): Promise<void> {
+    await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
+    await checkRowByTitle(page, title.successor);
+    await page.getByRole("toolbar", { name: "Bulk group actions" }).waitFor({ state: "visible" });
+  }
+
+  async function openViewerPanels(page: Page): Promise<void> {
+    await (await revealRowByTitle(page, title.successor)).click();
+    const metaSide = page.locator("aside.doc-fs-meta-side");
+    const versionHistory = metaSide.locator("details.doc-version-history");
+    await versionHistory.locator("summary").click();
+    await versionHistory.getByText(title.predecessor, { exact: false }).waitFor({ state: "visible" });
+    await metaSide.getByRole("button", { name: /change stage$/ }).first().click();
+    await page.getByRole("menu", { name: "Set stage" }).waitFor({ state: "visible" });
+  }
+
+  // every drawn text under the scope root against its composited background; the rendered document is out of scope.
+  // A source string, not a function: the test transform names inner arrows with a helper the page does not have.
+  const getContrastMissesScript = (scopeSelector: string): string => `(() => {
+    const parse = (value) => (value.match(/[\\d.]+/g) || []).map(Number);
+    const lum = ([r, g, b]) => {
+      const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const backgroundOf = (start) => {
+      const layers = [];
+      for (let el = start; el; el = el.parentElement) {
+        const [r, g, b, a = 1] = parse(getComputedStyle(el).backgroundColor);
+        if (a > 0) layers.push([r, g, b, a]);
+        if (a >= 1) break;
+      }
+      return layers.reverse().reduce((under, [r, g, b, a]) => [r, g, b].map((v, i) => v * a + under[i] * (1 - a)), [255, 255, 255]);
+    };
+    const misses = [];
+    const container = document.querySelector(${JSON.stringify(scopeSelector)});
+    for (const el of Array.from(container ? container.querySelectorAll("*") : [])) {
+      if (el.closest(".doc-body-isolation") || el.closest(".sr-only")) continue;
+      const text = Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join("");
+      if (!text || el.getBoundingClientRect().width < 1) continue;
+      const [hi, lo] = [lum(parse(getComputedStyle(el).color)), lum(backgroundOf(el))].sort((a, b) => b - a);
+      const ratio = (hi + 0.05) / (lo + 0.05);
+      if (ratio < 4.5) misses.push(ratio.toFixed(2) + " " + el.tagName.toLowerCase() + "." + String(el.className) + ": " + text.slice(0, 40));
+    }
+    return misses;
+  })()`;
+
+  for (const theme of ["light", "dark"]) {
+    test(`every drawn text in the viewer chrome of an old revision clears 4.5:1 in the ${theme} theme`, async () => {
+      const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      try {
+        const page: Page = await context.newPage();
+        await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+        // the app's mount effect writes data-theme from its tweaks → switch only once a fetched ledger row shows, a later commit than that effect
+        await revealRowByTitle(page, title.successor);
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        await openViewerPanels(page);
+        await page.keyboard.press("Escape");
+        await page.locator("aside.doc-fs-meta-side").getByRole("button", { name: /View previous revision/ }).click();
+        await page.getByRole("button", { name: /View latest revision/ }).waitFor({ state: "visible" });
+        assert.equal(await page.evaluate(() => document.documentElement.getAttribute("data-theme")), theme);
+        assert.deepEqual(await page.evaluate(getContrastMissesScript(".doc-fs-container")), []);
+      } finally {
+        await context.close();
+      }
+    });
+
+    test(`every item of the open stage menu clears 4.5:1 in the ${theme} theme, its checked item hovered and marked by a check`, async () => {
+      const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      try {
+        const page: Page = await context.newPage();
+        await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+        const row = await revealRowByTitle(page, title.successor);
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        await row.getByRole("button", { name: /change stage$/ }).click();
+        const menu = page.getByRole("menu", { name: "Set stage" });
+        await menu.waitFor({ state: "visible" });
+        const checked = menu.getByRole("menuitemradio", { checked: true });
+        await checked.hover();
+        assert.deepEqual(await page.evaluate(getContrastMissesScript('[role="menu"]')), []);
+        assert.equal(await menu.locator(".doc-stage-menu-mark").count(), 1);
+        assert.equal(await checked.locator(".doc-stage-menu-mark").count(), 1);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
+  const rows = [
+    { name: "the ledger with its rail and bulk action bar", open: openLedgerWithSelection, width: 1024 },
+    { name: "the ledger with its rail and bulk action bar", open: openLedgerWithSelection, width: 1440 },
+    { name: "the viewer with version history and the stage menu open", open: openViewerPanels, width: 1024 },
+    { name: "the viewer with version history and the stage menu open", open: openViewerPanels, width: 1440 },
+  ];
+
+  for (const row of rows) {
+    test(`no drawn text in ${row.name} sits below the 13px meta floor at ${row.width}`, async () => {
+      const context: BrowserContext = await browser.newContext({ viewport: { width: row.width, height: 900 } });
+      try {
+        const page: Page = await context.newPage();
+        await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+        await row.open(page);
+        assert.deepEqual(await getBelowFloorText(page), []);
       } finally {
         await context.close();
       }

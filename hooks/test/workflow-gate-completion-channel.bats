@@ -735,8 +735,8 @@ PYX
     echo "no schema-absent nudge -- ${output}" >&2
     return 1
   }
-  [[ "${output}" == *"16-25% depending on the window"* ]] || {
-    echo "the measured justification is missing from the nudge -- ${output}" >&2
+  [[ "${output}" == *"recurs on a share of runs that varies by window"* ]] || {
+    echo "the non-emission justification is missing from the nudge -- ${output}" >&2
     return 1
   }
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
@@ -776,6 +776,35 @@ log('[SIZE-EST] bundles=1 tool_uses~=8 — small')"
   }
   [[ "$(last_advisory)" != *"completion-channel"* ]] || {
     echo "tagged a DEV workflow: $(last_advisory)" >&2
+    return 1
+  }
+}
+
+# The cost each nudge states is what derived synthesis replaces with defaults — the writer's
+# self-assessment — never a lesson, which no prompt or self-improvement step reads.
+@test "completion-channel(cost): every nudge names the lost writer self-assessment, never a lesson" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
+  local per_site_script="const a = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: { properties: { completion_block: { type: 'string' } } } });
+const b = await agent('glass-atrium-intel-planner', { goal: 'plan', schema: { properties: { verdict: { type: 'string' } } } });"
+  local absent_script="const r = await agent('glass-atrium-intel-researcher', { goal: 'survey the landscape' });"
+  local rows=(property-absent per-site schema-absent)
+  local scripts=("${SCHEMA_SITE}" "${per_site_script}" "${absent_script}")
+  local phrases=("${NUDGE_PHRASE}" "${PER_SITE_PHRASE}" "${ABSENT_PHRASE}")
+  local fails="" i
+  for i in 0 1 2; do
+    run_hook_exec "${scripts[i]}"
+    [[ "${output}" == *"${phrases[i]}"* ]] || {
+      fails="${fails} ${rows[i]}:no-nudge"
+      echo "${rows[i]} -- ${output}"
+      continue
+    }
+    [[ "${output}" == *"loses the writer's self-assessment"* && "${output}" != *"lesson"* ]] || {
+      fails="${fails} ${rows[i]}:cost"
+      echo "${rows[i]} -- ${output}"
+    }
+  done
+  [[ -z "${fails}" ]] || {
+    echo "nudge cost rows failed:${fails}"
     return 1
   }
 }

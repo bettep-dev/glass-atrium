@@ -160,7 +160,8 @@
 # production): ATRIUM_UPDATE_PSQL (psql) · ATRIUM_UPDATE_DB_NAME (glass_atrium) ·
 # ATRIUM_UPDATE_DB=off (disable update_job tracking only — the resolved-gap record
 # rides its own ATRIUM_UPDATE_PG_HELPER seam, not psql) ·
-# ATRIUM_UPDATE_PG_HELPER (resolved-gap dual-write CLI) · ATRIUM_UPDATE_JOB_ID (adopt a row the
+# ATRIUM_UPDATE_PG_HELPER (resolved-gap dual-write CLI) · ATRIUM_UPDATE_BACKFILL_PY (the
+# unadjudicated backfill mode, autoagent/daemon_cycle.py) · ATRIUM_UPDATE_JOB_ID (adopt a row the
 # web route pre-created instead of INSERTing) · ATRIUM_UPDATE_NPM (npm) ·
 # ATRIUM_UPDATE_LAUNCHCTL (launchctl) · ATRIUM_UPDATE_LAUNCH_AGENTS_DIR
 # (~/Library/LaunchAgents) · ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR
@@ -512,7 +513,8 @@ print(json.dumps({
         # count fold and the query builder, so an llm-tiered row would inflate
         # the operator awaiting-decision count for a row awaiting nothing.
         "approval_tier": "auto",
-        "status": "applied" if landed else "rejected",
+        # Unlanded → no gate verdict, never rejected; a label-absent schema stores rejected
+        "status": "applied" if landed else "unadjudicated",
         # Born terminal, so no later transition stamps it: the actor arrives with
         # the insert. Its own token — this row is an updater accountability
         # record, never a daemon push.
@@ -541,8 +543,8 @@ print(json.dumps({
 #
 # Equally deliberate: the emit does not read whether the body actually landed. A run
 # that offered the discard and did not apply it is itself the accountability event, so
-# it still records — as status=rejected, since the outcome ledger below supplies the
-# landed split.
+# it still records — as status=unadjudicated, since the outcome ledger below supplies
+# the landed split.
 #
 # Best-effort with a loud warning, following the conflict-decline precedent — a
 # database write failure must NEVER abort a deploy.
@@ -1697,10 +1699,11 @@ update_roster_gate() {
   # No match is data, not an error: an add-only release has an empty remove half.
   removes="$(printf '%s\n' "${changes}" | grep '^remove ' || true)"
   if [[ -z "${removes}" ]]; then
-    if printf '%s\n' "${changes}" | grep -q '^add '; then
+    # Line-prefix matches in-shell — an early-exit reader would race the multi-line writer and lose the match.
+    if [[ $'\n'"${changes}" == *$'\n''add '* ]]; then
       update_log "roster ADD only — the release-shipped agent installs in-band through the updater's create path"
     fi
-    if printf '%s\n' "${changes}" | grep -q '^deleted-locally '; then
+    if [[ $'\n'"${changes}" == *$'\n''deleted-locally '* ]]; then
       update_log "roster deleted-locally — the release still ships an agent this install removed; its body is NOT re-created (re-add through python -m agent_lifecycle add)"
     fi
     return 0
@@ -2058,7 +2061,7 @@ update_merge_agent_editable_regions() {
   local merge_dir records_file resolved_file
   local file base local_file candidate plan_err plan_line plan_rc
   local verdict reason changed n_candidates=0 rc=0 create_rc=0 plan_reset is_reset
-  local backup_base cycle_date version
+  local backup_base run_stamp cycle_date version
 
   _update_merge_lib_dir="${ATRIUM_UPDATE_MERGE_LIB_DIR:-${_update_merge_lib_dir}}"
   _update_state_dir="$(spine_baseline_dir)"
@@ -2081,8 +2084,8 @@ update_merge_agent_editable_regions() {
   : >"${_update_agent_outcomes_file}"
 
   # Per-run before-image sink for the git-free transaction: a ROOT-SIBLING
-  # agents-bak/<cycle_date>_update-<version> dir (env override shares the daemon's
-  # AUTOAGENT_BACKUP_DIR base var). Root-sibling so git ls-files never lists it and
+  # agents-bak/<cycle_date>_update-<version>_<HHMMSS>_<pid> dir (env override
+  # shares the daemon's AUTOAGENT_BACKUP_DIR base var). Root-sibling so git ls-files never lists it and
   # tar merge-extract never clobbers it; the per-run subdir groups this run's
   # <basename>.bak images for retention prune. git_txn_apply captures + restores
   # from here (never commits). The base is derived by the shared
@@ -2093,10 +2096,16 @@ update_merge_agent_editable_regions() {
   # dispatch captures into the same cycle dir and writes the shared index, and the
   # no-candidate early return below must not leave it either unset or carrying the
   # previous run's rows.
+  #
+  # The _<HHMMSS>_<pid> suffix makes the dir per-RUN: a same-day re-run of one
+  # version (a re-published release) would otherwise rewrite the earlier run's
+  # .bak / .base.bak. Named, not mkdir-claimed — the dir stays lazily created, so a
+  # run that applies nothing leaves no empty dir to become prune's newest anchor.
   backup_base="$(update_agents_bak_base "${root}")"
-  cycle_date="$(date +%Y-%m-%d)"
+  run_stamp="$(date +%Y-%m-%d_%H%M%S)"
+  cycle_date="${run_stamp%_*}"
   version="$(jq -r '.version // "unknown"' "${manifest}")"
-  _update_agent_backup_dir="${backup_base}/${cycle_date}_update-${version}"
+  _update_agent_backup_dir="${backup_base}/${cycle_date}_update-${version}_${run_stamp#*_}_$$"
   _update_agent_install_root="${root}"
   _update_restore_index_rows=""
   _update_agent_create_failures=""
@@ -2930,12 +2939,16 @@ update_wire_hooks_post_apply() {
 #     migrations directory itself ships with the release, so the state is reached by
 #     updating rather than by breaking anything. An EXPLICIT ATRIUM_UPDATE_PRISMA
 #     override bypasses the branch: naming a binary means use it.
+# None of the three runs the unadjudicated backfill, and neither does a deploy whose
+# target was overridden (the DB-target skip in update_run_unadjudicated_backfill); the
+# re-arm marker written first leaves each of them to the daemon cycle head.
 update_migrate_deploy_post_apply() {
   local root monitor_dir prisma_bin rc=0
   root="$(update_ga_root)"
   monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-${root}/monitor}"
   prisma_bin="${ATRIUM_UPDATE_PRISMA:-${monitor_dir}/node_modules/.bin/prisma}"
 
+  update_rearm_unadjudicated_backfill
   if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
     update_log "migrate: SKIPPED (GA_SKIP_DB_SETUP set) — pending migrations stay pending; apply with '${root}/glass-atrium db-setup'"
     return 0
@@ -2962,6 +2975,61 @@ update_migrate_deploy_post_apply() {
     update_die_code 15 "prisma migrate deploy failed (rc=${rc}) — update files APPLIED but the database schema was NOT migrated (database unreachable, or a migration errored — see the prisma output above); the monitor was NOT restarted. Recover with '${root}/glass-atrium db-setup', then '${root}/glass-atrium doctor'"
   fi
   update_log "migrate: pending Prisma migrations applied"
+  update_run_unadjudicated_backfill "${root}"
+}
+
+# Re-arm marker the daemon cycle head reads: written on every applied update before any
+# no-op or failure can return, so the backfill still runs when the hand-off below does not.
+update_rearm_unadjudicated_backfill() {
+  local reports
+  reports="$(update_reports_dir)"
+  if ! { mkdir -p -- "${reports}" && : >"${reports}/.unadjudicated-backfill-pending"; }; then
+    update_log "WARN: could not write the unadjudicated-backfill re-arm marker under ${reports} — the update continues; the next update or '$(update_ga_root)/glass-atrium db-setup' re-arms it"
+  fi
+}
+
+# Run the unadjudicated backfill over the just-migrated schema, inside the updater's own
+# .apply-lock hold (the mode's lock gate reads it). Best-effort: no mode rc changes the
+# update rc, and every non-zero leaves the re-arm marker for the daemon cycle.
+update_run_unadjudicated_backfill() {
+  local root="$1" mode reports override rc=0
+  override="$(update_backfill_target_override)"
+  if [[ -n "${override}" ]]; then
+    update_log "migrate: unadjudicated backfill SKIPPED — ${override}; the re-arm marker leaves it to the daemon cycle"
+    return 0
+  fi
+  mode="${ATRIUM_UPDATE_BACKFILL_PY:-${root}/autoagent/daemon_cycle.py}"
+  if [[ ! -f "${mode}" ]]; then
+    update_log "WARN: unadjudicated backfill skipped — no entry point at ${mode}; the re-arm marker leaves it to the daemon cycle"
+    return 0
+  fi
+  reports="$(update_reports_dir)"
+  update_log "migrate: running the unadjudicated backfill (${reports})"
+  python3 "${mode}" --backfill-unadjudicated --reports-dir "${reports}" >&2 || rc=$?
+  update_log_backfill_rc "${rc}"
+}
+
+# Why the deploy's database may not be the one the backfill reaches (dbname=glass_atrium
+# on libpq's default target); empty when nothing overrides it. DATABASE_URL is tested
+# for set-ness only — its value is never expanded here.
+update_backfill_target_override() {
+  if [[ -n "${DATABASE_URL+set}" ]]; then
+    printf '%s\n' "DATABASE_URL is set, so the migrated database may not be glass_atrium, the only one the backfill reaches"
+  elif [[ -n "${ATRIUM_UPDATE_DB_NAME+set}" && "${ATRIUM_UPDATE_DB_NAME}" != glass_atrium ]]; then
+    printf '%s\n' "ATRIUM_UPDATE_DB_NAME=${ATRIUM_UPDATE_DB_NAME} is not glass_atrium, the only database the backfill reaches"
+  fi
+}
+
+# One named line per backfill exit code (autoagent/daemon_cycle.py → ExitCode).
+update_log_backfill_rc() {
+  local rc="$1" retry="the re-arm marker stays and the daemon cycle retries it (update continues)"
+  case "${rc}" in
+    0) update_log "migrate: unadjudicated backfill done" ;;
+    7) update_log "WARN: unadjudicated backfill hit a PostgreSQL fault (rc=7) — ${retry}" ;;
+    10) update_log "WARN: unadjudicated backfill deferred (rc=10) — a sandbox DB target, a live daemon cycle or a schema without the 'unadjudicated' label; ${retry}" ;;
+    11) update_log "WARN: unadjudicated backfill refused — apply lock not held (rc=11) — ${retry}" ;;
+    *) update_log "WARN: unadjudicated backfill failed (rc=${rc}) — ${retry}" ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -3023,7 +3091,9 @@ RETURNING id;
 PSQL
   )" || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
-    if printf '%s' "${out}" | grep -qiE 'unique|duplicate|update_job_single_active'; then
+    # In-shell match, case-folded by a subshell-scoped nocasematch — a grep -q reader would race the multi-line psql error.
+    local single_active_re='unique|duplicate|update_job_single_active'
+    if (shopt -s nocasematch && [[ "${out}" =~ ${single_active_re} ]]); then
       update_die_code 8 "another update is already in-progress (single-active DB guard) — refusing to start a second"
     fi
     update_log "WARN: update_job INSERT failed (rc=${rc}): $(printf '%s' "${out}" | tr '\n' ' ' | cut -c1-200) — proceeding without DB tracking"
@@ -3441,8 +3511,8 @@ update_refresh_monitor_launchd() {
   # FILE tracks the current EnvironmentVariables/PATH — kickstart -k restarts the
   # service for the NEW BUILD but re-execs the ALREADY-LOADED definition (a kickstart
   # alone never picks up a plist env change), so this re-copy keeps the deployed plist
-  # current for the next full definition reload (daemon-daily-restart / reboot /
-  # --load-launchd). Guarded on the rendered SoT: a render gap warns, never aborts, and
+  # current for the next full definition reload (reboot / --load-launchd). Guarded on
+  # the rendered SoT: a render gap warns, never aborts, and
   # an unchanged plist is a no-op — the kickstart/bootstrap probe below is unchanged.
   rendered="$(update_rendered_launchd_dir)/${label}.plist"
   # Guard the mkdir so a create failure WARNs + skips the re-copy rather than aborting —
@@ -3846,7 +3916,7 @@ update_restore_agents() {
   # SECURITY: reject path separators / traversal in the request-supplied cycle-id.
   case "${cycle_id}" in
     */* | *'..'*) update_die_code 10 "invalid cycle-id (no path separators): ${cycle_id}" ;;
-    *) ;; # a plain <cycle_date>_update-<version> token — safe
+    *) ;; # a plain <cycle_date>_update-<version>_<HHMMSS>_<pid> token — safe
   esac
   root="$(update_ga_root)"
   update_require_tools python3
@@ -4196,9 +4266,32 @@ update_sweep_removed_files() {
   update_log "retired sweep: removed=${removed_n} preserved=${preserved_n} family-skipped=${family_n} unmoved=${unmoved_n} refused=${refused_n}"
 }
 
-# The merge → base-content-capture → retirement-sweep → baseline-capture finalize
-# sequence, shared by the main post-apply path and the already-up-to-date early
-# return, which is how a drop-only release still sweeps. Two order constraints are
+# Move the retired lesson store into a per-run Trash sink from the data root and the
+# legacy pre-migration root (resolved as doctor's Tier-A leftover scan resolves it).
+# Runtime data has no shipped hash, so the retired map can never select it. Every run
+# re-checks, because an aggregator run that began before the apply may write it once
+# more. Absent → no-op; a failed move is one named WARN, never fatal, like the sweep.
+update_retire_lesson_store() {
+  local data_dir src sink
+  sink="$(update_trash_dir)/glass-atrium-update-retired-data-$(date +%Y%m%d-%H%M%S)_$$"
+  for data_dir in "${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data" \
+    "${GA_TARGET_HOME:-${HOME}/.claude}/data"; do
+    src="${data_dir}/lessons.json"
+    [[ -e "${src}" || -L "${src}" ]] || continue
+    # Origin path kept under the sink → the two roots' same-named stores never collide.
+    if mkdir -p -- "${sink}/${data_dir#/}" && mv -f -- "${src}" "${sink}/${data_dir#/}/"; then
+      update_log "retired lesson store moved → Trash: ${src}"
+    else
+      update_log "WARN: retired lesson store NOT moved — ${src} (mv into ${sink} failed)"
+    fi
+  done
+  return 0
+}
+
+# The merge → base-content-capture → retirement-sweep → lesson-store retirement →
+# baseline-capture finalize sequence, shared by the main post-apply path and the
+# already-up-to-date early return, which is how a drop-only release still sweeps.
+# Two order constraints are
 # load-bearing: update_capture_base_content reads the merge's own outcome ledger to
 # decide which bodies may advance, so it runs after the merge and before
 # update_capture_baseline advances the hash anchor — a base left at the OLD anchor
@@ -4223,6 +4316,7 @@ update_finalize_merge_and_anchors() {
   update_capture_base_content "${new_dir}"
   update_consume_editable_reset "${root}"
   update_sweep_removed_files "${manifest}" "${root}"
+  update_retire_lesson_store
   update_capture_baseline "${manifest}"
   update_ticker_stop
 }

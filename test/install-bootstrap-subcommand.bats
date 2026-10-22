@@ -8,7 +8,7 @@
 #   * env-port fallback: bootstrap_health_gate reads ATRIUM_MONITOR_PORT from
 #     monitor/.env, else defaults to 16145 — the curl target proves which port.
 #
-# Hermetic strategy (mirrors scripts/test/daemon-bootstrap-supervise.bats): copy
+# Hermetic strategy: copy
 # lib/ga-core.sh into a sandbox GA_ROOT (resolving the sandbox monitor/.env),
 # SOURCE the engine directly with strict mode + ERR trap, ga_init_env it, and
 # override run_install with a no-op so the bootstrap logic is isolated from the
@@ -170,9 +170,12 @@ SLEEP
 # install path, and call the bootstrap function. Runs inside `bats run` so the
 # subshell exit code is captured; set -e + the ERR trap make a named-exit-code
 # path exit the subshell with that code. STUB_BIN is prepended so the stubs win.
+# The resolver's env seams are unset so the sandbox .env / 16145 default decides
+# the port, never the caller's ambient environment.
 source_and_call() {
   local fn="$1"
-  run env PATH="${STUB_BIN}:${PATH}" \
+  run env -u ATRIUM_MONITOR_PORT -u ATRIUM_MONITOR_ENV -u ATRIUM_CONFIG_TOML \
+    PATH="${STUB_BIN}:${PATH}" \
     STUB_NPM_BUILD_FAIL="${STUB_NPM_BUILD_FAIL:-0}" \
     STUB_HEALTH="${STUB_HEALTH:-fail}" \
     bash -c "
@@ -368,7 +371,7 @@ SH
   t6_build_release_fixture 1.0.9
   t6_build_fetch_stub
   t6_build_stock_toolbin || return 1
-  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" GA_DATA_ROOT="${SANDBOX}/.glass-atrium" TMPDIR="${SANDBOX}" \
     FIXTURE_MANIFEST="${FIXTURE_MANIFEST}" FIXTURE_BUNDLE="${FIXTURE_BUNDLE}" \
     FETCH_URL_LOG="${FETCH_URL_LOG}" FETCH_ARGV_LOG="${FETCH_ARGV_LOG}" \
     GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \
@@ -385,7 +388,7 @@ SH
   t6_build_release_fixture 1.0.9
   t6_build_fetch_stub
   t6_build_stock_toolbin || return 1
-  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" GA_DATA_ROOT="${SANDBOX}/.glass-atrium" TMPDIR="${SANDBOX}" \
     FIXTURE_MANIFEST="${FIXTURE_MANIFEST}" FIXTURE_BUNDLE="${FIXTURE_BUNDLE}" \
     FETCH_URL_LOG="${FETCH_URL_LOG}" FETCH_ARGV_LOG="${FETCH_ARGV_LOG}" \
     GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \

@@ -340,6 +340,15 @@ mint_bad_sink() {
   assert_empty
 }
 
+# Multi-line prompt → a multi-write writer, which an early-exiting token reader races at any size and can SIGPIPE.
+@test "a prompt larger than the pipe buffer with both tokens on its first lines passes, exit 0" {
+  local filler
+  filler="$(seq -f 'context line %05g describing the change in realistic prose' 1 1300)"
+  run_hook "glass-atrium-dev-shell" "[ENTRY-CLASS] simple-task: one-file fix"$'\n'"[SIZE-EST] bundles=1 tool_uses~=3 — one file${SCOPE_DECL}"$'\n'"${filler}"
+  assert_status 0
+  assert_empty
+}
+
 # (d) ALLOW: non-dev spawn → exit 0 (gate only blocks DEV)
 
 @test "non-dev subagent_type, no plan-ref, no token → silent, exit 0 (not a DEV spawn)" {

@@ -231,3 +231,10 @@ test("GET /api/health/daemon-payload: a failing doctor block reaches the summary
     );
   }
 });
+
+test("GET /api/health/daemon-payload: every daily-restart name stays readable as history", async () => {
+  for (const name of ["daily-restart", "daily-restart-autoagent", "daily-restart-wiki"]) {
+    const body = await getPayloads(name);
+    assert.strictEqual(body.daemon, name, `${name}: past rows must stay readable after the job retired`);
+  }
+});

@@ -510,9 +510,9 @@ def test_when_the_contract_is_declared_then_every_surface_names_the_same_set():
     # The degradation notice names a migration by directory name; a rename would leave the one
     # stderr line an operator acts on pointing at nothing.
     migrations = _SCRIPTS_ROOT.parent / "monitor" / "prisma" / "migrations"
-    named = re.search(r'PROVENANCE_MIGRATION = "([^"]+)"', source)
-    assert named, "PROVENANCE_MIGRATION declaration not found"
-    assert (migrations / named.group(1)).is_dir(), "PROVENANCE_MIGRATION directory"
+    named = re.search(r'\n    PROVENANCE="([^"]+)",\n', source)
+    assert named, "MIGRATION.PROVENANCE declaration not found"
+    assert (migrations / named.group(1)).is_dir(), "MIGRATION.PROVENANCE directory"
     assert _PROVENANCE_COLUMN in (migrations / named.group(1) / "migration.sql").read_text(
         encoding="utf-8"
-    ), "PROVENANCE_MIGRATION migration.sql"
+    ), "MIGRATION.PROVENANCE migration.sql"

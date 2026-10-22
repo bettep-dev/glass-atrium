@@ -6,15 +6,15 @@
 //   - GET /api/improvement happy path · 200 + shape
 //   - GET /api/improvement?tier=auto · 200 + tier filter narrowing
 //   - GET /api/improvement actionable_proposals · safety-tier + non-terminal only
+//   - GET /api/improvement · a safety-routed row lands in the safety column, an auto row in auto
 //   - GET /api/improvement?limit=200 (max) · 200 + bounded
 //   - GET /api/improvement invalid query · 400 invalid_param
 //   - GET /api/improvement/stats · 200 + shape + cache hit on 2nd call
 //   - GET /api/improvement/stats · latest_cycle_started_at = unwindowed last autoagent cycle start
 //
 // Test infra:
-//   - DB: real Postgres (DATABASE_URL from .env) — read-only assertions only,
-//     no inserts or scrub. Existing fixture data drives the assertions
-//     (78 proposals + outcomes already present).
+//   - DB: the test database test/lib/select-test-db.ts selects · insert cases scrub
+//     their own rows in `finally`.
 //   - App: stripped Fastify (improvement route only) + app.inject() — no port binding.
 
 import test, { after, before } from "node:test";
@@ -32,6 +32,7 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import {
   buildAgentMembershipFilter,
   loadCanonicalAgentKeys,
+  resetAgentRegistryCache,
 } from "../src/server/agents/registry.js";
 import {
   __resetImprovementStatsCacheForTests,
@@ -256,6 +257,71 @@ test("GET /api/improvement?tier=auto: actionable_proposals stays empty of auto r
       "safety",
       `tier=auto must not surface auto actionable rows: ${p.approval_tier}`,
     );
+  }
+});
+
+// The dual-write writer stores a safety-routed proposal under 'user', never 'auto'
+// (scripts/_pg_dual_write_daemon.py → _APPROVAL_TIER_TO_ENUM).
+// A one-agent registry fixture scopes every surface to this test's two rows.
+test("GET /api/improvement: a safety-routed proposal counts in the safety column, an auto one in auto", async () => {
+  const prisma = getPrisma();
+  const agent = `__test_safety_column_${process.pid}__`;
+  const registryPath = path.join(stubDir, "agent-registry.json");
+  writeFileSync(registryPath, JSON.stringify({ agents: { [agent]: { domains: ["test"] } } }), "utf8");
+  const priorRegistryPath = process.env.AGENT_REGISTRY_PATH;
+  process.env.AGENT_REGISTRY_PATH = registryPath;
+  resetAgentRegistryCache();
+  const insert = async (
+    tier: "user" | "auto",
+    status: "pending" | "applied",
+  ): Promise<number> => {
+    const rows = await prisma.$queryRaw<Array<{ id: bigint }>>`
+      INSERT INTO core.autoagent_proposals
+        (cycle_date, pattern_label, target_file, target_agent, classification,
+         approval_tier, status, pre_verify_passed, source_file, source_file_mtime)
+      VALUES
+        (CURRENT_DATE, ${agent}, ${`/__test__/safety-column-${tier}.md`}, ${agent},
+         'apply'::core."ProposalClassification", CAST(${tier} AS core."ApprovalTier"),
+         CAST(${status} AS core."ProposalStatus"), TRUE, '/__test__/source.md', 0)
+      RETURNING id
+    `;
+    const inserted = rows[0];
+    assert.ok(inserted !== undefined, "fixture insert returned a row");
+    return Number(inserted.id);
+  };
+  try {
+    const id = {
+      safety: await insert("user", "pending"),
+      auto: await insert("auto", "applied"),
+    };
+    const res = await app.inject({ method: "GET", url: "/api/improvement?limit=50" });
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.json() as {
+      tier_distribution: { auto: number; safety: number };
+      proposals: Array<{ id: number; approval_tier: string }>;
+      actionable_proposals: Array<{ id: number; approval_tier: string }>;
+    };
+    const buildTierById = (rows: Array<{ id: number; approval_tier: string }>): Record<number, string> =>
+      Object.fromEntries(rows.map((p) => [p.id, p.approval_tier]));
+    assert.deepStrictEqual(body.tier_distribution, { auto: 1, safety: 1 }, "tier_distribution");
+    assert.deepStrictEqual(
+      buildTierById(body.proposals),
+      { [id.safety]: "safety", [id.auto]: "auto" },
+      "proposals[].approval_tier",
+    );
+    assert.deepStrictEqual(
+      buildTierById(body.actionable_proposals),
+      { [id.safety]: "safety" },
+      "the Awaiting approval feed",
+    );
+  } finally {
+    await prisma.$executeRaw`DELETE FROM core.autoagent_proposals WHERE target_agent = ${agent}`;
+    if (priorRegistryPath === undefined) {
+      delete process.env.AGENT_REGISTRY_PATH;
+    } else {
+      process.env.AGENT_REGISTRY_PATH = priorRegistryPath;
+    }
+    resetAgentRegistryCache();
   }
 });
 
@@ -520,6 +586,61 @@ test("GET /api/improvement/stats: review_flag_last_7d excludes poisoned_window r
   assertWithinBracket(body.review_flag_last_7d, before, after, "review_flag_last_7d");
 });
 
+// Verdict-only counts: an unadjudicated row reached no verdict → never counted.
+// The rejected row beside it fails a reader stuck at 0.
+// Siblings insert + delete rejected rows mid-read → a SHARE lock holds writers off.
+// The before/after bracket absorbs only a midnight crossing.
+test("GET /api/improvement/stats: rejected counts take a rejected row and never an unadjudicated one", async () => {
+  const prisma = getPrisma();
+  const label = `__test_stats_verdict_${process.pid}__`;
+  const insertToday = async (status: "rejected" | "unadjudicated"): Promise<void> => {
+    await prisma.$executeRaw`
+      INSERT INTO core.autoagent_proposals
+        (cycle_date, pattern_label, target_file, classification, approval_tier, status,
+         source_file, source_file_mtime)
+      VALUES
+        (CURRENT_DATE, ${label}, ${`/__test__/stats-verdict-${status}.md`},
+         'reject'::core."ProposalClassification", 'auto'::core."ApprovalTier",
+         CAST(${status} AS core."ProposalStatus"), '/__test__/source.md', 0)
+    `;
+  };
+  try {
+    await insertToday("unadjudicated");
+    await insertToday("rejected");
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`LOCK TABLE core.autoagent_proposals IN SHARE MODE`;
+        // statement_timestamp, not CURRENT_DATE: the latter is frozen at transaction start.
+        const countVerdictOnly = async (): Promise<[number, number]> => {
+          const rows = await tx.$queryRaw<Array<{ last_7d: bigint; all_time: bigint }>>`
+            SELECT
+              COUNT(*) FILTER (
+                WHERE cycle_date >= statement_timestamp()::date - INTERVAL '7 days'
+              )::bigint AS last_7d,
+              COUNT(*)::bigint AS all_time
+            FROM core.autoagent_proposals
+            WHERE status = 'rejected'::core."ProposalStatus"
+          `;
+          return [Number(rows[0]?.last_7d ?? 0n), Number(rows[0]?.all_time ?? 0n)];
+        };
+        const [last7dBefore, allTimeBefore] = await countVerdictOnly();
+        __resetImprovementStatsCacheForTests();
+        const res = await app.inject({ method: "GET", url: "/api/improvement/stats" });
+        const [last7dAfter, allTimeAfter] = await countVerdictOnly();
+        assert.strictEqual(res.statusCode, 200);
+        const body = res.json() as { rejected_last_7d: number; rejected_all_time: number };
+        assertWithinBracket(body.rejected_last_7d, last7dBefore, last7dAfter, "rejected_last_7d");
+        assert.strictEqual(allTimeAfter, allTimeBefore, "the SHARE lock holds every writer off");
+        assert.strictEqual(body.rejected_all_time, allTimeBefore, "rejected_all_time");
+      },
+      { maxWait: 30_000, timeout: 30_000 },
+    );
+  } finally {
+    await prisma.$executeRaw`DELETE FROM core.autoagent_proposals WHERE pattern_label = ${label}`;
+    __resetImprovementStatsCacheForTests();
+  }
+});
+
 test("GET /api/improvement/stats: 30s in-process cache returns identical payload", async () => {
   __resetImprovementStatsCacheForTests();
   const first = await app.inject({ method: "GET", url: "/api/improvement/stats" });
@@ -649,14 +770,14 @@ test("POST approve: exit 18 → 409 { status: 'parked_pattern' } naming the park
   process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
     "apply-parked-pattern.sh",
     18,
-    "[daemon-apply] parked-pattern guard REFUSED proposal id=4242 — every covering pattern row is terminal (rows 3384:rejected, 6:applied); nothing applied, proposal left as it was. Reject it from the monitor if it should not stay queued.",
+    "[daemon-apply] parked-pattern guard REFUSED proposal id=4242 — every covering pattern row is terminal (rows 5120:rejected, 7:applied); nothing applied, proposal left as it was. Reject it from the monitor if it should not stay queued.",
   );
   const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
   assert.strictEqual(res.statusCode, 409);
   const body = res.json() as { status: string; id: number; reason: string };
   assert.strictEqual(body.status, "parked_pattern");
   assert.strictEqual(body.id, 4242);
-  assert.ok(body.reason.includes("3384:rejected, 6:applied"), "reason names every parked row");
+  assert.ok(body.reason.includes("5120:rejected, 7:applied"), "reason names every parked row");
   assert.match(body.reason, /\bReject\b/, "reason points to the Reject action");
 });
 
@@ -755,6 +876,58 @@ test("POST approve: exit 23 → 422 { status: 'row_unreadable' } leading with Re
   assert.match(body.reason.slice(0, 80), /not a DB outage/, "the cause survives the 80-char toast cut");
   assert.doesNotMatch(body.reason, /\bretry/i, "a data problem is never offered a retry");
   assert.ok(body.reason.includes("row is unreadable"), "the daemon's stderr rides along for diagnosis");
+});
+
+test("POST approve: exit 25 → 503 { status: 'apply_error' } leading with the pending-migration remedy", async () => {
+  // assert_apply_record_table's refusal line verbatim — checked before the first apply, so nothing moved
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-record-table-unconfirmed.sh",
+    25,
+    "[daemon-apply] FATAL: core.autoagent_apply_records not confirmed (probe rc=0 answer=f err=) — nothing applied; run the pending monitor migration",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 503, "nothing changed and a retry after the migration succeeds — never the generic 500");
+  const body = res.json() as { status: string; id: number; reason: string };
+  assert.strictEqual(body.status, "apply_error");
+  assert.strictEqual(body.id, 4242);
+  assert.ok(body.reason.startsWith("nothing applied"), "the outcome leads, since the approve toast truncates");
+  assert.match(body.reason.slice(0, 80), /run the pending monitor migration/, "the remedy survives the 80-char toast cut");
+  assert.ok(body.reason.includes("not confirmed"), "the daemon's stderr rides along for diagnosis");
+});
+
+test("POST approve: exit 26 → 200 { status: 'applied', record_missing: true } naming the cause and the JSONL record", async () => {
+  // create_apply_record's refusal line verbatim — raised after the bytes landed and the row flipped applied
+  const causes = ["psql_not_found", "digest_or_diff_missing", "insert_failed"];
+  for (const cause of causes) {
+    process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+      `apply-record-failed-${cause}.sh`,
+      26,
+      `[daemon-apply] FATAL: apply record NOT written cause=${cause} target=agents/glass-atrium-dev-shell.md pattern=p-shell — the row is applied and its JSONL applied row holds the record`,
+    );
+    const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+    assert.strictEqual(res.statusCode, 200, `cause ${cause}: the row is applied, so the answer is a success the card refreshes on`);
+    const body = res.json() as { id: number; status: string; record_missing?: boolean; reason?: string };
+    assert.strictEqual(body.id, 4242);
+    assert.strictEqual(body.status, "applied");
+    assert.strictEqual(body.record_missing, true, `cause ${cause}`);
+    assert.ok(body.reason?.includes(`cause=${cause}`), `reason names cause ${cause}`);
+    assert.ok(body.reason?.includes("JSONL applied row"), "reason names where the record survives");
+  }
+});
+
+test("POST approve: exit 26 with no parseable cause → 200 record_missing, no stderr text copied into the reason", async () => {
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-record-failed-garbled.sh",
+    26,
+    "[daemon-apply] FATAL: apply record NOT written cause=Garbled tail",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 200);
+  const body = res.json() as { status: string; record_missing?: boolean; reason?: string };
+  assert.strictEqual(body.status, "applied");
+  assert.strictEqual(body.record_missing, true);
+  assert.ok(body.reason?.includes("JSONL applied row"), "the record's location survives a garbled line");
+  assert.doesNotMatch(body.reason ?? "", /Garbled|cause=/, "no stderr text is copied from an unparseable line");
 });
 
 test("POST approve: exit 2 (bad arg) → 500 { status: 'apply_error' }", async () => {

@@ -50,8 +50,6 @@ METER_NEEDLE="Turn-budget meter"
 BUDGET_DEV_NEEDLE="Budget sizing (auto-injected DEV"
 BUDGET_ANALYSIS_NEEDLE="Budget sizing (auto-injected analysis"
 WIKI_UNTRUSTED_NEEDLE="Wiki raw-store untrusted-data clause"
-LESSON_NEEDLE="Prior-lesson recall"
-LESSON_AGENT="glass-atrium-dev-front"
 
 # Non-overlapping occurrences of fixed string $1 in file $2. `grep -o` rather than a bash pattern
 # substitution: the substitution is quadratic on bash 3.2 over a ~40 KB assembly.
@@ -89,9 +87,9 @@ check_roster_count() {
   fi
 }
 
-# Run one slot for agent $1 with lesson store $2 and drop log $3; stdout = that slot's context.
+# Run one slot for agent $1 with drop log $2; stdout = that slot's context.
 get_slot_ctx() {
-  local agent="${1}" lessons="${2}" droplog="${3}" slot="${4}" payload out
+  local agent="${1}" droplog="${2}" slot="${3}" payload out
   payload="$(jq -nc --arg a "${agent}" '{hook_event_name:"SubagentStart",agent_type:$a}')"
   # Slots are fail-open by contract, so a non-zero exit is not a verdict — the counts are.
   out="$(env -u SUBAGENT_BUDGET_METER_OFF -u GA_DATA_ROOT -u GA_CHUNK_REGISTRY -u GA_CHUNK_PART \
@@ -103,7 +101,6 @@ get_slot_ctx() {
     INJECT_SCOPE_RULES_BUDGET_SRC="${BUDGET_SRC}" \
     INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="${WIKI_UNTRUSTED_SRC}" \
     INJECT_SCOPE_RULES_AGENTS_DIR="${AGENTS_DIR}" \
-    INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
     INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
     INJECT_SCOPE_RULES_SPAWN_COUNTER="${BATS_FILE_TMPDIR}/spawns.count" \
     INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_FILE_TMPDIR}/manifest.log" \
@@ -113,10 +110,10 @@ get_slot_ctx() {
 
 # Join every slot for agent $1 into file $4 — what one spawn hands the model.
 build_assembly() {
-  local agent="${1}" lessons="${2}" droplog="${3}" out="${4}" slot ctx
+  local agent="${1}" droplog="${2}" out="${3}" slot ctx
   : >"${out}"
   for slot in "${SLOT1_HOOK}" "${HOOKS_DIR}"/inject-scope-part-[0-9][0-9].sh; do
-    ctx="$(get_slot_ctx "${agent}" "${lessons}" "${droplog}" "${slot}")"
+    ctx="$(get_slot_ctx "${agent}" "${droplog}" "${slot}")"
     if [[ -n "${ctx}" ]]; then
       printf '%s\n\n' "${ctx}" >>"${out}"
     fi
@@ -145,7 +142,6 @@ setup_file() {
   export SANDBOX_HOME="${BATS_FILE_TMPDIR}/home"
   export CHUNK_SINK="${BATS_FILE_TMPDIR}/chunk.diag.log"
   export ASM_DIR="${BATS_FILE_TMPDIR}/asm"
-  export LESSON_STORE="${BATS_FILE_TMPDIR}/lessons.json"
   mkdir -p "${RULES_ROOT}" "${SANDBOX_HOME}" "${ASM_DIR}"
   repo_abs="$(cd "${REPO_ROOT}" && pwd)"
   ln -s "${repo_abs}/scoped" "${RULES_ROOT}/scoped"
@@ -158,15 +154,8 @@ setup_file() {
   while IFS= read -r agent; do
     jq -r --arg a "${agent}" '.agents[$a].rules // {} | (.scope // empty), (.shared // [])[]' \
       "${RULES_ROOT}/agent-registry.json" >"${ASM_DIR}/${agent}.members"
-    build_assembly "${agent}" /nonexistent "${ASM_DIR}/${agent}.drop" "${ASM_DIR}/${agent}.txt"
+    build_assembly "${agent}" "${ASM_DIR}/${agent}.drop" "${ASM_DIR}/${agent}.txt"
   done <"${ASM_DIR}/agents.txt"
-
-  python3 -c '
-import json, sys
-json.dump({"ctm": [{"agent": sys.argv[2], "task_type": "bug-fix", "text": "SINGLE_LESSON_ENTRY",
-                    "score": 5, "frequency": 9}], "epm": []}, open(sys.argv[1], "w"))
-' "${LESSON_STORE}" "${LESSON_AGENT}"
-  build_assembly "${LESSON_AGENT}" "${LESSON_STORE}" "${ASM_DIR}/lesson.drop" "${ASM_DIR}/lesson.txt"
 }
 
 @test "every registry agent packs with events=none, over exactly the slots the wrappers bind" {
@@ -272,7 +261,6 @@ json.dump({"ctm": [{"agent": sys.argv[2], "task_type": "bug-fix", "text": "SINGL
     check_roster_count "${agent}" "${BUDGET_DEV_NEEDLE}" "${budget_dev}"
     check_roster_count "${agent}" "${BUDGET_ANALYSIS_NEEDLE}" "${budget_analysis}"
     check_roster_count "${agent}" "${WIKI_UNTRUSTED_NEEDLE}" "${wiki}"
-    check_count "${agent}" "${LESSON_NEEDLE}" 0
   done <"${ASM_DIR}/agents.txt"
   [[ -z "${bad}" ]] || {
     printf '%b' "${bad}" >&2
@@ -292,28 +280,6 @@ json.dump({"ctm": [{"agent": sys.argv[2], "task_type": "bug-fix", "text": "SINGL
   fi
   [[ -z "${rows}" ]] || {
     printf '%b' "${rows}" >&2
-    return 1
-  }
-}
-
-@test "one-entry lesson store: dev-front receives the lesson once, retired blocks stay once, drop sink empty" {
-  local entry src anchor needle bad=""
-  check_count lesson "${LESSON_NEEDLE}" 1
-  check_count lesson "- [bug-fix] SINGLE_LESSON_ENTRY" 1
-  check_count lesson "Injection shed" 0
-  for entry in "${RETIRED_BLOCKS[@]}"; do
-    src="${entry%%|*}"
-    anchor="${entry#*|}"
-    if grep -qxF -- "${src}" "${ASM_DIR}/${LESSON_AGENT}.members"; then
-      needle="$(get_needle "${src}" "${anchor}")"
-      check_count lesson "${needle}" 1
-    fi
-  done
-  if [[ -s "${ASM_DIR}/lesson.drop" ]]; then
-    bad="${bad}drop sink written: $(<"${ASM_DIR}/lesson.drop")\n"
-  fi
-  [[ -z "${bad}" ]] || {
-    printf '%b' "${bad}" >&2
     return 1
   }
 }

@@ -17,12 +17,12 @@
 - **`[SIZE-EST]` analysis mode (schema-mode NON-DEV analysis/research/audit spawn — the INPUT-side right-sizing complement)**:
   - Which spawns: glass-atrium-intel-researcher / glass-atrium-intel-planner / glass-atrium-intel-reporter / glass-atrium-qa-code-reviewer, each whose single terminal StructuredOutput IS the deliverable.
   - Why: such a spawn has no `files × 4.5` edit analog — it spends its budget on reads and reasoning, so a broad read + `effort:high` + a 3-4-field schema starves the emit step (the non-emit failure class).
-    - Non-emission rate, dated figures and re-derivation recipe: `skills/glass-atrium-ops-orchestrator.md` → Completion-channel non-emission (MEASUREMENT SoT).
+    - Non-emission share and re-derivation recipe: `skills/glass-atrium-ops-orchestrator.md` → Completion-channel non-emission (MEASUREMENT SoT).
   - Format `[SIZE-EST] reads~=N fields=N effort=<medium|high> scope=<allowlist|bounded> — <1-line reason>`: `reads~=N` = the pre-spawn read/tool-use estimate · `fields` = the output schema's required-field count · `effort` = the chosen reasoning tier · `scope` = an explicit file/dir READ allowlist, never a repo sweep.
   - Read-scope anchor (the read analog of `files × 4.5`): a simple fact-find ~3-10 reads · a direct comparison ~10-15 reads per source.
   - **Reserve-then-check (gate BEFORE work begins)**: the input budget the read allowlist is sized to is `input_budget = context_window − reserved_output`.
   - **Output-field cap**: 2-3 fields.
-  - **Effort matched to depth**: default `medium` for broad reads, `high` ONLY for narrow-scope deep reasoning.
+  - **Effort matched to depth**: the unmeasured default for a spawn whose author sets a tier — `medium` for broad reads, `high` only for narrow-scope deep reasoning.
   - Honesty and backing as in DEV mode, `reads~`/`fields` included: presence is checked, correctness never.
   - Gate: `enforce-workflow-verify-stage.sh` fires an ADVISORY nudge (never exit 2, fail-open) on a schema-mode non-DEV analysis spawn missing this token — unlike the DEV-mode exit-2 block.
 

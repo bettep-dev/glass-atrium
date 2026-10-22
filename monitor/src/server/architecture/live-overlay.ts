@@ -31,14 +31,8 @@ export interface OverlayLogger {
 	info(obj: object, msg?: string): void;
 }
 
-// Daemons surfaced in the live overlay (autoagent + wiki + role-qualified
-// daily-restart runs). Legacy merged 'daily-restart' rows are history-only.
-const DAEMON_NAMES = [
-	"autoagent",
-	"wiki",
-	"daily-restart-autoagent",
-	"daily-restart-wiki",
-] as const;
+// Daemons surfaced in the live overlay. Every daily-restart name is history-only.
+const DAEMON_NAMES = ["autoagent", "wiki"] as const;
 
 // Expected run cadence per daemon (minutes) — DERIVED from the shared cron schedule
 // (DAEMON_CRON_SCHEDULE → expectedIntervalMinutes), NOT a parallel literal, so a schedule
@@ -249,7 +243,7 @@ export async function queryDaemonAggRows(
       started_at AS last_run_at,
       status::text AS last_status
     FROM core.daemon_runs
-    WHERE daemon_name IN ('autoagent', 'wiki', 'daily-restart-autoagent', 'daily-restart-wiki')
+    WHERE daemon_name IN ('autoagent', 'wiki')
     ORDER BY daemon_name, started_at DESC
   `,
 		queryInstallAnchor(prisma),

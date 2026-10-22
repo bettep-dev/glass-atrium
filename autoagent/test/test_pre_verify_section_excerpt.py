@@ -357,7 +357,7 @@ class BudgetFamilyContextTest(unittest.TestCase):
         self.assertNotIn(dc.TURN_BUDGET_NOT_APPLICABLE, budget_slot)
         self.assertEqual(_get_turn_budget_slot(plain).strip(), dc.TURN_BUDGET_NOT_APPLICABLE)
 
-    def test_when_label_is_budget_family_then_live_turn_budget_section_is_whole(self):
+    def test_when_label_is_budget_family_then_tracked_turn_budget_section_is_whole(self):
         _, lines = _get_tracked_turn_budget_block(self)
 
         with tempfile.TemporaryDirectory() as live:

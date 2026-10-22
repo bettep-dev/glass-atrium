@@ -25,6 +25,10 @@ GA_BATS_KILLSWITCHES=(
   WORKTREE_LOCK_TTL_SECS
 )
 
+# libpq names that outrank or reroute PGHOST — cleared so only the dead PGHOST below routes a
+# host-less connection. One declaration: test/bats-db-seal.bats asserts each one cleared.
+GA_BATS_PG_ROUTING_NAMES=(PGPORT PGHOSTADDR PGSERVICE PGDATABASE PGPASSFILE)
+
 ga_bats_hermetic_env() {
   # Discovery sentinel — a bats version that stops auto-loading the setup file makes the
   # per-corpus sentinel assertion fail loudly instead of silently unpinning this baseline.
@@ -41,7 +45,29 @@ ga_bats_hermetic_env() {
     unset "${switch}"
   done
 
-  ga_bats_set_scratch_cwd
+  ga_bats_set_scratch_cwd || return 1
+
+  # Dead PGHOST: a host-less libpq connection (psql, a hook's psycopg "dbname=glass_atrium") fails on
+  # a socket path that never exists instead of reaching the live server on the default /tmp socket.
+  # Set here so every entrypoint inherits it — direct bats, CI per-file jobs, the live-suite runner.
+  # An ephemeral-cluster suite exports its own PGHOST over it.
+  export PGHOST="${BATS_RUN_TMPDIR}/no-pg-socket"
+  local name
+  for name in "${GA_BATS_PG_ROUTING_NAMES[@]}"; do
+    unset "${name}"
+  done
+
+  # Runtime log/data root, same family as the dead PGHOST: shell hooks, python consumers and the
+  # launcher resolve logs/ and data/ from GA_DATA_ROOT before $HOME/.glass-atrium, so a hook a test
+  # runs with no seam of its own writes here, not into the live logs a daemon ingests.
+  # Overridden, never defaulted → an ambient live-root export (a launcher-driven run) cannot leak in.
+  # One root per run → every file of a --jobs run shares it.
+  # A suite that sandboxes HOME names its own root on the command it drives (pinned: test/bats-log-seal.bats).
+  # A suite whose subject IS the HOME fallback unsets it on the command it drives.
+  export GA_DATA_ROOT="${BATS_RUN_TMPDIR}/ga-data-root"
+  # the chunked part-hooks resolve their diag sink from the rules root, not GA_DATA_ROOT
+  export GA_CHUNK_SINK="${GA_DATA_ROOT}/logs/inject-scope-chunk.diag.log"
+  mkdir -p "${GA_DATA_ROOT}/logs" "${GA_DATA_ROOT}/data" || return 1
 }
 
 # Scratch-cwd seat: each test starts in BATS_SUITE_TMPDIR.

@@ -41,6 +41,8 @@ source "${GA}/scripts/lib/path-guard.sh"
 ROW_MARKER='note : backup dir'
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
   SANDBOX="$(mktemp -d -t ga-doctor-bkpdir-bats.XXXXXX)"
   GA_SANDBOX="${SANDBOX}/ga"

@@ -123,6 +123,9 @@ def test_when_pg_unreachable_then_exit_4_after_retry():
     # "dbname=glass_atrium" conninfo leaves host unset, so libpq consults PGHOST.
     env = dict(os.environ)
     env["PGHOST"] = "/nonexistent-pg-socket-dir"
+    # either one routes libpq past PGHOST to a reachable server
+    env.pop("PGHOSTADDR", None)
+    env.pop("PGSERVICE", None)
 
     result = _run_helper('{"op":"bump_wiki_dirty","args":{}}', env=env)
 

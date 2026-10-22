@@ -10,8 +10,10 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
 import {
+  CANONICAL_MAP,
   DAEMON_NODE_BINDINGS,
   DIAGRAMS,
+  NODE_DESCRIPTIONS,
 } from "../src/server/architecture/diagrams-source.js";
 import {
   resolveDaemonStatuses,
@@ -28,12 +30,7 @@ import type { DaemonStatusCard } from "../src/server/types/health-detail.js";
 import { buildScreenSandbox } from "./client-sandbox.js";
 
 // live-overlay.ts DAEMON_NAMES mirror — the overlay surface this binding serves.
-const EXPECTED_DAEMONS = [
-  "autoagent",
-  "wiki",
-  "daily-restart-autoagent",
-  "daily-restart-wiki",
-] as const;
+const EXPECTED_DAEMONS = ["autoagent", "wiki"] as const;
 
 // Node-definition matcher: id immediately followed by a shape opener
 // ([, (, {, [/ …) at a token boundary — mermaid node declaration form.
@@ -62,6 +59,40 @@ test("every bound node id exists as a node definition in some diagram source", (
     }
   }
 });
+
+test("the binding table carries exactly the daemons the live overlay reports", () => {
+  assert.deepStrictEqual(
+    Object.keys(DAEMON_NODE_BINDINGS).sort(),
+    [...EXPECTED_DAEMONS].sort(),
+    "a daemon the overlay never reports keeps a dead ring binding",
+  );
+});
+
+// The retired long-running daemon layer — resident sessions, their supervisors, the daily
+// restart, the fakechat heartbeats and the healthchecks that probed them. The map must not
+// depict any of it as live, in a drawn label, a source diagram or a node description.
+const RETIRED_LAYER_ROWS: ReadonlyArray<{ name: string; pattern: RegExp }> = [
+  { name: "a retired daemon tmux session", pattern: /claude-(autoagent|wiki)-daemon/ },
+  { name: "a daemon restarter or the daily restart", pattern: /restart/i },
+  { name: "a fakechat heartbeat channel", pattern: /heartbeat/i },
+  { name: "a daemon self-health check", pattern: /self-health|self-monitor|self-probe/i },
+];
+
+function getArchitectureTexts(): string[] {
+  return [
+    ...DIAGRAMS.flatMap((d) => [d.title, d.description, d.mermaid_source]),
+    ...Object.values(NODE_DESCRIPTIONS),
+    CANONICAL_MAP.description ?? "",
+    CANONICAL_MAP.mermaid_drawn,
+  ];
+}
+
+for (const row of RETIRED_LAYER_ROWS) {
+  test(`no diagram depicts ${row.name}`, () => {
+    const hit = getArchitectureTexts().find((text) => row.pattern.test(text));
+    assert.strictEqual(hit, undefined, `${row.name} is still depicted`);
+  });
+}
 
 // --- AC-T4: one server verdict, two screens ---
 // Each screen is driven through its OWN route payload — the map through the live overlay, the

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SC2034: apply_lock_acquired is the result global CONSUMED by sourcing scripts
 # (daemon-apply.sh + update.sh update_serialize_begin), not this lib — structural
-# false positive, same contract daemon-lock.sh documents.
+# false positive.
 # shellcheck disable=SC2034
 #
 # apply-lock.sh — stale-reclaim guard for the shared mkdir-directory .apply-lock
@@ -19,8 +19,7 @@
 # wedge). Acquire now probes the holder before deciding held-vs-stale and
 # RECLAIMS a lock whose holder is BOTH not-live (kill -0 fails / no pid) AND aged
 # past a TTL. A genuinely LIVE holder still blocks — mutual exclusion is
-# preserved. The reclaim liveness logic mirrors daemon-lock.sh's proven
-# dead-holder probe, adapted from its symlink primitive to this mkdir-dir one.
+# preserved.
 #
 # Three hardenings on top of that reclaim design (incident #58325 defects 2-4):
 #   * recycled-PID guard — the holder record carries a `fingerprint` file (the
@@ -36,8 +35,7 @@
 #     silently degrading hard mutual exclusion to a TTL-bounded lock.
 #
 # Result is reported via the apply_lock_acquired global (NOT an exit code) so
-# set -e / ERR-trap callers can invoke apply_lock_acquire as a plain statement,
-# exactly as daemon-lock.sh reports daemon_lock_acquired.
+# set -e / ERR-trap callers can invoke apply_lock_acquire as a plain statement.
 
 # ga_guard_path gates every removal below; a missing guard fails this source, never a delete.
 # Existence checked first: bash 3.2 under set -e exits on a failed source before any message.

@@ -37,8 +37,8 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 
 # TUNE: concurrency is bounded by the Workflow engine runtime self-cap (orchestrator-role.md Spawn
 # Budget), NOT a fixed number; this is a SEPARATE lifetime-CUMULATIVE runaway backstop with an
-# ABSOLUTE threshold. A healthy multi-wave session was observed at ~20 cumulative, so 30 sits above
-# that but below the 40-52 truncation range (orchestrator-role.md Delegation-size discipline).
+# ABSOLUTE threshold. A healthy multi-wave session sits below it, and 30 stays below the 40-52
+# truncation range (orchestrator-role.md Delegation-size discipline).
 # Env-overridable (SPAWN_BUDGET_ADVISORY_THRESHOLD).
 readonly DEFAULT_THRESHOLD=30
 threshold="${SPAWN_BUDGET_ADVISORY_THRESHOLD:-${DEFAULT_THRESHOLD}}"

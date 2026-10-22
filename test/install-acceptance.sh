@@ -3,6 +3,10 @@
 # Self-contained: seeds its own sandbox, runs install/uninstall, asserts AC1-AC7.
 # NEVER touches the real ~/.claude or the real GA config.toml (uses GA_TARGET_HOME
 # + GA_CONFIG_TOML overrides pointed at a mktemp sandbox).
+# Real-HOME mode: HOME stays the user's, so doctor's read-only checks read the live machine —
+# §26 OAuth token-leak check (tmux list-sessions + show-environment -g, launchctl getenv) and
+# the monitor liveness GET; names and counts only, value never shown. Doctor's metered
+# `claude -p` self-test runs a sandbox stub through GA_AUTH_CLAUDE_BIN, never the real CLI.
 set -uo pipefail
 
 # Repo root = parent of this script's test/ dir (portable: no hardcoded $HOME path).
@@ -83,6 +87,16 @@ export ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/update-state"
 # empty dir → trivial scan (the DOCTOR_AUTH_REPORTS_DIR seam the bats suites already use)
 mkdir -p "${SANDBOX}/empty-reports"
 export DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}/empty-reports"
+# metered-call seam — the stub logs each argv line so STEP 1 can prove the self-test ran it
+CLAUDE_STUB_CALLS="${SANDBOX}/claude-stub.calls"
+mkdir -p "${SANDBOX}/bin"
+cat >"${SANDBOX}/bin/claude" <<SH
+#!/bin/bash
+printf '%s\n' "\$*" >>'${CLAUDE_STUB_CALLS}'
+echo OK
+SH
+chmod +x "${SANDBOX}/bin/claude"
+export GA_AUTH_CLAUDE_BIN="${SANDBOX}/bin/claude"
 # shellcheck disable=SC2329 # run by the EXIT trap; 0.11 misses a trap reached through the final exit
 delete_sandbox() {
   if ga_guard_path "${SANDBOX}"; then rm -rf -- "${SANDBOX:?}"; fi
@@ -159,6 +173,11 @@ hdr "STEP 1 — doctor preflight (sandbox)"
 DOCTOR_RC=$?
 tail -3 "${SANDBOX}/doctor1.log"
 [[ "${DOCTOR_RC}" -eq 0 ]] && ok "doctor exits 0 (PASS or PASS-with-warnings)" || no "doctor rc=${DOCTOR_RC}"
+if grep -q '^-p ' "${CLAUDE_STUB_CALLS}" 2>/dev/null; then
+  ok "doctor's metered 'claude -p' self-test ran the sandbox stub, not the real CLI"
+else
+  no "doctor's 'claude -p' self-test never reached the sandbox stub (GA_AUTH_CLAUDE_BIN unrouted)"
+fi
 
 # =============================================================================
 hdr "STEP 2 — install run #1 (config render + symlink farm + wire_hooks)"
@@ -171,12 +190,20 @@ INSTALL_RC=$?
 grep -q 'DB bootstrap skipped (GA_SKIP_DB_SETUP set)' "${SANDBOX}/install1.log" \
   && ok "DB bootstrap gated off (GA_SKIP_DB_SETUP honored)" \
   || no "GA_SKIP_DB_SETUP skip message missing from install log"
-# launchd plist render wired into run_install — 8 plists in the sandboxed
-# GA_PLIST_OUT dir (file-write only; launchctl never invoked by render_plists)
+# launchd plist render wired into run_install — one plist per active roster job
+# (lib/ga-env.sh LAUNCHD_JOBS) in the sandboxed GA_PLIST_OUT dir (file-write only;
+# launchctl never invoked by render_plists)
+ROSTER_COUNT="$(
+  # subshell: sourcing the engine arms readonly globals — keep them contained
+  # shellcheck source=lib/ga-env.sh
+  source "${GA}/lib/ga-env.sh" || exit 1
+  ga_init_env "${GA}" >/dev/null 2>&1
+  printf '%s\n' "${#LAUNCHD_JOBS[@]}"
+)"
 PLIST_COUNT="$(find "${GA_PLIST_OUT}" -name 'com.glass-atrium.*.plist' 2>/dev/null | wc -l | tr -d ' ')"
-[[ "${PLIST_COUNT}" -eq 8 ]] \
-  && ok "launchd plist render: 8 plists in sandboxed GA_PLIST_OUT" \
-  || no "launchd plist render: expected 8 plists, found ${PLIST_COUNT}"
+[[ "${ROSTER_COUNT}" =~ ^[0-9]+$ && "${ROSTER_COUNT}" -gt 0 && "${PLIST_COUNT}" -eq "${ROSTER_COUNT}" ]] \
+  && ok "launchd plist render: ${PLIST_COUNT} plists in sandboxed GA_PLIST_OUT = active roster LAUNCHD_JOBS" \
+  || no "launchd plist render: expected one plist per active roster job (LAUNCHD_JOBS count '${ROSTER_COUNT}'), found ${PLIST_COUNT}"
 
 # --- AC2: config rendered with real $HOME, zero unexpanded ${HOME} ---
 hdr "STEP 2 / AC2 — config.toml render"

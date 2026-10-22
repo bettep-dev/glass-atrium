@@ -43,6 +43,8 @@ UPDATE_SH="${GA}/scripts/update.sh"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   TARGET="$(mktemp -d -t ga-doctor-decline-target.XXXXXX)"
   DATA_ROOT="$(mktemp -d -t ga-doctor-decline-data.XXXXXX)"

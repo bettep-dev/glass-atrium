@@ -379,8 +379,8 @@ test("POST supersedes_id=-1 → 400 'must be a positive integer'", async () => {
 });
 
 test("POST supersedes_id=99999999 (non-existent id) → 400 'does not reference an existing document'", async () => {
-  // The exact id MUST be guaranteed non-existent. 99999999 is well above any
-  // realistic prod row id (current max ~1789). The probe SELECT returns zero
+  // The exact id MUST be guaranteed non-existent. 99999999 is far above any
+  // realistic row id. The probe SELECT returns zero
   // rows → handleCreate emits 400 invalid_body with FK reason.
   //
   // No cleanup needed — fetchAndValidatePredecessor halts before insert.

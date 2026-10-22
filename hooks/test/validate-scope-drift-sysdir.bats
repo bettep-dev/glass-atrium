@@ -34,7 +34,7 @@ teardown() {
 run_edit() {
   local payload
   payload="$(jq -n --arg f "$1" '{tool_name:"Edit", tool_input:{file_path:$f}}')"
-  run env HOME="${WORK}" PLAN_FILE="${PLAN}" \
+  run env HOME="${WORK}" GA_DATA_ROOT="${WORK}/.glass-atrium" PLAN_FILE="${PLAN}" \
     bash -c 'printf "%s" "$1" | bash "$2"' _ "${payload}" "${HOOK}"
 }
 

@@ -886,6 +886,13 @@ passthrough() {
     agents-only) run_agents_only ;;
     migrate) migrate_layout ;;
     prune) run_prune ;;
+    retire-launchd-jobs)
+      # the autoagent-cycle retirement stage's entry: the routine's rc is the stage verdict, so `exit` it
+      # (a non-zero `return` would trip the echo-only ERR trap, as in the doctor branch)
+      local retire_rc=0
+      retire_launchd_jobs || retire_rc=$?
+      exit "${retire_rc}"
+      ;;
     uninstall)
       # uninstall sub-modes: --verify-clean and --orphan-scan are
       # mutually-exclusive standalone modes; the default is the full removal

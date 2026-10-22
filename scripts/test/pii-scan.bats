@@ -41,7 +41,7 @@ setup() {
   #   missing under this HOME is harmless — every isolated-repo test commits
   #   with a repo-local user.email.
   local h_tail="home"
-  export HOME="/Users/ga-fixture-${h_tail}"
+  export HOME="/Users/ga-fixture-${h_tail}" GA_DATA_ROOT="/Users/ga-fixture-${h_tail}/.glass-atrium"
   WORK="$(mktemp -d -t pii-scan-bats.XXXXXX)"
 }
 

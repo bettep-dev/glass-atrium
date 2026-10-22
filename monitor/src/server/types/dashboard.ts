@@ -71,14 +71,8 @@ export type DaemonStatusValue =
   | "apply_unavailable";
 
 export interface DaemonStatusItem {
-  // Active daemons + legacy "daily-restart" (historical rows only — restart runs
-  // are role-qualified per restarted daemon; no new rows under the merged name).
-  daemon_name:
-    | "autoagent"
-    | "wiki"
-    | "daily-restart"
-    | "daily-restart-autoagent"
-    | "daily-restart-wiki";
+  // Board daemons only — every daily-restart name is history-only and carries no item.
+  daemon_name: "autoagent" | "wiki";
   last_run_at: string | null;
   last_status: DaemonStatusValue | null;
   expected_next_at: string | null;

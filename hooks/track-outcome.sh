@@ -11,6 +11,20 @@ set -Eeuo pipefail
 # shellcheck source=hook-utils.sh
 [[ -r "${BASH_SOURCE%/*}/hook-utils.sh" ]] && source "${BASH_SOURCE%/*}/hook-utils.sh"
 
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
+
 # DF-21: the 7-param override's free-text fields (message/suggestion, EN+KO) carried the same raw
 # printf %s vulnerability as hook-utils' hook_emit_error — a " or \ in any of them yielded MALFORMED
 # JSON. Build via jq (JSON-correct escaping + ctx validated as a JSON fragment); on jq absent/failed
@@ -74,6 +88,9 @@ require_safety_marker() {
   return 0
 }
 
+# Payload and parser-output names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT PARSED
+
 INPUT=$(cat 2>/dev/null) || exit 0
 [ -z "$INPUT" ] && exit 0
 
@@ -120,7 +137,7 @@ _INLINE_CORE_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'summ
 # to mis-encode). None of the four is regex-special inside a character class.
 _INLINE_DELIM_CLASS = '[' + ''.join(chr(_c) for _c in (0x7C, 0xB7, 0x2022, 0x22C5)) + ']'
 # Schema-mode (ultracode Workflow / StructuredOutput) subagents NEVER print the text-channel
-# [COMPLETION] block — the engine consumes ONLY the StructuredOutput tool call (0/129 observed).
+# [COMPLETION] block — the engine consumes ONLY the StructuredOutput tool call.
 # But the writer's fields survive inside the terminal SO input under this OPTIONAL string property:
 # the full multi-line [COMPLETION]...[/COMPLETION] text. Pinned as a constant so the recorder and
 # the orchestrator-side schema convention name the SAME field (a divergence silently loses recovery).
@@ -237,29 +254,34 @@ def parse_completion_body(text):
 
     return result
 
-def _strip_completion_sentinels(block):
-    """Strip a leading '[COMPLETION]' opener line and a trailing '[/COMPLETION]' closer line
-    from a captured SO-input completion_block BEFORE field parsing. The SO-input block carries
-    the FULL multi-line block INCLUDING both sentinels; parse_completion_body reads the colon-less
-    '[/COMPLETION]' closer as a CONTINUATION of the last field, gluing the sentinel (and any
-    trailing whitespace) onto that value — so the last field (lesson/concerns/summary/… — whichever
-    it is) leaks the closer. The text-channel tiers never hit this: _T1/_T2 capture group(1), the
-    region strictly BETWEEN the anchors. Block-level (not per-field) → field-agnostic, cleaning
-    whatever field lands last. Tolerates surrounding blank/whitespace/CRLF lines and a MISSING
-    closer (writer truncation — the last line is then a real field, left untouched)."""
+def _get_completion_bodies(block):
+    """Split a captured SO-input completion_block into its block bodies, sentinels removed, BEFORE
+    field parsing — each body is the region _T1 captures on the text channel. parse_completion_body
+    reads every colon-less line as a continuation of the last field, so a closer left in a body, and
+    any prose after it, would fold into that field (lesson/concerns/qa_score/… — whichever is last).
+    The first body starts after one leading lone '[COMPLETION]' opener (or at the first non-blank
+    line when the opener is missing); each later body starts after a lone opener that follows a
+    closer. A body ends before its lone '[/COMPLETION]' closer; prose between blocks belongs to none.
+    Field-agnostic; tolerates blank/whitespace/CRLF lines and a MISSING closer (writer truncation —
+    the body then runs to its last non-blank line). Always returns at least one body."""
     lines = block.split('\n')
-    start, end = 0, len(lines)
-    # Leading: skip blank/whitespace lines, then drop one lone [COMPLETION] opener.
-    while start < end and not lines[start].strip():
+    bodies = []
+    start = 0
+    while start < len(lines) and not lines[start].strip():
         start += 1
-    if start < end and lines[start].strip() == '[COMPLETION]':
+    if start < len(lines) and lines[start].strip() == '[COMPLETION]':
         start += 1
-    # Trailing: skip blank/whitespace lines, then drop one lone [/COMPLETION] closer.
-    while end > start and not lines[end - 1].strip():
-        end -= 1
-    if end > start and lines[end - 1].strip() == '[/COMPLETION]':
-        end -= 1
-    return '\n'.join(lines[start:end])
+    while start is not None:
+        end = start
+        while end < len(lines) and lines[end].strip() != '[/COMPLETION]':
+            end += 1
+        if end == len(lines):
+            while end > start and not lines[end - 1].strip():
+                end -= 1
+        bodies.append('\n'.join(lines[start:end]))
+        start = next((i + 1 for i in range(end + 1, len(lines))
+                      if lines[i].strip() == '[COMPLETION]'), None)
+    return bodies
 
 try:
     d = json.load(sys.stdin)
@@ -1044,11 +1066,19 @@ diag(f"terminal_structuredoutput={terminal_so}")
 # parse_tier 3 + an empty grader body → byte-identical today-synthesis (structuredoutput-derived).
 so_completion_block = ''
 if parse_tier == 3 and terminal_so == '1' and terminal_so_block:
-    # _strip_completion_sentinels drops the [COMPLETION]/[/COMPLETION] lines (else the colon-less
-    # closer folds into the last field — see its docstring); the cleaned block doubles as the grader
-    # body, matching the text-channel _block_text (m_tier1/m_tier2 group(1)) semantics.
-    _clean_so_block = _strip_completion_sentinels(terminal_so_block)
+    # Body selection = the text channel's tier-1 rule (_t1_matches): the LAST body, else the last
+    # earlier one whose result validates — a quoted emit-format template on either side of the real
+    # block must not bind. The selected body doubles as the grader body, matching the text-channel
+    # _block_text (m_tier1/m_tier2 group(1)) semantics.
+    _so_bodies = _get_completion_bodies(terminal_so_block)
+    _clean_so_block = _so_bodies[-1]
     _so_fields = parse_completion_body(_clean_so_block)
+    if _so_fields.get('result', '').strip() not in _VALID_RESULTS:
+        for _body in reversed(_so_bodies[:-1]):
+            _cand = parse_completion_body(_body)
+            if _cand.get('result', '').strip() in _VALID_RESULTS:
+                _clean_so_block, _so_fields = _body, _cand
+                break
     if (_INLINE_CORE_FIELDS & set(_so_fields)) \
             and _so_fields.get('result', '').strip() in _VALID_RESULTS:
         parse_tier = 1
@@ -1080,6 +1110,17 @@ def out_wide(k, v, n):
 out('agent_type', agent_type)
 out('agent_id', agent_id)
 out('session_id', session_id)
+
+
+def _envelope_text(key):
+    value = d.get(key, '')
+    return value if isinstance(value, str) else ''
+
+
+# Spawn provenance for core.outcomes: the envelope's own ids, never a placeholder label
+# ('orchestrator', 'agent_id_missing', 'unknown') → a main-session row joins no spawn.
+out('envelope_agent_id', '' if hook_event in MAIN_SESSION_HOOKS else _envelope_text('agent_id'))
+out('envelope_session_id', _envelope_text('session_id'))
 out('cwd', cwd)
 # hook_event: lets the shell side gate the T2 loud-fail marker on SubagentStop (a real
 # subagent yielding 0 records) vs a quiet main-session conversational skip.
@@ -1433,12 +1474,15 @@ PARSED=$(printf '%s' "$INPUT" | STYLE_REF_MATCH_LIB="${STYLE_REF_MATCH_LIB}" pyt
 
 # Extraction helper
 extract_field() {
-  printf '%s\n' "$PARSED" | sed -n "s/^@@${1}@@//p" | head -1
+  printf '%s\n' "$PARSED" | sed -n "s/^@@${1}@@//p" | drain_after head -1
 }
 
 AGENT_TYPE=$(extract_field agent_type)
 AGENT_ID=$(extract_field agent_id)
 SESSION_ID=$(extract_field session_id)
+# Raw envelope ids for the core.outcomes provenance columns; empty = NULL.
+ENVELOPE_AGENT_ID=$(extract_field envelope_agent_id)
+ENVELOPE_SESSION_ID=$(extract_field envelope_session_id)
 # HOOK_EVENT: gates the T2 loud-fail marker (SubagentStop 0-record case) vs a quiet skip.
 HOOK_EVENT=$(extract_field hook_event)
 S_RESULT=$(extract_field c_result)
@@ -1590,7 +1634,7 @@ fi
 # CORRECTION_HINT_GAP (computed here where the correction vars are in scope; APPLIED in/after the
 # REVIEW_FLAG block below — an early REVIEW_FLAG set would be clobbered by REVIEW_FLAG's re-init):
 # agent emitted a correction (evaluative_signal=-1) but omitted the distilled directive_hint the
-# Correction-emission rule requires as the 3rd co-emitted element = a lesson-less correction.
+# Correction-emission rule requires as the 3rd co-emitted element = a correction gap.
 # READ-ONLY — never mutates AGENT_PROVIDED_CORRECTION or the core.correction_signals write path.
 CORRECTION_HINT_GAP=0
 if [ "${C_EVALUATIVE_SIGNAL}" = "-1" ] && [ -z "${C_DIRECTIVE_HINT}" ]; then
@@ -1710,8 +1754,8 @@ fi
 # TERMINAL_SO=1 is reachable ONLY via the python completion_block promotion: a text-channel [COMPLETION]
 # sets parse_tier 1/2 BEFORE detect_terminal_structuredoutput runs → TERMINAL_SO=0, so this pairing
 # uniquely marks a writer block recovered from the terminal StructuredOutput input. A DISTINCT literal
-# (NOT the synthesized structuredoutput-derived, which daemon_cycle carves out of SUCCESS + the monitor
-# folds as reconstructed) keeps the recovered signal a clean SUCCESS exemplar + a 'healthy' monitor row.
+# (NOT the synthesized structuredoutput-derived, which the emit-failure metric counts + the monitor
+# folds as reconstructed) keeps the recovered row out of that metric + a 'healthy' monitor row.
 if [[ "${HAS_STRUCTURED}" = "true" ]] && [[ "${TERMINAL_SO}" = "1" ]] && [[ "${ATTRIBUTION_SOURCE}" = "hook-input" ]]; then
   ATTRIBUTION_SOURCE="structuredoutput-completion"
   printf '[outcome-record] structuredoutput-completion: writer [COMPLETION] recovered from terminal StructuredOutput input (attribution=%s, agent=%s)\n' \
@@ -1978,7 +2022,8 @@ fi
 # them for the always-run scan would let the detector's prior+1 count override the agent-emitted
 # revision_count in the correction-signal sink, the one overwrite this cross-check must never do.
 # The agent's emitted fields stay authoritative; the always-run verdict feeds only the disagreement
-# review-flag reason. T9_CORRECTION_DETECTION=false disables the whole pipeline.
+# review-flag reason and its own user_correction_detected column. T9_CORRECTION_DETECTION=false
+# disables the whole pipeline.
 #
 # Cost: the bounded transcript tail read (T9_TAIL_WINDOW_BYTES, 64 KiB default) now runs on every
 # recorded stop rather than only in the no-emit window. SubagentStop has no block channel, so this is
@@ -2253,7 +2298,7 @@ PYEOF
     T9_RESULT=$(T9_TRANSCRIPT="${T9_TRANSCRIPT_PATH}" T9_TASK_TYPE="${TASK_TYPE}" T9_SESSION_ID="${SESSION_ID}" python3 "$T9_PY_FILE" 2>/dev/null || true)
 
     t9_extract() {
-      printf '%s\n' "$T9_RESULT" | sed -n "s/^@@${1}@@//p" | head -1
+      printf '%s\n' "$T9_RESULT" | sed -n "s/^@@${1}@@//p" | drain_after head -1
     }
 
     T9_DETECTOR_VERDICT=$(t9_extract detector_verdict)
@@ -2478,8 +2523,8 @@ fi
 # (WAS_OFF_ROLE == true). The underconfidence (low+true) and EMPTY-metric_pass branches are UNCHANGED —
 # they still flag structural rows, so the consumer-side carve-out mirrors this BRANCH (structural AND
 # high AND metric_pass=false), never the structural predicate alone: _outcome_signal
-# ._is_structural_polar_mismatch. Keyed on the structural predicate alone it would discard those two
-# live signals from both lesson buckets.
+# ._is_structural_polar_mismatch. Keyed on the structural predicate alone it would drop those two
+# live signals from the negative predicate.
 # Each setter below stamps a concrete reason token into REVIEW_FLAG_REASONS, so a flagged row names
 # its own trigger instead of being re-derived against a stale taxonomy at read time. The vocabulary
 # is declared once in lib/review-flag-reasons.sh; the carrier is cleared by the final guard.
@@ -2549,12 +2594,12 @@ fi
 # Correction-gap loud flag (applied here, in/after the REVIEW_FLAG block, per the early-clobber note
 # where CORRECTION_HINT_GAP is computed): a -1 correction with an empty directive_hint only partially
 # met the 3-element co-emission → raise review_flag + a loud 1-line stderr note so the learning
-# aggregation registers the lesson-less correction. READ-ONLY vs the correction WRITE path — the
+# aggregation registers the correction gap. READ-ONLY vs the correction WRITE path — the
 # SIG_EMIT / core.correction_signals dualwrite, EVALUATIVE_SIGNAL and DIRECTIVE_HINT are untouched.
 if [[ "${CORRECTION_HINT_GAP}" -eq 1 ]]; then
   REVIEW_FLAG="true"
   review_flag_add_reason "correction-gap"
-  printf '[outcome-record] correction-gap: evaluative_signal=-1 with empty directive_hint (lesson-less correction), agent=%s\n' \
+  printf '[outcome-record] correction-gap: evaluative_signal=-1 with empty directive_hint, agent=%s\n' \
     "${AGENT_TYPE}" >&2
 fi
 
@@ -2593,7 +2638,7 @@ if [[ -n "${SCOPE_DECL_LINES}" ]]; then
   # shellcheck source=lib/code-based-grader.sh
   #   Sourced for _cbg_path_is_tool_artifact — the single artifact-shape SoT, never a second copy.
   source "${BASH_SOURCE%/*}/lib/code-based-grader.sh"
-  SCOPE_DECL="$(printf '%s\n' "${SCOPE_DECL_LINES}" | tr '\037' '\n' | scope_decl_select)"
+  SCOPE_DECL="$(printf '%s\n' "${SCOPE_DECL_LINES}" | tr '\037' '\n' | drain_after scope_decl_select)"
   SCOPE_ALLOWED="$(scope_decl_files "${SCOPE_DECL}")"
 
   # The files: leg runs on code task_types only: a review/plan/doc row routinely lists the paths it
@@ -2624,6 +2669,21 @@ fi
 if [[ "${SCOPE_EXCESS_FOUND}" -eq 1 ]]; then
   REVIEW_FLAG="true"
   review_flag_add_reason "scope-excess"
+fi
+
+# qa-score-malformed — a present qa_score off the cov=N,ins=N,instr=N,clar=N shape, each N 1-5.
+# The ,d8=N tail is the HTML-primary review extension (scoped/scope-qa.md → D8 Visual Decision Sub-Pass).
+# ADVISORY: the value is stored unchanged. Checked as stored — the parser trims only the ends, so
+# inner whitespace, a wrapped value or a folded non-template line is a malformed stored value.
+if [[ -n "${QA_SCORE:-}" ]]; then
+  case "${QA_SCORE}" in
+    cov=[1-5],ins=[1-5],instr=[1-5],clar=[1-5]) ;;
+    cov=[1-5],ins=[1-5],instr=[1-5],clar=[1-5],d8=[1-5]) ;;
+    *)
+      REVIEW_FLAG="true"
+      review_flag_add_reason "qa-score-malformed"
+      ;;
+  esac
 fi
 
 # DOWNGRADE_ORIGIN provenance — recorded alongside grader_verdict (NOT a metric_pass mutation).
@@ -3013,6 +3073,9 @@ if [ -x "${PG_HELPER}" ]; then
     --arg downgrade_origin "${DOWNGRADE_ORIGIN:-}" \
     --arg grader_crosscheck "${GRADER_CROSSCHECK:-}" \
     --arg files_modified "${FILES:-}" \
+    --arg agent_id "${ENVELOPE_AGENT_ID:-}" \
+    --arg session_id "${ENVELOPE_SESSION_ID:-}" \
+    --arg correction_verdict "${T9_DETECTOR_VERDICT:-}" \
     --arg sig_event_ts "${TIMESTAMP}" \
     --arg sig_task_type "${TASK_TYPE}" \
     --arg sig_emit "${SIG_EMIT}" \
@@ -3037,7 +3100,10 @@ if [ -x "${PG_HELPER}" ]; then
         has_mixed_effort: (if $effort == "" or $has_mixed_effort == "" then null else ($has_mixed_effort == "true") end),
         grader_verdict: (if $grader_verdict == "" then null else $grader_verdict end),
         downgrade_origin: (if $downgrade_origin == "" then null else $downgrade_origin end),
-        grader_crosscheck: (if $grader_crosscheck == "" then null else $grader_crosscheck end)
+        grader_crosscheck: (if $grader_crosscheck == "" then null else $grader_crosscheck end),
+        agent_id: (if $agent_id == "" then null else $agent_id end),
+        session_id: (if $session_id == "" then null else $session_id end),
+        user_correction_detected: (if $correction_verdict == "" then null else ($correction_verdict == "1") end)
       },
       signals: (
         if $sig_emit == "1" then [{

@@ -3,9 +3,8 @@
 #
 #   The drop sink records only what was SHED, so "did this agent actually see that rule at that spawn"
 #   was an assumption. C03 emits one bounded manifest line per injection-attempted spawn naming the
-#   kept block labels with their source paths, the assembled byte size, an optional digest and — for
-#   the runtime-derived lesson block alone — the injected lesson ids and scores. Its reader
-#   (`--manifest-coverage`) is a required co-deliverable: the writer alone is an orphaned signal.
+#   kept block labels with their source paths, the assembled byte size and an optional digest. Its
+#   reader (`--manifest-coverage`) is a required co-deliverable: the writer alone is an orphaned signal.
 #
 #   ACs pinned here:
 #     AC1  an injection-attempted spawn emits EXACTLY one manifest line naming the kept block labels
@@ -15,13 +14,21 @@
 #          with manifest emission enabled.
 #     AC4  an unwritable manifest sink leaves the injection and the exit status unchanged (fail-open).
 #     AC5  an absent digest tool still writes the line, without a digest field, exit status unchanged.
-#     AC6  the kept lesson carries its ids and scores plus a truncation flag that never over-claims.
 #     AC7  the reader reports per-agent block coverage matching the fixture sink.
 #
-#   FAIL-AT-HEAD: 12 of the 14 rows fail against the pre-C03 hook, which writes no manifest sink at all
+#   Session field, backstop and spool window pinned here:
+#     - every line carries the envelope's session_id as a path-safe key (`unknown` when absent),
+#       ahead of the line-final `blocks=`.
+#     - every line carries the canary exposure fields arm, salt_id, delivered and delivered_hash, in that
+#       order, after ctx_bytes (and digest) and ahead of the line-final `blocks=`.
+#     - the spawn-path delete is a backstop: a log at 64 MiB survives a spawn, one above it is deleted.
+#     - the reader counts the live log plus every spool named by the rotation contract
+#       `<live log>.<UTC %Y%m%dT%H%M%SZ>.<pid>.spool`, and no other file beside it.
+#
+#   FAIL-AT-HEAD: 9 of the 11 C03 rows fail against the pre-C03 hook, which writes no manifest sink at all
 #   and treats the reader flag as an ordinary no-arg hook invocation. Every row that could pass VACUOUSLY
-#   on an absent sink (the two that assert a field is NOT present) is anchored by an accompanying
-#   line-count assertion, so absence of the whole sink fails them. AC3 and AC4 are the two deliberate
+#   on an absent sink (the one that asserts a field is NOT present) is anchored by an accompanying
+#   line-count assertion, so absence of the whole sink fails it. AC3 and AC4 are the two deliberate
 #   exceptions — preserved invariants guarding that the new sink never corrupts the drop-rate signal and
 #   that its append can never trip the ERR trap into a spawn-suppressing exit.
 #
@@ -39,7 +46,6 @@ setup() {
   MANIFEST="${BATS_TEST_TMPDIR}/manifest.log"
   DROPLOG="${BATS_TEST_TMPDIR}/drop.log"
   COUNTER="${BATS_TEST_TMPDIR}/spawns.count"
-  LESSONS="${BATS_TEST_TMPDIR}/lessons.json"
 
   # A BUDGET-DEV fixture whose one small block sits well under the ceiling → a no-drop spawn.
   BUDGET_FIT="${BATS_TEST_TMPDIR}/budget-fit.md"
@@ -62,14 +68,17 @@ setup() {
 
 # Drive the hook's SubagentStart injection path. All scope sources except the BUDGET-DEV block are
 # sandboxed to /nonexistent and the meter is off, so for a BUDGET_DEV_AGENTS member the assembly is
-# emit + budget-dev (+ lesson when a store is given). $1=agent $2=budget source $3=lessons store
-# $4=extra env assignment (may be empty).
+# emit + budget-dev. HOME is the per-test sandbox, so the default log root never reaches the real one.
+# $1=agent $2=budget source $3=extra env assignment (may be empty) · SESSION_FIELD=optional JSON
+# fragment appended to the envelope (e.g. `,"session_id":"s1"`).
 run_inject() {
-  local agent="${1}" budget_src="${2}" lessons="${3:-/nonexistent}" extra="${4:-IGNORED_BY_HOOK=1}"
+  local agent="${1}" budget_src="${2}" extra="${3:-IGNORED_BY_HOOK=1}"
   run bash -c '
-    agent="$1"; hook="$2"; budget="$3"; lessons="$4"; extra="$5"
-    manifest="$6"; droplog="$7"; counter="$8"; ceiling="$9"
-    printf "%s" "{\"agent_type\":\"${agent}\",\"agent_id\":\"sess-A1\"}" | env \
+    agent="$1"; hook="$2"; budget="$3"; extra="$4"
+    manifest="$5"; droplog="$6"; counter="$7"; ceiling="$8"; session_field="$9"; home="${10}"
+    printf "%s" "{\"agent_type\":\"${agent}\",\"agent_id\":\"sess-A1\"${session_field}}" | env \
+      -u GA_DATA_ROOT \
+      HOME="${home}" \
       INJECT_SCOPE_RULES_MANIFEST_LOG="${manifest}" \
       INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
       INJECT_SCOPE_RULES_SPAWN_COUNTER="${counter}" \
@@ -78,36 +87,24 @@ run_inject() {
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
       INJECT_SCOPE_RULES_BUDGET_SRC="${budget}" \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
       "${extra}" \
       "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "${budget_src}" "${lessons}" "${extra}" \
-    "${MANIFEST}" "${DROPLOG}" "${COUNTER}" "${CEILING_OVERRIDE:-9984}"
+  ' _ "${agent}" "${HOOK_SH}" "${budget_src}" "${extra}" \
+    "${MANIFEST}" "${DROPLOG}" "${COUNTER}" "${CEILING_OVERRIDE:-9984}" "${SESSION_FIELD:-}" \
+    "${BATS_TEST_TMPDIR}/home"
 }
 
 # Drive an operator introspection mode. stdin is /dev/null so a pre-C03 hook (no dispatch for the new
 # mode → hook_read_input's blocking cat) cannot hang the suite. $1=mode flag.
 run_query() {
   run bash -c '
-    hook="$1"; mode="$2"; manifest="$3"; droplog="$4"; counter="$5"
-    env INJECT_SCOPE_RULES_MANIFEST_LOG="${manifest}" \
+    hook="$1"; mode="$2"; manifest="$3"; droplog="$4"; counter="$5"; home="$6"
+    env -u GA_DATA_ROOT HOME="${home}" \
+      INJECT_SCOPE_RULES_MANIFEST_LOG="${manifest}" \
       INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
       INJECT_SCOPE_RULES_SPAWN_COUNTER="${counter}" \
       "${hook}" "${mode}" </dev/null
-  ' _ "${HOOK_SH}" "${1}" "${MANIFEST}" "${DROPLOG}" "${COUNTER}"
-}
-
-# A lesson store for $1 with a short first CTM line plus a $2-char filler, mirroring the dropsink
-# suite's fixture so the truncate-keep boundary is dialable.
-write_lessons() {
-  local agent="${1}" fill="${2}"
-  jq -nc --arg a "${agent}" --argjson n "${fill}" '{
-    ctm: [
-      {agent: $a, task_type: "bug-fix", text: "KEPTLINE_ONE_WHOLE", score: 5, frequency: 9},
-      {agent: $a, task_type: "feature", text: ("F" * $n), score: 4, frequency: 8}
-    ],
-    epm: [{agent: $a, task_type: "refactor", text: "EPM_NEVER_EVAL", score: 2, frequency: 3}]
-  }' >"${LESSONS}"
+  ' _ "${HOOK_SH}" "${1}" "${MANIFEST}" "${DROPLOG}" "${COUNTER}" "${BATS_TEST_TMPDIR}/home"
 }
 
 manifest_lines() {
@@ -137,6 +134,15 @@ assert_manifest_has() {
     echo "manifest missing '${1}' (log: $(cat "${MANIFEST}" 2>/dev/null))" >&2
     return 1
   }
+}
+
+# Append $3 hand-written MANIFEST lines for agent $2 to file $1 — a spool or decoy the hook never writes.
+write_manifest_lines() {
+  local file="${1}" agent="${2}" count="${3}" i
+  for ((i = 0; i < count; i++)); do
+    printf '2026-10-05T12:00:00Z [inject-scope-rules] MANIFEST agent_id=a%s session_id=s1 agent=%s ctx_bytes=10 blocks=emit:/e\n' \
+      "${i}" "${agent}" >>"${file}"
+  done
 }
 
 # ── AC1 — exactly one line per attempted spawn, naming kept labels + assembled bytes ───────────────
@@ -245,7 +251,7 @@ assert_manifest_has() {
 # ── AC5 — absent digest tool → line still written, digest field omitted ────────────────────────────
 
 @test "AC5: an absent digest tool writes the manifest line without a digest field" {
-  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" /nonexistent \
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" \
     "INJECT_SCOPE_RULES_DIGEST_CMD=ga-no-such-digest-tool"
   assert_status 0
   [[ "$(manifest_lines)" == "1" ]] || {
@@ -266,47 +272,6 @@ assert_manifest_has() {
   assert_status 0
   grep -qE 'digest=[0-9a-f]{64}' "${MANIFEST}" || {
     echo "no hex digest recorded (log: $(cat "${MANIFEST}"))" >&2
-    return 1
-  }
-}
-
-# ── AC6 — kept lesson carries its ids and scores; the flag never over-claims ───────────────────────
-
-@test "AC6: a kept lesson block records its ids and scores with lesson_truncated=0" {
-  write_lessons "glass-atrium-dev-front" 40
-  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" "${LESSONS}"
-  assert_status 0
-  assert_manifest_has 'lessons=ctm:bug-fix/keptline-one-whole@5'
-  assert_manifest_has 'epm:refactor/epm-never-eval@2'
-  assert_manifest_has 'lesson_truncated=0'
-  assert_manifest_has "lesson:${LESSONS}"
-}
-
-@test "AC6: a source-capped lesson records lesson_truncated=1 rather than over-claiming" {
-  # A filler far past LESSON_MAX_BYTES (1200) forces the in-source cap.
-  write_lessons "glass-atrium-dev-front" 4000
-  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" "${LESSONS}"
-  assert_status 0
-  assert_manifest_has 'lesson_truncated=1'
-}
-
-@test "AC6: a fully shed lesson is named neither as a kept block nor by its ids" {
-  write_lessons "glass-atrium-dev-front" 40
-  # BUDGET_BIG breaches the ceiling → the lesson is the first real shed for this assembly.
-  run_inject "glass-atrium-dev-front" "${BUDGET_BIG}" "${LESSONS}"
-  assert_status 0
-  # Anchored: the line must exist and simply lack the lesson fields (an absent sink would pass the two
-  # negative assertions below vacuously).
-  [[ "$(manifest_lines)" == "1" ]] || {
-    echo "expected 1 manifest line, got $(manifest_lines)" >&2
-    return 1
-  }
-  ! grep -q 'lessons=' "${MANIFEST}" || {
-    echo "manifest lists lesson ids for a shed lesson (log: $(cat "${MANIFEST}"))" >&2
-    return 1
-  }
-  ! grep -q 'lesson:' "${MANIFEST}" || {
-    echo "manifest names the lesson as kept after it was shed (log: $(cat "${MANIFEST}"))" >&2
     return 1
   }
 }
@@ -359,4 +324,149 @@ assert_manifest_has() {
   [[ "${roster}" == "${arms}" ]] || {
     echo "roster != case arms" >&2; echo "roster: ${roster}" >&2; echo "arms  : ${arms}" >&2; return 1
   }
+}
+
+@test "a manifest line carries the envelope session_id as a path-safe key, unknown when absent" {
+  local row name field want i=0
+  local -a rows=(
+    'uuid session id|,"session_id":"7c1b5a9e-3d42-4f86-b0e7-25a9c4d813f6"|7c1b5a9e-3d42-4f86-b0e7-25a9c4d813f6'
+    'hostile session id|,"session_id":"../x y;z"|xyz'
+    'empty session id|,"session_id":""|unknown'
+    'absent session id||unknown'
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name field want <<<"${row}"
+    i=$((i + 1))
+    MANIFEST="${BATS_TEST_TMPDIR}/session-${i}.log"
+    SESSION_FIELD="${field}"
+    run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status} (output: ${output})"; return 1; }
+    grep -qE " MANIFEST agent_id=[^ ]+ session_id=${want} .* blocks=" "${MANIFEST}" || {
+      echo "${name}: no session_id=${want} ahead of blocks= (log: $(cat "${MANIFEST}" 2>/dev/null))"
+      return 1
+    }
+    [[ "$(grep -o ' session_id=' "${MANIFEST}" | wc -l | tr -cd '0-9')" == "1" ]] || {
+      echo "${name}: expected exactly one session_id field (log: $(cat "${MANIFEST}"))"
+      return 1
+    }
+  done
+}
+
+# Write a canary for glass-atrium-dev-front under the sandbox data root with salt $1, valid unless $2
+# names one delivery-check failure (expired · aged past the lease · hash mismatch · over the cap);
+# prints the text's Python hashlib hash, the daemon's side of the contract.
+write_front_canary() {
+  local dir="${BATS_TEST_TMPDIR}/home/.glass-atrium/data/learning/canary"
+  mkdir -p "${dir}"
+  python3 - "${dir}/glass-atrium-dev-front.json" "${1}" "${2:-valid}" <<'PY'
+import hashlib, json, os, sys, time
+path, salt, variant = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+now = int(time.time())
+text = "C" * 1201 if variant == "overcap" else "CANARY_EXPOSURE_TEXT"
+digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+stored = "0" * 64 if variant == "mismatch" else digest
+expires_at = now - 60 if variant == "expired" else now + 3600
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump({"salt": salt, "text_sha256": stored, "expires_at": expires_at, "text": text}, fh)
+if variant == "aged":
+    aged = now - (5760 + 60) * 60
+    os.utime(path, (aged, aged))
+print(digest, end="")
+PY
+}
+
+@test "a manifest line carries arm, salt_id, delivered and delivered_hash in order ahead of blocks=" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
+  local row name salt variant extra want hash i=0
+  # name|salt (empty = no canary file, so that row runs first)|fixture variant|extra env|want — salt 2
+  # puts sess-A1 in the treatment arm, salt 8 in control; with no digest tool the arm is left to the
+  # daemon's recomputation. A present file failing a delivery check still records its salt and arm.
+  local -a rows=(
+    'no canary file||||arm=none salt_id=none delivered=0 delivered_hash=none'
+    'treatment-arm canary|2|valid||arm=1 salt_id=2 delivered=1 delivered_hash=HASH'
+    'control-arm canary|8|valid||arm=0 salt_id=8 delivered=0 delivered_hash=none'
+    'no digest tool|2|valid|INJECT_SCOPE_RULES_DIGEST_CMD=ga-no-such-digest-tool|arm=none salt_id=2 delivered=0 delivered_hash=none'
+    'expired treatment-arm canary|2|expired||arm=1 salt_id=2 delivered=0 delivered_hash=none'
+    'treatment-arm canary aged past the lease|2|aged||arm=1 salt_id=2 delivered=0 delivered_hash=none'
+    'treatment-arm canary with a hash mismatch|2|mismatch||arm=1 salt_id=2 delivered=0 delivered_hash=none'
+    'treatment-arm canary over the cap|2|overcap||arm=1 salt_id=2 delivered=0 delivered_hash=none'
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name salt variant extra want <<<"${row}"
+    i=$((i + 1))
+    MANIFEST="${BATS_TEST_TMPDIR}/exposure-${i}.log"
+    if [[ -n "${salt}" ]]; then
+      hash="$(write_front_canary "${salt}" "${variant}")" || { echo "${name}: fixture failed"; return 1; }
+      want="${want/HASH/${hash}}"
+    fi
+    run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" "${extra}"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status} (output: ${output})"; return 1; }
+    grep -qE " ctx_bytes=[0-9]+( digest=[0-9a-f]{64})? ${want} blocks=" "${MANIFEST}" || {
+      echo "${name}: want [${want}] between ctx_bytes and blocks= (log: $(cat "${MANIFEST}" 2>/dev/null))"
+      return 1
+    }
+  done
+}
+
+# Spawn-path delete is only a backstop — the daemon rotation owns the log bound.
+@test "a log at the 64 MiB backstop survives a spawn and a log above it is deleted" {
+  local row name size want got i=0
+  local -a rows=(
+    'log at the backstop|67108864|kept'
+    'log one byte above the backstop|67108865|deleted'
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name size want <<<"${row}"
+    i=$((i + 1))
+    MANIFEST="${BATS_TEST_TMPDIR}/backstop-${i}.log"
+    printf 'sentinel-head\n' >"${MANIFEST}"
+    # Sparse extension to the exact size: stock macOS ships dd but no truncate.
+    dd if=/dev/zero of="${MANIFEST}" bs=1 count=0 seek="${size}" 2>/dev/null
+    got="$(wc -c <"${MANIFEST}" | tr -cd '0-9')"
+    [[ "${got}" == "${size}" ]] || { echo "${name}: fixture is ${got} bytes, want ${size}"; return 1; }
+    run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status} (output: ${output})"; return 1; }
+    got="$(head -n1 "${MANIFEST}")"
+    if [[ "${want}" == "kept" ]]; then
+      [[ "${got}" == "sentinel-head" ]] || { echo "${name}: the log was deleted (head: ${got:0:80})"; return 1; }
+      tail -n1 "${MANIFEST}" | grep -aq ' MANIFEST ' || { echo "${name}: no line appended to the kept log"; return 1; }
+    else
+      [[ "${got}" == *" MANIFEST "* ]] || { echo "${name}: the log was not replaced (head: ${got:0:80})"; return 1; }
+    fi
+  done
+}
+
+@test "--manifest-coverage counts the live log and contract-named spools, never a non-matching file" {
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
+  assert_status 0
+  write_manifest_lines "${MANIFEST}.20261005T120000Z.4242.spool" "glass-atrium-dev-node" 2
+  write_manifest_lines "${MANIFEST}.20261004T120000Z.17.spool" "glass-atrium-dev-node" 1
+  local decoy
+  for decoy in \
+    "${MANIFEST}.1" \
+    "${MANIFEST}.20261005T120000Z.spool" \
+    "${MANIFEST}.2026-10-05T12:00:00Z.4242.spool" \
+    "${MANIFEST}.20261005T120000Z.4242.spool.tmp" \
+    "${MANIFEST}.20261005T120000.4242.spool" \
+    "${BATS_TEST_TMPDIR}/other.log.20261005T120000Z.4242.spool"; do
+    write_manifest_lines "${decoy}" "decoy" 1
+  done
+  run_query --manifest-coverage
+  assert_status 0
+  assert_contains "records=4 agents=2"
+  assert_contains "agent=glass-atrium-dev-front spawns=1 blocks=emit:1,budget-dev:1"
+  assert_contains "agent=glass-atrium-dev-node spawns=3 blocks=emit:3"
+  ! printf '%s' "${output}" | grep -q 'agent=decoy' || {
+    echo "a non-contract file was counted (output: ${output})"
+    return 1
+  }
+}
+
+@test "--manifest-coverage counts a pending spool when the live log was rotated away" {
+  write_manifest_lines "${MANIFEST}.20261005T120000Z.4242.spool" "glass-atrium-dev-node" 2
+  [[ ! -e "${MANIFEST}" ]] || { echo "live log unexpectedly present"; return 1; }
+  run_query --manifest-coverage
+  assert_status 0
+  assert_contains "records=2 agents=1"
+  assert_contains "agent=glass-atrium-dev-node spawns=2 blocks=emit:2"
 }

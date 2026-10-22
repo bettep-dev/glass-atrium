@@ -179,6 +179,18 @@ test("dropped keys go unconditionally; unknown keys survive the merge", async ()
   assert.strictEqual(config._comment, "keep me");
 });
 
+test("a tier knob renders by its row: a value lands verbatim, 'inherit' deletes the key, no row leaves it alone", async () => {
+  const { config } = await render(
+    { worker_effort: "low", pre_verify_effort: "medium", worker_max_output_tokens: "8000", pre_verify_max_output_tokens: "4000" },
+    { "tier.worker_effort": "high", "tier.pre_verify_effort": "inherit", "tier.worker_max_output_tokens": "32000" },
+  );
+
+  assert.strictEqual(config.worker_effort, "high", "a saved level is written");
+  assert.ok(!("pre_verify_effort" in config), "'inherit' removes the key, so the CLI default governs");
+  assert.strictEqual(config.worker_max_output_tokens, "32000", "a cap stays a string");
+  assert.strictEqual(config.pre_verify_max_output_tokens, "4000", "no row leaves a hand-set key untouched");
+});
+
 test("the SQL migration and isRetiredWorkerModelId agree on the retired-id set", async () => {
   // The two rename doors — the SQL migration and the daemon-config.json carry-forward — must apply
   // one policy. A prefix-shaped SQL predicate silently renames an API-style haiku id and leaves the

@@ -180,6 +180,21 @@ run_hook_without_jq() {
   [[ "${row}" == "chmod-777" ]]
 }
 
+# ~160 KiB of JSON-escaped lines → a multi-write writer, which races a reader that stops at a line-1
+# match at any size; a writer left with a write dies of SIGPIPE, which pipefail reports as "no match".
+pipe_overflow_padding() {
+  seq -f 'padding line %05g of an ordinary build log' 1 4000 | awk '{ printf "%s\\n", $0 }'
+}
+
+@test "block: a dangerous command on line 1 of a command larger than the pipe buffer still blocks, with its row" {
+  local padding row
+  padding="$(pipe_overflow_padding)"
+  run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"chmod -R 777 /\\n${padding}\"}}"
+  [[ "${status}" -eq 2 ]] || { echo "${output}"; return 1; }
+  row="$(get_block_row "${output}")" || { echo "${output}"; return 1; }
+  [[ "${row}" == "chmod-777" ]] || { echo "row: ${row}"; return 1; }
+}
+
 # Header relabel (clauded-docs/290 T18): the hook is a heuristic backstop, not a
 # security boundary. These assertions grep the script header — they gate the
 # labeling ACs, not matching behavior (byte-identical behavior is covered by the

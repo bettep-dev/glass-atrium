@@ -122,6 +122,9 @@ setup() {
   STATE="${WORK}/state/update-state"
   REQ_DIR="${STATE}/editable-reset"
   mkdir -p "${INSTALL}/agents" "${NEWSRC}/agents" "${STATE}/base-agents" "${REQ_DIR}"
+  # Both roots the finalize retire step reads → sandboxed, so no run reaches a live store.
+  export GA_DATA_ROOT="${WORK}/data-root"
+  export GA_TARGET_HOME="${WORK}/target-home"
 
   printf '%s\n' "${MARKED_LOCAL}" >"${INSTALL}/agents/dev-r.md"
   printf '%s\n' "${UNMARKED_LOCAL}" >"${INSTALL}/agents/dev-u.md"

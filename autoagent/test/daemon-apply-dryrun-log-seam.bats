@@ -16,14 +16,16 @@
 # Run via: bats autoagent/test/daemon-apply-dryrun-log-seam.bats
 # Requires: bats >= 1.5.0, bash 3.2+, python3
 #
-# Hermetic strategy: PATH points at a stub bin mirroring every real command EXCEPT
-# psql, so backlog_source_available() is false and the deterministic JSON-report
-# fallback runs (precedent: daemon-apply-landing-zone.bats). The report source
-# returns early from both the parked-pattern guard and the generation-outcome
-# assertion, so the dry-run short-circuit is reached with no DB seam at all. Agents
-# and reports dirs live under a per-test mktemp WORK, and every assertion is keyed
-# on a label unique to THIS run — a row another writer left behind can satisfy none
-# of them. No live PG, no live agents dir, no live data root is touched.
+# Hermetic strategy: each dry-run drives the single-proposal path (--proposal-id)
+# with PATH at a stub bin mirroring every real command EXCEPT psql, whose stand-in
+# answers the id lookup — the one statement a dry-run issues — from a per-test row
+# file (precedent: daemon-apply-landing-zone.bats). The parked-pattern guard (a
+# psycopg reader no psql stub isolates) answers "no guard fires" through the
+# AUTOAGENT_DAEMON_CYCLE_PY seam, and the stored row carries an ok generation
+# outcome, so the dry-run short-circuit is reached. Agents and reports dirs live
+# under a per-test mktemp WORK, and every assertion is keyed on a label unique to
+# THIS run — a row another writer left behind can satisfy none of them. No live PG,
+# no live agents dir, no live data root is touched.
 #
 # Every assertion carries a `|| return 1` fail-fast guard: an unguarded intermediate
 # `[[ ]]` is masked under bash 3.2 (the macOS default) though CI's bash 5.3 gates it.
@@ -32,6 +34,7 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
+PROPOSAL_ID=501
 BACKFILL_PY="${GA}/scripts/autoagent-status-backfill.py"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
@@ -54,13 +57,50 @@ build_psql_masked_stub() {
   done
 }
 
-# setup_file — build the invariant stub bin ONCE. `skip` is illegal here; a missing
-# daemon-apply.sh is handled by the per-test setup skip below.
+# install_psql_stub — the PG stand-in: the id lookup answers the per-test row file.
+install_psql_stub() {
+  cat >"$1/psql" <<'STUB'
+#!/usr/bin/env bash
+sql="$(cat)"
+case "${sql}" in
+  *"id::text = :'pid'"*) cat -- "${STUB_SINGLE_ROW:?}" ;;
+  *) : ;;
+esac
+exit 0
+STUB
+  chmod +x "$1/psql"
+}
+
+# build_guard_passthrough PATH — Python stand-in for the AUTOAGENT_DAEMON_CYCLE_PY seam (run as
+# `python3 <seam>`): the parked-pattern guard answers "no guard fires" (stdin drained for the
+# piping printf); every other mode execs the real file.
+build_guard_passthrough() {
+  local real_literal
+  real_literal="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "${GA}/autoagent/daemon_cycle.py")"
+  cat >"$1" <<PY
+import os
+import sys
+
+if "--parked-pattern-guard" in sys.argv[1:]:
+    sys.stdin.buffer.read()
+    sys.stdout.write('{"guarded": [], "rejected": []}\n')
+    sys.exit(0)
+os.execv(sys.executable, [sys.executable, ${real_literal}] + sys.argv[1:])
+PY
+}
+
+# setup_file — build the invariant stub bin and guard stand-in ONCE. `skip` is
+# illegal here; a missing daemon-apply.sh is handled by the per-test setup skip below.
 setup_file() {
   STUB="${BATS_FILE_TMPDIR}/bin"
+  GUARD_SEAM="${BATS_FILE_TMPDIR}/daemon_cycle_passthrough.py"
   mkdir -p -- "${STUB}"
-  [[ -f "${GA}/autoagent/daemon-apply.sh" ]] && build_psql_masked_stub "${STUB}"
-  export STUB
+  if [[ -f "${GA}/autoagent/daemon-apply.sh" ]]; then
+    build_psql_masked_stub "${STUB}"
+    install_psql_stub "${STUB}"
+    build_guard_passthrough "${GUARD_SEAM}"
+  fi
+  export STUB GUARD_SEAM
 }
 
 setup() {
@@ -79,51 +119,37 @@ teardown() {
   if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
-# write_report LABEL — emit a one-patch JSON report (report-fallback shape) whose
-# patch targets probe.md under AGENTS and carries LABEL as its pattern_label.
-write_report() {
-  local label="$1"
-  printf '%s\n' '# Probe Agent' '' '## Goal' '<!-- EDITABLE:BEGIN -->' \
-    'editable goal line one' '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
-  python3 - "${AGENTS}/probe.md" "${label}" >"${WORK}/report.json" <<'PY'
-import json
-import sys
-
-target, label = sys.argv[1], sys.argv[2]
-print(
-    json.dumps(
-        {
-            "patches": [
-                {
-                    "classification": "body-auto",
-                    "approval_tier": "auto",
-                    "pre_verify_passed": True,
-                    "haiku_status": "ok",
-                    "pattern_label": label,
-                    "pattern_agent": "probe",
-                    "target_file": target,
-                    "proposed_diff": (
-                        "--- a/probe.md\n+++ b/probe.md\n@@ -5,1 +5,2 @@\n"
-                        " editable goal line one\n+inserted editable line\n"
-                    ),
-                }
-            ]
-        }
-    )
-)
-PY
+# b64 — base64 without line breaks, as the single lookup encodes free text.
+b64() {
+  printf '%s' "$1" | base64 | tr -d '\n'
 }
 
-# run_dryrun LABEL ENV... — dry-run the real script over the LABEL report with the
-# psql-masked PATH. Extra args are forwarded to `env` FIRST, so a case may lead with
-# `-u NAME` options: env stops reading options at the first assignment, and the two
+# write_proposal_row LABEL — write probe.md under AGENTS and the stored pending
+# proposal the single lookup returns for it, carrying LABEL as its pattern_label.
+write_proposal_row() {
+  local label="$1" label_b64 agent_b64 target_b64 diff_b64
+  printf '%s\n' '# Probe Agent' '' '## Goal' '<!-- EDITABLE:BEGIN -->' \
+    'editable goal line one' '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
+  label_b64="$(b64 "${label}")"
+  agent_b64="$(b64 probe)"
+  target_b64="$(b64 "${AGENTS}/probe.md")"
+  diff_b64="$(printf '%s\n' '--- a/probe.md' '+++ b/probe.md' '@@ -5,1 +5,2 @@' \
+    ' editable goal line one' '+inserted editable line' | base64 | tr -d '\n')"
+  printf '%s|2026-06-26|%s|%s|%s|%s|pending|ok\n' "${PROPOSAL_ID}" "${label_b64}" \
+    "${agent_b64}" "${target_b64}" "${diff_b64}" >"${WORK}/proposal.row"
+}
+
+# run_dryrun LABEL ENV... — dry-run the real script over the LABEL proposal with the
+# stub PATH. Extra args are forwarded to `env` FIRST, so a case may lead with
+# `-u NAME` options: env stops reading options at the first assignment, and the
 # fixed assignments below would otherwise swallow them as a command name.
 run_dryrun() {
   local label="$1"
   shift
-  write_report "${label}"
+  write_proposal_row "${label}"
   run env "$@" PATH="${STUB}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
-    bash "${REAL_SCRIPT}" --dry-run --report "${WORK}/report.json" --agents-dir "${AGENTS}"
+    STUB_SINGLE_ROW="${WORK}/proposal.row" AUTOAGENT_DAEMON_CYCLE_PY="${GUARD_SEAM}" \
+    bash "${REAL_SCRIPT}" --dry-run --proposal-id "${PROPOSAL_ID}" --agents-dir "${AGENTS}"
 }
 
 # dryrun_log_path DIR — the dry-run JSONL inside the given reports directory.
@@ -155,7 +181,7 @@ assert_row_landed() {
   local label="dryrun-seam-a-$$"
   local reports="${WORK}/reports"
   mkdir -p -- "${reports}"
-  run_dryrun "${label}" AUTOAGENT_REPORTS_DIR="${reports}" HOME="${FAKE_HOME}"
+  run_dryrun "${label}" AUTOAGENT_REPORTS_DIR="${reports}" HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium"
 
   [[ "${status}" -eq 0 ]] || { echo "status=${status} output=${output}" >&2; return 1; }
   assert_row_landed "${reports}" "${label}" || return 1

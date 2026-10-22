@@ -118,6 +118,19 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 # track-outcome.sh, so surfaces 4 and 5 cannot disagree with them about which line declares what.
 # shellcheck source=lib/scope-match.sh
 source "${BASH_SOURCE%/*}/lib/scope-match.sh"
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
 
 # Per-session marker line cap. The marker appends one subagent_type line per spawn with no
 # rotation; a marathon session would grow it unboundedly (the SessionStart reaper
@@ -136,7 +149,7 @@ fi
 # DEV-set — core-compliance-matrix.md Scope Legend canonical DEV agents. Space-separated tokens for
 # bash 3.2 (no declare -A). AUTO-SYNCED from the scope-dev.md DEV roster by agent_lifecycle (the
 # add/delete transaction + `python -m agent_lifecycle sync-gate-roster`) — do NOT hand-edit.
-readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift"
+readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift glass-atrium-dev-aws"
 
 # Deep-review override (surface 5): a declaration listing this many paths, or any path under one of
 # these prefixes, outweighs the writer-reported confidence when the review is composed. The prose SoT
@@ -232,6 +245,8 @@ if [[ "${1:-}" == "--block-counts" ]]; then
 fi
 
 # stdin non-interactive → drain once, otherwise fail-open.
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n input gate_tsv hook_event session_id prompt_b64 prompt_full text decl scope_line files line scan
 input=""
 if [[ ! -t 0 ]]; then
   input="$(cat 2>/dev/null)" || input=""
@@ -311,7 +326,7 @@ references_plan() {
   local text="${1}"
   [[ -z "${text}" ]] && return 1
   printf '%s' "${text}" \
-    | grep -qE 'clauded-docs/[0-9]+|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html|documents/[A-Za-z0-9_./-]+\.html|(^|[^A-Za-z0-9_])plan-[0-9]+([^A-Za-z0-9]|$)|(^|[^A-Za-z0-9_])[0-9]+-plan([^A-Za-z0-9]|$)' 2>/dev/null
+    | drain_after grep -qE 'clauded-docs/[0-9]+|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html|documents/[A-Za-z0-9_./-]+\.html|(^|[^A-Za-z0-9_])plan-[0-9]+([^A-Za-z0-9]|$)|(^|[^A-Za-z0-9_])[0-9]+-plan([^A-Za-z0-9]|$)' 2>/dev/null
 }
 
 # Shared attestation-token predicate: fixed-string (grep -qF) presence of an anchored bracketed
@@ -319,7 +334,7 @@ references_plan() {
 has_token() {
   local text="${1}" literal="${2}"
   [[ -z "${text}" ]] && return 1
-  printf '%s' "${text}" | grep -qF "${literal}" 2>/dev/null
+  printf '%s' "${text}" | drain_after grep -qF "${literal}" 2>/dev/null
 }
 
 # Entry-classification token — the orchestrator's conscious "this DEV task is simple/exempt"
@@ -345,7 +360,7 @@ has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
 # accepts, so a quoted `[SCOPE]` mention alone does not silence the nudge.
 has_scope_token() {
   local decl
-  decl="$(printf '%s\n' "${1}" | scope_decl_select)"
+  decl="$(printf '%s\n' "${1}" | drain_after scope_decl_select)"
   [[ -n "${decl}" ]]
 }
 
@@ -377,7 +392,7 @@ scope_files_sensitive_prefix() {
 # guess. Only the count and the matched prefix reach stderr — the prompt itself never does.
 warn_deep_review() {
   local scope_line files count prefix prefix_note=""
-  scope_line="$(printf '%s\n' "${prompt_full}" | scope_decl_select)"
+  scope_line="$(printf '%s\n' "${prompt_full}" | drain_after scope_decl_select)"
   [[ -n "${scope_line}" ]] || return 0
   files="$(scope_decl_files "${scope_line}")"
   [[ -n "${files}" ]] || return 0
@@ -595,8 +610,9 @@ if references_plan "${prompt_full}"; then
   # SC2310: has_plan_subset_token is a pure predicate — set -e disable under `if` intended.
   # shellcheck disable=SC2310
   if [[ "${orchestrator_origin}" == true ]] && ! has_plan_subset_token "${prompt_full}"; then
-    printf '[enforce-verification-gate] Plan-referencing spawn of %s carries no [PLAN-SUBSET] token. If this delegation is a strict subset of the plan, classify each included task'"'"'s declared predecessors first and record [PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=<edges|n/a>. Advisory only — absence is correct for a whole-plan delegation.\n' \
-      "${subagent_type}" >&2
+    # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → the reviewer-miss block keeps exit 2.
+    (printf '[enforce-verification-gate] Plan-referencing spawn of %s carries no [PLAN-SUBSET] token. If this delegation is a strict subset of the plan, classify each included task'"'"'s declared predecessors first and record [PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=<edges|n/a>. Advisory only — absence is correct for a whole-plan delegation.\n' \
+      "${subagent_type}") >&2 || true
   fi
   # Reviewer durably recorded BEFORE this spawn (sequential reviewer→DEV) → gate satisfied.
   if [[ "${reviewer_present}" == true ]]; then

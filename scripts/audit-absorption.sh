@@ -43,17 +43,11 @@ SCOPE_FILES=(
   autoagent/daemon-apply.sh
   autoagent/daemon-cycle.sh
   autoagent/lib/git-txn.sh
-  scripts/daemon-daily-restart.sh
   scripts/wiki-daily-compile.sh
-  scripts/autoagent-daemon-healthcheck.sh
-  scripts/wiki-daemon-healthcheck.sh
   scripts/pii-scan.sh
-  scripts/daemon-inject-entry.sh
   scripts/pg-backup.sh
   scripts/monitor-log-rotate.sh
   scripts/lib/apply-lock.sh
-  scripts/lib/daemon-bootstrap-common.sh
-  scripts/lib/daemon-lock.sh
   scripts/lib/pg-report-drop.sh
   scripts/lib/wiki-envelope.sh
 )

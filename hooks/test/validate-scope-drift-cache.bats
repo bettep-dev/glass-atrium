@@ -113,7 +113,7 @@ run_hook() {
   input="$(jq -n --arg sid "${SID}" --arg fp "${fp}" \
     '{session_id: $sid, tool_input: {file_path: $fp}}')"
   run env -u PLAN_FILE \
-    HOME="${WORK}" \
+    HOME="${WORK}" GA_DATA_ROOT="${WORK}/.glass-atrium" \
     ATRIUM_MONITOR_PORT=16145 \
     SCOPE_DRIFT_MONITOR_URL="http://127.0.0.1:16145/api/clauded-docs" \
     SCOPE_DRIFT_CACHE_DIR="${CACHE_DIR}" \
@@ -241,6 +241,24 @@ run_hook() {
   run_hook "/work/repo/src/other/out-of-scope.ts"
   [[ "${status}" -eq 0 ]] && [[ "${output}" == *SCOPE-070* ]] && [[ "${output}" == *'"plan_id":7'* ]] \
     || { echo "unlisted path not flagged against the md plan: ${output}" >&2; return 1; }
+}
+
+# ~80 KiB of listed paths → a multi-write writer, which races a reader that stops at a line-1 match at
+# any size; a writer left with a write dies of SIGPIPE, which pipefail reports as "no match". Long paths
+# keep the row count low → the per-row matcher loop stays fast.
+@test "an md plan whose Target Files list exceeds the pipe buffer still warns on an unlisted path" {
+  local body dir
+  dir="src/listed/$(printf 'deeply-nested-module-directory-%02d/' 1 2 3 4 5 6)"
+  body="$(
+    printf '%s\n' '# Plan' '## Target Files'
+    seq -f "- \`${dir}padding-file-%05g.ts\`" 1 350
+    printf '%s\n' '## Open Questions' '- none'
+  )"
+  set_list_rows '{"id":7,"doc_status":"implementing","format":"md","created_at":"2026-07-01T00:00:00Z"}'
+  write_doc 7 md "${body}"
+  run_hook "/work/repo/src/other/out-of-scope.ts"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *SCOPE-070* ]] || { echo "unlisted path not flagged: ${output}" >&2; return 1; }
 }
 
 @test "an md plan binds only through its heading, never through a quoted HTML section" {

@@ -79,3 +79,21 @@ describe("TrendChart y-scale inside a clipping card", () => {
     });
   }
 });
+
+describe("Recharts day ticks in a real browser", () => {
+  const { ChartAxisTick, CHART_TICK_CHAR_PX } = ui.UI as { ChartAxisTick: React.FC<Record<string, unknown>>; CHART_TICK_CHAR_PX: number };
+  const label = "2026-09-30";
+  const tick = renderToStaticMarkup(React.createElement("svg", { width: 400, height: 40 },
+    React.createElement(ChartAxisTick, { x: 200, y: 4, payload: { value: label, coordinate: 200 }, index: 1, visibleTicksCount: 3 })));
+
+  test("a rendered tick label is no wider than the per-character estimate the gap math uses", async () => {
+    const page = await browser.newPage({ viewport: { width: 1024, height: 200 } });
+    await page.setContent(`<!doctype html><html data-theme="light"><body>${tick}</body></html>`);
+    await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+    const width = await page.evaluate(() => document.querySelector("text")!.getComputedTextLength());
+    await page.close();
+
+    assert.ok(width <= label.length * CHART_TICK_CHAR_PX, `"${label}" renders ${width.toFixed(1)}px, over the ${label.length * CHART_TICK_CHAR_PX}px estimate`);
+  });
+});

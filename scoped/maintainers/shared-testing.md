@@ -1,6 +1,6 @@
 # Maintainer notes — `scoped/shared-testing.md`
 
-Corpus-maintenance companion to `scoped/shared-testing.md`. Nothing here binds a running agent: it is the retention ledger, the tooling-status commentary, the academic provenance and the delivery bookkeeping that were removed from the rule file when it was cut to agent-facing duties. Read it before editing that file; do not inject it, and cite it only as the convention below allows.
+Corpus-maintenance companion to `scoped/shared-testing.md`. Nothing here binds a running agent: it holds the rule file's retention ledger, tooling-status commentary, academic provenance and delivery bookkeeping. Read it before editing that file; do not inject it, and cite it only as the convention below allows.
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
@@ -15,8 +15,8 @@ Corpus-maintenance companion to `scoped/shared-testing.md`. Nothing here binds a
 - The rule file applies to all DEV agents, plus glass-atrium-meta-prompt-engineer (prompts = code), plus glass-atrium-qa-code-reviewer, which judges added and edited tests against it.
   - glass-atrium-meta-agent does NOT inherit it; glass-atrium-qa-debugger does not either — it authors no tests.
   - The reviewer's entry is a per-agent `rules.shared` append, like its `shared-naming.md` and `shared-code-structure.md` entries.
-- Membership is declared on the registry row (`agent-registry.json` → the agent's `rules` array) and in `rules/glass-atrium/core-compliance-matrix.md`. The rule file itself no longer restates it.
-- A delivery-status paragraph ("nothing injects it at spawn, so a duty homed HERE reaches no running agent") was DROPPED rather than moved: it is false once the body is delivered, so keeping a copy would preserve a claim a future editor could act on.
+- Membership is declared on the registry row (`agent-registry.json` → the agent's `rules` array) and in `rules/glass-atrium/core-compliance-matrix.md`. The rule file itself does not restate it.
+- Keep a delivery-status paragraph ("nothing injects it at spawn, so a duty homed HERE reaches no running agent") out of both files: the body is delivered at spawn, so the claim is false and a future editor could act on it.
 
 ## Retention ledger — who reads each section
 
@@ -24,7 +24,8 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 
 | Section | Established reader | Where the inbound pointer lives |
 |---|---|---|
-| Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) · `scripts/test/audit-test-smells.bats` header |
+| Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) |
+| Test Quality (with Detection signature per row) | the same adjudicator — the conditional-logic row's data-driven carve-out | `scripts/test/audit-test-smells.bats` header |
 | Test Quality · Mocking Rules · Test Structure · Authoring scope | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
 | Test Structure | glass-atrium-dev-python — its naming and test-data lines | `agents/glass-atrium-dev-python.md` → `### Tests = Specification` · `### Testing` |
 | Rationalization Rejection (Testing) | every agent — via the charter's excuse→rebuttal home-file list and the `feature` note's exception pointer | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection · `core-outcome-record.md` → the `feature` note |
@@ -39,6 +40,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 | Test Depth and Upkeep | the orchestrator, declaring a DEV/PLANNING delegation's `[SCOPE] files=` | `rules/glass-atrium/orchestrator-role.md` → `### Context Handoff Size` → **`files=` completeness duty** |
 
 - **Heading stability**: `## Test Quality`, `### Meaningless-Test Prohibitions`, `## Destructive-Path Suite Safety (live-postgres reach)` and `## Mechanical Success Metrics` are named verbatim by the pointers above. Renaming one dangles its inbound pointer even though no suite reads the body.
+  - Also stable: `### Detection signature per row, keyed by the Prohibited literal above` — named in full by the reviewer row, and by its `Detection signature per row` prefix in the `scripts/test/audit-test-smells.bats` header.
   - Also stable: `## Rationalization Rejection (Testing)` and its bolded lead **Qualifier on the last row (the deliberate-break exception)** — the sandbox write-confinement lane edits one sentence under that lead, and `### What makes a test a test` → **Watch it fail** points at it.
   - A bold lead named verbatim binds the same way: the `core-outcome-record.md` `feature` note names **Qualifier on the last row (the deliberate-break exception)**, so renaming that lead dangles a Tier-1 pointer.
   - Cited by `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks`, some also by in-file pointers — grep before renaming one:
@@ -51,7 +53,11 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 ## Backing honesty — Test Quality
 
 - The `## Test Quality` section is an adherence-layer convention with **no runtime backstop** — no hook or gate verifies that the decision procedure was run, and none can. Its only mechanical companion is the three-signal advisory auditor below, which never inspects the relationship claim itself.
-- The home-file, grouping, ID-ban, comment, test-data and table-form rules are reviewer-applied with no tooling at all. Extending the auditor to ID-bearing titles, incident-framed headers and source-grep pins is a deferred follow-up, not a current check.
+- The home-file, grouping, test-data and table-form rules are reviewer-applied with no tooling at all.
+- The ID-ban and comment rules are CI-blocking for new findings only: `scripts/naming-ratchet.sh` fails the `test-naming-ratchet` job on an `id_title` or `incident_header` finding absent from its committed baseline `scripts/naming-ratchet-baseline.txt`, and on baseline growth.
+  - Not blocked: a finding already in the baseline, and a stale entry's exact text until `naming-ratchet.sh --write` drops it.
+  - Not blocked: baseline growth on a push whose `github.event.before` is all-zeros or cannot be fetched — that run omits `--base`, so the growth check is skipped.
+- Extending the auditor to source-grep pins is a deferred follow-up, not a current check.
 
 ## Test-authoring delta — provenance
 
@@ -78,9 +84,12 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 
 The rule file states only that every row is reviewer-applied. The mapping below is for whoever adjudicates an auditor finding.
 
-- MECHANICAL means decidable-in-principle by a script — NOT that a script exists. **No row on that table is enforced.**
-- Only signals (a) and (b) of `scripts/audit-test-smells.sh` back any row, and that auditor is **ADVISORY**: it exits 0 on findings, is **NOT wired into CI**, and is run by hand.
-- That auditor carries a THIRD signal no row states — (c) count-pin: an assertion comparing a non-zero integer literal against a census the same assertion derives by counting the tree or a source file. A signal-(c) finding therefore maps to no row, and is in particular not the tooling for the change-detector row.
+- MECHANICAL means decidable-in-principle by a script — not that a script exists. **No row on that table is enforced.**
+- Only signals (a) and (b) of `scripts/audit-test-smells.sh` back any row, and that auditor is advisory: it exits 0 on findings, and nothing in CI reads its signals (a)-(c) — the third is below; the naming ratchet runs it only for its `id_title` and `incident_header` counts.
+  - The auditor also reports the advisory `id_title` and `incident_header` counts. They back the **ID ban** and **Comments** rules, not a row, and never change the auditor's exit status.
+  - CI blocks new findings of those two kinds through `scripts/naming-ratchet.sh` against its committed baseline; the ratchet, not the auditor, carries the failing exit (`## Backing honesty — Test Quality`).
+- That auditor carries a third signal no row states — (c) count-pin: an assertion comparing a non-zero integer literal against a census the same assertion derives by counting the tree or a source file.
+  - A signal-(c) finding therefore maps to no row, and is in particular not the tooling for the change-detector row.
 - A row marked `[no tooling]` below has no implementation at all and is reviewer-applied exactly like a JUDGMENT row.
 
 | Prohibited row (keyed by its literal in the rule file) | Smell source | Check |
@@ -95,7 +104,7 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 | A test written per file, class or function by reflex, or to reach a count or coverage figure | Google SWE book ch.12 (per-behavior tests) | JUDGMENT `[no tooling]` |
 | Control flow that can SKIP an assertion | Meszaros 2007 | JUDGMENT `[no tooling]` |
 
-- **Trivial-target row**: resolving the production target from the test is not implemented; the rule file now states the read as the reviewer's own duty instead.
+- **Trivial-target row**: resolving the production target from the test is not implemented; the rule file states the read as the reviewer's own duty.
 - **Conditional-logic row**: deliberately excluded from the auditor, because its carve-out requires reading which branch the assertion sits on. The same reasoning is recorded in the `scripts/audit-test-smells.sh` header.
 - **DAMP carve-out source**: Google Testing Blog, *Tests Too DRY? Make Them DAMP!*, 2019.
 - **Empirical backing for the list as a whole**: smelly tests carry measurably higher defect risk than clean ones (Palomba et al., ASE 2016; corroborated ICSME 2018).
@@ -105,24 +114,24 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 
 - **Test-first duty**: it binds at `core-outcome-record.md` → Field Input Guide → `metric_pass`, which is delivered to every agent and states the observed-failure bar; its `feature` note names the deliberate-break exception and points to the rule file for it.
   - The rule file's qualifier is the exception's one statement — when a test written after its implementation is admissible, and how and where the break is made — and it reconciles the exception with the "Writing code first as a reference" rebuttal.
-- **"Too simple to need tests" row**: the rebuttal is qualified against the prohibited shape *a test whose target has no branch and no logic*, so it no longer collides with the injected minimalism carve-out that exempts a trivial one-liner. The two ends are worded alike on purpose — change them together.
+- **"Too simple to need tests" row**: the rebuttal is qualified against the prohibited shape *a test whose target has no branch and no logic*, so it does not collide with the injected minimalism carve-out that exempts a trivial one-liner.
+  - The two ends are worded alike on purpose — change them together.
 
 ## Destructive-Path Suite Safety — provenance
 
 - **Same-shell rule, PROBED rather than inferred, both halves**: a two-body bats file whose first body defines a function and whose second asserts `declare -F` does not find it — the second body passes, so nothing leaked; and a file defining the same name in `setup` instead — both bodies see it.
 - The section is single-sited here by `orchestrator-role.md` → Document-Driven Workflow step 6, which calls it "pointer only, the procedure is single-sited there". Splitting it across a second heading would move content out from under that pointer.
-- It is the largest section in the rule file and the only task-conditional one; its condition is now stated in its own opening line rather than in a delivery note.
-
-## Follow-up fix pass — Destructive-Path step structure
-
-`### Step 1` through `### Step 4` each opened with one wrapper bullet that pushed all real content to depth 3-4. In each, the wrapper's children were promoted to top level and the wrapper's own non-restating clause was kept as the step's unbolded lead line — none of the four merely restated its heading:
-
-- Step 1 carries "a command-word pattern is FORBIDDEN as the enumeration step";
-- Step 2 names the executing / naming / neutralized vocabulary;
-- Step 3 names the read target and "the pid question is not answerable from the test file alone";
-- Step 4 carries "all of them resolving".
-
-`### Step 5` had no wrapper bullet and was left untouched. Net effect is dedentation only: no step lost a clause, and the section's byte size falls slightly rather than growing — which matters because this H2 is already the largest in the rule file and sits marginally over the 8 KB shape-cap guide, an overage accepted so the procedure stays single-sited under its inbound pointer.
+- It is the largest section in the rule file and the only task-conditional one; its condition is stated in its own opening line.
+  - It sits just under the 8 KB H2 shape-cap guide, with little room to grow while the procedure stays single-sited under its inbound pointer.
+- **Step 5 collision list, measured**: each entry was reproduced by a run under the whole-invocation escape; add a suite only on a reproduced run.
+  - `GA_PG_SOCKET`: `test/run-step-fail-return.bats` with only an off-/tmp `GA_PG_SOCKET` exported failed its `drive_db` rows, and passed every row with the name unset.
+  - `psql`: `hooks/test/ephemeral-pg-locale.bats` failed its two rows asserting on `psql` output under record-only `psql` and `lsof` stubs, and passed all four without them; a `createdb` stub changed nothing.
+  - Not named because measured clean: `test/ga-db-sql-binding.bats`.
+  - Not named although they collide: a whole-tree run under the escape also failed rows in `hooks/test/agent-tracker.bats`, `hooks/test/cost-tracker-dualwrite.bats` and `hooks/test/ephemeral-pg-recorder-schema.bats`, each of which passes unsealed.
+    - Why not named: their failures are attributed to the empty `psql` stub output by inference from rows that read `psql` output, with no per-suite stub comparison like the locale entry's `createdb` run.
+    - Whether Step 5 names them is the rule owner's decision.
+- **Kept on purpose**: the never-`GA_DB_NAME` clause — the guard's FATAL text offers `GA_DB_NAME`, but `lib/ga-db.sh` → `_require_db_setup_ready` tests only `PG_SOCKET`.
+- **Naming**: Step 5's escape is not the per-suite Live-DB seal (`test/lib/bats-db-seal.bash`); name it by Step 5's own wording, never as "the seal".
 
 ## Mechanical Success Metrics — code pointer
 

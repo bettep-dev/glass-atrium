@@ -89,6 +89,7 @@ interface OutcomesHelpers {
     needsYou?: { rows: LedgerRow[]; total: number; windowLabel: string } | null,
   ) => { key: string; label: string; heading: string; rows: LedgerRow[]; anchorId?: string }[];
   BandTileO: (props: { tile: BandTile; windowLabel: string }) => RenderNode;
+  VolumeTilesO: (props: { tiles: BandTile[]; windowLabel: string; info?: unknown }) => RenderNode;
   ResultTable: (props: Record<string, unknown>) => RenderNode;
   ResultTableRow: (props: { row: LedgerRow & { agent: string; task_type: string }; onRowClick: () => void; closure?: ClosureState }) => RenderNode;
   focusLedgerSectionO: (id: string, doc: { getElementById: (id: string) => unknown }) => boolean;
@@ -102,7 +103,7 @@ interface OutcomesHelpers {
   buildActiveFilterEntriesO: (filter: Record<string, unknown>) => { key: string; label: string; patch: Record<string, string> | null }[];
   ActiveFilterChips: (props: { filter: Record<string, unknown>; onRemove?: (patch: Record<string, string>) => void; onClearAll?: () => void }) => RenderNode | null;
   getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
-  window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; PageVerdict: unknown } };
+  window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; PageVerdict: unknown; CardInfo: unknown } };
 }
 
 interface RenderNode {
@@ -343,10 +344,29 @@ test("AlarmLaneO: a stopped channel keeps its lane row, which names the channel 
   const lane = flattenNodes(helpers.AlarmLaneO({ channelLivenessState: silent, searchState: { status: "ready" } }));
   assert.ok(lane.some((n) => n.type === helpers.SilentChannelRowO), "the per-channel row stays in the lane");
 
-  const rowText = flattenNodes(helpers.SilentChannelRowO({ channels: ["subagent-stop"] }))
-    .flatMap((n) => n.children.filter((c) => typeof c === "string")).join("");
+  const { title, body } = helpers.SilentChannelRowO({ channels: ["subagent-stop"] }).props ?? {};
+  const rowText = [title, body].filter((slot) => typeof slot === "string").join(" ");
   assert.match(rowText, /subagent-stop/);
   assert.doesNotMatch(rowText, /Recording stopped|understated/, "the verdict above already states the stop and its effect");
+});
+
+describe("a lane alarm is the shared page-level alert card, its tone never painted on a local tinted shell", () => {
+  const alertCard = (helpers.window.UI as unknown as Record<string, unknown>).AlertCard;
+  const rows = [
+    { name: "a silent channel is critical", tone: "crit", details: undefined, node: () => helpers.SilentChannelRowO({ channels: ["subagent-stop"] }) },
+    { name: "a sustained outage warns, its raw answer behind Details", tone: "warn", details: "HTTP 503", node: () => (helpers.BlockedBannerO as (p: unknown) => RenderNode)({ detail: "HTTP 503" }) },
+  ];
+
+  for (const row of rows) {
+    test(row.name, () => {
+      const node = row.node();
+      assert.strictEqual(node.type, alertCard, "the row renders the shared AlertCard");
+      assert.strictEqual(node.props?.tone, row.tone);
+      assert.ok(node.props?.surface === undefined || node.props.surface === "raised", "a page-level lane row is a raised card");
+      assert.strictEqual(node.props?.style, undefined, "no local tint or tone border");
+      assert.strictEqual(node.props?.details, row.details, "a raw answer rides only the card's Details");
+    });
+  }
 });
 
 test("ledger: a failed read draws one banner at the ledger and its header follows the failed state", () => {
@@ -484,22 +504,57 @@ describe("PageVerdictO: the Task results verdict follows the shared outcome-rate
   const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
   const healthyWindow = ready({ done: 195, fail: 2, done_with_concerns: 3 }, 1);
   const rows = [
-    { name: "breakage at or above 5% is crit", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: recording, tone: "crit", text: /6\.0% of 200 .*failed or were blocked/ },
-    { name: "open caveats at or above 10% alone are warn", state: ready({ done: 170, done_with_concerns: 30 }, 25), liveness: recording, tone: "warn", text: /12\.5% still carry an open caveat/ },
-    { name: "both shares under their steps are ok", state: healthyWindow, liveness: recording, tone: "ok", text: /1\.0% of 200/ },
+    { name: "breakage at or above 5% is crit", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: recording, tone: "crit", text: /6\.0% failed or blocked .*200 records/ },
+    { name: "open caveats at or above 10% alone are warn", state: ready({ done: 170, done_with_concerns: 30 }, 25), liveness: recording, tone: "warn", text: /12\.5% caveat open/ },
+    { name: "both shares under their steps are ok", state: healthyWindow, liveness: recording, tone: "ok", text: /1\.0% failed or blocked .*200 records/ },
     { name: "a sample under the low-N floor claims no tone", state: ready({ fail: 10 }), liveness: recording, tone: "neutral", text: /too few to judge/ },
     { name: "an empty window claims no tone", state: ready({}), liveness: recording, tone: "neutral", text: /No task results/ },
     { name: "a failed read is unknown, never all-clear", state: { status: "error" as const, error: "boom" }, liveness: recording, tone: "neutral", text: /unknown/ },
     { name: "a stopped recording channel is crit over an ok rate", state: healthyWindow, liveness: { status: "ready" as const, data: { alerting: ["subagent-stop"] } }, tone: "crit", text: /Recording stopped on subagent-stop .*understated/ },
-    { name: "an unchecked recording channel holds back the all-clear", state: healthyWindow, liveness: { status: "error" as const, error: "boom" }, tone: "neutral", text: /couldn't check the recording channels/ },
-    { name: "a flagged rate stands while the recording channels are still loading", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: { status: "loading" as const }, tone: "crit", text: /failed or were blocked/ },
+    { name: "an unchecked recording channel holds back the all-clear and says so in the tone word", state: healthyWindow, liveness: { status: "error" as const, error: "boom" }, tone: "neutral", text: /1\.0% failed or blocked/, label: "Couldn't check channels" },
+    { name: "a recording channel still loading holds back the all-clear and says so in the tone word", state: healthyWindow, liveness: { status: "loading" as const }, tone: "neutral", text: /1\.0% failed or blocked/, label: "Checking channels" },
+    { name: "a flagged rate stands while the recording channels are still loading", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: { status: "loading" as const }, tone: "crit", text: /failed or blocked/ },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const node = helpers.PageVerdictO({ analyticsState: row.state, channelLivenessState: row.liveness, windowDays: 30 }) as RenderNode;
       assert.strictEqual(node.type, helpers.window.UI.PageVerdict, "renders the shared PageVerdict atom");
       assert.strictEqual(node.props!.tone, row.tone);
+      assert.strictEqual(node.props!.label, (row as { label?: string }).label, "only an unchecked channel replaces the tone word");
       assert.match(String(node.children.join("")), row.text);
+    });
+  }
+});
+
+// copy cap: a verdict is one line → numbers first, at most 90 characters at a five-digit window
+describe("PageVerdictO: a judged verdict leads with its shares and fits the 90-character line cap", () => {
+  const VERDICT_CAP = 90;
+  const windowOf = (counts: Record<string, number>, open: number) => {
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    return {
+      status: "ready" as const,
+      data: {
+        overall: { total, reconstructed_total: 0, by_result: Object.entries(counts).map(([result, count]) => ({ result, count, writer_open_count: result === "done_with_concerns" ? open : 0 })) },
+        byResultCount: counts,
+      },
+    };
+  };
+  const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
+  const okWindow = windowOf({ done: 11200, fail: 52, done_with_concerns: 100 }, 40);
+  const unreadHero = { status: "loading" as const };
+  const rows = [
+    { name: "a crit rate", analytics: windowOf({ done: 10500, fail: 652, done_with_concerns: 200 }, 120), attention: unreadHero, liveness: recording },
+    { name: "an ok rate", analytics: okWindow, attention: unreadHero, liveness: recording },
+    { name: "an ok rate raised by the hero", analytics: okWindow, attention: { status: "ready" as const, data: { total: 3405, parts: { flagged: 3405, fail: 0, blocked: 0, open: 0 } } }, liveness: recording },
+    { name: "an ok rate while the recording channels are still loading", analytics: okWindow, attention: unreadHero, liveness: { status: "loading" as const } },
+    { name: "an ok rate whose recording channels couldn't be checked", analytics: okWindow, attention: unreadHero, liveness: { status: "error" as const, error: "boom" } },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const node = helpers.PageVerdictO({ analyticsState: row.analytics, channelLivenessState: row.liveness, attentionState: row.attention, windowDays: 30 } as never) as RenderNode;
+      const text = String(node.children.join(""));
+      assert.match(text, /^\d+\.\d% /, `leads with a share: "${text}"`);
+      assert.ok(text.length <= VERDICT_CAP, `"${text}" is ${text.length} chars`);
     });
   }
 });
@@ -538,9 +593,9 @@ describe("PageVerdictO: the verdict is never greener than the needs-you hero", (
     });
   }
 
-  test("a verdict raised by the hero names the needs-you count and links to it", () => {
+  test("a verdict raised by the hero leads with the needs-you share and links to it", () => {
     const node = helpers.PageVerdictO({ analyticsState: healthy, channelLivenessState: recording, attentionState: attention(60), windowDays: 30 } as never) as RenderNode;
-    assert.match(String(node.children.join("")), /60 records .*need you/);
+    assert.match(String(node.children.join("")), /^30\.0% need you · /);
     assert.ok((node.props!.chips as { key: string }[]).some((chip) => chip.key === "needs-you"));
   });
 });
@@ -748,9 +803,12 @@ test("reportingHealthSummaryO: a silent channel is named in the closed summary l
 test("selfReportSummaryO / loopEventsSummaryO: the summary counts what the section holds", () => {
   assert.strictEqual(
     helpers.selfReportSummaryO({ status: "ready", data: aboveFloor({ done: 190 }, 40) }),
-    "160 writer-emitted of 200 records",
+    "160 of 200 self-reported",
     "the closed line names both populations, so the card's all-records counts reconcile with it",
   );
+  // header meta cap → a six-digit window still fits one header line
+  const wide = helpers.selfReportSummaryO({ status: "ready", data: aboveFloor({ done: 120000 }, 4000) });
+  assert.ok(wide.length <= 32, `"${wide}" is ${wide.length} chars`);
   assert.strictEqual(helpers.loopEventsSummaryO({ status: "ready", data: { events: [{}, {}, {}] } }), "3 recent cycle events");
   assert.strictEqual(helpers.loopEventsSummaryO({ status: "ready", data: {} }), "0 recent cycle events");
 });
@@ -779,6 +837,51 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
     assert.strictEqual(asRendered({ ...attention, count }).type, "div", `count ${count} offers no jump`);
   }
   assert.strictEqual(asRendered(tileOf(tiles, "broken")).type, "div", "tiles without a target stay static");
+});
+
+// design.md copy rule: a definition over a cap opens from a focusable ⓘ, never a hover-only title
+describe("StatusBandO: the tile rules open from one focusable ⓘ described by the band label, never from a hover-only title", () => {
+  const data = aboveFloor({ done: 150, fail: 8, blocked: 4 });
+  const tiles = helpers.buildStatusBandTilesO(data, 25);
+  const band = helpers.StatusBandO({ analyticsState: { status: "ready", data }, attentionState: { status: "ready", data: { total: 25, parts: { flagged: 25, fail: 0, blocked: 0, open: 0 } } as { total: number } }, windowDays: 30 });
+  const bandNodes = flattenNodes(band);
+  const volume = bandNodes.find((n) => n.type === helpers.VolumeTilesO)!;
+  const info = volume.props!.info as RenderNode;
+  const hoverTitled = (node: RenderNode) => flattenNodes(node).filter((n) => n.props?.title != null);
+
+  test("no tile carries a hover-only title", () => {
+    const hero = tileOf(tiles, "attention");
+    const rendered = [
+      { name: "a jumpable hero", node: helpers.BandTileO({ tile: hero, windowLabel: "30d" }) },
+      { name: "a static hero", node: helpers.BandTileO({ tile: { ...hero, count: 0 }, windowLabel: "30d" }) },
+      { name: "the volume column", node: helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d" }) },
+    ];
+    for (const row of rendered) assert.deepStrictEqual(hoverTitled(row.node).length, 0, `${row.name} has no hover-only title`);
+  });
+
+  test("the hero's accessible name still carries its rule", () => {
+    const hero = tileOf(tiles, "attention");
+    assert.ok(String(helpers.BandTileO({ tile: hero, windowLabel: "30d" }).props!["aria-label"]).includes(hero.hint));
+  });
+
+  test("the ⓘ sits outside every tile button, is described by the band label, and its drawer names every tile's rule", () => {
+    assert.strictEqual(info.type, helpers.window.UI.CardInfo, "the shared ⓘ trigger");
+    const label = bandNodes.find((n) => n.props?.id === info.props!.describedBy);
+    assert.ok(label, "the ⓘ points at an element in the band");
+    assert.strictEqual(renderText(label).trim(), "Status band");
+    assert.ok(bandNodes.some((n) => n.props?.role === "group" && n.props["aria-labelledby"] === label!.props!.id), "the band is named by the same label");
+    const drawer = renderText(info.children);
+    for (const tile of tiles) {
+      assert.ok(drawer.includes(tile.label), `the drawer names ${tile.key}`);
+      assert.ok(drawer.includes(tile.hint), `the drawer states ${tile.key}'s rule`);
+    }
+  });
+
+  test("the volume column renders the ⓘ it is handed", () => {
+    const marker = { type: "marker", props: {}, children: [] };
+    const column = helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d", info: marker });
+    assert.ok(flattenNodes(column).includes(marker as RenderNode));
+  });
 });
 
 test("focusLedgerSectionO: scrolls to and focuses the target, and reports a missing one", () => {
@@ -1078,8 +1181,8 @@ test("ledger row: the needs-you reason is written on the row and in its accessib
 describe("getGraderSentenceO: automatic checks read as one sentence over the checkable records", () => {
   test("checked = passed + failed, out of every graded record", () => {
     assert.strictEqual(
-      helpers.getGraderSentenceO({ verified_pass: 58, unverified: 9106, verified_fail: 10, not_measured: 3, graded_total: 9174 }),
-      "Checked 68 of 9,174 records: 58 passed, 10 failed",
+      helpers.getGraderSentenceO({ verified_pass: 47, unverified: 8312, verified_fail: 14, not_measured: 5, graded_total: 8373 }),
+      "Checked 61 of 8,373 records: 47 passed, 14 failed",
     );
   });
   test("no breakdown → no sentence, never a sentence of zeros", () => {

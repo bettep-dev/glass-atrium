@@ -1,34 +1,12 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
-# fakechat-cleanup.sh — shared, STRICTLY PORT-SCOPED reap of the orphan bun MCP
-# child that squats a daemon's fakechat HTTP port after its tmux session dies.
-#
-# The confirmed failure: rapidly restarting the autoagent/wiki daemons leaves the
-# bun fakechat server reparented to PID 1, still bound to 127.0.0.1:<port>
-# (autoagent 8787 / wiki 8788, config.toml [ports].{autoagent,wiki}_fakechat). The
-# next `claude --channels plugin:fakechat` session's own bun child then hits
-# EADDRINUSE and never binds within the cold-start budget. This lib reaps that
-# squatter so the fresh child can bind.
-#
-# WHY port-scoped (the load-bearing safety property): both daemons run the
-# IDENTICAL command line `claude --channels plugin:fakechat@claude-plugins-official`
-# — the per-role port is injected via the tmux `-e FAKECHAT_PORT=` ENV, NOT argv. So
-# a `pgrep -f 'plugin:fakechat@'` match is PORT-BLIND and would TERM the LIVE HEALTHY
-# PEER daemon on every restart. This lib NEVER does a plugin:fakechat@ cmdline match:
-# it reaches the owner DIRECTLY by port (lsof -iTCP), and its only cmdline match (the
-# spawn-unix helper) is port-keyed.
-#
-# STRICT-MODE SAFE (sourced BOTH under the daemon bootstrap's `set -Eeuo pipefail` +
-# ERR trap AND under the non-strict ga install/uninstall domain): every lsof/pgrep/
-# kill is `|| true`-guarded, the settle-poll uses the `[[ $((...)) ]]` wall-clock
-# idiom (never a bare `(( ))` whose 0-result would exit a `set -e` caller), and PID
-# lists are consumed via the `while read <<EOF` here-doc idiom. It NEVER toggles
-# `set -e` (that would corrupt the caller's shell mode) and uses NO arrays (a bash
-# 3.2 `set -u` empty-array expansion aborts "unbound").
+# fakechat-cleanup.sh — frees a fakechat HTTP port: its listener owner's process tree + the
+# port-keyed spawn-unix helper. Port-scoped by design — a fakechat channel's port rides an env
+# var, not argv, so a `plugin:fakechat@` cmdline match would reach fakechat sessions on every port.
+# Safe under a strict caller (`set -Eeuo pipefail` + ERR trap) or a non-strict one: probes +
+# signals `|| true`-guarded, no bare `(( ))`, no arrays (bash 3.2 `set -u`), `set -e` never toggled.
 
-# _fakechat_log MSG… — route through the caller's log() when present (daemon
-# bootstrap: role-tagged; ga domain: stderr), else a plain stderr line so the lib is
-# self-contained when sourced standalone.
+# _fakechat_log MSG… — the caller's log() when defined, else a stderr line (standalone source).
 _fakechat_log() {
   if declare -f log >/dev/null 2>&1; then
     log "$@"
@@ -68,10 +46,10 @@ $2
 EOF
 }
 
-# fakechat_free_port PORT — reap whatever squats fakechat PORT: the lsof-identified
-# listener owner + its descendant tree + the port-keyed spawn-unix helper debris.
-# Escalates TERM → settle-poll → KILL → re-lsof race-closer. Best-effort: ALWAYS
-# returns 0 (a teardown / bootstrap reclaim must never abort on a reap hiccup).
+# fakechat_free_port PORT — TERM → settle-poll → KILL → re-lsof race-closer over PORT's listener
+# owner tree + its port-keyed spawn-unix helper. The owner is never identified → an ungated call
+# signals any unrelated listener on PORT; callers gate it (uninstall, or observed retired residue).
+# Best-effort: always returns 0, so a teardown never aborts on a reap hiccup.
 fakechat_free_port() {
   local port="${1:-}"
   # a non-integer / out-of-range port is a caller bug — loud-log + no-op (NEVER

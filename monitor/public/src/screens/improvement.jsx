@@ -54,7 +54,7 @@ const TOAST_DURATION_MS = 3200;
 // (terminal 컬럼 오염 방지) · 카드에 snoozed 마커.
 // variant — 레인별 카드 밀도 (T1). full = AppliedHistoryRowI 이력 행 · compact =
 // CompactProposalCardI 단일행. applied/safety=full, rejected=compact.
-// rejected.tone='crit' 유지 — 심볼-전용 착색용(✕·count·스파크에만, T7 색상 예약).
+// rejected.tone='crit' colours the ✕ glyph and the reject spark only, never the count.
 const KANBAN_COLUMNS = [
 	{
 		key: "safety",
@@ -83,8 +83,6 @@ const KANBAN_COLUMNS = [
 // applied·rejected 2트랙만 순회 (T3). safety 엔트리 label/symbol 은 ROW-1 이 소비.
 const SAFETY_COLUMN = KANBAN_COLUMNS.find((col) => col.key === "safety");
 const TERMINAL_COLUMNS = KANBAN_COLUMNS.filter((col) => col.key !== "safety");
-// REJECTED 컴팩션 — 최근 N행 표시 후 나머지는 '＋N more' 요약으로 접음 (T5).
-const REJECTED_RECENT_CAP = 8;
 
 // 카드 액션 가능 status (mutation 엔드포인트 actionable set 미러 — routes/improvement.ts
 // ACTIONABLE_PROPOSAL_STATUSES). pending/snoozed 만 허용/거절 버튼 노출.
@@ -100,9 +98,6 @@ const TONE_TEXT_CLASS = {
 	crit: "text-crit",
 	info: "text-info",
 };
-// crit 을 ✕ 로 정합(reconcile) — DESIGN.md §4.2 severity 표준(crit=✕) + ui.jsx TONE_GLYPH/TONE_ICON 일치.
-// ⛔(ban) 은 별도 semantic 로 예약 (styleRefGradeBadgeI 의 'block' 게이트에만 잔류).
-const TONE_SYMBOL = { ok: "✓", warn: "⚠", crit: "✕", info: "ℹ" };
 
 // 'text-ok' → 'ok' — 배지 헬퍼(confidenceBadgeMetaI/preVerifyBadgeI)의 tone 문자열을 canonical
 // Badge 의 tone prop(prefix 없는 키)로 변환. 매핑 미스 → 'neutral'(shell neutral 유지).
@@ -116,7 +111,6 @@ const SYMBOL_ICON_I = {
 	"⚠": "warn",
 	"✕": "x",
 	"×": "x",
-	"⛔": "ban",
 	ℹ: "info",
 	"⏸": "pause",
 	"↻": "refresh",
@@ -199,12 +193,8 @@ function ScreenImprovement({ onNav }) {
 				});
 				const body = await res.json().catch(() => ({}));
 				if (res.ok) {
-					showToast(
-						"ok",
-						action === "approve"
-							? `Suggestion #${id} approved and applied (applied)`
-							: `Suggestion #${id} rejected (rejected)`,
-					);
+					const toast = getSuccessToastI(action, id, body);
+					showToast(toast.tone, toast.message);
 					triggerRefresh();
 					return;
 				}
@@ -377,69 +367,49 @@ function ScreenImprovement({ onNav }) {
 			{/* 타입 스케일 토큰 (ui.jsx SoT) — 멱등 마운트. .fs-* 유틸 + --fs-* CSS var 공급. */}
 			<TypeScaleStyle />
 			<style>{`
-        @keyframes toastInI   { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
         @keyframes spinI { from{transform:rotate(0)} to{transform:rotate(360deg)} }
-        @media (prefers-reduced-motion: reduce) { [class*="i-anim-"], .i-act-spin { animation-duration:0.01ms !important; } }
-        /* inset ring — column overflow-y-auto 클리핑 회피 (outset ring 잘림 방지). */
-        .i-card-shadow { box-shadow:0 1px 2px rgba(0,0,0,0.04), inset 0 0 0 1px rgb(var(--line)); }
-        .i-card-shadow:hover { box-shadow:0 2px 8px rgba(0,0,0,0.08), inset 0 0 0 1px rgb(var(--accent) / 0.4); }
-        .i-row-card { transition:box-shadow 120ms, transform 120ms; cursor:pointer; }
-        .i-row-card:hover { transform:translateY(-1px); }
+        @media (prefers-reduced-motion: reduce) { .i-act-spin { animation-duration:0.01ms !important; } }
+        .i-row-card { cursor:pointer; }
+        /* interactive tile — hover = raised-2 shadow step + faint ring, never a transform lift */
+        .i-tile-hover { transition:box-shadow 120ms; }
+        .i-tile-hover:hover { box-shadow:0 0 0 1px rgb(var(--faint)), var(--shadow-raised-2); }
+        @media (prefers-reduced-motion: reduce) { .i-tile-hover { transition:none; } }
         /* clipped board text → whole text on hover or keyboard focus (a title tooltip never shows on focus) */
         .i-row-card:is(:hover, :focus-visible) .i-clip { white-space:normal; overflow:visible; display:block;
           -webkit-line-clamp:unset; overflow-wrap:anywhere; }
-        .i-anim-toast { animation:toastInI 180ms ease-out; }
         /* 카드 메타 배지 — 전부 canonical window.UI.Badge(.pill family)로 이관 (screen-local 배지 CSS 폐지).
            tone 은 status Badge 의 내부 Icon(text-{tone})이 운반 · shell 은 항상 neutral(loud fill 금지 · dual-encode 보존). */
         /* 시그니처 셀 — 2줄 클램프 + 셀 최소폭(crush 방지) + 행 최소높이(1↔2줄 점프 차단). */
         /* line-clamp-2 = webkit box · word-break 으로 긴 단일 토큰도 줄바꿈 → 가로 overflow 방지. */
-        /* 허용/거절 액션 버튼 — dual-encoded (색 + ✓/✕ 기호) · WCAG AA contrast. */
-        .i-act-btn { flex:1; display:inline-flex; align-items:center; justify-content:center; gap:4px; font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); font-weight:600; padding:5px 8px; border-radius:6px; border:1px solid transparent; cursor:pointer; transition:background 120ms, border-color 120ms; }
-        /* RC4 in-flight — opacity 둔감화 + pointer-events:none 가 실제 중복 클릭 게이트. */
-        .i-act-btn:disabled { opacity:.55; cursor:progress; pointer-events:none; }
         /* 스피너 — 텍스트 글리프(↻)에서 인라인 <svg>(Icon 'refresh')로 교체됨. svg 루트는
            transform-origin/transform-box 기본값이 브라우저별로 갈려 off-center wobble 위험 →
            fill-box + center 로 아이콘 자기 중심 회전 고정(제자리 스핀 보장). reduced-motion 시 정지. */
         .i-act-spin { display:inline-block; transform-box:fill-box; transform-origin:center; animation:spinI 0.7s linear infinite; }
-        .i-act-approve { color:rgb(var(--ok)); border-color:rgb(var(--ok) / 0.45); background:rgb(var(--ok) / 0.1); }
-        .i-act-approve:hover { background:rgb(var(--ok) / 0.2); border-color:rgb(var(--ok) / 0.7); }
-        .i-act-reject { color:rgb(var(--crit)); border-color:rgb(var(--crit) / 0.45); background:rgb(var(--crit) / 0.1); }
-        .i-act-reject:hover { background:rgb(var(--crit) / 0.2); border-color:rgb(var(--crit) / 0.7); }
         /* T3 — 종결 그리드 비대칭(applied 2fr : rejected 1fr). 인라인 gridTemplateColumns 금지
            (미디어쿼리가 인라인 스타일을 못 이김) → 클래스 선언 + <640px 단일 컬럼 붕괴를 같은
            블록에서 직접 출하(base.css L607 은 drawer 전용 → 보드 붕괴 미담당 · 검증 완료). */
-        /* loop output — captions wrap to 2 lines · peer cards share one height · the third card spans the row until three fit (no lone half-width card at 1024) */
-        .i-loop-output .card-sub { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
-        .i-loop-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; align-items:stretch; }
+        /* loop output — peer cards share one height · the third card spans the row until three fit (no lone half-width card at 1024) */
+        .i-loop-grid { --i-loop-metric-h:56px; display:grid; grid-template-columns:minmax(0,1fr); gap:12px; align-items:stretch; }
         @media (min-width:768px) { .i-loop-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } .i-loop-grid > :nth-child(3) { grid-column:1 / -1; } }
         @media (min-width:1280px) { .i-loop-grid { grid-template-columns:repeat(3, minmax(0,1fr)); } .i-loop-grid > :nth-child(3) { grid-column:auto; } }
+        /* one loop-card anatomy — metric and visual slots start at the same offsets in all three cards */
+        /* subgrid rows → a metric that wraps in one card moves the visual slot of all three together */
+        .i-loop-grid > .card { display:grid; grid-row:span 4; grid-template-rows:subgrid; row-gap:0; }
+        .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; padding:8px var(--card-pad) 0; }
+        .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
+        /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
+        .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
-        /* 알람 레인 — 보고 표면과 구조적으로 구분되는 유일한 자리. tint 는 컨테이너가
-           운반하고 텍스트 색으로 심각도를 싣지 않는다(라이트 테마 AA 미달). */
-        .i-alarm-lane { border:1px solid rgb(var(--warn) / 0.45); border-radius:10px;
-          background:rgb(var(--warn) / 0.06); padding:2px; }
-        /* T2 — AWAITING 존. 0건 = 슬림 idle 스트립(amber 없음, --sunken/--line 중립).
-           ≥1건 = 상단 full-width --warn 배너(populated-대기에만 amber 소비 · T7). */
+        /* awaiting zone — 0 rows = slim neutral idle strip · 1+ rows = the warn AlertCard over the scrolling list */
         .i-await-strip { display:flex; align-items:center; gap:6px; min-height:30px; padding:0 12px;
           background:rgb(var(--sunken)); border:1px solid rgb(var(--line)); border-radius:8px;
           color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); }
-        .i-await-banner { border:1px solid rgb(var(--warn) / 0.45); border-radius:10px;
-          background:rgb(var(--warn) / 0.08); padding:10px 12px; animation:iAwaitInI 200ms ease-out; }
-        .i-await-head { display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono',monospace;
-          text-transform:uppercase; letter-spacing:0.05em; color:rgb(var(--warn)); font-size:var(--fs-meta); }
-        .i-await-body { display:flex; flex-direction:column; gap:8px; margin-top:8px;
-          max-height:40vh; overflow-y:auto; }
-        @keyframes iAwaitInI { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
-        /* T8 — reduced-motion: 공간 오버슈트 제거, opacity-only 전이(keyframe 재정의). */
-        @media (prefers-reduced-motion: reduce) {
-          @keyframes iAwaitInI { from { opacity:0; } to { opacity:1; } }
-        }
+        .i-await-body { display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow-y:auto; }
         /* T6 — APPLIED/REJECTED 종결-컬럼 헤더 공용 밴드. 두 헤더 동일 min-height + 세로중앙 정렬 →
            헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). 26px = fs-stat 18px count 를 담는 높이. */
         .i-col-header { min-height:26px; display:flex; align-items:center; }
-        /* T6 — APPLIED hero. 18px --ok count(상태 밴드 수치보다 작게) 는 hero 축 세로중앙(.i-col-header) · ✓+APPLIED 라벨은
-           별도 inline-flex 그룹으로 묶어 자기들끼리 세로중앙(✓ mid = 라벨 mid) → 붕 뜸 제거. gap 만 담당. */
+        /* applied hero — ink count below the status band's figure size · ✓ + label grouped so the glyph centres on the label */
         .i-applied-hero { gap:6px; }
         /* T5 — REJECTED 컴팩트 행(단일행 · rationale 숨김 · 중립 chrome). --crit 는 ✕ 심볼에만. */
         .i-compact-row { display:flex; align-items:center; gap:6px; padding:5px 8px; }
@@ -556,6 +526,18 @@ function ScreenImprovement({ onNav }) {
 	);
 }
 
+// 2xx toast — an approve whose apply record was not written (exit 26) warns: the row is applied, the table copy is not
+function getSuccessToastI(action, id, body) {
+	if (action !== "approve") {
+		return { tone: "ok", message: `Suggestion #${id} rejected (rejected)` };
+	}
+	if (body?.record_missing) {
+		const reason = body.reason ? String(body.reason) : "apply record not written";
+		return { tone: "warn", message: `Suggestion #${id} applied, but ${reason}` };
+	}
+	return { tone: "ok", message: `Suggestion #${id} approved and applied (applied)` };
+}
+
 const sumCountsI = (list) =>
 	list.reduce((sum, b) => sum + Number(b.count ?? 0), 0);
 
@@ -632,7 +614,7 @@ function StatusBandI({
 					label="Applied (7 days)"
 					value={formatIntI(applied)}
 					owner="loop output"
-					population={`${appliedHeld ? `${appliedHeld} · ` : ""}of ${formatIntI(cycleTotal)} cycles · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
+					population={`${appliedHeld ? `${appliedHeld} · ` : ""}of ${getCycleCountTextI(cycleTotal)} · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
 					basis="Cycles started in the last 7 days"
 					onRetry={onRetry}
 				/>
@@ -764,7 +746,7 @@ function InstrumentationStripI({ styleRef, corpusAuditState, at, onOpen }) {
 				>
 					<SymI s={chip.symbol} className={chip.tone} size={11} />
 					<span className="text-ink">{chip.name}</span>
-					<span className={chip.tone}>{chip.label}</span>
+					<span className="text-dim">{chip.label}</span>
 				</span>
 			))}
 			<button type="button" className="btn ghost sm" onClick={onOpen}>
@@ -820,7 +802,7 @@ function StatusTileI({ status, tone, symbol, label, value, population, basis, ow
 function TilePlaceholderI({ status, label, owner, onRetry }) {
 	const { LoadingPlaceholder } = window.UI;
 	return (
-		<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
+		<div className="sub-card bg-elev p-2.5 min-w-0">
 			<div className="fs-meta text-faint min-h-[2.4em]">{label}</div>
 			{status === "loading" ? (
 				<LoadingPlaceholder label={label} minHeight={28} className="mt-1" />
@@ -861,6 +843,10 @@ function formatCycleStampI(iso) {
 	});
 }
 
+function getCycleCountTextI(count) {
+	return `${formatIntI(count)} ${count === 1 ? "cycle" : "cycles"}`;
+}
+
 // 뷰 전환 — nav 항목이 아니라 화면 안의 전환이다. 선택 상태는 aria-pressed 와 ✓ 글리프가
 // 함께 운반한다(색 단독 금지).
 function ViewToggleI({ view, onChange }) {
@@ -898,7 +884,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
-				<CardHead title="Verified vs rejected (trend)" />
+				<CardHead title="Verified vs rejected" />
 				<div className="px-5 pb-4">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.trend}
@@ -916,7 +902,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 	if (state.status === "loading" || !aggregate) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
-				<CardHead title="Verified vs rejected (trend)" />
+				<CardHead title="Verified vs rejected" />
 				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="the trend" minHeight={60} />
 				</div>
@@ -929,7 +915,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 	if (series.length < 2) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
-				<CardHead title="Verified vs rejected (trend)" />
+				<CardHead title="Verified vs rejected" />
 				<div className="px-5 pb-4">
 					<div className="placeholder">Not enough days to plot a trend</div>
 				</div>
@@ -942,27 +928,26 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		const scored = d.verified + d.reject;
 		return { label: formatDateI(d.date), value: scored > 0 ? d.reject / scored : null };
 	});
+	const basis = getLoopBasisI(aggregate);
 	return (
 		<div className="card" id={ANCHOR_ID_I.trend}>
-			<CardHead title="Verified vs rejected (trend)" sub={getLoopBasisI(aggregate)} />
-			<div className="px-5 pb-4">
-				<div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mb-1">
-					<RejectRateHeadlineI before={aggregate.failBefore} after={aggregate.failAfter} />
-					<span className="fs-meta text-faint">
-						{`Share rejected per day · all ${formatIntI(series.length)} cycle days: ${formatIntI(aggregate.verifiedTotal)} verified · ${formatIntI(aggregate.rejectTotal)} rejected`}
-					</span>
-				</div>
-				<TrendChart
-					label="Share of scored cycles rejected, per day"
-					tone="warn"
-					kind="bars"
-					h={112}
-					yScale
-					maxTicks={5}
-					formatValue={(v) => `${Math.round(v * 100)}%`}
-					points={points}
-				/>
-			</div>
+			<CardHead title="Verified vs rejected" sub={<span title={basis.title}>{basis.text}</span>} />
+			{getLoopSlotsI({
+				metric: <RejectRateHeadlineI before={aggregate.failBefore} after={aggregate.failAfter} />,
+				visual: (
+					<TrendChart
+						label="Share of scored cycles rejected, per day"
+						tone="warn"
+						kind="bars"
+						h={112}
+						yScale
+						maxTicks={5}
+						formatValue={(v) => `${Math.round(v * 100)}%`}
+						points={points}
+					/>
+				),
+				foot: `Share rejected per day · all ${formatIntI(series.length)} cycle days: ${formatIntI(aggregate.verifiedTotal)} verified · ${formatIntI(aggregate.rejectTotal)} rejected`,
+			})}
 		</div>
 	);
 }
@@ -1003,7 +988,7 @@ function LoopOutputGroupI({
 		<section className="space-y-3 i-loop-output" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
 			<CardHead
 				title="Loop output"
-				sub="Last 7 days of cycles unless a card names its own basis"
+				sub="7-day cycles unless a card says"
 				right={
 					<button
 						className="btn ghost sm"
@@ -1116,7 +1101,8 @@ function KanbanCardI({
 			<div className="flex-shrink-0">
 				<CardHead
 					title="Suggestion board"
-					sub={`Applied and rejected: latest ${BOARD_RECENT_LIMIT} suggestions · awaiting: every open one`}
+					sub={`Lanes: latest ${BOARD_RECENT_LIMIT} suggestions`}
+					info={`Applied and rejected lanes read the latest ${BOARD_RECENT_LIMIT} suggestions. Awaiting shows every open one.`}
 				/>
 			</div>
 			{isError ? (
@@ -1183,16 +1169,17 @@ function AwaitingZoneI({ rows, onRowClick, onAction, pendingActionId }) {
 	);
 }
 
-// ≥1건 — 상단 full-width amber 배너 (populated-대기에만 --warn 소비 · T7). maxHeight 40vh 스크롤.
+// 1+ rows — the warn AlertCard heads the list (the zone around it is the live region) · list scrolls past 40vh
 function AwaitingBannerI({ rows, onRowClick, onAction, pendingActionId }) {
+	const { AlertCard } = window.UI;
 	return (
-		<div className="i-await-banner">
-			<div className="i-await-head">
-				<SymI s={SAFETY_COLUMN.symbol} size={13} />
-				<span>{SAFETY_COLUMN.label}</span>
-				<span className="tnum">{formatIntI(rows.length)}</span>
-				<span className="ml-auto fs-meta">Your call</span>
-			</div>
+		<div className="flex flex-col gap-2">
+			<AlertCard
+				tone="warn"
+				hasLiveHost
+				title={`${SAFETY_COLUMN.label} · ${formatIntI(rows.length)}`}
+				body="Your call"
+			/>
 			<div className="i-await-body">
 				{rows.map((row) => (
 					<ProposalCardI
@@ -1228,15 +1215,19 @@ function KanbanColumnI({
 	rejectBuckets,
 	onRowClick,
 }) {
-	const { EmptyState } = window.UI;
+	const { EmptyState, getSlotRows } = window.UI;
+	const [isExpanded, setExpanded] = useSI(false);
 	const isCompact = column.variant === "compact";
+	// both lanes cap at the M slot → their show-all feet line up across the grid
+	const { rows: cappedRows, hiddenCount } = getSlotRows(rows, "M");
+	const shown = isExpanded ? rows : cappedRows;
 	// 빈-컬럼 안내 — 원인 한 줄 + 다음-단계 힌트 (bare "Empty" 대체, 공용 EmptyState atom SoT).
 	const emptyMessage =
 		column.key === "applied" ? "Nothing applied yet" : "Nothing rejected";
 	const emptyHint =
 		column.key === "applied"
 			? "Approved suggestions move here once the loop applies them."
-			: "Suggestions the loop or a reviewer turned down show up here.";
+			: "Suggestions turned down, or closed without a verdict, show up here.";
 	// 헤더 sticky + --elev 배경 — 카드 본문 톤과 통일 · row scroll 시 헤더 비침 차단.
 	return (
 		<div className="flex flex-col min-h-0 min-w-0 gap-2">
@@ -1273,10 +1264,10 @@ function KanbanColumnI({
 				{rows.length === 0 ? (
 					<EmptyState message={emptyMessage} hint={emptyHint} />
 				) : isCompact ? (
-					<RejectedCompactListI rows={rows} onRowClick={onRowClick} />
+					<RejectedCompactListI rows={shown} onRowClick={onRowClick} />
 				) : (
 					<ul className="flex flex-col gap-1">
-						{rows.map((row) => (
+						{shown.map((row) => (
 							<li key={row.id}>
 								<AppliedHistoryRowI row={row} onClick={() => onRowClick(row)} />
 							</li>
@@ -1284,7 +1275,42 @@ function KanbanColumnI({
 					</ul>
 				)}
 			</div>
+			{hiddenCount > 0 ? (
+				<LaneMoreToggleI
+					hiddenCount={hiddenCount}
+					isExpanded={isExpanded}
+					noun={isCompact ? "closed" : "applied"}
+					onToggle={() => setExpanded((prev) => !prev)}
+				/>
+			) : null}
 		</div>
+	);
+}
+
+// '＋N more' — a real focusable toggle, expanding the lane in place; volume stays a number.
+function LaneMoreToggleI({ hiddenCount, isExpanded, noun, onToggle }) {
+	return (
+		<button
+			type="button"
+			className="i-more-btn"
+			onClick={onToggle}
+			aria-expanded={isExpanded}
+			aria-label={
+				isExpanded
+					? `Show fewer ${noun} suggestions`
+					: `View all ${noun} suggestions (${formatIntI(hiddenCount)} more)`
+			}
+		>
+			{isExpanded ? (
+				<>
+					<SymI s="−" size={13} /> show less
+				</>
+			) : (
+				<>
+					<SymI s="＋" size={13} /> {formatIntI(hiddenCount)} more · view all
+				</>
+			)}
+		</button>
 	);
 }
 
@@ -1320,7 +1346,7 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="i-row-card bg-elev rounded-md w-full min-w-0 text-left px-2 py-1.5 flex items-center gap-2 fs-meta"
+			className="i-row-card i-tile-hover bg-elev rounded-md w-full min-w-0 text-left px-2 py-1.5 flex items-center gap-2 fs-meta"
 			title={title}
 			aria-label={ariaLabel}
 		>
@@ -1331,19 +1357,19 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 	);
 }
 
-// T6 — APPLIED hero 헤더. fs-stat --ok tnum count + ✓ + 'APPLIED'(fs-meta 라벨 ≈ 2:1). 부피막대 없음.
+// applied lane header — ink count + ok ✓ glyph + dim label; the tone rides on the glyph alone
 function AppliedHeroHeaderI({ count, label, symbol }) {
 	return (
 		<div className="i-applied-hero i-col-header">
 			<span
-				className="fs-stat tnum font-mono text-ok"
+				className="fs-stat tnum font-mono text-ink"
 				style={{ lineHeight: 1 }}
 			>
 				{formatIntI(count)}
 			</span>
 			<span className="inline-flex items-center gap-1.5">
 				<SymI s={symbol} className="text-ok" size={14} />
-				<span className="fs-meta uppercase tracking-wider text-ok">
+				<span className="fs-meta uppercase tracking-wider text-dim">
 					{label}
 				</span>
 			</span>
@@ -1351,8 +1377,7 @@ function AppliedHeroHeaderI({ count, label, symbol }) {
 	);
 }
 
-// T5/T6/T7 — REJECTED 중립 헤더. --crit 는 ✕ 심볼·count·스파크에만, 라벨 chrome 은 그레이(--dim).
-// reject 스파크는 헤더 우측(loopAggregate.trend reject 계열 · stroke --crit/0.6 ≠ --warn).
+// rejected lane header — crit on the ✕ glyph and the reject spark only · label dim, count ink
 // count + cause split share the server day window; the fetched rows count only when no window came back
 function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
 	const hasSpark = Array.isArray(trend) && trend.length >= 2;
@@ -1367,7 +1392,7 @@ function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
 		<div className="i-col-header gap-1.5 fs-meta font-mono uppercase tracking-wider whitespace-nowrap min-w-0">
 			<SymI s={symbol} className="text-crit" size={13} />
 			<span className="text-dim">{label}</span>
-			<span className="text-crit tnum">{formatIntI(count)}</span>
+			<span className="text-ink tnum">{formatIntI(count)}</span>
 			<span className="text-faint normal-case tracking-normal truncate min-w-0">{basis}</span>
 			{hasSpark ? (
 				<span className="ml-auto flex items-center gap-1">
@@ -1395,7 +1420,7 @@ function RejectBucketSplitI({ summary }) {
 		[
 			"Infra",
 			summary.infra_count,
-			"The model call yielded no usable diff (quota / transient / auth) — never judged",
+			"Never judged — the model call yielded no usable diff (quota / transient / auth), or the loop closed the row without a verdict",
 		],
 		[
 			"Lifecycle",
@@ -1470,51 +1495,19 @@ function getRejectSparkNameI(reject) {
 	return `Rejections per day over ${reject.length} days — latest ${latest}, peak ${peak}, ${total} in total`;
 }
 
-// T5 — 최근 REJECTED_RECENT_CAP 행만 표시 + 나머지는 '＋N more' 요약(38 은 숫자로 인정).
-// '＋N more' 는 실제 포커스 가능 버튼(T8) → in-place 확장 토글(전용 화면 없음, 볼륨은 숫자로만).
+// Rejected-lane rows, grouped under their shared pattern label (the lane caps and expands them).
 function RejectedCompactListI({ rows, onRowClick }) {
-	const [isExpanded, setExpanded] = useSI(false);
-	const shown = isExpanded ? rows : rows.slice(0, REJECTED_RECENT_CAP);
-	const moreCount = rows.length - REJECTED_RECENT_CAP;
-
-	return (
-		<React.Fragment>
-			{groupByLabelI(shown).map((group) => (
-				<RejectedGroupI
-					key={group.label}
-					label={group.label}
-					rows={group.rows}
-					onRowClick={onRowClick}
-				/>
-			))}
-			{moreCount > 0 && (
-				<button
-					type="button"
-					className="i-more-btn"
-					onClick={() => setExpanded((prev) => !prev)}
-					aria-expanded={isExpanded}
-					aria-label={
-						isExpanded
-							? "Show fewer declined suggestions"
-							: `View all declined suggestions (${formatIntI(moreCount)} more)`
-					}
-				>
-					{isExpanded ? (
-						<>
-							<SymI s="−" size={12} /> show less
-						</>
-					) : (
-						<>
-							<SymI s="＋" size={12} /> {formatIntI(moreCount)} more · view all
-						</>
-					)}
-				</button>
-			)}
-		</React.Fragment>
-	);
+	return groupByLabelI(rows).map((group) => (
+		<RejectedGroupI
+			key={group.label}
+			label={group.label}
+			rows={group.rows}
+			onRowClick={onRowClick}
+		/>
+	));
 }
 
-// Shared pattern label printed once as the group head, not on every declined row.
+// Shared pattern label printed once as the group head, not on every row.
 function RejectedGroupI({ label, rows, onRowClick }) {
 	return (
 		<div className="flex flex-col gap-1">
@@ -1549,12 +1542,27 @@ function groupByLabelI(rows) {
 function CompactProposalCardI({ row, onClick }) {
 	// group head carries the pattern label → the row leads with its own reason
 	const primary = row.rationale || "No rationale recorded";
+	// closed by the loop with no gate verdict → shares the column, never reads as a reject
+	const isJudged = row.status !== "unadjudicated";
 	// 행별 ✕ 없음 — 열 헤더 ✕/--crit 가 rejected 상태를 이미 인코딩
 	return (
 		<BoardRowI
 			onClick={onClick}
 			title={String(primary)}
-			ariaLabel={`View declined suggestion ${row.id} details`}
+			ariaLabel={
+				isJudged
+					? `View declined suggestion ${row.id} details`
+					: `View suggestion ${row.id} details — closed without a verdict`
+			}
+			lead={
+				isJudged ? null : (
+					<span
+						className="text-faint uppercase tracking-wider shrink-0"
+						title="Closed by the loop without a verdict — not a rejection">
+						Not judged
+					</span>
+				)
+			}
 			text={primary}
 			trail={
 				<>
@@ -1586,7 +1594,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 	const isSnoozed = status === "snoozed";
 
 	return (
-		<div className="i-card-shadow bg-elev rounded-md">
+		<div className="sub-card i-tile-hover bg-elev p-0">
 			<button
 				type="button"
 				onClick={onClick}
@@ -1670,11 +1678,9 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 	);
 }
 
-// 허용(approve)/거절(reject) 버튼 행 — dual-encoded (색 + 기호 ✓/✕).
-// safety 카드는 "High-risk — your call" 라벨 추가 (안전 게이트 강조).
-// 클릭 시 onAction 위임 → 부모가 fetch + toast + refresh 처리.
-// isPending — 이 카드 액션 in-flight → 두 버튼 disable + aria-busy + 스피너
-//   (응답까지 중복 클릭 차단 · .i-act-btn:disabled 가 실제 게이트).
+// approve / reject row — shared .btn sm: approve = ok ✓ glyph + ink label · reject = destructive crit outline.
+// a safety card adds a "Your call" line (warn ⚠ glyph, dim words).
+// isPending → both buttons disabled + aria-busy + spinner until the answer lands (no double submit).
 function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 	const stop = (fn) => (e) => {
 		e.stopPropagation();
@@ -1683,14 +1689,14 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 	return (
 		<div className="px-2.5 pb-2.5 pt-0">
 			{isSafety && (
-				<div className="fs-meta text-warn mb-1.5 flex items-center gap-1">
-					<SymI s="⚠" size={11} /> Your call
+				<div className="fs-meta text-dim mb-1.5 flex items-center gap-1">
+					<SymI s="⚠" className="text-warn" size={11} /> Your call
 				</div>
 			)}
 			<div className="flex items-center gap-1.5">
 				<button
 					type="button"
-					className="i-act-btn i-act-approve"
+					className="btn sm flex-1 justify-center"
 					onClick={stop(() => onAction("approve", row))}
 					disabled={isPending}
 					aria-busy={isPending}
@@ -1702,13 +1708,14 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 						</>
 					) : (
 						<>
-							<SymI s="✓" size={13} /> Approve
+							<SymI s="✓" className="text-ok" size={13} /> Approve
 						</>
 					)}
 				</button>
 				<button
 					type="button"
-					className="i-act-btn i-act-reject"
+					className="btn sm flex-1 justify-center"
+					style={REJECT_OUTLINE_STYLE}
 					onClick={stop(() => onAction("reject", row))}
 					disabled={isPending}
 					aria-busy={isPending}
@@ -1728,6 +1735,9 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 		</div>
 	);
 }
+
+// destructive outline (design.md §7.4) — crit label + crit border, no fill; the agents Delete button's shape
+const REJECT_OUTLINE_STYLE = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))" };
 
 // confidence_observed(NN%) 배지 — empirical posterior (0.0-1.0).
 // canonical status Badge(.pill)로 렌더 — 밴드 tone 은 선행 Icon(TONE_ICON[tone])이 운반, shell 은 neutral.
@@ -1807,7 +1817,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
-				<CardHead title="Learning memory: wins & mistakes (CTM · EPM)" />
+				<CardHead title="Learning memory" />
 				<div className="p-3">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.learningMemory}
@@ -1826,8 +1836,8 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
 				<CardHead
-					title="Learning memory: wins & mistakes (CTM · EPM)"
-					sub="All time, every agent — not the group's 7-day cycle window"
+					title="Learning memory"
+					sub="CTM/EPM · all time"
 				/>
 				<div className="p-3">
 					<LoadingPlaceholder label="learning memory" minHeight={68} />
@@ -1836,55 +1846,42 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 		);
 	}
 
-	const { ctm, epm, outcome, joinMeta } = buckets;
-	// linked_agent_count = DISTINCT 연결 에이전트 수 (record-level 연결은 FK 부재로 측정 불가).
-	const linkedAgents = Number(joinMeta?.linked_agent_count ?? 0);
+	const { ctm, epm } = buckets;
 	// 보고 표면 — 크롬은 중립, 톤은 SymI 글리프에만.
 	const cards = [
 		// CTM 실제 유도식 = confidence high + metric_pass + done — 학습 패턴 카드(learning_log)와 산출 기준이 다름.
-		[
-			"✓",
-			"text-ok",
-			"Confirmed wins",
-			formatIntI(ctm),
-			"Confidence high · check passed · done",
-		],
-		[
-			"⚠",
-			"text-warn",
-			"Mistake patterns (EPM)",
-			formatIntI(epm),
-			"Cases that failed or needed repeated rework",
-		],
+		["✓", "text-ok", "Confirmed wins", ctm, "Confidence high · check passed · done"],
+		["⚠", "text-warn", "Mistake patterns (EPM)", epm, "Cases that failed or needed repeated rework"],
 	];
 	return (
 		<div className="card" id={ANCHOR_ID_I.learningMemory}>
 			<CardHead
-				title="Learning memory: wins & mistakes (CTM · EPM)"
-				sub="All time, every agent — not the group's 7-day cycle window"
+				title="Learning memory"
+				sub="CTM/EPM · all time"
 			/>
-			<div className="grid grid-cols-2 gap-2 p-3">
-				{cards.map(([sym, tone, label, value, hint]) => (
-					<div
-						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
-					>
-						<div className="flex items-start gap-1.5 fs-meta min-h-[2.4em]">
-							<SymI s={sym} className={tone} size={12} />
-							<span>{label}</span>
-						</div>
-						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-							{value}
-						</div>
-						<div
-							className="card-sub fs-meta mt-1"
-							title={window.UI.titleOf(hint)}
-						>
-							{hint}
-						</div>
+			{getLoopSlotsI({
+				metric: cards.map(([sym, tone, label, value]) => (
+					<span key={label} className="inline-flex items-baseline gap-1.5">
+						<SymI s={sym} className={tone} size={13} />
+						<span className="fs-stat font-semibold text-ink font-mono">{formatIntI(value)}</span>
+						<span className="fs-meta text-dim">{label}</span>
+					</span>
+				)),
+				visual: (
+					<div className="grid grid-cols-2 gap-2">
+						{cards.map(([sym, tone, label, , hint]) => (
+							<div key={label} className="sub-card bg-elev p-2.5 min-w-0">
+								<div className="flex items-start gap-1.5 fs-meta">
+									<SymI s={sym} className={tone} size={13} />
+									<span>{label}</span>
+								</div>
+								<div className="card-sub is-wrap fs-meta mt-1">{hint}</div>
+							</div>
+						))}
 					</div>
-				))}
-			</div>
+				),
+				foot: "All agents · not the group's 7-day window",
+			})}
 		</div>
 	);
 }
@@ -1896,7 +1893,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 function AlarmLaneI({ applyCap }) {
 	if (Number(applyCap?.capped_patterns ?? 0) <= 0) return null;
 	return (
-		<div className="i-alarm-lane" role="region" aria-label="Alarms">
+		<div className="flex flex-col gap-2" role="region" aria-label="Alarms">
 			<ParkedLoopBannerI applyCap={applyCap} />
 		</div>
 	);
@@ -1915,25 +1912,14 @@ function ParkedLoopBannerI({ applyCap }) {
 	const capped = Number(applyCap.capped_patterns ?? 0);
 	if (capped <= 0) return null;
 	const agents = Number(applyCap.capped_agents ?? 0);
+	const { AlertCard } = window.UI;
+	// the hint stays in the wrapping body — a "do not do this" warning cannot hide behind a clamp or a hover
 	return (
-		<div className="card" role="status" data-testid="parked-loop-banner">
-			<div className="flex items-start gap-2 p-3">
-				<SymI s="⚠" className="text-warn" size={14} />
-				<div className="min-w-0">
-					<div className="fs-meta">
-						Repeat-apply cap — {formatIntI(capped)} parked{" "}
-						{capped === 1 ? "pattern" : "patterns"} across {formatIntI(agents)}{" "}
-						{agents === 1 ? "agent" : "agents"}
-					</div>
-					{/* is-wrap 필수 — .card-sub 기본값은 nowrap+ellipsis 1줄 클램프다. 이 경고는
-					    500자대이고, 잘린 앞부분이 하필 되돌리기를 권하는 문장처럼 읽힌다.
-					    title 툴팁만으로는 부족하다: 하지 말라는 경고를 hover 뒤에 둘 수 없다. */}
-					<div className="card-sub is-wrap fs-meta mt-1">
-						{applyCap.rearm_hint}
-					</div>
-				</div>
-			</div>
-		</div>
+		<AlertCard
+			tone="warn"
+			title={`Repeat-apply cap — ${formatIntI(capped)} parked ${capped === 1 ? "pattern" : "patterns"} across ${formatIntI(agents)} ${agents === 1 ? "agent" : "agents"}`}
+			body={applyCap.rearm_hint}
+		/>
 	);
 }
 
@@ -1992,7 +1978,7 @@ function HeldCauseStripI({ buckets }) {
 							<SymI
 								s={isHumanCause ? "⚠" : "ℹ"}
 								className={isHumanCause ? "text-warn" : "text-faint"}
-								size={11}
+								size={13}
 							/>
 						</span>
 						<span className="text-ink">{b.label}</span>
@@ -2002,8 +1988,6 @@ function HeldCauseStripI({ buckets }) {
 						<span className="text-dim tnum">
 							{`${formatIntI(agents)} ${agents === 1 ? "agent" : "agents"}`}
 						</span>
-						{/* is-wrap required — .card-sub clamps to one line, and a clipped remedy leaves only the numbers. */}
-						<span className="card-sub is-wrap fs-body">{b.hint}</span>
 					</li>
 				);
 			})}
@@ -2135,32 +2119,44 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 // 원장 푸터 — 모든 수치가 자기 게이트를 데리고 다닌다. 이웃한 숫자가 서로 다른 윈도우와
 // 모집단을 가질 때, 게이트 없는 숫자는 조용히 비교당한다. 폐지된 Learned-patterns 카드에서
 // 살아남은 사실(전체 패턴 수 · 반려 수)도 여기에 있다.
-function LedgerFooterI({ total, declined, suppression }) {
-	const pendingTotal = Number(suppression?.pending_total ?? 0);
+function LedgerFooterI({ total, declined }) {
+	return (
+		<div className="card-foot">
+			{`${formatIntI(total)} patterns · ${formatIntI(declined)} declined, all time · rows above: last 7 days`}
+		</div>
+	);
+}
+
+// "How this is counted" drawer — each cause's remedy and the figures' gates, kept off the card face.
+function LedgerNotesI({ suppression }) {
+	const causes = new Map();
+	for (const key of ["parked", "per_cycle"]) {
+		for (const b of getSuppressionListI(suppression, key)) causes.set(`${b.cause}:${b.hint}`, b);
+	}
 	const unpromptable = Number(suppression?.pending_unpromptable ?? 0);
+	const pendingTotal = Number(suppression?.pending_total ?? 0);
 	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
 	return (
-		<div className="px-3 pb-3 flex flex-col gap-1">
-			<div className="card-sub is-wrap fs-meta">
-				{formatIntI(total)} patterns recorded all time · {formatIntI(declined)}{" "}
-				declined all time · the live and inert rows above are the last 7 days of
-				discovery
-			</div>
+		<div className="flex flex-col gap-3 fs-body">
+			<p>The live and inert rows are the last 7 days of discovery; totals and declines are all time.</p>
+			{[...causes.values()].map((b) => (
+				<p key={`${b.cause}:${b.hint}`}>
+					<span className="text-ink font-semibold">{b.label}</span> — {b.hint}
+				</p>
+			))}
 			{suppression ? (
-				<div className="card-sub is-wrap fs-meta">
-					{formatIntI(unpromptable)} of {formatIntI(pendingTotal)} pending rows can
-					never propose — counted
-					across every agent, because the intake skip reads the label. The held
-					figures above are narrower: agents in agent-registry.json only.
-				</div>
+				<p>
+					{formatIntI(unpromptable)} of {formatIntI(pendingTotal)} pending rows can never propose —
+					counted across every agent, because the intake skip reads the label. The held figures are
+					narrower: agents in agent-registry.json only.
+				</p>
 			) : null}
 			{offRegistry > 0 ? (
-				<div className="card-sub is-wrap fs-meta">
-					{formatIntI(offRegistry)} parked{" "}
-					{offRegistry === 1 ? "pattern is" : "patterns are"} excluded from every
-					held figure: the agent is not in agent-registry.json. Still parked, still
-					not proposing.
-				</div>
+				<p>
+					{formatIntI(offRegistry)} parked {offRegistry === 1 ? "pattern is" : "patterns are"} excluded
+					from every held figure: the agent is not in agent-registry.json. Still parked, still not
+					proposing.
+				</p>
 			) : null}
 		</div>
 	);
@@ -2250,7 +2246,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 			<div className="bg-sunken p-2.5 rounded-md flex flex-col gap-2">
 				<div className="flex items-center gap-1.5 fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
-					<span className={badge.tone}>{badge.label}</span>
+					<span className="text-dim">{badge.label}</span>
 					{badge.titleHint && badge.titleHint !== badge.label && (
 						<span className="text-faint">· {badge.titleHint}</span>
 					)}
@@ -2457,7 +2453,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
-				<CardHead title="Self-improvement changes (applied)" />
+				<CardHead title="Applied changes" />
 				<div className="px-5 pb-4">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.changeSummary}
@@ -2475,7 +2471,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	if (state.status === "loading" || !aggregate) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
-				<CardHead title="Self-improvement changes (applied)" />
+				<CardHead title="Applied changes" />
 				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="applied changes" minHeight={68} />
 				</div>
@@ -2489,7 +2485,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	if (eventCount === 0) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
-				<CardHead title="Self-improvement changes (applied)" />
+				<CardHead title="Applied changes" />
 				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
@@ -2501,48 +2497,62 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		);
 	}
 
-	// stretches to the row's tallest card (the trend) → the reject rate anchors the foot, no blank band
+	const basis = getLoopBasisI(aggregate);
 	return (
-		<div className="card flex flex-col" id={ANCHOR_ID_I.changeSummary}>
+		<div className="card" id={ANCHOR_ID_I.changeSummary}>
 			<CardHead
-				title="Self-improvement changes (applied)"
-				sub={getLoopBasisI(aggregate)}
+				title="Applied changes"
+				sub={<span title={basis.title}>{basis.text}</span>}
 			/>
-			<div className="px-5 pt-3 pb-4 flex-1 flex flex-col gap-3">
-				<div>
-					<div className="fs-meta text-faint uppercase tracking-wider">
-						Lines changed
-					</div>
-					<div className="mt-1 flex items-baseline gap-x-5 gap-y-1 flex-wrap">
-						<LineCountI
-							symbol="＋"
-							tone="text-ok"
-							count={added}
-							word="added"
-							title={`${formatIntI(added)} rule/instruction lines added across ${formatIntI(eventCount)} cycles`}
-						/>
-						<LineCountI
-							symbol="−"
-							tone="text-crit"
-							count={removed}
-							word="removed"
-							title={`${formatIntI(removed)} rule/instruction lines removed across ${formatIntI(eventCount)} cycles`}
-						/>
-					</div>
-					<div className="fs-meta text-dim mt-1">
-						{`${formatIntI(changedCount)} of ${formatIntI(eventCount)} cycles changed rule lines`}
-					</div>
-				</div>
-				<div className="mt-auto">
-					<div className="fs-meta text-faint uppercase tracking-wider">
-						Reject rate, recent half of cycle days
-					</div>
-					<div className="mt-1">
+			{getLoopSlotsI({
+				metric: (
+					<div>
+						<div className="fs-meta text-faint uppercase tracking-wider">
+							Reject rate, recent half
+						</div>
 						<RejectRateHeadlineI before={failBefore} after={failAfter} />
 					</div>
-				</div>
-			</div>
+				),
+				visual: (
+					<>
+						<div className="fs-meta text-faint uppercase tracking-wider">
+							Lines changed
+						</div>
+						<div className="mt-1 flex items-baseline gap-x-5 gap-y-1 flex-wrap">
+							<LineCountI
+								symbol="＋"
+								tone="text-ok"
+								count={added}
+								word="added"
+								title={`${formatIntI(added)} rule/instruction ${added === 1 ? "line" : "lines"} added across ${getCycleCountTextI(eventCount)}`}
+							/>
+							<LineCountI
+								symbol="−"
+								tone="text-crit"
+								count={removed}
+								word="removed"
+								title={`${formatIntI(removed)} rule/instruction ${removed === 1 ? "line" : "lines"} removed across ${getCycleCountTextI(eventCount)}`}
+							/>
+						</div>
+					</>
+				),
+				foot: `${formatIntI(changedCount)} of ${getCycleCountTextI(eventCount)} changed rule lines`,
+			})}
 		</div>
+	);
+}
+
+// One loop-card anatomy → metric, visual and foot start at the same offsets in all three cards.
+function getLoopSlotsI({ metric, visual, foot }) {
+	const { CARD_SLOTS } = window.UI;
+	return (
+		<>
+			<div className="i-loop-metric">{metric}</div>
+			<div className="i-loop-visual" style={{ height: CARD_SLOTS.S.plotPx }}>
+				{visual}
+			</div>
+			<div className="card-foot">{foot}</div>
+		</>
 	);
 }
 
@@ -2662,9 +2672,9 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 
 	return (
 		<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
-			<CardHead title="Pattern ledger" />
+			<CardHead title="Pattern ledger" info={<LedgerNotesI suppression={suppression} />} />
 			{columns ? (
-				<SplitRow ratio="1:1">
+				<SplitRow ratio="1:1" layout="equal" className="i-ledger-cols">
 					<SplitColumn>
 						{liveSection}
 						{columns.live.map((section) => section.node)}
@@ -2677,7 +2687,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 					{sideSections.map((section) => section.node)}
 				</>
 			)}
-			<LedgerFooterI total={total} declined={declinedAllTime} suppression={suppression} />
+			<LedgerFooterI total={total} declined={declinedAllTime} />
 		</section>
 	);
 }
@@ -2768,7 +2778,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="i-card-shadow i-row-card bg-elev rounded-md text-left p-2.5 w-full flex items-center gap-2"
+			className="sub-card i-row-card i-tile-hover bg-elev text-left p-2.5 w-full flex items-center gap-2"
 			aria-label={`Candidate ${rank}: ${label}${pattern.agent ? ` — ${pattern.agent}` : ""} — seen ${freq} times`}
 		>
 			<span
@@ -2821,32 +2831,10 @@ function candidateSeverityI(freq, maxFreq) {
 // ----- Shared chrome --------------------------------------------------------
 
 function ToastI({ tone, message }) {
-	// tone 색상은 기호(✓/⚠/✕/ℹ)로 dual-encode — 왼쪽 보더 강조 효과 제거 (사용자 directive).
-	const symbol = TONE_SYMBOL[tone] || TONE_SYMBOL.info;
+	const { TONE_GLYPH } = window.UI;
 	return (
-		<div
-			role="status"
-			aria-live="polite"
-			className="i-anim-toast"
-			style={{
-				position: "fixed",
-				bottom: 24,
-				right: 24,
-				zIndex: 200,
-				background: "rgb(var(--elev))",
-				border: "1px solid rgb(var(--line))",
-				borderRadius: 8,
-				padding: "10px 16px",
-				fontSize: "var(--fs-body)",
-				fontFamily: "JetBrains Mono, monospace",
-				color: "rgb(var(--ink))",
-				boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
-				maxWidth: 360,
-			}}
-		>
-			<span style={{ marginRight: 8 }}>
-				<SymI s={symbol} />
-			</span>
+		<div role="status" aria-live="polite" className={`doc-toast ${tone}`}>
+			<span className="doc-toast-glyph" aria-hidden="true">{TONE_GLYPH[tone] || TONE_GLYPH.info}</span>
 			{message}
 		</div>
 	);
@@ -2931,14 +2919,22 @@ function deriveLoopAggregateI(data) {
 }
 
 // loop-events carries no day window → the basis is the newest rows up to the request limit
+// ~145px beside the longest title at the 1280 three-card row → the line keeps the count, the hover title adds the dates
 function getLoopBasisI(aggregate) {
 	const { eventCount } = aggregate;
 	const trend = aggregate.trend || [];
-	const span =
-		trend.length > 0 ? `, ${trend[0].date} to ${trend[trend.length - 1].date}` : "";
-	if (eventCount >= LOOP_EVENTS_LIMIT)
-		return `Latest ${formatIntI(eventCount)} cycles${span}`;
-	return `All ${formatIntI(eventCount)} recorded cycles${span}`;
+	const qualifier = eventCount >= LOOP_EVENTS_LIMIT ? "Last" : "All";
+	const text = `${qualifier} ${getCycleCountTextI(eventCount)}`;
+	if (trend.length === 0) return { text, title: text };
+	return { text, title: `${text} · ${getDateSpanI(trend[0].date, trend[trend.length - 1].date)}` };
+}
+
+// MM/DD drops the year → a span across a year boundary states its years instead
+function getDateSpanI(first, last) {
+	const firstYear = String(first).slice(0, 4);
+	const lastYear = String(last).slice(0, 4);
+	if (firstYear !== lastYear) return `${firstYear}–${lastYear}`;
+	return `${formatDateI(first)}–${formatDateI(last)}`;
 }
 
 // newest request per region setter → a superseded answer cannot move the stamp either
@@ -2990,6 +2986,7 @@ function getPageFailuresI(regions, view) {
 
 // APPLIED / REJECTED 분리 + snoozed 명시 라우팅.
 //   applied / rejected → terminal 전용 컬럼 (혼합 폐지).
+//   unadjudicated → rejected 컬럼 · 판정 없는 종결 → 카드에 non-verdict 표시 (보드 이탈 금지).
 //   non-terminal (pending / snoozed / approved) → safety actionable 컬럼.
 //     actionable feed 는 safety-tier only (auto 는 생성 시점 종결) → tier 분기 불필요.
 //     snoozed 는 terminal 컬럼 오염 방지차 actionable 컬럼 유지 · 카드 버튼으로 종결 가능.
@@ -3001,7 +2998,7 @@ function groupByColumnI(proposals) {
 			out.applied.push(p);
 			continue;
 		}
-		if (status === "rejected") {
+		if (status === "rejected" || status === "unadjudicated") {
 			out.rejected.push(p);
 			continue;
 		}

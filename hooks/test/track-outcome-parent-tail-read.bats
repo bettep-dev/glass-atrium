@@ -143,7 +143,7 @@ PY
 run_t9() {
   : >"${READ_LOG}"
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PYTHONPATH="${SHIM_DIR}" \
     TMPDIR="${CACHE_TMP}" \
     READ_TARGET="${1##*/}" \

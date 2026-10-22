@@ -111,7 +111,7 @@ Delegate to a subagent when the user request matches any row below.
 
 | Phase | Purpose | Actions | Forbidden | Output |
 |-------|---------|---------|-----------|--------|
-| **Investigation** | Gather context before delegating | Summarize user intent (1 sentence)<br>· Glob/Grep scan (min 1 pass — routing facts only; boundary: `#### Scan boundary and provenance`)<br>· Check progress files + prior Outcome Records | Delegating without investigation | Internal context summary |
+| **Investigation** | Gather context before delegating | Summarize user intent (1 sentence)<br>· Glob/Grep scan (min 1 pass — routing facts only; boundary: `#### Scan boundary and provenance`)<br>· Check progress files + prior Outcome Records, through the lesson-free read only (`core-outcome-record.md` → **Lesson-free read**) | Delegating without investigation | Internal context summary |
 | **Decision** | Compose team + define scope | Decompose into sub-tasks, sized per `### Spawn Budget` → Delegation-size discipline<br>· Compose team + phase order from capability hints (`domains` + descriptions), justified by that alignment<br>· Define scope (files, change type, constraints) and fix it in TEXT with a `[SCOPE]` line on DEV/PLANNING delegations (grammar SoT: `### Context Handoff Size`)<br>· Probe each target path (Read/Glob) before prompt assembly, then run `#### Decision-phase probes`<br>· Classify DEV entry — SIZABLE if ANY of ~3+ coordinated files · ≥2 modules · ≥3 expected turns · public-contract change (borderline → SIZABLE) → plan first; simple → `[ENTRY-CLASS] simple-task: <reason>` (`#### Entry classification (DEV delegations)`) | Habitual delegation without rationale<br>· Keyword/alias-based routing<br>· Collapsing compound requests into single agent<br>· Spawning subagent on unprobed paths<br>· Spawning subagent whose compatibility preconditions are unmet<br>· Oversized single delegation (>2 bundles / est ≳40 tool_uses)<br>· Delegating DEV/PLANNING work with no `[SCOPE]` line | Team (`agents` + `reason` + `order`) + scope + constraints |
 | **Delegation** | Deliver self-contained context | Follow Handoff Context rules<br>· Generate + attach CID<br>· English delegation prompt | Passing full conversation history<br>· Context-free "just do it" | Subagent invocation with CID |
 | **Monitoring** | Verify results + quality | Check `[COMPLETION]` block<br>· Escalate `blocked`/`fail` to user or glass-atrium-qa-debugger<br>· Relay `done_with_concerns`<br>· Verify intent-result alignment<br>· Reconcile the delivered path set against the delegation's `[SCOPE]` — excess → `skills/glass-atrium-ops-orchestrator.md` → `### Scope-Expansion Approval Protocol`, never absorbed silently<br>· Write the plan's stage from the returned reconciliation verdict (`## Document-Driven Workflow` step 5) | Forwarding results without verification<br>· Silently accepting work that fell outside the declared `[SCOPE]`<br>· Printing the raw `[COMPLETION]` block to the user (machine-facing record artifact — summarize in prose; `core-outcome-record.md` → Emit Boundary Channel asymmetry)<br>· Treating a proxy as a completion signal — mtime quiet, an `idle` listing entry, newest-file-by-mtime, an appearing commit (`skills/glass-atrium-ops-orchestrator.md` → Completion signals) | Final response or follow-up |
@@ -373,7 +373,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - **Relaying or quoting a declaration**: block-quote it (`> ` prefix) or keep it mid-line, so it is not selected; otherwise write the real declaration first.
     - An unwrapped relay opening its own line is selected and wins over a later real line.
   - **Space-in-path limit**: no form can express a path containing a space.
-  - **`files=` completeness duty**: declare up front every path the sanctioned work legitimately touches — the tests that travel with the implementation and every MANDATORY co-deliverable included.
+  - **`files=` completeness duty**: declare up front every path the sanctioned work legitimately touches — the tests that travel with the implementation and every required co-deliverable included.
     - Also declare the coupled tests the change will make stale, obsolete or wrong (`scoped/shared-testing.md` → **Coupled-test check**).
     - Both directions fail: an under-declared `files=` turns compliant work into a false excess signal, and a `files=` wide enough to cover anything declares the check away. Declare what the work needs, not a safety margin.
   - **Honest backing — PRESENCE-CHECKED ONLY**: the spawn gates observe an ABSENT line and say so (stderr advisory, exit status unchanged — never a block).
@@ -403,11 +403,20 @@ On `result: fail` or `result: blocked`:
 
 **Retry** (same agent, max 2 attempts with refined prompt) → **Fallback** (alternative agent if domain coverage allows) → **Escalate** to glass-atrium-qa-debugger (2 consecutive fail = immediate escalation) → **Circuit-breaker** (same agent emits 3 consecutive fail → suspend agent, report to user).
 
+**Retry effort escalation**: a Retry after `result: fail` runs one `effort` tier above the failed attempt, topping out at `xhigh` and never below the failed attempt's tier (a fail at `xhigh` or `max` retries at that tier) — the failure has surfaced the hidden edge cases extra effort helps most on.
+
+- Workflow path only: raise the tier through the `agent()` tier option.
+  - Lead the escalated spawn's label with a `retry` segment: `retry:<label of the failed attempt>`.
+    - Why: no outcome field marks a retry, so a tier comparison finds and excludes escalated spawns by this label.
+- Manual path: a Retry is not escalated — that path has no per-spawn tier input (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Thinking Budget Policy [ALL]`).
+- Scope: the Retry after `fail` only — never a Retry after `blocked`, and never the `robustAgent` retry-once-on-null (`skills/glass-atrium-ops-orchestrator.md` → `robustAgent`).
+  - Why: `blocked` is a technical impediment and a null is a budget or emit failure; a higher tier buys neither and spends more of the budget.
+
 **Debugger evidence gate**: reject a glass-atrium-qa-debugger diagnosis that carries no logs, reproduction or code reference — never re-delegate a fix on it.
 
 **Backing honesty (which stages are enforced)**: only the **Circuit-breaker** is code-backed (`hooks/track-outcome.sh` → `circuit_breaker_record`); detail: `skills/glass-atrium-ops-delegation-contracts/references/failure-recovery.md`.
 
-- The first three stages and the **Debugger evidence gate** are honor-system — applied behaviorally, never treated as mechanically enforced.
+- The first three stages, the **Retry effort escalation** included, and the **Debugger evidence gate** are honor-system — applied behaviorally, never treated as mechanically enforced.
 
 **Checkpoint resumption**: on partial completion before a fail, resume from the last successful phase recorded in the task's `progress-{task-name}.md`. A full restart is FORBIDDEN without the user's explicit confirmation.
 

@@ -11,7 +11,7 @@
 #   (avoids dirtying other sessions).
 #
 # CID: coalesce(cid, correlation_id) — prefers cid, falls back to correlation_id
-#   (schema carries both). With 97.5% single-agent chains most groups have one
+#   (schema carries both). Most chains are single-agent, so most groups have one
 #   record; only multi-agent CIDs are gate targets.
 #
 # PG access (socket-only invariant): psql "dbname=glass_atrium" — Unix socket only,
@@ -121,7 +121,7 @@ WITH grp AS (
          bool_or(norm_agent IN (
            'glass-atrium-dev-front','glass-atrium-dev-react','glass-atrium-dev-angular','glass-atrium-dev-gsap','glass-atrium-dev-android',
            'glass-atrium-dev-nestjs','glass-atrium-dev-node','glass-atrium-dev-python','glass-atrium-dev-db','glass-atrium-dev-rag',
-           'glass-atrium-dev-animator','glass-atrium-dev-shell','glass-atrium-dev-swift'
+           'glass-atrium-dev-animator','glass-atrium-dev-shell','glass-atrium-dev-swift','glass-atrium-dev-aws'
          )) AS has_dev,
          count(*) AS n,
          min(record_ts) AS first_ts
@@ -156,7 +156,7 @@ WITH grp AS (
          bool_or(norm_agent IN (
            'glass-atrium-dev-front','glass-atrium-dev-react','glass-atrium-dev-angular','glass-atrium-dev-gsap','glass-atrium-dev-android',
            'glass-atrium-dev-nestjs','glass-atrium-dev-node','glass-atrium-dev-python','glass-atrium-dev-db','glass-atrium-dev-rag',
-           'glass-atrium-dev-animator','glass-atrium-dev-shell','glass-atrium-dev-swift'
+           'glass-atrium-dev-animator','glass-atrium-dev-shell','glass-atrium-dev-swift','glass-atrium-dev-aws'
          )) AS has_dev
   FROM (
     SELECT cid, correlation_id, task_type, record_ts,

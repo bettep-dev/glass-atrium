@@ -23,8 +23,9 @@ the updater's accountability record, which always sends a terminal status.
 
 Every case drives the helper's REAL statement text through a stdlib SQL engine (see
 _pg_stub_backend), so it runs on the test-python-pytest gating leg and can fail the
-merge. `reverted` is absent from the co-movement matrix: the helper coerces it away,
-so no push carries it. A REVIEWED reverted row is covered by the freeze pins below.
+merge. One terminal set drives both conflict arms. `reverted` never arrives on a
+push (the helper coerces it away), so a stored `reverted` row is seeded straight into
+the store, and the incoming side of the matrix covers the pushable members only.
 
 Two rules sit above the co-movement arms:
 - Reviewed-row freeze: a stored terminal row carrying `reviewed_at` (the apply flip,
@@ -35,10 +36,14 @@ Two rules sit above the co-movement arms:
   so a non-marker push takes its status and rationale even when non-terminal. The
   exemption widens the non-terminal arm only: a non-terminal marker push (the legacy
   `snoozed` shape) keeps both, and a terminal push takes both as for any row. The
-  daemon writes markers `rejected`, so its same-key re-push keeps status `rejected`
-  and lands the newer marker rationale, whose back-off prefix the classifier and the
-  held-cycle count read unchanged. Outside the freeze every other column always
-  takes the push; the exemption decides status and rationale alone.
+  daemon writes markers `unadjudicated`, so its same-key re-push keeps status
+  `unadjudicated` and lands the newer marker rationale, whose back-off prefix the
+  classifier and the held-cycle count read unchanged. Outside the freeze every other
+  column always takes the push; the exemption decides status and rationale alone.
+
+The pattern link and the generator-input version persist as pushed, NULL when the
+push names none, and a re-push naming none keeps the stored pair: an older report or
+another writer's envelope must not unlink a proposal from its pattern.
 """
 
 from __future__ import annotations
@@ -57,11 +62,11 @@ _PATTERN_LABEL = "rationale-co-movement"
 _TARGET_FILE = "agents/glass-atrium-dev-python.md"
 _KEY = (_CYCLE_DATE, _PATTERN_LABEL, _TARGET_FILE)
 
-# The arm's own terminal set; `reverted` is not writable through the helper.
-_TERMINAL = ("applied", "approved", "rejected")
+# One terminal set for both conflict arms; `reverted` is not writable through the helper.
+_TERMINAL = ("applied", "approved", "rejected", "reverted", "unadjudicated")
 _NON_TERMINAL = ("pending", "snoozed")
-_STORABLE = _TERMINAL + _NON_TERMINAL
-_REVIEWED_TERMINAL = (*_TERMINAL, "reverted")
+_PUSHABLE_TERMINAL = tuple(s for s in _TERMINAL if s != "reverted")
+_STORABLE = _PUSHABLE_TERMINAL + _NON_TERMINAL
 _REVIEWED_AT = "2026-07-26 03:51:48"
 _MARKER = "skipped:chronic-timeout-backoff"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -88,6 +93,10 @@ _ACTOR_DECLARATIONS = {
         _DAEMON_CYCLE,
         '_SUPERSEDE_ACTOR = "daemon-cycle-supersede"',
     ),
+    "daemon-cycle-generation-closed": (
+        _DAEMON_CYCLE,
+        '_GENERATION_CLOSED_ACTOR = "daemon-cycle-generation-closed"',
+    ),
     "daemon-cycle-push": (
         _REPO_ROOT / "scripts" / "_pg_push_autoagent_cycle.py",
         '"reviewed_by": "daemon-cycle-push"',
@@ -104,6 +113,7 @@ _ACTOR_DECLARATIONS = {
 _STORED_ACTOR = "daemon-cycle-parked-guard"
 _INCOMING_ACTOR = "daemon-cycle-push"
 _PROVENANCE = ("status", "rationale", "reviewed_by")
+_LINK = ("learning_pattern_id", "generator_input_version")
 
 # Every column the conflict arm assigns, distinct per variant → a leaked column shows.
 # pre_verify_axes stays None: the stdlib engine cannot bind the Jsonb adapter.
@@ -124,6 +134,8 @@ _SEEDED = {
     "confidence_observed": 0.9,
     "project_key": "aaaaaaaaaaaa",
     "promotion_tier": "proposal",
+    "learning_pattern_id": 4127,
+    "generator_input_version": "gen-inputs-1",
 }
 _REPUSHED = {
     "target_agent": "glass-atrium-dev-shell",
@@ -142,6 +154,8 @@ _REPUSHED = {
     "confidence_observed": 0.1,
     "project_key": "bbbbbbbbbbbb",
     "promotion_tier": "mention",
+    "learning_pattern_id": 4128,
+    "generator_input_version": "gen-inputs-2",
 }
 
 
@@ -178,8 +192,18 @@ class _Proposals:
             reviewed_by=actor,
         )
 
+    def seed(self, status: str, rationale: str, actor: str = "") -> None:
+        # Unreviewed stored row of any status: `reverted` cannot arrive by push.
+        self.push("pending", rationale, actor)
+        self._set_columns(status=status)
+
     def get_stored(self) -> dict[str, str]:
         stored = backend.read_proposal(self._db_path, _KEY)
+        assert stored is not None, "the seeding push stored no row"
+        return stored
+
+    def get_link(self) -> dict[str, str]:
+        stored = backend.read_proposal(self._db_path, _KEY, _LINK)
         assert stored is not None, "the seeding push stored no row"
         return stored
 
@@ -213,11 +237,15 @@ class _Proposals:
     def set_review(self, status: str) -> None:
         # The helper writes no reviewed_at and coerces `reverted`, so the review
         # stamp the apply flip or the reject route leaves is set straight in the store.
+        self._set_columns(status=status, reviewed_at=_REVIEWED_AT)
+
+    def _set_columns(self, **columns: str) -> None:
+        assignments = ", ".join("%s = ?" % name for name in columns)
         with closing(sqlite3.connect(self._db_path)) as db:
             db.execute(
-                "UPDATE autoagent_proposals SET status = ?, reviewed_at = ?"
-                " WHERE cycle_date = ? AND pattern_label = ? AND target_file = ?",
-                (status, _REVIEWED_AT, *_KEY),
+                "UPDATE autoagent_proposals SET " + assignments
+                + " WHERE cycle_date = ? AND pattern_label = ? AND target_file = ?",
+                (*columns.values(), *_KEY),
             )
             db.commit()
 
@@ -247,7 +275,7 @@ def test_when_a_terminal_status_is_preserved_then_its_rationale_is_preserved(
     proposals: _Proposals, stored_status: str, incoming_status: str
 ):
     # The defect: the status survived the re-push and the text explaining it did not.
-    proposals.push(stored_status, _stamp(stored_status))
+    proposals.seed(stored_status, _stamp(stored_status))
 
     proposals.push(incoming_status, _generation_text(incoming_status))
 
@@ -275,7 +303,7 @@ def test_when_no_status_is_preserved_then_the_incoming_rationale_replaces_it(
 
 
 @pytest.mark.parametrize("stored_status", _STORABLE)
-@pytest.mark.parametrize("incoming_status", _TERMINAL)
+@pytest.mark.parametrize("incoming_status", _PUSHABLE_TERMINAL)
 def test_when_the_incoming_status_is_terminal_then_its_rationale_comes_with_it(
     proposals: _Proposals, stored_status: str, incoming_status: str
 ):
@@ -299,7 +327,7 @@ def test_when_a_terminal_status_is_preserved_then_its_actor_is_preserved(
 ):
     # The stored row carries NO reviewed_at — a machine transition stamps the actor
     # alone — so the freeze never fires and this arm is the whole protection.
-    proposals.push(stored_status, _stamp(stored_status), _STORED_ACTOR)
+    proposals.seed(stored_status, _stamp(stored_status), _STORED_ACTOR)
 
     proposals.push(incoming_status, _generation_text(incoming_status), _INCOMING_ACTOR)
 
@@ -311,7 +339,7 @@ def test_when_a_terminal_status_is_preserved_then_its_actor_is_preserved(
 
 
 @pytest.mark.parametrize("stored_status", _STORABLE)
-@pytest.mark.parametrize("incoming_status", _TERMINAL)
+@pytest.mark.parametrize("incoming_status", _PUSHABLE_TERMINAL)
 def test_when_the_incoming_status_is_terminal_then_its_actor_comes_with_it(
     proposals: _Proposals, stored_status: str, incoming_status: str
 ):
@@ -352,7 +380,76 @@ def test_a_born_terminal_row_names_its_creator(proposals: _Proposals):
     }
 
 
-@pytest.mark.parametrize("stored_status", _REVIEWED_TERMINAL)
+# The stub declares every column TEXT, so a stored integer link reads back as its text.
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        pytest.param(
+            _SEEDED,
+            {"learning_pattern_id": "4127", "generator_input_version": "gen-inputs-1"},
+            id="both pushed",
+        ),
+        pytest.param(
+            {k: v for k, v in _SEEDED.items() if k not in _LINK},
+            {"learning_pattern_id": None, "generator_input_version": None},
+            id="neither pushed",
+        ),
+        pytest.param(
+            {**_SEEDED, "learning_pattern_id": ""},
+            {"learning_pattern_id": None, "generator_input_version": "gen-inputs-1"},
+            id="empty id pushed",
+        ),
+        pytest.param(
+            {**_SEEDED, "learning_pattern_id": 0},
+            {"learning_pattern_id": None, "generator_input_version": "gen-inputs-1"},
+            id="zero id pushed",
+        ),
+    ],
+)
+def test_a_new_row_stores_the_pattern_link_and_input_version_it_was_pushed(
+    proposals: _Proposals, content: dict, expected: dict
+):
+    proposals.push_row("pending", content)
+
+    assert proposals.get_link() == expected
+
+
+@pytest.mark.parametrize(
+    ("repush", "expected"),
+    [
+        pytest.param(
+            _REPUSHED,
+            {"learning_pattern_id": "4128", "generator_input_version": "gen-inputs-2"},
+            id="re-push names a new pair",
+        ),
+        pytest.param(
+            {k: v for k, v in _REPUSHED.items() if k not in _LINK},
+            {"learning_pattern_id": "4127", "generator_input_version": "gen-inputs-1"},
+            id="re-push names none",
+        ),
+    ],
+)
+def test_a_re_push_replaces_the_stored_link_only_with_one_it_names(
+    proposals: _Proposals, repush: dict, expected: dict
+):
+    proposals.push_row("pending", _SEEDED)
+
+    proposals.push_row("pending", repush)
+
+    assert proposals.get_link() == expected
+
+
+def test_when_the_status_label_exists_then_an_unadjudicated_push_persists_it(
+    proposals: _Proposals,
+):
+    # The stub catalog carries the schema's own enum, so this is the label-present
+    # branch; the label-absent branch lives in proposal-status-label-fallback.bats.
+    proposals.push("unadjudicated", _stamp("unadjudicated"))
+
+    assert proposals.get_stored()["status"] == "unadjudicated"
+
+
+@pytest.mark.parametrize("stored_status", _TERMINAL)
 @pytest.mark.parametrize("incoming_status", _STORABLE)
 def test_when_a_reviewed_row_is_terminal_then_no_re_push_changes_any_column(
     proposals: _Proposals, stored_status: str, incoming_status: str
@@ -435,18 +532,18 @@ def test_when_a_marker_yields_to_a_non_marker_then_its_actor_yields_with_it(
     }
 
 
-def test_when_an_unreviewed_rejected_marker_is_re_pushed_then_the_newer_rationale_lands(
+def test_when_an_unreviewed_unadjudicated_marker_is_re_pushed_then_the_newer_rationale_lands(
     proposals: _Proposals,
 ):
-    # The shape the daemon writes today: a terminal push, so the exemption never
+    # The shape the back-off arm stores: a terminal push, so the exemption never
     # decides it — a marker carve-out in the terminal arm would keep the stale text.
-    proposals.push_outcome("rejected", _stamp("rejected"), _MARKER)
+    proposals.push_outcome("unadjudicated", _stamp("unadjudicated"), _MARKER)
 
-    proposals.push_outcome("rejected", _generation_text("rejected"), _MARKER)
+    proposals.push_outcome("unadjudicated", _generation_text("unadjudicated"), _MARKER)
 
     assert proposals.get_stored() == {
-        "status": "rejected",
-        "rationale": _generation_text("rejected"),
+        "status": "unadjudicated",
+        "rationale": _generation_text("unadjudicated"),
     }
 
 
@@ -491,3 +588,35 @@ def test_the_exempted_marker_is_the_outcome_the_daemon_writes():
     # The helper cannot import the daemon, so the literal the upsert exempts is
     # tied to the daemon's own spelling here.
     assert f'"{_MARKER}"' in _DAEMON_CYCLE.read_text(encoding="utf-8")
+
+
+# DB tiers the monitor folds into its safety column (improvement.ts → foldTierCounts).
+_MONITOR_SAFETY_TIERS = ("user", "user-pending", "llm")
+
+
+@pytest.mark.parametrize(
+    ("classification", "route"),
+    [
+        pytest.param("body-auto", "safety", id="safety-routed body-auto"),
+        pytest.param(
+            "frontmatter-dryrun", "safety", id="safety-routed frontmatter dry-run"
+        ),
+        pytest.param("body-auto", "auto", id="verified body-auto"),
+    ],
+)
+def test_the_stored_tier_lands_in_the_monitor_column_of_its_route(
+    proposals: _Proposals, classification: str, route: str
+):
+    proposals.push_row(
+        "pending",
+        dict(
+            _SEEDED,
+            classification=classification,
+            approval_tier=route,
+            pre_verify_passed=True,
+        ),
+    )
+
+    stored = proposals.get_row()["approval_tier"]
+    column = "safety" if stored in _MONITOR_SAFETY_TIERS else stored
+    assert column == route, f"stored approval_tier {stored!r}"

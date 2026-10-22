@@ -10,8 +10,9 @@
 # (the gate is not over-blocking — startswith('ok') == the single path's ok* match).
 # And (f): a report that cannot be read — by its CONTENT (malformed JSON) or by its PATH SHAPE (a
 # directory, a dangling link, nesting past the decoder's limit) — returns non-zero with one named
-# stderr line and no traceback, the signal the source dispatch turns into exit 22 (the dispatch
-# itself: daemon-apply-zero-eligible-row.bats AC9). A symlink to a valid report stays readable.
+# stderr line and no traceback, the signal the report-source dispatch turns into exit 22 (that
+# dispatch is unreachable while batch mode is closed, so no suite drives it). A symlink to a valid
+# report stays readable.
 #
 # Originated as a disposable verification artifact (agent-test-files-disposable);
 # now retained in-repo under autoagent/test/.

@@ -15,6 +15,10 @@
 
 import sys
 import time
+from collections import defaultdict
+from collections.abc import Iterable
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import NamedTuple
 
 try:
@@ -59,6 +63,18 @@ from _outcome_signal import (  # noqa: F401 — re-export surface, see above
     HARD_TEST_BAR_TASK_TYPES,
     ATTRIBUTION_SYNTHESIZED,
 )
+from _outcome_signal import (
+    METRIC_KEYS,
+    TOOL_USE_LINE_PATTERN,
+    FloorResult,
+    OutcomeFacts,
+    PairWindows,
+    PatternEvidence,
+    SpawnFacts,
+    TriggeringSpawn,
+    get_confirmation_events,
+    get_floor_verdict,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +91,10 @@ _STATUS_RANK = {
     "applied": 3,
 }
 _TERMINAL_REJECT = "rejected"
-_VALID_STATUS = set(_STATUS_RANK) | {_TERMINAL_REJECT}
+# Non-terminal, unranked: leaves intake unjudged → returns on a new passing pair.
+_DORMANT = "dormant"
+_DORMANCY_PAIR = frozenset({"identified", _DORMANT})
+_VALID_STATUS = set(_STATUS_RANK) | {_TERMINAL_REJECT, _DORMANT}
 
 # Aggregator → PG tier mapping. The DB "ApprovalTier" enum keeps 'llm' for
 # read back-compat — do NOT drop or narrow _VALID_TIER, or legacy rows fail on
@@ -93,8 +112,10 @@ _VALID_TIER = {"auto", "llm", "user-pending", "user"}
 
 def _validate_status_transition(old_status: str | None, new_status: str) -> None:
     """Raise ValueError on illegal monotonic regression.
-    Permitted: None → any · identified→proposed→approved→applied · any-non-applied → rejected.
-    Forbidden: rank regression · applied→anything · rejected→anything (both terminal)."""
+    Permitted: None → any · identified→proposed→approved→applied · identified ↔ dormant ·
+    any-non-applied → rejected.
+    Forbidden: rank regression · applied→anything · rejected→anything (both terminal) ·
+    dormant with any status outside the identified pair, rejected excepted."""
     if new_status not in _VALID_STATUS:
         raise ValueError(
             "invalid status %r (allowed: %s)" % (new_status, sorted(_VALID_STATUS))
@@ -110,6 +131,15 @@ def _validate_status_transition(old_status: str | None, new_status: str) -> None
     if old_status == _TERMINAL_REJECT and new_status != _TERMINAL_REJECT:
         raise ValueError(
             "illegal transition: rejected → %s (rejected is terminal)" % new_status
+        )
+    if (
+        _DORMANT in (old_status, new_status)
+        and new_status != _TERMINAL_REJECT
+        and not {old_status, new_status} <= _DORMANCY_PAIR
+    ):
+        raise ValueError(
+            "illegal transition: %s → %s (dormant pairs with identified only)"
+            % (old_status, new_status)
         )
     if new_status in _STATUS_RANK and old_status in _STATUS_RANK:
         if _STATUS_RANK[new_status] < _STATUS_RANK[old_status]:
@@ -257,9 +287,36 @@ ON CONFLICT (pattern_signature) DO UPDATE SET
     discovered_date = EXCLUDED.discovered_date,
     frequency = EXCLUDED.frequency,
     agent = EXCLUDED.agent,
-    status = EXCLUDED.status,
+    -- text compare → valid without the dormant label; only put_learning_pattern_status leaves it
+    status = CASE
+                 WHEN core.learning_log.status::text = 'dormant' THEN core.learning_log.status
+                 ELSE EXCLUDED.status
+             END,
     approval_tier = EXCLUDED.approval_tier,
     last_updated = now()
+"""
+
+# Column-presence probes, run on every call: a failed probe fails that call like any other query.
+_COLUMN_SQL = SimpleNamespace(
+    METRIC_KEY="""
+SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'core' AND table_name = 'learning_log' AND column_name = 'metric_key'
+)
+""",
+    # 'delivered' stands for the four canary exposure columns, which one migration adds together
+    EXPOSURE="""
+SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'core' AND table_name = 'spawn_manifest' AND column_name = 'delivered'
+)
+""",
+)
+
+_LEARNING_LOG_METRIC_KEY_SQL = """
+UPDATE core.learning_log
+SET metric_key = %(metric_key)s::core."MetricKey"
+WHERE pattern_signature = %(pattern_signature)s
 """
 
 
@@ -270,18 +327,33 @@ def upsert_learning_pattern(
     agent: str | None,
     status: str,
     approval_tier: str,
+    metric_key: str | None = None,
 ) -> int:
     """UPSERT one row into core.learning_log keyed by pattern_signature.
 
     Validates the monotonic state transition before commit and raises ValueError
     on illegal regression (the caller catches, logs, and skips). Returns
     elapsed_ms; never raises on PG-side errors, only on input validation (status
-    enum, tier enum), which runs before connect so the caller sees a schema bug
-    clearly.
+    enum, tier enum, metric key), which runs before connect so the caller sees a
+    schema bug clearly.
+
+    A stored 'dormant' status survives the conflict update. metric_key (one of
+    METRIC_KEYS) is written only where the column exists — a schema without it
+    still gets the row; None leaves a stored key untouched.
     """
     # Input validation (raises ValueError before any PG call).
     if not pattern_signature or not isinstance(pattern_signature, str):
         raise ValueError("pattern_signature must be non-empty str")
+    if status == _DORMANT:
+        raise ValueError(
+            "status 'dormant' is written by put_learning_pattern_status, never by the upsert"
+        )
+    if metric_key is not None and (
+        not isinstance(metric_key, str) or metric_key not in METRIC_KEYS
+    ):
+        raise ValueError(
+            "metric_key %r not in %s" % (metric_key, sorted(METRIC_KEYS))
+        )
     if status not in _VALID_STATUS:
         raise ValueError(
             "status %r not in %s" % (status, sorted(_VALID_STATUS))
@@ -318,6 +390,13 @@ def upsert_learning_pattern(
                 # Raises ValueError (not psycopg) on illegal regression.
                 _validate_status_transition(old_status, status)
                 cur.execute(_LEARNING_LOG_UPSERT_SQL, row)
+                if metric_key is not None:
+                    cur.execute(_COLUMN_SQL.METRIC_KEY)
+                    if cur.fetchone()[0]:
+                        cur.execute(
+                            _LEARNING_LOG_METRIC_KEY_SQL,
+                            {"metric_key": metric_key, "pattern_signature": pattern_signature},
+                        )
             conn.commit()
 
     return _run_with_retry(
@@ -487,6 +566,100 @@ def discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
     if updated:
         return DischargeResult(DISCHARGE_APPLIED, updated[0])
     return DischargeResult(DISCHARGE_NOT_MATCHED, None)
+
+
+# core.learning_log identified ↔ dormant — the one writer of 'dormant'
+# pair no longer passing → dormant, no verdict; a new passing pair → identified
+# discharge's tri-state → an outage never reads as "nothing to move"
+
+TRANSITION_MOVED = "moved"
+TRANSITION_NOT_MATCHED = "not_matched"
+TRANSITION_FAILED = "failed"
+
+
+class TransitionResult(NamedTuple):
+    """One of the three TRANSITION_* outcomes, with the row id on a move only."""
+
+    outcome: str
+    row_id: int | None
+
+
+# Label test + write in one statement → no probe-then-write window
+# label absent (code ahead of migration) → no match, row stays identified, cast never parsed
+_DORMANT_LABEL_SQL = """
+    SELECT 1
+      FROM pg_catalog.pg_enum AS e
+      JOIN pg_catalog.pg_type AS t ON t.oid = e.enumtypid
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = t.typnamespace
+     WHERE n.nspname = 'core'
+       AND t.typname = 'LearningStatus'
+       AND e.enumlabel = 'dormant'"""
+
+_LEARNING_LOG_STATUS_SQL = f"""
+UPDATE core.learning_log
+SET status = (SELECT %(status)s::text)::core."LearningStatus",
+    last_transition_at = now(),
+    last_transition_reason = %(reason)s,
+    last_updated = now()
+WHERE id = %(pattern_id)s
+  AND status::text = %(from_status)s
+  AND EXISTS ({_DORMANT_LABEL_SQL})
+RETURNING id
+"""
+
+
+def put_learning_pattern_status(
+    pattern_id: int, status: str, reason: str
+) -> TransitionResult:
+    """Move one core.learning_log row between 'identified' and 'dormant' + audit reason.
+
+    Only a row holding the other member of the pair moves; any other stored status,
+    and every row on a schema without the 'dormant' label, reports NOT_MATCHED.
+
+    Returns TRANSITION_MOVED with the row id, TRANSITION_NOT_MATCHED, or
+    TRANSITION_FAILED when the call never completed.
+    Raises ValueError on input validation only (before any PG call).
+    """
+    if not isinstance(pattern_id, int) or pattern_id <= 0:
+        raise ValueError("pattern_id must be positive int, got %r" % (pattern_id,))
+    if status not in _DORMANCY_PAIR:
+        raise ValueError("status %r not in %s" % (status, sorted(_DORMANCY_PAIR)))
+    if not reason or not isinstance(reason, str):
+        raise ValueError("reason must be non-empty str")
+
+    params = {
+        "pattern_id": pattern_id,
+        "status": status,
+        "from_status": next(iter(_DORMANCY_PAIR - {status})),
+        "reason": reason[:LEARNING_LOG_REASON_MAX],
+    }
+    updated: list[int] = []
+    committed: list[bool] = []
+
+    def _do():
+        # A retry re-runs the whole round-trip — a stale first-attempt id must not survive.
+        updated.clear()
+        committed.clear()
+        with psycopg.connect(
+            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(_LEARNING_LOG_STATUS_SQL, params)
+                updated.extend(row[0] for row in cur.fetchall())
+            conn.commit()
+        committed.append(True)
+
+    _run_with_retry(
+        op_name="put_learning_pattern_status",
+        target_table="core.learning_log",
+        payload_ref="learning_log:%d" % pattern_id,
+        fn=_do,
+    )
+    if not committed:
+        return TransitionResult(TRANSITION_FAILED, None)
+    if updated:
+        return TransitionResult(TRANSITION_MOVED, updated[0])
+    return TransitionResult(TRANSITION_NOT_MATCHED, None)
 
 
 # ---------------------------------------------------------------------------
@@ -764,7 +937,8 @@ def read_aggregator_watermark(name: str) -> float:
 def read_learning_log_signatures() -> dict:
     """Return current learning_log signatures keyed by (pattern_signature_core, agent).
 
-    Shape: {(pat_core, agent): {"frequency": int, "status": str, "approval_tier": str}}.
+    Shape: {(pat_core, agent): {"id": int, "frequency": int, "status": str,
+    "approval_tier": str, "last_transition_at": datetime | None}}.
 
     pat_core = pattern signature stripped of surrounding whitespace; the caller
     does any further normalization (its own _NUMERIC_RE.sub() before dedup).
@@ -775,11 +949,12 @@ def read_learning_log_signatures() -> dict:
         with psycopg.connect("dbname=glass_atrium", connect_timeout=1, autocommit=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT pattern_signature, frequency, status, approval_tier, agent "
+                    "SELECT pattern_signature, frequency, status, approval_tier, agent, "
+                    "       id, last_transition_at "
                     "FROM core.learning_log"
                 )
                 out: dict = {}
-                for sig, freq, status, tier, agent in cur.fetchall():
+                for sig, freq, status, tier, agent, row_id, transition_at in cur.fetchall():
                     pat_core = (sig or "").strip()
                     # PG signature is "<pat_core>|<agent>" per aggregator's UPSERT
                     # contract — split back so caller can dedup against (pat_core, agent).
@@ -789,9 +964,11 @@ def read_learning_log_signatures() -> dict:
                     else:
                         key = (pat_core, (agent or "").strip())
                     out[key] = {
+                        "id": int(row_id),
                         "frequency": int(freq or 0),
                         "status": status or "identified",
                         "approval_tier": tier or "user-pending",
+                        "last_transition_at": transition_at,
                     }
                 return out
     except Exception as exc:  # noqa: BLE001
@@ -808,15 +985,22 @@ def read_learning_log_signatures() -> dict:
 # intake tier band: 'user-pending' + 'llm' (the frozen DB value the retired
 # 'llm-pending' band maps to via _TIER_MAP — those rows fold into the
 # user-pending flow downstream, never dropped). Served by learning_log_status_tier_idx.
-_PENDING_PATTERNS_SELECT_SQL = """
+_PENDING_PATTERNS_SELECT_TEMPLATE = """
 SELECT id, discovered_date, pattern_signature, frequency, agent,
-       status::text, approval_tier::text
+       status::text, approval_tier::text, {metric_key_column}, last_transition_at
 FROM core.learning_log
 WHERE status = 'identified'::core."LearningStatus"
   AND approval_tier IN ('user-pending'::core."ApprovalTier",
                         'llm'::core."ApprovalTier")
 ORDER BY frequency DESC, id
 """
+_PENDING_PATTERNS_SELECT_SQL = _PENDING_PATTERNS_SELECT_TEMPLATE.format(
+    metric_key_column="metric_key::text"
+)
+# a schema without the metric_key column rejects any statement naming it → NULL in its place
+_PENDING_PATTERNS_KEYLESS_SELECT_SQL = _PENDING_PATTERNS_SELECT_TEMPLATE.format(
+    metric_key_column="NULL::text"
+)
 
 
 def read_pending_learning_patterns() -> list[dict]:
@@ -828,18 +1012,27 @@ def read_pending_learning_patterns() -> list[dict]:
     predicate. The full intake predicate lives in _PENDING_PATTERNS_SELECT_SQL.
 
     Shape: [{"id": int, "discovered_date": date, "pattern_signature": str,
-    "frequency": int, "agent": str, "status": str, "approval_tier": str}],
-    frequency DESC. Falls back to [] on any failure — the daemon takes the
-    zero-pattern path (no generation this cycle; next cycle retries).
+    "frequency": int, "agent": str, "status": str, "approval_tier": str,
+    "metric_key": str | None, "last_transition_at": datetime | None}], frequency
+    DESC. metric_key is None for a keyless row and for every row of a schema
+    without the column; last_transition_at is None for a row never transitioned.
+    Falls back to [] on any failure — the daemon takes the zero-pattern path
+    (no generation this cycle; next cycle retries).
     """
     try:
         with psycopg.connect("dbname=glass_atrium", connect_timeout=1, autocommit=True) as conn:
             with conn.cursor() as cur:
-                cur.execute(_PENDING_PATTERNS_SELECT_SQL)
+                cur.execute(_COLUMN_SQL.METRIC_KEY)
+                has_metric_key = cur.fetchone()[0]
+                cur.execute(
+                    _PENDING_PATTERNS_SELECT_SQL
+                    if has_metric_key
+                    else _PENDING_PATTERNS_KEYLESS_SELECT_SQL
+                )
                 rows: list[dict] = []
                 for (
                     row_id, discovered_date, signature, frequency, agent,
-                    status, tier,
+                    status, tier, metric_key, last_transition_at,
                 ) in cur.fetchall():
                     rows.append({
                         "id": row_id,
@@ -849,6 +1042,8 @@ def read_pending_learning_patterns() -> list[dict]:
                         "agent": (agent or "").strip(),
                         "status": status or "identified",
                         "approval_tier": tier or "user-pending",
+                        "metric_key": metric_key,
+                        "last_transition_at": last_transition_at,
                     })
                 return rows
     except Exception as exc:  # noqa: BLE001 — read fallback is loud (stderr) + safe
@@ -996,61 +1191,15 @@ def read_outcomes_since(
     )
 
     sql = (
-        "SELECT record_ts, agent, task_type::text, result::text, "
-        "       confidence::text, metric_pass, metric_type, "
-        "       revision_count, evaluative_signal, directive_hint, "
-        "       lesson, concerns, files_modified, correlation_id, cid, "
-        "       summary, review_flag, grader_verdict::text, attribution_source "
-        "FROM core.outcomes "
-        "WHERE " + " AND ".join(where_clauses) + " "
+        _OUTCOME.ROWS_SELECT_SQL + " AND ".join(where_clauses) + " "
         "ORDER BY record_ts " + order_upper
     )
     if limit_int is not None:
         sql += " LIMIT %s"
         params.append(limit_int)
 
-    rows: list[dict] = []
     try:
-        with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, tuple(params))
-                for (
-                    record_ts, agent_, task_type_, result_, confidence, metric_pass,
-                    metric_type, revision_count, evaluative_signal, directive_hint,
-                    lesson, concerns, files_modified, correlation_id, cid, summary,
-                    review_flag, grader_verdict, attribution_source,
-                ) in cur.fetchall():
-                    # audit ref — file-path replacement identifier, for user grep tracing
-                    audit_ref = "pg:%s:%s:%s" % (
-                        record_ts.isoformat(timespec="seconds"),
-                        agent_ or "",
-                        task_type_ or "",
-                    )
-                    rows.append({
-                        "record_ts": record_ts,
-                        "pg_audit_ref": audit_ref,
-                        "agent": agent_ or "",
-                        "task_type": task_type_ or "",
-                        "result": result_ or "",
-                        "confidence": confidence or "",
-                        "metric_pass": metric_pass,
-                        "metric_type": metric_type or "",
-                        "revision_count": int(revision_count or 0),
-                        "evaluative_signal": evaluative_signal,
-                        "directive_hint": directive_hint or "",
-                        "lesson": lesson or "",
-                        "concerns": list(concerns or []),
-                        "files_modified": list(files_modified or []),
-                        "correlation_id": correlation_id or "",
-                        "cid": cid or "",
-                        "summary": summary or "",
-                        "review_flag": bool(review_flag),
-                        "grader_verdict": grader_verdict or "",
-                        # write-time provenance → downstream carve-outs see the
-                        # completion-synthesized marker
-                        "attribution_source": attribution_source or "",
-                    })
-        return rows
+        return _fetch_outcome_rows(sql, params)
     except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
         sys.stderr.write(
             '{"hook":"_pg_learning_dualwrite","op":"read_outcomes_since",'
@@ -1066,6 +1215,91 @@ def read_outcomes_since(
             )
         )
         return []
+
+
+def read_outcome_window(since_epoch: float) -> list[dict] | None:
+    """read_outcomes_since rows after since_epoch, ascending — None on ANY read failure.
+
+    For a caller judging a window: an outage must never read as an empty window."""
+    where_clauses, params = _learning_window_where(since_epoch, agent=None, task_type=None)
+    sql = _OUTCOME.ROWS_SELECT_SQL + " AND ".join(where_clauses) + " ORDER BY record_ts ASC"
+    try:
+        return _fetch_outcome_rows(sql, params)
+    except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
+        sys.stderr.write(
+            '{"hook":"_pg_learning_dualwrite","op":"read_outcome_window",'
+            '"error_kind":"%s","fallback":"none","since_epoch":%s}\n'
+            % (type(exc).__name__, since_epoch)
+        )
+        return None
+
+
+_OUTCOME = SimpleNamespace(
+    ROWS_SELECT_SQL=(
+        "SELECT record_ts, agent, task_type::text, result::text, "
+        "       confidence::text, metric_pass, metric_type, "
+        "       revision_count, evaluative_signal, directive_hint, "
+        "       lesson, concerns, files_modified, correlation_id, cid, "
+        "       summary, review_flag, grader_verdict::text, attribution_source "
+        "FROM core.outcomes "
+        "WHERE "
+    ),
+    # Per agent_id: grader verified failures + recorder's tool_use actual (no column).
+    # Agent text fills CID/Files bullets + each '## ' section → whole line, header only.
+    # numeric cast → no digit run overflows the read.
+    FACTS_SELECT_SQL="""
+SELECT agent_id,
+       count(*) FILTER (WHERE grader_verdict::text = %s),
+       max(substring(split_part(body_md, chr(10) || '## ', 1)
+                     FROM '(?n)' || %s::text)::numeric)
+FROM core.outcomes
+WHERE agent_id = ANY(%s)
+GROUP BY agent_id
+""",
+)
+
+
+def _fetch_outcome_rows(sql: str, params: list[object]) -> list[dict]:
+    rows: list[dict] = []
+    with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, tuple(params))
+            for (
+                record_ts, agent_, task_type_, result_, confidence, metric_pass,
+                metric_type, revision_count, evaluative_signal, directive_hint,
+                lesson, concerns, files_modified, correlation_id, cid, summary,
+                review_flag, grader_verdict, attribution_source,
+            ) in cur.fetchall():
+                # audit ref — file-path replacement identifier, for user grep tracing
+                audit_ref = "pg:%s:%s:%s" % (
+                    record_ts.isoformat(timespec="seconds"),
+                    agent_ or "",
+                    task_type_ or "",
+                )
+                rows.append({
+                    "record_ts": record_ts,
+                    "pg_audit_ref": audit_ref,
+                    "agent": agent_ or "",
+                    "task_type": task_type_ or "",
+                    "result": result_ or "",
+                    "confidence": confidence or "",
+                    "metric_pass": metric_pass,
+                    "metric_type": metric_type or "",
+                    "revision_count": int(revision_count or 0),
+                    "evaluative_signal": evaluative_signal,
+                    "directive_hint": directive_hint or "",
+                    "lesson": lesson or "",
+                    "concerns": list(concerns or []),
+                    "files_modified": list(files_modified or []),
+                    "correlation_id": correlation_id or "",
+                    "cid": cid or "",
+                    "summary": summary or "",
+                    "review_flag": bool(review_flag),
+                    "grader_verdict": grader_verdict or "",
+                    # write-time provenance → carve-outs see the completion-synthesized marker
+                    "attribution_source": attribution_source or "",
+                })
+    return rows
 
 
 def count_outcomes_since(
@@ -1110,3 +1344,259 @@ def count_outcomes_since(
             )
         )
         return None
+
+
+# Per-pattern metric window read: one row per spawn of any listed agent type
+# joined tables pre-grouped by agent_id → a spawn with N overage / outcome rows counts once
+# outside [baseline, end) task members only: up to evaluation + earlier ones stopped ≥ baseline − W
+# tool_use_actual: the recorder's header line, read as _OUTCOME.FACTS_SELECT_SQL reads it
+_SPAWN_FACTS_SELECT_SQL = SimpleNamespace(
+    TEMPLATE="""
+WITH spawns AS (
+    SELECT id, agent_id, agent_type, session_id, started_at, {exposure_columns}
+    FROM core.spawn_manifest
+    WHERE agent_type = ANY(%s) AND started_at < %s
+      AND (started_at >= %s OR agent_id IN (
+          SELECT agent_id FROM core.agent_events
+          WHERE event_name = 'SubagentStop' AND event_ts >= %s))
+)
+SELECT s.agent_type, s.agent_id, s.session_id, s.started_at,
+       COALESCE(b.overage_rows, 0), stop.stopped_at,
+       COALESCE(o.attributions, '{{}}'::text[]), o.tool_use_actual,
+       s.arm, s.salt_id, s.delivered, s.delivered_hash
+FROM spawns s
+LEFT JOIN (
+    SELECT agent_id, count(*) AS overage_rows FROM core.budget_overages
+    WHERE agent_id IN (SELECT agent_id FROM spawns) GROUP BY agent_id
+) b ON b.agent_id = s.agent_id
+LEFT JOIN (
+    SELECT agent_id, min(event_ts) AS stopped_at FROM core.agent_events
+    WHERE event_name = 'SubagentStop' AND agent_id IN (SELECT agent_id FROM spawns)
+    GROUP BY agent_id
+) stop ON stop.agent_id = s.agent_id
+LEFT JOIN (
+    SELECT agent_id, array_agg(attribution_source) AS attributions,
+           max(substring(split_part(body_md, chr(10) || '## ', 1)
+                         FROM '(?n)' || %s::text)::numeric) AS tool_use_actual
+    FROM core.outcomes
+    WHERE agent_id IN (SELECT agent_id FROM spawns) GROUP BY agent_id
+) o ON o.agent_id = s.agent_id
+ORDER BY s.agent_type, s.started_at, s.id
+""",
+    EXPOSURE_COLUMNS=SimpleNamespace(
+        FULL="arm, salt_id, delivered, delivered_hash",
+        # a schema without the exposure columns rejects a statement naming them → NULL in their place
+        PRE_EXPOSURE="NULL::smallint AS arm, NULL::bigint AS salt_id,"
+        " NULL::boolean AS delivered, NULL::varchar AS delivered_hash",
+    ),
+)
+# The install's provenance start: its earliest MANIFEST row carrying a session id.
+_PROVENANCE_START_SQL = (
+    "SELECT min(started_at) FROM core.spawn_manifest WHERE session_id IS NOT NULL"
+)
+
+
+def read_pattern_floor(
+    agent: str,
+    metric_key: str,
+    windows: PairWindows,
+    evaluated_at: datetime,
+    *,
+    redelegation_window: timedelta = timedelta(0),
+) -> FloorResult | None:
+    """The occurrence floor of `agent` for `metric_key` over `windows` at `evaluated_at`,
+    read from core.spawn_manifest and the facts joined by agent_id; `budget_overage` over
+    tasks of `redelegation_window` (`get_floor_verdict`).
+
+    None on ANY read failure — table-absent schema and PG unreachable included — so an
+    outage fails closed and never reads as an empty window. Raises ValueError on a
+    `metric_key` outside METRIC_KEYS, before any read."""
+    if metric_key not in METRIC_KEYS:
+        raise ValueError(f"read_pattern_floor: unknown metric key {metric_key!r}")
+    try:
+        provenance_start, spawns = _read_spawn_facts(
+            [agent], windows, evaluated_at=evaluated_at, redelegation_window=redelegation_window
+        )
+    except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
+        sys.stderr.write(
+            '{"hook":"_pg_learning_dualwrite","op":"read_pattern_floor",'
+            '"error_kind":"%s","fallback":"none","metric_key":"%s"}\n'
+            % (type(exc).__name__, metric_key)
+        )
+        return None
+    return get_floor_verdict(
+        spawns[agent], metric_key, windows, provenance_start, evaluated_at,
+        redelegation_window=redelegation_window,
+    )
+
+
+def read_pattern_floors(
+    agents: Iterable[str],
+    windows: PairWindows,
+    evaluated_at: datetime,
+    *,
+    redelegation_window: timedelta = timedelta(0),
+) -> dict[tuple[str, str], FloorResult] | None:
+    """Every metric key's floor for each of `agents`, keyed (agent, metric key), from one
+    provenance read and one spawn read over all of them — never a read per agent or key.
+
+    None on ANY read failure, as `read_pattern_floor`: every floor fails closed together."""
+    agents = sorted(set(agents))
+    try:
+        provenance_start, spawns = _read_spawn_facts(
+            agents, windows, evaluated_at=evaluated_at, redelegation_window=redelegation_window
+        )
+    except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
+        sys.stderr.write(
+            '{"hook":"_pg_learning_dualwrite","op":"read_pattern_floors",'
+            '"error_kind":"%s","fallback":"none","agents":%d}\n'
+            % (type(exc).__name__, len(agents))
+        )
+        return None
+    return {
+        (agent, metric_key): get_floor_verdict(
+            spawns[agent], metric_key, windows, provenance_start, evaluated_at,
+            redelegation_window=redelegation_window,
+        )
+        for agent in agents
+        for metric_key in sorted(METRIC_KEYS)
+    }
+
+
+def _read_spawn_facts(
+    agents: list[str],
+    windows: PairWindows,
+    *,
+    evaluated_at: datetime | None = None,
+    redelegation_window: timedelta = timedelta(0),
+) -> tuple[datetime | None, defaultdict[str, list[SpawnFacts]]]:
+    """The provenance start and each agent's spawns over baseline..end, plus the task members
+    `get_floor_verdict` places outside it (up to `evaluated_at`, None → windows.end); raises on
+    any failure. A schema without the canary exposure columns reads every spawn's as None."""
+    upper = windows.end if evaluated_at is None else max(windows.end, evaluated_at)
+    params = (
+        agents, upper, windows.start.baseline, windows.start.baseline - redelegation_window,
+        TOOL_USE_LINE_PATTERN,
+    )
+    with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(_PROVENANCE_START_SQL)
+            provenance_start = cur.fetchone()[0]
+            cur.execute(_COLUMN_SQL.EXPOSURE)
+            has_exposure = cur.fetchone()[0]
+            variants = _SPAWN_FACTS_SELECT_SQL.EXPOSURE_COLUMNS
+            columns = variants.FULL if has_exposure else variants.PRE_EXPOSURE
+            sql = _SPAWN_FACTS_SELECT_SQL.TEMPLATE.format(exposure_columns=columns)
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    spawns: defaultdict[str, list[SpawnFacts]] = defaultdict(list)
+    for (
+        agent_type, agent_id, session_id, started_at, overage_rows, stopped_at, attributions,
+        tool_use_actual, *exposure,
+    ) in rows:
+        spawns[agent_type].append(SpawnFacts(
+            agent_id, session_id, started_at, int(overage_rows), stopped_at is not None,
+            tuple({"attribution_source": source} for source in attributions),
+            stopped_at, None if tool_use_actual is None else int(tool_use_actual), *exposure,
+        ))
+    return provenance_start, spawns
+
+
+# Generator evidence read
+
+
+def read_pattern_evidence(
+    agent: str,
+    windows: PairWindows,
+    evaluated_at: datetime,
+    *,
+    redelegation_window: timedelta = timedelta(0),
+) -> dict[str, PatternEvidence] | None:
+    """Each metric key's floor and triggering spawns for `agent`, keyed by metric key.
+
+    Triggering spawns = every member of each metric event the floor counts in the
+    confirmation window (`get_confirmation_events`), newest first. None on ANY read
+    failure — the caller renders the evidence unavailable."""
+    try:
+        provenance_start, spawns = _read_spawn_facts(
+            [agent], windows, evaluated_at=evaluated_at, redelegation_window=redelegation_window
+        )
+        agent_spawns = spawns[agent]
+        events = {
+            metric_key: _get_triggering_spawns(
+                agent_spawns, metric_key, windows, provenance_start, evaluated_at,
+                redelegation_window,
+            )
+            for metric_key in sorted(METRIC_KEYS)
+        }
+        agent_ids = sorted(
+            {spawn.agent_id for triggering in events.values() for spawn in triggering}
+        )
+        facts = _read_outcome_facts(agent_ids) if agent_ids else {}
+    except Exception as exc:  # every failure renders as unavailable evidence
+        sys.stderr.write(
+            '{"hook":"_pg_learning_dualwrite","op":"read_pattern_evidence",'
+            f'"error_kind":"{type(exc).__name__}","fallback":"none"}}\n'
+        )
+        return None
+    return {
+        metric_key: PatternEvidence(
+            get_floor_verdict(
+                agent_spawns, metric_key, windows, provenance_start, evaluated_at,
+                redelegation_window=redelegation_window,
+            ),
+            tuple(_get_triggering_spawn(spawn, facts) for spawn in events[metric_key]),
+        )
+        for metric_key in sorted(METRIC_KEYS)
+    }
+
+
+def _get_triggering_spawns(
+    spawns: list[SpawnFacts],
+    metric_key: str,
+    windows: PairWindows,
+    provenance_start: datetime | None,
+    evaluated_at: datetime,
+    redelegation_window: timedelta,
+) -> list[SpawnFacts]:
+    events = get_confirmation_events(
+        spawns, metric_key, windows, provenance_start, evaluated_at,
+        redelegation_window=redelegation_window,
+    )
+    triggering = [spawn for members in events for spawn in members]
+    return sorted(triggering, key=lambda spawn: spawn.started_at, reverse=True)
+
+
+def _get_triggering_spawn(
+    spawn: SpawnFacts, facts: dict[str, OutcomeFacts]
+) -> TriggeringSpawn:
+    outcome = facts.get(spawn.agent_id, OutcomeFacts(0, None))
+    attributions = tuple(
+        str(row["attribution_source"])
+        for row in spawn.outcomes
+        if row.get("attribution_source")
+    )
+    return TriggeringSpawn(
+        spawn.agent_id,
+        spawn.started_at,
+        spawn.overage_rows,
+        attributions,
+        outcome.verified_fail_rows,
+        outcome.tool_use_actual,
+    )
+
+
+def _read_outcome_facts(agent_ids: list[str]) -> dict[str, OutcomeFacts]:
+    """Verified failures + tool_use actual per agent_id; raises on any failure."""
+    params = (GRADER_VERDICT_FAIL, TOOL_USE_LINE_PATTERN, agent_ids)
+    with psycopg.connect(
+        "dbname=glass_atrium", connect_timeout=2, autocommit=True
+    ) as conn:
+        rows = conn.execute(_OUTCOME.FACTS_SELECT_SQL, params).fetchall()
+    return {
+        agent_id: OutcomeFacts(
+            int(verified_fails),
+            None if tool_use_actual is None else int(tool_use_actual),
+        )
+        for agent_id, verified_fails, tool_use_actual in rows
+    }

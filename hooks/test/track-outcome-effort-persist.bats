@@ -80,7 +80,7 @@ _mk_envelope() {
 }
 
 _run_helper() {
-  run env HOME="${EPH_HOME}" PYTHONPATH="${EF_PSYCOPG_PP}" \
+  run env HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium" PYTHONPATH="${EF_PSYCOPG_PP}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     bash -c 'printf "%s" "$1" | python3 "$2" 2>&1' _ "${1}" "${EF_PG_HELPER}"
 }

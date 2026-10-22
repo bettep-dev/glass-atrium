@@ -1,6 +1,6 @@
 // Unit tests for the client-side cron-node live-badge fold in
-// public/src/screens/architecture.jsx (F39): two daemons can bind ONE node id
-// (cron: daily-restart-autoagent + daily-restart-wiki, per DAEMON_NODE_BINDINGS).
+// public/src/screens/architecture.jsx (F39): two daemons can bind ONE node id —
+// the served node_ids are payload data, never a guaranteed one-to-one map.
 // buildLiveDaemonsByNodeId must keep a LIST per node id so no status is dropped.
 // Pre-fix, the Map was `set(nid, d)` (last-writer-wins) — one daemon silently
 // vanished and the drawer showed a single pill.
@@ -14,7 +14,7 @@
 // minimal React/window.UI stubs, then exercises the real helpers — not a drift-prone
 // copy. No DB / no network is touched (the tested helpers are pure).
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
@@ -96,7 +96,7 @@ interface ArchHelpers {
     payloadState: FetchState | null | undefined,
     daemonName: string,
   ) => DaemonRunRow[] | null;
-  getLegibleFitScaleAR: (
+  getDefaultViewScaleAR: (
     paneW: number,
     paneH: number,
     graphW: number,
@@ -211,9 +211,9 @@ async function loadArch(): Promise<{
     "buildRingToneByNodeId must be reachable (AC-T2 live-verdict instrument)",
   );
   assert.strictEqual(
-    typeof h.getLegibleFitScaleAR,
+    typeof h.getDefaultViewScaleAR,
     "function",
-    "getLegibleFitScaleAR must be reachable (AC-13 instrument)",
+    "getDefaultViewScaleAR must be reachable (default-view instrument)",
   );
   assert.strictEqual(
     typeof h.getMapHealthEndpoints,
@@ -267,8 +267,8 @@ const daemon = (
 
 test("two daemons on one node id are BOTH kept as a list (no last-writer-wins drop)", () => {
   const map = arch.buildLiveDaemonsByNodeId([
-    daemon("daily-restart-autoagent", "ok"),
-    daemon("daily-restart-wiki", "error"),
+    daemon("autoagent", "ok"),
+    daemon("wiki", "error"),
   ]);
   const bound = map.get("cron");
   assert.ok(bound, "node 'cron' must have a bound list");
@@ -278,24 +278,24 @@ test("two daemons on one node id are BOTH kept as a list (no last-writer-wins dr
   // deepStrictEqual would trip on the cross-realm Array.prototype mismatch.
   assert.strictEqual(
     bound.map((d) => d.daemon_name).sort().join(","),
-    "daily-restart-autoagent,daily-restart-wiki",
+    "autoagent,wiki",
   );
 });
 
 test("collision keeps both regardless of input order (order-independent)", () => {
   const map = arch.buildLiveDaemonsByNodeId([
-    daemon("daily-restart-wiki", "error"),
-    daemon("daily-restart-autoagent", "ok"),
+    daemon("wiki", "error"),
+    daemon("autoagent", "ok"),
   ]);
   assert.strictEqual(map.get("cron")?.length, 2);
 });
 
 test("one daemon bound to many node ids appears under each id as a length-1 list", () => {
   const map = arch.buildLiveDaemonsByNodeId([
-    daemon("autoagent", "ok", { node_ids: ["autoagent_d", "autoagent_ka"] }),
+    daemon("autoagent", "ok", { node_ids: ["autoagent_d", "cron"] }),
   ]);
   assert.strictEqual(map.get("autoagent_d")?.length, 1);
-  assert.strictEqual(map.get("autoagent_ka")?.length, 1);
+  assert.strictEqual(map.get("cron")?.length, 1);
   assert.strictEqual(map.get("autoagent_d")?.[0].daemon_name, "autoagent");
 });
 
@@ -353,36 +353,42 @@ test("AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으�
   );
 });
 
-// --- AC-13: 순수 스케일 산식 — 하향 클램프가 되살아나면 붉어짐 ---
+// --- default-view scale — 90% of the contain fit ---
 
-// 화면 상수와 짝 — 산식이 이 하한 아래로 내려가지 않음을 재는 기준값.
-const LEGIBLE_FIT_FLOOR = 12 / 30;
+// the default view's share of the contain fit — paired with the screen's overview rule
+const DEFAULT_VIEW_SHARE = 0.9;
 
-// 픽스처 격자 — 폭-fit 이 하한보다 작은 조합을 반드시 포함해야 함(AC-13 도메인 조건).
-const FIT_GRID: Array<[number, number, number, number]> = [
-  [400, 400, 4000, 200], // 폭-fit 0.1 — 하한 미만, 하향 클램프의 유일한 무는 지점
-  [400, 400, 1200, 1200], // fit 0.33 — 하한 미만
-  [1200, 800, 1500, 1000], // fit 0.8 — 하한 초과, 클램프 없음
-  [400, 400, 400, 400], // fit 1
-  [800, 800, 200, 200], // fit 4 — 상한 1 로 잘림
+// pane/graph grid spanning fits far under the retired 12px floor, around 1, and above the natural-size cap
+const FIT_GRID: Array<{ name: string; dims: [number, number, number, number]; containFit: number }> = [
+  { name: "a very wide graph (width fit 0.1)", dims: [400, 400, 4000, 200], containFit: 0.1 },
+  { name: "a square graph larger than the pane (fit 1/3)", dims: [400, 400, 1200, 1200], containFit: 1 / 3 },
+  { name: "a graph slightly larger than the pane (fit 0.8)", dims: [1200, 800, 1500, 1000], containFit: 0.8 },
+  { name: "a graph exactly the pane size (fit 1)", dims: [400, 400, 400, 400], containFit: 1 },
+  { name: "a small graph capped at natural size (fit 4)", dims: [800, 800, 200, 200], containFit: 4 },
 ];
 
-test("AC-13 어떤 입력에도 하한 미만을 반환하지 않고 1 을 넘지 않음", () => {
-  for (const [pw, ph, gw, gh] of FIT_GRID) {
-    const s = arch.getLegibleFitScaleAR(pw, ph, gw, gh);
-    assert.ok(s >= LEGIBLE_FIT_FLOOR, `${pw}x${ph}/${gw}x${gh} -> ${s} < floor`);
-    assert.ok(s <= 1, `${pw}x${ph}/${gw}x${gh} -> ${s} > 1`);
+describe("the default view scale is 90% of the contain fit capped at natural size", () => {
+  for (const row of FIT_GRID) {
+    test(row.name, () => {
+      const s = arch.getDefaultViewScaleAR(...row.dims);
+      const expected = DEFAULT_VIEW_SHARE * Math.min(row.containFit, 1);
+      assert.ok(Math.abs(s - expected) < 1e-9, `${row.dims.join("x")} -> ${s}, expected ${expected}`);
+    });
   }
-  // 하한 미만 조합은 정확히 하한으로 올라옴(하향 클램프 복원 시 0.1 이 반환되어 실패).
-  assert.strictEqual(arch.getLegibleFitScaleAR(400, 400, 4000, 200), LEGIBLE_FIT_FLOOR);
-  // fit 이 하한을 넘으면 그대로 통과(상수로 뭉개지 않음).
-  assert.strictEqual(arch.getLegibleFitScaleAR(1200, 800, 1500, 1000), 0.8);
 });
 
-test("AC-13 비정상 치수는 하한으로 떨어짐 (0/음수/NaN)", () => {
-  assert.strictEqual(arch.getLegibleFitScaleAR(0, 400, 400, 400), LEGIBLE_FIT_FLOOR);
-  assert.strictEqual(arch.getLegibleFitScaleAR(400, 400, 0, 400), LEGIBLE_FIT_FLOOR);
-  assert.strictEqual(arch.getLegibleFitScaleAR(NaN, 400, 400, 400), LEGIBLE_FIT_FLOOR);
+describe("unmeasured dimensions fall back to 90% of natural size", () => {
+  const rows: Array<{ name: string; dims: [number, number, number, number] }> = [
+    { name: "a zero pane width", dims: [0, 400, 400, 400] },
+    { name: "a negative pane height", dims: [400, -1, 400, 400] },
+    { name: "a zero graph width", dims: [400, 400, 0, 400] },
+    { name: "a NaN pane width", dims: [NaN, 400, 400, 400] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.strictEqual(arch.getDefaultViewScaleAR(...row.dims), DEFAULT_VIEW_SHARE);
+    });
+  }
 });
 
 // --- T7: the map absorbs the five health responses -------------------------
@@ -879,11 +885,16 @@ test("M1 a live-overlay failure is named in the lane and names its own reason", 
   assert.ok(bare[0].note.length > 0, "a reasonless failure still needs a sentence");
 });
 
-test("M1 every tone the lane can paint has a rank, so no row sorts to nowhere", () => {
+test("every tone the lane can paint has a rank, so no row sorts to nowhere", () => {
   const ranks = readInCtx<Record<string, number>>("ALARM_TONE_RANK");
-  const glyphs = readInCtx<Record<string, string>>("TONE_GLYPH_CLASS");
+  const everyTrigger = { offWriters: [{ writer_name: "track-outcome" }], healthStoreErrors: ["PostgreSQL"], liveState: { status: "error", data: null, error: "x" } };
+  const tones = [
+    ...alarmRows({ ...everyTrigger, governance: { absent: ["scoped/scope-dev.md"], sourceMissing: false } }),
+    ...alarmRows({ governance: { absent: [], sourceMissing: true } }),
+  ].map((r) => r.tone);
 
-  for (const tone of Object.keys(glyphs))
+  assert.ok(tones.length >= 5, "precondition: every lane trigger raises its row");
+  for (const tone of new Set(tones))
     assert.ok(
       Number.isFinite(ranks[tone]),
       `tone "${tone}" can be painted but has no rank — it would sort as NaN`,
@@ -1009,7 +1020,7 @@ test("V4 dashed strokes on the map mean unverified and nothing else", () => {
 // --- 39731 conformance: C1–C4 ------------------------------------------------------------
 test("C1 a daemons store that has not answered leaves no verdict ring from the live daemon statuses", () => {
   const critDaemon = arch.buildLiveDaemonsByNodeId([
-    { daemon_name: "daily-restart", status: "error", effective_status: "error", node_ids: ["cron"] },
+    { daemon_name: "autoagent", status: "error", effective_status: "error", node_ids: ["cron"] },
   ]);
 
   for (const status of ["error", "loading", "ready"]) {
@@ -1188,25 +1199,13 @@ test("P1 the security category's node stroke uses no status hue", () => {
   assert.ok(!statusHexes.includes(stroke), `${stroke} collides with a status hue ${statusHexes}`);
 });
 
-test("the pre-layout label measure uses the font family mermaid lays the map out with", () => {
-  const ctx = createArchContext();
-  const measureContext = { font: "", measureText: (text: string) => ({ width: text.length }) };
-  (ctx.window as Record<string, unknown>).MERMAID_CONFIG = { themeVariables: { fontFamily: "Probe Face, serif" } };
-  ctx.document = { documentElement: {}, createElement: () => ({ getContext: () => measureContext }) };
-  vm.runInContext(archCode, ctx);
-
-  callInCtx<number>(ctx, "getMapTextWidthAR", "label");
-
-  assert.match(measureContext.font, /px Probe Face, serif$/, `measured with "${measureContext.font}"`);
-});
-
-test("the drawn map's label lines come from the client measure alone, never from stored breaks", () => {
-  const measure = (text: string) => text.length * 10;
+test("drawn labels are single-line whatever the stored breaks", () => {
   const drawn = CANONICAL_MAP.mermaid_drawn;
   const unbroken = drawn.replace(/\s*<br\s*\/?>\s*/gi, " ");
 
-  const fromStored = callInCtx<string>(archCtx, "buildMeasuredMapSourceAR", drawn, measure);
-  const fromUnbroken = callInCtx<string>(archCtx, "buildMeasuredMapSourceAR", unbroken, measure);
+  const fromStored = callInCtx<string>(archCtx, "buildSingleLineMapSourceAR", drawn);
+  const fromUnbroken = callInCtx<string>(archCtx, "buildSingleLineMapSourceAR", unbroken);
 
+  assert.doesNotMatch(fromStored, /<br\s*\/?>/i, "a stored break reached the drawn source");
   assert.strictEqual(fromStored, fromUnbroken);
 });

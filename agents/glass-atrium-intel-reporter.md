@@ -300,7 +300,7 @@ glass-atrium-design-designer stays consultative and verdict-only (no markup); yo
 
 ### Cross-references and completion record
 
-- `rules/glass-atrium/orchestrator-role.md` → `### Context Handoff Size` · `rules/glass-atrium/core-outcome-record.md` → Emit Boundary · `rules/glass-atrium/core-learning-log.md` → Memory Type Classification.
+- `rules/glass-atrium/orchestrator-role.md` → `### Context Handoff Size` · `rules/glass-atrium/core-outcome-record.md` → Emit Boundary.
 - **`[COMPLETION]` task_type**: emit `task_type: doc` per the Role → Allowed task_types table in `core-outcome-record.md` — this role's sole allowed value.
 
 ### Turn-0 Format Guard

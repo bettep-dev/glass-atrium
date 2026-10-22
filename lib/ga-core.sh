@@ -159,12 +159,9 @@ run_install() {
   set -e
   [[ "${doctor_rc}" -eq 0 ]] || die "doctor preflight failed — aborting install"
 
-  # clear any STALE detached daemon tmux session before a fresh install: a
-  # `claude-{wiki,autoagent}-daemon` session left over from a prior install (it
-  # survives launchctl bootout + plugin uninstall) would otherwise linger with a
-  # broken config. Guarded (DRY_RUN + sandbox + tmux-absent); a reinstall's own
-  # daemons start clean afterward.
-  kill_daemon_tmux_sessions
+  # retire the LAUNCHD_RETIRED_JOBS labels + daemon tmux sessions a prior install left (a session survives
+  # launchctl bootout + plugin uninstall); residue-gated, so a clean install signals nothing
+  retire_launchd_jobs_or_warn
 
   # config.toml render — MUST precede any render-monitor-env.sh invocation
   # (ordering contract: that script validates [paths].monitor_docs_html_root as
@@ -372,7 +369,7 @@ run_prune() {
 
   # STEP2 — build the manifest set ONCE (read-set-then-act: a mid-loop manifest
   # change cannot flip a removal decision). Newline-delimited TARGET_HOME-rel
-  # paths for the criterion-d grep -Fxq lookup (bash 3.2 — no declare -A).
+  # paths for the criterion-d whole-line lookup (bash 3.2 — no declare -A).
   local manifest_set
   # read_manifest_files dies on its own failure (already precondition-guarded
   # above); the command-substitution masks its rc, which is benign here.
@@ -397,7 +394,8 @@ run_prune() {
     rel="${link#"${TARGET_HOME}"/}"
     # (d) NOT-IN-MANIFEST — a broken link that IS in the manifest means its
     # source is transiently missing (a should-exist file): preserve + flag.
-    if printf '%s\n' "${manifest_set}" | grep -Fxq -- "${rel}"; then
+    # whole-line match in-shell — the manifest list piped to `grep -q` races its early exit
+    if [[ $'\n'"${manifest_set}"$'\n' == *$'\n'"${rel}"$'\n'* ]]; then
       log "  flag : broken GA symlink in manifest (source transiently missing, preserved): ${link}"
       flagged=$((flagged + 1))
       continue
@@ -570,7 +568,7 @@ migrate_layout() {
 # Single-command wrap of the FULL fresh-machine sequence: run_install (doctor → config render → plist
 # render → symlink farm → hook wiring → DB bootstrap → launchd repoint → claude --version) THEN monitor
 # `npm run build` + a /api/ health gate. Named exit codes (loud-fail). launchd job LOADING stays manual
-# (review-first) BY DEFAULT — never launchctl from here UNLESS --load-launchd is set, then the 8 jobs load
+# (review-first) BY DEFAULT — never launchctl from here UNLESS --load-launchd is set, then the active roster loads
 # AFTER the health gate passes (phase 4).
 # Exit-code semantics (distinct from die's generic 1):
 #   20 = monitor build failed   21 = monitor health gate failed (no 200 in window)
@@ -611,7 +609,7 @@ run_bootstrap() {
   # the load step below is reached ONLY on a passed gate.
   bootstrap_health_gate
 
-  # phase 4 (OPT-IN) — load the 8 rendered launchd jobs. Fires ONLY behind
+  # phase 4 (OPT-IN) — load the rendered active-roster launchd jobs. Fires ONLY behind
   # --load-launchd; default (no flag) leaves loading to the operator (review-first).
   # Gated post-gate by control flow: a failed gate already exited above.
   load_launchd_jobs

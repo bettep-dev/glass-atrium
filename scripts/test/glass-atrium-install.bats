@@ -34,6 +34,16 @@ REAL_GENMAN="${GA}/scripts/generate-manifest.sh"
 # shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
 
+# Octal permission of a file — BSD stat first, GNU fallback. Output-validated: GNU
+# `stat -f` is filesystem status, so the exit code alone cannot select the form.
+mode_of() {
+  local m
+  m="$(stat -f '%Lp' "$1" 2>/dev/null || true)"
+  [[ "${m}" =~ ^[0-7]{3,4}$ ]] || m="$(stat -c '%a' "$1" 2>/dev/null || true)"
+  [[ "${m}" =~ ^[0-7]{3,4}$ ]] || return 1
+  printf '%s\n' "${m}"
+}
+
 setup() {
   [[ -f "${INSTALL_SH}" ]] || skip "install.sh not found: ${INSTALL_SH}"
   [[ -f "${REAL_SPINE}" ]] || skip "apply-spine.sh not found: ${REAL_SPINE}"
@@ -136,7 +146,7 @@ build_release() {
 # GA_NO_RUN keeps handoff() from exec'ing the launcher; `run` sets the usual
 # $status/$output globals for the calling test.
 run_install() {
-  run env HOME="${FAKE_HOME}" \
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
     GA_DIR="${TARGET}" \
     GA_NO_RUN=1 \
     GA_FARM_CALL_LOG="${WORK}/farm-calls.log" \
@@ -418,7 +428,7 @@ build_escaping_release() {
     return 1
   }
   [[ "${output}" == *'manifest key escapes the install root: ../outside.txt'* ]] || return 1
-  [ "$(stat -f '%Lp' "${WORK}/outside.txt")" = "600" ] || return 1
+  [ "$(mode_of "${WORK}/outside.txt")" = "600" ] || return 1
   [ ! -e "${TARGET}" ] || return 1
 }
 
@@ -468,7 +478,7 @@ seed_symlinked_target_dir() {
     return 1
   }
   [[ "${output}" == *'WARN: mode target escapes the install root (skipped): ext/f.txt'* ]] || return 1
-  [ "$(stat -f '%Lp' "${WORK}/outside/f.txt")" = "600" ] || return 1
+  [ "$(mode_of "${WORK}/outside/f.txt")" = "600" ] || return 1
   [ -x "${TARGET}/glass-atrium" ] || return 1
 }
 

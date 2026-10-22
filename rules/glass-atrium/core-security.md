@@ -50,6 +50,7 @@ What the harness mechanically enforces around agent tool authorization, and wher
     - live `settings.json`/`settings.local.json` and live hook dirs of `~/.claude/` AND of every `~/.claude-*` profile branch — a branch's settings file carries that profile's own hook wiring
     - `agents/*.md` frontmatter identity keys {name, tools, scope} (`model:` excluded)
     - NEW `agents/*.md` creation
+    - the live canary directory (`<data root>/data/learning/canary/`) — the per-agent trial text `hooks/inject-scope-rules.sh` delivers at spawn
 
 ## LLM-Specific Security
 

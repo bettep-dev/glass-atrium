@@ -22,7 +22,7 @@ Pinned invariants:
   (5) a non-ok base (skipped:*) never gains the escalation suffix.
 
 No network, no PG, no Haiku: the CLI seam (_invoke_haiku_cli) is scripted and
-the run_cycle row stubs the generator, mirroring the sibling back-off seam test.
+the generation-unit row stubs the generator, mirroring the sibling back-off seam test.
 
 Run with either runner:
     python3 -m unittest autoagent.test.test_parse_mode_provenance -v
@@ -49,6 +49,9 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+_TEST_DIR = Path(__file__).resolve().parent
+if str(_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_TEST_DIR))
 
 try:
     import daemon_cycle as dc
@@ -57,6 +60,8 @@ try:
 except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
+
+from _pg_seal import seal_pg_reach  # noqa: E402 — test dir anchored above
 
 _PROBE_AGENT = "provenance-probe-agent"
 
@@ -240,7 +245,7 @@ class EscalatedStatusComposition(unittest.TestCase):
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class CycleStatusDerivation(unittest.TestCase):
-    """One cycle over a single target — the derivation switch end to end."""
+    """One generation unit over a single target — the derivation switch end to end."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -251,7 +256,7 @@ class CycleStatusDerivation(unittest.TestCase):
         self.target_md = self.agents_dir / f"{_PROBE_AGENT}.md"
         self.target_md.write_text("# probe agent\n", encoding="utf-8")
 
-        pattern = dc.Pattern(
+        self.pattern = dc.Pattern(
             date="2026-07-01",
             label="probe pattern",
             frequency="9",
@@ -261,15 +266,10 @@ class CycleStatusDerivation(unittest.TestCase):
             raw_line=f"pg:learning_log:1:probe pattern|{_PROBE_AGENT}",
             row_id=1,
         )
-        for target, repl in (
-            ("read_user_pending_patterns", lambda *a, **k: [pattern]),
-            ("fetch_generation_outcomes", lambda *a, **k: []),
-            ("FEATURE_FLAGS_FILE", self.tmp_dir / "no-such-flags.json"),
-            ("INTER_CALL_SPACING_SEC", 0.0),
-        ):
-            patcher = mock.patch.object(dc, target, repl)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(dc, "INTER_CALL_SPACING_SEC", 0.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.pg_reach = seal_pg_reach(self)
 
     def _run(self, proposal: "dc.PatchProposal") -> "dc.PatchResult":
         with mock.patch.object(dc, "consecutive_timeout_count", lambda _t: 0):
@@ -277,16 +277,18 @@ class CycleStatusDerivation(unittest.TestCase):
                 dc, "generate_consolidated_proposal", lambda *a, **k: proposal
             ):
                 with contextlib.redirect_stderr(io.StringIO()):
-                    report = dc.run_cycle(
-                        log_path=self.tmp_dir / "learning-log.md",
-                        outcomes_dir=self.tmp_dir,
+                    patch = dc.build_patch_result(
+                        _PROBE_AGENT,
+                        [self.pattern],
+                        cycle_date="2026-07-02",
                         agents_dir=self.agents_dir,
+                        seen_targets=set(),
                         skip_haiku=False,
                         skip_pre_verify=True,
                         skip_loop_emit=True,
                     )
-        self.assertEqual(len(report.patches), 1)
-        return report.patches[0]
+        self.assertEqual(self.pg_reach, [])
+        return patch
 
     def _proposal(self, *, parse_mode: str, **extra: object) -> "dc.PatchProposal":
         return dc.PatchProposal(

@@ -1,6 +1,6 @@
 # DEV Scope Rules
 
-> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {glass-atrium-dev-front, glass-atrium-dev-react, glass-atrium-dev-angular, glass-atrium-dev-gsap, glass-atrium-dev-android, glass-atrium-dev-nestjs, glass-atrium-dev-node, glass-atrium-dev-python, glass-atrium-dev-db, glass-atrium-dev-rag, glass-atrium-dev-animator, glass-atrium-dev-shell, glass-atrium-dev-swift}
+> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {glass-atrium-dev-front, glass-atrium-dev-react, glass-atrium-dev-angular, glass-atrium-dev-gsap, glass-atrium-dev-android, glass-atrium-dev-nestjs, glass-atrium-dev-node, glass-atrium-dev-python, glass-atrium-dev-db, glass-atrium-dev-rag, glass-atrium-dev-animator, glass-atrium-dev-shell, glass-atrium-dev-swift, glass-atrium-dev-aws}
 > **Inherits**: Tier 1 (Core) + Tier 3 (cross-cutting)
 > **See**: [core-compliance-matrix.md → Loading Tiers](core-compliance-matrix.md#loading-tiers)
 
@@ -140,6 +140,7 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - **Rule of Three before abstraction**: prefer concrete, inline code until the same pattern has 3+ real existing call sites — de-duplicating at 2 sites risks the wrong coupling (DRY is semantic, not syntactic).
 - **Surface, don't suppress**: when you spot a genuine improvement, risk, or better design outside the requested scope, note it as a finding to the user — neither silently implement it nor silently drop it. The note preserves the discovery; the default keeps the diff scoped.
 - **Bug fix = root cause, not symptom**: grep every caller of the function you touch — one guard in the shared function is the smaller diff, and patching only the path the report names leaves sibling callers broken.
+- **A column read as a gate → list every writer**: when a change makes a predicate read a column as a gate, list every writer of that column (inserts, updates, upserts, migrations) and cite the list in the plan or PR — one unchecked writer leaves rows the gate misreads.
 - **Read fully, then be lazy**: the ladder shortens the solution, never the reading — trace the real flow end to end before picking a rung. A small diff you don't understand is a second bug, not efficiency.
 - **YAGNI applies to tests too**: the only skippable check is a test whose target has no branch and no logic; non-trivial logic leaves one runnable check.
   - Nothing under the minimalism carve-out below is ever skippable — a one-line auth or validation guard keeps its check.

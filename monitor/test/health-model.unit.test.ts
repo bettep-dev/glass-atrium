@@ -111,7 +111,9 @@ function daemonRow(name: string, overrides: Record<string, unknown> = {}) {
 }
 
 // The full roster the cards expect, named once — a per-case re-listing is what drifts out of step.
-const DAEMON_NAMES = ["autoagent", "wiki", "daily-restart-autoagent", "daily-restart-wiki"];
+const DAEMON_NAMES = ["autoagent", "wiki"];
+// History-only names: the server keeps their past rows readable, the board carries no card for them.
+const RETIRED_DAEMON_NAMES = ["daily-restart-autoagent", "daily-restart-wiki"];
 
 function allHealthyStates(overrides: Partial<HealthStates> = {}): HealthStates {
   return {
@@ -167,7 +169,7 @@ function tallyCardFacts(states: HealthStates): CardTally {
   return tally;
 }
 
-test("all sources healthy: every one of the 7 cards resolves, browser probe included", () => {
+test("all sources healthy: every card resolves, browser probe included", () => {
   const tally = tallyCardFacts(allHealthyStates());
   assert.strictEqual(tally.ready, HealthModel.HEALTH_CARD_DEFS.length);
   assert.strictEqual(tally.ok, HealthModel.HEALTH_CARD_DEFS.length);
@@ -179,24 +181,24 @@ test("browser probe failed: the card still resolves AND lands in the degraded bu
   const tally = tallyCardFacts(
     allHealthyStates({ pgState: ready({ status: "ok", db: "open", browser: "failed" }) }),
   );
-  assert.strictEqual(tally.ready, 7);
+  assert.strictEqual(tally.ready, HealthModel.HEALTH_CARD_DEFS.length);
   assert.strictEqual(tally.degraded, 1);
 });
 
 test("browser unprobed: info bucket, never ok or degraded", () => {
   const tally = tallyCardFacts(allHealthyStates({ pgState: ready({ status: "ok", db: "open" }) }));
   assert.strictEqual(tally.info, 1);
-  assert.strictEqual(tally.ok, 6);
+  assert.strictEqual(tally.ok, HealthModel.HEALTH_CARD_DEFS.length - 1);
 });
 
 test("pg not ready: pg + browser cards stop resolving", () => {
   const tally = tallyCardFacts(allHealthyStates({ pgState: LOADING }));
-  assert.strictEqual(tally.ready, 5);
+  assert.strictEqual(tally.ready, HealthModel.HEALTH_CARD_DEFS.length - 2);
 });
 
 test("hook config not ready: the hook card stops resolving", () => {
   const tally = tallyCardFacts(allHealthyStates({ hookState: LOADING }));
-  assert.strictEqual(tally.ready, 6);
+  assert.strictEqual(tally.ready, HealthModel.HEALTH_CARD_DEFS.length - 1);
 });
 
 test("bucket attribution: missing daemon row → info; quota_exceeded → degraded (warn re-tone)", () => {
@@ -209,14 +211,12 @@ test("bucket attribution: missing daemon row → info; quota_exceeded → degrad
             last_status: "quota_exceeded",
             effective_status: "quota_exceeded",
           }),
-          daemonRow("wiki"),
-          daemonRow("daily-restart-autoagent"),
-          // daily-restart-wiki row absent → card tone 'info' ('No data')
+          // wiki row absent → card tone 'info' ('No data')
         ],
       }),
     }),
   );
-  assert.strictEqual(tally.ready, 7);
+  assert.strictEqual(tally.ready, HealthModel.HEALTH_CARD_DEFS.length);
   assert.strictEqual(tally.info, 1);
   assert.strictEqual(tally.degraded, 1);
 });
@@ -230,6 +230,23 @@ test("stale daemon (server verdict): degraded bucket + counted as stale", () => 
   assert.strictEqual(tally.stale, 1);
 });
 
+test("a retired daily-restart row changes no card, whatever its status", () => {
+  const base = tallyCardFacts(allHealthyStates());
+  for (const status of ["ok", "error", "stale", "missing"]) {
+    const withHistory = tallyCardFacts(
+      allHealthyStates({
+        daemonState: ready({
+          daemons: [
+            ...DAEMON_NAMES.map((name) => daemonRow(name)),
+            ...RETIRED_DAEMON_NAMES.map((name) => daemonRow(name, { last_status: status, effective_status: status })),
+          ],
+        }),
+      }),
+    );
+    assert.deepStrictEqual(withHistory, base, `history rows at '${status}' must not move a bucket`);
+  }
+});
+
 test("hook failures: unretried 24h failure → crit; retried-only → warn (F08)", () => {
   const crit = tallyCardFacts(
     allHealthyStates({ hookFailState: ready({ count_24h: 2, unretried_count_24h: 1 }) }),
@@ -240,7 +257,7 @@ test("hook failures: unretried 24h failure → crit; retried-only → warn (F08)
     allHealthyStates({ hookFailState: ready({ count_24h: 2, unretried_count_24h: 0 }) }),
   );
   assert.strictEqual(warn.degraded, 1);
-  assert.strictEqual(warn.ok, 6);
+  assert.strictEqual(warn.ok, HealthModel.HEALTH_CARD_DEFS.length - 1);
 });
 
 test("stale verdict: display meta comes from the tone table, tone stays crit (Rule 4)", () => {
@@ -282,7 +299,7 @@ test("AC-T3 count: a row the server calls fresh is never counted stale, however 
   );
   assert.strictEqual(
     tally.ok,
-    7,
+    HealthModel.HEALTH_CARD_DEFS.length,
     "and the card stays in the healthy bucket — a re-derived verdict would re-tone it to crit",
   );
 });

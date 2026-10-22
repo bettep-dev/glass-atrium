@@ -21,6 +21,13 @@ const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const AGENT_NAMES = ["dev-react", "dev-shell", "dev-db"];
 const TASK_TYPES = ["bug-fix", "feature", "refactor", "research", "plan", "review", "diagnosis", "doc", "cleanup"];
 const MATRIX_SELECTOR = '[aria-label^="Success rate per agent"]';
+// More lifecycle agents than the S slot holds → the no-record card has a remainder to roll up.
+const LIFECYCLE_AGENTS = ["dev-react", "dev-shell", "dev-db", "dev-node", "dev-python", "dev-front", "dev-swift", "dev-rag"];
+const PAIRED_CARD_IDS = ["agents-failing-pairs", "agents-lifecycle"];
+// One list row: more empty body than this under a card's last row is a half-empty card.
+const ROW_PX = 40;
+// The type scale's floor: no chart label renders below it.
+const META_FLOOR_PX = 13;
 
 const ROW_TABLES = [
   { name: "ledger", selector: ".agent-table-minibars tr[data-roving-row]" },
@@ -82,7 +89,7 @@ async function openRenderContext(width = 1024): Promise<RenderContext> {
   app.get("/api/agents/success-rate", async () => ({ rows: getSuccessRateRows() }));
   app.get("/api/agents/review-flag-timeseries", async () => ({ rows: getReviewFlagRows() }));
   app.get("/api/agents/lifecycle-stats", async () => ({
-    rows: AGENT_NAMES.map((agent_type) => ({ agent_type, start_count: 4, stop_count: 4, completed_count: 3, p95_duration_sec: 60 })),
+    rows: LIFECYCLE_AGENTS.map((agent_type) => ({ agent_type, start_count: 4, stop_count: 4, completed_count: 3, p95_duration_sec: 60 })),
   }));
   app.get("/api/*", async () => ({ rows: [] }));
 
@@ -253,6 +260,16 @@ describe("agents screen at 1024px, charts and Retry", () => {
   });
 });
 
+// Each paired card: its bottom edge, and the empty body under its last table row.
+async function getPairedCardFill(page: Page) {
+  return page.evaluate((ids) => ids.map((id) => {
+    const card = document.getElementById(id)!.querySelector(".card") ?? document.getElementById(id)!;
+    const body = card.querySelector(".card-body")!;
+    const lastRow = Array.from(card.querySelectorAll("tbody tr")).at(-1)!;
+    return { id, bottom: card.getBoundingClientRect().bottom, slack: body.getBoundingClientRect().bottom - lastRow.getBoundingClientRect().bottom };
+  }), PAIRED_CARD_IDS);
+}
+
 describe("agents screen at 1440px", () => {
   let ctx: RenderContext;
 
@@ -261,6 +278,31 @@ describe("agents screen at 1440px", () => {
   });
 
   after(() => closeRenderContext(ctx));
+
+  test("the failing-pairs and no-record cards end at one edge with no half-empty body wherever they share a row", async () => {
+    try {
+      for (const width of [1440, 1920]) {
+        await ctx.page.setViewportSize({ width, height: 900 });
+        const cards = await getPairedCardFill(ctx.page);
+        const label = `${width}: ${cards.map((c) => `${c.id} bottom ${Math.round(c.bottom)} slack ${Math.round(c.slack)}`).join(" | ")}`;
+        assert.ok(Math.abs(cards[0]!.bottom - cards[1]!.bottom) < 1, label);
+        for (const card of cards) assert.ok(card.slack < ROW_PX, label);
+      }
+    } finally {
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+    }
+  });
+
+  test("no chart label renders below the meta floor", async () => {
+    const sizes = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll(".recharts-wrapper text"))
+        .filter((t) => (t.textContent || "").trim() !== "")
+        .map((t) => ({ text: (t.textContent || "").trim(), px: parseFloat(getComputedStyle(t).fontSize) })),
+    );
+    assert.ok(sizes.length > 0, "the screen draws chart labels");
+    const small = sizes.filter((s) => s.px < META_FLOOR_PX);
+    assert.deepEqual(small, [], `${small.length} of ${sizes.length} chart labels below ${META_FLOOR_PX}px`);
+  });
 
   test("the task-type matrix shows every column without a sideways scroll", async () => {
     await openTaskTypeFold(ctx.page);

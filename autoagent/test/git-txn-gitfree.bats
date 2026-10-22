@@ -104,9 +104,15 @@ _apply_via_gitapply() {
   return "${rc}"
 }
 
-# inode number, portable across BSD (macOS) and GNU stat.
+# inode number — BSD stat first, GNU fallback. Output-validated: GNU `stat -f` is
+# filesystem status (statfs block on stdout), so the exit code alone cannot select
+# the right form.
 _inode_of() {
-  stat -f '%i' "$1" 2>/dev/null || stat -c '%i' "$1" 2>/dev/null
+  local ino
+  ino="$(stat -f '%i' "$1" 2>/dev/null || true)"
+  [[ "${ino}" =~ ^[0-9]+$ ]] || ino="$(stat -c '%i' "$1" 2>/dev/null || true)"
+  [[ "${ino}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "${ino}"
 }
 
 # ---------------------------------------------------------------------------
@@ -184,6 +190,32 @@ _inode_of() {
   [ "${ino_before}" != "${ino_after}" ] # rename swapped a fresh file in
   # no leftover rollback temp beside the target
   ! ls "${TARGET}".rollback.* >/dev/null 2>&1
+}
+
+@test "_inode_of reads one inode number under a GNU stat whose -f prints a statfs block (PATH shim)" {
+  # GNU stat: -f is --file-system → statfs block on stdout, exit 1 ('%i' read as a
+  # missing path); its free counts can differ between two calls on the same inode.
+  local shim="${WORK}/gnu-shim"
+  mkdir -p "${shim}"
+  cat >"${shim}/stat" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+  -f)
+    printf '  File: "%s"\n' "${3:-}"
+    printf '    ID: 0 Namelen: 255     Type: overlayfs\n'
+    printf 'Blocks: Total: 1          Free: 1          Available: 1\n'
+    exit 1
+    ;;
+  -c) printf '4242\n' ;;
+  *) exit 1 ;;
+esac
+SHIM
+  chmod 755 "${shim}/stat"
+  PATH="${shim}:${PATH}" run _inode_of "${TARGET}"
+  [[ "${status}" -eq 0 && "${output}" == "4242" ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 # ---------------------------------------------------------------------------

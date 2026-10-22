@@ -167,7 +167,7 @@ write_payload() {
 run_hook() {
   : >"${OPEN_COUNT_FILE}"
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PYTHONPATH="${SHIM_DIR}" \
     PGHOST="/nonexistent-socket-xyzzy" \
     CLAUDE_GATE_INFLIGHT="" \

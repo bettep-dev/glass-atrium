@@ -25,7 +25,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 
 ## What moved out of the body, and why
 
-- **Effort/thinking blockquote** — duplicate of `GLASS_ATRIUM_GLOBAL_RULES.md` → Thinking Budget Policy, a Tier-1 rule that reaches every subagent.
+- **Effort/thinking blockquote** — restated `GLASS_ATRIUM_GLOBAL_RULES.md` → Thinking Budget Policy, a Tier-1 rule that reaches every subagent; its `effort=high default` clause contradicts that section's parent-tier default.
 - **Self line budget** — a constraint on whoever edits the body, not a duty on a Node task. The body's length is carried almost entirely by the Guardrails list, so an addition should replace or merge rather than append.
 - **"Measurable pass conditions only (binding guardrail rules live in the Guardrails section)"** — framing for the editor, not a duty.
 - **The `acceptance_criteria.md` Guardrails bullet** — deleted together with the `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]` branch it mirrored.
@@ -53,7 +53,7 @@ Five daemon-evolved EDITABLE lines were judged against this body plus the rules 
 
 | Quote | Class | Reason |
 |---|---|---|
-| "MUST default to `effort=medium` for routine implementations" | contradicts | Thinking Budget Policy defaults `effort=high`; effort is set by the caller, not the spawned agent |
+| "MUST default to `effort=medium` for routine implementations" | contradicts | a body line cannot set its spawn's tier; the `effort:` key or `agent()` option does (Thinking Budget Policy) |
 | "MUST consolidate tool exploration (Grep/Read results) into one exploratory pass" | unsupported | no outcome evidence it caused or cured anything |
 | "confirm all Grep/Read is complete and documented before first Write/Edit" | contradicts | injected BUDGET-DEV staging (1-2 files at a time, verify each) and the retry after a first failure both need reads mid-implementation |
 | "MUST NOT perform secondary Grep/Read exploration on previously-examined targets" | contradicts | "1st failure → reformulate hypothesis + retry" needs re-tracing; post-edit re-reads verify work |

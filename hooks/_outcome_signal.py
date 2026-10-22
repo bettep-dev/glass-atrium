@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # Pure outcome-signal rules — the SINGLE definition of the negative-signal
-# predicate (learning-aggregator pattern emit + lesson-bucket routing,
-# daemon_cycle staleness recompute) and of the Role → Allowed task_types
-# allowlist that predicate depends on.
+# predicate (learning-aggregator pattern emit; daemon_cycle post-apply
+# regression watch), of the Role → Allowed task_types
+# allowlist that predicate depends on, and of the per-pattern metric
+# (pair windows, spawn half, occurrence floor).
 #
 # STDLIB-ONLY BY CONTRACT, psycopg-free in particular. learning-aggregator imports
 # these rules OUTSIDE the guard that degrades it when the DB driver is missing, and
@@ -12,6 +13,17 @@
 # BaseException, so an `except Exception` fail-open guard around that import does
 # NOT catch it and the importing process dies instead of degrading. Any import with
 # a driver dependency added here re-opens that kill path.
+
+# daemon imports this unguarded on an install's python3 3.9 → no 3.10+ construct at import
+from __future__ import annotations
+
+import hashlib
+import os
+from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime, timedelta, timezone
+from types import MappingProxyType, SimpleNamespace
+from typing import NamedTuple
 
 # ---------------------------------------------------------------------------
 # Role → Allowed task_types allowlist
@@ -57,12 +69,8 @@ def _role_task_type_allowed(agent, task_type):
 # ---------------------------------------------------------------------------
 # Negative-signal trigger predicate (AP-3)
 # ---------------------------------------------------------------------------
-# Every learning consumer keys on this ONE definition: the learning-aggregator
-# pattern emit (patterns 1/5) and lesson-bucket routing, plus the daemon_cycle
-# staleness recompute — so the emit condition, the EPM route and the live-window
-# recompute cannot drift apart (drift = live patterns mis-skipped as stale, or a
-# row routed to failure memory by one consumer and not the other). Defined over the
-# row dict _pg_learning_dualwrite.read_outcomes_since returns.
+# One definition → aggregator pattern emit (1/5) + daemon_cycle._is_soft_negative_outcome
+# Input: a row dict of _pg_learning_dualwrite.read_outcomes_since
 
 # done_with_concerns stays negative by PAIRED CONTRACT with the Result-selection
 # criterion in core-outcome-record.md: that criterion admits the result only for the
@@ -87,10 +95,9 @@ ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
 # subagent's TERMINAL StructuredOutput was successfully consumed: result=done +
 # confidence=low + metric_pass=false, writer-unverified. 'done' is not in
 # NEGATIVE_SIGNAL_RESULTS, so the row's RESULT contributes nothing — but
-# track-outcome.sh now sets review_flag on it for degraded-row visibility, and that
+# track-outcome.sh sets review_flag on it for degraded-row visibility, and that
 # OR-term is excluded by _is_visibility_flag_row so the count stays neutral.
-# Polarity handling (NEUTRAL, never a SUCCESS exemplar) lives in daemon_cycle's
-# partition, which keys on this token.
+# Also a member of _EMIT_FAILURE_ATTRIBUTIONS (emit-failure metric).
 ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED = "structuredoutput-derived"
 # Per-row floor mirroring the core-learning-log.md "revision_count 2+" process-
 # improvement bar — 1 rework request is normal iteration, 2+ marks a correction.
@@ -161,8 +168,8 @@ def _is_structural_polar_mismatch(row: dict) -> bool:
     Mirrors the D1 BRANCH, not merely its structural predicate. D1 gates that one arm;
     the underconfidence (low+true) and ABSENT-metric_pass arms still set review_flag on
     structural rows, so a carve-out keyed on _is_structural_row alone is a SUPERSET of
-    what D1 suppresses and silently drops those two live signals out of both memory
-    buckets."""
+    what D1 suppresses and silently drops those two live signals from the negative
+    predicate."""
     # Cheap conjuncts first: all three are pure and total (every access is
     # row.get(...) or ""), so the order is verdict-identical and skips the
     # frozenset-plus-prefix-loop structural test on the common non-mismatch row.
@@ -190,8 +197,7 @@ def _is_synthesized_measurement_gap(row: dict) -> bool:
     structuredoutput-derived (result=done, writer-unverified) is the third sibling
     provenance: its result contributes no OR-term, but its review_flag does — that
     term is excluded by _is_visibility_flag_row, not here, because the row is not a
-    done_with_concerns measurement gap. Its SUCCESS-side exclusion (NEUTRAL
-    polarity) lives in daemon_cycle._is_success_outcome."""
+    done_with_concerns measurement gap."""
     if (row.get("attribution_source") or "") == ATTRIBUTION_BUDGET_TRUNCATION:
         return False
     return (
@@ -262,3 +268,385 @@ def negative_signal_hits(row: dict) -> tuple[str, ...]:
 def is_negative_signal_outcome(row: dict) -> bool:
     """True when the row counts toward the per-agent negative-signal trigger."""
     return bool(negative_signal_hits(row))
+
+
+# Per-pattern metric → aggregator status, intake re-check, roster writer, power check, replay
+# Input: _pg_learning_dualwrite.read_pattern_floors / read_pattern_floor, or a replay-local read
+
+METRIC_BUDGET_OVERAGE = "budget_overage"
+METRIC_EMIT_FAILURE = "emit_failure"
+METRIC_KEYS = frozenset({METRIC_BUDGET_OVERAGE, METRIC_EMIT_FAILURE})
+# emit failure's cut-off leg (quota stop, user interrupt, kill): a guardrail, never a pattern key
+METRIC_NO_SUBAGENT_STOP = "no_subagent_stop"
+# A/A design-effect row key per metric definition; a row counts only for the definition it was
+# measured under → the pre-split union-event row, keyed `emit_failure`, sizes no key here
+DESIGN_EFFECT_ROW_KEYS = MappingProxyType({
+    METRIC_BUDGET_OVERAGE: METRIC_BUDGET_OVERAGE,
+    METRIC_EMIT_FAILURE: "emit_failure_attribution",
+    METRIC_NO_SUBAGENT_STOP: METRIC_NO_SUBAGENT_STOP,
+})
+# Recorder-written outcome provenance: the agent emitted no [COMPLETION] of its own.
+ATTRIBUTION_TRUNCATED_COMPLETION = "truncated_completion"
+_EMIT_FAILURE_ATTRIBUTIONS = frozenset({
+    ATTRIBUTION_SYNTHESIZED,
+    ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
+    ATTRIBUTION_BUDGET_TRUNCATION,
+    ATTRIBUTION_TRUNCATED_COMPLETION,
+})
+# = track-outcome.sh TOOL_USE_LINE, whole line, group 1 = actual (test_size_est_underestimate.py)
+TOOL_USE_LINE_PATTERN = (
+    r"^- [*][*]Tool use[*][*]: actual=([0-9]+)(?: declared=[0-9]+)?$"
+)
+
+PAIR_WINDOW = timedelta(days=7)
+BASELINE = SimpleNamespace(
+    SPAN=timedelta(days=84),  # look-back cap
+    MIN_COVERED=timedelta(days=28),  # the power check's projected-units window
+)
+FLOOR_MIN_SESSIONS = 5
+# a no-SubagentStop spawn younger than this at evaluation may still be running
+PENDING_GRACE = timedelta(hours=6)
+# advisory-subagent-budget.sh → DEFAULT_TOOL_BUDGET, the budget its SUBAGENT_TOOL_BUDGET overrides
+DEFAULT_TOOL_BUDGET = 40
+
+VERDICT_PASS = "pass"
+VERDICT_FAIL = "fail"
+VERDICT_INSUFFICIENT_BASELINE = "insufficient-baseline"
+
+
+class WindowStarts(NamedTuple):
+    baseline: datetime
+    detection: datetime
+    confirmation: datetime
+
+
+class PairWindows(NamedTuple):
+    """Half-open UTC windows: baseline [start.baseline, start.detection) · detection
+    [start.detection, start.confirmation) · confirmation [start.confirmation, end)."""
+
+    start: WindowStarts
+    end: datetime
+
+
+class SpawnFacts(NamedTuple):
+    """One core.spawn_manifest row plus the daemon-recorded facts joined by its agent_id."""
+
+    agent_id: str | None  # None = an `unknown` MANIFEST id → unjoinable
+    session_id: str | None
+    started_at: datetime
+    overage_rows: int  # core.budget_overages rows for agent_id
+    has_subagent_stop: bool
+    outcomes: tuple[Mapping[str, object], ...]  # core.outcomes rows for agent_id
+    stopped_at: datetime | None = None  # earliest SubagentStop; None → no continuation follows
+    tool_use_actual: int | None = None  # recorder's header line; None = unrecorded
+    # canary exposure (core.spawn_manifest column comments); all None = older line or schema
+    arm: int | None = None  # 1 = treatment, 0 = control
+    salt_id: int | None = None
+    is_delivered: bool | None = None  # column `delivered`
+    delivered_hash: str | None = None
+
+
+class WindowCount(NamedTuple):
+    spawns: int  # tasks under budget_overage (one per spawn at W = 0)
+    events: int
+    sessions: int  # distinct non-NULL session ids among the event spawns
+
+
+class FloorResult(NamedTuple):
+    verdict: str
+    detection: WindowCount
+    confirmation: WindowCount
+    baseline: WindowCount  # floor half of the provenance-covered baseline
+    unjoinable: int
+    pending: int  # spawns that may still be running at evaluation
+
+
+class OutcomeFacts(NamedTuple):
+    verified_fail_rows: int
+    tool_use_actual: int | None  # None = no tool_use line recorded
+
+
+class TriggeringSpawn(NamedTuple):
+    """Machine facts of one triggering spawn — daemon-recorded, never agent-emitted."""
+
+    agent_id: str
+    started_at: datetime
+    overage_rows: int
+    attribution_sources: tuple[str, ...]
+    verified_fail_rows: int
+    tool_use_actual: int | None
+
+
+class PatternEvidence(NamedTuple):
+    floor: FloorResult
+    triggering: tuple[TriggeringSpawn, ...]  # newest first
+
+
+def get_pair_windows(now: datetime) -> PairWindows:
+    """Windows anchored on D, the most recent UTC midnight at or before `now`.
+
+    Raises ValueError on a naive `now` — a guessed zone shifts D by up to a day."""
+    if now.utcoffset() is None:
+        raise ValueError("get_pair_windows: `now` must be timezone-aware")
+    end = now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    detection_start = end - 2 * PAIR_WINDOW
+    start = WindowStarts(
+        baseline=detection_start - BASELINE.SPAN,
+        detection=detection_start,
+        confirmation=end - PAIR_WINDOW,
+    )
+    return PairWindows(start=start, end=end)
+
+
+def is_new_pair(windows: PairWindows, last_transition_at: datetime) -> bool:
+    """Does this pair count toward a `dormant` row's re-entry? Only when its detection
+    starts at or after the row's last transition — a row stays dormant ≥ 14 days."""
+    return windows.start.detection >= last_transition_at
+
+
+def is_floor_half(agent_id: str) -> bool:
+    """Floor half = even parity of sha256(agent_id); the reference half is the complement.
+
+    sha256, never hash(): the builtin is salted per process (PYTHONHASHSEED)."""
+    return hashlib.sha256(agent_id.encode("utf-8")).digest()[-1] % 2 == 0
+
+
+def is_metric_event(spawn: SpawnFacts, metric_key: str) -> bool:
+    """Is this spawn an event of `metric_key`? Daemon-recorded facts only — no
+    agent-emitted outcome field (result, revision_count, …) can move it."""
+    if metric_key == METRIC_BUDGET_OVERAGE:
+        return spawn.overage_rows > 0
+    if metric_key == METRIC_EMIT_FAILURE:
+        return any(
+            (row.get("attribution_source") or "") in _EMIT_FAILURE_ATTRIBUTIONS
+            for row in spawn.outcomes
+        )
+    if metric_key == METRIC_NO_SUBAGENT_STOP:
+        return not spawn.has_subagent_stop
+    raise ValueError(f"is_metric_event: unknown metric key {metric_key!r}")
+
+
+def is_pending(spawn: SpawnFacts, evaluated_at: datetime) -> bool:
+    """May this spawn still be running? No SubagentStop yet, started within
+    PENDING_GRACE before `evaluated_at`."""
+    return not spawn.has_subagent_stop and spawn.started_at > evaluated_at - PENDING_GRACE
+
+
+def get_tool_budget(environ: Mapping[str, str]) -> int:
+    """One spawn's TOOL_USE budget as advisory-subagent-budget.sh resolves it from `environ`:
+    SUBAGENT_TOOL_BUDGET when a base-10 digit string above zero, else DEFAULT_TOOL_BUDGET."""
+    value = environ.get("SUBAGENT_TOOL_BUDGET", "")
+    if value.isascii() and value.isdigit() and int(value, 10) > 0:
+        return int(value, 10)
+    return DEFAULT_TOOL_BUDGET
+
+
+def get_tasks(
+    spawns: Iterable[SpawnFacts], redelegation_window: timedelta
+) -> list[tuple[SpawnFacts, ...]]:
+    """One agent type's spawns grouped into tasks, each ordered from its first spawn.
+
+    A spawn continues a task when it shares the parent session of the task's last member and
+    starts in [that member's SubagentStop, + `redelegation_window`); of several such tasks, the
+    one whose last member stopped latest. W = 0 → one task per spawn."""
+    tasks: list[list[SpawnFacts]] = []
+    open_tasks: defaultdict[str, list[list[SpawnFacts]]] = defaultdict(list)
+    for spawn in sorted(spawns, key=lambda s: (s.started_at, s.agent_id or "")):
+        candidates = open_tasks.get(spawn.session_id or "", ())
+        continued = [t for t in candidates if _is_continuation(t[-1], spawn, redelegation_window)]
+        if continued:
+            max(continued, key=lambda t: t[-1].stopped_at).append(spawn)
+            continue
+        task = [spawn]
+        tasks.append(task)
+        if spawn.session_id is not None:
+            open_tasks[spawn.session_id].append(task)
+    return [tuple(task) for task in tasks]
+
+
+def _is_continuation(prior: SpawnFacts, spawn: SpawnFacts, redelegation_window: timedelta) -> bool:
+    return (
+        prior.stopped_at is not None
+        and prior.session_id == spawn.session_id
+        and prior.stopped_at <= spawn.started_at < prior.stopped_at + redelegation_window
+    )
+
+
+def is_task_overrun(task: Sequence[SpawnFacts], tool_budget: int) -> bool:
+    """Any member records an overage, or the members' combined tool_use reaches one spawn's
+    budget — the 100% crossing advisory-subagent-budget.sh records as an overage; an unrecorded
+    member adds nothing, so the sum is a lower bound."""
+    return any(s.overage_rows > 0 for s in task) or (
+        sum(s.tool_use_actual or 0 for s in task) >= tool_budget
+    )
+
+
+class _Unit(NamedTuple):
+    members: tuple[SpawnFacts, ...]  # its task under budget_overage, else the spawn alone
+    is_event: bool
+
+    @property
+    def first(self) -> SpawnFacts:  # its started_at, agent_id half and session place the unit
+        return self.members[0]
+
+
+class _Units(NamedTuple):
+    counted: list[_Unit]
+    unjoinable: int
+    pending: int
+
+
+def get_floor_verdict(
+    spawns: Iterable[SpawnFacts],
+    metric_key: str,
+    windows: PairWindows,
+    provenance_start: datetime | None,
+    evaluated_at: datetime,
+    *,
+    redelegation_window: timedelta = timedelta(0),
+    tool_budget: int | None = None,
+) -> FloorResult:
+    """Occurrence floor over windows, never over a batch.
+
+    Pass: ≥ 5 event sessions in detection and in confirmation, confirmation rate above
+    the floor-half baseline rate. `insufficient-baseline`, never a pass, while the
+    provenance-covered baseline spans < 28 days or its floor half holds no spawn; a None
+    `provenance_start` covers nothing. Spawns before it count nowhere. NULL-agent_id
+    spawns and spawns pending at `evaluated_at` count on no side and are returned as
+    `unjoinable` and `pending`.
+
+    `budget_overage` counts complete tasks (`get_tasks` over `redelegation_window`), each in
+    its first spawn's window and half; a task open at `evaluated_at` counts on no side, its
+    spawns in `pending`. `emit_failure` counts spawns. A spawn outside
+    [windows.start.baseline, windows.end) is a task member only. `tool_budget` None → the
+    budget this process's environment resolves (`get_tool_budget`)."""
+    if metric_key not in METRIC_KEYS:
+        raise ValueError(f"get_floor_verdict: unknown metric key {metric_key!r}")
+    units = _get_counted_units(
+        list(spawns), metric_key, windows, provenance_start, evaluated_at,
+        redelegation_window, tool_budget,
+    )
+    start = windows.end if provenance_start is None else provenance_start
+    covered_start = max(windows.start.baseline, start)
+    floor_half = [u for u in units.counted if is_floor_half(u.first.agent_id)]
+    baseline = _get_window_count(floor_half, covered_start, windows.start.detection)
+    detection = _get_window_count(
+        units.counted, windows.start.detection, windows.start.confirmation
+    )
+    confirmation = _get_window_count(units.counted, windows.start.confirmation, windows.end)
+    is_covered = windows.start.detection - covered_start >= BASELINE.MIN_COVERED
+    verdict = _get_verdict(detection, confirmation, baseline, is_covered=is_covered)
+    return FloorResult(
+        verdict, detection, confirmation, baseline, units.unjoinable, units.pending
+    )
+
+
+def get_confirmation_events(
+    spawns: Iterable[SpawnFacts],
+    metric_key: str,
+    windows: PairWindows,
+    provenance_start: datetime | None,
+    evaluated_at: datetime,
+    *,
+    redelegation_window: timedelta = timedelta(0),
+    tool_budget: int | None = None,
+) -> list[tuple[SpawnFacts, ...]]:
+    """The events `get_floor_verdict` counts in the confirmation window, each with every
+    member — a task under `budget_overage`, the spawn alone otherwise."""
+    if metric_key not in METRIC_KEYS:
+        raise ValueError(f"get_confirmation_events: unknown metric key {metric_key!r}")
+    units = _get_counted_units(
+        list(spawns), metric_key, windows, provenance_start, evaluated_at,
+        redelegation_window, tool_budget,
+    )
+    return [
+        unit.members
+        for unit in units.counted
+        if unit.is_event and windows.start.confirmation <= unit.first.started_at < windows.end
+    ]
+
+
+def _get_counted_units(
+    spawns: list[SpawnFacts],
+    metric_key: str,
+    windows: PairWindows,
+    provenance_start: datetime | None,
+    evaluated_at: datetime,
+    redelegation_window: timedelta,
+    tool_budget: int | None,
+) -> _Units:
+    joinable = [s for s in spawns if s.agent_id is not None]
+    if metric_key == METRIC_BUDGET_OVERAGE:
+        budget = get_tool_budget(os.environ) if tool_budget is None else tool_budget
+        units, pending = _get_task_units(
+            joinable, windows, evaluated_at, redelegation_window, budget
+        )
+    else:
+        units, pending = _get_spawn_units(joinable, metric_key, windows, evaluated_at)
+    start = windows.end if provenance_start is None else provenance_start
+    counted = [u for u in units if u.first.started_at >= start]
+    unjoinable = sum(1 for s in spawns if s.agent_id is None and _is_in_windows(s, windows))
+    return _Units(counted, unjoinable, pending)
+
+
+def _get_task_units(
+    joinable: list[SpawnFacts],
+    windows: PairWindows,
+    evaluated_at: datetime,
+    redelegation_window: timedelta,
+    tool_budget: int,
+) -> tuple[list[_Unit], int]:
+    tasks = [
+        task
+        for task in get_tasks(joinable, redelegation_window)
+        if _is_in_windows(task[0], windows)
+    ]
+    closed = [t for t in tasks if not _is_task_open(t, evaluated_at, redelegation_window)]
+    pending = sum(len(t) for t in tasks) - sum(len(t) for t in closed)
+    return [_Unit(t, is_task_overrun(t, tool_budget)) for t in closed], pending
+
+
+def _get_spawn_units(
+    joinable: list[SpawnFacts], metric_key: str, windows: PairWindows, evaluated_at: datetime
+) -> tuple[list[_Unit], int]:
+    in_windows = [s for s in joinable if _is_in_windows(s, windows)]
+    settled = [s for s in in_windows if not is_pending(s, evaluated_at)]
+    units = [_Unit((s,), is_metric_event(s, metric_key)) for s in settled]
+    return units, len(in_windows) - len(settled)
+
+
+def _is_in_windows(spawn: SpawnFacts, windows: PairWindows) -> bool:
+    return windows.start.baseline <= spawn.started_at < windows.end
+
+
+def _is_task_open(
+    task: Sequence[SpawnFacts], evaluated_at: datetime, redelegation_window: timedelta
+) -> bool:
+    """A member may still be running, or a continuation may still start at or after
+    `evaluated_at` — before the last member's stop + W."""
+    last_stop = task[-1].stopped_at
+    return any(is_pending(s, evaluated_at) for s in task) or (
+        last_stop is not None
+        and redelegation_window > timedelta(0)
+        and evaluated_at < last_stop + redelegation_window
+    )
+
+
+def _get_window_count(units: list[_Unit], start: datetime, end: datetime) -> WindowCount:
+    in_window = [u for u in units if start <= u.first.started_at < end]
+    events = [u.first for u in in_window if u.is_event]
+    sessions = {s.session_id for s in events if s.session_id is not None}
+    return WindowCount(len(in_window), len(events), len(sessions))
+
+
+def _get_verdict(
+    detection: WindowCount, confirmation: WindowCount, baseline: WindowCount, *, is_covered: bool
+) -> str:
+    if not is_covered or baseline.spawns == 0:
+        return VERDICT_INSUFFICIENT_BASELINE
+    if min(detection.sessions, confirmation.sessions) < FLOOR_MIN_SESSIONS:
+        return VERDICT_FAIL
+    # rates compared by cross-multiplication → exact on integer counts
+    if confirmation.events * baseline.spawns > baseline.events * confirmation.spawns:
+        return VERDICT_PASS
+    return VERDICT_FAIL

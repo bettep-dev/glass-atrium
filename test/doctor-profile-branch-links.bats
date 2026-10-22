@@ -21,6 +21,8 @@ source "${GA}/scripts/lib/path-guard.sh"
 REQUIRED=(agents rules skills settings.json)
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
   SANDBOX="$(mktemp -d -t ga-doctor-profile-link-bats.XXXXXX)"
   GA_SANDBOX="${SANDBOX}/ga"
@@ -165,7 +167,7 @@ break_rules_link() {
       echo "${class}: fix line '${fix}' does not take the form '${form}'" >&2
       return 1
     }
-    HOME="${HOMEDIR}" bash -c "${fix}" || {
+    HOME="${HOMEDIR}" GA_DATA_ROOT="${HOMEDIR}/.glass-atrium" bash -c "${fix}" || {
       echo "${class}: fix line failed when run as printed: ${fix}" >&2
       return 1
     }

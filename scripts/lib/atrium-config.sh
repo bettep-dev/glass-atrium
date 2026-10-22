@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # atrium-config.sh — read-only config.toml accessors shared by shell consumers
-# (daemon bootstraps/healthchecks, inject, daily-restart, wiki-compile,
-# render-monitor-env.sh). Sourced, not executable. config.toml is the upper SoT;
+# (installer, updater, launchd/monitor-env renderers, pg-backup, wiki-compile,
+# hooks). Sourced, not executable. config.toml is the upper SoT;
 # every accessor takes a caller-supplied default, so a checkout without a rendered
 # config.toml (or a missing key) preserves stock behavior (fresh-clone safety).
 #
@@ -244,8 +244,8 @@ atrium_resolve_timezone() {
   printf '%s\n' "${configured}"
 }
 
-# Resolve the effective ATRIUM_TIMEZONE for the quota-detection consumers
-# (daemon-daily-restart.sh, wiki-daily-compile.sh): honor a pre-set ATRIUM_TIMEZONE
+# Resolve the effective ATRIUM_TIMEZONE for the quota-detection consumer
+# (wiki-daily-compile.sh): honor a pre-set ATRIUM_TIMEZONE
 # verbatim, else resolve [meta].timezone (default 'auto') to a concrete host zone.
 # WHY concrete: the REPL prints quota reset times in the HOST tz, so detection
 # keys on the resolved zone — literal 'auto' never matches the quota greps, and a

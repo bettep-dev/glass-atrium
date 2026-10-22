@@ -28,6 +28,8 @@
 # Every assertion is gated `|| return 1` (a mid-body `[[ ]]` is exempt from errexit on macOS
 # bash 3.2.57 though CI's bash 5.3.9 gates it — measured, bats 1.13.0 on both legs).
 #
+# Repo checkout only: an install never ships publish-release.sh, so any copy there is skipped, not tested.
+#
 # Run via: bats test/publish-release-remote-consistency.bats
 # Requires: bats 1.5+, jq, bash 3.2+
 
@@ -39,6 +41,11 @@ PUB="${GA}/scripts/publish-release.sh"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  local top=""
+  # GA's own toplevel, never BATS_TEST_DIRNAME's → an install's test/ is its own repo
+  top="$(git -C "${GA}" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ "${top}" -ef "${GA}" ]] \
+    || skip "not a repo checkout root: ${GA} — generate-manifest.sh EXCLUDE_RE keeps publish-release.sh out of every install"
   [[ -f "${PUB}" ]] || skip "publish-release.sh not found: ${PUB}"
   command -v jq >/dev/null 2>&1 || skip "jq required"
   SANDBOX="$(mktemp -d -t ga-pub-consistency.XXXXXX)"
@@ -68,6 +75,8 @@ git() {
     if [[ "${GIT_LSREMOTE_RC:-0}" -ne 0 ]]; then return "${GIT_LSREMOTE_RC}"; fi
     printf '%b' "${GIT_LSREMOTE:-}"
     ;;
+  *"merge-base --is-ancestor"*) return "${GIT_ANCESTOR_RC:-0}" ;;
+  *"fetch"*) return "${GIT_FETCH_RC:-0}" ;;
   *"remote"*) printf '%s\n' "${GIT_REMOTES-origin}" ;;
   *) : ;;
   esac
@@ -165,6 +174,18 @@ drive_replace() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"remote-tag consistency check SKIPPED"* ]] || return 1
   [[ "${output}" == *"GATE_OK"* ]] || return 1
+}
+
+@test "a HEAD not reachable from the remote main refuses to publish" {
+  drive_consistency GIT_HEAD=abc123 GIT_REMOTES=origin GIT_ANCESTOR_RC=1
+  [[ "${status}" -eq 7 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"abc123 is not reachable from origin/main"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "an unfetchable remote main refuses to publish" {
+  drive_consistency GIT_HEAD=abc123 GIT_REMOTES=origin GIT_FETCH_RC=1
+  [[ "${status}" -eq 7 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"cannot fetch origin/main"* ]] || { echo "${output}"; return 1; }
 }
 
 @test "item3 regression: gate 1 (dirty tree) still fails BEFORE the remote gate → exit 7" {

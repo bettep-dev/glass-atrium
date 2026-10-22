@@ -16,19 +16,19 @@ Four properties are covered:
     mechanism), and the monitor route's stored LIKE marker is still a prefix of
     the head;
 (3) the two fixes COMPOSED over one store — the same-cycle stamp this predicate
-    writes still explains the rejected status after a later run re-pushes that
+    writes still explains the terminal status after a later run re-pushes that
     identity through _pg_dual_write_daemon's UPSERT, and the run's own row is
     still live for its own push. Either fix reverted and this pair goes red;
-(4) the CALL-SITE binding — the cycle loop passes its own cycle date and the
-    CONSOLIDATED label, untransposed. (1)-(3) drive the predicate directly and
-    so hold for any caller, including one handing it the lead pattern's label:
-    the exclusion is only as good as the identity the loop binds into it.
+(4) the CALL-SITE binding — the generation unit passes its own cycle date and
+    the CONSOLIDATED label, untransposed. (1)-(3) drive the predicate directly
+    and so hold for any caller, including one handing it the lead pattern's
+    label: the exclusion is only as good as the identity the unit binds into it.
 
 Backend: the stdlib sqlite stand-in from ``scripts/test/_pg_stub_backend.py``
 runs the REAL statement text (cast-stripped, qmark-rewritten), so no Postgres
 and no psycopg are needed and the store-backed properties run on the
 merge-gating unittest leg. Property (4) touches no store at all — it drives the
-loop with a recorder in place of the predicate. What the stand-in cannot see,
+generation unit with a recorder in place of the predicate. What the stand-in cannot see,
 and what nothing here claims: the date-typed ``cycle_date``
 column, its cast, and the driver's type adaptation — those stay live-Postgres
 verification steps.
@@ -56,12 +56,13 @@ _AUTOAGENT_DIR = _REPO_ROOT / "autoagent"
 # unittest discover puts neither root on sys.path, and scripts/test/conftest.py
 # is a pytest-only anchor this runner never loads.
 _STUB_DIR = _REPO_ROOT / "scripts" / "test"
-for _anchor in (_AUTOAGENT_DIR, _STUB_DIR):
+for _anchor in (_AUTOAGENT_DIR, _STUB_DIR, Path(__file__).resolve().parent):
     if str(_anchor) not in sys.path:
         sys.path.insert(0, str(_anchor))
 
 import _pg_stub_backend as stub  # noqa: E402 — anchors pinned by the loop above
 import daemon_cycle as dc  # noqa: E402 — anchors pinned by the loop above
+from _pg_seal import seal_pg_reach  # noqa: E402 — anchors pinned by the loop above
 
 _ROUTE = _REPO_ROOT / "monitor" / "src" / "server" / "routes" / "improvement.ts"
 _ROUTE_MARKER = re.compile(r'SUPERSEDE_RATIONALE_LIKE\s*=\s*"([^"]*)"')
@@ -82,19 +83,28 @@ def _generation_text(run: int) -> str:
 
 
 
-def _run_supersede(db_path: Path) -> None:
+def _run_supersede(testcase: unittest.TestCase, db_path: Path) -> None:
     """Drive the real supersede statement against the stdlib backend."""
-    # create=True: the connect alias is bound only when psycopg imported, and the
-    # gating leg has no psycopg — the seam must exist either way.
+    # Sealed first: on the import-succeeded leg a renamed _pg_connect fails here,
+    # never patched as a dead attribute while the real connect stays live.
+    pg_reach = seal_pg_reach(testcase)
+    with stub.load_helper(db_path) as helper:
+        fragment = helper.PROPOSAL_STATUS_SQL
     quiet = contextlib.redirect_stderr(io.StringIO())
     armed = mock.patch.object(dc, "HAS_PG_LOOP_WRITE", True)
-    seam = mock.patch.object(
-        dc, "_pg_connect", lambda: stub.create_connection(db_path), create=True
+    seam = mock.patch.object(dc, "_pg_connect", lambda: stub.create_connection(db_path))
+    # The fragment is unbound only when the helper import failed.
+    status = mock.patch.object(
+        dc,
+        "_PG_PROPOSAL_STATUS_SQL",
+        fragment,
+        create=dc._PG_LOOP_IMPORT_EXC is not None,
     )
-    with quiet, armed, seam:
+    with quiet, armed, seam, status:
         dc.supersede_prior_pending_for_agent(
             _AGENT, _TARGET, cycle_date=_RUN_DATE, pattern_label=_RUN_LABEL
         )
+    testcase.assertEqual(pg_reach, [])
 
 
 class TestSupersedePredicate(unittest.TestCase):
@@ -120,7 +130,7 @@ class TestSupersedePredicate(unittest.TestCase):
             db.commit()
 
     def _supersede(self) -> None:
-        _run_supersede(self.db)
+        _run_supersede(self, self.db)
 
     def _row(self, cycle_date: str, label: str) -> dict[str, str]:
         row = stub.read_proposal(self.db, (cycle_date, label, _TARGET))
@@ -134,12 +144,12 @@ class TestSupersedePredicate(unittest.TestCase):
 
     def test_when_label_drifted_in_same_cycle_then_row_transitions(self) -> None:
         row = self._row(_RUN_DATE, _DRIFTED_LABEL)
-        self.assertEqual(row["status"], "rejected")
+        self.assertEqual(row["status"], "unadjudicated")
         self.assertEqual(row["rationale"], dc._SUPERSEDE_REASON_SAME_CYCLE)
 
     def test_when_row_is_from_a_prior_cycle_then_row_transitions(self) -> None:
         row = self._row(_PRIOR_DATE, _RUN_LABEL)
-        self.assertEqual(row["status"], "rejected")
+        self.assertEqual(row["status"], "unadjudicated")
         self.assertEqual(row["rationale"], dc._SUPERSEDE_REASON_CROSS_DAY)
 
 
@@ -186,14 +196,14 @@ class TestSupersedeRationaleConsumers(unittest.TestCase):
 class TestSupersedeStampSurvivesRepush(unittest.TestCase):
     """The two fixes composed over ONE store: the supersede stamps, the push keeps it.
 
-    The identity exclusion is what makes a SAME-CYCLE rejected row exist at all —
+    The identity exclusion is what makes a SAME-CYCLE terminated row exist at all —
     without it the run's own row is the one terminalized, and no drifted-label row
     survives the cycle carrying a stamp. The rationale co-movement in the UPSERT's
     conflict arm is what keeps that stamp when a later run re-sends the identity
     with the report's baked-in 'pending'. Revert either and the pair stops holding:
-    without the exclusion the run's own row goes rejected and the drifted row's
+    without the exclusion the run's own row is terminated and the drifted row's
     stamp is the cross-day text, and without the co-movement the stamp is replaced
-    by the incoming generation text while the rejected status it explains stays —
+    by the incoming generation text while the terminal status it explains stays —
     which is exactly the unrecognised text the failure classifier defaults to the
     quality class, advancing the reject streak.
 
@@ -212,7 +222,7 @@ class TestSupersedeStampSurvivesRepush(unittest.TestCase):
         with stub.load_helper(self.db) as helper:
             self._push(helper, _RUN_LABEL, _generation_text(1))
             self._push(helper, _DRIFTED_LABEL, _generation_text(1))
-            _run_supersede(self.db)
+            _run_supersede(self, self.db)
             self._push(helper, _RUN_LABEL, _generation_text(2))
             self._push(helper, _DRIFTED_LABEL, _generation_text(2))
 
@@ -244,7 +254,7 @@ class TestSupersedeStampSurvivesRepush(unittest.TestCase):
     ) -> None:
         self.assertEqual(
             self._row(_DRIFTED_LABEL),
-            {"status": "rejected", "rationale": dc._SUPERSEDE_REASON_SAME_CYCLE},
+            {"status": "unadjudicated", "rationale": dc._SUPERSEDE_REASON_SAME_CYCLE},
         )
 
     def test_when_the_row_is_the_runs_own_then_its_next_push_still_refreshes_it(
@@ -267,17 +277,17 @@ class TestSupersedeStampSurvivesRepush(unittest.TestCase):
                 (_RUN_DATE, _DRIFTED_LABEL, _TARGET),
                 columns=("status", "reviewed_by"),
             ),
-            {"status": "rejected", "reviewed_by": dc._SUPERSEDE_ACTOR},
+            {"status": "unadjudicated", "reviewed_by": dc._SUPERSEDE_ACTOR},
         )
 
 
 class TestSupersedeCallSiteBinding(unittest.TestCase):
-    """The loop binds the run's OWN identity into the call — positionally.
+    """The generation unit binds the run's OWN identity into the call.
 
     Every test above drives the predicate directly, so each one holds for ANY
     caller: one that passes the lead pattern's label instead of the consolidated
     one, or transposes the date and the label, keeps them all green while the
-    exclusion silently spares the wrong row. The loop is the only place that
+    exclusion silently spares the wrong row. The unit is the only place that
     knows which identity the push will own, so the binding is asserted there,
     with a recorder standing in for the predicate. The recorder captures keywords
     as well as positionals — the two identity terms are keyword-only, and a
@@ -287,19 +297,18 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
     equals the lead pattern's label whenever there is only one, and a
     single-pattern probe could not tell the two apart.
 
-    Seams are the loop's own gates, stubbed to reach the call deterministically —
+    Seams are the unit's own gates, stubbed to reach the call deterministically —
     generation (no Haiku, no network), the apply-area verdict, and the safety
     tier (whose 'safety' route reaches 'pending' without an LLM pre-verify and
-    passes floor terminalization untouched). ``HAS_PG_LOOP_WRITE`` is off, so
-    every other emit in the cycle early-returns; the supersede seam is the only
-    live call site left.
+    passes floor terminalization untouched). ``seal_pg_reach`` turns every PG
+    path off, so every other emit in the unit early-returns; the supersede seam
+    is the only live call site left.
     """
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.tmp_dir = Path(tmp.name)
-        self.agents_dir = self.tmp_dir / "agents"
+        self.agents_dir = Path(tmp.name) / "agents"
         self.agents_dir.mkdir()
         self.target_md = self.agents_dir / f"{_AGENT}.md"
         self.target_md.write_text("# probe agent\n", encoding="utf-8")
@@ -307,6 +316,7 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
         self.lead = self._pattern("lead signal", "9", row_id=1)
         self.second = self._pattern("trailing signal", "4", row_id=2)
         self.calls: list[tuple[object, ...]] = []
+        self.pg_reach = seal_pg_reach(self)
 
     def _pattern(self, label: str, frequency: str, *, row_id: int) -> "dc.Pattern":
         return dc.Pattern(
@@ -334,15 +344,9 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
         self.calls.append((args, kwargs))
         return 0
 
-    def _drive_cycle(self) -> "dc.CycleReport":
-        """Run one cycle over the two-pattern agent, recording the supersede call."""
+    def _generate(self) -> None:
+        """Run the unit over the two-pattern agent, recording the supersede call."""
         seams = {
-            "read_user_pending_patterns": lambda *a, **k: [self.lead, self.second],
-            "fetch_generation_outcomes": lambda *a, **k: [],
-            # Absent flags file → the confidence filter resolves 'floor', so the
-            # promotion ladder never reaches PG for stats.
-            "FEATURE_FLAGS_FILE": self.tmp_dir / "no-such-flags.json",
-            "HAS_PG_LOOP_WRITE": False,
             "generate_consolidated_proposal": self._proposal,
             "classify_patch_area": lambda *a, **k: "body-auto",
             "classify_safety_tier": lambda *a, **k: "safety",
@@ -352,29 +356,35 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
             stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
             for name, repl in seams.items():
                 stack.enter_context(mock.patch.object(dc, name, repl))
-            return dc.run_cycle(
-                log_path=self.tmp_dir / "learning-log.md",
-                outcomes_dir=self.tmp_dir,
+            dc.build_patch_result(
+                _AGENT,
+                [self.lead, self.second],
+                cycle_date=_RUN_DATE,
                 agents_dir=self.agents_dir,
+                seen_targets=set(),
                 skip_haiku=True,
                 skip_pre_verify=True,
                 skip_loop_emit=False,
             )
+        self.assertEqual(self.pg_reach, [])
 
-    def test_when_the_loop_supersedes_then_it_binds_its_own_date_and_label(self) -> None:
-        report = self._drive_cycle()
+    def test_when_the_unit_supersedes_then_it_binds_its_own_date_and_label(
+        self,
+    ) -> None:
+        self._generate()
         consolidated = dc._consolidated_pattern_label(_AGENT, [self.lead, self.second])
-        # A fixture whose two candidate labels coincide would pass on a wrong
+        # A fixture whose candidate values coincide would pass on a wrong
         # binding, so the discrimination is asserted before the binding is.
         self.assertNotEqual(consolidated, self.lead.label)
-        self.assertNotEqual(consolidated, report.cycle_date)
+        self.assertNotEqual(consolidated, _RUN_DATE)
+        self.assertNotEqual(self.lead.date, _RUN_DATE)
 
         self.assertEqual(len(self.calls), 1, f"expected one supersede call: {self.calls}")
         self.assertEqual(
             self.calls[0],
             (
                 (_AGENT, str(self.target_md)),
-                {"cycle_date": report.cycle_date, "pattern_label": consolidated},
+                {"cycle_date": _RUN_DATE, "pattern_label": consolidated},
             ),
         )
 

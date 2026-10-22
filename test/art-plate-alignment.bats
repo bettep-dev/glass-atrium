@@ -183,7 +183,10 @@ _run_geometry() {
     bash "${PROBE}"
   [ "${status}" -eq 0 ]
   # mono emits NO SGR sequence (the cup_to ESC[..H is not an SGR 'm' sequence).
-  ! printf '%s' "${output}" | grep -q "${esc}\[[0-9;]*m"
+  if printf '%s' "${output}" | grep -q "${esc}\[[0-9;]*m"; then
+    echo "mono output carries an SGR sequence"
+    return 1
+  fi
   # identical geometry: same row count, same first-row anchor, same centered pad.
   [ "${#lines[@]}" -eq "${color_lines}" ]
   local mono_cup mono_first_body mono_pad

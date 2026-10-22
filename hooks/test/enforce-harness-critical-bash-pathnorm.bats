@@ -39,7 +39,7 @@ setup() {
 bash_hook() {
   local envelope
   envelope="$(jq -cn --arg c "${1}" '{tool_name: "Bash", tool_input: {command: $c}}')"
-  run env "HOME=${FAKE_HOME}" "${HOOK_SH}" <<<"${envelope}"
+  run env "HOME=${FAKE_HOME}" "GA_DATA_ROOT=${FAKE_HOME}/.glass-atrium" "${HOOK_SH}" <<<"${envelope}"
 }
 
 # ── T1-1.a — a redirect target in every varied spelling blocks ───────────────
@@ -238,4 +238,28 @@ bash_hook() {
   # and this deliberate over-block is asserted rather than assumed.
   bash_hook "cp /tmp/e.sh ${FAKE_HOME}/.glass-atrium/hooks/../../work/z"
   [ "${status}" -eq 2 ]
+}
+
+# ── the canary directory on the Bash arm ──────────────────────────────────────
+
+@test "canary directory: Bash writes into it block in every spelling, a read and its neighbours pass" {
+  local c="${FAKE_HOME}/.glass-atrium/data/learning/canary" row want cmd
+  local rows=(
+    "2|printf x > ${c}/a.json"
+    "2|printf x > ${FAKE_HOME}/.glass-atrium//data/./learning/canary/a.json"
+    "2|cp /tmp/x ~/.glass-atrium/data/learning/canary/a.json"
+    "2|cp /tmp/x ${c}"
+    "2|tee ${FAKE_HOME}/.Glass-Atrium/Data/Learning/Canary/a.json </dev/null"
+    "0|cat ${c}/a.json"
+    "0|printf x > ${FAKE_HOME}/.glass-atrium/data/learning/other.json"
+    "0|printf x > ${FAKE_HOME}/.glass-atrium/data/learning/canary-old/a.json"
+    "0|printf x > ${BATS_TEST_TMPDIR}/git/glass-atrium/data/learning/canary/a.json"
+  )
+  for row in "${rows[@]}"; do
+    want="${row%%|*}"
+    cmd="${row#*|}"
+    run env -u GA_DATA_ROOT "HOME=${FAKE_HOME}" "${HOOK_SH}" \
+      <<<"$(jq -cn --arg c "${cmd}" '{tool_name: "Bash", tool_input: {command: $c}}')"
+    [[ "${status}" -eq "${want}" ]] || { echo "row [${cmd}] want ${want}: status ${status}: ${output}"; return 1; }
+  done
 }

@@ -2,9 +2,9 @@
 # update-deletion-shape-tripwire.bats — pins the ADVISORY deletion-shape tripwire in
 # scripts/update.sh (update_check_deletion_shape + update_editable_region_lines).
 #
-# The 2026-08-10 base-anchor contamination produced a clean, no-conflict plan: base==local made
-# every vendor-differing EDITABLE region resolve take-release, so 83 live-only daemon lines
-# read as vendor deletions and sailed through the confirm gate. The tripwire names that exact
+# A base-anchor contamination produces a clean, no-conflict plan: base==local makes every
+# vendor-differing EDITABLE region resolve take-release, so live-only daemon lines read as
+# vendor deletions and sail through the confirm gate. The tripwire names that exact
 # shape (all-take-release + net-negative EDITABLE-region line delta) before the gate.
 #
 # Contracts pinned:

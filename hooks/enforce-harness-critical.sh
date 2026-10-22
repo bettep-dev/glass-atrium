@@ -37,6 +37,11 @@
 #       hand-edited live and often, so blocking them would train a hook-disable
 #       habit; sanctioned autoagent maintenance reroutes via HARNESS_PROTECTION_APPROVE=1.
 #       PROT_RE mirrors these three dirs for the Bash arm.
+#   (f) the live canary directory — the per-agent trial text inject-scope-rules.sh
+#       delivers at spawn (`<data root>/data/learning/canary/`). Derived from the
+#       data-root seam (hook-utils.sh → HOOK_DATA_DIR, GA_DATA_ROOT override), so a
+#       relocated root moves the protected directory; PROT_DIR_RE carries the same
+#       derived directory for the Bash arm, its lookahead matching the file form too.
 #
 # Bash arm (best-effort, bar-raising ONLY). Three structural pre-passes feed every
 # recogniser: heredoc bodies whose consumer is NOT a shell are DATA and leave the
@@ -131,7 +136,8 @@
 # case-varied spelling onto the protected file. Widening-only — on a case-SENSITIVE
 # volume it blocks more, never less.
 # Block channel: stderr emit_error + exit 2 (shared-hook-capability-contract.md).
-# Scope: LIVE install paths ONLY (HOME-anchored) — the git repo tree is untouched.
+# Scope: LIVE install paths ONLY (HOME-anchored; the canary directory data-root-anchored) —
+# the git repo tree is untouched.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -181,20 +187,25 @@ hook_require_python3_unless_empty "${INPUT}" "HAR-003" \
 # relative to HEAD, never a narrowing.
 shopt -s nocasematch
 
+# Canary directory below the data root — the directory inject-scope-rules.sh reads as its CANARY_DIR.
+readonly CANARY_DIR_SUFFIX="learning/canary"
+
 # Hot-path prefilter (pure bash, zero spawns): every protected class textually
-# requires one of the two protected-root dir-name literals in the raw envelope —
+# requires one of the two protected-root dir-name literals in the raw envelope, or
+# the canary directory's own name — a relocated data root carries no root literal.
 # PROT_RE and the deterministic path classes literal-match on them, and traversal
 # forms still contain them. No literal → nothing this gate can block → exit 0.
 # Residual shared with the Bash arm: indirection / JSON \uXXXX escaping of the
 # literals skips this gate (see header).
 case "${INPUT}" in
-  *".claude"* | *".glass-atrium"*) : ;;
+  *".claude"* | *".glass-atrium"* | *"${CANARY_DIR_SUFFIX##*/}"*) : ;;
   *) exit 0 ;;
 esac
 
 CLAUDE_DIR="${HOME}/.claude"
 GA_DIR="${HOME}/.glass-atrium"
-readonly CLAUDE_DIR GA_DIR
+CANARY_DIR="$(hook_normalize_path "${HOOK_DATA_DIR}/${CANARY_DIR_SUFFIX}")"
+readonly CLAUDE_DIR GA_DIR CANARY_DIR
 
 # Single-pass envelope classifier (python3 — robust JSON/frontmatter/regex parsing),
 # ONE spawn for the whole hook: emits tool_name, the arm target (file_path for
@@ -262,6 +273,13 @@ SEP = r"/(?:\.?/)*"
 # `/`, so it can never over-reach past the root segment.
 CLAUDE_ROOT = r"\.claude(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?"
 
+# Live canary directory, handed over by the shell from the data-root seam. Its last four segments
+# (root name, data, learning, canary) are the protected spelling, matched wherever they sit like the
+# root-name literals above, so `~`, `$HOME` and absolute prefixes all match. An absent value — the
+# module imported outside the hook — protects nothing, never every path.
+CANARY_SEGMENTS = [seg for seg in os.environ.get("HARNESS_CANARY_DIR", "").split("/") if seg][-4:]
+CANARY_DIR_RE = SEP.join(re.escape(seg) for seg in CANARY_SEGMENTS) if CANARY_SEGMENTS else r"(?!)"
+
 PROT_RE = re.compile(
     "|".join((
         CLAUDE_ROOT + SEP + r"settings(?:\.local)?\.json",
@@ -287,7 +305,8 @@ PROT_RE = re.compile(
 PROT_DIR_RE = re.compile(
     r"(?:" + CLAUDE_ROOT + SEP + r"hooks"
     + r"|\.claude" + SEP + r"agents"
-    + r"|\.glass-atrium" + SEP + r"(?:hooks|agents|autoagent|scripts|skills))"
+    + r"|\.glass-atrium" + SEP + r"(?:hooks|agents|autoagent|scripts|skills)"
+    + r"|" + CANARY_DIR_RE + r")"
     + r"(?![\w.\-])",
     re.IGNORECASE,
 )
@@ -1535,6 +1554,9 @@ block_wording() {
     scheduled-exec-dir)
       BLOCK_SUG="This scheduled-execution surface (autoagent / scripts / skills) runs unattended, so it is protected agent_id-independent: change it in the SOURCE repository and ship it through the installer / update.sh release path. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
       ;;
+    canary-dir)
+      BLOCK_SUG="The canary directory holds the per-agent trial text the scope-rules hook delivers at spawn; only the improvement daemon writes it, so it is protected agent_id-independent and a tool-layer write would put unregistered text into a live trial. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      ;;
     new-agent-creation)
       BLOCK_SUG="Agent creation runs through the lifecycle CLI: \`python3 -m agent_lifecycle add\` writes the body, the registry entry and the symlink farm as one gated transaction, where a direct file write leaves an agent that loads no scope rules. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
       ;;
@@ -1614,7 +1636,7 @@ block_critical() {
   IFS= read -r -d '' PY_STATUS || true
 } < <(
   st=0
-  printf '%s\n' "${INPUT}" | python3 -c "${DETECT_PY}" 2>/dev/null || st=$?
+  printf '%s\n' "${INPUT}" | HARNESS_CANARY_DIR="${CANARY_DIR}" python3 -c "${DETECT_PY}" 2>/dev/null || st=$?
   printf '%s\0' "${st}"
 )
 if [[ "${PY_STATUS}" != "0" ]]; then
@@ -1671,6 +1693,9 @@ write_edit_arm() {
       ;;
     "${GA_DIR}/autoagent/"* | "${GA_DIR}/scripts/"* | "${GA_DIR}/skills/"*)
       block_critical "HAR-001" "scheduled-exec-dir" "${norm}" "${raw}"
+      ;;
+    "${CANARY_DIR}/"*)
+      block_critical "HAR-001" "canary-dir" "${norm}" "${raw}"
       ;;
     *) : ;;
   esac

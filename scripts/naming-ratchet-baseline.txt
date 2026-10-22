@@ -1,0 +1,1245 @@
+ID_TITLE @test #1 evaluative_signal=-1 with empty directive_hint fires the correction-gap loud flag
+ID_TITLE @test #10/#11 commit: swap replaces the live file via atomic rename (inode changes, no temp residue)
+ID_TITLE @test #11 commit: rollback via atomic restore recovers pre-swap content after a mid-swap failure
+ID_TITLE @test #11 rollback: in-isolation restore uses atomic rename (inode changes, content restored, no temp residue)
+ID_TITLE @test #13 key: the spelling predicate refuses exactly empty, absolute and dot-dot-segment keys, under both names
+ID_TITLE @test #13 retired: a dot-dot inside a segment name is not an escape and is selected
+ID_TITLE @test #13 retired: a dot-dot key reaching a real file beside the install root is refused
+ID_TITLE @test #13 retired: a dot-dot key resolving back inside the install root is refused
+ID_TITLE @test #13 retired: a dot-dot key with no target still emits its UNSAFE row
+ID_TITLE @test #13 retired: a key through a symlinked directory to a file outside the root is refused
+ID_TITLE @test #13 retired: a live hash outside the recorded list is preserved with its row
+ID_TITLE @test #13 retired: a malformed hash list is a loud row and the pass continues
+ID_TITLE @test #13 retired: a manifest with no retired map emits one no-op row and selects nothing
+ID_TITLE @test #13 retired: a merge-claimed path is excluded silently
+ID_TITLE @test #13 retired: a migrations-family path is excluded with its named row
+ID_TITLE @test #13 retired: a path already absent from the live install is a silent no-op
+ID_TITLE @test #13 retired: a path still in files[] is a tripwire row, never selected
+ID_TITLE @test #13 retired: a pristine retired file is selected
+ID_TITLE @test #13 retired: a refused key does not stop a contained key in the same map
+ID_TITLE @test #13 retired: a symlink at a retired path is skipped with its named row
+ID_TITLE @test #13 retired: an absolute key is refused with its UNSAFE row, never selected
+ID_TITLE @test #13 retired: the un-moved record path is the baseline state dir's own
+ID_TITLE @test #13 retired: top-level and one-level keys stay selected under an aliased install root
+ID_TITLE @test #14 retired: S-KEEP shapes on disk survive a sweep untouched
+ID_TITLE @test #14 retired: a USER-MODIFIED retired file is PRESERVED (provenance guard)
+ID_TITLE @test #14 retired: a drop-only release sweeps on the no-content-change path
+ID_TITLE @test #14 retired: a failed move WARNs, records the path, and the finalize steps still run
+ID_TITLE @test #14 retired: a key resolving outside the root through an in-root directory symlink is counted as refused and recorded
+ID_TITLE @test #14 retired: a manifest with no retired key removes nothing and says so once
+ID_TITLE @test #14 retired: a migrations-family retired path is never moved
+ID_TITLE @test #14 retired: a refused key spelled like a row suffix is recorded exactly
+ID_TITLE @test #14 retired: a removed file under a mirrored root retires its farm link
+ID_TITLE @test #14 retired: a removed hooks/<name> retires its binding, an un-moved one does not
+ID_TITLE @test #14 retired: a run with no refusal removes a stale refusal record
+ID_TITLE @test #14 retired: a second run of the same release reports zero removals
+ID_TITLE @test #14 retired: an escaping retired key is logged, counted as refused and recorded, and a clean key still moves
+ID_TITLE @test #14 retired: both MALFORMED shapes (retired-AND-shipped, bad hash list) are counted as refusals
+ID_TITLE @test #14 retired: rewording the spine's refusal rows leaves the refusal record unchanged
+ID_TITLE @test #14 retired: two provenance-clean paths are MOVED into one per-run sink
+ID_TITLE @test #2 evaluative_signal=-1 WITH a directive_hint does NOT fire the flag (3-element co-emission met)
+ID_TITLE @test #25 single invalid (template-only) block still synthesizes — no crash, behavior preserved
+ID_TITLE @test #25(a) template-quote BEFORE the real block does not shadow the writer signal (result=done)
+ID_TITLE @test #25(b) real block THEN a trailing template quote still selects the real block (validity reverse-scan)
+ID_TITLE @test #3 evaluative_signal=0 does NOT fire the flag (0 is a neutral signal, not a correction)
+ID_TITLE @test #4 absent evaluative_signal does NOT fire the flag (absent is not a correction)
+ID_TITLE @test #5 READ-ONLY: the gap-flag block assigns only REVIEW_FLAG and the correction WRITE anchors survive
+ID_TITLE @test A2/A3: a rule-doc-sourced shed block carries its resolvable, existing source path
+ID_TITLE @test A5: caps count BYTES, so a multibyte body breaches a byte cap
+ID_TITLE @test A5: the widened marker keeps total injected bytes within the ceiling, no unintended shed
+ID_TITLE @test A6: a marker that outgrows a fixed 256B reserve still keeps the emitted total within the ceiling
+ID_TITLE @test A7: the lib never exits and its re-source guard is set -e safe
+ID_TITLE @test AC-16: no tracked repo path matches the third-party denylist
+ID_TITLE @test AC-17: generate-manifest.sh --check exits 0 on this repo
+ID_TITLE @test AC-2/AC-3 wiki-daily-compile: no-unprocessed-skip reports the drop and still exits 0
+ID_TITLE @test AC-2/AC-3 wiki-daily-compile: wiki-root-missing reports the drop and still exits 1
+ID_TITLE @test AC-4.14 a registered agent outside the probe roster never flags
+ID_TITLE @test AC-4.4 an unregistered agent resolves to the unregistered reason, never probe-omission
+ID_TITLE @test AC-4.5 the eight non-writer channels never flag
+ID_TITLE @test AC-4.5 the three writer channels flag an absent probe reference
+ID_TITLE @test AC-4.6 the style-ref roster is declared exactly once across the hooks tree
+ID_TITLE @test AC-4.7 each channel set is declared exactly once across the hooks tree
+ID_TITLE @test AC-A1 tilde identity Edit widening tools → HAR-001 block (exit 2)
+ID_TITLE @test AC-A2 tilde and absolute forms of ONE identity Edit agree (status + reason)
+ID_TITLE @test AC-A3 traversal-bearing tilde identity Edit → HAR-001 block (exit 2)
+ID_TITLE @test AC-A4 body Edit (absolute form) → pass
+ID_TITLE @test AC-A4 body Edit (tilde form) → pass
+ID_TITLE @test AC-A4 body bullet add (tilde form, block-list file) → pass
+ID_TITLE @test AC-B1 block-list Edit granting Bash to the META agent → HAR-001 block (exit 2)
+ID_TITLE @test AC-B1 block-list Edit granting WebSearch to the shell agent → HAR-001 block (exit 2)
+ID_TITLE @test AC-B1b/AC-B4-5 column-0 block list widened → HAR-001 block (exit 2)
+ID_TITLE @test AC-B2 full-file Write widening a block list, key lines identical → HAR-001 block (exit 2)
+ID_TITLE @test AC-B4-1 plain scalar: description reword → pass
+ID_TITLE @test AC-B4-1 plain scalar: name rename → block
+ID_TITLE @test AC-B4-10 blank line in the region: a widening edit after it still blocks
+ID_TITLE @test AC-B4-2 quoted scalar: name value change → block
+ID_TITLE @test AC-B4-2 quoted scalar: same value re-quoted → pass (ruled non-change)
+ID_TITLE @test AC-B4-3 folded scalar under a non-guarded key: continuation edit → pass
+ID_TITLE @test AC-B4-4 block list (2-space): reorder → pass
+ID_TITLE @test AC-B4-4 block list (2-space): widen → block
+ID_TITLE @test AC-B4-6 inline flow: widen → block
+ID_TITLE @test AC-B4-7 full-line comment in the region: a widening edit below it still blocks
+ID_TITLE @test AC-B4-7 full-line comment in the region: editing the comment text → pass
+ID_TITLE @test AC-B4-8 inline comment after a list item: adding an item that carries one → block
+ID_TITLE @test AC-B4-8 inline comment after a list item: appending a comment to an item → pass
+ID_TITLE @test AC-B4-9 nested map under a non-guarded key: edit → pass, no unparseable verdict
+ID_TITLE @test AC-B5 folded description continuation edit (dev-rag) → pass
+ID_TITLE @test AC-B5 maxTurns edit (dev-rag) → pass
+ID_TITLE @test AC-B5 model pin edit (shapes) → pass
+ID_TITLE @test AC-B5 non-guarded list-item edit with inline comment (designer skills) → pass
+ID_TITLE @test AC-B5 non-guarded nested-map value edit (designer skills_policy) → pass
+ID_TITLE @test AC-B6 body bullet duplicating a tools item → block (fail-closed, unreachable in practice)
+ID_TITLE @test AC-B6 body prose edits pass on every corpus file (remove + add)
+ID_TITLE @test AC-B7 containment: anchor under a non-guarded key → pass, not unparseable
+ID_TITLE @test AC-B7 containment: body-only Edit not overlapping an unparseable region → pass
+ID_TITLE @test AC-B7 containment: folded scalar under a non-guarded key → pass, not unparseable
+ID_TITLE @test AC-B7 containment: nested map under a non-guarded key → pass, not unparseable
+ID_TITLE @test AC-B7 out-of-contract frontmatter forms → frontmatter-unparseable (form × tool)
+ID_TITLE @test AC-B7 unparseable frontmatter surfaces as HAR-001, never HAR-003
+ID_TITLE @test AC-C1-C the barrier manifest carries the retired array and drops the files[] row
+ID_TITLE @test AC-C2 GA_DB_BACKUP_DIR outranks the config and never warns
+ID_TITLE @test AC-C2 the WARN is emitted once per shell, not once per resolution
+ID_TITLE @test AC-C2(1) fresh install: the value IS the default -> default location, silent
+ID_TITLE @test AC-C2(2) a customization in use: destination EXISTS -> configured value, silent
+ID_TITLE @test AC-C2(3) a customization not yet created, 0 dumps at the default -> configured value, silent
+ID_TITLE @test AC-C2(4) live shape: absolute, elsewhere, absent, dumps at the default -> default + WARN, nothing created
+ID_TITLE @test AC-C2(4b) the populated census is *.dump, wider than the rotation glob
+ID_TITLE @test AC-C2(5a) a relative value -> default + WARN naming the reason
+ID_TITLE @test AC-C2(5b) a declared-but-empty value -> default + WARN naming ITS OWN reason
+ID_TITLE @test AC-C2(5c) an UNDECLARED key -> default, silent (fresh-clone safety)
+ID_TITLE @test AC-C2(6a) a '..' or '.' segment is declined with its own reason
+ID_TITLE @test AC-C2(6b) a symlinked destination resolves to its TARGET before adoption
+ID_TITLE @test AC-C2(6c) a world-writable PARENT is declined (creatable arm)
+ID_TITLE @test AC-C2(6d) a world-writable EXISTING destination is declined
+ID_TITLE @test AC-C2(6e) the sticky bit alone does not admit a FOREIGN-owned parent
+ID_TITLE @test AC-C2(6f) canonicalization never rescues a RELATIVE value
+ID_TITLE @test AC-C2(6g) a directory the invoking user OWNS at 1777 is still declined
+ID_TITLE @test AC-C2(6h) the canonicalizer TERMINATES on a relative operand
+ID_TITLE @test AC-C2(6i) an unreadable MODE declines under its own reason, not ownership
+ID_TITLE @test AC-M1 widening in the LAST edits element → identity block
+ID_TITLE @test AC-M10 body-only element with replace_all honoured → pass
+ID_TITLE @test AC-M2 widening in the FIRST edits element → identity block
+ID_TITLE @test AC-M3 benign multi-element body-only MultiEdit → pass
+ID_TITLE @test AC-M4 staged widening across two elements → identity block
+ID_TITLE @test AC-M5 edits element carries a non-string old_string → frontmatter-unparseable
+ID_TITLE @test AC-M5 edits element is not an object → frontmatter-unparseable
+ID_TITLE @test AC-M5 edits is a string, not an array → frontmatter-unparseable
+ID_TITLE @test AC-M5 edits is an EMPTY array → frontmatter-unparseable
+ID_TITLE @test AC-M5 edits key absent → frontmatter-unparseable
+ID_TITLE @test AC-M6 MultiEdit creating a NEW agents/*.md → new-agent-creation block
+ID_TITLE @test AC-M7 MultiEdit on live settings.json → live-settings block
+ID_TITLE @test AC-M8 MultiEdit removing the closing fence → frontmatter-fence-edit
+ID_TITLE @test AC-M9 MultiEdit on an unprotected .glass-atrium path → pass
+ID_TITLE @test AC-Q1 containment: body prose spelling a quoted guarded key at column 0 → pass
+ID_TITLE @test AC-Q1 duplicate UNQUOTED tools key line, identical value → frontmatter-unparseable
+ID_TITLE @test AC-Q1 duplicate already on disk: body-only Write → frontmatter-unparseable
+ID_TITLE @test AC-Q1 quoted NON-guarded key line → pass, not unparseable
+ID_TITLE @test AC-Q1 quoted duplicate of tools: Edit appending one → frontmatter-unparseable
+ID_TITLE @test AC-Q1 quoted duplicate of tools: full-file Write carrying one → frontmatter-unparseable
+ID_TITLE @test AC-Q1 quoted name key changed by an Edit → identity-frontmatter-edit
+ID_TITLE @test AC-Q1 quoted tools key widened by a Write → identity-frontmatter-write
+ID_TITLE @test AC-Q1 quoted-key file, body-only Write → pass
+ID_TITLE @test AC-Q1 unreadable key token (unbalanced quote) at column 0 → frontmatter-unparseable
+ID_TITLE @test AC-S1.3a: wrapper carries no literal port default (16145 / 7842)
+ID_TITLE @test AC-S1.3b: GA root resolved through the wrapper's symlink (parent has no scripts/)
+ID_TITLE @test AC-S1.3b: relative symlink target also resolves to the real GA root
+ID_TITLE @test AC-S2 lifecycle-scaffold frontmatter form parses clean → pass
+ID_TITLE @test AC1 byte-identical: embedded-NUL value stripped, matching hook_get_tool_input
+ID_TITLE @test AC1 byte-identical: probe VALUE equals hook_get_tool_input for every field kind
+ID_TITLE @test AC1 every template key has exactly one census row
+ID_TITLE @test AC1 present: non-empty field → state=present, value returned unchanged
+ID_TITLE @test AC1 registered-but-unlisted agent is named and exits 2
+ID_TITLE @test AC1 spot-checks: type coercion + trailing-newline strip + embedded-newline keep
+ID_TITLE @test AC1 the invocation confines MCP discovery with --strict-mcp-config
+ID_TITLE @test AC1 the model invocation carries a Write-less tool set
+ID_TITLE @test AC10 shell lib and classifier classify the shared root corpus identically
+ID_TITLE @test AC10'(fires): the same spawn WITHOUT the bare token still records analysis-size
+ID_TITLE @test AC10'(silent): a non-DEV schema spawn WITH the bare token records no analysis-size tag
+ID_TITLE @test AC10: an absent apply script composes the same value as a non-executable one
+ID_TITLE @test AC11 a Write inside a git checkout of this repo → pass
+ID_TITLE @test AC11 a redirect inside a git checkout of this repo → pass
+ID_TITLE @test AC11(absent): no python3 on PATH at all still exits 0
+ID_TITLE @test AC11: a healthy apply still composes exactly ok with no unavailability line
+ID_TITLE @test AC11: an unusable python3 on PATH still exits 0 (fail-open preserved)
+ID_TITLE @test AC12: a composition block resident only in a string literal is treated as absent
+ID_TITLE @test AC12: an apply that RAN and failed still composes apply_failed
+ID_TITLE @test AC13 the exemplar fence declares completion_block as a schema member, not prose
+ID_TITLE @test AC13(no trace): a --lint preview writes no trace line at all
+ID_TITLE @test AC13: --lint exit status equals the live gate decision for every corpus script
+ID_TITLE @test AC13: a DB carrying only the older label reports the dependency absent and composes nothing
+ID_TITLE @test AC14'(dev field): a non-DEV script records dev=no and a DEV script records dev=yes
+ID_TITLE @test AC14'(order): the new fields sit AFTER advisory=, which sits after verdict=
+ID_TITLE @test AC14'(pre-helper paths): an envelope with no script still records well-formed defaults
+ID_TITLE @test AC14'(slot correctness): both dispatch branches report the literal expected count
+ID_TITLE @test AC14'(tally): the verdict tally over a mixed-format log is unchanged by the new fields
+ID_TITLE @test AC14: a dry run records provenance naming the dry run
+ID_TITLE @test AC15'(impl none): the none literal on impl: remains valid
+ID_TITLE @test AC15'(none): impl-computed: none blocks as block-grammar
+ID_TITLE @test AC15'(omitted): the same declaration with the line omitted passes
+ID_TITLE @test AC15: a missing helper records its own reason, not the dry-run one
+ID_TITLE @test AC16: an enum-absent skip records the reason and names the missing labels
+ID_TITLE @test AC17: a declined compose records the DB-reported decline, not the sent token
+ID_TITLE @test AC18: a successful compose records the composed value the DB reported
+ID_TITLE @test AC19: a compose that reported no provenance records unreported, not the sent token
+ID_TITLE @test AC1: a completed cycle runs the doctor and records the verdict in the per-cycle report
+ID_TITLE @test AC1: a dropped block appends a structured record naming agent, block, and byte overage
+ID_TITLE @test AC1: a readable target hashes to the whole 64-hex reference digest
+ID_TITLE @test AC1: a shed block is absent from the manifest's kept-block list
+ID_TITLE @test AC1: an aborted apply stage sends apply_status=apply_failed
+ID_TITLE @test AC1: an injection-attempted spawn emits exactly one manifest line naming kept blocks and bytes
+ID_TITLE @test AC1: every content-producible verdict token the hook can emit is produced by some fixture
+ID_TITLE @test AC1: three attempted spawns emit exactly three manifest lines
+ID_TITLE @test AC2 a relocated run root whose real chain is clean still compiles
+ID_TITLE @test AC2 a symlinked data-root component pointing into a 0777 tree is refused with exit 7
+ID_TITLE @test AC2 a symlinked data-root component whose target sits inside a 0777 tree is refused
+ID_TITLE @test AC2 a symlinked run root landing in a 0777 tree is refused before any mode-changing write
+ID_TITLE @test AC2 a world-writable non-sticky TMPDIR cannot become the run-dir parent
+ID_TITLE @test AC2 an other-writable run root is refused with exit 7 before any spend
+ID_TITLE @test AC2 legitimately-empty: field absent from tool_input → state=empty
+ID_TITLE @test AC2 legitimately-empty: field present but empty string → state=empty
+ID_TITLE @test AC2 legitimately-empty: value that rstrips to empty → state=empty (matches extractor)
+ID_TITLE @test AC2 listed-but-unregistered agent is named and exits 2
+ID_TITLE @test AC2 the ancestor walk flags the run-root component itself and dereferences a symlink
+ID_TITLE @test AC2 the script's own mode reader answers a bare octal mode, or empty when it cannot read one
+ID_TITLE @test AC20: a helper failure records unreported with its rc and still degrades the cycle
+ID_TITLE @test AC21: a declined compose triggers no follow-up write that would overwrite the kept status
+ID_TITLE @test AC22: recording provenance writes no new file into the report directory
+ID_TITLE @test AC23: the doctor still fails on an unsuperseded abort after a provenance-recording cycle
+ID_TITLE @test AC2: a clean apply stage sends apply_status=ok
+ID_TITLE @test AC2: a failing doctor verdict is recorded and the cycle still completes
+ID_TITLE @test AC2: a no-drop spawn writes no drop record but advances the injection-attempted denominator
+ID_TITLE @test AC2: each historically observed reason is produced by at least one fixture
+ID_TITLE @test AC2: no hasher on PATH → empty digest, loud stderr, apply-safe status 0
+ID_TITLE @test AC2: the operator introspection modes emit no manifest line (delta 0)
+ID_TITLE @test AC3 a claimed reader file exists and still carries its anchor literal
+ID_TITLE @test AC3 a duplicate idx aborts with exit 5 and zero files under NOTES_DIR
+ID_TITLE @test AC3 an agent name in the archived row's prose is still shape-filtered out
+ID_TITLE @test AC3 distinctness: legitimately-empty and drifted envelope report different states
+ID_TITLE @test AC3 non-agent literals and the archived struck-through row report nothing
+ID_TITLE @test AC3 unrecognized: malformed JSON → state=unrecognized
+ID_TITLE @test AC3 unrecognized: non-object root (JSON array) → state=unrecognized
+ID_TITLE @test AC3 unrecognized: tool_input is a non-object (string) → state=unrecognized
+ID_TITLE @test AC3 unrecognized: tool_input is null → state=unrecognized
+ID_TITLE @test AC3 unrecognized: tool_input key absent → state=unrecognized
+ID_TITLE @test AC3: a MARKERLOST row records the omitted marker without inflating the DROP numerator
+ID_TITLE @test AC3: a failing doctor leaves the apply stage's composed outcome unchanged
+ID_TITLE @test AC3: a preflight-aborting cycle writes the abort row and NO post-gate row
+ID_TITLE @test AC3: a truncating hasher persists nothing, never the partial digest
+ID_TITLE @test AC3: an absent sink and counter yield rate 0, not missing data
+ID_TITLE @test AC3: the compose write is the LAST daemon_runs write of the dispatch
+ID_TITLE @test AC3: the named aggregation query reports drops over spawns-with-injection-attempted
+ID_TITLE @test AC3: with manifest emission enabled the drop-rate reports the same numerator and denominator
+ID_TITLE @test AC4 a malformed registry JSON fails open with an advisory note
+ID_TITLE @test AC4 a reshaped legend table (no agent column) fails open, never reports every agent
+ID_TITLE @test AC4 an M-of-N envelope writes exactly M notes, names each miss, and records partial
+ID_TITLE @test AC4 an absent Scope Legend section fails open with an advisory note
+ID_TITLE @test AC4 an absent matrix in --roster-check is named absent, not merely unreadable
+ID_TITLE @test AC4 an unreadable registry path fails open with an advisory note
+ID_TITLE @test AC4 fail-open: python3 absent → state=empty (today's silent allow), NOT unrecognized
+ID_TITLE @test AC4(declspawn): a declared role with no spawn-position token blocks as block-declspawn
+ID_TITLE @test AC4(norev): a declaration whose reviewer is never spawned blocks as block-norev
+ID_TITLE @test AC4: a --proposal-id run with one eligible row writes the per-patch row only, no heartbeat
+ID_TITLE @test AC4: a clean doctor verdict is recorded and raises no failure
+ID_TITLE @test AC4: a mode that never ran the apply stage writes no apply health
+ID_TITLE @test AC4: an unreadable target → empty digest, loud stderr, apply-safe status 0
+ID_TITLE @test AC4: an unwritable drop sink and counter still exit 0 with the injection intact
+ID_TITLE @test AC4: an unwritable manifest sink still exits 0 with the injection intact
+ID_TITLE @test AC5 an oversize note body aborts with exit 6 and zero writes
+ID_TITLE @test AC5 no exemptions remain: every template key names a real reader
+ID_TITLE @test AC5 registry and legend in agreement exits 0 with an empty report
+ID_TITLE @test AC5: a helper/DB failure degrades the cycle instead of crashing it
+ID_TITLE @test AC5: a non-zero doctor degrades the cycle's aggregate without aborting the run
+ID_TITLE @test AC5: a present digest tool records a digest field
+ID_TITLE @test AC5: an absent digest tool writes the manifest line without a digest field
+ID_TITLE @test AC5: the heartbeat row's status literal is inside the set §14's producer pin fixes
+ID_TITLE @test AC5: the model id resolves through the shared helper; a missing lib is empty and loud
+ID_TITLE @test AC6 Edit of settings.local.json under a branch root → live-settings block
+ID_TITLE @test AC6 Write of settings.json under every branch root → live-settings block
+ID_TITLE @test AC6 a Layer B fault survives a clean Layer C at the Layer-A-OK exit point
+ID_TITLE @test AC6 a Layer B fault survives a clean Layer C at the drift-report exit point
+ID_TITLE @test AC6 a Layer B fault survives a clean Layer C at the rules-dir-missing exit point
+ID_TITLE @test AC6 a Layer C mismatch exits 2 through the full run when Layer B is clean
+ID_TITLE @test AC6 branch hooks/ dir write → live-hooks-dir block
+ID_TITLE @test AC6 case-varied branch spelling still blocks (nocasematch contract)
+ID_TITLE @test AC6 golden envelope: notes are shell-written to array-derived paths, stamped, and synced
+ID_TITLE @test AC6 suffix-lookalike roots are not config roots → pass
+ID_TITLE @test AC6'(i): 4 literal impl spawns vs 1 sizing entry — slots=4, size-map fires, verdict unchanged
+ID_TITLE @test AC6'(ii): the same script with 4 sizing entries — slots=4, size-map silent
+ID_TITLE @test AC6'(iii): 1 impl spawn vs 0 sizing entries — slots=1, size-map fires
+ID_TITLE @test AC6'(iv): upstream form, 2 impl spawns vs 1 sizing entry — slots=2, size-map fires
+ID_TITLE @test AC6'(v-fires): the same script with 1 sizing entry — slots=2, size-map fires, verdict unchanged
+ID_TITLE @test AC6'(v-silent): 1 computed type + 1 literal impl spawn, 2 sizing entries — slots=2, silent
+ID_TITLE @test AC6: a DB lacking the composed enum label skips the write and names the migration
+ID_TITLE @test AC6: a cycle that CLEARED the gate writes gate=cleared on the heartbeat row
+ID_TITLE @test AC6: an absent or non-executable doctor entry point skips loudly and keeps the cycle clean
+ID_TITLE @test AC6: both values arrive as psql -v bindings on a heredoc that stays quoted
+ID_TITLE @test AC7 Layer A still reports declared-missing and undeclared-present
+ID_TITLE @test AC7 Layer B still fails open on an unparseable Compliance Matrix table
+ID_TITLE @test AC7 a clean matrix exits 0 with the Layer A OK banner
+ID_TITLE @test AC7 a present-but-unreadable matrix is named unreadable, not absent
+ID_TITLE @test AC7 an absent matrix emits BOTH enforcement layers' advisories on stderr
+ID_TITLE @test AC7 an unreadable matrix still short-circuits to exit 0
+ID_TITLE @test AC7 cp into a branch hooks dir → block
+ID_TITLE @test AC7 interpreter write of a branch settings file → block
+ID_TITLE @test AC7 redirect into a branch settings file → block
+ID_TITLE @test AC7 the prompt the model receives carries the untrusted-data clause, the nonce line and the envelope grammar
+ID_TITLE @test AC7(negative): simple-task alongside 3 implementation slots records no such tag
+ID_TITLE @test AC7(positive): simple-task alongside 4 implementation slots records entry-cardinality
+ID_TITLE @test AC7: a DB carrying the enum label still composes the apply health
+ID_TITLE @test AC7: a cycle that SKIPPED the gate via the operator override writes gate=skipped
+ID_TITLE @test AC7: an absent or empty report keeps a clean cycle clean and names the miss
+ID_TITLE @test AC7: coverage distinguishes a spawn that kept a block from one that shed it
+ID_TITLE @test AC7: the reader reads an absent sink as zero records, not missing data
+ID_TITLE @test AC7: the reader reports per-agent block coverage matching the fixture
+ID_TITLE @test AC8 an agent BODY edit below the frontmatter fence passes
+ID_TITLE @test AC8 branch jobs/, projects/ and memory writes pass
+ID_TITLE @test AC8 no file on the exemption list reaches undeclared-present
+ID_TITLE @test AC8 the injection-text source is exempt, so Layer A stops reporting it
+ID_TITLE @test AC8(6 slots): a larger cardinality still exits 0 — the tag is advisory at any count
+ID_TITLE @test AC8: a failed presence probe warns loudly and composes anyway
+ID_TITLE @test AC8: a failing doctor still degrades the cycle when the verdict cannot be recorded
+ID_TITLE @test AC8: a script satisfying the entry-cardinality condition still exits 0
+ID_TITLE @test AC8: a sentinel WITHOUT the run nonce survives as body bytes
+ID_TITLE @test AC8: manifest_block_kept case arms equal the MANIFEST_BLOCK_LABELS roster
+ID_TITLE @test AC8: the gate field is additive — the pinned status-literal set is untouched
+ID_TITLE @test AC9: an apply script with its executable bit cleared composes apply_unavailable
+ID_TITLE @test ArmB-neg cd into rules/ or scoped/ then relative write → pass (H1-D1)
+ID_TITLE @test BASENAME CLAUDE.md on a branch root (tilde) + bg=true → NOT blocked (AC2)
+ID_TITLE @test BASENAME CLAUDE.md on the backup dir + bg=true → NOT blocked (AC2)
+ID_TITLE @test BASENAME GLASS_ATRIUM_GLOBAL_RULES.md on a branch root (bare) + bg=true → NOT blocked (AC2)
+ID_TITLE @test BASENAME MEMORY.md on a branch root (absolute-\$HOME) + bg=true → NOT blocked (AC2)
+ID_TITLE @test C0 setup_suite discovery sentinel is exported
+ID_TITLE @test C1 same (record_ts,agent,task_type) collides → 1 survivor (last writer), sequence gapped
+ID_TITLE @test C1 the charter no longer instructs authors to cap EVERY schema field
+ID_TITLE @test C1 the closed set is enumerated from both declaration sites
+ID_TITLE @test C2 DISTINCT (millisecond) record_ts for the same agent+task_type → BOTH rows survive
+ID_TITLE @test C2 already-reconciled pair pre-check: STYLEREF is single-sited and mirrored
+ID_TITLE @test C2 the charter states no schema-cap rule of its own (no maxLength/maxItems token)
+ID_TITLE @test C3 every roster declared in code is named in the compliance matrix
+ID_TITLE @test C3 the charter declares the schema-cap authority single-sited
+ID_TITLE @test C3 track-outcome.sh stamps record_ts at sub-second precision (python %f), date only as fallback
+ID_TITLE @test C4 end-to-end: evaluative_signal=-1 WITHOUT directive_hint writes the row + review_flag=true + correction_signals
+ID_TITLE @test C4 the charter's pointer is an IMPERATIVE to read the canonical rules, not a bare token
+ID_TITLE @test C5 end-to-end: two same-(agent,task_type) subagents both persist with DISTINCT record_ts
+ID_TITLE @test C5 the charter explicitly disclaims prescribing a cap of its own
+ID_TITLE @test D06 block-preservation: an unwritable sink must NOT convert the reviewer-miss block into a pass
+ID_TITLE @test D06 block-preservation: an unwritable sink never converts a block into a pass
+ID_TITLE @test D06 default sink: with no VGATE_FIRED_LOG override the trace lands under the data root
+ID_TITLE @test D06 negative: a spawn the gate passes appends NOTHING to the sink
+ID_TITLE @test D06 negative: nested sub-worker advisory (exit 0) appends NOTHING to the sink
+ID_TITLE @test D06 prune: sink over the line cap is bounded at or below the cap
+ID_TITLE @test D06 reader: --block-counts over a fixture sink reports counts by verdict tag
+ID_TITLE @test D06 reader: absent sink reads as zeros, not missing data
+ID_TITLE @test D06 reader: read-only — invoking it appends nothing to the sink
+ID_TITLE @test D06 reader: reports without draining stdin (no operator hang)
+ID_TITLE @test D06 register-once: PostToolUse DEV spawn appends NOTHING to the block sink
+ID_TITLE @test D06 register-once: PostToolUse stamp appends NOTHING to the block sink
+ID_TITLE @test D06 writer: every block path appends exactly 1 line carrying its own verdict tag
+ID_TITLE @test D06 writer: the trace line carries the spawn's subagent_type
+ID_TITLE @test D06: reviewer-miss BLOCK appends exactly one block-reviewer trace line
+ID_TITLE @test D06: reviewer-present pass appends NO trace line (delta 0)
+ID_TITLE @test D1 the defective capped-property notation is absent from the analysis-schema example
+ID_TITLE @test D13: the seven pre-existing corpus fixtures produce their re-adjudicated verdicts
+ID_TITLE @test D2 the analysis-schema example declares its properties UNCAPPED
+ID_TITLE @test D3 the withdrawn per-row cap-sizing floor is gone (no per-element cap endorsement)
+ID_TITLE @test DF-5: PostToolUse reviewer spawn stamps reviewer-present (only an executed spawn records)
+ID_TITLE @test DF-5: PostToolUse-stamped reviewer → later PreToolUse DEV plan-ref spawn passes silently
+ID_TITLE @test DF-5: PreToolUse DEV entry-miss BLOCK (exit 2) leaves NO marker line (no counter inflation)
+ID_TITLE @test DF-5: PreToolUse DEV plan-ref spawn (reviewer-miss BLOCK) does NOT stamp itself (read-only on PreToolUse)
+ID_TITLE @test DF-5: PreToolUse reviewer spawn does NOT stamp → blocked-spawn leaves no reviewer-present
+ID_TITLE @test E1 non-Write tool → allow (exit 0)
+ID_TITLE @test E2 Write with no agent_id → fail-open (exit 0)
+ID_TITLE @test E2E (T23): one release combining a non-agent change, an only-vendor merge, a NON-CONFLICTING both-changed merge, a CONTESTED both-changed decline, and a roster add
+ID_TITLE @test E3 Write with a fully-stripped agent_id → fail-open (exit 0)
+ID_TITLE @test E4 Write + valid agent_id but no recoverable agent_type → fail-open (exit 0)
+ID_TITLE @test E5 Write + non-doc agent recovered via sidecar → allow-non-doc-agent (exit 0)
+ID_TITLE @test E5 commit: a row through a symlinked directory rolls back and creates nothing outside
+ID_TITLE @test E6 Write + doc agent + empty file_path → fail-open (exit 0)
+ID_TITLE @test E7 Write + doc agent + non-target extension → allow-non-target-ext (exit 0)
+ID_TITLE @test EMIT + METER combined stays < 2048 bytes (~2KB persistence-preview survival, T1)
+ID_TITLE @test F10: || exit 0 is required in a sourced library, not in an executed script
+ID_TITLE @test F11: missing --path target and scope drift both exit 3
+ID_TITLE @test F12: unknown argument is a usage error (exit 2)
+ID_TITLE @test F13: valid benign and handled@<where> annotations pass
+ID_TITLE @test F14: a closer abutting the idiom terminates it (command substitution, pipe, ampersand)
+ID_TITLE @test F15: the word boundary survives the widened terminator class
+ID_TITLE @test F16: a closer abutting || exit 0 terminates it in a sourced library
+ID_TITLE @test F1: empty reason is rejected
+ID_TITLE @test F2: out-of-vocabulary label is rejected (closed two-label vocabulary)
+ID_TITLE @test F3: handled label naming no location is rejected (bare line numbers included)
+ID_TITLE @test F4: unannotated site is reported as file:line (one physical line is one site)
+ID_TITLE @test F5: annotated and converted counts are distinct fields
+ID_TITLE @test F6: a comment line carrying the idiom is not a site
+ID_TITLE @test F7: hook_require_python3 comment's derivation recipe excludes the definer
+ID_TITLE @test F7: surfaced stderr channels (2>&1, 2>>) are not sites
+ID_TITLE @test F8: token accepted one line above, never two
+ID_TITLE @test F9: continuation walk accepts the token on the statement's first line
+ID_TITLE @test G1 MultiEdit ADDING a body --- hr → pass (fence delta is span-scoped)
+ID_TITLE @test G2 MultiEdit REMOVING a body --- hr → pass (same old/new as the Edit row)
+ID_TITLE @test G3 MultiEdit inserting a fence INSIDE the frontmatter → still block
+ID_TITLE @test G4 CHARACTERIZATION f3 second ---…--- block after the closing fence → pass
+ID_TITLE @test H1 Edit into autoagent/ → block (agent cannot rewrite scheduled code)
+ID_TITLE @test H1 Edit into rules/ → pass (excluded)
+ID_TITLE @test H1 Edit into scoped/ → pass (excluded)
+ID_TITLE @test H1 Edit into scripts/ → block
+ID_TITLE @test H1 Edit into skills/ → block
+ID_TITLE @test H1 Write into autoagent/ → HAR-001 scheduled-exec block
+ID_TITLE @test H1 Write into rules/ → pass (excluded, hand-edited live)
+ID_TITLE @test H1 Write into scoped/ → pass (excluded)
+ID_TITLE @test H1 Write into scripts/ → block
+ID_TITLE @test H1 Write into skills/ → block
+ID_TITLE @test H1 bash cp into scripts/ → block
+ID_TITLE @test H1 bash redirect into autoagent/ → HAR-002 block
+ID_TITLE @test H1 bash tee into skills/ → block
+ID_TITLE @test JSON-fallback: a body-auto patch WITHOUT pre_verify_passed is EXCLUDED (DF-17 fail-closed)
+ID_TITLE @test K0 setup_suite discovery sentinel is exported
+ID_TITLE @test K1 kill switch SET → bypass before any verdict is written (exit 0)
+ID_TITLE @test K2 kill switch UNSET → the same input blocks (exit 2)
+ID_TITLE @test K3 an ambient kill-switch export cannot green this suite (hermeticity proof)
+ID_TITLE @test L1 a marked body lands at the release, keeps its model line, and consumes the request
+ID_TITLE @test L10 a consume failure takes its consume-failed code and writes the ledger row
+ID_TITLE @test L11 a release that adds region lines reports deleted and added lines separately
+ID_TITLE @test L12 a reset body logs its reset success line and only an unmarked merge claims preserved regions
+ID_TITLE @test L2 a body the request does not name keeps its daemon line
+ID_TITLE @test L3 a second run writes nothing and no dropped line comes back
+ID_TITLE @test L4 a body that moved after the operator reviewed it is refused and retained
+ID_TITLE @test L5 a malformed request exits 16 before anything is applied
+ID_TITLE @test L6 a request id that was already consumed exits 16 before anything is applied
+ID_TITLE @test L7 a request left behind after a landing resolves already-at-release and the body keeps updating
+ID_TITLE @test L8 a base entry that moved since the request was reviewed WARNs and flags base_drift
+ID_TITLE @test L9 a stale body absent from the release is refused and retained while the rest land
+ID_TITLE @test LLM05 block parity: 5 dangerous patterns on Bash tool → exit 2 + decision:block
+ID_TITLE @test LLM05 clean Bash output → exit 0, not blocked
+ID_TITLE @test LLM05 embedded-NUL: os.\u0000system( NUL-split (Bash) → block (NUL stripped, not truncated)
+ID_TITLE @test LLM05 embedded-newline: ^os.system( on its own line (Bash) → block (newline preserved)
+ID_TITLE @test LLM05 non-Bash pass-through: DROP TABLE under a Read tool → exit 0, NOT blocked
+ID_TITLE @test LLM07 embedded-NUL: NUL-split leak phrase still fires SEC-072 (NUL stripped, not truncated)
+ID_TITLE @test M1 the META body no longer prescribes output-shape constraints of its own
+ID_TITLE @test M1: a forced shed emits exactly one fixed-width marker naming the shed block (>=1 named)
+ID_TITLE @test M2 the META body states no schema constraint (no additionalProperties/maxLength/maxItems)
+ID_TITLE @test M2: a no-shed spawn keeps the FULL ceiling — the marker budget is conditional
+ID_TITLE @test M3 the META body declares itself a pointer rather than a schema-rule site
+ID_TITLE @test M3: the ceiling-lowered diagnostic fires exactly once however many blocks shed
+ID_TITLE @test M4 the META pointer is an IMPERATIVE to read the canonical rules, not a bare token
+ID_TITLE @test M4: a ceiling below the non-droppable block sheds once, never loops, and records the shed
+ID_TITLE @test M5 the META body KEEPS its own pre-draft output-shape scoping duty
+ID_TITLE @test M5: with the only droppable block shed, the non-droppable emit and the marker still emit
+ID_TITLE @test O1 record writes a request the next run consumes, keeping durable before-images
+ID_TITLE @test O10 record refuses a body whose EDITABLE region count differs from its base entry
+ID_TITLE @test O11 a symlinked body gets a regular-file before-image and restore brings the content back
+ID_TITLE @test O12 restore refuses a restore image that is a symlink
+ID_TITLE @test O13 a failed base-image capture leaves no lone body image, and a clean rerun captures both
+ID_TITLE @test O2 record is refused with --headless and writes nothing
+ID_TITLE @test O3 record is refused while another writer holds the apply-lock
+ID_TITLE @test O4 a refused record exits 16 and records nothing
+ID_TITLE @test O5 show previews exactly the lines the reset drops and writes nothing
+ID_TITLE @test O6 cancel moves the request aside and a later run leaves the body alone
+ID_TITLE @test O7 restore puts the body and its base entry back to their pre-reset images
+ID_TITLE @test O8 restore refuses a body edited after the reset unless --allow-live-moved
+ID_TITLE @test O9 a before-image that cannot be written retains the body in the request
+ID_TITLE @test P0-2 tilde + traversal Edit into live GA hooks dir → block
+ID_TITLE @test P0-2 tilde Edit into autoagent/ → HAR-001 block (tilde no longer dodges)
+ID_TITLE @test P0-2 tilde Write onto live settings.json → HAR-001 block
+ID_TITLE @test P0-2 tilde path NOT under monitor root still blocks (expansion is not a blanket allow)
+ID_TITLE @test P0-2 tilde path under env monitor root → allow-monitor-root-env (exit 0)
+ID_TITLE @test P0-2 ~user form stays literal → pass (deliberately not expanded)
+ID_TITLE @test P2 single-trap teardown: the lock is released and the private run dir is removed
+ID_TITLE @test P3 headless: ATRIUM_UPDATE_JOB_ID adopts the route-created row (no INSERT, heartbeat only)
+ID_TITLE @test P3 headless: a 2nd concurrent in-progress INSERT (partial unique index violation) loud-fails exit 8
+ID_TITLE @test P3 headless: a confirmed apply drives in-progress→completed and runs the install-parity post-step
+ID_TITLE @test P3 headless: claude precondition LOUD-FAILS exit 7 when a plist PATH omits claude
+ID_TITLE @test P3 headless: claude precondition LOUD-FAILS exit 7 when the binary is unresolvable
+ID_TITLE @test P3 headless: claude precondition PASSES when the binary resolves and each plist PATH contains it
+ID_TITLE @test P3 headless: terminal writes are WHERE-guarded (a stale-swept row is never resurrected)
+ID_TITLE @test P3 headless: the EXIT trap marks an unfinalized in-progress row 'failed' (abort/crash recovery)
+ID_TITLE @test P3 headless: the interactive path starts no ticker
+ID_TITLE @test P3 headless: the merge-span ticker heartbeats on a timer and outlives no run
+ID_TITLE @test P3 headless: update_heartbeat fires the DB heartbeat at a long-stage boundary
+ID_TITLE @test P3 headless: update_job transitions in-progress INSERT → heartbeat → completed (psql seam)
+ID_TITLE @test P3 headless: update_job_fail records status='failed' + failure_reason (WHERE-guarded)
+ID_TITLE @test P3: --restore-agents loud-fails (exit 10) on a missing snapshot dir
+ID_TITLE @test P3: --restore-agents rejects a cycle-id with path separators / traversal (exit 10)
+ID_TITLE @test P3: --restore-agents restores agent bodies from the agents-bak before-image (git-revert replacement)
+ID_TITLE @test P3: ATRIUM_UPDATE_DB=off (and interactive mode) performs ZERO psql calls
+ID_TITLE @test P3: agents-bak retention prune drops before-image dirs past the 14-day window, keeps fresh ones
+ID_TITLE @test P3: install-parity post-step is idempotent (loaded→kickstart -k, unloaded→bootstrap; mock npm/launchctl)
+ID_TITLE @test P3: the decoupled one-shot launchd plist renders with the update-oneshot label + --headless args
+ID_TITLE @test P7: DONE count=0 with TOTAL>=1 aborts 5 despite matching zero captures
+ID_TITLE @test P7: a zero-byte envelope is a structural violation, not an empty run
+ID_TITLE @test R1 bash classes never carry the frontmatter sentence
+ID_TITLE @test R1 classifier-failure: fail-closed wording, no deployment remedies
+ID_TITLE @test R1 every block class: expected verdict, distinct suggestion, frontmatter-sentence rule
+ID_TITLE @test R1 live-settings suggestion omits update.sh and the frontmatter sentence
+ID_TITLE @test R2 AC1 cp source-position: still blocks, no 'write blocked', read-respelling remedy
+ID_TITLE @test R2 AC2 re-spelling: cat redirect to an unprotected dest passes
+ID_TITLE @test R2 AC2 re-spelling: dd reading the protected path passes
+ID_TITLE @test R2 AC2 re-spelling: the Read tool passes
+ID_TITLE @test R2 AC3 direction pair: source position vs target position
+ID_TITLE @test R2 AC4 ambiguous grammar falls back to bash-mutation, never to a pass
+ID_TITLE @test R2 source-position also recognised for mv / install / rsync
+ID_TITLE @test R2-1 json round-trip: load(protected) + dump(/tmp) → pass · dump(protected) → block
+ID_TITLE @test R2-1 node writeFileSync(/tmp, readFileSync(protected)) → pass · swapped → block
+ID_TITLE @test R2-1 open('/tmp','w').write(open(protected).read()) → pass · swapped → block
+ID_TITLE @test R2-1 perl open: read handle on a protected path → pass · '>' handle → block
+ID_TITLE @test R2-1 ruby File.write('/tmp', File.read(protected)) → pass · swapped → block
+ID_TITLE @test R2-1 shutil.copy: FROM a protected path → pass · INTO one → block
+ID_TITLE @test R2-1 shutil.move OUT of a protected path → block (source is destroyed)
+ID_TITLE @test R2-2 cp into a protected dir: no trailing slash AND trailing slash → block
+ID_TITLE @test R2-2 redirect whose target is a bare protected dir → block
+ID_TITLE @test R2-2-neg cp into a longer sibling dir name → pass (boundary lookahead)
+ID_TITLE @test R2-4 &> redirect into live settings → block (separator-form, pinned)
+ID_TITLE @test R2-4 >& redirect into a live hook file → block
+ID_TITLE @test R2-4 clobber redirect >| into live settings → HAR-002 block
+ID_TITLE @test R2-4-neg fd dup 2>&1 while armed → pass (no false relative target)
+ID_TITLE @test R2-5 cd - back toward a protected dir → block (unknown return re-arms)
+ID_TITLE @test R2-5 popd back toward a protected dir → block
+ID_TITLE @test R2-5-neg cd - / popd with no protected dir in the history → pass
+ID_TITLE @test R2-6 cp -t into a protected dir → block (target precedes the sources)
+ID_TITLE @test R2-6 dd of= a protected path → block · dd if= a protected path → pass
+ID_TITLE @test R2-6 install / rsync / truncate onto a protected path → block
+ID_TITLE @test R2-6 sed --in-place on a protected path → block (long twin of sed -i)
+ID_TITLE @test R2-6-neg the added verbs on unprotected paths → pass (no false blocks)
+ID_TITLE @test R2: Bash-holding wiki-reader spawn → clause body present in additionalContext
+ID_TITLE @test R2: code-DEV agent gets NO clause, ZERO drops, within ceiling (nodrop invariant intact)
+ID_TITLE @test R2: injected clause covers unmarked legacy raw content explicitly
+ID_TITLE @test R2: non-Bash agent (sec-guard) receives no clause
+ID_TITLE @test R3-1 ruby File.delete/unlink (ALL_ARGS) → block, incl. the multi-arg form
+ID_TITLE @test R3-1 ruby FileUtils.chmod (TAIL_ARGS) → block on any tail argument
+ID_TITLE @test R3-1 ruby FileUtils.rm_rf/rm_r/rm/mkdir_p/mkdir (ALL_ARGS) → block
+ID_TITLE @test R3-1-neg the same sentinel rules on unprotected paths → pass (no blanket block)
+ID_TITLE @test R3-2 injected classifier exception on a Write envelope → HAR-003 block
+ID_TITLE @test R3-2 injected classifier exception → HAR-003 block naming the exception
+ID_TITLE @test R3-2-neg Write to a new unprotected file → pass (absence is not a defect)
+ID_TITLE @test R3-2-neg injected classifier exception on a NON-protected envelope → pass
+ID_TITLE @test R3-3 node createWriteStream / openSync with template literals → block
+ID_TITLE @test R3-3 node writeFileSync with a template-literal target → block
+ID_TITLE @test R3-3-neg node template-literal READ of a protected path → pass
+ID_TITLE @test R3-3-neg ruby backtick stays shell text, not a string literal → pass
+ID_TITLE @test R3-4 Path(protected).open write modes → block
+ID_TITLE @test R3-4 json.dump into Path(protected).open('w') → block
+ID_TITLE @test R3-4-neg Path(protected).open() with no mode or a read mode → pass
+ID_TITLE @test R3-5 variable-bound target inside a code string → pass (documented residual)
+ID_TITLE @test R3-6 bare pushd back toward a protected dir → block (stack swap re-arms)
+ID_TITLE @test R3-6 pushd +N / -N rotation back toward a protected dir → block
+ID_TITLE @test R3-6-neg bare cd out of a protected dir → pass (HOME is nameable)
+ID_TITLE @test R3-6-neg bare pushd / rotation with no protected dir in the history → pass
+ID_TITLE @test R3: Bash command reading wiki/raw/ → advisory note, exit 0
+ID_TITLE @test R3: literal wiki/raw/ token in command → advisory note, exit 0
+ID_TITLE @test R3: non-Bash tool → exit 0, silent
+ID_TITLE @test R3: ordinary Bash command → no note, exit 0
+ID_TITLE @test R5: V1 still fires — 4-field frontmatter + valid envelope → blocked (SCOPE-001)
+ID_TITLE @test R5: a Korean-language source keeping its Korean headings is permitted → exit 0 (language is not a violation)
+ID_TITLE @test R5: conforming non-Korean write under LC_ALL=C → exit 0, zero output (no stderr leak)
+ID_TITLE @test R5: conforming write (envelope + 3-field frontmatter) → permitted, exit 0 (V1 unaffected)
+ID_TITLE @test R5: non-raw path → exit 0, silent
+ID_TITLE @test R5: reversed envelope markers (close before open) → blocked, exit 2
+ID_TITLE @test R5: wiki/raw write WITHOUT body provenance envelope → blocked, exit 2 (SCOPE-006)
+ID_TITLE @test S1 GLASS_ATRIUM_GLOBAL_RULES.md carries the marker (capitalized header allowed)
+ID_TITLE @test S1 the charter names the canonical site (path + section) it points at
+ID_TITLE @test S1: /tmp-rooted store still triggers through the inbound link (both sides canonicalized)
+ID_TITLE @test S1: dot-dot traversal into raw/ is triggered → envelope-less write blocked (SCOPE-006)
+ID_TITLE @test S1: labelled write via dot-dot traversal → permitted, exit 0
+ID_TITLE @test S1: symlink from outside pointing INTO raw/ is triggered → blocked (SCOPE-008)
+ID_TITLE @test S2 inject-scope-rules.sh carries the marker
+ID_TITLE @test S2 the skill still carries that section and its absolute cap rules
+ID_TITLE @test S2.4 adding scope where absent → block
+ID_TITLE @test S2.4 append an inline comment to an inline-form key line → pass (ruled non-change)
+ID_TITLE @test S2.4 duplicate an already-granted inline item → pass (ruled non-change)
+ID_TITLE @test S2.4 inline tools reorder → pass (ruled non-change)
+ID_TITLE @test S2.4 quote a block-list item → pass (ruled non-change)
+ID_TITLE @test S2.4 quote an inline item → pass (ruled non-change)
+ID_TITLE @test S2.4 reorder the guarded key LINES → pass (ruled non-change)
+ID_TITLE @test S2.4 scope absent on BOTH sides compares equal → pass
+ID_TITLE @test S2.4 unbalanced quote is taken literally → block (values differ)
+ID_TITLE @test S3 glass-atrium-qa-code-reviewer.md carries the marker
+ID_TITLE @test S3 the META body names the canonical site (path + section) it points at
+ID_TITLE @test S4 bash -c with a copy verb → block (was a bypass at HEAD)
+ID_TITLE @test S4 sh -c with a nested cd + relative redirect → block (was a bypass at HEAD)
+ID_TITLE @test S4-neg bash with a script-file argument → pass (no code flag)
+ID_TITLE @test S4-neg shell -c with a non-protected cd → pass
+ID_TITLE @test S5 REGRESSION GUARD: awk in-program redirect still blocks after the mask
+ID_TITLE @test S5 REGRESSION GUARD: bash -c with a redirect still blocks after the mask
+ID_TITLE @test T-ALW-1: an atom at exactly the allowance renders inside the BUDGET, not into the reserve
+ID_TITLE @test T-ALW-2: the allowance charges the index width, so a wider index costs allowance
+ID_TITLE @test T-CAP-1: every part of every registry agent is at or under the cap, wrapper included
+ID_TITLE @test T-CAP-2: a part sized to exactly the cap is emitted, not rejected
+ID_TITLE @test T-CF-1: a section that cannot fit one part is excluded, named in part 01, and warned
+ID_TITLE @test T-CF-2: an oversize H2 that splits at H3 is split, not warned
+ID_TITLE @test T-COND-1: conditional members are pointers in part 01 only, never bodies
+ID_TITLE @test T-DET-1: a slot run alone produces the same part as the same slot of a full run
+ID_TITLE @test T-EVT-1: the warning-token set has one definition, and the sink writes those tokens
+ID_TITLE @test T-MISS-1: a member absent on this install degrades loudly and delivers the rest
+ID_TITLE @test T-OVF-1: a chunk count above the slot count fills every slot and names the remainder
+ID_TITLE @test T-OVF-2: a slot above the part count emits nothing at all
+ID_TITLE @test T-SEAM-1: a wrapper's basename resolves its part, and an empty envelope emits nothing
+ID_TITLE @test T-SEAM-2: a seam abort lands on the sink, not stderr alone
+ID_TITLE @test T-SEAM-3: an EMPTY PATH still records the abort, so no external stands before the guard
+ID_TITLE @test T-SEAM-4: an unhandled core fault reaches the sink and the seam records the exit status
+ID_TITLE @test T-SEL-1: selection is registry-driven, in declared order, scoped/ members only
+ID_TITLE @test T-SEL-2: an agent with no rules block warns NOMEMBERSHIP and is never silent-empty
+ID_TITLE @test T-SELF-1: every part carries the part header, the order-independence sentence and a band path
+ID_TITLE @test T-SLOT-1: the wrappers present are one contiguous set matching the core's slot count
+ID_TITLE @test T-SLOT-2: each shipped wrapper resolves its OWN part from its own basename
+ID_TITLE @test T-U16-1: counting is UTF-16 units, and an astral character counts two
+ID_TITLE @test T1 AC-1 wiki-daily-compile: an absent LOG_DIR never fakes a PG drop on the abort branch
+ID_TITLE @test T1 AC-2 wiki-daily-compile: an absent LOG_DIR never aborts the raw-absent fall-through
+ID_TITLE @test T1 all-take-release with a net-negative delta warns and persists a record
+ID_TITLE @test T1 block-then-emit: [COMPLETION] text turn before StructuredOutput is honored (structured path)
+ID_TITLE @test T1 done + cid closes the same-cid open DWC rows through the set-close route
+ID_TITLE @test T1 envelope carries the auto tier, the constant label and a non-empty cost guard state
+ID_TITLE @test T1 link rollback: a failure AFTER the link row swapped restores it as a LINK with its original target
+ID_TITLE @test T1 link rollback: the same forced failure leaves the live link row PRESENT
+ID_TITLE @test T1 link: a driven apply lands the live row as a link holding the release's target text
+ID_TITLE @test T1 link: a link row whose target is NOT staged stages as a link and verifies
+ID_TITLE @test T1 link: a staging copy that FAILS on a link row loud-fails the stage
+ID_TITLE @test T1 link: an apply carrying BOTH the link row and its target row lands both
+ID_TITLE @test T1 link: with the link-preserving copy reverted the same fixture stages a REGULAR file
+ID_TITLE @test T1-1.a redirect: dot segment into the settings file → block
+ID_TITLE @test T1-1.a redirect: dot-dot backtrack into the settings file → block
+ID_TITLE @test T1-1.a redirect: double separator into the settings file → block
+ID_TITLE @test T1-1.b awk redirect target with a double separator → block
+ID_TITLE @test T1-1.b copy verb with a double separator (command-text site) → block
+ID_TITLE @test T1-1.b dd output operand with a double separator → block
+ID_TITLE @test T1-1.b nested shell code flag with a double separator → block
+ID_TITLE @test T1-1.b node code-flag write with a dot segment → block
+ID_TITLE @test T1-1.b permission verb with a double separator (command-text site) → block
+ID_TITLE @test T1-1.b python code-flag write with a double separator → block
+ID_TITLE @test T1-1.c cwd arming through a dot-dot intermediate, then a relative write → block
+ID_TITLE @test T1-1.c cwd arming with a dot segment, then a relative write → block
+ID_TITLE @test T1-1.c cwd arming with a double separator, then a relative write → block
+ID_TITLE @test T1-1.d known false positive: copying a protected file to a backup stays blocked
+ID_TITLE @test T1-1.d legitimate baseline commands → pass (one row per command)
+ID_TITLE @test T1-1.e redirect resolving OUT of the protected tree → pass
+ID_TITLE @test T1-1.f cwd arming that resolves OUT of the protected tree → pass
+ID_TITLE @test T1-1.f cwd arming that resolves to an unprotected parent → pass
+ID_TITLE @test T1-1.h the header's residual paragraph states what the repair does and does not cover
+ID_TITLE @test T1-1.i case-varied cwd arming with a dot segment → block
+ID_TITLE @test T1-1.i case-varied directory form at a command-text site → block
+ID_TITLE @test T1-1.i case-varied file form with a double separator → block
+ID_TITLE @test T1-1.j a copy verb naming the before-image store → pass
+ID_TITLE @test T1-1.j a copy verb naming the development checkout → pass
+ID_TITLE @test T1-1.j a dotted sibling of a protected directory → pass
+ID_TITLE @test T1-1.j a suffixed sibling of a protected directory → pass
+ID_TITLE @test T1-1.j the live rollback before-image store → pass
+ID_TITLE @test T1-1.j this repository's own development checkout → pass
+ID_TITLE @test T1-BC case-varied protected paths, Bash arm → block (one row per class)
+ID_TITLE @test T1-BC13 non-protected .claude/data path, Bash arm → still pass
+ID_TITLE @test T1-BC13w non-protected .claude/data path, Write arm → still pass
+ID_TITLE @test T1-K case-varied protected paths, Write arm → block (one row per class)
+ID_TITLE @test T1-K1 case-varied .MD extension, MultiEdit widening → block
+ID_TITLE @test T1-K10 case-varied live-settings block payload carries the raw target
+ID_TITLE @test T1-K2 case-varied agents DIRECTORY, MultiEdit widening → block
+ID_TITLE @test T1-K3 case-varied protected ROOT, MultiEdit widening → block
+ID_TITLE @test T1-K5 case-varied .MD Edit widening the identity trio → block
+ID_TITLE @test T1-neg case-varied .MD under an EXCLUDED rules dir → still pass
+ID_TITLE @test T1-neg case-varied .MD under the excluded rules dir → still pass
+ID_TITLE @test T10 AC1: a failed DB write spools the envelope and the hook still exits 0
+ID_TITLE @test T10 AC2: a successful write drains a non-empty spool (each entry removed on confirmed write)
+ID_TITLE @test T10 AC3: entries older than the max age are pruned
+ID_TITLE @test T10 AC3: spool over the count bound evicts oldest-first and records the count
+ID_TITLE @test T10 AC4: an uncreatable spool dir drops the write with a named code and exits 0
+ID_TITLE @test T10 an empty or absent ledger path records unadjudicated and still returns 0
+ID_TITLE @test T10 budget pin: counter at budget (40) + errored StructuredOutput ⇒ budget-truncation
+ID_TITLE @test T11 budget-truncation + rate-limit prose ⇒ blocked (keyword result under a budget kill)
+ID_TITLE @test T11 commit: rollback removes a newly created file (no snapshot)
+ID_TITLE @test T11 commit: rolls back ALL on a mid-swap failure
+ID_TITLE @test T11 commit: swaps staged files into the live install
+ID_TITLE @test T11 every row records the gate that ran, never no-model-call
+ID_TITLE @test T11 stage: loud-fail on a hash mismatch, install untouched
+ID_TITLE @test T11 stage: loud-fail when a staged source file is missing
+ID_TITLE @test T11 stage: staged copies verify against the manifest hashes
+ID_TITLE @test T12 Site C: a present-but-unwritable spool dir emits DATA-080 (distinct from DATA-071), drops the write, exits 0
+ID_TITLE @test T12 a landed roster path stamps landed and an unlanded one does not
+ID_TITLE @test T13: a MERGE-CLAIMED agent body is EXCLUDED, the rest of agents/ is SELECTED
+ID_TITLE @test T13: a changed overlay and a changed runtime config are SELECTED like any other row
+ID_TITLE @test T13: a file missing from the live install is selected (must install)
+ID_TITLE @test T13: detects a content hash diff (changed file selected)
+ID_TITLE @test T13: identical content is NOT selected
+ID_TITLE @test T13: loud-fail (rc 1) when a manifest path carries no hash
+ID_TITLE @test T14: an explicit state-dir argument overrides the env default
+ID_TITLE @test T14: capture loud-fails when the source manifest is missing
+ID_TITLE @test T14: capture stores the manifest and read returns its path
+ID_TITLE @test T14: read returns rc 1 when no baseline has been captured (get contract)
+ID_TITLE @test T19/P2-T2: the pre-merge local body lands in the PERSISTENT agents-bak (single authoritative before-image)
+ID_TITLE @test T19/U-A: a live-only operator model: pin survives the merge (release ships none)
+ID_TITLE @test T19/U-A: a pin-only delta is a no-op (nothing to apply, live body untouched)
+ID_TITLE @test T19: STRUCTURAL region-count mismatch routes to the agent_lifecycle ceremony (not applied)
+ID_TITLE @test T19: a failed per-file transaction summarizes as rolled-back/unapplied
+ID_TITLE @test T19: a sensitive diff in an agent merge is REFUSED (not applied)
+ID_TITLE @test T19: keep-local region preserved + release structure applied through git_txn (agent-only change)
+ID_TITLE @test T1: GA_SKIP_DB_SETUP skips the deploy, says so with the remedy, and never reaches prisma
+ID_TITLE @test T2 a net-positive delta leaves the tripwire silent
+ID_TITLE @test T2 a non-done result leaves the consumer inert (zero HTTP calls)
+ID_TITLE @test T2 marker-preference: trailing non-marker assistant text after StructuredOutput does not shadow the block
+ID_TITLE @test T2 the row LANDS in core.autoagent_proposals through the real dual-write CLI
+ID_TITLE @test T24: a successful apply captures the new-release agent bodies into the base-content store
+ID_TITLE @test T2: an absent migrations directory is a no-op that names itself and never reaches prisma
+ID_TITLE @test T3 R2-positive: no [COMPLETION] + terminal consumed StructuredOutput derives done (structuredoutput-derived)
+ID_TITLE @test T3 a non-take-release verdict leaves the tripwire silent
+ID_TITLE @test T3 done with an empty cid leaves the consumer inert (zero HTTP calls)
+ID_TITLE @test T3 the same file resolved twice on one day lands ONE row that tracks the LAST outcome
+ID_TITLE @test T3-E1 DEFENSIVE (host-rejected) Edit carrying edits[] → fail-closed, not folded
+ID_TITLE @test T3-E2 LIVE Edit old_string:'' with evil frontmatter on an EXISTING agent file → block
+ID_TITLE @test T3-E3 LIVE Edit old_string:'' creating a NEW agent file → block
+ID_TITLE @test T3-E3b LIVE Edit old_string:'' creating a NEW agent file (subagent) → block
+ID_TITLE @test T3-E5 DEFENSIVE (host-rejected) Edit with old_string ABSENT → fail-closed block
+ID_TITLE @test T3-E6 DEFENSIVE (host-rejected) Edit with old_string null → fail-closed block
+ID_TITLE @test T3-ctl Edit old_string:'' on a NON-agent path → still pass (no global false positive)
+ID_TITLE @test T3-ctl Edit old_string:'' under the EXCLUDED rules dir → still pass
+ID_TITLE @test T3-ctl legitimate body Edit on an agent file → still pass
+ID_TITLE @test T3: a missing prisma CLI exits 15 naming the path, the dependency fix and db-setup
+ID_TITLE @test T4 AC2 drift (malformed JSON) → DEL-003 error + exit 0
+ID_TITLE @test T4 AC2 drift (tool_input non-object) → DEL-003 error + exit 0
+ID_TITLE @test T4 AC2 drift (tool_input renamed) → DEL-003 error + exit 0 (loud, not silent disarm)
+ID_TITLE @test T4 AC3 well-formed blocked path → exit 2 with DEL-001 (drift path did not cannibalize the block)
+ID_TITLE @test T4 a non-zero CLI exit warns once and continues the update
+ID_TITLE @test T4 degenerate empty object '{}' (python3 present) → silent allow (nothing to guard, no drift)
+ID_TITLE @test T4 distinctness: legitimately-empty field → silent allow (exit 0, NO DEL-003)
+ID_TITLE @test T4 monitor DOWN keeps the hook exit code at zero and prints the recovery token
+ID_TITLE @test T4 order flip: counter at budget (40) + consumed StructuredOutput ⇒ structuredoutput-derived wins
+ID_TITLE @test T4 the tripwire is advisory — rc 0 and no write outside its own ledger
+ID_TITLE @test T4-M10 edits element missing old_string → frontmatter-unparseable
+ID_TITLE @test T4-M14 edits element with BOTH keys missing → frontmatter-unparseable
+ID_TITLE @test T4-M14neg control: present-but-empty old_string on an EXISTING file → pass
+ID_TITLE @test T4-M9 edits element missing new_string → frontmatter-unparseable
+ID_TITLE @test T4: the step runs 'migrate deploy' with the monitor root as cwd
+ID_TITLE @test T5 a cid with nothing open makes one call and prints no closed line
+ID_TITLE @test T5 an absent dual-write helper warns and continues
+ID_TITLE @test T5 fallback guard: no [COMPLETION] + NO StructuredOutput keeps the old synthesis path
+ID_TITLE @test T5 only EDITABLE-region lines are counted
+ID_TITLE @test T5-1: a scope-run finding is blocking (exit 1) and still prints the finding
+ID_TITLE @test T5-2: a grammar reject is blocking on a scope run, a clean scope exits 0
+ID_TITLE @test T5-3: --advisory keeps a scope-run finding non-blocking without hiding it
+ID_TITLE @test T5-4: --path stays advisory, --strict blocks it, the two mode flags conflict
+ID_TITLE @test T5: a failing 'migrate deploy' exits 15, passes prisma's stderr through and names db-setup
+ID_TITLE @test T6 a file that did not land records reject / unadjudicated
+ID_TITLE @test T6 a reset-to-release with a request id is recorded as sanctioned, never as a defect
+ID_TITLE @test T6 errored StructuredOutput tool_result falls through to completion-synthesized
+ID_TITLE @test T6: an unreachable database loud-fails 15 with the connection error visible
+ID_TITLE @test T6: jq-hidden end-to-end — spine_stage_and_verify verifies via the python3 fallback
+ID_TITLE @test T6: jq-hidden spine_get_manifest_hash parity — recorded hash echoed, unknown path empty
+ID_TITLE @test T6: jq-hidden verify still LOUD-FAILS on a hash mismatch (fallback is no weaker)
+ID_TITLE @test T6: neither jq nor python3 → spine_stage_and_verify loud-fails naming both parsers
+ID_TITLE @test T7 a reset-to-release without a request is still reported as a defect
+ID_TITLE @test T7 rate-limit prose + consumed StructuredOutput records done (keyword heuristic superseded)
+ID_TITLE @test T7 rationale names the hunk count, the line deltas and a bounded dropped excerpt
+ID_TITLE @test T7: a pending migration is applied to a throwaway database and a re-run is idempotent
+ID_TITLE @test T8 tool_use_id pairing: interleaved errored decoy tool_result does not defeat id-pairing
+ID_TITLE @test T8 without the resolver sidecar the excerpt falls back to the diff and says so
+ID_TITLE @test T8: update_run applies migrations AFTER the file apply and the wire step
+ID_TITLE @test T9 AC1: consecutive fails reaching the threshold write a spawn-readable suspension signal
+ID_TITLE @test T9 AC2: a non-fail outcome resets the counter and clears the suspension
+ID_TITLE @test T9 a multi-row run splits landed per row and stamps both with ONE cycle date
+ID_TITLE @test T9 absent paired tool_result (kill mid-call) does not match — stays completion-synthesized
+ID_TITLE @test T9: a failing migrate step loud-fails 15 from update_run and leaves the applied files in place
+ID_TITLE @test V7: Edit on a raw non-.md path → exit 0, silent
+ID_TITLE @test V7: Edit on literal .glass-atrium/wiki/raw path → blocked, exit 2
+ID_TITLE @test V7: Edit outside raw/ → exit 0, silent
+ID_TITLE @test V7: Edit removing the UNTRUSTED-SOURCE envelope from raw/*.md → blocked, exit 2 (SCOPE-007)
+ID_TITLE @test V7: SCOPE-007 suggestion names the delete + Write re-save correction path
+ID_TITLE @test V7: envelope-preserving Edit on raw/*.md → still blocked, exit 2 (unconditional immutability)
+ID_TITLE @test V8: Edit onto a symlinked raw destination → SCOPE-007 (V7 precedes the guard)
+ID_TITLE @test V8: SCOPE-008 block names the real-path correction and reports the parent in context
+ID_TITLE @test V8: Write onto a symlinked destination → blocked, exit 2 (SCOPE-008)
+ID_TITLE @test V8: Write under a symlinked parent directory → blocked, exit 2 (SCOPE-008)
+ID_TITLE @test V8: non-existent destination under real dirs still reaches V6 (SCOPE-006, not SCOPE-008)
+ID_TITLE @test V8: symlinked destination outside raw/ → exit 0, silent
+ID_TITLE @test W2 invariant: a non-existent path with a non-empty body never mints verified_fail
+ID_TITLE @test Write: raw write WITHOUT body envelope → blocked, exit 2 (SCOPE-006 — V6 intact)
+ID_TITLE @test advisory-trace(R1): a completion-block cap records the schema-cap tag naming rule R1
+ID_TITLE @test advisory-trace(rules): the items-scoped and risk-band caps record R2 and R3 distinctly
+ID_TITLE @test consistency(a-count #27): honest dev-first-parallel dual-role, 2 spawns → PASS
+ID_TITLE @test consistency(a-count #27): same-type dual-role SINGLE spawn, impl-first → BLOCK_DECLSPAWN
+ID_TITLE @test consistency(b' config-array): undeclared config-array dev literal → BLOCK_UNDECL (R3 hole closed)
+ID_TITLE @test cwd is the owned agents dir and never /tmp (pin E1)
+ID_TITLE @test docroute F1: leak + dev-* spawn + ENTRY_ADVISORY → BLOCK with entry-format addendum
+ID_TITLE @test docroute F1: pure leak, NO dev-* spawn → BLOCK, NO entry addendum (no spurious nudge)
+ID_TITLE @test dormant backup dir config path + bg=true → BLOCKED (AC4)
+ID_TITLE @test drop record format: ISO8601 UTC timestamp, script basename, site slug, exit status
+ID_TITLE @test entry(#28): 'workplan-2026' does NOT satisfy plan-ref → BLOCK_ENTRY
+ID_TITLE @test entry(#28): real 'plan-6569' slug satisfies plan-ref → PASS
+ID_TITLE @test exempt(F7 accepted-FN): computed agentType + ZERO dev literals anywhere → PASS (Tier-A blind spot)
+ID_TITLE @test feature: existing NON-test files only → unverified (W1 — existence of unrelated files promotes nothing)
+ID_TITLE @test generate: modes map records a symlink's TARGET mode, not its lstat bits (FB-2)
+ID_TITLE @test git checkout hooks path + bg=true → NOT blocked (AC11)
+ID_TITLE @test header: cross-references UD-1
+ID_TITLE @test leak parity: all 8 LLM07 patterns each trigger SEC-072 advisory + exit 0
+ID_TITLE @test norev(#26): upstream form + reviewer PROSE-MENTION only (no real spawn) → BLOCK_NOREV
+ID_TITLE @test permit path: Write over an existing raw file → exit 0, silent (no SCOPE-009, no SCOPE-008)
+ID_TITLE @test plan-ref word-boundary (#28): 'workplan-2026' does NOT satisfy references_plan → entry-miss BLOCK
+ID_TITLE @test plan-ref word-boundary (#28): real 'plan-6569' slug satisfies references_plan → reviewer-miss BLOCK, exit 2
+ID_TITLE @test plumbing: ADR-2 addendum allowlist includes block-grammar, excludes block-entry/block-sizeest
+ID_TITLE @test python3 absent + orchestrator harness write → BLOCKED (H-3 fail-closed)
+ID_TITLE @test regex(#29 i): /\\/\\//g before the reviewer spawn on the same line → PASS (was block-norev)
+ID_TITLE @test regex(#29 ii): backtick char-class regex + multi-line template before the declaration → PASS (was block-nodecl)
+ID_TITLE @test regex(#29 iii): char-class regex /[/]/ on a spawn-bearing line → PASS
+ID_TITLE @test regex(#29 iv): genuinely //-commented reviewer, no live reviewer → BLOCK_NOREV
+ID_TITLE @test resilience(#45 full-catch): every schema site .catch-chained → PASS, NO advisory
+ID_TITLE @test resilience(#45 partial): one .catch-chained schema site + one bare schema site → PASS + advisory fires
+ID_TITLE @test resilience(#45 robust): schema work routed through robustAgent wrapper → PASS, NO advisory
+ID_TITLE @test resolver default 16145 is the sole shell terminal literal (AC-S1.3a)
+ID_TITLE @test retired checks: Korean heading + bibliography, no envelope → still blocked (SCOPE-006, no SCOPE-003/004)
+ID_TITLE @test roster gate PASSES a content update on a CUSTOMIZED install (T20 fix: user-local agent does NOT block)
+ID_TITLE @test same-version-different-bytes: per-file SHA-256 verify rejects loudly (exit 15), zero writes
+ID_TITLE @test schema-cap(R1): maxLength on a completion_block property → PASS + schema-cap advisory fires
+ID_TITLE @test schema-cap(R2): maxLength inside an items object → PASS + schema-cap advisory fires
+ID_TITLE @test schema-cap(R3): maxLength value strictly between 64 and 300 → PASS + schema-cap advisory fires
+ID_TITLE @test self-consistency(T11): each skill skeleton declaration fence → PASS
+ID_TITLE @test self-consistency(T5): BLOCK_NODECL stderr scaffold pasted into a DEV script → PASS
+ID_TITLE @test structural row high+false still records review_flag=false (D1 gate untouched)
+ID_TITLE @test the --tools value carries no Write token (pin E1)
+ID_TITLE @test the advisory surfaces the checker's stderr diagnostic with a line number (R6)
+ID_TITLE @test the header carries the why-this-arg-combo rationale anchor (AC10)
+ID_TITLE @test the header records that nested spawns remain ungated [FAIL-AT-HEAD until T6 header edit]
+ID_TITLE @test update-in-place with '&' in docs path renders the exact path (S-1)
+ID_TITLE @test update-in-place with backslash in docs path renders the exact path (S-1)
+ID_TITLE @test ~/.claude-personal/ path → silent short-circuit (AC5)
+ID_TITLE @test ~/.claude-personal/logs/ reference + bg=true → NOT blocked (AC3)
+ID_TITLE @test ~/.claude-work-dev/ path → silent short-circuit (AC5)
+ID_TITLE @test ~/.claude-work-dev/data/ reference + bg=true → NOT blocked (AC3)
+ID_TITLE @test ~/.claude-work-dev/hooks/x.sh + bg=true → BLOCKED (AC1)
+ID_TITLE @test ~/.claude-work-dev/projects/<proj>/memory/ write + bg=true → STILL blocked (AC3 memory guard)
+ID_TITLE @test ~/.claude-work-dev/settings.json + bg=true → BLOCKED (AC1)
+ID_TITLE @test ~/.claude-work-dev/shell-snapshots/ reference + bg=true → NOT blocked (AC3)
+ID_TITLE test #20 replyUpdateCasConflict: concurrent delete (row gone) → 404 not_found + body restored
+ID_TITLE test #20 replyUpdateCasConflict: concurrent hash race → 409 + loser's body restored on disk (no DB/FS divergence)
+ID_TITLE test #20 replyUpdateCasConflict: re-SELECT DB failure → 503 database_unavailable (restore still ran first)
+ID_TITLE test #20 updateClaudedDocRow: CAS guards the WHERE on the client expected_hash (parameterized bind)
+ID_TITLE test #20 updateClaudedDocRow: guarded-WHERE miss (0 rows) → typed cas_conflict, never throws
+ID_TITLE test #21 buildFsFailReason: errno error → path-free errno form, no absolute path
+ID_TITLE test #21 buildFsFailReason: non-errno error → generic fallback, no path
+ID_TITLE test #21 fsErrnoCode: extracts errno code · undefined for non-errno / non-object
+ID_TITLE test #21 prefixedFsReason: keeps the stage discriminator (pinned by html-export tests) while dropping the path
+ID_TITLE test 39731-S2 the drill-down store's failure is not a headline health fact
+ID_TITLE test AC-1 a bundle already on the page registers without a fetch
+ID_TITLE test AC-1 a bundle that fails to arrive resolves loudly instead of stranding its callers
+ID_TITLE test AC-1 a non-flowchart adopted type exports under the same verdict
+ID_TITLE test AC-1 every package the bundle embeds carries a license notice
+ID_TITLE test AC-1 every viewer render path awaits the loader before it renders
+ID_TITLE test AC-1 one counting path — census and report read the same fixture through one counter
+ID_TITLE test AC-1 the bundle on disk is the byte sequence its sidecar pins
+ID_TITLE test AC-1 the dagre control draws the same source diagonally
+ID_TITLE test AC-1 the exported flowchart edges are orthogonal under the ADR-3 verdict
+ID_TITLE test AC-1 the exported flowchart edges carry no cubic command
+ID_TITLE test AC-1 the loader injects the bundle before it registers, once per page
+ID_TITLE test AC-1 the loader names exactly the vendored file the sidecar names
+ID_TITLE test AC-1 the sidecar's tarball hash is the one npm resolved
+ID_TITLE test AC-10 계수는 레이아웃 방향에 비의존 — 같은 canonical 콘텐츠가 LR/TD 에서 같은 census·report 를 냄
+ID_TITLE test AC-11 full description lives on the rendered aria-describedby target
+ID_TITLE test AC-18 exactly one rendered diagram SVG
+ID_TITLE test AC-18 no tab controls in the DOM
+ID_TITLE test AC-2 an elk directive renders with zero fallback warnings
+ID_TITLE test AC-2 drawn subgraph nesting depth <= cap
+ID_TITLE test AC-2 the exported document carries no script, vendored or otherwise
+ID_TITLE test AC-2 the fallback watch catches a genuinely unregistered layout
+ID_TITLE test AC-2 the same render without awaiting the prep does warn
+ID_TITLE test AC-2: invalid model value → 400 field-level error + zero writes
+ID_TITLE test AC-3 ELK edges are orthogonal under the ADR-3 verdict
+ID_TITLE test AC-3 drawn node count <= its grade cap, and the faithful/balanced cap rows stay pinned to their four literals
+ID_TITLE test AC-3 the same source under dagre yields different node coordinates
+ID_TITLE test AC-3 the viewer draws the same graph from the same config
+ID_TITLE test AC-3: per-call budget format → 400 atomic (no cross-field invariant)
+ID_TITLE test AC-4 (adversarial) 체인 줄은 화살표 토큰마다 1엣지 — 체이닝으로 엣지 상한을 우회할 수 없음
+ID_TITLE test AC-4 a layout the page never registered fails the export instead of falling back
+ID_TITLE test AC-4 a missing page asset fails the export instead of skipping the injection
+ID_TITLE test AC-4 drawn edge count <= its grade cap
+ID_TITLE test AC-4.8: 기록된 모든 사유 토큰이 고유 라벨 + 실질 title 로 렌더 — catch-all 0건
+ID_TITLE test AC-4.9: 빈 carrier(구행)와 미상 토큰은 서로 구별되는 상태로 렌더
+ID_TITLE test AC-4: daemon-key change rewrites daemon-config.json — unknown keys + budget string survive
+ID_TITLE test AC-5 drawn node label chars <= its grade cap outside the literal exemption list
+ID_TITLE test AC-5 export and viewer draw the C4 fixture at the same width under one declared screen
+ID_TITLE test AC-5 export and viewer draw the erDiagram fixture at the same width
+ID_TITLE test AC-5: dev pin upserts only the model line, resolves symlinks, surfaces unparseable
+ID_TITLE test AC-6 an unresolvable mermaid package fails the export, not the module import
+ID_TITLE test AC-8 omitted_node_ids ledger is honest while drawn is smaller than source, and only canonical carries its own non-empty title/description in place of the source's
+ID_TITLE test AC-9 (route) 예산 health 표면이 등록되어 있고 slug/omitted_node_ids 를 리포트 위에 합성함
+ID_TITLE test AC-9 three states come from the ratio band and violations name (metric, measured, cap)
+ID_TITLE test AC-9: successful PUT → exactly 1 audit row (middleware-written) with old→new payload
+ID_TITLE test AC-B0-2(1): the LIVE store holds no row from this run
+ID_TITLE test AC-B0-2(1): the suite's resolved database holds this run's nonce row
+ID_TITLE test AC-B0-2(2): allows ${label} — genuinely separate databases
+ID_TITLE test AC-B0-2(2): an unparseable DSN falls back to the raw string comparison
+ID_TITLE test AC-B0-2(2): refuses ${label} — same database, different spelling
+ID_TITLE test AC-B2-0 형태 게이트는 census 를 막지 않음 — 계수기는 그대로 열려 있음
+ID_TITLE test AC-B2-0a 계수기가 못 읽는 형태는 fail — 측정을 멈춘 채 초록으로 지나가지 않음
+ID_TITLE test AC-B2-0b 파서는 미지원 형태를 경고와 함께 건너뜀 — 유령 노드로 가드를 통과하지 못함
+ID_TITLE test AC-B2-0c 게이트는 모든 것을 거부해서 만족되지 않음 — 출하되는 여덟 문자열 전부 통과
+ID_TITLE test AC-B2-0d 형태 지표는 비율 밴드 밖 — 자기 생성자를 가짐
+ID_TITLE test AC-B2-1f `doc_export` 는 external 로 분류되고 그 규칙이 다른 노드를 재분류하지 않음
+ID_TITLE test AC-B2-2a every bound part node id is drawn
+ID_TITLE test AC-B2-2b the binding table covers the health part roster, every part non-empty
+ID_TITLE test AC-B2-2c the live overlay carries the server table as part_bindings
+ID_TITLE test AC-B2-2d daemon parts carry the drawn projection of the daemon binding table
+ID_TITLE test AC-B2-3a healthy verdict lights the ok ring on exactly the bound rendered nodes
+ID_TITLE test AC-B2-3b a fault daemon verdict outranks the healthy part verdict on the same node
+ID_TITLE test AC-B2-3c a stamped part binding with no verdict leaves its nodes unlit
+ID_TITLE test AC-B2-3d an unreachable PG and a failed export probe light their zones crit
+ID_TITLE test AC-B2-3d healthy part verdicts light the zone that represents them
+ID_TITLE test AC-B2-3e a health poll with no canvas re-render repaints the zone ring
+ID_TITLE test AC-B2-3f exactly the zones with a single health node carry the verdict
+ID_TITLE test AC-B2-4a every roster part is reachable by opening its node
+ID_TITLE test AC-B2-4b the entries follow the roster, and an empty roster leaves none
+ID_TITLE test AC-B2-4c an unreachable database turns the PostgreSQL entry, not only the strip
+ID_TITLE test AC-B2-4e the Chromium export entry's tone follows the launch probe through all three of its values
+ID_TITLE test AC-B2-5a the hook part detail carries the configuration and the failure log together
+ID_TITLE test AC-B2-5b an empty window still names when the last failure was
+ID_TITLE test AC-B2-5c the hook detail exists only inside the node panel
+ID_TITLE test AC-B2-6a a store that failed is still named when the health model never loaded
+ID_TITLE test AC-B2-6a no always-on fact strip stands between the page top and the map
+ID_TITLE test AC-B2-6a no model and no failure names nothing — the alert is not a permanent fixture
+ID_TITLE test AC-B2-6b a health store that failed is named by an alert standing on the page
+ID_TITLE test AC-B2-6c the map requests neither self-improvement store
+ID_TITLE test AC-B2-6f a daemon part with no response carries no verdict, never a fabricated one
+ID_TITLE test AC-FIT-1 the whole map is inside the pane at ${width}x${height}
+ID_TITLE test AC-T12 the hook part detail lists the failures the window actually returned
+ID_TITLE test AC-T15 aria-describedby target holds the full description
+ID_TITLE test AC-T15 description node is visually hidden yet still rendered
+ID_TITLE test AC-T17 the map renders no About this diagram prose section
+ID_TITLE test AC-T18(a) the ready map renders no live chips
+ID_TITLE test AC-T18(b) an inactive writer raises exactly one alert naming it
+ID_TITLE test AC-T18(b) no writer alert exists while dual-write is active
+ID_TITLE test AC-T18(c) the governance banner survives beside the writer alert
+ID_TITLE test AC-T19 no interaction attaches the node-dim classes
+ID_TITLE test AC-T2 cadence 를 넘긴 staleness 가 있어도 화면은 판정을 올리지 않음
+ID_TITLE test AC-T2 초과 판정은 서버 필드에서 tone 으로 그대로 나옴
+ID_TITLE test AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으로 남김
+ID_TITLE test AC-T22(a) 내보내기[${format}]: 산출 HTML 을 열면 가로 스크롤이 생기고 잘리지 않음
+ID_TITLE test AC-T22(a) 뷰어[${format}]: 넓은 다이어그램이 가로 스크롤을 얻고 잘리지 않음
+ID_TITLE test AC-T22(b) 내보내기[${format}]: 산출 HTML 의 <svg> 전부에 인라인 max-width 가 없음
+ID_TITLE test AC-T22(b) 뷰어[${format}]: 채택 타입 전부의 산출 <svg> 에 인라인 max-width 가 없음
+ID_TITLE test AC-T23 내보내기: 세 프리셋의 렌더 폭이 서로 구분됨
+ID_TITLE test AC-T23 뷰어 전체화면: 세 프리셋의 렌더 폭이 서로 구분됨
+ID_TITLE test AC-T23 뷰어 전체화면: 프리셋이 스크롤 원점 왼쪽으로 새지 않음
+ID_TITLE test AC-T23 뷰어: 세 프리셋의 렌더 폭이 서로 구분됨
+ID_TITLE test AC-T23: 같은 프리셋이 내보내기 산출물에서 같은 폭으로 재현됨
+ID_TITLE test AC-T3 count: a row the server calls fresh is never counted stale, however old it looks
+ID_TITLE test AC-T3 verdict: effective_status decides, whatever staleness_minutes says
+ID_TITLE test AC-T4 fixture is the server's own rule: at the shipped threshold it rebuilds the payload
+ID_TITLE test AC-T4 map and health board render one verdict per daemon, in every input class
+ID_TITLE test AC-T4 moving only the server threshold moves both screens, or neither is reading it
+ID_TITLE test AC-T4 the server threshold moves, the row does not, and the card moves with the verdict
+ID_TITLE test AC-T5 a fault verdict lights that daemon's bound nodes and no others
+ID_TITLE test AC-T5 the ring displaces neither the governance banner nor the writer alert
+ID_TITLE test AC-T6 fault verdict lights the ring on exactly the bound rendered nodes
+ID_TITLE test AC-T8 a daemon part's detail stands open in the panel, named by the part it belongs to
+ID_TITLE test AC-T8 opening another node moves the panel to that node's parts alone
+ID_TITLE test AC-T8 the keyboard alone reaches a node and opens its health detail
+ID_TITLE test AC-T8 the panel entry carries every fact the table's four columns named
+ID_TITLE test AC-T9 a payload response still on its way reads as loading, not as unreadable
+ID_TITLE test AC-T9 an errored payload response says it could not be read, not that it is loading
+ID_TITLE test AC-T9 opening a second daemon's node drills the payload request into THAT daemon
+ID_TITLE test AC-T9 opening another daemon's node re-requests the payload alone
+ID_TITLE test AC2: DWC with a closure timestamp renders de-emphasized grey
+ID_TITLE test AC3: DWC with NULL closed_at renders the amber warn token
+ID_TITLE test AC7: begin marks the row pending without recording a closure
+ID_TITLE test AC7: settle on failure clears pending and leaves the row open (amber)
+ID_TITLE test AC7: settle on success clears pending and records the optimistic closure
+ID_TITLE test AC7: transitions are immutable and row-scoped
+ID_TITLE test ADR-13 the ledger match is boundary-anchored, never a substring
+ID_TITLE test ADR-13 the ledger scans the whole tracked tree, minus itself
+ID_TITLE test ADR-20 every node can carry a state ring, whatever classDef or shape it has
+ID_TITLE test ADR-20 every node shows its focus position, whatever classDef or shape it has
+ID_TITLE test ADR-20 no drawn label reaches the payload carrying raw markup
+ID_TITLE test ADR-20 the drawn map's node labels read exactly as the source declares them
+ID_TITLE test B2-1 drawn id 집합 ⊆ source id 집합 — 그 차집합이 정확히 omitted_node_ids 원장
+ID_TITLE test B2-1 라벨 계수는 shape 구분자를 글자로 세지 않음 — 원통 노드가 제 글자 수로 읽힘
+ID_TITLE test B2-4 guard the residual bindings come from the served part_bindings, not a map-local copy
+ID_TITLE test B2-5 guard the last-run reading tracks the served instant and empties only the parts without one
+ID_TITLE test C1 a daemons store that has not answered leaves no verdict ring from the live daemon statuses
+ID_TITLE test C2 a node carrying more than one attention part says how many on its glyph
+ID_TITLE test C2 the per-node attention counts add up to the caption's attention count
+ID_TITLE test C3 regression pin — the as-of stamp advances only on a successful headline read
+ID_TITLE test C4 an unjudged part and a 'No data' part never share a drawer label
+ID_TITLE test D2: bare alias PUT → 400 with remediation message on EVERY domain (dev/research too)
+ID_TITLE test D3 fail-open: missing pricing SoT → GET 200 with known_models [] — next GET recovers
+ID_TITLE test D5: drift compare is variant-suffix-normalized ('claude-sonnet-5[1m]' == 'claude-sonnet-5')
+ID_TITLE test DF-13 cascadeAfterRowUpdate: actual diff on a grouped row → cascade fires once
+ID_TITLE test DF-13 cascadeAfterRowUpdate: standalone row (folder_id NULL) → NO cascade even on a diff
+ID_TITLE test DF-13 cascadeAfterRowUpdate: status echo (parsed === existing) → NO cascade (siblings untouched)
+ID_TITLE test DF-26 cascadeUpdateDocStatus: expectedHash → target carries a bound content_hash CAS guard
+ID_TITLE test DF-26 cascadeUpdateDocStatus: no expectedHash (body-changed path) → NO extra guard
+ID_TITLE test DF-26 restoreHtmlBody: in-place (not swap) still restores previous bytes
+ID_TITLE test DF-26 restoreHtmlBody: isNewSwapFile → unlinks the swap orphan (leaves no dangling file)
+ID_TITLE test GET /:id/html-export: 404 not_found when id does not exist — NO reason field (R1 a)
+ID_TITLE test GET /:id/html-export: 503 filesystem_unavailable on unreadable stored bytes (R1 b — NOT 404/500)
+ID_TITLE test GET /:id/html-export: dark theme (R3) — serialized output carries the host dark palette token
+ID_TITLE test GET /api/cost/by-model: '<synthetic>' zero-token sentinel rows excluded (F24)
+ID_TITLE test GET /api/cost/kpi: KPI band shape + invariants (R09)
+ID_TITLE test GET /api/cost/session-distribution: no_llm_session_count split + rows carry real tokens (F24)
+ID_TITLE test GET /api/cost/turn-stats: avg_turns_per_session true per-session aggregate (F29)
+ID_TITLE test H6 전환 dual-match: bare alias 충돌 시 정확히 1회 + 비접두 키 passthrough
+ID_TITLE test M1 a 'No data' part keeps its tone on the node, and it outranks an ok daemon there
+ID_TITLE test M1 a live-overlay failure is named in the lane and names its own reason
+ID_TITLE test M1 a zero never stands in for a reading that never arrived
+ID_TITLE test M1 cutting a store can only add unverified nodes, never remove one
+ID_TITLE test M1 every health state renders its own caption sentence
+ID_TITLE test M1 the lane stands the worse fact first whatever order it was assembled in
+ID_TITLE test M3 a health model that never loaded leaves every bound node unverified
+ID_TITLE test P0-2 every canvas edge is axis-aligned while the dagre control is not
+ID_TITLE test P0-2 focal 강조는 희소하고 실재하는 노드에만 붙음 — 배정은 drawn 이 선언한 id 로만 가고 개수는 1~2
+ID_TITLE test P0-2 no YAML frontmatter fence survives in the drawn source
+ID_TITLE test P0-2 the canvas logs no layout fallback, and this harness would catch one
+ID_TITLE test P0-2 the embedded second mermaid runtime owns no global and renders nothing
+ID_TITLE test P0-2 the map canvas is laid out by ELK, not by the silent dagre fallback
+ID_TITLE test P0-2-fix every box and every zone is drawn with rounded corners
+ID_TITLE test P0-2-fix labels render in the same font mermaid measured them with
+ID_TITLE test P0-2-fix no node label overruns the box mermaid sized for it
+ID_TITLE test P0-2-fix the canvas, its zones and its boxes read as three separate tones
+ID_TITLE test P1 a node's accessible name carries its label and a distinct health word per state
+ID_TITLE test P1 the attention caption names every flagged part and no settled one
+ID_TITLE test P1 the focus ring sits outside the health ring and never moves it
+ID_TITLE test P1 the security category's node stroke uses no status hue
+ID_TITLE test P1-1 authored diagram text is rendered at a level that strips script
+ID_TITLE test P1-1 every adopted diagram type carries the useMaxWidth:false width contract
+ID_TITLE test P1-1 the config carries the ELK default and the log level the warning watch needs
+ID_TITLE test P1-1 the drawn source carries no %%{init}%% directive — layout and theme come from the shared config
+ID_TITLE test P1-2 the export injects the config file itself, with nothing appended
+ID_TITLE test P1-2 the export injects the same vendored bundle the prep module fetches
+ID_TITLE test P1-2 the export reads the same-origin assets index.html loads, and the viewer initializes mermaid from the config global that file defines
+ID_TITLE test P1-3 a one-line dagre opt-out directive still overrides the global default
+ID_TITLE test P1-3 adopted-type blocks keep the cycle-A width contract
+ID_TITLE test P1-3 every sample block renders to an SVG
+ID_TITLE test P1-3 flowchart links carry no cubic command and stay orthogonal
+ID_TITLE test P1-3 no sample produced a layout fallback warning
+ID_TITLE test P1-3 opening a document pulls the vendor loader exactly once
+ID_TITLE test P1-3 the excluded type shows the inline max-width the adopted contract removes
+ID_TITLE test P1-3 the sample set covers every adopted type and an excluded one
+ID_TITLE test P1-3 the widest sample overflows its container and scrolls instead of clipping
+ID_TITLE test P2-5: GUARD — every emitted style-finding rule ∈ STYLE_RULE_ALLOWLIST (no rule escapes the frozen set)
+ID_TITLE test P2: style violations are evaluated only AFTER structure + placeholder pass
+ID_TITLE test POST approve: exit 13 → 422 { status: 'regen_invalid', axes: {C3:false} } (parsed from stderr)
+ID_TITLE test T10 learning-log: list + total + status-dist registry-gated (NULL-agent + noise excluded)
+ID_TITLE test T10 learning-log: the window-free parked rows are registry-gated too
+ID_TITLE test T10 loop-events: event-list + total + result-dist registry-gated (noise excluded)
+ID_TITLE test T11 a response that has not arrived folds to null, never to an empty configuration
+ID_TITLE test T11 opening the hook part renders the whole configuration it was served
+ID_TITLE test T11 the hook chain fold names every hook under the matcher it fires on
+ID_TITLE test T11: rendered list excludes non-registry agent_name; summary total still counts it
+ID_TITLE test T12 corpus-audits: NULL measurements arrive as null, never coerced to 0
+ID_TITLE test T12 corpus-audits: limit is honoured and an out-of-range limit is a 400
+ID_TITLE test T12 corpus-audits: newest-first window, count and latest_cycle_date agree with the list
+ID_TITLE test T12 corpus-audits: seeded reading is retrievable from the route payload with all 12 columns intact
+ID_TITLE test T12: de-registered on-disk dev-*.md (glass-atrium-dev-ghost) excluded from the model table
+ID_TITLE test T6 cross-analysis: by_agent_top_10 excludes noise, keeps canonical
+ID_TITLE test T6 cross-analysis: sibling by_result is registry-scoped by default, include_all=1 restores noise
+ID_TITLE test T7 a daemon name carrying a space is encoded before the URL leaves the screen
+ID_TITLE test T7 a daemon name that would otherwise change the query is encoded into it
+ID_TITLE test T7 exactly one endpoint follows the daemon, which is what lets the other four stay put
+ID_TITLE test T7 search: default view excludes noise + de-registered (registry-scoped)
+ID_TITLE test T7 search: include_all=1 re-admits de-registered + sentinels (forensic, AC-2)
+ID_TITLE test T7 the map requests all five health responses it absorbed
+ID_TITLE test T7 the payload endpoint carries the selected daemon, not a frozen literal
+ID_TITLE test T8/T9 fail-open: empty registry skips the gate (no invalid IN () SQL)
+ID_TITLE test T8: actionable_proposals[] target_agent registry-gated
+ID_TITLE test T8: proposals[] target_agent registry-gated (noise + denylist trio excluded)
+ID_TITLE test T9: tier_breakdown_30d counts registry-only via positive allowlist
+ID_TITLE test V1 an unjudged part never paints as ok, while warn and crit always show
+ID_TITLE test V1 bindings that have not arrived report unknown, not an empty unverified set
+ID_TITLE test V2 a zone member's connections include the arrows drawn onto its zone
+ID_TITLE test V4 dashed strokes on the map mean unverified and nothing else
+ID_TITLE test a P95 numeral stays neutral at every tier, the glyph alone carrying the tier while amber stays off the routine warn tier
+ID_TITLE test a budget crossing rides the P95 fill-bar instead of a pill that contradicts the fast-tier glyph
+ID_TITLE test a parked pattern the registry gate hides is reported, not dropped (F5)
+ID_TITLE test buildSearchUrlO: include_all present only when the toggle is on (T7 contract)
+ID_TITLE test classifyDbFailure: P2010 자체는 SQLSTATE 로 오인하지 않음
+ID_TITLE test daily-at America/New_York: EDT(여름, UTC-4) offset 적용 — EST 와 다름
+ID_TITLE test daily-at America/New_York: EST(겨울, UTC-5) offset 적용
+ID_TITLE test each stage group opens with a level-2 heading under the page H1, and the ledger holds no other heading
+ID_TITLE test every ledger row reads the fleet P95 cut, and only a p95 above it takes the warn glyph
+ID_TITLE test hook failures: unretried 24h failure → crit; retried-only → warn (F08)
+ID_TITLE test modelOptionsMC: empty known_models (SoT fail-open, D3) → inherit-only where allowed
+ID_TITLE test parseIdParam: unsafe-integer 거부 (M1 overflow + M3 float-round)
+ID_TITLE test rowToSummaryItem: invocations ↔ invocations_30d alias 동치 (F25 deprecated alias)
+ID_TITLE test rowToSummaryItem: matrix 분모 — needs_context 제외 + 별도 카운트 노출 (F21)
+ID_TITLE test stripIllegalControlChars: removes DEL (\\x7f) and C1 controls (\\x80–\\x9f)
+ID_TITLE test stripIllegalControlChars: removes the full C0 control range except \\t \\n \\r
+ID_TITLE test success-rate: days=7 윈도우 day-set 경계 — 오늘 포함 정확히 7일 (F26)
+ID_TITLE test the P95 warn cut follows the fleet's upper quartile, so warn stays rare while the 10-minute floor holds
+ID_TITLE test the removal ledger, its exclusions and the survivors hold in one tracked-tree scan (AC-B2-5d · AC-B2-6d · AC-B2-6b · ADR-20 · AC-12 · 39739-R1 · 39731-S1 · 39731-S4)
+INCIDENT_HEADER #      loses BOTH keys); the S-1 cases pin metachar-safe in-place rewrites.
+INCIDENT_HEADER #     1) reviewer-miss BLOCK (channel-a: emit_error stderr JSON + exit 2, VGATE-REVIEWER-001) —
+INCIDENT_HEADER #     AC1  a registered agent absent from the Scope Legend is NAMED and exits 2.
+INCIDENT_HEADER #     update_die — the D6 R1 anti-masking property the skip must not become a
+INCIDENT_HEADER #   (CID 2026-07-02T1055_pricing-sot_e7b2, plan task P5; supersedes the T13a
+INCIDENT_HEADER #   * AC-S1.3b: GA-root resolved through the wrapper's OWN symlink even when the
+INCIDENT_HEADER #   - zero-width detection (SEC-071) still fires from the single-python3 flag,
+INCIDENT_HEADER #   AC1  coverage           -> every template key has exactly one census row
+INCIDENT_HEADER #   C1 collision  — two DISTINCT outcomes sharing (record_ts, agent, task_type) collapse to
+INCIDENT_HEADER #   L1 landing    — the marked body equals the release apart from its operator model line;
+INCIDENT_HEADER #   T1 direct envelope with qa_score → the column holds the exact value.
+INCIDENT_HEADER #   T1 end-to-end: a [COMPLETION] `result: done` + `concerns:` block driven through
+INCIDENT_HEADER #   T1 envelope  — one envelope per resolved file carrying the constant pattern
+INCIDENT_HEADER #   T1 fires    — take-release + net-negative delta → loud per-file WARN naming the drop count
+INCIDENT_HEADER #   T1 gate       — result=done + non-empty cid → ONE `PATCH /api/outcomes/close-by-cid?cid=…`
+INCIDENT_HEADER #   T1 the DB dual-write helper IS invoked with a well-formed envelope for the run
+INCIDENT_HEADER #   T1-T2b the three documented no-ops (the GA_SKIP_DB_SETUP opt-out, an absent migrations dir, a
+INCIDENT_HEADER #   closed block, clean tag line       ->  T1=hit  T2=hit  INLINE=miss  GUARD=n/a     tier=1
+INCIDENT_HEADER #   verified_fail — the SINGLE narrow LLM09 zero-evidence path ONLY
+INCIDENT_HEADER #  #25 — validity-aware LAST-preference over ALL tier-1 matches. A subagent that quotes the
+INCIDENT_HEADER # (OWASP LLM05/LLM07) after its single-pass refactor:
+INCIDENT_HEADER # (doc#4 T9). track-outcome.sh formerly open()+json.loads'd the SUBAGENT's OWN transcript up to
+INCIDENT_HEADER # (incident #58325 systemic fix): the install / update / manifest-regeneration
+INCIDENT_HEADER # ADVISORY ONLY: every row asserts `status -eq 0` alongside the presence/absence of LOCK-ADV-001, so
+INCIDENT_HEADER # C1/C4 (charter) and M1/M3/M4 (META body) pin the prescriptive-clause needles instead. The META body
+INCIDENT_HEADER # CLASS (2026-07-02 incident): launchd invokes the daemon scripts THROUGH the
+INCIDENT_HEADER # Contract pinned (R3 "print-block-then-emit"): a schema-mode agent terminates its run on a
+INCIDENT_HEADER # FROZEN HEAD OBSERVATION (produced by RUNNING the hook at f5c4883 against the R1 fixture below, not
+INCIDENT_HEADER # Focus (Thread C / T10-T11): the runtime-DATA false-positive fix. The hook is a
+INCIDENT_HEADER # LC_ALL=ko_KR.UTF-8 succeeds interactively). So instead of reproducing the
+INCIDENT_HEADER # Pins the CURRENT safe collision behavior of the H-3 atomic per-file symlink
+INCIDENT_HEADER # Pins the T3 contract: the value-only hook_get_tool_input returns empty for BOTH a legitimately
+INCIDENT_HEADER # Raw-ingestion gate: V7 Edit immutability, V8 destination state and the V1-V6 blocking floor.
+INCIDENT_HEADER # SCOPE-070 advisory. Coverage now derives from the single-sited root grammar in
+INCIDENT_HEADER # SCOPE-080), on the staged+unstaged split (300+150=450 → advisory), and on binary dashes (0).
+INCIDENT_HEADER # WHY: F1 emission discipline is a documentation contract split across three files. The stable
+INCIDENT_HEADER # Wiring-only-coverage reconciliation + cheap smoke cases (plan clauded-docs/284 T5).
+INCIDENT_HEADER # advisory-context-budget.sh — threshold-vs-cited-onset reconciliation coverage (T17).
+INCIDENT_HEADER # advisory-egress-secret.sh — egress-correlation advisory coverage (plan H3 · LLM02).
+INCIDENT_HEADER # advisory-subagent-budget-split-limit.bats — T1c fail-at-HEAD coverage for T5
+INCIDENT_HEADER # agent-tracker-live-child-marker.bats — pins the C1-H/C2-H live-child marker written by
+INCIDENT_HEADER # apply-lock.sh suite (P1-T7) — pins the shared stale-reclaim guard for the
+INCIDENT_HEADER # apply-spine.sh suite — pins the E3 safe-apply spine library contract:
+INCIDENT_HEADER # autoagents-eval.sh headless arg-combo proxy suite (F1 plan pins E1/E2, AC10/AC12).
+INCIDENT_HEADER # block-dangerous-commands.sh — envelope-driven smoke (plan clauded-docs/284 T5).
+INCIDENT_HEADER # block-no-verify.sh — envelope-driven smoke (plan clauded-docs/284 T5).
+INCIDENT_HEADER # cluster (hooks/test/lib/ephemeral-pg.bash) with the N36 names unset; HOME, GA_DATA_ROOT, TMPDIR
+INCIDENT_HEADER # code-based-grader-crosscheck.bats — acceptance spec for the T2 Step 4-5 transcript
+INCIDENT_HEADER # code-based-grader-files-evidence.bats — T1c fail-at-HEAD coverage for T2
+INCIDENT_HEADER # daemon-apply test-suite PREFLIGHT suite (T1a root presence + T22 green-suite
+INCIDENT_HEADER # daemon-apply-marker-preservation.bats — S2 acceptance spec for clauded-docs/762.
+INCIDENT_HEADER # daemon-apply-preservation-verify.bats — T1c fail-at-HEAD coverage for T20
+INCIDENT_HEADER # daemon-apply.sh ZERO-ELIGIBLE post-gate row suite (T3-1) — pins the heartbeat row a cycle with
+INCIDENT_HEADER # daemon-apply.sh apply-time LANDING-ZONE guard suite (git-FREE, P1-T4) — pins
+INCIDENT_HEADER # daemon-apply.sh apply-time provenance suite (T130) — pins the two record-only values the status
+INCIDENT_HEADER # daemon-cycle-apply-status.bats — pins the composed apply-health write (T-B4) in the CYCLE DRIVER.
+INCIDENT_HEADER # daemon-cycle-doctor-stage.bats — pins the TERMINAL DOCTOR STAGE in the cycle driver (T3-1).
+INCIDENT_HEADER # data-root-seam-gaps.bats — pins FIX #3: routes 4 legacy-hardcoded DATA-tier stores through the
+INCIDENT_HEADER # data-root-seam.bats — pins the T1 shell data/log-root seam: the HOME-anchored
+INCIDENT_HEADER # detect-secret-file-write.sh — envelope-driven smoke (plan clauded-docs/284 T5).
+INCIDENT_HEADER # enforce-commit-guard-live-child-advisory.bats — pins the C1-H/C2-H commit-time live-child note.
+INCIDENT_HEADER # enforce-config-protection.sh — envelope-driven smoke (plan clauded-docs/284 T5).
+INCIDENT_HEADER # enforce-harness-critical.sh — A-set: envelope path normalisation (clauded-docs/743 P0-A).
+INCIDENT_HEADER # enforce-harness-critical.sh — B-set: frontmatter structure (clauded-docs/743 P0-B).
+INCIDENT_HEADER # enforce-harness-critical.sh — Bash-arm protected-path normalisation (clauded-docs/774 T1-1).
+INCIDENT_HEADER # enforce-harness-critical.sh — M-set: the MultiEdit envelope (clauded-docs/748 T7).
+INCIDENT_HEADER # enforce-harness-critical.sh — block PAYLOAD suite (clauded-docs/2112 R1 + R2).
+INCIDENT_HEADER # enforce-harness-critical.sh — envelope-driven suite (plan clauded-docs/285 T2).
+INCIDENT_HEADER # enforce-harness-critical.sh — profile-branch coverage set (clauded-docs/2119 W2).
+INCIDENT_HEADER # enforce-verification-gate-plan-subset.bats — pins the C3-H [PLAN-SUBSET] presence NUDGE.
+INCIDENT_HEADER # enforce-verification-gate-reviewer-block.bats — T1c fail-at-HEAD coverage for T6
+INCIDENT_HEADER # fixture below asserts the block still wins with the nudge absent. The --lint case pins AC6 —
+INCIDENT_HEADER # force-push (GIT-001) and push-to-main (GIT-006) regexes contain '|' alternation.
+INCIDENT_HEADER # git-txn-restore-outcome.bats — T1c fail-at-HEAD coverage for T11 (Propagate
+INCIDENT_HEADER # glass-atrium-dispatch suite — pins the T08 `glass-atrium update` subcommand
+INCIDENT_HEADER # glass-atrium-update E2E suite (T23) — drives the FULL update flow ONCE in a
+INCIDENT_HEADER # glass-atrium-update suite — pins the E3 T09 update-skill adapter contract:
+INCIDENT_HEADER # h2-untrusted-ingest.bats — break the untrusted-ingest → shell-capable-reader chain (plan H2 · LLM01).
+INCIDENT_HEADER # hook's binary-resolution change (doc#4 T5): prefer the project-local
+INCIDENT_HEADER # hooks/hook-utils.sh — hook_normalize_path unit suite (P0-2 tilde-bypass fix).
+INCIDENT_HEADER # inject-scope-chunker.bats — the membership selector, the UTF-16 chunker and the shared
+INCIDENT_HEADER # inject-scope-rules-dropsink.bats — T7: the injection drop sink is a measured FILE, plus a named
+INCIDENT_HEADER # inject-scope-rules-manifest.bats — C03: the bounded per-spawn injection manifest and its reader.
+INCIDENT_HEADER # inject-scope-rules-marker.bats — T16 (in-context drop marker) + AM-T16 (per-block source path).
+INCIDENT_HEADER # inject-session-context.sh — envelope-driven smoke (plan clauded-docs/284 T5).
+INCIDENT_HEADER # install.sh suite (P2-T1/P2-T4 acceptance) — pins the no-.git bundle-install
+INCIDENT_HEADER # labelled "budget-truncation" instead — and that label must survive the L905-style relabel guard.
+INCIDENT_HEADER # lib/git-txn.sh — git-FREE file-copy transaction suite (P1-T1). Pins the new
+INCIDENT_HEADER # manifest-mode-integrity.bats — FB-2 manifest mode integrity (D6 R1 apply-then-verify).
+INCIDENT_HEADER # migrate-claude-to-ga-data.bats — pins the T6 Tier-A migration op (D2/D3, PIN-B) + the
+INCIDENT_HEADER # on the pg-report-drops sink (AC-2), while never changing the caller's exit
+INCIDENT_HEADER # pii-scan.sh release-gate scanner tests (T10 AC).
+INCIDENT_HEADER # publish-release.sh suite — pins the release-consistency gate (finding #17):
+INCIDENT_HEADER # replaces the model's Write tool on the nightly compile path (plan F1, pins §a
+INCIDENT_HEADER # repo (AC-17): the tracked manifest and the git-tracked file set agree in both
+INCIDENT_HEADER # run stays advisory unless `--strict` is passed. Every `--path` case below (F1-F16 and the advisory
+INCIDENT_HEADER # skill-registry-retired.bats — pins the retired-map row for skills/skill-registry.json (G-12).
+INCIDENT_HEADER # t12-silent-fail-triage.bats — pins two of T12's three frozen-manifest silent-fail sites, each of
+INCIDENT_HEADER # tail-read of the PARENT transcript on the regex correction-fallback path (T9 block,
+INCIDENT_HEADER # the manifest: the E4 agent three-anchor merge (update.sh) and the deterministic
+INCIDENT_HEADER # track-outcome-agent-identity.bats — W1-B of clauded-docs/1461: the recorder must resolve the
+INCIDENT_HEADER # track-outcome-correction-crosscheck.bats — DSH-C08: the transcript correction detector runs as an
+INCIDENT_HEADER # track-outcome-correction-gap.bats — pins the F3 correction-gap loud flag in track-outcome.sh.
+INCIDENT_HEADER # track-outcome-flag-reasons.bats — W2-B of clauded-docs/1461: every recorder-side review-flag
+INCIDENT_HEADER # track-outcome-so-completion-block.bats — P1 schema-mode WRITER recovery: the recorder pulls a
+INCIDENT_HEADER # track-outcome-spool-circuit-breaker.bats — pins T10 (outcome dead-letter spool) + T9 (recovery-loop
+INCIDENT_HEADER # track-outcome-synthesized-review-flag.bats — R7 of clauded-docs/760: a synthesized outcome row
+INCIDENT_HEADER # track-outcome-transcript-source.bats — T3 regression/smoke test for the transcript-source
+INCIDENT_HEADER # track-outcome-workflow-root-synthesis.bats — Thread D (T12) RED-first guard for the
+INCIDENT_HEADER # validate-secret-scan.sh — envelope-driven smoke (plan clauded-docs/284 T5).
+INCIDENT_HEADER # wiki-daily-compile.sh end-to-end flow suite — pins the F1 hardening that took the Write tool
+INCIDENT_HEADER # ~/.claude) and PASSES after the flip — the DATA-101/DATA-102 emit polarity flips with
+INCIDENT_HEADER //   (AC1) /search rows carry closed_at; a never-closed row (legacy 포함) reads NULL,
+INCIDENT_HEADER //   (S1) Every OPEN done_with_concerns row sharing the cid closes in ONE call; the
+INCIDENT_HEADER //   (e) R2 honest attribution_loss: an UNBACKED subagent-stop-missing row
+INCIDENT_HEADER //   - Dark-theme R3: serialized output carries the host dark palette token.
+INCIDENT_HEADER //   - GET /api/agents/failure-patterns  (T4 — top-N breakage ranking)
+INCIDENT_HEADER //   - GET /api/agents/latency          (T2 — p50/p95/p99 "Response time")
+INCIDENT_HEADER //   - T6  GET /api/outcomes/cross-analysis  → by_agent_top_10 (AgentStackedBar +
+INCIDENT_HEADER //   - normalizeEpochToMs seconds-vs-ms boundary (F31 — daemon writes epoch
+INCIDENT_HEADER //   - the registry gate silently eating a parked row (F5): one fixture agent is
+INCIDENT_HEADER //   - 사용자 입력 (q · limit · offset) 이 모두 parameter binding (placeholder) 으로 직렬화 — LLM05 (SQL injection 방어) 검증
+INCIDENT_HEADER // (window.UI.CLOSED_META + resolveResultMeta) — T4 of the DWC closure UX cycle.
+INCIDENT_HEADER // /api/agents/review-flag-timeseries gap-day 회귀 (DF-11) — 제로-활동 일자의
+INCIDENT_HEADER // AC-4.10 — the review-flag reason carrier is projected by BOTH outcomes row shapes
+INCIDENT_HEADER // AC-B0-2 clause 1 — proves the suite's RESOLVED connection target is not the live store.
+INCIDENT_HEADER // AD-11 composite utility (SICA precedent) — pins the advisory composite that folds
+INCIDENT_HEADER // ATRIUM_TIMEZONE resolution — T20 config externalization, T11 host-resolution).
+INCIDENT_HEADER // Both bind exactly the registry keys (LLM05 — parameter binding, never inlined)
+INCIDENT_HEADER // Content-budget tests (AC-1~AC-5, AC-8, AC-9) — the counting gate for the ONE drawn diagram.
+INCIDENT_HEADER // DELETE /api/agents/:name 이름 검증 회귀 — 선행 하이픈 CLI-플래그 주입 차단 (DF-14).
+INCIDENT_HEADER // DF-7 regression: GET /api/dashboard/cost-timeseries bounded its generate_series on
+INCIDENT_HEADER // E2E chromium harness — document diagrams under the shared ELK config (plan D5-2 P1-3).
+INCIDENT_HEADER // Entry-name capture strategy (R2 append-spy — no unzip dep):
+INCIDENT_HEADER // FE pure-helper tests for the Wave-2/3 client-semantics fixes (DF-24 / DF-25 / DF-29).
+INCIDENT_HEADER // FE pure-helper tests for the writer-vs-reconstructed headline default (finding #34).
+INCIDENT_HEADER // GET /api/agents/budget-overages integration test (P17 near-cap badge route).
+INCIDENT_HEADER // GET /api/improvement/corpus-audits — the read surface over the T12 destination
+INCIDENT_HEADER // GET /api/improvement/correction-signals integration test (P16 detection-quality
+INCIDENT_HEADER // GET `known_models` list (server derives it from the pricing SoT, P6/P7), so the
+INCIDENT_HEADER // Integration tests for /api/health/hook-failures recency aggregates (F08) and the
+INCIDENT_HEADER // Integration tests for GET/PUT /api/model-config (spec doc 36166 AC-1..AC-6, AC-9).
+INCIDENT_HEADER // P0-1 — vendored ELK bundle supply-chain pin, browserless.
+INCIDENT_HEADER // P0-1 — vendored ELK layout loader proof.
+INCIDENT_HEADER // P1-1 — the shared mermaid runtime config (public/mermaid-config.js), read as the
+INCIDENT_HEADER // P1-2 — the HTML export initializes from the SAME mermaid config file the viewer loads.
+INCIDENT_HEADER // P1-2 — what the HTML export actually draws, measured on its own output.
+INCIDENT_HEADER // P3-T5 — POST /api/improvement/:id/restore: the git-free recovery net wired to
+INCIDENT_HEADER // PART_NODE_BINDINGS 단위 테스트 (B2-2) — 헬스 부품 명부와 그려지는 지도를 맞대는 지배 계기.
+INCIDENT_HEADER // Regression test for FIX-RB1 — the confidence=null filter on /cross-analysis.
+INCIDENT_HEADER // Shared ELK-proof probes for the mermaid layout work (plan D5-2 §7 공용 판정 도구).
+INCIDENT_HEADER // Shared focus + colour-free state pins (plan 39859 S2): one focus token, no per-component rings, glyph+word dots.
+INCIDENT_HEADER // Shared heading + landmark pins (plan 39859 S1): page h1 = nav label, card titles = h2, named shell regions.
+INCIDENT_HEADER // T10 registry-membership gating for the two orphan-table read surfaces:
+INCIDENT_HEADER // T7 — reject-lifecycle bucket split on GET /api/improvement.
+INCIDENT_HEADER // T8 + T9 registry-membership gating for GET /api/improvement.
+INCIDENT_HEADER // T9 — parked-loop state on GET /api/improvement/learning-log.
+INCIDENT_HEADER // Tests for the dashboard update-availability resolver (plan E2 / T06).
+INCIDENT_HEADER // Tests for the unified Atrium system version (T03) — the monitor reports ONE
+INCIDENT_HEADER // Unit tests for DAEMON_NODE_BINDINGS (F32) — every live-overlay daemon must
+INCIDENT_HEADER // Unit tests for clauded-docs/control-chars (illegal C0/C1 control stripping).
+INCIDENT_HEADER // Unit tests for public/src/app.jsx nav-badge routing (T2 · T13a): the sidebar footer, the
+INCIDENT_HEADER // Unit tests for public/src/data/health-model.js (F02) — the health KPI
+INCIDENT_HEADER // Unit tests for the F12 review-flag REASON rendering in
+INCIDENT_HEADER // Unit tests for the P18 daemon_run_payload keyed/labeled row logic in
+INCIDENT_HEADER // Unit tests for the PUT optimistic-lock hardening (red-team #20) and the
+INCIDENT_HEADER // Unit tests for the T1 5-tier badge taxonomy registry in public/src/ui.jsx
+INCIDENT_HEADER // Unit tests for the T13/T14 client-side pure helpers extracted into the browser
+INCIDENT_HEADER // Unit tests for the hook-failures errorKind breakdown seam (P12).
+INCIDENT_HEADER // Unit tests for the needs_auth firing proxy + fs seam (Track A / A-D2).
+INCIDENT_HEADER // agent-registry 캐시 무효화 회귀 (DF-12) — DELETE 커밋이 registry 파일을 out-of-process
+INCIDENT_HEADER // aggregations (finding #34). No DB — the mappers + the shared discriminator
+INCIDENT_HEADER // alone selects the right database but leaves two of the three AC-B0-2 clauses unmet.
+INCIDENT_HEADER // browser_reason 경로 노출 회귀 — red-team #21 형제 사이트. chromium launch 실패
+INCIDENT_HEADER // carries no declaration file, so importing it lands on TS7016.
+INCIDENT_HEADER // db-failure 분류기 + responder 테스트 (M2 taxonomy split 회귀 고정).
+INCIDENT_HEADER // host-loopback-bind.unit.test.ts — the loopback-only bind invariant (red-team finding #22).
+INCIDENT_HEADER // html-root-audit 부팅 감사 테스트 (M7 회귀 고정).
+INCIDENT_HEADER // lifecycle in public/src/screens/outcomes.jsx (AC2 / AC3 / AC7).
+INCIDENT_HEADER // public/src/screens/architecture.jsx (F39): two daemons can bind ONE node id —
+INCIDENT_HEADER // registry-membership gap left after T6/T7 (outcomes.registry-gate.route.test.ts)
+INCIDENT_HEADER // route-params 공유 파서 + 라우트 레벨 oversized-id 가드 테스트 (M1/M3 회귀 고정).
+INCIDENT_HEADER // so the T10 membership gate collapses the feed to the seeded rows and a concurrent
+INCIDENT_HEADER // 문서 본문 다이어그램의 폭 기제 시험 (AC-T22 (a)(b)).
+INCIDENT_HEADER // 변이 라우트 → audit row · GET/미커버 라우트 → row 없음 · INSERT 실패 격리 · coverage-drift guard (A09 회귀 방지).
+INCIDENT_HEADER // 저장 본문 무결성 감사 테스트 (DSH-C11 회귀 고정).
+INCIDENT_HEADER // 제거 원장 — 이 작업이 지운 이름들이 정말 어디에도 남지 않았음을 잼 (ADR-10).

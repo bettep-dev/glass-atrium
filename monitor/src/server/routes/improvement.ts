@@ -363,25 +363,22 @@ interface ApplyCapDbRow {
 
 // -- Loop suppression surface ------------------------------------------------
 //
-// The repeat-apply cap is ONE of five mechanisms that stop a pattern from reaching
-// a proposal, and it is the only one that writes a lifecycle transition. Measured
-// per cycle day over 2026-08-24..08-31, the loop suppressed roughly 25
-// non-promptable selections, 10 staleness skips and 5 roster mismatches for every
-// 1 cap — and only the cap was visible anywhere. The banner that reported it said
-// "Loop parked", which reads as a statement about the loop.
+// The repeat-apply cap is one of several mechanisms that stop a pattern from
+// reaching a proposal. Each of the other suppression mechanisms (non-promptable
+// selections, staleness skips, roster mismatches) outnumbered the repeat-apply cap,
+// and only the cap was visible anywhere.
 //
-// Reported over two populations that are never summed — contract and the reason
+// Reported over three populations that are never summed — contract and the reason
 // on ImprovementLoopSuppressionState (types/improvement.ts).
 
 // Opening literals of the daemon's last_transition_reason stamps
 // (daemon_cycle.py APPLY_CAP_REASON_TEMPLATE / REJECT_STREAK_REASON_TEMPLATE /
-// NON_AUTO_FIXABLE_REASON / REVERTED_SNOOZE_REASON / NON_PROMPTABLE_REASON).
+// NON_AUTO_FIXABLE_REASON / REVERTED_SNOOZE_REASON).
 // Hardcoded rather than derived: a daemon rewording must surface as a bucket
 // dropping to zero, not as a silently tracked rename.
 //
-// 'non-promptable' matches the bare prefix on purpose — live rows carry an older
-// operator-decision wording alongside the current NON_PROMPTABLE_REASON literal,
-// and both begin here.
+// 'non-promptable' — no longer written; terminal rows stamped by the retired label
+// skip, in two wordings that share this bare prefix.
 const SUPPRESSION_REASON_PREFIXES = {
   "repeat-apply-cap": APPLY_CAP_REASON_PREFIX,
   "non-promptable": "non-promptable",
@@ -390,11 +387,20 @@ const SUPPRESSION_REASON_PREFIXES = {
   "reverted-snooze": "reverted snooze:",
 } as const;
 
+// Dormant-reason openers (aggregator PAIR_REASON_PREFIX, roster-mismatch drop) — hardcoded as above
+const DORMANT_REASON_PREFIXES = {
+  "aggregator-pair": "aggregator-pair",
+  "roster-mismatch": "roster-mismatch",
+} as const;
+
 // eval_result tokens the daemon emits when a gate DROPS or fails open on a
 // selection. 'stale-gate-unknown-family' is the loud fail-open: the pattern was
 // KEPT because no gate could judge it, which is a different fact from a drop and
-// is labelled as one.
+// is labelled as one. 'non-promptable', 'stale-unobserved-skip' and
+// 'stale-gate-unknown-family' are no longer emitted; kept so events still inside
+// the window stay counted.
 const SUPPRESSION_EVAL_RESULTS = [
+  "no-metric-key",
   "non-promptable",
   "stale-pattern-skip",
   "stale-unobserved-skip",
@@ -406,9 +412,9 @@ const SUPPRESSION_EVAL_RESULTS = [
   "non-auto-fixable-skip",
 ] as const;
 
-// Operator-facing name + remedy per cause. Shared by both populations: the same
-// mechanism can park a row AND recur per cycle (the cap does both), and a reader
-// comparing the two lists must not meet two different descriptions of one thing.
+// Operator-facing name + remedy per cause. Shared by every population: the same
+// mechanism can hold a row AND recur per cycle (the cap and roster mismatch do both),
+// and a reader comparing the lists must not meet two descriptions of one thing.
 const NON_AUTO_FIXABLE_COPY = {
   label: "Non-auto-fixable",
   hint:
@@ -424,38 +430,51 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
       "another. Terminal, and no status reset clears it — see the parked-pattern " +
       "warning below. Open design decision.",
   },
-  "non-promptable": {
-    label: "Non-promptable signal",
+  "no-metric-key": {
+    label: "No metric key",
     hint:
-      "An operational counter no agent-body sentence can decrement. Skipped at " +
-      "intake every cycle; abating it is a human design decision, not a patch.",
+      "A discovery row with no primary metric, so no trial can measure a patch " +
+      "against it. Skipped at intake every cycle; only a keyed pattern is eligible.",
+  },
+  "non-promptable": {
+    label: "Non-promptable signal (retired)",
+    hint:
+      "The retired label-set intake skip, now the no-metric-key skip. A terminal " +
+      "row stamped by it stays as it was; its events age out of the window.",
   },
   "stale-pattern-skip": {
-    label: "Staleness skip",
+    label: "Pair re-check skip",
     hint:
-      "The live outcome window no longer supports the pattern. Self re-arming — " +
-      "it returns on its own once the live rate crosses the floor again.",
+      "The intake re-check found the keyed pattern's detection and confirmation " +
+      "pair no longer passing. No status is written; the aggregator moves the row " +
+      "to dormant.",
   },
   "stale-unobserved-skip": {
-    label: "Not re-observed",
+    label: "Not re-observed (retired)",
     hint:
-      "The label family has no live-rate recompute, and the row has not been " +
-      "re-observed by the aggregator inside the window. Self re-arming on the " +
-      "next re-observation.",
+      "The retired staleness gate's skip for a family with no live-rate recompute. " +
+      "No longer emitted; its events age out of the window.",
   },
   "stale-gate-unknown-family": {
-    label: "Unchecked (unknown family)",
+    label: "Unchecked (unknown family, retired)",
     hint:
-      "NOT a suppression — the staleness gate could not judge this label family " +
-      "and let the pattern through. Listed because an unjudged pattern is what " +
-      "let a dead one sit in intake unnoticed; teaching the gate its family is " +
-      "the fix.",
+      "NOT a suppression — the retired staleness gate could not judge this label " +
+      "family and let the pattern through. No longer emitted; its events age out " +
+      "of the window.",
   },
   "roster-mismatch": {
     label: "Roster mismatch",
     hint:
       "The pattern's agent is not an agents/*.md stem, so no patch could land. " +
       "Fix the agent column or retire the row.",
+  },
+  "aggregator-pair": {
+    label: "Pair verdict not met",
+    hint:
+      "The aggregator's detection and confirmation windows no longer both support " +
+      "the pattern — a keyed row by its occurrence floor, a discovery row by its " +
+      "family rule. Self re-arming: a passing pair whose detection starts after " +
+      "the move returns it to identified.",
   },
   "reject-streak-snooze": {
     label: "Reject-streak snooze",
@@ -480,23 +499,8 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
 // mechanism retired last month does not keep reporting.
 const SUPPRESSION_WINDOW_DAYS = 7;
 
-// pattern_signature is "<label>|<agent>", and the daemon's intake skip matches the
-// LABEL by exact equality against NON_PROMPTABLE_LABELS — so a "<label>|" prefix
-// match here is that same predicate, not a looser one. Kept verbatim in step with
-// daemon_cycle.py NON_PROMPTABLE_LABELS.
-const NON_PROMPTABLE_LABELS = [
-  "budget-overage concentration",
-  "repeated failure by same agent",
-  "\uB3D9\uC77C \uC5D0\uC774\uC804\uD2B8 \uBC18\uBCF5 \uC2E4\uD328", // 동일 에이전트 반복 실패
-] as const;
-// A label is interpolated into a LIKE pattern below. `%` and `_` are LIKE
-// metacharacters, so a label carrying either would silently widen an exact
-// prefix match into a fuzzy one. Escaping is a NO-OP for the three labels above
-// (none contains %, _ or a backslash), so the emitted pattern is byte-identical
-// today — it exists so a future label stays the exact match the daemon's
-// equality predicate is.
-const escapeLikeLiteral = (value: string): string =>
-  value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+// Intake skip (no metric key) via jsonb → a column-less schema reads all rows keyless, as the daemon
+const KEYLESS_PREDICATE = Prisma.sql`(to_jsonb(learning_log) ->> 'metric_key') IS NULL`;
 
 interface SuppressionBucketDbRow {
   cause: string;
@@ -513,6 +517,20 @@ interface CycleSuppressionBucketDbRow extends SuppressionBucketDbRow {
 interface PendingSplitDbRow {
   unpromptable: bigint;
   total: bigint;
+}
+
+/**
+ * Reason-marker CASE → bucket key, 'other' for no match or no reason.
+ * Each arm binds its prefix as a parameter — no literal is concatenated into SQL.
+ */
+function buildReasonCase(prefixes: Readonly<Record<string, string>>): Prisma.Sql {
+  return Prisma.sql`CASE ${Prisma.join(
+    Object.entries(prefixes).map(
+      ([cause, prefix]) =>
+        Prisma.sql`WHEN last_transition_reason LIKE ${`${prefix}%`} THEN ${cause}`,
+    ),
+    " ",
+  )} ELSE 'other' END`;
 }
 
 // A cause with no copy entry still surfaces — an unlabelled bucket is a bug report,
@@ -560,8 +578,8 @@ const REJECT_BUCKET_QUALITY = "quality";
 
 // Head of daemon_cycle.py's _SUPERSEDE_REASON, stamped on a prior-cycle pending row that
 // supersede_prior_pending_for_agent terminates. The tail carries the anchoring detail, so
-// the marker is a prefix match. No status enum distinguishes these rows — the daemon
-// reuses 'rejected' — which is why the rationale text is the only discriminator available.
+// the marker is a prefix match. The rationale, never the status, separates a supersede row
+// from other non-verdict rows, whether it carries 'rejected' or 'unadjudicated'.
 const SUPERSEDE_RATIONALE_LIKE = "superseded by fresher per-agent proposal%";
 
 // Head of daemon_cycle.py's _PARKED_PATTERN_REASON — apply guard's unjudged reject, lifecycle like a supersede
@@ -902,6 +920,10 @@ async function handleImprovement(
       //     mechanical rows book as quality rejects (the defect).
       //   - COALESCE on both columns keeps the CASE total: a NULL rationale or NULL status
       //     compares NULL against LIKE and would otherwise fall through untyped.
+      //   - An unadjudicated row reached no verdict: past the lifecycle arms it is infra,
+      //     whatever its model status, so it precedes the quality arm too.
+      //   - status::text, never an enum literal: an install not yet migrated lacks the
+      //     unadjudicated label, and a literal cast to it fails the whole statement.
       //   - The provenance filter drops updater-written release rows, which are not
       //     rejections at all — the same guard the prose-only-add count carries.
       //   - GROUP BY 1 (ordinal): the bucket labels are bind parameters, so a repeated
@@ -913,6 +935,8 @@ async function handleImprovement(
               THEN ${REJECT_BUCKET_LIFECYCLE}
             WHEN COALESCE(rationale, '') LIKE ${PARKED_PATTERN_RATIONALE_LIKE}
               THEN ${REJECT_BUCKET_LIFECYCLE}
+            WHEN status::text = 'unadjudicated'
+              THEN ${REJECT_BUCKET_INFRA}
             WHEN COALESCE(haiku_status, '') LIKE ${HAIKU_OK_LIKE}
               THEN ${REJECT_BUCKET_QUALITY}
             ELSE ${REJECT_BUCKET_INFRA}
@@ -921,7 +945,7 @@ async function handleImprovement(
         FROM core.autoagent_proposals
         ${buildProposalWhere(windowDays, null, agent, canonicalKeys)}
         ${buildDaemonProvenanceFilter()}
-          AND status = 'rejected'::core."ProposalStatus"
+          AND status::text IN ('rejected', 'unadjudicated')
         GROUP BY 1
         ORDER BY 1
       `,
@@ -1345,29 +1369,16 @@ async function handleLearningLog(
     // AND-prefixed form to it.
     const agentAndFilter = buildAgentMembershipFilter(canonicalKeys);
 
-    // Bucketed suppression CASE, built from the daemon's reason stamps. Each arm
-    // binds its prefix as a parameter — no literal is concatenated into SQL.
-    const suppressionCase = Prisma.sql`CASE ${Prisma.join(
-      Object.entries(SUPPRESSION_REASON_PREFIXES).map(
-        ([cause, prefix]) =>
-          Prisma.sql`WHEN last_transition_reason LIKE ${`${prefix}%`} THEN ${cause}`,
-      ),
-      " ",
-    )} ELSE 'other' END`;
-    // Same predicate the daemon's intake skip applies, expressed over the
-    // "<label>|<agent>" signature.
-    const unpromptablePredicate = Prisma.sql`(${Prisma.join(
-      NON_PROMPTABLE_LABELS.map(
-        (label) =>
-          Prisma.sql`pattern_signature LIKE ${`${escapeLikeLiteral(label)}|%`} ESCAPE '\\'`,
-      ),
-      " OR ",
-    )})`;
-    // One column list for the pattern list and the parked rows — both map through rowToLearningLogSummary.
+    const suppressionCase = buildReasonCase(SUPPRESSION_REASON_PREFIXES);
+    const dormantCase = buildReasonCase(DORMANT_REASON_PREFIXES);
+    // 'dormant' compared as text: a schema without the label matches no row instead
+    // of failing the cast.
+    const dormantPredicate = Prisma.sql`status::text = 'dormant'`;
+    // One column list for the pattern list, the parked and the dormant rows — all map through rowToLearningLogSummary.
     const learningLogColumns = Prisma.sql`id, pattern_signature, frequency, agent,
                status::text AS status, approval_tier::text AS approval_tier,
                discovered_date, last_updated, last_transition_at, last_transition_reason,
-               ${unpromptablePredicate} AS intake_skipped`;
+               ${KEYLESS_PREDICATE} AS intake_skipped`;
 
     const [
       totalRows,
@@ -1377,6 +1388,8 @@ async function handleLearningLog(
       parkedBucketRows,
       parkedPatternRows,
       parkedUngatedRows,
+      dormantBucketRows,
+      dormantPatternRows,
       cycleBucketRows,
       pendingSplitRows,
     ] = await Promise.all([
@@ -1451,6 +1464,26 @@ async function handleLearningLog(
         WHERE status = 'rejected'::core."LearningStatus"
           AND last_transition_reason IS NOT NULL
       `,
+      // Dormant buckets and the rows behind them, window-free like the parked pair.
+      // Deliberately NOT registry-gated: a roster-mismatch row is dormant because its
+      // agent is not a roster stem, so the gate would drop the rows it reports.
+      prisma.$queryRaw<SuppressionBucketDbRow[]>`
+        SELECT ${dormantCase} AS cause,
+               COUNT(*)::bigint AS count,
+               COUNT(DISTINCT agent)::bigint AS agents
+        FROM core.learning_log
+        WHERE ${dormantPredicate}
+        GROUP BY 1
+        ORDER BY 2 DESC
+      `,
+      prisma.$queryRaw<ParkedPatternDbRow[]>`
+        SELECT ${learningLogColumns},
+               ${dormantCase} AS cause
+        FROM core.learning_log
+        WHERE ${dormantPredicate}
+        ORDER BY COALESCE(last_transition_at, last_updated) DESC, id DESC
+        LIMIT ${limit}
+      `,
       // Per-cycle buckets. Deliberately NOT registry-gated: roster-mismatch events
       // are emitted precisely BECAUSE the agent is not a real roster stem, so the
       // gate would zero out the one bucket that reports them and the count would
@@ -1475,16 +1508,16 @@ async function handleLearningLog(
       // never produce a proposal reads as capacity.
       //
       // Deliberately NOT registry-gated, for the same reason the per-cycle buckets
-      // are not: the daemon's intake skip keys on the pattern LABEL and never
+      // are not: the daemon's intake skip keys on the metric key and never
       // consults agent-registry.json, so gating this count would report a narrower
       // population than the mechanism it measures. Gated, the figure that motivated
-      // this field read "6 of 20" against a measured 28 of 47 — a number that
+      // this field read far below the ungated one — a gated count that
       // silently means something narrower than it appears, which is the failure
       // this whole payload exists to fix. The registry gate stays on the parked
       // buckets and the lists, where it scopes a DISPLAY population rather than
       // a claim about what the loop skips.
       prisma.$queryRaw<PendingSplitDbRow[]>`
-        SELECT COUNT(*) FILTER (WHERE ${unpromptablePredicate})::bigint AS unpromptable,
+        SELECT COUNT(*) FILTER (WHERE ${KEYLESS_PREDICATE})::bigint AS unpromptable,
                COUNT(*)::bigint AS total
         FROM core.learning_log
         WHERE status = 'identified'::core."LearningStatus"
@@ -1502,6 +1535,12 @@ async function handleLearningLog(
     const loopSuppressionState: ImprovementLoopSuppressionState = {
       parked,
       parked_patterns: parkedPatternRows.map(rowToParkedPattern),
+      dormant: {
+        buckets: dormantBucketRows.map((row) =>
+          suppressionBucket(row.cause, bigintToNumber(row.count), bigintToNumber(row.agents)),
+        ),
+        patterns: dormantPatternRows.map(rowToParkedPattern),
+      },
       per_cycle: cycleBucketRows.map((row) => ({
         ...suppressionBucket(row.cause, bigintToNumber(row.count), bigintToNumber(row.agents)),
         cycles: bigintToNumber(row.cycles),
@@ -1826,7 +1865,7 @@ const REVIEW_ACTOR_OPERATOR = "monitor-user";
 
 // daemon-apply.sh --proposal-id --auto-regen exit-code contract:
 //   0  = applied (direct — diff landed, no regen needed; status flipped by script)
-//   8  = no-op, already terminal (status applied/rejected/approved/reverted)
+//   8  = no-op, already terminal (status applied/rejected/approved/reverted/unadjudicated)
 //   9  = apply failed without auto-regen (won't occur on this route — we always
 //        pass --auto-regen — but kept as a defensive fallback branch)
 //   10 = applied-after-regen (stale diff → regenerated + pre-verify passed →
@@ -1850,6 +1889,13 @@ const REVIEW_ACTOR_OPERATOR = "monitor-user";
 //        the same bytes; stderr names the row — Reject is the way out
 //   24 = unknown --actor token — unreachable from here (the actor above is a fixed
 //        literal, not request input), so it falls to the generic apply_error 500
+//   25 = apply-record table unconfirmed (core.autoagent_apply_records absent — the
+//        monitor migration has not run, or the probe failed); checked before the first
+//        apply, so nothing applied — 503, a retry after the migration succeeds
+//   26 = apply record not written (insert failed, or a digest or the landed diff could
+//        not be computed) AFTER the bytes landed and the row flipped applied — answered
+//        200 applied + record_missing; the JSONL applied row holds the record and stderr
+//        names the cause token
 //   2 = bad arg · 3 = no psql · 6 = DB update failed · 17 = parked-pattern guard gave
 //       no verdict (infra-class failures)
 const APPLY_EXIT_APPLIED = 0;
@@ -1865,6 +1911,8 @@ const APPLY_EXIT_NOT_FOUND = 19;
 const APPLY_EXIT_GENERATION_NOT_OK = 20;
 const APPLY_EXIT_QUERY_FAILED = 21;
 const APPLY_EXIT_ROW_UNREADABLE = 23;
+const APPLY_EXIT_RECORD_TABLE_UNCONFIRMED = 25;
+const APPLY_EXIT_RECORD_NOT_WRITTEN = 26;
 
 // Approve-only exit-18 refusal — route-local like RestoreErrorBody
 interface ApproveRefusalBody {
@@ -1939,6 +1987,21 @@ async function handleApprove(
     // without a new commit. 200 `applied`, flagged `already_applied`.
     request.log.info(logBase, "proposal already applied in-file — row marked applied, no new commit");
     return { id, status: "applied", already_applied: true };
+  }
+  if (exitCode === APPLY_EXIT_RECORD_NOT_WRITTEN) {
+    // Row is applied, so a success the card refreshes on; error log — the missing table row needs an operator
+    const cause = getApplyRecordCause(stderr);
+    request.log.error(
+      { ...logBase, stderr, cause },
+      "proposal applied but its apply record was NOT written (status flipped; the JSONL applied row holds the record)",
+    );
+    const causeText = cause ? ` (cause=${cause})` : "";
+    return {
+      id,
+      status: "applied",
+      record_missing: true,
+      reason: `apply record not written${causeText} — the JSONL applied row holds it`,
+    };
   }
   if (exitCode === APPLY_EXIT_NOOP) {
     request.log.warn({ ...logBase, stderr }, "approve no-op (already terminal)");
@@ -2048,6 +2111,16 @@ async function handleApprove(
       status: "row_unreadable",
       id,
       reason: `use Reject — stored proposal row is unreadable (row data, not a DB outage), nothing applied: ${truncateStderr(stderr)}`,
+    };
+  }
+  if (exitCode === APPLY_EXIT_RECORD_TABLE_UNCONFIRMED) {
+    // Outcome + remedy first since the approve toast truncates
+    request.log.error({ ...logBase, stderr }, "approve failed — apply-record table unconfirmed (nothing applied)");
+    reply.code(503);
+    return {
+      status: "apply_error",
+      id,
+      reason: `nothing applied — run the pending monitor migration (glass-atrium db-setup), then approve again: ${truncateStderr(stderr)}`,
     };
   }
 
@@ -3069,7 +3142,7 @@ function parsePreVerifyAxes(stderr: string): PreVerifyAxes | undefined {
 }
 
 /**
- * Exit-18 parked rows from daemon-apply.sh's `REFUSED proposal id=N … (rows 3384:rejected, 6:applied)` line.
+ * Exit-18 parked rows from daemon-apply.sh's `REFUSED proposal id=N … (rows 5120:rejected, 7:applied)` line.
  * Only id:status tokens pass — no other stderr text reaches the reason; undefined when none.
  */
 function parseParkedRows(stderr: string): string | undefined {
@@ -3080,6 +3153,12 @@ function parseParkedRows(stderr: string): string | undefined {
 // Exit-20 outcome token — value charset only, so no free stderr text rides into the reason
 function parseGenerationOutcome(stderr: string): string | undefined {
   const match = /use Reject — proposal id=\d+ generation outcome haiku_status=([\w:.<>-]{1,32}) is not ok-prefixed/.exec(stderr);
+  return match?.[1];
+}
+
+// Exit-26 cause token — value charset only, so no free stderr text rides into the reason
+function getApplyRecordCause(stderr: string): string | undefined {
+  const match = /apply record NOT written cause=([a-z_]{1,32})(?=\s)/.exec(stderr);
   return match?.[1];
 }
 

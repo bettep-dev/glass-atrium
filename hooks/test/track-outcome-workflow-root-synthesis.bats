@@ -200,7 +200,7 @@ write_leaf_payload() {
 
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PGHOST="/nonexistent-socket-wr" \
     CLAUDE_GATE_INFLIGHT="" \
     SUBAGENT_TOOL_BUDGET_OFF="1" \

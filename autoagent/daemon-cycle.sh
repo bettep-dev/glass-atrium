@@ -4,6 +4,12 @@
 # Invoked once per /loop wakeup. Runs stages in sequence; each is independent
 # (one stage's failure logs but does not abort the next):
 #
+#   0. backfill     — head stage, every mode: while pending (completion record
+#                     absent or re-arm marker present in the reports dir), run
+#                     daemon_cycle.py --backfill-unadjudicated under .apply-lock.
+#   0b.retire       — every mode but --backfill-only: the launcher's
+#                     retire-launchd-jobs routine retires the long-running
+#                     daemon jobs while any of their residue remains.
 #   1. cycle        — pattern → outcomes → Haiku patch → classification →
 #                     pre-verify (4-axis review per body-auto patch) → JSON.
 #                     Pre-verify is embedded inside the cycle stage so each
@@ -30,6 +36,8 @@
 #     daemon-cycle.sh --apply-only        # M5 only (against today's existing JSON)
 #     daemon-cycle.sh --regression-only   # DEPRECATED no-op — emits warning, exits 0
 #     daemon-cycle.sh --aggregate-only    # learning-aggregator.py only
+#     daemon-cycle.sh --backfill-only     # backfill head stage only, pending forced;
+#                                         # exits with its rc, nothing after it runs
 #     daemon-cycle.sh --full-cycle        # explicit alias for default
 #     daemon-cycle.sh --dry-run           # propagate dry-run to all stages
 #                                         # (also implies --skip-pre-verify on cycle stage)
@@ -56,6 +64,7 @@
 #     2 — argument error / unknown stage mode
 #     3 — python3 not found on PATH
 #     4 — claude binary not found on PATH/known locations
+#     130 / 143 — INT / TERM while the backfill stage holds .apply-lock (released first)
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -174,7 +183,7 @@ APPLY_LIMIT="${AUTOAGENT_APPLY_LIMIT:-0}"
 DRY_RUN=0
 OUT_PATH=""
 EXTRA_ARGS=()
-STAGE_MODE="full"  # full | cycle | apply | regression | aggregate
+STAGE_MODE="full"  # full | cycle | apply | regression | aggregate | backfill
 # Tracks whether the `full` dispatch already ran run_pg_push_stage (between
 # cycle and apply) so the tail does NOT push a second time.
 FULL_MODE_PG_PUSHED=0
@@ -233,8 +242,12 @@ while [[ $# -gt 0 ]]; do
             STAGE_MODE="aggregate"
             shift
             ;;
+        --backfill-only)
+            STAGE_MODE="backfill"
+            shift
+            ;;
         -h|--help)
-            sed -n '2,30p' "${BASH_SOURCE[0]}"
+            sed -n '2,49p' "${BASH_SOURCE[0]}"
             exit 0
             ;;
         *)
@@ -738,6 +751,131 @@ run_doctor_stage() {
     return "${rc}"
 }
 
+# Unadjudicated-backfill head stage. The reports dir is the one daemon-apply.sh and update.sh lock,
+# so all three writers serialize on one .apply-lock; the mode derives lock, marker and record from it.
+BACKFILL_LOCK_LIB="${ATRIUM_APPLY_LOCK_LIB:-${SCRIPT_DIR}/../scripts/lib/apply-lock.sh}"
+BACKFILL_LOCK_DIR=""
+
+# Echo why the stage runs nothing — before any lib or lock is touched; empty → run it.
+# Pending = completion record absent OR re-arm marker present; --backfill-only forces it.
+get_backfill_skip_reason() {
+    local reports_dir="$1"
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        printf 'dry-run\n'
+    elif [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
+        printf 'GA_SKIP_DB_SETUP set\n'
+    elif [[ "${STAGE_MODE}" != "backfill" && -e "${reports_dir}/.unadjudicated-backfill-done" ]] \
+        && [[ ! -e "${reports_dir}/.unadjudicated-backfill-pending" ]]; then
+        printf 'not pending (completion record present, no re-arm marker in %s)\n' "${reports_dir}"
+    fi
+}
+
+load_backfill_lock_lib() {
+    if [[ ! -f "${BACKFILL_LOCK_LIB}" ]]; then
+        printf '[daemon-cycle] stage=backfill FAILED: apply-lock lib missing (%s) — cycle degraded\n' \
+            "${BACKFILL_LOCK_LIB}" >&2
+        return 1
+    fi
+    # shellcheck source-path=SCRIPTDIR
+    # shellcheck source=../scripts/lib/apply-lock.sh
+    if ! . "${BACKFILL_LOCK_LIB}"; then
+        printf '[daemon-cycle] stage=backfill FAILED: apply-lock lib failed to load (%s) — cycle degraded\n' \
+            "${BACKFILL_LOCK_LIB}" >&2
+        return 1
+    fi
+}
+
+# A fresh data dir has no reports dir yet; without it the acquire would read as a held lock.
+create_backfill_reports_dir() {
+    if ! mkdir -p -- "$1"; then
+        printf '[daemon-cycle] stage=backfill FAILED: reports dir not creatable (%s) — cycle degraded\n' \
+            "$1" >&2
+        return 1
+    fi
+}
+
+# Run the mode under the acquired lock. Direct foreground child (no substitution, no pipe), so an
+# INT/TERM trap fires as soon as it exits, with the mode's parent being this driver.
+run_backfill_mode() {
+    local reports_dir="$1" rc=0
+    trap 'apply_lock_release "${BACKFILL_LOCK_DIR}"' EXIT
+    trap 'apply_lock_release "${BACKFILL_LOCK_DIR}"; trap - EXIT; exit 130' INT
+    trap 'apply_lock_release "${BACKFILL_LOCK_DIR}"; trap - EXIT; exit 143' TERM
+    "${PYTHON_BIN}" "${PY_MODULE}" --backfill-unadjudicated --reports-dir "${reports_dir}" || rc=$?
+    apply_lock_release "${BACKFILL_LOCK_DIR}"
+    # an EXIT trap left armed would release, at cycle end, a lock another process is mid-acquiring
+    trap - EXIT INT TERM
+    return "${rc}"
+}
+
+# Mode rc → stage rc: 10 is a gate deferral (still pending, retried next cycle); any other
+# non-zero (PG fault, lock not held, record write, import or argparse failure) degrades the cycle.
+fold_backfill_rc() {
+    local rc="$1"
+    case "${rc}" in
+        0) printf '[daemon-cycle] stage=backfill rc=0\n' >&2 ;;
+        10) printf '[daemon-cycle] stage=backfill rc=10 DEFERRED — still pending, retried next cycle\n' >&2 ;;
+        *)
+            printf '[daemon-cycle] stage=backfill rc=%d FAILED — cycle degraded\n' "${rc}" >&2
+            return 1
+            ;;
+    esac
+}
+
+run_backfill_stage() {
+    local reports_dir="${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
+    local skip_reason rc=0
+    skip_reason="$(get_backfill_skip_reason "${reports_dir}")"
+    if [[ -n "${skip_reason}" ]]; then
+        printf '[daemon-cycle] stage=backfill SKIP: %s\n' "${skip_reason}" >&2
+        return 0
+    fi
+    # shellcheck disable=SC2310  # errexit is not relied on: every failure path returns explicitly
+    load_backfill_lock_lib || return 1
+    # shellcheck disable=SC2310  # errexit is not relied on: every failure path returns explicitly
+    create_backfill_reports_dir "${reports_dir}" || return 1
+    BACKFILL_LOCK_DIR="${reports_dir}/.apply-lock"
+    apply_lock_acquire "${BACKFILL_LOCK_DIR}"
+    if [[ "${apply_lock_acquired}" != true ]]; then
+        printf '[daemon-cycle] stage=backfill SKIP: %s held by another process — retried next cycle\n' \
+            "${BACKFILL_LOCK_DIR}" >&2
+        return 0
+    fi
+    # shellcheck disable=SC2310  # errexit is not relied on: every failure path returns explicitly
+    run_backfill_mode "${reports_dir}" || rc=$?
+    fold_backfill_rc "${rc}"
+}
+
+# RETIRE: hands the retired long-running daemon jobs to the launcher's residue-gated routine. It lives
+# on this job because launchd runs this driver from the store on disk, so the first cycle after an
+# update reaches it whichever release's updater did the swap.
+# An unusable launcher is a named skip at rc 0, as in run_doctor_stage: the stage is permanent, so a
+# fold would mark every cycle on that install degraded forever. A non-zero routine rc means observed
+# residue is still present → degraded, never an abort. stdout → stderr: this driver's stdout carries
+# no status.
+run_retire_stage() {
+    if [[ ! -x "${DOCTOR_ENTRY}" ]]; then
+        local why="not executable"
+        if [[ ! -e "${DOCTOR_ENTRY}" ]]; then
+            why="absent"
+        fi
+        printf '[daemon-cycle] stage=retire SKIP: %s %s — retired daemon jobs not checked this cycle\n' \
+            "${DOCTOR_ENTRY}" "${why}" >&2
+        return 0
+    fi
+    local rc=0 args=("retire-launchd-jobs")
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        args+=("--dry-run")
+    fi
+    "${DOCTOR_ENTRY}" "${args[@]}" >&2 || rc=$?
+    if [[ "${rc}" -ne 0 ]]; then
+        printf '[daemon-cycle] stage=retire rc=%d FAILED — retired daemon residue not cleared, cycle degraded\n' \
+            "${rc}" >&2
+        return "${rc}"
+    fi
+    printf '[daemon-cycle] stage=retire rc=0\n' >&2
+}
+
 # -- Dispatch --------------------------------------------------------------
 
 # Aggregate exit tracking: each stage is independent (a failure logs its own rc
@@ -745,8 +883,8 @@ run_doctor_stage() {
 # stage is OR-accumulated into PIPELINE_RC so the final exit can report a
 # degraded cycle (exit 1) instead of an unconditional clean exit 0. The PG_PUSH
 # stage now contributes: a write failure (DB down) returns non-zero and is
-# folded in so a DB-down cycle surfaces as degraded (DF-16). LOOP_PUSH stays a
-# best-effort sink. Helper: run a stage, fold its rc into PIPELINE_RC.
+# folded in so a DB-down cycle surfaces as degraded (DF-16). Helper: run a
+# stage, fold its rc into PIPELINE_RC.
 PIPELINE_RC=0
 record_stage_rc() {
     local rc="$1"
@@ -771,6 +909,21 @@ record_apply_rc() {
     APPLY_RAN=1
     APPLY_RC="$1"
 }
+
+# Head stage ahead of every dispatch mode; --backfill-only exits on its rc with nothing after it.
+backfill_rc=0
+# shellcheck disable=SC2310  # errexit is not relied on: every failure path returns explicitly
+run_backfill_stage || backfill_rc=$?
+if [[ "${STAGE_MODE}" == "backfill" ]]; then
+    exit "${backfill_rc}"
+fi
+record_stage_rc "${backfill_rc}"
+
+# Ahead of dispatch: the one point every remaining mode passes, --backfill-only having exited above.
+retire_rc=0
+# shellcheck disable=SC2310  # errexit is not relied on: the rc is folded on the next line
+run_retire_stage || retire_rc=$?
+record_stage_rc "${retire_rc}"
 
 set +e
 case "${STAGE_MODE}" in
@@ -856,30 +1009,6 @@ if [[ "${APPLY_RAN}" -eq 1 ]]; then
 fi
 # APPLY-HEALTH-COMPOSE-END
 
-# LOOP-EVENTS-DUALWRITE-BEGIN
-# After the weekly-heartbeat.sh publisher was archived, core.autoagent_loop_events
-# had no publisher and froze. Publish autoagent-loop.jsonl (append-only ndjson)
-# to PG right after each cycle.
-# Idempotent: helper's ON CONFLICT (event_ts, agent, eval_result) DO UPDATE.
-# dry-run skipped — consistent with cycle/apply/aggregate stage policy.
-# LOOP_PUSH uses the same logging pattern as PG_PUSH (start/end/skip); the
-# helper's `|| true` swallow is preserved but surfaced via loop_rc capture.
-LOOP_PUSH_PY="${HOME}/.glass-atrium/scripts/_pg_push_autoagent_loop_events.py"
-if [[ "${DRY_RUN}" -eq 0 && -f "${LOOP_PUSH_PY}" ]]; then
-    printf '[daemon-cycle] LOOP_PUSH start helper=%s\n' "${LOOP_PUSH_PY}" >&2
-    loop_rc=0
-    "${PYTHON_BIN}" "${LOOP_PUSH_PY}" || loop_rc=$?
-    printf '[daemon-cycle] LOOP_PUSH end rc=%d\n' "${loop_rc}" >&2
-else
-    loop_helper_label="missing"
-    if [[ -f "${LOOP_PUSH_PY}" ]]; then
-        loop_helper_label="present"
-    fi
-    printf '[daemon-cycle] LOOP_PUSH SKIP dry=%d helper=%s\n' \
-        "${DRY_RUN}" "${loop_helper_label}" >&2
-fi
-# LOOP-EVENTS-DUALWRITE-END
-
 # DOCTOR-STAGE-BEGIN
 # Terminal by construction: apply rc, the composed apply health and the run row are all written
 # above, so this stage observes the install and changes none of them. The rc goes through the same
@@ -894,9 +1023,9 @@ record_stage_rc "${doctor_rc}"
 # Final exit reflects the aggregate dispatch result: 0 = all dispatched stages
 # clean · 1 = degraded (≥1 stage non-zero) · 2 = arg/stage-mode error · 3 =
 # python3 missing · 4 = claude missing. PG_PUSH now folds its write-failure rc
-# into this aggregate (DF-16 — a DB-down cycle is degraded); the LOOP_PUSH tail
-# sink stays best-effort. This lets launchd/monitoring distinguish a degraded
-# run from a clean one instead of always seeing success.
+# into this aggregate (DF-16 — a DB-down cycle is degraded). This lets
+# launchd/monitoring distinguish a degraded run from a clean one instead of
+# always seeing success.
 if [[ "${PIPELINE_RC}" -ne 0 ]]; then
     printf '[daemon-cycle] cycle finished DEGRADED — at least one stage returned non-zero (exit 1)\n' >&2
     exit 1

@@ -59,11 +59,20 @@
 # documented design. The per-root suite-hermeticity.bats probes scrub the same set on their
 # identical discover runs, so no probe can read green under conditions its stage lacks.
 #
+# The thirteenth pins the python stages onto a dead PGHOST with the libpq routing names unset — the
+# baseline stage 1 inherits from every corpus setup_suite, read from that baseline's own name list.
+#
 # The twelfth pins the runner's cwd seat, the FALLBACK seat:
 # - suite seat (test/lib/bats-hermetic-env.bash) → each test starts in BATS_SUITE_TMPDIR;
 # - bats process cwd → reaches a test only when that seat is not taken;
 # - stage 1 → starts outside the repository;
 # - python stages → resolve their relative roots against the repository root.
+#
+# The fourteenth pins stage 1's per-root invocations. bats runs ONE setup_suite.bash per
+# invocation — the first argument's directory's — so a shared invocation would hand test/'s
+# loader to every root and drop each root's own (hooks/test's database isolation among them).
+# The fifteenth and sixteenth pin the open-file preflight: stage 1 inherits a raised soft
+# limit, and a refused raise warns without becoming a stage verdict.
 
 bats_require_minimum_version 1.5.0
 
@@ -177,8 +186,14 @@ assert_daemon_env_scrubbed() {
   assert_stage_unset "${1}" "${2}" "${pairs[@]}"
 }
 
+# Prints the PG* record of the first python3 call whose argv contains $1.
+stage_pg_env() {
+  awk -v want="${1}" '/^CALL / { if (inside) exit; inside = index($0, want) > 0; next }
+    inside { print }' "${STUB_LOG_DIR}/python3-pg-env.log"
+}
+
 # The stage-1 twin. It reads the bats stub's log because stage 1 makes no python3 call at
-# all.
+# all. Stage 1 is one bats call per root, so EVERY recorded value must be the unset sentinel.
 assert_stage1_daemon_env_scrubbed() {
   local log="${STUB_LOG_DIR}/bats-daemon-env.log" name
   [[ -s "${log}" ]] || {
@@ -187,11 +202,12 @@ assert_stage1_daemon_env_scrubbed() {
   }
 
   for name in "${DAEMON_ENV_NAMES[@]}"; do
-    grep -qx -- "${name}=__UNSET__" "${log}" || {
-      printf 'stage 1 inherited %s; its env wrapper is missing or incomplete:\n%s\n' \
+    if awk -v n="${name}" 'index($0, n "=") == 1 && $0 != n "=__UNSET__" { hit = 1 }
+      END { exit !hit }' "${log}"; then
+      printf 'a stage 1 bats call inherited %s; its env wrapper is missing or incomplete:\n%s\n' \
         "${name}" "$(cat "${log}")" >&2
       return 1
-    }
+    fi
   done
 }
 
@@ -229,6 +245,7 @@ setup() {
 printf '%s\n' "$*" >>"${STUB_LOG_DIR}/bats-args.log"
 printf '%s\n' "$@" >>"${STUB_LOG_DIR}/bats-argv.log"
 pwd -P >>"${STUB_LOG_DIR}/bats-cwd.log"
+ulimit -Sn >>"${STUB_LOG_DIR}/bats-nofile.log"
 printf '%s\n' "${PYTHONDONTWRITEBYTECODE-__UNSET__}" >>"${STUB_LOG_DIR}/bats-env.log"
 # Stage 1 makes no python3 call, so this stub is the only recorder of its environment.
 # A separate log because scenario 1 asserts bats-env.log as a whole file.
@@ -237,6 +254,10 @@ for n in AUTOAGENT_GIT_ROOT AUTOAGENT_GIT_PATHSPEC AUTOAGENT_AGENTS_DIR AUTOAGEN
 done >>"${STUB_LOG_DIR}/bats-daemon-env.log"
 if [[ -n "${STUB_BATS_IMPORT_PROBE:-}" ]]; then
   cd -- "${STUB_LOG_DIR}/pyprobe" && "${REAL_PYTHON3}" -c 'import ga_probe_mod'
+fi
+# Fails only the call whose LAST argument is the named root.
+if [[ -n "${STUB_BATS_FAIL_ROOT:-}" && "${*: -1}" == "${STUB_BATS_FAIL_ROOT}" ]]; then
+  exit 3
 fi
 exit "${STUB_BATS_RC:-0}"
 STUB
@@ -256,6 +277,12 @@ printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$*" "${GA_DATA_ROOT-__UNSET__
   "${AUTOAGENT_GIT_PATHSPEC-__UNSET__}" "${AUTOAGENT_AGENTS_DIR-__UNSET__}" \
   "${CLAUDE_BIN-__UNSET__}" "$(pwd -P)" \
   >>"${STUB_LOG_DIR}/python3-env.log"
+# Every PG* name the call inherited, plus whether its PGHOST path existed while the stage ran.
+{
+  printf 'CALL %s\n' "$*"
+  env | grep '^PG' || true
+  if [[ -e "${PGHOST:-}" ]]; then echo PGHOST_EXISTS=yes; else echo PGHOST_EXISTS=no; fi
+} >>"${STUB_LOG_DIR}/python3-pg-env.log"
 case "$*" in
   *'import pytest'*) exit "${STUB_PYTEST_IMPORT_RC:-0}" ;;
   *unittest*) exit "${STUB_UNITTEST_RC:-0}" ;;
@@ -282,8 +309,9 @@ teardown() {
 @test "(1) the child inherits bytecode suppression and each stage banner carries its duration" {
   run_runner_expecting 0 || return 1
 
+  # One record per stage-1 bats call; every call must have inherited it.
   local seen
-  seen="$(cat "${STUB_LOG_DIR}/bats-env.log")"
+  seen="$(sort -u "${STUB_LOG_DIR}/bats-env.log")"
   [[ "${seen}" == "1" ]] || {
     printf 'child PYTHONDONTWRITEBYTECODE=%s (want 1)\n' "${seen}" >&2
     return 1
@@ -621,16 +649,22 @@ STUB
   local repo_dir repo_phys bats_cwd
   repo_dir="$(cd -- "${SANDBOX}" && pwd)"
   repo_phys="$(cd -- "${SANDBOX}" && pwd -P)"
-  bats_cwd="$(cat "${STUB_LOG_DIR}/bats-cwd.log")"
-  [[ -n "${bats_cwd}" && "${bats_cwd}" != "${repo_phys}" && "${bats_cwd}" != "${repo_phys}/"* ]] || {
-    printf 'stage 1 ran from %s (want a scratch dir outside the repo %s)\n' \
-      "${bats_cwd}" "${repo_phys}" >&2
+  [[ -s "${STUB_LOG_DIR}/bats-cwd.log" ]] || {
+    printf 'no stage 1 cwd record — the bats stub never ran\n' >&2
     return 1
   }
-  [[ ! -e "${bats_cwd}" ]] || {
-    printf 'the stage-1 scratch cwd outlived the runner: %s\n' "${bats_cwd}" >&2
-    return 1
-  }
+  # One record per stage-1 bats call; each is checked on its own.
+  while IFS= read -r bats_cwd; do
+    [[ -n "${bats_cwd}" && "${bats_cwd}" != "${repo_phys}" && "${bats_cwd}" != "${repo_phys}/"* ]] || {
+      printf 'stage 1 ran from %s (want a scratch dir outside the repo %s)\n' \
+        "${bats_cwd}" "${repo_phys}" >&2
+      return 1
+    }
+    [[ ! -e "${bats_cwd}" ]] || {
+      printf 'the stage-1 scratch cwd outlived the runner: %s\n' "${bats_cwd}" >&2
+      return 1
+    }
+  done <"${STUB_LOG_DIR}/bats-cwd.log"
 
   # A relative root would resolve against the scratch cwd, not the repository.
   local argv root
@@ -650,4 +684,94 @@ STUB
       return 1
     }
   done
+}
+
+@test "(13) every python stage runs on a dead PGHOST with every libpq routing name unset" {
+  # shellcheck source-path=SCRIPTDIR source=../../test/lib/bats-hermetic-env.bash
+  source "${BATS_TEST_DIRNAME}/../../test/lib/bats-hermetic-env.bash"
+  local stage record seen name
+  export PGHOST=/tmp
+  # every baseline name arrives set, so one the runner's scrub lacks reaches the stage record
+  for name in "${GA_BATS_PG_ROUTING_NAMES[@]}"; do
+    export "${name}=live"
+  done
+  run_runner_expecting 0 || return 1
+
+  for stage in 'discover -s hooks/test' 'discover -s autoagent/test' '-m pytest'; do
+    record="$(stage_pg_env "${stage}")"
+    seen="$(sed -n 's/^PGHOST=//p' <<<"${record}")"
+    [[ "${seen}" == /* && "${seen}" != /tmp && "${record}" == *PGHOST_EXISTS=no* ]] || {
+      printf '%s ran with PGHOST=%s (want a path that does not exist); record:\n%s\n' \
+        "${stage}" "${seen:-<unset>}" "${record}" >&2
+      return 1
+    }
+    for name in "${GA_BATS_PG_ROUTING_NAMES[@]}"; do
+      ! grep -q "^${name}=" <<<"${record}" || {
+        printf '%s inherited %s; record:\n%s\n' "${stage}" "${name}" "${record}" >&2
+        return 1
+      }
+    done
+  done
+}
+
+# A root handed to bats beside another root runs under that other root's setup_suite.bash,
+# never its own. The failing FIRST root also proves the later roots still run and its rc
+# still reaches the runner's.
+@test "(14) stage 1 hands each root to its own bats call, and a failing root keeps its rc without stopping the rest" {
+  local repo_dir
+  repo_dir="$(cd -- "${SANDBOX}" && pwd)"
+  export STUB_BATS_FAIL_ROOT="${repo_dir}/test"
+  run_runner_expecting 3 || return 1
+
+  local want got per_call
+  want="$(printf '%s\n' "${repo_dir}/test" "${repo_dir}/hooks/test" \
+    "${repo_dir}/scripts/test" "${repo_dir}/autoagent/test")"
+  got="$(awk '{ print $NF }' "${STUB_LOG_DIR}/bats-args.log")"
+  # Roots counted per call: one call naming two roots would still end on a distinct root.
+  per_call="$(awk -v r="${repo_dir}/" \
+    '{ n = 0; for (i = 1; i <= NF; i++) if (index($i, r) == 1) n++; seen[n] = 1 }
+      END { for (k in seen) print k }' "${STUB_LOG_DIR}/bats-args.log")"
+  [[ "${got}" == "${want}" && "${per_call}" == "1" ]] || {
+    printf 'stage 1 bats calls (want one per root, in root order):\n%s\n' \
+      "$(cat "${STUB_LOG_DIR}/bats-args.log")" >&2
+    return 1
+  }
+}
+
+@test "(15) a lowered soft open-file limit is raised before stage 1 and logged old to new" {
+  builtin ulimit -Sn 256
+  run_runner_expecting 0 || return 1
+
+  local seen
+  seen="$(sort -u "${STUB_LOG_DIR}/bats-nofile.log")"
+  [[ "${seen}" == unlimited || "${seen}" -gt 256 ]] || {
+    printf 'stage 1 inherited soft limit %s (want above 256) stderr:\n%s\n' "${seen}" "${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"run-bats-parallel: open-file soft limit 256 -> ${seen}"* ]] || {
+    printf 'no old -> new open-file line for 256 -> %s; stderr:\n%s\n' "${seen}" "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "(16) a refused open-file raise warns and leaves the runner rc to the stages" {
+  builtin ulimit -Sn 256
+  # Current kernels accept any soft value, so the refusal is mocked: bash imports an exported
+  # function into the runner, where it shadows the builtin for the raise alone.
+  ulimit() {
+    if [[ $# -ge 2 && "${1}" == -Sn ]]; then return 1; fi
+    builtin ulimit "$@"
+  }
+  export -f ulimit
+  run_runner_expecting 0 || return 1
+
+  [[ "${stderr}" == *"run-bats-parallel: WARN"*"256"* ]] || {
+    printf 'no WARN line naming the inherited 256; stderr:\n%s\n' "${stderr}" >&2
+    return 1
+  }
+  grep -qx 256 "${STUB_LOG_DIR}/bats-nofile.log" || {
+    printf 'stage 1 did not run at the inherited 256; recorded:\n' >&2
+    cat -- "${STUB_LOG_DIR}/bats-nofile.log" >&2 || true
+    return 1
+  }
 }

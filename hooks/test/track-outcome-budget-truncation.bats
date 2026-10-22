@@ -54,7 +54,7 @@ seed_counter() {
 # this helper returns. The payload file must already be built by the caller.
 _bt_run_env() {
   run env \
-    HOME="${BT_TMP}/home" \
+    HOME="${BT_TMP}/home" GA_DATA_ROOT="${BT_TMP}/home/.glass-atrium" \
     PGHOST="/nonexistent-socket-xyzzy" \
     CLAUDE_GATE_INFLIGHT="" \
     SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \

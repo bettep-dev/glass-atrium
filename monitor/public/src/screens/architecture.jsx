@@ -12,12 +12,10 @@ const {
 // Constants
 
 const MAP_LABEL = {
-	// map-only label size — the shared 14px renders under 12px once the wide LR graph is fitted to a 1024 pane
+	// map-only label size — the shared 14px renders under the 13px floor once the map is fitted to a 1024 pane
 	fontPx: 30,
-	// node label line target (SVG units) — two short words at the map font; a longer word sets its own line width
-	linePx: 150,
-	// mermaid wrap ceiling — above every pre-broken node line, so the layout keeps the breaks measured before it
-	wrapPx: 320,
+	// mermaid wrap ceiling (SVG units) — above the widest one-line map label, so mermaid never breaks one
+	wrapPx: 2000,
 	// map-only override at render time — layout engine, spacing and theme stay in the shared mermaid-config.js
 	get directive() {
 		return (
@@ -27,17 +25,53 @@ const MAP_LABEL = {
 	},
 };
 
-// smallest rendered label (the 12px meta step) — the fit never shrinks the map below it
-const MIN_RENDERED_LABEL_PX = 12;
+const MAP = {
+	// two columns, each read top to bottom — a sources column beside the pipeline spine
+	COL: {
+		// zones per column in reading order
+		ZONES: { sources: ["entry", "daemon"], pipeline: ["orch", "agents", "hooks", "data", "export"] },
+		IDS: { sources: "map_col_sources", pipeline: "map_col_pipeline" },
+		// zone whose edge-less members ELK packs in an order of its own — the screen restacks them in declaration order
+		STACK_ZONE: "daemon",
+		// spine edge drawn in a lane right of the spine, LANE units out (SVG units) — laid out inside it, it would run through the zone between its ends
+		BYPASS: { from: "agents", to: "data", LANE: 60 },
+		// room between the columns (SVG units) — the bus into Orchestrator runs down its middle
+		GUTTER: 80,
+		GAP: {
+			// drawn space between stacked spine zones (SVG units), under the zone below's title band — its 45-unit label line sits centred, 3.5 clear of each frame · four gaps, so each unit costs 4 of the drawing height that binds the 1024 fit
+			SPINE: 52,
+			// space between restacked members (SVG units)
+			MEMBER: 24,
+		},
+		// clearance between a screen-drawn label and its own edge (SVG units)
+		LABEL_PAD: 16,
+		// map arrowhead over the shared marker's size
+		ARROW_SCALE: 2,
+	},
+	EDGE: {
+		LABEL_RE: /(--\s*")([^"]*)("\s*-->)/,
+		// a whole edge line — from id, optional label, to id
+		LINE_RE: /^\s*([\w-]+)\s*(?:--\s*"([^"]*)"\s*)?-->\s*([\w-]+)\s*$/,
+		// one x,y pair of a path's d attribute
+		POINT_RE: /(-?[\d.]+(?:e-?\d+)?)[ ,](-?[\d.]+(?:e-?\d+)?)/g,
+	},
+	// map pane sizing (CSS px) — at any width the fit height never drops under FLOOR_PX, so labels keep the 13px floor even when the part health block leaves the first screen
+	PANE: { FLOOR_PX: 500, CONTROLS_MIN_INSET_PX: 48 },
+};
 
-// scale floor derived from the two above, so the floor is a rendered size rather than a bare ratio
-const LEGIBLE_FIT_FLOOR = MIN_RENDERED_LABEL_PX / MAP_LABEL.fontPx;
+// default/Reset view = this share of the contain fit — the overview keeps every label at the 13px floor down to a 1024 window
+const DEFAULT_VIEW_SHARE = 0.9;
 
-// svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 zoom() 이 minZoom 으로 되끌어올려지지 않음.
-const PAN_ZOOM_MIN = 0.2;
+// band under the map kept on the first screen (CSS px) — the part health block's title shows there, so the page reads as scrollable
+const PART_HEALTH = { PEEK_PX: 48 };
+
+// svg-pan-zoom min/max zoom, relative to the zoom at the last resize() — the default view rebases it, so it bounds zoom-out from there
+const PAN_ZOOM = { MIN: 0.2, MAX: 5 };
 
 // zone inset around its members (SVG user units) — the gap ELK itself leaves under the last member
 const ZONE_PAD = 12;
+
+const TRANSLATE_RE = /translate\(\s*([-\d.e]+)[\s,]+([-\d.e]+)\s*\)/;
 
 // 존 제목 띠 높이(SVG 사용자 단위) — 렌더 후 조정이라 지시자의 diagramPadding 여유 안이어야 viewBox 를 넘지 않음.
 const ZONE_TITLE_BAND = 8;
@@ -66,8 +100,6 @@ const ARCH_CANVAS_ID = "arch-map-canvas";
 const CANVAS = {
 	// pane clamped to its drawing's height
 	FIT_HEIGHT_ATTR: "data-arch-fit-height",
-	// drawing floor-bound and too wide for the room beside the zoom controls → they fold into a row under it
-	CONTROLS_LANE_ATTR: "data-arch-controls-lane",
 };
 // map slot wrapper — outlives the error-to-map swap, so a map Retry hands focus here on recovery
 const MAP_REGION_ID_AR = "arch-map-region";
@@ -150,7 +182,7 @@ const FOCUS_RING_GAP = RING_GAP + 5;
 const RING_GAP_BY_CLASS = { [RING_FOCUS_CLASS]: FOCUS_RING_GAP };
 
 // 한 노드에 여러 판정이 겹칠 때 남길 하나 — 테두리는 한 겹뿐이라 최악이 이김.
-// cron 처럼 재시작 데몬 둘이 같은 노드를 짚는 자리에서 한쪽 결함이 다른 쪽 정상에 덮이지 않게 함.
+// 데몬과 부품이 같은 노드를 짚는 자리(autoagent_d)에서 한쪽 결함이 다른 쪽 정상에 덮이지 않게 함.
 // info ('No data') outranks ok — a part with no data must not read as all-clear under an ok neighbour.
 const RING_TONE_RANK = { ok: 1, info: 2, warn: 3, crit: 4 };
 
@@ -164,7 +196,6 @@ const DIAGRAM_SOURCE_AR = "the system map";
 const LIVE_SOURCE_AR = "the live overlay";
 
 // 페이로드 드릴다운 기본 데몬 — payload 를 실제로 기록하는 데몬(autoagent/wiki) 중 첫째.
-// daily-restart-* 는 run status 만 남기고 payload 를 쓰지 않아 항상 빈 entries 임.
 const MAP_PAYLOAD_DAEMON = "autoagent";
 
 // health 폴링 주기 — 장애 대응 표면이라 수동 Refresh 만으로는 늦음.
@@ -460,7 +491,7 @@ function ScreenArchitecture(
 	}, [activeDiagram]);
 
 	// unscoped mermaid node id → daemon 목록 — 서버 DAEMON_NODE_BINDINGS(node_ids) 기반. 소비자는 노드 상세 드로어의 daemon pill.
-	//   한 노드에 복수 daemon 바인딩 가능(cron: daily-restart-autoagent/-wiki) → id 당 목록 보존, last-writer-wins 드롭 방지 (F39).
+	//   한 노드에 복수 daemon 바인딩 가능 → id 당 목록 보존, last-writer-wins 드롭 방지 (F39).
 	const liveDaemonsByNodeId = useMemoAR(() => {
 		if (liveState.status !== "ready") return new Map();
 		return buildLiveDaemonsByNodeId(liveState.data?.daemons);
@@ -469,7 +500,7 @@ function ScreenArchitecture(
 	// 링 근거원 — 데몬 판정 ∪ 부품 판정.
 	// 데몬은 /live 의 node_ids 로, 부품은 같은 응답의 part_bindings 로 노드를 찾음.
 	// 판정 자체는 부품 쪽만 health 응답에서 옴.
-	// 두 원천을 한 Map 으로 접는 이유 — cron 처럼 양쪽이 같은 노드를 짚는 자리가 있고 테두리는 한 겹뿐임.
+	// 두 원천을 한 Map 으로 접는 이유 — autoagent_d 처럼 양쪽이 같은 노드를 짚는 자리가 있고 테두리는 한 겹뿐임.
 	// health 응답 넷이 deps 에 있어야 폴링 한 틱이 새 Map 이 됨.
 	// 캔버스 효과는 이 참조가 바뀔 때만 다시 칠함 — 빼면 첫 렌더만 맞고 이후 조용히 낡음.
 	const ringToneByNodeId = useMemoAR(
@@ -533,7 +564,7 @@ function ScreenArchitecture(
 		[liveState.data, daemonHealthState, pgState, hookState, hookFailState],
 	);
 
-	// caption population per node — two parts can share one node (cron), so one glyph may stand for several.
+	// caption population per node — parts may share one node, so one glyph may stand for several.
 	const attentionCountByNodeId = useMemoAR(
 		() => buildAttentionCountByNodeIdAR(healthPartRows),
 		[healthPartRows],
@@ -629,7 +660,7 @@ function ScreenArchitecture(
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
 					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; } " +
 					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; align-items: center; } " +
-					".arch-part-meta { grid-column: 1 / -1; font-size: 12px; } " +
+					".arch-part-meta { grid-column: 1 / -1; font-size: var(--fs-meta); } " +
 					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
 					// max-height 를 여기서 풂 — styles/base.css 의 `.card-body { max-height: 70vh }` 는 무한히 긴
 					// 페이지를 막는 공통 규칙인데, 이 카드는 flex 로 이미 제 높이가 정해져 있어 그 상한이
@@ -660,7 +691,7 @@ function ScreenArchitecture(
 					".arch-mermaid-canvas svg :is(.node, .cluster) rect:not(.arch-ring) { rx: 8px; ry: 8px; } " +
 					// pan-drag 중 SVG 텍스트 select 차단 (클릭/줌/팬 보존).
 					".arch-mermaid-canvas { user-select: none; -webkit-user-select: none; } " +
-					// 줌 floor 힌트 — 캔버스 우하단 작은 안내 (가독 fit 적용됨 = 휠/드래그로 탐색).
+					// 캔버스 우하단 작은 안내 — 박스 클릭 = 상세.
 					".arch-canvas-hint { position: absolute; right: 8px; bottom: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--faint)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
@@ -702,7 +733,7 @@ function ScreenArchitecture(
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
-					// corner badge at the label size, so it holds the same 12px floor; its opaque pill keeps the ring and the border out of the text
+					// corner badge at the label size, so it holds the same 13px floor; its opaque pill keeps the ring and the border out of the text
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL.fontPx}px; font-weight: 700; pointer-events: none; ` +
 					"text-anchor: start; } " +
 					`#${ARCH_CANVAS_ID} rect.arch-ring-glyph-pill { display: none; fill: rgb(var(--surface)); stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; } ` +
@@ -714,9 +745,6 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
-					// lane mode — one row of controls with the hint on its left, a toolbar under the drawing rather than over it
-					`.arch-mermaid-canvas[${CANVAS.CONTROLS_LANE_ATTR}] .arch-zoom-controls { flex-direction: row; bottom: 6px; } ` +
-					`.arch-mermaid-canvas[${CANVAS.CONTROLS_LANE_ATTR}] .arch-canvas-hint { right: auto; left: 8px; } ` +
 					".arch-zoom-btn { min-width: 32px; height: 32px; display: inline-flex; gap: 4px; align-items: center; justify-content: center; " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--dim)); " +
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; ' +
@@ -739,7 +767,7 @@ function ScreenArchitecture(
 					".arch-part-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
 					// 로그 목록은 부품 이름 아래로 한 칸 들여씀 — 어느 부품의 로그인지 들여쓰기만으로 냄.
 					".arch-part-detail { padding-left: 10px; display: flex; flex-direction: column; gap: 8px; } " +
-					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬(cron). 진짜 button 이라
+					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬. 진짜 button 이라
 					// 키보드 활성과 포커스 순서를 브라우저에서 그대로 받음.
 					".arch-part-drill { align-self: flex-start; min-height: 32px; margin: 0 0 0 10px; padding: 0 10px; " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; " +
@@ -749,8 +777,9 @@ function ScreenArchitecture(
 					".arch-caption { display: flex; flex-direction: column; gap: 6px; margin: -8px 0 12px; } " +
 					".arch-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-legend-item { display: inline-flex; align-items: center; gap: 6px; } " +
-					".arch-legend-swatch { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 14px; " +
-					'border: 2px solid rgb(var(--faint)); border-radius: 4px; font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 700; line-height: 1; } ' +
+					// height = the meta line + both 2px borders, so the swatch's mark never spills over its ring
+					".arch-legend-swatch { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: calc(var(--fs-meta) + 4px); " +
+					'border: 2px solid rgb(var(--faint)); border-radius: 4px; font-family: "JetBrains Mono", monospace; font-size: var(--fs-meta); font-weight: 700; line-height: 1; } ' +
 					".arch-legend-swatch-warn { border-color: rgb(var(--warn)); color: rgb(var(--warn)); } " +
 					".arch-legend-swatch-crit { border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
 					".arch-legend-swatch-dashed { border-style: dashed; } " +
@@ -971,9 +1000,9 @@ function MermaidCanvas({
 		const inst = panZoomRef.current;
 		if (inst) inst.zoomBy(factor);
 	}, []);
-	const fitToView = useCallbackAR(() => {
+	const resetView = useCallbackAR(() => {
 		const inst = panZoomRef.current;
-		if (inst) applyLegibleFitAR(inst, containerRef.current);
+		if (inst) applyDefaultViewAR(inst, containerRef.current);
 	}, []);
 	const panBy = useCallbackAR((dx, dy) => {
 		const inst = panZoomRef.current;
@@ -1000,7 +1029,7 @@ function MermaidCanvas({
 		const elkReady = window.ensureElkLayout ? window.ensureElkLayout() : Promise.resolve();
 
 		Promise.all([fontsReady, elkReady])
-			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL.directive + buildMeasuredMapSourceAR(source, getMapTextWidthAR))))
+			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL.directive + getMapColumnsAR(buildSingleLineMapSourceAR(source)).columnSource)))
 			.then((result) => {
 				if (cancelled || !result) return;
 				setRenderState({ status: "ready", error: null, svgHtml: result.svg });
@@ -1015,6 +1044,15 @@ function MermaidCanvas({
 			cancelled = true;
 		};
 	}, [source, diagramId]);
+
+	// first post-render effect — every later effect measures the composed columns, so this must run before them
+	useEffectAR(() => {
+		if (renderState.status !== "ready") return;
+		const svgEl = containerRef.current?.querySelector("svg");
+		if (!svgEl || svgEl.dataset.archColumns === "1") return;
+		svgEl.dataset.archColumns = "1";
+		setMapColumnLayoutAR(svgEl, getMapColumnsAR(source), buildRedundantZoneIdsAR(source));
+	}, [renderState.status, renderState.svgHtml, source]);
 
 	// SVG 가 DOM 에 들어간 직후 — 라벨 매칭으로 backend node id 를 dataset 에 저장 (노드 클릭 → 상세).
 	useEffectAR(() => {
@@ -1180,7 +1218,7 @@ function MermaidCanvas({
 			.forEach((el) => ensureRingRectAR(el, RING_STATE_CLASS));
 	}, [renderState.status, renderState.svgHtml]);
 
-	// svg-pan-zoom 활성화 — diagramId 변경 → cleanup → 신규 SVG 재초기화 + 가독 fit.
+	// svg-pan-zoom 활성화 — diagramId 변경 → cleanup → 신규 SVG 재초기화 + 기본 보기(개요).
 	useEffectAR(() => {
 		if (renderState.status !== "ready") return;
 		if (!window.svgPanZoom) return;
@@ -1201,9 +1239,8 @@ function MermaidCanvas({
 			instance = window.svgPanZoom(svgEl, {
 				// 컨트롤 아이콘 제거 — 마우스 휠/드래그/더블클릭만 사용.
 				controlIconsEnabled: false,
-				// 라이브러리 줌 하한 — 전폭 fit 비율이 LEGIBLE_FIT_FLOOR 미만이어도 zoom() 을 되끌어올리지 않도록 더 낮게 (PAN_ZOOM_MIN).
-				minZoom: PAN_ZOOM_MIN,
-				maxZoom: 5,
+				minZoom: PAN_ZOOM.MIN,
+				maxZoom: PAN_ZOOM.MAX,
 				zoomScaleSensitivity: 0.3,
 				panEnabled: true,
 				zoomEnabled: true,
@@ -1211,8 +1248,7 @@ function MermaidCanvas({
 				mouseWheelZoomEnabled: true,
 				// false → 단일 클릭은 React onClick 으로 정상 버블링 → 노드 클릭 → 상세 모달 보존.
 				preventMouseEventsDefault: false,
-				// 자동 fit/center 비활성 — 라이브러리 fit 는 폭 기준 으깸·floor 무시 →
-				// applyLegibleFitAR 가 절대 행렬 스케일을 직접 계산.
+				// 자동 fit/center 비활성 → applyDefaultViewAR 가 절대 행렬 스케일을 직접 계산.
 				fit: false,
 				center: false,
 				contain: false,
@@ -1224,7 +1260,7 @@ function MermaidCanvas({
 			raf1 = requestAnimationFrame(() => {
 				raf2 = requestAnimationFrame(() => {
 					if (panZoomRef.current !== instance) return; // 그새 교체됨
-					applyLegibleFitAR(instance, root);
+					applyDefaultViewAR(instance, root);
 				});
 			});
 		} catch (_e) {
@@ -1289,7 +1325,7 @@ function MermaidCanvas({
 		[onSelectNode],
 	);
 
-	// 키보드 탐색 — +/- 줌, 화살표 팬, 0 맞춤. 캔버스 포커스 시 동작 (touch/mouse 동등 a11y).
+	// 키보드 탐색 — +/- 줌, 화살표 팬, 0 기본 보기 복귀. 캔버스 포커스 시 동작 (touch/mouse 동등 a11y).
 	const handleKeyDown = useCallbackAR(
 		(e) => {
 			const PAN_STEP = 40;
@@ -1303,7 +1339,7 @@ function MermaidCanvas({
 					zoomBy(0.8);
 					break;
 				case "0":
-					fitToView();
+					resetView();
 					break;
 				case "ArrowUp":
 					panBy(0, PAN_STEP);
@@ -1322,7 +1358,7 @@ function MermaidCanvas({
 			}
 			e.preventDefault();
 		},
-		[zoomBy, fitToView, panBy],
+		[zoomBy, resetView, panBy],
 	);
 
 	if (renderState.status === "rendering" || renderState.status === "idle") {
@@ -1380,16 +1416,16 @@ function MermaidCanvas({
 					<button
 						type="button"
 						className="arch-zoom-btn arch-zoom-btn-labelled"
-						onClick={fitToView}
-						aria-label="Fit diagram to view"
-						title="Fit to view (0)"
+						onClick={resetView}
+						aria-label="Reset diagram view"
+						title="Reset view (0)"
 					>
 						<ArchIconTargetAR />
-						Fit
+						Reset
 					</button>
 				</div>
 
-				{/* 가독 fit 안내 — 넓은 LR 그래프는 휠/+−·드래그/화살표·키보드로 탐색 */}
+				{/* 기본 보기는 개요 — 세부 라벨은 휠/+−·드래그/화살표·키보드로 확대해 탐색 */}
 				{healthPending && (
 					<div className="arch-canvas-busy" role="status">
 						Loading health…
@@ -1403,7 +1439,7 @@ function MermaidCanvas({
 	);
 }
 
-// fit-to-view 아이콘 — Icon SoT 의 'target' 마크업 재사용 (currentColor 상속).
+// Reset 아이콘 — Icon SoT 의 'target' 마크업 재사용 (currentColor 상속).
 function ArchIconTargetAR() {
 	const { Icon } = window.UI;
 	return <Icon name="target" size={15} />;
@@ -1507,8 +1543,9 @@ function HookChainDetail({ state }) {
 									<span className="fs-meta text-faint">{row.hookCount} hooks</span>
 								</summary>
 								<ul className="arch-hook-groups">
-									{row.groups.map((group) => (
-										<li key={group.matcher} className="arch-hook-group">
+									{/* position in the key — settings.json may repeat a matcher (or leave it empty) within one event; order is fixed settings order */}
+									{row.groups.map((group, groupIndex) => (
+										<li key={`${groupIndex}-${group.matcher}`} className="arch-hook-group">
 											<span className="fs-meta font-mono text-dim">{group.matcher}</span>
 											<ul className="arch-hook-list">
 												{group.hooks.map((hook, index) => (
@@ -1619,7 +1656,7 @@ function HookFailureDetail({ state }) {
 }
 
 // 노드 상세의 헬스 구획 — 걷어낸 표가 서던 자리 (ADR-20). 표는 부품 명부 전체를 한 화면에
-// 폈고 이쪽은 클릭한 노드에 묶인 부품만 냄. 일곱 전원이 여전히 닿는 근거는 화면이 아니라
+// 폈고 이쪽은 클릭한 노드에 묶인 부품만 냄. 부품 전원이 여전히 닿는 근거는 화면이 아니라
 // 바인딩 계기임: 모든 부품이 노드를 최소 하나 갖고(AC-B2-2b) 그 노드가 전부 그려지므로
 // (AC-B2-2a) 그려지지 않는 노드 뒤에 숨는 부품이 있을 수 없음 — 그 조합은 붉은 테스트임.
 // 표가 내던 네 열 중 Nodes 만 형태가 바뀜: 클릭한 노드는 여는 행위가 이미 말했으므로 나머지
@@ -1670,7 +1707,7 @@ function NodePartHealth({
 				{rows.map((row) => {
 					const renderDetail = HEALTH_ROW_DETAILS[row.kind];
 					// 드릴다운 응답은 한 번에 한 데몬 것임 — 다른 데몬의 실행 목록을 이 데몬의 것으로
-					// 그리지 않도록 이름이 맞을 때만 상세를 폄 (cron 은 데몬 부품 둘이 같은 노드에 묶임).
+					// 그리지 않도록 이름이 맞을 때만 상세를 폄 (한 노드에 데몬 부품이 둘 이상 묶일 수 있음).
 					const isDrilled = !row.daemonName || row.daemonName === payloadDaemon;
 					// 남은 바인딩만 부름 — 클릭한 노드는 패널을 연 행위가 이미 말했음.
 					const alsoLights = row.nodeIds.filter((id) => id !== unscoped);
@@ -2066,55 +2103,31 @@ const TONE_GLYPH_CLASS = {
 	warn: "text-warn",
 	crit: "text-crit",
 	info: "text-info",
+	ok: "text-ok",
 };
 
 /**
- * 경보 레인의 행 — 심각도별 tint · 아이콘 · 이름 배지를 한 상자로 실음.
- * tone 은 CSS 변수명으로 그대로 들어가므로, 새 tone 은 같은 이름의 변수가 tokens.css 에 있어야 함.
- * role=alert 는 행이 가짐 — 레인이 가지면 네 사실이 한 경보로 접혀 이름을 따로 셀 수 없음.
+ * 경보 레인의 행 — 공유 AlertCard 한 장으로 그림, tone 은 카드의 글리프 우물에만 실림.
+ * role=alert 는 행 래퍼가 가짐 — 레인이 가지면 네 사실이 한 경보로 접혀 이름을 따로 셀 수 없음 · 카드는 hasLiveHost 로 역할을 내려놓음.
  */
 function AlarmRowAR({ row, onRetry }) {
-	const { Icon, Badge } = window.UI;
+	const { AlertCard } = window.UI;
+	const retry = onRetry && row.retry && (
+		<button className="btn sm" onClick={onRetry}>
+			Retry
+		</button>
+	);
 	return (
-		<div
-			role="alert"
-			data-alarm={row.key}
-			data-alarm-tone={row.tone}
-			className="arch-alarm-row rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: `rgb(var(--${row.tone}) / 0.08)`,
-				borderColor: `rgb(var(--${row.tone}) / 0.4)`,
-			}}
-		>
-			<Icon
-				name={row.icon}
-				size={16}
-				className={`${TONE_GLYPH_CLASS[row.tone]} mt-0.5`}
+		<div role="alert" data-alarm={row.key} data-alarm-tone={row.tone} className="arch-alarm-row">
+			<AlertCard
+				tone={row.tone}
+				hasLiveHost
+				title={row.title}
+				body={row.note}
+				details={row.detail}
+				subjects={row.badges}
+				actions={retry || null}
 			/>
-			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">{row.title}</div>
-				<div className="fs-meta text-dim mt-1">{row.note}</div>
-				{row.detail && (
-					<details className="fs-meta text-faint mt-1">
-						<summary className="cursor-pointer">Details</summary>
-						<code className="block mt-1 font-mono break-all">{row.detail}</code>
-					</details>
-				)}
-				{row.badges.length > 0 && (
-					<div className="flex flex-wrap gap-1.5 mt-2">
-						{row.badges.map((name) => (
-							<Badge key={name}>
-								{name}
-							</Badge>
-						))}
-					</div>
-				)}
-			</div>
-			{onRetry && row.retry && (
-				<button className="btn sm" onClick={onRetry}>
-					Retry
-				</button>
-			)}
 		</div>
 	);
 }
@@ -2145,19 +2158,22 @@ async function fetchJsonAR(url, signal) {
 	return res.json();
 }
 
-// 초기 줌 절대 스케일 — 인자만으로 계산(DOM·instance 미참조). 하한은 폭-fit 으로 내려 클램프되지 않음.
-function getLegibleFitScaleAR(paneW, paneH, graphW, graphH) {
-	if (!(paneW > 0 && paneH > 0 && graphW > 0 && graphH > 0)) return LEGIBLE_FIT_FLOOR;
+// default-view absolute scale from arguments alone (no DOM/instance) · unmeasured dims → DEFAULT_VIEW_SHARE at natural size
+function getDefaultViewScaleAR(paneW, paneH, graphW, graphH) {
+	if (!(paneW > 0 && paneH > 0 && graphW > 0 && graphH > 0)) return DEFAULT_VIEW_SHARE;
 	const containFit = Math.min(paneW / graphW, paneH / graphH);
-	return Math.max(Math.min(containFit, 1), LEGIBLE_FIT_FLOOR);
+	return DEFAULT_VIEW_SHARE * Math.min(containFit, 1);
 }
 
-// svg-pan-zoom 초기 줌을 절대 스케일로 직접 적용 (라이브러리 fit:true 는 하한을 무시함).
-// 단계: resize() pane 갱신 → targetAbs = getLegibleFitScaleAR → 상대 zoom(R) → pan(viewBox 원점 상쇄 + 정렬).
-function applyLegibleFitAR(instance, root) {
+/**
+ * Sets the default view: the drawing at DEFAULT_VIEW_SHARE of the contain fit, centred in the frame a contain-fit drawing would fill.
+ * The library zoom bounds are relative to the zoom at the last resize(), so they are widened for the jump and rebased after it — a Reset from a deep zoom-in lands exactly here.
+ */
+function applyDefaultViewAR(instance, root) {
 	// 직전 렌더의 short-graph clamp 를 측정 전 제거 → getSizes() 가 실제 전체 pane 측정 (early-return 가드보다 위 배치 필수).
 	clearCanvasSizingAR(root);
 	if (!instance || typeof instance.getSizes !== "function") return;
+	applyPaneFloorAR(root);
 	// pane 측정 dims 강제 갱신 (init 시점 stale 폭 방어).
 	try {
 		instance.resize();
@@ -2171,35 +2187,53 @@ function applyLegibleFitAR(instance, root) {
 	if (realW <= 0 || realH <= 0 || s.width <= 0 || s.height <= 0) return;
 
 	// the zoom controls stand over the pane's right edge → the drawing fits beside them, so no box sits under a button
-	const drawableW = s.width - getControlsGutterAR(root);
-	const targetAbs = getLegibleFitScaleAR(drawableW, s.height, realW, realH);
+	const drawableW = s.width - Math.max(getControlsGutterAR(root), MAP.PANE.CONTROLS_MIN_INSET_PX);
+	const paneH = getFitPaneHeightAR(root, s.height);
+	const targetAbs = getDefaultViewScaleAR(drawableW, paneH, realW, realH);
+	const frameH = (realH * targetAbs) / DEFAULT_VIEW_SHARE;
 
-	// 공개 zoom 은 상대(=절대/originalState) · init 직후 현재 절대행렬 = viewport CTM .a → relative = targetAbs / 현재절대.
-	const curAbs = readViewportScaleAR(root) || s.realZoom || 1;
-	const relative = curAbs > 0 ? targetAbs / curAbs : targetAbs;
+	// zoom() is relative to the zoom resize() just rebased on (= realZoom) · the CTM lags it by a frame after a zoom, so it is not the base
+	const relative = s.realZoom > 0 ? targetAbs / s.realZoom : targetAbs;
+	zoomUnclampedAR(instance, relative);
 
-	instance.zoom(relative);
-
-	const fittedGraphH = realH * targetAbs;
-	const fittedGraphW = realW * targetAbs;
-	// floor-bound: no legible scale fits beside the controls → they move into a lane under the drawing instead
-	const shouldUseLane = fittedGraphW > drawableW + 0.5;
-	if (shouldUseLane) getCanvasAR(root)?.setAttribute(CANVAS.CONTROLS_LANE_ATTR, "");
-	const laneH = shouldUseLane ? getControlsLaneHeightAR(root) : 0;
-
-	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · 콘텐츠 viewBox.x/y 시작 → 좌상단(0,0) 정렬에 -origin*scale 필요 (fit/center:false 라 라이브러리 미보정).
-	const baseX = -(s.viewBox.x || 0) * targetAbs;
-	const baseY = -(s.viewBox.y || 0) * targetAbs;
-	// 좁은 그래프는 가로 가운데 · 낮은 그래프는 pane 을 그림 높이로 줄임 → 위아래 빈 띠 없음 (넓은/높은 그래프는 좌상단 시작).
-	const slackX = Math.max(0, (drawableW - fittedGraphW) / 2);
-	instance.pan({ x: baseX + slackX, y: baseY });
-	// with a lane the pane grows to the drawing plus the lane, so the drawing never runs down under the controls row
-	if (laneH > 0 || fittedGraphH < s.height) setCanvasHeightAR(root, fittedGraphH + laneH, instance);
+	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · viewBox 원점 상쇄(-origin*scale) + 양축 가운데 slack.
+	const slackX = Math.max(0, (drawableW - realW * targetAbs) / 2);
+	// the short-graph clamp never takes the pane under the floor, a width-bound drawing included
+	const clampH = Math.max(frameH, MAP.PANE.FLOOR_PX);
+	const slackY = Math.max(0, (Math.min(clampH, s.height) - realH * targetAbs) / 2);
+	instance.pan({
+		x: -(s.viewBox.x || 0) * targetAbs + slackX,
+		y: -(s.viewBox.y || 0) * targetAbs + slackY,
+	});
+	if (clampH < s.height - 0.5) setCanvasHeightAR(root, clampH);
+	rebaseZoomAR(instance);
 
 	// fit-applied mark — until the library's next-frame CTM flush, the viewport still holds its viewBox meet scale
 	root
 		?.querySelector(".svg-pan-zoom_viewport")
 		?.setAttribute("data-arch-fit-scale", String(targetAbs));
+}
+
+// relative zoom that the library's [minZoom, maxZoom] bounds cannot clamp, bounds restored afterwards
+function zoomUnclampedAR(instance, relative) {
+	if (typeof instance.setMinZoom !== "function") {
+		instance.zoom(relative);
+		return;
+	}
+	instance.setMinZoom(Math.min(PAN_ZOOM.MIN, relative));
+	instance.setMaxZoom(Math.max(PAN_ZOOM.MAX, relative));
+	instance.zoom(relative);
+	instance.setMinZoom(PAN_ZOOM.MIN);
+	instance.setMaxZoom(PAN_ZOOM.MAX);
+}
+
+// resize() re-reads the pane size and re-bases the zoom bounds on the current zoom — the buttons scale about the cached pane centre
+function rebaseZoomAR(instance) {
+	try {
+		instance.resize();
+	} catch (_e) {
+		/* stale pane size only shifts the zoom centre */
+	}
 }
 
 // width the zoom controls take from the pane's right edge, measured so any control size or offset is covered
@@ -2210,23 +2244,6 @@ function getControlsGutterAR(root) {
 	return Math.max(0, canvas.getBoundingClientRect().right - controls.getBoundingClientRect().left);
 }
 
-// height the controls row takes from the pane's bottom edge — meaningful only once the lane attribute is set
-function getControlsLaneHeightAR(root) {
-	const canvas = getCanvasAR(root);
-	const controls = canvas?.querySelector(".arch-zoom-controls");
-	if (!controls) return 0;
-	return Math.max(0, canvas.getBoundingClientRect().bottom - controls.getBoundingClientRect().top);
-}
-
-// .svg-pan-zoom_viewport 의 실제 변환행렬 스케일(.a) = 사용자가 측정하는 절대 스케일.
-function readViewportScaleAR(root) {
-	if (!root) return 0;
-	const vp = root.querySelector(".svg-pan-zoom_viewport");
-	if (!vp || typeof vp.getCTM !== "function") return 0;
-	const m = vp.getCTM();
-	return m ? m.a : 0;
-}
-
 // 캔버스 인라인 sizing (short-graph clamp) 제거 → CSS 기본 flex-fill 복원 (이전 그래프 height/flex 잔존이 다음 측정 오염 차단).
 // root 는 컨테이너 또는 캔버스 자신 어디든 허용.
 function clearCanvasSizingAR(root) {
@@ -2235,21 +2252,37 @@ function clearCanvasSizingAR(root) {
 	canvas.style.height = "";
 	canvas.style.flex = "";
 	canvas.removeAttribute(CANVAS.FIT_HEIGHT_ATTR);
-	canvas.removeAttribute(CANVAS.CONTROLS_LANE_ATTR);
 }
 
-// the zoom buttons scale about the pane centre → the cached pane size follows the clamp
-function setCanvasHeightAR(root, heightPx, instance) {
+// grows a short pane to the floor before the fit measures it · the fit still clamps the canvas to its frame when width binds
+function applyPaneFloorAR(root) {
+	const canvas = getCanvasAR(root);
+	if (!canvas || canvas.getBoundingClientRect().height >= MAP.PANE.FLOOR_PX) return;
+	setCanvasHeightAR(root, MAP.PANE.FLOOR_PX);
+}
+
+// height the default view fits in — the first-screen height, raised to the floor, which wins over the part health peek band
+function getFitPaneHeightAR(root, paneH) {
+	const firstScreen = Math.min(paneH, getFirstScreenCanvasHeightAR(root));
+	return Math.min(paneH, Math.max(firstScreen, MAP.PANE.FLOOR_PX));
+}
+
+// tallest pane whose bottom leaves PART_HEALTH.PEEK_PX of the first screen under it — the map is tall enough to push the block off it
+function getFirstScreenCanvasHeightAR(root) {
+	const canvas = getCanvasAR(root);
+	const page = canvas?.closest(".arch-page");
+	if (!page) return Infinity;
+	const screenBottom = Math.min(page.getBoundingClientRect().bottom, window.innerHeight);
+	const height = screenBottom - (canvas.getBoundingClientRect().top + page.scrollTop) - PART_HEALTH.PEEK_PX;
+	return height > 0 ? height : Infinity;
+}
+
+function setCanvasHeightAR(root, heightPx) {
 	const canvas = getCanvasAR(root);
 	if (!canvas) return;
 	canvas.style.height = `${Math.ceil(heightPx)}px`;
 	canvas.style.flex = "none";
 	canvas.setAttribute(CANVAS.FIT_HEIGHT_ATTR, "");
-	try {
-		instance.resize();
-	} catch (_e) {
-		/* stale pane size only shifts the zoom centre */
-	}
 }
 
 function getCanvasAR(root) {
@@ -2258,7 +2291,7 @@ function getCanvasAR(root) {
 }
 
 // 서버 daemon 목록 → unscoped mermaid node id 별 daemon 배열 (F39).
-//   한 노드에 복수 daemon 바인딩 시(cron) last-writer-wins 로 하나가 유실되지 않도록 id 당 목록 축적.
+//   한 노드에 복수 daemon 바인딩 시 last-writer-wins 로 하나가 유실되지 않도록 id 당 목록 축적.
 function buildLiveDaemonsByNodeId(daemons) {
 	const m = new Map();
 	for (const d of daemons || []) {
@@ -2380,96 +2413,407 @@ function getCornerGlyphTextAR(tone, attentionCount) {
 
 const MAP_NODE_LINE_RE = /^(\s*[A-Za-z_][\w-]*)(\(\[|\[\(|\[\[|\[|\(\(|\(|\{)(?:"([^"]*)"|([^"\]\)}]*))(\]\)|\)\]|\]\]|\]|\)\)|\)|\})\s*$/;
 
-const MAP_EDGE_LABEL_RE = /(--\s*")([^"]*)("\s*-->)/;
-
 /**
- * Re-breaks node and edge labels into lines of several words before layout — mermaid's single wrapping
- * width gives every wrapped node the same box, so each label gets a box sized from its own words.
- * A node's line limit is never under the longest word in its zone: the zone column is that wide anyway.
- * A zone title breaks at that same word floor, so the title never widens its zone past the members.
+ * Draws every map label on one line — stored breaks are dropped and the wrap ceiling sits above the widest label.
+ * Edge labels get no-break spaces: mermaid wraps them at its own fixed width, which wrappingWidth does not reach.
  */
-function buildMeasuredMapSourceAR(source, measureText) {
-	const lines = source.split("\n");
-	const zoneFloor = getZoneWordFloorAR(lines, measureText);
-	let zone = "";
-	return lines
+function buildSingleLineMapSourceAR(source) {
+	return source
+		.split("\n")
 		.map((line) => {
-			const zoneMatch = /^(\s*subgraph\s+([\w-]+)\s*\[)"([^"]*)"(\]\s*)$/.exec(line) ?? /^\s*subgraph\s+([\w-]+)/.exec(line);
-			if (zoneMatch) {
-				zone = zoneMatch[2] ?? zoneMatch[1];
-				if (zoneMatch.length < 5) return line;
-				const titleLines = getLabelLinesAR(getLabelWordsAR(zoneMatch[3]), measureText, zoneFloor.get(zone) || 0);
-				return `${zoneMatch[1]}"${titleLines.join(" <br/>")}"${zoneMatch[4]}`;
-			}
-			if (/^\s*end\s*$/.test(line)) zone = "";
-			const edge = MAP_EDGE_LABEL_RE.exec(line);
-			if (edge) {
-				const labelLines = getLabelLinesAR(getLabelWordsAR(edge[2]), measureText, MAP_LABEL.linePx);
-				return line.replace(MAP_EDGE_LABEL_RE, `$1${labelLines.join(" <br/>")}$3`);
-			}
+			const zone = /^(\s*subgraph\s+[\w-]+\s*\[)"([^"]*)"(\]\s*)$/.exec(line);
+			if (zone) return `${zone[1]}"${getLabelWordsAR(zone[2]).join(" ")}"${zone[3]}`;
+			const edge = MAP.EDGE.LABEL_RE.exec(line);
+			if (edge) return line.replace(MAP.EDGE.LABEL_RE, `$1${getLabelWordsAR(edge[2]).join("\u00a0")}$3`);
 			const node = MAP_NODE_LINE_RE.exec(line);
 			if (!node) return line;
 			const [, head, open, quotedLabel, bareLabel, close] = node;
 			const words = getLabelWordsAR(quotedLabel ?? bareLabel);
-			if (words.length === 0) return line;
-			const limit = Math.max(MAP_LABEL.linePx, zoneFloor.get(zone) || 0);
-			return `${head}${open}"${getLabelLinesAR(words, measureText, limit).join(" <br/>")}"${close}`;
+			return words.length === 0 ? line : `${head}${open}"${words.join(" ")}"${close}`;
 		})
 		.join("\n");
 }
 
-function getLabelWordsAR(label) {
-	return label.replace(/<br\s*\/?>/gi, " ").split(/\s+/).filter(Boolean);
+/**
+ * Splits the flat map source into a sources column wrapper and a pipeline column wrapper, each laid out top to bottom.
+ * Edges between the columns, the bypass and every spine label stay out of the layout and are returned for the screen to draw.
+ */
+function getMapColumnsAR(source) {
+	const { zoneIdByMemberId } = buildZoneRingPlanAR(source);
+	const { columns, rest, screenEdges, spineLabels } = getMapColumnLinesAR(source.split("\n").slice(1), zoneIdByMemberId);
+	return { columnSource: buildMapColumnSourceAR(columns, rest), screenEdges, spineLabels, zoneIdByMemberId };
 }
 
-// zone id → its longest node-label word
-function getZoneWordFloorAR(lines, measureText) {
-	const floor = new Map();
+// source lines sorted four ways — zone blocks into their column, edges the screen draws, spine labels, the rest kept for the root
+function getMapColumnLinesAR(lines, zoneIdByMemberId) {
+	const getZone = (id) => zoneIdByMemberId.get(id) ?? id;
+	const sorted = { columns: { sources: [], pipeline: [] }, rest: [], screenEdges: [], spineLabels: [] };
 	let zone = "";
 	for (const line of lines) {
-		const zoneMatch = /^\s*subgraph\s+([\w-]+)/.exec(line);
-		if (zoneMatch) zone = zoneMatch[1];
-		else if (/^\s*end\s*$/.test(line)) zone = "";
-		const node = zone ? MAP_NODE_LINE_RE.exec(line) : null;
-		if (!node) continue;
-		const widest = Math.max(0, ...getLabelWordsAR(node[3] ?? node[4]).map(measureText));
-		floor.set(zone, Math.max(floor.get(zone) || 0, widest));
+		zone = /^\s*subgraph\s+([\w-]+)/.exec(line)?.[1] ?? zone;
+		const edge = zone ? null : MAP.EDGE.LINE_RE.exec(line);
+		if (zone) sorted.columns[getZoneColumnAR(getZone(zone))].push(line);
+		else if (edge) setEdgeLineAR(sorted, line, edge, getZone);
+		else sorted.rest.push(line);
+		if (/^\s*end\s*$/.test(line)) zone = "";
 	}
-	return floor;
+	return sorted;
 }
 
-// greedy fill at the line target, then the narrowest width that keeps that line count — balanced lines, narrow box
-function getLabelLinesAR(words, measureText, lineTarget) {
-	const widestWord = Math.max(...words.map(measureText));
-	const limit = Math.max(widestWord, lineTarget);
-	const lineCount = getGreedyLinesAR(words, measureText, limit).length;
-	for (let width = widestWord; width < limit; width += 2) {
-		const lines = getGreedyLinesAR(words, measureText, width);
-		if (lines.length <= lineCount) return lines;
+// an edge line → a screen edge, or an unlabelled ELK edge plus its spine label — an ELK label takes a layer of its own, and the spine's height binds the 1024 fit
+function setEdgeLineAR(sorted, line, [, from, label, to], getZone) {
+	const edge = { from, to, fromZone: getZone(from), toZone: getZone(to), label: getLabelWordsAR(label ?? "").join(" ") };
+	const kind = getScreenEdgeKindAR(edge.fromZone, edge.toZone);
+	if (kind) {
+		sorted.screenEdges.push({ ...edge, kind });
+		return;
 	}
-	return getGreedyLinesAR(words, measureText, limit);
+	if (edge.label) sorted.spineLabels.push(edge);
+	sorted.rest.push(`${/^\s*/.exec(line)[0]}${from} --> ${to}`);
 }
 
-function getGreedyLinesAR(words, measureText, limit) {
-	const lines = [];
-	for (const word of words) {
-		const last = lines[lines.length - 1];
-		if (last !== undefined && measureText(`${last} ${word}`) <= limit) lines[lines.length - 1] = `${last} ${word}`;
-		else lines.push(word);
-	}
-	return lines;
+// bus: between the columns · bypass: past a spine zone · null: ELK lays it out
+function getScreenEdgeKindAR(fromZone, toZone) {
+	if (getZoneColumnAR(fromZone) !== getZoneColumnAR(toZone)) return "bus";
+	if (fromZone === MAP.COL.BYPASS.from && toZone === MAP.COL.BYPASS.to) return "bypass";
+	return null;
 }
 
-let mapTextContextAR = null;
+function getZoneColumnAR(zoneId) {
+	return MAP.COL.ZONES.sources.includes(zoneId) ? "sources" : "pipeline";
+}
 
-// canvas measure at the map font — runs after document.fonts.ready, so the measured face is the drawn one
-function getMapTextWidthAR(text) {
-	if (!mapTextContextAR) {
-		mapTextContextAR = document.createElement("canvas").getContext("2d");
-		// same face mermaid lays out with — a copied family drifts and the pre-layout wrap regresses silently
-		mapTextContextAR.font = `${MAP_LABEL.fontPx}px ${window.MERMAID_CONFIG.themeVariables.fontFamily}`;
+// root TB — with no edge joining the wrappers they share the root's one layer, so TB sets them side by side where LR would stack them
+function buildMapColumnSourceAR(columns, rest) {
+	const getColumnBlock = (column) =>
+		[`    subgraph ${MAP.COL.IDS[column]}[" "]`, "        direction TB", ...columns[column], "    end"];
+	return ["flowchart TB", ...getColumnBlock("sources"), ...getColumnBlock("pipeline"), ...rest].join("\n");
+}
+
+/**
+ * Composes the two columns on the ELK layout: removes the column frames, restacks the Daemons members in declaration order,
+ * opens each spine gap to the arrow leg, gives each column one frame width, draws the spine labels and the bypass,
+ * places the sources column one gutter left of the spine, top-aligned with it, draws the bus into Orchestrator,
+ * ranks the nodes for Tab and fits the viewBox to the composed drawing.
+ */
+function setMapColumnLayoutAR(svgEl, { screenEdges, spineLabels, zoneIdByMemberId }, redundantZoneIds) {
+	const frames = Object.values(MAP.COL.IDS).map((id) => getZoneElAR(svgEl, id));
+	if (frames.some((frame) => !frame)) return;
+	for (const frame of frames) frame.remove();
+	for (const [column, zoneIds] of Object.entries(MAP.COL.ZONES))
+		for (const id of zoneIds) getZoneElAR(svgEl, id)?.setAttribute("data-arch-column", MAP.COL.IDS[column]);
+
+	setStackedMembersAR(svgEl, zoneIdByMemberId);
+	setSpineGapsAR(svgEl, zoneIdByMemberId, redundantZoneIds);
+	setColumnFrameWidthsAR(svgEl);
+	for (const spineLabel of spineLabels) setSpineLabelAR(svgEl, spineLabel, redundantZoneIds);
+	for (const edge of screenEdges.filter((screenEdge) => screenEdge.kind === "bypass")) createBypassEdgeAR(svgEl, edge);
+	setSourcesColumnPlaceAR(svgEl, zoneIdByMemberId);
+	for (const edge of screenEdges.filter((screenEdge) => screenEdge.kind === "bus")) createBusEdgeAR(svgEl, edge);
+	setReadingRankAR(svgEl, zoneIdByMemberId);
+	setMapArrowheadsAR(svgEl);
+	const drawn = svgEl.getBBox();
+	const pad = ZONE_TITLE_BAND;
+	svgEl.setAttribute("viewBox", `${drawn.x - pad} ${drawn.y - pad} ${drawn.width + 2 * pad} ${drawn.height + 2 * pad}`);
+}
+
+// a zone's frame and its member nodes — what moves when the zone moves
+function getZonePartsAR(svgEl, zoneId, zoneIdByMemberId) {
+	return [getZoneElAR(svgEl, zoneId), ...getZoneMembersAR(svgEl, zoneId, zoneIdByMemberId)].filter(Boolean);
+}
+
+// member nodes of a zone in declaration order — the source's order, not the drawing's
+function getZoneMembersAR(svgEl, zoneId, zoneIdByMemberId) {
+	const nodes = [...svgEl.querySelectorAll("g.node")];
+	return [...zoneIdByMemberId]
+		.filter(([, memberZoneId]) => memberZoneId === zoneId)
+		.map(([memberId]) => nodes.find((el) => getSourceNodeIdAR(el.id) === memberId))
+		.filter(Boolean);
+}
+
+/**
+ * Restacks the stack zone's members top to bottom in declaration order on one centre x, then refits the frame and title to them.
+ * ELK packs edge-less members in an order of its own; members already stacked in order are left as laid out.
+ */
+function setStackedMembersAR(svgEl, zoneIdByMemberId) {
+	const zoneEl = getZoneElAR(svgEl, MAP.COL.STACK_ZONE);
+	const rect = zoneEl?.querySelector(":scope > rect");
+	const members = getZoneMembersAR(svgEl, MAP.COL.STACK_ZONE, zoneIdByMemberId);
+	const boxes = members.map((el) => getSvgBoxAR(svgEl, el));
+	if (!rect || members.length < 2 || boxes.every((box, i) => i === 0 || box.top >= boxes[i - 1].bottom)) return;
+
+	const union = getUnionSvgBoxAR(svgEl, members);
+	const frame = getSvgBoxAR(svgEl, rect);
+	const pad = { top: union.top - frame.top, bottom: frame.bottom - union.bottom, side: Math.max(ZONE_PAD, Math.min(union.left - frame.left, frame.right - union.right)) };
+	const cx = getBoxCentreAR(union).x;
+	let top = union.top;
+	members.forEach((el, i) => {
+		translateMapPartAR(el, cx - getBoxCentreAR(boxes[i]).x, top - boxes[i].top);
+		top += boxes[i].bottom - boxes[i].top + MAP.COL.GAP.MEMBER;
+	});
+	setStackFrameAR(svgEl, rect, getUnionSvgBoxAR(svgEl, members), { pad, cx });
+}
+
+// the frame refit around the stacked members with the zone's own padding, wide enough for its title centred on cx
+function setStackFrameAR(svgEl, rect, stacked, { pad, cx }) {
+	const titleEl = rect.parentElement.querySelector(":scope > .cluster-label");
+	const titleBox = titleEl ? getSvgBoxAR(svgEl, titleEl) : null;
+	const titleHalf = titleBox ? (titleBox.right - titleBox.left) / 2 : 0;
+	setZoneFrameBoxAR(svgEl, rect, {
+		left: Math.min(stacked.left, cx - titleHalf) - pad.side,
+		right: Math.max(stacked.right, cx + titleHalf) + pad.side,
+		top: stacked.top - pad.top,
+		bottom: stacked.bottom + pad.bottom,
+	});
+}
+
+// one zone frame moved and sized to a box in svg units, its title kept centred over the frame top
+function setZoneFrameBoxAR(svgEl, rect, box) {
+	const before = getSvgBoxAR(svgEl, rect);
+	const scale = svgEl.getScreenCTM().inverse().multiply(rect.getScreenCTM()).a;
+	rect.setAttribute("y", String(Number.parseFloat(rect.getAttribute("y")) + (box.top - before.top) / scale));
+	rect.setAttribute("height", String((box.bottom - box.top) / scale));
+	const titleEl = rect.parentElement.querySelector(":scope > .cluster-label");
+	const at = TRANSLATE_RE.exec(titleEl?.getAttribute("transform") || "");
+	if (at) titleEl.setAttribute("transform", `translate(${at[1]}, ${Number(at[2]) + (box.top - before.top) / scale})`);
+	setZoneFrameSpanAR(svgEl, rect, box);
+}
+
+/**
+ * Opens each spine gap so it is drawn MAP.COL.GAP.SPINE tall once the zone below gains its title band — ELK leaves its fixed
+ * subgraph spacing and mermaid exposes no knob for it.
+ * Every zone under the gap moves down with it, and the ELK edges' points under it follow, so each spine edge lengthens.
+ */
+function setSpineGapsAR(svgEl, zoneIdByMemberId, redundantZoneIds) {
+	const chain = MAP.COL.ZONES.pipeline;
+	const paths = [...svgEl.querySelectorAll("path.flowchart-link")];
+	for (const [i, zoneId] of chain.slice(1).entries()) {
+		const above = getZoneBoxAR(svgEl, chain[i]);
+		const below = getZoneBoxAR(svgEl, zoneId);
+		const dy = above && below ? MAP.COL.GAP.SPINE + getZoneTitleBandAR(zoneId, redundantZoneIds) - (below.top - above.bottom) : 0;
+		if (dy < 0.5) continue;
+		for (const id of chain.slice(i + 1)) for (const el of getZonePartsAR(svgEl, id, zoneIdByMemberId)) translateMapPartAR(el, 0, dy);
+		for (const path of paths) setPathPointsBelowAR(svgEl, path, above.bottom + 0.5, dy);
 	}
-	return mapTextContextAR.measureText(text).width;
+}
+
+// moves every point of a path lower than a threshold (svg units) down by dy
+function setPathPointsBelowAR(svgEl, path, threshold, dy) {
+	const m = svgEl.getScreenCTM().inverse().multiply(path.getScreenCTM());
+	const localThreshold = (threshold - m.f) / m.d;
+	const localDy = dy / m.d;
+	const d = path.getAttribute("d") || "";
+	path.setAttribute("d", d.replace(MAP.EDGE.POINT_RE, (_match, x, y) => `${x},${Number(y) > localThreshold ? Number(y) + localDy : Number(y)}`));
+}
+
+// each column's stacked zone frames span their union — widening only, so every member stays inside its own frame
+function setColumnFrameWidthsAR(svgEl) {
+	for (const zoneIds of Object.values(MAP.COL.ZONES)) {
+		const rects = zoneIds.map((id) => getZoneElAR(svgEl, id)?.querySelector(":scope > rect")).filter(Boolean);
+		const boxes = rects.map((rect) => getSvgBoxAR(svgEl, rect));
+		const span = { left: Math.min(...boxes.map((b) => b.left)), right: Math.max(...boxes.map((b) => b.right)) };
+		for (const rect of rects) setZoneFrameSpanAR(svgEl, rect, span);
+	}
+}
+
+// one zone frame stretched to a horizontal span in svg units, its title re-centred over the new frame
+function setZoneFrameSpanAR(svgEl, rect, span) {
+	const box = getSvgBoxAR(svgEl, rect);
+	const scale = svgEl.getScreenCTM().inverse().multiply(rect.getScreenCTM()).a;
+	rect.setAttribute("x", String(Number.parseFloat(rect.getAttribute("x")) + (span.left - box.left) / scale));
+	rect.setAttribute("width", String((span.right - span.left) / scale));
+	const titleEl = rect.parentElement.querySelector(":scope > .cluster-label");
+	const at = TRANSLATE_RE.exec(titleEl?.getAttribute("transform") || "");
+	const shift = (span.left + span.right - box.left - box.right) / 2 / scale;
+	if (at && shift) titleEl.setAttribute("transform", `translate(${Number(at[1]) + shift}, ${at[2]})`);
+}
+
+// the band the zone-title effect later adds above a zone frame — none where the zone hides its title
+function getZoneTitleBandAR(zoneId, redundantZoneIds) {
+	return redundantZoneIds.has(zoneId) ? 0 : ZONE_TITLE_BAND;
+}
+
+/**
+ * A spine edge's label right of its own edge, centred in the gap the edge crosses as it is finally drawn — under the title band.
+ * Inside the gap no other edge runs, so the label sits nearer its own edge than any other line.
+ */
+function setSpineLabelAR(svgEl, { from, to, fromZone, toZone, label }, redundantZoneIds) {
+	const above = getZoneBoxAR(svgEl, fromZone);
+	const below = getZoneBoxAR(svgEl, toZone);
+	const path = [...svgEl.querySelectorAll("path.flowchart-link")].find((el) => (el.getAttribute("data-id") || "").startsWith(`L_${from}_${to}_`));
+	if (!above || !below || !path) return;
+	const inGap = getSvgPathPointsAR(svgEl, path).filter((point) => point.y >= above.bottom && point.y <= below.top);
+	const edgeRight = Math.max(...inGap.map((point) => point.x));
+	if (!Number.isFinite(edgeRight)) return;
+	const drawnTop = below.top - getZoneTitleBandAR(toZone, redundantZoneIds);
+	setScreenLabelAR(svgEl, label, `${from}>${to}`, { left: edgeRight + MAP.COL.LABEL_PAD, y: (above.bottom + drawnTop) / 2 });
+}
+
+// path points every few svg units, in the svg's own user space
+function getSvgPathPointsAR(svgEl, path) {
+	const m = svgEl.getScreenCTM().inverse().multiply(path.getScreenCTM());
+	const length = path.getTotalLength();
+	const count = Math.max(1, Math.ceil(length / 2));
+	return Array.from({ length: count + 1 }, (_, i) => {
+		const point = path.getPointAtLength((length * i) / count);
+		return new DOMPoint(point.x, point.y).matrixTransform(m);
+	});
+}
+
+// the bypass: out of its source's right side, down a lane right of the spine past the zone between, into its target's right side
+function createBypassEdgeAR(svgEl, edge) {
+	const spine = MAP.COL.ZONES.pipeline.map((id) => getZoneBoxAR(svgEl, id)).filter(Boolean);
+	const from = getZoneBoxAR(svgEl, edge.fromZone);
+	const to = getZoneBoxAR(svgEl, edge.toZone);
+	if (!from || !to) return;
+	const laneX = Math.max(...spine.map((box) => box.right)) + MAP.COL.BYPASS.LANE;
+	const [fromY, toY] = [getBoxCentreAR(from).y, getBoxCentreAR(to).y];
+	createScreenPathAR(svgEl, edge, [{ x: from.right, y: fromY }, { x: laneX, y: fromY }, { x: laneX, y: toY }, { x: to.right, y: toY }]);
+	// level with the zone it passes, where neither horizontal leg runs
+	const passed = spine.filter((box) => box.top >= from.bottom && box.bottom <= to.top);
+	const labelY = passed.length ? getBoxCentreAR(getBoxesUnionAR(passed)).y : (from.bottom + to.top) / 2;
+	if (edge.label) setScreenLabelAR(svgEl, edge.label, `${edge.from}>${edge.to}`, { left: laneX + MAP.COL.LABEL_PAD, y: labelY });
+}
+
+// the sources column one gutter left of the spine, its top on Orchestrator's — ELK centres it, on either side of the spine, under the root TB
+function setSourcesColumnPlaceAR(svgEl, zoneIdByMemberId) {
+	const parts = MAP.COL.ZONES.sources.flatMap((id) => getZonePartsAR(svgEl, id, zoneIdByMemberId));
+	const sources = getUnionSvgBoxAR(svgEl, parts);
+	const spine = getBoxesUnionAR(MAP.COL.ZONES.pipeline.map((id) => getZoneBoxAR(svgEl, id)).filter(Boolean));
+	const sourcesTop = Math.min(...MAP.COL.ZONES.sources.map((id) => getZoneBoxAR(svgEl, id)?.top ?? Infinity));
+	if (!parts.length || !Number.isFinite(sourcesTop)) return;
+	for (const el of parts) translateMapPartAR(el, spine.left - MAP.COL.GUTTER - sources.right, spine.top - sourcesTop);
+}
+
+// a bus edge: out of its source zone's right side, along the gutter's middle, into the target's left side — the bus edges share that entry
+function createBusEdgeAR(svgEl, edge) {
+	const from = getZoneBoxAR(svgEl, edge.fromZone);
+	const to = getZoneBoxAR(svgEl, edge.toZone);
+	if (!from || !to) return;
+	const busX = to.left - MAP.COL.GUTTER / 2;
+	const [fromY, toY] = [getBoxCentreAR(from).y, getBoxCentreAR(to).y];
+	createScreenPathAR(svgEl, edge, [{ x: from.right, y: fromY }, { x: busX, y: fromY }, { x: busX, y: toY }, { x: to.left, y: toY }]);
+}
+
+// one screen edge as a clone of a drawn link — same classes and marker, so edge counts, styles and the orthogonality check cover it
+function createScreenPathAR(svgEl, edge, points) {
+	const template = svgEl.querySelector("path.flowchart-link");
+	if (!template) return;
+	const path = template.cloneNode(true);
+	path.removeAttribute("transform");
+	path.removeAttribute("data-points");
+	path.id = `L_${edge.from}_${edge.to}_screen`;
+	path.setAttribute("data-id", path.id);
+	path.setAttribute("data-arch-edge", edge.kind);
+	path.setAttribute("d", `M${points.map(({ x, y }) => `${x},${y}`).join("L")}`);
+	template.parentNode.appendChild(path);
+}
+
+// map-only arrowhead — the shared marker is sized for 14px text, and the map draws its labels at MAP_LABEL.fontPx units
+function setMapArrowheadsAR(svgEl) {
+	for (const marker of svgEl.querySelectorAll("marker[id$='pointEnd']"))
+		for (const attr of ["markerWidth", "markerHeight"])
+			marker.setAttribute(attr, String(Number.parseFloat(marker.getAttribute(attr)) * MAP.COL.ARROW_SCALE));
+}
+
+function getBoxesUnionAR(boxes) {
+	return {
+		left: Math.min(...boxes.map((b) => b.left)),
+		top: Math.min(...boxes.map((b) => b.top)),
+		right: Math.max(...boxes.map((b) => b.right)),
+		bottom: Math.max(...boxes.map((b) => b.bottom)),
+	};
+}
+
+// union box of drawn parts — an empty group adds nothing
+function getUnionSvgBoxAR(svgEl, els) {
+	return getBoxesUnionAR(els.map((el) => getSvgBoxAR(svgEl, el)).filter((b) => b.right > b.left || b.bottom > b.top));
+}
+
+function translateMapPartAR(el, dx, dy) {
+	el.setAttribute("transform", `translate(${dx}, ${dy}) ${el.getAttribute("transform") || ""}`.trim());
+}
+
+// a screen-drawn label: its left edge at `at.left`, its middle at `at.y` (svg units) · tagged with the `from>to` edge it captions
+function setScreenLabelAR(svgEl, text, edgeKey, at) {
+	const labelEl = createScreenLabelAR(svgEl, text);
+	if (!labelEl) return;
+	labelEl.setAttribute("data-arch-edge-label", edgeKey);
+	const box = getSvgBoxAR(svgEl, labelEl);
+	labelEl.setAttribute("transform", `translate(${at.left - box.left}, ${at.y - getBoxCentreAR(box).y})`);
+}
+
+// each node's zone position in reading order — the sources column top to bottom, then the spine
+function setReadingRankAR(svgEl, zoneIdByMemberId) {
+	const readingOrder = [...MAP.COL.ZONES.sources, ...MAP.COL.ZONES.pipeline];
+	for (const el of svgEl.querySelectorAll("g.node")) {
+		const rank = readingOrder.indexOf(zoneIdByMemberId.get(getSourceNodeIdAR(el.id)));
+		if (rank >= 0) el.dataset.archRank = String(rank);
+	}
+}
+
+/**
+ * A screen-drawn edge label in mermaid's own markup — same classes, so label counts and styles stay one.
+ * Every map edge reaches ELK unlabelled, so there is no drawn label to clone, and the frame is sized from the rendered text.
+ */
+function createScreenLabelAR(svgEl, text) {
+	const host = svgEl.querySelector("g.edgeLabels") ?? svgEl.querySelector("g.edgePaths")?.parentNode;
+	if (!host) return null;
+	const { label, inner, frame, box } = getEdgeLabelMarkupAR(text);
+	host.append(label);
+	frame.setAttribute("width", String(MAP_LABEL.wrapPx));
+	frame.setAttribute("height", String(MAP_LABEL.wrapPx));
+	const scale = frame.getScreenCTM()?.a || 1;
+	const rendered = box.getBoundingClientRect();
+	const [width, height] = [rendered.width / scale, rendered.height / scale];
+	frame.setAttribute("width", String(width));
+	frame.setAttribute("height", String(height));
+	inner.setAttribute("transform", `translate(${-width / 2}, ${-height / 2})`);
+	return label;
+}
+
+// g.edgeLabel > g.label > foreignObject > div.labelBkg > span.edgeLabel > p — one unwrapped line of text
+function getEdgeLabelMarkupAR(text) {
+	const [label, inner, frame] = ["g", "g", "foreignObject"].map((tag) => document.createElementNS(SVG_NS_AR, tag));
+	label.setAttribute("class", "edgeLabel");
+	inner.setAttribute("class", "label");
+	const box = document.createElement("div");
+	box.className = "labelBkg";
+	box.setAttribute("style", `display: table-cell; white-space: nowrap; line-height: 1.5; max-width: ${MAP_LABEL.wrapPx}px; text-align: center;`);
+	const textEl = document.createElement("span");
+	textEl.className = "edgeLabel";
+	const line = document.createElement("p");
+	line.textContent = text;
+	textEl.append(line);
+	box.append(textEl);
+	frame.append(box);
+	inner.append(frame);
+	label.append(inner);
+	return { label, inner, frame, box };
+}
+
+function getZoneElAR(svgEl, zoneId) {
+	return [...svgEl.querySelectorAll("g.cluster")].find((el) => matchZoneIdAR(el.id || "", [zoneId]) === zoneId) ?? null;
+}
+
+function getZoneBoxAR(svgEl, zoneId) {
+	const el = getZoneElAR(svgEl, zoneId);
+	return el ? getSvgBoxAR(svgEl, el) : null;
+}
+
+// element box in the svg's own user space (viewBox units) — groups carry their own transforms
+function getSvgBoxAR(svgEl, el) {
+	const b = el.getBBox();
+	const m = svgEl.getScreenCTM().inverse().multiply(el.getScreenCTM());
+	return { left: b.x * m.a + m.e, top: b.y * m.d + m.f, right: (b.x + b.width) * m.a + m.e, bottom: (b.y + b.height) * m.d + m.f };
+}
+
+function getBoxCentreAR(box) {
+	return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 };
+}
+
+function getLabelWordsAR(label) {
+	return label.replace(/<br\s*\/?>/gi, " ").split(/\s+/).filter(Boolean);
 }
 
 // every region the page reads feeds the stamp; no read time until the map itself has been read
@@ -2503,12 +2847,6 @@ function getPartStatusAR(row, freshness) {
 	if (!row.tone) return { tone: null, text: getPartStatusTextAR(row) };
 	const verdict = window.UI.getFreshnessVerdict({ ...freshness, tone: row.tone, label: row.statusLabel });
 	return { tone: verdict.tone, text: verdict.label };
-}
-
-// neutral has no tone text class — a last-known row reads dim, an unjudged one faint
-function getPartToneClassAR(tone) {
-	if (!tone) return "text-faint";
-	return tone === "neutral" ? "text-dim" : `text-${tone}`;
 }
 
 const PART_TONE_RANK_AR = { crit: 0, warn: 1, info: 3, ok: 4 };
@@ -2622,7 +2960,8 @@ function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onS
 				<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">Part health</h2>
 			</div>
 			<div className="card-body">
-				<SplitRow ratio="1:1">
+				{/* two lists in one card, not peer cards → each column keeps its content height */}
+				<SplitRow ratio="1:1" layout="content">
 					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} {...listProps} />
 					<SplitColumn>
 						{/* a cold read leaves only unloaded parts → the Not loaded list speaks, not a false 'No other parts' */}
@@ -2655,7 +2994,7 @@ function PartHealthListAR({ title, rows, empty, freshness, nodeIndex, onSelectNo
 }
 
 function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
-	const { formatRelativeTime } = window.UI;
+	const { formatRelativeTime, Icon, TONE_ICON } = window.UI;
 	const box = getPartBoxAR(row, nodeIndex);
 	const status = getPartStatusAR(row, freshness);
 	const schedule = getPartScheduleAR(row, formatRelativeTime);
@@ -2666,7 +3005,13 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 	return (
 		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row">
 			<span>{row.name}</span>
-			<span className={getPartToneClassAR(status.tone)}>{status.text}</span>
+			{/* verdict word stays neutral, tone on the glyph only · an unjudged row reads faint */}
+			<span className={status.tone ? "text-dim" : "text-faint"}>
+				{status.tone && status.tone !== "neutral" && (
+					<Icon name={TONE_ICON[status.tone]} size={12} className={`${TONE_GLYPH_CLASS[status.tone]} mr-1`} />
+				)}
+				{status.text}
+			</span>
 			{box ? (
 				<button type="button" className="btn sm" onClick={() => onSelectNode(box.nodeId)} aria-label={`Open ${box.label} for ${row.name}`}>
 					Open box
@@ -2680,7 +3025,7 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 }
 
 // 레인 정렬 순위 — 심각도만으로 셈. 같은 tone 안의 순서는 조립 순서(안정 정렬)가 냄.
-// 글리프 색 표의 모든 tone 이 여기 있어야 함 — 빠진 tone 은 NaN 비교로 제자리를 잃음.
+// 레인이 내는 모든 tone 이 여기 있어야 함 — 빠진 tone 은 NaN 비교로 제자리를 잃음.
 const ALARM_TONE_RANK = { crit: 1, warn: 2, info: 3 };
 
 /**
@@ -2694,7 +3039,6 @@ function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) 
 		rows.push({
 			key: "dual-write",
 			tone: "crit",
-			icon: "warn",
 			title: "Dual-write stopped — these writers are not recording",
 			// 스캔 실패도 같은 false 로 떨어짐(live-overlay 의 fail-loud 기본값) — 두 원인을 함께 적음.
 			note: "Marker scan found no dual-write block, or could not read the file.",
@@ -2705,7 +3049,6 @@ function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) 
 		rows.push({
 			key: "health-store",
 			tone: "crit",
-			icon: "warn",
 			title: "Couldn't load system health",
 			note: "These stores did not answer; the parts they judge carry no verdict.",
 			badges: healthStoreErrors,
@@ -2716,7 +3059,6 @@ function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) 
 		rows.push({
 			key: "live-overlay",
 			tone: "crit",
-			icon: "warn",
 			title: "Couldn't load the live overlay",
 			note: "The live endpoint did not answer; ring verdicts and part bindings are missing.",
 			detail: liveState.error,
@@ -2729,7 +3071,6 @@ function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) 
 		rows.push({
 			key: "governance",
 			tone: "warn",
-			icon: "warn",
 			title: governance?.sourceMissing
 				? "Governance membership unverifiable — compliance matrix unreadable"
 				: "Governance document missing",
@@ -2964,14 +3305,18 @@ function fitZoneBoxesAR(root, zoneIdByMemberId) {
 	});
 }
 
-// zones whose drawn box runs into another zone's box — zone rects share one parent group, so their bboxes compare directly
+// zones whose drawn box runs into another zone's box — boxes read in the zones' shared parent space, as bottom-row zones carry the row translate
 function getCrowdedZonesAR(zoneEls) {
-	const boxes = zoneEls.map((el) => el.querySelector(":scope > rect")?.getBBox());
+	const frameEl = zoneEls[0]?.parentElement;
+	const boxes = zoneEls.map((el) => {
+		const rect = el.querySelector(":scope > rect");
+		return frameEl && rect ? getUnionBoxAR(frameEl, [rect]) : null;
+	});
 	const crowded = new Set();
 	boxes.forEach((a, i) =>
 		boxes.forEach((b, j) => {
 			if (i >= j || !a || !b) return;
-			if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
+			if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) {
 				crowded.add(zoneEls[i]);
 				crowded.add(zoneEls[j]);
 			}
@@ -3030,7 +3375,7 @@ function wrapZoneTitleAR(zoneEl, rect, memberBox) {
 	const titleEl = zoneEl.querySelector(":scope > .cluster-label");
 	const frameEl = titleEl?.querySelector("foreignObject");
 	const textEl = frameEl?.firstElementChild;
-	const at = /translate\(\s*([-\d.e]+)[\s,]+([-\d.e]+)\s*\)/.exec(titleEl?.getAttribute("transform") || "");
+	const at = TRANSLATE_RE.exec(titleEl?.getAttribute("transform") || "");
 	if (!textEl || !at) return;
 
 	const title = getWrappedTitleSizeAR(textEl, memberBox.right - memberBox.left);
@@ -3184,28 +3529,18 @@ function getGroupSpaceBoxAR(shape, box) {
 }
 
 /**
- * Re-appends the focusable map nodes in flow order so Tab follows the left-to-right flow.
+ * Re-appends the focusable map nodes in reading order so Tab reads the left column top to bottom, then the right column.
  * Each node moves only within its own parent group and keeps its transform → nothing moves on screen.
  */
 function setFlowTabOrderAR(root) {
 	const stops = [...root.querySelectorAll('svg g.node[tabindex="0"]')].map((el) => {
 		const box = el.getBoundingClientRect();
-		return { el, cx: box.left + box.width / 2, top: box.top, width: box.width };
+		return { el, rank: Number(el.dataset.archRank ?? Infinity), top: box.top, cx: box.left + box.width / 2, width: box.width };
 	});
 	if (stops.length < 2 || stops.some((stop) => !(stop.width > 0))) return;
-	for (const { el } of getFlowOrderAR(stops)) el.parentNode.appendChild(el);
-}
-
-// column by column, top to bottom — a column = centres within half the narrowest node of its first node
-function getFlowOrderAR(stops) {
-	const tolerance = Math.min(...stops.map((stop) => stop.width)) / 2;
-	const columns = [];
-	for (const stop of [...stops].sort((a, b) => a.cx - b.cx)) {
-		const column = columns.at(-1);
-		if (column && stop.cx - column[0].cx <= tolerance) column.push(stop);
-		else columns.push([stop]);
-	}
-	return columns.flatMap((column) => column.sort((a, b) => a.top - b.top));
+	// zone reading rank, then top to bottom inside a zone · an unranked node keeps to the end
+	stops.sort((a, b) => a.rank - b.rank || a.top - b.top || a.cx - b.cx);
+	for (const { el } of stops) el.parentNode.appendChild(el);
 }
 
 // 스키마 node id (`${diagramId}.${mermaidId}`) → unscoped mermaid id (마지막 '.' 뒤 segment).

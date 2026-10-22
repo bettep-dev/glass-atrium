@@ -31,6 +31,7 @@ const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 interface Badge {
   badge: string;
   badgeTone: string;
+  glyph?: string;
   source?: string;
   title?: string;
 }
@@ -74,6 +75,7 @@ interface StampInput {
 interface UiSurface {
   getShellPageState: (input: StampInput) => ShellPageState;
   formatKstTime: (at: string) => string;
+  TONE_GLYPH: Record<string, string>;
 }
 interface AppSurface extends AppHelpers {
   setHash: (hash: string) => void;
@@ -164,7 +166,7 @@ function ready(data: unknown): unknown {
   return { status: "ready", data };
 }
 function daemonPayload(down: number): { daemons: { daemon_name: string; effective_status: string }[] } {
-  const names = ["autoagent", "wiki", "daily-restart-autoagent", "daily-restart-wiki"];
+  const names = ["autoagent", "wiki"];
   return {
     daemons: names.map((daemon_name, i) => ({
       daemon_name,
@@ -172,7 +174,7 @@ function daemonPayload(down: number): { daemons: { daemon_name: string; effectiv
     })),
   };
 }
-// Every shell-polled store answering healthy — the 7-part denominator the tile reads.
+// Every shell-polled store answering healthy — the 5-part denominator the tile reads.
 function allHealthy(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     liveState: ready(daemonPayload(0)),
@@ -201,7 +203,7 @@ test("the nav down numeral equals the lane's down-part count for every mix of do
   const rows = [
     { name: "nothing down", over: {} },
     { name: "one daemon down", over: { liveState: ready(daemonPayload(1)) } },
-    { name: "every daemon down", over: { liveState: ready(daemonPayload(4)) } },
+    { name: "every daemon down", over: { liveState: ready(daemonPayload(2)) } },
     {
       name: "two daemons plus the hook chain",
       over: { liveState: ready(daemonPayload(2)), hookFailState: ready({ count_24h: 1, unretried_count_24h: 1 }) },
@@ -252,10 +254,10 @@ test("a fold with nothing checked is loading while any part store is pending, un
 });
 
 test("partsOk counts only observed-healthy parts and never exceeds partsChecked", () => {
-  for (const down of [0, 2, 4]) {
+  for (const down of [0, 1, 2]) {
     const fold = app.foldHarness(allHealthy({ liveState: ready(daemonPayload(down)) }));
-    assert.equal(fold.partsChecked, 7, "4 daemons + pg + browser + hook chain are all shell-polled");
-    assert.equal(fold.partsOk, 7 - down);
+    assert.equal(fold.partsChecked, 5, "2 daemons + pg + browser + hook chain are all shell-polled");
+    assert.equal(fold.partsOk, 5 - down);
     assert.ok(fold.partsOk <= fold.partsChecked);
     assert.equal(fold.downNames.length, down);
     assert.equal(fold.version, "1.0.0");
@@ -269,22 +271,22 @@ test("an unretried hook failure puts the hook chain in the lane's down set", () 
     allHealthy({ hookFailState: ready({ count_24h: 3, unretried_count_24h: 2 }) }),
   );
   assert.deepEqual([...fold.downNames], ["Hook Chain"]);
-  assert.equal(fold.partsOk, 6);
-  assert.equal(fold.partsChecked, 7);
+  assert.equal(fold.partsOk, 4);
+  assert.equal(fold.partsChecked, 5);
 });
 
 test("a hook store that has not answered leaves the part unchecked, not down", () => {
   const fold = app.foldHarness(allHealthy({ hookState: { status: "loading", data: null } }));
   assert.deepEqual([...fold.downNames], [], "silence is not a fault");
   assert.deepEqual([...fold.uncheckedNames], ["Hook Chain"]);
-  assert.equal(fold.partsChecked, 6, "the denominator is what answered");
+  assert.equal(fold.partsChecked, 4, "the denominator is what answered");
 });
 
 // The map is the owner of the part set — a part it reads as 'no data' must not read as down here.
 test("a part the System map calls 'no data' is unchecked in the fold, never down", () => {
   const noRows = app.foldHarness(allHealthy({ liveState: ready({ daemons: [] }) }));
   assert.deepEqual([...noRows.downNames], [], "an absent daemon row is unknown, not down");
-  assert.equal(noRows.uncheckedNames.length, 4);
+  assert.equal(noRows.uncheckedNames.length, 2);
 
   const unprobed = app.foldHarness(
     allHealthy({ healthState: ready({ status: "ok", db: "open", browser: "unprobed" }) }),
@@ -342,22 +344,22 @@ test("systemsRollup: every part healthy and no failures → ALL SYSTEMS", () => 
 
 // The footer tone follows the worst alarm: a down part is crit on the lane, so the footer is crit too.
 test("systemsRollup: a down part is crit with the ✕ glyph and the lane's down count", () => {
-  for (const down of [1, 3]) {
+  for (const down of [1, 2]) {
     const fold = app.foldHarness(allHealthy({ liveState: ready(daemonPayload(down)), kpiState: ready({ last_1h_fail_count: 4 }) }));
     const r = app.systemsRollup(fold);
     assert.strictEqual(r.tone, "crit", `${down} down outranks the fail count`);
     assert.strictEqual(r.dotClass, "bg-crit");
-    assert.strictEqual(r.glyph, "✕");
+    assert.strictEqual(r.glyph, app.ui.TONE_GLYPH.crit);
     assert.strictEqual(r.label, `${fold.downNames.length} ${down === 1 ? "PART" : "PARTS"} DOWN`);
   }
 });
 
-test("systemsRollup: failures with no down part stay warn, without the crit glyph", () => {
+test("systemsRollup: failures with no down part stay warn, with the warn glyph", () => {
   const r = app.systemsRollup(app.foldHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 4 }) })));
   assert.strictEqual(r.tone, "warn");
   assert.strictEqual(r.dotClass, "bg-warn");
   assert.strictEqual(r.label, "ISSUES DETECTED");
-  assert.ok(!r.glyph);
+  assert.strictEqual(r.glyph, app.ui.TONE_GLYPH.warn);
 });
 
 // An unread source is unknown, never healthy: the footer must not keep "ALL SYSTEMS" over a lost store.
@@ -578,6 +580,19 @@ test("the rendered Agents badge describes itself to assistive tech and tells sus
   assert.notStrictEqual(visibleByRow.get("streak only"), visibleByRow.get("one suspended"), "same count, different shape");
 });
 
+// The System map numerals say how many of what only through their description: the tone glyph is aria-hidden.
+test("the rendered System map badges describe their failures and down parts to assistive tech", () => {
+  const harness = app.getHarness(allHealthy({ liveState: ready(daemonPayload(2)), kpiState: ready({ last_1h_fail_count: 4 }) }));
+  const tree = renderSidebar(harness, ready(buildBreakerSummary([])));
+  const [mapItem] = findNodes(tree, (n) => n.props?.key === "architecture");
+  const spoken = collectReadText(mapItem, isAriaHidden).join("");
+
+  assert.strictEqual(harness.downNames.length, 2, "precondition: two parts are down");
+  assert.match(spoken, /4 failed tasks in the last hour/);
+  assert.match(spoken, /2 harness parts down/);
+  for (const name of harness.downNames) assert.ok(spoken.includes(name), `assistive tech hears ${name}`);
+});
+
 // A daemon row may still carry the retired `stale` flag; the verdict is effective_status alone.
 test("a legacy stale flag on a healthy daemon row adds no System map badge", () => {
   const legacy = {
@@ -611,6 +626,57 @@ test("the sidebar slot follows the page's read state, below every harness word",
 
       assert.strictEqual(rollup.label, row.label);
       assert.strictEqual(rollup.tone, row.tone);
+    });
+  }
+});
+
+// Colour alone is no signal: every toned numeral in the nav carries its tone's shape.
+test("every toned nav badge carries its tone's glyph, whichever store raised it", () => {
+  const fold = app.foldHarness(allHealthy({ liveState: ready(daemonPayload(2)), kpiState: ready({ last_1h_fail_count: 4 }) }));
+  const suspended = ready(buildBreakerSummary([buildBreakerAlarm("glass-atrium-qa-debugger", "suspended")]));
+  const streak = ready(buildBreakerSummary([buildBreakerAlarm("glass-atrium-dev-node", "streak")]));
+  const badges = [
+    ...(app.harnessToNavBadges(fold).architecture?.badges ?? []),
+    app.agentsToNavBadges(suspended).agents,
+    app.agentsToNavBadges(streak).agents,
+  ].filter((b): b is Badge => Boolean(b));
+
+  assert.deepStrictEqual(new Set(badges.map((b) => b.badgeTone)), new Set(["warn", "crit"]), "precondition: both tones are raised");
+  for (const b of badges) assert.strictEqual(b.glyph, app.ui.TONE_GLYPH[b.badgeTone], `${b.source} ${b.badgeTone} badge glyph`);
+});
+
+const getClassTokens = (n: RenderedNode): string[] => String(n.props?.className ?? "").split(/\s+/).filter(Boolean);
+const TONE = { NAMES: ["ok", "warn", "crit", "info"], TEXT_CLASSES: ["text-ok", "text-warn", "text-crit", "text-info"] };
+
+// The badge shell and the rollup words stay neutral on the sunken surface (light warn 2.51, crit 3.52 as tinted text).
+test("the sidebar's nav badges and rollup put their tone on the glyph only, never on the shell or the words", async (t) => {
+  const crit = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 3 }) }));
+  const warn = app.getHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 3 }) }));
+  const agents = ready(buildBreakerSummary([buildBreakerAlarm("glass-atrium-qa-debugger", "suspended")]));
+  const rows = [
+    { name: "a down part with failures and a suspended agent", harness: crit, tone: "crit" },
+    { name: "failures with no down part", harness: warn, tone: "warn" },
+  ];
+  for (const row of rows) {
+    await t.test(row.name, () => {
+      const tree = renderSidebar(row.harness, agents);
+      const badges = findNodes(tree, (n) => getClassTokens(n).includes("nav-badge"));
+      assert.ok(badges.length >= 2, "precondition: the render reaches the toned badges");
+      for (const badge of badges) {
+        const [glyph, ...words] = badge.children.filter(isRenderedNode);
+        const tone = getClassTokens(glyph).find((c) => TONE.TEXT_CLASSES.includes(c))?.slice("text-".length) ?? "";
+        assert.ok(tone === "warn" || tone === "crit", `a badge glyph carries a raised tone, not "${tone}"`);
+        assert.strictEqual(collectText(glyph.children).join("").trim(), app.ui.TONE_GLYPH[tone], `a ${tone} badge's glyph is its tone's shape`);
+        assert.deepStrictEqual(getClassTokens(badge).filter((c) => TONE.NAMES.includes(c)), [], `a ${tone} badge shell names no tone`);
+        assert.strictEqual(badge.props?.style, undefined, `a ${tone} badge paints no inline tone fill`);
+        for (const word of words) assert.deepStrictEqual(getClassTokens(word).filter((c) => TONE.TEXT_CLASSES.includes(c)), [], `a ${tone} badge's numeral stays neutral`);
+      }
+
+      const rollup = app.systemsRollup(row.harness);
+      const [label] = findNodes(tree, (n) => collectText(n.children).join("") === rollup.label);
+      const [glyph] = findNodes(tree, (n) => collectText(n.children).join("") === rollup.glyph);
+      assert.ok(getClassTokens(label).includes("text-dim"), `the ${row.tone} rollup label reads dim`);
+      assert.ok(getClassTokens(glyph).includes(`text-${row.tone}`), `the ${row.tone} rollup glyph carries the tone`);
     });
   }
 });

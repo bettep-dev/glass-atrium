@@ -126,7 +126,7 @@ record_shape() {
     transcript_path: "/nonexistent/parent.jsonl"
   }' >"${payload}"
 
-  run env HOME="${SANDBOX_HOME}" PATH="${SHIM_DIR}:${PATH}" CLAUDE_GATE_INFLIGHT="" \
+  run env HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" PATH="${SHIM_DIR}:${PATH}" CLAUDE_GATE_INFLIGHT="" \
     T9_CORRECTION_DETECTION="false" STYLE_REF_READCACHE_OFF="1" OUTCOME_SPOOL_DIR="${spool}" \
     bash -c '"$1" < "$2" 2>&1' _ "${HOOK_SH}" "${payload}"
   [[ "${status}" -eq 0 ]] || {

@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2154  # references shared globals (DB_NAME/DB_SETUP_SCRIPT/RECREATE_DB/RECREATE_YES/PG_SOCKET/GA_ROOT/DRY_RUN/LOAD_LAUNCHD/BOOTSTRAP_EXIT_HEALTH/BOOTSTRAP_HEALTH_WINDOW_SECS) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
+# shellcheck disable=SC2154  # references shared globals (DB_NAME/DB_SETUP_SCRIPT/RECREATE_DB/RECREATE_YES/PG_SOCKET/GA_ROOT/DRY_RUN/LOAD_LAUNCHD/LAUNCHD_JOBS/BOOTSTRAP_EXIT_HEALTH/BOOTSTRAP_HEALTH_WINDOW_SECS) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — database provisioning/recreate + drop-with-backup + monitor health gate domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
 # DB-setup precondition guard (recreate_db_gate / run_db_setup shared) — asserts the oss-db-setup.sh
@@ -70,15 +70,18 @@ SELECT migration_name, coalesce(finished_at::text, ''), coalesce(rolled_back_at:
 SQL
 }
 
-# Classify history rows read on STDIN, one `applied <name>` / `failed <name>` line out per row.
-# APPLIED = finished_at non-empty AND rolled_back_at empty. Counting migration_name alone would
-# read a failed or rolled-back attempt as applied — the false-green this whole surface exists to
-# prevent, because re-applying never clears such a row.
+# Classify history rows read on STDIN, one `applied <name>` / `rolled_back <name>` / `failed <name>`
+# line out per row. APPLIED = finished_at non-empty AND rolled_back_at empty; ROLLED_BACK =
+# rolled_back_at set; FAILED = an unfinished row that was not rolled back. Counting migration_name
+# alone would read a failed or rolled-back attempt as applied — the false-green this whole surface
+# exists to prevent, because re-applying never clears such a row.
 get_migration_states() {
   local name finished rolled_back
   while IFS=$'\x1f' read -r name finished rolled_back; do
     [[ -n "${name}" ]] || continue
-    if [[ -n "${finished}" && -z "${rolled_back}" ]]; then
+    if [[ -n "${rolled_back}" ]]; then
+      printf 'rolled_back %s\n' "${name}"
+    elif [[ -n "${finished}" ]]; then
       printf 'applied %s\n' "${name}"
     else
       printf 'failed %s\n' "${name}"
@@ -164,6 +167,18 @@ run_db_setup() {
     exit_step "${db_rc}" || return "${db_rc}"
   fi
   log "== DB bootstrap done =="
+  _rearm_unadjudicated_backfill
+}
+
+# Re-arm marker the daemon cycle head reads (same reports-dir precedence as scripts/update.sh →
+# update_reports_dir): a DB kept across a reinstall may hold rows the backfill has not relabelled.
+# No DB read here, so every install takes the same path; a write failure never changes the setup rc.
+_rearm_unadjudicated_backfill() {
+  local reports="${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
+  if ! { mkdir -p -- "${reports}" && : >"${reports}/.unadjudicated-backfill-pending"; }; then
+    log "warn unadjudicated-backfill re-arm marker not written under ${reports} — setup continues; the next update or '${0##*/} db-setup' re-arms it"
+  fi
+  return 0
 }
 
 # DB bootstrap (fresh-machine gate — delegates to oss-db-setup.sh)
@@ -197,6 +212,7 @@ setup_database() {
       return 0
     fi
     log "DB '${DB_NAME}' present — skipping bootstrap (pending migrations: '${0##*/} db-setup')"
+    _rearm_unadjudicated_backfill
     return 0
   fi
   run_db_setup
@@ -409,7 +425,8 @@ bootstrap_health_gate() {
       || die "lsof not found — cannot verify the gate's own build is the :${port} listener (install lsof or stop any stale monitor and re-run)"
     local listener_pids
     listener_pids="$(lsof -ti "tcp:${port}" 2>/dev/null || true)"
-    if printf '%s\n' "${listener_pids}" | grep -Fxq -- "${mon_pid}"; then
+    # whole-line match in-shell — several pid lines piped to `grep -q` race its early exit
+    if [[ $'\n'"${listener_pids}"$'\n' == *$'\n'"${mon_pid}"$'\n'* ]]; then
       listener_ok="yes"
     fi
   fi
@@ -431,7 +448,7 @@ bootstrap_health_gate() {
   if [[ "${http_code}" == "200" && "${listener_ok}" == "yes" && "${db_open}" == "yes" ]]; then
     log "== bootstrap: monitor health gate PASS (/api/health 200 + db:open in ${elapsed}s, port ${port}, listener=pid ${mon_pid}) =="
     if "${LOAD_LAUNCHD}"; then
-      log "== bootstrap: health gate passed — proceeding to --load-launchd (loading the 8 launchd jobs) =="
+      log "== bootstrap: health gate passed — proceeding to --load-launchd (loading the ${#LAUNCHD_JOBS[@]} launchd jobs) =="
     else
       log "== bootstrap COMPLETE — load launchd jobs manually (review-first): docs/INSTALL.md §7, or re-run with --load-launchd =="
     fi

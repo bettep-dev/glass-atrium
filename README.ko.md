@@ -113,7 +113,7 @@ Glass Atrium에서 오케스트레이터는 전체 맥락을 혼자 쥔 채, 모
 - **자기개선 루프** — autoagent 데몬(`autoagent/`)이 쌓인 결과 기록과 교정 신호를 에이전트 지침 패치로 바꾸고, 안전한 것만 자동 적용합니다. 적용 전 원본을 보관해 두었다가 문제가 생기면 되돌립니다. 지침 패치와 별개로, 새 작업을 시작할 때는 과거 학습된 성공·실패 패턴을 해당 에이전트의 세션에 직접 주입해 곧바로 재사용합니다.
 - **Atrium Monitor** — Fastify 5 + Prisma 7 + React 18 기반의 10개 화면 실시간 대시보드(`http://127.0.0.1:16145`).
 - **모델·예산 직접 할당** — 모니터의 **Models & budgets** 화면에서 설정 파일을 건드리지 않고도 도메인별 모델과 호출당 USD 하드 캡을 할당합니다.
-- **라이브 아키텍처 맵** — 모니터의 System map 화면이 관리 중인 7개 Mermaid 다이어그램을 실시간 데몬 상태와 함께 렌더링합니다.
+- **라이브 아키텍처 맵** — 모니터의 System map 화면이 정식 아키텍처 맵(Mermaid 다이어그램 1개)을 실시간 데몬 상태와 함께 렌더링합니다.
 - **위키 지식 저장소** — 원본을 큐레이션된 노트로 가공하는 파이프라인에 SQLite BM25 전문 검색 인덱스까지 갖춘 LLM 전용 저장소(`wiki/`). 리서치 에이전트의 웹 조사 결과가 이곳에 쌓이고, 새 조사·분석 전에 먼저 조회해 기존 지식을 재사용합니다.
 - **내부 에이전트 스킬** — 에이전트와 오케스트레이터가 자동으로 호출하는 점진적 공개 방식의 `SKILL.md` 패키지([스킬](#스킬-내부-품질-계층) 참고).
 - **파일 단위 심링크 팜 설치** — 사용자 소유 파일과 충돌 없이 공존하도록, 디렉터리가 아닌 파일 단위로 `~/.claude/<rel>` → `~/.glass-atrium/<rel>` 심링크를 멱등하게 생성합니다.
@@ -188,19 +188,19 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ## 모니터 화면
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-dashboard.webp" alt="대시보드" width="100%"></p>
-<p align="center"><em>대시보드 — 멈춘 하네스 부품을 맨 위에 알리고, 하네스 상태·7일 작업 결과·에이전트 현황·오늘 지출 타일과 일별 지출, 이번 주 작업 결과, 시간대별 실행 분포를 이어서 보여 줍니다.</em></p>
+<p align="center"><em>대시보드 — 멈춘 하네스 부품과 평소보다 빠른 지출을 맨 위에 알리고, 하네스 상태·7일 작업 결과·에이전트 현황·오늘 지출 타일과 이번 주 작업 결과, 시간대별 실행 분포를 이어서 보여 줍니다.</em></p>
 
-<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="비용·토큰" width="100%"></p>
-<p align="center"><em>비용·토큰 — 오늘 지출이 7일 평균 대비 정상 범위인지 먼저 알리고, 30일 비용·완료 작업당 비용·캐시 비중 KPI와 일별 비용 추이, 토큰 유형·모델별 비용, 비용이 큰 세션을 보여 줍니다.</em></p>
+<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="비용·사용량" width="100%"></p>
+<p align="center"><em>비용·사용량 — 오늘 지출이 7일 평균 대비 정상 범위인지 먼저 알리고, 평소 대비 오늘·30일 비용·완료 작업당 비용·캐시 비중 KPI와 일별 비용 추이, 토큰 유형·모델별 비용, 비용이 큰 세션을 보여 줍니다.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-agents.webp" alt="에이전트" width="100%"></p>
-<p align="center"><em>에이전트 — 라우팅하면 안 되는 에이전트와 실패·도구 사용 한도 초과·컨텍스트 부족 건수를 먼저 보여 주고, 성공률이 낮은 에이전트·작업 조합과 완료 기록이 없는 실행을 표로 정리합니다.</em></p>
+<p align="center"><em>에이전트 — 라우팅하면 안 되는 에이전트와 실패·도구 사용 한도 초과·컨텍스트 부족 건수를 먼저 보여 주고, 성공률이 낮은 에이전트·작업 조합과 완료 기록이 없는 실행을 에이전트별 P95와 함께 표로 정리합니다.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-learning.webp" alt="학습" width="100%"></p>
-<p align="center"><em>학습 — 자가개선 루프의 승인 대기·최근 적용·제안 가능 백로그·사람 판단이 필요한 보류 패턴 수를 보여 주고, 제안 보드에서 적용 이력과 원인별 거부 이력을 나눠 표시합니다.</em></p>
+<p align="center"><em>학습 — 자가개선 루프의 승인 대기·최근 적용·제안 가능 백로그·사람 판단이 필요한 보류 패턴 수와 계측 상태를 보여 주고, 제안 보드에서 적용 이력과 원인별 거부 이력을 나눠 표시합니다.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="System map" width="100%"></p>
-<p align="center"><em>System map — 하네스 구성 다이어그램에 부품별 상태 링을 겹쳐 주의가 필요한 곳을 표시하고, 아래 부품 상태 목록에서 각 부품의 상태와 마지막 실행 시각을 보여 줍니다.</em></p>
+<p align="center"><em>System map — 주의가 필요한 부품을 맨 위에 짚고, 데몬·오케스트레이터·에이전트에서 안전 검사·저장소·문서로 이어지는 구성도에 부품별 상태 링을 겹친 뒤, 아래 부품 상태 목록에서 각 부품의 상태를 보여 줍니다.</em></p>
 
 ## 라이선스
 

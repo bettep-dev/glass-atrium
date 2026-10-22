@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 # doctor-proposal-provenance.bats — pins run_doctor §25 (terminal proposal rows naming no actor).
 #
-# Every status writer stamps core.autoagent_proposals.reviewed_by from this release on, and nothing
-# backfills the rows written before it. This section is the standing surface that would notice the
+# Every status writer stamps core.autoagent_proposals.reviewed_by from this release on, but the
+# unadjudicated backfill, which relabels status only and keeps the stored actor; nothing backfills
+# the actor of rows written before it. This section is the standing surface that would notice the
 # gap reopening. Registration kind B (report-only): its log line only, and AC5 asserts the warning
 # total does not move — a counted warning would be red on every established install forever, and
 # scoping it by id or date to go green is the workaround class this item exists to avoid.
@@ -41,6 +42,8 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   command -v jq >/dev/null 2>&1 || skip "jq required"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
 
@@ -88,7 +91,7 @@ STUB
   # Default scenario: the database exists and every terminal row names its mover. Each test
   # overrides what it is about, so a row never silently depends on a state it did not set.
   stub_out exists '1'
-  provenance_counts 271 0 0
+  provenance_counts 240 0 0
 }
 
 # $1 = query kind (exists|provenance|other), $2 = stdout the stub returns for it.
@@ -131,23 +134,94 @@ path_without_psql() {
   printf '%s' "${farm}"
 }
 
-# Run the REAL run_doctor against the sandbox GA_ROOT in a fresh strict-mode subprocess. GA_DB_NAME
-# points the whole DB path at a throwaway name and PATH puts the stub first, so no live database
-# name is ever spoken and no real psql is ever reached.
+# Strict-mode driver: $1 = GA checkout, $2 = sandbox GA_ROOT, the rest = the lib call to make.
+DOCTOR_DRIVER='
+  set -Eeuo pipefail
+  source "$1/lib/ga-core.sh"
+  ga_init_env "$2"
+  shift 2
+  "$@"
+'
+
+# Step driver: the doctor driver plus a mode word ($3, cli|tui; tui sets GA_TUI_STEP as run_step
+# does) and an ERR trap that ends a call RETURNING N with 100+N. A call that exits N ends the
+# shell with N without firing the trap, so the status alone tells a return from an exit.
+STEP_DRIVER='
+  set -Eeuo pipefail
+  source "$1/lib/ga-core.sh"
+  ga_init_env "$2"
+  if [[ "$3" == tui ]]; then GA_TUI_STEP=1; fi
+  shift 3
+  trap "exit \$(( \$? + 100 ))" ERR
+  "$@"
+'
+
+# The sandbox environment every driver runs in. GA_DB_NAME points the whole DB path at a throwaway
+# name and PATH puts the stub first, so no live database name is ever spoken and no real psql is
+# ever reached. $1 = PATH override.
+set_sandbox_env() {
+  SANDBOX_ENV=(PATH="${1:-${STUB}:${PATH}}"
+    GA_LIB_DIR="${GA}/scripts/lib" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}"
+    GA_GENERATE_MANIFEST="${SANDBOX}/no-such-manifest-gen"
+    GA_DATA_ROOT="${SANDBOX}/data" ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/state"
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT:-9}"
+    GA_DB_NAME="ga_doctor_provenance_sandbox"
+    GA_MIGRATIONS_DIR="${MIGRATIONS}" GA_STUB_STATE="${STUB_STATE}")
+}
+
+# Run the REAL run_doctor against the sandbox GA_ROOT in a fresh strict-mode subprocess.
 run_doctor_sandbox() {
-  run env PATH="${1:-${STUB}:${PATH}}" \
-    GA_LIB_DIR="${GA}/scripts/lib" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" \
-    GA_GENERATE_MANIFEST="${SANDBOX}/no-such-manifest-gen" \
-    GA_DATA_ROOT="${SANDBOX}/data" ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/state" \
-    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT:-9}" \
-    GA_DB_NAME="ga_doctor_provenance_sandbox" \
-    GA_MIGRATIONS_DIR="${MIGRATIONS}" GA_STUB_STATE="${STUB_STATE}" \
-    bash -c '
-      set -Eeuo pipefail
-      source "$1/lib/ga-core.sh"
-      ga_init_env "$2"
-      run_doctor
-    ' _ "${GA}" "${GA_SANDBOX}"
+  set_sandbox_env "${1:-}"
+  run env "${SANDBOX_ENV[@]}" bash -c "${DOCTOR_DRIVER}" _ "${GA}" "${GA_SANDBOX}" run_doctor
+}
+
+# Forced-interrupt harness: the driver's shell owns one late child (kept through exec), its stderr
+# pipe is full before the first write, and the reader drains only after that child has exited → on
+# bash 3.2 the child's SIGCHLD interrupts a builtin write blocked in the driver's shell.
+FORCED_HARNESS_PY="$(
+  cat <<'PY'
+import fcntl, os, subprocess, sys, time
+
+stdout_path = sys.argv[1]
+read_fd, write_fd = os.pipe()
+flags = fcntl.fcntl(write_fd, fcntl.F_GETFL)
+fcntl.fcntl(write_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+filler = 0
+try:
+    while True:
+        os.write(write_fd, b".")
+        filler += 1
+except BlockingIOError:
+    pass
+fcntl.fcntl(write_fd, fcntl.F_SETFL, flags)
+with open(os.devnull, "rb") as stdin, open(stdout_path, "wb") as stdout:
+    proc = subprocess.Popen(
+        ["/bin/bash", "-c", '( sleep 0.6 ) & exec /bin/bash "$@"', "_"] + sys.argv[2:],
+        stdin=stdin, stdout=stdout, stderr=write_fd)
+os.close(write_fd)
+time.sleep(1.5)
+drained = b""
+while True:
+    chunk = os.read(read_fd, 65536)
+    if not chunk:
+        break
+    drained += chunk
+sys.stdout.buffer.write(drained[filler:])
+sys.exit(proc.wait())
+PY
+)"
+
+# Run one lib call through a driver under the forced harness. Args: the driver text, the lib call.
+# Sets status · output = the driver's stderr · FORCED_STDOUT = the file holding its stdout.
+run_forced_driver() {
+  local python_bin driver="${1}"
+  shift
+  python_bin="$(command -v python3)"
+  # shellcheck disable=SC2154  # BATS_TEST_TMPDIR is assigned by the Bats runner
+  FORCED_STDOUT="$(mktemp "${BATS_TEST_TMPDIR}/forced-stdout.XXXXXX")"
+  set_sandbox_env
+  run --separate-stderr env "${SANDBOX_ENV[@]}" "${python_bin}" -c "${FORCED_HARNESS_PY}" \
+    "${FORCED_STDOUT}" -c "${driver}" _ "${GA}" "${GA_SANDBOX}" "$@"
 }
 
 assert_output_has() {
@@ -242,17 +316,17 @@ warn_total_of_output() {
   run_doctor_sandbox
   local green
   green="$(warn_total_of_output)" || return 1
-  assert_output_has "all 271 terminal proposal row(s) name the actor that moved them" || return 1
+  assert_output_has "all 240 terminal proposal row(s) name the actor that moved them" || return 1
 
-  # The live shape this item measured: most terminal rows carry neither column, a smaller set
+  # The two-population shape: most terminal rows carry neither column, a smaller set
   # carries the stale drain's instant with no actor. Both numbers must survive into the line.
-  provenance_counts 271 84 175
+  provenance_counts 240 70 145
   run_doctor_sandbox
-  assert_output_has "259 of 271 terminal row(s) name no actor" || return 1
-  assert_output_has "84 carry a review instant with no actor" || return 1
-  assert_output_has "175 carry neither" || return 1
+  assert_output_has "215 of 240 terminal row(s) name no actor" || return 1
+  assert_output_has "70 carry a review instant with no actor" || return 1
+  assert_output_has "145 carry neither" || return 1
   assert_output_has "report-only" || return 1
-  assert_output_lacks "all 271 terminal proposal row(s) name the actor" || return 1
+  assert_output_lacks "all 240 terminal proposal row(s) name the actor" || return 1
 
   # Registration kind B: the line prints, the total does not move, the exit code does not change.
   local gap
@@ -263,7 +337,7 @@ warn_total_of_output() {
     return 1
   }
   [[ "${status}" -eq 0 ]] || {
-    echo "a 259-row provenance gap failed the doctor (exit ${status}) — it must never do that" >&2
+    echo "a 215-row provenance gap failed the doctor (exit ${status}) — it must never do that" >&2
     return 1
   }
   assert_output_lacks "provenance-gap" || return 1
@@ -272,15 +346,15 @@ warn_total_of_output() {
 # ── AC6 — one population alone still names which one it is ─────────────────────────────────────
 
 @test "AC6: a gap in one population alone keeps the split, never a bare total" {
-  provenance_counts 271 3 0
+  provenance_counts 240 3 0
   run_doctor_sandbox
-  assert_output_has "3 of 271 terminal row(s) name no actor" || return 1
+  assert_output_has "3 of 240 terminal row(s) name no actor" || return 1
   assert_output_has "3 carry a review instant with no actor" || return 1
   assert_output_has "0 carry neither" || return 1
 
-  provenance_counts 271 0 12
+  provenance_counts 240 0 12
   run_doctor_sandbox
-  assert_output_has "12 of 271 terminal row(s) name no actor" || return 1
+  assert_output_has "12 of 240 terminal row(s) name no actor" || return 1
   assert_output_has "0 carry a review instant with no actor" || return 1
   assert_output_has "12 carry neither" || return 1
 }
@@ -320,13 +394,20 @@ warn_total_of_output() {
   done
   # Terminal rows only: a pending or snoozed row has not been moved to a final state by anyone, so
   # it names no missing mover and would inflate the report with rows that are not a gap.
-  for needle in applied approved rejected reverted; do
-    grep -qF -- "'${needle}'::core.\"ProposalStatus\"" "${STUB_STATE}/calls.log" || {
+  for needle in applied approved rejected reverted unadjudicated; do
+    grep -qF -- "'${needle}'" "${STUB_STATE}/calls.log" || {
       echo "the probe's status filter omits ${needle}" >&2
       echo "${sql}" >&2
       return 1
     }
   done
+  # A schema without the unadjudicated label rejects an enum cast of it when planning the
+  # statement, so the list is compared as text (proposal-status-label-fallback.bats runs it).
+  grep -qF -- "status::text IN" "${STUB_STATE}/calls.log" || {
+    echo "the probe compares status against enum casts, which a pre-label schema cannot plan" >&2
+    echo "${sql}" >&2
+    return 1
+  }
   grep -qF -- "'pending'" "${STUB_STATE}/calls.log" && {
     echo "the probe counts non-terminal rows as a provenance gap" >&2
     return 1
@@ -345,7 +426,7 @@ warn_total_of_output() {
   local answer
   # A NOTICE riding on the row, a reply to a different question, and a short row: none of the three
   # answers THIS question, and arithmetic over any of them would abort the whole run.
-  for answer in "NOTICE: relation rebuilt" "20260101000000_alpha	2026-01-01T00:00:00Z	" "271"; do
+  for answer in "NOTICE: relation rebuilt" "20260101000000_alpha	2026-01-01T00:00:00Z	" "240"; do
     printf '%s' "${answer}" >"${STUB_STATE}/provenance.out"
     run_doctor_sandbox
     [[ "${status}" -eq 0 ]] || {
@@ -356,5 +437,47 @@ warn_total_of_output() {
     assert_output_has "answered something other than three counts" || return 1
     assert_output_lacks "name the actor that moved them" || return 1
     assert_output_lacks "name no actor" || return 1
+  done
+}
+
+# ── Forced write: a log or die line blocked by an interrupt never decides the exit ─────────────
+
+# The doctor's shell owns a late child, so its SIGCHLD lands while a log/die write is blocked on a
+# full stderr pipe. A builtin write in that shell fails, and under errexit that failure becomes the
+# exit, dropping the rest of the report. Each row asserts the fixed state: its own exit, the line
+# exactly once on stderr, nothing on stdout. The doctor keeps no trace log, so stderr is the only
+# channel to check. The die_step rows use a code other than 1, so a failed write's errexit status
+# cannot pass for the code; the step driver reports a return as 100+N, so the CLI row must exit
+# its code and the TUI row must return it.
+@test "a log or die line blocked under an interrupt still arrives once and leaves the exit to the code path" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  local row name expected needle driver_name call_line driver rest
+  local -a call
+  for row in \
+    'doctor report|0|== doctor: Glass Atrium preflight ==|doctor|run_doctor' \
+    'die|1|FATAL: forced die probe|doctor|die forced die probe' \
+    'die_step on the CLI exits its code|3|FATAL: forced die_step probe|step|cli die_step 3 forced die_step probe' \
+    'die_step under the TUI returns its code|103|FATAL: forced die_step probe|step|tui die_step 3 forced die_step probe'; do
+    IFS='|' read -r name expected needle driver_name call_line <<<"${row}"
+    IFS=' ' read -r -a call <<<"${call_line}"
+    case "${driver_name}" in
+      step) driver="${STEP_DRIVER}" ;;
+      *) driver="${DOCTOR_DRIVER}" ;;
+    esac
+    run_forced_driver "${driver}" "${call[@]}"
+    [[ "${status}" -eq "${expected}" ]] || {
+      echo "${name}: status ${status}, expected ${expected}: ${output} ${stderr}"
+      return 1
+    }
+    rest="${output#*"${needle}"}"
+    [[ "${output}" == *"${needle}"* && "${rest}" != *"${needle}"* ]] || {
+      echo "${name}: '${needle}' not exactly once on stderr: ${output}"
+      return 1
+    }
+    [[ ! -s "${FORCED_STDOUT}" ]] || {
+      echo "${name}: stdout not empty:"
+      cat -- "${FORCED_STDOUT}"
+      return 1
+    }
   done
 }

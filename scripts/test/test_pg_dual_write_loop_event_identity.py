@@ -40,6 +40,9 @@ _SUBJECT = "clauded-docs/39785"
 _STALE_CAUSE = "discharge-unresolved"
 _CORRECTED_CAUSE = "discharge-covered-terminal"
 _CENSUS_CAUSES = ("verified", "unverified")
+_SPOOL_CLOSED = "manifest-spool-closed"
+_SPOOL = "inject-scope-rules.manifest.log.20261010T043000Z.4242.spool"
+_COUNT_COLUMNS = ("lines_read", "lines_without_row")
 _BLANK_SUBJECTS = ("", "   ")
 
 
@@ -63,6 +66,22 @@ class _LoopEvents:
     def get_causes(self) -> list[str]:
         return [row["eval_result"] for row in backend.read_loop_events(self._db_path)]
 
+    def close_spool(self, lines_read: int, lines_without_row: int) -> None:
+        self.helper.write_autoagent_loop_event(
+            event_ts=_EVENT_TS,
+            agent="daemon-cycle",
+            eval_result=_SPOOL_CLOSED,
+            changes_added=0,
+            changes_removed=0,
+            subject=_SPOOL,
+            lines_read=lines_read,
+            lines_without_row=lines_without_row,
+        )
+
+    def get_counts(self) -> list[tuple[int, int]]:
+        rows = backend.read_loop_events(self._db_path, columns=_COUNT_COLUMNS)
+        return [tuple(int(row[column]) for column in _COUNT_COLUMNS) for row in rows]
+
     def get_subjects(self) -> list[str]:
         rows = backend.read_loop_events(self._db_path, columns=("subject",))
         return [row["subject"] for row in rows]
@@ -79,8 +98,8 @@ def events(tmp_path):
 def test_when_one_cause_is_re_emitted_then_the_census_holds_one_row(
     events: _LoopEvents,
 ):
-    # Append-only source: log-rotation overlap replays a line, and a second row
-    # would double the recurrence count the cycle reports.
+    # A cycle report emitted twice re-emits the cause; a second row would double
+    # the recurrence count the cycle reports.
     events.emit(_CENSUS_CAUSES[0], changes_added=1)
 
     events.emit(_CENSUS_CAUSES[0], changes_added=9)
@@ -123,6 +142,17 @@ def test_when_a_subject_differs_only_by_surrounding_space_then_it_is_one_verdict
 
     assert events.get_causes() == [_CORRECTED_CAUSE]
     assert events.get_subjects() == [_SUBJECT]
+
+
+def test_when_a_spool_close_is_written_then_its_row_stores_both_counts_of_the_latest_write(
+    events: _LoopEvents,
+):
+    # The A/A sink reads lost lines from these columns; a count left off reads as nothing lost.
+    events.close_spool(lines_read=11, lines_without_row=2)
+
+    events.close_spool(lines_read=12, lines_without_row=3)
+
+    assert events.get_counts() == [(12, 3)]
 
 
 def test_when_a_verdict_cause_carries_no_subject_then_it_is_refused(

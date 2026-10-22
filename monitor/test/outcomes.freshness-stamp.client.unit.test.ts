@@ -144,12 +144,16 @@ function getLuminance(rgb: number[]): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
+// One token map per theme — the dark theme spans its main block and the root-only accent default.
 function getThemeTokens(): Array<Record<string, number[]>> {
-  const css = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
-  return [...css.matchAll(/\{([^}]*)\}/g)]
-    .map((block) => Object.fromEntries([...block[1].matchAll(/--([a-z-]+):\s*(\d+)\s+(\d+)\s+(\d+);/g)]
-      .map((m) => [m[1], [Number(m[2]), Number(m[3]), Number(m[4])]])))
-    .filter((tokens) => tokens.ink && tokens.elev && tokens.accent && tokens.warn);
+  const css = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const themes = { light: {} as Record<string, number[]>, dark: {} as Record<string, number[]> };
+  for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    const theme = selector.trim() === ":root" ? themes.light : selector.includes('[data-theme="dark"]') ? themes.dark : null;
+    if (!theme) continue;
+    for (const m of body.matchAll(/--([a-z-]+):\s*(\d+)\s+(\d+)\s+(\d+);/g)) theme[m[1]] = [Number(m[2]), Number(m[3]), Number(m[4])];
+  }
+  return [themes.light, themes.dark].filter((tokens) => tokens.ink && tokens.elev && tokens.accent && tokens.warn);
 }
 
 function getContrast(a: number[], b: number[]): number {

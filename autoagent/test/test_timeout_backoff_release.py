@@ -11,8 +11,8 @@ comment:
 * **The recorded ceiling is recoverable.** Every timeout rationale carries the
   ceiling it was measured against, verbatim. A row recorded under a superseded
   ceiling is evidence about a regime that no longer exists and must not count
-  toward a streak evaluated against the current one — the three rows holding the
-  highest-overage agent were all measured at 90s while HEAD configures 180s.
+  toward a streak evaluated against the current one — the shape: every row of a
+  holding streak recorded under a superseded ceiling, current ceiling higher.
 * **A bounded hold admits one probe.** Back-off rows are looked past by the
   streak reader, so counting them separately is what yields "held for N cycles"
   and lets the gate open for exactly one cycle. That probe is the actor the
@@ -59,8 +59,12 @@ if str(_AUTOAGENT_DIR) not in sys.path:
 _STUB_DIR = _REPO_ROOT / "scripts" / "test"
 if str(_STUB_DIR) not in sys.path:
     sys.path.insert(0, str(_STUB_DIR))
+_TEST_DIR = Path(__file__).resolve().parent
+if str(_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_TEST_DIR))
 
 import _pg_stub_backend as stub  # noqa: E402 — stdlib-only, anchored above
+from _pg_seal import seal_pg_reach  # noqa: E402 — test dir anchored above
 
 try:
     import daemon_cycle as dc
@@ -75,8 +79,8 @@ except Exception as exc:  # noqa: BLE001 — import failure → skip, not error
 # FROZEN FIXTURES — the three real emitted rationale shapes, transcribed
 # ---------------------------------------------------------------------------
 
-_SUPERSEDED_CEILING_SEC = 90  # what the three holding rows were measured at
-_CURRENT_CEILING_SEC = 180  # what HEAD and live configure
+_SUPERSEDED_CEILING_SEC = 90  # ceiling the superseded rows were recorded under
+_CURRENT_CEILING_SEC = 180  # current configured ceiling, higher
 
 
 def _timeout(ceiling_sec: int) -> str:
@@ -143,7 +147,7 @@ class SupersededCeilingTest(unittest.TestCase):
     """A row measured against a ceiling that no longer exists is not evidence."""
 
     def test_when_every_row_recorded_under_superseded_ceiling_then_no_hold(self):
-        # The live dev-shell shape: three 90s timeouts, ceiling now 180s.
+        # Rows recorded under a superseded ceiling, current ceiling higher.
         state = dc.build_backoff_state(
             [_timeout(_SUPERSEDED_CEILING_SEC)] * 3,
             ceiling_sec=_CURRENT_CEILING_SEC,
@@ -187,8 +191,7 @@ class BoundedHoldTest(unittest.TestCase):
     """Back-off rows are counted separately, so a held-for-N figure exists."""
 
     def test_when_held_beyond_bound_then_one_probe_admitted(self):
-        # The live dev-shell shape after the ceiling change: four consecutive
-        # back-off cycles over the underlying timeout history.
+        # Held one cycle past the probe bound over a current-ceiling streak.
         state = dc.build_backoff_state(
             [_backoff(3)] * 4 + [_timeout(_CURRENT_CEILING_SEC)] * 3,
             ceiling_sec=_CURRENT_CEILING_SEC,
@@ -311,10 +314,13 @@ class RejectedMarkerHistoryTest(unittest.TestCase):
         ):
             return dc.read_backoff_state("/tmp/probe-agent.md")
 
-    def test_when_markers_stored_rejected_then_state_matches_snoozed_history(self):
-        rejected = self._read("rejected")
-        self.assertEqual(rejected.held_cycles, 4)
-        self.assertEqual(rejected, self._read("snoozed"))
+    def test_marker_state_is_identical_whatever_status_the_markers_carry(self):
+        # 'unadjudicated' = current writer · 'rejected' / 'snoozed' = older rows.
+        unadjudicated = self._read("unadjudicated")
+        self.assertEqual(unadjudicated.held_cycles, 4)
+        for status in ("rejected", "snoozed"):
+            with self.subTest(status=status):
+                self.assertEqual(self._read(status), unadjudicated)
 
 
 @unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
@@ -361,7 +367,7 @@ class ReadSeamTest(unittest.TestCase):
         self.assertEqual(state.streak, 0)
 
     def test_when_count_wrapper_called_then_it_reports_the_state_streak(self):
-        # consecutive_timeout_count stays the run_cycle seam; the superseded-row
+        # consecutive_timeout_count stays the generation seam; the superseded-row
         # correction lands inside it rather than beside it.
         with mock.patch.object(
             dc,
@@ -378,7 +384,7 @@ _PROBE_AGENT = "backoff-release-probe-agent"
 
 @unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
 class CycleSeamTest(unittest.TestCase):
-    """run_cycle opens the gate for exactly the cycle the probe is due."""
+    """The generation unit opens the gate for exactly the cycle the probe is due."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -389,7 +395,7 @@ class CycleSeamTest(unittest.TestCase):
         self.target_md = self.agents_dir / f"{_PROBE_AGENT}.md"
         self.target_md.write_text("# probe agent\n", encoding="utf-8")
 
-        pattern = dc.Pattern(
+        self.pattern = dc.Pattern(
             date="2026-07-01",
             label="probe pattern",
             frequency="9",
@@ -399,15 +405,10 @@ class CycleSeamTest(unittest.TestCase):
             raw_line=f"pg:learning_log:1:probe pattern|{_PROBE_AGENT}",
             row_id=1,
         )
-        for target, repl in (
-            ("read_user_pending_patterns", lambda *a, **k: [pattern]),
-            ("fetch_generation_outcomes", lambda *a, **k: []),
-            ("FEATURE_FLAGS_FILE", self.tmp_dir / "no-such-flags.json"),
-            ("INTER_CALL_SPACING_SEC", 0.0),
-        ):
-            patcher = mock.patch.object(dc, target, repl)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(dc, "INTER_CALL_SPACING_SEC", 0.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.pg_reach = seal_pg_reach(self)
 
     def _run(self, *, state: "dc.BackoffState") -> tuple["dc.PatchResult", str]:
         self.generated = False
@@ -432,16 +433,18 @@ class CycleSeamTest(unittest.TestCase):
                     dc, "generate_consolidated_proposal", _probe_generation
                 ):
                     with _capture_stderr() as err:
-                        report = dc.run_cycle(
-                            log_path=self.tmp_dir / "learning-log.md",
-                            outcomes_dir=self.tmp_dir,
+                        patch = dc.build_patch_result(
+                            _PROBE_AGENT,
+                            [self.pattern],
+                            cycle_date="2026-07-02",
                             agents_dir=self.agents_dir,
+                            seen_targets=set(),
                             skip_haiku=False,
                             skip_pre_verify=True,
                             skip_loop_emit=True,
                         )
-        self.assertEqual(len(report.patches), 1)
-        return report.patches[0], err.getvalue()
+        self.assertEqual(self.pg_reach, [])
+        return patch, err.getvalue()
 
     def test_when_probe_due_then_generation_attempted(self):
         patch, err = self._run(

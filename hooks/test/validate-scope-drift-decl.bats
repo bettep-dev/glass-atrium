@@ -52,7 +52,7 @@ run_hook() {
   input="$(jq -n --arg sid "${SID}" --arg aid "${AID}" --arg fp "${fp}" \
     '{session_id: $sid, agent_id: $aid, tool_input: {file_path: $fp}}')"
   run env -u PLAN_FILE \
-    HOME="${WORK}" \
+    HOME="${WORK}" GA_DATA_ROOT="${WORK}/.glass-atrium" \
     ATRIUM_MONITOR_PORT=16145 \
     SCOPE_DRIFT_CACHE_DIR="${CACHE_DIR}" \
     PLAN_FILE="${plan}" \

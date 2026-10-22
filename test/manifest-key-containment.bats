@@ -21,6 +21,8 @@ readonly ESCAPING_KEY_EXIT=25
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   command -v jq >/dev/null 2>&1 || skip "jq required"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
   SANDBOX="$(cd -- "$(mktemp -d -t ga-manifest-contain.XXXXXX)" && pwd -P)"
@@ -89,6 +91,8 @@ run_passthrough() {
 # run_tui_plan ACTION — the REAL launcher's build_step_plan + run_plan (panel mode, as dispatch drives it), with
 # EVERY plan step except the containment gate replaced by a recorder. The recorders are proven installed
 # (each `type` body writes RECORD) before run_plan starts, so no real teardown step can ever run here.
+# The body is captured whole, then matched in-shell: piping `type` (one write per line) into an early-exit
+# reader lets the reader close before the last write, failing the check under pipefail.
 run_tui_plan() {
   run env GA_LAUNCHER="${GA}/glass-atrium" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}" RECORD="${RECORD}" DEFS="${SANDBOX}/recorders.sh" \
@@ -102,7 +106,8 @@ run_tui_plan() {
         [[ "${fn}" == "require_contained_manifest_keys" ]] && continue
         printf "%s() { printf \"%%s\\\\n\" %s >>\"\${RECORD}\"; }\n" "${fn}" "${fn}" >"${DEFS}"
         source "${DEFS}"
-        type "${fn}" | grep -qF "RECORD" || { printf "recorder missing for %s\n" "${fn}"; exit 97; }
+        body="$(type "${fn}")"
+        [[ "${body}" == *RECORD* ]] || { printf "recorder missing for %s\n" "${fn}"; exit 97; }
       done
       TTY=/dev/null
       run_plan "Uninstall" "" "panel" </dev/null

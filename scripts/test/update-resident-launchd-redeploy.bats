@@ -89,45 +89,45 @@ _extract_array() {
 
 @test "resident redeploy: a LOADED job whose deployed plist DRIFTED is re-copied + bootout+bootstrap" {
   write_stub_launchctl
-  # daemon-daily-restart (an incident job): loaded, deployed plist STALE vs rendered.
-  write_plist "${RENDERED}/com.glass-atrium.daemon-daily-restart.plist" "/new/bin:/usr/bin"
-  write_plist "${AGENTS}/com.glass-atrium.daemon-daily-restart.plist" "/stale/bin:/usr/bin"
+  # wiki-compile: loaded, deployed plist STALE vs rendered.
+  write_plist "${RENDERED}/com.glass-atrium.wiki-compile.plist" "/new/bin:/usr/bin"
+  write_plist "${AGENTS}/com.glass-atrium.wiki-compile.plist" "/stale/bin:/usr/bin"
   run bash -c '
     source "'"${SKILL}"'"
     export ATRIUM_UPDATE_LAUNCHCTL="'"${LAUNCHCTL}"'"
     export ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR="'"${RENDERED}"'"
     export ATRIUM_UPDATE_LAUNCH_AGENTS_DIR="'"${AGENTS}"'"
     export LAUNCHCTL_LOG="'"${LAUNCHCTL_LOG}"'"
-    export LOADED_LABELS="com.glass-atrium.daemon-daily-restart"
+    export LOADED_LABELS="com.glass-atrium.wiki-compile"
     update_refresh_resident_launchd
   '
-  [ "$status" -eq 0 ] || return 1
+  [ "$status" -eq 0 ] || { echo "${output}"; return 1; }
   # deployed plist now BYTE-IDENTICAL to the rendered SoT (re-copied).
-  cmp -s "${AGENTS}/com.glass-atrium.daemon-daily-restart.plist" \
-    "${RENDERED}/com.glass-atrium.daemon-daily-restart.plist" || return 1
+  cmp -s "${AGENTS}/com.glass-atrium.wiki-compile.plist" \
+    "${RENDERED}/com.glass-atrium.wiki-compile.plist" || return 1
   # reload happened: bootout THEN bootstrap the label (mirrors load_launchd_jobs).
-  grep -q "bootout gui/.*/com.glass-atrium.daemon-daily-restart" "${LAUNCHCTL_LOG}" || return 1
-  grep -q "bootstrap gui/.* .*com.glass-atrium.daemon-daily-restart.plist" "${LAUNCHCTL_LOG}" || return 1
+  grep -q "bootout gui/.*/com.glass-atrium.wiki-compile" "${LAUNCHCTL_LOG}" || return 1
+  grep -q "bootstrap gui/.* .*com.glass-atrium.wiki-compile.plist" "${LAUNCHCTL_LOG}" || return 1
 }
 
 @test "resident redeploy: a LOADED job whose deployed plist MATCHES needs no reload" {
   write_stub_launchctl
-  # wiki-daemon: loaded, deployed plist already byte-identical to rendered → no reload.
-  write_plist "${RENDERED}/com.glass-atrium.wiki-daemon.plist" "/same/bin:/usr/bin"
-  write_plist "${AGENTS}/com.glass-atrium.wiki-daemon.plist" "/same/bin:/usr/bin"
+  # monitor-log-rotate: loaded, deployed plist already byte-identical to rendered → no reload.
+  write_plist "${RENDERED}/com.glass-atrium.monitor-log-rotate.plist" "/same/bin:/usr/bin"
+  write_plist "${AGENTS}/com.glass-atrium.monitor-log-rotate.plist" "/same/bin:/usr/bin"
   run bash -c '
     source "'"${SKILL}"'"
     export ATRIUM_UPDATE_LAUNCHCTL="'"${LAUNCHCTL}"'"
     export ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR="'"${RENDERED}"'"
     export ATRIUM_UPDATE_LAUNCH_AGENTS_DIR="'"${AGENTS}"'"
     export LAUNCHCTL_LOG="'"${LAUNCHCTL_LOG}"'"
-    export LOADED_LABELS="com.glass-atrium.wiki-daemon"
+    export LOADED_LABELS="com.glass-atrium.monitor-log-rotate"
     update_refresh_resident_launchd
   '
-  [ "$status" -eq 0 ] || return 1
+  [ "$status" -eq 0 ] || { echo "${output}"; return 1; }
   # NO bootout/bootstrap for a plist that did not drift (the drift gate skipped it).
-  ! grep -q "bootout gui/.*/com.glass-atrium.wiki-daemon" "${LAUNCHCTL_LOG}" || return 1
-  ! grep -q "bootstrap gui/.* .*com.glass-atrium.wiki-daemon.plist" "${LAUNCHCTL_LOG}" || return 1
+  ! grep -q "bootout gui/.*/com.glass-atrium.monitor-log-rotate" "${LAUNCHCTL_LOG}" || return 1
+  ! grep -q "bootstrap gui/.* .*com.glass-atrium.monitor-log-rotate.plist" "${LAUNCHCTL_LOG}" || return 1
 }
 
 @test "resident redeploy: a NOT-loaded job is a clean skip (never auto-bootstrapped, deployed left stale)" {
@@ -150,6 +150,36 @@ _extract_array() {
   grep -q "/stale/bin" "${AGENTS}/com.glass-atrium.pg-backup.plist" || return 1
 }
 
+@test "resident redeploy: loaded retired labels with drifted deployed plists get no launchctl call and no file change" {
+  # The previous release's updater runs this unchanged post-step on the update that retires
+  # the daemon jobs: it reads the new active roster, so the retired labels stay the cycle
+  # stage's to tear down.
+  write_stub_launchctl
+  local job loaded=""
+  for job in autoagent-daemon wiki-daemon daemon-daily-restart; do
+    write_plist "${RENDERED}/com.glass-atrium.${job}.plist" "/new/bin:/usr/bin"
+    write_plist "${AGENTS}/com.glass-atrium.${job}.plist" "/stale/bin:/usr/bin"
+    loaded="${loaded} com.glass-atrium.${job}"
+  done
+  cp -R -- "${AGENTS}" "${WORK}/agents-before"
+  : >"${LAUNCHCTL_LOG}"
+  run bash -c '
+    source "'"${SKILL}"'"
+    export ATRIUM_UPDATE_LAUNCHCTL="'"${LAUNCHCTL}"'"
+    export ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR="'"${RENDERED}"'"
+    export ATRIUM_UPDATE_LAUNCH_AGENTS_DIR="'"${AGENTS}"'"
+    export LAUNCHCTL_LOG="'"${LAUNCHCTL_LOG}"'"
+    export LOADED_LABELS="'"${loaded}"'"
+    update_refresh_resident_launchd
+  '
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  for job in autoagent-daemon wiki-daemon daemon-daily-restart; do
+    ! grep -q "com.glass-atrium.${job}" "${LAUNCHCTL_LOG}" \
+      || { echo "${job}: launchctl was called"; cat "${LAUNCHCTL_LOG}"; return 1; }
+  done
+  diff -r -- "${WORK}/agents-before" "${AGENTS}" || { echo "a deployed plist changed"; return 1; }
+}
+
 @test "resident redeploy: update_post_step is wired to the generalized resident refresh (not the retired autoagent-only path)" {
   # Wiring guard: the post-step must call the generalized function. Pre-change it called
   # the retired update_refresh_autoagent_launchd (autoagent-cycle only) → this fails-before.
@@ -164,10 +194,10 @@ _extract_array() {
 
 @test "resident redeploy: a mkdir failure degrades to WARN + continues (never aborts under set -e)" {
   write_stub_launchctl
-  # daemon-daily-restart: loaded + drifted, but the deployed dir's PARENT is a regular FILE,
+  # wiki-compile: loaded + drifted, but the deployed dir's PARENT is a regular FILE,
   # so `mkdir -p` on the LaunchAgents dir CANNOT succeed. The never-aborts contract must hold
   # even called DIRECTLY under set -e (not only via the caller's `if ! update_post_step`).
-  write_plist "${RENDERED}/com.glass-atrium.daemon-daily-restart.plist" "/new/bin:/usr/bin"
+  write_plist "${RENDERED}/com.glass-atrium.wiki-compile.plist" "/new/bin:/usr/bin"
   printf 'not-a-dir\n' >"${WORK}/blocker"
   run bash -c '
     source "'"${SKILL}"'"
@@ -175,10 +205,10 @@ _extract_array() {
     export ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR="'"${RENDERED}"'"
     export ATRIUM_UPDATE_LAUNCH_AGENTS_DIR="'"${WORK}"'/blocker/LaunchAgents"
     export LAUNCHCTL_LOG="'"${LAUNCHCTL_LOG}"'"
-    export LOADED_LABELS="com.glass-atrium.daemon-daily-restart"
+    export LOADED_LABELS="com.glass-atrium.wiki-compile"
     update_refresh_resident_launchd 2>"'"${WORK}"'/warn.log"
   '
-  [ "$status" -eq 0 ] || return 1 # did NOT abort (set -e safe)
+  [ "$status" -eq 0 ] || { echo "${output}"; return 1; } # did NOT abort (set -e safe)
   grep -q "WARN: failed to create .*/blocker/LaunchAgents" "${WORK}/warn.log" || return 1
   ! grep -q "bootstrap gui/" "${LAUNCHCTL_LOG}" || return 1 # no reload — the job was skipped
 }

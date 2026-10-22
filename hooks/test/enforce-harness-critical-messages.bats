@@ -23,6 +23,8 @@ setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v jq >/dev/null 2>&1 || skip "jq required"
 
+  # The canary directory derives from the data root: unset, it sits under FAKE_HOME.
+  unset GA_DATA_ROOT
   FAKE_HOME="${BATS_TEST_TMPDIR}/home"
   AGENTS="${FAKE_HOME}/.glass-atrium/agents"
   mkdir -p "${FAKE_HOME}/.claude/hooks" "${FAKE_HOME}/.claude/agents" \
@@ -83,6 +85,9 @@ emit_class() {
     live-settings) run_hook "Write" "$(write_input "${prot}" "x")" ;;
     live-hooks-dir) run_hook "Write" "$(write_input "${FAKE_HOME}/.claude/hooks/x.sh" "x")" ;;
     scheduled-exec-dir) run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/scripts/x.sh" "x")" ;;
+    canary-dir)
+      run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/data/learning/canary/a.json" "x")"
+      ;;
     new-agent-creation) run_hook "Write" "$(write_input "${AGENTS}/brand-new.md" "x")" ;;
     identity-frontmatter-write)
       run_hook "Write" "$(write_input "${AGENTS}/glass-atrium-dev-shell.md" \
@@ -218,7 +223,7 @@ name: glass-atrium-dev-shell" "name: glass-atrium-dev-shell")"
 @test "R1 every block class: expected verdict, distinct suggestion, frontmatter-sentence rule" {
   local label cls sug seen=""
   local labels=(
-    live-settings live-hooks-dir scheduled-exec-dir new-agent-creation
+    live-settings live-hooks-dir scheduled-exec-dir canary-dir new-agent-creation
     identity-frontmatter-write identity-frontmatter-edit frontmatter-fence-edit
     unterminated-frontmatter frontmatter-unparseable edit-create-shape
     unreadable-edit-payload bash-mutation bash-interp-write

@@ -51,18 +51,22 @@ setup() {
   STUB_BIN="${SANDBOX}/bin"
   DB_DRIVER="${SANDBOX}/db-driver.sh"
   GATE_DRIVER="${SANDBOX}/gate-driver.sh"
-  mkdir -p "${SANDBOX_ROOT}/monitor/scripts" "${STUB_BIN}"
+  mkdir -p "${SANDBOX_ROOT}/monitor/scripts" "${STUB_BIN}" "${SANDBOX}/tmp"
 
-  # psql stub: the setup_database db-exists probe prints NOTHING (DB absent) so control falls
-  # through to run_db_setup; exit 0 so `|| true` is a no-op. NEVER touches a real cluster.
+  # psql stub: the setup_database db-exists probe prints PSQL_DB_EXISTS (empty = DB absent → control
+  # falls through to run_db_setup; "1" = DB present); exit 0 so `|| true` is a no-op. NEVER touches a
+  # real cluster.
   cat >"${STUB_BIN}/psql" <<'PSQL'
 #!/usr/bin/env bash
+printf '%s' "${PSQL_DB_EXISTS:-}"
 exit 0
 PSQL
   # oss-db-setup.sh stub: exit code driven by OSS_DB_EXIT (6 = prisma-failure default; 0 = success
   # control). run_db_setup runs `(cd monitor && bash oss-db-setup.sh)` — NO real DB/npm.
+  # OSS_DB_RAN names a file the stub creates, so a row can assert the bootstrap never ran.
   cat >"${SANDBOX_ROOT}/monitor/scripts/oss-db-setup.sh" <<'OSS'
 #!/usr/bin/env bash
+[[ -z "${OSS_DB_RAN:-}" ]] || : >"${OSS_DB_RAN}"
 exit "${OSS_DB_EXIT:-6}"
 OSS
   # curl stub: always non-zero → the gate's stale-listener precondition (line ~230) passes and the
@@ -90,7 +94,8 @@ ga_init_env "${GA_SANDBOX_ROOT}"
 source "${GA_REAL}/glass-atrium" >/dev/null 2>&1
 set +e
 trap - ERR EXIT INT TERM
-TTY="/dev/null"                                  # run_step scroll rows do `>"${TTY}"`; /dev/null sinks them
+TTY="${DRIVE_TTY:-/dev/null}"                    # run_step scroll rows do `>"${TTY}"`; /dev/null sinks them
+DRY_RUN="${DRIVE_DRY_RUN:-false}"                # the launcher's --dry-run parse, which a library source skips
 rc=0
 run_step "Database bootstrap" setup_database || rc=$?
 set +e                                           # run_step re-arms set -e at its tail; disarm so REACHED prints
@@ -117,18 +122,40 @@ DRV
 }
 
 teardown() {
+  [[ -n "${BATS_TEST_COMPLETED:-}" || -z "${SANDBOX:-}" ]] || print_step_captures
   if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
-# GA_LIB_DIR points ga_init_env's lib source at the real repo (the sandbox root has none).
+# A driver that dies inside run_step leaves its FATAL line only in the step capture — print every one.
+print_step_captures() {
+  local capture
+  for capture in "${SANDBOX}"/tmp/ga-step.*; do
+    [[ -f "${capture}" ]] || continue
+    printf -- '--- %s\n' "${capture##*/}"
+    cat -- "${capture}"
+  done
+}
+
+# drive_db OSS_RC [NAME=VALUE…] — GA_LIB_DIR points ga_init_env's lib source at the real repo (the
+# sandbox root has none). GA_TARGET_HOME, GA_DATA_ROOT, AUTOAGENT_REPORTS_DIR and TMPDIR all resolve
+# inside the sandbox, so no row writes a live path; trailing NAME=VALUE pairs override the defaults (env
+# applies them in order). GA_PG_SOCKET is stripped: an ambient off-/tmp seam trips the DB-setup guard.
 drive_db() {
-  run env \
+  local oss_rc="${1:-6}"
+  shift || true
+  run env -u GA_SKIP_DB_SETUP -u DATABASE_URL -u ATRIUM_UPDATE_DB_NAME -u GA_PG_SOCKET \
     GA_REAL="${GA}" \
     GA_SANDBOX_ROOT="${SANDBOX_ROOT}" \
     GA_LIB_DIR="${GA}/scripts/lib" \
     GA_DB_NAME="ga_fqclass_throwaway" \
-    OSS_DB_EXIT="${1:-6}" \
+    GA_TARGET_HOME="${SANDBOX}/target-home" \
+    GA_DATA_ROOT="${SANDBOX}/data-root" \
+    AUTOAGENT_REPORTS_DIR="${SANDBOX}/reports" \
+    OSS_DB_EXIT="${oss_rc}" \
+    OSS_DB_RAN="${SANDBOX}/oss-ran" \
+    TMPDIR="${SANDBOX}/tmp" \
     PATH="${STUB_BIN}:${PATH}" \
+    "$@" \
     bash "${DB_DRIVER}"
 }
 
@@ -138,6 +165,7 @@ drive_gate() {
     GA_SANDBOX_ROOT="${SANDBOX_ROOT}" \
     GA_LIB_DIR="${GA}/scripts/lib" \
     ATRIUM_MONITOR_PORT="16145" \
+    TMPDIR="${SANDBOX}/tmp" \
     PATH="${STUB_BIN}:${PATH}" \
     bash "${GATE_DRIVER}"
 }
@@ -161,6 +189,131 @@ drive_gate() {
   drive_db 0
   [[ "${status}" -eq 0 ]] \
     && [[ "${output}" == *"REACHED_AFTER rc=0"* ]]
+}
+
+@test "setup_database runs to its marker when the caller exports an off-/tmp GA_PG_SOCKET" {
+  # An ambient socket seam must not reach the driver — the fail-closed DB-setup guard would end it.
+  export GA_PG_SOCKET="${SANDBOX}/pgsock"
+  mkdir -p "${GA_PG_SOCKET}"
+  drive_db 0
+  [[ "${status}" -eq 0 && "${output}" == *"REACHED_AFTER rc=0"* ]] || {
+    echo "${output}"
+    return 1
+  }
+}
+
+# === Backfill re-arm marker — db-setup leg (setup_database → run_db_setup) =============================
+# Each row gets its own reports dir; only the re-arm table, which asserts on it, also gets its own bootstrap record.
+
+@test "setup_database re-arms the backfill marker on both branches that leave a usable DB" {
+  local -a rows=(
+    "fresh install, bootstrap exits 0|0||ran"
+    "DB present, no bootstrap|6|1|not-ran"
+  )
+  local row name oss_rc exists bootstrap dir i=0
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name oss_rc exists bootstrap <<<"${row}"
+    i=$((i + 1))
+    dir="${SANDBOX}/row-${i}"
+    mkdir -p "${dir}"
+    drive_db "${oss_rc}" PSQL_DB_EXISTS="${exists}" AUTOAGENT_REPORTS_DIR="${dir}/reports" OSS_DB_RAN="${dir}/oss-ran"
+    [[ "${status}" -eq 0 && "${output}" == *"REACHED_AFTER rc=0"* ]] \
+      || {
+        echo "${name}"
+        echo "${output}"
+        return 1
+      }
+    [[ -f "${dir}/reports/.unadjudicated-backfill-pending" ]] || {
+      echo "${name}: marker absent"
+      return 1
+    }
+    if [[ "${bootstrap}" == "ran" ]]; then
+      [[ -f "${dir}/oss-ran" ]] || {
+        echo "${name}: bootstrap did not run"
+        return 1
+      }
+    else
+      [[ ! -e "${dir}/oss-ran" ]] || {
+        echo "${name}: bootstrap ran"
+        return 1
+      }
+    fi
+  done
+}
+
+@test "setup_database writes no backfill marker on a path that neither confirms nor provisions the DB" {
+  local -a rows=(
+    "fresh install, bootstrap exits 6|6|REACHED_AFTER rc=6|DRIVE_DRY_RUN=false"
+    "dry-run|0|REACHED_AFTER rc=0|DRIVE_DRY_RUN=true"
+    "GA_SKIP_DB_SETUP set|0|REACHED_AFTER rc=0|GA_SKIP_DB_SETUP=1"
+  )
+  local row name oss_rc reached input dir i=0
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name oss_rc reached input <<<"${row}"
+    i=$((i + 1))
+    dir="${SANDBOX}/row-${i}"
+    drive_db "${oss_rc}" "${input}" AUTOAGENT_REPORTS_DIR="${dir}/reports"
+    [[ "${status}" -eq 0 && "${output}" == *"${reached}"* ]] \
+      || {
+        echo "${name}"
+        echo "${output}"
+        return 1
+      }
+    [[ ! -e "${dir}/reports/.unadjudicated-backfill-pending" ]] || {
+      echo "${name}: marker written"
+      return 1
+    }
+  done
+}
+
+@test "the backfill marker lands where AUTOAGENT_REPORTS_DIR, else GA_DATA_ROOT, resolves the reports dir" {
+  local -a rows=(
+    "AUTOAGENT_REPORTS_DIR set|set"
+    "AUTOAGENT_REPORTS_DIR empty|empty"
+  )
+  local row name reports_input dir want other i=0
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name reports_input <<<"${row}"
+    i=$((i + 1))
+    dir="${SANDBOX}/row-${i}"
+    if [[ "${reports_input}" == "set" ]]; then
+      want="${dir}/reports"
+      other="${dir}/data-root/data/daemon-reports"
+      drive_db 0 GA_DATA_ROOT="${dir}/data-root" AUTOAGENT_REPORTS_DIR="${want}"
+    else
+      want="${dir}/data-root/data/daemon-reports"
+      other="${dir}/reports"
+      drive_db 0 GA_DATA_ROOT="${dir}/data-root" AUTOAGENT_REPORTS_DIR=
+    fi
+    [[ "${status}" -eq 0 && "${output}" == *"REACHED_AFTER rc=0"* ]] \
+      || {
+        echo "${name}"
+        echo "${output}"
+        return 1
+      }
+    [[ -f "${want}/.unadjudicated-backfill-pending" ]] || {
+      echo "${name}: marker not in ${want}"
+      return 1
+    }
+    [[ ! -e "${other}/.unadjudicated-backfill-pending" ]] || {
+      echo "${name}: marker in ${other}"
+      return 1
+    }
+  done
+}
+
+@test "an unwritable reports dir logs a named warn and leaves the setup rc unchanged" {
+  : >"${SANDBOX}/not-a-dir"
+  # GA_VERBOSE=1 + TTY=/dev/stdout: the step classifier echoes every captured line into ${output}.
+  drive_db 0 AUTOAGENT_REPORTS_DIR="${SANDBOX}/not-a-dir/reports" DRIVE_TTY=/dev/stdout GA_VERBOSE=1
+  [[ "${status}" -eq 0 && "${output}" == *"REACHED_AFTER rc=0"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"warn unadjudicated-backfill re-arm marker not written"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 # === Force-quit-guard behavioral — step-13 (bootstrap_health_gate) same-scope sentinel ==================

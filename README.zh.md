@@ -113,7 +113,7 @@ Glass Atrium 建立在 **Manager Pattern（中心化的管理者模式）** 之�
 - **自我改进循环** — autoagent 守护进程（`autoagent/`）把累积的结果记录与纠正信号转化为智能体指令补丁，只有安全的部分才会自动应用。应用之前会先把原文另存一份，一旦出问题便原样回滚。除了这些指令补丁之外，每当开始新任务时，它还会把先前学到的成功与失败模式直接注入到该智能体的会话中，立即加以复用。
 - **Atrium Monitor** — 基于 Fastify 5 + Prisma 7 + React 18、共 10 个界面的实时仪表盘（`http://127.0.0.1:16145`）。
 - **模型与预算直接分配** — 在监控的 **Models & budgets** 界面，你无需修改配置文件即可为各领域分配模型，并设定每次调用的 USD 硬上限。
-- **实时架构图** — 监控的 System map 界面会把维护中的 7 张 Mermaid 图与实时守护进程状态一并渲染。
+- **实时架构图** — 监控的 System map 界面会把规范架构图（1 张 Mermaid 图）与实时守护进程状态一并渲染。
 - **wiki 知识库** — 一个仅供 LLM 使用的存储库（`wiki/`），配有「原始素材 → 经整理笔记」的加工流水线，以及 SQLite BM25 全文检索索引。研究智能体的网络调查结果会在此积累；每次开始新的调查/分析之前会先行查询，以复用既有知识。
 - **内部智能体技能** — 由智能体和编排器自动调用、采用渐进式披露的 `SKILL.md` 包（参见[技能](#技能内部质量层)）。
 - **按文件的符号链接群安装** — 为与用户自有文件互不冲突地共存，以文件（而非目录）为单位，幂等地创建 `~/.claude/<rel>` → `~/.glass-atrium/<rel>` 符号链接。
@@ -180,19 +180,19 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ## 监控界面
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-dashboard.webp" alt="仪表盘" width="100%"></p>
-<p align="center"><em>仪表盘概览 — 一目了然地展示今日成本、最近 30 天支出、token 使用趋势，以及会话/失败计数器。</em></p>
+<p align="center"><em>仪表盘 — 在顶部提示已停止的 harness 部件和高于常态的支出，随后展示 harness 状态、7 天任务结果、智能体概况、今日支出卡片，以及本周任务结果和按时段的运行分布。</em></p>
 
-<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="成本·token" width="100%"></p>
-<p align="center"><em>成本·token — 提供成本 KPI、30 天每日成本趋势（含尖峰标记），以及消耗速率（burn rate）预测。</em></p>
+<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="成本·用量" width="100%"></p>
+<p align="center"><em>成本·用量 — 先提示今日支出相对 7 天平均是否处于正常范围，再展示今日对比常态、30 天成本、每个完成任务的成本、缓存占比等 KPI，以及每日成本趋势、按 token 类型和模型的成本、成本最高的会话。</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-agents.webp" alt="智能体" width="100%"></p>
-<p align="center"><em>智能体 — 展示各智能体的执行次数、成功率、P95，以及趋势迷你图（sparkline）。</em></p>
+<p align="center"><em>智能体 — 先展示不应路由的智能体，以及失败、超出工具调用上限、上下文不足的数量，再用表格列出成功率偏低的智能体·任务组合和没有完成记录的运行，并附各智能体的 P95。</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-learning.webp" alt="学习" width="100%"></p>
-<p align="center"><em>学习 — 展示自我改进提案看板（待处理/已应用/已拒绝），以及置信度与预检结果。</em></p>
+<p align="center"><em>学习 — 展示自我改进循环的待审批、最近应用、可提出建议的积压、需人工判断的搁置模式数量及埋点状态，并在建议看板中分别显示应用历史和按原因分类的拒绝历史。</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="System map" width="100%"></p>
-<p align="center"><em>System map — 在维护中的 Mermaid 架构图上叠加了实时状态。</em></p>
+<p align="center"><em>System map — 在顶部指出需要关注的部件，在从守护进程经编排器、智能体到安全检查、存储和文档的架构图上叠加各部件的状态环，并在下方的部件状态列表中显示各部件的状态。</em></p>
 
 ## 许可证
 

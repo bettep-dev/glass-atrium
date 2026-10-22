@@ -72,18 +72,17 @@ function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
   return <svg {...props} />;
 }
 
-// 단일 배지 SoT (canonical) — 전 screen 이 window.UI.Badge 로만 배지를 렌더 (screen-local 배지 JSX/CSS 금지).
-//   .pill CSS family = styling layer (neutral shell SoT). 3 role 로 의미 구분:
-//   status   = 사용자가 반응해야 할 lifecycle/health 상태 → 선행 tone 심볼(Icon/glyph)이 톤 운반.
-//   metadata = 상태 아닌 서술 속성(agent-only, md, model-id) → neutral, glyph 없음.
-//   count    = 순수 수량(+1, 27 agents) → neutral, glyph 없음, 가장 작게.
-// 하드 규칙 (DESIGN.md §4.2/§7.3 neutral-shell 진화):
-//   · shell 은 모든 tone 에서 neutral(--sunken/--dim/--line) — tone-fill 을 .pill 껍데기에 칠하지 않는다.
-//   · tone 은 내부 심볼(Icon/glyph)에 text-{tone} 으로만 적용 → dual-encode = shape(글리프)+color+인접 label(DESIGN.md §8).
-//   · label 텍스트는 --dim 유지(AA-safe: --sunken 위 warn/ok/info tone 은 11px 3:1 sub-AA). 단 선행 심볼이 없으면(glyph=false status)
-//     tone 을 label 이 운반(유일 carrier) — shell 은 여전히 neutral.
-//   · metadata/count 는 톤을 받아도 항상 neutral (color≠metadata/count).
-// 변형: absent=true → .pill--absent(dashed/faint) · interactive=true → <button>+.pill--interactive(WCAG 2.2 §2.5.8 타깃)
+// Single badge SoT (canonical) — every screen renders badges only through window.UI.Badge (no screen-local badge JSX/CSS).
+//   .pill CSS family = styling layer (neutral shell SoT). 3 roles separate the meaning:
+//   status   = lifecycle/health state the user must react to → a leading tone symbol (Icon/glyph) carries the tone.
+//   metadata = descriptive non-state attribute (agent-only, md, model-id) → neutral, no glyph.
+//   count    = plain quantity (+1, 27 agents) → neutral, no glyph, smallest size.
+// Hard rules (DESIGN.md §4.2/§7.3 neutral shell):
+//   · shell neutral in every tone (--sunken/--dim/--line) — no tone fill on the .pill shell.
+//   · tone only on the inner symbol (Icon/glyph) via text-{tone} → dual-encode = shape (glyph) + color + adjacent label (DESIGN.md §8).
+//   · label text stays --dim (AA-safe: light warn/ok/info tones on --sunken read 3.15–3.45:1, sub-AA at --fs-meta) — a glyph=false status keeps a neutral label too.
+//   · metadata/count stay neutral even when given a tone (color ≠ metadata/count).
+// Variants: absent=true → .pill--absent (dashed/faint) · interactive=true → <button> + .pill--interactive (WCAG 2.2 §2.5.8 target)
 function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=true, icon=false, interactive=false, title, onClick, className='' }) {
   const isStatus = role === 'status';
   const hasTone = isStatus && tone !== 'neutral';
@@ -94,13 +93,10 @@ function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=
   //   (shell 이 --dim 이라 상속으론 tone 이 안 옴). aria-hidden 장식, 의미는 인접 label.
   const leadIcon = showLead && icon ? <Icon name={TONE_ICON[tone]} size={12} className={toneTextClass} /> : null;
   const leadGlyph = showLead && !icon ? <span className={toneTextClass}>{TONE_GLYPH[tone]} </span> : null;
-  // 심볼이 없는 status(glyph=false) 는 label 이 유일 tone carrier → children 을 text-{tone} span 으로 감싼다(shell neutral 유지).
-  //   심볼이 있으면 label 은 --dim 유지 (tone 은 심볼 담당, AA-safe).
-  const body = hasTone && !showLead ? <span className={toneTextClass}>{children}</span> : children;
   // className passthrough — 호출부가 일회성 .pill 변형을 이 인스턴스에만 덧붙이게 (현재 상시 소비자 없음).
   const cls = ['pill', sizeClass, absent ? 'pill--absent' : '', interactive ? 'pill--interactive' : '', className].filter(Boolean).join(' ');
   const a11y = title ? { title } : {};
-  const content = <>{leadIcon}{leadGlyph}{body}</>;
+  const content = <>{leadIcon}{leadGlyph}{children}</>;
   return interactive
     ? <button type="button" className={cls} onClick={onClick} {...a11y}>{content}</button>
     : <span className={cls} {...a11y}>{content}</span>;
@@ -111,18 +107,18 @@ function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=
 function Pill({ children, tone='neutral' }) {
   return tone === 'neutral'
     ? <Badge role="metadata" glyph={false}>{children}</Badge>
-    : <Badge role="status" tone={tone} glyph={false}>{children}</Badge>;
+    : <Badge role="status" tone={tone}>{children}</Badge>;
 }
 
 // 공용 빈-상태 atom (canonical) — 화면별 EmptyState* 복제 + 보드 dashed-col idiom 의 단일 SoT.
 //   .placeholder(base.css) dashed 관용구 재사용 → repo 전역 단일 빈-상태 표기.
 //   message = 핵심 원인 한 줄 · hint = 다음 단계/부연(선택) · action = 슬롯(재시도 버튼 등, 선택).
-//   타입은 6단 스케일 토큰(fs-meta/fs-micro)로 고정 — 화면별 off-scale px 리터럴 제거.
+//   타입은 스케일 토큰(fs-meta)로 고정 — 화면별 off-scale px 리터럴 제거.
 function EmptyState({ message, hint, action, className='' }) {
   return (
     <div className={`placeholder ${className}`.trim()}>
       <div className="fs-meta">{message}</div>
-      {hint && <div className="fs-micro text-faint mt-1">{hint}</div>}
+      {hint && <div className="fs-meta text-faint mt-1">{hint}</div>}
       {action && <div className="mt-2 flex justify-center">{action}</div>}
     </div>
   );
@@ -142,22 +138,12 @@ function SubCard({ children, sunken=false, label, labelLevel=3, className='' }) 
   );
 }
 
-// Content-level 타입 스케일 토큰 SoT — 레벨당 1 토큰으로 ad-hoc font-size 규격화 (시각 일관성)
-// 6단 — display 22(카드 지배 수치) · stat 18(일반 KPI) · title 14 · body 13 · meta 12 · micro 11
-// CSS var = 토큰 SoT · .fs-* = 소비 layer (className 단독 적용 가능)
-// .hero-stat = 패널당 단 하나의 지배 수치용 30px (display 22 보다 한 단 위) — 18px name 과 묶이지 않게 결정적 우위.
+// Content-level 타입 스케일 소비 layer — 단계 값은 tokens.css 단일 SoT, 여기는 .fs-* 클래스만
+// .hero-stat = 패널당 단 하나의 지배 수치용 30px (display 24 보다 한 단 위) — 20px name 과 묶이지 않게 결정적 우위.
 //   tabular-nums = 자릿수 고정 폭(드로어 hero 수치 정렬). negative tracking = 56px 미만 대형 수치 가독.
-// SPA 단일 screen 마운트 — screen 별 <style> 무조건 렌더 → 가드 시 재진입에서 토큰 소실 회귀
+// SPA 단일 screen 마운트 — screen 별 <style> 무조건 렌더 → 가드 시 재진입에서 클래스 소실 회귀
 function TypeScaleStyle() {
   return <style>{`
-    :root {
-      --fs-display: 22px;
-      --fs-stat:  18px;
-      --fs-title: 15px;
-      --fs-body:  14px;
-      --fs-meta:  12px;
-      --fs-micro: 11px;
-    }
     .fs-display { font-size: var(--fs-display); }
     .fs-stat  { font-size: var(--fs-stat); }
     .fs-title { font-size: var(--fs-title); line-height: 1.4; }
@@ -173,16 +159,14 @@ function TypeScaleStyle() {
   `}</style>;
 }
 
-// 증감 표시 — inverse=true 면 down=좋음/up=나쁨 (비용 증가 등 inverse 지표용)
+// Change indicator — default up=bad (crit)/down=good (ok), inverse=true flips it (metrics where a rise is good); tone on the arrow only, value neutral
 function Delta({ value, inverse=false }) {
   const sign = value > 0 ? 'up' : value < 0 ? 'down' : 'flat';
-  let tone;
-  if (sign === 'flat') tone = 'flat';
-  else if (inverse) tone = sign === 'up' ? 'down' : 'up';
-  else tone = sign;
+  const isBad = inverse ? sign === 'down' : sign === 'up';
+  const tone = sign === 'flat' ? 'faint' : isBad ? 'crit' : 'ok';
   const iconName = sign === 'up' ? 'arrowU' : sign === 'down' ? 'arrowD' : 'minus';
-  return <span className={`kpi-delta ${tone}`}>
-    <Icon name={iconName} size={11} stroke={2.2} />
+  return <span className="kpi-delta">
+    <Icon name={iconName} size={11} stroke={2.2} className={`text-${tone}`} />
     {Math.abs(value).toFixed(1)}%
   </span>;
 }
@@ -222,8 +206,8 @@ const CHART_MAX_TICKS = 7;
 const CHART_PLOT_FILL = 0.85;
 /** Minimum px between tick labels; Recharts axes get it through getChartXAxisProps. */
 const CHART_TICK_MIN_GAP_PX = 8;
-// ponytail: fixed per-char estimate of a --fs-meta day label (≤7px) → measure with canvas if labels grow wide
-const CHART_TICK_CHAR_PX = 7;
+// ponytail: fixed per-char estimate of a --fs-meta mono day label (13px × 0.6em ≈ 7.8px, rounded up for fallback faces) → measure with canvas if labels grow wide
+const CHART_TICK_CHAR_PX = 8;
 const CHART_TICK_SHIFT = { start: '0', middle: '-50%', end: '-100%' };
 
 // Evenly spaced day-tick indices, always the first and last day, at most maxTicks.
@@ -542,37 +526,11 @@ function StatusDot({ status }) {
   const toneClass = isKnown ? `text-${status}` : 'text-faint';
 
   return (
-    <span className={`inline-block fs-micro leading-none mr-1.5 align-middle ${toneClass}`} title={word}>
+    <span className={`inline-block fs-meta leading-none mr-1.5 align-middle ${toneClass}`} title={word}>
       <span aria-hidden="true">{glyph}</span>
       <span className="sr-only">{word}</span>
     </span>
   );
-}
-
-// 22px 원형 컬러 배지 + 이니셜. 색 = categorical agent 팔레트 토큰(tokens.css --agent-N, 테마 불변) —
-//   하드코딩 hex 제거. named agent 는 고정 슬롯, 그 외 id 해시로 안정 배정.
-const AGENT_NAMED_VAR = {
-  'glass-atrium-intel-planner':    '--agent-1',
-  'glass-atrium-intel-researcher': '--agent-2',
-  writer:   '--agent-3',
-  reviewer: '--agent-4',
-  coder:    '--agent-5',
-  analyst:  '--agent-6',
-};
-const AGENT_PALETTE_VARS = ['--agent-1', '--agent-2', '--agent-3', '--agent-4', '--agent-5', '--agent-6', '--agent-7', '--agent-8'];
-
-function AgentBadge({ a, size=22 }) {
-  const id = a?.id || a?.agent_id || '';
-  const name = a?.name || a?.agent_name || id || '?';
-  const initial = name[0] ? name[0].toUpperCase() : '?';
-  const colorVar = AGENT_NAMED_VAR[id] || AGENT_PALETTE_VARS[(strHash(id) >>> 0) % AGENT_PALETTE_VARS.length];
-  // 이니셜 전경 = 고정 dark ink(--agent-ink) → 밝은 amber/cyan fill 에서도 ≥3:1 대비 (기존 white ~2:1 회귀 해소).
-  //   팔레트 8색 전부 dark ink 로 ≥3.9:1 검증 완료 (fill 은 테마 불변 categorical).
-  return <span className="agent-badge inline-grid place-items-center font-mono font-semibold shrink-0"
-    style={{width:size, height:size, fontSize: size*0.5, borderRadius: size*0.3,
-      background: `rgb(var(${colorVar}))`, color: 'rgb(var(--agent-ink))', letterSpacing:'-0.02em'}}>
-    {initial}
-  </span>;
 }
 
 const AGENT_NAME_PREFIX = 'glass-atrium-';
@@ -600,15 +558,6 @@ function AgentName({ name, className = '' }) {
   );
 }
 
-// djb2-lite — 시각 팔레트용 결정적 해시 (crypto 불필요)
-function strHash(str) {
-  let h = 5381;
-  for (let i = 0; i < str.length; i++) {
-    h = ((h << 5) + h) + str.charCodeAt(i);
-  }
-  return h;
-}
-
 // Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
 function KpiValue({ children, unit, tone }) {
   return <div className="kpi-value">
@@ -617,8 +566,8 @@ function KpiValue({ children, unit, tone }) {
   </div>;
 }
 
-// label + 26px mono value + delta + 68×26 inline sparkline
-function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint, hintClassName='fs-micro' }) {
+// label + --fs-kpi mono value + delta + 68×26 inline sparkline
+function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint, hintClassName='fs-meta' }) {
   return <button onClick={onClick} className="kpi text-left">
     <div className="kpi-label">{label}</div>
     {hint && <div className={`${hintClassName} text-faint font-mono kpi-hint`}>{hint}</div>}
@@ -885,19 +834,68 @@ function Modal({ title, onClose, children, footer }) {
     title={title} footer={footer}>{children}</DetailSurface>;
 }
 
-function Tabs({ items, value, onChange }) {
-  return <div className="tabs">
-    {items.map(it => <button key={it.value} className={`tab ${value===it.value?'active':''}`} onClick={() => onChange(it.value)}>{it.label}</button>)}
+// id sequence for the title an info trigger is described by — works without useId (render-harness React stub).
+let cardTitleSeq = 0;
+
+/**
+ * One-line card header: title + meta, then the ⓘ trigger and actions on the right.
+ * @param info - long explanation moved off the card; opens in the detail drawer
+ * @param infoLabel - trigger name and drawer title
+ */
+function CardHead({ title, sub, info, infoLabel = 'How this is counted', right }) {
+  const titleIdRef = useRef(null);
+  if (titleIdRef.current === null) titleIdRef.current = `card-title-${++cardTitleSeq}`;
+
+  return <div className="card-head">
+    <div className="card-head-text">
+      <h2 id={titleIdRef.current} className="card-title">{title}</h2>
+      {sub && <span className="card-sub" title={window.UI.titleOf(sub)}>{sub}</span>}
+    </div>
+    {(info || right) && <div className="ml-auto flex items-center gap-2 shrink-0">
+      {info && <CardInfo label={infoLabel} describedBy={titleIdRef.current}>{info}</CardInfo>}
+      {right}
+    </div>}
   </div>;
 }
 
-function CardHead({ title, sub, right }) {
-  return <div className="card-head">
-    <div className="flex-1 min-w-0">
-      <h2 className="card-title">{title}</h2>
-      {sub && <div className="card-sub mt-0.5" title={window.UI.titleOf(sub)}>{sub}</div>}
-    </div>
-    {right && <div className="ml-auto flex items-center gap-2 shrink-0">{right}</div>}
+// ⓘ trigger: a real button (click + keyboard), named by `label`, described by the card title → opens the detail drawer.
+function CardInfo({ label, describedBy, children }) {
+  const [isOpen, setOpen] = useState(false);
+
+  return <>
+    <button type="button" className="btn ghost sm icon" aria-label={label} aria-describedby={describedBy}
+      aria-haspopup="dialog" aria-expanded={isOpen} onClick={() => setOpen(true)}>
+      <Icon name="info" size={16} />
+    </button>
+    {isOpen && <DetailSurface open title={label} onClose={() => setOpen(false)}>{children}</DetailSurface>}
+  </>;
+}
+
+// S/M/L card slots — visible list rows and chart plot height; peers in one row share a slot so their ends align.
+const CARD_SLOTS = Object.freeze({
+  S: Object.freeze({ rowCount: 5, plotPx: 160 }),
+  M: Object.freeze({ rowCount: 8, plotPx: 220 }),
+  L: Object.freeze({ rowCount: 12, plotPx: 300 }),
+});
+
+// Caps a list at its slot's row budget → the rows to render + how many a "Show all N" foot stands for.
+function getSlotRows(items, size = 'M') {
+  const { rowCount } = CARD_SLOTS[size] || CARD_SLOTS.M;
+  return { rows: items.slice(0, rowCount), hiddenCount: Math.max(0, items.length - rowCount) };
+}
+
+/**
+ * Card anatomy: one-line header, a body that fills the card, an optional foot pinned to the bottom edge.
+ * @param size - 'S' | 'M' | 'L' slot; S/M bodies never scroll inside the card
+ * @param foot - "Show all N" / "Other" / one footnote
+ */
+function Card({ size, title, sub, info, infoLabel, right, foot, isFlush = false, children, className = '' }) {
+  const sizeClass = CARD_SLOTS[size] ? `card--${size.toLowerCase()}` : '';
+
+  return <div className={`card ${sizeClass} ${className}`.replace(/\s+/g, ' ').trim()}>
+    {title && <CardHead title={title} sub={sub} info={info} infoLabel={infoLabel} right={right} />}
+    <div className={`card-body ${isFlush ? 'flush' : ''}`.trim()}>{children}</div>
+    {foot && <div className="card-foot">{foot}</div>}
   </div>;
 }
 
@@ -967,7 +965,7 @@ function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, cl
   if (idRef.current === null) idRef.current = `disclosure-${++disclosureSeq}`;
   useEffect(() => { if (isAlerting) setOpen(true); }, [isAlerting]);
 
-  return <div className={`card ${className}`.trim()}>
+  return <div className={`card ${isOpen ? '' : 'is-collapsed'} ${className}`.replace(/\s+/g, ' ').trim()}>
     <Heading className="m-0 px-4 py-1 fs-body font-normal">
       <DisclosureButton isOpen={isOpen} onToggle={() => setOpen((v) => !v)} controls={isOpen ? idRef.current : undefined}
         className="w-full text-left gap-2"
@@ -978,15 +976,15 @@ function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, cl
 }
 
 // ratio preset → base.css modifier; stacked below xl, side by side at xl.
-const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '7:5': '7-5', '3:2': '3-2', '2:1': '2-1' });
+const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '2:1': '2-1' });
 
-// layout → base.css modifier: content = each column its own height (no stretched empty box) · equal = peer cards match heights.
+// layout → base.css modifier: equal = peer cards match heights · content = each column its own height (rails, non-peer rows).
 const SPLIT_ROW_LAYOUTS = Object.freeze({ content: 'content', equal: 'equal' });
 
-// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'content' (default) | 'equal'.
-function SplitRow({ ratio = '1:1', layout = 'content', children, className = '' }) {
+// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'equal' (default) | 'content'.
+function SplitRow({ ratio = '1:1', layout = 'equal', children, className = '' }) {
   const modifier = SPLIT_ROW_RATIOS[ratio] || SPLIT_ROW_RATIOS['1:1'];
-  const layoutModifier = SPLIT_ROW_LAYOUTS[layout] || SPLIT_ROW_LAYOUTS.content;
+  const layoutModifier = SPLIT_ROW_LAYOUTS[layout] || SPLIT_ROW_LAYOUTS.equal;
 
   return <div className={`split-row split-row--${modifier} split-row--${layoutModifier} ${className}`.trim()}>{children}</div>;
 }
@@ -1726,14 +1724,44 @@ function PageErrorBanner({ sources, error, onRetry, isBusy = false, focusTargetI
   const getRecoveryTargetId = () => coveredCardIdRef.current || focusTargetId;
 
   return (
-    <div role="alert" className="card p-3 flex items-start gap-2" onFocus={handleFocus}>
-      <Icon name={TONE_ICON.crit} size={16} className="text-crit mt-0.5"/>
-      <div className="flex flex-col gap-1 min-w-0 flex-1">
-        <span className="fs-body font-medium">{copy.sentence}</span>
-        <span className="fs-meta text-dim">{copy.next}</span>
-        <ErrorDetails detail={copy.detail}/>
+    <AlertCard tone="crit" title={copy.sentence} body={copy.next} details={copy.detail} onFocus={handleFocus}
+      actions={<RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={getRecoveryTargetId}/>}/>
+  );
+}
+
+const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice', ok: 'Resolved', neutral: 'Notice' };
+
+/**
+ * The one conditional-alert card: tone rides only on the glyph well, the shell stays neutral.
+ * @param surface - 'raised' page-level card · 'inset' inside an existing card or panel
+ * @param subjects - names of affected parts, shown as neutral chips
+ * @param details - raw error kept behind a collapsed Details
+ * @param actions - up to two secondary `.btn.sm` controls
+ * @param hasLiveHost - a mounted live container announces it → no role here; else alert for crit, status otherwise
+ */
+function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, details, actions, hasLiveHost = false, onFocus, className = '' }) {
+  const role = hasLiveHost ? undefined : tone === 'crit' ? 'alert' : 'status';
+  const isInset = surface === 'inset';
+  const shell = isInset ? 'sub-card bg-sunken alert-card is-inset' : 'card alert-card';
+
+  return (
+    <div role={role} className={`${shell} ${className}`.trim()} data-tone={tone} onFocus={onFocus}>
+      <div className="alert-card-grid">
+        <span className="alert-card-well" aria-hidden="true">
+          <Icon name={TONE_ICON[tone]} size={isInset ? 14 : 16}/>
+        </span>
+        <div className="alert-card-content">
+          <span className="alert-card-title fs-body font-medium">
+            <span className="sr-only">{`${ALERT_SEVERITY_WORD[tone]}: `}</span>{title}
+          </span>
+          {body && <span className="alert-card-body fs-meta text-dim">{body}</span>}
+          {subjects?.length > 0 && (
+            <div className="alert-card-subjects">{subjects.map((subject) => <Badge key={subject}>{subject}</Badge>)}</div>
+          )}
+          <ErrorDetails detail={details}/>
+        </div>
+        {actions && <div className="alert-card-actions">{actions}</div>}
       </div>
-      <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={getRecoveryTargetId}/>
     </div>
   );
 }
@@ -1878,14 +1906,6 @@ function formatDuration(value, unit = 'sec') {
   if (sec < 60)   return `${sec}s`;
   if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
-}
-
-// byte 크기 → human-readable; 비숫자/NaN/음수 → '—'. <1KB = "N B" · 그 외 "N.N KB" (페이로드 ≤수십 KB 도메인)
-function formatBytes(bytes) {
-  const n = Number(bytes);
-  if (!Number.isFinite(n) || n < 0) return '—';
-  if (n < 1024) return `${n} B`;
-  return `${(n / 1024).toFixed(1)} KB`;
 }
 
 // K=1소수 · M/B/T=2소수 압축 · 1e3 미만 = 원값 문자열 · Math.abs 부호 무관 임계
@@ -2103,6 +2123,7 @@ const REVIEW_FLAG_REASON_META = {
   'probe-omission': { label: 'No convention probe', title: 'Code change recorded with no convention reference' },
   'unregistered-agent-probe-exempt': { label: 'Probe-exempt agent', title: 'The recorded agent never received the convention-probe instruction' },
   'scope-excess': { label: 'Outside declared scope', title: 'An edited path fell outside the file list the delegation declared' },
+  'qa-score-malformed': { label: 'Malformed QA score', title: 'The reported qa_score does not match cov=N,ins=N,instr=N,clar=N, optionally followed by ,d8=N, with each N from 1 to 5' },
 };
 
 // carrier 가 빈 구행(사유 기록 이전) — 사유를 지어내지 않고 명시적 미분류 상태로 렌더.
@@ -2158,7 +2179,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
@@ -2169,11 +2190,11 @@ window.UI = {
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,
   setShellBridge, getHarnessRead, getShellPageState, useShellPageState,
-  getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
-  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration, formatBytes,
+  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,

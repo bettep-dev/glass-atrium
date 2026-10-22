@@ -42,6 +42,9 @@ setup() {
   NEWSRC="${WORK}/newsrc"   # the staged new-release tree (test seam source)
   STATE="${WORK}/state"     # reports / baseline sandbox
   mkdir -p "${INSTALL}" "${NEWSRC}" "${STATE}"
+  # Both roots the finalize retire step reads → sandboxed, so no run reaches a live store.
+  export GA_DATA_ROOT="${WORK}/data-root"
+  export GA_TARGET_HOME="${WORK}/target-home"
 }
 
 teardown() {
@@ -326,8 +329,16 @@ STUB
     sleep 0.1
     i=$((i + 1))
   done
-  [[ -e "${WORK}/claude.ready" ]]                # updater reached the verify
-  [[ -d "${STATE}/daemon-reports/.apply-lock" ]] # lock held mid-run
+  [[ -e "${WORK}/claude.ready" ]] || {
+    echo "updater never reached the merge (no claude.ready handshake)" >&2
+    cat "${WORK}/update.log" >&2
+    return 1
+  }
+  [[ -d "${STATE}/daemon-reports/.apply-lock" ]] || {
+    echo "no .apply-lock held at SIGTERM-delivery time" >&2
+    cat "${WORK}/update.log" >&2
+    return 1
+  }
 
   kill -TERM "${UPDATE_PID}" # delivered NOW, pending while the stub is in flight
   : >"${WORK}/claude.resume" # unblock the verify so the deferred trap can fire

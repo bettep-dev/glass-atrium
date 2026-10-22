@@ -132,7 +132,7 @@ run_hook() {
   mkdir -p "${glob_dir}"
   printf '{"agentType":"glass-atrium-intel-planner"}\n' >"${glob_dir}/agent-reporter1.meta.json"
   run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"session_id\":\"sess-xyz\",\"tool_input\":{\"file_path\":\"/Users/nobody/reports/leak.md\"}}" \
-    HOME="${SANDBOX}/home"
+    HOME="${SANDBOX}/home" GA_DATA_ROOT="${SANDBOX}/home/.glass-atrium"
   [[ "${status}" -eq 2 ]] || return 1
   grep -q 'verdict=block' "${FIRED_LOG}" || return 1
 }
@@ -149,7 +149,7 @@ run_hook() {
   command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
   seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
   run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"~/monitor-root/report.md\"}}" \
-    HOME="/fixture-home" CLAUDED_DOCS_HTML_ROOT="/fixture-home/monitor-root" TMPDIR="/fixture-tmp"
+    HOME="/fixture-home" GA_DATA_ROOT="/fixture-home/.glass-atrium" CLAUDED_DOCS_HTML_ROOT="/fixture-home/monitor-root" TMPDIR="/fixture-tmp"
   [[ "${status}" -eq 0 ]] || return 1
   grep -q 'verdict=allow-monitor-root-env' "${FIRED_LOG}" || return 1
 }
@@ -158,7 +158,7 @@ run_hook() {
   command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
   seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
   run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"~/reports/leak.md\"}}" \
-    HOME="/fixture-home" CLAUDED_DOCS_HTML_ROOT="/fixture-home/monitor-root" TMPDIR="/fixture-tmp"
+    HOME="/fixture-home" GA_DATA_ROOT="/fixture-home/.glass-atrium" CLAUDED_DOCS_HTML_ROOT="/fixture-home/monitor-root" TMPDIR="/fixture-tmp"
   [[ "${status}" -eq 2 ]] || return 1
   grep -q 'verdict=block' "${FIRED_LOG}" || return 1
 }

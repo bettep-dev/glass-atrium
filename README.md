@@ -113,7 +113,7 @@ Which path it takes is the system's own call, based on the size and complexity o
 - **Self-improvement loop** — the autoagent daemon (`autoagent/`) turns accumulated outcome records and correction signals into agent-instruction patches, auto-applying only the safe ones. It sets the original aside before each apply and restores it as-is if anything goes wrong. Separately from those instruction patches, whenever a new task starts it injects the success and failure patterns learned earlier straight into that agent's session, so they are reused right away.
 - **Atrium Monitor** — a 10-screen real-time dashboard built on Fastify 5 + Prisma 7 + React 18 (`http://127.0.0.1:16145`).
 - **Direct model + budget assignment** — the monitor's **Models & budgets** screen assigns a per-domain model and a per-call USD hard cap without your having to edit the config file.
-- **Live architecture map** — the monitor's System map screen renders the 7 maintained Mermaid diagrams alongside live daemon status.
+- **Live architecture map** — the monitor's System map screen renders the canonical architecture map (one Mermaid diagram) alongside live daemon status.
 - **Wiki knowledge store** — an LLM-only store (`wiki/`) with a raw-source → curated-notes pipeline and a SQLite BM25 full-text search index. The research agents' web findings accumulate here, and it is consulted first — ahead of any new research or analysis — to reuse existing knowledge.
 - **Internal agent skills** — progressive-disclosure `SKILL.md` packages that the agents and orchestrator invoke automatically (see [Skills](#skills-the-internal-quality-layer)).
 - **Per-file symlink farm install** — idempotently creates `~/.claude/<rel>` → `~/.glass-atrium/<rel>` symlinks at the file level, not the directory level, so they coexist with user-owned files without conflict.
@@ -180,19 +180,19 @@ The body (the system prompt) is authored by **glass-atrium-meta-prompt-engineer*
 ## Monitor screens
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-dashboard.webp" alt="Dashboard" width="100%"></p>
-<p align="center"><em>Dashboard overview — today's cost, the last 30 days of spend, the token-usage trend, and the session and failure counters at a glance.</em></p>
+<p align="center"><em>Dashboard — flags stopped harness parts and spend running ahead of normal at the top, then shows tiles for harness health, 7-day task results, the agent fleet and today's spend, followed by this week's task results and runs by hour.</em></p>
 
-<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="Cost & tokens" width="100%"></p>
-<p align="center"><em>Cost & tokens — cost KPIs, the 30-day daily cost trend (with spike markers), and a burn-rate forecast.</em></p>
+<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="Cost & usage" width="100%"></p>
+<p align="center"><em>Cost & usage — first says whether today's spend is within the normal range of the 7-day average, then shows KPIs for today vs. normal, 30-day cost, cost per finished task and cache share, the daily cost trend, cost by token type and model, and the most expensive sessions.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-agents.webp" alt="Agents" width="100%"></p>
-<p align="center"><em>Agents — per-agent run counts, success rates, P95, and trend sparklines.</em></p>
+<p align="center"><em>Agents — leads with the agents unsafe to route to and the failed, over-tool-use-cap and needs-context counts, then tables the agent-task pairs with low success rates and the runs with no completion record, with per-agent P95.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-learning.webp" alt="Learning" width="100%"></p>
-<p align="center"><em>Learning — the self-improvement proposal board (pending/applied/rejected) with confidence and pre-verification results.</em></p>
+<p align="center"><em>Learning — shows the self-improvement loop's awaiting-approval, recently applied, proposable-backlog and human-held pattern counts plus instrumentation status, and splits the suggestion board into applied history and rejections by cause.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="System map" width="100%"></p>
-<p align="center"><em>System map — the maintained Mermaid architecture diagrams with a live-status overlay.</em></p>
+<p align="center"><em>System map — calls out the parts that need attention at the top, overlays per-part status rings on a diagram running from the daemons, orchestrator and agents to the safety checks, store and documents, and lists each part's state in the part-health list below.</em></p>
 
 ## License
 

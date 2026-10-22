@@ -17,6 +17,8 @@
 # TDD note: the "runtime-DATA exemption (NEW behavior)" group is RED against the
 # pre-fix hook; every "preserved protection" case is GREEN before AND after.
 
+bats_require_minimum_version 1.5.0
+
 HOOK_SH="${BATS_TEST_DIRNAME}/../enforce-foreground-harness.sh"
 
 setup() {
@@ -158,4 +160,14 @@ run_agent() {
   run_agent 'Write ~/.claude/hooks/x.sh.' true
   [[ "${status}" -eq 2 ]]
   [[ "${output}" == *'Rule 2'* ]]
+}
+
+# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
+source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
+
+@test "an interrupted block write still exits 2 with the block JSON once on stdout and nothing on stderr" {
+  jq -n '{tool_name:"Agent",tool_input:{prompt:"Edit ~/.claude/agents/x.md",run_in_background:true}}' \
+    >"${BATS_TEST_TMPDIR}/envelope"
+  FORCED_CHANNEL=stdout run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope"
+  assert_forced_block "Harness Path Protection Rule 2: foreground MANDATORY"
 }
