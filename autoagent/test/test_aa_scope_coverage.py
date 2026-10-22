@@ -243,6 +243,12 @@ _DECLARED_EDGES: tuple[DeclaredEdge, ...] = (
     ),
     DeclaredEdge(
         "autoagent/daemon_cycle.py",
+        "env=env",
+        None,
+        "_get_tier_call's os.environ plus data knobs (OTEL_METRICS_EXPORTER, output-token cap)",
+    ),
+    DeclaredEdge(
+        "autoagent/daemon_cycle.py",
         "ps_bin",
         None,
         "ps or its AUTOAGENT_PS_BIN override, not a repo file",
@@ -931,36 +937,70 @@ def _get_command_edges(scope: _ShellScope, words: list[str], inline: set[str]) -
 
 def _get_handoff_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
     """A value a child's environment receives; one the row cannot evaluate is unresolved."""
-    words = list(itertools.dropwhile(_RESERVED_WORDS.__contains__, words))
+    words = _get_command_start(_get_unredirected(words))
     if words[:1] == ["set"]:
-        allexport = any(re.fullmatch(r"-\w*a\w*", w) for w in words) or "allexport" in words
+        allexport = any(re.fullmatch(r"-\w*a\w*", w) for w in words) or any(
+            pair == ("-o", "allexport") for pair in zip(words, words[1:])
+        )
         return [Edge(scope.path, " ".join(words), None, None)] if allexport else []
     if words[:1] and words[0] in _EXPORT_VERBS:
         return _get_export_edges(scope, words)
     return _get_prefix_edges(scope, words)
 
 
+def _get_command_start(words: list[str]) -> list[str]:
+    """Words past reserved words, a ``function NAME`` header and ``time -p``."""
+    index = 0
+    while index < len(words):
+        if words[index] == "function":
+            index += 2
+        elif words[index] in _RESERVED_WORDS or words[index - 1 : index + 1] == ["time", "-p"]:
+            index += 1
+        else:
+            break
+    return words[index:]
+
+
 def _get_prefix_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
-    """Assignments and ``env`` operands before a command word; with no command, none."""
+    """Assignments before the command word, and the operands of ``env`` wherever it runs."""
+    handed = list(itertools.takewhile(_ASSIGNMENT.match, words))
+    rest = words[len(handed) :]
+    if not rest:
+        return []
+    if _is_eval(rest):
+        return [Edge(scope.path, " ".join(words), None, None)]  # its text is no parsed command
+    env = next((i for i, word in enumerate(rest) if _is_env(word)), None)
+    unread: list[Edge] = []
+    if env is not None:
+        env_handed, unread = _get_env_operands(scope, rest[env + 1 :])
+        handed += env_handed
+    return [edge for word in handed for edge in _get_assignment_edges(scope, word)] + unread
+
+
+def _is_eval(words: list[str]) -> bool:
+    command = list(itertools.dropwhile({"command", "builtin"}.__contains__, words))
+    return command[:1] == ["eval"]
+
+
+def _is_env(word: str) -> bool:
+    return posixpath.basename(_get_raw_value(word)) == "env"
+
+
+def _get_env_operands(scope: _ShellScope, words: list[str]) -> tuple[list[str], list[Edge]]:
+    """``env``'s assignments up to its command, and an option that reshapes argv as unresolved."""
     handed: list[str] = []
     unread: list[Edge] = []
-    in_env = False
     rest = iter(words)
     for word in rest:
         if _ASSIGNMENT.match(word):
             handed.append(word)
-        elif word == "env":
-            in_env = True
-        elif in_env and word == "-u":
+        elif word == "-u":
             next(rest, None)
-        elif in_env and word.startswith("-") and word not in _ENV_FLAGS:
+        elif word.startswith("-") and word not in _ENV_FLAGS:
             unread.append(Edge(scope.path, f"env {word}", None, None))  # -S, -C … reshape argv
-        elif not (in_env and word in _ENV_FLAGS):
+        elif word not in _ENV_FLAGS:
             break
-    else:
-        if not in_env:
-            return []
-    return [edge for word in handed for edge in _get_assignment_edges(scope, word)] + unread
+    return handed, unread
 
 
 def _get_export_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
@@ -992,13 +1032,19 @@ def _get_value_edges(scope: _ShellScope, raw: str, word: str) -> list[Edge]:
     value = scope.evaluate(word)
     if value is None:
         return [Edge(scope.path, raw, None, None)]
-    if value.endswith((".py", ".sh", ".bash")):
-        return [edge._replace(raw=raw) for edge in _get_target_edges(scope, [word], None)]
-    path = _get_repo_path(value) if "/" in value else None
+    return _get_handed_value_edges(scope.path, raw, value)
+
+
+def _get_handed_value_edges(source: str, raw: str, value: str) -> list[Edge]:
+    """A known value a child receives: a code file is an edge, a tree dir unresolved, data none."""
+    if "/" in value and value.endswith((".py", ".sh", ".bash")):
+        return [Edge(source, raw, _get_repo_path(value), None)]
+    path = _get_repo_path(f"{value.rstrip('/')}/") if "/" in value else value
     if path in _get_tracked():
-        return [Edge(scope.path, raw, path, None)]
-    if path and any(tracked.startswith(f"{path}/") for tracked in _get_tracked()):
-        return [Edge(scope.path, raw, None, None)]  # a dir: the child may load any file in it
+        return [Edge(source, raw, path, None)] if _get_language(path) else []
+    if "/" in value and path is not None:
+        if path == "." or any(tracked.startswith(f"{path}/") for tracked in _get_tracked()):
+            return [Edge(source, raw, None, None)]  # a dir: the child may load any file in it
     return []
 
 
@@ -1017,8 +1063,8 @@ def _get_run_edges_of(scope: _ShellScope, words: list[str], inline: set[str]) ->
     return [] if nested is None else _get_interpreter_edges(scope, words[nested:], inline)
 
 
-def _get_command_words(words: list[str]) -> list[str]:
-    """Words of a command with redirections and leading assignments or prefix words dropped."""
+def _get_unredirected(words: list[str]) -> list[str]:
+    """Words with redirections and a redirection's separate target dropped."""
     kept: list[str] = []
     skip = False
     for word in words:
@@ -1029,6 +1075,15 @@ def _get_command_words(words: list[str]) -> list[str]:
         if redirect:
             skip = redirect.end() == len(word) and not word.startswith("<<")
             continue
+        kept.append(word)
+    return kept
+
+
+def _get_command_words(words: list[str]) -> list[str]:
+    """Words of a command with redirections and leading assignments or prefix words dropped."""
+    words = _get_unredirected(words)
+    kept: list[str] = []
+    for word in words:
         if not kept and word == "command" and len(words) > 1 and words[1] in {"-v", "-V"}:
             return []
         if not kept and (word in _SHELL_PREFIX_WORDS or _ASSIGNMENT.match(word)):
@@ -1084,6 +1139,7 @@ _RUN_CALLS = frozenset(
     {"run", "Popen", "call", "check_call", "check_output", "create_subprocess_exec"}
 )
 _LOAD_CALLS = frozenset({"spec_from_file_location", "run_path"})
+_ENVIRONS = frozenset({"os.environ", "environ"})
 
 
 class _PythonScope:
@@ -1219,6 +1275,7 @@ def _get_python_edges(
             edges.extend(_get_import_edges(path, node, search_dirs))
         elif isinstance(node, ast.Call):
             edges.extend(_get_run_edges(scope, node))
+        edges.extend(_get_python_handoff_edges(scope, node))
     return edges
 
 
@@ -1281,7 +1338,7 @@ def _get_run_edges(scope: _PythonScope, node: ast.Call) -> list[Edge]:
                 scope, node.args[-1 if tail == "spec_from_file_location" else 0], None
             )
         ]
-    if tail not in _RUN_CALLS or not (name.startswith(("subprocess.", "asyncio.")) or name == tail):
+    if not _is_run_call(node):
         return []
     argv = (
         node.args[0]
@@ -1297,6 +1354,59 @@ def _get_run_edges(scope: _PythonScope, node: ast.Call) -> list[Edge]:
     else:
         return [Edge(scope.path, ast.unparse(argv), None, None)]
     return _get_argv_edges(scope, elements)
+
+
+def _is_run_call(node: ast.Call) -> bool:
+    name = ast.unparse(node.func)
+    tail = name.rsplit(".", 1)[-1]
+    return tail in _RUN_CALLS and (name.startswith(("subprocess.", "asyncio.")) or name == tail)
+
+
+def _get_python_handoff_edges(scope: _PythonScope, node: ast.AST) -> list[Edge]:
+    """Values a child's environment receives: ``env=``, ``os.environ`` writes, ``putenv``."""
+    match node:
+        case ast.Call(func=func, args=args, keywords=keywords):
+            name = ast.unparse(func)
+            env = next((k.value for k in keywords if k.arg == "env"), None)
+            if env is not None and _is_run_call(node):
+                return _get_mapping_edges(scope, "env", env)
+            if name in {f"{e}.update" for e in _ENVIRONS}:
+                pairs = [*args, *(ast.Dict([ast.Constant(k.arg)], [k.value]) for k in keywords)]
+                return [edge for arg in pairs for edge in _get_mapping_edges(scope, name, arg)]
+            if name in {"os.putenv", *(f"{e}.setdefault" for e in _ENVIRONS)} and len(args) > 1:
+                return _get_python_value_edges(scope, ast.unparse(node), args[1])
+        case ast.Assign(targets=targets, value=value):
+            return [
+                edge
+                for target in targets
+                if isinstance(target, ast.Subscript) and ast.unparse(target.value) in _ENVIRONS
+                for edge in _get_python_value_edges(scope, ast.unparse(target), value)
+            ]
+        case ast.AugAssign(target=target, value=value) if ast.unparse(target) in _ENVIRONS:
+            return _get_mapping_edges(scope, ast.unparse(target), value)
+    return []
+
+
+def _get_mapping_edges(scope: _PythonScope, prefix: str, node: ast.expr) -> list[Edge]:
+    """Items of a mapping handed to a child; ``**os.environ`` passes the inherited env through."""
+    if ast.unparse(node) in _ENVIRONS:
+        return []
+    if not isinstance(node, ast.Dict):
+        return [Edge(scope.path, f"{prefix}={ast.unparse(node)}", None, None)]
+    edges: list[Edge] = []
+    for key, value in zip(node.keys, node.values, strict=True):
+        if key is None:
+            edges.extend(_get_mapping_edges(scope, f"{prefix}**", value))
+        else:
+            edges.extend(_get_python_value_edges(scope, f"{prefix}[{ast.unparse(key)}]", value))
+    return edges
+
+
+def _get_python_value_edges(scope: _PythonScope, raw: str, node: ast.expr) -> list[Edge]:
+    value = scope.evaluate(node)
+    if value is None:
+        return [Edge(scope.path, raw, None, None)]
+    return _get_handed_value_edges(scope.path, raw, value)
 
 
 def _get_argv_edges(scope: _PythonScope, elements: list[ast.expr]) -> list[Edge]:
@@ -1495,12 +1605,86 @@ _HANDOFF_ROWS = (
     ("a plain word value", "LC_ALL=C sort", []),
     ("set -a exports every later assignment", "set -a", [("set -a", None)]),
     ("set -o allexport", "set -o allexport", [("set -o allexport", None)]),
+    ("env behind exec", f"exec env A={_UNKNOWN} ./run.sh", [(f"A={_UNKNOWN}", None)]),
+    ("env behind command", f"command env A={_UNKNOWN} ./run.sh", [(f"A={_UNKNOWN}", None)]),
+    ("env behind nohup", f"nohup env A={_UNKNOWN} ./run.sh", [(f"A={_UNKNOWN}", None)]),
+    ("env behind timeout", f"timeout 5 env A={_UNKNOWN} ./run.sh", [(f"A={_UNKNOWN}", None)]),
+    ("env by absolute path", f"/usr/bin/env A={_UNKNOWN} ./run.sh", [(f"A={_UNKNOWN}", None)]),
+    (
+        "redirect before the assignment",
+        f"2>/dev/null A={_UNKNOWN} ./run.sh",
+        [(f"A={_UNKNOWN}", None)],
+    ),
+    (
+        "redirect target as its own word",
+        f"2> /dev/null A={_UNKNOWN} ./run.sh",
+        [(f"A={_UNKNOWN}", None)],
+    ),
+    (
+        "one-line function keyword body",
+        f"function f {{ A={_UNKNOWN} ./run.sh; }}",
+        [(f"A={_UNKNOWN}", None)],
+    ),
+    ("one-line f() body", f"f() {{ A={_UNKNOWN} ./run.sh; }}", [(f"A={_UNKNOWN}", None)]),
+    ("time -p", f"time -p A={_UNKNOWN} ./run.sh", [(f"A={_UNKNOWN}", None)]),
+    (
+        "eval runs text the row cannot read",
+        f'eval "export A={_UNKNOWN}"',
+        [(f'eval "export A={_UNKNOWN}"', None)],
+    ),
+    (
+        "an install root",
+        'export R="${HOME}/.glass-atrium"',
+        [('R="${HOME}/.glass-atrium"', None)],
+    ),
+    (
+        "a tracked data file",
+        'export B="${HOME}/.glass-atrium/agents/glass-atrium-qa-code-reviewer.md"',
+        [],
+    ),
+    ("an assignment after a wrapper is its command name", f"exec A={_UNKNOWN} ./run.sh", []),
+    ("env as a plain argument", "grep env notes.txt", []),
+    ("set +o allexport", "set +o allexport", []),
     ("plain assignment", f"A={_UNKNOWN}", []),
     ("local without -x", f"local A={_UNKNOWN}", []),
     ("export -n removes the export", f"A={_UNKNOWN}\nexport -n A", []),
     ("declare +x removes the export", f"A={_UNKNOWN}\ndeclare +x A", []),
     ("export -f hands off a function of this file", "export -f helper", []),
     ("set +a", "set +a", []),
+)
+
+_PYTHON_HANDOFF_ROWS = (
+    ("env= value unknown", 'subprocess.run(["x"], env={"A": pick()})', [("env['A']", None)]),
+    (
+        "env= value a code path",
+        'subprocess.run(["x"], env={"LIB": "hooks/lib/style_ref_match.py"})',
+        [("env['LIB']", "hooks/lib/style_ref_match.py")],
+    ),
+    (
+        "env= carrying os.environ and data",
+        'subprocess.run(["x"], env={**os.environ, "A": "1"})',
+        [],
+    ),
+    (
+        "env= a mapping the row cannot read",
+        'subprocess.run(["x"], env=child_env)',
+        [("env=child_env", None)],
+    ),
+    ("os.environ item write", 'os.environ["A"] = pick()', [("os.environ['A']", None)]),
+    (
+        "os.environ.update",
+        'os.environ.update({"A": pick()}, B=pick())',
+        [("os.environ.update['A']", None), ("os.environ.update['B']", None)],
+    ),
+    (
+        "os.environ.setdefault",
+        'os.environ.setdefault("A", pick())',
+        [("os.environ.setdefault('A', pick())", None)],
+    ),
+    ("os.putenv", 'os.putenv("A", pick())', [("os.putenv('A', pick())", None)]),
+    ("an environ read", 'value = os.environ["A"]', []),
+    ("a run call with no env=", 'subprocess.run(["x"])', []),
+    ("env= on a call that runs no child", 'render(env={"A": pick()})', []),
 )
 
 
@@ -1515,6 +1699,19 @@ class HandoffShapeTest(unittest.TestCase):
                     (edge.raw, edge.target)
                     for words in scope.commands
                     for edge in _get_handoff_edges(scope, words)
+                ]
+
+                self.assertEqual(edges, expected)
+
+    def test_every_value_a_python_child_environment_receives_is_an_edge(self) -> None:
+        for name, text, expected in _PYTHON_HANDOFF_ROWS:
+            with self.subTest(name):
+                tree = ast.parse(text)
+                scope = _PythonScope("hooks/fixture.py", tree)
+                edges = [
+                    (edge.raw, edge.target)
+                    for node in ast.walk(tree)
+                    for edge in _get_python_handoff_edges(scope, node)
                 ]
 
                 self.assertEqual(edges, expected)
