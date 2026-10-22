@@ -595,6 +595,33 @@ seed_baseline_hashed() {
   [[ "$(cat "${INSTALL}/agents/dev-new.md")" == "new agent body" ]] || return 1
 }
 
+@test "roster gate reports both add-side directions when the change list runs past one pipe buffer" {
+  # both directions first, then ~1 MB of adds: an early-exit prefix match leaves its writer mid-write
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    update_detect_roster_changes() {
+      printf "add dev-new\ndeleted-locally dev-gone\n"
+      awk "BEGIN { for (i = 0; i < 60000; i++) print \"add dev-filler-\" i }"
+    }
+    update_log() { case "$1" in roster*) printf "%s\n" "$1" ;; esac; }
+    update_roster_gate unused-manifest unused-registry "${INSTALL}"
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"roster ADD only"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"roster deleted-locally"* ]] || {
+    echo "${output}"
+    return 1
+  }
+}
+
 @test "roster gate still DIES on the remove of a release that both adds and removes" {
   # The split is by DIRECTION, not by presence of an add: a release carrying any
   # vendor removal dies on that removal even when it also ships a new agent, and
@@ -1598,6 +1625,34 @@ PLIST
   '
   [ "$status" -eq 8 ] # single-active DB guard → named exit 8
   [[ "$output" == *"another update is already in-progress"* ]]
+}
+
+@test "headless: a unique-violation error past one pipe buffer still loud-fails exit 8" {
+  # the violation first, then ~1 MB of detail: an early-exit match leaves its writer mid-write
+  cat >"${WORK}/psql" <<'MOCK'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'ERROR: duplicate key value violates unique constraint "update_job_single_active_uniq"\n' >&2
+awk 'BEGIN { for (i = 0; i < 60000; i++) print "DETAIL: conflicting in-progress row " i }' >&2
+exit 1
+MOCK
+  chmod +x "${WORK}/psql"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
+    _update_headless=1
+    update_job_begin
+  '
+  [[ "${status}" -eq 8 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"another update is already in-progress"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "P3 headless: ATRIUM_UPDATE_JOB_ID adopts the route-created row (no INSERT, heartbeat only)" {
