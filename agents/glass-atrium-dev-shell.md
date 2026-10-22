@@ -74,7 +74,7 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 - MUST NOT self-approve — quality gate is ShellCheck exit code, not LLM judgment
 - MUST check worktree state with `git diff HEAD <paths>` before editing, to detect and skip already-applied fixes
 - MUST extend `SYMLINK_EXCLUDE_PREFIXES` (`lib/ga-env.sh`) when adding a test or data root, and verify the new prefix matches before committing — an unmatched root drifts into the `~/.claude` symlink farm silently
-- MUST check merge status before `gh pr merge` or `gh pr update-branch` — CONFLICTING state (via `gh pr view --json mergeStateStatus`) requires manual resolution, and retrying update-branch will not clear it
+- MUST check merge status before `gh pr update-branch` — a CONFLICTING state (via `gh pr view --json mergeStateStatus`) requires manual resolution, and retrying update-branch will not clear it
 
 ### Budget sizing
 
@@ -90,14 +90,12 @@ Both rules below are conditional on the worktree contract the delegation states;
 
 | Contract stated in the delegation | Incremental commit per file-group | Whole-tree manifest regeneration |
 |---|---|---|
-| INDEX OWNER | REQUIRED — commit as you go, preserving progress against budget exhaustion | Still FORBIDDEN unless you also hold the tree exclusively (see the barrier note below) |
+| INDEX OWNER | REQUIRED — commit as you go, preserving progress against budget exhaustion | Still FORBIDDEN unless you also hold the tree exclusively |
 | SHARED, or no contract stated | FORBIDDEN — checkpoint to the progress file, report uncommitted paths in `[COMPLETION]` | FORBIDDEN — scope the run to affected test paths, report the stale-manifest need in `[COMPLETION]` |
 
 - Handing your edits to the index owner to commit is NOT the fallback — an agent commits only its OWN work.
 - Checkpoint destination: `~/.claude-personal/projects/<home-encoded>/memory/progress-{task-name}.md`.
-- **Regeneration is a BARRIER, not an index operation**: `generate-manifest.sh` reads the working tree rather than the index, so it is safe only when no other agent is writing anywhere in that tree.
-  - An INDEX OWNER grant covers sole index mutation, not sole presence, so it does not by itself clear the barrier.
-- A stale manifest cascades as bats failures, so regenerate fresh before a comprehensive suite run when, and only when, you hold the tree.
+- A stale manifest cascades as bats failures, so regenerate fresh before a comprehensive suite run when, and only when, you hold the tree exclusively.
 <!-- EDITABLE:END -->
 
 ## Absolute Rules
@@ -105,8 +103,11 @@ Both rules below are conditional on the worktree contract the delegation states;
 - **Strict mode mandatory**: `#!/usr/bin/env bash` + `set -Eeuo pipefail` + `IFS=$'\n\t'`
 - **Early-exit pipe readers**: in a `hooks/` shell file, a pipe whose last reader can stop before EOF (`grep -q`, `head`) runs through `drain_after` (`hooks/lib/pipe-drain.sh`), or ends in `|| true` when no branch reads its status
   - Why: under `pipefail`, a writer with a write left when the reader exits dies of SIGPIPE, and 141 replaces the reader's verdict — a multi-write writer (a multi-line builtin value is one) races at any size; one write within the 64 KiB pipe capacity is safe.
-  - Backing: `scripts/audit-pipe-drain.sh` fails CI only on the readers it models — `grep` (or `egrep`, `fgrep`) with `-q`/`-m` (or `--quiet`, `--silent`, `--max-count`), `head`, an `awk` whose quoted program holds `exit`, and the helpers in its `READER_HELPERS` list — `hooks/test/` excluded.
-    - Any other early reader is honor-system — for example `sed` with `q`, `awk -f`, or a wrapping helper missing from that list.
+  - Backing: `scripts/audit-pipe-drain.sh` fails CI only on the readers it models, each the first word of a pipe stage or the word after `drain_after`, `hooks/test/` excluded:
+    - `grep` (or `egrep`, `fgrep`) with `-q`/`-m` (or `--quiet`, `--silent`, `--max-count`), and `head`.
+    - `awk` (or `gawk`, `mawk`, `nawk`) with any quoted argument holding the word `exit` — in practice its program; a double-quoted program spanning lines counts only an `exit` on its first line.
+    - The helpers in its `READER_HELPERS` list.
+    - Any other early reader is honor-system — for example `sed` with `q`, `awk -f`, a reader behind a prefix (`LC_ALL=C grep -q`), or a wrapping helper missing from `READER_HELPERS`.
 - **Interrupted builtin writes**: in every shell file, a write that carries a verdict or decides the exit is one an interrupt cannot reach, or its shell owns no un-waited child
   - In a hook, every write on the block path, the block write included, is one an interrupt cannot reach.
     - A hook's block path gets no alternative: reading the hook rules out neither an inherited nor an external SIGCHLD.
@@ -118,7 +119,7 @@ Both rules below are conditional on the worktree contract the delegation states;
   - `|| true` on an in-shell write alone keeps the exit but can lose a long message, or flush it later onto another channel.
   - A verdict pipe's writer side owns no un-waited child: a builtin write of a variable forks nothing; a writer side that starts a child it does not wait on (a backgrounded `&` job or a `<( )`) before it writes is exposed, while a `$( )` is waited, so it is not.
   - Reach: every shell file, not only `hooks/` — the fault needs only errexit and an un-waited child, which `lib/` and `scripts/` code owns as well.
-  - Backing: honor-system — no auditor models this class; `hooks/test/lib/forced-write.bash` drives a forced interrupt for a red-first row.
+  - Backing: honor-system — no auditor models this class; `hooks/test/lib/forced-write.bash` forces the interrupt for a hook row — run the row red first, then commit it asserting the fixed state.
 
 ## Tech Stack
 
@@ -173,7 +174,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 - `${ cmd; }` runs `cmd` in the current shell (no fork) and substitutes its stdout — replaces `$( cmd )` for hot-path commands where forking dominates cost.
 - `${| cmd; }` stores the result in `REPLY` instead of substituting — useful for repeated reads without re-parsing.
 - Backward compatibility: any script targeting Bash 3.2 (macOS default) MUST gate these forms behind a version check; the parser ERRORS on older Bash.
-- Pattern: `if ((BASH_VERSINFO[0] >= 5 && BASH_VERSINFO[1] >= 3)); then result=${ heavy_cmd; }; else result=$(heavy_cmd); fi`
+- Pattern: `if ((BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 3))); then result=${ heavy_cmd; }; else result=$(heavy_cmd); fi`
 
 ### Portability (macOS BSD vs GNU)
 
@@ -257,6 +258,7 @@ Any Guardrails violation is a red flag — scan those first. These have no Guard
 | macOS/Linux divergence | Branch via `command -v gsed` / `uname -s` |
 | Bash 3.2 incompatibility | Replace with 3.2 idiom or add version guard |
 | `set -e` unexpected exit | Identify exception rule → use `|| true` or restructure |
+| `printf`/`echo`: `write error: Interrupted system call` | Apply Absolute Rules **Interrupted builtin writes** write form; child removal only outside a hook's block path |
 | Temp file leak | Verify `trap cleanup EXIT` before resource creation |
 | HITL trigger (recursive-force deletion, `sudo`) | Halt → request user confirmation with diff preview |
 | SC2259 (`python3 -c` + heredoc conflict) | Apply Key Patterns `python3 -c` + stdin form (capture source, pass data via `<<<`) |

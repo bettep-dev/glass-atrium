@@ -486,6 +486,10 @@ class ExitCode(IntEnum):
     AA_START_REFUSED = 14
     # writing cycle refused before any stage — the code tree is not its install
     CYCLE_INSTALL_REFUSED = 15
+    # --aa-invalidate refused, nothing written — the stderr line names the AA.REFUSAL cause
+    AA_INVALIDATION_REFUSED = 16
+    # --aa-invalidate on the open start without --confirm-open-aa, nothing written — irreversible
+    AA_INVALIDATION_UNCONFIRMED = 17
 
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
@@ -2287,9 +2291,10 @@ def _put_roster_dormant(pattern_id: int, *, live: bool) -> None:
     """Move an off-roster intake row to 'dormant' so it stops re-entering intake.
 
     'dormant' is non-terminal: the aggregator's next passing pair returns it to
-    'identified', and an agent still off the roster is moved again by the next
-    writing cycle. A not-matched answer (row moved since the read, or a schema
-    without the label) leaves the row in whatever status it holds.
+    'identified' only once its agent is on the agent registry, or while that
+    registry is unreadable; an agent still off the roster is then moved again by
+    the next writing cycle. A not-matched answer (row moved since the read, or a
+    schema without the label) leaves the row in whatever status it holds.
     """
     if not live:
         sys.stderr.write(
@@ -8744,15 +8749,20 @@ POWER = SimpleNamespace(
     ),
     # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
     CHECK_EVAL_PREFIX="power-check-",
-    # latest design-effect row per agent and metric key among A/As whose aa-result passed; the start
-    # id in both dedupe keys joins them → one join for whole-roster and subset A/As alike
+    # latest design-effect row per agent and metric key among A/As whose aa-result passed, with
+    # its start id; the start id in the dedupe keys joins them → one join for whole-roster and
+    # subset A/As alike. An invalidated start drops out in the join, before DISTINCT ON picks →
+    # an older valid pass stays readable under it
     DESIGN_EFFECT_SQL=(
         "SELECT DISTINCT ON (effect.agent, effect.payload->>'metric_key') "
-        "effect.agent, effect.payload "
+        "effect.agent, effect.payload, split_part(effect.dedupe_key, ':', 2)::bigint "
         "FROM core.autoagent_trial_ledger AS effect "
         "JOIN core.autoagent_trial_ledger AS aa_result "
         "ON aa_result.dedupe_key = %s::text || split_part(effect.dedupe_key, ':', 2) "
         "AND aa_result.payload->>'overall' = %s "
+        "AND NOT EXISTS (SELECT 1 FROM core.autoagent_trial_ledger AS invalidation "
+        "WHERE invalidation.event = %s "
+        "AND invalidation.dedupe_key = %s::text || split_part(effect.dedupe_key, ':', 2)) "
         "WHERE effect.event = %s AND effect.agent = ANY(%s) "
         "ORDER BY effect.agent, effect.payload->>'metric_key', "
         "effect.recorded_at DESC, effect.id DESC"
@@ -8786,6 +8796,7 @@ class PowerPass(NamedTuple):
     design_effect: float
     required: float  # both arms' units at design_effect
     spawns: list[SpawnFacts]
+    aa_start_id: int | None  # the A/A start design_effect came from
 
 
 class PowerResult(NamedTuple):
@@ -8801,6 +8812,8 @@ class PowerInputs(NamedTuple):
     design_effects: dict[tuple[str, str], float]
     # design effect unusable: every pair on a ledger fault, one pair on an invalid stored row
     unchecked_keys: frozenset[tuple[str, str]]
+    # (agent, metric key) → the A/A start its design effect came from
+    aa_start_ids: dict[tuple[str, str], int]
 
 
 class PowerSubject(NamedTuple):
@@ -8862,7 +8875,10 @@ def _get_pattern_power_verdict(
     power_pass = None
     design_effect, required = check.design_effect, check.units.required
     if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
-        power_pass = PowerPass(pattern, floor.baseline, design_effect, required, spawns)
+        aa_start_id = inputs.aa_start_ids.get(subject.key)
+        power_pass = PowerPass(
+            pattern, floor.baseline, design_effect, required, spawns, aa_start_id
+        )
     method_b = _get_method_b_baseline(subject, inputs, windows)
     return check.verdict, _get_pattern_power_detail(subject, check, method_b), power_pass
 
@@ -8947,11 +8963,15 @@ def _read_power_history(
 
 def _read_power_design_effects(
     agents: list[str],
-) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]]]:
-    """((agent, metric key) → design effect of its latest passed A/A's row, unchecked pairs).
+) -> tuple[
+    dict[tuple[str, str], float], frozenset[tuple[str, str]], dict[tuple[str, str], int]
+]:
+    """((agent, metric key) → design effect of its latest passed A/A's row, unchecked pairs,
+    pair → that row's start id).
 
-    WARN per fault. A pair with no row from a passed A/A is absent (design-unmeasured). A read
-    fault — the table absent on a migrate-failed schema included — fails every pair closed.
+    WARN per fault. A pair with no row from a passed, uninvalidated A/A is absent
+    (design-unmeasured). A read fault — the table absent on a migrate-failed schema included —
+    fails every pair closed.
     """
     if not HAS_PG_LOOP_WRITE:
         cause = "trial ledger unreadable: PG helper import failed"
@@ -8961,7 +8981,14 @@ def _read_power_design_effects(
                 event = TRIAL_LEDGER.EVENT
                 cur.execute(
                     POWER.DESIGN_EFFECT_SQL,
-                    (f"{event.AA_RESULT}:", AA.VERDICT.PASS, event.AA_ARM_DESIGN_EFFECT, agents),
+                    (
+                        f"{event.AA_RESULT}:",
+                        AA.VERDICT.PASS,
+                        event.AA_INVALIDATION,
+                        f"{event.AA_INVALIDATION}:",
+                        event.AA_ARM_DESIGN_EFFECT,
+                        agents,
+                    ),
                 )
                 rows = cur.fetchall()
         except Exception as exc:  # noqa: BLE001 — any read fault is an outage → fail closed
@@ -8969,13 +8996,16 @@ def _read_power_design_effects(
         else:
             return _get_design_effects(rows)
     _warn_power_unchecked(cause, "every floor-passing keyed intake pattern")
-    return {}, frozenset((agent, key) for agent in agents for key in METRIC_KEYS)
+    return {}, frozenset((agent, key) for agent in agents for key in METRIC_KEYS), {}
 
 
 def _get_design_effects(
-    rows: list[tuple[str, dict]],
-) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]]]:
-    """((agent, metric key) → design effect read, pairs whose stored row is not a design effect).
+    rows: list[tuple[str, dict, int]],
+) -> tuple[
+    dict[tuple[str, str], float], frozenset[tuple[str, str]], dict[tuple[str, str], int]
+]:
+    """((agent, metric key) → design effect read, pairs whose stored row is not a design effect,
+    pair → the start id of the row read).
 
     A row keyed outside DESIGN_EFFECT_ROW_KEYS — the pre-split union-event `emit_failure` row
     included — was measured under no current definition and sizes nothing.
@@ -8983,13 +9013,15 @@ def _get_design_effects(
     metric_keys = {row_key: key for key, row_key in DESIGN_EFFECT_ROW_KEYS.items()}
     design_effects: dict[tuple[str, str], float] = {}
     invalid_keys: set[tuple[str, str]] = set()
-    for agent, payload in rows:
+    aa_start_ids: dict[tuple[str, str], int] = {}
+    for agent, payload, aa_start_id in rows:
         row_key = payload.get("metric_key") if isinstance(payload, dict) else None
         if isinstance(payload, dict) and row_key not in metric_keys:
             continue
         metric_key = metric_keys.get(row_key)
         try:
             design_effects[(agent, metric_key)] = _get_stored_design_effect(payload)
+            aa_start_ids[(agent, metric_key)] = aa_start_id
         except (ArithmeticError, AttributeError, TypeError, ValueError) as exc:
             invalid_keys.add((agent, metric_key))
             _warn_power_unchecked(
@@ -8997,7 +9029,7 @@ def _get_design_effects(
                 f"{_describe_fault(exc)}",
                 "every floor-passing intake pattern of the agent on that key",
             )
-    return design_effects, frozenset(invalid_keys)
+    return design_effects, frozenset(invalid_keys), aa_start_ids
 
 
 def _get_stored_design_effect(payload: dict) -> float:
@@ -9077,12 +9109,23 @@ def _send_power_verdict(
 
 
 SHADOW = SimpleNamespace(
-    # latest pre-registration per (agent, pattern, metric key); DISTINCT ON keeps one row each
+    # latest pre-registration per (agent, pattern, metric key); DISTINCT ON keeps one row each.
+    # Dropped after the pick, as not current: one sized on an invalidated start, or one recording
+    # no start written at or after an invalidated start's passed aa-result
     PREREGISTRATION_SQL=(
+        "SELECT agent, learning_pattern_id, metric_key, trial_key, payload, recorded_at FROM ("
         "SELECT DISTINCT ON (agent, learning_pattern_id, payload->>'metric_key') "
-        "agent, learning_pattern_id, payload->>'metric_key', trial_key, payload, recorded_at "
-        "FROM core.autoagent_trial_ledger WHERE event = %s AND agent = ANY(%s) "
+        "agent, learning_pattern_id, payload->>'metric_key' AS metric_key, trial_key, payload, "
+        "recorded_at FROM core.autoagent_trial_ledger WHERE event = %s AND agent = ANY(%s) "
         "ORDER BY agent, learning_pattern_id, payload->>'metric_key', recorded_at DESC, id DESC"
+        ") AS latest WHERE NOT EXISTS (SELECT 1 FROM core.autoagent_trial_ledger AS invalidation "
+        "WHERE invalidation.event = %s AND ("
+        "invalidation.payload->>'start_id' = latest.payload->>'aa_start_id' "
+        "OR (latest.payload->>'aa_start_id' IS NULL AND EXISTS ("
+        "SELECT 1 FROM core.autoagent_trial_ledger AS aa_result "
+        "WHERE aa_result.dedupe_key = %s::text || (invalidation.payload->>'start_id') "
+        "AND aa_result.payload->>'overall' = %s "
+        "AND aa_result.recorded_at <= latest.recorded_at))))"
     ),
     # W = 0 on every install → each spawn is its own task unit
     TASK_WINDOW=timedelta(0),
@@ -9193,6 +9236,7 @@ def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime
         "baseline": {"events": baseline.events, "spawns": baseline.spawns},
         "maximum_per_arm": _get_maximum_sample_size(baseline.events, baseline.spawns),
         "design_effect": power_pass.design_effect,
+        "aa_start_id": power_pass.aa_start_id,
         "required_units": power_pass.required,
         "boundaries": list(boundaries),
         "looks": looks,
@@ -9238,8 +9282,17 @@ def _read_shadow_trials(
     agents = sorted({power_pass.pattern.agent for power_pass in passes})
     try:
         with _pg_connect() as conn, conn.cursor() as cur:
-            event = TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION
-            cur.execute(SHADOW.PREREGISTRATION_SQL, (event, agents))
+            event = TRIAL_LEDGER.EVENT
+            cur.execute(
+                SHADOW.PREREGISTRATION_SQL,
+                (
+                    event.SHADOW_PREREGISTRATION,
+                    agents,
+                    event.AA_INVALIDATION,
+                    f"{event.AA_RESULT}:",
+                    AA.VERDICT.PASS,
+                ),
+            )
             rows = cur.fetchall()
     except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
         _warn_shadow(
@@ -9329,12 +9382,15 @@ _INSTALL_ROOT = Path(__file__).resolve().parent.parent
 
 AA = SimpleNamespace(
     SQL=SimpleNamespace(
-        # latest aa-start → its id, whether its aa-result exists, the fingerprint and recorded_at
+        # latest aa-start → its id, whether its aa-result or invalidation exists (either closes
+        # it), the fingerprint and recorded_at
         # (window start) of the newest aa-start / aa-restart row since it, the start's frozen
         # duration, and that newest row's id (the window's arm salt)
         LATEST_START=(
             "SELECT s.id, EXISTS (SELECT 1 FROM core.autoagent_trial_ledger r "
-            "WHERE r.event = %(result)s AND r.dedupe_key = %(result_prefix)s::text || s.id::text), "
+            "WHERE (r.event = %(result)s AND r.dedupe_key = %(result_prefix)s::text || s.id::text) "
+            "OR (r.event = %(invalidation)s "
+            "AND r.dedupe_key = %(invalidation_prefix)s::text || s.id::text)), "
             "f.payload->'fingerprint', f.recorded_at, s.payload->'duration', f.id "
             "FROM core.autoagent_trial_ledger s CROSS JOIN LATERAL ("
             "SELECT id, payload, recorded_at FROM core.autoagent_trial_ledger "
@@ -9347,6 +9403,13 @@ AA = SimpleNamespace(
             "AND o.session_id IS NOT NULL AND EXISTS (SELECT 1 FROM core.spawn_manifest m "
             "WHERE m.agent_id = o.agent_id)) FROM core.outcomes o "
             "WHERE o.agent = ANY(%(agents)s) AND o.record_ts >= %(start)s AND o.record_ts < %(end)s"
+        ),
+        # whether an aa-start row carries the id → the cause its invalidation records, NULL = none
+        INVALIDATION=(
+            "SELECT EXISTS (SELECT 1 FROM core.autoagent_trial_ledger "
+            "WHERE event = %(start)s AND id = %(start_id)s), "
+            "(SELECT payload->>'cause' FROM core.autoagent_trial_ledger "
+            "WHERE event = %(event)s AND dedupe_key = %(dedupe_key)s)"
         ),
         # the given salt ids that name an aa-start or aa-restart row
         SALT_ROWS=(
@@ -9447,6 +9510,9 @@ AA = SimpleNamespace(
         ALREADY_OPEN="already-open",
         LEDGER_UNREADABLE="ledger-unreadable",
         LEDGER_UNWRITABLE="ledger-unwritable",
+        UNKNOWN_START="unknown-start",
+        CAUSE_MISSING="cause-missing",
+        OPEN_UNCONFIRMED="open-unconfirmed",
     ),
 )
 
@@ -9617,6 +9683,8 @@ def _read_latest_aa_start() -> AaStart | None:
         "start": TRIAL_LEDGER.EVENT.AA_START,
         "result": TRIAL_LEDGER.EVENT.AA_RESULT,
         "result_prefix": f"{TRIAL_LEDGER.EVENT.AA_RESULT}:",
+        "invalidation": TRIAL_LEDGER.EVENT.AA_INVALIDATION,
+        "invalidation_prefix": f"{TRIAL_LEDGER.EVENT.AA_INVALIDATION}:",
         "fingerprinted": [TRIAL_LEDGER.EVENT.AA_START, TRIAL_LEDGER.EVENT.AA_RESTART],
     }
     with _pg_connect() as conn, conn.cursor() as cur:
@@ -9696,6 +9764,106 @@ def _refuse_aa_start(reason: str, detail: str) -> int:
         f"[daemon-cycle] --aa-start refused: {reason} — {detail}; nothing written\n"
     )
     return ExitCode.AA_START_REFUSED
+
+
+def invalidate_aa(start_id: int, cause: str, *, is_confirmed: bool = False) -> int:
+    """--aa-invalidate: record one A/A start void-by-defect → 0, a repeat reporting the recorded
+    cause; refused with a named reason and nothing written → ExitCode.AA_INVALIDATION_REFUSED.
+
+    The record closes an open start, and its passed result's design effects size nothing. The open
+    start carries the running A/A and its closure is irreversible (the ledger is append-only), so
+    it needs is_confirmed — unconfirmed → ExitCode.AA_INVALIDATION_UNCONFIRMED; a closed start
+    needs none. Readers honour the record only on installed code that carries them.
+    """
+    cause = cause.strip()
+    if not cause:
+        return _refuse_aa_invalidation(AA.REFUSAL.CAUSE_MISSING, "--cause names the defect")
+    if not HAS_PG_LOOP_WRITE:
+        return _refuse_aa_invalidation(AA.REFUSAL.LEDGER_UNWRITABLE, "PG helper import failed")
+    try:
+        is_started, _ = _read_aa_invalidation(start_id)
+        latest = _read_latest_aa_start()
+    except Exception as exc:  # noqa: BLE001 — refused by name, never a traceback
+        return _refuse_aa_invalidation(AA.REFUSAL.LEDGER_UNREADABLE, _describe_fault(exc))
+    if not is_started:
+        return _refuse_aa_invalidation(AA.REFUSAL.UNKNOWN_START, f"no aa-start row {start_id}")
+    # only the latest start can be open — the one _read_open_aa_start would return
+    is_open = latest is not None and latest.id == start_id and not latest.is_closed
+    if is_open and not is_confirmed:
+        return _refuse_unconfirmed_aa_invalidation(start_id)
+    return _write_aa_invalidation(start_id, cause, is_open=is_open)
+
+
+def _refuse_unconfirmed_aa_invalidation(start_id: int) -> int:
+    sys.stderr.write(
+        f"[daemon-cycle] --aa-invalidate refused: {AA.REFUSAL.OPEN_UNCONFIRMED} — A/A {start_id} "
+        "is the running A/A (its start reads as open), and invalidating it closes it "
+        "irreversibly; rerun with --confirm-open-aa to close it; nothing written\n"
+    )
+    return ExitCode.AA_INVALIDATION_UNCONFIRMED
+
+
+def _write_aa_invalidation(start_id: int, cause: str, *, is_open: bool) -> int:
+    try:
+        landed = _pg_write_trial_ledger_row(
+            TRIAL_LEDGER.EVENT.AA_INVALIDATION,
+            TRIAL_LEDGER.ACTOR.AA,
+            {"start_id": start_id, "cause": cause},
+            dedupe_key=_get_aa_invalidation_key(start_id),
+        )
+    except Exception as exc:  # noqa: BLE001 — refused by name, never a traceback
+        return _refuse_aa_invalidation(AA.REFUSAL.LEDGER_UNWRITABLE, _describe_fault(exc))
+    if landed != 1:
+        return _report_aa_invalidation(start_id)
+    closure = "it was the open A/A, now closed irreversibly" if is_open else "it reads as closed"
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: A/A {start_id} invalidated (cause: {cause!r}); {closure}, "
+        "and its result sizes nothing\n"
+    )
+    return 0
+
+
+def _report_aa_invalidation(start_id: int) -> int:
+    """A write that landed nothing: the writer returns 0 for a taken key and for an absent table
+    alike → the recorded invalidation read back → 0; none → refused."""
+    try:
+        _, recorded = _read_aa_invalidation(start_id)
+    except Exception as exc:  # noqa: BLE001 — refused by name, never a traceback
+        return _refuse_aa_invalidation(AA.REFUSAL.LEDGER_UNREADABLE, _describe_fault(exc))
+    if recorded is None:
+        return _refuse_aa_invalidation(
+            AA.REFUSAL.LEDGER_UNWRITABLE, "the write landed no row and none reads back"
+        )
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: A/A {start_id} already invalidated (cause: {recorded!r}); "
+        "nothing written\n"
+    )
+    return 0
+
+
+def _read_aa_invalidation(start_id: int) -> tuple[bool, str | None]:
+    """(an aa-start row carries the id, its invalidation's cause | None). Raises on a PG fault."""
+    params = {
+        "start": TRIAL_LEDGER.EVENT.AA_START,
+        "start_id": start_id,
+        "event": TRIAL_LEDGER.EVENT.AA_INVALIDATION,
+        "dedupe_key": _get_aa_invalidation_key(start_id),
+    }
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(AA.SQL.INVALIDATION, params)
+        is_started, cause = cur.fetchone()
+    return bool(is_started), cause
+
+
+def _get_aa_invalidation_key(start_id: int) -> str:
+    return f"{TRIAL_LEDGER.EVENT.AA_INVALIDATION}:{start_id}"
+
+
+def _refuse_aa_invalidation(reason: str, detail: str) -> int:
+    sys.stderr.write(
+        f"[daemon-cycle] --aa-invalidate refused: {reason} — {detail}; nothing written\n"
+    )
+    return ExitCode.AA_INVALIDATION_REFUSED
 
 
 def run_aa_stage(
@@ -10635,6 +10803,7 @@ def _read_recomputed_break_evens(agents: list[str], now: datetime) -> dict[str, 
         *_pg_read_spawn_facts(agents, windows),
         dict.fromkeys(((agent, INSTRUMENT.METRIC_KEY) for agent in agents), 1.0),
         frozenset(),
+        {},
     )
     break_evens: dict[str, float] = {}
     for agent in agents:
@@ -10767,14 +10936,16 @@ def _get_sample_ratio_p(control: int, treatment: int) -> float:
 
 
 def get_aa_delivery_criterion(armed: Mapping[str, Sequence[ArmedSpawn]]) -> AaCriterion:
-    """Delivery: the hook marked delivered on at least MINIMUM_DELIVERY_PERCENT of the treatment
-    spawns and on no control spawn; no treatment spawn fails. Hook arms that differ from the
-    recomputed arm are recorded per agent and decide nothing."""
+    """Delivery: at least MINIMUM_DELIVERY_PERCENT of the treatment spawns had every activation
+    delivered with one and the same hash, and no control spawn had any activation marked
+    delivered, hash or not; no treatment spawn fails. Hook arms that differ from the recomputed arm are recorded per agent
+    and decide nothing."""
     items = [item for agent_items in armed.values() for item in agent_items]
     treatment = [item for item in items if item.arm == 1]
     delivered = sum(item.spawn.is_delivered is True for item in treatment)
+    # any activation, not every one: this count is the only check on control contamination
     control_delivered = sum(
-        item.spawn.is_delivered is True for item in items if item.arm == 0
+        item.spawn.is_any_delivered is True for item in items if item.arm == 0
     )
     is_met = (
         bool(treatment)
@@ -13966,6 +14137,27 @@ def _main(argv: list[str]) -> int:
         help="Open an A/A on the installed manifest fingerprint (one aa-start ledger row), "
         "then exit (no cycle). Refused with exit 14 and a named reason; takes no --dry-run.",
     )
+    parser.add_argument(
+        "--aa-invalidate",
+        type=int,
+        default=None,
+        metavar="START_ID",
+        help="Record the A/A of START_ID void-by-defect (one aa-invalidation ledger row naming "
+        "--cause), then exit (no cycle): an open start reads as closed, and its result's design "
+        "effects size nothing. Refused with exit 16 and a named reason; the open start without "
+        "--confirm-open-aa refused with exit 17; takes no --dry-run.",
+    )
+    parser.add_argument(
+        "--cause",
+        default=None,
+        help="With --aa-invalidate: the defect that voids the A/A.",
+    )
+    parser.add_argument(
+        "--confirm-open-aa",
+        action="store_true",
+        help="With --aa-invalidate: confirm invalidating the OPEN start, which irreversibly "
+        "closes the running A/A. A closed start needs no confirmation.",
+    )
     args = parser.parse_args(argv)
 
     if args.aa_start:
@@ -13973,6 +14165,14 @@ def _main(argv: list[str]) -> int:
             parser.error("--aa-start writes the ledger; it takes no --dry-run")
         # Answered BEFORE the pause gate: its clean exit 0 would read as a started A/A.
         return start_aa(args.agents_dir)
+
+    if args.aa_invalidate is not None:
+        if args.dry_run:
+            parser.error("--aa-invalidate writes the ledger; it takes no --dry-run")
+        # Answered BEFORE the pause gate: its clean exit 0 would read as a recorded invalidation.
+        return invalidate_aa(
+            args.aa_invalidate, args.cause or "", is_confirmed=args.confirm_open_aa
+        )
 
     if args.backfill_unadjudicated:
         if args.reports_dir is None:
