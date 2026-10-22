@@ -62,6 +62,7 @@ _BUDGET_KEY = "budget_overage"
 # the pattern key's A/A arm-difference design effect, as its ledger row stores it
 _DESIGN_EFFECT = trial_design.ArmDesignEffect(1.5, 20, 200, 1.3, 1.8, 2000)
 _DESIGN_EFFECT_PAYLOAD = {"metric_key": _BUDGET_KEY, **_DESIGN_EFFECT._asdict()}
+_AA_START_ID = 4
 # floor-half baseline 20 events / 200 spawns → rate 0.1; the bound read from the reference module
 _BASELINE = SimpleNamespace(EVENTS=20, SPAWNS=200)
 _MAXIMUM = trial_design.get_trial_sample_size(_BASELINE.EVENTS / _BASELINE.SPAWNS)
@@ -130,8 +131,6 @@ def _get_spawns_after(start: datetime, count: int) -> list[SpawnFacts]:
         for index in range(count)
     ]
 
-
-_AA_START_ID = 4
 
 class _LedgerRow(NamedTuple):
     id: int

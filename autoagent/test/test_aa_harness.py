@@ -541,7 +541,6 @@ class AaStartRefusalTest(_AaFixture):
         self.assertEqual(self.ledger.rows, [])
 
 
-
 class AaInvalidationTest(_AaFixture):
     _CAUSE = "duplicate exposure in the shared spawn read"
 
@@ -629,9 +628,6 @@ class AaInvalidationTest(_AaFixture):
                 self.assertIn(f"--aa-invalidate refused: {reason} — ", stderr_text)
                 self.assertEqual(self._get_invalidations(), [])
                 self._patch("HAS_PG_LOOP_WRITE", True)
-                self.ledger.faulted.clear()
-                self.ledger.write_fault = None
-                self.ledger.is_key_taken = False
 
     def test_aa_invalidate_takes_no_dry_run(self) -> None:
         with (
@@ -640,6 +636,7 @@ class AaInvalidationTest(_AaFixture):
         ):
             dc._main(["--aa-invalidate", "1", "--cause", self._CAUSE, "--dry-run"])
         self.assertEqual(self._get_invalidations(), [])
+
 
 class AaRestartTest(_AaFixture):
     def test_an_open_aa_restarts_only_when_a_scoped_manifest_hash_moved(self) -> None:
@@ -3116,10 +3113,6 @@ class _AaLivePgFixture(_AaFixture):
     def _connect(self):
         return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
 
-
-class AaOpenReadLivePgTest(_AaLivePgFixture):
-    """The open-state read over the trial ledger."""
-
     def _insert(self, event: str, payload: dict, dedupe_key: str | None) -> int:
         with self._connect() as conn:
             return conn.execute(
@@ -3135,6 +3128,10 @@ class AaOpenReadLivePgTest(_AaLivePgFixture):
             "duration": _DURATION,
         }
         return self._insert("aa-start", payload, f"aa-start:after:{previous}")
+
+
+class AaOpenReadLivePgTest(_AaLivePgFixture):
+    """The open-state read over the trial ledger."""
 
     def _insert_restart(self, start: int, fingerprint: dict | None, day: str) -> int:
         reason = "fingerprint-changed" if fingerprint else "fingerprint-unreadable"
@@ -3255,13 +3252,7 @@ class AaInvalidationLivePgTest(_AaLivePgFixture):
     def test_a_second_run_on_one_start_writes_no_row_and_reports_the_recorded_cause(
         self,
     ) -> None:
-        start_payload = {
-            "fingerprint": {"a": "1"},
-            "started_at": _NOW.isoformat(),
-            "duration": _DURATION,
-        }
-        self._write("aa-start", "daemon-cycle-aa", start_payload, dedupe_key="aa-start:after:0")
-        start_id = dc._read_latest_aa_start().id
+        start_id = self._insert_start({"a": "1"}, 0)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             codes = [
