@@ -383,6 +383,8 @@ class ExitCodeContractTest(unittest.TestCase):
                 "BACKFILL_RECORD_FAILED": int(dc.ExitCode.BACKFILL_RECORD_FAILED),
                 "AA_START_REFUSED": int(dc.ExitCode.AA_START_REFUSED),
                 "CYCLE_INSTALL_REFUSED": int(dc.ExitCode.CYCLE_INSTALL_REFUSED),
+                "AA_INVALIDATION_REFUSED": int(dc.ExitCode.AA_INVALIDATION_REFUSED),
+                "AA_INVALIDATION_UNCONFIRMED": int(dc.ExitCode.AA_INVALIDATION_UNCONFIRMED),
             },
             {
                 "BACKFILL_PG": 7,
@@ -392,6 +394,8 @@ class ExitCodeContractTest(unittest.TestCase):
                 "BACKFILL_RECORD_FAILED": 13,
                 "AA_START_REFUSED": 14,
                 "CYCLE_INSTALL_REFUSED": 15,
+                "AA_INVALIDATION_REFUSED": 16,
+                "AA_INVALIDATION_UNCONFIRMED": 17,
             },
         )
 
