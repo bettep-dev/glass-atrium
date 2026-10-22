@@ -817,10 +817,14 @@ class _ShellScope:
         self.array_sites: list[tuple[int, str, str]] = []
         self.current = 0
         for position, words in enumerate(self.commands):
-            for word in _get_command_start(_get_unredirected(words)):
-                if word in _DECLARATION_WORDS or word.startswith("-"):
+            words = _get_command_start(_get_unredirected(words))
+            declared = bool(words) and words[0] in _DECLARATION_WORDS
+            for word in words[1:] if declared else words:
+                if declared and word.startswith(("-", "+")):
                     continue
-                match = _ASSIGNMENT.match(word)
+                match = _get_assignment_match(word) if declared else _ASSIGNMENT.match(word)
+                if match is None and declared:
+                    continue  # a bare NAME operand
                 if match is None:
                     break
                 if _is_self_reference(match):
@@ -944,20 +948,26 @@ def _get_handoff_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
     """A value a child's environment receives; one the row cannot evaluate is unresolved."""
     words = _get_command_start(_get_unredirected(words))
     if words[:1] == ["set"]:
-        return [Edge(scope.path, " ".join(words), None, None)] if _is_allexport(words) else []
+        allexport = _is_allexport(scope, words)
+        return [Edge(scope.path, " ".join(words), None, None)] if allexport else []
     if words[:1] and words[0] in _EXPORT_VERBS:
         return _get_export_edges(scope, words)
     return _get_prefix_edges(scope, words)
 
 
-def _is_allexport(words: list[str]) -> bool:
-    """``set`` turns allexport on: ``-…a…``, or an ``o`` in a flag word naming it next."""
+def _is_allexport(scope: _ShellScope, words: list[str]) -> bool:
+    """``set`` turns allexport on: ``-…a…``, ``o`` naming it, or an unreadable operand."""
     rest = iter(words[1:])
-    for word in rest:
-        if word in {"-", "--"} or word[0] not in "-+":
+    for operand in rest:
+        word = scope.evaluate(operand) if "$" in operand else operand
+        if word is None:
+            return True  # an expansion bash may read as flags
+        if word in {"", "-", "--"} or word[0] not in "-+":
             return False  # the rest are positional parameters
         for letter in word[1:]:
             option = next(rest, "") if letter == "o" else letter
+            if "$" in option:
+                option = scope.evaluate(option) or "allexport"
             if word[0] == "-" and option in {"a", "allexport"}:
                 return True
     return False
@@ -1007,12 +1017,14 @@ def _get_env_operands(scope: _ShellScope, words: list[str]) -> tuple[list[str], 
     edges: list[Edge] = []
     rest = iter(words)
     for word in rest:
-        if _ASSIGNMENT.match(word):
+        if _get_assignment_match(word):
             handed.append(word)
         elif word == "-u":
             next(rest, None)
         elif word.startswith("-") and word not in _ENV_FLAGS:
             edges.append(Edge(scope.path, f"env {word}", None, None))  # -S, -C … reshape argv
+            if word in {"-S", "-C", "-P"}:
+                next(rest, None)  # the option's own argument
         elif word.startswith(("$", '"$')):
             value = scope.evaluate(word)  # env reads an expanded NAME=value as an assignment
             if value is None or _ASSIGNMENT.match(value) is None:
@@ -1034,7 +1046,7 @@ def _get_export_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
     verb = " ".join(words[: 1 + len(flags)])
     edges: list[Edge] = []
     for word in words[1 + len(flags) :]:
-        if _ASSIGNMENT.match(word):
+        if _get_assignment_match(word):
             edges.extend(_get_assignment_edges(scope, word))
         elif _NAME.fullmatch(word):
             edges.extend(_get_value_edges(scope, f"{verb} {word}", f"${{{word}}}"))
@@ -1043,8 +1055,35 @@ def _get_export_edges(scope: _ShellScope, words: list[str]) -> list[Edge]:
     return edges
 
 
+def _get_assignment_match(word: str) -> re.Match[str] | None:
+    """``NAME=value`` as a builtin or ``env`` reads it, quotes around the name or ``=`` removed."""
+    return _ASSIGNMENT.match(word) or _ASSIGNMENT.match(_get_unquoted_assignment(word) or "")
+
+
+def _get_unquoted_assignment(word: str) -> str | None:
+    name = ""
+    quote = ""
+    index = 0
+    while index < len(word):
+        char = word[index]
+        if char == "\\" and quote != "'":
+            if word[index + 1 : index + 2] == "=":
+                index += 1
+                break
+            name, index = name + word[index + 1 : index + 2], index + 2
+        elif char in "\"'" and quote in {"", char}:
+            quote, index = ("" if quote else char), index + 1
+        elif char == "=":
+            break
+        else:
+            name, index = name + char, index + 1
+    else:
+        return None
+    return f"{name}={quote}{word[index + 1 :]}" if _NAME.fullmatch(name) else None
+
+
 def _get_assignment_edges(scope: _ShellScope, word: str) -> list[Edge]:
-    match = _ASSIGNMENT.match(word)
+    match = _get_assignment_match(word)
     if match is None or match.group(2):
         return [Edge(scope.path, word, None, None)]  # += hands off a value the row never sees
     return _get_value_edges(scope, word, match.group(3))
@@ -1400,6 +1439,8 @@ def _get_python_handoff_edges(scope: _PythonScope, node: ast.AST) -> list[Edge]:
             if env is not None and _is_run_call(node):
                 return _get_mapping_edges(scope, "env", env)
             position = _ENV_POSITIONS.get(name.removeprefix("os."))
+            if env is not None and position is not None:
+                return _get_mapping_edges(scope, name, env)
             if position is not None and len(args) > max(position, 2):
                 return _get_mapping_edges(scope, name, args[position])
             if name in {f"{e}.update" for e in _ENVIRONS}:
@@ -1724,6 +1765,59 @@ _HANDOFF_ROWS = (
         [('M="${HOME}/.glass-atrium/monitor/public/src/app.jsx"', "monitor/public/src/app.jsx")],
     ),
     ("a bare code filename the child resolves", "export L=helper.py", [("L=helper.py", None)]),
+    ("env operand quoted whole", 'env "A=$(pick)" ./run.sh', [('"A=$(pick)"', None)]),
+    (
+        "env operand quoted whole with an unknown name",
+        'env "A=${X}" ./run.sh',
+        [('"A=${X}"', None)],
+    ),
+    (
+        "env operand quoted whole after --",
+        'env -- "LIB=${HOME}/.glass-atrium/hooks/lib/style_ref_match.py" ./run.sh',
+        [
+            (
+                '"LIB=${HOME}/.glass-atrium/hooks/lib/style_ref_match.py"',
+                "hooks/lib/style_ref_match.py",
+            ),
+        ],
+    ),
+    (
+        "env operand single-quoted whole",
+        "env 'LIB=hooks/lib/style_ref_match.py' ./run.sh",
+        [("'LIB=hooks/lib/style_ref_match.py'", "hooks/lib/style_ref_match.py")],
+    ),
+    ("env operand with a quoted name", 'env "A"=$(pick) ./run.sh', [('"A"=$(pick)', None)]),
+    ("env operand with an escaped =", "env A\\=$(pick) ./run.sh", [("A\\=$(pick)", None)]),
+    ("env operand in ANSI-C quotes", "env $'A=1' ./run.sh", [("env $'A=1'", None)]),
+    ("export operand quoted whole", f'export "A=$(pick)"', [('"A=$(pick)"', None)]),
+    (
+        "export operand single-quoted code path",
+        "export 'LIB=hooks/lib/style_ref_match.py'",
+        [("'LIB=hooks/lib/style_ref_match.py'", "hooks/lib/style_ref_match.py")],
+    ),
+    ("export operand single-quoted data", "export 'A=1'", []),
+    ("export operand with an escaped =", "export A\\=1", []),
+    ("declare -x operand with a quoted name", 'declare -x "A"=$(pick)', [('"A"=$(pick)', None)]),
+    (
+        "a quoted declare operand is a second value",
+        f'B={_CODE_VALUE}\ndeclare "B=$(pick)"\nexport B',
+        [("export B", None)],
+    ),
+    (
+        "an assignment after a bare declared name is a second value",
+        f"B={_CODE_VALUE}\nlocal x B={_UNKNOWN}\nexport B",
+        [("export B", None)],
+    ),
+    (
+        "a quoted prefix word is the command",
+        'A="$(pick)" "B=$(pick)" ./run.sh',
+        [('A="$(pick)"', None)],
+    ),
+    ("an escaped = in a prefix word is the command", "A\\=$(pick) ./run.sh", []),
+    ("set -o with an unreadable name", 'set -o "$MODE"', [('set -o "$MODE"', None)]),
+    ("set with an unreadable flag word", 'set "$FLAGS"', [('set "$FLAGS"', None)]),
+    ("set -o with a readable name", 'OPT=pipefail\nset -o "${OPT}"', []),
+    ("set -- before an expansion", 'set -- "$@"', []),
     ("plain assignment", f"A={_UNKNOWN}", []),
     ("local without -x", f"local A={_UNKNOWN}", []),
     ("export -n removes the export", f"A={_UNKNOWN}\nexport -n A", []),
@@ -1784,6 +1878,21 @@ _PYTHON_HANDOFF_ROWS = (
         [("os.posix_spawn=child_env", None)],
     ),
     ("os.execv takes no env", 'os.execv("/bin/sh", ["sh"])', []),
+    (
+        "os.execve env= keyword",
+        'os.execve("/bin/sh", ["sh"], env=child_env)',
+        [("os.execve=child_env", None)],
+    ),
+    (
+        "os.execvpe env= keyword",
+        'os.execvpe("sh", ["sh"], env={"A": pick()})',
+        [("os.execvpe['A']", None)],
+    ),
+    (
+        "os.spawnve env= keyword",
+        'os.spawnve(os.P_WAIT, "/bin/sh", ["sh"], env=child_env)',
+        [("os.spawnve=child_env", None)],
+    ),
     ("an environ read", 'value = os.environ["A"]', []),
     ("a run call with no env=", 'subprocess.run(["x"])', []),
     ("env= on a call that runs no child", 'render(env={"A": pick()})', []),
