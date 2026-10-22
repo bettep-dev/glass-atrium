@@ -336,10 +336,9 @@ SHIM
   run bash -c '
     set -Eeuo pipefail
     source "$1"
-    nl="$(printf "\nx")"
-    nl="${nl%x}"
+    printf -v nl "\n"
     body="+$(printf "%080d" 0)"
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do body="${body}${nl}${body}"; done
+    for _ in {1..12}; do body="${body}${nl}${body}"; done
     diff="--- a/probe.md${nl}+++ b/probe.md${nl}@@ -1 +1,4096 @@${nl}${body}"
     basename="$(_git_txn_diff_header_basename "${diff}")"
     printf "%s\n" "${basename}"
