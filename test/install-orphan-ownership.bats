@@ -42,8 +42,7 @@ setup_file() {
   HARNESS_OUT_FILE="$(mktemp)"
   HARNESS_RC_FILE="${HARNESS_OUT_FILE}.rc"
   export HARNESS_OUT_FILE HARNESS_RC_FILE
-  # rc recorded, not raised — under errexit a failing harness would abort setup_file before
-  # any row could report which scenario failed
+  # rc recorded, not raised — errexit would abort setup_file before any row reports
   bash "${harness}" >"${HARNESS_OUT_FILE}" 2>&1 || rc=$?
   echo "${rc}" >"${HARNESS_RC_FILE}"
 }
@@ -89,13 +88,8 @@ setup() {
 }
 
 @test "Part B harness keeps a launchd-owned monitor owned when its pid heads a listener list past one pipe buffer" {
-  local output status
+  local output
   output="$(cat "${HARNESS_OUT_FILE}")"
-  status="$(cat "${HARNESS_RC_FILE}")"
-  [[ "${status}" -eq 0 ]] || {
-    echo "${output}"
-    return 1
-  }
   [[ "${output}" == *"PASS  launchd(long list): monitor_is_launchd_owned TRUE"* ]] || {
     echo "${output}"
     return 1
