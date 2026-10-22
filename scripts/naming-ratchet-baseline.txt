@@ -303,14 +303,11 @@ ID_TITLE @test AC8: a sentinel WITHOUT the run nonce survives as body bytes
 ID_TITLE @test AC8: manifest_block_kept case arms equal the MANIFEST_BLOCK_LABELS roster
 ID_TITLE @test AC8: the gate field is additive — the pinned status-literal set is untouched
 ID_TITLE @test AC9: an apply script with its executable bit cleared composes apply_unavailable
-ID_TITLE @test ArmA python3 -c open(...,'w') → HAR-002 bash-interp-write block
-ID_TITLE @test ArmB cd into a protected dir then relative redirect → HAR-002 block
 ID_TITLE @test ArmB-neg cd into rules/ or scoped/ then relative write → pass (H1-D1)
 ID_TITLE @test BASENAME CLAUDE.md on a branch root (tilde) + bg=true → NOT blocked (AC2)
 ID_TITLE @test BASENAME CLAUDE.md on the backup dir + bg=true → NOT blocked (AC2)
 ID_TITLE @test BASENAME GLASS_ATRIUM_GLOBAL_RULES.md on a branch root (bare) + bg=true → NOT blocked (AC2)
 ID_TITLE @test BASENAME MEMORY.md on a branch root (absolute-\$HOME) + bg=true → NOT blocked (AC2)
-ID_TITLE @test Bash channel: credential value redirected into .env → SEC-016 block (exit 2)
 ID_TITLE @test C0 setup_suite discovery sentinel is exported
 ID_TITLE @test C1 same (record_ts,agent,task_type) collides → 1 survivor (last writer), sequence gapped
 ID_TITLE @test C1 the charter no longer instructs authors to cap EVERY schema field
@@ -360,15 +357,6 @@ ID_TITLE @test E5 commit: a row through a symlinked directory rolls back and cre
 ID_TITLE @test E6 Write + doc agent + empty file_path → fail-open (exit 0)
 ID_TITLE @test E7 Write + doc agent + non-target extension → allow-non-target-ext (exit 0)
 ID_TITLE @test EMIT + METER combined stays < 2048 bytes (~2KB persistence-preview survival, T1)
-ID_TITLE @test EN: fetched pattern -> SEC-073, exit 0
-ID_TITLE @test EN: literal pattern -> SEC-070, exit 0
-ID_TITLE @test EN: match via new_string field (not content) -> SEC-070
-ID_TITLE @test EN: pattern split across content+new_string boundary -> SEC-070
-ID_TITLE @test EN: second representative pattern (you are now) -> SEC-070
-ID_TITLE @test EN: structured (dict) tool_response is stringified and still scanned -> SEC-073
-ID_TITLE @test EN: uppercase <<SYS>> tag -> SEC-073 (proves -i folds the uppercase pattern)
-ID_TITLE @test EN: uppercase [SYSTEM] tag -> SEC-070 (proves -i folds the uppercase pattern)
-ID_TITLE @test Edit channel: GitHub-token-shaped new_string → SEC-002 block (exit 2)
 ID_TITLE @test F10: || exit 0 is required in a sourced library, not in an executed script
 ID_TITLE @test F11: missing --path target and scope drift both exit 3
 ID_TITLE @test F12: unknown argument is a usage error (exit 2)
@@ -408,10 +396,6 @@ ID_TITLE @test K0 setup_suite discovery sentinel is exported
 ID_TITLE @test K1 kill switch SET → bypass before any verdict is written (exit 0)
 ID_TITLE @test K2 kill switch UNSET → the same input blocks (exit 2)
 ID_TITLE @test K3 an ambient kill-switch export cannot green this suite (hermeticity proof)
-ID_TITLE @test KO: developer-mode activation -> SEC-070 (Korean)
-ID_TITLE @test KO: fetched developer-mode activation -> SEC-073 (Korean)
-ID_TITLE @test KO: fetched system-prompt-reveal -> SEC-073 (Korean)
-ID_TITLE @test KO: ignore-previous-instructions -> SEC-070 (Korean)
 ID_TITLE @test L1 a marked body lands at the release, keeps its model line, and consumes the request
 ID_TITLE @test L10 a consume failure takes its consume-failed code and writes the ledger row
 ID_TITLE @test L11 a release that adds region lines reports deleted and added lines separately
@@ -440,8 +424,6 @@ ID_TITLE @test M4 the META pointer is an IMPERATIVE to read the canonical rules,
 ID_TITLE @test M4: a ceiling below the non-droppable block sheds once, never loops, and records the shed
 ID_TITLE @test M5 the META body KEEPS its own pre-draft output-shape scoping duty
 ID_TITLE @test M5: with the only droppable block shed, the non-droppable emit and the marker still emit
-ID_TITLE @test NUL: embedded NUL in a base64 marker still detects -> SEC-072
-ID_TITLE @test NUL: embedded NUL in a base64 marker still detects -> SEC-074
 ID_TITLE @test O1 record writes a request the next run consumes, keeping durable before-images
 ID_TITLE @test O10 record refuses a body whose EDITABLE region count differs from its base entry
 ID_TITLE @test O11 a symlinked body gets a regular-file before-image and restore brings the content back
@@ -577,8 +559,6 @@ ID_TITLE @test S4-neg bash with a script-file argument → pass (no code flag)
 ID_TITLE @test S4-neg shell -c with a non-protected cd → pass
 ID_TITLE @test S5 REGRESSION GUARD: awk in-program redirect still blocks after the mask
 ID_TITLE @test S5 REGRESSION GUARD: bash -c with a redirect still blocks after the mask
-ID_TITLE @test Site A: marker append failure emits VGATE-STAMP-001 (cross-hook state), exit stays 0
-ID_TITLE @test Site A: successful marker append stays silent (no VGATE-STAMP-001) and exits 0
 ID_TITLE @test T-ALW-1: an atom at exactly the allowance renders inside the BUDGET, not into the reserve
 ID_TITLE @test T-ALW-2: the allowance charges the index width, so a wider index costs allowance
 ID_TITLE @test T-CAP-1: every part of every registry agent is at or under the cap, wrapper included
@@ -765,31 +745,13 @@ ID_TITLE @test V8: Write under a symlinked parent directory → blocked, exit 2 
 ID_TITLE @test V8: non-existent destination under real dirs still reaches V6 (SCOPE-006, not SCOPE-008)
 ID_TITLE @test V8: symlinked destination outside raw/ → exit 0, silent
 ID_TITLE @test W2 invariant: a non-existent path with a non-empty body never mints verified_fail
-ID_TITLE @test Write channel: AWS-key-shaped content → SEC-001 block (exit 2)
 ID_TITLE @test Write: raw write WITHOUT body envelope → blocked, exit 2 (SCOPE-006 — V6 intact)
-ID_TITLE @test a lock under a relative store root is never deleted at release and is LOUD (DATA-076)
-ID_TITLE @test a marker the Stop cannot delete survives and is LOUD (DATA-075)
-ID_TITLE @test a reviewer-less plan spawn still blocks with VGATE-REVIEWER-001 and no nudge, monitor refused or reachable
 ID_TITLE @test advisory-trace(R1): a completion-block cap records the schema-cap tag naming rule R1
 ID_TITLE @test advisory-trace(rules): the items-scoped and risk-band caps record R2 and R3 distinctly
-ID_TITLE @test an unrecognized envelope shape is LOUD (LOCK-ADV-002) and still non-blocking
-ID_TITLE @test an unwritable marker dir is LOUD (DATA-074 warn) and still non-blocking
-ID_TITLE @test base64: exact marker -> SEC-072
-ID_TITLE @test base64: exact marker -> SEC-074
-ID_TITLE @test bash: chmod on live GA hooks dir → HAR-002 block
-ID_TITLE @test bash: redirect write into a launchd plist → HAR-002 block
-ID_TITLE @test bash: redirection overwrite into live settings → HAR-002 block
-ID_TITLE @test block-md-creation: monitor-internal documents write → DEL-002 block (exit 2)
-ID_TITLE @test blocked write with session + transcript envelope fields → SCOPE-006 alone, no retired warn code
-ID_TITLE @test classifier emits a full allow verdict then exits 1 → HAR-003 block (no pass smuggling)
-ID_TITLE @test classifier emits partial fields then crashes → HAR-003 block (misaligned trailer)
-ID_TITLE @test classifier exits non-zero with no output → HAR-003 block (fail-closed)
 ID_TITLE @test consistency(a-count #27): honest dev-first-parallel dual-role, 2 spawns → PASS
 ID_TITLE @test consistency(a-count #27): same-type dual-role SINGLE spawn, impl-first → BLOCK_DECLSPAWN
 ID_TITLE @test consistency(b' config-array): undeclared config-array dev literal → BLOCK_UNDECL (R3 hole closed)
-ID_TITLE @test corrupt pricing SoT fails loud: PricingSotError on stderr, DATA-184, non-zero non-2 exit
 ID_TITLE @test cwd is the owned agents dir and never /tmp (pin E1)
-ID_TITLE @test declared file outside [SCOPE] files= → SCOPE-070 advisory, non-blocking, source=scope-decl
 ID_TITLE @test docroute F1: leak + dev-* spawn + ENTRY_ADVISORY → BLOCK with entry-format addendum
 ID_TITLE @test docroute F1: pure leak, NO dev-* spawn → BLOCK, NO entry addendum (no spurious nudge)
 ID_TITLE @test dormant backup dir config path + bg=true → BLOCKED (AC4)
@@ -797,47 +759,17 @@ ID_TITLE @test drop record format: ISO8601 UTC timestamp, script basename, site 
 ID_TITLE @test entry(#28): 'workplan-2026' does NOT satisfy plan-ref → BLOCK_ENTRY
 ID_TITLE @test entry(#28): real 'plan-6569' slug satisfies plan-ref → PASS
 ID_TITLE @test exempt(F7 accepted-FN): computed agentType + ZERO dev literals anywhere → PASS (Tier-A blind spot)
-ID_TITLE @test fail-closed: python3 absent + non-empty input → SEC-010 block (exit 2)
-ID_TITLE @test family-matched claude-opus-4-9 prices at opus-4-8 rate with resolution=family_latest advisory and DATA-183
 ID_TITLE @test feature: existing NON-test files only → unverified (W1 — existence of unrelated files promotes nothing)
 ID_TITLE @test generate: modes map records a symlink's TARGET mode, not its lstat bits (FB-2)
-ID_TITLE @test git checkout . (discard-all) is blocked with code GIT-004
 ID_TITLE @test git checkout hooks path + bg=true → NOT blocked (AC11)
-ID_TITLE @test git push --force (long force) is blocked with code GIT-001
-ID_TITLE @test git push -f (short force) is blocked with code GIT-001
-ID_TITLE @test git push origin main is blocked with code GIT-006
-ID_TITLE @test git push origin master is blocked with code GIT-006
-ID_TITLE @test git restore . (restore-all) is blocked with code GIT-005
-ID_TITLE @test harness-synthetic model emits no unknown advisory and no DATA-183, records \$0 row
 ID_TITLE @test header: cross-references UD-1
-ID_TITLE @test leak non-match control: benign output → exit 0, NO SEC-072 advisory
 ID_TITLE @test leak parity: all 8 LLM07 patterns each trigger SEC-072 advisory + exit 0
-ID_TITLE @test live settings.json Write (main session) → HAR-001 block (exit 2)
-ID_TITLE @test main-session git commit with a live child raises GIT-ADV-001 (advisory, exit 0)
-ID_TITLE @test malicious: bash process-substitution of curl → SEC-010 block (exit 2)
-ID_TITLE @test malicious: chmod -R 777 / → SEC-010 block (exit 2)
-ID_TITLE @test malicious: curl piped to sh → SEC-010 block (exit 2)
-ID_TITLE @test malicious: curl piped to sudo bash → SEC-010 block (exit 2)
-ID_TITLE @test malicious: git commit --no-gpg-sign → SEC-011 block (exit 2)
-ID_TITLE @test malicious: git commit --no-verify → SEC-011 block (exit 2)
-ID_TITLE @test malicious: rm -fR -- ~/x (end-of-options marker) → SEC-010 block (exit 2)
-ID_TITLE @test malicious: rm -fr / (reordered flags) → SEC-010 block (exit 2)
-ID_TITLE @test malicious: rm -r -f ~ (split flags) → SEC-010 block (exit 2)
-ID_TITLE @test malicious: rm -rf / → SEC-010 block (exit 2)
-ID_TITLE @test malicious: rm -rf quoted \$HOME → SEC-010 block (exit 2)
-ID_TITLE @test missing model field emits no unknown advisory and no DATA-183, records \$0 row
-ID_TITLE @test nested sub-worker (agent_id present), same plan-ref NO-[SIZE-EST] prompt → size guard SKIPPED, exit 0 (NOT VGATE-SIZE-001)
 ID_TITLE @test norev(#26): upstream form + reviewer PROSE-MENTION only (no real spawn) → BLOCK_NOREV
-ID_TITLE @test orchestrator DEV, plain prompt, NO [SIZE-EST] → VGATE-SIZE-001 BLOCK (exit 2)
-ID_TITLE @test orchestrator DEV, plan-ref present but NO [SIZE-EST] → VGATE-SIZE-001 BLOCK (exit 2, size gate reachable for plan-bearing spawns)
-ID_TITLE @test other still-valid blocks are intact (GIT-002 hard reset)
-ID_TITLE @test out-of-plan non-system path → SCOPE-070 advisory (control)
 ID_TITLE @test permit path: Write over an existing raw file → exit 0, silent (no SCOPE-009, no SCOPE-008)
 ID_TITLE @test plan-ref word-boundary (#28): 'workplan-2026' does NOT satisfy references_plan → entry-miss BLOCK
 ID_TITLE @test plan-ref word-boundary (#28): real 'plan-6569' slug satisfies references_plan → reviewer-miss BLOCK, exit 2
 ID_TITLE @test plumbing: ADR-2 addendum allowlist includes block-grammar, excludes block-entry/block-sizeest
 ID_TITLE @test python3 absent + orchestrator harness write → BLOCKED (H-3 fail-closed)
-ID_TITLE @test python3 absent + protected write → HAR-003 block (fail-closed, exit 2)
 ID_TITLE @test regex(#29 i): /\\/\\//g before the reviewer spawn on the same line → PASS (was block-norev)
 ID_TITLE @test regex(#29 ii): backtick char-class regex + multi-line template before the declaration → PASS (was block-nodecl)
 ID_TITLE @test regex(#29 iii): char-class regex /[/]/ on a spawn-bearing line → PASS
@@ -847,37 +779,20 @@ ID_TITLE @test resilience(#45 partial): one .catch-chained schema site + one bar
 ID_TITLE @test resilience(#45 robust): schema work routed through robustAgent wrapper → PASS, NO advisory
 ID_TITLE @test resolver default 16145 is the sole shell terminal literal (AC-S1.3a)
 ID_TITLE @test retired checks: Korean heading + bibliography, no envelope → still blocked (SCOPE-006, no SCOPE-003/004)
-ID_TITLE @test reviewer-miss BLOCK carries the distinct VGATE-REVIEWER-001 code [FAIL-AT-HEAD]
 ID_TITLE @test roster gate PASSES a content update on a CUSTOMIZED install (T20 fix: user-local agent does NOT block)
-ID_TITLE @test rule-table lint fails closed (GIT-000) when a pattern does not compile
-ID_TITLE @test safety-override marker at the legacy ~/.claude path is IGNORED (DATA-102)
-ID_TITLE @test safety-override marker honored at the new \$HOME/.glass-atrium default (DATA-101)
 ID_TITLE @test same-version-different-bytes: per-file SHA-256 verify rejects loudly (exit 15), zero writes
 ID_TITLE @test schema-cap(R1): maxLength on a completion_block property → PASS + schema-cap advisory fires
 ID_TITLE @test schema-cap(R2): maxLength inside an items object → PASS + schema-cap advisory fires
 ID_TITLE @test schema-cap(R3): maxLength value strictly between 64 and 300 → PASS + schema-cap advisory fires
-ID_TITLE @test scope: WebSearch is a target tool -> SEC-073
-ID_TITLE @test scope: mcp fetch tool is a target -> SEC-073
 ID_TITLE @test self-consistency(T11): each skill skeleton declaration fence → PASS
 ID_TITLE @test self-consistency(T5): BLOCK_NODECL stderr scaffold pasted into a DEV script → PASS
 ID_TITLE @test structural row high+false still records review_flag=false (D1 gate untouched)
-ID_TITLE @test symlinked hook invocation imports pricing_loader via canonicalized BASH_SOURCE (no DATA-184)
 ID_TITLE @test the --tools value carries no Write token (pin E1)
 ID_TITLE @test the advisory surfaces the checker's stderr diagnostic with a line number (R6)
 ID_TITLE @test the header carries the why-this-arg-combo rationale anchor (AC10)
 ID_TITLE @test the header records that nested spawns remain ungated [FAIL-AT-HEAD until T6 header edit]
-ID_TITLE @test trunc: pattern within the first 8000 chars is scanned -> SEC-073
-ID_TITLE @test unknown model emits STDERR advisory with resolution=fallback plus structured DATA-183
 ID_TITLE @test update-in-place with '&' in docs path renders the exact path (S-1)
 ID_TITLE @test update-in-place with backslash in docs path renders the exact path (S-1)
-ID_TITLE @test validate-pre-write-raw: raw write without frontmatter → SCOPE-001 block (exit 2)
-ID_TITLE @test verdict boundary: 401 lines → SCOPE-080 advisory, still exit 0 (non-blocking)
-ID_TITLE @test verdict: no-op repo (no changes) → TOTAL 0 → exit 0, no SCOPE-080 advisory
-ID_TITLE @test violating: credential content behind a .env write channel → SEC-017 alert, exit 0
-ID_TITLE @test weakening: eslint rule set to off on .eslintrc.json → CFG-001 block (exit 2)
-ID_TITLE @test weakening: tsconfig strictness flipped to false → CFG-001 block (exit 2)
-ID_TITLE @test well-formed table passes a harmless command (no false GIT-000)
-ID_TITLE @test zero-width: ZWSP in content -> SEC-071 advisory, exit 0
 ID_TITLE @test ~/.claude-personal/ path → silent short-circuit (AC5)
 ID_TITLE @test ~/.claude-personal/logs/ reference + bg=true → NOT blocked (AC3)
 ID_TITLE @test ~/.claude-work-dev/ path → silent short-circuit (AC5)
