@@ -1507,6 +1507,8 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
             ("every activation delivered with one hash", [_TREATED, _TREATED],
              (True, True, _TREATED[3])),
             ("an undelivered resume activation", [_TREATED, undelivered], (False, True, _TREATED[3])),
+            ("a resume activation delivered without a hash", [_TREATED, (1, _SALT_ID, True, None)],
+             (False, True, _TREATED[3])),
             ("activations delivered with two hashes", [_TREATED, (*_TREATED[:3], other_hash)],
              (False, True, None)),
             ("no activation delivered", [_CONTROL, _CONTROL], (False, False, None)),

@@ -10738,9 +10738,9 @@ def _get_sample_ratio_p(control: int, treatment: int) -> float:
 
 
 def get_aa_delivery_criterion(armed: Mapping[str, Sequence[ArmedSpawn]]) -> AaCriterion:
-    """Delivery: the hook marked delivered on every activation of at least
-    MINIMUM_DELIVERY_PERCENT of the treatment spawns and on no activation of any control spawn;
-    no treatment spawn fails. Hook arms that differ from the recomputed arm are recorded per agent
+    """Delivery: at least MINIMUM_DELIVERY_PERCENT of the treatment spawns had every activation
+    delivered with one and the same hash, and no control spawn had any activation marked
+    delivered, hash or not; no treatment spawn fails. Hook arms that differ from the recomputed arm are recorded per agent
     and decide nothing."""
     items = [item for agent_items in armed.values() for item in agent_items]
     treatment = [item for item in items if item.arm == 1]
