@@ -15,6 +15,8 @@
 #   (B) AC-S2.5c — a FOREIGN holder (fails argv OR cwd) fails the install loudly WITHOUT a kill.
 #   (C) AC-S2.5a — a launchd-owned holder yields nothing from the orphan detector (kill path
 #                  never fires) while stop_launchd bootouts/settles/proceeds — UNCHANGED.
+#   (C2)         — the launchd ownership check holds when its pid heads a listener list
+#                  past one pipe buffer under pipefail.
 #   (D) AC-S2.5d — an our-stray whose port never frees escalates SIGTERM->SIGKILL, then
 #                  loud-fails bounded.
 #
@@ -33,15 +35,17 @@ source "${GA}/scripts/lib/path-guard.sh"
 # The teardown_file test reads no cache.
 # The relative-TMPDIR test re-runs the harness on purpose (+~6s): a cached run cannot vary TMPDIR.
 setup_file() {
-  local ga harness
+  local ga harness rc=0
   ga="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
   harness="${ga}/test/install-orphan-ownership-exec-harness.sh"
   [[ -f "${harness}" && -f "${ga}/glass-atrium" ]] || return 0
   HARNESS_OUT_FILE="$(mktemp)"
   HARNESS_RC_FILE="${HARNESS_OUT_FILE}.rc"
   export HARNESS_OUT_FILE HARNESS_RC_FILE
-  bash "${harness}" >"${HARNESS_OUT_FILE}" 2>&1
-  echo $? >"${HARNESS_RC_FILE}"
+  # rc recorded, not raised — under errexit a failing harness would abort setup_file before
+  # any row could report which scenario failed
+  bash "${harness}" >"${HARNESS_OUT_FILE}" 2>&1 || rc=$?
+  echo "${rc}" >"${HARNESS_RC_FILE}"
 }
 
 teardown_file() {
@@ -82,6 +86,20 @@ setup() {
   [[ "$output" == *"orphan detector yields NOTHING (kill path never fires on launchd)"* ]]
   [[ "$output" == *"bootout issued for com.glass-atrium.monitor"* ]]
   [[ "$output" == *"never-frees: SIGTERM then SIGKILL both issued to the verified pid"* ]]
+}
+
+@test "Part B harness keeps a launchd-owned monitor owned when its pid heads a listener list past one pipe buffer" {
+  local output status
+  output="$(cat "${HARNESS_OUT_FILE}")"
+  status="$(cat "${HARNESS_RC_FILE}")"
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"PASS  launchd(long list): monitor_is_launchd_owned TRUE"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "teardown_file succeeds silently when setup_file skipped before creating the output files" {
