@@ -162,6 +162,70 @@ audit_body() {
   done
 }
 
+@test "a title code counts as an ID unless a non-test product file defines that whole code for an emitter" {
+  local tree="${TS_TMP}/tree"
+  write_fixture "${tree}/hooks/guard.sh" <<'EOF'
+#!/usr/bin/env bash
+readonly US=$'\x1f'
+RULES=(
+  "git\s+push\s+-f${US}GIT-001${US}Force push blocked"
+  "git\s+checkout\s+\.${US}GIT-004${US}Discard-all blocked"
+)
+for rule in "${RULES[@]}"; do
+  IFS="${US}" read -r pattern code message <<<"${rule}"
+  emit_error "${code}" "block" "${message} ${pattern}"
+done
+CODES=(SEC-001 SEC-002)
+emit_error "${CODES[${i}]}" "block" "secret found"
+case "${verdict}" in
+  block:*) block_critical "HAR-001" "harness file" ;;
+esac
+hook_require_python3 "SEC-017" "python3 required"
+hook_require_python3_unless_empty "${INPUT}" "SEC-018" "python3 required"
+block_and_exit "VGATE-SIZE-001" "plan too large"
+# emit_error "TKT-12" is how the ticket fix would read
+true # block_critical "TKT-13"
+EOF
+  write_fixture "${tree}/hooks/test/fixture.sh" <<'EOF'
+emit_error "TST-001" "block" "fixture only"
+EOF
+  local -a table=(
+    $'codes from a read table an emitter consumes\x1fbats\x1fGIT-001 and GIT-004 block the command\x1f0'
+    $'a code from a bash array an emitter consumes\x1fbats\x1fSEC-002 blocks a token\x1f0'
+    $'a quoted literal of a case-arm block_critical call\x1fbats\x1fHAR-001 blocks a harness write\x1f0'
+    $'the first argument of hook_require_python3\x1fbats\x1fSEC-017 needs python3\x1f0'
+    $'the second argument of hook_require_python3_unless_empty\x1fbats\x1fSEC-018 needs python3\x1f0'
+    $'a compound code matched whole\x1fbats\x1fVGATE-SIZE-001 caps the plan\x1f0'
+    $'a TS title carrying a defined code\x1fts\x1fHAR-001 blocks a harness write\x1f0'
+    $'a suffix that exists only inside a compound code\x1fbats\x1fSIZE-001 caps the plan\x1f1'
+    $'a defined code extended into a longer compound\x1fbats\x1fHAR-001-B blocks a harness write\x1f1'
+    $'a code mentioned only in a whole-line comment\x1fbats\x1fTKT-12 keeps the pin\x1f1'
+    $'a code mentioned only in a trailing comment\x1fbats\x1fTKT-13 keeps the pin\x1f1'
+    $'a retired code defined nowhere\x1fbats\x1fDATA-999 records the outcome\x1f1'
+    $'a defined code beside a ticket ID\x1fbats\x1fHAR-001 blocks a harness write per AC-1\x1f1'
+    $'a code defined only under a test directory\x1fbats\x1fTST-001 blocks the fixture\x1f1'
+  )
+  local row name ext title want fixture out idx=0
+  for row in "${table[@]}"; do
+    IFS=$'\x1f' read -r name ext title want <<<"${row}"
+    idx=$((idx + 1))
+    fixture="${TS_TMP}/code${idx}.${ext}"
+    if [[ "${ext}" == ts ]]; then
+      printf 'test("%s", () => {});\n' "${title}" >"${fixture}"
+    else
+      printf '#!/usr/bin/env bats\n@test "%s" {\n  true\n}\n' "${title}" >"${fixture}"
+    fi
+    out="$(bash "${AUDIT_SH}" --root "${tree}" --path "${fixture}" --quiet)" || {
+      echo "${name}: exit $? ${out}"
+      return 1
+    }
+    [[ "${out}" == *" id_title=${want} "* ]] || {
+      echo "${name}: want id_title=${want}, got ${out}"
+      return 1
+    }
+  done
+}
+
 @test "an incident-header finding names the header line that triggered it, at that line" {
   # The ratchet keys a header finding on this detail text, so a generic detail would collapse every
   # header into one key.

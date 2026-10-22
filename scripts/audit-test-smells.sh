@@ -21,6 +21,13 @@
 #     is an ID stays the reviewer's.
 #   - id_title: a Bats `@test` title, or the first string-literal argument of a single-line `test(`
 #     or `it(` call in a `.ts` file, that carries an ID.
+#   - Product-code skip: a title token is no ID when its whole hyphen-joined code (`VGATE-SIZE-001`,
+#     never its `SIZE-001` suffix) is defined on a non-comment line of a non-test file under
+#     PRODUCT_DIRS — as a quoted literal code argument of an emitter (EMITTERS_FIRST: 1st argument,
+#     `hook_require_python3_unless_empty`: 2nd), or as an entry of a code table an emitter consumes:
+#     a bash array passed as `"${NAME[...]}"`, or the field an `IFS="${SEP}" read -r` line names and
+#     the emitter receives as `"${field}"`, taken from every `${SEP}`-delimited row of that file.
+#     A title is flagged when any one token stays undefined; a retired code defined nowhere is an ID.
 #   - incident_header: a file whose leading comment block — `#`, `//` or `/* */` lines after an
 #     optional shebang and leading blank lines, ending at the first blank or code line — carries an
 #     ID or a `YYYY-MM-DD` date. A `# shellcheck` directive line is tooling and is skipped. The
@@ -42,7 +49,7 @@
 #   1 = blocking run reporting findings
 #   2 = usage error
 #   3 = IO/scope error (a bundled scope directory or a --path file is missing, or any scope
-#       directory is unreadable)
+#       directory or product source file is unreadable)
 #
 # Measured baseline — a measured quantity, never a target band, and deliberately NOT quoted here:
 # a hand-copied census re-drifts on the next edit exactly as a hand-copied file count does (the
@@ -159,6 +166,28 @@ readonly RE_DATE_STAMP='(^|[^0-9])[0-9]{4}-[0-9]{2}-[0-9]{2}([^0-9]|$)'
 readonly RE_TS_TITLE='(^|[^[:alnum:]_.$])(test|it)\([[:space:]]*("[^"]*"|'"'"'[^'"'"']*'"'"'|`[^`]*`)'
 readonly RE_SHELLCHECK_DIRECTIVE='^#[[:space:]]*shellcheck[[:space:]]'
 
+# The emitters live under hooks/; an absent root (a fixture tree, a partial install) defines nothing.
+PRODUCT_DIRS=(
+  hooks
+  lib
+  scripts
+  autoagent
+)
+readonly PRODUCT_DIRS
+readonly EMITTERS_FIRST='emit_error|block_critical|block_and_exit|hook_require_python3'
+readonly RE_CODE='^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+$'
+readonly RE_CODE_HEAD='(^|[^[:alnum:]_])(([A-Z][A-Z0-9]*-)+)$'
+readonly RE_CODE_TAIL='^((-[A-Z0-9]+)+)([^[:alnum:]_]|$)'
+readonly RE_EMIT_NAME="(^|[^[:alnum:]_])(${EMITTERS_FIRST}|hook_require_python3_unless_empty)[[:space:]]"
+readonly RE_EMIT_ARG='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"';|&)]+)'
+readonly RE_EMIT_FIRST="(^|[^[:alnum:]_])(${EMITTERS_FIRST})[[:space:]]+${RE_EMIT_ARG}"
+readonly RE_EMIT_SECOND="(^|[^[:alnum:]_])hook_require_python3_unless_empty[[:space:]]+${RE_EMIT_ARG}[[:space:]]+${RE_EMIT_ARG}"
+readonly RE_ARRAY_REF='^\$\{([A-Za-z_][A-Za-z0-9_]*)\['
+readonly RE_VAR_REF='^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$'
+readonly RE_READ_TABLE='IFS="\$\{([A-Za-z_][A-Za-z0-9_]*)\}"[[:space:]]+read[[:space:]]+(-r[[:space:]]+)?([A-Za-z_][A-Za-z0-9_ ]*)'
+readonly RE_WORD='^[[:space:]]*([^[:space:]]+)(.*)$'
+readonly RE_CELL='^[[:space:]"]*([^[:space:]"]+)[[:space:]"]*$'
+
 no_result_check=0
 tautology=0
 count_pin=0
@@ -169,6 +198,10 @@ HEADER_HIT_LINE=0
 HEADER_HIT_TEXT=""
 LINE_CODE=""
 LINE_TEXT=""
+# Newline-bounded code list (bash 3.2 has no associative array), built on the first title token.
+DEFINED_CODES=$'\n'
+CODES_BUILT=0
+READ_FIELD_INDEX=-1
 
 # Splits one physical line into two views. LINE_CODE blanks quoted spans so a `run` inside a string
 # is not a call; LINE_TEXT keeps them so a `$status` inside a string is still an inspection. Both
@@ -302,6 +335,181 @@ header_is_incident() {
   return 1
 }
 
+# True when the title carries an ID: a match whose whole hyphen-joined code no product file defines.
+title_has_id() {
+  local rest="${1}" seen="" left="" code="" after=""
+  while [[ "${rest}" =~ ${RE_ID_TAG} ]]; do
+    code="${BASH_REMATCH[2]}"
+    left="${seen}${rest%%"${BASH_REMATCH[0]}"*}${BASH_REMATCH[1]}"
+    after="${BASH_REMATCH[4]}${rest#*"${BASH_REMATCH[0]}"}"
+    if [[ "${left}" =~ ${RE_CODE_HEAD} ]]; then
+      code="${BASH_REMATCH[2]}${code}"
+      left="${left%"${BASH_REMATCH[2]}"}"
+    fi
+    if [[ "${after}" =~ ${RE_CODE_TAIL} ]]; then
+      code+="${BASH_REMATCH[1]}"
+      after="${after#"${BASH_REMATCH[1]}"}"
+    fi
+    # shellcheck disable=SC2310  # an undefined code is the reportable outcome, not an error
+    code_is_defined "${code}" || return 0
+    seen="${left}${code}"
+    rest="${after}"
+  done
+  return 1
+}
+
+code_is_defined() {
+  if ((CODES_BUILT == 0)); then
+    build_defined_codes
+  fi
+  [[ "${DEFINED_CODES}" == *$'\n'"${1}"$'\n'* ]]
+}
+
+# Reads each non-test file under the present product roots that names an emitter, once per run.
+build_defined_codes() {
+  local dir="" files="" file="" lines="" line=""
+  CODES_BUILT=1
+  for dir in "${PRODUCT_DIRS[@]}"; do
+    [[ -d "${root_dir}/${dir}" ]] || continue
+    # shellcheck disable=SC2310  # product_grep reports its own failure; the exit carries it
+    files="$(product_grep -rlIE --exclude-dir=test -- "${RE_EMIT_NAME}" "${root_dir}/${dir}")" || exit 3
+    while IFS= read -r file; do
+      [[ -n "${file}" ]] || continue
+      # shellcheck disable=SC2310  # as above
+      lines="$(product_grep -E -- "${RE_EMIT_NAME}" "${file}")" || exit 3
+      while IFS= read -r line; do
+        scan_line "${line}"
+        register_line_codes "${file}" "${LINE_TEXT}"
+      done <<<"${lines}"
+    done <<<"${files}"
+  done
+}
+
+# grep whose no-match is an empty result; an unreadable product file is an IO error (exit 3).
+product_grep() {
+  local rc=0
+  grep "$@" || rc=$?
+  if ((rc > 1)); then
+    printf 'ERROR: product source unreadable while collecting defined codes under %s\n' "${root_dir}" >&2
+    return 3
+  fi
+}
+
+# Registers the code argument of every emitter call on one comment-stripped line.
+register_line_codes() {
+  local file="${1}" rest="${2}" arg=""
+  while [[ "${rest}" =~ ${RE_EMIT_FIRST} ]]; do
+    arg="${BASH_REMATCH[3]}"
+    rest="${rest#*"${BASH_REMATCH[0]}"}"
+    register_code_arg "${file}" "${arg}"
+  done
+  rest="${2}"
+  while [[ "${rest}" =~ ${RE_EMIT_SECOND} ]]; do
+    arg="${BASH_REMATCH[3]}"
+    rest="${rest#*"${BASH_REMATCH[0]}"}"
+    register_code_arg "${file}" "${arg}"
+  done
+}
+
+# A quoted literal defines its code; a double-quoted array or field reference defines its table.
+register_code_arg() {
+  local file="${1}" arg="${2}" body=""
+  case "${arg}" in
+    \"?*\" | \'?*\') body="${arg:1:${#arg}-2}" ;;
+    *) return 0 ;;
+  esac
+  if [[ "${body}" =~ ${RE_CODE} ]]; then
+    DEFINED_CODES+="${body}"$'\n'
+  elif [[ "${arg}" == \"* && "${body}" =~ ${RE_ARRAY_REF} ]]; then
+    register_array_table "${file}" "${BASH_REMATCH[1]}"
+  elif [[ "${arg}" == \"* && "${body}" =~ ${RE_VAR_REF} ]]; then
+    register_read_table "${file}" "${BASH_REMATCH[1]}"
+  fi
+}
+
+# Registers every code-shaped element of the file's NAME=( … ) assignment, single- or multi-line.
+register_array_table() {
+  local file="${1}" re_open="^[[:space:]]*([a-z]+[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*)?${2}=\\((.*)$"
+  local line="" text="" in_array=0
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    scan_line "${line}"
+    text="${LINE_TEXT}"
+    if ((in_array == 0)); then
+      [[ "${text}" =~ ${re_open} ]] || continue
+      text="${BASH_REMATCH[3]}"
+      in_array=1
+    fi
+    if [[ "${text}" == *')'* ]]; then
+      text="${text%%)*}"
+      in_array=0
+    fi
+    register_words "${text}"
+  done <"${file}"
+}
+
+register_words() {
+  local rest="${1}" word=""
+  while [[ "${rest}" =~ ${RE_WORD} ]]; do
+    word="${BASH_REMATCH[1]}"
+    rest="${BASH_REMATCH[2]}"
+    word="${word//\"/}"
+    word="${word//\'/}"
+    if [[ "${word}" =~ ${RE_CODE} ]]; then
+      DEFINED_CODES+="${word}"$'\n'
+    fi
+  done
+}
+
+# Registers the rows of every `IFS="${SEP}" read -r` line in the file that names FIELD.
+register_read_table() {
+  local file="${1}" field="${2}" reads="" line="" sep=""
+  # shellcheck disable=SC2310  # product_grep reports its own failure; the exit carries it
+  reads="$(product_grep -E -- "${RE_READ_TABLE}" "${file}")" || exit 3
+  while IFS= read -r line; do
+    scan_line "${line}"
+    [[ "${LINE_TEXT}" =~ ${RE_READ_TABLE} ]] || continue
+    sep="${BASH_REMATCH[1]}"
+    set_read_field_index "${BASH_REMATCH[3]}" "${field}"
+    if ((READ_FIELD_INDEX >= 0)); then
+      register_table_rows "${file}" "${sep}" "${READ_FIELD_INDEX}"
+    fi
+  done <<<"${reads}"
+}
+
+# Sets READ_FIELD_INDEX to FIELD's 0-based position among the read's names, -1 when absent.
+set_read_field_index() {
+  local rest="${1}" pos=0
+  READ_FIELD_INDEX=-1
+  while [[ "${rest}" =~ ${RE_WORD} ]]; do
+    rest="${BASH_REMATCH[2]}"
+    if [[ "${BASH_REMATCH[1]}" == "${2}" ]]; then
+      READ_FIELD_INDEX="${pos}"
+      return 0
+    fi
+    pos=$((pos + 1))
+  done
+}
+
+# Registers cell INDEX of each `${SEP}`-delimited row in the file when it is one code-shaped word.
+register_table_rows() {
+  local file="${1}" sep="\${${2}}" index="${3}" rows="" line="" rest="" cell="" pos=0
+  # shellcheck disable=SC2310  # product_grep reports its own failure; the exit carries it
+  rows="$(product_grep -F -- "${sep}" "${file}")" || exit 3
+  while IFS= read -r line; do
+    scan_line "${line}"
+    rest="${LINE_TEXT}"
+    for ((pos = 0; pos < index; pos++)); do
+      [[ "${rest}" == *"${sep}"* ]] || continue 2
+      rest="${rest#*"${sep}"}"
+    done
+    [[ "${rest%%"${sep}"*}" =~ ${RE_CELL} ]] || continue
+    cell="${BASH_REMATCH[1]}"
+    if [[ "${cell}" =~ ${RE_CODE} ]]; then
+      DEFINED_CODES+="${cell}"$'\n'
+    fi
+  done <<<"${rows}"
+}
+
 # Counts the TS test titles carrying an ID; the Bats signals do not apply to a TS file.
 audit_ts_titles() {
   local rel="${1}" idx=0 title=""
@@ -309,7 +517,8 @@ audit_ts_titles() {
     [[ "${AUDIT_CLI_LINES[idx]}" =~ ${RE_TS_TITLE} ]] || continue
     title="${BASH_REMATCH[3]}"
     title="${title:1:${#title}-2}"
-    if [[ "${title}" =~ ${RE_ID_TAG} ]]; then
+    # shellcheck disable=SC2310  # a false predicate is the unreported outcome, not an error
+    if title_has_id "${title}"; then
       id_title=$((id_title + 1))
       audit_cli_report ID_TITLE "${rel}:$((idx + 1))" "test ${title}"
     fi
@@ -364,7 +573,8 @@ audit_bats_bodies() {
         test_name="${test_name%\"}"
         test_name="${test_name#\"}"
         test_line=$((idx + 1))
-        if [[ "${test_name}" =~ ${RE_ID_TAG} ]]; then
+        # shellcheck disable=SC2310  # a false predicate is the unreported outcome, not an error
+        if title_has_id "${test_name}"; then
           id_title=$((id_title + 1))
           audit_cli_report ID_TITLE "${rel}:${test_line}" "@test ${test_name}"
         fi
