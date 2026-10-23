@@ -185,6 +185,133 @@ list_bashes() {
   done
 }
 
+# Spellings that name a harness path in plain text: each resolves to the live harness, so each blocks.
+
+# Args: $1 = want (exit code) · $2.. = `name|prompt` rows. HOME may be set by the caller.
+assert_rows() {
+  local want="$1" row name prompt
+  shift
+  for row in "$@"; do
+    IFS='|' read -r name prompt <<<"${row}"
+    run_agent "${prompt}" omit
+    [[ "${status}" -eq "${want}" ]] || {
+      echo "row: ${name} · want ${want} · status ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "an angle-bracket placeholder segment does not cut the path short" {
+  assert_rows 2 \
+    'MEMORY.md behind a placeholder|Edit ~/.claude/projects/<home-encoded>/memory/MEMORY.md now.' \
+    'feedback file behind a placeholder|Write ~/.claude-personal/projects/<home-encoded>/memory/feedback_x.md now.' \
+    'traversal behind a placeholder|Edit ~/.claude/projects/<p>/../../agents/x.md now.'
+  assert_rows 0 \
+    'the charter progress spelling|Persist ~/.claude/projects/<home-encoded>/memory/progress-{task-name}.md now.'
+}
+
+@test "a protected path joined onto an exempt path by a separator is still classified" {
+  assert_rows 2 \
+    'comma|Edit ~/.claude/data/a.json,~/.claude/settings.json now.' \
+    'scope line|[SCOPE] files=~/.claude/data/report.json,~/.claude/agents/x.md · deliverable=edit · out=none' \
+    'semicolon onto a branch|Edit ~/.claude/logs/a;~/.claude-work/settings.json now.' \
+    'colon|Edit ~/.claude/projects/p/notes.md:~/.claude/hooks/x.sh now.' \
+    'pipe|Edit ~/.claude/todos/a|~/.claude/settings.json now.' \
+    'ampersands|Edit ~/.claude/data/a&&~/.claude/settings.json now.' \
+    'relative after a comma|Edit ~/.claude/data/a,.claude/settings.json now.'
+  assert_rows 0 \
+    'two exempt paths in one list|[SCOPE] files=~/.claude/data/a.json,~/.claude/projects/-Users-x/memory/progress-x.md · deliverable=edit · out=none'
+}
+
+@test "a harness root named without a trailing slash still blocks" {
+  assert_rows 2 \
+    'cd into the root|cd ~/.claude && edit settings.json' \
+    'root as a directory word|Rewrite the hooks in the ~/.claude directory.' \
+    'bare root|Edit ~/.claude' \
+    'bare branch root|Edit ~/.claude-work' \
+    'quoted root|Edit "~/.claude"/settings.json now.' \
+    'glob root|Edit ~/.claude*/settings.json now.' \
+    'brace list of roots|Edit ~/{.claude,.claude-work}/settings.json now.' \
+    'brace branch suffix|Edit ~/.claude-{work,personal}/settings.json now.'
+  assert_rows 0 \
+    'the global config file is no config dir|Read ~/.claude.json for the MCP server list.'
+}
+
+@test "a noisy spelling of the home dir still blocks" {
+  local home="${BATS_TEST_TMPDIR}/home/u"
+  mkdir -p "${home}"
+  HOME="${home}" assert_rows 2 \
+    'doubled slash after tilde|Edit ~//.claude/agents/x.md now.' \
+    'dot segment after tilde|Edit ~/./.claude/agents/x.md now.' \
+    "doubled slash after the home|Edit ${home}//.claude/agents/x.md now." \
+    "dot segment after the home|Edit ${home}/./.claude/agents/x.md now." \
+    "doubled slash inside the home|Edit ${BATS_TEST_TMPDIR}/home//u/.claude/agents/x.md now." \
+    'tilde with a user name|Edit ~u/.claude/agents/x.md now.' \
+    'dot-slash relative|cd ~ && edit ./.claude/agents/x.md' \
+    'relative after an equals sign|Edit --file=.claude/agents/x.md now.' \
+    'quote inside the path|Edit $HOME"/.claude/agents/x.md" now.' \
+    "single quotes splitting the root|Edit ~/.cl'aude'/agents/x.md now." \
+    'backslash before the root|Edit ~/\.claude/agents/x.md now.'
+}
+
+@test "trailing punctuation after a path does not change its class" {
+  assert_rows 0 \
+    'progress file ending a sentence|Checkpoint to ~/.claude/projects/-Users-x/memory/progress-foo.md.' \
+    'progress file in bold|Checkpoint to **~/.claude/projects/-Users-x/memory/progress-foo.md**' \
+    'progress file before an exclamation|Checkpoint to ~/.claude/projects/-Users-x/memory/progress-foo.md!' \
+    'BASENAME file ending a sentence|Append the note to ~/.claude/CLAUDE.md.'
+  assert_rows 2 \
+    'traversal before punctuation|Read ~/.claude/data/..!'
+}
+
+@test "a case variant of a harness root blocks, since the host filesystem folds case" {
+  local upper_home
+  upper_home="$(printf '%s' "${HOME}" | tr '[:lower:]' '[:upper:]')"
+  assert_rows 2 \
+    'capitalized root|Edit ~/.Claude/agents/x.md now.' \
+    'upper-case branch root|Edit ~/.CLAUDE-work/settings.json now.' \
+    'upper-case home|Edit '"${upper_home}"'/.claude/hooks/x.sh now.' \
+    'capitalized relative root|From the home dir, edit .Claude/agents/x.md now.'
+}
+
+# CWD-relative arm: a relative token names the harness only when, read from $HOME, it reaches an entry
+#   the harness root holds or one Claude Code loads as config.
+
+@test "a CWD-relative .claude path blocks only where it would name a harness entry from home" {
+  local home="${BATS_TEST_TMPDIR}/home"
+  mkdir -p "${home}/.claude"
+  : >"${home}/.claude/statusline-command.sh"
+  HOME="${home}" assert_rows 0 \
+    'repo worktree dir|Repo /x/glass-atrium, worktree .claude/worktrees/wt-pa-hpp, branch fix/x.' \
+    'repo audit dir|Records: `.claude/prompt-audit/pa-s3/impl77/` and the plan.'
+  HOME="${home}" assert_rows 2 \
+    'an entry the harness root holds|From the home dir, edit .claude/statusline-command.sh now.' \
+    'a config entry not yet created|From the home dir, edit .claude/agents/x.md now.' \
+    'a settings file not yet created|From the home dir, edit .claude/settings.local.json now.' \
+    'traversal out of a repo dir|Edit .claude/worktrees/../agents/x.md now.' \
+    'a tilde path to the same dir|Edit ~/.claude/worktrees/wt/hooks/x.sh now.'
+}
+
+@test "a failed normalization still scans the raw prompt and says so only when it allows" {
+  mkdir -p "${BATS_TEST_TMPDIR}/noawk"
+  printf '#!/bin/sh\nexit 1\n' >"${BATS_TEST_TMPDIR}/noawk/awk"
+  chmod +x "${BATS_TEST_TMPDIR}/noawk/awk"
+  PATH="${BATS_TEST_TMPDIR}/noawk:${PATH}" run --separate-stderr \
+    bash -c 'printf "%s" "$1" | bash "$2"' _ \
+    "$(jq -n '{tool_name:"Agent",tool_input:{prompt:"Edit ~/.claude/agents/x.md now."}}')" "${HOOK_SH}"
+  [[ "${status}" -eq 2 && -z "${output}" && "${#stderr_lines[@]}" -eq 1 ]] || {
+    echo "block row · status ${status} · stdout ${output} · stderr ${stderr}"
+    return 1
+  }
+  PATH="${BATS_TEST_TMPDIR}/noawk:${PATH}" run --separate-stderr \
+    bash -c 'printf "%s" "$1" | bash "$2"' _ \
+    "$(jq -n '{tool_name:"Agent",tool_input:{prompt:"Read ~/.claude/data/x.md now."}}')" "${HOOK_SH}"
+  [[ "${status}" -eq 0 && "${stderr}" == *'only the raw prompt was scanned'* ]] || {
+    echo "allow row · status ${status} · stderr ${stderr}"
+    return 1
+  }
+}
+
 # Mixed prompt: any non-exempt match blocks
 
 @test "data/ (exempt) + hooks/ (config) in one prompt → BLOCKED" {

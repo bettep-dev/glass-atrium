@@ -177,9 +177,13 @@ list_bashes() {
   [[ "${status}" -eq 0 ]]
 }
 
-@test "case-varied .Claude-Work → NOT blocked (this hook is case-sensitive by design)" {
-  run_agent 'Write ~/.Claude-Work/hooks/x.sh.' true
-  [[ "${status}" -eq 0 ]]
+# A case-insensitive filesystem (macOS APFS default) resolves a case variant to the live branch dir.
+@test "a case-varied branch root blocks like the branch root itself" {
+  run_agent 'Write ~/.Claude-Work/hooks/x.sh.' omit
+  [[ "${status}" -eq 2 ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 # Block-message generalization (D4) — the Rule-2 pin in the base suite still holds alongside this

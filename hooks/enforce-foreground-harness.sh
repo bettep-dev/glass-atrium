@@ -25,7 +25,11 @@
 # Progress-file exclusion: a progress-*.md directly in a projects/<p>/memory/ dir is session-internal
 #   state every agent must checkpoint before its turn cap (GLASS_ATRIUM_GLOBAL_RULES.md → Cross-Session
 #   Continuity) — staging it would defeat it. MEMORY.md and every other memory file stay protected.
-#   A `..` segment in a match voids every exemption.
+#   A `..` in a match, or a second root inside it, voids every exemption.
+#
+# Spelling: the scan reads the prompt as the shell resolves it — quotes and backslashes removed,
+#   `//` and `/./` collapsed, case folded (macOS APFS resolves `~/.Claude/` to the live dir), every
+#   home form rewritten to `~/` — and a root counts with or without a trailing `/`, glob or brace.
 #
 # Source: rules/glass-atrium/orchestrator-role.md → Harness Path Protection.
 
@@ -61,10 +65,16 @@ if [[ -z "${prompt}" ]]; then
   exit 0
 fi
 
-# Every root form the scan matches contains `.claude` → a prompt without it names no harness path.
-if [[ "${prompt}" != *.claude* ]]; then
+# Every root form contains `.claude` in some case, a quote or backslash possibly inside it (the
+# shell drops those: `.cl"aude"/x`) → a prompt matching neither names no harness path. A regex, not a
+# bash pattern substitution: bash 3.2 runs those superlinearly on a large prompt.
+quote_run='["'"'"'\\]*'
+precheck_re="\\.${quote_run}c${quote_run}l${quote_run}a${quote_run}u${quote_run}d${quote_run}e"
+shopt -s nocasematch
+if [[ ! "${prompt}" =~ ${precheck_re} ]]; then
   exit 0
 fi
+shopt -u nocasematch
 
 # Remedy named by both block reasons — the Write routes of Harness Path Protection Rule 2.
 readonly routes_text='Take a write route instead: (1) an install-managed file (a symlink into ~/.glass-atrium/: agent bodies, rules/glass-atrium/*, skills/glass-atrium-*, GLASS_ATRIUM_GLOBAL_RULES.md) -> edit the repo path, which ships through manifest regeneration and the updater; (2) a harness file the install does not manage (profile settings*.json, settings.local.json, other profile-local files) -> the staged lane: the main session copies it to a staging dir in the working tree, the agent edits the copy, the user approves the diff and applies it; (3) a read -> the repo path for an install-managed file, the staged lane read-only copy otherwise. Never name the resolved ~/.glass-atrium/ target to get past this check: it writes the live install outside the updater.'
@@ -80,84 +90,144 @@ if [[ ! -r "${config_dirs_lib}" ]] || ! source "${config_dirs_lib}"; then
   exit 2
 fi
 
-# Home forms → tilde form, so one tilde arm covers them all: the literal-home spellings and the
-# resolved home (runtime value, matched as a FIXED string — no regex escaping of $HOME). The tilde
-# comes from a variable: a bare `~` in the replacement is tilde-expanded by bash 4.3+ but kept literal
-# by bash 3.2. An empty $HOME adds no form — a bare `/` pattern would rewrite every separator.
+# Normalize as the shell resolves a path, in ONE awk fork (linear, where bash 3.2 pattern substitution
+# is not): case fold (macOS APFS resolves `~/.Claude/` to the live dir) · quotes and backslashes
+# dropped · `//` and `/./` collapsed · every home form → `~/`, the resolved home matched as a FIXED
+# string. An empty or `/` home adds no form — a bare `/` pattern would rewrite every separator.
 home_dir="${HOME:-}"
-tilde='~'
-# shellcheck disable=SC2016  # the patterns are literal prompt text, never expansions
-home_forms=('"${HOME}"/' '"$HOME"/' '${HOME}/' '$HOME/')
-if [[ -n "${home_dir}" ]]; then
-  home_forms+=("${home_dir}/")
+home_dir="${home_dir%/}"
+# shellcheck disable=SC2016  # awk program text, never shell expansions
+normalize_awk='
+function norm(s) {
+  s = tolower(s)
+  gsub(quote_class, "", s)
+  while (gsub(/\/\//, "/", s)) {}
+  while (gsub(/\/\.\//, "/", s)) {}
+  return s
+}
+function swap(s, from,    out, i) {
+  out = ""
+  while ((i = index(s, from)) > 0) {
+    out = out substr(s, 1, i - 1) "~/"
+    s = substr(s, i + length(from))
+  }
+  return out s
+}
+BEGIN {
+  quote_class = "[\"" sprintf("%c", 39) "\\\\]"
+  home = norm(ENVIRON["FH_HOME"])
+  sub(/\/$/, "", home)
+}
+{
+  line = swap(swap(norm($0), "${home}/"), "$home/")
+  if (home != "") line = swap(line, home "/")
+  print line
+}'
+# On awk failure the raw prompt is still scanned; the note prints on the allow exits only, so a block
+# keeps its single stderr reason. `trap - ERR` inside: an inherited (-E) trap would exit 0 there.
+normalized=""
+degraded=false
+if normalized="$(
+  trap - ERR
+  printf '%s\n' "${prompt}" | FH_HOME="${home_dir}" LC_ALL=C awk "${normalize_awk}"
+)"; then
+  prompt="${normalized}"
+else
+  degraded=true
 fi
-for home_form in "${home_forms[@]}"; do
-  prompt=${prompt//"${home_form}"/${tilde}/}
-done
 
-# Scan the prompt for harness path occurrences — each match is a path token from any `.claude*`
-# config root up to the next whitespace / quote / backtick / closing paren-or-bracket (so we can resolve
-# its basename). grep -oE prints one match per line; sort -u dedupes. `|| true` absorbs grep's
-# exit-1 no-match so pipefail does not trip the ERR trap when there are no harness paths.
-#
-# Two alternations: the tilde form (`~/.claude.../`, every home form after the rewrite above) and a
-# CWD-relative form (`.claude.../`).
-#
-# Relative-form arm closes the prior blind spot: a prompt that first changes
-# directory to $HOME (`cd ~ && edit .claude/agents/x.md`) references the harness
-# root with no home prefix, so the tilde arm misses it and
-# the Rule-2 check is bypassed. The `(^|[[:space:]"'`(<>])` boundary
-# anchors `.claude` to a genuine path start — it never re-matches the tilde
-# arm (its `/` precedes `.claude`) and never matches an incidental
-# substring (e.g. `foo.claude`).
-#   Residual blind spot (documented, low-risk): the relative arm presumes the
-# CWD is $HOME. A relative `.claude/...` resolved against a NON-home CWD points
-# outside the harness and is NOT a Rule-2 target, yet still matches here — an
-# over-match that can only over-block (fail-SAFE for a Rule-2 gate). Forms that
-# fully obscure the path (variable indirection, base64, a `cd` to a deeper dir
-# then `../.claude/...`) remain out of a static text scan's reach; this is one
-# enforcement layer among several, not a complete sandbox.
-harness_re="(~/${CLAUDE_CONFIG_ROOT_RE}|(^|[[:space:]\"'\`(<>])${CLAUDE_CONFIG_ROOT_RE})"
+# Allow exit: exit 0, naming a degraded normalization first.
+allow() {
+  if [[ "${degraded}" == true ]]; then
+    printf '[enforce-foreground-harness] awk normalization failed; only the raw prompt was scanned\n' >&2
+  fi
+  exit 0
+}
+
+# Scan for root occurrences: `~/` or `~user/` before `.claude` (every home form after the rewrite), or
+# a CWD-relative `.claude` after a boundary byte. A token runs to whitespace, a backtick, `)`, `<>`, or
+# a list separator `,;:|` — so a protected path joined onto an exempt one is a token of its own — and
+# keeps an `<angle-placeholder>` segment whole. The root grammar is checked per token below.
+# shellcheck disable=SC2016  # backticks are literal bracket members, never expansions
+tok_char='[^[:space:]`)<>,;:|]'
+placeholder='<[^[:space:]<>]*>'
+# shellcheck disable=SC2016  # backticks are literal bracket members, never expansions
+boundary='[[:space:]`(<>{,;:|&=*[]'
+scan_re="(~[a-z0-9._-]*/\\{?|(^|${boundary})(\\./)*\\{?)\\.claude(${tok_char}|${placeholder})*"
 matches=""
 matches="$(printf '%s' "${prompt}" \
-  | { grep -oE "${harness_re}"'[^[:space:]"'"'"'`)<>]*' || true; } \
+  | { grep -oE "${scan_re}" || true; } \
   | sort -u)" || matches=""
 
 # No harness path → out of scope.
 if [[ -z "${matches}" ]]; then
-  exit 0
+  allow
 fi
 
-# BASENAME exception: a match is exempt when its first segment after the harness root is one
-# of {CLAUDE.md, MEMORY.md, GLASS_ATRIUM_GLOBAL_RULES.md} — the prompt references an allowlisted
-# root-level file directly. EVERY match exempt → the call is exempt. Implementation: strip the
-# harness root prefix, take the first '/'-separated segment, compare; any non-exempt match → BLOCK.
+# CWD-relative arm rule: a relative `.claude*/` token is ambiguous — read from $HOME it is the harness,
+# read from a repo it is that repo's own `.claude/` (worktrees/, audit records). The agent's cwd is not
+# knowable here (tool_input carries none; the envelope cwd is the session's, and a prompt `cd` moves it),
+# so the token counts as a harness path when, read from $HOME, its first segment is an entry the
+# harness root holds, or one Claude Code loads as config before it exists.
+# Any other entry, created from $HOME, is a file no session reads → no misconfiguration, no block.
+config_entries=' settings.json settings.local.json keybindings.json agents agent-memory commands skills hooks rules plugins output-styles projects '
+
+# Classify each token: strip the boundary byte and the `~/` / `./` / `{` lead, take the root with the
+# lib grammar, then the first segment after it. EVERY token exempt → the call is exempt.
 all_exempt=true
+lead_re='^[^.~]+'
+tilde_re='^~[a-z0-9._-]*/'
+root_re="^${CLAUDE_CONFIG_ROOT_RE%/}"
+wild_re='^-?[*?{}[]'
 progress_re='^projects/[^/]+/memory/progress-[^/]*\.md$'
 while IFS= read -r path; do
   [[ -z "${path}" ]] && continue
-  # The relative-form arm captures one leading separator byte (space/quote/backtick/paren/angle) —
-  # trim it so the prefix-strips below see a clean path token (IFS read already trims a leading TAB).
-  path="${path#[[:space:]]}"
-  path="${path#\"}"
-  path="${path#\'}"
-  path="${path#\`}"
-  path="${path#(}"
-  path="${path#<}"
-  path="${path#>}"
-  # Strip the leading root prefix in any of its three forms (tilde / absolute-home / bare). The
-  # helper shares ONE root grammar with the scan regex above, so a root the scan admits can never
-  # be one the strip fails to reduce — the drift that left profile branches unrecognized.
-  remainder="$(claude_config_strip_branch_root "${path}" "${home_dir}")"
-  # A `..` segment can climb out of any exempt subtree → never exempt.
-  if [[ "/${remainder}/" == */../* ]]; then
+  if [[ "${path}" =~ ${lead_re} ]]; then
+    path="${path#"${BASH_REMATCH[0]}"}"
+  fi
+  relative=true
+  if [[ "${path}" =~ ${tilde_re} ]]; then
+    relative=false
+    path="${path#"${BASH_REMATCH[0]}"}"
+  fi
+  while [[ "${path}" == ./* ]]; do
+    path="${path#./}"
+  done
+  path="${path#\{}"
+  raw="${path}"
+  # Trailing prose punctuation or markdown emphasis is not part of the path; a dot run is kept.
+  while :; do
+    case "${path}" in
+      */. | */.. | *..) break ;;
+      *[]?*_!.]) path="${path%?}" ;;
+      *) break ;;
+    esac
+  done
+  [[ "${path}" =~ ${root_re} ]] || continue
+  root="${BASH_REMATCH[0]}"
+  rest="${path#"${root}"}"
+  # The root itself (bare, glob or brace spelling) → the whole config dir → never exempt.
+  if [[ -z "${rest}" || "${rest}" =~ ${wild_re} ]]; then
     all_exempt=false
     break
   fi
-  # First segment after the root.
+  # A lookalike name (`.claude.json`, `.claudex/`) is no config root.
+  [[ "${rest}" == /* ]] || continue
+  remainder="${rest#/}"
+  # A `..` climbs out of any exempt subtree; a second root inside the token is a swallowed path.
+  if [[ "/${raw}/" == */../* || "/${remainder}/" == */../* || "${remainder}" == *.claude* ]]; then
+    all_exempt=false
+    break
+  fi
   first_segment="${remainder%%/*}"
+  if [[ "${relative}" == true && -n "${home_dir}" && -n "${first_segment}" ]]; then
+    entry="${home_dir}/${root}/${first_segment}"
+    if [[ ! -e "${entry}" && ! -L "${entry}" && "${config_entries}" != *" ${first_segment} "* ]]; then
+      continue
+    fi
+  fi
   case "${first_segment}" in
-    CLAUDE.md | MEMORY.md | GLASS_ATRIUM_GLOBAL_RULES.md) continue ;;
+    claude.md | memory.md | glass_atrium_global_rules.md) continue ;;
     data | projects | logs | todos | shell-snapshots | statsig)
       # Runtime-DATA subdir → not config, not blocked. But the memory dir nests under projects/
       # (projects/<proj>/memory/…), so a /memory/ path segment keeps the match protected — only a
@@ -181,7 +251,7 @@ while IFS= read -r path; do
 done <<<"${matches}"
 
 if [[ "${all_exempt}" == "true" ]]; then
-  exit 0
+  allow
 fi
 
 # Non-exempt harness path, whatever run_in_background holds → BLOCK (reason on stderr, exit 2).
