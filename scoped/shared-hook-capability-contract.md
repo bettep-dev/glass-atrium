@@ -19,13 +19,22 @@ Rows = lifecycle event · columns = capability surface. `mutate` = can change mo
 
 ## Block Channels (Two Non-Interchangeable Mechanisms)
 
-Both channels exist, they are NOT substitutable, and a hook MUST pick the one its registering event's consumer expects. `exit 2` alone does not imply a stdout decision, and a stdout decision without the matching exit does not block.
+Both channels exist, they are NOT substitutable, and a hook MUST pick the one its registering event's consumer expects. `exit 2` alone does not imply a stdout decision.
 
+- Every hook this section names pairs its channel with `exit 2`. A stdout decision at `exit 0` is a documented path none of them uses, and it is unmeasured.
 - **Channel a — stderr `emit_error` JSON + `exit 2`**: `emit_error` writes a structured JSON error to stderr (`hook-utils.sh` `hook_emit_error` → `>&2`), then the hook exits 2. No stdout `decision` field. Used by `validate-secret-scan.sh`, `block-dangerous-commands.sh`, `enforce-commit-guard.sh`, `block-no-verify.sh`, `block-md-creation.sh`, `enforce-delegation.sh`, `enforce-harness-critical.sh`.
-- **Channel b — stdout `{"decision":"block"}` + exit**: the hook prints a JSON object carrying `"decision":"block"` to stdout, then exits. Used by `validate-output.sh` (its blocking LLM05 path) and `enforce-foreground-harness.sh`.
+  - A plain-text stderr reason + `exit 2` with silent stdout is the same channel: `enforce-foreground-harness.sh` writes its reason as one plain stderr line.
+- **Channel b — stdout `{"decision":"block"}` + exit**: the hook prints a JSON object carrying `"decision":"block"` to stdout, then exits. Used by `validate-output.sh` (its blocking LLM05 path, on PostToolUse).
 - **`"advisory"` is not a channel-b form**: the PostToolUse decision schema rejects it (`"Hook JSON output validation failed"`), so a non-blocking advisory emits a stderr `emit_error` + `exit 0` instead — `validate-output.sh`'s LLM07 path is the worked case.
-- **Discriminator is the stdout `"decision"` JSON, never the exit code**: `exit 2` is not exclusive to channel a — `validate-output.sh` and `enforce-foreground-harness.sh` emit a stdout decision AND `exit 2` together. Channel-a hooks carry no stdout `decision` at all.
-- **Non-substitutability**: do NOT swap a channel-a `emit_error`+`exit 2` for a stdout `decision`, or the reverse, without verifying the registering event's contract — the consumer reads exactly one surface.
+- **Discriminator is the stdout `"decision"` JSON, never the exit code**: `exit 2` is not exclusive to channel a — `validate-output.sh` emits a stdout decision AND `exit 2` together. Channel-a hooks carry no stdout `decision` at all.
+- **What the model sees at `exit 2`**: stdout JSON is NOT ignored at `exit 2` on PreToolUse or PostToolUse — it is parsed. Which text reaches the model differs per event:
+  - PreToolUse, measured by a live probe (CLI 2.1.308) with a JSON `allow`: the JSON cannot override the block, so the tool does not run. The model gets stderr in the error tool_result, and `permissionDecisionReason` is not shown.
+  - PreToolUse, docs only (not probed): when the stdout JSON makes a blocking decision, that decision's reason replaces stderr.
+  - PostToolUse, measured by the same probe with `decision:"block"` + `reason` + `additionalContext`: the JSON is applied. The model gets the `reason` in place of stderr, plus the `additionalContext`, and stderr does not reach it.
+    - The tool already ran: its tool_result is unchanged, and the turn continues.
+  - Recheck the two measured results after a CLI upgrade — the published reference does not say which PostToolUse JSON fields apply at `exit 2`.
+- **Non-substitutability**: do NOT swap a channel-a `emit_error`+`exit 2` for a stdout `decision`, or the reverse, without verifying the registering event's contract.
+  - Why: each block shows the model one reason text, and the event plus the JSON content decide which surface supplies it (**What the model sees at `exit 2`** above).
 
 ## on_fail Action Taxonomy (validation-failure disposition vocabulary)
 
