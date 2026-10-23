@@ -455,6 +455,8 @@ keep_evidence() {
   if [[ -n "${OUT}" ]]; then
     KEPT_DIR="${OUT}/${2%.diff}.evidence"
     mkdir -p -- "${KEPT_DIR}"
+  elif [[ -n "${TMPDIR:-}" ]]; then
+    KEPT_DIR="$(mktemp -d -p "${TMPDIR}")" # -p: bare BSD mktemp ignores a caller-set TMPDIR
   else
     KEPT_DIR="$(mktemp -d)"
   fi

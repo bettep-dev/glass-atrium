@@ -343,7 +343,7 @@ tool_result_record() {
 @test "a stopped run without --out keeps the stopped diff's evidence in a dir its stop message names" {
   local row name want kept
   mkdir -p "${BATS_TEST_TMPDIR}/tmp"
-  TMPDIR="${BATS_TEST_TMPDIR}/tmp"
+  export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
   for row in 'binding|9' 'shape|10'; do
     name="${row%%|*}"
     want="${row#*|}"
@@ -354,8 +354,8 @@ tool_result_record() {
     run_runner --measured --tier xhigh --corpus "${CORPUS}"
     assert_status "${want}" "${name}"
     kept="${stderr##*evidence kept in }"
-    [[ "${kept}" == /* && "${kept}" != "${stderr}" ]] || {
-      printf 'row %s: no kept dir named\n%s\n' "${name}" "${stderr}"
+    [[ "${kept}" == "${TMPDIR}"/* && "${kept}" != "${stderr}" ]] || {
+      printf 'row %s: no kept dir under %s named\n%s\n' "${name}" "${TMPDIR}" "${stderr}"
       return 1
     }
     assert_evidence "${kept}" "${name}"
