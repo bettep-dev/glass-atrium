@@ -241,6 +241,7 @@ completion_block() {
     $'free text\x1fstrong review\x1fstrong review\x1fqa-score-malformed\x1ftrue'; do
     IFS=$'\x1f' read -r name written stored reasons flag <<<"${row}"
     n=$((n + 1))
+    # shellcheck disable=SC2030  # a per-row id inside this test only.
     AGENT_ID="fraid${$}q${n}"
     SPOOL_DIR="${FR_TMP}/spool-qa-${n}"
     write_inline_payload "$(completion_block 'result: done' 'task_type: review' 'metric_pass: true' \
@@ -309,6 +310,43 @@ completion_block() {
   }
 }
 
+# scope-decl-unread — record 0 carries a `[SCOPE]` line the selector could not read
+
+# Protects the recorder's errexit path: an unread declaration flags the row instead of aborting before
+# the spool write, and skips the comparison rather than reporting the declared path as excess.
+@test "scope-decl-unread — an unread declaration flags the recorded row and skips the excess comparison" {
+  local grep_dir="${FR_TMP}/forced-grep" real_grep tfile block got_result got_flag got_reasons
+  real_grep="$(type -P grep)"
+  mkdir -p "${grep_dir}"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'for _a in "$@"; do'
+    printf '%s\n' "  case \"\${_a}\" in *'[[]SCOPE[]]'*) echo 'grep: forced read error' >&2; exit 2 ;; esac"
+    printf '%s\n' 'done'
+    printf '%s\n' "exec \"${real_grep}\" \"\$@\""
+  } >"${grep_dir}/grep"
+  chmod +x "${grep_dir}/grep"
+  # shellcheck disable=SC2031  # AGENT_ID is per-test; the qa row loop's reassignment never reaches here.
+  tfile="${TRANSCRIPT_DIR}/agent-${AGENT_ID}.jsonl"
+  block="$(completion_block 'result: done' 'task_type: bug-fix' 'metric_pass: true' 'confidence: high' \
+    'files: hooks/a.sh, hooks/undeclared.sh' 'style_ref: hooks/a.sh' 'summary: fixed a')"
+  jq -nc --arg t '[SCOPE] files=hooks/a.sh · deliverable=fix · out=none' \
+    '{type:"user", message:{role:"user", content:$t}}' >"${tfile}"
+  jq -nc --arg t "${block}" \
+    '{type:"assistant", message:{role:"assistant", content:[{type:"text", text:$t}]}}' >>"${tfile}"
+  write_transcript_payload
+  SHIM_DIR="${grep_dir}:${SHIM_DIR}" run_hook
+  got_result="$(spooled_field result)" || true
+  got_flag="$(spooled_field review_flag)" || true
+  got_reasons="$(spooled_field review_flag_reasons)" || true
+  [[ "${status}" -eq 0 && "${got_result}" == "done" && "${got_flag}" == "true" &&
+    "${got_reasons}" == "scope-decl-unread" ]] || {
+    echo "status=${status} result='${got_result}' flag='${got_flag}' reasons='${got_reasons}'"
+    echo "${output}"
+    return 1
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Vocabulary — one declaration, and every recorder-side token stamped somewhere
 # ---------------------------------------------------------------------------
@@ -317,7 +355,7 @@ completion_block() {
   local token
   for token in overconfidence underconfidence empty-metric degraded-attribution-derived \
     degraded-attribution-synthesized grader-contradiction correction-gap correction-disagreement \
-    scope-excess qa-score-malformed; do
+    scope-excess scope-decl-unread qa-score-malformed; do
     grep -qF "review_flag_add_reason \"${token}\"" "${HOOK_SH}" \
       || {
         echo "token '${token}': no review_flag_add_reason stamp in the recorder"

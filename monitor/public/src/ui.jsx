@@ -2123,6 +2123,7 @@ const REVIEW_FLAG_REASON_META = {
   'probe-omission': { label: 'No convention probe', title: 'Code change recorded with no convention reference' },
   'unregistered-agent-probe-exempt': { label: 'Probe-exempt agent', title: 'The recorded agent never received the convention-probe instruction' },
   'scope-excess': { label: 'Outside declared scope', title: 'An edited path fell outside the file list the delegation declared' },
+  'scope-decl-unread': { label: 'Scope unread', title: 'The delegation carried a [SCOPE] line the recorder could not read, so the declared-scope check did not run' },
   'qa-score-malformed': { label: 'Malformed QA score', title: 'The reported qa_score does not match cov=N,ins=N,instr=N,clar=N, optionally followed by ,d8=N, with each N from 1 to 5' },
 };
 

@@ -76,6 +76,28 @@ run_gate() {
   [[ "${output}" == *"VGATE-ENTRY-001"* ]] || { echo "wrong verdict -- ${output}" >&2; return 1; }
 }
 
+# A read failure is not an absent declaration: the operator is told the declaration could not be read,
+# and neither the presence nudge nor the depth advisory runs on a list nobody read.
+@test "an unread [SCOPE] declaration is reported as unread, never as missing or sized (exit 0)" {
+  local grep_dir="${BATS_TEST_TMPDIR}/forced-grep" real_grep
+  real_grep="$(type -P grep)"
+  mkdir -p "${grep_dir}"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'for _a in "$@"; do'
+    printf '%s\n' "  case \"\${_a}\" in *'[[]SCOPE[]]'*) echo 'grep: forced read error' >&2; exit 2 ;; esac"
+    printf '%s\n' 'done'
+    printf '%s\n' "exec \"${real_grep}\" \"\$@\""
+  } >"${grep_dir}/grep"
+  chmod +x "${grep_dir}/grep"
+  PATH="${grep_dir}:${PATH}" run_gate "Implement clauded-docs/3854. ${SIZE_EST}"$'\n'"${SCOPE_DECL}"
+  [[ "${status}" -eq 0 ]] || { echo "advisory must never block, status was ${status} -- ${output}" >&2; return 1; }
+  [[ "${output}" == *"declaration could not be read"* ]] || { echo "no unread advisory -- ${output}" >&2; return 1; }
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "unread reported as missing -- ${output}" >&2; return 1; }
+  [[ "${output}" != *"${DEEP_PHRASE}"* ]] || { echo "unread declaration was sized -- ${output}" >&2; return 1; }
+  [[ "${output}" != *"internal error"* ]] || { echo "selector status tripped the ERR trap -- ${output}" >&2; return 1; }
+}
+
 # --- surface 5: Deep-review advisory on a carried [SCOPE] declaration -------------------------
 
 DEEP_PHRASE='Deep (4-pass)'
