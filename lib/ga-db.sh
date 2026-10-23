@@ -425,8 +425,7 @@ bootstrap_health_gate() {
       || die "lsof not found — cannot verify the gate's own build is the :${port} listener (install lsof or stop any stale monitor and re-run)"
     local listener_pids
     listener_pids="$(lsof -ti "tcp:${port}" 2>/dev/null || true)"
-    # whole-line match in-shell — several pid lines piped to `grep -q` race its early exit
-    if [[ $'\n'"${listener_pids}"$'\n' == *$'\n'"${mon_pid}"$'\n'* ]]; then
+    if printf '%s\n' "${listener_pids}" | grep -Fxq -- "${mon_pid}"; then
       listener_ok="yes"
     fi
   fi

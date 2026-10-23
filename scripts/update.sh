@@ -1699,11 +1699,10 @@ update_roster_gate() {
   # No match is data, not an error: an add-only release has an empty remove half.
   removes="$(printf '%s\n' "${changes}" | grep '^remove ' || true)"
   if [[ -z "${removes}" ]]; then
-    # Line-prefix matches in-shell — an early-exit reader would race the multi-line writer and lose the match.
-    if [[ $'\n'"${changes}" == *$'\n''add '* ]]; then
+    if printf '%s\n' "${changes}" | grep -q '^add '; then
       update_log "roster ADD only — the release-shipped agent installs in-band through the updater's create path"
     fi
-    if [[ $'\n'"${changes}" == *$'\n''deleted-locally '* ]]; then
+    if printf '%s\n' "${changes}" | grep -q '^deleted-locally '; then
       update_log "roster deleted-locally — the release still ships an agent this install removed; its body is NOT re-created (re-add through python -m agent_lifecycle add)"
     fi
     return 0
@@ -3091,9 +3090,7 @@ RETURNING id;
 PSQL
   )" || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
-    # In-shell match, case-folded by a subshell-scoped nocasematch — a grep -q reader would race the multi-line psql error.
-    local single_active_re='unique|duplicate|update_job_single_active'
-    if (shopt -s nocasematch && [[ "${out}" =~ ${single_active_re} ]]); then
+    if printf '%s' "${out}" | grep -qiE 'unique|duplicate|update_job_single_active'; then
       update_die_code 8 "another update is already in-progress (single-active DB guard) — refusing to start a second"
     fi
     update_log "WARN: update_job INSERT failed (rc=${rc}): $(printf '%s' "${out}" | tr '\n' ' ' | cut -c1-200) — proceeding without DB tracking"

@@ -16,7 +16,7 @@
 # server on the port must NOT be auto-handled, so "port serving + plist exists" is
 # insufficient. True ONLY if BOTH: `launchctl list` shows com.glass-atrium.monitor with a
 # NUMERIC pid (`-` = loaded-but-not-running → NOT owned), AND that pid is an exact whole-line
-# lsof -ti match (whole-line, so 5355 never false-matches 53556). Port via atrium_monitor_port
+# lsof -ti match (`grep -Fxq` so 5355 never false-matches 53556). Port via atrium_monitor_port
 # (ADR-1), never a literal; absent launchctl/lsof or unresolvable port → false.
 monitor_is_launchd_owned() {
   command -v launchctl >/dev/null 2>&1 || return 1
@@ -32,8 +32,7 @@ monitor_is_launchd_owned() {
   # excludes client connections (a bare lsof also returns them).
   local listener_pids
   listener_pids="$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)"
-  # whole-line match in-shell — several listener lines piped to `grep -q` race its early exit
-  [[ $'\n'"${listener_pids}"$'\n' == *$'\n'"${pid}"$'\n'* ]] || return 1
+  printf '%s\n' "${listener_pids}" | grep -Fxq -- "${pid}" || return 1
   return 0
 }
 

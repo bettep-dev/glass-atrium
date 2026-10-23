@@ -483,10 +483,8 @@ headless_auth_selftest() {
   # TZ-agnostic last alternative so this lib takes no atrium_load_timezone dependency. A bounded-probe
   # timeout (rc 124) carrying a quota body is a quota event; a BARE rc 124 has no body to match, so a
   # network hang still falls through to the credential branch rather than being mislabelled quota.
-  # in-shell match — a multi-line body piped to `grep -q` races its early exit under pipefail
-  # `\n` in the bracket → grep's one-line scope for `resets … (`
-  local quota_re=$'Limit reached|Usage ⚠|out of extra usage|/rate-limit-options|resets [^)\n]*\\('
-  if [[ "${probe_out}" =~ ${quota_re} ]]; then
+  local quota_re='Limit reached|Usage ⚠|out of extra usage|/rate-limit-options|resets [^)]*\('
+  if printf '%s' "${probe_out}" | grep -qE "${quota_re}"; then
     local reset_at
     # `|| true` swallows the no-match exit 1 so pipefail cannot fire the file-scope ERR trap; an
     # unparenthesised body simply yields an advisory without the reset time.
@@ -506,7 +504,7 @@ headless_auth_selftest() {
   local failed=0
   if [[ "${probe_rc}" -ne 0 ]]; then
     failed=1
-  elif (shopt -s nocasematch && [[ "${probe_out}" =~ ${AUTH_FAIL_RE} ]]); then # subshell scopes nocasematch
+  elif printf '%s' "${probe_out}" | grep -qiE "${AUTH_FAIL_RE}"; then
     failed=1
   fi
 

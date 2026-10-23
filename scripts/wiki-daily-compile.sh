@@ -353,11 +353,6 @@ _collision_warn_lines() {
   done <<<"${_collisions}"
 }
 
-# Whole-line fixed match of $2 in the newline-separated set $1 — in-shell, so no early-exit reader races the writer.
-_has_line() {
-  [[ $'\n'"$1"$'\n' == *$'\n'"$2"$'\n'* ]]
-}
-
 # Classify a raw as processed/unprocessed. Args: raw file, note-url set, collision set,
 # note-source_raw set. Primary match = the raw's basename as some note's source_raw: raw
 # basenames are unique (1 URL = 1 file), so it needs NO collision guard and is the only
@@ -370,8 +365,7 @@ _classify_raw() {
   local _note_raws="$4"
   local _slug _base _url
   _base=$(basename "${_file}")
-  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
-  if _has_line "${_note_raws}" "${_base}"; then
+  if printf '%s\n' "${_note_raws}" | grep -qxF "${_base}"; then
     printf 'processed'
     return 0
   fi
@@ -381,10 +375,9 @@ _classify_raw() {
     return 0
   fi
   _url=$(_extract_source_url "${_file}")
-  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
   if [[ -n "${_url}" ]] \
-    && ! _has_line "${_collisions}" "${_url}" \
-    && _has_line "${_note_urls}" "${_url}"; then
+    && ! printf '%s\n' "${_collisions}" | grep -qxF "${_url}" \
+    && printf '%s\n' "${_note_urls}" | grep -qxF "${_url}"; then
     printf 'processed'
     return 0
   fi
@@ -506,7 +499,7 @@ fi
 #    notes/<basename>.md is absent AND (raw has no source_url, or that url is not
 #    in any note OR is a collision url). wiki-curator normalizes the slug (strips
 #    date/hash), so a basename-only check would miss matches. bash 3.2: NOTE_URLS
-#    and COLLISION_URLS are newline-separated strings, membership via _has_line.
+#    and COLLISION_URLS are newline-separated strings, membership via grep -qxF.
 NOTE_URLS=$(_collect_note_source_urls "${NOTES_DIR}")
 # NOTE_RAWS keys the collision-immune primary match — a raw basename present here
 # is processed regardless of any source_url collision.
