@@ -39,5 +39,12 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 ## Readers and coupled tests
 
 - No code reads this file's TEXT. The path is pinned in `registry_ops.py` (`_HOOK_AUTHORING_CONDITION` / `_HOOK_REVIEW_CONDITION`, and through them `RULE_FILES`), exact-equality pinned by `scripts/test/test_agent_lifecycle_overhaul.py`, plus the manifest.
-- Eight hook headers cite this file in comments, two of them by heading: `hooks/enforce-config-protection.sh` cites "Block Channels" and `hooks/advisory-preedit-facts.sh` cites the "Per-Event table" and the Stop-lifecycle row. Both headings stay unrenamed, as do `## on_fail Action Taxonomy (validation-failure disposition vocabulary)`, `## Event Registration Status (file-verified)` and `## Authoring Rules`. A heading rename here dangles those comments — nothing breaks mechanically, and nothing catches it either.
-- `rules/glass-atrium/orchestrator-role.md` → `### Reach of the gate` cites `### PreToolUse(Agent) measured record` by name as the record behind its Workflow-spawn item; keep that heading unrenamed too.
+- Nine hook headers cite this file in comments.
+- The headers citing a heading other than the measured record:
+  - `hooks/enforce-config-protection.sh` cites "Block Channels";
+  - `hooks/advisory-preedit-facts.sh` cites the "Per-Event table" and the Stop-lifecycle row.
+- Keep those cited headings unrenamed, and also `## on_fail Action Taxonomy (validation-failure disposition vocabulary)`, `## Event Registration Status (file-verified)` and `## Authoring Rules`.
+- A heading rename here dangles the comments citing it — nothing breaks mechanically, and nothing catches it either.
+- These cite `### PreToolUse(Agent) measured record` by name; keep that heading unrenamed too:
+  - `rules/glass-atrium/orchestrator-role.md` → `### Reach of the gate`, as the record behind its Workflow-spawn item;
+  - the `hooks/enforce-foreground-harness.sh` header, as the record of the measured Agent-call envelope.

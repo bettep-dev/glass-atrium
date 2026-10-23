@@ -501,6 +501,8 @@ A write in this scope is a harness/memory configuration change, and the user MUS
   - `enforce-foreground-harness.sh` (PreToolUse) blocks every Agent spawn whose prompt names a non-exempt harness path, whatever `run_in_background` holds or omits.
     - Why: the model sends or omits that field on its own, so neither its value nor its absence is evidence of how the agent launches.
   - Exempt: the BASENAME exception, the runtime-data subdirs the hook header lists, and `### Progress-file exclusion`.
+    - A `..` segment, or any `.claude` text after the harness root, in the path as written voids every exemption.
+    - A directory symlink the walk crosses before entering a root, leading inside a root rather than onto the root itself, voids every exemption too.
   - Honest backing: the hook reaches only what `### Reach of the gate` states.
 
 ### Write routes
@@ -513,7 +515,8 @@ A write in this scope is a harness/memory configuration change, and the user MUS
 | read, not install-managed | the staged lane's read-only variant |
 
 - Install-managed files: agent bodies, `rules/glass-atrium/*`, `skills/glass-atrium-*` and `GLASS_ATRIUM_GLOBAL_RULES.md`.
-- A repo path does not trip the hook.
+- In a subagent prompt, name a repo path that contains `.claude` by its absolute form.
+  - Why: a relative one is judged as if read from `$HOME`, and can block.
 - Naming the resolved `~/.glass-atrium/` target of a harness symlink in a subagent prompt is FORBIDDEN: it writes the live install outside the updater.
 
 ### Staged lane
@@ -526,7 +529,7 @@ Each step builds on the previous.
    - Staging dir: a lane-created dir inside the session's working-directory tree, with no `.claude*` path segment, outside git tracking.
      - Why: a bare `mktemp -d` lands under `$TMPDIR`, which may sit outside a background agent's allowed directories.
 2. **Edit**: a subagent edits only the staging copy, named in its prompt by absolute path.
-   - Why: a bare relative `.claude…` token trips the hook's relative-path arm.
+   - Why: a relative path containing `.claude` can trip the hook (`### Write routes`).
 3. **Approve**: the main session shows the diff, and the user OKs the specific path and change (Rule 1).
    - The approval names the real target file and every profile that links to it: one settings file is shared by more than one profile.
 4. **Apply**: the user runs the apply command the main session prints, in the user's own terminal outside the CLI.
@@ -544,22 +547,28 @@ Each step builds on the previous.
 
 ### Progress-file exclusion
 
-- A `progress-*.md` file sitting directly in a profile's `projects/<p>/memory/` dir is outside both Rule 1 and Rule 2: one filename after `memory/`, no further segment and no `..`.
+- A `progress-*.md` file sitting directly in a profile's `projects/<p>/memory/` dir is outside both Rule 1 and Rule 2: one filename after `memory/` and no further segment.
 - Every other memory file stays protected — the `MEMORY.md` index there, `feedback_*.md` and the rest.
+- What voids this exclusion: `## Harness Path Protection` → Rule 2 → Exempt.
 - Why: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Cross-Session Continuity (progress.md) [ALL]` mandates that every agent write these files as session-internal state, and a checkpoint must land before the turn cap ends the run, so a per-write approval or staging it defeats it.
 - Reading one stays under that section's `### Session-Start Continuity Header`.
 - The owner may override this exclusion.
 
 ### Reach of the gate
 
-The hook scans the Agent prompt's text, so it reaches only the harness paths that text names. Outside its reach:
+The hook takes candidate paths from the Agent prompt's text and resolves each against the filesystem, symlinks included, so it reaches only the harness paths that text names. Outside its reach:
 
 - a write the prompt does not name;
 - a path the prompt hides — variable indirection, encoding, a deeper `cd`;
+  - this includes a home written as a run-time expansion the hook does not read as home;
+- a path whose written text the hook does not read as naming a harness root, such as a glob standing in for a root letter;
 - a Workflow-tool `agent()` spawn — measured: it does not pass PreToolUse(Agent), so the gate cannot see Workflow spawns (record: `scoped/shared-hook-capability-contract.md` → `PreToolUse(Agent) measured record`);
   - Rule 2 still binds a Workflow `agent()` prompt, on the honor system alone;
 - a prompt naming the resolved install target of a harness symlink: `### Write routes` forbids it, but only on the honor system — the hook scans only `.claude` paths, and no hook guards the install's `rules/` and `scoped/` trees on that route.
 
 - The scan cannot tell a read from a write, so a prompt naming a harness path only to read it is blocked too: use the read-only variant.
-- Not built: a Write/Edit/Bash gate on calls carrying an `agent_id`, which would catch the write itself. Its home is `hooks/enforce-harness-critical.sh`.
+- The hook does not examine a symlink inside a root it has entered: it judges the rest of the path as written.
+- Past its candidate cap, the hook blocks fail-safe rather than leave candidates unresolved.
+- The prompt scan is one layer. The layer meant to catch the writes it cannot see is a Write/Edit/Bash gate on calls carrying an `agent_id`.
+  - Not built; its home is `hooks/enforce-harness-critical.sh`.
   - It is also the candidate cover for the Workflow-tool `agent()` gap: whether a Workflow agent's Write/Edit/Bash calls carry an `agent_id` is unmeasured.
