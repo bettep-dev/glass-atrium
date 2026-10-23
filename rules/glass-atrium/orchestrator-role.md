@@ -507,9 +507,11 @@ A write in this scope is a harness/memory configuration change, and the user MUS
 |---|---|
 | install-managed — a harness symlink into `~/.glass-atrium/` | edit the repo path; it ships through manifest regeneration and the updater |
 | not install-managed — profile `settings*.json`, other profile-local files | `### Staged lane` |
-| a read of either kind | install-managed → read the repo path · not install-managed → the staged lane's read-only variant |
+| read, install-managed | read the repo path |
+| read, not install-managed | the staged lane's read-only variant |
 
-- Install-managed files: agent bodies, `rules/glass-atrium/*`, `skills/glass-atrium-*` and `GLASS_ATRIUM_GLOBAL_RULES.md`. A repo path does not trip the hook.
+- Install-managed files: agent bodies, `rules/glass-atrium/*`, `skills/glass-atrium-*` and `GLASS_ATRIUM_GLOBAL_RULES.md`.
+- A repo path does not trip the hook.
 - Naming the resolved `~/.glass-atrium/` target of a harness symlink in an Agent prompt is FORBIDDEN: it writes the live install outside the updater.
 
 ### Staged lane
@@ -534,7 +536,9 @@ Each step builds on the previous.
   - A resolved real file inside the install root (`~/.glass-atrium/` by default) is refused: it is install-managed and takes the repo route.
   - A staged JSON file must pass `jq -e .` before the in-place write.
   - The apply writes the content in place; a rename or `mv` over a link or a file is FORBIDDEN.
+    - Why: a rename over a link replaces the link with a regular file, so the profiles that shared it diverge; a rename over the resolved real file swaps in the temp file's inode, mode and owner. Writing the real file in place avoids both.
 - **Read-only variant**: Copy out alone, with no apply; the agent reads the staging copy.
+- **Honest backing**: honor-system — no hook runs the apply-safety checks, because the user runs the printed apply outside the CLI.
 
 ### Progress-file exclusion
 
