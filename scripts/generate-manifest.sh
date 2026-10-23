@@ -47,7 +47,9 @@
 #              runtime consumer; the executed set is GA_PYTHON_IMPORTS in lib/ga-deps.sh.
 #   EXCLUDE    dev-only: monitor/test/ (dashboard .test.ts, NOT the harness suite —
 #              no other pattern here catches .test.ts, .ts != .js), *.test.js basenames,
-#              */archive/*, publish-release.sh (maintainer/CI-only). Untracked/gitignored
+#              */archive/*, publish-release.sh (maintainer/CI-only),
+#              autoagent/reviewer-catch-rate/ (the reviewer catch-rate answer key — an
+#              installed copy is readable to the reviewer it measures). Untracked/gitignored
 #              excluded by construction — listing one hard-fails doctor §4 on a fresh clone.
 #
 # settings.json stays OUT of .files: it is user-owned config the installer never
@@ -180,7 +182,9 @@ readonly -a SCOPE_PATHS=(
 # scripts/test/, autoagent/test/) are deliberately NOT excluded: they bundle
 # install-internal so the daemon-apply preflight can run them in place, which is why
 # there is no blanket test/ dir alternation and no .bats / test_*.py basename drop.
-readonly EXCLUDE_RE='(^|/)monitor/test/|\.test\.js$|(^|/)archive/|(^|/)publish-release\.sh$'
+# The catch-rate corpus dir is dropped by its trailing slash, so the runner sharing its
+# name (autoagent/reviewer-catch-rate.sh) and its suite still ship.
+readonly EXCLUDE_RE='(^|/)monitor/test/|\.test\.js$|(^|/)archive/|(^|/)publish-release\.sh$|(^|/)autoagent/reviewer-catch-rate/'
 
 command -v jq >/dev/null 2>&1 || {
   echo "generate-manifest: jq required" >&2
