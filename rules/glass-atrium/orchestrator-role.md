@@ -144,7 +144,7 @@ The probes run during the Decision phase, before the spawn: Permission · Foregr
   - EPERM → halt delegation; report the failing path + likely cause (macOS TCC / Claude tool-auth / POSIX perm) + remediation (FDA grant / permission allow / chmod).
   - Why: a subagent spawned on an unreadable path is guaranteed to emit `result: blocked`, wasting Failure-Recovery retries.
 - **Foreground Probe (pre-delegation)**: for each target path declared in delegation scope, scan against harness scope (`~/.claude/` and every `~/.claude-*` profile branch config dir).
-  - Harness scope match (non-exempt) → take the matching route in `## Harness Path Protection` → `### Write routes`, and do not name the harness path in the Agent prompt.
+  - Harness scope match (non-exempt) → take the matching route in `## Harness Path Protection` → `### Write routes`, and do not name the harness path in the subagent prompt.
   - The exemptions and the rule's authority are single-sited at `## Harness Path Protection` (Rule 2); runtime backstop: `enforce-foreground-harness.sh` (PreToolUse hook).
 - **Capability Probe (ADVISORY checklist, pre-delegation)**: for a delegation requiring specific tools (Bash, Write, `mcp__*`, chrome-devtools / claude-in-chrome, etc.), enumerate the required set, then read the target subagent's frontmatter `tools:` array in `~/.claude/agents/<name>.md`.
   - Missing tool → halt delegation; report the gap (agent file + missing tool + remediation: update the agent body `tools:` array OR pair a different agent OR surface to user).
@@ -155,6 +155,8 @@ The probes run during the Decision phase, before the spawn: Permission · Foregr
   - A declared precondition binds every mode it covers — e.g. glass-atrium-intel-reporter's gate covers ALL monitor POSTs, the user-requested HTML primary AND the agent-only record alike, so agent-only mode is NOT a pass-through.
 
 **Probe strength (distinct kinds — do NOT merge them)**: ONLY the **Foreground Probe is mechanically enforced** (`enforce-foreground-harness.sh`). Permission / Capability / Compatibility are **ADVISORY checklist items** — the Decision row's Forbidden column names their failures, but no hook verifies them, so their backing is honor-system.
+
+- Foreground Probe enforcement covers Agent-tool spawns only — the Workflow-tool gap: `### Reach of the gate`.
 
 > **Decomposition self-check (Decision phase, BEFORE script authoring)**: before authoring any DEV-spawning workflow, confirm a persisted plan exists for sizable work and the verify-stage precedes implementation. A leaf gate catches a wrong path only after it is taken; this check picks the sequencing at decision time.
 
@@ -495,7 +497,7 @@ A write in this scope is a harness/memory configuration change, and the user MUS
 - **Rule 1 — User approval (GOVERNANCE / social-contract, NOT hook-enforced)**: before each delegation that writes to an in-scope path, the user must explicitly OK the specific path + change; a sub-agent delegation alone is insufficient.
   - Backing: honor-system — no hook verifies that the approval occurred.
   - Exempt: `### Progress-file exclusion`.
-- **Rule 2 — Staged lane MANDATORY (ENFORCEMENT, hook-backed)**: a harness write never travels through an Agent prompt; it takes its route in `### Write routes`.
+- **Rule 2 — Staged lane MANDATORY (ENFORCEMENT, hook-backed)**: a harness write never travels through a subagent prompt — an Agent-tool prompt or a Workflow-tool `agent()` prompt; it takes its route in `### Write routes`.
   - `enforce-foreground-harness.sh` (PreToolUse) blocks every Agent spawn whose prompt names a non-exempt harness path, whatever `run_in_background` holds or omits.
     - Why: the model sends or omits that field on its own, so neither its value nor its absence is evidence of how the agent launches.
   - Exempt: the BASENAME exception, the runtime-data subdirs the hook header lists, and `### Progress-file exclusion`.
@@ -512,7 +514,7 @@ A write in this scope is a harness/memory configuration change, and the user MUS
 
 - Install-managed files: agent bodies, `rules/glass-atrium/*`, `skills/glass-atrium-*` and `GLASS_ATRIUM_GLOBAL_RULES.md`.
 - A repo path does not trip the hook.
-- Naming the resolved `~/.glass-atrium/` target of a harness symlink in an Agent prompt is FORBIDDEN: it writes the live install outside the updater.
+- Naming the resolved `~/.glass-atrium/` target of a harness symlink in a subagent prompt is FORBIDDEN: it writes the live install outside the updater.
 
 ### Staged lane
 
@@ -554,8 +556,10 @@ The hook scans the Agent prompt's text, so it reaches only the harness paths tha
 
 - a write the prompt does not name;
 - a path the prompt hides — variable indirection, encoding, a deeper `cd`;
-- a Workflow-tool `agent()` spawn, if that spawn does not fire PreToolUse(Agent) — unmeasured;
+- a Workflow-tool `agent()` spawn — measured: it does not pass PreToolUse(Agent), so the gate cannot see Workflow spawns (record: `scoped/shared-hook-capability-contract.md` → `PreToolUse(Agent) measured record`);
+  - Rule 2 still binds a Workflow `agent()` prompt, on the honor system alone;
 - a prompt naming the resolved install target of a harness symlink: `### Write routes` forbids it, but only on the honor system — the hook scans only `.claude` paths, and no hook guards the install's `rules/` and `scoped/` trees on that route.
 
 - The scan cannot tell a read from a write, so a prompt naming a harness path only to read it is blocked too: use the read-only variant.
 - Not built: a Write/Edit/Bash gate on calls carrying an `agent_id`, which would catch the write itself. Its home is `hooks/enforce-harness-critical.sh`.
+  - It is also the candidate cover for the Workflow-tool `agent()` gap: whether a Workflow agent's Write/Edit/Bash calls carry an `agent_id` is unmeasured.

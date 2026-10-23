@@ -963,7 +963,7 @@ Prohibition rules > Security > Quality gates > Cost limits > Team size
 - Exception (low-risk only): the orchestrator MAY directly write `memory/*` files (session-internal state).
   - Agent instruction files (`~/.claude/agents/*.md`) are NOT in this exception — prompts = code, and frontmatter (name/tools/scope) is a Safety-tier surface, so they MUST be edited via glass-atrium-meta-prompt-engineer delegation, never by direct orchestrator write.
   - The `enforce-delegation.sh` hook enforces this split on Write/Edit (allows `memory/*`, keeps blocking `agents/*.md`).
-  - This exception does not bypass Harness Path Protection: a direct write under `~/.claude/` still requires the Rule 1 user approval, and a harness write is never handed to an Agent prompt instead (`orchestrator-role.md` → `## Harness Path Protection` → Rule 1 and Rule 2).
+  - This exception does not bypass Harness Path Protection: a direct write under `~/.claude/` still requires the Rule 1 user approval, and a harness write is never handed to a subagent prompt instead (`orchestrator-role.md` → `## Harness Path Protection` → Rule 1 and Rule 2).
 
 ### Entropy Management (Janitor) [ORCHESTRATOR]
 
