@@ -59,6 +59,29 @@ if [[ "${tool_name}" != "Agent" ]]; then
   exit 0
 fi
 
+# Measurement capture (plan clauded-docs/43753 Stream 0b): one JSON line per Agent call under the data root.
+#   Records the CLI version, envelope + tool_input key NAMES and run_in_background's type, its value only
+#   when boolean or "true"/"false" — never prompt text or any other value. Best-effort: never alters the verdict.
+capture_agent_envelope() {
+  local data_root="${GA_DATA_ROOT:-${HOME}/.glass-atrium}" transcript version=""
+  transcript="$(printf '%s' "${input}" | jq -r '.transcript_path // ""' 2>/dev/null)" || transcript=""
+  if [[ -n "${transcript}" && -r "${transcript}" ]]; then
+    version="$(tail -n 1 -- "${transcript}" | jq -r '.version // ""' 2>/dev/null)" || version=""
+  fi
+  mkdir -p -- "${data_root}/data" 2>/dev/null || return 0
+  printf '%s' "${input}" | jq -c --arg v "${version}" '
+    (.tool_input | if type == "object" then . else {} end) as $t
+    | {ts: (now | todate), cli_version: $v, envelope_keys: keys, tool_input_keys: ($t | keys),
+       run_in_background: (if ($t | has("run_in_background")) then
+         ($t.run_in_background as $b | {type: ($b | type),
+           value: (if ($b | type) == "boolean" or $b == "true" or $b == "false" then $b else null end)})
+       else null end)}' 2>/dev/null >>"${data_root}/data/hpp-agent-capture.jsonl"
+}
+if [[ "${GA_HPP_AGENT_CAPTURE:-}" == "1" ]]; then
+  # shellcheck disable=SC2310  # best-effort capture: a failure inside must neither exit nor fire the ERR trap
+  capture_agent_envelope || true
+fi
+
 prompt=""
 prompt="$(printf '%s' "${input}" | jq -r '.tool_input.prompt // ""' 2>/dev/null)" || prompt=""
 

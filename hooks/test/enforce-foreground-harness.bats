@@ -252,6 +252,43 @@ list_bashes() {
   [[ "${status}" -eq 0 ]]
 }
 
+# Envelope capture (measurement): off unless GA_HPP_AGENT_CAPTURE=1, and it never leaks a value.
+
+@test "the envelope capture writes nothing and keeps every verdict when its env var is unset" {
+  local root="${BATS_TEST_TMPDIR}/capture-off" row name want prompt payload written
+  mkdir -p "${root}/home"
+  for row in 'harness path|2|Edit ~/.claude/agents/x.md' 'no harness path|0|Refactor src/a.ts'; do
+    IFS='|' read -r name want prompt <<<"${row}"
+    payload="$(jq -n --arg p "${prompt}" '{tool_name:"Agent", tool_input:{prompt:$p}}')"
+    run env -u GA_HPP_AGENT_CAPTURE "HOME=${root}/home" "GA_DATA_ROOT=${root}/data-root" \
+      bash -c 'printf "%s" "$1" | bash "$2"' _ "${payload}" "${HOOK_SH}"
+    written="$(find "${root}" -type f)"
+    [[ "${status}" -eq "${want}" && -z "${written}" ]] || {
+      echo "row: ${name} · want ${want} · status ${status} · written: ${written} · ${output}"
+      return 1
+    }
+  done
+}
+
+@test "the envelope capture records key names and the field's type, never prompt text or other values" {
+  local root="${BATS_TEST_TMPDIR}/capture-on" payload record
+  mkdir -p "${root}/home"
+  printf '%s\n' '{"type":"user"}' '{"type":"assistant","version":"9.9.9"}' >"${root}/transcript.jsonl"
+  payload="$(jq -n --arg t "${root}/transcript.jsonl" '{tool_name:"Agent", transcript_path:$t,
+    tool_input:{prompt:"SECRET-PROMPT edit ~/.claude/agents/x.md", description:"SECRET-DESC", run_in_background:true}}')"
+  run env "GA_HPP_AGENT_CAPTURE=1" "HOME=${root}/home" "GA_DATA_ROOT=${root}/data-root" \
+    bash -c 'printf "%s" "$1" | bash "$2"' _ "${payload}" "${HOOK_SH}"
+  record="$(cat -- "${root}/data-root/data/hpp-agent-capture.jsonl")"
+  [[ "${status}" -eq 2 && "${record}" != *SECRET* ]] || {
+    echo "status ${status} · record: ${record}"
+    return 1
+  }
+  jq -e '.cli_version == "9.9.9"
+    and .envelope_keys == ["tool_input", "tool_name", "transcript_path"]
+    and .tool_input_keys == ["description", "prompt", "run_in_background"]
+    and .run_in_background == {type: "boolean", value: true}' <<<"${record}"
+}
+
 # shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
 source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
 
