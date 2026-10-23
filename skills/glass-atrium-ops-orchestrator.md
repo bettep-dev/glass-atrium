@@ -963,7 +963,7 @@ Prohibition rules > Security > Quality gates > Cost limits > Team size
 - Exception (low-risk only): the orchestrator MAY directly write `memory/*` files (session-internal state).
   - Agent instruction files (`~/.claude/agents/*.md`) are NOT in this exception — prompts = code, and frontmatter (name/tools/scope) is a Safety-tier surface, so they MUST be edited via glass-atrium-meta-prompt-engineer delegation, never by direct orchestrator write.
   - The `enforce-delegation.sh` hook enforces this split on Write/Edit (allows `memory/*`, keeps blocking `agents/*.md`).
-  - This exception does not bypass Harness Path Protection: writes under `~/.claude/` still require the user-approval + foreground obligation (see `orchestrator-role.md` Harness Path Protection Rule 1-2).
+  - This exception does not bypass Harness Path Protection: a direct write under `~/.claude/` still requires the Rule 1 user approval, and a harness write is never handed to an Agent prompt instead (`orchestrator-role.md` → `## Harness Path Protection` → Rule 1 and Rule 2).
 
 ### Entropy Management (Janitor) [ORCHESTRATOR]
 
@@ -1056,9 +1056,9 @@ Steps 1-2 run on either branch; a "no" at step 2 routes to EXTEND (step 3-alt). 
 3. **Author body** — delegate: glass-atrium-intel-researcher (domain/capability research) + glass-atrium-meta-prompt-engineer (system prompt per CRISP) → authored body file.
 4. **Commit via direct Bash CLI** — `python -m agent_lifecycle add --scope DEV --domains "…" --gate-q1 <v> --gate-q2 <v> --body-file <path>`.
    - It writes the registry entry `~/.glass-atrium/agent-registry.json` and the body `~/.glass-atrium/agents/<name>.md` (`agent_lifecycle/paths.py` `ga_root`), then symlinks the body into the `~/.claude/agents/` farm.
-   - Harness Path Protection covers only that symlink-farm write, so the commit runs with `run_in_background: false` (Foreground Probe) and only after the user's OK (step 5).
+   - Harness Path Protection covers only that symlink-farm write, so the commit is a foreground Bash call in the main session, run only after the user's OK (step 5).
 5. **⏸ Foreground-commit approval (HUMAN PAUSE)** — Harness Path Protection Rule 1: the user explicitly OKs the path + change before the commit runs.
-   - Rule 2: the Bash invocation runs foreground, so the user sees the diff in real time.
+   - The commit is a main-session Bash call, not an Agent spawn, so Rule 2's staged lane does not apply; the user watches it run.
 6. **Reconcile (MANDATORY post-commit gate)** — run skill `glass-atrium-ops-reconcile-inject` (`python3 -m agent_lifecycle sync-inject`) to fill the tracked roster arrays, declared in `scripts/agent_lifecycle/readers.py` → `_TRACKED_INJECT_ARRAYS`: `BUDGET_DEV_AGENTS` in `hooks/inject-scope-rules.sh` and `STYLEREF_AGENTS` in `hooks/lib/styleref-roster.sh`.
    - `sync-inject` fills the arrays; `orphan-scan --mode reconcile` writes nothing — it only lists failed-rollback recovery markers.
    - BUDGET_DEV is DEV minus the daemon-carrier agents holding in-body budget bullets. STYLEREF is the whole DEV roster and gates the `style_ref` `review_flag` predicate, not an injected block.
