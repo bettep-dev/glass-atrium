@@ -133,7 +133,7 @@ install_forced_grep_failure() {
   seed_transcript '[SCOPE] files=hooks/a.sh · deliverable=x · out=y'
   install_forced_grep_failure
   run_hook "/repo/hooks/other.sh"
-  if ga_guard_path "${SHIMBIN}/grep"; then rm -f -- "${SHIMBIN:?}/grep"; fi
+  if ga_guard_path "${SHIMBIN}"; then rm -f -- "${SHIMBIN:?}/grep"; fi
 
   run_hook "/repo/hooks/other.sh"
   [[ "${output}" == *SCOPE-070* ]] && [[ "${output}" == *scope-decl* ]] \
