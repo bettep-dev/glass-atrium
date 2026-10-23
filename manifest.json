@@ -1051,7 +1051,7 @@
     "autoagent/test/git-txn-gitfree.bats": "182893d00f311842f1431ec48c19b786f0bd44466acd5eb91d5cd9bafd0fe241",
     "autoagent/test/git-txn-restore-outcome.bats": "aa0a1ee6c3466423e271d355f2e6f3536d2cdc55a69eadf79a24c202ff896fb1",
     "autoagent/test/live-pg-ephemeral.bats": "d71b1c8f4808442eeff5f8afec71fff8cff37aecf311966effb1055621980481",
-    "autoagent/test/reviewer-catch-rate.bats": "068a888901a492721d7d795694bcf06ae123a15bad59ece1868815edc26a392c",
+    "autoagent/test/reviewer-catch-rate.bats": "a69a7dfda4636424be7a0b65e73cdebd156b60f5e886af003b991486bea53ee6",
     "autoagent/test/setup_suite.bash": "1b60bce1b36e8e413b63bf07a427ba6a6e1270e70d0164ee19cbb50b60762366",
     "autoagent/test/suite-hermeticity.bats": "a073bfb63cee00274ffa9aaddca3ee5aeba903caedef1cadc1a0fa9ef706e2b6",
     "autoagent/test/test_aa_harness.py": "022078a7795f198535d416962d818e889474790cdfd5cad56f880d4bd1a2f6df",

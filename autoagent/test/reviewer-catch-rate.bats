@@ -154,7 +154,7 @@ assistant_record() {
 
 run_runner() {
   run --separate-stderr env \
-    HOME="${FAKE_HOME}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
     CLAUDE_CONFIG_DIR="${CALLER_CONFIG_DIR}" \
     REVIEWER_CATCH_RATE_CONFIG_DIR="${CONFIG_DIR}" \
     REVIEWER_CATCH_RATE_CLAUDE_BIN="${LAUNCHER}" \
