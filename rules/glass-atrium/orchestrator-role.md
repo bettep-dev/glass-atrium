@@ -379,15 +379,17 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - `[AGENT-COMPOSITION]` is deliberately NOT in this family — it lives in a script block comment, never in a prompt (`#### Ultracode declaration contract` above).
 - **`[SCOPE]` — the 7th delegation element (REQUIRED on DEV and PLANNING delegations). This bullet is the grammar SoT; every other file carries a pointer only.** One line opened by the token, `files=` first, ` · `-separated:
 
-  `[SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>`
+  ```
+  [SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>
+  ```
 
   - **What it is for**: it fixes the LITERAL scope of the user's instruction in text at delegation time — a scope held only in the orchestrator's head can never be compared against what was built.
   - **Placement**: the token-family rule above.
   - **Write the ` · ` separators — the canonical form.**
-    - **Parser behaviour** — line selection (**Declaration line**), the record-0 read, the `files=` parse, fail-open shapes, the non-contract tolerances and relay shapes still selected — plus the worked completeness case: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`.
+    - **Parser behaviour** — line selection, the record-0 read and fail-open shapes: the comments above `hooks/lib/scope-match.sh` → `_SCOPE_DECL_OPEN`, `scope_decl_select` and `scope_decl_from_record0`. The bare declaration line (**Declaration line**), its separators and the worked completeness case: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`.
   - **First wins**: of several declarations the first line is taken, never merged.
   - **Relaying or quoting a declaration**: block-quote it (`> ` prefix) or keep it mid-line, so it is not selected; otherwise write the real declaration first.
-    - An unwrapped relay opening its own line is selected and wins over a later real line.
+    - A relay opening its own line in the bare form is selected and wins over a later real line.
   - **Space-in-path limit**: no form can express a path containing a space.
   - **`files=` completeness duty**: declare up front every path the sanctioned work legitimately touches — the tests that travel with the implementation and every required co-deliverable included.
     - Also declare the coupled tests the change will make stale, obsolete or wrong (`scoped/shared-testing.md` → **Coupled-test check**).
