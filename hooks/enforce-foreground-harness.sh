@@ -4,7 +4,7 @@
 #
 # Blocks an Agent call whose prompt names a non-exempt path under ~/.claude/ or any ~/.claude-* profile
 # branch config dir, whatever run_in_background holds or omits — the field is model-sent and proves
-# nothing about how the CLI launches the agent. A harness write never travels through an Agent prompt:
+# nothing about how the CLI launches the agent. A harness write never travels through a subagent prompt:
 # it goes repo-side or through the user-applied staged lane, so the user sees the diff before it lands.
 # Trigger: matcher "Agent" (registered in ~/.claude/settings.json).
 #
