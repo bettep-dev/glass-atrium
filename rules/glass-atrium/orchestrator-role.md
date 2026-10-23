@@ -386,7 +386,9 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - **What it is for**: it fixes the LITERAL scope of the user's instruction in text at delegation time — a scope held only in the orchestrator's head can never be compared against what was built.
   - **Placement**: the token-family rule above.
   - **Write the ` · ` separators — the canonical form.**
-    - **Parser behaviour** — line selection, the record-0 read and fail-open shapes: the comments above `hooks/lib/scope-match.sh` → `_SCOPE_DECL_OPEN`, `scope_decl_select` and `scope_decl_from_record0`. The bare declaration line (**Declaration line**), its separators and the worked completeness case: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`.
+    - **Parser behaviour**:
+      - Line selection, the record-0 read and fail-open shapes: the comments above `hooks/lib/scope-match.sh` → `_SCOPE_DECL_OPEN`, `scope_decl_select` and `scope_decl_from_record0`.
+      - The bare declaration line (**Declaration line**), its separators and the worked completeness case: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`.
   - **First wins**: of several declarations the first line is taken, never merged.
   - **Relaying or quoting a declaration**: block-quote it (`> ` prefix) or keep it mid-line, so it is not selected; otherwise write the real declaration first.
     - A relay opening its own line in the bare form is selected and wins over a later real line.
