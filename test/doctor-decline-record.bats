@@ -18,6 +18,9 @@
 #   AC7  a truncated entry is counted as malformed, never dropped
 #   AC8-AC12  a declined body equal to its base-store entry at the release hash is a repaired note;
 #        a differing, absent or off-release base still FAILs, and a mixed record FAILs on the open body
+#   AC13-AC16  "equal" ignores only the frontmatter lines the update carry pass sanctions: a live-only
+#        `model:` pin and a base-divergent `effort:` repair; a body line or an identity key still FAILs,
+#        and a missing python3 leaves the body not comparable
 #
 # Hermetic: GA_TARGET_HOME + GA_DATA_ROOT point at throwaway temp dirs, AUTOAGENT_BACKUP_DIR points
 # the record derivation at the fixture (the SAME var the producer honours — no test-only seam),
@@ -32,7 +35,7 @@
 #   Every assertion `return 1`s on mismatch, so EACH one independently fails the test on either leg.
 #
 # Run via: bats test/doctor-decline-record.bats
-# Requires: bats >= 1.5.0, bash 3.2+
+# Requires: bats >= 1.5.0, bash 3.2+, jq, python3 (the anchor comparison runs editable_merge.py)
 
 bats_require_minimum_version 1.5.0
 
@@ -52,7 +55,10 @@ setup() {
   BACKUP_DIR="${WORK}/agents-bak"
   STATE_DIR="${WORK}/update-state" # update state seam → no case reads the real ~/.claude/data/update
   DECLINE_LOG="${WORK}/update-declines/conflict-declines.log"
-  mkdir -p "${TARGET}/bin" "${BACKUP_DIR}"
+  GA_SANDBOX="${WORK}/ga" # a writable GA_ROOT for the rows whose LIVE body must differ from the repo's
+  mkdir -p "${TARGET}/bin" "${BACKUP_DIR}" "${GA_SANDBOX}/agents"
+  printf '{"version":"1.0.0","agents":{}}\n' >"${GA_SANDBOX}/agent-registry.json"
+  printf '{"version":"1.0.1","files":[],"hashes":{}}\n' >"${WORK}/manifest.json"
   cat >"${TARGET}/bin/claude" <<'SH'
 #!/bin/bash
 echo OK
@@ -80,9 +86,38 @@ run_doctor_seam() {
     run "${REAL_GA}" doctor
 }
 
+# The same seams, but GA_ROOT is the writable sandbox root, so a row can shape the LIVE body too. The
+# doctor libs still load from this repo, and _get_body_anchor_state resolves editable_merge.py from
+# them — the sandbox carries no autoagent/ of its own. $1 (optional) is prepended to PATH.
+run_doctor_sandbox() {
+  run env PATH="${1:+${1}:}${PATH}" GA_LIB_DIR="${GA}/scripts/lib" GA_TARGET_HOME="${TARGET}" \
+    GA_MANIFEST="${WORK}/manifest.json" GA_DATA_ROOT="${DATA_ROOT}" \
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
+    AUTOAGENT_BACKUP_DIR="${BACKUP_DIR}" ATRIUM_UPDATE_STATE_DIR="${STATE_DIR}" \
+    bash -c '
+      set -Eeuo pipefail
+      source "$1/lib/ga-core.sh"
+      ga_init_env "$2"
+      run_doctor
+    ' _ "${GA}" "${GA_SANDBOX}"
+}
+
+# Sandbox twin of seed_release_anchor: live ($2) and base ($3) are written independently, and the
+# release hash is the base entry's own, so only the live↔base comparison decides the verdict.
+seed_sandbox_anchor() {
+  local rel="$1" base_entry hash
+  base_entry="${STATE_DIR}/base-agents/${rel##*/}"
+  mkdir -p -- "${STATE_DIR}/base-agents"
+  printf '%s' "$2" >"${GA_SANDBOX}/${rel}"
+  printf '%s' "$3" >"${base_entry}"
+  hash="$(shasum -a 256 -- "${base_entry}" | awk '{print $1}')"
+  printf '{"version":"test","hashes":{"%s":"%s"}}\n' "${rel}" "${hash}" >"${STATE_DIR}/baseline-manifest.json"
+}
+
 # Lay the release anchor §15 compares a declined body against, for the REPO body $1 (GA_ROOT is the
 # entry point's own tree, so the live side is never written — only the scratch state dir varies).
-# $2 = base entry shape: `equal` copies the live body, `differs` appends a line, `absent` writes none.
+# $2 = base entry shape: `equal` copies the live body, `differs` appends a line, `absent` writes none,
+#      `effort-high` copies it with its `effort: low` line raised to `effort: high`.
 # $3 = manifest hash shape: `base` records sha256(base entry), `other` records a hash of nothing.
 seed_release_anchor() {
   local rel="$1" base_shape="$2" hash_shape="$3" base_entry hash
@@ -92,6 +127,7 @@ seed_release_anchor() {
     equal) cp -- "${GA}/${rel}" "${base_entry}" ;;
     differs) { cat -- "${GA}/${rel}" && printf 'hand edit\n'; } >"${base_entry}" ;;
     absent) ;;
+    effort-high) sed 's/^effort: low$/effort: high/' "${GA}/${rel}" >"${base_entry}" ;;
   esac
   hash="$(printf '' | shasum -a 256 | awk '{print $1}')"
   if [[ "${hash_shape}" == base && -f "${base_entry}" ]]; then
@@ -229,14 +265,15 @@ assert_output_lacks() {
 
 # ── AC8-AC12 — a declined body now at its release anchor is repaired, never a standing FAIL ────
 # The FAIL claims divergence from the base store, so the check that falsifies it is: live body
-# byte-equal to its base-store entry AND that entry at the release hash the updater recorded. Each
-# row varies ONE side of that conjunction; GA_ROOT is this repo tree, so only the scratch state moves.
+# equal to its base-store entry but for the frontmatter lines the update carry pass keeps, AND that
+# entry at the release hash the updater recorded. Each row varies ONE side of that conjunction;
+# GA_ROOT is this repo tree, so only the scratch state moves.
 
 @test "AC8: a declined body equal to its base entry at the release hash is a repaired note, not FAIL" {
   append_decline 0 "agents/glass-atrium-dev-shell.md"
   seed_release_anchor "agents/glass-atrium-dev-shell.md" equal base
   run_doctor_seam
-  assert_output_has "note : 1 in-window decline(s) repaired — live body equals its base-store entry at the release hash (reset or landed)" || return 1
+  assert_output_has "note : 1 in-window decline(s) repaired — live body matches its base-store entry at the release hash, sanctioned carry-pass frontmatter lines aside (reset or landed)" || return 1
   assert_output_lacks "declined a merge in the last" || return 1
   assert_output_lacks "not comparable" || return 1
 }
@@ -247,7 +284,7 @@ assert_output_lacks() {
   run_doctor_seam
   assert_output_has "FAIL : 1 agent body/bodies declined a merge" || return 1
   assert_output_has "declined body: agents/glass-atrium-dev-shell.md" || return 1
-  assert_output_lacks "repaired — live body equals" || return 1
+  assert_output_lacks "repaired — live body matches" || return 1
 }
 
 @test "AC10: a declined body with no base entry FAILs and says why it is not comparable" {
@@ -264,7 +301,7 @@ assert_output_lacks() {
   seed_release_anchor "agents/glass-atrium-dev-shell.md" equal other
   run_doctor_seam
   assert_output_has "FAIL : 1 agent body/bodies declined a merge" || return 1
-  assert_output_lacks "repaired — live body equals" || return 1
+  assert_output_lacks "repaired — live body matches" || return 1
 }
 
 @test "AC12: one repaired and one open body FAIL on the open body alone" {
@@ -277,4 +314,132 @@ assert_output_lacks() {
   assert_output_lacks "declined body: agents/glass-atrium-dev-shell.md" || return 1
   assert_output_has "note : 1 in-window decline(s) repaired" || return 1
   [[ "${status}" -ne 0 ]] || return 1
+}
+
+# ── AC13-AC16 — "equal" means equal but for the frontmatter lines the carry pass sanctions ─────
+# The update carry pass keeps a live-only `model:` pin and a live `effort:` that differs from the base,
+# so a body repaired to the release still carries them; a byte compare called that body diverged.
+
+AGENT_BASE=$'---\nname: glass-atrium-dev-a\ntools: [Read, Bash]\n---\n\n# Agent\n\nRelease body line.\n'
+AGENT_PINNED=$'---\nname: glass-atrium-dev-a\ntools: [Read, Bash]\nmodel: claude-test-model-1\n---\n\n# Agent\n\nRelease body line.\n'
+
+@test "AC13: a live body that adds only a model pin to its base entry is a repaired note, not FAIL" {
+  append_decline 0 "agents/glass-atrium-dev-a.md"
+  seed_sandbox_anchor "agents/glass-atrium-dev-a.md" "${AGENT_PINNED}" "${AGENT_BASE}"
+  run_doctor_sandbox
+  assert_output_has "note : 1 in-window decline(s) repaired" || return 1
+  assert_output_lacks "declined a merge in the last" || return 1
+  assert_output_lacks "not comparable" || return 1
+}
+
+@test "AC14: a pinned live body still FAILs when the base differs outside the sanctioned lines" {
+  local -a rows=(
+    $'body line\t---\nname: glass-atrium-dev-a\ntools: [Read, Bash]\n---\n\n# Agent\n\nHand-edited body line.\n'
+    $'identity name\t---\nname: glass-atrium-dev-b\ntools: [Read, Bash]\n---\n\n# Agent\n\nRelease body line.\n'
+    $'identity tools\t---\nname: glass-atrium-dev-a\ntools: [Read]\n---\n\n# Agent\n\nRelease body line.\n'
+  )
+  local row name base
+  for row in "${rows[@]}"; do
+    name="${row%%$'\t'*}"
+    base="${row#*$'\t'}"
+    : >"${DECLINE_LOG}" 2>/dev/null || true
+    append_decline 0 "agents/glass-atrium-dev-a.md"
+    seed_sandbox_anchor "agents/glass-atrium-dev-a.md" "${AGENT_PINNED}" "${base}"
+    run_doctor_sandbox
+    assert_output_has "FAIL : 1 agent body/bodies declined a merge" || {
+      echo "row: ${name}"
+      return 1
+    }
+    assert_output_has "declined body: agents/glass-atrium-dev-a.md" || {
+      echo "row: ${name}"
+      return 1
+    }
+    assert_output_lacks "in-window decline(s) repaired" || {
+      echo "row: ${name}"
+      return 1
+    }
+    [[ "${status}" -ne 0 ]] || {
+      echo "row: ${name} — doctor exited 0 — output:"
+      echo "${output}"
+      return 1
+    }
+  done
+}
+
+@test "AC15: a repo body whose effort line differs from its base entry is a repaired note" {
+  local rel="agents/glass-atrium-sec-guard.md"
+  grep -qx 'effort: low' -- "${GA}/${rel}" || {
+    echo "fixture body ${rel} no longer carries 'effort: low' — pick another effort-bearing body" >&2
+    return 1
+  }
+  append_decline 0 "${rel}"
+  seed_release_anchor "${rel}" effort-high base
+  ! cmp -s -- "${GA}/${rel}" "${STATE_DIR}/base-agents/${rel##*/}" || {
+    echo "the effort-high base entry is byte-equal to the live body — the row proves nothing" >&2
+    return 1
+  }
+  run_doctor_seam
+  assert_output_has "note : 1 in-window decline(s) repaired" || return 1
+  assert_output_lacks "declined a merge in the last" || return 1
+}
+
+@test "AC16: with no runnable python3 a body at its anchor is not comparable and still FAILs" {
+  local stub="${WORK}/no-python-bin"
+  mkdir -p -- "${stub}"
+  printf '#!/bin/sh\nexit 127\n' >"${stub}/python3"
+  chmod +x "${stub}/python3"
+  append_decline 0 "agents/glass-atrium-dev-a.md"
+  seed_sandbox_anchor "agents/glass-atrium-dev-a.md" "${AGENT_BASE}" "${AGENT_BASE}"
+  run_doctor_sandbox "${stub}"
+  assert_output_has "FAIL : 1 agent body/bodies declined a merge" || return 1
+  assert_output_has "note : agents/glass-atrium-dev-a.md not comparable — no runnable python3" || return 1
+  [[ "${status}" -ne 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+}
+
+@test "a failed anchor comparison names the module's final stderr line in its not-comparable note" {
+  local real_py stub="${WORK}/traceback-python-bin"
+  real_py="$(command -v python3)"
+  mkdir -p -- "${stub}"
+  cat >"${stub}/python3" <<SH
+#!/bin/sh
+if [ "\$2" = anchor ]; then
+  printf 'Traceback (most recent call last):\n  File "editable_merge.py", line 1\nModuleNotFoundError: No module named daemon_cycle\n' >&2
+  exit 1
+fi
+exec "${real_py}" "\$@"
+SH
+  chmod +x "${stub}/python3"
+  # name · base entry · PATH prefix · expected reason fragment — \x1f-separated so an empty field survives
+  local -a rows=(
+    $'module reason\x1f\xff\xfe not utf-8\n\x1f\x1fcheck both paths exist and are UTF-8)'
+    "import traceback"$'\x1f'"${AGENT_BASE}"$'\x1f'"${stub}"$'\x1f'"ModuleNotFoundError: No module named daemon_cycle"
+  )
+  local row name base path_prefix reason
+  for row in "${rows[@]}"; do
+    name="${row%%$'\x1f'*}"
+    row="${row#*$'\x1f'}"
+    base="${row%%$'\x1f'*}"
+    row="${row#*$'\x1f'}"
+    path_prefix="${row%%$'\x1f'*}"
+    reason="${row#*$'\x1f'}"
+    : >"${DECLINE_LOG}" 2>/dev/null || true
+    append_decline 0 "agents/glass-atrium-dev-a.md"
+    seed_sandbox_anchor "agents/glass-atrium-dev-a.md" "${AGENT_BASE}" "${base}"
+    run_doctor_sandbox "${path_prefix}"
+    assert_output_has "FAIL : 1 agent body/bodies declined a merge" || {
+      echo "row: ${name}"
+      return 1
+    }
+    assert_output_has "not comparable — anchor comparison failed" || {
+      echo "row: ${name}"
+      return 1
+    }
+    assert_output_has "${reason}" || {
+      echo "row: ${name}"
+      return 1
+    }
+  done
 }
