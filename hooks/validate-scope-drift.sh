@@ -243,7 +243,7 @@ scope_decl_resolve() {
 if [[ -n "${FILE_PATH}" ]]; then
   SCOPE_DECL_FILES="$(scope_decl_resolve)"
   if [[ "${SCOPE_DECL_FILES}" == "${SCOPE_DECL_UNREAD_SENTINEL}" ]]; then
-    (printf '[validate-scope-drift] [SCOPE] comparison did not run: the delegation [SCOPE] declaration could not be read, so this edit was not checked against it. The plan-doc comparison still runs. Advisory only.\n') >&2 || true
+    (printf '[validate-scope-drift] [SCOPE] comparison did not run for this edit: the delegation [SCOPE] declaration could not be read. The plan-doc comparison still runs. Advisory only.\n') >&2 || true
   elif [[ -n "${SCOPE_DECL_FILES}" ]] && [[ "${SCOPE_DECL_FILES}" != "${SCOPE_DECL_NONE_SENTINEL}" ]]; then
     # shellcheck disable=SC2310
     #   Predicate call — the exit status IS the answer (declared vs undeclared path).

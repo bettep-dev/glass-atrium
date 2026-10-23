@@ -412,7 +412,7 @@ warn_scope_advisories() {
     printf '%s\n' "${prompt_full}" | drain_after scope_decl_select
   )" || decl_status=$?
   if ((decl_status != 0)); then
-    (printf '[enforce-verification-gate] DEV spawn of %s: its [SCOPE] declaration could not be read (selector status %d), so neither its presence nor its file count was checked — a read failure, not a missing declaration. Advisory only.\n' \
+    (printf '[enforce-verification-gate] DEV spawn of %s: a [SCOPE] declaration could not be read (selector status %d), so neither its presence nor its file count was checked — the prompt may still carry one, so this is not a missing-declaration report. Advisory only.\n' \
       "${subagent_type}" "${decl_status}") >&2 || true
     return 0
   fi
