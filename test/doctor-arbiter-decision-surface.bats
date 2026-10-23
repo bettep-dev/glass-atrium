@@ -155,7 +155,7 @@ JSON
       printf -- '---\nname: glass-atrium-dev-a\n---\n\nrelease body\n' >"${base_entry}"
       ;;
   esac
-  # the recorded release hash is the BASE entry's own, so only the byte comparison can tell `differs`
+  # the recorded release hash is the BASE entry's own, so only the live-to-base comparison can tell `differs`
   hash="$(printf '' | shasum -a 256 | awk '{print $1}')"
   [[ ! -f "${base_entry}" ]] || hash="$(shasum -a 256 -- "${base_entry}" | awk '{print $1}')"
   printf '{"version":"test","hashes":{"%s":"%s"}}\n' "${rel}" "${hash}" >"${STATE_DIR}/baseline-manifest.json"
@@ -299,7 +299,7 @@ assert_output_lacks() {
 @test "AC7: a failure-class record whose target equals its base entry at the release hash is superseded info" {
   seed_unanswered_record_with_anchor equal
   run_doctor_sandbox
-  assert_output_has "info : contested gap superseded — target body matches its base-store entry at the release hash, sanctioned model/effort frontmatter lines aside (reset or landed)" || return 1
+  assert_output_has "info : contested gap superseded — target body matches its base-store entry at the release hash, sanctioned carry-pass frontmatter lines aside (reset or landed)" || return 1
   assert_output_has "target=agents/glass-atrium-dev-a.md" || return 1
   assert_output_lacks "contested gap unanswered" || return 1
   assert_output_lacks "remedy: the named gap(s) kept the local run" || return 1

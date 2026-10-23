@@ -883,7 +883,7 @@ run_doctor() {
       decline_fail=1
     fi
     if [[ "${decline_repaired}" -gt 0 ]]; then
-      log "  note : ${decline_repaired} in-window decline(s) repaired — live body matches its base-store entry at the release hash, sanctioned model/effort frontmatter lines aside (reset or landed) (${decline_log})"
+      log "  note : ${decline_repaired} in-window decline(s) repaired — live body matches its base-store entry at the release hash, sanctioned carry-pass frontmatter lines aside (reset or landed) (${decline_log})"
     elif [[ "${decline_open}" -gt 0 ]]; then
       : # verdict already reported above
     elif [[ "${decline_out}" -gt 0 ]]; then
@@ -1043,7 +1043,7 @@ run_doctor() {
         log "  info : contested gap arbiter-resolved — ${rec_choice} agent=${rec_agent} region=${rec_region} target=${rec_target}"
         arbiter_resolved=$((arbiter_resolved + 1))
       elif _get_body_anchor_state "${rec_target}" >/dev/null; then
-        log "  info : contested gap superseded — target body matches its base-store entry at the release hash, sanctioned model/effort frontmatter lines aside (reset or landed) agent=${rec_agent} region=${rec_region} target=${rec_target} (record kept until retention prunes it)"
+        log "  info : contested gap superseded — target body matches its base-store entry at the release hash, sanctioned carry-pass frontmatter lines aside (reset or landed) agent=${rec_agent} region=${rec_region} target=${rec_target} (record kept until retention prunes it)"
         arbiter_superseded=$((arbiter_superseded + 1))
       else
         log "  warn : contested gap unanswered — ${rec_fail} agent=${rec_agent} region=${rec_region} target=${rec_target} (local run kept)"

@@ -265,14 +265,15 @@ assert_output_lacks() {
 
 # ── AC8-AC12 — a declined body now at its release anchor is repaired, never a standing FAIL ────
 # The FAIL claims divergence from the base store, so the check that falsifies it is: live body
-# byte-equal to its base-store entry AND that entry at the release hash the updater recorded. Each
-# row varies ONE side of that conjunction; GA_ROOT is this repo tree, so only the scratch state moves.
+# equal to its base-store entry but for the frontmatter lines the update carry pass keeps, AND that
+# entry at the release hash the updater recorded. Each row varies ONE side of that conjunction;
+# GA_ROOT is this repo tree, so only the scratch state moves.
 
 @test "AC8: a declined body equal to its base entry at the release hash is a repaired note, not FAIL" {
   append_decline 0 "agents/glass-atrium-dev-shell.md"
   seed_release_anchor "agents/glass-atrium-dev-shell.md" equal base
   run_doctor_seam
-  assert_output_has "note : 1 in-window decline(s) repaired — live body matches its base-store entry at the release hash, sanctioned model/effort frontmatter lines aside (reset or landed)" || return 1
+  assert_output_has "note : 1 in-window decline(s) repaired — live body matches its base-store entry at the release hash, sanctioned carry-pass frontmatter lines aside (reset or landed)" || return 1
   assert_output_lacks "declined a merge in the last" || return 1
   assert_output_lacks "not comparable" || return 1
 }
