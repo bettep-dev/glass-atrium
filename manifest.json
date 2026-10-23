@@ -1259,7 +1259,7 @@
     "hooks/test/enforce-config-protection.bats": "725de72f81b14103745c900d56153473a2d7db4d2369b086e0a651c4459e607d",
     "hooks/test/enforce-delegation.bats": "2c7a59779c5fdcbb1996158738d707b174eb77c4dad921f68ea720ae9efad38d",
     "hooks/test/enforce-foreground-harness-branch.bats": "04e0fc4c891cd867d8a2b97ce82bb4957037b1808a77d92c9cecca531fbb925e",
-    "hooks/test/enforce-foreground-harness.bats": "3b503b4b07f22f2812e59d3a34a8d6be69f7562ac7609b2c021e56adba78be69",
+    "hooks/test/enforce-foreground-harness.bats": "ce877823ba0ea02a29a10a483a7c799b1562ba688d416a834ac70dfe1fbe4cb6",
     "hooks/test/enforce-harness-critical-bash-pathnorm.bats": "6ff1295d98c318b2a19de52f575938be11900afccb6a4eafadde982a4f04985f",
     "hooks/test/enforce-harness-critical-branch.bats": "696e5c0d66778687d00e0e67f9120aa48737bf18e594d5e8c782fbc8754f572f",
     "hooks/test/enforce-harness-critical-frontmatter.bats": "47c9c32e982dc6c09ae7308aa227f5ff690c674bdaa5dd4de4e9e50c18dd8512",

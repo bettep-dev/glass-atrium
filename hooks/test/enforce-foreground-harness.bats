@@ -89,7 +89,7 @@ list_bashes() {
     "the home itself|2|Write ${home}/.claude/hooks/x.sh now." \
     'a path the home pattern would match as a regex|0|Write /tmp/aXbbc/.claude/hooks/x.sh now.'; do
     IFS='|' read -r name want prompt <<<"${row}"
-    HOME="${home}" run_agent "${prompt}" omit
+    HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" omit
     [[ "${status}" -eq "${want}" ]] || {
       echo "row: ${name} · want ${want} · status ${status}: ${output}"
       return 1
@@ -191,7 +191,7 @@ list_bashes() {
 @test "a .. ahead of the root blocks exactly when the path it resolves to is a harness root" {
   local home="${BATS_TEST_TMPDIR}/home/u"
   mkdir -p "${home}"
-  HOME="${home}" assert_rows 2 \
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
     'tilde, a dir, then ..|Edit ~/x/../.claude/agents/a.md now.' \
     'home variable, a dir, then ..|Edit $HOME/x/../.claude/agents/a.md now.' \
     "literal home, a dir, then ..|Edit ${home}/x/../.claude/agents/a.md now." \
@@ -200,7 +200,7 @@ list_bashes() {
     'lookalike dotted dir, then ..|Edit ~/.claude.d/../.claude/agents/a.md now.' \
     'relative from home, then ..|From the home dir, edit x/../.claude/agents/a.md now.' \
     'traversal onto a progress name|Write ~/x/../.claude/projects/p/memory/progress-a.md now.'
-  HOME="${home}" assert_rows 0 \
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
     'resolves to a repo dot dir|Edit ~/x/../y/.claude/agents/a.md now.' \
     'lookalike dir climbed out of|Edit ~/.claudex/../notes/a.md now.' \
     'resolves to the global config file|Read ~/x/../.claude.json now.' \
@@ -262,7 +262,7 @@ assert_rows() {
 @test "a noisy spelling of the home dir still blocks" {
   local home="${BATS_TEST_TMPDIR}/home/u"
   mkdir -p "${home}"
-  HOME="${home}" assert_rows 2 \
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
     'doubled slash after tilde|Edit ~//.claude/agents/x.md now.' \
     'dot segment after tilde|Edit ~/./.claude/agents/x.md now.' \
     "doubled slash after the home|Edit ${home}//.claude/agents/x.md now." \
@@ -312,7 +312,7 @@ assert_rows() {
   ln -s ../.claude "${home}/proj/.claude"
   ln -s ../.claude/agents "${home}/proj/.claude-agents"
   ln -s ../.claude/settings.json "${home}/proj/.claude-settings.json"
-  HOME="${home}" assert_rows 2 \
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
     'glob star inside the root name|Edit ~/.cl*aude/agents/new.md now.' \
     'glob bracket inside the root name|Edit ~/.[c]laude/hooks/x.sh now.' \
     'option-joined relative path|Run tool -f.claude/agents/a.md now.' \
@@ -323,7 +323,7 @@ assert_rows() {
     "absolute path through a directory symlink|Edit ${home}/proj/.claude/settings.json now." \
     'directory symlink onto a dir inside the root|Edit ~/proj/.claude-agents/a.md now.' \
     'file symlink onto a root file|Edit ~/proj/.claude-settings.json now.'
-  HOME="${home}" assert_rows 0 \
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
     "a repo's own .claude dir|Edit ~/repo/.claude/agents/a.md now." \
     "the home path inside another volume path|Edit /Volumes/x${home}/.claude/agents/a.md now." \
     'a glob match whose real name holds .claude text|Persist ~/.claude/projects/*/memory/progress-a.md now.'
@@ -337,7 +337,7 @@ assert_rows() {
   if [[ "${base}/${upper}" -ef "${base}/${lower}" ]]; then
     want=2
   fi
-  HOME="${base}/${lower}" assert_rows "${want}" \
+  HOME="${base}/${lower}" GA_DATA_ROOT="${base}/${lower}/.glass-atrium" assert_rows "${want}" \
     "upper-case decomposed home|Edit ${base}/${upper}/.claude/agents/a.md now." \
     "upper-case decomposed home and root|Edit ${base}/${upper}/.CLAUDE/settings.json now."
 }
@@ -345,17 +345,17 @@ assert_rows() {
 @test "a brace bash would expand is judged protected and a literal brace resolves as written" {
   local home="${BATS_TEST_TMPDIR}/home/u"
   mkdir -p "${home}"
-  HOME="${home}" assert_rows 2 \
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
     'alternatives spelling the root|Edit ~/.cla{u,x}de/agents/a.md now.' \
     'alternatives holding the root|Edit ~/.{claude,x}/agents/a.md now.'
-  HOME="${home}" assert_rows 0 \
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
     'a brace with no comma is a literal name|Edit ~/.clau{d}e/agents/a.md now.'
 }
 
 @test "a bare root word, with or without a trailing slash, is a name in prose and a path as an operand" {
   local home="${BATS_TEST_TMPDIR}/home/u"
   mkdir -p "${home}/.claude-work"
-  HOME="${home}" assert_rows 0 \
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
     'profile named in a sentence|Switch the session to the .claude-work profile.' \
     'roots named in a list of profiles|Profiles: .claude-work and .claude-personal.' \
     'repo dot dir named in a sentence|The repo keeps its worktrees in .claude for now.' \
@@ -365,7 +365,7 @@ assert_rows() {
     'profile with a trailing slash in a sentence|The branch suite runs on a `.claude-work-dev/` root.' \
     'escaped root in a grep pattern|Grep hooks/ for the literal `\.claude/` first.' \
     'root glob with a trailing slash in a sentence|The precheck regex matches `\.claude/` and `.claude-*/` spellings.'
-  HOME="${home}" assert_rows 2 \
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
     'operand of cd|cd .claude-work && edit settings.json' \
     'operand after an option|Run ls -la .claude-work now.' \
     'operand after the end-of-options marker|Run tool -- .claude-work now.' \
@@ -385,10 +385,10 @@ assert_rows() {
   local home="${BATS_TEST_TMPDIR}/home"
   mkdir -p "${home}/.claude"
   : >"${home}/.claude/statusline-command.sh"
-  HOME="${home}" assert_rows 0 \
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
     'repo worktree dir|Repo /x/glass-atrium, worktree .claude/worktrees/wt-pa-hpp, branch fix/x.' \
     'repo audit dir|Records: `.claude/prompt-audit/pa-s3/impl77/` and the plan.'
-  HOME="${home}" assert_rows 2 \
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
     'an entry the harness root holds|From the home dir, edit .claude/statusline-command.sh now.' \
     'a config entry not yet created|From the home dir, edit .claude/agents/x.md now.' \
     'a settings file not yet created|From the home dir, edit .claude/settings.local.json now.' \
@@ -412,7 +412,7 @@ cap_prompt() {
   for row in "cap minus one|$((cap - 1))|0" "exactly the cap|${cap}|0" "cap plus one|$((cap + 1))|2"; do
     IFS='|' read -r name count want <<<"${row}"
     prompt="$(cap_prompt "${count}")"
-    HOME="${home}" run_agent "${prompt}" omit
+    HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" omit
     [[ "${status}" -eq "${want}" ]] || {
       echo "row: ${name} · want ${want} · status ${status}: ${output}"
       return 1
