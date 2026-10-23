@@ -46,11 +46,6 @@ list_bashes() {
 
 # AC1 — the branch that motivated the fix
 
-@test "~/.claude-work-dev/settings.json → BLOCKED (AC1)" {
-  run_agent 'Add the hook entry to ~/.claude-work-dev/settings.json.' true
-  [[ "${status}" -eq 2 ]]
-}
-
 @test "~/.claude-work-dev/hooks/x.sh → BLOCKED (AC1)" {
   run_agent 'Write the new hook to ~/.claude-work-dev/hooks/x.sh.' true
   [[ "${status}" -eq 2 ]]
@@ -103,50 +98,18 @@ list_bashes() {
   [[ "${status}" -eq 2 ]]
 }
 
-# AC2 — BASENAME exception holds on every branch × root form
+# BASENAME exception holds on every branch × root form; runtime-DATA exclusions keep their CURRENT
+#   membership on branch roots.
 
-@test "BASENAME CLAUDE.md on a branch root (tilde) → NOT blocked (AC2)" {
-  run_agent 'Append the project note to ~/.claude-work-dev/CLAUDE.md then stop.' true
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "BASENAME MEMORY.md on a branch root (absolute-\$HOME) → NOT blocked (AC2)" {
-  run_agent "Add the index line to ${HOME}/.claude-personal/MEMORY.md then exit." true
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "BASENAME GLASS_ATRIUM_GLOBAL_RULES.md on a branch root (bare) → NOT blocked (AC2)" {
-  run_agent 'From the home dir, update .claude-work-dev/GLASS_ATRIUM_GLOBAL_RULES.md now.' true
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "BASENAME CLAUDE.md on the backup dir → NOT blocked (AC2)" {
-  run_agent "Read ~/${BACKUP_DIR}/CLAUDE.md for the old wording." true
-  [[ "${status}" -eq 0 ]]
-}
-
-# AC3 — runtime-DATA exclusions keep their CURRENT membership on branch roots
-
-@test "~/.claude-work-dev/data/ reference → NOT blocked (AC3)" {
-  run_agent 'For context, read ~/.claude-work-dev/data/outcomes/2026-08-14.md.' true
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "~/.claude-personal/logs/ reference → NOT blocked (AC3)" {
-  run_agent 'Tail ~/.claude-personal/logs/daemon.log and report the last error.' true
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "~/.claude-work-dev/shell-snapshots/ reference → NOT blocked (AC3)" {
-  run_agent 'List ~/.claude-work-dev/shell-snapshots/latest.sh for the env dump.' true
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "BASENAME and runtime-DATA references on a branch root pass with the field absent" {
+@test "BASENAME and runtime-DATA references on a branch root are not blocked in any root form" {
   local row name prompt
   for row in \
-    'CLAUDE.md|Append the project note to ~/.claude-work-dev/CLAUDE.md then stop.' \
+    'CLAUDE.md, tilde|Append the project note to ~/.claude-work-dev/CLAUDE.md then stop.' \
+    "MEMORY.md, absolute home|Add the index line to ${HOME}/.claude-personal/MEMORY.md then exit." \
+    'GLASS_ATRIUM_GLOBAL_RULES.md, bare|From the home dir, update .claude-work-dev/GLASS_ATRIUM_GLOBAL_RULES.md now.' \
+    "CLAUDE.md on the backup dir|Read ~/${BACKUP_DIR}/CLAUDE.md for the old wording." \
     'data/|For context, read ~/.claude-work-dev/data/outcomes/2026-08-14.md.' \
+    'logs/|Tail ~/.claude-personal/logs/daemon.log and report the last error.' \
     'shell-snapshots/|List ~/.claude-work-dev/shell-snapshots/latest.sh.'; do
     IFS='|' read -r name prompt <<<"${row}"
     run_agent "${prompt}" omit

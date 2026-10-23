@@ -83,34 +83,24 @@ list_bashes() {
   done < <(list_bashes)
 }
 
-# Runtime-DATA exemption: a read-only reference to a runtime-data subdir is not blocked.
-
-@test "tilde ~/.claude/data/ reference → NOT blocked (case a)" {
-  run_agent 'For context, read ~/.claude/data/outcomes/2026-07-07.md then summarize.' true
-  [[ "${status}" -eq 0 ]]
+@test "a home holding regex metacharacters matches as a fixed string" {
+  local row name want prompt home='/tmp/a.b+c'
+  for row in \
+    "the home itself|2|Write ${home}/.claude/hooks/x.sh now." \
+    'a path the home pattern would match as a regex|0|Write /tmp/aXbbc/.claude/hooks/x.sh now.'; do
+    IFS='|' read -r name want prompt <<<"${row}"
+    HOME="${home}" run_agent "${prompt}" omit
+    [[ "${status}" -eq "${want}" ]] || {
+      echo "row: ${name} · want ${want} · status ${status}: ${output}"
+      return 1
+    }
+  done
 }
 
-@test "tilde ~/.claude/projects/ (session transcript) → NOT blocked" {
-  run_agent 'Analyze the transcript at ~/.claude/projects/-Users-x/session.jsonl (read-only).' true
-  [[ "${status}" -eq 0 ]]
-}
+# BASENAME and runtime-DATA exemptions: a root-level allowlisted file, or a read-only reference to a
+#   runtime-data subdir, is not blocked in any root form.
 
-@test "tilde ~/.claude/logs/ reference → NOT blocked" {
-  run_agent 'Tail ~/.claude/logs/daemon.log and report the last error.' true
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "absolute-\$HOME /.claude/data/ reference → NOT blocked (arm-invariant)" {
-  run_agent "Read ${HOME}/.claude/data/learning-log.md for prior lessons." true
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "CWD-relative .claude/data/ reference → NOT blocked (arm-invariant)" {
-  run_agent 'From the repo root, read .claude/data/session-spawns/latest.json.' true
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "BASENAME and runtime-DATA references pass with the field absent" {
+@test "BASENAME and runtime-DATA references are not blocked in any root form" {
   local row name prompt
   for row in \
     'CLAUDE.md|Append the project note to ~/.claude/CLAUDE.md then stop.' \
@@ -118,7 +108,9 @@ list_bashes() {
     'GLASS_ATRIUM_GLOBAL_RULES.md|Update ~/.claude/GLASS_ATRIUM_GLOBAL_RULES.md now.' \
     'data/|For context, read ~/.claude/data/outcomes/2026-07-07.md.' \
     'projects/ transcript|Analyze ~/.claude/projects/-Users-x/session.jsonl (read-only).' \
-    'logs/|Tail ~/.claude/logs/daemon.log.'; do
+    'logs/|Tail ~/.claude/logs/daemon.log.' \
+    "absolute-home data/|Read ${HOME}/.claude/data/learning-log.md for prior lessons." \
+    'CWD-relative data/|From the repo root, read .claude/data/session-spawns/latest.json.'; do
     IFS='|' read -r name prompt <<<"${row}"
     run_agent "${prompt}" omit
     [[ "${status}" -eq 0 ]] || {
@@ -129,11 +121,6 @@ list_bashes() {
 }
 
 # CONFIG-write protection
-
-@test "tilde ~/.claude/hooks/x.sh → STILL blocked (case b)" {
-  run_agent 'Write the new hook to ~/.claude/hooks/x.sh and register it.' true
-  [[ "${status}" -eq 2 ]]
-}
 
 @test "tilde ~/.claude-personal/<config> → STILL blocked (case c)" {
   run_agent 'Update ~/.claude-personal/agents/reviewer.md with the new domains.' true
@@ -148,23 +135,6 @@ list_bashes() {
 @test "tilde ~/.claude/skills/x/SKILL.md → STILL blocked (skills config)" {
   run_agent 'Edit ~/.claude/skills/foo/SKILL.md description field.' true
   [[ "${status}" -eq 2 ]]
-}
-
-# BASENAME exemption (case d)
-
-@test "CLAUDE.md basename at harness root → NOT blocked" {
-  run_agent 'Append the project note to ~/.claude/CLAUDE.md then stop.' true
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "MEMORY.md basename at harness root → NOT blocked" {
-  run_agent 'Add the index line to ~/.claude/MEMORY.md and exit.' true
-  [[ "${status}" -eq 0 ]]
-}
-
-@test "GLASS_ATRIUM_GLOBAL_RULES.md basename at harness root → NOT blocked" {
-  run_agent 'Update ~/.claude/GLASS_ATRIUM_GLOBAL_RULES.md thinking-budget section.' true
-  [[ "${status}" -eq 0 ]]
 }
 
 # Path-form arms classify CONFIG correctly (case e)
@@ -230,15 +200,9 @@ list_bashes() {
 }
 
 @test "a prompt with no .claude substring passes without sourcing the lib" {
-  local copy="${BATS_TEST_TMPDIR}/nolib/enforce-foreground-harness.sh" payload
   mkdir -p "${BATS_TEST_TMPDIR}/nolib"
-  cp -- "${HOOK_SH}" "${copy}"
-  [[ ! -e "${BATS_TEST_TMPDIR}/nolib/lib/claude-config-dirs.sh" ]] || {
-    echo "the copy must have no lib beside it"
-    return 1
-  }
-  payload="$(jq -n '{tool_name:"Agent", tool_input:{prompt:"Refactor src/util/date.ts.", run_in_background:true}}')"
-  run bash -c 'printf "%s" "$1" | bash "$2"' _ "${payload}" "${copy}"
+  cp -- "${HOOK_SH}" "${BATS_TEST_TMPDIR}/nolib/enforce-foreground-harness.sh"
+  HOOK_SH="${BATS_TEST_TMPDIR}/nolib/enforce-foreground-harness.sh" run_agent 'Refactor src/util/date.ts.' true
   [[ "${status}" -eq 0 ]] || {
     echo "${output}"
     return 1

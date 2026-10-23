@@ -52,17 +52,11 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-# Extract tool_name. Non-Agent calls are out of scope.
-tool_name=""
-tool_name="$(printf '%s' "${input}" | jq -r '.tool_name // ""' 2>/dev/null)" || tool_name=""
-if [[ "${tool_name}" != "Agent" ]]; then
-  exit 0
-fi
-
+# One jq pass: a non-Agent call yields an empty prompt, so it exits with the empty-prompt case.
 prompt=""
-prompt="$(printf '%s' "${input}" | jq -r '.tool_input.prompt // ""' 2>/dev/null)" || prompt=""
+prompt="$(printf '%s' "${input}" | jq -r 'select(.tool_name == "Agent") | .tool_input.prompt // ""' 2>/dev/null)" || prompt=""
 
-# Empty prompt → nothing to scan.
+# Non-Agent call or empty prompt → nothing to scan.
 if [[ -z "${prompt}" ]]; then
   exit 0
 fi
@@ -86,41 +80,35 @@ if [[ ! -r "${config_dirs_lib}" ]] || ! source "${config_dirs_lib}"; then
   exit 2
 fi
 
-# Literal-home forms → tilde form, so the tilde arm below matches them. The tilde comes from a variable:
-# a bare `~` in the replacement is tilde-expanded by bash 4.3+ but kept literal by bash 3.2.
+# Home forms → tilde form, so one tilde arm covers them all: the literal-home spellings and the
+# resolved home (runtime value, matched as a FIXED string — no regex escaping of $HOME). The tilde
+# comes from a variable: a bare `~` in the replacement is tilde-expanded by bash 4.3+ but kept literal
+# by bash 3.2. An empty $HOME adds no form — a bare `/` pattern would rewrite every separator.
+home_dir="${HOME:-}"
 tilde='~'
 # shellcheck disable=SC2016  # the patterns are literal prompt text, never expansions
-for literal_home in '"${HOME}"/' '"$HOME"/' '${HOME}/' '$HOME/'; do
-  prompt=${prompt//"${literal_home}"/${tilde}/}
-done
-
-# Resolve the installing user's home at runtime → both the harness regex and the
-# prefix-strip loop (below) match `${HOME}/.claude.../` in addition to `~/`.
-# Dual-form coverage: a prompt may write the harness path in absolute-home form,
-# so dropping the absolute arm would reopen a bypass hole.
-home_dir="${HOME:-}"
-# Regex-escape the home prefix for safe inclusion in the grep -E alternation
-# (a literal `.` or other metachar in $HOME must not act as a regex operator).
-home_re=""
+home_forms=('"${HOME}"/' '"$HOME"/' '${HOME}/' '$HOME/')
 if [[ -n "${home_dir}" ]]; then
-  home_re="$(printf '%s' "${home_dir}" | sed -e 's/[][\\.^$*+?(){}|/]/\\&/g')"
+  home_forms+=("${home_dir}/")
 fi
+for home_form in "${home_forms[@]}"; do
+  prompt=${prompt//"${home_form}"/${tilde}/}
+done
 
 # Scan the prompt for harness path occurrences — each match is a path token from any `.claude*`
 # config root up to the next whitespace / quote / backtick / closing paren-or-bracket (so we can resolve
 # its basename). grep -oE prints one match per line; sort -u dedupes. `|| true` absorbs grep's
 # exit-1 no-match so pipefail does not trip the ERR trap when there are no harness paths.
 #
-# Three alternations: tilde form (`~/.claude.../`) always; absolute-home form (`${HOME}/.claude.../`)
-# only when $HOME is known (regex-escaped runtime home — installing user, never a hardcoded identity);
-# and a CWD-relative form (`.claude.../`).
+# Two alternations: the tilde form (`~/.claude.../`, every home form after the rewrite above) and a
+# CWD-relative form (`.claude.../`).
 #
 # Relative-form arm closes the prior blind spot: a prompt that first changes
 # directory to $HOME (`cd ~ && edit .claude/agents/x.md`) references the harness
-# root with no `~/` or `${HOME}/` prefix, so the two absolute arms miss it and
+# root with no home prefix, so the tilde arm misses it and
 # the Rule-2 check is bypassed. The `(^|[[:space:]"'`(<>])` boundary
-# anchors `.claude` to a genuine path start — it never re-matches the absolute
-# arms (their `/` or `~` precedes `.claude`) and never matches an incidental
+# anchors `.claude` to a genuine path start — it never re-matches the tilde
+# arm (its `/` precedes `.claude`) and never matches an incidental
 # substring (e.g. `foo.claude`).
 #   Residual blind spot (documented, low-risk): the relative arm presumes the
 # CWD is $HOME. A relative `.claude/...` resolved against a NON-home CWD points
@@ -130,9 +118,6 @@ fi
 # then `../.claude/...`) remain out of a static text scan's reach; this is one
 # enforcement layer among several, not a complete sandbox.
 harness_re="(~/${CLAUDE_CONFIG_ROOT_RE}|(^|[[:space:]\"'\`(<>])${CLAUDE_CONFIG_ROOT_RE})"
-if [[ -n "${home_re}" ]]; then
-  harness_re="(~/${CLAUDE_CONFIG_ROOT_RE}|${home_re}/${CLAUDE_CONFIG_ROOT_RE}|(^|[[:space:]\"'\`(<>])${CLAUDE_CONFIG_ROOT_RE})"
-fi
 matches=""
 matches="$(printf '%s' "${prompt}" \
   | { grep -oE "${harness_re}"'[^[:space:]"'"'"'`)<>]*' || true; } \
