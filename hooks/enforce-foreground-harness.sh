@@ -40,6 +40,7 @@
 #     cannot be expanded without eval → protected, fail-safe. A brace with neither is literal text.
 #   - A bare root word (no `/`, relative) is prose unless an action word, an option, a redirect or a
 #     joined `=`/`@`/`-x`/list position makes it an operand.
+#   - Past 128 unique candidates the prompt is protected, fail-safe, with none of them walked.
 #   Not read as home: any other expansion — `${HOME:-}/`, `${HOME%/}/`, `$(echo ~)/`.
 #
 # Source: rules/glass-atrium/orchestrator-role.md → Harness Path Protection.
@@ -226,6 +227,26 @@ allow() {
 # No harness path → out of scope.
 if [[ -z "${candidates}" ]]; then
   allow
+fi
+
+# Non-exempt harness path, whatever run_in_background holds → BLOCK (reason on stderr, exit 2).
+# Args: $1 = an optional reason line printed ahead of the Rule 2 text.
+# Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → exit 2 stands.
+block() {
+  (
+    [[ -z "${1:-}" ]] || printf '%s\n' "${1}"
+    printf '%s %s %s\n' '[enforce-foreground-harness] Harness Path Protection Rule 2: staged lane MANDATORY. An Agent prompt may not name a path under ~/.claude/ or any ~/.claude-* profile branch config dir, whatever run_in_background holds or omits: the user must see and approve a harness change before it lands.' "${routes_text}" 'Source: rules/glass-atrium/orchestrator-role.md -> Harness Path Protection.'
+  ) >&2 || true
+  exit 2
+}
+
+# Each unique candidate costs one stat walk (~0.3 ms on bash 3.2) → past the cap the prompt blocks
+# unresolved, fail-safe. The densest tracked text names 23; the degraded extractor counts repeats too.
+readonly candidate_cap=128
+candidate_list=()
+IFS=$'\n' read -r -d '' -a candidate_list <<<"${candidates}" || true
+if ((${#candidate_list[@]} > candidate_cap)); then
+  block "[enforce-foreground-harness] The prompt names ${#candidate_list[@]} unique .claude path candidates, past the cap of ${candidate_cap} this gate resolves, so it is judged protected without resolving them (fail-safe). Split the delegation so each prompt names fewer such paths."
 fi
 
 # Home as the walk sees it. An empty home has no harness; a sentinel that cannot exist keeps the lexical
@@ -479,21 +500,12 @@ tilde_re='^~[a-z0-9._-]*(/|$)'
 progress_re='^projects/[^/]+/memory/progress-[^/]*\.md$'
 
 # nocasematch stays on: the lexical root and exemption tests fold case as the host filesystem does.
-blocked=false
 glob_match=false
-while IFS=$'\t' read -r flags written; do
+for line in "${candidate_list[@]}"; do
+  flags="${line%%$'\t'*}" written="${line#*$'\t'}"
   [[ -n "${written}" ]] || continue
   if candidate_blocks; then
-    blocked=true
-    break
+    block
   fi
-done <<<"${candidates}"
-
-if [[ "${blocked}" != true ]]; then
-  allow
-fi
-
-# Non-exempt harness path, whatever run_in_background holds → BLOCK (reason on stderr, exit 2).
-# Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → exit 2 stands.
-(printf '%s %s %s\n' '[enforce-foreground-harness] Harness Path Protection Rule 2: staged lane MANDATORY. An Agent prompt may not name a path under ~/.claude/ or any ~/.claude-* profile branch config dir, whatever run_in_background holds or omits: the user must see and approve a harness change before it lands.' "${routes_text}" 'Source: rules/glass-atrium/orchestrator-role.md -> Harness Path Protection.') >&2 || true
-exit 2
+done
+allow

@@ -385,6 +385,34 @@ assert_rows() {
     'a tilde path to the same dir|Edit ~/.claude/worktrees/wt/hooks/x.sh now.'
 }
 
+# Prompt naming $1 unique non-protected `.claude` paths under the home (a repo's own dot dir each).
+cap_prompt() {
+  local count="$1" i prompt="Review"
+  for ((i = 1; i <= count; i++)); do
+    prompt="${prompt} ~/repo/r${i}/.claude/agents/a.md"
+  done
+  printf '%s now.\n' "${prompt}"
+}
+
+# The gate resolves at most 128 unique candidates; past that it blocks without resolving any.
+@test "a prompt past the unique-candidate cap blocks unresolved and one within it is resolved" {
+  local home="${BATS_TEST_TMPDIR}/home/u" cap=128 row name count want prompt
+  mkdir -p "${home}"
+  for row in "cap minus one|$((cap - 1))|0" "exactly the cap|${cap}|0" "cap plus one|$((cap + 1))|2"; do
+    IFS='|' read -r name count want <<<"${row}"
+    prompt="$(cap_prompt "${count}")"
+    HOME="${home}" run_agent "${prompt}" omit
+    [[ "${status}" -eq "${want}" ]] || {
+      echo "row: ${name} · want ${want} · status ${status}: ${output}"
+      return 1
+    }
+    [[ "${want}" -eq 0 || "${output}" == *"${count} unique"*"cap of ${cap}"* ]] || {
+      echo "row: ${name} · cap reason missing: ${output}"
+      return 1
+    }
+  done
+}
+
 @test "a failed normalization still scans the raw prompt and says so only when it allows" {
   mkdir -p "${BATS_TEST_TMPDIR}/noawk"
   printf '#!/bin/sh\nexit 1\n' >"${BATS_TEST_TMPDIR}/noawk/awk"
@@ -441,18 +469,26 @@ source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
 
 # Degraded row: a hook copy with no lib/ beside it → the fail-closed branch.
 @test "every block path exits 2 with its reason once on stderr and nothing on stdout, even when the write is interrupted" {
-  local row name hook needle
+  local row name hook envelope needle rule2='Harness Path Protection Rule 2: staged lane MANDATORY' cap_text
+  cap_text="$(cap_prompt 129)"
   mkdir -p "${BATS_TEST_TMPDIR}/nolib"
   cp -- "${HOOK_SH}" "${BATS_TEST_TMPDIR}/nolib/enforce-foreground-harness.sh"
   jq -n '{tool_name:"Agent",tool_input:{prompt:"Edit ~/.claude/agents/x.md"}}' \
     >"${BATS_TEST_TMPDIR}/envelope"
+  jq -n --arg p "${cap_text}" '{tool_name:"Agent",tool_input:{prompt:$p}}' \
+    >"${BATS_TEST_TMPDIR}/envelope-cap"
   for row in \
-    "config path|${HOOK_SH}|Harness Path Protection Rule 2: staged lane MANDATORY" \
-    "degraded lib|${BATS_TEST_TMPDIR}/nolib/enforce-foreground-harness.sh|repair the hook install"; do
-    IFS='|' read -r name hook needle <<<"${row}"
-    run_forced_hook "${hook}" "${BATS_TEST_TMPDIR}/envelope"
+    "config path|${HOOK_SH}|envelope|${rule2}" \
+    "past the candidate cap|${HOOK_SH}|envelope-cap|${rule2}" \
+    "degraded lib|${BATS_TEST_TMPDIR}/nolib/enforce-foreground-harness.sh|envelope|repair the hook install"; do
+    IFS='|' read -r name hook envelope needle <<<"${row}"
+    run_forced_hook "${hook}" "${BATS_TEST_TMPDIR}/${envelope}"
     assert_forced_block "${needle}" || {
       echo "row: ${name}"
+      return 1
+    }
+    [[ "${envelope}" != envelope-cap || "${output}" == *'cap of 128'* ]] || {
+      echo "row: ${name} · cap reason missing: ${output}"
       return 1
     }
   done
