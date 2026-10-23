@@ -28,8 +28,11 @@
 #   A `..` in a match, or a second root inside it, voids every exemption.
 #
 # Spelling: the scan reads the prompt as the shell resolves it — quotes and backslashes removed,
-#   `//` and `/./` collapsed, case folded (macOS APFS resolves `~/.Claude/` to the live dir), every
-#   home form rewritten to `~/` — and a root counts with or without a trailing `/`, glob or brace.
+#   `//` and `/./` collapsed, case folded (macOS APFS resolves `~/.Claude/` to the live dir), and
+#   `$HOME/`, `${HOME}/` and the literal home path rewritten to `~/`; `~user/` counts as home unrewritten.
+#   A token with a `..` segment is also resolved lexically (a relative one read from $HOME) and scanned
+#   that way. A root counts with or without a trailing `/`, glob or brace.
+#   Not rewritten, so never read as home: any other expansion — `${HOME:-}/`, `${HOME%/}/`, `$(echo ~)/`.
 #
 # Source: rules/glass-atrium/orchestrator-role.md → Harness Path Protection.
 # Measured envelope (run_in_background never delivered): scoped/shared-hook-capability-contract.md →
@@ -94,8 +97,9 @@ fi
 
 # Normalize as the shell resolves a path, in ONE awk fork (linear, where bash 3.2 pattern substitution
 # is not): case fold (macOS APFS resolves `~/.Claude/` to the live dir) · quotes and backslashes
-# dropped · `//` and `/./` collapsed · every home form → `~/`, the resolved home matched as a FIXED
-# string. An empty or `/` home adds no form — a bare `/` pattern would rewrite every separator.
+# dropped · `//` and `/./` collapsed · the header's home forms → `~/`, the resolved home matched as a
+# FIXED string · a `..` token resolved. An empty or `/` home adds no form — a bare `/` pattern would
+# rewrite every separator.
 home_dir="${HOME:-}"
 home_dir="${home_dir%/}"
 # shellcheck disable=SC2016  # awk program text, never shell expansions
@@ -115,15 +119,48 @@ function swap(s, from,    out, i) {
   }
   return out s
 }
+function resolve(t,    anchor, name, k, n, seg, i, stack, out) {
+  anchor = ""
+  if (t ~ /^~[a-z0-9._-]*\//) {
+    k = index(t, "/")
+    name = substr(t, 2, k - 2)
+    if (home == "") {
+      anchor = substr(t, 1, k - 1)  # unknown home → the tilde stays, never climbed past
+      t = substr(t, k)
+    } else t = (name == "" ? home : parent "/" name) substr(t, k)
+  } else if (substr(t, 1, 1) != "/") {
+    if (home == "") return t
+    t = home "/" t
+  }
+  n = split(t, seg, "/")
+  k = 0
+  for (i = 1; i <= n; i++) {
+    if (seg[i] == "" || seg[i] == ".") continue
+    if (seg[i] == "..") { if (k > 0) k--; continue }
+    stack[++k] = seg[i]
+  }
+  out = ""
+  for (i = 1; i <= k; i++) out = out "/" stack[i]
+  if (home != "" && index(out "/", home "/") == 1) out = "~" substr(out, length(home) + 1)
+  return anchor out
+}
 BEGIN {
   quote_class = "[\"" sprintf("%c", 39) "\\\\]"
   home = norm(ENVIRON["FH_HOME"])
   sub(/\/$/, "", home)
+  parent = home
+  sub(/\/[^\/]*$/, "", parent)
 }
 {
   line = swap(swap(norm($0), "${home}/"), "$home/")
   if (home != "") line = swap(line, home "/")
   print line
+  # A traversal token is also scanned resolved, `/..` kept on its tail → the `..` guard voids its exemptions.
+  if (!index(line, "..")) next
+  n = split(line, tok, "[[:space:]`(),;:|&=]+")
+  for (j = 1; j <= n; j++)
+    if (index(tok[j], ".claude") && tok[j] ~ /(^|\/)\.\.(\/|$)/ && (r = resolve(tok[j])) != tok[j])
+      print r "/.."
 }'
 # On awk failure the raw prompt is still scanned; the note prints on the allow exits only, so a block
 # keeps its single stderr reason. `trap - ERR` inside: an inherited (-E) trap would exit 0 there.

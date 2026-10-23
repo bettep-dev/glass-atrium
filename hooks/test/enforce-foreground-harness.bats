@@ -187,6 +187,25 @@ list_bashes() {
   done
 }
 
+@test "a .. ahead of the root blocks exactly when the path it resolves to is a harness root" {
+  local home="${BATS_TEST_TMPDIR}/home/u"
+  mkdir -p "${home}"
+  HOME="${home}" assert_rows 2 \
+    'tilde, a dir, then ..|Edit ~/x/../.claude/agents/a.md now.' \
+    'home variable, a dir, then ..|Edit $HOME/x/../.claude/agents/a.md now.' \
+    "literal home, a dir, then ..|Edit ${home}/x/../.claude/agents/a.md now." \
+    'climb out of the home and back in|Edit ~/../u/.claude/agents/a.md now.' \
+    'lookalike dir, then ..|Edit ~/.claudex/../.claude/agents/a.md now.' \
+    'lookalike dotted dir, then ..|Edit ~/.claude.d/../.claude/agents/a.md now.' \
+    'relative from home, then ..|From the home dir, edit x/../.claude/agents/a.md now.' \
+    'traversal onto a progress name|Write ~/x/../.claude/projects/p/memory/progress-a.md now.'
+  HOME="${home}" assert_rows 0 \
+    'resolves to a repo dot dir|Edit ~/x/../y/.claude/agents/a.md now.' \
+    'lookalike dir climbed out of|Edit ~/.claudex/../notes/a.md now.' \
+    'resolves to the global config file|Read ~/x/../.claude.json now.' \
+    'climbs to another home|Edit ~/../v/.claude/agents/a.md now.'
+}
+
 # Spellings that name a harness path in plain text: each resolves to the live harness, so each blocks.
 
 # Args: $1 = want (exit code) · $2.. = `name|prompt` rows. HOME may be set by the caller.
@@ -269,7 +288,8 @@ assert_rows() {
 @test "an empty home still blocks a harness path instead of rewriting every separator" {
   HOME='' assert_rows 2 \
     'tilde config path|Write ~/.claude/hooks/x.sh now.' \
-    'home variable config path|Edit $HOME/.claude/agents/x.md now.'
+    'home variable config path|Edit $HOME/.claude/agents/x.md now.' \
+    'tilde traversal ahead of the root|Edit ~/x/../.claude/agents/x.md now.'
 }
 
 @test "a case variant of a harness root blocks, since the host filesystem folds case" {

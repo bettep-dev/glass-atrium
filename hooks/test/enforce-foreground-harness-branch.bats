@@ -150,6 +150,21 @@ list_bashes() {
   done
 }
 
+@test "a .. ahead of a branch root blocks like the branch root itself" {
+  local row name prompt
+  for row in \
+    'a dir, then ..|Edit ~/x/../.claude-work-dev/agents/a.md now.' \
+    'lookalike dir, then ..|Edit ~/.claudex/../.claude-work-dev/settings.json now.' \
+    'climb out of the home and back in|Edit ~/../'"${HOME##*/}"'/.claude-work-dev/hooks/x.sh now.'; do
+    IFS='|' read -r name prompt <<<"${row}"
+    run_agent "${prompt}" omit
+    [[ "${status}" -eq 2 ]] || {
+      echo "row: ${name} · status ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
 @test "~/.claude-work-dev/jobs/ → BLOCKED (current runtime-DATA membership pinned, no jobs member)" {
   run_agent 'Queue the run via ~/.claude-work-dev/jobs/pending.json.' true
   [[ "${status}" -eq 2 ]]
