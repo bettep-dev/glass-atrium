@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # enforce-foreground-harness.sh — PreToolUse(Agent) gate enforcing
-# Harness Path Protection Rule 2 (orchestrator-role.md).
+# Harness Path Protection Rule 2 (orchestrator-role.md): staged lane MANDATORY.
 #
-# Blocks sub-agent delegations targeting ~/.claude/ or any ~/.claude-* profile branch config dir with
-# run_in_background=true. The user MUST inspect harness/memory writes in real time — background spawns
-# hide diffs and silently break future sessions; this hook is the deterministic runtime gateway an
-# LLM-side self-check cannot guarantee. Trigger: matcher "Agent" (registered in ~/.claude/settings.json).
+# Blocks an Agent call whose prompt names a non-exempt path under ~/.claude/ or any ~/.claude-* profile
+# branch config dir, whatever run_in_background holds or omits — the field is model-sent and proves
+# nothing about how the CLI launches the agent. A harness write never travels through an Agent prompt:
+# it goes repo-side or through the user-applied staged lane, so the user sees the diff before it lands.
+# Trigger: matcher "Agent" (registered in ~/.claude/settings.json).
 #
-# Contract: stdin = JSON (tool_name, tool_input{prompt, run_in_background}) · stdout silent · stderr =
-#   the block reason on violation · exit 2 = block · exit 0 = pass / fail-open on internal error
+# Contract: stdin = JSON (tool_name, tool_input{prompt}) · stdout silent · stderr = the block reason
+#   on violation · exit 2 = block · exit 0 = pass / fail-open on internal error
 #   (defense-in-depth — one of several layers, never break the session).
 #
 # BASENAME exception:
@@ -18,8 +19,13 @@
 # Runtime-DATA exclusion: Rule 2 protects harness CONFIG writes (agents/, hooks/, skills/,
 #   settings*.json, the memory dir). Runtime-DATA subdirs (data/, projects/, logs/, todos/,
 #   shell-snapshots/, statsig/) hold transcripts/logs/caches that CANNOT misconfigure a future session,
-#   so a bare reference (a text scan cannot tell READ from WRITE) must not force foreground. The memory
-#   dir nests under projects/ and stays protected via a /memory/ segment guard, never leaking into memory writes.
+#   so a bare reference (a text scan cannot tell READ from WRITE) is not blocked. The memory dir nests
+#   under projects/ and stays protected via a /memory/ segment guard, never leaking into memory writes.
+#
+# Progress-file exclusion: a progress-*.md directly in a projects/<p>/memory/ dir is session-internal
+#   state every agent must checkpoint before its turn cap (GLASS_ATRIUM_GLOBAL_RULES.md → Cross-Session
+#   Continuity) — staging it would defeat it. MEMORY.md and every other memory file stay protected.
+#   A `..` segment in a match voids every exemption.
 #
 # Source: rules/glass-atrium/orchestrator-role.md → Harness Path Protection.
 
@@ -53,33 +59,40 @@ if [[ "${tool_name}" != "Agent" ]]; then
   exit 0
 fi
 
-# Extract prompt body + run_in_background flag. Absent run_in_background → "false"
-# (Claude Code semantics: optional param, foreground is the default).
 prompt=""
 prompt="$(printf '%s' "${input}" | jq -r '.tool_input.prompt // ""' 2>/dev/null)" || prompt=""
-run_bg=""
-run_bg="$(printf '%s' "${input}" | jq -r '.tool_input.run_in_background // false | tostring' 2>/dev/null)" || run_bg="false"
-
-# Foreground (or unset) → no Rule-2 risk regardless of paths.
-if [[ "${run_bg}" != "true" ]]; then
-  exit 0
-fi
 
 # Empty prompt → nothing to scan.
 if [[ -z "${prompt}" ]]; then
   exit 0
 fi
 
-# Branch-root grammar, single-sited in lib/. Sourced HERE — after the foreground and empty-prompt
-# early exits — so a missing lib fails CLOSED on background calls only (a security gate must never
-# degrade silently) while the common foreground path never pays the source cost.
+# Every root form the scan matches contains `.claude` → a prompt without it names no harness path.
+if [[ "${prompt}" != *.claude* ]]; then
+  exit 0
+fi
+
+# Remedy named by both block reasons — the Write routes of Harness Path Protection Rule 2.
+readonly routes_text='Take a write route instead: (1) an install-managed file (a symlink into ~/.glass-atrium/: agent bodies, rules/glass-atrium/*, skills/glass-atrium-*, GLASS_ATRIUM_GLOBAL_RULES.md) -> edit the REPO path, which ships through manifest regeneration and the updater; (2) a harness file the install does not manage (profile settings*.json, settings.local.json, other profile-local files) -> the staged lane: the main session copies it to a staging dir in the working tree, the agent edits the copy, the user approves the diff and applies it; (3) a read -> the repo path for a bundle member, the staged lane read-only copy otherwise. Never name the resolved ~/.glass-atrium/ target to get past this check.'
+
+# Branch-root grammar, single-sited in lib/. Sourced after the `.claude` precheck → the fail-closed lib
+# check runs on every Agent prompt containing `.claude` (a security gate must never degrade silently),
+# while a prompt naming no harness root never pays the source cost.
 config_dirs_lib="${BASH_SOURCE%/*}/lib/claude-config-dirs.sh"
 # shellcheck source=lib/claude-config-dirs.sh
 if [[ ! -r "${config_dirs_lib}" ]] || ! source "${config_dirs_lib}"; then
   # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → exit 2 stands.
-  (printf '%s\n' '[enforce-foreground-harness] Harness Path Protection Rule 2 gate degraded (fail-closed): lib/claude-config-dirs.sh is unreadable, so harness paths cannot be classified. Set run_in_background=false (or omit) and repair the hook install.') >&2 || true
+  (printf '%s %s\n' '[enforce-foreground-harness] Harness Path Protection Rule 2 gate degraded (fail-closed): lib/claude-config-dirs.sh is unreadable, so harness paths cannot be classified. Do not name the harness path in the Agent prompt, and repair the hook install.' "${routes_text}") >&2 || true
   exit 2
 fi
+
+# Literal-home forms → tilde form, so the tilde arm below matches them. The tilde comes from a variable:
+# a bare `~` in the replacement is tilde-expanded by bash 4.3+ but kept literal by bash 3.2.
+tilde='~'
+# shellcheck disable=SC2016  # the patterns are literal prompt text, never expansions
+for literal_home in '"${HOME}"/' '"$HOME"/' '${HOME}/' '$HOME/'; do
+  prompt=${prompt//"${literal_home}"/${tilde}/}
+done
 
 # Resolve the installing user's home at runtime → both the harness regex and the
 # prefix-strip loop (below) match `${HOME}/.claude.../` in addition to `~/`.
@@ -105,7 +118,7 @@ fi
 # Relative-form arm closes the prior blind spot: a prompt that first changes
 # directory to $HOME (`cd ~ && edit .claude/agents/x.md`) references the harness
 # root with no `~/` or `${HOME}/` prefix, so the two absolute arms miss it and
-# the Rule-2 background check is bypassed. The `(^|[[:space:]"'`(<>])` boundary
+# the Rule-2 check is bypassed. The `(^|[[:space:]"'`(<>])` boundary
 # anchors `.claude` to a genuine path start — it never re-matches the absolute
 # arms (their `/` or `~` precedes `.claude`) and never matches an incidental
 # substring (e.g. `foo.claude`).
@@ -135,6 +148,7 @@ fi
 # root-level file directly. EVERY match exempt → the call is exempt. Implementation: strip the
 # harness root prefix, take the first '/'-separated segment, compare; any non-exempt match → BLOCK.
 all_exempt=true
+progress_re='^projects/[^/]+/memory/progress-[^/]*\.md$'
 while IFS= read -r path; do
   [[ -z "${path}" ]] && continue
   # The relative-form arm captures one leading separator byte (space/quote/backtick/paren/angle) —
@@ -150,16 +164,24 @@ while IFS= read -r path; do
   # helper shares ONE root grammar with the scan regex above, so a root the scan admits can never
   # be one the strip fails to reduce — the drift that left profile branches unrecognized.
   remainder="$(claude_config_strip_branch_root "${path}" "${home_dir}")"
+  # A `..` segment can climb out of any exempt subtree → never exempt.
+  if [[ "/${remainder}/" == */../* ]]; then
+    all_exempt=false
+    break
+  fi
   # First segment after the root.
   first_segment="${remainder%%/*}"
   case "${first_segment}" in
     CLAUDE.md | MEMORY.md | GLASS_ATRIUM_GLOBAL_RULES.md) continue ;;
     data | projects | logs | todos | shell-snapshots | statsig)
-      # Runtime-DATA subdir → not config, does not force foreground. But the memory dir nests under
-      # projects/ (projects/<proj>/memory/…), so a /memory/ path segment keeps the match protected —
-      # this exclusion cannot un-protect a memory write. `/${remainder}/` frames the glob boundaries.
+      # Runtime-DATA subdir → not config, not blocked. But the memory dir nests under projects/
+      # (projects/<proj>/memory/…), so a /memory/ path segment keeps the match protected — only a
+      # progress checkpoint directly in it is exempt. `/${remainder}/` frames the glob boundaries.
       case "/${remainder}/" in
         */memory/*)
+          if [[ "${remainder}" =~ ${progress_re} ]]; then
+            continue
+          fi
           all_exempt=false
           break
           ;;
@@ -177,7 +199,7 @@ if [[ "${all_exempt}" == "true" ]]; then
   exit 0
 fi
 
-# Non-exempt harness path with run_in_background=true → BLOCK (reason on stderr, exit 2).
+# Non-exempt harness path, whatever run_in_background holds → BLOCK (reason on stderr, exit 2).
 # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → exit 2 stands.
-(printf '%s\n' '[enforce-foreground-harness] Harness Path Protection Rule 2: foreground MANDATORY for an Agent call that writes under ~/.claude/ or any ~/.claude-* profile branch config dir, so the user can watch the harness change as it happens. Set run_in_background=false (or omit it). Source: rules/glass-atrium/orchestrator-role.md -> Harness Path Protection.') >&2 || true
+(printf '%s %s %s\n' '[enforce-foreground-harness] Harness Path Protection Rule 2: staged lane MANDATORY. An Agent prompt may not name a path under ~/.claude/ or any ~/.claude-* profile branch config dir, whatever run_in_background holds or omits: the user must see and approve a harness change before it lands.' "${routes_text}" 'Source: rules/glass-atrium/orchestrator-role.md -> Harness Path Protection.') >&2 || true
 exit 2
