@@ -3,8 +3,8 @@
 #   Protection Rule 2 (staged lane MANDATORY): an Agent prompt naming a non-exempt harness path is
 #   blocked whatever run_in_background holds or omits.
 #
-# The hook is a pure TEXT scan of the delegation prompt — it cannot tell a READ reference from a
-# WRITE target. Exempt: the BASENAME files at a harness root, the runtime-DATA subdirs (data/,
+# The hook reads each path the delegation prompt names through the filesystem (stat only) — it cannot
+# tell a READ reference from a WRITE target. Exempt: the BASENAME files at a harness root, the runtime-DATA subdirs (data/,
 # projects/, logs/, …), and a progress-*.md directly in a projects/<p>/memory/ dir. Every other memory
 # file and every CONFIG path (agents/, hooks/, skills/, settings*.json) stays protected, and a `..`
 # segment voids every exemption.
@@ -162,7 +162,8 @@ list_bashes() {
     'progress file one dir deeper|2|Write ~/.claude/projects/-Users-x/memory/sub/progress-x.md now.' \
     'progress file under a memory dir nested deeper in projects|2|Write ~/.claude/projects/-Users-x/memory/sub/memory/progress-x.md now.' \
     'file inside a progress-named dir|2|Write ~/.claude/projects/-Users-x/memory/progress-x/MEMORY.md now.' \
-    'non-md progress file|2|Write ~/.claude/projects/-Users-x/memory/progress-x.txt now.'; do
+    'non-md progress file|2|Write ~/.claude/projects/-Users-x/memory/progress-x.txt now.' \
+    'progress file behind a wildcard project segment|0|Persist ~/.claude/projects/*/memory/progress-x.md now.'; do
     IFS='|' read -r name want prompt <<<"${row}"
     run_agent "${prompt}" omit
     [[ "${status}" -eq "${want}" ]] || {
@@ -300,6 +301,70 @@ assert_rows() {
     'upper-case branch root|Edit ~/.CLAUDE-work/settings.json now.' \
     'upper-case home|Edit '"${upper_home}"'/.claude/hooks/x.sh now.' \
     'capitalized relative root|From the home dir, edit .Claude/agents/x.md now.'
+}
+
+# Filesystem resolution: a spelling no text pattern reads as a root still blocks when the filesystem
+#   resolves it into one, and a spelling that only looks like the home passes.
+
+@test "a spelling the filesystem resolves into a harness root blocks" {
+  local home="${BATS_TEST_TMPDIR}/home/u"
+  mkdir -p "${home}/.claude/agents" "${home}/.claude/projects/p.claude/memory" "${home}/proj" "${home}/repo/.claude"
+  ln -s ../.claude "${home}/proj/.claude"
+  ln -s ../.claude/agents "${home}/proj/.claude-agents"
+  ln -s ../.claude/settings.json "${home}/proj/.claude-settings.json"
+  HOME="${home}" assert_rows 2 \
+    'glob star inside the root name|Edit ~/.cl*aude/agents/new.md now.' \
+    'glob bracket inside the root name|Edit ~/.[c]laude/hooks/x.sh now.' \
+    'option-joined relative path|Run tool -f.claude/agents/a.md now.' \
+    'at-prefixed relative path|Attach @.claude/settings.json now.' \
+    'tilde-plus form|Edit ~+/.claude/agents/a.md now.' \
+    'tilde-minus form|Edit ~-/.claude/settings.json now.' \
+    'directory symlink onto the root|Edit ~/proj/.claude/agents/a.md now.' \
+    "absolute path through a directory symlink|Edit ${home}/proj/.claude/settings.json now." \
+    'directory symlink onto a dir inside the root|Edit ~/proj/.claude-agents/a.md now.' \
+    'file symlink onto a root file|Edit ~/proj/.claude-settings.json now.'
+  HOME="${home}" assert_rows 0 \
+    "a repo's own .claude dir|Edit ~/repo/.claude/agents/a.md now." \
+    "the home path inside another volume path|Edit /Volumes/x${home}/.claude/agents/a.md now." \
+    'a glob match whose real name holds .claude text|Persist ~/.claude/projects/*/memory/progress-a.md now.'
+}
+
+@test "a case or Unicode variant of the home blocks exactly when the filesystem resolves it to the home" {
+  local base="${BATS_TEST_TMPDIR}/home" lower upper want=0
+  lower="$(printf 'caf\303\251')"
+  upper="$(printf 'CAFE\314\201')"
+  mkdir -p "${base}/${lower}/.claude/agents"
+  if [[ "${base}/${upper}" -ef "${base}/${lower}" ]]; then
+    want=2
+  fi
+  HOME="${base}/${lower}" assert_rows "${want}" \
+    "upper-case decomposed home|Edit ${base}/${upper}/.claude/agents/a.md now." \
+    "upper-case decomposed home and root|Edit ${base}/${upper}/.CLAUDE/settings.json now."
+}
+
+@test "a brace bash would expand is judged protected and a literal brace resolves as written" {
+  local home="${BATS_TEST_TMPDIR}/home/u"
+  mkdir -p "${home}"
+  HOME="${home}" assert_rows 2 \
+    'alternatives spelling the root|Edit ~/.cla{u,x}de/agents/a.md now.' \
+    'alternatives holding the root|Edit ~/.{claude,x}/agents/a.md now.'
+  HOME="${home}" assert_rows 0 \
+    'a brace with no comma is a literal name|Edit ~/.clau{d}e/agents/a.md now.'
+}
+
+@test "a bare root word is a name in prose and a path as an operand" {
+  local home="${BATS_TEST_TMPDIR}/home/u"
+  mkdir -p "${home}/.claude-work"
+  HOME="${home}" assert_rows 0 \
+    'profile named in a sentence|Switch the session to the .claude-work profile.' \
+    'roots named in a list of profiles|Profiles: .claude-work and .claude-personal.' \
+    'repo dot dir named in a sentence|The repo keeps its worktrees in .claude for now.'
+  HOME="${home}" assert_rows 2 \
+    'operand of cd|cd .claude-work && edit settings.json' \
+    'operand after an option|Run ls -la .claude-work now.' \
+    'redirect target|Run echo x > .claude-work now.' \
+    'option value|Run tool --dir=.claude-work now.' \
+    'tilde root word|Rewrite the hooks in ~/.claude-work now.'
 }
 
 # CWD-relative arm: a relative token names the harness only when, read from $HOME, it reaches an entry

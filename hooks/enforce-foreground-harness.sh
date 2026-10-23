@@ -25,19 +25,28 @@
 # Progress-file exclusion: a progress-*.md directly in a projects/<p>/memory/ dir is session-internal
 #   state every agent must checkpoint before its turn cap (GLASS_ATRIUM_GLOBAL_RULES.md → Cross-Session
 #   Continuity) — staging it would defeat it. MEMORY.md and every other memory file stay protected.
-#   A `..` in a match, or a second root inside it, voids every exemption.
+#   A `..` in the written path, or `.claude` text after the root, voids every exemption.
 #
-# Spelling: the scan reads the prompt as the shell resolves it — quotes and backslashes removed,
-#   `//` and `/./` collapsed, case folded (macOS APFS resolves `~/.Claude/` to the live dir), and
-#   `$HOME/`, `${HOME}/` and the literal home path rewritten to `~/`; `~user/` counts as home unrewritten.
-#   A token with a `..` segment is also resolved lexically (a relative one read from $HOME) and scanned
-#   that way. A root counts with or without a trailing `/`, glob or brace.
-#   Not rewritten, so never read as home: any other expansion — `${HOME:-}/`, `${HOME%/}/`, `$(echo ~)/`.
+# Resolution: the verdict follows what the filesystem says a path reaches, not how it is spelled.
+#   - Candidates: every token whose text, glob metacharacters and quotes removed, holds `.claude` in any
+#     case. A token starts at whitespace, a separator (`` ` ``()<>,;:|&), or after `=`, `@` or `-x`.
+#   - A tilde form, `$HOME/` or `${HOME}/` at the token start, or a relative token, is read from $HOME;
+#     `~+` and `~-` count as relative (the agent's cwd is unknowable). Anything else resolves as written.
+#   - Segments are walked with stat tests only (`-d`, `-e`, `-ef`): a step whose inode is a protected
+#     root's, or a root-grammar name under the home, enters the root — so case, Unicode folding, `..`
+#     and symlinks resolve as the host filesystem resolves them. A file symlink is read with readlink.
+#   - A glob is expanded by bash pathname expansion (no execution), each match walked, and its
+#     metacharacter-stripped spelling walked too. A brace that bash would expand (`{a,b}`, `{a..b}`)
+#     cannot be expanded without eval → protected, fail-safe. A brace with neither is literal text.
+#   - A bare root word (no `/`, relative) is prose unless an action word, an option, a redirect or a
+#     joined `=`/`@`/`-x`/list position makes it an operand.
+#   Not read as home: any other expansion — `${HOME:-}/`, `${HOME%/}/`, `$(echo ~)/`.
 #
 # Source: rules/glass-atrium/orchestrator-role.md → Harness Path Protection.
 # Measured envelope (run_in_background never delivered): scoped/shared-hook-capability-contract.md →
 #   ### PreToolUse(Agent) measured record.
 
+# shellcheck disable=SC2310  # predicates return their verdict as status: a failed stat test is an answer
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -70,13 +79,15 @@ if [[ -z "${prompt}" ]]; then
   exit 0
 fi
 
-# Every root form contains `.claude` in some case, a quote or backslash possibly inside it (the
-# shell drops those: `.cl"aude"/x`) → a prompt matching neither names no harness path. A regex, not a
-# bash pattern substitution: bash 3.2 runs those superlinearly on a large prompt.
-quote_run='["'"'"'\\]*'
-precheck_re="\\.${quote_run}c${quote_run}l${quote_run}a${quote_run}u${quote_run}d${quote_run}e"
+# Every candidate holds `.claude` in some case once quotes, backslashes and glob or brace metacharacters
+# are dropped (`.cl"aude"`, `.cl*aude`), or a brace alternative spells it (`.cla{u,x}de`) → a prompt
+# matching neither names no harness path. A regex, not a bash pattern substitution: bash 3.2 runs those
+# superlinearly on a large prompt.
+meta_run='[]["'"'"'\\*?{}]*'
+precheck_re="\\.${meta_run}c${meta_run}l${meta_run}a${meta_run}u${meta_run}d${meta_run}e"
+brace_re='\.[^[:space:]]*[{][^[:space:]{}]*,'
 shopt -s nocasematch
-if [[ ! "${prompt}" =~ ${precheck_re} ]]; then
+if [[ ! "${prompt}" =~ ${precheck_re} && ! "${prompt}" =~ ${brace_re} ]]; then
   exit 0
 fi
 shopt -u nocasematch
@@ -95,87 +106,116 @@ if [[ ! -r "${config_dirs_lib}" ]] || ! source "${config_dirs_lib}"; then
   exit 2
 fi
 
-# Normalize as the shell resolves a path, in ONE awk fork (linear, where bash 3.2 pattern substitution
-# is not): case fold (macOS APFS resolves `~/.Claude/` to the live dir) · quotes and backslashes
-# dropped · `//` and `/./` collapsed · the header's home forms → `~/`, the resolved home matched as a
-# FIXED string · a `..` token resolved. An empty or `/` home adds no form — a bare `/` pattern would
-# rewrite every separator.
-home_dir="${HOME:-}"
-home_dir="${home_dir%/}"
+# Candidate extraction in ONE awk fork (linear, where bash 3.2 pattern substitution is not). Output
+# lines `x<flags>\t<candidate>`: flag c = operand context (bare-root rule), b = brace bash would expand.
+# A `<placeholder>` stays one segment, a comma inside a brace stays in its token.
 # shellcheck disable=SC2016  # awk program text, never shell expansions
-normalize_awk='
-function norm(s) {
+extract_awk='
+# Root text in s, metacharacters dropped, trying each brace alternative; past the probe budget the
+# word counts as root text (fail-safe — its brace flag then decides).
+function has_root_text(s,    pre, post, n, i, alt) {
+  if (match(s, /\{[^{}]*\}/)) {
+    if (++probes > 256) return 1
+    pre = substr(s, 1, RSTART - 1)
+    post = substr(s, RSTART + RLENGTH)
+    n = split(substr(s, RSTART + 1, RLENGTH - 2), alt, /[,\003]/)
+    for (i = 1; i <= n; i++) if (has_root_text(pre alt[i] post)) return 1
+    return n == 0 && has_root_text(pre post)
+  }
   s = tolower(s)
-  gsub(quote_class, "", s)
-  while (gsub(/\/\//, "/", s)) {}
-  while (gsub(/\/\.\//, "/", s)) {}
-  return s
+  gsub(/[*?[]/, "", s)
+  gsub(/\]/, "", s)
+  return index(s, ".claude") > 0
 }
-function swap(s, from,    out, i) {
-  out = ""
-  while ((i = index(s, from)) > 0) {
-    out = out substr(s, 1, i - 1) "~/"
-    s = substr(s, i + length(from))
-  }
-  return out s
+function emit(c, f) {
+  probes = 0
+  if (!has_root_text(c)) return
+  if (index(c, "\003") || c ~ /\{[^{}]*\.\.[^{}]*\}/) f = f "b"
+  gsub(/\003/, ",", c)
+  gsub(/\001/, "<", c)
+  gsub(/\002/, ">", c)
+  seen[c] = seen[c] f
 }
-function resolve(t,    anchor, name, k, n, seg, i, stack, out) {
-  anchor = ""
-  if (t ~ /^~[a-z0-9._-]*\//) {
-    k = index(t, "/")
-    name = substr(t, 2, k - 2)
-    if (home == "") {
-      anchor = substr(t, 1, k - 1)  # unknown home → the tilde stays, never climbed past
-      t = substr(t, k)
-    } else t = (name == "" ? home : parent "/" name) substr(t, k)
-  } else if (substr(t, 1, 1) != "/") {
-    if (home == "") return t
-    t = home "/" t
+function starts(t, f,    c) {
+  if (t == "") return
+  emit(t, f)
+  if (t ~ /^-/) {
+    c = t
+    sub(/^-+/, "", c)
+    emit(c, f "c")
+    if (t ~ /^-[A-Za-z0-9]/) emit(substr(t, 3), f "c")
   }
-  n = split(t, seg, "/")
-  k = 0
-  for (i = 1; i <= n; i++) {
-    if (seg[i] == "" || seg[i] == ".") continue
-    if (seg[i] == "..") { if (k > 0) k--; continue }
-    stack[++k] = seg[i]
+  c = t
+  while (match(c, /[=@]/)) {
+    c = substr(c, RSTART + 1)
+    emit(c, f "c")
   }
-  out = ""
-  for (i = 1; i <= k; i++) out = out "/" stack[i]
-  if (home != "" && index(out "/", home "/") == 1) out = "~" substr(out, length(home) + 1)
-  return anchor out
+}
+function split_word(w, f,    b, m, j, k, s, part, piece, joined) {
+  while (match(w, /<[^<>]*>/))
+    w = substr(w, 1, RSTART - 1) "\001" substr(w, RSTART + 1, RLENGTH - 2) "\002" substr(w, RSTART + RLENGTH)
+  while (match(w, /\{[^{}]*,[^{}]*\}/)) {
+    b = substr(w, RSTART, RLENGTH)
+    gsub(/,/, "\003", b)
+    w = substr(w, 1, RSTART - 1) b substr(w, RSTART + RLENGTH)
+  }
+  gsub(/[<>]+/, "\005", w)
+  m = split(w, part, /[`(),;|&:]+/)
+  for (j = 1; j <= m; j++) {
+    joined = (j > 1 && part[j - 1] != "")
+    k = split(part[j], piece, "\005")
+    for (s = 1; s <= k; s++) starts(piece[s], (f || joined || s > 1) ? "c" : "")
+  }
 }
 BEGIN {
   quote_class = "[\"" sprintf("%c", 39) "\\\\]"
-  home = norm(ENVIRON["FH_HOME"])
-  sub(/\/$/, "", home)
-  parent = home
-  sub(/\/[^\/]*$/, "", parent)
+  verbs = " cd pushd popd ls cat cp mv rm rmdir mkdir touch ln tee chmod chown install find tar rsync sed awk vi vim nano code open source stat du head tail less grep git edit write update modify change delete remove create rewrite overwrite replace append patch move copy rename save "
 }
 {
-  line = swap(swap(norm($0), "${home}/"), "$home/")
-  if (home != "") line = swap(line, home "/")
-  print line
-  # A traversal token is also scanned resolved, `/..` kept on its tail → the `..` guard voids its exemptions.
-  if (!index(line, "..")) next
-  n = split(line, tok, "[[:space:]`(),;:|&=]+")
-  for (j = 1; j <= n; j++)
-    if (index(tok[j], ".claude") && tok[j] ~ /(^|\/)\.\.(\/|$)/ && (r = resolve(tok[j])) != tok[j])
-      print r "/.."
-}'
-# On awk failure the raw prompt is still scanned; the note prints on the allow exits only, so a block
+  n = split($0, words, /[[:space:]]+/)
+  for (i = 1; i <= n; i++) {
+    w = words[i]
+    gsub(quote_class, "", w)
+    p = prev
+    prev = tolower(w)
+    sub(/:$/, "", prev)
+    probes = 0
+    if (!index(w, ".") || !has_root_text(w)) continue
+    split_word(w, index(verbs, " " p " ") || p ~ /^-/ || p ~ /[<>]$/)
+  }
+}
+END { for (c in seen) print "x" seen[c] "\t" c }'
+
+# Degraded extractor (awk failed): whitespace words with quotes dropped, split on the list separators,
+# every candidate in operand context. Builtins only; slower, so it runs only after an awk failure.
+fallback_candidates() {
+  local IFS=$' \t\n' word piece
+  set -f
+  for word in ${prompt}; do
+    word="${word//[\"\'\\]/}"
+    [[ "${word}" == *.[Cc][Ll][Aa][Uu][Dd][Ee]* ]] || continue
+    for piece in ${word//[,;|&:()<>\`]/ }; do
+      if [[ "${piece}" == *.[Cc][Ll][Aa][Uu][Dd][Ee]* ]]; then
+        printf 'xc\t%s\n' "${piece}"
+      fi
+    done
+  done
+  set +f
+}
+
+# On awk failure the fallback still classifies; the note prints on the allow exits only, so a block
 # keeps its single stderr reason. `trap - ERR` inside: an inherited (-E) trap would exit 0 there.
-normalized=""
+candidates=""
 degraded=false
-if normalized="$(
+if ! candidates="$(
   trap - ERR
-  printf '%s\n' "${prompt}" | FH_HOME="${home_dir}" LC_ALL=C awk "${normalize_awk}"
+  printf '%s\n' "${prompt}" | LC_ALL=C awk "${extract_awk}"
 )"; then
-  prompt="${normalized}"
-else
   degraded=true
+  candidates="$(fallback_candidates)" || candidates=""
 fi
 
-# Allow exit: exit 0, naming a degraded normalization first.
+# Allow exit: exit 0, naming a degraded extraction first.
 allow() {
   if [[ "${degraded}" == true ]]; then
     printf '[enforce-foreground-harness] awk normalization failed; only the raw prompt was scanned\n' >&2
@@ -183,25 +223,250 @@ allow() {
   exit 0
 }
 
-# Scan for root occurrences: `~/` or `~user/` before `.claude` (every home form after the rewrite), or
-# a CWD-relative `.claude` after a boundary byte. A token runs to whitespace, a backtick, `)`, `<>`, or
-# a list separator `,;:|` — so a protected path joined onto an exempt one is a token of its own — and
-# keeps an `<angle-placeholder>` segment whole. The root grammar is checked per token below.
-# shellcheck disable=SC2016  # backticks are literal bracket members, never expansions
-tok_char='[^[:space:]`)<>,;:|]'
-placeholder='<[^[:space:]<>]*>'
-# shellcheck disable=SC2016  # backticks are literal bracket members, never expansions
-boundary='[[:space:]`(<>{,;:|&=*[]'
-scan_re="(~[a-z0-9._-]*/\\{?|(^|${boundary})(\\./)*\\{?)\\.claude(${tok_char}|${placeholder})*"
-matches=""
-matches="$(printf '%s' "${prompt}" \
-  | { grep -oE "${scan_re}" || true; } \
-  | sort -u)" || matches=""
-
 # No harness path → out of scope.
-if [[ -z "${matches}" ]]; then
+if [[ -z "${candidates}" ]]; then
   allow
 fi
+
+# Home as the walk sees it. An empty home has no harness; a sentinel that cannot exist keeps the lexical
+# root test (`~/.claude` → <sentinel>/.claude) blocking instead of reading every path as home.
+home_dir="${HOME:-}"
+while [[ "${home_dir}" == */ && "${home_dir}" != / ]]; do
+  home_dir="${home_dir%/}"
+done
+[[ -n "${home_dir}" ]] || home_dir='/nonexistent/.enforce-foreground-harness-no-home'
+
+# Lexical twin of an absolute path (the shell's logical view): empty and `.` segments dropped, `..` pops.
+# Args: $1 = absolute path. Sets lexical_out.
+set_lexical() {
+  local rest="${1#/}" seg out=""
+  while [[ -n "${rest}" ]]; do
+    seg="${rest%%/*}"
+    if [[ "${rest}" == */* ]]; then rest="${rest#*/}"; else rest=""; fi
+    case "${seg}" in
+      "" | .) ;;
+      ..) out="${out%/*}" ;;
+      *) out="${out}/${seg}" ;;
+    esac
+  done
+  lexical_out="${out:-/}"
+}
+set_lexical "${home_dir}"
+home_lex="${lexical_out}"
+
+# Protected roots on disk: `.claude` and each `.claude-*` dir of the home that fits the lib grammar.
+root_name_re="^${CLAUDE_CONFIG_ROOT_RE%/}$"
+roots=()
+shopt -s nullglob nocaseglob nocasematch
+for dir in "${home_dir}/.claude" "${home_dir}"/.claude-*; do
+  if [[ -d "${dir}" && "${dir##*/}" =~ ${root_name_re} ]]; then
+    roots+=("${dir}")
+  fi
+done
+shopt -u nullglob nocaseglob
+
+# Exit 0 when $1 is the same inode as a protected root (case, Unicode and symlinks folded by stat).
+is_root() {
+  local dir
+  [[ -e "${1}" ]] || return 1
+  for dir in ${roots[@]+"${roots[@]}"}; do
+    [[ "${1}" -ef "${dir}" ]] && return 0
+  done
+  return 1
+}
+
+# Next segment of walk_rest into seg; walk_rest keeps the tail.
+take_segment() {
+  seg="${walk_rest%%/*}"
+  if [[ "${walk_rest}" == */* ]]; then walk_rest="${walk_rest#*/}"; else walk_rest=""; fi
+}
+
+# A non-directory symlink at walk_p restarts the walk at its target (readlink: a metadata read).
+# Exit 1 when the hop budget is spent — a link loop, judged protected by the caller.
+follow_file_link() {
+  local target
+  ((link_hops++ < 8)) || return 1
+  target="$(readlink -- "${walk_p}" 2>/dev/null)" || return 0
+  [[ "${target}" == /* ]] || target="${walk_p%/*}/${target}"
+  walk_rest="${target#/}${walk_rest:+/${walk_rest}}"
+  walk_p=/ walk_lex=/ crossed_link=true
+}
+
+# One step for a `..` segment: physical parent of an existing dir, else a lexical pop.
+step_up() {
+  if [[ -d "${walk_p}" ]]; then walk_p="${walk_p%/}/.."; else walk_p="${walk_p%/*}"; fi
+  walk_lex="${walk_lex%/*}"
+  walk_p="${walk_p:-/}" walk_lex="${walk_lex:-/}"
+}
+
+# Walk the written segments from walk_p (lexical twin walk_lex). Exit 0 on entering a root (sets
+# root_dir and remainder); exit 1 otherwise, last_dir = the deepest existing dir a step reached.
+walk_down() {
+  local seg parent_p parent_lex
+  while [[ -n "${walk_rest}" ]]; do
+    take_segment
+    case "${seg}" in
+      "" | .) continue ;;
+      ..) step_up ;;
+      *)
+        parent_p="${walk_p}" parent_lex="${walk_lex}"
+        walk_p="${walk_p%/}/${seg}" walk_lex="${walk_lex%/}/${seg}"
+        # A root-grammar name under the home is a root whether or not it exists yet.
+        if [[ "${seg}" =~ ${root_name_re} ]] && [[ "${parent_p}" -ef "${home_dir}" || "${parent_lex}" == "${home_lex}" ]]; then
+          root_dir="${home_dir}/${seg}" remainder="${walk_rest}"
+          return 0
+        fi
+        ;;
+    esac
+    if [[ -L "${walk_p}" && ! -d "${walk_p}" ]]; then
+      follow_file_link || { opaque=true && return 0; }
+      continue
+    fi
+    [[ -L "${walk_p}" ]] && crossed_link=true
+    if is_root "${walk_p}"; then
+      root_dir="${walk_p}" remainder="${walk_rest}"
+      return 0
+    fi
+    [[ -d "${walk_p}" ]] && last_dir="${walk_p}"
+  done
+  return 1
+}
+
+# After a symlink was crossed: is the deepest dir reached physically inside a root? Exit 0 = inside.
+walk_up() {
+  local dir="${last_dir}" level
+  for ((level = 0; level < 64; level++)); do
+    is_root "${dir}" && return 0
+    [[ "${dir}" -ef / ]] && return 1
+    dir="${dir%/}/.."
+  done
+  return 1
+}
+
+# The entered root's remainder against the exemptions. Exit 0 = needs the staged lane.
+needs_staged_lane() {
+  local first
+  [[ "${opaque}" == true ]] && return 0
+  while [[ "${remainder}" == /* || "${remainder}" == ./* ]]; do
+    remainder="${remainder#/}" remainder="${remainder#./}"
+  done
+  # The root itself: a bare relative root word in prose is a name, not an operand.
+  if [[ -z "${remainder}" ]]; then
+    [[ "${relative}" == true && "${written}" != */* && "${flags}" != *c* ]] && return 1
+    return 0
+  fi
+  # The `.claude`-text void reads written text: a glob match's remainder is a real name on disk.
+  [[ "/${written}/" == */../* ]] && return 0
+  [[ "${glob_match}" != true && "${remainder}" == *.claude* ]] && return 0
+  first="${remainder%%/*}"
+  if [[ "${relative}" == true && ! -e "${root_dir}/${first}" && ! -L "${root_dir}/${first}" && "${config_entries}" != *" ${first} "* ]]; then
+    return 1
+  fi
+  exempt_entry "${first}" && return 1
+  return 0
+}
+
+# BASENAME file, runtime-DATA subdir, or a progress checkpoint directly in a memory dir. Exit 0 = exempt.
+exempt_entry() {
+  case "${1}" in
+    claude.md | memory.md | glass_atrium_global_rules.md) return 0 ;;
+    data | projects | logs | todos | shell-snapshots | statsig)
+      # The memory dir nests under projects/ → a /memory/ segment keeps it protected; `/…/` frames globs.
+      case "/${remainder}/" in
+        */memory/*) [[ "${remainder}" =~ ${progress_re} ]] ;;
+        *) return 0 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# Walk one spelling from walk_p / walk_lex / walk_rest. Exit 0 = it reaches a protected path.
+reaches_harness() {
+  opaque=false crossed_link=false last_dir="" link_hops=0 root_dir="" remainder=""
+  if walk_down; then
+    needs_staged_lane && return 0
+    return 1
+  fi
+  [[ "${crossed_link}" == true && -n "${last_dir}" ]] && walk_up && return 0
+  return 1
+}
+
+# Split $1 into the walk start and the written tail; relative = read from $HOME as a guess.
+set_start() {
+  local spelled="${1}"
+  relative=false walk_p="${home_dir}" walk_lex="${home_lex}"
+  # shellcheck disable=SC2016  # the home spellings are literal prompt text, never expansions
+  case "${spelled}" in
+    '~+' | '~+/'* | '~-' | '~-/'*) relative=true walk_rest="${spelled:2}" ;;
+    '~'*)
+      if [[ "${spelled}" =~ ${tilde_re} ]]; then walk_rest="${spelled#"${BASH_REMATCH[0]}"}"; else relative=true walk_rest="${spelled}"; fi
+      ;;
+    '$HOME' | '$HOME/'*) walk_rest="${spelled#\$HOME}" ;;
+    '${HOME}' | '${HOME}/'*) walk_rest="${spelled#\$\{HOME\}}" ;;
+    /*) walk_p=/ walk_lex=/ walk_rest="${spelled#/}" ;;
+    *) relative=true walk_rest="${spelled}" ;;
+  esac
+}
+
+# A glob is expanded by bash pathname expansion, never run; >1024 matches is judged protected (walk cost).
+# Exit 0 = a match reaches a protected path.
+glob_reaches_harness() {
+  local match matches=() head tail="" IFS=$'\n'
+  set_start "${written}"
+  [[ "${walk_p}" == *[][*?]* ]] && return 1
+  # Expand only through the last wildcard segment: a file the prompt would create does not exist yet.
+  head="${walk_rest}"
+  while [[ "${head}" == */* && "${head##*/}" != *[][*?]* ]]; do
+    tail="${head##*/}${tail:+/${tail}}" head="${head%/*}"
+  done
+  shopt -s nullglob
+  # shellcheck disable=SC2206  # pathname expansion is the point; word splitting is on newline only
+  matches=(${walk_p%/}/${head})
+  shopt -u nullglob
+  ((${#matches[@]} <= 1024)) || return 0
+  glob_match=true
+  for match in ${matches[@]+"${matches[@]}"}; do
+    walk_p=/ walk_lex=/ walk_rest="${match#/}${tail:+/${tail}}"
+    reaches_harness && return 0
+  done
+  glob_match=false
+  return 1
+}
+
+# Glob metacharacters dropped from each segment; a segment of wildcards alone stays as one name, so
+# `projects/*/memory/progress-x.md` keeps its shape for the exemptions.
+strip_globs() {
+  local rest="${written}" seg bare out="" sep=""
+  while :; do
+    seg="${rest%%/*}"
+    bare="${seg//[][*?]/}"
+    [[ -z "${bare}" ]] || seg="${bare}"
+    out="${out}${sep}${seg}" sep=/
+    [[ "${rest}" == */* ]] || break
+    rest="${rest#*/}"
+  done
+  written="${out}"
+}
+
+# Exit 0 = the candidate names a path that needs the staged lane.
+candidate_blocks() {
+  [[ "${flags}" == *b* ]] && return 0
+  # Trailing prose punctuation or markdown emphasis is not part of the path; a dot run is kept.
+  while :; do
+    case "${written}" in
+      */. | */.. | *..) break ;;
+      *[]?*_!.]) written="${written%?}" ;;
+      *) break ;;
+    esac
+  done
+  if [[ "${written}" == *[][*?]* ]]; then
+    glob_reaches_harness && return 0
+    strip_globs
+  fi
+  set_start "${written}"
+  reaches_harness
+}
 
 # CWD-relative arm rule: a relative `.claude*/` token is ambiguous — read from $HOME it is the harness,
 # read from a repo it is that repo's own `.claude/` (worktrees/, audit records). The agent's cwd is not
@@ -210,86 +475,21 @@ fi
 # harness root holds, or one Claude Code loads as config before it exists.
 # Any other entry, created from $HOME, is a file no session reads → no misconfiguration, no block.
 config_entries=' settings.json settings.local.json keybindings.json agents agent-memory commands skills hooks rules plugins output-styles projects '
-
-# Classify each token: strip the boundary byte and the `~/` / `./` / `{` lead, take the root with the
-# lib grammar, then the first segment after it. EVERY token exempt → the call is exempt.
-all_exempt=true
-lead_re='^[^.~]+'
-tilde_re='^~[a-z0-9._-]*/'
-root_re="^${CLAUDE_CONFIG_ROOT_RE%/}"
-wild_re='^-?[*?{}[]'
+tilde_re='^~[a-z0-9._-]*(/|$)'
 progress_re='^projects/[^/]+/memory/progress-[^/]*\.md$'
-while IFS= read -r path; do
-  [[ -z "${path}" ]] && continue
-  if [[ "${path}" =~ ${lead_re} ]]; then
-    path="${path#"${BASH_REMATCH[0]}"}"
-  fi
-  relative=true
-  if [[ "${path}" =~ ${tilde_re} ]]; then
-    relative=false
-    path="${path#"${BASH_REMATCH[0]}"}"
-  fi
-  while [[ "${path}" == ./* ]]; do
-    path="${path#./}"
-  done
-  path="${path#\{}"
-  raw="${path}"
-  # Trailing prose punctuation or markdown emphasis is not part of the path; a dot run is kept.
-  while :; do
-    case "${path}" in
-      */. | */.. | *..) break ;;
-      *[]?*_!.]) path="${path%?}" ;;
-      *) break ;;
-    esac
-  done
-  [[ "${path}" =~ ${root_re} ]] || continue
-  root="${BASH_REMATCH[0]}"
-  rest="${path#"${root}"}"
-  # The root itself (bare, glob or brace spelling) → the whole config dir → never exempt.
-  if [[ -z "${rest}" || "${rest}" =~ ${wild_re} ]]; then
-    all_exempt=false
-    break
-  fi
-  # A lookalike name (`.claude.json`, `.claudex/`) is no config root.
-  [[ "${rest}" == /* ]] || continue
-  remainder="${rest#/}"
-  # A `..` climbs out of any exempt subtree; a second root inside the token is a swallowed path.
-  if [[ "/${raw}/" == */../* || "/${remainder}/" == */../* || "${remainder}" == *.claude* ]]; then
-    all_exempt=false
-    break
-  fi
-  first_segment="${remainder%%/*}"
-  if [[ "${relative}" == true && -n "${home_dir}" && -n "${first_segment}" ]]; then
-    entry="${home_dir}/${root}/${first_segment}"
-    if [[ ! -e "${entry}" && ! -L "${entry}" && "${config_entries}" != *" ${first_segment} "* ]]; then
-      continue
-    fi
-  fi
-  case "${first_segment}" in
-    claude.md | memory.md | glass_atrium_global_rules.md) continue ;;
-    data | projects | logs | todos | shell-snapshots | statsig)
-      # Runtime-DATA subdir → not config, not blocked. But the memory dir nests under projects/
-      # (projects/<proj>/memory/…), so a /memory/ path segment keeps the match protected — only a
-      # progress checkpoint directly in it is exempt. `/${remainder}/` frames the glob boundaries.
-      case "/${remainder}/" in
-        */memory/*)
-          if [[ "${remainder}" =~ ${progress_re} ]]; then
-            continue
-          fi
-          all_exempt=false
-          break
-          ;;
-        *) continue ;;
-      esac
-      ;;
-    *)
-      all_exempt=false
-      break
-      ;;
-  esac
-done <<<"${matches}"
 
-if [[ "${all_exempt}" == "true" ]]; then
+# nocasematch stays on: the lexical root and exemption tests fold case as the host filesystem does.
+blocked=false
+glob_match=false
+while IFS=$'\t' read -r flags written; do
+  [[ -n "${written}" ]] || continue
+  if candidate_blocks; then
+    blocked=true
+    break
+  fi
+done <<<"${candidates}"
+
+if [[ "${blocked}" != true ]]; then
   allow
 fi
 
