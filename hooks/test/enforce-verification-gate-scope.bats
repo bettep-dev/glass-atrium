@@ -14,6 +14,7 @@
 HOOK_SH="${VGATE_SH:-${BATS_TEST_DIRNAME}/../enforce-verification-gate.sh}"
 NUDGE_PHRASE='carries no [SCOPE] declaration'
 LINE_OPENING_PHRASE='the declaration must open its own line'
+WRAPPED_TOKEN_PHRASE='neither does a [SCOPE] token wrapped in backticks or **'
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-verification-gate.sh not found: ${HOOK_SH}"
@@ -118,19 +119,24 @@ plain_paths() {
     'a quoted mention alone still draws the missing-declaration nudge'
     'quoted sensitive-path text ahead of a plain declaration leaves the depth advisory silent'
     'a mid-line declaration draws a nudge naming the line-opening requirement'
+    'a wrapped token with a comma list draws the missing-declaration nudge'
+    'a wrapped token with a space-separated list draws a nudge naming the wrapped-token exclusion'
   )
+  # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
   local -a prompts=(
     "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''> reviewer: the [SCOPE] files= list omitted hooks/test/x.bats'
     "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''Earlier round: [SCOPE] files=hooks/old.sh · out=none'$'\n''[SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none'
     "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''Fix it. [SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none'
+    "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''`[SCOPE]` files=hooks/a.sh, hooks/test/a.bats · deliverable=fix · out=none'
+    "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''`[SCOPE]` files=monitor/src/a.ts monitor/src/b.ts deliverable=fix out=none'
   )
-  local -a phrases=("${NUDGE_PHRASE}" "${DEEP_PHRASE}" "${LINE_OPENING_PHRASE}")
-  local -a expected=('present' 'absent' 'present')
+  local -a phrases=("${NUDGE_PHRASE}" "${DEEP_PHRASE}" "${LINE_OPENING_PHRASE}" "${NUDGE_PHRASE}" "${WRAPPED_TOKEN_PHRASE}")
+  local -a expected=('present' 'absent' 'present' 'present' 'present')
   local i got
   for i in "${!names[@]}"; do
     run_gate "${prompts[${i}]}"
     [[ "${status}" -eq 0 ]] || {
-      echo "${names[${i}]}: advisory must never block, status ${status}" >&2
+      echo "${names[${i}]}: advisory must never block, status ${status} -- ${output}" >&2
       return 1
     }
     got='absent'
