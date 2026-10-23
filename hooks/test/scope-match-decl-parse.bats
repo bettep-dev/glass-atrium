@@ -188,35 +188,17 @@ record0_entries() {
     'earlier-round prose declaration first'
     'placeholder rule excerpt first'
     'mention without files= first'
+    'bare mention with an empty files= value first'
     'block-quoted declaration first'
     'JSON-quoted fix prose first'
     'a later line-opening declaration does not override the first'
     'harness-indented declaration'
     'list-marker bullet declaration'
     'numbered-item declaration'
-    'backtick-wrapped declaration'
-    'bold-wrapped token'
-    'backtick-wrapped mention with an empty files= value first'
-    'bulleted backtick-wrapped mention with an empty files= value first'
-    'bold-wrapped mention with an empty files= value first'
     'backtick-wrapped path value'
     'bold-wrapped path value'
-    'whole-line bold declaration'
-    'backtick-wrapped verdict with prose after the wrap first'
-    'bulleted backtick-wrapped verdict with prose after the wrap first'
-    'numbered bold-wrapped verdict with prose after the wrap first'
-    'backtick-wrapped token with prose after its value first'
-    'bulleted bold-wrapped token with prose after a path list first'
-    'backtick-wrapped token closed by a pipe separator'
-    'bold-wrapped token closed by a grammar key'
-    'bold-wrapped token with a wrapped value closed by end of line'
-    'backtick-wrapped token whose value ends in a full stop first'
-    'bold-wrapped token whose value ends in a colon first'
-    'backtick-wrapped token whose value ends in a semicolon first'
-    'bold-wrapped token whose value ends in a closing parenthesis first'
-    'backtick-wrapped token with a middot glued to prose first'
-    'bold-wrapped token with a pipe glued to prose first'
-    'bold-wrapped token whose path embeds a grammar key first'
+    'backtick-wrapped line first'
+    'bold-wrapped line first'
   )
   # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
   local -a prompts=(
@@ -224,35 +206,17 @@ record0_entries() {
     "Earlier round: [SCOPE] files=hooks/old.sh · out=none"$'\n'"${real}"
     '  `[SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<type> · out=<excluded|none>`'$'\n'"${real}"
     '[SCOPE] — the 7th delegation element'$'\n'"${real}"
+    '[SCOPE] files= must list the tests'$'\n'"${real}"
     '> [SCOPE] files=hooks/quoted.sh · out=none'$'\n'"${real}"
     '"fix": "Add hooks/y.sh to [SCOPE] files=. Rewrite the rest"'$'\n'"${real}"
     "${real}"$'\n''[SCOPE] files=hooks/later.sh · out=none'
     "Fix E1."$'\n'"  ${real}"
     "- ${real}"
     "1. ${real}"
-    "\`${real}\`"
-    '**[SCOPE]** files=hooks/real.sh · deliverable=fix · out=none'
-    '`[SCOPE] files=` must list the tests'$'\n'"${real}"
-    '- `[SCOPE] files=` completeness duty: declare tests'$'\n'"${real}"
-    '**[SCOPE] files=** is required'$'\n'"${real}"
     '[SCOPE] files=`hooks/real.sh` · deliverable=fix · out=none'
     '[SCOPE] files=**hooks/real.sh** · deliverable=fix · out=none'
-    '**[SCOPE] files=hooks/real.sh**'
-    '`[SCOPE] files=hooks/real.sh` lists one path only'$'\n'"${real}"
-    '- `[SCOPE] files=hooks/real.sh` omitted hooks/test/real.bats'$'\n'"${real}"
-    '1. **[SCOPE] files=hooks/real.sh** is under-declared'$'\n'"${real}"
-    '`[SCOPE]` files=hooks/old.sh lists one path only'$'\n'"${real}"
-    '- **[SCOPE]** files=hooks/old.sh, hooks/test/old.bats omitted the manifest'$'\n'"${real}"
-    '`[SCOPE]` files=hooks/real.sh | deliverable=fix'
-    '**[SCOPE]** files=hooks/real.sh deliverable=fix out=none'
-    '**[SCOPE]** files=`hooks/real.sh`'
-    '`[SCOPE]` files=hooks/old.sh.'$'\n'"${real}"
-    '**[SCOPE]** files=hooks/old.sh:'$'\n'"${real}"
-    '`[SCOPE]` files=hooks/old.sh;'$'\n'"${real}"
-    '**[SCOPE]** files=hooks/old.sh)'$'\n'"${real}"
-    '`[SCOPE]` files=hooks/old.sh·this was wrong'$'\n'"${real}"
-    '**[SCOPE]** files=hooks/old.sh|this was wrong'$'\n'"${real}"
-    '**[SCOPE]** files=hooks/layout=x was narrow'$'\n'"${real}"
+    '`[SCOPE]` files=hooks/old.sh · deliverable=fix · out=none'$'\n'"${real}"
+    '- **[SCOPE] files=hooks/old.sh**'$'\n'"${real}"
   )
   local i got
   for i in "${!names[@]}"; do
@@ -264,18 +228,36 @@ record0_entries() {
   done
 }
 
-@test "a wrapped token keeps every path of a comma-separated list closed by a separator or end of line" {
-  local -a names=('middot-closed list' 'end-of-line-closed list')
+@test "a line-opening wrapped token or whole-line wrap is not a declaration" {
+  local real='[SCOPE] files=hooks/real.sh · deliverable=fix · out=none'
+  local -a names=(
+    'backtick-wrapped declaration'
+    'bold-wrapped token'
+    'whole-line bold declaration'
+    'backtick-wrapped token closed by a pipe separator'
+    'bold-wrapped token closed by a grammar key'
+    'bold-wrapped token with a wrapped value closed by end of line'
+    'indented backtick-wrapped token with a comma list closed by a middot'
+    'bold-wrapped token with a wrapped comma list closed by end of line'
+    'whole-line backtick wrap with a space-separated list'
+  )
   # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
   local -a prompts=(
-    '`[SCOPE]` files=hooks/a.sh, hooks/test/a.bats · deliverable=fix · out=none'
+    "\`${real}\`"
+    '**[SCOPE]** files=hooks/real.sh · deliverable=fix · out=none'
+    '**[SCOPE] files=hooks/real.sh**'
+    '`[SCOPE]` files=hooks/real.sh | deliverable=fix'
+    '**[SCOPE]** files=hooks/real.sh deliverable=fix out=none'
+    '**[SCOPE]** files=`hooks/real.sh`'
+    '  `[SCOPE]` files=hooks/a.sh, hooks/test/a.bats · deliverable=fix · out=none'
     '**[SCOPE]** files=`hooks/a.sh`,`hooks/test/a.bats`'
+    '`[SCOPE] files=hooks/a.sh hooks/b.sh · deliverable=fix · out=none`'
   )
   local i got
   for i in "${!names[@]}"; do
     got="$(record0_entries "${prompts[${i}]}")"
-    [[ "${got}" == 'hooks/a.sh'$'\n''hooks/test/a.bats' ]] || {
-      echo "${names[${i}]}: expected [hooks/a.sh hooks/test/a.bats], got [${got}]" >&2
+    [[ -z "${got}" ]] || {
+      echo "${names[${i}]}: expected no declaration, got [${got}]" >&2
       return 1
     }
   done
