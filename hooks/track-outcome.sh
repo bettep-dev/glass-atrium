@@ -2630,16 +2630,23 @@ fi
 # A delegation with no declaration skips the comparison entirely (fail-open, older delegations).
 # The emit row carries record 0's `[SCOPE]`-bearing lines `\x1f`-joined; the declaration among them
 # is chosen by the same shared selector the drift advisory and the verification gate use.
+# A selector status 2 (lines present, declaration unread) flags the row as scope-decl-unread and skips
+# the comparison; the status is captured because an uncaught one would abort before the PG write.
 SCOPE_DECL_LINES=$(extract_field scope_decl)
 SCOPE_EXCESS_FOUND=0
+SCOPE_DECL_STATUS=0
 if [[ -n "${SCOPE_DECL_LINES}" ]]; then
   # shellcheck source=lib/scope-match.sh
   source "${BASH_SOURCE%/*}/lib/scope-match.sh"
   # shellcheck source=lib/code-based-grader.sh
   #   Sourced for _cbg_path_is_tool_artifact — the single artifact-shape SoT, never a second copy.
   source "${BASH_SOURCE%/*}/lib/code-based-grader.sh"
-  SCOPE_DECL="$(printf '%s\n' "${SCOPE_DECL_LINES}" | tr '\037' '\n' | drain_after scope_decl_select)"
-  SCOPE_ALLOWED="$(scope_decl_files "${SCOPE_DECL}")"
+  # shellcheck disable=SC2310
+  #   The selector's status IS the answer: 2 = declaration unread, captured instead of aborting.
+  SCOPE_DECL="$(printf '%s\n' "${SCOPE_DECL_LINES}" | tr '\037' '\n' | drain_after scope_decl_select)" \
+    || SCOPE_DECL_STATUS=$?
+  SCOPE_ALLOWED=""
+  [[ "${SCOPE_DECL_STATUS}" -eq 0 ]] && SCOPE_ALLOWED="$(scope_decl_files "${SCOPE_DECL}")"
 
   # The files: leg runs on code task_types only: a review/plan/doc row routinely lists the paths it
   # READ, which are not authored excess. Non-code rows are compared on the write history alone.
@@ -2669,6 +2676,12 @@ fi
 if [[ "${SCOPE_EXCESS_FOUND}" -eq 1 ]]; then
   REVIEW_FLAG="true"
   review_flag_add_reason "scope-excess"
+fi
+if [[ "${SCOPE_DECL_STATUS}" -ne 0 ]]; then
+  REVIEW_FLAG="true"
+  review_flag_add_reason "scope-decl-unread"
+  (printf '[outcome-record] scope-decl-unread: selector status %s, scope-excess comparison skipped, agent=%s\n' \
+    "${SCOPE_DECL_STATUS}" "${AGENT_TYPE}") >&2 || true
 fi
 
 # qa-score-malformed — a present qa_score off the cov=N,ins=N,instr=N,clar=N shape, each N 1-5.
