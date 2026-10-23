@@ -276,7 +276,7 @@ scope_decl_from_record0() {
   local tpath="${1:-}"
   [[ -r "${tpath}" ]] || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  # shellcheck disable=SC2312  # a failed head/jq stage yields empty text → no declaration, fail-open.
+  # shellcheck disable=SC2312  # a failed head/jq stage → empty text + its nonzero status, reported as unread.
   head -n 1 "${tpath}" \
     | jq -r 'if (.message.content | type) == "string" then .message.content
              elif (.message.content | type) == "array" then ([.message.content[]? | .text? // ""] | join("\n"))
