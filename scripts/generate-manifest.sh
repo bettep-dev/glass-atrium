@@ -91,9 +91,9 @@
 #
 # Named exit codes: 1=--check divergence · 2=usage · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
-# manifest that fails structural validation · 7=apply-spine.sh missing or
-# failed to load · 8=a tracked manifest path carries a backslash, a control
-# byte (0x01-0x1f, DEL) or a non-UTF-8 byte.
+# manifest that fails structural validation · 7=apply-spine.sh or
+# tracked-paths.sh missing or failed to load · 8=a tracked manifest path carries
+# a backslash, a control byte (0x01-0x1f, DEL) or a non-UTF-8 byte.
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on
@@ -118,6 +118,17 @@ readonly SPINE_LIB="${GA_ROOT}/scripts/lib/apply-spine.sh"
 # shellcheck source=/dev/null
 source "${SPINE_LIB}" || {
   echo "generate-manifest: ${SPINE_LIB} failed to load (retired-map family predicate)" >&2
+  exit 7
+}
+
+readonly TRACKED_LIB="${GA_ROOT}/scripts/lib/tracked-paths.sh"
+[[ -f "${TRACKED_LIB}" ]] || {
+  echo "generate-manifest: ${TRACKED_LIB} required (tracked-path oracle)" >&2
+  exit 7
+}
+# shellcheck source=/dev/null
+source "${TRACKED_LIB}" || {
+  echo "generate-manifest: ${TRACKED_LIB} failed to load (tracked-path oracle)" >&2
   exit 7
 }
 
@@ -329,24 +340,14 @@ read_manifest_retired_lines() {
     -- "${MANIFEST}" | LC_ALL=C sort
 }
 
-# Every path git tracks anywhere in the repo, sorted — the "the vendor still ships
-# this" oracle. Deliberately unscoped and not EXCLUDE_RE-filtered; the rationale is
-# the retired-map contract note in the header. -z as in generate_files; a newline
-# path is skipped, not refused — never a manifest key, and split it could fake a match.
-raw_tracked_paths() {
-  local path
-  git -C "${GA_ROOT}" ls-files -z | while IFS= read -r -d '' path; do
-    if [[ "${path}" != *$'\n'* ]]; then printf '%s\n' "${path}"; fi
-  done | LC_ALL=C sort
-}
-
 # Emit `<path>\t<sha256>` for each committed files[] path the vendor has dropped —
 # the newly retired set. Each line is also announced on stderr, once, on the single
 # regeneration that performs the transition: the path leaves files[] in that same
 # write, so the next run's committed files[] no longer offers it.
 retired_dropped_lines() {
   local raw path hash
-  raw=$'\n'"$(raw_tracked_paths)"$'\n'
+  # the "vendor still ships this" oracle: unscoped, not EXCLUDE_RE-filtered (header retired-map note)
+  raw=$'\n'"$(ga_get_tracked_paths "${GA_ROOT}")"$'\n'
   while IFS=$'\t' read -r path hash; do
     [[ -n "${path}" ]] || continue
     if [[ "${raw}" == *$'\n'"${path}"$'\n'* ]]; then continue; fi

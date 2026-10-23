@@ -75,6 +75,7 @@ _BASELINE = WindowCount(spawns=200, events=20, sessions=20)
 _BASELINE_RATE = _BASELINE.events / _BASELINE.spawns
 # the measured A/A arm-difference design effect the bound rows are judged at
 _DESIGN_EFFECT = 1.5
+_AA_START_ID = 1
 # the bound read from the trial_design reference module, never from the code under test
 _REQUIRED_UNITS = trial_design.get_required_units(
     trial_design.get_trial_sample_size(_BASELINE_RATE), design_effect=_DESIGN_EFFECT
@@ -141,7 +142,9 @@ def _get_power_inputs(
     """The passing agent's budget_overage inputs; design_effect None → no A/A row at the key."""
     key = (_AGENT.PASSING, _KEY.BUDGET)
     design_effects = {} if design_effect is None else {key: design_effect}
-    return dc.PowerInputs(provenance_start, {_AGENT.PASSING: spawns}, design_effects, frozenset())
+    return dc.PowerInputs(
+        provenance_start, {_AGENT.PASSING: spawns}, design_effects, frozenset(), {}
+    )
 
 
 def _get_floor_passing_history(units: int) -> list[SpawnFacts]:
@@ -370,7 +373,7 @@ class _LedgerConnection:
         self.reads.append(list(agents))
         is_design_effect = event == stub.get_trial_ledger().EVENT.AA_ARM_DESIGN_EFFECT
         self.rows = [
-            (agent, payload)
+            (agent, payload, _AA_START_ID)
             for (agent, _), payload in sorted(self.latest_payloads.items())
             if is_design_effect and agent in agents
         ]
@@ -564,7 +567,8 @@ class CheckPatternPowerTest(_StageFixture):
                 self.assertIn(f"agent={_AGENT.PASSING} key={_KEY.EMIT}: {verdict}", stderr_text)
         union_row = _build_design_effect_payload(1.0, _KEY.EMIT)
         self.assertEqual(
-            dc._get_design_effects([(_AGENT.PASSING, union_row)]), ({}, frozenset())
+            dc._get_design_effects([(_AGENT.PASSING, union_row, _AA_START_ID)]),
+            ({}, frozenset(), {}),
         )
 
     def test_a_spawn_reaching_the_tool_budget_with_no_overage_row_is_a_budget_overage_event(
@@ -877,6 +881,40 @@ class DesignEffectReadLivePgTest(_StageFixture):
                     self._insert_result(recorded_at, 7, overall)
                 counts, _ = self._check()
                 self.assertEqual(counts[expected], 1)
+
+    def _insert_invalidation(self, recorded_at: datetime, start_id: int) -> None:
+        event = dc.TRIAL_LEDGER.EVENT.AA_INVALIDATION
+        payload = {"start_id": start_id, "cause": "duplicate exposure"}
+        self._insert(recorded_at, event, payload, f"{event}:{start_id}")
+
+    def test_an_invalidated_aas_design_effect_never_feeds_the_power_read(self) -> None:
+        # the invalidated newer pass is raised: read, it would lift the bound above the units
+        rows = [
+            ("the invalidated pass alone reads design-unmeasured", False, "design-unmeasured"),
+            ("an older valid pass under an invalidated newer one sizes the bound", True, "passing"),
+        ]
+        for name, has_older_pass, expected in rows:
+            with self.subTest(name):
+                self._use_database(self._TEMPLATE.FULL)
+                if has_older_pass:
+                    older = _DAY - timedelta(days=3)
+                    self._insert_design_effect(older, 1, _build_design_effect_payload())
+                    self._insert_result(older, 1, dc.AA.VERDICT.PASS)
+                newer = _DAY - timedelta(days=1)
+                raised = _build_design_effect_payload(_DESIGN_EFFECT * 1.2)
+                self._insert_design_effect(newer, 2, raised)
+                self._insert_result(newer, 2, dc.AA.VERDICT.PASS)
+                self._insert_invalidation(newer, 2)
+                counts, _ = self._check()
+                self.assertEqual((counts[expected], sum(counts.values())), (1, 1))
+
+    def test_a_passing_pattern_carries_the_start_id_its_design_effect_came_from(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        self._insert_design_effect(_DAY - timedelta(days=1), 3, _build_design_effect_payload())
+        self._insert_result(_DAY - timedelta(days=1), 3, dc.AA.VERDICT.PASS)
+        with contextlib.redirect_stderr(io.StringIO()):
+            power = dc.check_pattern_power([_pattern(_AGENT.PASSING, 1)], skip_loop_emit=True)
+        self.assertEqual([power_pass.aa_start_id for power_pass in power.passes], [3])
 
     def test_a_later_unpassed_aa_leaves_the_last_passed_rows_value_in_force(self) -> None:
         self._use_database(self._TEMPLATE.FULL)

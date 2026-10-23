@@ -1346,15 +1346,49 @@ def count_outcomes_since(
         return None
 
 
-# Per-pattern metric window read: one row per spawn of any listed agent type
+# Per-pattern metric window read: one row per spawn unit of any listed agent type
+# unit = every MANIFEST row of one agent_id (SubagentStart fires per activation, resumes included)
+# → formed over all time before the type + window filters: a resume never enters as a new spawn
+# NULL (`unknown`) ids are never grouped → each such row stays a unit of its own
+# activation_delivered = one activation delivered with its hash, read by both unit kinds
+# delivered = every activation so, with one hash · any_delivered = at least one marked delivered
 # joined tables pre-grouped by agent_id → a spawn with N overage / outcome rows counts once
 # outside [baseline, end) task members only: up to evaluation + earlier ones stopped ≥ baseline − W
 # tool_use_actual: the recorder's header line, read as _OUTCOME.FACTS_SELECT_SQL reads it
 _SPAWN_FACTS_SELECT_SQL = SimpleNamespace(
     TEMPLATE="""
-WITH spawns AS (
-    SELECT id, agent_id, agent_type, session_id, started_at, {exposure_columns}
-    FROM core.spawn_manifest
+WITH manifest AS (
+    SELECT *, CASE WHEN delivered IS NOT NULL THEN delivered AND delivered_hash IS NOT NULL END
+                  AS activation_delivered
+    FROM (SELECT id, agent_id, agent_type, session_id, started_at, {exposure_columns}
+          FROM core.spawn_manifest) exposed
+),
+firsts AS (
+    SELECT DISTINCT ON (agent_id) id, agent_id, agent_type, session_id, started_at, arm, salt_id
+    FROM manifest WHERE agent_id IS NOT NULL
+    ORDER BY agent_id, started_at, id
+),
+deliveries AS (
+    SELECT agent_id, count(*) AS activations,
+           CASE WHEN bool_and(activation_delivered IS NULL) THEN NULL
+                ELSE bool_and(activation_delivered IS TRUE) AND count(DISTINCT delivered_hash) = 1
+           END AS delivered,
+           bool_or(delivered) AS any_delivered,
+           CASE WHEN count(DISTINCT delivered_hash) = 1 THEN min(delivered_hash) END
+               AS delivered_hash
+    FROM manifest WHERE agent_id IS NOT NULL GROUP BY agent_id
+),
+units AS (
+    SELECT f.id, f.agent_id, f.agent_type, f.session_id, f.started_at, f.arm, f.salt_id,
+           d.delivered, d.delivered_hash, d.any_delivered, d.activations
+    FROM firsts f JOIN deliveries d ON d.agent_id = f.agent_id
+    UNION ALL
+    SELECT id, agent_id, agent_type, session_id, started_at, arm, salt_id,
+           activation_delivered, delivered_hash, delivered, 1
+    FROM manifest WHERE agent_id IS NULL
+),
+spawns AS (
+    SELECT * FROM units
     WHERE agent_type = ANY(%s) AND started_at < %s
       AND (started_at >= %s OR agent_id IN (
           SELECT agent_id FROM core.agent_events
@@ -1363,7 +1397,7 @@ WITH spawns AS (
 SELECT s.agent_type, s.agent_id, s.session_id, s.started_at,
        COALESCE(b.overage_rows, 0), stop.stopped_at,
        COALESCE(o.attributions, '{{}}'::text[]), o.tool_use_actual,
-       s.arm, s.salt_id, s.delivered, s.delivered_hash
+       s.arm, s.salt_id, s.delivered, s.delivered_hash, s.any_delivered, s.activations
 FROM spawns s
 LEFT JOIN (
     SELECT agent_id, count(*) AS overage_rows FROM core.budget_overages
@@ -1492,12 +1526,13 @@ def _read_spawn_facts(
     spawns: defaultdict[str, list[SpawnFacts]] = defaultdict(list)
     for (
         agent_type, agent_id, session_id, started_at, overage_rows, stopped_at, attributions,
-        tool_use_actual, *exposure,
+        tool_use_actual, *exposure, activations,
     ) in rows:
         spawns[agent_type].append(SpawnFacts(
             agent_id, session_id, started_at, int(overage_rows), stopped_at is not None,
             tuple({"attribution_source": source} for source in attributions),
             stopped_at, None if tool_use_actual is None else int(tool_use_actual), *exposure,
+            int(activations),
         ))
     return provenance_start, spawns
 

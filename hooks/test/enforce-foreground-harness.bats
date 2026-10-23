@@ -156,18 +156,24 @@ run_agent() {
   [[ "${status}" -eq 0 ]]
 }
 
-@test "block reason names Rule 2 (contract pin)" {
-  run_agent 'Write ~/.claude/hooks/x.sh.' true
-  [[ "${status}" -eq 2 ]]
-  [[ "${output}" == *'Rule 2'* ]]
-}
-
 # shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
 source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
 
-@test "an interrupted block write still exits 2 with the block JSON once on stdout and nothing on stderr" {
+# Degraded row: a hook copy with no lib/ beside it → the fail-closed branch.
+@test "every block path exits 2 with its reason once on stderr and nothing on stdout, even when the write is interrupted" {
+  local row name hook needle
+  mkdir -p "${BATS_TEST_TMPDIR}/nolib"
+  cp -- "${HOOK_SH}" "${BATS_TEST_TMPDIR}/nolib/enforce-foreground-harness.sh"
   jq -n '{tool_name:"Agent",tool_input:{prompt:"Edit ~/.claude/agents/x.md",run_in_background:true}}' \
     >"${BATS_TEST_TMPDIR}/envelope"
-  FORCED_CHANNEL=stdout run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope"
-  assert_forced_block "Harness Path Protection Rule 2: foreground MANDATORY"
+  for row in \
+    "config path|${HOOK_SH}|Harness Path Protection Rule 2: foreground MANDATORY" \
+    "degraded lib|${BATS_TEST_TMPDIR}/nolib/enforce-foreground-harness.sh|repair the hook install"; do
+    IFS='|' read -r name hook needle <<<"${row}"
+    run_forced_hook "${hook}" "${BATS_TEST_TMPDIR}/envelope"
+    assert_forced_block "${needle}" || {
+      echo "row: ${name}"
+      return 1
+    }
+  done
 }

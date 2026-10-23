@@ -38,6 +38,7 @@ make_sandbox() {
   cp "${REAL_SCRIPT}" "${WORK}/scripts/generate-manifest.sh"
   cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
   cp "${REAL_SPINE%/*}/path-guard.sh" "${WORK}/scripts/lib/path-guard.sh"
+  cp "${REAL_SPINE%/*}/tracked-paths.sh" "${WORK}/scripts/lib/tracked-paths.sh"
   printf '# agent alpha\n' >"${WORK}/agents/alpha.md"
   printf '{"files":[],"hashes":{}}\n' >"${WORK}/manifest.json"
   git -C "${WORK}" init -q

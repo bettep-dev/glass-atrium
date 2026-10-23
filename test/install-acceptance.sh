@@ -25,6 +25,8 @@ REAL_CLAUDE="${HOME}/.claude"
 REAL_CONFIG="${GA}/config.toml"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/tracked-paths.sh
+source "${GA}/scripts/lib/tracked-paths.sh"
 
 PASS=0
 FAIL=0
@@ -38,16 +40,12 @@ no() {
 }
 hdr() { printf '\n===== %s =====\n' "$1"; }
 
-# Count manifest files[] entries absent from the git index of repo root $1. ls-files -z
-# keeps a non-ASCII or double-quote path raw like the manifest key; a newline path is
-# skipped so its split halves cannot fake a match.
+# Count manifest files[] entries absent from the git index of repo root $1.
 untracked_listed_count() {
-  local root="$1" path
+  local root="$1"
   LC_ALL=C comm -23 \
     <(jq -r '.files[]' "${root}/manifest.json" | LC_ALL=C sort) \
-    <(git -C "${root}" ls-files -z | while IFS= read -r -d '' path; do
-      if [[ "${path}" != *$'\n'* ]]; then printf '%s\n' "${path}"; fi
-    done | LC_ALL=C sort) | wc -l | tr -d ' '
+    <(ga_get_tracked_paths "${root}") | wc -l | tr -d ' '
 }
 
 # --- safety guard snapshot ----------------------------------------------------

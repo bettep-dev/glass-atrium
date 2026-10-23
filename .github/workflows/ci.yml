@@ -597,6 +597,7 @@ jobs:
       # and fail_on_failure stays false so the reporter never masks a green/red
       # verdict the ci-pass gate already derives from bats itself.
       - name: Annotate bats results (junit → inline PR)
+        id: junit
         if: always()
         uses: mikepenz/action-junit-report@d9f48fc87bc235f7e214acf696ca5abc0a986f16 # v6.4.2
         with:
@@ -608,6 +609,30 @@ jobs:
           check_name: "bats results (${{ matrix.name }})"
           fail_on_failure: false
           require_tests: false
+
+      # The action swallows a failed checks.create (step still passes, client has
+      # no retry) → empty report_url = no check created → one delayed retry.
+      - name: Wait before retrying the bats results check
+        if: always() && steps.junit.outputs.report_url == ''
+        run: sleep 20
+
+      - name: Retry bats results check (junit → inline PR)
+        id: junit_retry
+        if: always() && steps.junit.outputs.report_url == ''
+        uses: mikepenz/action-junit-report@d9f48fc87bc235f7e214acf696ca5abc0a986f16 # v6.4.2
+        with:
+          report_paths: reports/bats/**/report.xml
+          check_name: "bats results (${{ matrix.name }})"
+          fail_on_failure: false
+          require_tests: false
+          job_summary: false # the first attempt already wrote the step summary
+
+      - name: Warn when the bats results check was not created
+        if: always() && steps.junit.outputs.report_url == '' && steps.junit_retry.outputs.report_url == ''
+        env:
+          LABEL: ${{ matrix.name }}
+        run: |
+          echo "::warning title=bats results check not created::bats results (${LABEL}) check run was not created after one retry; see this job's log for the action's error"
 
       # GITHUB_STEP_SUMMARY aggregate. Parses every per-file junit report.xml
       # (tests / failures / errors / skipped counts live on the <testsuite>
