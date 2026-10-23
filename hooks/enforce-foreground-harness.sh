@@ -21,7 +21,7 @@
 #   so a bare reference (a text scan cannot tell READ from WRITE) must not force foreground. The memory
 #   dir nests under projects/ and stays protected via a /memory/ segment guard, never leaking into memory writes.
 #
-# Source: rules/orchestrator-role.md → Harness Path Protection.
+# Source: rules/glass-atrium/orchestrator-role.md → Harness Path Protection.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
