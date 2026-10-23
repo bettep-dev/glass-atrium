@@ -15,8 +15,9 @@
 #   AC4  exit status                       -> IDENTICAL with and without an unanswered record
 #   AC5  the field names §18 reads         -> the ones the producer's record writer emits
 #   AC6  a second plan run                 -> one record per gap key, rewritten, never appended
-#   AC7-AC9  a failure-class record whose target body equals its base-store entry at the release
-#        hash -> info (superseded), and NOT the empty-dir ok; a differing or absent base -> warn
+#   AC7-AC9  a failure-class record whose target body matches its base-store entry at the release
+#        hash -> info (superseded), and NOT the empty-dir ok; a differing or absent base -> warn;
+#        a live-only `model:` pin is a sanctioned line, so a pinned target is still superseded
 #
 # Every model seam is a nonexistent binary: no drive invokes the headless CLI, and the missing-binary
 # early exit IS the model-unavailable class this suite needs.
@@ -126,7 +127,8 @@ JSON
 
 # Hand-write one UNANSWERED record for glass-atrium-dev-a (the AC5-pinned field names) and lay its
 # target body in the sandbox root with the release anchor shaped by $1: `equal` = base entry is a
-# copy at the recorded hash · `differs` = base entry carries an extra line · `absent` = no entry.
+# copy at the recorded hash · `differs` = base entry carries an extra line · `absent` = no entry ·
+# `pinned` = the live body adds a `model:` pin to a frontmatter base entry.
 seed_unanswered_record_with_anchor() {
   local base_shape="$1" rel="agents/glass-atrium-dev-a.md" base_entry hash
   mkdir -p -- "${RECORD_DIR}" "${STATE_DIR}/base-agents"
@@ -148,6 +150,10 @@ JSON
     equal) cp -- "${GA_SANDBOX}/${rel}" "${base_entry}" ;;
     differs) printf 'release body\nlocal line\n' >"${base_entry}" ;;
     absent) ;;
+    pinned)
+      printf -- '---\nname: glass-atrium-dev-a\nmodel: claude-test-model-1\n---\n\nrelease body\n' >"${GA_SANDBOX}/${rel}"
+      printf -- '---\nname: glass-atrium-dev-a\n---\n\nrelease body\n' >"${base_entry}"
+      ;;
   esac
   # the recorded release hash is the BASE entry's own, so only the byte comparison can tell `differs`
   hash="$(printf '' | shasum -a 256 | awk '{print $1}')"
@@ -293,12 +299,20 @@ assert_output_lacks() {
 @test "AC7: a failure-class record whose target equals its base entry at the release hash is superseded info" {
   seed_unanswered_record_with_anchor equal
   run_doctor_sandbox
-  assert_output_has "info : contested gap superseded — target body equals its base-store entry at the release hash (reset or landed)" || return 1
+  assert_output_has "info : contested gap superseded — target body matches its base-store entry at the release hash, sanctioned model/effort frontmatter lines aside (reset or landed)" || return 1
   assert_output_has "target=agents/glass-atrium-dev-a.md" || return 1
   assert_output_lacks "contested gap unanswered" || return 1
   assert_output_lacks "remedy: the named gap(s) kept the local run" || return 1
   # a superseded-only record dir is NOT the empty-dir case
   assert_output_lacks "ok   : no contested-gap decision records" || return 1
+}
+
+@test "a failure-class record whose target adds only a model pin to its base entry is superseded info" {
+  seed_unanswered_record_with_anchor pinned
+  run_doctor_sandbox
+  assert_output_has "info : contested gap superseded" || return 1
+  assert_output_has "target=agents/glass-atrium-dev-a.md" || return 1
+  assert_output_lacks "contested gap unanswered" || return 1
 }
 
 @test "AC8: a failure-class record whose target differs from its base entry still warns" {

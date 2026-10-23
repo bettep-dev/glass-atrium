@@ -883,7 +883,7 @@ run_doctor() {
       decline_fail=1
     fi
     if [[ "${decline_repaired}" -gt 0 ]]; then
-      log "  note : ${decline_repaired} in-window decline(s) repaired — live body equals its base-store entry at the release hash (reset or landed) (${decline_log})"
+      log "  note : ${decline_repaired} in-window decline(s) repaired — live body matches its base-store entry at the release hash, sanctioned model/effort frontmatter lines aside (reset or landed) (${decline_log})"
     elif [[ "${decline_open}" -gt 0 ]]; then
       : # verdict already reported above
     elif [[ "${decline_out}" -gt 0 ]]; then
@@ -1043,7 +1043,7 @@ run_doctor() {
         log "  info : contested gap arbiter-resolved — ${rec_choice} agent=${rec_agent} region=${rec_region} target=${rec_target}"
         arbiter_resolved=$((arbiter_resolved + 1))
       elif _get_body_anchor_state "${rec_target}" >/dev/null; then
-        log "  info : contested gap superseded — target body equals its base-store entry at the release hash (reset or landed) agent=${rec_agent} region=${rec_region} target=${rec_target} (record kept until retention prunes it)"
+        log "  info : contested gap superseded — target body matches its base-store entry at the release hash, sanctioned model/effort frontmatter lines aside (reset or landed) agent=${rec_agent} region=${rec_region} target=${rec_target} (record kept until retention prunes it)"
         arbiter_superseded=$((arbiter_superseded + 1))
       else
         log "  warn : contested gap unanswered — ${rec_fail} agent=${rec_agent} region=${rec_region} target=${rec_target} (local run kept)"
@@ -2004,6 +2004,7 @@ _decline_scan() {
 # Fail-closed and errexit-independent (callers test it in a condition): only rc 0 clears a verdict.
 _get_body_anchor_state() {
   local rel="$1" live base_entry baseline release_hash base_hash verdict="" merge_rc=0
+  local err_file="" merge_err=""
   local merge_py="${BASH_SOURCE[0]%/*}/../autoagent/lib/editable_merge.py"
   local -a sha=()
   # shellcheck source-path=SCRIPTDIR
@@ -2033,8 +2034,9 @@ _get_body_anchor_state() {
     printf '%s\n' "anchor comparison module missing (${merge_py})"
     return 2
   fi
+  # GA-ABSORB[handled@empty-hash branch below]: absent/unparseable manifest reported as not comparable
   release_hash="$(jq -r --arg rel "${rel}" '(.hashes // {})[$rel] // empty' -- "${baseline}" 2>/dev/null)" \
-    || release_hash="" # GA-ABSORB[handled@empty-hash branch below]: absent/unparseable manifest reported as not comparable
+    || release_hash=""
   if [[ -z "${release_hash}" ]]; then
     printf '%s\n' "no release hash for ${rel} in ${baseline}"
     return 2
@@ -2045,11 +2047,18 @@ _get_body_anchor_state() {
     printf '%s\n' "no shasum/sha256sum to hash the base entry"
     return 2
   fi
+  if ! err_file="$(mktemp)"; then
+    printf '%s\n' "no temp file for the anchor comparison's stderr"
+    return 2
+  fi
   # A token, not an rc verdict: a traceback also exits 1, which must read as not comparable.
-  verdict="$(python3 "${merge_py}" anchor --live "${live}" --base "${base_entry}" 2>/dev/null)" \
-    || merge_rc=$? # GA-ABSORB[handled@merge_rc branch below]: a failed comparison is reported as not comparable
+  verdict="$(python3 "${merge_py}" anchor --live "${live}" --base "${base_entry}" 2>"${err_file}")" || merge_rc=$?
+  # Last line, not first: the module's own reason is one line, and a traceback names its cause last.
+  merge_err="$(awk 'NF { last = $0 } END { print last }' "${err_file}")"
+  # shellcheck disable=SC2310  # guard verdict branched on — a refusal leaves a temp file, never an abort
+  if ga_guard_path "${err_file}"; then rm -f -- "${err_file:?}"; fi
   if [[ "${merge_rc}" -ne 0 ]]; then
-    printf '%s\n' "anchor comparison failed (editable_merge.py anchor exit ${merge_rc} on ${live} / ${base_entry})"
+    printf '%s\n' "anchor comparison failed (editable_merge.py anchor exit ${merge_rc} on ${live} / ${base_entry})${merge_err:+ — ${merge_err}}"
     return 2
   fi
   case "${verdict}" in

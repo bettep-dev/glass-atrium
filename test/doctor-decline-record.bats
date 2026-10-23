@@ -272,7 +272,7 @@ assert_output_lacks() {
   append_decline 0 "agents/glass-atrium-dev-shell.md"
   seed_release_anchor "agents/glass-atrium-dev-shell.md" equal base
   run_doctor_seam
-  assert_output_has "note : 1 in-window decline(s) repaired — live body equals its base-store entry at the release hash (reset or landed)" || return 1
+  assert_output_has "note : 1 in-window decline(s) repaired — live body matches its base-store entry at the release hash, sanctioned model/effort frontmatter lines aside (reset or landed)" || return 1
   assert_output_lacks "declined a merge in the last" || return 1
   assert_output_lacks "not comparable" || return 1
 }
@@ -283,7 +283,7 @@ assert_output_lacks() {
   run_doctor_seam
   assert_output_has "FAIL : 1 agent body/bodies declined a merge" || return 1
   assert_output_has "declined body: agents/glass-atrium-dev-shell.md" || return 1
-  assert_output_lacks "repaired — live body equals" || return 1
+  assert_output_lacks "repaired — live body matches" || return 1
 }
 
 @test "AC10: a declined body with no base entry FAILs and says why it is not comparable" {
@@ -300,7 +300,7 @@ assert_output_lacks() {
   seed_release_anchor "agents/glass-atrium-dev-shell.md" equal other
   run_doctor_seam
   assert_output_has "FAIL : 1 agent body/bodies declined a merge" || return 1
-  assert_output_lacks "repaired — live body equals" || return 1
+  assert_output_lacks "repaired — live body matches" || return 1
 }
 
 @test "AC12: one repaired and one open body FAIL on the open body alone" {
@@ -396,4 +396,49 @@ AGENT_PINNED=$'---\nname: glass-atrium-dev-a\ntools: [Read, Bash]\nmodel: claude
     echo "${output}"
     return 1
   }
+}
+
+@test "a failed anchor comparison names the module's final stderr line in its not-comparable note" {
+  local real_py stub="${WORK}/traceback-python-bin"
+  real_py="$(command -v python3)"
+  mkdir -p -- "${stub}"
+  cat >"${stub}/python3" <<SH
+#!/bin/sh
+if [ "\$2" = anchor ]; then
+  printf 'Traceback (most recent call last):\n  File "editable_merge.py", line 1\nModuleNotFoundError: No module named daemon_cycle\n' >&2
+  exit 1
+fi
+exec "${real_py}" "\$@"
+SH
+  chmod +x "${stub}/python3"
+  # name · base entry · PATH prefix · expected reason fragment — \x1f-separated so an empty field survives
+  local -a rows=(
+    $'module reason\x1f\xff\xfe not utf-8\n\x1f\x1fcheck both paths exist and are UTF-8)'
+    "import traceback"$'\x1f'"${AGENT_BASE}"$'\x1f'"${stub}"$'\x1f'"ModuleNotFoundError: No module named daemon_cycle"
+  )
+  local row name base path_prefix reason
+  for row in "${rows[@]}"; do
+    name="${row%%$'\x1f'*}"
+    row="${row#*$'\x1f'}"
+    base="${row%%$'\x1f'*}"
+    row="${row#*$'\x1f'}"
+    path_prefix="${row%%$'\x1f'*}"
+    reason="${row#*$'\x1f'}"
+    : >"${DECLINE_LOG}" 2>/dev/null || true
+    append_decline 0 "agents/glass-atrium-dev-a.md"
+    seed_sandbox_anchor "agents/glass-atrium-dev-a.md" "${AGENT_BASE}" "${base}"
+    run_doctor_sandbox "${path_prefix}"
+    assert_output_has "FAIL : 1 agent body/bodies declined a merge" || {
+      echo "row: ${name}"
+      return 1
+    }
+    assert_output_has "not comparable — anchor comparison failed" || {
+      echo "row: ${name}"
+      return 1
+    }
+    assert_output_has "${reason}" || {
+      echo "row: ${name}"
+      return 1
+    }
+  done
 }
