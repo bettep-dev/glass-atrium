@@ -24,6 +24,9 @@ HOOK_SH="${BATS_TEST_DIRNAME}/../enforce-foreground-harness.sh"
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-foreground-harness.sh not found: ${HOOK_SH}"
   command -v jq >/dev/null 2>&1 || skip "jq required"
+  # Capture gate isolation: a live flag file or exported env var must never record test calls.
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR}/isolated-data-root"
+  unset GA_HPP_AGENT_CAPTURE
 }
 
 # Drive the hook as an Agent PreToolUse call. jq -n builds the payload so the
@@ -154,6 +157,73 @@ run_agent() {
   payload="$(jq -n '{tool_name:"Write", tool_input:{file_path:"~/.claude/hooks/x.sh"}}')"
   run bash -c 'printf "%s" "$1" | bash "$2"' _ "${payload}" "${HOOK_SH}"
   [[ "${status}" -eq 0 ]]
+}
+
+# Envelope capture (measurement): off unless GA_HPP_AGENT_CAPTURE=1 or the data-root flag file exists,
+#   and it never leaks a value.
+
+@test "the envelope capture writes nothing and keeps every verdict when neither gate is set" {
+  local root="${BATS_TEST_TMPDIR}/capture-off" row name want prompt payload written
+  mkdir -p "${root}/home"
+  for row in 'harness path|2|Edit ~/.claude/agents/x.md' 'no harness path|0|Refactor src/a.ts'; do
+    IFS='|' read -r name want prompt <<<"${row}"
+    payload="$(jq -n --arg p "${prompt}" '{tool_name:"Agent", tool_input:{prompt:$p, run_in_background:true}}')"
+    run env -u GA_HPP_AGENT_CAPTURE "HOME=${root}/home" "GA_DATA_ROOT=${root}/data-root" \
+      bash -c 'printf "%s" "$1" | bash "$2"' _ "${payload}" "${HOOK_SH}"
+    written="$(find "${root}" -type f)"
+    [[ "${status}" -eq "${want}" && -z "${written}" ]] || {
+      echo "row: ${name} · want ${want} · status ${status} · written: ${written} · ${output}"
+      return 1
+    }
+  done
+}
+
+@test "either gate records key names and the field's type, never prompt text or other values" {
+  local row name gate version_src want_version root payload record
+  local -a gate_env
+  for row in 'env var|env|transcript|9.9.9' 'flag file|flag|envelope|8.8.8'; do
+    IFS='|' read -r name gate version_src want_version <<<"${row}"
+    root="${BATS_TEST_TMPDIR}/capture-${gate}"
+    mkdir -p "${root}/home" "${root}/data-root/data"
+    printf '%s\n' '{"type":"user"}' '{"type":"assistant","version":"9.9.9"}' >"${root}/transcript.jsonl"
+    payload="$(jq -n --arg t "${root}/transcript.jsonl" '{tool_name:"Agent", transcript_path:$t,
+      tool_input:{prompt:"SECRET-PROMPT edit ~/.claude/agents/x.md", description:"SECRET-DESC", run_in_background:true}}')"
+    if [[ "${version_src}" == "envelope" ]]; then
+      payload="$(jq -c '. + {version: "8.8.8"}' <<<"${payload}")"
+    fi
+    gate_env=("HOME=${root}/home" "GA_DATA_ROOT=${root}/data-root")
+    if [[ "${gate}" == "env" ]]; then
+      gate_env+=("GA_HPP_AGENT_CAPTURE=1")
+    else
+      : >"${root}/data-root/data/hpp-agent-capture.on"
+    fi
+    run env -u GA_HPP_AGENT_CAPTURE "${gate_env[@]}" \
+      bash -c 'printf "%s" "$1" | bash "$2"' _ "${payload}" "${HOOK_SH}"
+    record="$(cat -- "${root}/data-root/data/hpp-agent-capture.jsonl" 2>/dev/null)" || record=""
+    [[ "${status}" -eq 2 && -n "${record}" && "${record}" != *SECRET* ]] || {
+      echo "row: ${name} · status ${status} · record: ${record}"
+      return 1
+    }
+    jq -e --arg v "${want_version}" '.cli_version == $v
+      and (.envelope_keys - ["version"]) == ["tool_input", "tool_name", "transcript_path"]
+      and .tool_input_keys == ["description", "prompt", "run_in_background"]
+      and .run_in_background == {type: "boolean", value: true}' <<<"${record}" >/dev/null || {
+      echo "row: ${name} · record: ${record}"
+      return 1
+    }
+  done
+}
+
+@test "a failed capture write keeps the block verdict" {
+  local root="${BATS_TEST_TMPDIR}/capture-unwritable" payload
+  mkdir -p "${root}/data-root/data/hpp-agent-capture.jsonl"
+  payload="$(jq -n '{tool_name:"Agent", tool_input:{prompt:"Edit ~/.claude/agents/x.md", run_in_background:true}}')"
+  run env "GA_HPP_AGENT_CAPTURE=1" "GA_DATA_ROOT=${root}/data-root" \
+    bash -c 'printf "%s" "$1" | bash "$2"' _ "${payload}" "${HOOK_SH}"
+  [[ "${status}" -eq 2 && "${output}" == *"Harness Path Protection Rule 2"* ]] || {
+    echo "status ${status} · ${output}"
+    return 1
+  }
 }
 
 # shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
