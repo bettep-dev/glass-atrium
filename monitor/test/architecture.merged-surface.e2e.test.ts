@@ -1164,9 +1164,13 @@ test("AC-T5 the ring displaces neither the governance banner nor the writer aler
 		}),
 	);
 
+	// the healthy part ring also lights nodes — only the crit ring proves the fault ring is on screen
+	const probe = await waitForPartRing(DAEMON_PART_ID, RING_CRIT_CLASS);
+	const faultNodes = getRenderedBound(probe.rendered, BOUND_DAEMON);
 	assert.ok(
-		(await waitForPartRing(DAEMON_PART_ID, RING_CRIT_CLASS)).ringed.length > 0,
-		"fault fixture must light a node — otherwise the two legs below prove nothing",
+		faultNodes.length > 0 &&
+			faultNodes.every((id) => (probe.classByNode[id] || []).includes(RING_CRIT_CLASS)),
+		`fault fixture must crit-ring every drawn ${BOUND_DAEMON} node (${getProbeState(probe)}) — otherwise the two legs below prove nothing`,
 	);
 	assert.equal(
 		await countAlertsNaming(absentDoc),
