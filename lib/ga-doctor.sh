@@ -831,9 +831,10 @@ run_doctor() {
   #     and a warn leaves a prescribed repair permanently optional. The window is what keeps that from
   #     becoming a forever-red: an aged entry is history and reports `note`, never a failure.
   #     An in-window entry is RESOLVED when its body now sits at the release anchor — live body equal
-  #     to its base-store entry at the release hash (_get_body_anchor_state), the state a sanctioned
-  #     reset or a later landed merge leaves. Limits, by design: a hand repair that keeps local edits
-  #     and a live-only `model:` pin never equal the base, so both stay FAIL until the entry ages out.
+  #     to its base-store entry at the release hash but for the frontmatter lines the update carry pass
+  #     keeps (_get_body_anchor_state), the state a sanctioned reset or a later landed merge leaves.
+  #     Limit, by design: a hand repair that keeps local edits never equals the base, so it stays FAIL
+  #     until the entry ages out.
   local decline_fail=0
   local decline_log="" decline_cutoff="" decline_scan="" decline_counts="" decline_body=""
   local decline_in=0 decline_out=0 decline_malformed=0 decline_repaired=0 decline_open=0
@@ -1995,12 +1996,15 @@ _decline_scan() {
 # 3-way merge reads, at the hash the updater recorded for $1 in the state-dir baseline manifest
 # (spine_baseline_path). That manifest — not the install-root one — is the release record paired
 # with the base store: update_capture_baseline writes both in one finalize sequence, while a dev
-# tree's own manifest names the NEXT release. Equality alone is not enough: a hand-synced or
-# contaminated base equals the live body too, so the hash is what ties the base to the release.
+# tree's own manifest names the NEXT release. "At the anchor" = live body equal to its base-store entry
+# but for the frontmatter lines the update carry pass keeps (editable_merge.py anchor owns that key
+# set), AND that entry at the release hash: a hand-synced or contaminated base equals the live body
+# too, so the hash is what ties the base to the release.
 # rc 0 = at the anchor · rc 1 = compared and diverged · rc 2 = not comparable, reason on stdout.
 # Fail-closed and errexit-independent (callers test it in a condition): only rc 0 clears a verdict.
 _get_body_anchor_state() {
-  local rel="$1" live base_entry baseline release_hash base_hash cmp_rc=0
+  local rel="$1" live base_entry baseline release_hash base_hash verdict="" merge_rc=0
+  local merge_py="${BASH_SOURCE[0]%/*}/../autoagent/lib/editable_merge.py"
   local -a sha=()
   # shellcheck source-path=SCRIPTDIR
   # shellcheck source=../scripts/lib/apply-spine.sh
@@ -2019,11 +2023,14 @@ _get_body_anchor_state() {
   elif [[ ! -f "${base_entry}" || ! -r "${base_entry}" ]]; then
     printf '%s\n' "no base-store entry (${base_entry})"
     return 2
-  elif ! command -v cmp >/dev/null 2>&1; then
-    printf '%s\n' "cmp(1) absent"
-    return 2
   elif ! command -v jq >/dev/null 2>&1; then
     printf '%s\n' "jq absent — the release hash cannot be read"
+    return 2
+  elif ! python3 -c 'import sys' >/dev/null 2>&1; then
+    printf '%s\n' "no runnable python3 — the anchor comparison cannot run"
+    return 2
+  elif [[ ! -f "${merge_py}" ]]; then
+    printf '%s\n' "anchor comparison module missing (${merge_py})"
     return 2
   fi
   release_hash="$(jq -r --arg rel "${rel}" '(.hashes // {})[$rel] // empty' -- "${baseline}" 2>/dev/null)" \
@@ -2038,13 +2045,21 @@ _get_body_anchor_state() {
     printf '%s\n' "no shasum/sha256sum to hash the base entry"
     return 2
   fi
-  cmp -s "${live}" "${base_entry}" || cmp_rc=$?
-  if [[ "${cmp_rc}" -gt 1 ]]; then
-    printf '%s\n' "cmp failed reading ${live} or ${base_entry}"
+  # A token, not an rc verdict: a traceback also exits 1, which must read as not comparable.
+  verdict="$(python3 "${merge_py}" anchor --live "${live}" --base "${base_entry}" 2>/dev/null)" \
+    || merge_rc=$? # GA-ABSORB[handled@merge_rc branch below]: a failed comparison is reported as not comparable
+  if [[ "${merge_rc}" -ne 0 ]]; then
+    printf '%s\n' "anchor comparison failed (editable_merge.py anchor exit ${merge_rc} on ${live} / ${base_entry})"
     return 2
-  elif [[ "${cmp_rc}" -eq 1 ]]; then
-    return 1
   fi
+  case "${verdict}" in
+    at-anchor) ;;
+    diverged) return 1 ;;
+    *)
+      printf '%s\n' "anchor comparison failed (unrecognised verdict '${verdict}')"
+      return 2
+      ;;
+  esac
   # shellcheck disable=SC2310,SC2311
   if ! base_hash="$(_sha_hex "${sha[@]}" -- "${base_entry}")"; then
     printf '%s\n' "hashing the base entry failed (${base_entry})"
