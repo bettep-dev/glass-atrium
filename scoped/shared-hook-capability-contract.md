@@ -10,12 +10,28 @@ Rows = lifecycle event · columns = capability surface. `mutate` = can change mo
 
 | Event | Mutate-capable surface | Observe surface | Block channel | Notes |
 |-------|------------------------|-----------------|---------------|-------|
-| PreToolUse | `tool_input` only (via `updatedInput`) | `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`, `tool_name`, `tool_input`, `agent_id` | channel-a for every block here (measured) · stdout `hookSpecificOutput.permissionDecision`, not `decision` (docs-only) | Cannot read the agent's prose/reasoning — only `tool_input`/`session_id`/`agent_id` are visible. |
+| PreToolUse | `tool_input` only (via `updatedInput`) | `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`, `tool_name`, `tool_input`, `agent_id` | channel-a for every block here (measured) · stdout `hookSpecificOutput.permissionDecision`, not `decision` (docs-only) | Cannot read the agent's prose/reasoning. Agent calls: `PreToolUse(Agent) measured record`. |
 | PostToolUse | none — observe-only (no `updatedOutput`) | `tool_name`, `tool_response`/output, `tool_input` | channel-a (`exit 2`) or channel-b (stdout `{"decision":"block"}` only — `"advisory"` is rejected, see Block Channels) | Cannot mutate model-visible tool output. May only block, or advise via stderr, after the tool ran. |
 | `Stop` / `SubagentStop` | none — observe-only | terminal turn / subagent transcript metadata | none (advisory lifecycle; `exit 2` does not rewind a finished turn) | Post-completion accounting only (`cost-tracker.sh`, `track-outcome.sh`). No payload to mutate. |
 | `SessionStart` | injects turn-0 context via stdout (additive, never a mutation) | drained stdin (payload unused by current hooks) | none for the injection itself (`exit 0`); one audit-grade `exit 2` exists, see the note | `inject-session-context.sh` injects its stdout into session context. `validate-compliance-matrix.sh` exits 2 on a confirmed matrix inconsistency (its Layer B) while its Layer A drift check stays advisory — neither rewinds the session, which SessionStart cannot do. |
 | `SubagentStart` | injects child context via stdout `hookSpecificOutput.additionalContext` (additive) | `agent_type`, `agent_id` | none (cannot block a spawn — context-injection only) | `inject-scope-rules.sh` delivers the marker blocks to its rostered children. Fail-open (`exit 0`) always. |
 | `UserPromptSubmit` | injects context via stdout `hookSpecificOutput.additionalContext` (additive) | `prompt`, `transcript_path`, `prompt_id`; never `agent_id`; `source` absent on CLI 2.1.283 | `exit 2` erases the prompt — unused: the registered hook never blocks | `inject-reply-language.sh` adds one context line and always exits 0. See Event Registration Status. |
+
+### PreToolUse(Agent) measured record
+
+What a PreToolUse hook receives on an `Agent` tool call. Agent calls only: no other tool's envelope is claimed here, and the PreToolUse row above stays the general contract.
+
+- **Provenance**: captured live 2026-10-23 by a temporary key-names-only capture in `hooks/enforce-foreground-harness.sh`, since removed, CLI 2.1.308.
+  - Captured: three main-session Agent calls — `run_in_background` sent `true`, sent `false`, omitted — and one Workflow-tool `agent()` spawn.
+- **`tool_input` keys** [measured]: `description`, `prompt`, `subagent_type` — on all three calls.
+- **`run_in_background` is not delivered** [measured]: absent from `tool_input` on all three calls — sent `true`, sent `false`, omitted.
+  - So a hook cannot read the field, whatever the model sends.
+  - The capture records the field from a fixture envelope that carries it, so its absence is not a blind spot of the capture.
+- **`false` does not keep a call in the foreground** [measured]: an explicit `run_in_background: false` call still launched as a background agent, as the call's return showed.
+- **Envelope keys** [measured]: `agent_type`, `cwd`, `effort`, `hook_event_name`, `permission_mode`, `prompt_id`, `scratchpad_dir`, `session_id`, `tool_input`, `tool_name`, `tool_use_id`, `transcript_path` — on all three calls; none carried `agent_id`.
+- **No key names the background mode** [measured]: no envelope or `tool_input` key on the three calls names the session's background mode.
+- **Workflow `agent()` spawns do not reach PreToolUse(Agent)** [measured]: the Workflow spawn left no record, so no PreToolUse(Agent) hook sees a Workflow spawn.
+- **Re-probe**: after a CLI upgrade, re-capture the Agent `tool_input` and envelope keys before a hook relies on any one of them.
 
 ## Block Channels (Two Non-Interchangeable Mechanisms)
 
