@@ -566,6 +566,7 @@ The hook takes candidate paths from the Agent prompt's text and resolves each ag
 - a path the prompt hides — variable indirection, encoding, a deeper `cd`;
   - this includes a home written as a run-time expansion the hook does not read as home;
 - a path whose written text the hook does not read as naming a harness root, such as a glob standing in for a root letter;
+- a root named only as a bare word in prose, the file named relative to it, so no token is a protected path;
 - a Workflow-tool `agent()` spawn — measured: it does not pass PreToolUse(Agent), so the gate cannot see Workflow spawns (record: `scoped/shared-hook-capability-contract.md` → `PreToolUse(Agent) measured record`);
   - Rule 2 still binds a Workflow `agent()` prompt, on the honor system alone;
 - a prompt naming the resolved install target of a harness symlink: `### Write routes` forbids it, but only on the honor system — the hook scans only `.claude` paths, and no hook guards the install's `rules/` and `scoped/` trees on that route.
@@ -573,6 +574,6 @@ The hook takes candidate paths from the Agent prompt's text and resolves each ag
 - The scan cannot tell a read from a write, so a prompt naming a harness path only to read it is blocked too: use the read-only variant.
 - The hook does not examine a symlink inside a root it has entered: it judges the rest of the path as written.
 - Past its candidate cap, the hook blocks fail-safe rather than leave candidates unresolved.
-- The prompt scan is one layer. The layer meant to catch the writes it cannot see is a Write/Edit/Bash gate on calls carrying an `agent_id`.
+- The layer meant to catch the writes the prompt scan cannot see is a Write/Edit/Bash gate on calls carrying an `agent_id`.
   - Not built; its home is `hooks/enforce-harness-critical.sh`.
   - It is also the candidate cover for the Workflow-tool `agent()` gap: whether a Workflow agent's Write/Edit/Bash calls carry an `agent_id` is unmeasured.
