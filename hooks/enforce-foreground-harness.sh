@@ -32,6 +32,8 @@
 #   home form rewritten to `~/` — and a root counts with or without a trailing `/`, glob or brace.
 #
 # Source: rules/glass-atrium/orchestrator-role.md → Harness Path Protection.
+# Measured envelope (run_in_background never delivered): scoped/shared-hook-capability-contract.md →
+#   ### PreToolUse(Agent) measured record.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -77,7 +79,7 @@ fi
 shopt -u nocasematch
 
 # Remedy named by both block reasons — the Write routes of Harness Path Protection Rule 2.
-readonly routes_text='Take a write route instead: (1) an install-managed file (a symlink into ~/.glass-atrium/: agent bodies, rules/glass-atrium/*, skills/glass-atrium-*, GLASS_ATRIUM_GLOBAL_RULES.md) -> edit the repo path, which ships through manifest regeneration and the updater; (2) a harness file the install does not manage (profile settings*.json, settings.local.json, other profile-local files) -> the staged lane: the main session copies it to a staging dir in the working tree, the agent edits the copy, the user approves the diff and applies it; (3) a read -> the repo path for an install-managed file, the staged lane read-only copy otherwise. Never name the resolved ~/.glass-atrium/ target to get past this check: it writes the live install outside the updater.'
+readonly routes_text='Take a write route instead: (1) an install-managed file (a symlink into ~/.glass-atrium/: agent bodies, rules/glass-atrium/*, skills/glass-atrium-*, GLASS_ATRIUM_GLOBAL_RULES.md) -> edit the repo path, which ships through manifest regeneration and the updater; (2) a harness file the install does not manage (profile settings*.json, settings.local.json, other profile-local files) -> the staged lane: the main session copies it to a staging dir in the working tree with cat <real> > <stage>/<name> and no other command, the agent edits the copy, the user approves the diff and applies it; (3) a read -> the repo path for an install-managed file, the staged lane read-only copy otherwise. Never name the resolved ~/.glass-atrium/ target to get past this check: it writes the live install outside the updater.'
 
 # Branch-root grammar, single-sited in lib/. Sourced after the `.claude` precheck → the fail-closed lib
 # check runs on every Agent prompt containing `.claude` (a security gate must never degrade silently),

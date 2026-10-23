@@ -44,9 +44,9 @@ list_bashes() {
   [[ "${path_bash}" == /bin/bash ]] || printf '%s\n' "${path_bash}"
 }
 
-# AC1 — the branch that motivated the fix
+# A config path on a profile branch root blocks like one on ~/.claude/
 
-@test "~/.claude-work-dev/hooks/x.sh → BLOCKED (AC1)" {
+@test "~/.claude-work-dev/hooks/x.sh → BLOCKED" {
   run_agent 'Write the new hook to ~/.claude-work-dev/hooks/x.sh.' true
   [[ "${status}" -eq 2 ]]
 }
@@ -91,9 +91,9 @@ list_bashes() {
   done < <(list_bashes)
 }
 
-# AC4 — dormant backup dir: intentional fail-safe over-coverage
+# Dormant backup dir: intentional fail-safe over-coverage
 
-@test "dormant backup dir config path → BLOCKED (AC4)" {
+@test "dormant backup dir config path → BLOCKED" {
   run_agent "Restore ~/${BACKUP_DIR}/hooks/old.sh into place." true
   [[ "${status}" -eq 2 ]]
 }
@@ -126,7 +126,7 @@ list_bashes() {
     'progress file|0|Persist ~/.claude-work-dev/projects/-Users-x/memory/progress-foo.md now.' \
     'MEMORY.md in the memory dir|2|Update ~/.claude-work-dev/projects/-Users-x/memory/MEMORY.md now.' \
     'feedback file|2|Write ~/.claude-work-dev/projects/-Users-x/memory/feedback_x.md now.' \
-    'traversal out of a progress file|2|Write ~/.claude-work-dev/projects/-Users-x/memory/progress-x.md/../MEMORY.md now.'; do
+    'traversal that ends on a progress name|2|Write ~/.claude-work-dev/projects/../memory/progress-x.md now.'; do
     IFS='|' read -r name want prompt <<<"${row}"
     run_agent "${prompt}" omit
     [[ "${status}" -eq "${want}" ]] || {
@@ -172,7 +172,7 @@ list_bashes() {
   [[ "${status}" -eq 0 ]]
 }
 
-@test "git checkout hooks path → NOT blocked (AC11)" {
+@test "git checkout hooks path → NOT blocked" {
   run_agent 'Edit /Users/x/git/glass-atrium/hooks/enforce-foreground-harness.sh.' true
   [[ "${status}" -eq 0 ]]
 }

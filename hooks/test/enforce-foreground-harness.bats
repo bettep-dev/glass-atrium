@@ -122,7 +122,7 @@ list_bashes() {
 
 # CONFIG-write protection
 
-@test "tilde ~/.claude-personal/<config> → STILL blocked (case c)" {
+@test "tilde ~/.claude-personal/<config> → STILL blocked" {
   run_agent 'Update ~/.claude-personal/agents/reviewer.md with the new domains.' true
   [[ "${status}" -eq 2 ]]
 }
@@ -158,8 +158,10 @@ list_bashes() {
     'progress file on a profile branch|0|Persist ~/.claude-personal/projects/-Users-x/memory/progress-foo.md now.' \
     'MEMORY.md in the memory dir|2|Update ~/.claude/projects/-Users-x/memory/MEMORY.md now.' \
     'feedback file|2|Write ~/.claude-work/projects/-Users-x/memory/feedback_x.md now.' \
-    'traversal out of a progress file|2|Write ~/.claude/projects/-Users-x/memory/progress-x.md/../MEMORY.md now.' \
+    'traversal that ends on a progress name|2|Write ~/.claude/projects/../memory/progress-x.md now.' \
     'progress file one dir deeper|2|Write ~/.claude/projects/-Users-x/memory/sub/progress-x.md now.' \
+    'progress file under a memory dir nested deeper in projects|2|Write ~/.claude/projects/-Users-x/memory/sub/memory/progress-x.md now.' \
+    'file inside a progress-named dir|2|Write ~/.claude/projects/-Users-x/memory/progress-x/MEMORY.md now.' \
     'non-md progress file|2|Write ~/.claude/projects/-Users-x/memory/progress-x.txt now.'; do
     IFS='|' read -r name want prompt <<<"${row}"
     run_agent "${prompt}" omit
@@ -262,6 +264,12 @@ assert_rows() {
     'BASENAME file ending a sentence|Append the note to ~/.claude/CLAUDE.md.'
   assert_rows 2 \
     'traversal before punctuation|Read ~/.claude/data/..!'
+}
+
+@test "an empty home still blocks a harness path instead of rewriting every separator" {
+  HOME='' assert_rows 2 \
+    'tilde config path|Write ~/.claude/hooks/x.sh now.' \
+    'home variable config path|Edit $HOME/.claude/agents/x.md now.'
 }
 
 @test "a case variant of a harness root blocks, since the host filesystem folds case" {
