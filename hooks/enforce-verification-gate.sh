@@ -20,7 +20,7 @@
 #      escape hatch for legitimate small DEV work. Non-DEV spawns exit 0; plan/token-bearing spawns
 #      clear THIS branch (but still face surface 2).
 #   4) scope-miss ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin DEV spawn whose
-#      prompt carries no line-opening [SCOPE] declaration. Advisory-first deliberately: a syntactic
+#      prompt carries no bare line-opening [SCOPE] declaration. Advisory-first deliberately: a syntactic
 #      scan cannot tell a relayed line-opening declaration from the real one, so promotion to exit 2
 #      waits on accumulated false-positive data plus an explicit user decision. Emitted on the PASS
 #      paths only, after every verdict above.
@@ -415,7 +415,7 @@ warn_scope_advisories() {
   # SC2310: has_scope_token is a pure predicate — set -e disable under `if` intended.
   # shellcheck disable=SC2310
   if ! has_scope_token "${prompt_full}"; then
-    printf '[enforce-verification-gate] DEV spawn of %s carries no [SCOPE] declaration — a mid-line or quoted [SCOPE] does not count, the declaration must open its own line. Record it in the canonical middot-separated grammar — [SCOPE] files=path/one, path/two · deliverable=<type> · out=none — so the delegation'"'"'s literal scope is fixed in text before the work starts (grammar SoT: orchestrator-role.md → Context Handoff Size). Advisory only — presence is checked here, fidelity to the user instruction is not.\n' \
+    printf '[enforce-verification-gate] DEV spawn of %s carries no [SCOPE] declaration — a mid-line or quoted [SCOPE] does not count, and neither does a [SCOPE] token wrapped in backticks or ** — the declaration must open its own line with the bare token. Record it in the canonical middot-separated grammar — [SCOPE] files=path/one, path/two · deliverable=<type> · out=none — so the delegation'"'"'s literal scope is fixed in text before the work starts (grammar SoT: orchestrator-role.md → Context Handoff Size). Advisory only — presence is checked here, fidelity to the user instruction is not.\n' \
       "${subagent_type}" >&2
     return 0
   fi
