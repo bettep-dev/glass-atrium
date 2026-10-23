@@ -1368,7 +1368,7 @@
     "hooks/test/validate-pre-write-raw.bats": "553d4a507528a5a84302c1fe8acbf188a4cb44ce6a79845becae3830ba91388e",
     "hooks/test/validate-prompt-parity.bats": "d79a725c6430983ba6938244369f7f99b2f376cb35929b56ba068e00188a6fe5",
     "hooks/test/validate-scope-drift-cache.bats": "0c8e4984d5d2086024489e475cd8cf1182f68b9251f61ce51c79a4a24ed6964f",
-    "hooks/test/validate-scope-drift-decl.bats": "ae732e2337b97bc3993ed0fdf1ad68ee9cb1fcb24d7655f28fff2d1f85093c2b",
+    "hooks/test/validate-scope-drift-decl.bats": "b9bbc4f55c29c8f458b1f5a761d0db3ecb881266c8f72c45bf60262536cedd57",
     "hooks/test/validate-scope-drift-sysdir.bats": "972b72c4fa36bdd5a783b15e4fe47697c81f8f2ee84f46fe7c2562ccb19ba7eb",
     "hooks/test/validate-secret-scan.bats": "497c4c422f902e124f1da02a59779e3b663d06763cdc93f92992d08d7174d3e9",
     "hooks/test/validate-tool-response-parity.bats": "f61acc7035b5e7dbe54b0c1d1e9c67503788833ae3894f55d53ffe686dfa4909",
