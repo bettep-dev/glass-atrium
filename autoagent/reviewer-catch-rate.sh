@@ -12,7 +12,12 @@
 #   SubagentStart scope-injection hooks named in lib/ga-env.sh → EXPECTED_HOOK_BINDINGS — no SubagentStop recorder
 #   and no Stop cost tracker, so a run writes no outcome row, no lesson and no CostEvent.
 # Void checks, read from the reviewer transcript under <config dir>/projects/*/<session id>/: the injected scope
-#   header, no tool input naming a label path, and every recorded effort equal to the arm.
+#   header, no tool input or tool result naming a label path, and every recorded effort equal to the arm.
+# Tools: claude-work-dev runs --permission-mode bypassPermissions, so the reviewer keeps every tool its frontmatter
+#   grants, Bash included, and can reach the repo checkout by absolute path; the label-read check is the guard.
+#   It over-voids a result that only names a label path (ci.yml, generate-manifest.sh) — a void, never a miss.
+#   Leak residual: answer text reached through a source naming no label path — a plan or build record
+#   describing the planted defects, the monitor API — passes unvoided.
 # Launcher: required, no PATH fallback — the headless rule is `claude-work-dev -p`, a zsh function,
 #   so pass an executable wrapper such as `#!/bin/zsh -i` + `claude-work-dev "$@"`.
 # Corpus: <name>.diff files + labels.tsv rows `<diff basename> TAB <defect id> TAB <ERE, matched case-insensitive>`.
@@ -62,6 +67,9 @@ def injects(attachment):
         return False
     content = attachment.get('content')
     return any(isinstance(p, str) and header in p for p in (content if isinstance(content, list) else [content]))
+def names(value):
+    text = json.dumps(value)
+    return next((n for n in needles if n in text), '')
 with open(path, encoding='utf-8', errors='replace') as handle:
     for line in handle:
         try:
@@ -72,17 +80,22 @@ with open(path, encoding='utf-8', errors='replace') as handle:
             continue
         if record.get('type') == 'attachment' and isinstance(record.get('attachment'), dict):
             injected = injected or int(injects(record['attachment']))
+        message = record.get('message') if isinstance(record.get('message'), dict) else {}
+        content = message.get('content')
+        items = [i for i in content if isinstance(i, dict)] if isinstance(content, list) else []
+        if record.get('type') == 'user':
+            for item in items:
+                if item.get('type') == 'tool_result':
+                    leak = leak or names(item.get('content'))
         if record.get('type') != 'assistant':
             continue
         tier = record.get('effort')
         tier = tier if isinstance(tier, str) and tier else 'absent'
         if tier not in efforts:
             efforts.append(tier)
-        message = record.get('message') if isinstance(record.get('message'), dict) else {}
-        for item in message.get('content') if isinstance(message.get('content'), list) else []:
-            if isinstance(item, dict) and item.get('type') == 'tool_use':
-                text = json.dumps(item.get('input'))
-                leak = leak or next((n for n in needles if n in text), '')
+        for item in items:
+            if item.get('type') == 'tool_use':
+                leak = leak or names(item.get('input'))
         usage, msg_id = message.get('usage'), message.get('id')
         if isinstance(usage, dict) and not (msg_id and msg_id in seen):
             if msg_id:
@@ -230,7 +243,8 @@ read_injection_hooks() {
   ' "${BINDINGS_FILE}"
 }
 
-# Project settings for every case dir: the injection hooks only, plus the read tools the parent and reviewer use.
+# Project settings for every case dir: the injection hooks only. permissions.allow binds only a launcher without
+# bypassPermissions — claude-work-dev bypasses it, so it narrows no tool there.
 write_settings() {
   python3 -c '
 import json, sys
@@ -362,7 +376,7 @@ audit_transcript() {
   IFS=$'\x1f' read -r leak injected efforts input output cache_read cache_creation <<<"${fields}"
   add_tokens "${input}" "${output}" "${cache_read}" "${cache_creation}"
   if [[ -n "${leak}" ]]; then
-    void_case "${name}" "reviewer transcript names ${leak} in a tool input — the answer key was read"
+    void_case "${name}" "reviewer transcript names ${leak} in a tool input or tool result — the answer key was reachable"
     return 1
   fi
   if ((injected != 1)); then

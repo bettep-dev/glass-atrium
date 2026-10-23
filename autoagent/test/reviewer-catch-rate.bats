@@ -224,17 +224,48 @@ assert_not_launched() {
   add_case leaked-dir leak 'unquoted' \
     '[SHOULD FIX] hooks/x.sh:3 — unquoted variable, as autoagent/reviewer-catch-rate/case-01.diff shows'
   add_case leaked-labels leak 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable, per the labels.tsv row'
-  add_case read-labels leak 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
-  local read_input
-  read_input="$(jq -cn --arg p "${CORPUS}/labels.tsv" '{file_path: $p}')"
-  assistant_record high msg_r '' "${read_input}" >"${STUB_REPLY_DIR}/read-labels.records"
   run_runner --tier high --corpus "${CORPUS}"
   assert_status 1
   assert_report_rows $'hit.diff\tunquoted-var\tcaught' $'bare.diff\tno-markers\terror' \
     $'empty-relay.diff\tempty-block\terror' $'unclosed-relay.diff\ttruncated\terror' \
     $'crashed.diff\tcrash\terror' $'leaked-dir.diff\tleak\terror' $'leaked-labels.diff\tleak\terror' \
-    $'read-labels.diff\tleak\terror' "RECALL tier=high caught=1 scored=1 errors=7 ${ZERO_TOKENS}"
-  assert_stderr_names bare empty-relay unclosed-relay crashed leaked-dir leaked-labels read-labels
+    "RECALL tier=high caught=1 scored=1 errors=6 ${ZERO_TOKENS}"
+  assert_stderr_names bare empty-relay unclosed-relay crashed leaked-dir leaked-labels
+}
+
+# tool_result_record <tool_result content JSON> — the user record carrying one tool's output back to the reviewer.
+tool_result_record() {
+  jq -cn --argjson c "${1}" \
+    '{type: "user", message: {role: "user", content: [{type: "tool_result", tool_use_id: "toolu_1", content: $c}]}}'
+}
+
+@test "a diff scores only when no reviewer tool input or tool result names a label path" {
+  local row label_read repo_search label_hit corpus_hit clean_hit
+  for row in input-read result-text result-items result-clean; do
+    add_case "${row}" unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  done
+  label_read="$(jq -cn --arg p "${CORPUS}/labels.tsv" '{file_path: $p}')"
+  repo_search="$(jq -cn --arg p "${GA}" '{pattern: "unquoted", path: $p}')"
+  label_hit="$(jq -cn --arg p "${CORPUS}/labels.tsv" '$p + ":4:case-01.diff unquoted"')"
+  corpus_hit="$(jq -cn --arg p "${GA}/autoagent/reviewer-catch-rate/case-01.diff" '[{type: "text", text: $p}]')"
+  clean_hit="$(jq -cn --arg p "${GA}/hooks/x.sh" '$p + ":3:echo $files"')"
+  assistant_record xhigh msg_1 '' "${label_read}" >"${STUB_REPLY_DIR}/input-read.records"
+  { assistant_record xhigh msg_1 '' "${repo_search}" && tool_result_record "${label_hit}"; } \
+    >"${STUB_REPLY_DIR}/result-text.records"
+  { assistant_record xhigh msg_1 '' "${repo_search}" && tool_result_record "${corpus_hit}"; } \
+    >"${STUB_REPLY_DIR}/result-items.records"
+  { assistant_record xhigh msg_1 '' "${repo_search}" && tool_result_record "${clean_hit}"; } \
+    >"${STUB_REPLY_DIR}/result-clean.records"
+  run_runner --tier xhigh --corpus "${CORPUS}"
+  assert_status 1
+  assert_report_rows $'input-read.diff\tunquoted-var\terror' $'result-text.diff\tunquoted-var\terror' \
+    $'result-items.diff\tunquoted-var\terror' $'result-clean.diff\tunquoted-var\tcaught'
+  for row in input-read:labels.tsv result-text:labels.tsv result-items:reviewer-catch-rate/; do
+    [[ "${stderr}" == *"${row%%:*}.diff: reviewer transcript names ${row#*:} "* ]] || {
+      printf 'row %s: no label-read reason\n%s\n' "${row%%:*}" "${stderr}"
+      return 1
+    }
+  done
 }
 
 @test "a diff scores only when its reviewer transcript carries the injected scope header" {
