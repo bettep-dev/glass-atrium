@@ -229,3 +229,18 @@ fail_with_state() {
   [[ "${output}" != *"candidates)"* ]] || return 1
   [[ -L "${TARGET}/agents/orphan.md" ]]
 }
+
+# === manifest lookup past one pipe buffer =====================================
+@test "a broken symlink heading a manifest past one pipe buffer is preserved and flagged" {
+  # the listed rel first, then ~1 MB of entries: an early-exit lookup leaves its writer mid-write
+  {
+    printf '%s\n' "agents/inmanifest.md"
+    awk 'BEGIN { for (i = 0; i < 60000; i++) printf "agents/filler-%06d.md\n", i }'
+  } | jq -R . | jq -s '{files: .}' >"${MANIFEST}"
+  plant_orphan_link "agents/inmanifest.md"
+  run_prune_sandbox prune
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"1 flagged in-manifest"* ]] || fail_with_state
+  [[ "${output}" == *"0 pruned"* ]] || fail_with_state
+  [[ -L "${TARGET}/agents/inmanifest.md" ]] || fail_with_state "${TARGET}/agents/inmanifest.md"
+}
