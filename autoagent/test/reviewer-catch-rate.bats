@@ -1,14 +1,15 @@
 #!/usr/bin/env bats
-# reviewer-catch-rate.sh contract suite — scoring, run failures, preflight refusals, invocation shape.
-# Hermetic: a stub launcher stands in for the claude CLI, so no model call is ever made.
+# reviewer-catch-rate.sh contract suite — scoring, run failures, preflight refusals, spawn and session shape.
+# Hermetic: a stub launcher stands in for the claude CLI and stub hooks for the live ones, so no model call is made.
 #
 # Run via: bats autoagent/test/reviewer-catch-rate.bats
-# Requires: bats >= 1.5.0, bash 3.2+
+# Requires: bats >= 1.5.0, bash 3.2+, jq, python3
 
 # shellcheck disable=SC2154  # BATS_* and run's status/output/stderr are bats-provided
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+ZERO_TOKENS='input=0 output=0 cache_read=0 cache_creation=0'
 
 setup() {
   RUNNER="${GA}/autoagent/reviewer-catch-rate.sh"
@@ -17,10 +18,13 @@ setup() {
   CORPUS="${BATS_TEST_TMPDIR}/corpus"
   STUB_LOG_DIR="${BATS_TEST_TMPDIR}/stub-log"
   STUB_REPLY_DIR="${BATS_TEST_TMPDIR}/stub-replies"
+  HOOKS_DIR="${BATS_TEST_TMPDIR}/hooks"
   LAUNCHER="${BATS_TEST_TMPDIR}/launcher"
+  STUB_KEY_MODE=line1
   mkdir -p "${FAKE_HOME}" "${CORPUS}" "${STUB_LOG_DIR}" "${STUB_REPLY_DIR}"
   write_reviewer_definition "${CONFIG_DIR}" ''
   write_launcher
+  write_stub_hooks
   printf '# diff\tdefect\tpattern\n' >"${CORPUS}/labels.tsv"
 }
 
@@ -34,24 +38,86 @@ write_reviewer_definition() {
   } >"${1}/agents/glass-atrium-qa-code-reviewer.md"
 }
 
-# Stub CLI: logs argv, cwd, the prompt and the staged diff with its path, then replays the reply keyed by the
-# diff's first line (plus an optional <key>.rc exit status).
+# Stub CLI: logs argv, cwd, the tree under it, the prompt, the staged workflow script and diff; fires the hooks
+# the cwd's .claude/settings.json wires; writes a reviewer transcript under the --session-id; replays the reply.
+# Reply key: the diff's first line (line1, reply replayed raw) or its checksum (cksum, reply wrapped in the relay
+# markers, else the diff quoted back); <key>.rc sets the exit status,
+# <key>.records replaces the default assistant record, which carries the script's effort option.
 write_launcher() {
   cat >"${LAUNCHER}" <<'STUB'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 printf '%s\n' "$@" >>"${STUB_LOG_DIR}/argv"
-pwd -P >>"${STUB_LOG_DIR}/cwd"
-prompt="${!#}"
-diff_path="$(printf '%s\n' "${prompt}" | grep -Eo '/[^[:space:]]+\.diff' | head -n 1)"
-key="$(head -n 1 -- "${diff_path}")"
+prompt="${!#}" session='' prev=''
+for arg in "$@"; do
+  [[ "${prev}" != --session-id ]] || session="${arg}"
+  prev="${arg}"
+done
+script="$(printf '%s\n' "${prompt}" | grep -Eo '/[^[:space:]]+\.js' | head -n 1)"
+diff_path="$(grep -Eo '/[^[:space:]]+\.diff' -- "${script}" | head -n 1)"
+if [[ "${STUB_KEY_MODE}" == cksum ]]; then key="$(cksum <"${diff_path}" | awk '{ print $1 }')"; else key="$(head -n 1 -- "${diff_path}")"; fi
+export STUB_KEY="${key}"
+pwd -P >"${STUB_LOG_DIR}/cwd-${key}"
+(cd -- "${diff_path%/*}" && pwd -P) >"${STUB_LOG_DIR}/stagedir-${key}"
+find . >"${STUB_LOG_DIR}/tree-${key}"
 printf '%s\n' "${diff_path}" >"${STUB_LOG_DIR}/staged-${key}"
 cp -- "${diff_path}" "${STUB_LOG_DIR}/seen-${key}.diff"
+cp -- "${script}" "${STUB_LOG_DIR}/script-${key}.js"
 printf '%s\n' "${prompt}" >"${STUB_LOG_DIR}/prompt-${key}"
-cat -- "${STUB_REPLY_DIR}/${key}"
+fire() {
+  local cmd
+  [[ -f .claude/settings.json ]] || return 0
+  while IFS='' read -r cmd; do "${cmd}" </dev/null; done < <(jq -r --arg e "${1}" '.hooks[$e][]?.hooks[]?.command' .claude/settings.json)
+}
+encoded="$(printf '%s' "$(pwd -P)" | tr -c 'A-Za-z0-9' '-')"
+dir="${CLAUDE_CONFIG_DIR}/projects/${encoded}/${session}/subagents/workflows/wf_stub"
+mkdir -p "${dir}"
+transcript="${dir}/agent-stub.jsonl"
+context="$(fire SubagentStart | jq -rs 'map(.hookSpecificOutput.additionalContext? // empty) | join("\n")')"
+jq -cn --arg c "${context}" '{type: "attachment", attachment: {type: "hook_additional_context", hookEvent: "SubagentStart", content: [$c]}}' >"${transcript}"
+if [[ -f "${STUB_REPLY_DIR}/${key}.records" ]]; then
+  cat -- "${STUB_REPLY_DIR}/${key}.records" >>"${transcript}"
+else
+  effort="$(grep -Eo "effort: '[a-z]+'" -- "${script}" | head -n 1 | cut -d "'" -f 2)"
+  jq -cn --arg e "${effort}" '{type: "assistant", effort: $e, message: {role: "assistant", id: "msg_default", content: [{type: "text", text: "ok"}]}}' >>"${transcript}"
+fi
+fire SubagentStop >/dev/null
+if [[ "${STUB_KEY_MODE}" != cksum ]]; then
+  cat -- "${STUB_REPLY_DIR}/${key}"
+else
+  printf 'REVIEWER-REPLY-BEGIN\n'
+  if [[ -f "${STUB_REPLY_DIR}/${key}" ]]; then
+    cat -- "${STUB_REPLY_DIR}/${key}"
+  else
+    printf '%s\n' '- `[CONSIDER][Risk: L] the change`: quoted back as proposed'
+    sed 's/^/    /' "${diff_path}"
+  fi
+  printf 'REVIEWER-REPLY-END\n'
+fi
+fire Stop >/dev/null
 if [[ -f "${STUB_REPLY_DIR}/${key}.rc" ]]; then exit "$(cat -- "${STUB_REPLY_DIR}/${key}.rc")"; fi
 STUB
   chmod +x "${LAUNCHER}"
+}
+
+# Every stub hook logs its own name; inject-scope-rules.sh also emits the scope header unless <key>.noinject exists.
+write_stub_hooks() {
+  local hook n
+  mkdir -p "${HOOKS_DIR}"
+  # shellcheck disable=SC2016  # the stub hook expands $0 at its own run time
+  for n in 01 02 03 04 05 06 07 08 09 10 11 12; do
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "${0##*/}" >>"${STUB_LOG_DIR}/hooks"\n' >"${HOOKS_DIR}/inject-scope-part-${n}.sh"
+  done
+  for hook in track-outcome.sh cost-tracker.sh agent-tracker.sh telemetry-activation.sh; do
+    cp -- "${HOOKS_DIR}/inject-scope-part-01.sh" "${HOOKS_DIR}/${hook}"
+  done
+  cat >"${HOOKS_DIR}/inject-scope-rules.sh" <<'HOOK'
+#!/usr/bin/env bash
+printf '%s\n' "${0##*/}" >>"${STUB_LOG_DIR}/hooks"
+[[ -e "${STUB_REPLY_DIR}/${STUB_KEY}.noinject" ]] && exit 0
+printf '%s\n' '{"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": "**Scope rules — part 01 of 12 · auto-injected at spawn for glass-atrium-qa-code-reviewer**"}}'
+HOOK
+  chmod +x "${HOOKS_DIR}"/*.sh
 }
 
 # add_case <key> <defect id> <pattern> <relayed reply> [preamble] — one diff, its label row, its stub reply.
@@ -61,13 +127,24 @@ add_case() {
   printf '%sREVIEWER-REPLY-BEGIN\n%s\nREVIEWER-REPLY-END\n' "${5:+${5}$'\n'}" "${4}" >"${STUB_REPLY_DIR}/${1}"
 }
 
+# assistant_record <effort, empty = absent> <message id> [usage JSON] [tool_use input JSON]
+assistant_record() {
+  jq -cn --arg e "${1}" --arg id "${2}" --argjson u "${3:-null}" --argjson t "${4:-null}" '
+    {type: "assistant", message: {role: "assistant", id: $id,
+      content: ([{type: "text", text: "ok"}] + (if $t == null then [] else [{type: "tool_use", name: "Read", input: $t}] end))}}
+    | if $e == "" then . else .effort = $e end
+    | if $u == null then . else .message.usage = $u end'
+}
+
 run_runner() {
   run --separate-stderr env \
     HOME="${FAKE_HOME}" \
     CLAUDE_CONFIG_DIR="${CONFIG_DIR}" \
     REVIEWER_CATCH_RATE_CLAUDE_BIN="${LAUNCHER}" \
+    REVIEWER_CATCH_RATE_HOOKS_DIR="${HOOKS_DIR}" \
     STUB_LOG_DIR="${STUB_LOG_DIR}" \
     STUB_REPLY_DIR="${STUB_REPLY_DIR}" \
+    STUB_KEY_MODE="${STUB_KEY_MODE}" \
     bash "${RUNNER}" "$@"
 }
 
@@ -83,7 +160,18 @@ assert_report_rows() {
   local row
   for row in "$@"; do
     [[ $'\n'"${output}"$'\n' == *$'\n'"${row}"$'\n'* ]] || {
-      printf 'missing row: %s\nstdout:\n%s\n' "${row}" "${output}"
+      printf 'missing row: %s\nstdout:\n%s\nstderr:\n%s\n' "${row}" "${output}" "${stderr}"
+      return 1
+    }
+  done
+}
+
+# assert_stderr_names <diff key>... — each voided diff states its own reason.
+assert_stderr_names() {
+  local name
+  for name in "$@"; do
+    [[ "${stderr}" == *"${name}.diff"* ]] || {
+      printf 'row %s: no stderr reason\n%s\n' "${name}" "${stderr}"
       return 1
     }
   done
@@ -121,7 +209,7 @@ assert_not_launched() {
     $'bold-lead-in.diff\tglob-use\tcaught' $'lowercase-tag.diff\tglob-use\tcaught' \
     $'padded-markers.diff\tglob-use\tcaught' \
     $'mid-line-tag.diff\tglob-use\tmissed' $'outside.diff\tsplit-use\tmissed' \
-    'RECALL tier=xhigh caught=7 scored=9 errors=0'
+    "RECALL tier=xhigh caught=7 scored=9 errors=0 ${ZERO_TOKENS}"
 }
 
 @test "a failed launch, a reply without a closed non-empty relay block or a reply naming the corpus scores that diff error and exits 1" {
@@ -136,19 +224,60 @@ assert_not_launched() {
   add_case leaked-dir leak 'unquoted' \
     '[SHOULD FIX] hooks/x.sh:3 — unquoted variable, as autoagent/reviewer-catch-rate/case-01.diff shows'
   add_case leaked-labels leak 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable, per the labels.tsv row'
+  add_case read-labels leak 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  local read_input
+  read_input="$(jq -cn --arg p "${CORPUS}/labels.tsv" '{file_path: $p}')"
+  assistant_record high msg_r '' "${read_input}" >"${STUB_REPLY_DIR}/read-labels.records"
   run_runner --tier high --corpus "${CORPUS}"
   assert_status 1
   assert_report_rows $'hit.diff\tunquoted-var\tcaught' $'bare.diff\tno-markers\terror' \
     $'empty-relay.diff\tempty-block\terror' $'unclosed-relay.diff\ttruncated\terror' \
     $'crashed.diff\tcrash\terror' $'leaked-dir.diff\tleak\terror' $'leaked-labels.diff\tleak\terror' \
-    'RECALL tier=high caught=1 scored=1 errors=6'
-  local name
-  for name in bare empty-relay unclosed-relay crashed leaked-dir leaked-labels; do
-    [[ "${stderr}" == *"${name}.diff"* ]] || {
-      printf 'row %s: no stderr reason\n%s\n' "${name}" "${stderr}"
-      return 1
-    }
+    $'read-labels.diff\tleak\terror' "RECALL tier=high caught=1 scored=1 errors=7 ${ZERO_TOKENS}"
+  assert_stderr_names bare empty-relay unclosed-relay crashed leaked-dir leaked-labels read-labels
+}
+
+@test "a diff scores only when its reviewer transcript carries the injected scope header" {
+  add_case injected unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  add_case uninjected unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  : >"${STUB_REPLY_DIR}/uninjected.noinject"
+  run_runner --tier xhigh --corpus "${CORPUS}"
+  assert_status 1
+  assert_report_rows $'injected.diff\tunquoted-var\tcaught' $'uninjected.diff\tunquoted-var\terror'
+  assert_stderr_names uninjected
+}
+
+@test "a diff scores only when every recorded reviewer tier equals the requested arm" {
+  local row
+  for row in match mismatch absent mixed; do
+    add_case "${row}" unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
   done
+  assistant_record xhigh msg_1 >"${STUB_REPLY_DIR}/match.records"
+  assistant_record high msg_1 >"${STUB_REPLY_DIR}/mismatch.records"
+  assistant_record '' msg_1 >"${STUB_REPLY_DIR}/absent.records"
+  { assistant_record xhigh msg_1 && assistant_record high msg_2; } >"${STUB_REPLY_DIR}/mixed.records"
+  run_runner --tier xhigh --corpus "${CORPUS}"
+  assert_status 1
+  assert_report_rows $'match.diff\tunquoted-var\tcaught' $'mismatch.diff\tunquoted-var\terror' \
+    $'absent.diff\tunquoted-var\terror' $'mixed.diff\tunquoted-var\terror'
+  assert_stderr_names mismatch absent mixed
+}
+
+@test "token use sums reviewer usage once per message id, per diff and on the RECALL line" {
+  add_case tok unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  add_case quiet unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  local usage_a='{"input_tokens": 1, "output_tokens": 2, "cache_read_input_tokens": 3, "cache_creation_input_tokens": 4}'
+  local usage_b='{"input_tokens": 10, "output_tokens": 20, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 40}'
+  {
+    assistant_record xhigh msg_a "${usage_a}"
+    assistant_record xhigh msg_a "${usage_a}"
+    assistant_record xhigh msg_b "${usage_b}"
+  } >"${STUB_REPLY_DIR}/tok.records"
+  run_runner --tier xhigh --corpus "${CORPUS}"
+  assert_status 0
+  assert_report_rows $'TOKENS\ttok.diff\tinput=11 output=22 cache_read=33 cache_creation=44' \
+    $'TOKENS\tquiet.diff\t'"${ZERO_TOKENS}" \
+    'RECALL tier=xhigh caught=2 scored=2 errors=0 input=11 output=22 cache_read=33 cache_creation=44'
 }
 
 build_unlabeled_diff() {
@@ -188,17 +317,26 @@ build_no_diff() { printf '# none\n' >"${1}/labels.tsv"; }
   done
 }
 
-@test "an absent or effort-keyed reviewer definition stops the run with exit 5 before any launch" {
+@test "an absent reviewer definition stops the run with exit 5 before any launch, while an effort-keyed one runs" {
+  add_case hit unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  CONFIG_DIR="${BATS_TEST_TMPDIR}/config-absent"
+  mkdir -p "${CONFIG_DIR}"
+  run_runner --tier xhigh --corpus "${CORPUS}"
+  assert_status 5 absent
+  assert_not_launched absent
+  CONFIG_DIR="${BATS_TEST_TMPDIR}/config-keyed"
+  write_reviewer_definition "${CONFIG_DIR}" 'effort: high'
+  run_runner --tier xhigh --corpus "${CORPUS}"
+  assert_status 0 keyed
+  assert_report_rows $'hit.diff\tunquoted-var\tcaught'
+}
+
+@test "unusable session wiring stops the run with exit 7 before any launch" {
   add_case hit unquoted-var 'unquoted' 'unquoted variable'
-  local row
-  for row in absent keyed; do
-    CONFIG_DIR="${BATS_TEST_TMPDIR}/config-${row}"
-    mkdir -p "${CONFIG_DIR}"
-    [[ "${row}" == absent ]] || write_reviewer_definition "${CONFIG_DIR}" 'effort: high'
-    run_runner --tier xhigh --corpus "${CORPUS}"
-    assert_status 5 "${row}"
-    assert_not_launched "${row}"
-  done
+  rm -- "${HOOKS_DIR}/inject-scope-part-07.sh"
+  run_runner --tier xhigh --corpus "${CORPUS}"
+  assert_status 7 missing-hook
+  assert_not_launched missing-hook
 }
 
 launcher_for() {
@@ -212,7 +350,7 @@ launcher_for() {
 @test "an unplanned tier or an unusable launcher is refused before any launch" {
   add_case hit unquoted-var 'unquoted' 'unquoted variable'
   local row name want kind tier
-  for row in 'tier-medium|2|stub|medium' 'tier-missing|2|stub|' 'launcher-unset|4|unset|xhigh' \
+  for row in 'tier-low|2|stub|low' 'tier-max|2|stub|max' 'tier-missing|2|stub|' 'launcher-unset|4|unset|xhigh' \
     'launcher-not-executable|4|plain-file|xhigh'; do
     IFS='|' read -r name want kind tier <<<"${row}"
     LAUNCHER="$(launcher_for "${kind}")"
@@ -235,44 +373,96 @@ launcher_for() {
   done
 }
 
-@test "the launcher runs headless from HOME at the requested tier and spawns the typed reviewer under a corpus CID" {
-  add_case hit unquoted-var 'unquoted' 'unquoted variable'
-  run_runner --tier high --corpus "${CORPUS}"
-  assert_status 0
-  local argv prompt cwd home
-  argv="$(cat -- "${STUB_LOG_DIR}/argv")"
-  prompt="$(cat -- "${STUB_LOG_DIR}/prompt-hit")"
-  cwd="$(cat -- "${STUB_LOG_DIR}/cwd")"
-  home="$(cd -- "${FAKE_HOME}" && pwd -P)"
-  [[ $'\n'"${argv}"$'\n' == *$'\n-p\n'* && "${argv}" == *$'--effort\nhigh'* ]] || {
-    printf '%s\n' "${argv}"
-    return 1
-  }
-  [[ $'\n'"${argv}"$'\n' != *$'\n--agent\n'* ]] || {
-    printf '%s\n' "${argv}"
-    return 1
-  }
-  [[ "${cwd}" == "${home}" ]] || return 1
-  [[ "${prompt}" == *glass-atrium-qa-code-reviewer* ]] || {
-    printf '%s\n' "${prompt}"
-    return 1
-  }
-  printf '%s\n' "${prompt}" | grep -Eq 'CID: [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{4}_reviewer-corpus_[0-9a-f]{4}$'
+# effort_after <argv lines> — every value following an --effort flag, one per line.
+effort_after() { awk 'prev == "--effort" { print } { prev = $0 }' <<<"${1}"; }
+
+@test "every arm runs an xhigh headless parent whose staged workflow spawns the typed reviewer at the arm's tier with a schema" {
+  add_case hit unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  local tier argv script parent_tier
+  for tier in medium high xhigh; do
+    mkdir -p "${STUB_LOG_DIR}"
+    run_runner --tier "${tier}" --corpus "${CORPUS}"
+    assert_status 0 "${tier}"
+    assert_report_rows "RECALL tier=${tier} caught=1 scored=1 errors=0 ${ZERO_TOKENS}" || {
+      echo "row ${tier}"
+      return 1
+    }
+    argv="$(cat -- "${STUB_LOG_DIR}/argv")"
+    script="$(cat -- "${STUB_LOG_DIR}/script-hit.js")"
+    parent_tier="$(effort_after "${argv}")"
+    mv -- "${STUB_LOG_DIR}" "${BATS_TEST_TMPDIR}/log-${tier}"
+    [[ $'\n'"${argv}"$'\n' == *$'\n-p\n'* && "${parent_tier}" == xhigh ]] || {
+      echo "row ${tier}: ${argv}"
+      return 1
+    }
+    [[ "${argv}" == *$'--setting-sources\nproject,local'* ]] || {
+      echo "row ${tier}: ${argv}"
+      return 1
+    }
+    printf '%s\n' "${argv}" | grep -Eqx -- '--session-id' || {
+      echo "row ${tier}: ${argv}"
+      return 1
+    }
+    ! printf '%s\n' "${argv}" | grep -Eqx -- '--agents?' || {
+      echo "row ${tier}: ${argv}"
+      return 1
+    }
+    [[ "${script}" == *"agentType: 'glass-atrium-qa-code-reviewer'"* && "${script}" == *"effort: '${tier}'"* &&
+      "${script}" == *'schema'* && "${script}" == *"label: 'corpus:hit'"* ]] || {
+      echo "row ${tier}: ${script}"
+      return 1
+    }
+    printf '%s\n' "${script}" | grep -Eq 'CID: [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{4}_reviewer-corpus_[0-9a-f]{4}' \
+      || {
+        echo "row ${tier}: ${script}"
+        return 1
+      }
+  done
 }
 
-@test "the reviewer is pointed at a temporary copy of the diff staged outside the corpus" {
+@test "the reviewer works in the case stage dir outside the corpus and repo, holding a copy of the diff and no label path" {
   add_case hit unquoted-var 'unquoted' 'unquoted variable'
   run_runner --tier xhigh --corpus "${CORPUS}"
   assert_status 0
   cmp -- "${STUB_LOG_DIR}/seen-hit.diff" "${CORPUS}/hit.diff"
-  local prompt staged
+  local prompt staged cwd stage_dir corpus repo
   prompt="$(cat -- "${STUB_LOG_DIR}/prompt-hit")"
   staged="$(cat -- "${STUB_LOG_DIR}/staged-hit")"
+  cwd="$(cat -- "${STUB_LOG_DIR}/cwd-hit")"
+  stage_dir="$(cat -- "${STUB_LOG_DIR}/stagedir-hit")"
+  corpus="$(cd -- "${CORPUS}" && pwd -P)"
+  repo="$(cd -- "${GA}" && pwd -P)"
   [[ "${prompt}" != *"${CORPUS}"* && "${staged}" != "${CORPUS}"/* ]] || return 1
+  [[ "${cwd}" == "${stage_dir}" && "${cwd}" != "${corpus}"* && "${cwd}" != "${repo}"* ]] || {
+    printf 'cwd %s\n' "${cwd}"
+    return 1
+  }
+  ! grep -Eq 'labels\.tsv|findings\.tsv|reviewer-catch-rate/' -- "${STUB_LOG_DIR}/tree-hit" || {
+    cat -- "${STUB_LOG_DIR}/tree-hit"
+    return 1
+  }
   [[ ! -e "${staged%/*}" ]] || {
     printf 'stage dir left behind: %s\n' "${staged%/*}"
     return 1
   }
+}
+
+@test "a corpus run writes no outcome row and no lesson" {
+  add_case hit unquoted-var 'unquoted' 'unquoted variable'
+  run_runner --tier xhigh --corpus "${CORPUS}"
+  assert_status 0
+  local fired argv
+  fired="$(cat -- "${STUB_LOG_DIR}/hooks")"
+  argv="$(cat -- "${STUB_LOG_DIR}/argv")"
+  [[ $'\n'"${fired}"$'\n' == *$'\ninject-scope-rules.sh\n'* && $'\n'"${fired}"$'\n' == *$'\ninject-scope-part-12.sh\n'* ]] || {
+    printf 'fired:\n%s\n' "${fired}"
+    return 1
+  }
+  ! grep -Eqx 'track-outcome\.sh|cost-tracker\.sh|agent-tracker\.sh|telemetry-activation\.sh' <<<"${fired}" || {
+    printf 'fired:\n%s\n' "${fired}"
+    return 1
+  }
+  [[ "${argv}" == *$'--setting-sources\nproject,local'* ]]
 }
 
 @test "a missing shared path guard stops the run with exit 6 before any launch" {
@@ -285,14 +475,14 @@ launcher_for() {
   assert_not_launched path-guard
 }
 
-@test "a run states its live-profile footprint on stderr" {
+@test "a run states its recorder-free footprint on stderr" {
   add_case hit unquoted-var 'unquoted' 'unquoted variable'
   run_runner --tier xhigh --corpus "${CORPUS}"
   assert_status 0
-  local word
-  for word in reviewer-corpus outcome CostEvent lesson agent-tool-budget; do
-    [[ "${stderr}" == *"${word}"* ]] || {
-      printf 'missing %s in:\n%s\n' "${word}" "${stderr}"
+  local phrase
+  for phrase in 'project,local' 'no outcome row' 'no lesson' 'no CostEvent' 'inject-scope' "${HOOKS_DIR}"; do
+    [[ "${stderr}" == *"${phrase}"* ]] || {
+      printf 'missing %s in:\n%s\n' "${phrase}" "${stderr}"
       return 1
     }
   done
@@ -322,26 +512,9 @@ count_corpus_labels() {
     "${REPO_CORPUS}/labels.tsv"
 }
 
-# Stub reviewer for the repo corpus: relays the reply filed under the staged diff's checksum, else one
-# severity-tagged finding quoting the diff back as indented continuation lines, which scoring reads.
-write_corpus_launcher() {
-  cat >"${BATS_TEST_TMPDIR}/launcher" <<'STUB'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-prompt="${!#}"
-diff_path="$(printf '%s\n' "${prompt}" | grep -Eo '/[^[:space:]]+\.diff' | head -n 1)"
-reply="${STUB_REPLY_DIR}/$(cksum <"${diff_path}" | awk '{ print $1 }')"
-printf 'REVIEWER-REPLY-BEGIN\n'
-if [[ -f "${reply}" ]]; then
-  cat -- "${reply}"
-else
-  printf '%s\n' '- `[CONSIDER][Risk: L] the change`: quoted back as proposed'
-  sed 's/^/    /' "${diff_path}"
-fi
-printf 'REVIEWER-REPLY-END\n'
-STUB
-  chmod +x "${BATS_TEST_TMPDIR}/launcher"
-}
+# Repo-corpus stub mode: replies are filed under the staged diff's checksum, else one severity-tagged finding
+# quoting the diff back as indented continuation lines, which scoring reads.
+write_corpus_launcher() { STUB_KEY_MODE='cksum'; }
 
 # The review findings findings.tsv files for defect id $1, one per line, empty when none.
 corpus_findings() {
@@ -381,7 +554,7 @@ corpus_findings() {
     printf '%s\n' "${output}"
     return 1
   }
-  assert_report_rows "RECALL tier=high caught=0 scored=${count} errors=0"
+  assert_report_rows "RECALL tier=high caught=0 scored=${count} errors=0 ${ZERO_TOKENS}"
 }
 
 # denial-reply.md: an unrelated finding citing the Residue class list, anchored away from every corpus file and symbol,
@@ -403,7 +576,7 @@ corpus_findings() {
   done <"${REPO_CORPUS}/labels.tsv"
   run_runner --tier xhigh
   assert_status 0
-  assert_report_rows "RECALL tier=xhigh caught=0 scored=${count} errors=0"
+  assert_report_rows "RECALL tier=xhigh caught=0 scored=${count} errors=0 ${ZERO_TOKENS}"
 }
 
 # Fields split on \x1f like the runner's own label read, so an empty field cannot shift the rest.
