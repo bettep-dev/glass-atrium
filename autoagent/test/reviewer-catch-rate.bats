@@ -162,6 +162,7 @@ run_runner() {
     STUB_LOG_DIR="${STUB_LOG_DIR}" \
     STUB_REPLY_DIR="${STUB_REPLY_DIR}" \
     STUB_KEY_MODE="${STUB_KEY_MODE}" \
+    STUB_CONFIG_OVERRIDE="${STUB_CONFIG_OVERRIDE:-}" \
     bash "${RUNNER}" "$@"
 }
 
@@ -192,6 +193,27 @@ assert_stderr_names() {
       return 1
     }
   done
+}
+
+# assert_evidence <dir> <row name> — the stopped diff's reply, launcher stderr and stage files survive the run.
+assert_evidence() {
+  local file
+  for file in reply stderr change.diff review.js .claude/settings.json; do
+    [[ -f "${1}/${file}" ]] || {
+      printf 'row %s: %s/%s not kept\nstderr:\n%s\n' "${2}" "${1}" "${file}" "${stderr}"
+      return 1
+    }
+  done
+}
+
+# assert_one_launch <row name> — the stop came at the first diff, so no later diff paid for a run.
+assert_one_launch() {
+  local launches
+  launches="$(grep -cx -- '-p' "${STUB_LOG_DIR}/argv")"
+  [[ "${launches}" -eq 1 ]] || {
+    printf 'row %s: launches=%s, want 1\n' "${1}" "${launches}"
+    return 1
+  }
 }
 
 assert_not_launched() {
@@ -285,23 +307,61 @@ tool_result_record() {
   done
 }
 
-@test "a launch that exits 0 yet leaves no reviewer transcript in the config dir stops the run with exit 9" {
-  local name launches
+@test "a launch that exits 0 with no session transcript in the config dir stops the run with exit 9 naming the binding" {
+  local name
   for name in case-a case-b case-c; do
     add_case "${name}" unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
   done
-  export STUB_CONFIG_OVERRIDE="${BATS_TEST_TMPDIR}/hard-set-config"
-  run_runner --measured --tier xhigh --corpus "${CORPUS}"
+  STUB_CONFIG_OVERRIDE="${BATS_TEST_TMPDIR}/hard-set-config"
+  run_runner --measured --tier xhigh --corpus "${CORPUS}" --out "${BATS_TEST_TMPDIR}/out"
   assert_status 9
-  launches="$(grep -cx -- '-p' "${STUB_LOG_DIR}/argv")"
-  [[ "${launches}" -eq 1 ]] || {
-    printf 'launches=%s, want 1\n' "${launches}"
+  assert_one_launch binding
+  [[ "${stderr}" == *'case-a.diff'*'REVIEWER_CATCH_RATE_CONFIG_DIR'* && "${stderr}" != *'scriptPath'* ]] || {
+    printf 'stderr:\n%s\n' "${stderr}"
     return 1
   }
-  [[ "${stderr}" == *'case-a.diff'*'REVIEWER_CATCH_RATE_CONFIG_DIR'* && $'\n'"${output}" != *$'\nRECALL '* ]] || {
-    printf 'stdout:\n%s\nstderr:\n%s\n' "${output}" "${stderr}"
+  [[ $'\n'"${output}" != *$'\nRECALL '* ]] || return 1
+  assert_evidence "${BATS_TEST_TMPDIR}/out/case-a.evidence" binding
+}
+
+@test "a launch whose parent session landed but spawned no reviewer stops the run with exit 10 naming the spawn and session shape" {
+  local name
+  for name in case-a case-b; do
+    add_case "${name}" unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+    : >"${STUB_REPLY_DIR}/${name}.notranscript"
+  done
+  run_runner --measured --tier xhigh --corpus "${CORPUS}" --out "${BATS_TEST_TMPDIR}/out"
+  assert_status 10
+  assert_one_launch shape
+  [[ "${stderr}" == *'case-a.diff'*'scriptPath'*'project,local'* && "${stderr}" != *'REVIEWER_CATCH_RATE_CONFIG_DIR'* ]] || {
+    printf 'stderr:\n%s\n' "${stderr}"
     return 1
   }
+  assert_evidence "${BATS_TEST_TMPDIR}/out/case-a.evidence" shape
+}
+
+@test "a stopped run without --out keeps the stopped diff's evidence in a dir its stop message names" {
+  local row name want kept
+  mkdir -p "${BATS_TEST_TMPDIR}/tmp"
+  TMPDIR="${BATS_TEST_TMPDIR}/tmp"
+  for row in 'binding|9' 'shape|10'; do
+    name="${row%%|*}"
+    want="${row#*|}"
+    add_case "${name}" unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+    [[ "${name}" != shape ]] || : >"${STUB_REPLY_DIR}/${name}.notranscript"
+    STUB_CONFIG_OVERRIDE=''
+    [[ "${name}" != binding ]] || STUB_CONFIG_OVERRIDE="${BATS_TEST_TMPDIR}/hard-set-config"
+    run_runner --measured --tier xhigh --corpus "${CORPUS}"
+    assert_status "${want}" "${name}"
+    kept="${stderr##*evidence kept in }"
+    [[ "${kept}" == /* && "${kept}" != "${stderr}" ]] || {
+      printf 'row %s: no kept dir named\n%s\n' "${name}" "${stderr}"
+      return 1
+    }
+    assert_evidence "${kept}" "${name}"
+    : >"${CORPUS}/labels.tsv"
+    mv -- "${CORPUS}/${name}.diff" "${BATS_TEST_TMPDIR}/"
+  done
 }
 
 @test "a failed launch that leaves no reviewer transcript scores that diff error and the run goes on" {
@@ -313,6 +373,10 @@ tool_result_record() {
   assert_status 1
   assert_report_rows $'crashed.diff\tcrash\terror' $'later.diff\tunquoted-var\tcaught' \
     "RECALL tier=xhigh caught=1 scored=1 errors=1 ${ZERO_TOTALS}"
+  [[ "${stderr}" != *'ERROR line'* ]] || {
+    printf 'the ERR trap fired on an absorbed lookup:\n%s\n' "${stderr}"
+    return 1
+  }
 }
 
 @test "a diff scores only when its reviewer transcript carries the injected scope header" {

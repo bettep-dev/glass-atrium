@@ -39,8 +39,10 @@
 #   5 = reviewer definition unreadable · 6 = shared path guard missing
 #   7 = session wiring unusable: python3 absent, no injection binding readable, or an injection hook not executable
 #   8 = launcher config dir unset or not a directory
-#   9 = a launch exited 0 yet left no reviewer transcript under the config dir — the binding is wrong, so the run
-#       stops at that diff instead of paying for every later one
+#   9 = a launch exited 0 yet left no session transcript under the config dir — the binding is wrong
+#   10 = a launch exited 0 and its parent transcript landed, but no reviewer was spawned — spawn or session shape
+#       (Workflow refusing scriptPath on a fresh run, or user-dir agents not loading under project,local)
+#   9 and 10 stop the run at that diff instead of paying for every later one, and keep its evidence
 set -Eeuo pipefail
 IFS=$'\n\t'
 trap 'printf "reviewer-catch-rate: ERROR line %s: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2' ERR
@@ -125,6 +127,7 @@ HOOKS_DIR="${REVIEWER_CATCH_RATE_HOOKS_DIR:-${GA_ROOT:-${HOME}/.glass-atrium}/ho
 STAGE_DIR=''
 CASE_SESSION=''
 CASE_LAUNCH_RC=0
+KEPT_DIR=''
 CASE_TOKENS=''
 CASE_PARENT_TOKENS=''
 DIFFS=()
@@ -132,6 +135,8 @@ INJECTION_HOOKS=()
 LABEL_DIFFS=()
 LABEL_DEFECTS=()
 LABEL_PATTERNS=()
+REVIEWER_TRANSCRIPTS=()
+PARENT_TRANSCRIPTS=()
 TOKENS=(0 0 0 0)
 PARENT_TOKENS=(0 0 0 0)
 CAUGHT=0
@@ -335,6 +340,8 @@ review_case() {
   local verdict=0
   # shellcheck disable=SC2310  # each status folds into the case verdict
   launch_review "$@" || verdict=1
+  find_session_transcripts
+  stop_on_absent_reviewer "${2}" "${1}"
   # shellcheck disable=SC2310  # each status folds into the case verdict
   audit_transcript "$@" || verdict=1
   count_parent_tokens "${2}"
@@ -396,23 +403,14 @@ build_workflow() {
 
 # 1 when the case has no single reviewer transcript, or it read a label path, lacks the scope header or recorded
 # a tier other than the arm; a read transcript sets CASE_TOKENS and adds to the totals whatever the verdict.
-# A launch that exited 0 with no transcript at all stops the run (exit 9): the session recorded elsewhere, and
-# every later diff would pay a full run to fail the same way.
 audit_transcript() {
-  local name="${2}" transcript fields leak injected efforts input output cache_read cache_creation lookup=0
+  local name="${2}" fields leak injected efforts input output cache_read cache_creation
   CASE_TOKENS=''
-  # shellcheck disable=SC2310  # pure lookup — its status is the transcript verdict
-  transcript="$(find_transcript)" || lookup=$?
-  if ((lookup == 1 && CASE_LAUNCH_RC == 0)); then
-    local reason="${name}: the launch exited 0 but left no reviewer transcript"
-    reason+=" under ${CONFIG_DIR}/projects/*/${CASE_SESSION}/ — set REVIEWER_CATCH_RATE_CONFIG_DIR to the dir the launcher runs under"
-    die 9 "${reason} (claude-work-dev: \$HOME/.claude-work-dev); stopping before the next diff"
-  fi
-  if ((lookup != 0)); then
+  if ((${#REVIEWER_TRANSCRIPTS[@]} != 1)); then
     void_case "${name}" "no single reviewer transcript under ${CONFIG_DIR}/projects/*/${CASE_SESSION}/"
     return 1
   fi
-  fields="$(python3 -c "${TRANSCRIPT_READER}" "${transcript}" "${INJECTION_HEADER}" "${LABEL_PATHS[@]}")"
+  fields="$(python3 -c "${TRANSCRIPT_READER}" "${REVIEWER_TRANSCRIPTS[0]}" "${INJECTION_HEADER}" "${LABEL_PATHS[@]}")"
   IFS=$'\x1f' read -r leak injected efforts input output cache_read cache_creation <<<"${fields}"
   add_tokens "${input}" "${output}" "${cache_read}" "${cache_creation}"
   if [[ -n "${leak}" ]]; then
@@ -426,15 +424,41 @@ audit_transcript() {
   check_recorded_tier "${name}" "${efforts}"
 }
 
-# 1 when no reviewer transcript exists, 2 when several do.
-find_transcript() {
-  local -a found
+# The case session's transcripts under the bound dir: the parent beside its session dir, the reviewer inside it.
+# Sets arrays instead of printing, so no lookup runs in a command substitution the ERR trap reports from.
+find_session_transcripts() {
   shopt -s nullglob
-  found=("${CONFIG_DIR}"/projects/*/"${CASE_SESSION}"/subagents/workflows/wf_*/agent-*.jsonl)
+  PARENT_TRANSCRIPTS=("${CONFIG_DIR}"/projects/*/"${CASE_SESSION}".jsonl)
+  REVIEWER_TRANSCRIPTS=("${CONFIG_DIR}"/projects/*/"${CASE_SESSION}"/subagents/workflows/wf_*/agent-*.jsonl)
   shopt -u nullglob
-  ((${#found[@]} > 0)) || return 1
-  ((${#found[@]} == 1)) || return 2
-  printf '%s\n' "${found[0]}"
+}
+
+# A launch that exited 0 yet spawned no recorded reviewer stops the run: every later diff would fail the same way.
+# No parent transcript either → the session recorded elsewhere (exit 9); a parent but no reviewer → shape (exit 10).
+stop_on_absent_reviewer() {
+  local name="${1}" reason
+  ((CASE_LAUNCH_RC == 0 && ${#REVIEWER_TRANSCRIPTS[@]} == 0)) || return 0
+  keep_evidence "${2}" "${name}"
+  if ((${#PARENT_TRANSCRIPTS[@]} == 0)); then
+    reason="the launch exited 0 but no session transcript landed under ${CONFIG_DIR}/projects/*/"
+    reason+=' — set REVIEWER_CATCH_RATE_CONFIG_DIR to the dir the launcher runs under'
+    die 9 "${name}: ${reason} (claude-work-dev: \$HOME/.claude-work-dev); evidence kept in ${KEPT_DIR}"
+  fi
+  reason="the parent session landed (${PARENT_TRANSCRIPTS[0]}) but spawned no reviewer — spawn or session shape:"
+  reason+=' Workflow may refuse scriptPath on a fresh run, or user-dir agents may not load under --setting-sources'
+  die 10 "${name}: ${reason} project,local; evidence kept in ${KEPT_DIR}"
+}
+
+# Copies the stopped case dir — parent reply, launcher stderr, staged files — out of the stage dir the EXIT trap
+# deletes, into <out>/<case>.evidence or a fresh temp dir; sets KEPT_DIR.
+keep_evidence() {
+  if [[ -n "${OUT}" ]]; then
+    KEPT_DIR="${OUT}/${2%.diff}.evidence"
+    mkdir -p -- "${KEPT_DIR}"
+  else
+    KEPT_DIR="$(mktemp -d)"
+  fi
+  cp -R -- "${1}/." "${KEPT_DIR}/"
 }
 
 check_recorded_tier() {
@@ -457,18 +481,14 @@ add_tokens() {
 # The headless parent's own usage, read from <config dir>/projects/*/<session id>.jsonl beside the reviewer's
 # session dir; an unread parent leaves its column unread and states why on stderr.
 count_parent_tokens() {
-  local -a found
   local fields i _leak _injected _efforts input output cache_read cache_creation
   CASE_PARENT_TOKENS=''
-  shopt -s nullglob
-  found=("${CONFIG_DIR}"/projects/*/"${CASE_SESSION}".jsonl)
-  shopt -u nullglob
-  if ((${#found[@]} != 1)); then
+  if ((${#PARENT_TRANSCRIPTS[@]} != 1)); then
     printf 'reviewer-catch-rate: %s: no single parent transcript %s.jsonl — its tokens are uncounted\n' \
       "${1}" "${CASE_SESSION}" >&2
     return 0
   fi
-  fields="$(python3 -c "${TRANSCRIPT_READER}" "${found[0]}" "${INJECTION_HEADER}")"
+  fields="$(python3 -c "${TRANSCRIPT_READER}" "${PARENT_TRANSCRIPTS[0]}" "${INJECTION_HEADER}")"
   IFS=$'\x1f' read -r _leak _injected _efforts input output cache_read cache_creation <<<"${fields}"
   local -a values=("${input}" "${output}" "${cache_read}" "${cache_creation}")
   CASE_PARENT_TOKENS="$(format_tokens parent_ "${values[@]}")"
