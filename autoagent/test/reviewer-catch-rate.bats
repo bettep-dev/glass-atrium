@@ -10,6 +10,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 ZERO_TOKENS='input=0 output=0 cache_read=0 cache_creation=0'
+ZERO_PARENT_TOKENS='parent_input=0 parent_output=0 parent_cache_read=0 parent_cache_creation=0'
+ZERO_TOTALS="${ZERO_TOKENS} ${ZERO_PARENT_TOKENS}"
 
 setup() {
   RUNNER="${GA}/autoagent/reviewer-catch-rate.sh"
@@ -40,10 +42,14 @@ write_reviewer_definition() {
 }
 
 # Stub CLI: logs argv, cwd, the tree under it, the prompt, the staged workflow script and diff; fires the hooks
-# the cwd's .claude/settings.json wires; writes a reviewer transcript under the --session-id; replays the reply.
+# the cwd's .claude/settings.json wires; writes a parent and a reviewer transcript under the --session-id;
+# replays the reply.
 # Reply key: the diff's first line (line1, reply replayed raw) or its checksum (cksum, reply wrapped in the relay
 # markers, else the diff quoted back); <key>.rc sets the exit status,
-# <key>.records replaces the default assistant record, which carries the script's effort option.
+# <key>.records replaces the default assistant record, which carries the script's effort option;
+# <key>.parent replaces the default usage-free parent record, and <key>.noparent writes no parent transcript;
+# <key>.notranscript writes no reviewer transcript, and STUB_CONFIG_OVERRIDE stands in for a launcher that
+# hard-sets its own config dir.
 write_launcher() {
   cat >"${LAUNCHER}" <<'STUB'
 #!/usr/bin/env bash
@@ -72,9 +78,17 @@ fire() {
   while IFS='' read -r cmd; do "${cmd}" </dev/null; done < <(jq -r --arg e "${1}" '.hooks[$e][]?.hooks[]?.command' .claude/settings.json)
 }
 encoded="$(printf '%s' "$(pwd -P)" | tr -c 'A-Za-z0-9' '-')"
-dir="${CLAUDE_CONFIG_DIR}/projects/${encoded}/${session}/subagents/workflows/wf_stub"
+config="${STUB_CONFIG_OVERRIDE:-${CLAUDE_CONFIG_DIR}}"
+dir="${config}/projects/${encoded}/${session}/subagents/workflows/wf_stub"
 mkdir -p "${dir}"
 transcript="${dir}/agent-stub.jsonl"
+[[ ! -e "${STUB_REPLY_DIR}/${key}.notranscript" ]] || transcript=/dev/null
+parent="${config}/projects/${encoded}/${session}.jsonl"
+if [[ -f "${STUB_REPLY_DIR}/${key}.parent" ]]; then
+  cat -- "${STUB_REPLY_DIR}/${key}.parent" >"${parent}"
+elif [[ ! -e "${STUB_REPLY_DIR}/${key}.noparent" ]]; then
+  jq -cn '{type: "assistant", message: {role: "assistant", id: "msg_parent", content: [{type: "text", text: "relayed"}]}}' >"${parent}"
+fi
 context="$(fire SubagentStart | jq -rs 'map(.hookSpecificOutput.additionalContext? // empty) | join("\n")')"
 jq -cn --arg c "${context}" '{type: "attachment", attachment: {type: "hook_additional_context", hookEvent: "SubagentStart", content: [$c]}}' >"${transcript}"
 if [[ -f "${STUB_REPLY_DIR}/${key}.records" ]]; then
@@ -212,7 +226,7 @@ assert_not_launched() {
     $'bold-lead-in.diff\tglob-use\tcaught' $'lowercase-tag.diff\tglob-use\tcaught' \
     $'padded-markers.diff\tglob-use\tcaught' \
     $'mid-line-tag.diff\tglob-use\tmissed' $'outside.diff\tsplit-use\tmissed' \
-    "RECALL tier=xhigh caught=7 scored=9 errors=0 ${ZERO_TOKENS}"
+    "RECALL tier=xhigh caught=7 scored=9 errors=0 ${ZERO_TOTALS}"
 }
 
 @test "a failed launch, a reply without a closed non-empty relay block or a reply naming the corpus scores that diff error and exits 1" {
@@ -232,7 +246,7 @@ assert_not_launched() {
   assert_report_rows $'hit.diff\tunquoted-var\tcaught' $'bare.diff\tno-markers\terror' \
     $'empty-relay.diff\tempty-block\terror' $'unclosed-relay.diff\ttruncated\terror' \
     $'crashed.diff\tcrash\terror' $'leaked-dir.diff\tleak\terror' $'leaked-labels.diff\tleak\terror' \
-    "RECALL tier=high caught=1 scored=1 errors=6 ${ZERO_TOKENS}"
+    "RECALL tier=high caught=1 scored=1 errors=6 ${ZERO_TOTALS}"
   assert_stderr_names bare empty-relay unclosed-relay crashed leaked-dir leaked-labels
 }
 
@@ -271,6 +285,36 @@ tool_result_record() {
   done
 }
 
+@test "a launch that exits 0 yet leaves no reviewer transcript in the config dir stops the run with exit 9" {
+  local name launches
+  for name in case-a case-b case-c; do
+    add_case "${name}" unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  done
+  export STUB_CONFIG_OVERRIDE="${BATS_TEST_TMPDIR}/hard-set-config"
+  run_runner --measured --tier xhigh --corpus "${CORPUS}"
+  assert_status 9
+  launches="$(grep -cx -- '-p' "${STUB_LOG_DIR}/argv")"
+  [[ "${launches}" -eq 1 ]] || {
+    printf 'launches=%s, want 1\n' "${launches}"
+    return 1
+  }
+  [[ "${stderr}" == *'case-a.diff'*'REVIEWER_CATCH_RATE_CONFIG_DIR'* && $'\n'"${output}" != *$'\nRECALL '* ]] || {
+    printf 'stdout:\n%s\nstderr:\n%s\n' "${output}" "${stderr}"
+    return 1
+  }
+}
+
+@test "a failed launch that leaves no reviewer transcript scores that diff error and the run goes on" {
+  add_case crashed crash 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  add_case later unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  printf '3\n' >"${STUB_REPLY_DIR}/crashed.rc"
+  : >"${STUB_REPLY_DIR}/crashed.notranscript"
+  run_runner --measured --tier xhigh --corpus "${CORPUS}"
+  assert_status 1
+  assert_report_rows $'crashed.diff\tcrash\terror' $'later.diff\tunquoted-var\tcaught' \
+    "RECALL tier=xhigh caught=1 scored=1 errors=1 ${ZERO_TOTALS}"
+}
+
 @test "a diff scores only when its reviewer transcript carries the injected scope header" {
   add_case injected unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
   add_case uninjected unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
@@ -297,21 +341,33 @@ tool_result_record() {
   assert_stderr_names mismatch absent mixed
 }
 
-@test "token use sums reviewer usage once per message id, per diff and on the RECALL line" {
+@test "token use sums reviewer and parent usage once per message id, per diff and on the summary line" {
   add_case tok unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
   add_case quiet unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  add_case orphan unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
   local usage_a='{"input_tokens": 1, "output_tokens": 2, "cache_read_input_tokens": 3, "cache_creation_input_tokens": 4}'
   local usage_b='{"input_tokens": 10, "output_tokens": 20, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 40}'
+  local usage_p='{"input_tokens": 100, "output_tokens": 200, "cache_read_input_tokens": 300, "cache_creation_input_tokens": 400}'
   {
     assistant_record xhigh msg_a "${usage_a}"
     assistant_record xhigh msg_a "${usage_a}"
     assistant_record xhigh msg_b "${usage_b}"
   } >"${STUB_REPLY_DIR}/tok.records"
+  {
+    assistant_record xhigh msg_p "${usage_p}"
+    assistant_record xhigh msg_p "${usage_p}"
+    assistant_record xhigh msg_q "${usage_a}"
+  } >"${STUB_REPLY_DIR}/tok.parent"
+  : >"${STUB_REPLY_DIR}/orphan.noparent"
   run_runner --measured --tier xhigh --corpus "${CORPUS}"
   assert_status 0
-  assert_report_rows $'TOKENS\ttok.diff\tinput=11 output=22 cache_read=33 cache_creation=44' \
-    $'TOKENS\tquiet.diff\t'"${ZERO_TOKENS}" \
-    'RECALL tier=xhigh caught=2 scored=2 errors=0 input=11 output=22 cache_read=33 cache_creation=44'
+  assert_report_rows \
+    $'TOKENS\ttok.diff\tinput=11 output=22 cache_read=33 cache_creation=44\tparent_input=101 parent_output=202 parent_cache_read=303 parent_cache_creation=404' \
+    $'TOKENS\tquiet.diff\t'"${ZERO_TOKENS}"$'\t'"${ZERO_PARENT_TOKENS}" \
+    $'TOKENS\torphan.diff\t'"${ZERO_TOKENS}"$'\tunread' \
+    $'orphan.diff\tunquoted-var\tcaught' \
+    'RECALL tier=xhigh caught=3 scored=3 errors=0 input=11 output=22 cache_read=33 cache_creation=44 parent_input=101 parent_output=202 parent_cache_read=303 parent_cache_creation=404'
+  assert_stderr_names orphan
 }
 
 build_unlabeled_diff() {
@@ -387,7 +443,7 @@ build_no_diff() { printf '# none\n' >"${1}/labels.tsv"; }
     if [[ -n "${flag}" ]]; then run_runner "${flag}" --tier xhigh --corpus "${CORPUS}"; else run_runner --tier xhigh --corpus "${CORPUS}"; fi
     assert_status 0 "${name}"
     assert_report_rows "# reviewer-catch-rate mode=${mode} tier=xhigh corpus=${CORPUS}" \
-      "${summary} tier=xhigh caught=1 scored=1 errors=0 ${ZERO_TOKENS}" || {
+      "${summary} tier=xhigh caught=1 scored=1 errors=0 ${ZERO_TOTALS}" || {
       echo "row ${name}"
       return 1
     }
@@ -457,12 +513,12 @@ effort_after() { awk 'prev == "--effort" { print } { prev = $0 }' <<<"${1}"; }
 
 @test "every arm runs an xhigh headless parent whose staged workflow spawns the typed reviewer at the arm's tier with a schema" {
   add_case hit unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
-  local tier argv script parent_tier
+  local tier argv script parent_tier brief
   for tier in medium high xhigh; do
     mkdir -p "${STUB_LOG_DIR}"
     run_runner --measured --tier "${tier}" --corpus "${CORPUS}"
     assert_status 0 "${tier}"
-    assert_report_rows "RECALL tier=${tier} caught=1 scored=1 errors=0 ${ZERO_TOKENS}" || {
+    assert_report_rows "RECALL tier=${tier} caught=1 scored=1 errors=0 ${ZERO_TOTALS}" || {
       echo "row ${tier}"
       return 1
     }
@@ -491,11 +547,16 @@ effort_after() { awk 'prev == "--effort" { print } { prev = $0 }' <<<"${1}"; }
       echo "row ${tier}: ${script}"
       return 1
     }
-    printf '%s\n' "${script}" | grep -Eq 'CID: [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{4}_reviewer-corpus_[0-9a-f]{4}' \
+    printf '%s\n' "${script}" | grep -Eq 'CID: [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{4}_change-review_[0-9a-f]{4}' \
       || {
         echo "row ${tier}: ${script}"
         return 1
       }
+    brief="$(sed -n '/^const brief/,/CID:/p' <<<"${script}")"
+    [[ -n "${brief}" && "${brief}" != *[Cc][Oo][Rr][Pp][Uu][Ss]* ]] || {
+      echo "row ${tier}: the brief names the corpus: ${script}"
+      return 1
+    }
   done
 }
 
@@ -633,7 +694,7 @@ corpus_findings() {
     printf '%s\n' "${output}"
     return 1
   }
-  assert_report_rows "RECALL tier=high caught=0 scored=${count} errors=0 ${ZERO_TOKENS}"
+  assert_report_rows "RECALL tier=high caught=0 scored=${count} errors=0 ${ZERO_TOTALS}"
 }
 
 # denial-reply.md: an unrelated finding citing the Residue class list, anchored away from every corpus file and symbol,
@@ -655,7 +716,7 @@ corpus_findings() {
   done <"${REPO_CORPUS}/labels.tsv"
   run_runner --measured --tier xhigh
   assert_status 0
-  assert_report_rows "RECALL tier=xhigh caught=0 scored=${count} errors=0 ${ZERO_TOKENS}"
+  assert_report_rows "RECALL tier=xhigh caught=0 scored=${count} errors=0 ${ZERO_TOTALS}"
 }
 
 # Fields split on \x1f like the runner's own label read, so an empty field cannot shift the rest.

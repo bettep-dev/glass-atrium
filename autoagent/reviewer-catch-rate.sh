@@ -39,6 +39,8 @@
 #   5 = reviewer definition unreadable · 6 = shared path guard missing
 #   7 = session wiring unusable: python3 absent, no injection binding readable, or an injection hook not executable
 #   8 = launcher config dir unset or not a directory
+#   9 = a launch exited 0 yet left no reviewer transcript under the config dir — the binding is wrong, so the run
+#       stops at that diff instead of paying for every later one
 set -Eeuo pipefail
 IFS=$'\n\t'
 trap 'printf "reviewer-catch-rate: ERROR line %s: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2' ERR
@@ -48,7 +50,7 @@ readonly SCRIPT_DIR
 readonly PATH_GUARD="${SCRIPT_DIR}/../scripts/lib/path-guard.sh"
 readonly BINDINGS_FILE="${SCRIPT_DIR}/../lib/ga-env.sh"
 readonly REVIEWER='glass-atrium-qa-code-reviewer'
-readonly CID_SLUG='reviewer-corpus'
+readonly CID_SLUG='change-review'
 readonly CORPUS_NAME='reviewer-catch-rate'
 readonly REPLY_BEGIN='REVIEWER-REPLY-BEGIN'
 readonly REPLY_END='REVIEWER-REPLY-END'
@@ -122,13 +124,16 @@ CONFIG_DIR="${REVIEWER_CATCH_RATE_CONFIG_DIR:-}"
 HOOKS_DIR="${REVIEWER_CATCH_RATE_HOOKS_DIR:-${GA_ROOT:-${HOME}/.glass-atrium}/hooks}"
 STAGE_DIR=''
 CASE_SESSION=''
+CASE_LAUNCH_RC=0
 CASE_TOKENS=''
+CASE_PARENT_TOKENS=''
 DIFFS=()
 INJECTION_HOOKS=()
 LABEL_DIFFS=()
 LABEL_DEFECTS=()
 LABEL_PATTERNS=()
 TOKENS=(0 0 0 0)
+PARENT_TOKENS=(0 0 0 0)
 CAUGHT=0
 SCORED=0
 ERRORS=0
@@ -292,7 +297,7 @@ print_footprint() {
 }
 
 run_corpus() {
-  local n=0 diff name case_dir body totals summary
+  local n=0 diff name case_dir body totals parent_totals summary
   printf '# reviewer-catch-rate mode=%s tier=%s corpus=%s\n' "${MODE}" "${TIER}" "${CORPUS}"
   printf 'diff\tdefect\tverdict\n'
   for diff in "${DIFFS[@]}"; do
@@ -305,12 +310,14 @@ run_corpus() {
     if review_case "${case_dir}" "${name}"; then body="${case_dir}/body"; fi
     if [[ -n "${OUT}" ]]; then cp -- "${case_dir}/reply" "${OUT}/${name%.diff}.reply.txt"; fi
     score_diff "${name}" "${body}"
-    printf 'TOKENS\t%s\t%s\n' "${name}" "${CASE_TOKENS:-unread}"
+    printf 'TOKENS\t%s\t%s\t%s\n' "${name}" "${CASE_TOKENS:-unread}" "${CASE_PARENT_TOKENS:-unread}"
   done
-  totals="$(format_tokens "${TOKENS[@]}")"
+  totals="$(format_tokens '' "${TOKENS[@]}")"
+  parent_totals="$(format_tokens parent_ "${PARENT_TOKENS[@]}")"
   summary='PROBE'
   if [[ "${MODE}" == measured ]]; then summary='RECALL'; fi
-  printf '%s tier=%s caught=%s scored=%s errors=%s %s\n' "${summary}" "${TIER}" "${CAUGHT}" "${SCORED}" "${ERRORS}" "${totals}"
+  printf '%s tier=%s caught=%s scored=%s errors=%s %s %s\n' "${summary}" "${TIER}" "${CAUGHT}" "${SCORED}" "${ERRORS}" \
+    "${totals}" "${parent_totals}"
   ((ERRORS == 0)) || exit 1
 }
 
@@ -323,12 +330,14 @@ stage_case() {
 }
 
 # Both checks run, so a voided launch still adds its spent tokens; 1 when either voids the diff.
+# Parent tokens are counted on every launch and never decide the verdict.
 review_case() {
   local verdict=0
   # shellcheck disable=SC2310  # each status folds into the case verdict
   launch_review "$@" || verdict=1
   # shellcheck disable=SC2310  # each status folds into the case verdict
   audit_transcript "$@" || verdict=1
+  count_parent_tokens "${2}"
   return "${verdict}"
 }
 
@@ -340,6 +349,7 @@ launch_review() {
   (cd -- "${case_dir}" && CLAUDE_CONFIG_DIR="${CONFIG_DIR}" "${LAUNCHER}" -p --effort "${PARENT_TIER}" --setting-sources project,local \
     --session-id "${CASE_SESSION}" --output-format text "${prompt}") \
     </dev/null >"${case_dir}/reply" 2>"${case_dir}/stderr" || rc=$?
+  CASE_LAUNCH_RC="${rc}"
   if ((rc != 0)); then
     stderr_tail="$(tail -n 5 -- "${case_dir}/stderr")"
     void_case "${name}" "launcher exited ${rc}: ${stderr_tail}"
@@ -386,11 +396,19 @@ build_workflow() {
 
 # 1 when the case has no single reviewer transcript, or it read a label path, lacks the scope header or recorded
 # a tier other than the arm; a read transcript sets CASE_TOKENS and adds to the totals whatever the verdict.
+# A launch that exited 0 with no transcript at all stops the run (exit 9): the session recorded elsewhere, and
+# every later diff would pay a full run to fail the same way.
 audit_transcript() {
-  local name="${2}" transcript fields leak injected efforts input output cache_read cache_creation
+  local name="${2}" transcript fields leak injected efforts input output cache_read cache_creation lookup=0
   CASE_TOKENS=''
   # shellcheck disable=SC2310  # pure lookup — its status is the transcript verdict
-  if ! transcript="$(find_transcript)"; then
+  transcript="$(find_transcript)" || lookup=$?
+  if ((lookup == 1 && CASE_LAUNCH_RC == 0)); then
+    local reason="${name}: the launch exited 0 but left no reviewer transcript"
+    reason+=" under ${CONFIG_DIR}/projects/*/${CASE_SESSION}/ — set REVIEWER_CATCH_RATE_CONFIG_DIR to the dir the launcher runs under"
+    die 9 "${reason} (claude-work-dev: \$HOME/.claude-work-dev); stopping before the next diff"
+  fi
+  if ((lookup != 0)); then
     void_case "${name}" "no single reviewer transcript under ${CONFIG_DIR}/projects/*/${CASE_SESSION}/"
     return 1
   fi
@@ -408,12 +426,14 @@ audit_transcript() {
   check_recorded_tier "${name}" "${efforts}"
 }
 
+# 1 when no reviewer transcript exists, 2 when several do.
 find_transcript() {
   local -a found
   shopt -s nullglob
   found=("${CONFIG_DIR}"/projects/*/"${CASE_SESSION}"/subagents/workflows/wf_*/agent-*.jsonl)
   shopt -u nullglob
-  ((${#found[@]} == 1)) || return 1
+  ((${#found[@]} > 0)) || return 1
+  ((${#found[@]} == 1)) || return 2
   printf '%s\n' "${found[0]}"
 }
 
@@ -430,11 +450,36 @@ check_recorded_tier() {
 add_tokens() {
   local i
   local -a values=("$@")
-  CASE_TOKENS="$(format_tokens "${values[@]}")"
+  CASE_TOKENS="$(format_tokens '' "${values[@]}")"
   for i in 0 1 2 3; do TOKENS[i]=$((TOKENS[i] + values[i])); done
 }
 
-format_tokens() { printf 'input=%s output=%s cache_read=%s cache_creation=%s' "$@"; }
+# The headless parent's own usage, read from <config dir>/projects/*/<session id>.jsonl beside the reviewer's
+# session dir; an unread parent leaves its column unread and states why on stderr.
+count_parent_tokens() {
+  local -a found
+  local fields i _leak _injected _efforts input output cache_read cache_creation
+  CASE_PARENT_TOKENS=''
+  shopt -s nullglob
+  found=("${CONFIG_DIR}"/projects/*/"${CASE_SESSION}".jsonl)
+  shopt -u nullglob
+  if ((${#found[@]} != 1)); then
+    printf 'reviewer-catch-rate: %s: no single parent transcript %s.jsonl — its tokens are uncounted\n' \
+      "${1}" "${CASE_SESSION}" >&2
+    return 0
+  fi
+  fields="$(python3 -c "${TRANSCRIPT_READER}" "${found[0]}" "${INJECTION_HEADER}")"
+  IFS=$'\x1f' read -r _leak _injected _efforts input output cache_read cache_creation <<<"${fields}"
+  local -a values=("${input}" "${output}" "${cache_read}" "${cache_creation}")
+  CASE_PARENT_TOKENS="$(format_tokens parent_ "${values[@]}")"
+  for i in 0 1 2 3; do PARENT_TOKENS[i]=$((PARENT_TOKENS[i] + values[i])); done
+}
+
+# format_tokens <key prefix> <input> <output> <cache read> <cache creation>
+format_tokens() {
+  printf '%sinput=%s %soutput=%s %scache_read=%s %scache_creation=%s' \
+    "${1}" "${2}" "${1}" "${3}" "${1}" "${4}" "${1}" "${5}"
+}
 
 extract_relay() {
   awk -v begin="${REPLY_BEGIN}" -v end="${REPLY_END}" '
