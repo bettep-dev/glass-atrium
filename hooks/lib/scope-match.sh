@@ -254,16 +254,24 @@ readonly _SCOPE_DECL_OPEN='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?'
 readonly _SCOPE_DECL_BARE_FORM='[[]SCOPE[]][[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*]'
 readonly SCOPE_DECL_LINE_RE="${_SCOPE_DECL_OPEN}${_SCOPE_DECL_BARE_FORM}"
 
-# Stdin text → its first declaration line (empty when none). Always returns 0.
+# Stdin text → its first declaration line.
+# Returns: 0 = line printed, or none found (empty output) · 2 = the text could not be read (grep
+# status 2 or higher): empty output plus a reason on stderr. Each caller handles 2 itself — an
+# unread declaration is not an absent one.
 scope_decl_select() {
-  grep -m 1 -E -- "${SCOPE_DECL_LINE_RE}" 2>/dev/null || true # GA-ABSORB[benign]: no declaration ⇒ grep status 1 ⇒ empty output, callers fail-open
+  local rc=0
+  grep -m 1 -E -- "${SCOPE_DECL_LINE_RE}" 2>/dev/null || rc=$?
+  [[ "${rc}" -le 1 ]] && return 0
+  (printf 'scope_decl_select: grep status %s, [SCOPE] declaration not read\n' "${rc}") >&2 || true
+  return 2
 }
 
 # The first declaration in a subagent transcript's record 0 — the parent-authored delegation
 # prompt. Pinned to record 0 on purpose: a whole-transcript grep would let the child emit a wider
 # `[SCOPE]` line of its own and nullify the very check that exists to sit outside its control.
 # Two or more declarations inside record 0 → the first wins (deterministic, never merged).
-# Args: $1=transcript path. Prints the line (empty when absent/unreadable), always returns 0.
+# Args: $1=transcript path. Prints the line (empty when absent/unreadable). Returns the pipeline
+# status, so scope_decl_select's 2 reaches the caller.
 scope_decl_from_record0() {
   local tpath="${1:-}"
   [[ -r "${tpath}" ]] || return 0
