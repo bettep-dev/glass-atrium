@@ -38,8 +38,9 @@
 #   - A glob is expanded by bash pathname expansion (no execution), each match walked, and its
 #     metacharacter-stripped spelling walked too. A brace that bash would expand (`{a,b}`, `{a..b}`)
 #     cannot be expanded without eval → protected, fail-safe. A brace with neither is literal text.
-#   - A bare root word (no `/`, relative) is prose unless an action word, an option, a redirect or a
-#     joined `=`/`@`/`-x`/list position makes it an operand.
+#   - A bare root word (relative, no `/` but a trailing one) is prose unless an action word, an option
+#     (a lone `-` is a list marker), a redirect or a joined `=`/`@`/`-x`/list position makes it an operand.
+#   - A block names the candidate that triggered it.
 #   - Past 128 unique candidates the prompt is protected, fail-safe, with none of them walked.
 #   Not read as home: any other expansion — `${HOME:-}/`, `${HOME%/}/`, `$(echo ~)/`.
 #
@@ -94,7 +95,7 @@ fi
 shopt -u nocasematch
 
 # Remedy named by both block reasons — the Write routes of Harness Path Protection Rule 2.
-readonly routes_text='Take a write route instead: (1) an install-managed file (a symlink into ~/.glass-atrium/: agent bodies, rules/glass-atrium/*, skills/glass-atrium-*, GLASS_ATRIUM_GLOBAL_RULES.md) -> edit the repo path, which ships through manifest regeneration and the updater; (2) a harness file the install does not manage (profile settings*.json, settings.local.json, other profile-local files) -> the staged lane: the main session copies it to a staging dir in the working tree with cat <real> > <stage>/<name> and no other command, the agent edits the copy, the user approves the diff and applies it; (3) a read -> the repo path for an install-managed file, the staged lane read-only copy otherwise. Never name the resolved ~/.glass-atrium/ target to get past this check: it writes the live install outside the updater.'
+readonly routes_text='Take a write route instead: (1) an install-managed file (a symlink into ~/.glass-atrium/: agent bodies, rules/glass-atrium/*, skills/glass-atrium-*, GLASS_ATRIUM_GLOBAL_RULES.md) -> edit the repo path, which ships through manifest regeneration and the updater; (2) a harness file the install does not manage (profile settings*.json, settings.local.json, other profile-local files) -> the staged lane: the main session copies it to a staging dir in the working tree with cat <real> > <stage>/<name> and no other command, the agent edits the copy, the user approves the diff and applies it; (3) a read -> the repo path for an install-managed file, the staged lane read-only copy otherwise; (4) a repo path that contains .claude (a worktree, a repo-local settings or audit file) -> name it by its absolute form: a relative one is judged as if read from the home dir, and can block. Never name the resolved ~/.glass-atrium/ target to get past this check: it writes the live install outside the updater.'
 
 # Branch-root grammar, single-sited in lib/. Sourced after the `.claude` precheck → the fail-closed lib
 # check runs on every Agent prompt containing `.claude` (a security gate must never degrade silently),
@@ -182,7 +183,8 @@ BEGIN {
     sub(/:$/, "", prev)
     probes = 0
     if (!index(w, ".") || !has_root_text(w)) continue
-    split_word(w, index(verbs, " " p " ") || p ~ /^-/ || p ~ /[<>]$/)
+    # A lone `-` word is a markdown list marker, not an option; `--` still ends options.
+    split_word(w, index(verbs, " " p " ") || (p ~ /^-/ && p != "-") || p ~ /[<>]$/)
   }
 }
 END { for (c in seen) print "x" seen[c] "\t" c }'
@@ -366,14 +368,16 @@ walk_up() {
 
 # The entered root's remainder against the exemptions. Exit 0 = needs the staged lane.
 needs_staged_lane() {
-  local first
+  local first bare="${written}"
   [[ "${opaque}" == true ]] && return 0
   while [[ "${remainder}" == /* || "${remainder}" == ./* ]]; do
     remainder="${remainder#/}" remainder="${remainder#./}"
   done
-  # The root itself: a bare relative root word in prose is a name, not an operand.
+  # The root itself: a bare relative root word in prose is a name, not an operand. A trailing slash
+  # names no file inside the root, so `.claude/` is the same bare word.
   if [[ -z "${remainder}" ]]; then
-    [[ "${relative}" == true && "${written}" != */* && "${flags}" != *c* ]] && return 1
+    while [[ "${bare}" == */ ]]; do bare="${bare%/}"; done
+    [[ "${relative}" == true && "${bare}" != */* && "${flags}" != *c* ]] && return 1
     return 0
   fi
   # The `.claude`-text void reads written text: a glob match's remainder is a real name on disk.
@@ -504,8 +508,9 @@ glob_match=false
 for line in "${candidate_list[@]}"; do
   flags="${line%%$'\t'*}" written="${line#*$'\t'}"
   [[ -n "${written}" ]] || continue
+  shown="${written:0:200}"
   if candidate_blocks; then
-    block
+    block "[enforce-foreground-harness] Blocking candidate: ${shown//[[:cntrl:]]/?} (this prompt token, quotes and backslashes dropped, resolves to a protected harness path)."
   fi
 done
 allow

@@ -352,19 +352,30 @@ assert_rows() {
     'a brace with no comma is a literal name|Edit ~/.clau{d}e/agents/a.md now.'
 }
 
-@test "a bare root word is a name in prose and a path as an operand" {
+@test "a bare root word, with or without a trailing slash, is a name in prose and a path as an operand" {
   local home="${BATS_TEST_TMPDIR}/home/u"
   mkdir -p "${home}/.claude-work"
   HOME="${home}" assert_rows 0 \
     'profile named in a sentence|Switch the session to the .claude-work profile.' \
     'roots named in a list of profiles|Profiles: .claude-work and .claude-personal.' \
-    'repo dot dir named in a sentence|The repo keeps its worktrees in .claude for now.'
+    'repo dot dir named in a sentence|The repo keeps its worktrees in .claude for now.' \
+    'root word opening a bullet item|- `.claude` is git-ignored in this repo.' \
+    'profile opening an indented bullet item|  - .claude-work is the profile the live suite runs under.' \
+    'repo dot dir with a trailing slash in a sentence|The repo keeps its worktrees in .claude/ for now.' \
+    'profile with a trailing slash in a sentence|The branch suite runs on a `.claude-work-dev/` root.' \
+    'escaped root in a grep pattern|Grep hooks/ for the literal `\.claude/` first.' \
+    'root glob with a trailing slash in a sentence|The precheck regex matches `\.claude/` and `.claude-*/` spellings.'
   HOME="${home}" assert_rows 2 \
     'operand of cd|cd .claude-work && edit settings.json' \
     'operand after an option|Run ls -la .claude-work now.' \
+    'operand after the end-of-options marker|Run tool -- .claude-work now.' \
     'redirect target|Run echo x > .claude-work now.' \
     'option value|Run tool --dir=.claude-work now.' \
-    'tilde root word|Rewrite the hooks in ~/.claude-work now.'
+    'tilde root word|Rewrite the hooks in ~/.claude-work now.' \
+    'operand of cd with a trailing slash|cd .claude-work/ && edit settings.json' \
+    'operand after an option with a trailing slash|Run ls -la .claude-work/ now.' \
+    'a dot-slash root name|Look in ./.claude/ for now.' \
+    'tilde root with a trailing slash|Rewrite the hooks in ~/.claude-work/ now.'
 }
 
 # CWD-relative arm: a relative token names the harness only when, read from $HOME, it reaches an entry
@@ -420,7 +431,7 @@ cap_prompt() {
   PATH="${BATS_TEST_TMPDIR}/noawk:${PATH}" run --separate-stderr \
     bash -c 'printf "%s" "$1" | bash "$2"' _ \
     "$(jq -n '{tool_name:"Agent",tool_input:{prompt:"Edit ~/.claude/agents/x.md now."}}')" "${HOOK_SH}"
-  [[ "${status}" -eq 2 && -z "${output}" && "${#stderr_lines[@]}" -eq 1 ]] || {
+  [[ "${status}" -eq 2 && -z "${output}" && "${stderr}" != *'only the raw prompt was scanned'* && "${stderr}" == *'candidate: ~/.claude/agents/x.md'* ]] || {
     echo "block row · status ${status} · stdout ${output} · stderr ${stderr}"
     return 1
   }
@@ -429,6 +440,25 @@ cap_prompt() {
     "$(jq -n '{tool_name:"Agent",tool_input:{prompt:"Read ~/.claude/data/x.md now."}}')" "${HOOK_SH}"
   [[ "${status}" -eq 0 && "${stderr}" == *'only the raw prompt was scanned'* ]] || {
     echo "allow row · status ${status} · stderr ${stderr}"
+    return 1
+  }
+}
+
+# The reason names the token that blocked, not an exempt one beside it, and the absolute-form remedy.
+@test "a block names its triggering candidate and the absolute-form remedy" {
+  local payload
+  payload="$(jq -n '{tool_name:"Agent",tool_input:{prompt:"Read ~/.claude/data/zz-exempt.md, then edit ~/.claude/hooks/zz-trigger.sh now."}}')"
+  run --separate-stderr bash -c 'printf "%s" "$1" | bash "$2"' _ "${payload}" "${HOOK_SH}"
+  [[ "${status}" -eq 2 && -z "${output}" ]] || {
+    echo "status ${status} · stdout ${output} · stderr ${stderr}"
+    return 1
+  }
+  [[ "${stderr}" == *'candidate: ~/.claude/hooks/zz-trigger.sh'* && "${stderr}" != *zz-exempt* ]] || {
+    echo "triggering candidate not named alone: ${stderr}"
+    return 1
+  }
+  [[ "${stderr}" == *'contains .claude'*'absolute form'* ]] || {
+    echo "absolute-form remedy missing: ${stderr}"
     return 1
   }
 }
