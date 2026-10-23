@@ -15,6 +15,7 @@ setup() {
   RUNNER="${GA}/autoagent/reviewer-catch-rate.sh"
   FAKE_HOME="${BATS_TEST_TMPDIR}/home"
   CONFIG_DIR="${BATS_TEST_TMPDIR}/config"
+  CALLER_CONFIG_DIR="${BATS_TEST_TMPDIR}/caller-config"
   CORPUS="${BATS_TEST_TMPDIR}/corpus"
   STUB_LOG_DIR="${BATS_TEST_TMPDIR}/stub-log"
   STUB_REPLY_DIR="${BATS_TEST_TMPDIR}/stub-replies"
@@ -64,6 +65,7 @@ printf '%s\n' "${diff_path}" >"${STUB_LOG_DIR}/staged-${key}"
 cp -- "${diff_path}" "${STUB_LOG_DIR}/seen-${key}.diff"
 cp -- "${script}" "${STUB_LOG_DIR}/script-${key}.js"
 printf '%s\n' "${prompt}" >"${STUB_LOG_DIR}/prompt-${key}"
+printf '%s\n' "${CLAUDE_CONFIG_DIR}" >"${STUB_LOG_DIR}/config-${key}"
 fire() {
   local cmd
   [[ -f .claude/settings.json ]] || return 0
@@ -139,7 +141,8 @@ assistant_record() {
 run_runner() {
   run --separate-stderr env \
     HOME="${FAKE_HOME}" \
-    CLAUDE_CONFIG_DIR="${CONFIG_DIR}" \
+    CLAUDE_CONFIG_DIR="${CALLER_CONFIG_DIR}" \
+    REVIEWER_CATCH_RATE_CONFIG_DIR="${CONFIG_DIR}" \
     REVIEWER_CATCH_RATE_CLAUDE_BIN="${LAUNCHER}" \
     REVIEWER_CATCH_RATE_HOOKS_DIR="${HOOKS_DIR}" \
     STUB_LOG_DIR="${STUB_LOG_DIR}" \
@@ -202,7 +205,7 @@ assert_not_launched() {
   add_case mid-line-tag glob-use 'unquoted glob' '- **Design**: nothing rises to [SHOULD FIX]; no unquoted glob.'
   add_case outside split-use 'word splitting' 'No defects found.' \
     '- `[MUST FIX][Risk: H] hooks/x.sh → main`: word splitting on a path.'
-  run_runner --tier xhigh --corpus "${CORPUS}"
+  run_runner --measured --tier xhigh --corpus "${CORPUS}"
   assert_status 0
   assert_report_rows $'hit.diff\tunquoted-var\tcaught' $'sub-bullet.diff\tsplit-use\tcaught' \
     $'blank-line-continuation.diff\tsplit-use\tcaught' $'numbered-list.diff\tglob-use\tcaught' \
@@ -224,7 +227,7 @@ assert_not_launched() {
   add_case leaked-dir leak 'unquoted' \
     '[SHOULD FIX] hooks/x.sh:3 — unquoted variable, as autoagent/reviewer-catch-rate/case-01.diff shows'
   add_case leaked-labels leak 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable, per the labels.tsv row'
-  run_runner --tier high --corpus "${CORPUS}"
+  run_runner --measured --tier high --corpus "${CORPUS}"
   assert_status 1
   assert_report_rows $'hit.diff\tunquoted-var\tcaught' $'bare.diff\tno-markers\terror' \
     $'empty-relay.diff\tempty-block\terror' $'unclosed-relay.diff\ttruncated\terror' \
@@ -304,7 +307,7 @@ tool_result_record() {
     assistant_record xhigh msg_a "${usage_a}"
     assistant_record xhigh msg_b "${usage_b}"
   } >"${STUB_REPLY_DIR}/tok.records"
-  run_runner --tier xhigh --corpus "${CORPUS}"
+  run_runner --measured --tier xhigh --corpus "${CORPUS}"
   assert_status 0
   assert_report_rows $'TOKENS\ttok.diff\tinput=11 output=22 cache_read=33 cache_creation=44' \
     $'TOKENS\tquiet.diff\t'"${ZERO_TOKENS}" \
@@ -348,6 +351,20 @@ build_no_diff() { printf '# none\n' >"${1}/labels.tsv"; }
   done
 }
 
+@test "the launcher runs with the runner's config dir, whatever CLAUDE_CONFIG_DIR the caller exports" {
+  add_case hit unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  write_reviewer_definition "${CALLER_CONFIG_DIR}" ''
+  run_runner --measured --tier xhigh --corpus "${CORPUS}"
+  assert_status 0
+  local seen
+  seen="$(cat -- "${STUB_LOG_DIR}/config-hit")"
+  [[ "${seen}" == "${CONFIG_DIR}" ]] || {
+    printf 'launcher config dir %s, runner %s\n' "${seen}" "${CONFIG_DIR}"
+    return 1
+  }
+  assert_report_rows $'hit.diff\tunquoted-var\tcaught'
+}
+
 @test "an absent reviewer definition stops the run with exit 5 before any launch, while an effort-keyed one runs" {
   add_case hit unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
   CONFIG_DIR="${BATS_TEST_TMPDIR}/config-absent"
@@ -360,6 +377,37 @@ build_no_diff() { printf '# none\n' >"${1}/labels.tsv"; }
   run_runner --tier xhigh --corpus "${CORPUS}"
   assert_status 0 keyed
   assert_report_rows $'hit.diff\tunquoted-var\tcaught'
+}
+
+@test "only a --measured run prints a RECALL line, and any other run prints its result as a PROBE line" {
+  add_case hit unquoted-var 'unquoted' '[SHOULD FIX] hooks/x.sh:3 — unquoted variable'
+  local row name flag mode summary absent
+  for row in "probe||probe|PROBE|RECALL" "measured|--measured|measured|RECALL|PROBE"; do
+    IFS='|' read -r name flag mode summary absent <<<"${row}"
+    if [[ -n "${flag}" ]]; then run_runner "${flag}" --tier xhigh --corpus "${CORPUS}"; else run_runner --tier xhigh --corpus "${CORPUS}"; fi
+    assert_status 0 "${name}"
+    assert_report_rows "# reviewer-catch-rate mode=${mode} tier=xhigh corpus=${CORPUS}" \
+      "${summary} tier=xhigh caught=1 scored=1 errors=0 ${ZERO_TOKENS}" || {
+      echo "row ${name}"
+      return 1
+    }
+    [[ $'\n'"${output}" != *$'\n'"${absent} "* ]] || {
+      printf 'row %s: prints a %s line\n%s\n' "${name}" "${absent}" "${output}"
+      return 1
+    }
+  done
+}
+
+@test "an unset or non-directory launcher config dir is refused with exit 8 before any launch" {
+  add_case hit unquoted-var 'unquoted' 'unquoted variable'
+  local row name
+  for row in "unset|" "plain-file|${CORPUS}/hit.diff" "absent|${BATS_TEST_TMPDIR}/no-such-dir"; do
+    name="${row%%|*}"
+    CONFIG_DIR="${row#*|}"
+    run_runner --measured --tier xhigh --corpus "${CORPUS}"
+    assert_status 8 "${name}"
+    assert_not_launched "${name}"
+  done
 }
 
 @test "unusable session wiring stops the run with exit 7 before any launch" {
@@ -412,7 +460,7 @@ effort_after() { awk 'prev == "--effort" { print } { prev = $0 }' <<<"${1}"; }
   local tier argv script parent_tier
   for tier in medium high xhigh; do
     mkdir -p "${STUB_LOG_DIR}"
-    run_runner --tier "${tier}" --corpus "${CORPUS}"
+    run_runner --measured --tier "${tier}" --corpus "${CORPUS}"
     assert_status 0 "${tier}"
     assert_report_rows "RECALL tier=${tier} caught=1 scored=1 errors=0 ${ZERO_TOKENS}" || {
       echo "row ${tier}"
@@ -579,7 +627,7 @@ corpus_findings() {
   write_corpus_launcher
   local count
   count="$(count_corpus_labels)"
-  run_runner --tier high
+  run_runner --measured --tier high
   assert_status 0
   [[ "${output}" != *$'\tcaught'* ]] || {
     printf '%s\n' "${output}"
@@ -605,7 +653,7 @@ corpus_findings() {
     cp -- "${denial}" "${STUB_REPLY_DIR}/${key%% *}"
     count=$((count + 1))
   done <"${REPO_CORPUS}/labels.tsv"
-  run_runner --tier xhigh
+  run_runner --measured --tier xhigh
   assert_status 0
   assert_report_rows "RECALL tier=xhigh caught=0 scored=${count} errors=0 ${ZERO_TOKENS}"
 }

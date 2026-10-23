@@ -2,7 +2,10 @@
 # reviewer-catch-rate.sh — planted-defect recall of glass-atrium-qa-code-reviewer at one effort tier.
 # Recall only: a defect is caught when a severity-tagged finding of the relayed review matches its label pattern;
 #   no gate reads the result.
-# Usage: REVIEWER_CATCH_RATE_CLAUDE_BIN=<launcher> reviewer-catch-rate.sh --tier medium|high|xhigh [--corpus DIR] [--out DIR]
+# Usage: REVIEWER_CATCH_RATE_CLAUDE_BIN=<launcher> REVIEWER_CATCH_RATE_CONFIG_DIR=<launcher config dir> \
+#   reviewer-catch-rate.sh --tier medium|high|xhigh [--measured] [--corpus DIR] [--out DIR]
+# Mode: probe unless --measured — a probe prints PROBE where a measured run prints RECALL, so a session-shape probe
+#   can never be read as a measured recall; pass --measured only once the plan's load-bearing Open Questions close.
 #
 # Route: per diff, a headless parent (`<launcher> -p --effort xhigh`) runs the Workflow tool on a script staged in
 #   the case dir; the script spawns the reviewer through `agent()` with the arm as its effort option and a
@@ -20,6 +23,10 @@
 #   describing the planted defects, the monitor API — passes unvoided.
 # Launcher: required, no PATH fallback — the headless rule is `claude-work-dev -p`, a zsh function,
 #   so pass an executable wrapper such as `#!/bin/zsh -i` + `claude-work-dev "$@"`.
+# Config dir: required, no default — the one dir read for the reviewer definition and transcripts, and exported to
+#   the launcher as CLAUDE_CONFIG_DIR. An explicit binding, not a mismatch check: the runner cannot observe a
+#   launcher's dir without a model call (claude-work-dev hard-sets $HOME/.claude-work-dev, and its zsh -i startup
+#   puts the real CLI ahead of any PATH stub), so for that launcher pass exactly $HOME/.claude-work-dev.
 # Corpus: <name>.diff files + labels.tsv rows `<diff basename> TAB <defect id> TAB <ERE, matched case-insensitive>`.
 # Install root: the live bundle omits the corpus (generate-manifest.sh → EXCLUDE_RE), so a run there needs --corpus.
 # Base files: every corpus diff is a new-file patch, so the label-free base set is the empty tree — the case dir
@@ -31,6 +38,7 @@
 #   2 = usage error · 3 = corpus invalid · 4 = launcher unset or not executable
 #   5 = reviewer definition unreadable · 6 = shared path guard missing
 #   7 = session wiring unusable: python3 absent, no injection binding readable, or an injection hook not executable
+#   8 = launcher config dir unset or not a directory
 set -Eeuo pipefail
 IFS=$'\n\t'
 trap 'printf "reviewer-catch-rate: ERROR line %s: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2' ERR
@@ -106,10 +114,11 @@ PY
 readonly TRANSCRIPT_READER
 
 TIER=''
+MODE='probe'
 CORPUS="${SCRIPT_DIR}/${CORPUS_NAME}"
 OUT=''
 LAUNCHER="${REVIEWER_CATCH_RATE_CLAUDE_BIN:-}"
-CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+CONFIG_DIR="${REVIEWER_CATCH_RATE_CONFIG_DIR:-}"
 HOOKS_DIR="${REVIEWER_CATCH_RATE_HOOKS_DIR:-${GA_ROOT:-${HOME}/.glass-atrium}/hooks}"
 STAGE_DIR=''
 CASE_SESSION=''
@@ -127,6 +136,7 @@ ERRORS=0
 main() {
   parse_args "$@"
   require_launcher
+  require_config_dir
   load_corpus
   require_reviewer_definition
   require_session_wiring
@@ -145,6 +155,11 @@ die() {
 
 parse_args() {
   while (($# > 0)); do
+    if [[ "${1}" == --measured ]]; then
+      MODE='measured'
+      shift
+      continue
+    fi
     (($# >= 2)) || die 2 "${1}: missing value"
     case "${1}" in
       --tier) TIER="${2}" ;;
@@ -163,6 +178,11 @@ parse_args() {
 require_launcher() {
   [[ -n "${LAUNCHER}" ]] || die 4 'REVIEWER_CATCH_RATE_CLAUDE_BIN is unset: pass a launcher that runs claude-work-dev'
   [[ -f "${LAUNCHER}" && -x "${LAUNCHER}" ]] || die 4 "launcher is not an executable file: ${LAUNCHER}"
+}
+
+require_config_dir() {
+  [[ -n "${CONFIG_DIR}" ]] || die 8 'REVIEWER_CATCH_RATE_CONFIG_DIR is unset: pass the config dir the launcher runs under'
+  [[ -d "${CONFIG_DIR}" ]] || die 8 "launcher config dir is not a directory: ${CONFIG_DIR}"
 }
 
 load_corpus() {
@@ -272,8 +292,8 @@ print_footprint() {
 }
 
 run_corpus() {
-  local n=0 diff name case_dir body totals
-  printf '# reviewer-catch-rate tier=%s corpus=%s\n' "${TIER}" "${CORPUS}"
+  local n=0 diff name case_dir body totals summary
+  printf '# reviewer-catch-rate mode=%s tier=%s corpus=%s\n' "${MODE}" "${TIER}" "${CORPUS}"
   printf 'diff\tdefect\tverdict\n'
   for diff in "${DIFFS[@]}"; do
     n=$((n + 1))
@@ -288,7 +308,9 @@ run_corpus() {
     printf 'TOKENS\t%s\t%s\n' "${name}" "${CASE_TOKENS:-unread}"
   done
   totals="$(format_tokens "${TOKENS[@]}")"
-  printf 'RECALL tier=%s caught=%s scored=%s errors=%s %s\n' "${TIER}" "${CAUGHT}" "${SCORED}" "${ERRORS}" "${totals}"
+  summary='PROBE'
+  if [[ "${MODE}" == measured ]]; then summary='RECALL'; fi
+  printf '%s tier=%s caught=%s scored=%s errors=%s %s\n' "${summary}" "${TIER}" "${CAUGHT}" "${SCORED}" "${ERRORS}" "${totals}"
   ((ERRORS == 0)) || exit 1
 }
 
@@ -315,7 +337,7 @@ launch_review() {
   local case_dir="${1}" name="${2}" prompt rc=0 stderr_tail
   CASE_SESSION="$(python3 -c 'import uuid; print(uuid.uuid4())')"
   prompt="$(build_prompt "${case_dir}/review.js")"
-  (cd -- "${case_dir}" && "${LAUNCHER}" -p --effort "${PARENT_TIER}" --setting-sources project,local \
+  (cd -- "${case_dir}" && CLAUDE_CONFIG_DIR="${CONFIG_DIR}" "${LAUNCHER}" -p --effort "${PARENT_TIER}" --setting-sources project,local \
     --session-id "${CASE_SESSION}" --output-format text "${prompt}") \
     </dev/null >"${case_dir}/reply" 2>"${case_dir}/stderr" || rc=$?
   if ((rc != 0)); then
