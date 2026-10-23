@@ -246,7 +246,7 @@ fi
 
 # stdin non-interactive → drain once, otherwise fail-open.
 # Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
-export -n input gate_tsv hook_event session_id prompt_b64 prompt_full text decl scope_line files line scan
+export -n input gate_tsv hook_event session_id prompt_b64 prompt_full text scope_line files line scan
 input=""
 if [[ ! -t 0 ]]; then
   input="$(cat 2>/dev/null)" || input=""
@@ -354,16 +354,6 @@ has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
 # discovery). Anchored bracketed literal, PRESENCE only — never the classification's correctness.
 has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
 
-# [SCOPE] delegation-scope declaration — the orchestrator's record of the delegation's literal file
-# and deliverable scope. PRESENCE only: whether the declaration matches the user's instruction is
-# honor-system, the same ceiling as its sibling tokens. Present = a line the shared scope_decl_select
-# accepts, so a quoted `[SCOPE]` mention alone does not silence the nudge.
-has_scope_token() {
-  local decl
-  decl="$(printf '%s\n' "${1}" | drain_after scope_decl_select)"
-  [[ -n "${decl}" ]]
-}
-
 # Prints the first sensitive prefix matched by the declared paths (empty when none). Read into an
 # array rather than word-split in place: an unquoted expansion would also glob `settings*.json`
 # against the cwd. Args: $1=newline-separated declared paths. Always returns 0.
@@ -388,12 +378,11 @@ scope_files_sensitive_prefix() {
 }
 
 # Surface 5 emitter — the file-count / sensitive-path Deep-review advisory. Counts through the shared
-# scope_decl_files parser: an absent, unparseable or empty declaration is SILENCE (fail-open), never a
-# guess. Only the count and the matched prefix reach stderr — the prompt itself never does.
+# scope_decl_files parser: an unparseable or empty declaration is SILENCE (fail-open), never a guess.
+# Only the count and the matched prefix reach stderr — the prompt itself never does.
+# Args: $1=the selected declaration line.
 warn_deep_review() {
-  local scope_line files count prefix prefix_note=""
-  scope_line="$(printf '%s\n' "${prompt_full}" | drain_after scope_decl_select)"
-  [[ -n "${scope_line}" ]] || return 0
+  local scope_line="${1}" files count prefix prefix_note=""
   files="$(scope_decl_files "${scope_line}")"
   [[ -n "${files}" ]] || return 0
   count="$(printf '%s' "${files}" | grep -c '[^[:space:]]' || true)"
@@ -410,16 +399,29 @@ warn_deep_review() {
 
 # Surfaces 4+5 emitter. Called from the PASS paths only so a fault in these newest checks can never
 # turn one of the blocks above into a pass. A missing declaration is nudged; a present one is sized.
+# [SCOPE] = the orchestrator's record of the delegation's literal scope, checked for PRESENCE only —
+# a line the shared scope_decl_select accepts, so a quoted `[SCOPE]` mention does not silence the nudge.
+# Selector status 2 = the declaration was never read → reported as unread, neither nudged nor sized.
 warn_scope_advisories() {
   [[ "${orchestrator_origin}" == true ]] || return 0
-  # SC2310: has_scope_token is a pure predicate — set -e disable under `if` intended.
-  # shellcheck disable=SC2310
-  if ! has_scope_token "${prompt_full}"; then
+  local scope_line decl_status=0
+  # `trap - ERR` inside the $( ): the inherited fail-open trap would exit the subshell 0 and mask the 2.
+  # shellcheck disable=SC2310  # the selector's status IS the answer, captured by the || below
+  scope_line="$(
+    trap - ERR
+    printf '%s\n' "${prompt_full}" | drain_after scope_decl_select
+  )" || decl_status=$?
+  if ((decl_status != 0)); then
+    (printf '[enforce-verification-gate] DEV spawn of %s: its [SCOPE] declaration could not be read (selector status %d), so neither its presence nor its file count was checked — a read failure, not a missing declaration. Advisory only.\n' \
+      "${subagent_type}" "${decl_status}") >&2 || true
+    return 0
+  fi
+  if [[ -z "${scope_line}" ]]; then
     printf '[enforce-verification-gate] DEV spawn of %s carries no [SCOPE] declaration — a mid-line or quoted [SCOPE] does not count, and neither does a [SCOPE] token wrapped in backticks or ** — the declaration must open its own line with the bare token. Record it in the canonical middot-separated grammar — [SCOPE] files=path/one, path/two · deliverable=<type> · out=none — so the delegation'"'"'s literal scope is fixed in text before the work starts (grammar SoT: orchestrator-role.md → Context Handoff Size). Advisory only — presence is checked here, fidelity to the user instruction is not.\n' \
       "${subagent_type}" >&2
     return 0
   fi
-  warn_deep_review
+  warn_deep_review "${scope_line}"
 }
 
 # get_monitor_docs_url — the clauded-docs collection URL, or rc 1 when none resolves. A full

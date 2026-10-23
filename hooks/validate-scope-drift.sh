@@ -191,10 +191,12 @@ fi
 # non-match emits its own advisory and lets the plan-doc leg below reach its own verdict.
 # Resolution is cached per agent_id in the existing per-session cache shape (same helpers, same
 # TTL and bypass env) — the sentinel below caches the far more common "no declaration" answer
-# too, so an undeclared delegation re-parses no transcript on later edits.
+# too, so an undeclared delegation re-parses no transcript on later edits. An unread declaration
+# (selector status 2) has its own sentinel and is never cached, so the next edit reads it again.
 SCOPE_DECL_NONE_SENTINEL='./no-scope-declaration'
+SCOPE_DECL_UNREAD_SENTINEL='./scope-declaration-unread'
 scope_decl_resolve() {
-  local agent_id session_id safe_key cache_file tpath decl_line files
+  local agent_id session_id safe_key cache_file tpath decl_line files decl_status=0
   agent_id="$(echo "${INPUT}" | jq -r '.agent_id // ""' 2>/dev/null || true)"
   session_id="$(echo "${INPUT}" | jq -r '.session_id // ""' 2>/dev/null || true)"
   [[ -n "${agent_id}" ]] && [[ -n "${session_id}" ]] || return 0
@@ -221,7 +223,11 @@ scope_decl_resolve() {
 
   files=""
   if [[ -n "${tpath}" ]]; then
-    decl_line="$(scope_decl_from_record0 "${tpath}")"
+    decl_line="$(scope_decl_from_record0 "${tpath}")" || decl_status=$?
+    if ((decl_status != 0)); then
+      printf '%s' "${SCOPE_DECL_UNREAD_SENTINEL}"
+      return 0
+    fi
     [[ -n "${decl_line}" ]] && files="$(scope_decl_files "${decl_line}")"
   fi
   [[ -z "${files}" ]] && files="${SCOPE_DECL_NONE_SENTINEL}"
@@ -236,7 +242,9 @@ scope_decl_resolve() {
 
 if [[ -n "${FILE_PATH}" ]]; then
   SCOPE_DECL_FILES="$(scope_decl_resolve)"
-  if [[ -n "${SCOPE_DECL_FILES}" ]] && [[ "${SCOPE_DECL_FILES}" != "${SCOPE_DECL_NONE_SENTINEL}" ]]; then
+  if [[ "${SCOPE_DECL_FILES}" == "${SCOPE_DECL_UNREAD_SENTINEL}" ]]; then
+    (printf '[validate-scope-drift] [SCOPE] comparison did not run: the delegation [SCOPE] declaration could not be read, so this edit was not checked against it. The plan-doc comparison still runs. Advisory only.\n') >&2 || true
+  elif [[ -n "${SCOPE_DECL_FILES}" ]] && [[ "${SCOPE_DECL_FILES}" != "${SCOPE_DECL_NONE_SENTINEL}" ]]; then
     # shellcheck disable=SC2310
     #   Predicate call — the exit status IS the answer (declared vs undeclared path).
     if match_file_against_allowed "${FILE_PATH}" "${SCOPE_DECL_FILES}"; then

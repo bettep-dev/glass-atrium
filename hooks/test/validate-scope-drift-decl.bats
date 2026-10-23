@@ -104,6 +104,42 @@ run_hook() {
   [[ "${output}" != *scope-decl* ]] || { echo "bypass ignored the missing transcript: ${output}" >&2; return 1; }
 }
 
+# grep in SHIMBIN that fails with status 2 on the selector's pattern and is the real grep otherwise.
+install_forced_grep_failure() {
+  local real_grep
+  real_grep="$(type -P grep)"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'for _a in "$@"; do'
+    printf '%s\n' "  case \"\${_a}\" in *'[[]SCOPE[]]'*) echo 'grep: forced read error' >&2; exit 2 ;; esac"
+    printf '%s\n' 'done'
+    printf '%s\n' "exec \"${real_grep}\" \"\$@\""
+  } >"${SHIMBIN}/grep"
+  chmod +x "${SHIMBIN}/grep"
+}
+
+# An unread declaration is neither "no declaration" (silence) nor a drift verdict against an empty list.
+@test "an unread [SCOPE] declaration says the comparison did not run and raises no drift advisory" {
+  seed_transcript '[SCOPE] files=hooks/a.sh · deliverable=x · out=y'
+  install_forced_grep_failure
+  run_hook "/repo/hooks/other.sh"
+  [[ "${status}" -eq 0 ]] || { echo "blocking exit ${status}: ${output}" >&2; return 1; }
+  [[ "${output}" == *"comparison did not run"* ]] \
+    || { echo "no did-not-run advisory: ${output}" >&2; return 1; }
+  [[ "${output}" != *SCOPE-070* ]] || { echo "drift verdict on an unread declaration: ${output}" >&2; return 1; }
+}
+
+@test "an unread [SCOPE] declaration is not cached: the next readable edit compares against it" {
+  seed_transcript '[SCOPE] files=hooks/a.sh · deliverable=x · out=y'
+  install_forced_grep_failure
+  run_hook "/repo/hooks/other.sh"
+  if ga_guard_path "${SHIMBIN}/grep"; then rm -f -- "${SHIMBIN:?}/grep"; fi
+
+  run_hook "/repo/hooks/other.sh"
+  [[ "${output}" == *SCOPE-070* ]] && [[ "${output}" == *scope-decl* ]] \
+    || { echo "unread answer outlived the failure: ${output}" >&2; return 1; }
+}
+
 @test "the comparison predicate is defined once, in lib/, and both consumers source it" {
   local defs
   defs="$(grep -rlF --include='*.sh' 'match_file_against_allowed() {' "${GA}/hooks" | wc -l | tr -d '[:space:]')"
