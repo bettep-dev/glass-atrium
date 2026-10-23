@@ -325,7 +325,10 @@ async function openMap(
 		"screen must expose window.ARCH_SELECTORS (canvas + tabControl + desc SoT)",
 	);
 
-	await page.waitForSelector(`${selectors.canvas} svg`, { timeout: 30_000 });
+	// svg 삽입과 노드 id 각인은 다른 커밋 — CPU 가 굶으면 그 사이에 탐침이 떨어짐.
+	await page.waitForSelector(`${selectors.canvas} svg g.node[data-arch-node-id]`, {
+		timeout: 30_000,
+	});
 }
 
 // health 픽스처만 갈아끼우는 케이스용 — 큐를 기본값으로 다시 적는 자리 인자를 지움.
@@ -708,6 +711,9 @@ const OK_DAEMON = "wiki";
 // 데몬 원천과 부품 원천이 같은 노드에서 만나는 자리 — HEALTH_CARD_DEFS 의 autoagent 카드 id.
 const DAEMON_PART_ID = "daemon-cycle";
 
+// DAEMON_PART_ID 와 같은 health 응답에서 판정을 받되 live 데몬 바인딩이 겹치지 않는 부품.
+const HEALTH_WITNESS_PART_ID = "glass-atrium-wiki-curator";
+
 // 데몬 둘 밖의 부품 셋(PG · Chromium export · hook chain) → 그 판정을 대신 내는 존.
 // 화면은 이 짝을 리터럴로 갖지 않음 — 그려지는 소스의 subgraph 멤버십과 part_bindings 를 곱해
 // "헬스 노드를 하나만 담은 존" 을 파생함. 여기 리터럴은 그 파생이 오늘 무엇을 내는지 못 박는 자리이고,
@@ -776,10 +782,12 @@ interface RingProbe {
 	// 노드 하나가 실제로 든 링 클래스 목록 — 총계만으로는 어느 노드가 어느 tone 인지 못 가름.
 	// 두 원천이 같은 노드를 짚는 자리(autoagent_d)의 최악-우선 결과를 재는 유일한 다리임.
 	classByNode: Record<string, string[]>;
+	hasCanvas: boolean;
 }
 
 async function getRingProbe(): Promise<RingProbe> {
 	return await page.evaluate((canvas) => {
+		const hasCanvas = Boolean(document.querySelector(`${canvas} svg`));
 		const rendered: string[] = [];
 		const ringed: string[] = [];
 		const ringClasses: string[] = [];
@@ -799,8 +807,13 @@ async function getRingProbe(): Promise<RingProbe> {
 			ringed.push(nodeId || "(unmatched node)");
 			ringClasses.push(...hits);
 		}
-		return { rendered, ringed, ringClasses, classByNode };
+		return { rendered, ringed, ringClasses, classByNode, hasCanvas };
 	}, selectors.canvas);
+}
+
+// 전제 실패 메시지의 공통 꼬리 — "안 그려짐" 이 캔버스 부재인지 각인 전 탐침인지를 가름.
+function getProbeState(probe: RingProbe): string {
+	return `canvas svg ${probe.hasCanvas ? "present" : "absent"}, ${probe.rendered.length} stamped node(s)`;
 }
 
 // 부품 바인딩 중 이 캔버스가 실제로 그린 것들 — 데몬 쪽 getRenderedBound 의 부품 판임.
@@ -909,7 +922,7 @@ function assertNodeUnringed(probe: RingProbe, partId: string, zoneId: string): v
 	const nodes = getRenderedPart(probe.rendered, partId);
 	assert.ok(
 		nodes.length > 0,
-		`fixture precondition: none of part '${partId}' bound ids is drawn — the assertion below would be vacuous`,
+		`fixture precondition: none of part '${partId}' bound ids is drawn (${getProbeState(probe)}) — the assertion below would be vacuous`,
 	);
 	for (const nodeId of nodes) {
 		assert.deepEqual(
@@ -938,7 +951,7 @@ function assertPartRing(probe: RingProbe, partId: string, expected: string): voi
 	const nodes = getRenderedPart(probe.rendered, partId);
 	assert.ok(
 		nodes.length > 0,
-		`fixture precondition: none of part '${partId}' bound ids (${(PART_NODE_BINDINGS[partId] ?? []).join(", ")}) is drawn — the ring assertion below would be vacuous`,
+		`fixture precondition: none of part '${partId}' bound ids (${(PART_NODE_BINDINGS[partId] ?? []).join(", ")}) is drawn (${getProbeState(probe)}) — the ring assertion below would be vacuous`,
 	);
 	for (const nodeId of nodes) {
 		assert.deepEqual(
@@ -947,6 +960,21 @@ function assertPartRing(probe: RingProbe, partId: string, expected: string): voi
 			`part '${partId}' node ${nodeId} must carry exactly ${expected}`,
 		);
 	}
+}
+
+// 부품의 그려진 노드 전원이 기대 클래스를 들 때까지 대기 — waitForZoneRing 의 부품 판.
+// 기한을 넘기면 마지막 탐침을 돌려주고 판정은 assertPartRing 이 냄.
+async function waitForPartRing(partId: string, expected: string): Promise<RingProbe> {
+	const deadline = Date.now() + 10_000;
+	let probe = await getRingProbe();
+	while (Date.now() < deadline) {
+		const nodes = getRenderedPart(probe.rendered, partId);
+		if (nodes.length > 0 && nodes.every((id) => (probe.classByNode[id] || []).includes(expected)))
+			return probe;
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		probe = await getRingProbe();
+	}
+	return probe;
 }
 
 test("AC-T5 a fault verdict lights that daemon's bound nodes and no others", async () => {
@@ -994,14 +1022,21 @@ test("AC-B2-3b a fault daemon verdict outranks the healthy part verdict on the s
 	// 겹침 노드가 여기서 ok 로 켜져야 아래 crit 이 '경쟁에서 이겼다' 가 됨.
 	// 부품 판정이 아예 없으면 단언이 공허해짐.
 	await openMap(getLiveFixture({ daemons: [] }), getQueueFixture(), health);
-	assertPartRing(await getRingProbe(), DAEMON_PART_ID, RING_OK_CLASS);
+	assertPartRing(await waitForPartRing(DAEMON_PART_ID, RING_OK_CLASS), DAEMON_PART_ID, RING_OK_CLASS);
 
 	await openMap(
 		getLiveFixture({ daemons: [getDaemon(BOUND_DAEMON, "stale")] }),
 		getQueueFixture(),
 		health,
 	);
-	const probe = await getRingProbe();
+	// live 와 health 는 따로 도착함 — crit 만 기다리면 ok 판정이 오기 전에 재어 경쟁 없이 초록이 됨.
+	// 같은 /api/health/daemons 응답이 내는 다른 부품의 ok 가 그 응답이 반영됐다는 증인.
+	assertPartRing(
+		await waitForPartRing(HEALTH_WITNESS_PART_ID, RING_OK_CLASS),
+		HEALTH_WITNESS_PART_ID,
+		RING_OK_CLASS,
+	);
+	const probe = await waitForPartRing(DAEMON_PART_ID, RING_CRIT_CLASS);
 
 	const daemonNodes = new Set(getRenderedBound(probe.rendered, BOUND_DAEMON));
 	const contested = getRenderedPart(probe.rendered, DAEMON_PART_ID).filter((id) =>
