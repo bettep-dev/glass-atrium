@@ -1322,7 +1322,7 @@
     "hooks/test/t12-silent-fail-triage.bats": "777e1e2047e7f2de5ecd8b0a6b9c8850d3b47a16e78a7f17ec8e5bf5bdd46e36",
     "hooks/test/telemetry-activation.bats": "c8e9e29957175c8df9699f1ef6477241fe8c179d080d22b7bf3dcfd95fb4ca3a",
     "hooks/test/test_budget_overage_clustering.py": "b7fcd6955aa484495b2f0b32a056a34f6d1085809ec6c21dac9babfafe6ce4c8",
-    "hooks/test/test_cost_pricing.py": "f6d5aa7a3b1b0481e0f09116cb7f30805a5c7817d2eee38cd3a24d3d48b4c804",
+    "hooks/test/test_cost_pricing.py": "4aebc6dea22381323b13f2074dc9b52e0b9885539631349a7298b1a2c892c706",
     "hooks/test/test_daemon_config_loader.py": "54d3c8da99c7e3e7e0f837886c7081c68b1da32c1b8a78feafa5ba7618456bc0",
     "hooks/test/test_ga_paths.py": "8f037528b3d3c57f52c5929a9ece15ce44406546f26a6060075a37c21201d0f6",
     "hooks/test/test_learning_liveness_observation.py": "c052ee9da6202f41afd9e56cd261862044ebf2089f59151a75c390445122f46d",
