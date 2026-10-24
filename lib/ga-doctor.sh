@@ -2444,7 +2444,14 @@ PY
 snapshot_staleness_scan() {
   local root="$1"
   local rel repo entry shown changed untracked flagged head_epoch newest lag
-  local stale=0 path_anomaly=0 git_warned=0
+  local stale=0 path_anomaly=0 git_warned=0 git_list=""
+  # One listing file for every git read: a NUL stream cannot live in a variable, and a file read
+  # is waited, so its rc is branchable where a process substitution's is lost.
+  if ! git_list="$(mktemp)"; then
+    log "  warn : recovery-repo staleness scan skipped — no temp file for the git reads"
+    printf '0 0\n'
+    return 0
+  fi
   # The recovery-repo whitelist — the shared leaf (SoT) the write side
   # (scripts/snapshot-live-repos.sh) reads too, so neither side can go blind to a repo the
   # other reconciles. Sourced lazily + idempotently, source-path agnostic via BASH_SOURCE so
@@ -2475,7 +2482,12 @@ snapshot_staleness_scan() {
     # --directory collapses an untracked tree to its top entry, which is the ONLY way a file-less
     # control-char tree becomes visible at all (git ignores empty directories everywhere else).
     # HEAD-independent, so it runs BEFORE the commitless gate whose `continue` would skip it.
-    # shellcheck disable=SC2312
+    # GA-CONVERTED: the anomaly read's rc is branched on — a failed read is a note, never zero anomalies
+    # shellcheck disable=SC2310  # the listing rc IS the readable/unreadable verdict
+    if ! _snapshot_git_list "${repo}" "${git_list}" ls-files --others --directory --exclude-standard -z; then
+      log "  note : ${rel} — path-anomaly scan unreadable (git ls-files failed); control-character paths not established"
+      : >"${git_list}"
+    fi
     while IFS= read -r -d '' entry; do
       [[ -n "${entry}" ]] || continue
       [[ "${entry}" == *[[:cntrl:]]* ]] || continue
@@ -2483,7 +2495,7 @@ snapshot_staleness_scan() {
       shown="$(printf '%q' "${entry}")"
       log "  warn : ${rel} — control-character path, unsafe for a blanket snapshot stage (path anomaly, NOT snapshot staleness): ${shown}"
       flagged=1
-    done < <(git -C "${repo}" ls-files --others --directory --exclude-standard -z 2>/dev/null || true)
+    done <"${git_list}"
     # Counted OUTSIDE the clean/dirty branch, on a condition evaluated independently of the staleness
     # one — that disjointness is what keeps either finding from masking the other.
     [[ "${flagged}" -eq 0 ]] || path_anomaly=$((path_anomaly + 1))
@@ -2495,21 +2507,30 @@ snapshot_staleness_scan() {
       stale=$((stale + 1))
       continue
     fi
-    changed=0
     # NUL-delimited reads throughout: a path may legitimately contain whitespace, and the anomaly
-    # scan above exists precisely because one may contain a newline. `|| true` keeps a git read
-    # failure from aborting the enclosing command substitution; an empty stream reads as no findings.
-    # shellcheck disable=SC2312
+    # scan above exists precisely because one may contain a newline.
+    # GA-CONVERTED: the tracked-change read's rc is branched on — a failed read is a note, never the clean-tree ok
+    # shellcheck disable=SC2310  # the listing rc IS the readable/unreadable verdict
+    if ! _snapshot_git_list "${repo}" "${git_list}" diff --name-only -z HEAD; then
+      log "  note : ${rel} — recovery snapshot state unreadable (git diff failed); staleness not established"
+      continue
+    fi
+    changed=0
     while IFS= read -r -d '' entry; do
       [[ -n "${entry}" ]] || continue
       changed=$((changed + 1))
-    done < <(git -C "${repo}" diff --name-only -z HEAD 2>/dev/null || true)
+    done <"${git_list}"
+    # GA-CONVERTED: the untracked read's rc is branched on — a failed read is a note, never the clean-tree ok
+    # shellcheck disable=SC2310  # the listing rc IS the readable/unreadable verdict
+    if ! _snapshot_git_list "${repo}" "${git_list}" ls-files --others --exclude-standard -z; then
+      log "  note : ${rel} — recovery snapshot state unreadable (git ls-files failed); staleness not established"
+      continue
+    fi
     untracked=0
-    # shellcheck disable=SC2312
     while IFS= read -r -d '' entry; do
       [[ -n "${entry}" ]] || continue
       untracked=$((untracked + 1))
-    done < <(git -C "${repo}" ls-files --others --exclude-standard -z 2>/dev/null || true)
+    done <"${git_list}"
     # The ok line is UNCONDITIONAL: the untracked count above reads `ls-files --others` WITHOUT
     # --directory, which recurses into an untracked tree, so a control-char tree holding any
     # committable file inflates `untracked` and routes here to STALE. Reaching this branch therefore
@@ -2522,10 +2543,12 @@ snapshot_staleness_scan() {
     stale=$((stale + 1))
     # Recency DETAIL on an already-stale repo (AC-3 as a derived property, never its own verdict).
     # Both reads are advisory: a masked failure degrades to the un-ageable note, never to a false ok.
+    # GA-ABSORB[handled@the recency-lag-unavailable note]: an empty epoch fails the numeric test into that note
     head_epoch="$(git -C "${repo}" log -1 --format=%ct 2>/dev/null || true)"
     # `|| true` keeps an un-computable mtime (no python3) from aborting under the caller's set -e;
     # the empty capture then falls through to the "unavailable" note below, never to a false ok.
     # shellcheck disable=SC2310,SC2311
+    # GA-ABSORB[handled@the recency-lag-unavailable note]: an empty value fails the numeric test into that note
     newest="$(_snapshot_newest_mtime "${repo}" || true)"
     if [[ "${head_epoch}" =~ ^[0-9]+$ && "${newest}" =~ ^[0-9]+$ ]]; then
       lag=$((newest - head_epoch))
@@ -2536,7 +2559,17 @@ snapshot_staleness_scan() {
       log "         recency lag unavailable (python3 missing or the tracked set is unreadable)"
     fi
   done
+  # shellcheck disable=SC2310  # guard verdict branched on — a refusal leaves a temp file, never an abort
+  if ga_guard_path "${git_list}"; then rm -f -- "${git_list:?}"; fi
   printf '%d %d\n' "${stale}" "${path_anomaly}"
+}
+
+# Write the NUL-delimited listing of `git -C $1 <args…>` to file $2. The rc is git's own, so a failed
+# read is never mistaken for an empty listing.
+_snapshot_git_list() {
+  local repo="$1" list="$2"
+  shift 2
+  git -C "${repo}" "$@" >"${list}" 2>/dev/null # GA-ABSORB[handled@snapshot_staleness_scan's unreadable notes]: stderr only — every call branches on this rc
 }
 
 # verify-clean (parity doctor)
