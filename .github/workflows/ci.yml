@@ -1043,6 +1043,22 @@ jobs:
             echo "LIVE_CLAUDE_BEFORE=absent" >> "${GITHUB_ENV}"
           fi
 
+      # Retired-map carry-forward. Bare --check cannot see a retired key dropped
+      # from the committed map — it rebuilds the expected map from that same map —
+      # so the PR target's tip manifest is the reference that still carries it.
+      # The merge base would miss keys the target added after it, which is where a
+      # lane-side conflict resolution drops them. A push has no target, so the step
+      # skips. One ref at depth 1, no history walk; anonymous on this public repo.
+      - name: Check the retired map keeps every key of the PR target's tip
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          RUNNER_TMP: ${{ runner.temp }}
+        run: |
+          git fetch --no-tags --depth=1 origin "refs/heads/${BASE_REF}"
+          git show FETCH_HEAD:manifest.json >"${RUNNER_TMP}/target-tip-manifest.json"
+          ./scripts/generate-manifest.sh --check --reference "${RUNNER_TMP}/target-tip-manifest.json"
+
       # The real bundle+manifest builder. NOT the repo-root build-glass-atrium.sh
       # (a one-shot ~/.claude → ~/.glass-atrium migration copier that requires an
       # existing $HOME/.claude and produces neither tar nor manifest — it FATALs
