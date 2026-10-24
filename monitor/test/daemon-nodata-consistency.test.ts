@@ -1,78 +1,68 @@
 // Cross-screen consistency proof for 'No data'/overdue daemon semantics (F#38).
-// Drives health-model.js (health/dashboard) from the REAL ui.jsx DAEMON_STATUS_TONE
-// table (architecture's SoT), so a divergence between the two screens fails the suite.
+// Drives health-model.js (health/dashboard) from the REAL ui.jsx window.UI
+// (architecture's SoT), so a divergence between the two screens fails the suite.
 // Proves: a never-reported daemon → info 'No data' on BOTH surfaces; an overdue daemon
 // → crit; a within-cadence daemon → its real status. Each case is driven by the server's
 // effective_status, the field both surfaces read, so the two cannot diverge on a rule of
 // their own. health-model reads window.UI at call time (JSX not importable in node) →
-// stub built from parsed ui.jsx source.
+// the shipped ui.jsx is evaluated in a sandbox and installed as window.UI.
 // Runner: npx tsx --test test/daemon-nodata-consistency.test.ts
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+
+import { buildUiSandbox } from "./client-sandbox.js";
 
 interface ToneEntry {
   tone: string;
   label: string;
 }
-
-// Parse ui.jsx const DAEMON_STATUS_TONE = { key: { tone: 'x', label: 'y' }, ... }.
-// Source-level parse (mirrors architecture.daemon-binding.test.ts style) — the single
-// SoT the FE renders; a hand-copied literal here would defeat the point.
-function parseUiStatusTone(): Record<string, ToneEntry> {
-  const uiPath = fileURLToPath(
-    new URL("../public/src/ui.jsx", import.meta.url),
-  );
-  const src = readFileSync(uiPath, "utf8");
-  const blockMatch = src.match(
-    /const DAEMON_STATUS_TONE\s*=\s*\{([\s\S]*?)\};/,
-  );
-  assert.ok(blockMatch, "ui.jsx must declare const DAEMON_STATUS_TONE");
-  const table: Record<string, ToneEntry> = {};
-  const entryRe =
-    /(\w+):\s*\{\s*tone:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g;
-  for (const m of blockMatch[1].matchAll(entryRe)) {
-    table[m[1]] = { tone: m[2], label: m[3] };
-  }
-  return table;
+interface DaemonStatusUi {
+  DAEMON_STATUS_TONE: Record<string, ToneEntry>;
+  daemonStatusTone: (status: string) => string;
+  daemonStatusLabel: (status: string) => string;
 }
 
-const TONE_TABLE = parseUiStatusTone();
+const UI = await buildUiSandbox<DaemonStatusUi>();
 
-// window.UI backed by the parsed ui.jsx table + a call spy (proves delegation, not a
-// local literal, in resolveDaemonDisplayMeta).
+// Spread copies each sandbox-realm entry into this realm, so deepStrictEqual compares
+// values rather than failing on the foreign Object prototype.
+function getToneEntry(status: string): ToneEntry {
+  const entry = UI.DAEMON_STATUS_TONE[status];
+  assert.ok(entry, `ui.jsx DAEMON_STATUS_TONE must carry '${status}'`);
+  return { ...entry };
+}
+
+// Call spy over the real window.UI lookups — proves delegation, not a local literal, in
+// resolveDaemonDisplayMeta, while every answer still comes from the shipped functions.
 const lookups: Array<[string, string]> = [];
-interface StubWindow {
-  UI: {
-    daemonStatusTone: (status: string) => string;
-    daemonStatusLabel: (status: string) => string;
-  };
+interface SpyWindow {
+  UI: DaemonStatusUi;
   HealthModel?: {
     resolveDaemonDisplayMeta: (d: unknown) => ToneEntry;
   };
 }
-const stubWindow: StubWindow = {
+const spyWindow: SpyWindow = {
   UI: {
+    ...UI,
     daemonStatusTone: (status) => {
       lookups.push(["tone", status]);
-      return (TONE_TABLE[status] ?? { tone: "info", label: status ?? "—" }).tone;
+      return UI.daemonStatusTone(status);
     },
     daemonStatusLabel: (status) => {
       lookups.push(["label", status]);
-      return (TONE_TABLE[status] ?? { tone: "info", label: status ?? "—" }).label;
+      return UI.daemonStatusLabel(status);
     },
   },
 };
 // Double-cast is required, not laziness: with the DOM lib loaded `globalThis.window` is
-// `Window & typeof globalThis`, which does not overlap this stub — and installing a
-// non-Window stub is exactly the point, since the module under test is a browser
+// `Window & typeof globalThis`, which does not overlap this object — and installing a
+// non-Window object is exactly the point, since the module under test is a browser
 // module loaded in node.
-(globalThis as unknown as { window?: StubWindow }).window = stubWindow;
+(globalThis as unknown as { window?: SpyWindow }).window = spyWindow;
 
 await import("../public/src/data/health-model.js");
-const HealthModel = stubWindow.HealthModel;
+const HealthModel = spyWindow.HealthModel;
 assert.ok(HealthModel, "health-model.js must register window.HealthModel");
 
 // effective_status is the server verdict: overdue ⇒ 'stale' · otherwise the reported
@@ -94,7 +84,7 @@ test("never-reported daemon (null last_status row) → info 'No data' via shared
   );
   assert.deepStrictEqual(
     meta,
-    TONE_TABLE.missing,
+    getToneEntry("missing"),
     "health's null-status meta must equal architecture's 'missing' mapping",
   );
   assert.deepStrictEqual(meta, { tone: "info", label: "No data" });
@@ -123,7 +113,7 @@ test("overdue daemon → crit 'Overdue' via the server verdict, outranking last_
   );
   assert.deepStrictEqual(
     meta,
-    TONE_TABLE.stale,
+    getToneEntry("stale"),
     "health's overdue meta must equal architecture's 'stale' mapping",
   );
   assert.deepStrictEqual(meta, { tone: "crit", label: "Overdue" });
@@ -138,6 +128,6 @@ test("within-cadence daemon → its real last_status mapping (no downgrade)", ()
   const meta = HealthModel.resolveDaemonDisplayMeta(
     daemon({ last_status: "ok", effective_status: "ok" }),
   );
-  assert.deepStrictEqual(meta, TONE_TABLE.ok);
+  assert.deepStrictEqual(meta, getToneEntry("ok"));
   assert.deepStrictEqual(meta, { tone: "ok", label: "Healthy" });
 });

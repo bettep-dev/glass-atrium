@@ -3,7 +3,8 @@
 // compared against the Prisma schema as the SoT. A value added on one surface only is the
 // failure this suite exists to catch — an unnarrowed value silently becomes null, and an
 // untoned value renders as a raw enum token at an info tone (quieter than the state it
-// reports). Compile-time-only surfaces are left to the typecheck job.
+// reports). The route sets and the tone table are read as the values that ship, never as
+// source text. Compile-time-only surfaces are left to the typecheck job.
 // Runner: npx tsx --test test/daemon-status.enum-parity.test.ts
 
 import test from "node:test";
@@ -11,9 +12,17 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { buildDaemonStatusItems } from "../src/server/routes/dashboard.js";
-import { deriveNeedsAuth } from "../src/server/routes/health-detail.js";
+import {
+  buildDaemonStatusItems,
+  KNOWN_DAEMON_STATUSES as dashboardStatuses,
+} from "../src/server/routes/dashboard.js";
+import {
+  deriveNeedsAuth,
+  KNOWN_DAEMON_STATUSES as healthDetailStatuses,
+} from "../src/server/routes/health-detail.js";
+import { KNOWN_DAEMON_STATUSES as wikiStatuses } from "../src/server/routes/wiki.js";
 import type { DaemonAggRow } from "../src/server/architecture/live-overlay.js";
+import { buildUiSandbox } from "./client-sandbox.js";
 
 // The value this cycle adds — apply health, previously inexpressible (the run row is
 // written pre-apply and its status derives solely from per-patch errors).
@@ -41,30 +50,18 @@ function getSchemaEnumValues(): string[] {
     .filter((line) => /^[a-z_]+$/.test(line));
 }
 
-function getQuotedMembers(src: string, blockRe: RegExp, label: string): string[] {
-  const block = src.match(blockRe);
-  assert.ok(block, `${label} must declare its DaemonStatus member list`);
-  return [...stripLineComments(block[1]).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+interface ToneEntry {
+  tone: string;
+  label: string;
 }
 
-function getNarrowingSet(routeFile: string): string[] {
-  return getQuotedMembers(
-    repoRead(`src/server/routes/${routeFile}`),
-    /const KNOWN_DAEMON_STATUSES[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/,
-    routeFile,
-  );
-}
+const UI = await buildUiSandbox<{ DAEMON_STATUS_TONE: Record<string, ToneEntry> }>();
 
-// Same source-regex shape daemon-nodata-consistency.test.ts parses — ui.jsx is the tone SoT.
-function getToneTable(): Record<string, { tone: string; label: string }> {
-  const block = repoRead("public/src/ui.jsx").match(/const DAEMON_STATUS_TONE\s*=\s*\{([\s\S]*?)\};/);
-  assert.ok(block, "ui.jsx must declare const DAEMON_STATUS_TONE");
-  const table: Record<string, { tone: string; label: string }> = {};
-  for (const m of block[1].matchAll(/(\w+):\s*\{\s*tone:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)) {
-    table[m[1]] = { tone: m[2], label: m[3] };
-  }
-  return table;
-}
+const NARROWING_SETS: Array<{ route: string; statuses: ReadonlySet<string> }> = [
+  { route: "dashboard.ts", statuses: dashboardStatuses },
+  { route: "health-detail.ts", statuses: healthDetailStatuses },
+  { route: "wiki.ts", statuses: wikiStatuses },
+];
 
 const SCHEMA_VALUES = getSchemaEnumValues();
 
@@ -83,23 +80,25 @@ test("a migration adds each value (schema-only addition would never reach a data
   }
 });
 
-test("all three route narrowing sets equal the schema enum", () => {
-  for (const routeFile of ["dashboard.ts", "health-detail.ts", "wiki.ts"]) {
+for (const { route, statuses } of NARROWING_SETS) {
+  // Equality, not inclusion: a missing member nulls a real value, an extra one admits a
+  // value no database can hold.
+  test(`${route} narrowing set equals the schema enum`, () => {
     assert.deepStrictEqual(
-      getNarrowingSet(routeFile).slice().sort(),
+      [...statuses].sort(),
       SCHEMA_VALUES.slice().sort(),
-      `${routeFile} narrowing set drifted from enum DaemonStatus (drift → silent null)`,
+      `${route} narrowing set drifted from enum DaemonStatus (drift → silent null)`,
     );
-  }
-});
+  });
+}
 
 test("ui.jsx tone table holds every emitted value, and the new one renders louder than info", () => {
-  const table = getToneTable();
+  const table = UI.DAEMON_STATUS_TONE;
   for (const value of SCHEMA_VALUES) {
     assert.ok(table[value], `DAEMON_STATUS_TONE must carry '${value}' (absent → raw token at info tone)`);
   }
   const labels = SCHEMA_VALUES.map((value) => table[value].label);
-  const expected: Record<string, { tone: string; label: string }> = {
+  const expected: Record<string, ToneEntry> = {
     [APPLY_FAILED]: { tone: "crit", label: "Apply failed" },
     // Unavailability, not failure — an install that legitimately ships without an apply
     // script must read as a standing warn, never a standing red.
