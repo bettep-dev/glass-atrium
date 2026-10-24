@@ -683,6 +683,91 @@ ship_lib_a() {
   [[ "${output}" == *"RETIRED key ABSENT"* ]] || return 1
 }
 
+# Retire scripts/lib/a.sh through a real regeneration and keep that manifest as the
+# reference — the PR target tip that already carries the retired key.
+retire_lib_a_into_reference() {
+  ship_lib_a >/dev/null
+  git -C "${WORK}" rm -q scripts/lib/a.sh
+  git -C "${WORK}" commit -qm drop-a
+  "${SCRIPT}" >/dev/null 2>&1
+  REFERENCE="${BATS_TEST_TMPDIR}/reference.json"
+  cp "${MANIFEST}" "${REFERENCE}"
+}
+
+drop_lib_a_from_current_retired() {
+  jq 'del(.retired["scripts/lib/a.sh"])' "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+}
+
+@test "--check: a retired key dropped from the committed map stays invisible without a reference" {
+  retire_lib_a_into_reference
+  drop_lib_a_from_current_retired
+  run "${SCRIPT}" --check
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "--check --reference: exit 1 names each reference retired key the current map dropped" {
+  retire_lib_a_into_reference
+  drop_lib_a_from_current_retired
+  run "${SCRIPT}" --check --reference "${REFERENCE}"
+  [[ "${status}" -eq 1 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"RETIRED-DROPPED (1):"* ]] || return 1
+  [[ "${output}" == *"- scripts/lib/a.sh"* ]] || return 1
+}
+
+@test "--check --reference: exit 0 when the current map keeps every reference key" {
+  retire_lib_a_into_reference
+  run "${SCRIPT}" --check --reference "${REFERENCE}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" != *"RETIRED-DROPPED"* ]] || return 1
+}
+
+@test "--check --reference: a reference key whose path is back in files[] is not a drop" {
+  retire_lib_a_into_reference
+  printf '# lib a again\n' >"${WORK}/scripts/lib/a.sh"
+  git -C "${WORK}" add scripts/lib/a.sh
+  git -C "${WORK}" commit -qm reship-a
+  "${SCRIPT}" >/dev/null
+  run "${SCRIPT}" --check --reference "${REFERENCE}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "--check --reference: a reference key in a barred family is not a drop" {
+  retire_lib_a_into_reference
+  jq '.retired["monitor/prisma/migrations/20260101000000_seed/migration.sql"] = .retired["scripts/lib/a.sh"]' \
+    "${REFERENCE}" >"${REFERENCE}.tmp"
+  mv -f "${REFERENCE}.tmp" "${REFERENCE}"
+  run "${SCRIPT}" --check --reference "${REFERENCE}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "--check --reference: exit 2 on a reference that cannot be read as a manifest" {
+  "${SCRIPT}" >/dev/null
+  local bad_dir="${BATS_TEST_TMPDIR}"
+  printf 'not json\n' >"${bad_dir}/not-json.json"
+  printf '{"retired":[]}\n' >"${bad_dir}/array-retired.json"
+  local -a rows=(
+    "absent file|${bad_dir}/absent.json"
+    "not JSON|${bad_dir}/not-json.json"
+    "retired not an object|${bad_dir}/array-retired.json"
+  )
+  local row
+  for row in "${rows[@]}"; do
+    run "${SCRIPT}" --check --reference "${row#*|}"
+    [[ "${status}" -eq 2 ]] || { echo "${row%%|*}: status ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "--check: exit 2 on an argument that is not a reference flag" {
+  "${SCRIPT}" >/dev/null
+  local -a rows=("--refrence" "--reference")
+  local arg
+  for arg in "${rows[@]}"; do
+    run "${SCRIPT}" --check "${arg}"
+    [[ "${status}" -eq 2 ]] || { echo "${arg}: status ${status}: ${output}"; return 1; }
+  done
+}
+
 # Stamp one retired entry into a freshly generated manifest, then run --check. The
 # default value is a REAL shipped hash, so only the entry's shape can fail the gate.
 check_with_retired_entry() {
