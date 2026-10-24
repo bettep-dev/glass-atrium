@@ -57,34 +57,60 @@ setup() {
   [[ -f "${GA}/glass-atrium" ]] || skip "glass-atrium launcher not found"
 }
 
+# A miss names its needle and prints the output — a bare mid-body [[ ]] is errexit-exempt on bash 3.2.
+harness_output_has() {
+  local needle
+  for needle in "$@"; do
+    [[ "${output}" == *"${needle}"* ]] || {
+      echo "harness output lacks: ${needle}"
+      echo "${output}"
+      return 1
+    }
+  done
+}
+
 @test "Part B orphan-ownership harness passes (all scenarios green, zero fails)" {
   local output status
   output="$(cat "${HARNESS_OUT_FILE}")"
   status="$(cat "${HARNESS_RC_FILE}")"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"0 failed"* ]]
-  [[ "$output" != *"    FAIL "* ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  harness_output_has "0 failed"
+  [[ "${output}" != *"    FAIL "* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "Part B harness asserts our-stray self-heal (A) + foreign no-kill (B)" {
   local output status
   output="$(cat "${HARNESS_OUT_FILE}")"
   status="$(cat "${HARNESS_RC_FILE}")"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"our-stray: SIGTERM issued to the verified pid"* ]]
-  [[ "$output" == *"our-stray: not mis-classified as FOREIGN"* ]]
-  [[ "$output" == *"foreign(argv): NO kill issued"* ]]
-  [[ "$output" == *"foreign(cwd): NO kill issued"* ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  harness_output_has \
+    "our-stray: SIGTERM issued to the verified pid" \
+    "our-stray: not mis-classified as FOREIGN" \
+    "foreign(argv): NO kill issued" \
+    "foreign(cwd): NO kill issued"
 }
 
 @test "Part B harness asserts launchd unchanged (C) + never-frees escalation (D)" {
   local output status
   output="$(cat "${HARNESS_OUT_FILE}")"
   status="$(cat "${HARNESS_RC_FILE}")"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"orphan detector yields NOTHING (kill path never fires on launchd)"* ]]
-  [[ "$output" == *"bootout issued for com.glass-atrium.monitor"* ]]
-  [[ "$output" == *"never-frees: SIGTERM then SIGKILL both issued to the verified pid"* ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  harness_output_has \
+    "orphan detector yields NOTHING (kill path never fires on launchd)" \
+    "bootout issued for com.glass-atrium.monitor" \
+    "never-frees: SIGTERM then SIGKILL both issued to the verified pid"
 }
 
 @test "Part B harness keeps a launchd-owned monitor owned when its pid heads a listener list past one pipe buffer" {
