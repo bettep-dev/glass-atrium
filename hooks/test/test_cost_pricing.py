@@ -928,6 +928,8 @@ class MultiSourceRemoteTest(_LoaderCase):
         not_found = urllib.error.HTTPError(
             _OWN_REPO_REMOTE_URL, 404, "Not Found", None, None
         )
+        # unclosed → its ResourceWarning fires at a later GC, inside another test's stderr capture
+        self.addCleanup(not_found.close)
         err = io.StringIO()
         with mock.patch.object(
             pricing_loader,
