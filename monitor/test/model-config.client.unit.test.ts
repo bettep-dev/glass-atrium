@@ -21,7 +21,6 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
@@ -210,7 +209,7 @@ test("budget input placeholder advertises the shipped default cap, not a stale l
 });
 
 // Inherit roster SoT — DOMAIN_META_MC[*].inherit in the shipped model-config.jsx.
-// The literal table is the independent oracle the scraped roster is compared against.
+// The literal table is the independent oracle the shipped roster is compared against.
 const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
   "model.dev": true,
   "model.research": true,
@@ -221,13 +220,13 @@ const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
   "model.daemon_cycle_worker": false,
 };
 
-function getInheritRosterOrFailMc(): Record<string, boolean> {
-  const src = readFileSync(MC_SRC, "utf8");
-  const block = /const DOMAIN_META_MC = \{([\s\S]*?)\n\};/.exec(src);
-  assert.ok(block, "DOMAIN_META_MC declaration located in model-config.jsx");
+function getShippedInheritRosterMc(): Record<string, boolean> {
+  // loadMc returns the contextified sandbox itself; a top-level const is reachable only by evaluation in it.
+  const domainMeta: unknown = vm.runInContext("DOMAIN_META_MC", mc as unknown as vm.Context);
+  assert.ok(domainMeta && typeof domainMeta === "object", "DOMAIN_META_MC is an object in the shipped model-config.jsx");
   const roster: Record<string, boolean> = {};
-  for (const [, domain, body] of block[1].matchAll(/"(model\.[a-z_]+)":\s*\{([^}]*)\}/g)) {
-    roster[domain] = /\binherit:\s*true\b/.test(body);
+  for (const [domain, meta] of Object.entries(domainMeta)) {
+    roster[domain] = meta?.inherit === true;
   }
   return roster;
 }
@@ -243,8 +242,8 @@ test("modelOptionsMC: unknown domain (fallback meta) lists exactly the injected 
 test("modelOptionsMC: the inherit roster decides the inherit option, domain by domain", () => {
   // Data-driven over the whole roster, not a hand-written case per domain.
   // A domain added to DOMAIN_META_MC is therefore covered the moment it ships.
-  // Self-reference guard — a scraped expectation would shrink with the roster and pass vacuously.
-  const roster = getInheritRosterOrFailMc();
+  // Self-reference guard — an expectation read from the shipped table would shrink with it and pass vacuously.
+  const roster = getShippedInheritRosterMc();
   assert.deepStrictEqual(roster, INHERIT_ROSTER_MC, "shipped DOMAIN_META_MC inherit flags");
   for (const [domain, inherits] of Object.entries(INHERIT_ROSTER_MC)) {
     const opts = sameRealm(mc.modelOptionsMC(domain, KNOWN_MODELS_FIXTURE));
@@ -401,7 +400,7 @@ test("every server model domain has a client slot, in the server's order, with a
   const sorted = sameRealm(mc.sortDomainsMC(shuffled)).map((d) => d.domain);
   assert.deepStrictEqual(sorted, serverKeys, "DOMAIN_ORDER_MC covers every server domain in order");
 
-  const roster = getInheritRosterOrFailMc();
+  const roster = getShippedInheritRosterMc();
   for (const def of MODEL_DOMAINS) {
     assert.strictEqual(roster[def.key], def.allowInherit, `${def.key}: client inherit flag = server allowInherit`);
   }

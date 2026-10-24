@@ -1847,9 +1847,7 @@ function resolveBadge(key) {
 // 서버(resolveDaemonStatuses)가 설치 앵커(min(started_at)) 기준 시스템이 1 cadence 초과로
 // 떠 있으면 stale(crit)로 승격 — 진짜 신규 설치(cadence 미만)만 info 유지.
 const DAEMON_STATUS_TONE = {
-  // 'Healthy' 는 BADGE_TONE_META.ok.label 과 의도적 동일 리터럴 — daemon-nodata-consistency.test.ts 의
-  // 소스 정규식 파서가 `label: '...'` 문자열 리터럴을 요구(참조식 불가)하므로 여기서 단일화 불가.
-  // 드리프트는 ui.badge-registry.unit.test.ts 의 동치 단언(=== BADGE_TONE_META.ok.label)이 차단.
+  // 'Healthy' 는 BADGE_TONE_META.ok.label 과 같은 값의 별도 리터럴 — 둘을 묶는 테스트 없음, 변경 시 양쪽 함께 갱신
   ok:                { tone: 'ok',      label: 'Healthy' },
   partial:           { tone: 'warn',    label: 'Warning' },
   error:             { tone: 'crit',    label: 'Down' },

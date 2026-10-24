@@ -5,8 +5,7 @@
 //
 // The screen is a browser JSX module: it sits outside the tsx --test import path and outside
 // tsconfig's include, so neither an import nor a type check reaches it — reading the text is
-// what is left. Precedent: test/daemon-status.enum-parity.test.ts reads route source and
-// compares the declaration block it extracts by regex.
+// what is left.
 
 import test from "node:test";
 import assert from "node:assert/strict";
