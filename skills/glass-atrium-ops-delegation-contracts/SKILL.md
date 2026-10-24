@@ -1,11 +1,11 @@
 ---
 name: glass-atrium-ops-delegation-contracts
-description: 'Orchestrator-only delegation contracts behind pointers in rules/glass-atrium/orchestrator-role.md: the ultracode [AGENT-COMPOSITION] declaration and its block-* verdicts, the [SIZE-EST] delegation-size discipline, the [SCOPE] files= parser, worktree isolation for parallel fan-out, plan edge discovery, the pre-merge live-deploy gate, and Stage-2, exposure and failure-recovery detail. Use when authoring a Workflow script that spawns dev-* agents, sizing or splitting a DEV or schema-mode analysis spawn, writing a [SIZE-EST] or [AGENT-COMPOSITION] line, reading a block-* verdict, checking why a [SCOPE] line gave no signal, isolating concurrent tracks, classifying a plan''s predecessor edges, or deploying before the PR. Do NOT use inside a subagent (orchestrator-role.md binds the main session only), for the [SCOPE] grammar line or its authoring rules (orchestrator-role.md → Context Handoff Size), or for workflow skeletons, sentinel placement and schema caps (skills/glass-atrium-ops-orchestrator.md).'
+description: 'Orchestrator-only delegation contracts behind pointers in rules/glass-atrium/orchestrator-role.md and skills/glass-atrium-ops-orchestrator.md: the [AGENT-COMPOSITION] declaration, block-* verdicts, [SIZE-EST] sizing, the [SCOPE] parser, worktree isolation, plan edge discovery, the pre-merge live-deploy gate, review-round routing, the Deploy-Safety Idiom, and Stage-2, exposure and failure-recovery detail. Use when authoring a Workflow script that spawns dev-* agents, sizing or splitting a DEV or schema-mode analysis spawn, reading a block-* verdict, checking why a [SCOPE] line gave no signal, isolating concurrent tracks, classifying a plan''s predecessor edges, composing or routing a review round, copying files to a live install, or deploying before the PR. Do NOT use inside a subagent (main session only), for the [SCOPE] grammar or its authoring rules (orchestrator-role.md → Context Handoff Size), or for workflow skeletons, sentinel placement and schema caps (skills/glass-atrium-ops-orchestrator.md).'
 ---
 
 # Delegation Contracts (orchestrator only)
 
-- **What this skill holds**: the detail behind standing obligations that `rules/glass-atrium/orchestrator-role.md` states as pointers.
+- **What this skill holds**: the detail behind standing obligations that `rules/glass-atrium/orchestrator-role.md` or `skills/glass-atrium-ops-orchestrator.md` states as pointers.
 - **SoT split**: each pointer states its obligation, when it fires and its triggers, and is the SoT for them; the Reference Index names what each side is the SoT for.
 
 ## When to Use
@@ -20,6 +20,8 @@ description: 'Orchestrator-only delegation contracts behind pointers in rules/gl
 - Setting the exposure bit or running the Visual-Weight Probe on an authoring delegation, or judging a `needs_devfront_markup` flag → deliverable exposure.
 - Picking a team's cardinality from the task shape → the Effort-scaling table.
 - Reading why a Failure Recovery stage is or is not enforced → the failure-recovery backing.
+- Composing a review round, or routing one that does not converge → Review rounds and reviewer prompts.
+- Copying files toward a live install → the Deploy-Safety Idiom.
 - A spawn gate blocked or advised on one of these tokens → the reference file for that token (Reference Index).
 
 ## Reference Index
@@ -40,6 +42,13 @@ Read only the file the task needs.
 | dev-front markup exception | `references/deliverable-exposure.md` | `#### Monitoring-phase notes` → **glass-atrium-dev-front markup-exception Monitoring judgment** | its trigger, the capability judgment, skeleton-first one-POST handoff, no user surfacing | trigger detail, capability criterion, handoff steps, stitching ban, surfacing exception, EXTEND citation |
 | Effort-scaling table | `references/delegation-size-discipline.md` | `#### Analysis fan-out and team cardinality` → **Effort-scaling by task shape** | the duty to pick count from shape, when it fires | the table, its examples and notes |
 | Failure Recovery backing | `references/failure-recovery.md` | `### Failure Recovery Loop` → **Backing honesty (which stages are enforced)** | which checks are honor-system and how applied, the one code-backed stage | why they are honor-system, the counter, `.suspended` marker, reset, SubagentStart signal |
+
+References whose pointer site is `skills/glass-atrium-ops-orchestrator.md`, not the rule file:
+
+| Topic | File | Pointer site in `skills/glass-atrium-ops-orchestrator.md` | SoT at the pointer site | SoT in the reference file |
+|---|---|---|---|---|
+| Review rounds and reviewer prompts | `references/review-rounds.md` | `### Quality Gates [ORCHESTRATOR]` → `#### Review rounds and reviewer prompts` | the trigger (every review round, both paths), the reviewer-side counterpart | non-convergence routing table, reviewer-prompt content |
+| Deploy-Safety Idiom | `references/deploy-safety-idiom.md` | `#### Deploy-Safety Idiom (drift-preserving live-copy + verify) [ORCHESTRATOR]` | what it binds, advisory status, when in the cycle the deploy runs | the sanctioned flows, copy-step anti-patterns, the bash 3.2-safe idiom |
 
 ## Edit Rules
 
