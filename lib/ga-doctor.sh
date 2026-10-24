@@ -66,6 +66,7 @@ run_doctor() {
       local rel missing=0 rels
       # Waited capture, not a process substitution → no late SIGCHLD lands on a later write.
       # A producer die only empties the capture (|| true) → the run continues, as before.
+      # GA-ABSORB[handled@the jq and files-array FAIL rows of this block]: the producer dies only on what those rows already fail
       rels="$(read_manifest_files)" || true
       while IFS= read -r rel; do
         [[ -n "${rel}" ]] || continue
@@ -88,6 +89,7 @@ run_doctor() {
   if [[ -d "${TARGET_HOME}" ]]; then
     local dangling=0 link links
     # Waited capture (see §4); an empty capture yields one empty line, skipped by the guard.
+    # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
     links="$(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r link; do
       [[ -n "${link}" ]] || continue
@@ -207,6 +209,7 @@ run_doctor() {
     #       some missing) on an established install.
     local ga_links=0 lk lks
     # Waited capture (see §4).
+    # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
     lks="$(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r lk; do
       [[ -n "${lk}" ]] || continue
@@ -223,6 +226,7 @@ run_doctor() {
     fi
     local rel total=0 undeployed=0 dst cur rels
     # Waited capture (see §4).
+    # GA-ABSORB[handled@the jq and files-array guard of this block]: the producer dies only on what that guard already excludes
     rels="$(read_manifest_files)" || true
     while IFS= read -r rel; do
       [[ -n "${rel}" ]] || continue
@@ -305,6 +309,7 @@ run_doctor() {
     # IFS prefix scopes space+tab splitting to THIS read only — the launcher's strict IFS=$'\n\t'
     # otherwise keeps `shasum -a 256` as one array word → an unrunnable command name.
     # shellcheck disable=SC2310
+    # GA-ABSORB[handled@the empty-array skip row below]: an empty resolver hits EOF, and the empty array is the loud skip
     IFS=$' \t' read -ra drift_sha < <(_resolve_sha256_cmd) || true
     if [[ "${#drift_sha[@]}" -eq 0 ]]; then
       log "  warn : manifest drift gate skipped (consumer install — no shasum/sha256sum for hash reconciliation)"
@@ -340,6 +345,7 @@ run_doctor() {
     # advisory read — a malformed manifest already FAILs §4, so a here-default is
     # enough; mask the rc (|| printf) so set -e never trips on a parse miss.
     # shellcheck disable=SC2312
+    # GA-ABSORB[handled@the manifest-parse FAIL rows of §4]: a parse miss prints the visible unknown version
     mver="$(jq -r '.version // "unknown"' -- "${MANIFEST}" 2>/dev/null || printf 'unknown')"
     log "  info : Glass Atrium version ${mver} (manifest.version)"
   else
@@ -365,6 +371,7 @@ run_doctor() {
     # pin atrium_toml_get at ga-core's resolved CONFIG_TOML (env-scoped subshell)
     # so a sandbox GA_CONFIG_TOML override is honored. Read rc masked (advisory).
     # shellcheck disable=SC2311,SC2312
+    # GA-ABSORB[handled@the config key drift note of §22]: an unreadable config.toml reads there as every template key absent
     repo_slug="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get "[release]" "repo" 2>/dev/null || printf '')"
   fi
   if [[ -z "${repo_slug}" || "${repo_slug}" == "<owner>/<repo>" ]]; then
@@ -440,6 +447,7 @@ run_doctor() {
         # Latest ACTIONABLE row: win_drop > 0 guarantees one exists inside the window, and the newest
         # non-lesson row is at least that recent. SC2312 — the lib carries no file-scope set -e.
         # shellcheck disable=SC2312
+        # GA-ABSORB[handled@the unclassifiable-log warn above]: the awk counts proved the log readable; this only picks the latest row
         last_drop="$(grep 'inject-scope-rules] DROP ' "${inject_drop_log}" 2>/dev/null | grep -v -e 'block=lesson ' -e 'block=canary ' | tail -n1 || true)"
         [[ -n "${last_drop}" ]] && log "         latest: ${last_drop}"
       elif [[ "${life_events}" -gt 0 ]]; then
@@ -452,6 +460,7 @@ run_doctor() {
         canary_warns=$((canary_warns + win_canary))
         local last_canary=""
         # shellcheck disable=SC2312
+        # GA-ABSORB[handled@the unclassifiable-log warn above]: the awk counts proved the log readable; this only picks the latest row
         last_canary="$(grep 'inject-scope-rules] DROP .*block=canary ' "${inject_drop_log}" 2>/dev/null | tail -n1 || true)"
         [[ -n "${last_canary}" ]] && log "         latest: ${last_canary}"
       fi
@@ -526,6 +535,7 @@ run_doctor() {
   elif [[ "${slot_python_ok}" -ne 1 ]]; then
     log "  warn : split scope-rule channel BLIND — no runnable python3, so the chunker core cannot be asked for its slot count"
     inject_slot_warns=$((inject_slot_warns + 1))
+  # GA-ABSORB[handled@this elif's BLIND warn]: stderr only — the rc routes to that row
   elif ! slot_audit="$(GA_CHUNK_RULES_ROOT="${GA_ROOT}" python3 "${chunk_core}" --audit 2>/dev/null)" || [[ -z "${slot_audit}" ]]; then
     log "  warn : split scope-rule channel BLIND — the chunker core produced no audit (${chunk_core} --audit); the agent-registry is likely unreadable, so neither the slot count nor any assembled total can be established"
     inject_slot_warns=$((inject_slot_warns + 1))
@@ -664,6 +674,7 @@ run_doctor() {
     # IFS prefix scopes space+tab splitting to THIS read only — the launcher's strict IFS=$'\n\t'
     # otherwise keeps `shasum -a 256` as one array word → an unrunnable command name.
     # shellcheck disable=SC2310
+    # GA-ABSORB[handled@the empty-array skip row below]: an empty resolver hits EOF, and the empty array is the loud skip
     IFS=$' \t' read -ra ld_sha < <(_resolve_sha256_cmd) || true
     if [[ "${#ld_sha[@]}" -eq 0 ]]; then
       log "  warn : launchd deploy-drift check skipped — no shasum/sha256sum for plist comparison"
@@ -916,8 +927,11 @@ run_doctor() {
   #     zero channels are silent and the reader is broken.
   local channel_silent=0 channel_blind=0
   local liveness_port="" liveness_raw="" liveness_code="" liveness_json="" liveness_alerting="" liveness_line=""
+  local liveness_detail=""
+  # shellcheck disable=SC2016,SC2310,SC2311  # jq programs, not shell; each capture's rc IS its branch's verdict
   if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
     log "  note : curl or jq absent — recording-channel liveness not read (advisory)"
+  # GA-ABSORB[handled@this elif's port-unresolvable note]: stderr only — the rc routes to that row
   elif ! liveness_port="$(atrium_monitor_port 2>/dev/null)"; then
     log "  note : monitor port unresolvable — recording-channel liveness not read (advisory)"
   # No --fail: it collapses every non-2xx into curl's generic failure exit, and the two cases need
@@ -926,13 +940,17 @@ run_doctor() {
   # exists to name rather than to disguise as a monitor being down. The status rides on its own
   # trailing line so a body that fails to parse cannot swallow it.
   elif ! liveness_raw="$(curl -s --connect-timeout 2 --max-time 5 -w '\n%{http_code}' \
-      "http://127.0.0.1:${liveness_port}/api/outcomes/channel-liveness" 2>/dev/null)"; then
+    "http://127.0.0.1:${liveness_port}/api/outcomes/channel-liveness" 2>/dev/null)"; then # GA-ABSORB[handled@this elif's monitor-not-answering note]: stderr only — the rc routes to that row
     log "  note : monitor not answering on :${liveness_port} — recording-channel liveness not read (advisory)"
-  elif liveness_code="${liveness_raw##*$'\n'}"; liveness_json="${liveness_raw%$'\n'*}";
-       [[ "${liveness_code}" != 2[0-9][0-9] ]]; then
+  elif
+    liveness_code="${liveness_raw##*$'\n'}"
+    liveness_json="${liveness_raw%$'\n'*}"
+    [[ "${liveness_code}" != 2[0-9][0-9] ]]
+  then
     log "  warn : monitor answered HTTP ${liveness_code} for /api/outcomes/channel-liveness on :${liveness_port} — the monitor is up but does not carry this route, so the watchdog's second surface is blind"
     log "         remedy: the deployed monitor predates the route — rebuild and restart it (a stale build, not a silent channel)"
     channel_blind=1
+  # GA-ABSORB[handled@this elif's blind warn]: stderr only — the rc routes to that row
   elif ! liveness_alerting="$(printf '%s' "${liveness_json}" | jq -er '.alerting | join(" ")' 2>/dev/null)"; then
     # jq rc != 0 = no readable `alerting` member: the route's shape moved under this reader, which
     # is itself the watchdog going blind — surface it rather than reading the miss as "none".
@@ -940,20 +958,24 @@ run_doctor() {
     channel_blind=1
   elif [[ -z "${liveness_alerting}" ]]; then
     log "  ok   : no recording channel has gone silent (monitor watchdog reports none alerting)"
-  else
-    # One line per named channel, every number lifted from the SAME response.
-    # shellcheck disable=SC2312
-    while IFS= read -r liveness_line; do
-      [[ -n "${liveness_line}" ]] || continue
-      log "  warn : recording channel silent — ${liveness_line}"
-      channel_silent=$((channel_silent + 1))
-    done < <(printf '%s' "${liveness_json}" | jq -r '
+  # One line per named channel, every number lifted from the SAME response. A named set whose
+  # per-channel detail cannot be read is the watchdog going blind, never zero silent channels.
+  # GA-CONVERTED: the detail read's rc and emptiness are branched on — a blind read is a counted channel-blind warn
+  elif ! liveness_detail="$(_get_command_output jq -r '
         .thresholds as $t
         | .days as $d
         | .channels[]
         | select(.alerting)
         | "\(.attribution_source): peak \(.peak_daily_count) rows/day over \($d)d, nothing recorded for \(.silent_hours | floor)h (alerts past \($t.silence_hours)h once a channel exceeds \($t.eligibility_daily_floor)/day)"
-      ' 2>/dev/null)
+      ' <<<"${liveness_json}")" || [[ -z "${liveness_detail}" ]]; then
+    log "  warn : /api/outcomes/channel-liveness names alerting channel(s) (${liveness_alerting}) but carries no readable per-channel detail — the watchdog's second surface is blind"
+    channel_blind=1
+  else
+    while IFS= read -r liveness_line; do
+      [[ -n "${liveness_line}" ]] || continue
+      log "  warn : recording channel silent — ${liveness_line}"
+      channel_silent=$((channel_silent + 1))
+    done <<<"${liveness_detail}"
     log "         remedy: the recorder stopped writing through the named channel — check the hook path that feeds it (hooks/track-outcome.sh) before reading the resulting gap as a quality change"
   fi
 
@@ -975,6 +997,7 @@ run_doctor() {
   # jq's rc is the separator that matters here: a registry with no `agents` member reads as zero keys,
   # which is indistinguishable from a healthy empty one, whereas a file jq cannot parse is this reader
   # going blind — reported, never folded into the clean case.
+  # GA-ABSORB[handled@this elif's unparseable-registry warn]: stderr only — the rc routes to that row
   elif ! registry_keys="$(jq -r '(.agents // {}) | keys[]' -- "${registry_json}" 2>/dev/null)"; then
     log "  warn : agent registry unparseable (${registry_json}) — a key with no agent body cannot be detected here; check the file's JSON"
     registry_warns=1
@@ -1032,7 +1055,7 @@ run_doctor() {
             "\(.region_index // "?")/\(.region_count // "?")",
             (.target // "?"),
             (if (.choice // "") == "" then "-" else .choice end)
-          ] | @tsv' -- "${arbiter_rec}" 2>/dev/null)"; then
+          ] | @tsv' -- "${arbiter_rec}" 2>/dev/null)"; then # GA-ABSORB[handled@this if's unreadable-record warn]: stderr only — the rc routes to that row
         log "  warn : contested-gap decision record unreadable (${arbiter_rec}) — the gap it names cannot be classified; inspect the file"
         arbiter_warns=$((arbiter_warns + 1))
         continue
@@ -1131,15 +1154,29 @@ run_doctor() {
   elif ! jq -e 'type == "object"' -- "${SETTINGS_JSON}" >/dev/null 2>&1; then
     log "  note : live settings.json unparseable (${SETTINGS_JSON}) — permissions coverage not compared"
   else
-    local perms_key perms_rule perms_live perms_total perms_present perms_missing
+    local perms_key perms_rule perms_live perms_template_rules perms_total perms_present perms_missing
+    # shellcheck disable=SC2016  # a jq filter, expanded by jq
+    local perms_filter='.permissions[$k] // [] | .[]'
     log "  info : settings permissions coverage vs ${perms_template} (report-only; the live file is never written)"
     log "         basis: literal string match of each template rule — a differently worded equivalent reads as missing, and a live-only rule is never reported; this is template coverage, not a security-gap claim"
     for perms_key in deny ask; do
       perms_total=0
       perms_present=0
       perms_missing=""
+      # GA-CONVERTED: the live read's rc is branched on — a non-array member is a note, never "every rule missing"
+      # shellcheck disable=SC2310,SC2311  # the capture's rc IS the readable/unreadable verdict
+      if ! perms_live="$(_get_command_output jq -r --arg k "${perms_key}" "${perms_filter}" -- "${SETTINGS_JSON}")"; then
+        log "  note : live settings.json permissions unreadable for ${perms_key} (${SETTINGS_JSON}) — coverage not compared"
+        continue
+      fi
+      # GA-CONVERTED: the template read's rc is branched on — a non-array member is a note, never a silent skip
+      # shellcheck disable=SC2310,SC2311  # the capture's rc IS the readable/unreadable verdict
+      if ! perms_template_rules="$(_get_command_output jq -r --arg k "${perms_key}" "${perms_filter}" -- "${perms_template}")"; then
+        log "  note : settings template permissions unreadable for ${perms_key} (${perms_template}) — coverage not compared"
+        continue
+      fi
       # Newline-fenced haystack: one jq read per key, then a literal containment test per rule.
-      perms_live=$'\n'"$(jq -r --arg k "${perms_key}" '.permissions[$k] // [] | .[]' -- "${SETTINGS_JSON}" 2>/dev/null || true)"$'\n'
+      perms_live=$'\n'"${perms_live}"$'\n'
       while IFS= read -r perms_rule; do
         [[ -n "${perms_rule}" ]] || continue
         perms_total=$((perms_total + 1))
@@ -1148,7 +1185,7 @@ run_doctor() {
         else
           perms_missing="${perms_missing}${perms_missing:+, }${perms_rule}"
         fi
-      done < <(jq -r --arg k "${perms_key}" '.permissions[$k] // [] | .[]' -- "${perms_template}" 2>/dev/null || true)
+      done <<<"${perms_template_rules}"
       [[ "${perms_total}" -gt 0 ]] || continue
       log "         ${perms_key}: ${perms_present}/${perms_total} template rule(s) present${perms_missing:+ — missing: ${perms_missing}}"
     done
@@ -1305,6 +1342,7 @@ run_doctor() {
   local tools_mirror_dir="" tools_mirror_tool="" tools_mirror_out=""
   local tools_mirror_line="" tools_mirror_name="" tools_mirror_rc=0
   local tools_mirror_drift="" tools_mirror_count=0
+  # GA-ABSORB[handled@the no-sync-tool note below]: an unresolvable scripts dir is the empty value that note reports
   tools_mirror_dir="$(cd -- "${BASH_SOURCE[0]%/*}/../scripts" 2>/dev/null && pwd)" || tools_mirror_dir=""
   tools_mirror_tool="${tools_mirror_dir}/sync-registry-tools.sh"
   if [[ -z "${tools_mirror_dir}" || ! -f "${tools_mirror_tool}" ]]; then
@@ -1478,7 +1516,8 @@ run_doctor() {
   #     a server: no server → clean. A TMUX_TMPDIR dir holding no socket prints the same ENOENT,
   #     so it is indistinguishable from no server → also clean. Any other list-sessions failure
   #     (e.g. socket permission) → unreadable note, never a clean pass.
-  local token_leak=0 leak_name="CLAUDE_CODE_OAUTH_TOKEN" tmux_ls_err=""
+  local token_leak=0 leak_name="CLAUDE_CODE_OAUTH_TOKEN" tmux_ls_err="" tmux_env="" launchd_env=""
+  # shellcheck disable=SC2310,SC2311  # each capture's rc IS its branch's verdict
   if ! command -v tmux >/dev/null 2>&1; then
     log "  note : tmux token-leak check skipped — tmux not found"
   # set -E carries the ERR trap into the substitution, where bash 3.2 fires it even under `!` →
@@ -1493,25 +1532,27 @@ run_doctor() {
         ;;
       *) log "  note : default tmux server unreadable — list-sessions failed for a reason other than no server running; ${leak_name} check not performed" ;;
     esac
+  # GA-CONVERTED: show-environment's rc is branched on — a failed read is a note, never a clean pass
+  elif ! tmux_env="$(_get_command_output tmux show-environment -g)"; then
+    log "  note : default tmux server global environment unreadable — show-environment failed; ${leak_name} check not performed"
+  elif [[ $'\n'"${tmux_env}" == *$'\n'"${leak_name}="* ]]; then
+    token_leak=$((token_leak + 1))
+    log "  warn : ${leak_name} is set in the default tmux server's global environment — every new pane inherits it; clear it with 'tmux set-environment -g -u ${leak_name}' (value not shown)"
   else
-    # grep to /dev/null, not -q: an early exit could SIGPIPE the producer, which pipefail reads as clean.
-    if tmux show-environment -g 2>/dev/null | grep "^${leak_name}=" >/dev/null; then
-      token_leak=$((token_leak + 1))
-      log "  warn : ${leak_name} is set in the default tmux server's global environment — every new pane inherits it; clear it with 'tmux set-environment -g -u ${leak_name}' (value not shown)"
-    else
-      log "  ok   : default tmux server global environment carries no ${leak_name}"
-    fi
+    log "  ok   : default tmux server global environment carries no ${leak_name}"
   fi
+  # shellcheck disable=SC2310,SC2311  # the capture's rc IS the readable/unreadable verdict
   if ! command -v launchctl >/dev/null 2>&1; then
     log "  note : launchd token-leak check skipped — launchctl not found"
+  # GA-CONVERTED: getenv's rc is branched on — a failed read is a note, never a clean pass
+  elif ! launchd_env="$(_get_command_output launchctl getenv "${leak_name}")"; then
+    log "  note : launchd user domain unreadable — launchctl getenv failed; ${leak_name} check not performed"
+  # stdout, never the exit status: getenv of an unset name exits 0 with empty stdout.
+  elif [[ -n "${launchd_env}" ]]; then
+    token_leak=$((token_leak + 1))
+    log "  warn : ${leak_name} is set in the launchd user domain — every launchd job inherits it; clear it with 'launchctl unsetenv ${leak_name}' (value not shown)"
   else
-    # stdout, never the exit status: getenv of an unset name exits 0 with empty stdout.
-    if launchctl getenv "${leak_name}" 2>/dev/null | grep . >/dev/null; then
-      token_leak=$((token_leak + 1))
-      log "  warn : ${leak_name} is set in the launchd user domain — every launchd job inherits it; clear it with 'launchctl unsetenv ${leak_name}' (value not shown)"
-    else
-      log "  ok   : launchd user domain carries no ${leak_name}"
-    fi
+    log "  ok   : launchd user domain carries no ${leak_name}"
   fi
 
   # 27. profile-branch links — registration kind B (report-only).
@@ -1697,13 +1738,23 @@ _log_canary_ledger_verdict() {
   fi
 }
 
+# Run "$@" with stderr dropped and the ERR trap cleared; the rc is the command's own. Call it ONLY
+# inside `$( )`: bash 3.2 fires an inherited ERR trap in a substitution even under `if !`, and the
+# cleared trap must be that subshell's, never the caller's.
+_get_command_output() {
+  trap - ERR
+  "$@" 2>/dev/null # GA-ABSORB[handled@each caller's unreadable branch]: stderr only — every caller branches on this rc
+}
+
 # Emit the UTC calendar date $1 days ago as YYYY-MM-DD, or NOTHING with rc 1 when neither date(1)
 # dialect is available. BSD (`-v-Nd`) is tried first, then GNU (`-d 'N days ago'`); python3 is
 # deliberately not a fallback here because §9e already treats a missing python3 as a live condition.
 # The caller branches on the rc — an un-resolvable window is surfaced, never defaulted away.
 _drop_window_cutoff_date() {
   local days="${1}"
+  # GA-ABSORB[handled@the return 1 below]: stderr only — callers branch on the helper rc
   date -u -v-"${days}"d +%Y-%m-%d 2>/dev/null && return 0
+  # GA-ABSORB[handled@the return 1 below]: stderr only — callers branch on the helper rc
   date -u -d "${days} days ago" +%Y-%m-%d 2>/dev/null && return 0
   return 1
 }
@@ -1725,13 +1776,14 @@ GA_REWIRE_NOTICE_WINDOW_DAYS="${GA_REWIRE_NOTICE_WINDOW_DAYS:-7}"
 # The candidate set is a GLOB plus the inject diagnostic log, never a filename list.
 _doctor_report_rewire_marker() {
   local marker="${GA_DATA_ROOT}/data/hook-rewire-pending"
-  [[ -f "${marker}" ]] || return 0
+  [[ -f "${marker}" ]] || return 0 # GA-ABSORB[benign]: no marker is the nothing-to-report state
 
   local written now
   written="$(awk -F= '/^epoch=/ { print $2; exit }' "${marker}")" || written=""
   # An unreadable/absent epoch falls back to the file's own mtime — an unagedable marker must still
   # age out rather than become permanent.
   if [[ ! "${written}" =~ ^[0-9]+$ ]]; then
+    # GA-ABSORB[benign]: the marker vanished after its -f check, which is the clean state
     written="$(stat_mtime "${marker}")" || return 0
   fi
   now="$(date +%s)"
@@ -1775,7 +1827,7 @@ _doctor_report_profile_links() {
   fi
   # shellcheck disable=SC2311  # the -r guard above keeps its grammar source from failing; the rest is a glob loop
   branches="$(_get_profile_link_branches "${grammar}")"
-  [[ -n "${branches}" ]] || return 0
+  [[ -n "${branches}" ]] || return 0 # GA-ABSORB[benign]: no profile branch is the nothing-to-report state
   if ! command -v jq >/dev/null 2>&1 || ! jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
     log "  note : profile branch link check skipped — needs jq and a readable manifest (${MANIFEST})"
     return 0
@@ -2000,6 +2052,7 @@ _decline_record_path() {
     base="${AUTOAGENT_BACKUP_DIR}"
   else
     agents_dir="${GA_ROOT}/agents"
+    # GA-ABSORB[handled@the unresolved-path fallback]: a missing agents dir keeps the literal path
     if resolved="$(cd -- "${agents_dir}" 2>/dev/null && pwd -P)"; then
       agents_dir="${resolved}"
     fi
@@ -2053,6 +2106,7 @@ _missed_cycle_scan() {
     newest="${day%.json}"
     [[ -n "${oldest}" ]] || oldest="${newest}"
   done
+  # GA-ABSORB[handled@the no-report-yet note of §29]: no report is the state that note names
   [[ -n "${newest}" ]] || return 0
   printf '%s\n' "${newest}"
   for ((offset = days; offset >= 1; offset--)); do
@@ -2117,6 +2171,7 @@ _get_body_anchor_state() {
     return 2
   fi
   # shellcheck disable=SC2310
+  # GA-ABSORB[handled@the empty-array skip row below]: an empty resolver hits EOF, and the empty array is the loud skip
   IFS=$' \t' read -ra sha < <(_resolve_sha256_cmd) || true
   if [[ "${#sha[@]}" -eq 0 ]]; then
     printf '%s\n' "no shasum/sha256sum to hash the base entry"
@@ -2363,6 +2418,7 @@ PY
   # rc is NOT actually lost — the mask is visible only to a standalone lint of this sourced lib
   # (which cannot see the caller's strict mode, same reason as the file-header SC2154 disable).
   # shellcheck disable=SC2312
+  # GA-ABSORB[handled@the recency-lag-unavailable note]: the rc 1 is the caller's empty capture
   git -C "${repo}" ls-files -z 2>/dev/null | python3 -c "${py}" "${repo}" 2>/dev/null || return 1
 }
 
@@ -2388,7 +2444,14 @@ PY
 snapshot_staleness_scan() {
   local root="$1"
   local rel repo entry shown changed untracked flagged head_epoch newest lag
-  local stale=0 path_anomaly=0 git_warned=0
+  local stale=0 path_anomaly=0 git_warned=0 git_list=""
+  # One listing file for every git read: a NUL stream cannot live in a variable, and a file read
+  # is waited, so its rc is branchable where a process substitution's is lost.
+  if ! git_list="$(mktemp)"; then
+    log "  warn : recovery-repo staleness scan skipped — no temp file for the git reads"
+    printf '0 0\n'
+    return 0
+  fi
   # The recovery-repo whitelist — the shared leaf (SoT) the write side
   # (scripts/snapshot-live-repos.sh) reads too, so neither side can go blind to a repo the
   # other reconciles. Sourced lazily + idempotently, source-path agnostic via BASH_SOURCE so
@@ -2419,7 +2482,12 @@ snapshot_staleness_scan() {
     # --directory collapses an untracked tree to its top entry, which is the ONLY way a file-less
     # control-char tree becomes visible at all (git ignores empty directories everywhere else).
     # HEAD-independent, so it runs BEFORE the commitless gate whose `continue` would skip it.
-    # shellcheck disable=SC2312
+    # GA-CONVERTED: the anomaly read's rc is branched on — a failed read is a note, never zero anomalies
+    # shellcheck disable=SC2310  # the listing rc IS the readable/unreadable verdict
+    if ! _snapshot_git_list "${repo}" "${git_list}" ls-files --others --directory --exclude-standard -z; then
+      log "  note : ${rel} — path-anomaly scan unreadable (git ls-files failed); control-character paths not established"
+      : >"${git_list}"
+    fi
     while IFS= read -r -d '' entry; do
       [[ -n "${entry}" ]] || continue
       [[ "${entry}" == *[[:cntrl:]]* ]] || continue
@@ -2427,7 +2495,7 @@ snapshot_staleness_scan() {
       shown="$(printf '%q' "${entry}")"
       log "  warn : ${rel} — control-character path, unsafe for a blanket snapshot stage (path anomaly, NOT snapshot staleness): ${shown}"
       flagged=1
-    done < <(git -C "${repo}" ls-files --others --directory --exclude-standard -z 2>/dev/null || true)
+    done <"${git_list}"
     # Counted OUTSIDE the clean/dirty branch, on a condition evaluated independently of the staleness
     # one — that disjointness is what keeps either finding from masking the other.
     [[ "${flagged}" -eq 0 ]] || path_anomaly=$((path_anomaly + 1))
@@ -2439,21 +2507,30 @@ snapshot_staleness_scan() {
       stale=$((stale + 1))
       continue
     fi
-    changed=0
     # NUL-delimited reads throughout: a path may legitimately contain whitespace, and the anomaly
-    # scan above exists precisely because one may contain a newline. `|| true` keeps a git read
-    # failure from aborting the enclosing command substitution; an empty stream reads as no findings.
-    # shellcheck disable=SC2312
+    # scan above exists precisely because one may contain a newline.
+    # GA-CONVERTED: the tracked-change read's rc is branched on — a failed read is a note, never the clean-tree ok
+    # shellcheck disable=SC2310  # the listing rc IS the readable/unreadable verdict
+    if ! _snapshot_git_list "${repo}" "${git_list}" diff --name-only -z HEAD; then
+      log "  note : ${rel} — recovery snapshot state unreadable (git diff failed); staleness not established"
+      continue
+    fi
+    changed=0
     while IFS= read -r -d '' entry; do
       [[ -n "${entry}" ]] || continue
       changed=$((changed + 1))
-    done < <(git -C "${repo}" diff --name-only -z HEAD 2>/dev/null || true)
+    done <"${git_list}"
+    # GA-CONVERTED: the untracked read's rc is branched on — a failed read is a note, never the clean-tree ok
+    # shellcheck disable=SC2310  # the listing rc IS the readable/unreadable verdict
+    if ! _snapshot_git_list "${repo}" "${git_list}" ls-files --others --exclude-standard -z; then
+      log "  note : ${rel} — recovery snapshot state unreadable (git ls-files failed); staleness not established"
+      continue
+    fi
     untracked=0
-    # shellcheck disable=SC2312
     while IFS= read -r -d '' entry; do
       [[ -n "${entry}" ]] || continue
       untracked=$((untracked + 1))
-    done < <(git -C "${repo}" ls-files --others --exclude-standard -z 2>/dev/null || true)
+    done <"${git_list}"
     # The ok line is UNCONDITIONAL: the untracked count above reads `ls-files --others` WITHOUT
     # --directory, which recurses into an untracked tree, so a control-char tree holding any
     # committable file inflates `untracked` and routes here to STALE. Reaching this branch therefore
@@ -2466,10 +2543,12 @@ snapshot_staleness_scan() {
     stale=$((stale + 1))
     # Recency DETAIL on an already-stale repo (AC-3 as a derived property, never its own verdict).
     # Both reads are advisory: a masked failure degrades to the un-ageable note, never to a false ok.
+    # GA-ABSORB[handled@the recency-lag-unavailable note]: an empty epoch fails the numeric test into that note
     head_epoch="$(git -C "${repo}" log -1 --format=%ct 2>/dev/null || true)"
     # `|| true` keeps an un-computable mtime (no python3) from aborting under the caller's set -e;
     # the empty capture then falls through to the "unavailable" note below, never to a false ok.
     # shellcheck disable=SC2310,SC2311
+    # GA-ABSORB[handled@the recency-lag-unavailable note]: an empty value fails the numeric test into that note
     newest="$(_snapshot_newest_mtime "${repo}" || true)"
     if [[ "${head_epoch}" =~ ^[0-9]+$ && "${newest}" =~ ^[0-9]+$ ]]; then
       lag=$((newest - head_epoch))
@@ -2480,7 +2559,17 @@ snapshot_staleness_scan() {
       log "         recency lag unavailable (python3 missing or the tracked set is unreadable)"
     fi
   done
+  # shellcheck disable=SC2310  # guard verdict branched on — a refusal leaves a temp file, never an abort
+  if ga_guard_path "${git_list}"; then rm -f -- "${git_list:?}"; fi
   printf '%d %d\n' "${stale}" "${path_anomaly}"
+}
+
+# Write the NUL-delimited listing of `git -C $1 <args…>` to file $2. The rc is git's own, so a failed
+# read is never mistaken for an empty listing.
+_snapshot_git_list() {
+  local repo="$1" list="$2"
+  shift 2
+  git -C "${repo}" "$@" >"${list}" 2>/dev/null # GA-ABSORB[handled@snapshot_staleness_scan's unreadable notes]: stderr only — every call branches on this rc
 }
 
 # verify-clean (parity doctor)
@@ -2500,6 +2589,7 @@ verify_clean() {
       [[ -n "${link}" ]] || continue
       log "  FAIL : residual GA symlink: ${link}"
       ga_links=$((ga_links + 1))
+      # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
     done < <(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
   fi
   if [[ "${ga_links}" -eq 0 ]]; then

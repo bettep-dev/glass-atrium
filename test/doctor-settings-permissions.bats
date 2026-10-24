@@ -284,3 +284,32 @@ warn_total_of_output() {
     return 1
   }
 }
+
+@test "an unreadable permissions member on either side is a note, never a coverage count" {
+  local row name live template want
+  local rows=(
+    'live permissions not an object|{"permissions":["Bash(rm:*)"]}||note : live settings.json permissions unreadable'
+    'template permissions not an object||{"permissions":"deny-all"}|note : settings template permissions unreadable'
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name live template want <<<"${row}"
+    seed_template
+    seed_live "$(template_deny)" "$(template_ask)"
+    [[ -z "${live}" ]] || printf '%s\n' "${live}" >"${TARGET}/settings.json"
+    [[ -z "${template}" ]] || printf '%s\n' "${template}" >"${GA_SANDBOX}/settings.template.json"
+    run_doctor_sandbox
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: status ${status}"
+      echo "${output}"
+      return 1
+    }
+    assert_output_has "${want}" || {
+      echo "${name}"
+      return 1
+    }
+    assert_output_lacks "template rule(s) present" || {
+      echo "${name}"
+      return 1
+    }
+  done
+}
