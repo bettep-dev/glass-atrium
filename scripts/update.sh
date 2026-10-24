@@ -83,7 +83,8 @@
 # launchd job so the install-parity post-step's monitor `kickstart -k` cannot kill
 # the update runner. No mode asks a question: the release bundle is authoritative
 # and every changed file is applied. Subflags select the mode:
-#   (default)            CLI apply — E3 behavior, NO DB tracking.
+#   (default)            CLI apply — E3 behavior, NO DB tracking; an applied set
+#                        touching monitor/ rebuilds the monitor (no restart).
 #   --headless           apply with core.update_job status tracking
 #                        (in-progress→completed/failed) + heartbeat + the
 #                        install-parity post-step (monitor rebuild + launchd
@@ -3455,7 +3456,7 @@ PLIST
 # ---------------------------------------------------------------------------
 
 # Build the monitor (tsc + build:assets + build:client via `npm run build`). Returns
-# non-zero on build failure (the caller treats it as fatal → job 'failed').
+# non-zero on build failure (headless: fatal → job 'failed'; CLI: a warning).
 update_build_monitor() {
   local monitor_dir npm
   monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
@@ -3988,17 +3989,32 @@ update_restore_agents() {
 # ---------------------------------------------------------------------------
 
 # Single success-path finalizer. On the applied path (did_apply=1) in headless mode
-# run the install-parity post-step (fatal on build failure → exit 9); then mark the
-# job completed. did_apply=0 (a no-op "already up to date" path) skips the post-step
-# (nothing was built). The CLI mode no-ops both.
+# run the install-parity post-step (fatal on build failure → exit 9); in CLI mode run
+# the best-effort monitor rebuild only. Then mark the job completed (a CLI no-op).
+# did_apply=0 (a no-op "already up to date" path) skips both (nothing was applied).
 update_finalize_success() {
   local did_apply="${1:-0}"
-  if [[ "${_update_headless}" -eq 1 && "${did_apply}" -eq 1 ]]; then
-    if ! update_post_step; then
-      update_die_code 9 "install-parity post-step (monitor build / launchd refresh) failed — update files applied but the monitor was not rebuilt/restarted; retry"
+  if [[ "${did_apply}" -eq 1 ]]; then
+    if [[ "${_update_headless}" -eq 1 ]]; then
+      if ! update_post_step; then
+        update_die_code 9 "install-parity post-step (monitor build / launchd refresh) failed — update files applied but the monitor was not rebuilt/restarted; retry"
+      fi
+    else
+      update_build_monitor_cli
     fi
   fi
   update_job_complete
+}
+
+# CLI apply whose set touches monitor/ → rebuild, so the served bundle is not stale.
+# A failure warns, never fails the applied update; the restart stays headless-only.
+update_build_monitor_cli() {
+  [[ $'\n'"${_update_apply_paths}" == *$'\n'monitor/* ]] || return 0
+  if update_build_monitor; then
+    update_log "monitor not restarted by a CLI update — restart the monitor to load a server-side change"
+  else
+    update_log "WARN: monitor build failed — update files applied; rebuild by hand: (cd monitor && npm run build)"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -4028,7 +4044,8 @@ Usage:
 Flow: acquire the apply-lock → download + verify the
 release → deterministic non-agent sync → agent
 EDITABLE-region merge (E4) → capture the baseline → refresh the ~/.claude mirror
-farm → reconcile settings.json hook bindings (wire-hooks). Headless additionally
+farm → reconcile settings.json hook bindings (wire-hooks). A CLI apply touching
+monitor/ rebuilds the monitor but does not restart it. Headless additionally
 tracks the core.update_job row and runs the install-parity post-step. No
 path-pattern refusal holds a changed row back for manual review.
 USAGE
@@ -4591,7 +4608,8 @@ update_run() {
   update_migrate_deploy_post_apply
 
   # Headless success finalize: install-parity post-step (monitor rebuild + launchd
-  # refresh) then mark the update_job row completed. Interactive mode no-ops both.
+  # refresh) then mark the update_job row completed. Interactive mode rebuilds a
+  # changed monitor only.
   update_finalize_success 1
   update_log "update complete"
 }

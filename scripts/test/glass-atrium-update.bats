@@ -196,6 +196,8 @@ load_skill() {
     seed_file "${NEWSRC}" "${rel}" "new ${rel}"
   done
   write_manifest "${WORK}/manifest.json" "${rows[@]}"
+  # The monitor/ row makes the CLI apply rebuild the monitor: seam npm so no real build runs.
+  write_mock_npm "${WORK}/npm"
 
   run env \
     GA_ROOT="${INSTALL}" \
@@ -203,6 +205,7 @@ load_skill() {
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_NPM="${WORK}/npm" \
     bash "${SKILL}"
   [ "$status" -eq 0 ]
   for rel in "${rows[@]}"; do
@@ -1923,6 +1926,59 @@ MOCK
   grep -q "run build" "${WORK}/npm.log"                            # build ran through the npm seam
   [[ "$(grep -c 'kickstart -k' "${WORK}/lc.log")" -eq 2 ]]         # loaded → kickstart -k, both times
   grep -q "bootstrap" "${WORK}/lc.log"                            # unloaded → bootstrap
+}
+
+# CLI (non-headless) apply of the one release file $1, npm + launchctl seamed; NPM_RC
+# picks the build's exit. The install's monitor dir exists in every case, so a build
+# skipped for an absent dir can never pass for a build the apply set did not ask for.
+run_cli_apply() {
+  local rel="$1"
+  write_mock_npm "${WORK}/npm"
+  write_mock_launchctl "${WORK}/launchctl"
+  mkdir -p "${INSTALL}/monitor"
+  seed_file "${INSTALL}" "${rel}" "old"
+  seed_file "${NEWSRC}" "${rel}" "new content"
+  write_manifest "${WORK}/manifest.json" "${rel}"
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_NPM="${WORK}/npm" \
+    NPM_LOG="${WORK}/npm.log" \
+    NPM_RC="${NPM_RC:-0}" \
+    ATRIUM_UPDATE_LAUNCHCTL="${WORK}/launchctl" \
+    LAUNCHCTL_LOG="${WORK}/launchctl.log" \
+    bash "${SKILL}"
+}
+
+@test "CLI apply touching monitor/ rebuilds the monitor and names the restart it does not do" {
+  run_cli_apply "monitor/src/server/app.ts"
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${INSTALL}/monitor/src/server/app.ts")" == "new content" ]] || return 1
+  [[ -f "${WORK}/npm.log" && "$(<"${WORK}/npm.log")" == "run build" ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"restart the monitor to load a server-side change"* ]] || { echo "${output}"; return 1; }
+  [[ ! -e "${WORK}/launchctl.log" ]] || { echo "CLI apply reached launchd"; return 1; }
+}
+
+@test "CLI apply whose monitor build fails warns and still exits 0 with the files applied" {
+  NPM_RC=1 run_cli_apply "monitor/public/src/ui.jsx"
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${INSTALL}/monitor/public/src/ui.jsx")" == "new content" ]] || return 1
+  [[ -f "${WORK}/npm.log" && "$(<"${WORK}/npm.log")" == "run build" ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"WARN: monitor build failed"* ]] || { echo "${output}"; return 1; }
+  [[ "${output}" != *"restart the monitor to load a server-side change"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "CLI apply that touches no monitor/ path never reaches the monitor build" {
+  run_cli_apply "scripts/tool.sh"
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1
+  [[ ! -e "${WORK}/npm.log" ]] || { echo "${output}"; return 1; }
 }
 
 @test "P3: the decoupled one-shot launchd plist renders with the update-oneshot label + --headless args" {
