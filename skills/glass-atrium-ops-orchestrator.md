@@ -299,26 +299,13 @@ The delegation-size discipline (`orchestrator-role.md` → `### Spawn Budget`) a
   - Honest backing: the routing decision is orchestrator honor-system, and the hook leg is advisory + presence-only (stderr, exit 0, silent without a `[SCOPE]` line).
   - Describing this override as "enforced" is FORBIDDEN.
   - Machine-checked repetition: `hooks/test/enforce-verification-gate-scope.bats` extracts the path-count number from this bullet and compares it with the hook's constant, so the two move together or that suite fails.
-- **Error recovery**: `orchestrator-role.md` → `### Failure Recovery Loop` (retry limits, escalation, circuit-breaker, checkpoint resumption); infinite retry forbidden.
+- **Error recovery**: `orchestrator-role.md` → `### Failure Recovery Loop`.
 - **Team termination**: complete → aggregate results → **reconcile and close** each plan the team built from (`## Managed Document Completion (Direct Handling)` → Step 3) → **Outcome Record** → retrospective (actual vs plan) → **instruction upgrade review**.
   - The retrospective's durable half is the Outcome Record's `summary` and `concerns` plus the learning-log aggregation (`core-learning-log.md` → Learning Log Auto-Aggregation).
-  - A user-facing memory write (`MEMORY.md` / `feedback_*.md`) is NOT a step here — it fires only on an explicit user instruction to remember (`core-learning-log.md` → Long-Term Memory Write-Gate).
 
 #### Review rounds and reviewer prompts
 
-Applies to every review round the orchestrator composes, on the manual and the ultracode path alike.
-
-| Condition | Action |
-|---|---|
-| a lens or review round returns no measurements | mark it "not exercised" and report it as a coverage gap; it never counts toward convergence or as a dry round |
-| a control cannot be tested adversarially, or keeps producing new bypass classes | take it to the user as a direction question before re-specifying it again |
-| a revision loop that `##### Stage gates` (this file) caps, the Stage-2 revision included, does not converge | follow the cap and escalation route `##### Stage gates` sets for that loop |
-| any other review loop does not converge | take it to the user — no round cap |
-
-- Why the user and no round cap on every other loop: a cap turns non-convergence into a stop the user never sees.
-- A reviewer prompt carries no severity bar, finding cap or convergence note.
-  - Why: a reviewer follows such text literally and reports less than the rule set finds.
-- A reviewer prompt's only carry-over from earlier rounds is the list of settled items, each with its settlement record.
+- Every review round the orchestrator composes, on the manual and the ultracode path alike, follows `skills/glass-atrium-ops-delegation-contracts/references/review-rounds.md`: the non-convergence routing and what a reviewer prompt may carry.
 - Reviewer-side counterpart: `scoped/scope-qa.md` → `## Delegation Bars and Convergence Notes [QA]`.
 
 ### Architecture Patterns [ORCHESTRATOR]
@@ -551,48 +538,13 @@ const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete
 
 Binds any delegation that copies files INTO a live install: reach the destination through a sanctioned flow FIRST, then make the copy step itself drift-proof. Advisory reference for shell-authoring delegations; NOT a gate.
 
+- The sanctioned flows, the copy-step anti-patterns and the bash 3.2-safe idiom: `skills/glass-atrium-ops-delegation-contracts/references/deploy-safety-idiom.md`.
+
 ##### When in the cycle this deploy runs (pointer, not a restatement)
 
 - Order SoT — pre-merge by default, the live-suite instrument and its exit-0 threshold, the prompt-file tail: `orchestrator-role.md` → `## Document-Driven Workflow` step 6.
   - The per-cycle order line and the narrow post-merge cases: `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md` → `## Per-cycle order` · `## Scope and backing`.
-- This section covers only HOW the copy reaches its destination safely.
-
-##### Reach the destination through a sanctioned flow FIRST
-
-A direct write into the live harness surface — `~/.glass-atrium/{hooks,agents,autoagent,scripts,skills}/`, `~/.claude/{hooks,agents}/`, `settings.json`, the `com.*.plist` files — is BLOCKED agent_id-independently by `enforce-harness-critical.sh`, so a delegation that just `cp`s there fails at the gate, not at review.
-
-Pick one of the three flows:
-
-- **Updater local-source seam** — stage the tree, then let `scripts/update.sh` deploy it (`ATRIUM_UPDATE_SRC_DIR` + `ATRIUM_UPDATE_SRC_MANIFEST`).
-  - The sanctioned default: the manifest gate, the agent EDITABLE-region merge and the backup/rollback transaction all still run.
-  - The apply is unattended — no prompt stands between the staged tree and the live install.
-- **Launch-env grant** — `HARNESS_PROTECTION_APPROVE=1` must be in the environment Claude Code was LAUNCHED with.
-  - An in-session `export` via the Bash tool NEVER reaches the hook (hooks inherit the launch environment), so this is a session-start decision a delegation cannot arrange for itself.
-- **Worktree-then-deploy** — do the work in a git worktree (unprotected), land it through review, and let the installer / `update.sh` / the `agent_lifecycle` CLI perform the live write.
-
-##### The copy step — three anti-patterns, then the sanctioned idiom
-
-The idiom is deploy-mechanism-agnostic: it applies to the copy step of whichever flow is chosen, with `DST` a staging tree rather than the live surface.
-
-- **cp-silent-fail** — a bare `cp` can partially or silently fail to update a target, so trusting its exit code alone hides drift.
-  - → Verify EACH copied file with `cmp -s` (byte-equality) AFTER the copy; a `cmp` mismatch is the deploy-failure signal (loud-fail, never `|| true` it).
-- **IFS-word-split** — `for f in ${LIST}` mis-splits the file list under a strict `IFS=$'\n\t'` (a path with an IFS char breaks iteration).
-  - → Iterate with `while IFS= read -r f; do … done <<<"${LIST}"` so each line is exactly one path, unsplit.
-- **lookbehind blind-spot** — a grep negative-lookbehind authored to exclude one shape can silently exclude the `/path/` form too, skipping real matches.
-  - → Use a blind-spot-free POSITIVE match or an explicit allowlist instead.
-
-Sanctioned idiom (bash 3.2-safe):
-
-```bash
-# drift-preserving staged copy + per-file cmp verify — loud-fail on any mismatch.
-# DST = the staging tree the sanctioned flow deploys FROM (e.g. ATRIUM_UPDATE_SRC_DIR),
-# never the live ~/.glass-atrium / ~/.claude surface.
-while IFS= read -r rel; do
-  [[ -z "${rel}" ]] && continue
-  cp -- "${SRC}/${rel}" "${DST}/${rel}"
-  cmp -s "${SRC}/${rel}" "${DST}/${rel}" || { printf 'DEPLOY DRIFT: %s\n' "${rel}" >&2; exit 1; }
-done <<<"${FILE_LIST}"
-```
+- The idiom covers only HOW the copy reaches its destination safely.
 
 #### Parallel Execution (Wave Execution) [ORCHESTRATOR]
 
