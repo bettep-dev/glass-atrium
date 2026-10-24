@@ -1191,7 +1191,7 @@
     "hooks/pricing.json": "5d0200be3f91cab6dace498c79402ef2fb097ad62a4c7d868cb67cb9ba25041c",
     "hooks/prune-security-warnings-state.sh": "6132703f1f50d1f90b0d81f04a9d15c1b7b92d0af66f929c474be18958c1c870",
     "hooks/prune-session-spawns.sh": "1c9e4ed43676a219461b1ec9b3b9abbf02e757154d32d92737e30b482789b044",
-    "hooks/style-ref-verify.sh": "06b9696e3640c1bfbf1efd33924aa382571237b92d96f9c1e53907f5761f6de1",
+    "hooks/style-ref-verify.sh": "27a851828554593bc1407d9a6e8ecc966bb69da44f606850cf5f84821c6f0e49",
     "hooks/telemetry-activation.sh": "8919317d28926aea0a5904d3f9e8707524231dd6e33275b9f4c98be3d44dbce7",
     "hooks/test/.gitignore": "19baf14d8996ce0a5eab522407df302de8ec6dccf73f08b7875ed8f14ef58247",
     "hooks/test/advisory-context-budget.bats": "798dd237844b89216c215dc478bf6e463151390c039fb328cb8f87a886df20f2",
