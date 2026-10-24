@@ -1481,7 +1481,12 @@ run_doctor() {
   local token_leak=0 leak_name="CLAUDE_CODE_OAUTH_TOKEN" tmux_ls_err=""
   if ! command -v tmux >/dev/null 2>&1; then
     log "  note : tmux token-leak check skipped — tmux not found"
-  elif ! tmux_ls_err="$(tmux list-sessions 2>&1 >/dev/null)"; then
+  # set -E carries the ERR trap into the substitution, where bash 3.2 fires it even under `!` →
+  # suspend it inside the subshell only; the no-server failure is an expected verdict here.
+  elif ! tmux_ls_err="$(
+    trap - ERR
+    tmux list-sessions 2>&1 >/dev/null
+  )"; then
     case "${tmux_ls_err}" in
       *"no server running"* | *"error connecting"*"No such file or directory"* | *"error connecting"*"Connection refused"*)
         log "  ok   : no default tmux server running — no global environment to leak ${leak_name} into"
@@ -1525,6 +1530,44 @@ run_doctor() {
   canary_ledger_warns="$(_doctor_report_canary_ledger)"
   canary_warns=$((canary_warns + canary_ledger_warns))
 
+  # 29. missed nightly cycle — a UTC report date absent from the daemon-reports lookback.
+  #     Registration kind A on an OPEN gap only (no report since → the cycle is still not running):
+  #     one counted warning, cleared by the next report, scheduled or a manual cycle. Never FAIL —
+  #     a non-zero doctor exit would degrade every cycle's aggregate verdict.
+  #     A SUPERSEDED gap is history no owner action can fill (a manual cycle writes today's date)
+  #     → kind-B note, which ages out with the lookback. Not applicable → kind-B note.
+  local missed_cycle=0 cycle_label="${LAUNCHD_LABEL_PREFIX}.autoagent-cycle" missed_scan=""
+  local missed_newest="" missed_open="" missed_past=""
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ "$(is_sandbox_target)" == "yes" ]]; then
+    log "  note : missed-cycle check skipped — sandbox target (launchd domain is per-UID, not per-HOME)"
+  elif ! command -v launchctl >/dev/null 2>&1; then
+    log "  note : missed-cycle check skipped — launchctl not found"
+  elif [[ ! -f "${LAUNCH_AGENTS}/${cycle_label}.plist" ]]; then
+    log "  note : missed-cycle check skipped — ${cycle_label} not deployed"
+  elif ! launchctl print "gui/${UID}/${cycle_label}" >/dev/null 2>&1; then
+    log "  note : missed-cycle check skipped — ${cycle_label} not loaded (counted by the launchd-unloaded row when probed)"
+  elif [[ ! -d "${apply_reports_dir}" ]]; then
+    log "  note : missed-cycle check skipped — no autoagent daemon-reports dir (${apply_reports_dir})"
+  elif ! missed_scan="$(_missed_cycle_scan "${apply_reports_dir}" "${MISSED_CYCLE_WINDOW_DAYS}")"; then
+    log "  note : missed-cycle check skipped — neither 'date -u -v-Nd' nor 'date -u -d \"N days ago\"' works here"
+  elif [[ -z "${missed_scan}" ]]; then
+    log "  note : missed-cycle check skipped — no autoagent cycle report yet (${apply_reports_dir})"
+  else
+    missed_newest="$(printf '%s\n' "${missed_scan}" | sed -n '1p')"
+    missed_open="$(printf '%s\n' "${missed_scan}" | sed -n 's/ open$//p' | tr '\n' ' ')"
+    missed_past="$(printf '%s\n' "${missed_scan}" | sed -n 's/ superseded$//p' | tr '\n' ' ')"
+    if [[ -n "${missed_past}" ]]; then
+      log "  note : autoagent cycle missed UTC report date(s) ${missed_past}— a later report shows it running again; a past date cannot be refilled, so this note ages out after ${MISSED_CYCLE_WINDOW_DAYS}d"
+    fi
+    if [[ -n "${missed_open}" ]]; then
+      missed_cycle=1
+      log "  warn : autoagent cycle has written no report since ${missed_newest} — missing UTC report date(s): ${missed_open}— check 'launchctl print gui/${UID}/${cycle_label}' and the cycle log, then run a cycle; its report clears this warning"
+    elif [[ -z "${missed_past}" ]]; then
+      log "  ok   : autoagent cycle wrote a report for every UTC date in the last ${MISSED_CYCLE_WINDOW_DAYS}d"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -1532,7 +1575,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + launchd_unloaded + token_leak + canary_warns))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + launchd_unloaded + token_leak + canary_warns + missed_cycle))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -1540,7 +1583,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${launchd_unloaded} launchd-unloaded + ${token_leak} token-leak + ${canary_warns} canary-trial — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${launchd_unloaded} launchd-unloaded + ${token_leak} token-leak + ${canary_warns} canary-trial + ${missed_cycle} missed-cycle — see above) =="
     fi
     return 0
   fi
@@ -1990,6 +2033,38 @@ _decline_scan() {
     }
     END { printf "%d %d %d\n%s", inw + 0, aged + 0, malformed + 0, bodies }
   ' "${1}"
+}
+
+# §29 lookback (days) over the nightly cycle reports — also the lifetime of a superseded-gap note,
+# since no owner action can fill a past date. Env-overridable so a test can pin either side.
+MISSED_CYCLE_WINDOW_DAYS="${MISSED_CYCLE_WINDOW_DAYS:-7}"
+
+# Missing UTC report dates in the last $2 days of reports dir $1, oldest first, one `<date> <state>`
+# line each: `open` = no report since → the cycle is still not running · `superseded` = a later
+# report exists. Line 1 is the newest report date; no report at all → no output.
+# Today is never a gap (its cycle may not have run yet); a date before the oldest report is never a
+# gap (fresh install). Exact `autoagent-YYYY-MM-DD.json` names only — the dir also holds
+# autoagent-applied-*.jsonl and wiki-*.json. rc 1 = no BSD/GNU date(1) arithmetic.
+_missed_cycle_scan() {
+  local dir="$1" days="$2" path day oldest="" newest="" offset
+  for path in "${dir}"/autoagent-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].json; do
+    [[ -f "${path}" ]] || continue
+    day="${path##*/autoagent-}"
+    newest="${day%.json}"
+    [[ -n "${oldest}" ]] || oldest="${newest}"
+  done
+  [[ -n "${newest}" ]] || return 0
+  printf '%s\n' "${newest}"
+  for ((offset = days; offset >= 1; offset--)); do
+    # shellcheck disable=SC2310,SC2311  # the helper rc IS the date(1)-capability verdict
+    day="$(_drop_window_cutoff_date "${offset}")" || return 1
+    [[ ! "${day}" < "${oldest}" && ! -f "${dir}/autoagent-${day}.json" ]] || continue
+    if [[ "${day}" < "${newest}" ]]; then
+      printf '%s superseded\n' "${day}"
+    else
+      printf '%s open\n' "${day}"
+    fi
+  done
 }
 
 # Classify the repo-relative agent body $1 against its RELEASE ANCHOR: the base-store entry the next
