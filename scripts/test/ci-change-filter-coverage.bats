@@ -25,6 +25,9 @@ CI_YML="${GA}/.github/workflows/ci.yml"
 # that skipped the bash leg would retire the gate on exactly the change kind it polices.
 # python / monitor rows: hook files outside each leg's own source globs that its tests read by
 # path (test-python + test-python-pytest share the `python` output).
+# The labels.tsv bash row stands for the reviewer catch-rate corpus data, which
+# autoagent/test/reviewer-catch-rate.bats reads as its input: `autoagent/**` sits in the python
+# filter, so only a corpus-dir glob reaches it.
 LEG_PATHS='bash requirements.txt
 bash requirements-dev.txt
 bash config.toml.example
@@ -34,6 +37,7 @@ bash .github/workflows/ci.yml
 bash rules/glass-atrium/core-security.md
 bash skills/glass-atrium-ops-token-audit/thresholds.yaml
 bash LICENSES-THIRD-PARTY.md
+bash autoagent/reviewer-catch-rate/labels.tsv
 python hooks/track-outcome.sh
 python hooks/pricing.json
 python hooks/inject-scope-rules.sh

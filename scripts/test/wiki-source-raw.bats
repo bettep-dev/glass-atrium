@@ -226,3 +226,37 @@ collisions() { _collect_collision_source_urls "${RAW_DIR}"; }
   run sed -n '2p' "${NOTES_DIR}/note.md"
   [[ "${output}" == "source_raw: the-raw.md" ]]
 }
+
+# ---------------------------------------------------------------------------
+# _classify_raw — a membership set past one pipe buffer keeps each verdict
+# ---------------------------------------------------------------------------
+
+@test "_classify_raw: a match heading a set past one pipe buffer keeps each verdict under pipefail" {
+  local fill
+  fill="$(awk 'BEGIN { for (i = 0; i < 60000; i++) printf "filler-%06d\n", i }')"
+  write_raw_bytes "${RAW_DIR}/raw-a.md" '---\nsource_url: http://dup\n---\n'
+  # set_of SPEC — "big:<line>" → <line> heading ~1 MB of filler; else the spec as written
+  set_of() {
+    case "$1" in
+      big:*) printf '%s\n%s' "${1#big:}" "${fill}" ;;
+      *) printf '%s' "$1" ;;
+    esac
+  }
+  # name|note-url set|collision set|note source_raw set|expected
+  local rows=(
+    "source_raw primary|||big:raw-a.md|processed"
+    "negated collision guard|http://dup|big:http://dup||unprocessed"
+    "source_url fallback|big:http://dup|||processed"
+  )
+  local row name urls colls raws want got
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name urls colls raws want <<<"${row}"
+    # the script's pipefail, scoped to a subshell so the test body keeps bats' own
+    got="$(set -o pipefail && _classify_raw "${RAW_DIR}/raw-a.md" "$(set_of "${urls}")" \
+      "$(set_of "${colls}")" "$(set_of "${raws}")")"
+    [[ "${got}" == "${want}" ]] || {
+      echo "${name}: got '${got}', want '${want}'"
+      return 1
+    }
+  done
+}

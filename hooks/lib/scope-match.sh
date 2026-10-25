@@ -136,7 +136,7 @@ scope_decl_files() {
   [[ "${found}" -eq 1 ]] || return 0
   field="${rest%%·*}"
   field="${field%%|*}"
-  # The selector's two wrap characters — a value or whole-line wrap never belongs to a path.
+  # The selector's two value-wrap characters — a value wrap never belongs to a path.
   field="${field//\`/}"
   field="${field//\*\*/}"
   [[ -z "${field}" ]] && return 0
@@ -234,69 +234,49 @@ scope_concerns_exempts_path() {
   return 1
 }
 
-# A declaration is a line the `[SCOPE]` token OPENS: optional indentation and one list marker, then
-# the token and a `files=` value that is neither empty nor a `<placeholder>`. The token is
-#   - bare — any text may follow the value;
-#   - wrapped alone (`` `[SCOPE]` `` / `**[SCOPE]**`) — the value list must end at end of line, or at
-#     whitespace then a `·` or `|` separator or a grammar key, and no value may end in `.` `:` `;`
-#     `)`: prose past the value, or one of those four endings, marks a verdict quoting a declaration;
-#   - opening a backtick or `**` wrap that closes at end of line if at all — a wrap closing mid-line
-#     with text after it marks a quoted verdict the same way.
+# A declaration is a line the bare `[SCOPE]` token OPENS: optional indentation and one list marker,
+# then the token and a `files=` value that is neither empty nor a `<placeholder>`; any text may follow
+# the value, and the value alone may sit in backticks or `**`.
 # A substring match would select quoted `[SCOPE]` text (a verdict, a rule excerpt) ahead of the
 # real line → a wrong list (false excess) or an empty one (the real declaration never read).
 # Purely syntactic on purpose — no reader re-implements the field parser to choose a line.
 # Shapes that fail OPEN (no declaration → comparison skipped, never a false excess):
 #   - the token mid-line (`Implement it. [SCOPE] files=…`) or behind a label (`Scope: [SCOPE] …`);
 #   - a block-quoted line (`> [SCOPE] files=…`, `> - [SCOPE] files=…`);
-#   - a wrapped token whose value list runs into anything else — prose past a space even behind a
-#     glued `·` or `=` (`a.sh·this was wrong`, `hooks/layout=x was narrow`), a glued `|` (`a.sh|prose`),
-#     a trailing comma, a space-separated path list — or whose value ends in `.` `:` `;` `)`;
-#   - a wrap opened before `[SCOPE]` that closes mid-line, even when only punctuation follows;
-#   - a whole-line wrap whose value holds that same wrap character (a nested backtick or `*`);
+#   - any line-opening wrap — a wrapped token (`` `[SCOPE]` `` / `**[SCOPE]**`), or a backtick or
+#     `**` opened before the token;
 #   - a space after `files=`, or a field order not opening with `files=`;
 #   - recorder only: a declaration ending past its 2000-char emit transport, dropped whole.
 # Not closed — a quoted line still selected, winning over a later real declaration (first wins):
-#   - a relayed declaration opening its own line unwrapped — relaying by block-quote is the fix;
-#   - a wrapped-token relay whose value closes at a spaced separator or grammar key, with prose in a
-#     later field (`**[SCOPE]** files=a.sh · deliverable=fix — too narrow`): its tail reads as field
-#     text, so it cannot be told from a real declaration;
-#   - a wrapped-token relay gluing ONE prose word to its value through any character value text may
-#     hold — `·`, `=`, `—`, … (`` `[SCOPE]` files=a.sh·prose ``, `files=hooks/old.sh=wrong`): it reads
-#     like the glued real form `files=a.sh·deliverable=fix`;
-#   - a wrapped-token relay whose value ends in any character but `.` `:` `;` `)` — `!` `?` `…` and
-#     the rest are value text (`**[SCOPE]** files=a.sh!`);
-#   - a line-opening wrap that closes at end of line or never, with prose after the value inside it
-#     (`` `[SCOPE] files=a.sh lists one path `` · `` **[SCOPE] files=`a.sh` lists one path** ``).
+#   - a relayed declaration opening its own line in the bare form — relaying by block-quote is the fix.
 readonly _SCOPE_DECL_OPEN='^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?'
 # shellcheck disable=SC2016  # the backtick is a literal wrap character, not an expansion.
 readonly _SCOPE_DECL_BARE_FORM='[[]SCOPE[]][[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*]'
-# The parser's own closed field-key vocabulary, case-insensitive like its drop list.
-readonly _SCOPE_DECL_FIELD_KEY='([Ff][Ii][Ll][Ee][Ss]|[Dd][Ee][Ll][Ii][Vv][Ee][Rr][Aa][Bb][Ll][Ee]|[Oo][Uu][Tt])='
-# A wrapped token's value text — never ending in sentence punctuation, which marks quoting prose.
-readonly _SCOPE_DECL_VALUE_TAIL='[^[:space:],|]*[^[:space:],|.:;)]'
-# shellcheck disable=SC2016
-readonly _SCOPE_DECL_WRAPPED_TOKEN_FORM='(`[[]SCOPE[]]`|[*][*][[]SCOPE[]][*][*])[[:space:]]+[Ff]iles=(`|[*][*])?[^<[:space:]`*]('"${_SCOPE_DECL_VALUE_TAIL}"')?([[:space:]]*,[[:space:]]*'"${_SCOPE_DECL_VALUE_TAIL}"')*([[:space:]]*$|[[:space:]]+(·|[|]|'"${_SCOPE_DECL_FIELD_KEY}"'))'
-# shellcheck disable=SC2016
-readonly _SCOPE_DECL_TICK_LINE_FORM='`[[]SCOPE[]][[:space:]]+[Ff]iles=[^<[:space:]`*][^`]*`?[[:space:]]*$'
-# shellcheck disable=SC2016
-readonly _SCOPE_DECL_BOLD_LINE_FORM='[*][*][[]SCOPE[]][[:space:]]+[Ff]iles=`?[^<[:space:]`*][^*]*([*][*])?[[:space:]]*$'
-readonly SCOPE_DECL_LINE_RE="${_SCOPE_DECL_OPEN}(${_SCOPE_DECL_BARE_FORM}|${_SCOPE_DECL_WRAPPED_TOKEN_FORM}|${_SCOPE_DECL_TICK_LINE_FORM}|${_SCOPE_DECL_BOLD_LINE_FORM})"
+readonly SCOPE_DECL_LINE_RE="${_SCOPE_DECL_OPEN}${_SCOPE_DECL_BARE_FORM}"
 
-# Stdin text → its first declaration line (empty when none). Always returns 0.
+# Stdin text → its first declaration line.
+# Returns: 0 = line printed, or none found (empty output) · 2 = the text could not be read (grep
+# status 2 or higher): empty output plus a reason on stderr. Each caller handles 2 itself — an
+# unread declaration is not an absent one.
 scope_decl_select() {
-  grep -m 1 -E -- "${SCOPE_DECL_LINE_RE}" 2>/dev/null || true # GA-ABSORB[benign]: no declaration ⇒ grep status 1 ⇒ empty output, callers fail-open
+  local rc=0
+  grep -m 1 -E -- "${SCOPE_DECL_LINE_RE}" 2>/dev/null || rc=$?
+  [[ "${rc}" -le 1 ]] && return 0
+  (printf 'scope_decl_select: grep status %s, [SCOPE] declaration not read\n' "${rc}") >&2 || true
+  return 2
 }
 
 # The first declaration in a subagent transcript's record 0 — the parent-authored delegation
 # prompt. Pinned to record 0 on purpose: a whole-transcript grep would let the child emit a wider
 # `[SCOPE]` line of its own and nullify the very check that exists to sit outside its control.
 # Two or more declarations inside record 0 → the first wins (deterministic, never merged).
-# Args: $1=transcript path. Prints the line (empty when absent/unreadable), always returns 0.
+# Args: $1=transcript path. Prints the line (empty when absent/unreadable). Returns the pipeline
+# status, so scope_decl_select's 2 reaches the caller.
 scope_decl_from_record0() {
   local tpath="${1:-}"
   [[ -r "${tpath}" ]] || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  # shellcheck disable=SC2312  # a failed head/jq stage yields empty text → no declaration, fail-open.
+  # shellcheck disable=SC2312  # a failed head/jq stage → empty text + its nonzero status, reported as unread.
   head -n 1 "${tpath}" \
     | jq -r 'if (.message.content | type) == "string" then .message.content
              elif (.message.content | type) == "array" then ([.message.content[]? | .text? // ""] | join("\n"))

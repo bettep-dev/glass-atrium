@@ -216,12 +216,19 @@ hook_log() {
 }
 
 # Check whether the hook is running in a subagent context.
+# An unreadable envelope (python3 absent or failing, malformed JSON, non-object root) is not an absent
+# agent_id: hook_get_field's empty would read it as main session → a main-session-only block on a misread.
 # Args: $1=json_input
-# Returns: 0 if subagent, 1 if main session
+# Returns: 1 only when a readable object's agent_id is absent or empty (main session), else 0
 hook_is_subagent() {
-  local agent_id
-  agent_id="$(hook_get_field "${1}" "agent_id")"
-  [[ -n "${agent_id}" ]]
+  local origin
+  # `|| true` inside the $() → a failed read never reaches a caller's inherited ERR trap (set -E).
+  origin="$(printf '%s\n' "${1}" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+print("subagent" if str(d.get("agent_id", "")).rstrip("\n").replace("\x00", "") else "main")
+' 2>/dev/null || true)"
+  [[ "${origin}" != "main" ]]
 }
 
 # Fail-closed python3 precondition guard — SECURITY hooks ONLY.

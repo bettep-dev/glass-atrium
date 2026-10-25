@@ -14,6 +14,7 @@
 HOOK_SH="${VGATE_SH:-${BATS_TEST_DIRNAME}/../enforce-verification-gate.sh}"
 NUDGE_PHRASE='carries no [SCOPE] declaration'
 LINE_OPENING_PHRASE='the declaration must open its own line'
+WRAPPED_TOKEN_PHRASE='neither does a [SCOPE] token wrapped in backticks or **'
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-verification-gate.sh not found: ${HOOK_SH}"
@@ -75,6 +76,28 @@ run_gate() {
   [[ "${output}" == *"VGATE-ENTRY-001"* ]] || { echo "wrong verdict -- ${output}" >&2; return 1; }
 }
 
+# A read failure is not an absent declaration: the operator is told the declaration could not be read,
+# and neither the presence nudge nor the depth advisory runs on a list nobody read.
+@test "an unread [SCOPE] declaration is reported as unread, never as missing or sized (exit 0)" {
+  local grep_dir="${BATS_TEST_TMPDIR}/forced-grep" real_grep
+  real_grep="$(type -P grep)"
+  mkdir -p "${grep_dir}"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'for _a in "$@"; do'
+    printf '%s\n' "  case \"\${_a}\" in *'[[]SCOPE[]]'*) echo 'grep: forced read error' >&2; exit 2 ;; esac"
+    printf '%s\n' 'done'
+    printf '%s\n' "exec \"${real_grep}\" \"\$@\""
+  } >"${grep_dir}/grep"
+  chmod +x "${grep_dir}/grep"
+  PATH="${grep_dir}:${PATH}" run_gate "Implement clauded-docs/3854. ${SIZE_EST}"$'\n'"${SCOPE_DECL}"
+  [[ "${status}" -eq 0 ]] || { echo "advisory must never block, status was ${status} -- ${output}" >&2; return 1; }
+  [[ "${output}" == *"declaration could not be read"* ]] || { echo "no unread advisory -- ${output}" >&2; return 1; }
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "unread reported as missing -- ${output}" >&2; return 1; }
+  [[ "${output}" != *"${DEEP_PHRASE}"* ]] || { echo "unread declaration was sized -- ${output}" >&2; return 1; }
+  [[ "${output}" != *"internal error"* ]] || { echo "selector status tripped the ERR trap -- ${output}" >&2; return 1; }
+}
+
 # --- surface 5: Deep-review advisory on a carried [SCOPE] declaration -------------------------
 
 DEEP_PHRASE='Deep (4-pass)'
@@ -118,19 +141,24 @@ plain_paths() {
     'a quoted mention alone still draws the missing-declaration nudge'
     'quoted sensitive-path text ahead of a plain declaration leaves the depth advisory silent'
     'a mid-line declaration draws a nudge naming the line-opening requirement'
+    'a wrapped token with a comma list draws the missing-declaration nudge'
+    'a wrapped token with a space-separated list draws a nudge naming the wrapped-token exclusion'
   )
+  # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
   local -a prompts=(
     "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''> reviewer: the [SCOPE] files= list omitted hooks/test/x.bats'
     "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''Earlier round: [SCOPE] files=hooks/old.sh · out=none'$'\n''[SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none'
     "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''Fix it. [SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none'
+    "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''`[SCOPE]` files=hooks/a.sh, hooks/test/a.bats · deliverable=fix · out=none'
+    "Implement clauded-docs/3854. ${SIZE_EST}"$'\n''`[SCOPE]` files=monitor/src/a.ts monitor/src/b.ts deliverable=fix out=none'
   )
-  local -a phrases=("${NUDGE_PHRASE}" "${DEEP_PHRASE}" "${LINE_OPENING_PHRASE}")
-  local -a expected=('present' 'absent' 'present')
+  local -a phrases=("${NUDGE_PHRASE}" "${DEEP_PHRASE}" "${LINE_OPENING_PHRASE}" "${NUDGE_PHRASE}" "${WRAPPED_TOKEN_PHRASE}")
+  local -a expected=('present' 'absent' 'present' 'present' 'present')
   local i got
   for i in "${!names[@]}"; do
     run_gate "${prompts[${i}]}"
     [[ "${status}" -eq 0 ]] || {
-      echo "${names[${i}]}: advisory must never block, status ${status}" >&2
+      echo "${names[${i}]}: advisory must never block, status ${status} -- ${output}" >&2
       return 1
     }
     got='absent'

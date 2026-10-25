@@ -15,6 +15,8 @@
 # 1.13.0 on both legs, so bash is the variable, not bats). Every assertion here `return 1`s on
 # mismatch.
 
+bats_require_minimum_version 1.5.0
+
 LIB_SH="${BATS_TEST_DIRNAME}/../lib/scope-match.sh"
 
 setup() {
@@ -188,35 +190,17 @@ record0_entries() {
     'earlier-round prose declaration first'
     'placeholder rule excerpt first'
     'mention without files= first'
+    'bare mention with an empty files= value first'
     'block-quoted declaration first'
     'JSON-quoted fix prose first'
     'a later line-opening declaration does not override the first'
     'harness-indented declaration'
     'list-marker bullet declaration'
     'numbered-item declaration'
-    'backtick-wrapped declaration'
-    'bold-wrapped token'
-    'backtick-wrapped mention with an empty files= value first'
-    'bulleted backtick-wrapped mention with an empty files= value first'
-    'bold-wrapped mention with an empty files= value first'
     'backtick-wrapped path value'
     'bold-wrapped path value'
-    'whole-line bold declaration'
-    'backtick-wrapped verdict with prose after the wrap first'
-    'bulleted backtick-wrapped verdict with prose after the wrap first'
-    'numbered bold-wrapped verdict with prose after the wrap first'
-    'backtick-wrapped token with prose after its value first'
-    'bulleted bold-wrapped token with prose after a path list first'
-    'backtick-wrapped token closed by a pipe separator'
-    'bold-wrapped token closed by a grammar key'
-    'bold-wrapped token with a wrapped value closed by end of line'
-    'backtick-wrapped token whose value ends in a full stop first'
-    'bold-wrapped token whose value ends in a colon first'
-    'backtick-wrapped token whose value ends in a semicolon first'
-    'bold-wrapped token whose value ends in a closing parenthesis first'
-    'backtick-wrapped token with a middot glued to prose first'
-    'bold-wrapped token with a pipe glued to prose first'
-    'bold-wrapped token whose path embeds a grammar key first'
+    'backtick-wrapped line first'
+    'bold-wrapped line first'
   )
   # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
   local -a prompts=(
@@ -224,35 +208,17 @@ record0_entries() {
     "Earlier round: [SCOPE] files=hooks/old.sh · out=none"$'\n'"${real}"
     '  `[SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<type> · out=<excluded|none>`'$'\n'"${real}"
     '[SCOPE] — the 7th delegation element'$'\n'"${real}"
+    '[SCOPE] files= must list the tests'$'\n'"${real}"
     '> [SCOPE] files=hooks/quoted.sh · out=none'$'\n'"${real}"
     '"fix": "Add hooks/y.sh to [SCOPE] files=. Rewrite the rest"'$'\n'"${real}"
     "${real}"$'\n''[SCOPE] files=hooks/later.sh · out=none'
     "Fix E1."$'\n'"  ${real}"
     "- ${real}"
     "1. ${real}"
-    "\`${real}\`"
-    '**[SCOPE]** files=hooks/real.sh · deliverable=fix · out=none'
-    '`[SCOPE] files=` must list the tests'$'\n'"${real}"
-    '- `[SCOPE] files=` completeness duty: declare tests'$'\n'"${real}"
-    '**[SCOPE] files=** is required'$'\n'"${real}"
     '[SCOPE] files=`hooks/real.sh` · deliverable=fix · out=none'
     '[SCOPE] files=**hooks/real.sh** · deliverable=fix · out=none'
-    '**[SCOPE] files=hooks/real.sh**'
-    '`[SCOPE] files=hooks/real.sh` lists one path only'$'\n'"${real}"
-    '- `[SCOPE] files=hooks/real.sh` omitted hooks/test/real.bats'$'\n'"${real}"
-    '1. **[SCOPE] files=hooks/real.sh** is under-declared'$'\n'"${real}"
-    '`[SCOPE]` files=hooks/old.sh lists one path only'$'\n'"${real}"
-    '- **[SCOPE]** files=hooks/old.sh, hooks/test/old.bats omitted the manifest'$'\n'"${real}"
-    '`[SCOPE]` files=hooks/real.sh | deliverable=fix'
-    '**[SCOPE]** files=hooks/real.sh deliverable=fix out=none'
-    '**[SCOPE]** files=`hooks/real.sh`'
-    '`[SCOPE]` files=hooks/old.sh.'$'\n'"${real}"
-    '**[SCOPE]** files=hooks/old.sh:'$'\n'"${real}"
-    '`[SCOPE]` files=hooks/old.sh;'$'\n'"${real}"
-    '**[SCOPE]** files=hooks/old.sh)'$'\n'"${real}"
-    '`[SCOPE]` files=hooks/old.sh·this was wrong'$'\n'"${real}"
-    '**[SCOPE]** files=hooks/old.sh|this was wrong'$'\n'"${real}"
-    '**[SCOPE]** files=hooks/layout=x was narrow'$'\n'"${real}"
+    '`[SCOPE]` files=hooks/old.sh · deliverable=fix · out=none'$'\n'"${real}"
+    '- **[SCOPE] files=hooks/old.sh**'$'\n'"${real}"
   )
   local i got
   for i in "${!names[@]}"; do
@@ -264,18 +230,36 @@ record0_entries() {
   done
 }
 
-@test "a wrapped token keeps every path of a comma-separated list closed by a separator or end of line" {
-  local -a names=('middot-closed list' 'end-of-line-closed list')
+@test "a line-opening wrapped token or whole-line wrap is not a declaration" {
+  local real='[SCOPE] files=hooks/real.sh · deliverable=fix · out=none'
+  local -a names=(
+    'backtick-wrapped declaration'
+    'bold-wrapped token'
+    'whole-line bold declaration'
+    'backtick-wrapped token closed by a pipe separator'
+    'bold-wrapped token closed by a grammar key'
+    'bold-wrapped token with a wrapped value closed by end of line'
+    'indented backtick-wrapped token with a comma list closed by a middot'
+    'bold-wrapped token with a wrapped comma list closed by end of line'
+    'whole-line backtick wrap with a space-separated list'
+  )
   # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
   local -a prompts=(
-    '`[SCOPE]` files=hooks/a.sh, hooks/test/a.bats · deliverable=fix · out=none'
+    "\`${real}\`"
+    '**[SCOPE]** files=hooks/real.sh · deliverable=fix · out=none'
+    '**[SCOPE] files=hooks/real.sh**'
+    '`[SCOPE]` files=hooks/real.sh | deliverable=fix'
+    '**[SCOPE]** files=hooks/real.sh deliverable=fix out=none'
+    '**[SCOPE]** files=`hooks/real.sh`'
+    '  `[SCOPE]` files=hooks/a.sh, hooks/test/a.bats · deliverable=fix · out=none'
     '**[SCOPE]** files=`hooks/a.sh`,`hooks/test/a.bats`'
+    '`[SCOPE] files=hooks/a.sh hooks/b.sh · deliverable=fix · out=none`'
   )
   local i got
   for i in "${!names[@]}"; do
     got="$(record0_entries "${prompts[${i}]}")"
-    [[ "${got}" == 'hooks/a.sh'$'\n''hooks/test/a.bats' ]] || {
-      echo "${names[${i}]}: expected [hooks/a.sh hooks/test/a.bats], got [${got}]" >&2
+    [[ -z "${got}" ]] || {
+      echo "${names[${i}]}: expected no declaration, got [${got}]" >&2
       return 1
     }
   done
@@ -323,6 +307,75 @@ big_text_file() {
     _ "${LIB_SH}" "${text}"
   [[ "${status}" -eq 0 ]] || {
     echo "status ${status}: ${output}"
+    return 1
+  }
+}
+
+# --- selector status --------------------------------------------------------------------------
+# grep status 1 is "no declaration"; 2 or higher is a read that never happened. Absorbing both into
+# an empty result made an unread declaration look like an absent one, so each caller reported
+# "no [SCOPE]" or skipped its comparison silently on a failure it could not see.
+
+# Prints a PATH dir whose grep fails with status 2 on the selector's pattern and is real otherwise.
+forced_grep_failure_dir() {
+  local dir="${BATS_TEST_TMPDIR}/forced-grep" real_grep
+  real_grep="$(type -P grep)"
+  mkdir -p "${dir}"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'for _a in "$@"; do'
+    printf '%s\n' "  case \"\${_a}\" in *'[[]SCOPE[]]'*) echo 'grep: forced read error' >&2; exit 2 ;; esac"
+    printf '%s\n' 'done'
+    printf '%s\n' "exec \"${real_grep}\" \"\$@\""
+  } >"${dir}/grep"
+  chmod +x "${dir}/grep"
+  printf '%s' "${dir}"
+}
+
+@test "the selector separates no declaration (status 0, silent) from an unread one (status 2, reason on stderr)" {
+  local real='[SCOPE] files=hooks/real.sh · deliverable=fix · out=none'
+  local row name text forced want_out want_status want_err path_prefix
+  for row in \
+    $'no declaration\x1fplain delegation prose\x1f0\x1f\x1f0\x1f' \
+    "declaration present"$'\x1f'"${real}"$'\x1f0\x1f'"${real}"$'\x1f0\x1f' \
+    "grep fails on a declaration"$'\x1f'"${real}"$'\x1f1\x1f\x1f2\x1fscope_decl_select' \
+    $'grep fails on prose\x1fplain delegation prose\x1f1\x1f\x1f2\x1fscope_decl_select'; do
+    IFS=$'\x1f' read -r name text forced want_out want_status want_err <<<"${row}"
+    path_prefix=""
+    [[ "${forced}" == "1" ]] && path_prefix="$(forced_grep_failure_dir):"
+    # shellcheck disable=SC2016  # $1/$2 expand in the child bash.
+    run --separate-stderr env PATH="${path_prefix}${PATH}" bash -c \
+      'set -Eeuo pipefail; source "$1"; printf "%s\n" "$2" | drain_after scope_decl_select' \
+      _ "${LIB_SH}" "${text}"
+    [[ "${status}" -eq "${want_status}" && "${output}" == "${want_out}" ]] || {
+      echo "${name}: status ${status} (want ${want_status}), stdout [${output}] (want [${want_out}])"
+      echo "stderr: ${stderr}"
+      return 1
+    }
+    if [[ -z "${want_err}" ]]; then
+      [[ -z "${stderr}" ]] || {
+        echo "${name}: unexpected stderr [${stderr}]"
+        return 1
+      }
+    else
+      [[ "${stderr}" == *"${want_err}"* ]] || {
+        echo "${name}: no reason on stderr [${stderr}]"
+        return 1
+      }
+    fi
+  done
+}
+
+@test "record 0 passes an unread declaration's status through to its caller" {
+  local tpath="${BATS_TEST_TMPDIR}/transcript.jsonl" dir
+  jq -cn --arg t '[SCOPE] files=hooks/real.sh · deliverable=fix · out=none' \
+    '{type:"user", message:{role:"user", content:$t}}' >"${tpath}"
+  dir="$(forced_grep_failure_dir)"
+  # shellcheck disable=SC2016  # $1/$2 expand in the child bash.
+  run --separate-stderr env PATH="${dir}:${PATH}" bash -c \
+    'set -Eeuo pipefail; source "$1"; scope_decl_from_record0 "$2"' _ "${LIB_SH}" "${tpath}"
+  [[ "${status}" -eq 2 && -z "${output}" && "${stderr}" == *"scope_decl_select"* ]] || {
+    echo "status ${status}, stdout [${output}], stderr [${stderr}]"
     return 1
   }
 }

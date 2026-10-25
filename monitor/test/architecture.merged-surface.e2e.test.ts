@@ -325,7 +325,10 @@ async function openMap(
 		"screen must expose window.ARCH_SELECTORS (canvas + tabControl + desc SoT)",
 	);
 
-	await page.waitForSelector(`${selectors.canvas} svg`, { timeout: 30_000 });
+	// svg insertion and node-id stamping are separate commits — a starved CPU lets a probe land between them
+	await page.waitForSelector(`${selectors.canvas} svg g.node[data-arch-node-id]`, {
+		timeout: 30_000,
+	});
 }
 
 // health 픽스처만 갈아끼우는 케이스용 — 큐를 기본값으로 다시 적는 자리 인자를 지움.
@@ -708,6 +711,9 @@ const OK_DAEMON = "wiki";
 // 데몬 원천과 부품 원천이 같은 노드에서 만나는 자리 — HEALTH_CARD_DEFS 의 autoagent 카드 id.
 const DAEMON_PART_ID = "daemon-cycle";
 
+// part whose verdict rides the same health response as DAEMON_PART_ID, with no live daemon bound to it
+const HEALTH = { WITNESS_PART_ID: "glass-atrium-wiki-curator" } as const;
+
 // 데몬 둘 밖의 부품 셋(PG · Chromium export · hook chain) → 그 판정을 대신 내는 존.
 // 화면은 이 짝을 리터럴로 갖지 않음 — 그려지는 소스의 subgraph 멤버십과 part_bindings 를 곱해
 // "헬스 노드를 하나만 담은 존" 을 파생함. 여기 리터럴은 그 파생이 오늘 무엇을 내는지 못 박는 자리이고,
@@ -776,10 +782,12 @@ interface RingProbe {
 	// 노드 하나가 실제로 든 링 클래스 목록 — 총계만으로는 어느 노드가 어느 tone 인지 못 가름.
 	// 두 원천이 같은 노드를 짚는 자리(autoagent_d)의 최악-우선 결과를 재는 유일한 다리임.
 	classByNode: Record<string, string[]>;
+	hasCanvas: boolean;
 }
 
 async function getRingProbe(): Promise<RingProbe> {
 	return await page.evaluate((canvas) => {
+		const hasCanvas = Boolean(document.querySelector(`${canvas} svg`));
 		const rendered: string[] = [];
 		const ringed: string[] = [];
 		const ringClasses: string[] = [];
@@ -799,8 +807,13 @@ async function getRingProbe(): Promise<RingProbe> {
 			ringed.push(nodeId || "(unmatched node)");
 			ringClasses.push(...hits);
 		}
-		return { rendered, ringed, ringClasses, classByNode };
+		return { rendered, ringed, ringClasses, classByNode, hasCanvas };
 	}, selectors.canvas);
+}
+
+// precondition-message tail — tells a missing canvas apart from a probe taken before stamping
+function getProbeState(probe: RingProbe): string {
+	return `canvas svg ${probe.hasCanvas ? "present" : "absent"}, ${probe.rendered.length} stamped node(s)`;
 }
 
 // 부품 바인딩 중 이 캔버스가 실제로 그린 것들 — 데몬 쪽 getRenderedBound 의 부품 판임.
@@ -909,7 +922,7 @@ function assertNodeUnringed(probe: RingProbe, partId: string, zoneId: string): v
 	const nodes = getRenderedPart(probe.rendered, partId);
 	assert.ok(
 		nodes.length > 0,
-		`fixture precondition: none of part '${partId}' bound ids is drawn — the assertion below would be vacuous`,
+		`fixture precondition: none of part '${partId}' bound ids is drawn (${getProbeState(probe)}) — the assertion below would be vacuous`,
 	);
 	for (const nodeId of nodes) {
 		assert.deepEqual(
@@ -938,7 +951,7 @@ function assertPartRing(probe: RingProbe, partId: string, expected: string): voi
 	const nodes = getRenderedPart(probe.rendered, partId);
 	assert.ok(
 		nodes.length > 0,
-		`fixture precondition: none of part '${partId}' bound ids (${(PART_NODE_BINDINGS[partId] ?? []).join(", ")}) is drawn — the ring assertion below would be vacuous`,
+		`fixture precondition: none of part '${partId}' bound ids (${(PART_NODE_BINDINGS[partId] ?? []).join(", ")}) is drawn (${getProbeState(probe)}) — the ring assertion below would be vacuous`,
 	);
 	for (const nodeId of nodes) {
 		assert.deepEqual(
@@ -949,13 +962,27 @@ function assertPartRing(probe: RingProbe, partId: string, expected: string): voi
 	}
 }
 
+// part counterpart of waitForZoneRing — on timeout returns the last probe and leaves the verdict to the caller
+async function waitForPartRing(partId: string, expected: string): Promise<RingProbe> {
+	const deadline = Date.now() + 10_000;
+	let probe = await getRingProbe();
+	while (Date.now() < deadline) {
+		const nodes = getRenderedPart(probe.rendered, partId);
+		if (nodes.length > 0 && nodes.every((id) => (probe.classByNode[id] || []).includes(expected)))
+			return probe;
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		probe = await getRingProbe();
+	}
+	return probe;
+}
+
 test("AC-T5 a fault verdict lights that daemon's bound nodes and no others", async () => {
 	await openMap(
 		getLiveFixture({
 			daemons: [getDaemon(BOUND_DAEMON, "stale"), getDaemon(OK_DAEMON, "ok")],
 		}),
 	);
-	const probe = await getRingProbe();
+	const probe = await waitForPartRing(DAEMON_PART_ID, RING_CRIT_CLASS);
 	const faultNodes = getRenderedBound(probe.rendered, BOUND_DAEMON);
 
 	assert.ok(
@@ -994,14 +1021,20 @@ test("AC-B2-3b a fault daemon verdict outranks the healthy part verdict on the s
 	// 겹침 노드가 여기서 ok 로 켜져야 아래 crit 이 '경쟁에서 이겼다' 가 됨.
 	// 부품 판정이 아예 없으면 단언이 공허해짐.
 	await openMap(getLiveFixture({ daemons: [] }), getQueueFixture(), health);
-	assertPartRing(await getRingProbe(), DAEMON_PART_ID, RING_OK_CLASS);
+	assertPartRing(await waitForPartRing(DAEMON_PART_ID, RING_OK_CLASS), DAEMON_PART_ID, RING_OK_CLASS);
 
 	await openMap(
 		getLiveFixture({ daemons: [getDaemon(BOUND_DAEMON, "stale")] }),
 		getQueueFixture(),
 		health,
 	);
-	const probe = await getRingProbe();
+	// guard: crit and ok land in one render only while buildRingToneByNodeId gates daemon tones on daemonState
+	assertPartRing(
+		await waitForPartRing(HEALTH.WITNESS_PART_ID, RING_OK_CLASS),
+		HEALTH.WITNESS_PART_ID,
+		RING_OK_CLASS,
+	);
+	const probe = await waitForPartRing(DAEMON_PART_ID, RING_CRIT_CLASS);
 
 	const daemonNodes = new Set(getRenderedBound(probe.rendered, BOUND_DAEMON));
 	const contested = getRenderedPart(probe.rendered, DAEMON_PART_ID).filter((id) =>
@@ -1029,6 +1062,8 @@ test("AC-B2-3b a fault daemon verdict outranks the healthy part verdict on the s
  */
 test("AC-B2-3d healthy part verdicts light the zone that represents them", async () => {
 	await openMapWithHealth(getHealthFixture());
+	for (const zoneId of Object.values(ZONE_REPRESENTED_PART_ZONE))
+		await waitForZoneRing(zoneId, ZONE_RING_OK_CLASS);
 	const nodeProbe = await getRingProbe();
 	const zoneProbe = await getZoneRingProbe();
 
@@ -1042,7 +1077,8 @@ test("AC-B2-3d an unreachable PG and a failed export probe light their zones cri
 	await openMapWithHealth(
 		getHealthFixture({ pg: { status: "degraded", db: "closed", browser: "failed" } }),
 	);
-	const zoneProbe = await getZoneRingProbe();
+	await waitForZoneRing(ZONE_REPRESENTED_PART_ZONE.pg, ZONE_RING_CRIT_CLASS);
+	const zoneProbe = await waitForZoneRing(ZONE_REPRESENTED_PART_ZONE.browser, ZONE_RING_CRIT_CLASS);
 
 	await assertZoneRing(zoneProbe, ZONE_REPRESENTED_PART_ZONE.pg, ZONE_RING_CRIT_CLASS, "--crit");
 	await assertZoneRing(
@@ -1062,6 +1098,8 @@ test("AC-B2-3d an unreachable PG and a failed export probe light their zones cri
  */
 test("AC-B2-3f exactly the zones with a single health node carry the verdict", async () => {
 	await openMapWithHealth(getHealthFixture());
+	for (const zoneId of Object.values(ZONE_REPRESENTED_PART_ZONE))
+		await waitForZoneRing(zoneId, ZONE_RING_OK_CLASS);
 	const zoneProbe = await getZoneRingProbe();
 
 	const lit = Object.entries(zoneProbe.zoneClasses)
@@ -1092,7 +1130,7 @@ test("AC-B2-3f exactly the zones with a single health node carry the verdict", a
 test("AC-B2-3e a health poll with no canvas re-render repaints the zone ring", async () => {
 	const pgZone = ZONE_REPRESENTED_PART_ZONE.pg;
 	await openMapWithHealth(getHealthFixture());
-	await assertZoneUnringed(await getZoneRingProbe(), pgZone, ZONE_RING_OK_CLASS);
+	await assertZoneUnringed(await waitForZoneRing(pgZone, ZONE_RING_OK_CLASS), pgZone, ZONE_RING_OK_CLASS);
 
 	const svgIdBefore = await getCanvasSvgId();
 	const pollsBefore = getHealthCounts()[PG_HEALTH_PATH] || 0;
@@ -1126,9 +1164,13 @@ test("AC-T5 the ring displaces neither the governance banner nor the writer aler
 		}),
 	);
 
+	// the healthy part ring also lights nodes — only the crit ring proves the fault ring is on screen
+	const probe = await waitForPartRing(DAEMON_PART_ID, RING_CRIT_CLASS);
+	const faultNodes = getRenderedBound(probe.rendered, BOUND_DAEMON);
 	assert.ok(
-		(await getRingProbe()).ringed.length > 0,
-		"fault fixture must light a node — otherwise the two legs below prove nothing",
+		faultNodes.length > 0 &&
+			faultNodes.every((id) => (probe.classByNode[id] || []).includes(RING_CRIT_CLASS)),
+		`fault fixture must crit-ring every drawn ${BOUND_DAEMON} node (${getProbeState(probe)}) — otherwise the two legs below prove nothing`,
 	);
 	assert.equal(
 		await countAlertsNaming(absentDoc),

@@ -26,7 +26,7 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
   - Scheduled-task fires and `/loop` wakeups replay stored text with no frame: only `source` can name them.
   - **Switch to `source`**: CLI 2.1.283 documents `source` on `UserPromptSubmit` but leaves it out of the payload. Once a CLI fills it, recognise machine-written prompts by it and keep the wrapper list only as the fallback for a payload without it. Recheck on every CLI upgrade.
   - Whoever adds another hook on a prompt event records its verified capabilities in the capability table.
-- **Cross-references**: `hooks/hook-utils.sh` (`hook_emit_error` = channel a, `hook_read_input`, `hook_get_field`, `hook_get_tool_input`, `hook_is_subagent`) · `settings.json` (the authority for which events are wired) · `rules/glass-atrium/core-security.md` (LLM01 tool-input trust boundary, LLM06 tool authorization, LLM07 prompt leakage) · `rules/glass-atrium/orchestrator-role.md` Harness Path Protection (the `enforce-foreground-harness.sh` channel-b rationale) · `rules/glass-atrium/shared-self-improve-hygiene.md` Precondition Loud-Fail (the autoagent exception to fail-open, still named inline in the rule file's Authoring Rules).
+- **Cross-references**: `hooks/hook-utils.sh` (`hook_emit_error` = channel a, `hook_read_input`, `hook_get_field`, `hook_get_tool_input`, `hook_is_subagent`) · `settings.json` (the authority for which events are wired) · `rules/glass-atrium/core-security.md` (LLM01 tool-input trust boundary, LLM06 tool authorization, LLM07 prompt leakage) · `rules/glass-atrium/orchestrator-role.md` Harness Path Protection (the rule `enforce-foreground-harness.sh` enforces, blocking on channel a) · `rules/glass-atrium/shared-self-improve-hygiene.md` Precondition Loud-Fail (the autoagent exception to fail-open, still named inline in the rule file's Authoring Rules).
 - **Why This Exists** section: dropped. Its three facts — events differ, PostToolUse cannot mutate, the channels are non-substitutable — are each stated where they bind, in the capability table and the channel rules.
 
 ## on_fail taxonomy shape
@@ -39,4 +39,12 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 ## Readers and coupled tests
 
 - No code reads this file's TEXT. The path is pinned in `registry_ops.py` (`_HOOK_AUTHORING_CONDITION` / `_HOOK_REVIEW_CONDITION`, and through them `RULE_FILES`), exact-equality pinned by `scripts/test/test_agent_lifecycle_overhaul.py`, plus the manifest.
-- Eight hook headers cite this file in comments, two of them by heading: `hooks/enforce-config-protection.sh` cites "Block Channels" and `hooks/advisory-preedit-facts.sh` cites the "Per-Event table" and the Stop-lifecycle row. Both headings survive this pass unchanged, as do `## on_fail Action Taxonomy (validation-failure disposition vocabulary)`, `## Event Registration Status (file-verified)` and `## Authoring Rules`. A heading rename here dangles those comments — nothing breaks mechanically, and nothing catches it either.
+- Nine hook headers cite this file in comments.
+- The headers citing a heading other than the measured record:
+  - `hooks/enforce-config-protection.sh` cites "Block Channels";
+  - `hooks/advisory-preedit-facts.sh` cites the "Per-Event table" and the Stop-lifecycle row.
+- Keep those cited headings unrenamed, and also `## on_fail Action Taxonomy (validation-failure disposition vocabulary)`, `## Event Registration Status (file-verified)` and `## Authoring Rules`.
+- A heading rename here dangles the comments citing it — nothing breaks mechanically, and nothing catches it either.
+- These cite `### PreToolUse(Agent) measured record` by name; keep that heading unrenamed too:
+  - `rules/glass-atrium/orchestrator-role.md` → `### Reach of the gate`, as the record behind its Workflow-spawn item;
+  - the `hooks/enforce-foreground-harness.sh` header, as the record of the measured Agent-call envelope.

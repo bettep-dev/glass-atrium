@@ -83,7 +83,8 @@
 # launchd job so the install-parity post-step's monitor `kickstart -k` cannot kill
 # the update runner. No mode asks a question: the release bundle is authoritative
 # and every changed file is applied. Subflags select the mode:
-#   (default)            CLI apply — E3 behavior, NO DB tracking.
+#   (default)            CLI apply — E3 behavior, NO DB tracking; an applied set
+#                        touching monitor/ rebuilds the monitor (no restart).
 #   --headless           apply with core.update_job status tracking
 #                        (in-progress→completed/failed) + heartbeat + the
 #                        install-parity post-step (monitor rebuild + launchd
@@ -2061,7 +2062,7 @@ update_merge_agent_editable_regions() {
   local merge_dir records_file resolved_file
   local file base local_file candidate plan_err plan_line plan_rc
   local verdict reason changed n_candidates=0 rc=0 create_rc=0 plan_reset is_reset
-  local backup_base cycle_date version
+  local backup_base run_stamp cycle_date version
 
   _update_merge_lib_dir="${ATRIUM_UPDATE_MERGE_LIB_DIR:-${_update_merge_lib_dir}}"
   _update_state_dir="$(spine_baseline_dir)"
@@ -2084,8 +2085,8 @@ update_merge_agent_editable_regions() {
   : >"${_update_agent_outcomes_file}"
 
   # Per-run before-image sink for the git-free transaction: a ROOT-SIBLING
-  # agents-bak/<cycle_date>_update-<version> dir (env override shares the daemon's
-  # AUTOAGENT_BACKUP_DIR base var). Root-sibling so git ls-files never lists it and
+  # agents-bak/<cycle_date>_update-<version>_<HHMMSS>_<pid> dir (env override
+  # shares the daemon's AUTOAGENT_BACKUP_DIR base var). Root-sibling so git ls-files never lists it and
   # tar merge-extract never clobbers it; the per-run subdir groups this run's
   # <basename>.bak images for retention prune. git_txn_apply captures + restores
   # from here (never commits). The base is derived by the shared
@@ -2096,10 +2097,16 @@ update_merge_agent_editable_regions() {
   # dispatch captures into the same cycle dir and writes the shared index, and the
   # no-candidate early return below must not leave it either unset or carrying the
   # previous run's rows.
+  #
+  # The _<HHMMSS>_<pid> suffix makes the dir per-RUN: a same-day re-run of one
+  # version (a re-published release) would otherwise rewrite the earlier run's
+  # .bak / .base.bak. Named, not mkdir-claimed — the dir stays lazily created, so a
+  # run that applies nothing leaves no empty dir to become prune's newest anchor.
   backup_base="$(update_agents_bak_base "${root}")"
-  cycle_date="$(date +%Y-%m-%d)"
+  run_stamp="$(date +%Y-%m-%d_%H%M%S)"
+  cycle_date="${run_stamp%_*}"
   version="$(jq -r '.version // "unknown"' "${manifest}")"
-  _update_agent_backup_dir="${backup_base}/${cycle_date}_update-${version}"
+  _update_agent_backup_dir="${backup_base}/${cycle_date}_update-${version}_${run_stamp#*_}_$$"
   _update_agent_install_root="${root}"
   _update_restore_index_rows=""
   _update_agent_create_failures=""
@@ -3449,7 +3456,7 @@ PLIST
 # ---------------------------------------------------------------------------
 
 # Build the monitor (tsc + build:assets + build:client via `npm run build`). Returns
-# non-zero on build failure (the caller treats it as fatal → job 'failed').
+# non-zero on build failure (headless: fatal → job 'failed'; CLI: a warning).
 update_build_monitor() {
   local monitor_dir npm
   monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
@@ -3910,7 +3917,7 @@ update_restore_agents() {
   # SECURITY: reject path separators / traversal in the request-supplied cycle-id.
   case "${cycle_id}" in
     */* | *'..'*) update_die_code 10 "invalid cycle-id (no path separators): ${cycle_id}" ;;
-    *) ;; # a plain <cycle_date>_update-<version> token — safe
+    *) ;; # a plain <cycle_date>_update-<version>_<HHMMSS>_<pid> token — safe
   esac
   root="$(update_ga_root)"
   update_require_tools python3
@@ -3982,17 +3989,32 @@ update_restore_agents() {
 # ---------------------------------------------------------------------------
 
 # Single success-path finalizer. On the applied path (did_apply=1) in headless mode
-# run the install-parity post-step (fatal on build failure → exit 9); then mark the
-# job completed. did_apply=0 (a no-op "already up to date" path) skips the post-step
-# (nothing was built). The CLI mode no-ops both.
+# run the install-parity post-step (fatal on build failure → exit 9); in CLI mode run
+# the best-effort monitor rebuild only. Then mark the job completed (a CLI no-op).
+# did_apply=0 (a no-op "already up to date" path) skips both (nothing was applied).
 update_finalize_success() {
   local did_apply="${1:-0}"
-  if [[ "${_update_headless}" -eq 1 && "${did_apply}" -eq 1 ]]; then
-    if ! update_post_step; then
-      update_die_code 9 "install-parity post-step (monitor build / launchd refresh) failed — update files applied but the monitor was not rebuilt/restarted; retry"
+  if [[ "${did_apply}" -eq 1 ]]; then
+    if [[ "${_update_headless}" -eq 1 ]]; then
+      if ! update_post_step; then
+        update_die_code 9 "install-parity post-step (monitor build / launchd refresh) failed — update files applied but the monitor was not rebuilt/restarted; retry"
+      fi
+    else
+      update_build_monitor_cli
     fi
   fi
   update_job_complete
+}
+
+# CLI apply whose set touches monitor/ → rebuild, so the served bundle is not stale.
+# A failure warns, never fails the applied update; the restart stays headless-only.
+update_build_monitor_cli() {
+  [[ $'\n'"${_update_apply_paths}" == *$'\n'monitor/* ]] || return 0
+  if update_build_monitor; then
+    update_log "monitor not restarted by a CLI update — restart the monitor to load a server-side change"
+  else
+    update_log "WARN: monitor build failed — update files applied; rebuild by hand: (cd monitor && npm run build)"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -4022,7 +4044,8 @@ Usage:
 Flow: acquire the apply-lock → download + verify the
 release → deterministic non-agent sync → agent
 EDITABLE-region merge (E4) → capture the baseline → refresh the ~/.claude mirror
-farm → reconcile settings.json hook bindings (wire-hooks). Headless additionally
+farm → reconcile settings.json hook bindings (wire-hooks). A CLI apply touching
+monitor/ rebuilds the monitor but does not restart it. Headless additionally
 tracks the core.update_job row and runs the install-parity post-step. No
 path-pattern refusal holds a changed row back for manual review.
 USAGE
@@ -4585,7 +4608,8 @@ update_run() {
   update_migrate_deploy_post_apply
 
   # Headless success finalize: install-parity post-step (monitor rebuild + launchd
-  # refresh) then mark the update_job row completed. Interactive mode no-ops both.
+  # refresh) then mark the update_job row completed. Interactive mode rebuilds a
+  # changed monitor only.
   update_finalize_success 1
   update_log "update complete"
 }

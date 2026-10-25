@@ -8,7 +8,7 @@ Reword around what these consumers read, never through it.
 
 | Consumer | Reads | Breaks when |
 |---|---|---|
-| `hooks/test/test_daemon_config_loader.py` → `CostTierRuleTextTest` (repo-tree copy) | the Cost-Tier Selection heading, then the text up to the NEXT `###` substring, for three phrases: the heuristic label on the table · the daemon config-reader module name · the unpinned session-default fallback | the heading is renamed · one of the three phrases is reworded · any `###` substring — a `###` or `####` heading, or a hash-prefixed heading name in prose — lands ahead of them, truncating the parsed span · that heading's exact literal is written a second time ANYWHERE ABOVE it, re-aiming the split at the wrong copy |
+| `hooks/test/test_daemon_config_loader.py` → `CostTierRuleTextTest` (repo-tree copy) | the Cost-Tier Selection heading, then the text up to the NEXT `###` substring, for three phrases: the heuristic label on the table · the daemon config-reader module name · the pinned worker-model-id fallback | the heading is renamed · one of the three phrases is reworded · any `###` substring — a `###` or `####` heading, or a hash-prefixed heading name in prose — lands ahead of them, truncating the parsed span · that heading's exact literal is written a second time ANYWHERE ABOVE it, re-aiming the split at the wrong copy |
 | `hooks/test/inject-session-context.bats` → "the workflow pre-flight carries both close-token forms of the grammar SoT" | the `in-script` and `deferred:` close-token form literals, token included, counted across the file: exactly one of each | either form literal is reworded · either form literal is written a second time anywhere in the file, quoted or not |
 | `hooks/enforce-verification-gate.sh` · `hooks/enforce-workflow-verify-stage.sh` · `hooks/enforce-foreground-harness.sh` · `hooks/inject-session-context.sh` · `hooks/inject-scope-rules.sh` | heading names, quoted into operator-facing block and advisory text | a cited heading is renamed, sending a blocked operator to a section that no longer exists |
 | `scoped/scope-dev.md` · `scope-qa.md` · `scope-planning.md` · `scope-report.md` · `skills/glass-atrium-ops-orchestrator.md` · `skills/glass-atrium-ops-delegation-contracts/` · `agents/glass-atrium-intel-reporter.md` · `agents/glass-atrium-dev-front.md` | the same heading names, plus the bolded leads reserved below | a cited heading or bolded lead is renamed |
@@ -144,8 +144,8 @@ The probes run during the Decision phase, before the spawn: Permission · Foregr
   - EPERM → halt delegation; report the failing path + likely cause (macOS TCC / Claude tool-auth / POSIX perm) + remediation (FDA grant / permission allow / chmod).
   - Why: a subagent spawned on an unreadable path is guaranteed to emit `result: blocked`, wasting Failure-Recovery retries.
 - **Foreground Probe (pre-delegation)**: for each target path declared in delegation scope, scan against harness scope (`~/.claude/` and every `~/.claude-*` profile branch config dir).
-  - Harness scope match (non-exempt) → `run_in_background` MUST be `false` (or omit the parameter); settle the value before submitting the Agent call.
-  - The BASENAME exception list and the rule's authority are single-sited at `## Harness Path Protection` (Rule 2); runtime backstop: `enforce-foreground-harness.sh` (PreToolUse hook).
+  - Harness scope match (non-exempt) → take the matching route in `## Harness Path Protection` → `### Write routes`, and do not name the harness path in the subagent prompt.
+  - The exemptions and the rule's authority are single-sited at `## Harness Path Protection` (Rule 2); runtime backstop: `enforce-foreground-harness.sh` (PreToolUse hook).
 - **Capability Probe (ADVISORY checklist, pre-delegation)**: for a delegation requiring specific tools (Bash, Write, `mcp__*`, chrome-devtools / claude-in-chrome, etc.), enumerate the required set, then read the target subagent's frontmatter `tools:` array in `~/.claude/agents/<name>.md`.
   - Missing tool → halt delegation; report the gap (agent file + missing tool + remediation: update the agent body `tools:` array OR pair a different agent OR surface to user).
   - The allowlist is **frozen at spawn time** (`core-security.md` LLM06), so a body edit applies from the NEXT spawn (body rewrites: `scope-meta.md` Outcome-Driven Rewrite Policy).
@@ -155,6 +155,8 @@ The probes run during the Decision phase, before the spawn: Permission · Foregr
   - A declared precondition binds every mode it covers — e.g. glass-atrium-intel-reporter's gate covers ALL monitor POSTs, the user-requested HTML primary AND the agent-only record alike, so agent-only mode is NOT a pass-through.
 
 **Probe strength (distinct kinds — do NOT merge them)**: ONLY the **Foreground Probe is mechanically enforced** (`enforce-foreground-harness.sh`). Permission / Capability / Compatibility are **ADVISORY checklist items** — the Decision row's Forbidden column names their failures, but no hook verifies them, so their backing is honor-system.
+
+- Foreground Probe enforcement covers Agent-tool spawns only — the Workflow-tool gap: `### Reach of the gate`.
 
 > **Decomposition self-check (Decision phase, BEFORE script authoring)**: before authoring any DEV-spawning workflow, confirm a persisted plan exists for sizable work and the verify-stage precedes implementation. A leaf gate catches a wrong path only after it is taken; this check picks the sequencing at decision time.
 
@@ -268,7 +270,18 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 ### Cost-Tier Selection
 
 - The table below is a **judgment heuristic** for LLM-led routing, not a mechanism: no tier-selecting code reads a per-agent tier field, so the orchestrator assigns a tier by task complexity before spawning.
-- The daemon's own automation reads its model from `~/.claude/data/daemon-config.json` via `hooks/daemon_config.py`; with that config absent it falls back to the session default (an unpinned family alias), never a pinned version.
+- The daemon's own automation reads its model through `hooks/daemon_config.py`: the `DAEMON_CONFIG` path override first, else `daemon-config.json` under the data root (`hooks/ga_paths.py` → `get_data_root`, whose base `GA_DATA_ROOT` overrides).
+- `load_daemon_config` falls back to a pinned worker-model id, never a bare family alias, when the file is missing, unreadable, corrupt or not a JSON object, or when neither `worker_model` nor the legacy `haiku_model` key holds a non-empty string.
+  - Why: the monitor rejects a bare alias for the worker model, and `hooks/pricing.json` cannot price one.
+- That id sits in every seam holding the fallback:
+  - `hooks/daemon_config.py` → `_FALLBACK`;
+  - `scripts/lib/atrium-config.sh` → `atrium_resolve_worker_model`;
+  - `monitor/src/server/model-config-consts.ts` → `RETIRED_WORKER_MODEL_REPLACEMENT`;
+  - `monitor/prisma/migrations/20260901000000_rename_haiku_model_config_keys_to_worker/migration.sql` → both `model.daemon_cycle_worker` values.
+- Moving the id:
+  - the migration's values move only through a new migration, never by editing the applied file.
+    - Why: `migrate deploy` never re-applies an applied migration, so an edit reaches fresh installs only (`migration.sql` → "WHY a new migration rather than an edit").
+  - every other seam is edited together, deliberately.
 - This wording is pinned — `## Machine-Read Structure`.
 
 | Task type | Model tier | Trigger |
@@ -277,16 +290,19 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 | Implementation / review / design | default (settings.json `model`) | Default for DEV · QA · PLANNING agents |
 | Strategic decisions (cascade effect) | Opus | Orchestrator itself only |
 
-**Tier-escalation heuristic (observability, NOT a mechanism)**:
+**Tier-escalation heuristic (observability, not a mechanism)**:
 
 - `fail_rate` (computed read-only in monitor `agents.ts` for the dashboard) is a cue the orchestrator MAY consult: a Haiku sub-agent persistently failing a task type (> ~20%) hints at the default model next time.
 - No code consumes `fail_rate` to switch a tier, so the escalation is not enforced.
 
 **Model pins**:
 
-- The repo default and daemon proposals follow settings.json `model` and MUST NOT hardcode a tier/version string.
+- Repo `agents/*.md` and daemon body proposals:
+  - carry no `model:` key.
+  - MUST NOT hardcode a tier/version string — they follow settings.json `model`.
 - A live-environment operator MAY pin a model in an agent's frontmatter as local-only config, never ported to git — a sanctioned override, not a violation.
-- Repo `agents/*.md` carry ZERO `model:` keys: every pin is LIVE-ONLY, and the updater preserves it across updates.
+- In agent frontmatter every pin is LIVE-ONLY, and the updater preserves it across updates.
+- Pinned ids are sanctioned in the worker-model fallback seams above and in the monitor's model-config seed values for the domains it renders into live agent frontmatter.
 - A delegation never authors a `model:` pin.
 
 ### Spawn Budget
@@ -363,17 +379,21 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - `[AGENT-COMPOSITION]` is deliberately NOT in this family — it lives in a script block comment, never in a prompt (`#### Ultracode declaration contract` above).
 - **`[SCOPE]` — the 7th delegation element (REQUIRED on DEV and PLANNING delegations). This bullet is the grammar SoT; every other file carries a pointer only.** One line opened by the token, `files=` first, ` · `-separated:
 
-  `[SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>`
+  ```
+  [SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>
+  ```
 
   - **What it is for**: it fixes the LITERAL scope of the user's instruction in text at delegation time — a scope held only in the orchestrator's head can never be compared against what was built.
   - **Placement**: the token-family rule above.
   - **Write the ` · ` separators — the canonical form.**
-    - **Parser behaviour** — line selection (**Declaration line**), the record-0 read, the `files=` parse, fail-open shapes, the non-contract tolerances and relay shapes still selected — plus the worked completeness case: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`.
+    - **Parser behaviour**:
+      - Line selection, the record-0 read and fail-open shapes: the comments above `hooks/lib/scope-match.sh` → `_SCOPE_DECL_OPEN`, `scope_decl_select` and `scope_decl_from_record0`.
+      - The bare declaration line (**Declaration line**), its separators and the worked completeness case: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`.
   - **First wins**: of several declarations the first line is taken, never merged.
   - **Relaying or quoting a declaration**: block-quote it (`> ` prefix) or keep it mid-line, so it is not selected; otherwise write the real declaration first.
-    - An unwrapped relay opening its own line is selected and wins over a later real line.
+    - A relay opening its own line in the bare form is selected and wins over a later real line.
   - **Space-in-path limit**: no form can express a path containing a space.
-  - **`files=` completeness duty**: declare up front every path the sanctioned work legitimately touches — the tests that travel with the implementation and every MANDATORY co-deliverable included.
+  - **`files=` completeness duty**: declare up front every path the sanctioned work legitimately touches — the tests that travel with the implementation and every required co-deliverable included.
     - Also declare the coupled tests the change will make stale, obsolete or wrong (`scoped/shared-testing.md` → **Coupled-test check**).
     - Both directions fail: an under-declared `files=` turns compliant work into a false excess signal, and a `files=` wide enough to cover anything declares the check away. Declare what the work needs, not a safety margin.
   - **Honest backing — PRESENCE-CHECKED ONLY**: the spawn gates observe an ABSENT line and say so (stderr advisory, exit status unchanged — never a block).
@@ -472,12 +492,88 @@ The standard plan/report-then-build flow as ONE lifecycle.
 
 ## Harness Path Protection (`~/.claude/` and every `~/.claude-*` profile branch)
 
-A write in this scope is a harness/memory configuration change, and the user MUST inspect it in real time.
+A write in this scope is a harness/memory configuration change, and the user MUST see and approve the exact change before it lands.
 
-- **Rationale**: harness/memory misconfiguration silently breaks future sessions, so the user must see progress and diffs as they happen.
+- **Rationale**: harness/memory misconfiguration silently breaks future sessions, so the user must see each diff before it reaches the harness.
 - **Scope**: `~/.claude/` and every `~/.claude-*` profile branch config dir (`-work`, `-personal`, `-work-dev`, a dormant backup dir, any future branch), all subdirectories.
 - **BASENAME exception**: `CLAUDE.md`, `MEMORY.md`, `GLASS_ATRIUM_GLOBAL_RULES.md` may be written directly (memory-index + root-rule updates) — the hook exempts these names at the harness root.
 - **Sub-agent path**: sub-agents bypass the hook automatically; Rule 1 and Rule 2 below govern **orchestrator delegation behavior only**.
 - **Rule 1 — User approval (GOVERNANCE / social-contract, NOT hook-enforced)**: before each delegation that writes to an in-scope path, the user must explicitly OK the specific path + change; a sub-agent delegation alone is insufficient.
   - Backing: honor-system — no hook verifies that the approval occurred.
-- **Rule 2 — Foreground MANDATORY (ENFORCEMENT, hook-backed)**: an Agent tool invocation that writes to an in-scope path MUST set `run_in_background: false` or omit the parameter. Backed by `enforce-foreground-harness.sh` (PreToolUse).
+  - Exempt: `### Progress-file exclusion`.
+- **Rule 2 — Staged lane MANDATORY (ENFORCEMENT, hook-backed)**: a harness write never travels through a subagent prompt — an Agent-tool prompt or a Workflow-tool `agent()` prompt; it takes its route in `### Write routes`.
+  - `enforce-foreground-harness.sh` (PreToolUse) blocks every Agent spawn whose prompt names a non-exempt harness path, whatever `run_in_background` holds or omits.
+    - Why: the model sends or omits that field on its own, so neither its value nor its absence is evidence of how the agent launches.
+  - Exempt: the BASENAME exception, the runtime-data subdirs the hook header lists, and `### Progress-file exclusion`.
+    - A `..` segment, or any `.claude` text after the harness root, in the path as written voids every exemption.
+    - A directory symlink the walk crosses before entering a root, leading inside a root rather than onto the root itself, voids every exemption too.
+  - Honest backing: the hook reaches only what `### Reach of the gate` states.
+
+### Write routes
+
+| Target | Route |
+|---|---|
+| install-managed — a harness symlink into `~/.glass-atrium/` | edit the repo path; it ships through manifest regeneration and the updater |
+| not install-managed — profile `settings*.json`, other profile-local files | `### Staged lane` |
+| read, install-managed | read the repo path |
+| read, not install-managed | the staged lane's read-only variant |
+
+- Install-managed files: agent bodies, `rules/glass-atrium/*`, `skills/glass-atrium-*` and `GLASS_ATRIUM_GLOBAL_RULES.md`.
+- In a subagent prompt, name a repo path that contains `.claude` by its absolute form.
+  - Why: a relative one is judged as if read from `$HOME`, and can block.
+- Naming the resolved `~/.glass-atrium/` target of a harness symlink in a subagent prompt is FORBIDDEN: it writes the live install outside the updater.
+
+### Staged lane
+
+Each step builds on the previous.
+
+1. **Copy out**: the main session copies the real target file into a staging dir — a read of the harness, never a write.
+   - Read form: `cat <real> > <stage>/<name>` — the only sanctioned form.
+   - `cp`, `rsync` and `install` from a protected path are blocked by HAR-002 (`hooks/enforce-harness-critical.sh`).
+   - Staging dir: a lane-created dir inside the session's working-directory tree, with no `.claude*` path segment, outside git tracking.
+     - Why: a bare `mktemp -d` lands under `$TMPDIR`, which may sit outside a background agent's allowed directories.
+2. **Edit**: a subagent edits only the staging copy, named in its prompt by absolute path.
+   - Why: a relative path containing `.claude` can trip the hook (`### Write routes`).
+3. **Approve**: the main session shows the diff, and the user OKs the specific path and change (Rule 1).
+   - The approval names the real target file and every profile that links to it: one settings file is shared by more than one profile.
+4. **Apply**: the user runs the apply command the main session prints, in the user's own terminal outside the CLI.
+   - Why user-run: `hooks/enforce-harness-critical.sh` blocks live `settings*.json` writes for every caller, the main session included, and the orchestrator never writes a harness path.
+
+- **Apply safety** — the printed apply runs each check below before it writes:
+  - A named target that is a symlink is refused as named; the lane resolves it, and the real file becomes the target.
+  - Resolution compares physical paths: resolve the directory with `cd -P <dir> && pwd -P`, then follow any final-component link.
+  - A resolved real file inside the install root (`~/.glass-atrium/` by default) is refused: it is install-managed and takes the repo route.
+  - A staged JSON file must pass `jq -e .` before the in-place write.
+  - The apply writes the content in place; a rename or `mv` over a link or a file is FORBIDDEN.
+    - Why: a rename over a link replaces the link with a regular file, so the profiles that shared it diverge; a rename over the resolved real file swaps in the temp file's inode, mode and owner. Writing the real file in place avoids both.
+- **Read-only variant**: Copy out alone, with no apply; the agent reads the staging copy.
+- **Honest backing**: honor-system — no hook runs the apply-safety checks, because the user runs the printed apply outside the CLI.
+
+### Progress-file exclusion
+
+- A `progress-*.md` file sitting directly in a profile's `projects/<p>/memory/` dir is outside both Rule 1 and Rule 2: one filename after `memory/` and no further segment.
+- Every other memory file stays protected — the `MEMORY.md` index there, `feedback_*.md` and the rest.
+- What voids this exclusion: `## Harness Path Protection` → Rule 2 → Exempt.
+- Why: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Cross-Session Continuity (progress.md) [ALL]` mandates that every agent write these files as session-internal state, and a checkpoint must land before the turn cap ends the run, so a per-write approval or staging it defeats it.
+- Reading one stays under that section's `### Session-Start Continuity Header`.
+- The owner may override this exclusion.
+
+### Reach of the gate
+
+The hook takes candidate paths from the Agent prompt's text and resolves each against the filesystem, symlinks included, so it reaches only the harness paths that text names. Outside its reach:
+
+- a write the prompt does not name;
+- a path the prompt hides — variable indirection, encoding, a deeper `cd`;
+  - this includes a home written as a run-time expansion the hook does not read as home;
+- a path whose written text the hook does not read as naming a harness root, such as a glob standing in for a root letter;
+- a root named only as a bare word in prose, the file named relative to it, so no token is a protected path;
+- a Workflow-tool `agent()` spawn — measured: it does not pass PreToolUse(Agent), so the gate cannot see Workflow spawns (record: `scoped/shared-hook-capability-contract.md` → `PreToolUse(Agent) measured record`);
+  - Rule 2 still binds a Workflow `agent()` prompt, on the honor system alone;
+- a prompt naming the resolved install target of a harness symlink: `### Write routes` forbids it, but only on the honor system — the hook scans only `.claude` paths, and no hook guards the install's `rules/` and `scoped/` trees on that route.
+
+- The scan cannot tell a read from a write, so a prompt naming a harness path only to read it is blocked too: use the read-only variant.
+- The hook does not examine a symlink inside a root it has entered: it judges the rest of the path as written.
+- Past its candidate cap, the hook blocks fail-safe rather than leave candidates unresolved.
+- The layer meant to catch the writes the prompt scan cannot see is a Write/Edit/Bash gate on calls carrying an `agent_id`.
+  - Not built; its home is `hooks/enforce-harness-critical.sh`.
+  - It is also the candidate cover for the Workflow-tool `agent()` gap: whether a Workflow agent's Write/Edit/Bash calls carry an `agent_id` is unmeasured.

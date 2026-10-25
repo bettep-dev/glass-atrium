@@ -330,6 +330,24 @@ SHIM
   grep -q 'inserted line' "${TARGET}"
 }
 
+# Protects git_txn_apply's caller under errexit: the header read must not exit 141 (SIGPIPE) on a large diff.
+# The diff is built inside the driver — passing it through argv or env could hit E2BIG on Linux.
+@test "header basename read keeps rc 0 under strict mode for a diff larger than the pipe buffer" {
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    printf -v nl "\n"
+    body="+$(printf "%080d" 0)"
+    for _ in {1..12}; do body="${body}${nl}${body}"; done
+    diff="--- a/probe.md${nl}+++ b/probe.md${nl}@@ -1 +1,4096 @@${nl}${body}"
+    basename="$(_git_txn_diff_header_basename "${diff}")"
+    printf "%s\n" "${basename}"
+  ' _ "${LIB}"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; return 1; }
+  [ "${output}" = "probe.md" ]
+}
+
 # ---------------------------------------------------------------------------
 # (8) before-image capture failure aborts BEFORE apply → BACKUP_CAPTURE_FAIL
 # ---------------------------------------------------------------------------

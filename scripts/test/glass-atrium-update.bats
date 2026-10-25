@@ -196,6 +196,8 @@ load_skill() {
     seed_file "${NEWSRC}" "${rel}" "new ${rel}"
   done
   write_manifest "${WORK}/manifest.json" "${rows[@]}"
+  # The monitor/ row makes the CLI apply rebuild the monitor: seam npm so no real build runs.
+  write_mock_npm "${WORK}/npm"
 
   run env \
     GA_ROOT="${INSTALL}" \
@@ -203,6 +205,7 @@ load_skill() {
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_NPM="${WORK}/npm" \
     bash "${SKILL}"
   [ "$status" -eq 0 ]
   for rel in "${rows[@]}"; do
@@ -593,6 +596,33 @@ seed_baseline_hashed() {
   [[ "$output" == *"NOT re-created"* ]] || return 1
   [[ ! -f "${INSTALL}/agents/dev-gone.md" ]] || return 1
   [[ "$(cat "${INSTALL}/agents/dev-new.md")" == "new agent body" ]] || return 1
+}
+
+@test "roster gate reports both add-side directions when the change list runs past one pipe buffer" {
+  # both directions first, then ~1 MB of adds: an early-exit prefix match leaves its writer mid-write
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    update_detect_roster_changes() {
+      printf "add dev-new\ndeleted-locally dev-gone\n"
+      awk "BEGIN { for (i = 0; i < 60000; i++) print \"add dev-filler-\" i }"
+    }
+    update_log() { case "$1" in roster*) printf "%s\n" "$1" ;; esac; }
+    update_roster_gate unused-manifest unused-registry "${INSTALL}"
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"roster ADD only"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"roster deleted-locally"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "roster gate still DIES on the remove of a release that both adds and removes" {
@@ -1418,9 +1448,9 @@ safe local line
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]
   # the persistent per-run before-image holds the pre-merge local body byte-for-byte
-  # (glob over the <cycle_date>_update-<version> dir — date computed in the child)
+  # (glob over the per-run cycle dir — date and run suffix computed in the child)
   local bak
-  bak="$(printf '%s\n' "${INSTALL}/agents-bak/"*"_update-1.0.0/dev-a.md.bak" | head -1)"
+  bak="$(printf '%s\n' "${INSTALL}/agents-bak/"*"_update-1.0.0_"*"/dev-a.md.bak" | head -1)"
   [[ -f "${bak}" ]]
   [[ "$(cat "${bak}")" == "${GOAL_LOCAL}" ]]
 }
@@ -1437,7 +1467,7 @@ safe local line
   run_update
   [ "$status" -eq 0 ] || return 1
   local index
-  index="$(printf '%s\n' "${INSTALL}/agents-bak/"*"_update-1.0.0/restore-index.tsv" | head -1)"
+  index="$(printf '%s\n' "${INSTALL}/agents-bak/"*"_update-1.0.0_"*"/restore-index.tsv" | head -1)"
   [[ -f "${index}" ]] || return 1
   grep -qF "$(printf 'dev-a.md.bak\tagents/dev-a.md')" "${index}" || return 1
 }
@@ -1598,6 +1628,34 @@ PLIST
   '
   [ "$status" -eq 8 ] # single-active DB guard → named exit 8
   [[ "$output" == *"another update is already in-progress"* ]]
+}
+
+@test "headless: a unique-violation error past one pipe buffer still loud-fails exit 8" {
+  # the violation first, then ~1 MB of detail: an early-exit match leaves its writer mid-write
+  cat >"${WORK}/psql" <<'MOCK'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'ERROR: duplicate key value violates unique constraint "update_job_single_active_uniq"\n' >&2
+awk 'BEGIN { for (i = 0; i < 60000; i++) print "DETAIL: conflicting in-progress row " i }' >&2
+exit 1
+MOCK
+  chmod +x "${WORK}/psql"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
+    _update_headless=1
+    update_job_begin
+  '
+  [[ "${status}" -eq 8 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"another update is already in-progress"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "P3 headless: ATRIUM_UPDATE_JOB_ID adopts the route-created row (no INSERT, heartbeat only)" {
@@ -1870,6 +1928,59 @@ PLIST
   grep -q "bootstrap" "${WORK}/lc.log"                            # unloaded → bootstrap
 }
 
+# CLI (non-headless) apply of the one release file $1, npm + launchctl seamed; NPM_RC
+# picks the build's exit. The install's monitor dir exists in every case, so a build
+# skipped for an absent dir can never pass for a build the apply set did not ask for.
+run_cli_apply() {
+  local rel="$1"
+  write_mock_npm "${WORK}/npm"
+  write_mock_launchctl "${WORK}/launchctl"
+  mkdir -p "${INSTALL}/monitor"
+  seed_file "${INSTALL}" "${rel}" "old"
+  seed_file "${NEWSRC}" "${rel}" "new content"
+  write_manifest "${WORK}/manifest.json" "${rel}"
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_NPM="${WORK}/npm" \
+    NPM_LOG="${WORK}/npm.log" \
+    NPM_RC="${NPM_RC:-0}" \
+    ATRIUM_UPDATE_LAUNCHCTL="${WORK}/launchctl" \
+    LAUNCHCTL_LOG="${WORK}/launchctl.log" \
+    bash "${SKILL}"
+}
+
+@test "CLI apply touching monitor/ rebuilds the monitor and names the restart it does not do" {
+  run_cli_apply "monitor/src/server/app.ts"
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${INSTALL}/monitor/src/server/app.ts")" == "new content" ]] || return 1
+  [[ -f "${WORK}/npm.log" && "$(<"${WORK}/npm.log")" == "run build" ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"restart the monitor to load a server-side change"* ]] || { echo "${output}"; return 1; }
+  [[ ! -e "${WORK}/launchctl.log" ]] || { echo "CLI apply reached launchd"; return 1; }
+}
+
+@test "CLI apply whose monitor build fails warns and still exits 0 with the files applied" {
+  NPM_RC=1 run_cli_apply "monitor/public/src/ui.jsx"
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${INSTALL}/monitor/public/src/ui.jsx")" == "new content" ]] || return 1
+  [[ -f "${WORK}/npm.log" && "$(<"${WORK}/npm.log")" == "run build" ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"WARN: monitor build failed"* ]] || { echo "${output}"; return 1; }
+  [[ "${output}" != *"restart the monitor to load a server-side change"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "CLI apply that touches no monitor/ path never reaches the monitor build" {
+  run_cli_apply "scripts/tool.sh"
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1
+  [[ ! -e "${WORK}/npm.log" ]] || { echo "${output}"; return 1; }
+}
+
 @test "P3: the decoupled one-shot launchd plist renders with the update-oneshot label + --headless args" {
   local claude="${WORK}/bin/claude"
   mkdir -p "${WORK}/bin"
@@ -1942,7 +2053,7 @@ PLIST
 }
 
 @test "P3: --restore-agents restores agent bodies from the agents-bak before-image (git-revert replacement)" {
-  local cyc="2026-07-01_update-1.0.0"
+  local cyc="2026-07-01_update-1.0.0_093000_4242"
   mkdir -p "${WORK}/agents-bak/${cyc}"
   printf 'BEFORE IMAGE BODY' >"${WORK}/agents-bak/${cyc}/dev-a.md.bak"
   seed_file "${INSTALL}" "agents/dev-a.md" "corrupted-by-a-bad-update"
@@ -2897,7 +3008,8 @@ safe local line
 
 # Seed the four declared roster paths under one root, each slot carrying $2.. as
 # its members. $1 = root. Shapes per the module's suffix map: .json registry,
-# .md brace list, .sh space-padded readonly array.
+# .md brace list, .sh space-padded readonly array — two in the inject hook, which
+# ships several, so the merge is driven over a multi-array file.
 seed_roster_quartet() {
   local root="$1" marker="$2"
   shift 2
@@ -2914,7 +3026,8 @@ seed_roster_quartet() {
   seed_file "${root}" "hooks/inject-scope-rules.sh" \
     "#!/usr/bin/env bash
 # ${marker}
-readonly INJECT_AGENTS=\" ${names} \"
+readonly BUDGET_DEV_AGENTS=\" ${names} \"
+readonly WIKI_UNTRUSTED_AGENTS=\" ${names} \"
 "
   seed_file "${root}" "hooks/lib/styleref-roster.sh" \
     "#!/usr/bin/env bash
@@ -3088,7 +3201,8 @@ assert_withheld_from_every_roster() {
 
   # A shell roster's slot is selected by the array NAME, so a second declaration
   # of the same name is valid shell the reader cannot see; only a count catches it.
-  [ "$(grep -c '^readonly INJECT_AGENTS=' "${INSTALL}/hooks/inject-scope-rules.sh")" -eq 1 ] || return 1
+  [ "$(grep -c '^readonly BUDGET_DEV_AGENTS=' "${INSTALL}/hooks/inject-scope-rules.sh")" -eq 1 ] || return 1
+  [ "$(grep -c '^readonly WIKI_UNTRUSTED_AGENTS=' "${INSTALL}/hooks/inject-scope-rules.sh")" -eq 1 ] || return 1
   [ "$(grep -c '^readonly STYLEREF_AGENTS=' "${INSTALL}/hooks/lib/styleref-roster.sh")" -eq 1 ] || return 1
   # Each rewritten array stays ONE physical line however many members resolved.
   [ "$(grep -c '^readonly STYLEREF_AGENTS=" dev-a user-x "$' "${INSTALL}/hooks/lib/styleref-roster.sh")" -eq 1 ] || {

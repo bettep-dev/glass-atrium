@@ -46,12 +46,12 @@ Its operative content, restated once here so the decision is auditable: every de
   - It sits INSIDE an editable region, so a live install with local edits resolves that region through a merge.
 - The index-mutation class, both worktree contracts and the regeneration barrier are defined in Tier-1 `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**, which reaches this agent on the host channel. Do not copy them into the body.
   - The body still keys its `### Concurrent-worktree contract` table on the delegation's worktree-contract line: only that line says which contract holds for a given run.
-  - The body's barrier note under that heading restates the canonical's **Whole-tree regeneration** and **Regeneration barrier**, so it is a removable mirror (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)` → **Standing consequence**).
-    - Removing it also removes the table's "(see the barrier note below)".
+  - The body states no barrier note: the canonical's **Whole-tree regeneration** and **Regeneration barrier** reach this agent, so a body copy is a redundant mirror (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)` → **Standing consequence**).
+    - The table cell and the stale-manifest bullet say only "hold the tree exclusively", which the canonical barrier defines.
 - **Early-exit pipe readers — the premise in its Why**: the race is keyed on the writer's write count, not on output past the pipe capacity.
   - Mechanism: bash line-buffers builtin stdout (one write per line) and an external stdio writer writes once per buffer, so a multi-line builtin value races an early reader at any size.
   - The same premise sits in the `hooks/lib/pipe-drain.sh` header and the `scripts/audit-pipe-drain.sh` header Why — canonical + mirror: keep the three in step and report drift.
-  - The Backing line lists what `scripts/audit-pipe-drain.sh` models (`is_early_reader`, `READER_HELPERS`, `EXCLUDED_PREFIX`); edit it whenever the auditor's model changes.
+  - The Backing line lists what `scripts/audit-pipe-drain.sh` models (`audit_stage`'s first-word read, `is_early_reader`, `READER_HELPERS`, `EXCLUDED_PREFIX`, `join_logical_line`'s single-quote-only join); edit it whenever the auditor's model changes.
   - The rule's own reach stays `hooks/`, the auditor's scope; the sibling **Interrupted builtin writes** bullet is the one that binds every shell file.
 - **Interrupted builtin writes — the decided keeps**:
   - Reach is every shell file: the fault needs only errexit and an un-waited child, and the `lib/ga-env.sh` logger (`log`, `die`) is an instance outside `hooks/`.
@@ -71,7 +71,8 @@ Its operative content, restated once here so the decision is auditable: every de
 | Work Rules **Search first** | `scoped/shared-search-first.md` → Principles (`rules.shared`) | none |
 | Work Rules **Logging** + **Comments** | `scoped/shared-comment-logging.md` (`rules.shared`) · `core-security.md` → Secret Management (host) | "error messages → stderr", moved into Work Rules **Functions** — neither canonical states it |
 | Hook Script Specifics "0 default" and "<1s typical" | `GLASS_ATRIUM_GLOBAL_RULES.md` → Hook Operation Policy (host) | 2 blocking · document any non-zero · `timeout` wrapper |
-| Concurrent-worktree lead "treat as SHARED and ask" | `core-git-workflow.md` → Commits → Concurrent worktree (host) | the contract table and the barrier note |
+| Concurrent-worktree lead "treat as SHARED and ask" | `core-git-workflow.md` → Commits → Concurrent worktree (host) | the contract table |
+| Concurrent-worktree barrier note "Regeneration is a BARRIER, not an index operation" | `core-git-workflow.md` → Concurrent worktree → **Regeneration barrier** (host) | the stale-manifest bullet |
 | Red Flags "use `mv ~/.Trash/`" | `GLASS_ATRIUM_GLOBAL_RULES.md` → File Deletion Policy (host) | the disambiguation against the recursive-force guardrail |
 | Success Criteria emit-mode table and notes | `core-outcome-record.md` → Completion Report Output Obligation (host) + slot-1 emit-format block | one pointer line + the no-`completion_block` fallback sub-bullet, which neither canonical states |
 | In-file repeats: Key Patterns "Every expansion quoted", the `grep -c` guardrail's output example | the unquoted-`$var` guardrail · Key Patterns `grep -c` zero-match trap | none |

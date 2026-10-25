@@ -41,6 +41,7 @@ setup() {
   cp "${REAL_SCRIPT}" "${SCRIPT}"
   cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
   cp "${REAL_SPINE%/*}/path-guard.sh" "${WORK}/scripts/lib/path-guard.sh"
+  cp "${REAL_SPINE%/*}/tracked-paths.sh" "${WORK}/scripts/lib/tracked-paths.sh"
   seed_manifest
   printf '# agent alpha\n' >"${WORK}/agents/alpha.md"
   printf '# rule beta\n' >"${WORK}/rules/beta.md"
@@ -406,6 +407,27 @@ SHIM
   done
 }
 
+@test "generate and --check: an absent tracked-path oracle exits 7 and leaves the manifest unwritten" {
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/scripts/lib/tracked-paths.sh"; fi
+  local before mode
+  before="$(cat "${MANIFEST}")"
+  for mode in "" "--check"; do
+    run "${SCRIPT}" ${mode:+"${mode}"}
+    [[ "${status}" -eq 7 ]] || {
+      echo "row ${mode:-generate}: status ${status}: ${output}"
+      return 1
+    }
+    [[ "${output}" == *'tracked-paths.sh required'* ]] || {
+      echo "row ${mode:-generate}: no oracle message: ${output}"
+      return 1
+    }
+    [[ "$(cat "${MANIFEST}")" == "${before}" ]] || {
+      echo "row ${mode:-generate}: manifest rewritten"
+      return 1
+    }
+  done
+}
+
 # T1b — the four executable-suite roots must bundle so the daemon-apply preflight
 # can run the suite from the installed tree; monitor/test must stay out. Seeds one
 # .bats per root (+ a test_*.py under autoagent) and a monitor/test .test.ts decoy —
@@ -452,6 +474,41 @@ seed_test_roots() {
   [[ "${status}" -ne 0 ]]
   run jq -e 'any(.files[]; endswith(".test.ts"))' "${MANIFEST}"
   [[ "${status}" -ne 0 ]]
+}
+
+# Row = "<name>|<path>|<want>": the reviewer catch-rate answer key never ships; the runner
+# sharing its name prefix and the suite beside it do.
+CATCH_RATE_ROWS=(
+  "corpus diff|autoagent/reviewer-catch-rate/case-01.diff|absent"
+  "corpus label file|autoagent/reviewer-catch-rate/labels.tsv|absent"
+  "runner sharing the corpus name|autoagent/reviewer-catch-rate.sh|present"
+  "suite reading the corpus|autoagent/test/reviewer-catch-rate.bats|present"
+)
+
+@test "generate: the reviewer catch-rate corpus stays out of files[] while its runner and suite ship" {
+  local row name path want files got
+  for row in "${CATCH_RATE_ROWS[@]}"; do
+    IFS='|' read -r name path want <<<"${row}"
+    mkdir -p "${WORK}/${path%/*}"
+    printf '# %s\n' "${name}" >"${WORK}/${path}"
+    git -C "${WORK}" add -- "${path}"
+  done
+  git -C "${WORK}" commit -qm 'seed catch-rate lane'
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  files="$(jq -r '.files[]' "${MANIFEST}")"
+  for row in "${CATCH_RATE_ROWS[@]}"; do
+    IFS='|' read -r name path want <<<"${row}"
+    got=absent
+    if [[ $'\n'"${files}"$'\n' == *$'\n'"${path}"$'\n'* ]]; then got=present; fi
+    [[ "${got}" == "${want}" ]] || {
+      echo "${name}: ${path} is ${got} in files[], want ${want}"
+      return 1
+    }
+  done
 }
 
 @test "generate: every tracked .bats under the four roots is bundled (count parity)" {
@@ -626,6 +683,91 @@ ship_lib_a() {
   [[ "${output}" == *"RETIRED key ABSENT"* ]] || return 1
 }
 
+# Retire scripts/lib/a.sh through a real regeneration and keep that manifest as the
+# reference — the PR target tip that already carries the retired key.
+retire_lib_a_into_reference() {
+  ship_lib_a >/dev/null
+  git -C "${WORK}" rm -q scripts/lib/a.sh
+  git -C "${WORK}" commit -qm drop-a
+  "${SCRIPT}" >/dev/null 2>&1
+  REFERENCE="${BATS_TEST_TMPDIR}/reference.json"
+  cp "${MANIFEST}" "${REFERENCE}"
+}
+
+drop_lib_a_from_current_retired() {
+  jq 'del(.retired["scripts/lib/a.sh"])' "${MANIFEST}" >"${MANIFEST}.tmp"
+  mv -f "${MANIFEST}.tmp" "${MANIFEST}"
+}
+
+@test "--check: a retired key dropped from the committed map stays invisible without a reference" {
+  retire_lib_a_into_reference
+  drop_lib_a_from_current_retired
+  run "${SCRIPT}" --check
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "--check --reference: exit 1 names each reference retired key the current map dropped" {
+  retire_lib_a_into_reference
+  drop_lib_a_from_current_retired
+  run "${SCRIPT}" --check --reference "${REFERENCE}"
+  [[ "${status}" -eq 1 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"RETIRED-DROPPED (1):"* ]] || return 1
+  [[ "${output}" == *"- scripts/lib/a.sh"* ]] || return 1
+}
+
+@test "--check --reference: exit 0 when the current map keeps every reference key" {
+  retire_lib_a_into_reference
+  run "${SCRIPT}" --check --reference "${REFERENCE}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" != *"RETIRED-DROPPED"* ]] || return 1
+}
+
+@test "--check --reference: a reference key whose path is back in files[] is not a drop" {
+  retire_lib_a_into_reference
+  printf '# lib a again\n' >"${WORK}/scripts/lib/a.sh"
+  git -C "${WORK}" add scripts/lib/a.sh
+  git -C "${WORK}" commit -qm reship-a
+  "${SCRIPT}" >/dev/null
+  run "${SCRIPT}" --check --reference "${REFERENCE}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "--check --reference: a reference key in a barred family is not a drop" {
+  retire_lib_a_into_reference
+  jq '.retired["monitor/prisma/migrations/20260101000000_seed/migration.sql"] = .retired["scripts/lib/a.sh"]' \
+    "${REFERENCE}" >"${REFERENCE}.tmp"
+  mv -f "${REFERENCE}.tmp" "${REFERENCE}"
+  run "${SCRIPT}" --check --reference "${REFERENCE}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "--check --reference: exit 2 on a reference that cannot be read as a manifest" {
+  "${SCRIPT}" >/dev/null
+  local bad_dir="${BATS_TEST_TMPDIR}"
+  printf 'not json\n' >"${bad_dir}/not-json.json"
+  printf '{"retired":[]}\n' >"${bad_dir}/array-retired.json"
+  local -a rows=(
+    "absent file|${bad_dir}/absent.json"
+    "not JSON|${bad_dir}/not-json.json"
+    "retired not an object|${bad_dir}/array-retired.json"
+  )
+  local row
+  for row in "${rows[@]}"; do
+    run "${SCRIPT}" --check --reference "${row#*|}"
+    [[ "${status}" -eq 2 ]] || { echo "${row%%|*}: status ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "--check: exit 2 on an argument that is not a reference flag" {
+  "${SCRIPT}" >/dev/null
+  local -a rows=("--refrence" "--reference")
+  local arg
+  for arg in "${rows[@]}"; do
+    run "${SCRIPT}" --check "${arg}"
+    [[ "${status}" -eq 2 ]] || { echo "${arg}: status ${status}: ${output}"; return 1; }
+  done
+}
+
 # Stamp one retired entry into a freshly generated manifest, then run --check. The
 # default value is a REAL shipped hash, so only the entry's shape can fail the gate.
 check_with_retired_entry() {
@@ -727,7 +869,8 @@ readonly HASHES_KEY_SWAP_JQ='.hashes["manifest.json"] = .hashes["LICENSE"] | del
   BARE="$(mktemp -d)"
   mkdir -p "${BARE}/scripts/lib"
   cp "${SCRIPT}" "${BARE}/scripts/generate-manifest.sh"
-  cp "${WORK}/scripts/lib/apply-spine.sh" "${WORK}/scripts/lib/path-guard.sh" "${BARE}/scripts/lib/"
+  cp "${WORK}/scripts/lib/apply-spine.sh" "${WORK}/scripts/lib/path-guard.sh" \
+    "${WORK}/scripts/lib/tracked-paths.sh" "${BARE}/scripts/lib/"
   cp "${MANIFEST}" "${BARE}/manifest.json"
   run git -C "${BARE}" rev-parse --is-inside-work-tree
   [[ "${status}" -ne 0 ]] || {

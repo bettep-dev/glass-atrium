@@ -215,17 +215,18 @@ Emit on the terminal turn only: an every-turn emit is noise, and a skipped emit 
 #### Role-scoped fields
 
 - **`qa_score`**: format `cov=N,ins=N,instr=N,clar=N`, each 1-5 — reserved for QA agents (glass-atrium-qa-code-reviewer / glass-atrium-qa-debugger) reviewing other agents' outputs.
-  - It rates the REVIEWED artifact and never selects the reviewer's own `result`, which follows the Result-selection criterion alone.
-  - A self-emitted Model-Based signal, NOT a deterministic verdict: the LLM evaluator's own score, layered ABOVE the Code-Based grader, never overriding `metric_pass`.
+  - It rates the reviewed artifact and never selects the reviewer's own `result`, which follows the Result-selection criterion alone.
+  - A self-emitted Model-Based signal, not a deterministic verdict: the LLM evaluator's own score, layered above the Code-Based grader, never overriding `metric_pass`.
   - What a low sum obliges the reviewer to do, and the evaluator-independence caveat: `scope-qa.md` → "Deliverable Quantitative Evaluation".
 - **`style_ref`**: the relative path of the sibling file used as convention reference — MUST be a path you actually read this turn.
   - Read during: Project Convention Probe (`scope-dev.md` → Pre-Execution Verification → Project Convention Probe) or Step 2 Read (`shared-search-first.md` → Pattern recognition → Step 2 Read / Step 3 Mirror).
-  - **Greenfield** (no sibling in the first-touch directory AND no AGENTS.md/CLAUDE.md anchor) → emit the literal `style_ref: greenfield` AND declare `convention: greenfield` in the turn-0 Assumptions line.
+  - **Greenfield** (no sibling in the first-touch directory and no AGENTS.md/CLAUDE.md anchor) → emit the literal `style_ref: greenfield` and declare `convention: greenfield` in the turn-0 Assumptions line.
   - **Omission** on a non-greenfield row → `review_flag: true`. Parser logic: `~/.glass-atrium/hooks/lib/style-ref-consts.sh::style_ref_compute_review_flag`, whose task_type allowlist is the single SoT for the production hook and its Bats test.
   - **Corroboration**: on SubagentStop `track-outcome.sh` checks the value against the transcript's `Read` tool_use history and records `style_ref_verified`.
-    - `true` = corroborated in that history · `null` = greenfield or absent, verification N/A.
-    - `false` = NOT corroborated through the `Read` channel — a coverage fact, never an honesty verdict: a Bash/Grep/Glob read carries no `file_path`, and a session with no `Read` calls corroborates nothing.
-  - **Mandatory graduation** is a separate future cycle requiring user approval, gated by `styleRefGradeBadgeI` in `monitor/public/src/screens/improvement.jsx`: emission ≥ 50% AND the uncorroborated share of the ADJUDICATED subset < 10% across the DEV agents.
+    - `true` = corroborated in that history.
+    - `null` = verification N/A: greenfield, absent, or unverifiable — an empty `Read` history, an unreadable transcript, or a missing `hooks/lib/style_ref_match.py`.
+    - `false` = a real path not corroborated by a non-empty `Read` history — a coverage fact, never an honesty verdict: a Bash/Grep/Glob read carries no `file_path`.
+  - **Mandatory graduation** is a separate future cycle requiring user approval, gated by `styleRefGradeBadgeI` in `monitor/public/src/screens/improvement.jsx`: emission ≥ 50% and the uncorroborated share of the adjudicated subset < 10% across the DEV agents.
     - Adjudicated = corroborated + uncorroborated, never eligible — an eligible denominator could be passed by widening the blind spot.
     - Publish corroborated / uncorroborated / unverifiable as three counts, not one derived rate that reads as an honesty verdict.
 
