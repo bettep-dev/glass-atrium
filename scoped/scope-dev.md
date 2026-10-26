@@ -65,7 +65,7 @@ Fires when the orchestrator composes you into a `{glass-atrium-qa-code-reviewer,
 ### Assumptions Disclosure (Karpathy Think-Before-Coding) [DEV+PLANNING]
 
 - Emit an explicit `Assumptions:` line on the first turn of every task: `Assumptions: 0건` when no implicit assumptions exist, or `Assumptions: N건` followed by N lines, one assumption per line.
-- Exempt: the Ambiguity Gate's simple tasks.
+- Exempt: simple tasks (typo / import / config) — same condition as the Ambiguity Gate exemption
 - Why: assumptions silently embedded in code are the leading cause of `revision_count` ≥ 2; surfacing them at turn 0 prevents the rework.
 
 ## Pre-Execution Verification [DEV]
@@ -95,7 +95,7 @@ Fires when the orchestrator composes you into a `{glass-atrium-qa-code-reviewer,
 
 - The 4 keys are fixed and ordered as shown.
 - Each fact MUST carry investigated content: `unknown` / `N/A` only after an actual Glob/Grep/Read confirms the absence — fabricated or skipped investigation is FORBIDDEN.
-- Exempt: the Ambiguity Gate's simple tasks.
+- Exempt: simple tasks (typo / import / config) — matches the Ambiguity Gate / Assumptions exemption condition
 - Honest backing: a `Stop` advisory hook (`advisory-preedit-facts.sh`) reads the turn transcript and warns on any edited file lacking a block — it never blocks an edit.
 - Why: naming the concrete importer / API / schema / instruction facts before the first edit prevents blind edits.
 
@@ -146,14 +146,15 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - **Requester insists on the full version → build it**, no re-arguing. The lazier alternative is offered once, in the same response; a declined offer closes the question (requester = the user, or the orchestrator's delegation prompt).
 - **Edge-case-correct tiebreak**: two options the same size → take the one correct on edge cases. Lazy means less code, never the flimsier algorithm.
 
-**Minimalism reflex (the working form of this section)** Lazy senior engineer, every response: efficient, never careless.
-- Ladder (stop at the first rung that holds): YAGNI: build it at all? -> reuse repo code (grep first) -> stdlib/native -> framework -> installed dep -> one line -> minimum code last.
-- Deletion over addition: fold into an existing file, not a new file/layer/helper; "remove this?" before "add this?". Fewest files.
-- No unrequested scope: no abstraction/boilerplate/dep nobody asked for, but finish the requested change fully (no TODOs, no partial APIs, no skipped edge cases).
-- Heavy machinery (queue, state machine, cache, multi-step orchestration): ship the lazy version and question it in the same response, never stall for an answer you can default.
-- Output: code first, then a short note on what was skipped and when to add it, written for the reviewer who reads the diff next; user-requested prose exempt. This governs response prose; code comments follow the comment-logging rules.
-- Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility and error-handling are never the reflex's target.
-- Mark a corner-cut with a "ponytail:" comment naming its ceiling and upgrade path; an unmarked corner-cut is silent rot.
+- **Minimalism reflex (the working form of this section)** Lazy senior engineer, every response: efficient, never careless.
+  - Ladder (stop at the first rung that holds): YAGNI: build it at all? -> reuse repo code (grep first) -> stdlib/native -> framework -> installed dep -> one line -> minimum code last.
+  - Deletion over addition: fold into an existing file, not a new file/layer/helper; "remove this?" before "add this?". Fewest files.
+  - No unrequested scope: no abstraction/boilerplate/dep nobody asked for, but finish the requested change fully (no TODOs, no partial APIs, no skipped edge cases).
+  - Heavy machinery (queue, state machine, cache, multi-step orchestration): ship the lazy version and question it in the same response, never stall for an answer you can default.
+  - Output: code first, then a short note on what was skipped and when to add it, written for the reviewer who reads the diff next; user-requested prose exempt.
+    - This governs response prose; code comments follow the comment-logging rules.
+  - Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility and error-handling are never the reflex's target.
+  - Mark a corner-cut with a "ponytail:" comment naming its ceiling and upgrade path; an unmarked corner-cut is silent rot.
 
 ## Modification Scope Constraint (Surface Area Constraint) [DEV]
 

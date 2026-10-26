@@ -219,7 +219,9 @@ Open, and owned outside this note (the fix edits other files):
 
 ## Rule-file pointers and loading stanza
 
-- The rule file carries no maintainer preamble pointing here and no companion pointer in the first-link literal bullet: neither sits under an externally-cited stub heading, so the companion-citation convention in this note's header sanctions neither. The editor caution for that literal lives here only (`### Extraction constraints (the first-link question)`).
+- The rule file carries no maintainer preamble pointing here and no companion pointer in the first-link literal bullet.
+  - Why: neither sits under an externally-cited stub heading, so the companion-citation convention in this note's header sanctions neither.
+  - The editor caution for that literal lives here only (`### Extraction constraints (the first-link question)`).
 - The two sanctioned pointers remain, one each under `## DEV Agent Fleet Governance` and `## Sprint Contract Gate [DEV+QA]`, which are the two headings external files cite into.
 - The loading stanza's `> **Inherits**:` and `> **See**:` lines carry no brace — keep them brace-free, so the single-brace-list invariant both stanza parsers depend on holds.
 
@@ -238,8 +240,6 @@ Removed from the rule file, recorded so they are not re-derived as omissions:
 - The option-form pointer under the Ambiguity Gate: Tier-1 Position Bias Mitigation reaches every agent.
 - The DEV-selection and simple-task-skip sentences under the plan gate: both are the orchestrator's acts.
 - The operational test's who-points-here parenthetical.
-- Exemption wording is single-sited in the Ambiguity Gate with its own examples (typo fixes, import additions); Assumptions Disclosure and Pre-Edit Facts point at it.
-  - Their former config-edit exemption is gone with it: a tightening, no duty weakened.
 
 ## Pair classifications
 
@@ -251,6 +251,8 @@ Removed from the rule file, recorded so they are not re-derived as omissions:
 | the rule file's **Sibling probe (PRIMARY)** code-form list ↔ `scoped/shared-search-first.md` → **Step 3 — Mirror** | redundant, resolved | search-first is the single site and reaches every DEV agent; the probe points at it |
 
 - Non-waiver pair: each file is its reader's only channel.
+- Flag, open (의미 상충): the Assumptions Disclosure and Pre-Edit Facts exemption lines list `typo / import / config` and call it the Ambiguity Gate's condition, whose list is typo fixes and import additions only.
+  - Kept as is: aligning either list narrows or widens a rule, so the owner decides which list holds.
 
 ## Pre-Edit Facts Disclosure — restored
 
