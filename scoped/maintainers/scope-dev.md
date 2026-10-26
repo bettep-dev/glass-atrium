@@ -2,7 +2,7 @@
 
 Companion to `scoped/scope-dev.md`, which carries DEV-agent-facing duties only. Everything here addresses a maintainer, the orchestrator, glass-atrium-meta-prompt-engineer, or the `agent_lifecycle` CLI operator — no running DEV agent is obliged by any of it.
 
-Deliberately absent from this file: the compressed cores' lead-line needles and the first-link sentence literal. Each is counted or machine-extracted out of the rule file itself, and `scoped/` is a recursive grep root — a copy here is a second hit, never a convenience.
+Deliberately absent from this file: the `RETIRED_BLOCKS` lead-line needles and the first-link sentence literal. Each is counted or machine-extracted out of the rule file itself, and `scoped/` is a recursive grep root — a copy here is a second hit, never a convenience.
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
@@ -19,6 +19,8 @@ Deliberately absent from this file: the compressed cores' lead-line needles and 
 | the same brace list | `autoagent/lib/roster_merge.py` → `_get_markdown_slots` | EXACTLY ONE brace-delimited membership list FILE-WIDE — its regex does not require the `agent_scope` prefix, so a second brace list of that shape anywhere in the file makes the updater refuse the whole file at deploy and strand every unrelated edit in it |
 | the whole file, as rule text for DEV spawns | `hooks/lib/inject_chunk.py`, selected by each DEV agent's `agent-registry.json` → `rules.scope` | heading boundaries — the chunker splits at headings and packs whole sections into capped parts, so a section too large for one part is named in an oversize marker instead of delivered; no `AGENT-INJECT` marker or extraction range applies |
 | the first-link question's quoted sentence | `hooks/test/enforce-workflow-verify-stage-firstlink.bats`, cross-read against `FIRST_LINK_LITERAL` in `hooks/enforce-workflow-verify-stage.sh` | see Extraction constraints below |
+| the style_ref, minimalism and non-waiver lead lines | `hooks/test/inject-scope-single-delivery.bats` → `RETIRED_BLOCKS` (anchors listed there) | each anchor on exactly ONE line; that whole line is the needle and occurs in no other member file |
+| the premise-audit lead under the load-bearing premise check | `skills/glass-atrium-ops-orchestrator.md` → `PREMISE_AUDIT_Q`, quoted from this file and `scoped/scope-qa.md` | byte-identical in both rule files, capitals included; no scan reads it |
 | the whole file, as a rule excerpt | `autoagent/daemon_cycle.py` verify prompt (char cap 120,000, no heading anchor) | nothing — restructure freely |
 | the file's basename | `hooks/validate-compliance-matrix.sh` (Layer A, `find -maxdepth 1` over `scoped/`) | a Compliance Matrix row for `scope-dev.md`. That scan is depth-1, which is why this companion sits in a SUBDIRECTORY and needs no matrix row of its own |
 
@@ -33,14 +35,20 @@ The suite runs a `sed` line RANGE over the rule file and then pulls the backtick
 
 Every other mention of that question in the rule file is deliberately lower-case for the first property. Keep it that way.
 
+- The sentence is also quoted verbatim into the workflow verify-stage goal text (`skills/glass-atrium-ops-orchestrator.md` → `FIRST_LINK_Q`), so it is quoted, never restated.
+- The rule file carries no editor caution beside the literal: a DEV agent answers the question and never quotes it, so the caution obliged no reader. The cross-read suite above is the guard.
+
 ### Retired slot-1 blocks — what remains in the rule file
 
 - The rule file carries no `AGENT-INJECT` marker. `hooks/inject-scope-rules.sh` extracts nothing from it; DEV agents receive the whole file through the part slots by `rules.scope` membership.
-- **Kept as ordinary content**: the style_ref core (after `### Project Convention Probe`) and the minimalism core (closing `## Complexity Proportionality`).
-  - Several rules in the minimalism core — the `ponytail:` corner-cut mark, the heavy-machinery rule, the ≤3-line output rule — are stated nowhere else in the file, so the core cannot be deleted as a duplicate.
+- **The style_ref core is folded** into `### Project Convention Probe` as its style_ref emit bullet; its restated trigger, sibling read, greenfield and probe-failure lines went.
+  - Its recorder-corroboration clause joined the probe, and its code-form-only clause became the probe's pointer to `scoped/shared-search-first.md` → **Step 3 — Mirror**.
+- **The minimalism core is kept as ordinary content** closing `## Complexity Proportionality`, de-duplicated against the bullets above it per bullet.
+  - Several rules in it — the `ponytail:` corner-cut mark, the heavy-machinery rule, the output rule — are stated nowhere else in the file, so it cannot be deleted as a duplicate.
+  - The runnable-check property moved to **YAGNI applies to tests too**; the read-before-ladder clause lives in **Read fully, then be lazy**; the intro's finish-the-requested-change clause lives in its no-unrequested-scope bullet.
 - **Deleted outright**: the plan-gate core. Every clause it carried is stated in `## Plan Direction Verification Gate [DEV+QA]`, including the three-part first-link answer shape the byte cap had cut from it.
-- **Folding each kept core into its canonical section is open work**: it needs a per-bullet audit, and it is the only way to remove the in-file restatement a DEV agent now reads twice within one part.
-- **Keep each kept core's bold lead phrase** (the words before its parenthetical): `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts them ABSENT from slot 1, and the check proves nothing once a phrase no longer exists in the source.
+- **Keep each core's bold lead phrase** — the style_ref emit bullet lead, and the minimalism lead's words before its parenthetical.
+  - Why: `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts them ABSENT from slot 1, and the check proves nothing once a phrase no longer exists in the source.
 - **Precondition the retirement rests on**: `python3 hooks/lib/inject_chunk.py --audit` MUST report `events=none` for every DEV agent. An OVERFLOW displaces a member band, and no slot-1 copy remains behind it.
 - **Degraded installs**: an install with no runnable python3 or an unreadable registry delivers none of this file's rules; `lib/ga-doctor.sh` MUST warn on that state.
 
@@ -127,11 +135,11 @@ glass-atrium-dev-front's narrow role co-authoring viewer-exposed clauded-docs HT
 
 The rule file states what the gate obliges a DEV agent; the classification below is the orchestrator's and fires before the DEV agent exists.
 
-Pair note — the QA-side and orchestrator-side sites of this gate:
+Pair note — the other sites of this gate:
 
-- `scoped/scope-qa.md` → `## Sprint Contract Gate [DEV+QA]` is a pointer and restates none of the definition below.
+- `scoped/scope-qa.md` carries no Sprint Contract Gate section: a pointer there reached no reader that receives the rule file (`scoped/maintainers/scope-qa.md` → `## What was moved here, and what was dropped`).
 - `rules/glass-atrium/orchestrator-role.md` holds the one condensed copy: the Decision `SIZABLE =` action row of `## Delegation Workflow` lists the sizable criteria inline, and `#### Entry classification (DEV delegations)` names those Decision actions as the copy.
-- How both reach the definition below: `## Open item`.
+- How orchestrator-role.md reaches the definition below: `## Open item`.
 
 ### Sizable-task definition (single SoT — the positive entry floor)
 
@@ -182,7 +190,7 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 | Heading in `scoped/scope-dev.md` | Cited from |
 |---|---|
 | `## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]` (stub) | `rules/glass-atrium/orchestrator-role.md` |
-| `## Sprint Contract Gate [DEV+QA]` (stub) | `rules/glass-atrium/orchestrator-role.md` · `scoped/scope-qa.md` · `scoped/maintainers/glass-atrium-dev-node.md` · operator-facing messages in `hooks/enforce-verification-gate.sh` and `hooks/enforce-workflow-verify-stage.sh` |
+| `## Sprint Contract Gate [DEV+QA]` (stub) | `rules/glass-atrium/orchestrator-role.md` · `scoped/maintainers/glass-atrium-dev-node.md` · operator-facing messages in `hooks/enforce-verification-gate.sh` and `hooks/enforce-workflow-verify-stage.sh` |
 | `## Plan Direction Verification Gate [DEV+QA]` | `rules/glass-atrium/orchestrator-role.md` · `scoped/scope-qa.md` · `scoped/scope-planning.md` · `skills/glass-atrium-ops-orchestrator.md` (comment) · `hooks/enforce-workflow-verify-stage.sh` (comment) |
 | `## Ambiguity Gate (Ambiguity Score)` → Assumptions Disclosure | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` · `agents/glass-atrium-dev-animator.md` · `scoped/scope-planning.md` |
 | `## Pre-Execution Verification` → `### Project Convention Probe` | `rules/glass-atrium/core-outcome-record.md` (`style_ref` row) · `agents/glass-atrium-dev-android.md` · `agents/glass-atrium-dev-shell.md` · `agents/glass-atrium-dev-swift.md` |
@@ -207,11 +215,13 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 
 Open, and owned outside this note (the fix edits other files):
 
-- `rules/glass-atrium/orchestrator-role.md` and `scoped/scope-qa.md` still reach the moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) through the rule-file stubs, one hop more than needed. Repointing them at this note removes the hop; `core-compliance-matrix.md` and `skills/glass-atrium-ops-orchestrator.md` already point here.
+- `rules/glass-atrium/orchestrator-role.md` still reaches the moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) through the rule-file stubs, one hop more than needed. Repointing its citations at this note removes the hop; `core-compliance-matrix.md` and `skills/glass-atrium-ops-orchestrator.md` already point here.
 
 ## Rule-file pointers and loading stanza
 
-- The rule file carries no maintainer preamble pointing here and no companion pointer in the first-link literal bullet: neither sits under an externally-cited stub heading, so the companion-citation convention in this note's header sanctions neither. The literal bullet keeps its caution — the sentence and the two lines bracketing it are machine-read — without a pointer.
+- The rule file carries no maintainer preamble pointing here and no companion pointer in the first-link literal bullet.
+  - Why: neither sits under an externally-cited stub heading, so the companion-citation convention in this note's header sanctions neither.
+  - The editor caution for that literal lives here only (`### Extraction constraints (the first-link question)`).
 - The two sanctioned pointers remain, one each under `## DEV Agent Fleet Governance` and `## Sprint Contract Gate [DEV+QA]`, which are the two headings external files cite into.
 - The loading stanza's `> **Inherits**:` and `> **See**:` lines carry no brace — keep them brace-free, so the single-brace-list invariant both stanza parsers depend on holds.
 
@@ -224,12 +234,31 @@ Removed from the rule file, recorded so they are not re-derived as omissions:
   - Their skills load globally at session start and the naming rules additionally reach DEV agents through `scoped/shared-naming.md` membership, so each line obliged nothing and was cited by nothing.
 - The package-provenance bullet: `core-security.md` → Dependency Auditing states it, is Tier 1, and measurably reaches every agent.
 - The reuse-order ladder bullet under vendor routing: the minimalism core carries the ladder and the never-hand-roll-crypto carve-out verbatim.
+- **Surface, don't suppress**: merged into `## Modification Scope Constraint (Surface Area Constraint) [DEV]` → **Everything outside that set is surfaced, never performed**, which carries the same duty with its `concerns:` channel.
+- The Quality Self-Check reconciliation paragraph: the copy-paste row and **Rule of Three before abstraction** both fire at three and the Rule of Three bullet already forbids abstracting at two, so the two rules never collide.
+- The EARS restatement under Pre-Edit Facts: it restated the hook bullet.
+- The option-form pointer under the Ambiguity Gate: Tier-1 Position Bias Mitigation reaches every agent.
+- The DEV-selection and simple-task-skip sentences under the plan gate: both are the orchestrator's acts.
+- The operational test's who-points-here parenthetical.
+
+## Pair classifications
+
+| Pair | Class | Disposition |
+|---|---|---|
+| the rule file's non-waiver bullet ↔ `scoped/scope-qa.md` → its `### Non-waiver` heading | false pair | both stay: different actor, own verdict tokens (`feasible`/`infeasible` vs `pass`/`revise`) |
+| the rule file's **Operational test** ↔ `scoped/scope-qa.md` and `scoped/scope-planning.md` | redundant, resolved | the rule file is the single site; both other files carry a pointer and restate the test in neither |
+| the rule file's premise-audit lead ↔ the same lead in `scoped/scope-qa.md` | canonical + mirror | both stay byte-identical — `PREMISE_AUDIT_Q` quotes one home per actor |
+| the rule file's **Sibling probe (PRIMARY)** code-form list ↔ `scoped/shared-search-first.md` → **Step 3 — Mirror** | redundant, resolved | search-first is the single site and reaches every DEV agent; the probe points at it |
+
+- Non-waiver pair: each file is its reader's only channel.
+- Flag, open (의미 상충): the Assumptions Disclosure and Pre-Edit Facts exemption lines list `typo / import / config` and call it the Ambiguity Gate's condition, whose list is typo fixes and import additions only.
+  - Kept as is: aligning either list narrows or widens a rule, so the owner decides which list holds.
 
 ## Pre-Edit Facts Disclosure — restored
 
 - **Citers**: `hooks/advisory-preedit-facts.sh`, a Stop-bound advisory, names the rule twice in its header and once in the operator-visible `missing`-verdict message, and `test/advisory-preedit-facts.bats` pins the declaration shape.
   - Binding SoT: `lib/ga-env.sh` → `EXPECTED_HOOK_BINDINGS`, upserted by `wire_hooks`; `settings.template.json` does NOT carry that row.
-- **Placement**: the section sits after the style_ref core and before `## Context Engineering [DEV]`, a clean sibling section under `## Pre-Execution Verification [DEV]`.
+- **Placement**: the section sits after `### Project Convention Probe` and before `## Context Engineering [DEV]`, a clean sibling section under `## Pre-Execution Verification [DEV]`.
 - **Why restore rather than retire the hook**: the restore costs no extra file and makes the operator-visible citation resolve.
 - **Delivery rides the part slots, never a marker block**: the rule file reaches every DEV agent whole through `rules.scope` membership, and slot 1 carries no scope-file text. A new marker block is NOT a sanctioned route for this duty.
 

@@ -71,7 +71,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 - Do not reintroduce, each works against readable tests: a regression pin named for its defect · a DAMP carve-out that covers byte-identical fixtures across files · a property-first ranking with no real-invariant bound · a fixed naming template or regex naming grammar.
   - A greenfield file is no exception: the **Naming** example shows content, never a template.
 - Honour the research's exclusions: no comment scaffold, no assertion-count cap, no numeric trigger (duplication percentage, line count, rows per table, builder variants, a coverage figure or test count), no blanket property or mutation mandate.
-- **The file-lead Authoring scope bullet** exists because the home-file and fold-back rules otherwise collide with `scoped/scope-dev.md` → "Everything outside that set is SURFACED, never performed" (an extra test, a neighbouring cleanup). Change the two together.
+- **The file-lead Authoring scope bullet** exists because the home-file and fold-back rules otherwise collide with `scoped/scope-dev.md` → "Everything outside that set is surfaced, never performed" (an extra test, a neighbouring cleanup). Change the two together.
   - Its coupled-test reach stays consistent with that line: a fix lands only inside the declared file set, and the rest is surfaced in `concerns` (**Coupled-test check**).
 - **Table form per stack**:
   - TypeScript lists `node:test` first because `monitor/test` imports it and not Vitest.
