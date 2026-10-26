@@ -369,7 +369,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 - **Standing obligation — fires at every Decision-phase decomposition**: sub-tasks that are file/resource non-overlapping and independent MUST fan out in parallel via domain-ownership partitioning.
 - Guardrails (a), (b) and (c) all bind.
   - (a) **The isolation unit for concurrent writers is the worktree.**
-    - Its agent-binding rules: `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**.
+    - Its agent-binding rules: `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** · **Worktree occupancy**.
     - When isolating a concurrent track, use one of the **Three sanctioned isolation paths**; a delegation given a pre-created worktree as `cwd` MUST root its target paths in that worktree.
     - Before admitting a second index mutator to a worktree, confirm from the liveness ledger that no other is live — never infer it (**Deciding "at a time"**).
     - A per-track `// [OWNERSHIP]` line also names the track's isolation unit.

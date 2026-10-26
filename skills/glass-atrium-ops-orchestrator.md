@@ -551,7 +551,7 @@ Binds any delegation that copies files INTO a live install: reach the destinatio
 A Wave is one parallel fan-out batch of sub-tasks.
 
 - **Automatic Parallelization (standing default)**: when and how to fan out — guardrails, worktree isolation for concurrent DEV tracks, `[SIZE-EST]` sizing, the over-fragmentation caveat — is stated as obligations at `orchestrator-role.md` → `#### Automatic Parallelization`.
-  - Isolation detail: the isolation paths and the "at a time" check — `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`; the agent-binding worktree rules — `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**.
+  - Isolation detail: the isolation paths and the "at a time" check — `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`; the agent-binding worktree rules — `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** · **Worktree occupancy**.
   - Skeleton `parallel()` blocks carry the per-track `// [OWNERSHIP]` attestation line that `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → `## Guardrail (a) — orchestrator-side rules` defines.
   - Research/analysis fan-out is the routine case: independent domains investigate separately, then results aggregate.
 - **Commit strategy**: agents within a Wave commit their own work on their own branches from their own worktree, with hooks running → the orchestrator merges after Wave completion.

@@ -175,7 +175,7 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 
 ### `#### Automatic Parallelization`
 
-- Guardrail (a)'s agent-binding rules, the index-mutation class and the mechanisms they answer live in Tier-1 `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**, which reaches every agent on the host channel.
+- Guardrail (a)'s agent-binding rules, the index-mutation class and the mechanisms they answer live in Tier-1 `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** · **Worktree occupancy**, which reaches every agent on the host channel.
   - Never copy them back into the rule file: its opening line tells subagents to ignore it, so a rule placed there loses its agent audience.
 - The split between the rule-file heading and `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`: that skill's `SKILL.md` → Reference Index.
 - `skills/glass-atrium-ops-orchestrator.md` cites the Tier-1 home and the reference file's leads directly. Before renaming such a lead, grep for its citers (`SKILL.md` → Edit Rules → **Cited leads**).
