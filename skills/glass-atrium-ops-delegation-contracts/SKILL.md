@@ -50,6 +50,8 @@ References whose pointer site is `skills/glass-atrium-ops-orchestrator.md`, not 
 | Topic | File | Pointer site in `skills/glass-atrium-ops-orchestrator.md` | SoT at the pointer site | SoT in the reference file |
 |---|---|---|---|---|
 | Review rounds and reviewer prompts | `references/review-rounds.md` | `### Quality Gates [ORCHESTRATOR]` → `#### Review rounds and reviewer prompts` | the trigger (every review round, both paths), the reviewer-side counterpart | non-convergence routing table, reviewer-prompt content |
+| Architecture patterns (pipeline combinations, Agent Teams) | `references/architecture-patterns.md` | `#### Explicit Pipeline Combinations [ORCHESTRATOR]` · `#### Agent Teams Hybrid [ORCHESTRATOR]` | when a Pipeline is enforced, when Agent Teams apply | combinations, stage ordering, ultracode mapping, the Agent Teams table, rules, anti-patterns, priority |
+| Workflow JS parse hazards | `references/workflow-js-parse-hazards.md` | `#### Resilient Workflow Authoring [ORCHESTRATOR]` → `##### JS parse hazards (a workflow script is plain JavaScript)` | what it binds (every workflow script), when it fires | the two forms, their remedies, the Bad/Good example, hook coverage |
 | Deploy-Safety Idiom | `references/deploy-safety-idiom.md` | `#### Deploy-Safety Idiom (drift-preserving live-copy + verify) [ORCHESTRATOR]` | what it binds, advisory status, when in the cycle the deploy runs | the sanctioned flows, copy-step anti-patterns, the bash 3.2-safe idiom |
 
 ## Edit Rules
@@ -65,3 +67,5 @@ References whose pointer site is `skills/glass-atrium-ops-orchestrator.md`, not 
   - `references/scope-parser.md` → `## Worked completeness case`.
   - `references/plan-direction-verification.md` → `## Team composition and verdicts` · `## Standing jobs inside the gate` · `## Gate outcome and activation scope`.
   - `references/deliverable-exposure.md` → `## Exposure Determination — signals and routing` · `## glass-atrium-dev-front markup exception — detail`.
+  - `references/architecture-patterns.md` → `## Explicit Pipeline Combinations` · `## Agent Teams Hybrid`.
+  - `references/workflow-js-parse-hazards.md` → `## The two forms and their remedies`.
