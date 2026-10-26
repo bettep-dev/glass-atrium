@@ -49,10 +49,9 @@ Illustrations no agent needs in order to act; the rule each one illustrates stay
 
 ## Restructure + diet pass — dispositions
 
-- Shape cap: `### Concurrent worktree` was over the 3 KB H3 cap (3,969 B at base; 3,312 B after the cuts below, still over).
-  - Fixed by a split: **Entry precondition**, **Who commits** and **Read-only** moved byte-identical into the sibling `### Worktree occupancy`, directly below it.
+- Shape cap: `### Concurrent worktree` is split to clear the 3 KB H3 cap.
+  - The split: **Entry precondition**, **Who commits** and **Read-only** moved byte-identical into the sibling `### Worktree occupancy`, directly below it.
   - Every lead an external site cites under `### Concurrent worktree` stays there, with both `worktree <path> — …` literals and the no-contract default.
-  - Read-based estimate, not measured: about 2.3 KB left in `### Concurrent worktree`, about 1.1 KB in `### Worktree occupancy`. Re-measure with a byte counter.
   - The surviving rule text keeps its exact wording and capitals, because git text is a fragile operation.
   - The index-mutation bullet, the second-agent bullet and the non-empty-index bullet were split at their sentence boundaries (one line, one rule).
 - Dropped from `### Concurrent worktree`:
@@ -64,9 +63,10 @@ Illustrations no agent needs in order to act; the rule each one illustrates stay
   - The merge carve-out is the sole link to `skills/glass-atrium-ops-orchestrator.md` → **Commit strategy** (the post-Wave integration merge); without it that merge collides with the **Who commits** lead.
   - **Merge authorization** covers only `gh pr ready` / `gh pr merge` on a cycle's PRs, a different act.
   - Moving the ban into `rules/glass-atrium/orchestrator-role.md` is a cross-file move: it needs that file's startup budget and the frozen-pin check.
-- `### Subject Line` → **Language & tone (English)** became **Imperative mood**, carrying only the mood examples.
-  - Single site: it restated **Message format** (`- [x] <English imperative description>`) — pair class redundant. **Message format** is the canonical and stays byte-identical, because `CONTRIBUTING.md` mirrors its literal.
-  - "Bodies are English as well (public OSS repository, no Korean subjects)" was dropped: English commit text is canonical in `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Output Language`, and the rationale was false in every repository but this one.
+- `### Subject Line` → **Language & tone (English)** became **Imperative mood**, carrying the mood examples and the body-language sentence as a sub-bullet.
+  - Single site: its "write subjects in English" clause restated **Message format** (`- [x] <English imperative description>`) — pair class redundant. **Message format** is the canonical and stays byte-identical, because `CONTRIBUTING.md` mirrors its literal.
+- Kept on review: "Bodies are English as well (public OSS repository, no Korean subjects)", byte-identical — fragile rule wording; cutting it widens the rule.
+  - Flag, not a cut: it overlaps `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Output Language`, which lets a user request a non-English deliverable; this sentence admits no such exception.
 - `### Anti-patterns` was dropped: its two bullets restated **Why over what** and **Conciseness**. No site cited the heading.
 - `## Pull Requests`:
   - The `.html` primary-deliverable bullet was dropped (의미 상충).

@@ -47,6 +47,7 @@ Applies to all agents.
 
 - **Compression target, not a hard cap**: aim for ~50 characters (GitHub UI truncation point, `git log --oneline` ergonomics).
 - **Imperative mood**: `Add login button`, not `Added login button` / `Adding login button`.
+  - Bodies are English as well (public OSS repository, no Korean subjects).
 - **Conventional Commits prefix** (`feat:`, `fix:`, etc.): optional.
   - When used, place after the checkbox: `- [x] feat: <description>`.
 
