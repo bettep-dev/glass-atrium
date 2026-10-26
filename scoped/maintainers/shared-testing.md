@@ -30,8 +30,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 | Test Structure | glass-atrium-dev-python — its naming and test-data lines | `agents/glass-atrium-dev-python.md` → `### Tests = Specification` · `### Testing` |
 | Rationalization Rejection (Testing) | every agent — via the charter's excuse→rebuttal home-file list and the `feature` note's exception pointer | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection · `core-outcome-record.md` → the `feature` note |
 | 3-Tier Test Hierarchy | every agent — the delivered commit rule defers its which-tests-when half to here | `core-git-workflow.md` → Commits |
-| Destructive-Path Suite Safety | the operator or session about to run a suite that can reach the live database — not an agent at spawn | `orchestrator-role.md` → Document-Driven Workflow step 6 |
-| Mechanical Success Metrics | every agent — a pointer stub resolving an inbound Tier-1 reference back to its canonical | `core-outcome-record.md` → Automatic Verification Criteria |
+| Mechanical Success Metrics | every agent — the `grader_verdict` presence-signal line under an inbound Tier-1 "See also" | `core-outcome-record.md` → Automatic Verification Criteria |
 | Test Depth and Upkeep | glass-atrium-qa-code-reviewer — its depth and coupled-test checks | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
 | Test Depth and Upkeep | glass-atrium-qa-code-reviewer — the named-removal exemption on its High risk trigger | `scoped/scope-qa.md` → `## Regression Risk Estimation [QA]` |
 | Test Depth and Upkeep | every DEV agent sizing its tests | `scoped/scope-dev.md` → **YAGNI applies to tests too** |
@@ -39,7 +38,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 | Test Depth and Upkeep | the orchestrator, reading its skill on demand | `skills/glass-atrium-ops-orchestrator.md` → `### Quality Gates [ORCHESTRATOR]` |
 | Test Depth and Upkeep | the orchestrator, declaring a DEV/PLANNING delegation's `[SCOPE] files=` | `rules/glass-atrium/orchestrator-role.md` → `### Context Handoff Size` → **`files=` completeness duty** |
 
-- **Heading stability**: `## Test Quality`, `### Meaningless-Test Prohibitions`, `## Destructive-Path Suite Safety (live-postgres reach)` and `## Mechanical Success Metrics` are named verbatim by the pointers above. Renaming one dangles its inbound pointer even though no suite reads the body.
+- **Heading stability**: `## Test Quality`, `### Meaningless-Test Prohibitions` and `## Mechanical Success Metrics` are named verbatim by the pointers above. Renaming one dangles its inbound pointer even though no suite reads the body.
   - Also stable: `### Detection signature per row, keyed by the Prohibited literal above` — named in full by the reviewer row, and by its `Detection signature per row` prefix in the `scripts/test/audit-test-smells.bats` header.
   - Also stable: `## Rationalization Rejection (Testing)` and its bolded lead **Qualifier on the last row (the deliberate-break exception)** — the sandbox write-confinement lane edits one sentence under that lead, and `### What makes a test a test` → **Watch it fail** points at it.
   - A bold lead named verbatim binds the same way: the `core-outcome-record.md` `feature` note names **Qualifier on the last row (the deliberate-break exception)**, so renaming that lead dangles a Tier-1 pointer.
@@ -68,7 +67,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 - Placement: the home-file, naming/data and per-stack H3s sit under `## Test Structure`, not `## Test Quality`, so `## Test Quality` stays near the 8 KB H2 shape-cap guide; the scope bound sits in the file lead because it governs every H2 it names.
   - `## Test Depth and Upkeep` is its own H2: depth also governs a behavior's first test, which the `### Decision procedure` heading excludes, and a numbered lead step there would renumber the steps other text cites.
   - `### Legitimate example tests` sits under `## Test Depth and Upkeep`, so the `## Test Quality` span stays well under 8192 B (`wc -c`).
-    - Its in-file pointers: the change-detector carve-out · **One-off disposition**.
+    - Its in-file pointer: the change-detector carve-out. **One-off disposition** sits under its table as the last row's keep criterion, so the row and the criterion are stated once each.
 - Do not reintroduce, each works against readable tests: a regression pin named for its defect · a DAMP carve-out that covers byte-identical fixtures across files · a property-first ranking with no real-invariant bound · a fixed naming template or regex naming grammar.
   - A greenfield file is no exception: the **Naming** example shows content, never a template.
 - Honour the research's exclusions: no comment scaffold, no assertion-count cap, no numeric trigger (duplication percentage, line count, rows per table, builder variants, a coverage figure or test count), no blanket property or mutation mandate.
@@ -116,22 +115,6 @@ The rule file states only that every row is reviewer-applied. The mapping below 
   - The rule file's qualifier is the exception's one statement — when a test written after its implementation is admissible, and how and where the break is made — and it reconciles the exception with the "Writing code first as a reference" rebuttal.
 - **"Too simple to need tests" row**: the rebuttal is qualified against the prohibited shape *a test whose target has no branch and no logic*, so it does not collide with the injected minimalism carve-out that exempts a trivial one-liner.
   - The two ends are worded alike on purpose — change them together.
-
-## Destructive-Path Suite Safety — provenance
-
-- **Same-shell rule, PROBED rather than inferred, both halves**: a two-body bats file whose first body defines a function and whose second asserts `declare -F` does not find it — the second body passes, so nothing leaked; and a file defining the same name in `setup` instead — both bodies see it.
-- The section is single-sited here by `orchestrator-role.md` → Document-Driven Workflow step 6, which calls it "pointer only, the procedure is single-sited there". Splitting it across a second heading would move content out from under that pointer.
-- It is the largest section in the rule file and the only task-conditional one; its condition is stated in its own opening line.
-  - It sits just under the 8 KB H2 shape-cap guide, with little room to grow while the procedure stays single-sited under its inbound pointer.
-- **Step 5 collision list, measured**: each entry was reproduced by a run under the whole-invocation escape; add a suite only on a reproduced run.
-  - `GA_PG_SOCKET`: `test/run-step-fail-return.bats` with only an off-/tmp `GA_PG_SOCKET` exported failed its `drive_db` rows, and passed every row with the name unset.
-  - `psql`: `hooks/test/ephemeral-pg-locale.bats` failed its two rows asserting on `psql` output under record-only `psql` and `lsof` stubs, and passed all four without them; a `createdb` stub changed nothing.
-  - Not named because measured clean: `test/ga-db-sql-binding.bats`.
-  - Not named although they collide: a whole-tree run under the escape also failed rows in `hooks/test/agent-tracker.bats`, `hooks/test/cost-tracker-dualwrite.bats` and `hooks/test/ephemeral-pg-recorder-schema.bats`, each of which passes unsealed.
-    - Why not named: their failures are attributed to the empty `psql` stub output by inference from rows that read `psql` output, with no per-suite stub comparison like the locale entry's `createdb` run.
-    - Whether Step 5 names them is the rule owner's decision.
-- **Kept on purpose**: the never-`GA_DB_NAME` clause — the guard's FATAL text offers `GA_DB_NAME`, but `lib/ga-db.sh` → `_require_db_setup_ready` tests only `PG_SOCKET`.
-- **Naming**: Step 5's escape is not the per-suite Live-DB seal (`test/lib/bats-db-seal.bash`); name it by Step 5's own wording, never as "the seal".
 
 ## Mechanical Success Metrics — code pointer
 

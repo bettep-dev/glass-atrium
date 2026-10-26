@@ -91,6 +91,7 @@ Each file below is inherited on its own condition. DEV is the common carrier, bu
 | `scoped/shared-design-token-consumption.md` | UI-emitting DEV subset ‡ |
 | `rules/glass-atrium/shared-self-improve-hygiene.md` | ORCHESTRATOR on a path-glob match § · change-scope DEV subset § |
 | `scoped/shared-hook-capability-contract.md` | hook-authoring DEV · hook-reviewing QA ¶ |
+| `scoped/shared-destructive-path-suite-safety.md` | suite-running DEV subset · glass-atrium-qa-code-reviewer suite-running subset |
 | `scoped/shared-naming.md` | DEV · glass-atrium-qa-code-reviewer |
 | `scoped/shared-code-structure.md` | DEV · glass-atrium-qa-code-reviewer |
 | `scoped/shared-investigation-discipline.md` | DEV · QA |
@@ -98,7 +99,7 @@ Each file below is inherited on its own condition. DEV is the common carrier, bu
 
 - **META inheritance is `glass-atrium-meta-prompt-engineer` only, with the one exception named below.**
   - It takes the files the table above marks `META †`, because "prompts = code" (`scoped/scope-meta.md` → "glass-atrium-meta-prompt-engineer: DEV Rule Inheritance").
-  - The conditional files are out of its scope: UI emission, the autoagent pipeline and hook authoring are none of them "prompts = code". Its registry row keeps an empty `conditional` list, and `SCOPE_CONDITIONAL_RULES` in `scripts/agent_lifecycle/registry_ops.py` has no META entry.
+  - The conditional files are out of its scope: UI emission, the autoagent pipeline, hook authoring and running suites are none of them "prompts = code". Its registry row keeps an empty `conditional` list, and `SCOPE_CONDITIONAL_RULES` in `scripts/agent_lifecycle/registry_ops.py` has no META entry.
   - `glass-atrium-meta-agent` inherits no Tier-3 file but `shared-authoring-hygiene.md`.
   - **`shared-authoring-hygiene.md` is the exception on both counts** — the one Tier-3 file both META agents take, and the one with no DEV member. `glass-atrium-meta-agent` rewrites agent instructions, so a rule binding authored instruction text binds it.
     - Its other members are PLANNING and REPORT, whose authored documents it binds equally, so its META cell carries a bare `✓` and no subset marker.
@@ -106,6 +107,10 @@ Each file below is inherited on its own condition. DEV is the common carrier, bu
   - **`shared-naming.md`, `shared-code-structure.md` and `shared-testing.md` are glass-atrium-qa-code-reviewer only.** DEV takes each unconditionally.
     - Why: glass-atrium-qa-debugger is read-only by its Guardrails and authors no identifier, code or test, so none of these authoring rules applies to it.
     - Their Compliance Matrix QA cells carry a bare `✓` with no footnote marker: the Tier-3 row names the single agent outright, which no marker could state more precisely.
+  - **`shared-destructive-path-suite-safety.md` is glass-atrium-qa-code-reviewer only, and conditional on a suite run** — like every DEV row, it carries the file under `rules.conditional` with the `when` of `scripts/agent_lifecycle/registry_ops.py` → `_LIVE_PG_SUITE_CONDITION`.
+    - Its Tier-3 tokens carry `subset`, so the orphan scan never asserts the file as `rules.shared` membership.
+    - Its DEV `✓` is conditional, never standing: it binds a DEV agent only on a turn meeting its `when`.
+      - Why a bare `✓`, no marker: a new marker needs its own `>` definition, a reserved-literal entry in `## Machine-Read Structure` and the validator's marker set, while the Tier-3 row already names the subset.
   - **`shared-investigation-discipline.md` binds both QA agents unconditionally**, so its `✓` carries no subset qualifier; glass-atrium-qa-debugger is its heaviest consumer — diagnosis is the investigation sequence.
     - ORCHESTRATOR is deliberately absent: its half of the duty (routing the escalation, rejecting a conclusion carrying no evidence) lives in `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop`.
 
@@ -162,7 +167,7 @@ Tier membership — which rules a scope *should* load — is distinct from deliv
 | Tier 1 — Core bodies | HOST project-instructions (unceilinged, unmeasured) | YES — every Tier-1 file |
 | Tier 2 — the agent's own scope file | the part slots, selected from the registry row's `rules.scope` | YES |
 | Tier 3 — unconditional `shared-*` members | the part slots, selected from `rules.shared` | YES |
-| Tier 3 — CONDITIONAL `scoped/` members (footnote cells) | path pointer only | NO body — selection cannot key on a task at spawn |
+| Tier 3 — CONDITIONAL `scoped/` members (footnote or `subset` rows) | path pointer only | NO body — selection cannot key on a task at spawn |
 | `rules/glass-atrium/` members without `paths:` frontmatter, and the ALL column | HOST project-instructions | YES — and deliberately NOT selected by the part slots, to avoid delivering them twice |
 | `rules/glass-atrium/` members with `paths:` frontmatter — this file and `shared-self-improve-hygiene.md` | HOST project-instructions, on a Read of a file their globs match, never at session start | UNMEASURED — **Path-scoped delivery** below |
 
@@ -185,8 +190,10 @@ Tier membership — which rules a scope *should* load — is distinct from deliv
   - That reconcile reads the **Tier-2 and Tier-3 declaration rows, never the Compliance Matrix table cell**, which is a coarser summary of them.
     - A cell reader reports a permanent false divergence for glass-atrium-qa-debugger on every reviewer-only QA cell (`### Tier 3 — Cross-cutting (conditional inheritance)` → **QA**).
   - **Why the registry and not this file:** the registry is merge-claimed by the updater (`autoagent/lib/roster_merge.py`) and this file is not, so a lifecycle-created agent's row survives a deploy and a hand-added Scope Legend row does not.
-- **Standing consequence**: a duty that binds an agent may live in that agent's `rules.scope` or `rules.shared` member file. It may NEVER live in a CONDITIONAL `scoped/` member, an un-membered file, or a skill the reader never loads — those deliver a pointer at most.
-  - A body mirror whose canonical reaches the same reader is redundant; keep a mirror only where the canonical is one of those three.
+- **Standing consequence**: a standing duty, binding an agent on every turn, may live in that agent's `rules.scope` or `rules.shared` member file. It may NEVER live in a CONDITIONAL `scoped/` member, an un-membered file, or a skill the reader never loads — those deliver a pointer at most.
+  - Sanctioned case: a task-conditional procedure may live in a CONDITIONAL `scoped/` member, because its pointer stanza (`hooks/lib/inject_chunk.py` → `build_conditional_stanza`) tells the reader to read it in full before acting under its `when`.
+    - Its members: `scoped/shared-hook-capability-contract.md` · `scoped/shared-destructive-path-suite-safety.md`.
+  - A body mirror whose canonical reaches the same reader is redundant; keep a mirror only where the canonical is one of the three homes the lead rules out.
   - A duty may live in a path-scoped `rules/glass-atrium/` member: its body, not a pointer, reaches the reader, but only on a Read its globs match (**Path-scoped delivery** above).
 - **Chunk budget**: the part slots pack against a per-chunk budget, not slot 1's block ceiling. Nothing may be shed silently — a section that cannot fit, and an agent whose chunk count exceeds the bound slots, each MUST produce a stderr warning, a drop-sink record and an in-context marker naming a path pointer.
   - A membership entry resolving to a file absent on the live install takes the same loud-and-degrade path.
@@ -246,6 +253,7 @@ Rows are grouped by tier: Tier 1 first, then Tier 2, then Tier 3.
 | shared-type-safety.md | | ✓ | ✓† | | | | | | | | |
 | shared-design-token-consumption.md | | ✓‡ | | | | | | | | | |
 | shared-hook-capability-contract.md | | ✓¶ | | | | | | ✓ | | | |
+| shared-destructive-path-suite-safety.md | | ✓ | | | | | | ✓ | | | |
 | shared-self-improve-hygiene.md | | ✓§ | | | | | | | | ✓§ | |
 | shared-naming.md | | ✓ | | | | | | ✓ | | | |
 | shared-code-structure.md | | ✓ | | | | | | ✓ | | | |

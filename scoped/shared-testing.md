@@ -8,13 +8,18 @@
 
 ### What makes a test a test
 
-- **Relationship over enumeration**: a test asserts a relationship that holds across an input class — not one hand-picked input/output pair. A test suite is sensitive to behavior change and insensitive to structure change.
+- **Relationship over enumeration**: a test asserts a relationship that holds across an input class — not one hand-picked input/output pair.
+  - A test suite is sensitive to behavior change and insensitive to structure change.
 - **The one question that decides a test's worth**: "if I broke the implementation in the smallest way that matters, would this test fail?" No → it is not a test.
 - **Watch it fail**: write the test before the code exists, or apply the deliberate-break exception (`## Rationalization Rejection (Testing)` → **Qualifier on the last row**). A test never observed to fail has not been verified.
   - Make the code correct for every valid input, not just the test's inputs — never hard-code a test's values.
   - Never edit, skip or delete a failing test until you know why it failed.
 - **Behavioral testing**: verify behavior a caller can observe (input → output), not implementation details — a source-text or line-order pin is a prohibited shape (`### Meaningless-Test Prohibitions`).
-- **Independence**: shared state between tests is FORBIDDEN · execution order MUST NOT matter · the result MUST NOT depend on timing (sleeps, wall-clock races) — a flaky test stops being an oracle.
+- **Independence**: each test stands on its own.
+  - Shared state between tests is FORBIDDEN.
+  - Execution order MUST NOT matter.
+  - The result MUST NOT depend on timing (sleeps, wall-clock races).
+  - Why: a flaky test stops being an oracle.
 
 ### Decision procedure — run it before writing the SECOND test of the same behavior
 
@@ -53,7 +58,6 @@ Each step builds on the previous.
 
 ### Detection signature per row, keyed by the Prohibited literal above
 
-- Detection signatures are ecosystem-specific where the ecosystem changes what an assertion is.
 - **A test with no assertion, or whose only claim is "it did not throw"**
   - **xUnit / JS**: zero assertion nodes in the test body.
   - **Bats / shell**: a bare command whose non-zero exit fails the test is the assertion — the signature is instead `run <cmd>` invoked with neither `$status` nor `$output` / `${lines[` examined afterwards in the same body.
@@ -64,13 +68,13 @@ Each step builds on the previous.
   - **Carve-out — a characterization test (Test Depth and Upkeep → Legitimate example tests) is exempt**: copying observed output is its whole purpose, bounded by that carve-out's own expiry condition. A snapshot with no stated expiry is not exempt.
 - **An assertion on the source text or line order of the code under test** — a `grep`, regex or file read over the source file under test, or a comparison of two source lines' positions.
   - **Carve-out — a static fact that is itself the contract** (a file listed in the manifest) is asserted, in the file that owns that contract.
-- **Near-duplicate cases that one property or one parameterized table would cover** — 3+ test bodies differing only in literals, all inside ONE equivalence class.
+- **Near-duplicate cases that one property or one parameterized table would cover** — 3+ test bodies differing only in literals, all inside one equivalence class.
   - **DAMP carve-out** decides whether a given cluster is this smell.
 - **A test whose target has no branch and no logic** — the production target is a single assignment or return with no branch, and the test only sets then gets. Resolve that target by reading it.
 - **A test written per file, class or function by reflex, or to reach a count or coverage figure** — its relationship cannot be stated beyond "X runs" or "X calls Y" (one test per method of each new file · only internal-collaborator call assertions).
   - A call asserted on a boundary mock (`## Mocking Rules`) is observable behavior and is exempt.
 - **Control flow that can SKIP an assertion** — `if` / `while` / `try` inside a test body where the assertion sits on only one branch, so a run can finish having asserted nothing.
-  - **Carve-out — data-driven iteration over a fixture table is not this smell**: a loop whose body asserts on EVERY element is the idiomatic parameterized form Decision procedure step 2 prefers. The trigger is a skippable assertion, never the presence of a loop keyword.
+  - **Carve-out — data-driven iteration over a fixture table is not this smell**: a loop whose body asserts on every element is the idiomatic parameterized form Decision procedure step 2 prefers. The trigger is a skippable assertion, never the presence of a loop keyword.
 
 ## Mocking Rules
 
@@ -80,14 +84,19 @@ Each step builds on the previous.
 
 ## Test Structure
 
-- **Arrange-Act-Assert**: keep the three phases visible, and never chain a second Act — a later action and its assertion belong in their own test. No `// Arrange` comment scaffold is required.
+- **Arrange-Act-Assert**: a test runs the three phases in order.
+  - Keep the three phases visible.
+  - Never chain a second Act — a later action and its assertion belong in their own test.
+  - No `// Arrange` comment scaffold is required.
 - **One behavior per test** — one relationship per test (`## Test Quality`); multiple asserts are allowed only as facets of that same relationship.
   - Each failure points to one cause: split the test, or give each assertion a message.
 
 ### Where a test lives
 
 - **One home file per behavior**: a new case, a regression case included, goes into the file that already owns that behavior — never into a new file per incident, plan or task.
-- **Grouping**: one `describe` block or test class per rule; each nesting level narrows exactly one condition. Split a file by behavior area, never by line count.
+- **Grouping**: one `describe` block or test class per rule.
+  - Each nesting level narrows exactly one condition.
+  - Split a file by behavior area, never by line count.
 - **Check before adding**: search the owning file for a test that already asserts the behavior — found → strengthen that test instead of adding a second.
 - **Fold-back**: when you edit a one-off incident file whose behavior has an owning file, fold its cases into that file — both files inside the **Authoring scope** bound at the head of this file.
 
@@ -97,7 +106,8 @@ Each step builds on the previous.
   - No sibling file to mirror → write the same sentence in the stack's test-name slot, e.g. `rejects a withdrawal that exceeds the balance`; the example shows content, never a template to copy.
 - **ID ban — the one hard naming rule**: no plan, task, incident or ticket ID (`AC-…`, `T19`, `P0-2`, `#14`) in a test name, test file name or helper name. The reference goes in the commit message.
   - Bad: `"T19/P2-T2: …"` · Good: `"update keeps a live model pin when the release omits it"`.
-- **Comments**: a test comment states what the test protects, never how the code or the test got here — `scoped/shared-comment-logging.md` binds test files like any other code. A test that calls itself vacuous is fixed or deleted.
+- **Comments**: a test comment states what the test protects, never how the code or the test got here — `scoped/shared-comment-logging.md` binds test files like any other code.
+  - A test that calls itself vacuous is fixed or deleted.
 - **Test data**: inline the few realistic values the assertion depends on; a placeholder (`'x'`, `'a@b.c'`) hides what matters.
 - **Shared fixture**: a large fixture repeated byte-for-byte across tests or files, whose copies can drift, becomes one named fixture — or a builder with safe defaults once its variants multiply. Small readable setup stays inline.
 
@@ -120,7 +130,6 @@ Every table row carries a name stating its condition — an unnamed row fails wi
   - bats `run --separate-stderr`: echo `${stderr}` as well — `${output}` then holds stdout only.
   - A direct call redirected to files: print those files on a nonzero status — once in the capturing helper, or at each call site.
   - Uncaptured output already reaches the bats failure report, so a status check on it needs nothing.
-  - Converting an existing status line to this form is never weaker, and may become stricter on bash 3.2.
 
 ## Test Depth and Upkeep
 
@@ -130,7 +139,6 @@ Every table row carries a name stating its condition — an unnamed row fails wi
   - Coverage may point at an untested risky branch; it never decides that a test is needed or that testing is enough.
   - Keep a project's existing coverage gate; never add one.
   - Why: a coverage target buys tests that execute code without checking it.
-- **One-off disposition**: keep a one-off verification test (`### Legitimate example tests`) only when deleting it could let a real break through later; equal coverage is never the reason to keep or delete a test (**Deletion duty**).
 - **Coupled-test check**: on every change, check the tests and CI jobs that exercise or read what the change touched — a green run reveals none of the classes below.
   - Find them by grepping the test and CI trees for each symbol, string literal, heading or path the change removed or renamed, then reading every hit.
   - Stale: its subject remains, but it asserts or names the old text or behavior and still passes.
@@ -142,15 +150,16 @@ Every table row carries a name stating its condition — an unnamed row fails wi
 
 ### Legitimate example tests (this is NOT a ban on examples)
 
-Each kind is legitimate when the stated purpose IS the whole reason the test exists.
+Each kind is legitimate when the stated purpose is the whole reason the test exists.
 
 | Kind | Legitimate when |
 |---|---|
 | regression pin | it reproduces one reported defect, is named for the behavior it protects, and lives in that behavior's home file |
-| characterization test | it pins observed legacy behavior before a refactor — deliberately structure-sensitive, deliberately temporary, rewritten or deleted once the refactor lands |
+| characterization test | it pins legacy behavior before a refactor, is structure-sensitive by design, and is rewritten or deleted post-refactor |
 | executable-specification example | it is the one canonical worked example documenting the contract |
 | one-off verification test (a probe, an incident repro, a change check) | it is kept as a regression pin in the behavior's home file, or deleted in the change that wrote it |
 
+- **One-off disposition** (the one-off verification test row): keep one only when deleting it could let a real break through later; equal coverage is never the reason to keep or delete a test (**Deletion duty**).
 - **Boundary**: an example test is never a substitute for the relationship test of the same behavior. Three examples of one behavior with no named relationship is enumeration, not coverage.
 
 ## Rationalization Rejection (Testing)
@@ -163,7 +172,7 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 | "I verified it manually" | Manual verification ≠ validation · non-reproducible = invalid |
 | "Writing code first as a reference" | Code written before tests MUST be **deleted and rewritten** |
 
-- **Qualifier on the last row (the deliberate-break exception)**: a test written after its implementation is admissible when it was OBSERVED to fail against a deliberately broken copy of the implementation. Skip that step and the test is unproven, so the rebuttal applies unchanged.
+- **Qualifier on the last row (the deliberate-break exception)**: a test written after its implementation is admissible when it was observed to fail against a deliberately broken copy of the implementation. Skip that step and the test is unproven, so the rebuttal applies unchanged.
   - Break a temporary copy, never the real tree: a fresh `mktemp -d` directory, with the test run's cwd inside it.
     - Why: a broken script run from the real tree can damage that tree; a broken copy is discarded, never reverted.
   - The copy carries everything the run loads, in its original relative layout — the implementation, the test, and its helpers, fixtures and config; for a built stack, the project and its build config.
@@ -181,86 +190,6 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 - Diff-based: run the T2 tests related to changed files first, selected per that project's test structure (`src/foo.ts` → `test/foo.spec.ts` / `foo.test.ts`).
 - A full T3 pass is REQUIRED before commit.
 
-## Destructive-Path Suite Safety (live-postgres reach)
-
-**Condition — this section binds only when you are about to RUN a suite file that executes one of two install-side shell functions**: `clear_unmanaged_pg_orphan` (`lib/ga-daemons.sh`) and its only caller `preflight_pg_utc_guard` (`lib/ga-tui-preflight.sh`) are the functions that can reach a live postgres. Clear the procedure below first: the steps build on each other, and a step you cannot complete is a FAIL rather than a judgement call.
-
-### Before you start: shadowing is not a safety condition
-
-- **Shadowing `kill`, `rm` and `lsof` does not make a suite safe** — the Step 4 questions decide safety.
-  - A shell-function shadow binds only in the shell that defines it, so a suite driving the function through a child shell can shadow all three while the real command runs.
-
-### Step 1 — Enumerate the occurrences
-
-List every occurrence and classify by READING it; a command-word pattern is FORBIDDEN as the enumeration step.
-
-- `grep -rn "clear_unmanaged_pg_orphan\|preflight_pg_utc_guard" test hooks/test scripts/test autoagent/test`
-- Read every line it returns, unfiltered: a missed executing site is indistinguishable from a pass.
-- Why: a first-command-word regex over `test/poll-wallclock-ceiling.bats` returns the `@test` title and misses the real call at the end of a `run_bounded` child-shell command string, after a `;`.
-- Derive the site list from the run; never carry a remembered count forward.
-
-### Step 2 — Classify each occurrence
-
-Classify each occurrence executing, naming, or neutralized — only executing sites continue.
-
-- Executing: the name is a command word — bare at the start of a statement, after `run`, or after ANY command separator (`;`, `&&`, `||`, `|`, newline) INCLUDING inside a child-shell command string.
-- Naming: it sits inside `grep`, `awk`, `declare -f`, a `[[ ]]` comparison, a `@test` title, a comment, a string literal in a non-shell file, or an argument to a helper (`extract_launcher_fn <name>`); or it is the definition itself.
-- Neutralized: a shadow definition (`<fn>() { return N; }`) that both precedes EVERY call it covers and sits in the SAME shell as that call — then those calls run the shadow, not the real function. Either half unproven → treat the calls as executing.
-  - **In a bats file, "the SAME shell" is the SAME test body, and this is the rule, not a nuance**: each test body runs in its own shell, so a shadow defined in one body does NOT reach a call in any later body.
-  - Therefore a call with no shadow inside its OWN body is EXECUTING even when a shadow of that name appears earlier in the file.
-  - Mirror: whatever `setup` defines DOES reach every body, because it runs inside each one — a shadow or a PATH stub installed there covers the whole file, a body-local one only its own body.
-
-### Step 3 — Read the reached function body
-
-Read the reached function body BEFORE answering — the pid question is not answerable from the test file alone. Open `clear_unmanaged_pg_orphan` in `lib/ga-daemons.sh` and read ONLY these:
-
-- Every lookup that feeds the signal, and how each is reached: a socket-scoped lookup, plus a socket-blind port fallback that runs only when the first returns nothing.
-  - COUNT them rather than assuming one — a substitute must cover every one, which a stub ignoring its arguments does in a single file.
-- Which layer consumes each answer: the pid feeds the signal, and the resolved socket path feeds the removal.
-- Then resolve the SITE's own controls the same way: a test file usually installs its stub through a helper defined elsewhere in that file, so follow the helper's definition — the call site shows only its name.
-- The READ relaxes no criterion below.
-
-### Step 4 — Answer the questions at every executing site
-
-Answer every question below at every executing site, all of them resolving.
-
-- **Pid control** — can every `lsof` the function reaches return a live postgres pid? It MUST NOT. No environment seam substitutes for this.
-  - It is the load-bearing half: the socket-BLIND `lsof -ti tcp:5432` fallback finds the live server wherever the socket path points.
-  - Two substitute shapes resolve it: one reporting NO owner, and one reporting a pid that provably cannot name a live process (a literal above the platform pid ceiling — macOS wraps pids below 100000). A real `lsof` on PATH resolves neither, whatever the socket redirect says.
-  - The fake-pid shape leaves `kill -INT <pid>` running the REAL `kill`; it is safe only because the pid cannot exist. A fake pid inside the live range fails this question.
-- **Path control** — does `${PG_SOCKET}/.s.PGSQL.5432` resolve to a path OTHER than the live server's socket?
-  - The object is that ONE path, not the tree containing it.
-  - A unique per-run `mktemp -d` directory PASSES even when it sits under `/tmp`, and the AF_UNIX `sun_path` cap (~104 bytes on macOS) forces `test/uninstall-detached-daemons.bats` there.
-  - What FAILS is `PG_SOCKET` resolving to the live socket's OWN directory — unset (defaults to `/tmp`), or an explicit `/tmp`.
-  - Which seam sets it depends on how the file loads the code:
-    - `GA_PG_SOCKET`, read ONLY by `ga_init_env` (`lib/ga-env.sh`), where `readonly PG_SOCKET="${GA_PG_SOCKET:-/tmp}"` sits. The freeze fires when `ga_init_env` is CALLED — as the launcher source does — NOT when `lib/ga-env.sh` is sourced.
-    - a plain `PG_SOCKET=` assignment, which WORKS in a file that sources a domain lib directly and so never calls `ga_init_env`: nothing made the name readonly there, and exporting `GA_PG_SOCKET` in such a file is inert.
-- **Mechanism binding** — which shell actually runs the function?
-  - A same-shell `run <fn>` is bound by shell functions AND by PATH stubs; a child-shell driver is bound ONLY by PATH stubs and EXPORTED environment.
-
-### Step 5 — Decide, and verify the decision after the run
-
-- **Pass** requires pid control AND path control, each by a mechanism that binds under Mechanism binding. Shadowing the signal or the removal command is neither necessary nor sufficient.
-- **Ambiguous means fail** — an ambiguous site is never argued into a pass.
-  - The one escape: prepend a scratch dir of record-only stubs to the PATH of the WHOLE invocation (a PATH stub binds in every child) and run that one file under it; unavailable → stop and report.
-    - Known collisions of that whole-invocation run — a not-ok row one causes is an artifact, not a regression:
-      - an exported off-/tmp `GA_PG_SOCKET` trips the fail-closed seam guard `lib/ga-db.sh` → `_require_db_setup_ready` in a suite driving DB setup through `ga_init_env`;
-        - such a suite strips the name from its driver's environment, as `test/run-step-fail-return.bats` → `drive_db` does — never relying on `GA_DB_NAME`, which the guard ignores;
-      - a record-only `psql` stub prints nothing, so `hooks/test/ephemeral-pg-locale.bats` fails its rows asserting on its ephemeral cluster's `psql` output.
-    - A colliding suite that executes neither function runs without the escape; one that executes either stays under this procedure.
-- **Post-condition, independent of all the reading**: record the live server's pid and its socket inode before the run and compare both after. A change in either means something reached it, whatever the file said.
-
-### What this procedure does NOT cover
-
-These shapes still let a live pid or path reach a real signal or removal:
-
-- a stub dir prepended inside a child command string while an earlier statement in that same child already ran the real tool;
-- `GA_PG_SOCKET` set but never exported, so a child that calls `ga_init_env` itself freezes `PG_SOCKET` to the live default;
-- a same-shell shadow definition that a child-shell driver in the same file does not inherit, so the child runs the real function while the parent reads as neutralized;
-- path control alone, which leaves the port-lookup fallback free to find and signal the live pid;
-- an executing site the enumeration misses because the function name is assembled from string fragments.
-
 ## Mechanical Success Metrics
 
-- Per-task-type pass conditions are canonical in `core-outcome-record.md` → Field Input Guide → `metric_pass` (`bug-fix` adds an exit-code-0 check); the result is recorded there as the `metric_pass` boolean.
 - `grader_verdict: verified_pass` on a code-type row is a presence signal, never a quality signal.
