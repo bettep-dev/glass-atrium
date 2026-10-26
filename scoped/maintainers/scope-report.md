@@ -46,6 +46,8 @@ Source: `monitor/src/server/clauded-docs/html-validator.ts`.
 
 - **Gate 1 — HTML5 baseline** → code `html_structure_invalid`, whose response names the missing fields. `html_body` must carry a doctype · an `<html>` root · a NON-EMPTY `<title>` · a `<body>` · ≥1 semantic landmark (`<main>`/`<article>`/`<section>`) · ≥1 heading · a `<meta charset>`. `<meta viewport>` is NOT checked — the server re-injects charset and viewport on GET. The dark-base skeleton already carries every checked element.
 - **Gate 2 — D8 column cap** → comparison tables ≤5 columns enforced server-side, not only by reviewer judgment; a multi-config table over the cap is split per config. Violation → code `d8_p2_violation`.
+- **Diagram scan — report-only, never a 400**: an excluded type adds a `diagram_type_excluded` notice to an OK result.
+  - The scan is the validator's terminal return, reached only on an otherwise-clean document.
 
 ## Co-edit rosters (what moves together when a rule changes)
 
@@ -65,6 +67,11 @@ Source: `monitor/src/server/clauded-docs/html-validator.ts`.
 | D8 numeric thresholds | none in prose — `monitor/src/server/clauded-docs/d8-thresholds.json` is the authority and every prose number is a mirror |
 
 - **Designer stub ↔ skill linkage record**: the Designer Co-Emission Trigger row above plus `skills/glass-atrium-design-html-co-emission/SKILL.md` → `## Cross-References` designer bullet. The designer stub keeps its trigger, output-field names and veto line; the designer body carries no pair map.
+- **Mermaid adopted-set copies**: `monitor/src/server/clauded-docs/diagram-types.json` governs; every prose member list is a hand-synced copy, corrected against the JSON.
+  - `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]`, the Type step.
+  - `agents/glass-atrium-intel-planner.md` → `### Pre-drawing decision core (delivered copy — apply to EVERY Mermaid block, not only the first)`.
+  - `skills/glass-atrium-design-html-co-emission/SKILL.md` → `### Mermaid type mapping`.
+  - Unpinned: no suite compares a copy's member list with the JSON; `monitor/test/clauded-docs.diagram-types.test.ts` checks only the JSON's own invariants and mermaid's behaviour.
 - **Heading renames**: `agents/glass-atrium-intel-reporter.md` points at these rule-file headings by name, and `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` names most of them — a rename edits both bodies in the same pass:
   - `### Three emission modes` · `### HTML request test` · `### Visual-Maximization Floor` · `### Dark base default` · `### Emission contract` · `### Document Lifecycle — completion + exposure routing`
   - `## Diagram Standard [REPORT]` · `## Pre-drawing Doctrine [REPORT]` · `## Designer Co-Emission Trigger [REPORT]` · `## Report Structure [REPORT]` · `## Self-Evaluation Obligation [REPORT]`
