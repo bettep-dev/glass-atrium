@@ -50,7 +50,7 @@ GOOD → // live fs count ↔ invariant compare → return result
 - **One-line sufficiency gate (form, not whether)**: past the density gate, the comment MUST be one essence line; the table below gives the remedy per case.
   - Stacked `//` continuation lines and run-on paragraphs are FORBIDDEN.
   - Distinct complete points stay separate one-line comments — this gate targets continuation of one thought.
-  - Helper extraction fires only on an independent structural trigger: `scope-dev.md` → **Minimalism reflex** · `## Comments That MUST NOT Be Written` → "Cyclomatic complexity > 10" · `scope-dev.md` → **Rule of Three before abstraction**.
+  - Helper extraction fires only on an independent structural trigger: `scope-dev.md` → **Minimalism reflex** · `shared-code-structure.md` → Function cap (20 lines OR cyclomatic complexity 10) · `scope-dev.md` → **Rule of Three before abstraction**.
     - Comment length alone never fires it.
 
 | Overflow case | Remedy |
