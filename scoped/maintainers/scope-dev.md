@@ -135,11 +135,11 @@ glass-atrium-dev-front's narrow role co-authoring viewer-exposed clauded-docs HT
 
 The rule file states what the gate obliges a DEV agent; the classification below is the orchestrator's and fires before the DEV agent exists.
 
-Pair note — the QA-side and orchestrator-side sites of this gate:
+Pair note — the other sites of this gate:
 
-- `scoped/scope-qa.md` → `## Sprint Contract Gate [DEV+QA]` is a pointer and restates none of the definition below.
+- `scoped/scope-qa.md` carries no Sprint Contract Gate section: a pointer there reached no reader that receives the rule file (`scoped/maintainers/scope-qa.md` → `## What was moved here, and what was dropped`).
 - `rules/glass-atrium/orchestrator-role.md` holds the one condensed copy: the Decision `SIZABLE =` action row of `## Delegation Workflow` lists the sizable criteria inline, and `#### Entry classification (DEV delegations)` names those Decision actions as the copy.
-- How both reach the definition below: `## Open item`.
+- How orchestrator-role.md reaches the definition below: `## Open item`.
 
 ### Sizable-task definition (single SoT — the positive entry floor)
 
@@ -190,7 +190,7 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 | Heading in `scoped/scope-dev.md` | Cited from |
 |---|---|
 | `## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]` (stub) | `rules/glass-atrium/orchestrator-role.md` |
-| `## Sprint Contract Gate [DEV+QA]` (stub) | `rules/glass-atrium/orchestrator-role.md` · `scoped/scope-qa.md` · `scoped/maintainers/glass-atrium-dev-node.md` · operator-facing messages in `hooks/enforce-verification-gate.sh` and `hooks/enforce-workflow-verify-stage.sh` |
+| `## Sprint Contract Gate [DEV+QA]` (stub) | `rules/glass-atrium/orchestrator-role.md` · `scoped/maintainers/glass-atrium-dev-node.md` · operator-facing messages in `hooks/enforce-verification-gate.sh` and `hooks/enforce-workflow-verify-stage.sh` |
 | `## Plan Direction Verification Gate [DEV+QA]` | `rules/glass-atrium/orchestrator-role.md` · `scoped/scope-qa.md` · `scoped/scope-planning.md` · `skills/glass-atrium-ops-orchestrator.md` (comment) · `hooks/enforce-workflow-verify-stage.sh` (comment) |
 | `## Ambiguity Gate (Ambiguity Score)` → Assumptions Disclosure | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` · `agents/glass-atrium-dev-animator.md` · `scoped/scope-planning.md` |
 | `## Pre-Execution Verification` → `### Project Convention Probe` | `rules/glass-atrium/core-outcome-record.md` (`style_ref` row) · `agents/glass-atrium-dev-android.md` · `agents/glass-atrium-dev-shell.md` · `agents/glass-atrium-dev-swift.md` |
@@ -215,7 +215,7 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 
 Open, and owned outside this note (the fix edits other files):
 
-- `rules/glass-atrium/orchestrator-role.md` and `scoped/scope-qa.md` still reach the moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) through the rule-file stubs, one hop more than needed. Repointing them at this note removes the hop; `core-compliance-matrix.md` and `skills/glass-atrium-ops-orchestrator.md` already point here.
+- `rules/glass-atrium/orchestrator-role.md` still reaches the moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) through the rule-file stubs, one hop more than needed. Repointing its citations at this note removes the hop; `core-compliance-matrix.md` and `skills/glass-atrium-ops-orchestrator.md` already point here.
 
 ## Rule-file pointers and loading stanza
 
