@@ -33,7 +33,8 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 
 ## Decisions worth keeping
 
-- **Naming subordination**: the body names no naming axis. Pre-Execution Verification → **Structure** keeps "Glob the target module" and points at `scoped/scope-dev.md` → Project Convention Probe, which takes code form from the sibling and identifier naming from the `scoped/shared-naming.md` canon.
+- **Naming subordination**: the body names no naming axis. Pre-Execution Verification → **Structure** keeps "Glob the target module" and points at `scoped/scope-dev.md` → Project Convention Probe.
+  - The probe points at `scoped/shared-search-first.md` → **Step 3 — Mirror** for the mirrored code-form axes; identifier form follows `scoped/shared-naming.md`.
 - **Anti-slop guardrail kept, made actionable**: the designer body is not in this agent's context, so the bullet instructs an on-demand Read of that path and says so, rather than citing a file the agent never receives.
 - **Motion bullet keeps the Compose mapping under its condition** — `spring(stiffness, dampingRatio)` and the ad-hoc-constant ban, led by "only when the project carries `motion-philosophy.md`".
   - The condition stays in the lead: without it the ban reads as binding every Android project, while `scoped/shared-design-token-consumption.md` → Mandatory Pre-Execution Gate proceeds on framework defaults when no motion file exists.

@@ -39,7 +39,8 @@ Two placement facts, both deliberate:
 
 ## Decisions worth keeping
 
-- **Naming subordination**: the Project Convention Probe line under Pre-Execution Verification points at `scoped/scope-dev.md` → Project Convention Probe, which carries the mirrored axes (import order, error+log, layout) and subordinates identifier naming to the naming canon.
+- **Naming subordination**: the Project Convention Probe line under Pre-Execution Verification points at `scoped/scope-dev.md` → Project Convention Probe.
+  - The probe points at `scoped/shared-search-first.md` → **Step 3 — Mirror** for the mirrored code-form axes; identifier form follows `scoped/shared-naming.md`.
   - The line adds only the Swift isolation-style axis.
   - It sits outside every editable region.
 - **`@unchecked Sendable` added to Red Flags** — the Error Recovery region already forbade silencing a strict-concurrency diagnostic with it, but nothing listed it as a scan target.
