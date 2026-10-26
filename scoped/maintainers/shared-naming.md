@@ -12,16 +12,26 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 ## Membership
 
-- DEV unconditionally, all 13, plus `glass-atrium-qa-code-reviewer` as the enforcement surface. `glass-atrium-qa-debugger` is excluded: read-only by its Guardrails, it authors no identifier.
+- Every DEV agent unconditionally, plus `glass-atrium-qa-code-reviewer` as the enforcement surface. `glass-atrium-qa-debugger` is excluded: read-only by its Guardrails, it authors no identifier.
 - Declared on each agent's `agent-registry.json` row (`rules.shared`) and summarized in `rules/glass-atrium/core-compliance-matrix.md`.
-- The Compliance Matrix QA cell is a plain `✓` with NO footnote marker. The design called for a fifth marker glyph (`‖`) for the qa-code-reviewer-only subset; the Tier-3 row states that subset by naming the single agent outright, which is more precise than a marker and costs no edit to `readonly FOOTNOTE_MARKERS` in `hooks/validate-compliance-matrix.sh`. An unlisted glyph would not fail check B2 — it would go unchecked, which is worse than a false failure. If a later file needs a genuine multi-agent QA subset, introduce `‖` there, add it to that constant in the same edit, and this row may adopt it.
+- The Compliance Matrix QA cell is a plain `✓` with no footnote marker: the Tier-3 row names the single agent outright, which is more precise than a marker glyph.
+  - A marker glyph (`‖`) would also need an edit to `readonly FOOTNOTE_MARKERS` in `hooks/validate-compliance-matrix.sh`; an unlisted glyph would not fail check B2 — it would go unchecked, which is worse than a false failure.
+  - If a later file needs a genuine multi-agent QA subset, introduce `‖` there, add it to that constant in the same edit, and this row may adopt it.
 
 ## The delta-core — edit rules
 
-- **Delivery**: the whole rule file reaches every member through the part slots, selected by each agent's `agent-registry.json` → `rules.shared` (the `## Membership` set above, glass-atrium-dev-swift included). `hooks/inject-scope-rules.sh` extracts nothing from it, and the file carries no `AGENT-INJECT` marker or byte-budget comment.
-- **No byte freeze applies**: the delta-core is ordinary content. Its closing line still lists boolean stative-first among the full skill's contents while `## Core rules outside the delta-core` states it as a rule; reconciling the two belongs to the fold in the next bullet.
-- **Folding the delta-core and the three outside rules into one canonical list is open work**: it needs a per-bullet audit, since the delta-core is the file's canonical statement of the rules it lists.
-- **Keep the delta-core's bold lead phrase** (the words before its em dash): `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts it ABSENT from slot 1, and the check proves nothing once the phrase no longer exists in the source.
+- **Delivery**: the whole rule file reaches every member through the part slots.
+  - Selection: each agent's `agent-registry.json` → `rules.shared` (the `## Membership` set above, glass-atrium-dev-swift included).
+  - `hooks/inject-scope-rules.sh` extracts nothing from it, and the file carries no `AGENT-INJECT` marker or byte-budget comment.
+- **No byte freeze applies**: the delta-core is ordinary content.
+- **Admission test**: the delta-core and `## Core rules outside the delta-core` hold only rules an agent gets wrong without them — a divergence from the model's default, or a closed vocabulary it cannot guess.
+  - Model-inferable rules stay out: padding verbs and the noise nouns Data/Info/Manager.
+  - Lookup tables stay in the skill (`## On-demand detail`).
+- **Reduction-floor guardrail is non-compressible**: never trim it in a diet pass — it is the counterweight to **No-stutter**.
+- **Folding the delta-core and the outside rules into one canonical list is open work**: it needs a per-bullet audit, since the delta-core is the file's canonical statement of the rules it lists.
+- **Keep the delta-core's bold lead phrase** (`Naming delta-core`, the words before its em dash):
+  - `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts it absent from slot 1, and the check proves nothing once the phrase no longer exists in the source.
+  - `hooks/test/inject-scope-single-delivery.bats` → `RETIRED_BLOCKS` anchors `**Naming delta-core` to exactly one line of the file and counts that whole line once per member assembly — keep the anchor on one line, and never repeat the line in another member file.
 - **Precondition the retirement rests on**: `python3 hooks/lib/inject_chunk.py --audit` MUST report `events=none` for every member. An OVERFLOW displaces a member band, and no slot-1 copy remains behind it.
   - Re-run the audit after any growth of this file and before any merge, and read each member's `chunks=` against the header's `slots=` from that run.
   - A branch-side run sets `GA_CHUNK_RULES_ROOT` to the tree under test and runs that tree's `hooks/lib/inject_chunk.py`; unset, the audit reads the live install's corpus, and `slots=` comes from whichever core file runs.
@@ -42,16 +52,17 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
     - **One verb per purpose per layer** — `SKILL.md` · `references/ANTI-PATTERNS.md`
     - **Identifier-kind binary** — `SKILL.md` · `references/VARIABLES-BOOLEANS.md`
     - **No-stutter** — `references/ANTI-PATTERNS.md`
-    - **Reduction-floor guardrail** (the bold lead's opening words) — `SKILL.md` · the reviewer
+    - **Reduction-floor guardrail** — `SKILL.md` · the reviewer
+    - **Booleans — stative-first** — `agents/glass-atrium-dev-react.md`
     - **Prefix-family grouping** — `references/VARIABLES-BOOLEANS.md` · the reviewer
     - **Qualifier-sibling grouping** — `references/ANTI-PATTERNS.md` · the reviewer
     - **Read-down naming** — the reviewer
   - Inside the rule file, the delta-core items and the edge-case sections cite one another by bold lead; a rename fixes those in-file citers in the same pass.
 - **Identifier-kind binary**'s group-member sub-bullet and `references/VARIABLES-BOOLEANS.md` → `### Noun-only form (data identifiers)` and **Maps** must give one verdict on a group member (`request.pending`, `user.byId`). Change either and re-read the other in the same pass.
   - A member taken out of its group needs one verdict too, stated at each site below. Change one and re-read the others in the same pass:
-    - the group-member sub-bullet's extraction sub-bullet · the rule file's `Member taken out of its group` and `Qualified read` rows
+    - the group-member sub-bullet's extraction sub-bullet, which also carries the rename syntax (`:` in a destructuring read, `as` in an import) · the rule file's `Member taken out of its group` and `Qualified read` rows
     - `SKILL.md` → "A group member reads with its group" · `references/VARIABLES-BOOLEANS.md` → **Group members read with their group**
-    - the rule file's `## Edge-case verdicts — scopes and bindings` row on an existing `user` beside an added `userById`, and its note: the join covers only a `userById` not read out of `user`
+    - the rule file's `## Edge-case verdicts — scopes and bindings` row on an existing `user` beside an added `userById`, whose input cell excludes a `userById` read out of `user`
 - The delta-core carries each rule, one Bad → Good pair and the exclusions a DEV agent needs to write a compliant name.
 - Every other verdict that shapes a name lives once in the edge-case sections, outside the delta-core, which DEV agents and the reviewer both receive.
   - A shape the rule text already settles word for word gets no row (a plain generic-terminal, bound-qualifier or `user`/`newUser` case); add a row only where two readers could split.
@@ -61,10 +72,12 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 - `skills/glass-atrium-dev-naming/references/ANTI-PATTERNS.md` → **Sibling collision groups first**, its `fileBlock` over-reduction row and its **Reduction floor** checklist line must read group first, qualifier as the fallback, in step with **Reduction-floor guardrail**.
 - `skills/glass-atrium-dev-naming/references/VARIABLES-BOOLEANS.md` → **Parameters** and **Prefix-family grouping**'s parameter exclusion must give one verdict: a function's own parameters stay flat.
   - In `## Edge-case verdicts — identifier kinds`, the constructor row groups and the props-or-options row stays flat. Change any of these and re-read the others in the same pass.
-- The delta-core's flat-only clause under **Prefix-family grouping** and the `## Edge-case verdicts — identifier kinds` flat-only row must give one verdict on a relational column, mapped ORM field or other flat-only name.
+- The delta-core's flat-only clause under **Prefix-family grouping** defers to the `## Edge-case verdicts — identifier kinds` fixed-outside and flat-only rows, which carry the one verdict on a relational column, mapped ORM field or other flat-only name.
   - Change either and re-read the other in the same pass; `agents/glass-atrium-dev-db.md` → **Schema** (FK `{table}_id`, OLAP denormalization) is the DEV rule they must not contradict.
 - Outbound: the rule file's `## Edge-case verdicts — identifier kinds` cites `skills/glass-atrium-dev-naming/SKILL.md` → **Family alignment**. Rename that skill bold lead and fix the rule file in the same pass.
-- Outbound: the rule file's `## Edge-case verdicts — reads and joins` log-or-error-text row cites `skills/glass-atrium-dev-naming/references/ANTI-PATTERNS.md` → **Cross-boundary names keep their qualifier**; its in-code `Member taken out of its group` row applies rename-at-extraction, with no floor check.
+- Outbound: the rule file's `## Edge-case verdicts — reads and joins` splits a group member's name at the log/error boundary.
+  - Its log-or-error-text row cites `skills/glass-atrium-dev-naming/references/ANTI-PATTERNS.md` → **Cross-boundary names keep their qualifier**.
+  - Its in-code `Member taken out of its group` row applies rename-at-extraction, with no floor check.
   - Keep the split at the log/error boundary, and fix the rule file in the same pass as any rename of that skill bold lead.
 - Outbound: the rule file's scope lines and the reviewer's `### Naming Edge Cases — Scope and Kind` cite `scoped/shared-testing.md` → `### Names, comments and test data`. Rename that heading and fix both in the same pass.
 
@@ -72,7 +85,9 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 Requirements for any regeneration of `manifest.json`. Each is a requirement, not a state: check it against the tree before relying on it.
 
-- **The manifest must ship this rule file and the part-slot wrappers (`hooks/inject-scope-part-*.sh`, `hooks/lib/inject-chunk.sh`, `hooks/lib/inject_chunk.py`) in the SAME deploy that carries the retired `hooks/inject-scope-rules.sh`, or earlier.** Slot 1 no longer carries the delta-core, so a deploy that lands the injector while the wrapper binding rows are declined leaves every member with no naming rule at all.
+- **The manifest must ship this rule file and the part-slot wrappers in the same deploy that carries the retired `hooks/inject-scope-rules.sh`, or earlier.**
+  - The wrappers: `hooks/inject-scope-part-*.sh`, `hooks/lib/inject-chunk.sh`, `hooks/lib/inject_chunk.py`.
+  - Why: slot 1 no longer carries the delta-core, so a deploy that lands the injector while the wrapper binding rows are declined leaves every member with no naming rule at all.
 - **The regeneration must run after any demoted file mode is fixed.**
   - Why: `scripts/generate-manifest.sh` records the raw `stat` mode with no normalisation and both install paths chmod landed files to the recorded mode, so a file left at a demoted mode is regenerated at that mode and then applied at it.
 - **Every new file must be tracked before the regeneration runs**: `scripts/generate-manifest.sh` takes its file list from `git ls-files`.
