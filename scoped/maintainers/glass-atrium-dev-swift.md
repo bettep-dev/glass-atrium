@@ -30,7 +30,8 @@ Two placement facts, both deliberate:
 
 - **Tech Stack prose run** — became a table; no fact dropped, the reader no longer parses one long middot chain.
 - **Secrets and signing credentials** — the no-hardcoding rule is `core-security.md` → Secret Management (host-delivered). The Guardrails bullet keeps only the Keychain / env delta and names that canonical; `## Security` carries no copy.
-- **Comment / TODO restatements in Self-Review** — the comment-rule core is delivered to every DEV subagent through `scoped/shared-comment-logging.md` membership (part slots). The Swift residue (the `os.Logger` privacy-redaction form, no shipped `print`, no sensitive data logged) stayed.
+- **Comment / TODO restatements in Self-Review** — the comment rules, the TODO form included, are delivered to every DEV subagent through `scoped/shared-comment-logging.md` membership (part slots).
+  - The Swift residue stayed: the `os.Logger` privacy-redaction form, no shipped `print`, no sensitive data logged.
 - **Red Flags and Prohibitions items already stated as Guardrails MUST NOTs** — both sections name Guardrails as the owner and list only the residue, the same shape as the dev-shell body.
 - **Emit instructions under Success Criteria** — the emit-mode table and its notes restated `core-outcome-record.md` → Completion Report Output Obligation, which is host-delivered and also compressed into the slot-1 emit-format block. One pointer line remains; no suite reads a DEV body's emit text.
   - Kept in the body under that pointer: the fallback for a schema declaring no `completion_block`, which neither canonical states.
