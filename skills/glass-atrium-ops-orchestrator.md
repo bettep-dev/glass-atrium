@@ -925,7 +925,7 @@ System hygiene checks — all READ-ONLY: each surfaces a candidate for the user 
 |---|---|
 | agent instruction bloat (warn past ~300 lines) | `agents/*.md` |
 | stale `memory/` files (30+ days) — archival candidates | session-internal memory dir |
-| unprocessed learning-log items | `memory/core-learning-log.md` |
+| unprocessed learning-log items | PostgreSQL `core.learning_log` |
 | Outcome-Record generation gaps | PostgreSQL `core.outcomes` |
 | `MEMORY.md` item freshness | user-facing memory index — report a stale item, never rewrite it |
 
