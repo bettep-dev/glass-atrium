@@ -50,7 +50,7 @@ glass-atrium-design-designer supplies the judgment calls an author cannot make m
 | C4 (`C4Context` / `C4Container` / `C4Component`) | system boundaries and component layers |
 
 - **SoT**: `monitor/src/server/clauded-docs/diagram-types.json` — where it and the table above disagree, the JSON wins.
-- **An excluded type is report-only on the server, not a rejection**: the document still publishes, permanently annotated with a `diagram_type_excluded` notice.
+- **An excluded type is report-only on the server, not a rejection**: the document still publishes; the write response and the server log carry a `diagram_type_excluded` notice, and nothing stores it with the document.
   - So hold your own recommendation to the set, and never tell the author the server will catch it.
 
 ## Response Form
