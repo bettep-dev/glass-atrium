@@ -12,6 +12,17 @@ Recorder and grader reference for that Tier-1 rule file: what `hooks/track-outco
 
 ## Recorder behaviour
 
+### Record storage
+
+- **Writer**: `hooks/_pg_outcome_dualwrite.py` writes `core.outcomes`; its `body_md` column carries the full markdown body, which the renderer CLI re-synthesizes to frontmatter.
+- **Record-side names**: the record stores the template's `files` as `files_modified`, and `cid` both as `cid` and as `correlation_id`; `metric_type` shares the 9-type task_type value set.
+- **`concerns`**: `track-outcome.sh` copies the value into the record's `## Concerns` section, reads that section back when a `done_with_concerns` row has no `concerns:` line, and clamps the stored value to 800 chars.
+  - An absent `concerns` is stored as an empty array.
+- **`revision_count`**: a missing or non-integer value falls back to 0.
+  - The hook's prior+1 cross-outcome accumulation is stubbed to 0 until a project-keyed PG restoration lands.
+  - Why: DB-only tracking has no cwd/project key, so a same-task_type prior lookup would miscount another project's correction.
+- **task_type agreement**: the rule file's `### Role → Allowed task_types` table is the single authority that `guess_task_type`, the grader's unknown-case branch and the dual-write `_norm_task_type` helper MUST agree on — divergence is a defect.
+
 ### Recorder parse outcomes
 
 What `track-outcome.sh` records for each emit shape.
@@ -22,6 +33,7 @@ What `track-outcome.sh` records for each emit shape.
 | block opened, closing sentinel missing | `parse_tier=2`, `truncated_completion` — writer-parsed, fields kept; attribution degrades to a truncation signal |
 | inline single-line with ≥1 core field | `parse_tier=1` via the inline tolerance tier — fields preserved |
 | no core field, or no block after ≥1 tool_use | synthesized: `done_with_concerns` / `confidence=low` / `metric_pass=false`, guessed `task_type` |
+| schema-mode run, `completion_block` present and parseable in the terminal StructuredOutput input | writer-emitted, attribution `structuredoutput-completion` — a healthy row |
 | schema-mode run whose terminal StructuredOutput was consumed, `completion_block` unusable | `structuredoutput-derived` synthesis: `result=done`, NOT `done_with_concerns` |
 
 - `structuredoutput-derived`: still `confidence=low` / `metric_pass=false` / lesson-absent, writer-unverified.
@@ -32,7 +44,7 @@ What `track-outcome.sh` records for each emit shape.
 
 ## Grader- and daemon-populated fields
 
-The columns the rule file's template marks writer-does-NOT-fill: `grader_verdict`, `downgrade_origin`, `confidence_observed`.
+The columns the rule file's template marks "writer does not fill": `grader_verdict`, `downgrade_origin`, `confidence_observed`.
 
 ### Grader verdict
 
@@ -91,6 +103,13 @@ The columns the rule file's template marks writer-does-NOT-fill: `grader_verdict
   - It corrects the systematically inflated writer `confidence` enum and is NOT the same field.
   - Backing: its storage column is the `core.autoagent_proposals` per-pattern aggregate; the parser only recognizes the field passively and does not persist it yet, so an absent value is silently ignored.
 
+## `style_ref` review flag
+
+- **Omission parser**: `hooks/lib/style-ref-consts.sh` → `style_ref_compute_review_flag`; its task_type allowlist is the single SoT for the production hook and its Bats test.
+- **Mandatory graduation** is a separate future cycle requiring user approval, gated by `styleRefGradeBadgeI` in `monitor/public/src/screens/improvement.jsx`: emission ≥ 50% and the uncorroborated share of the adjudicated subset < 10% across the DEV agents.
+  - Adjudicated = corroborated + uncorroborated, never eligible — an eligible denominator could be passed by widening the blind spot.
+  - Publish corroborated / uncorroborated / unverifiable as three counts, not one derived rate that reads as an honesty verdict.
+
 ## Linkage
 
 - Each fact lives once. The rule file keeps the writer-facing half: each field's template line and `### Field Input Guide` row, the `metric_pass` no-overwrite clause, and the `## Automatic Verification Criteria` rows. This note keeps the rest.
@@ -102,10 +121,36 @@ The columns the rule file's template marks writer-does-NOT-fill: `grader_verdict
 | `hooks/test/emit-discipline-doc-consistency.bats` → its two `EMITTER` tests | this file's emitter-marker count and both names, against the grader source | the emitter bullet under `### Grader verdict` |
 | `hooks/lib/code-based-grader.sh` → header comments | pointers to `### Grader verdict` (Outputs stanza, Input-surface invariant) | the Input-surface invariant bullet |
 | `hooks/test/code-based-grader.bats` → header comment | pointer to `### Grader verdict` | that heading |
-| `hooks/inject-scope-rules.sh` → `build_emit_format_block` | a shell literal restating the inline-salvage and unparseable rows | `### Recorder parse outcomes` — manual, unenforced |
+| `hooks/inject-scope-rules.sh` → `build_emit_format_block` | a shell literal restating the inline-salvage and unparseable rows | `### Recorder parse outcomes` and rule file → **Spawn-injected copy** — manual |
+| `hooks/test/track-outcome-completion-block-select.bats` → its `KNOWN_FIELDS` test | the first fence after rule file `## Completion Report Output Obligation`, up to the next `## ` | the template fence, kept first in that H2 |
+| `agents/` bodies, `hooks/inject-session-context.sh`, `orchestrator-role.md`, the ops skills | rule-file headings and leads by name | the names listed below |
 
 - The emitter-marker literal appears in this file inside the emitter bullet under `### Grader verdict` and nowhere else. The suite counts every occurrence in the file, so quoting the literal anywhere else here breaks the count.
 - Renaming `### Recorder parse outcomes` or `### Grader verdict` dangles a pointer in a Tier-1 file.
+- **The emit-format copy**: no test or hook compares it with the rule file; `hooks/test/inject-scope-rules-nodrop.bats` pins only the needle `REQUIRED by the outcome recorder`.
+  - The hook's header comment above `build_emit_format_block` says the rule file "carries the reciprocal pointer" — that is **Spawn-injected copy**; dropping that bullet falsifies the comment.
+- **Rule-file names cited from outside** — never rename one: `## Core` → **Lesson-free read** · `### Role → Allowed task_types` · `## Completion Report Output Obligation` · `### Emit Boundary` → Channel asymmetry · **Correction-emission rule** · `### Field Input Guide` → `metric_pass`.
+  - `#### Self-assessment fields` stays under `### Field Input Guide`: frozen `agents/` bodies and the ops skill cite the path Field Input Guide → `metric_pass`.
+  - The correction, content and role-scoped field rules sit in sibling `###` sections under `## Field Reference`, keeping each H2 and H3 inside the shape caps; the Field Input Guide opening line names them.
+
+## Restructure + diet pass — dispositions
+
+- Moved here, as reader-inert recorder or editor detail: the `_pg_outcome_dualwrite.py` / `body_md` storage line, **Record-side names**, the task_type agreement line, the `concerns` section read-back, the `revision_count` stub's why and restoration, the `style_ref` parser path and **Mandatory graduation**, the `structuredoutput-completion` healthy row, the nodrop needle note.
+- Dropped as redundant with a Tier-1 site reaching the same reader: "the engine consumes only the StructuredOutput call" (`GLASS_ATRIUM_GLOBAL_RULES.md` → **Schema-mode caveat**) and the closing-turn pointer to `### Turn Budget & Graceful Exit`.
+- Dropped as dup-in:
+  - the task_type-set allowlist line — the Role section states it;
+  - "Filling it never changes `result`" — ``### Whose outcome `result` describes`` states it;
+  - the stray-`directive_hint` line — merged into the trip-set line;
+  - four Field Input Guide cell qualifiers the template comments already carry: integer · `-1`/`0`/`+1` · only with `evaluative_signal: -1` · QA review only.
+- Two other Field Input Guide cell qualifiers left the rule file, not as template dups:
+  - `concerns` "absent is an empty array" — recorder storage behaviour, now under `### Record storage` → **`concerns`**.
+  - `confidence_observed` "empty is valid, not a `review_flag` trigger" — implied by the closed trigger table in rule file → `## Automatic Verification Criteria`, which carries no `confidence_observed` row.
+- The Result-selection `done` cell's caveat list became a note under the table, to fit the cell cap.
+- The **Correction-emission rule** lead lost "judged SEMANTICALLY in ANY language" to a sub-bullet, to fit the bullet cap; its bolded label is unchanged.
+- Prompt-audit pass on the restructure:
+  - **Omission** names the parser's scope — `feature` · `bug-fix` · `refactor` rows from agents that receive `scope-dev.md` — because the parser pointer that carried that scope moved here.
+  - "a schema-mode run never ends on prose" dropped: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` states it to the same reader.
+  - The retired `.md` sub-bullet now states the current rule instead of its retirement; the template's `style_ref` comment points at `### Role-scoped fields` → `style_ref`.
 
 ## Outstanding
 
