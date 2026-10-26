@@ -222,7 +222,7 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
       - `#### Deploy-Safety Idiom` → the step-6 pointer;
       - `#### Pipeline Acceptance Criteria` → `##### Stage gates`;
       - `scoped/scope-meta.md` → `## Prompt Deliverable Team Rule` → **Prompt-audit pass**.
-- Step 6's pointer to `scoped/shared-testing.md` → Destructive-Path Suite Safety keeps the phrase "pointer only, the procedure is single-sited there": `scoped/maintainers/shared-testing.md` quotes it as the reason that section stays single-sited. Reword both together or neither.
+- Step 6's pointer to `scoped/shared-destructive-path-suite-safety.md` keeps the phrase "pointer only, the procedure is single-sited there": `scoped/maintainers/shared-destructive-path-suite-safety.md` quotes it as the reason that procedure stays single-sited. Reword both together or neither.
 
 ### `## Harness Path Protection`
 

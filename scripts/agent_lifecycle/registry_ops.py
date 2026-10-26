@@ -132,8 +132,17 @@ _HOOK_REVIEW_CONDITION = {
     "file": f"{_SCOPED}shared-hook-capability-contract.md",
     "when": "the task reviews a hook change or analyses a hook failure",
 }
+# Phrased to match the rule file's own Condition line — keep the two in step.
+_LIVE_PG_SUITE_CONDITION = {
+    "file": f"{_SCOPED}shared-destructive-path-suite-safety.md",
+    "when": (
+        "the task runs a Glass Atrium suite file that executes "
+        "clear_unmanaged_pg_orphan or preflight_pg_utc_guard, "
+        "a whole-tree run included"
+    ),
+}
 SCOPE_CONDITIONAL_RULES: dict[str, tuple[dict[str, str], ...]] = {
-    "DEV": (_HYGIENE_CONDITION, _HOOK_AUTHORING_CONDITION),
+    "DEV": (_HYGIENE_CONDITION, _HOOK_AUTHORING_CONDITION, _LIVE_PG_SUITE_CONDITION),
     "QA": (_HOOK_REVIEW_CONDITION,),
 }
 
@@ -143,7 +152,9 @@ SCOPE_CONDITIONAL_RULES: dict[str, tuple[dict[str, str], ...]] = {
 # shared-code-structure.md, shared-naming.md and shared-testing.md also bind
 # glass-atrium-qa-code-reviewer alone within QA — likewise hand-added per agent,
 # but already in this set through the DEV defaults, so they need no entry of
-# their own.
+# their own. The same holds for the reviewer's hand-added
+# shared-destructive-path-suite-safety.md conditional entry: a QA default would
+# also reach glass-atrium-qa-debugger, which runs no suite.
 RULE_FILES: frozenset[str] = frozenset(
     set(SCOPE_RULE_FILES.values())
     | {f for files in SCOPE_SHARED_RULE_FILES.values() for f in files}
@@ -155,7 +166,7 @@ RULE_FILES: frozenset[str] = frozenset(
 def get_rules_for_scope(scope: str) -> dict[str, Any]:  # Any: str | list values
     """Return the scope-level `rules` defaults for a newly ADDed agent.
 
-    Defaults, not a derivation of truth: three documented per-AGENT divergences
+    Defaults, not a derivation of truth: the documented per-AGENT divergences
     cannot be read off a scope label — the UI-emitting DEV subset that also takes
     shared-design-token-consumption.md, glass-atrium-meta-prompt-engineer taking
     the 5 original cross-cutting DEV Tier-3 files its META sibling does not, and
@@ -163,7 +174,9 @@ def get_rules_for_scope(scope: str) -> dict[str, Any]:  # Any: str | list values
     shared-naming.md and shared-testing.md that its QA sibling does not. Each is
     corrected by appending the missing file with add_shared_rule_file —
     additively, since every divergence ADDS to the scope defaults rather than
-    contradicting them. The write surface is ADD / remove / additive domains
+    contradicting them. The reviewer's shared-destructive-path-suite-safety.md
+    conditional entry is the one divergence with no helper: it is a hand edit of
+    the row's `rules.conditional` list. The write surface is ADD / remove / additive domains
     append / additive rules.shared append; no op rewrites an existing value.
 
     Raises RegistryMutationError on an unknown scope — a silent empty default
