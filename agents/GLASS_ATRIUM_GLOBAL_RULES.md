@@ -119,7 +119,7 @@ The canonical rule for what language this system writes in.
 
 - Unmeasured: whether a key alone raises a spawn above a lower parent tier — on a workflow spawn with no `agent()` option, or on a named `Agent` call.
 - **Task-class rule**: a **Task-class targets** line alone never justifies setting or changing a spawn's tier.
-  - A tier moves for a task-class reason only through a measured per-class decision, `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop` → **Retry effort escalation**, or a deliberate measurement arm listed in the run's record of its arms.
+  - A tier moves for a task-class reason only through a measured per-class decision, `rules/glass-atrium/orchestrator-role.md` → `#### Retry effort escalation`, or a deliberate measurement arm listed in the run's record of its arms.
 - **Task-class targets**:
   - Effort buys verification depth and edge-case coverage.
   - Verification and brownfield bug fixing target high or above.

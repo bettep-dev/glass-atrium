@@ -1,6 +1,6 @@
 # Automatic Parallelization (standing default — fan out WITHOUT waiting for a per-task user request)
 
-- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `### Spawn Budget` → `#### Automatic Parallelization`.
+- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `#### Automatic Parallelization`.
 - **Agent-binding half of guardrail (a)**: `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** — the SoT for the index-mutation class, the index-owner rule, the regeneration barrier, the entry precondition, the delegation-side contract, who commits and read-only.
 
 ## Fan-out obligation — notes
