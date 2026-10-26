@@ -15,7 +15,7 @@ Applies to all agents, alongside each agent's own security rules.
 
 - **All external input MUST be validated**: Zod (TS) · class-validator (NestJS) · Pydantic (Python)
   - Server Actions and API endpoints → input schema validation MUST precede processing
-- Executing a command, query, or dynamic code built from user input is **STRICTLY FORBIDDEN** (injection risk) — user input enters only as bound data
+- Executing commands, queries, or dynamic code based on user input is **STRICTLY FORBIDDEN** (injection risk)
 - SQL raw queries → **parameterized binding is REQUIRED** · string concatenation is FORBIDDEN
 - User-supplied URLs → validate against an allowlist · prevent open redirects
   - Open-redirect check = parse the URL with the platform URL parser (`new URL()` / `urllib.parse`) and compare its **origin** to the allowlist
@@ -46,10 +46,10 @@ What the harness mechanically enforces around agent tool authorization, and wher
 - **Runtime critical-FILE layer (agent_id-INDEPENDENT) IS implemented**: `enforce-harness-critical.sh` (PreToolUse Write|Edit|MultiEdit + Bash) blocks writes to harness-critical live surfaces for every caller, main session and subagents alike.
   - It needs no caller identification: a per-file protection floor, not a per-agent tool-grant check.
   - Protected surfaces:
-    - live `settings.json`/`settings.local.json` and live hook dirs of `~/.claude/` and of every `~/.claude-*` profile branch — a branch's settings file carries that profile's own hook wiring
+    - live `settings.json`/`settings.local.json` and live hook dirs of `~/.claude/` AND of every `~/.claude-*` profile branch — a branch's settings file carries that profile's own hook wiring
     - live `hooks/`, `autoagent/`, `scripts/` and `skills/` under `~/.glass-atrium/` (live `rules/` and `scoped/` are not protected)
     - `agents/*.md` frontmatter identity keys {name, tools, scope} (`model:` excluded)
-    - new `agents/*.md` creation
+    - NEW `agents/*.md` creation
     - the live canary directory (`<data root>/data/learning/canary/`) — the per-agent trial text `hooks/inject-scope-rules.sh` delivers at spawn
 
 ## LLM-Specific Security

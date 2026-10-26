@@ -49,12 +49,15 @@ The rule file states only that the layer is not implemented. The rationale and t
   - The not-implemented lead lost its "and not because the caller is unidentifiable" tail with the sidecar sub-bullets moved here; it now ends by naming the absent layer — no hook adds a per-agent tool-grant check on top of the spawn-time freeze.
   - The critical-FILE layer now matches `hooks/enforce-harness-critical.sh` → its header list: the matcher names MultiEdit, and the live `~/.glass-atrium/` hooks and scheduled-execution dirs were added to the protected surfaces.
 - `## OWASP LLM Top 10 (2025) Reference` was dropped. Its one line was a navigation note that obliged no reader, and no site cited the heading. All ten `[LLMxx:2025]` tags stay inline at their rules.
-- Input Validation: the command/query/dynamic-code ban now reads "built from user input … enters only as bound data". The old "based on user input" wording read as banning every query that carries user input, which conflicts with the parameterized-binding bullet.
+- Input Validation: the command/query/dynamic-code ban keeps its exact base wording — it is a security absolute.
+  - Rewording it needs an owner ruling written into the plan and a security review of the new wording covering argv/option injection.
+  - Flag, unresolved (의미 상충): read literally, "based on user input" bans every query that carries user input, which conflicts with `SQL raw queries → parameterized binding is REQUIRED`.
 - Shape caps:
   - **Prompt Injection Refusal**, **Runtime critical-FILE layer** and the OWASP Top 10 bullet each went over 300 chars and were split at clause boundaries.
   - Two rebuttal cells went over 120 chars and were compressed; the in-file "(Agent Tool Authorization)" pointer was dropped from one of them.
   - The rate-limit sentence became a sub-bullet of **Unbounded consumption** (one line, one rule).
-- Caps: emphasis capitals outside bolded leads were lowercased (freezes, live, every, and, new, per-file, not). Constraint modals (MUST, REQUIRED, FORBIDDEN, STRICTLY FORBIDDEN) were kept.
+- Caps: emphasis capitals outside bolded leads were lowercased (freezes, live, every, per-file, not). Constraint modals (MUST, REQUIRED, FORBIDDEN, STRICTLY FORBIDDEN) were kept.
+  - The existing protected-surfaces sub-bullets keep their base capitals (`AND`, `NEW`): harness-path text is a fragile operation, so its wording stays.
 - `## Secret Management` is unchanged: secrets is a fragile operation, so its wording stays.
   - Recorded pair: its read ban, handoff ban and masking line overlap `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Absolute Rules [ALL]`.
   - Classed canonical + mirror: this file is the security canonical that overrides the other ALL rules, and the charter copy sits in the frozen `agents/` tree.
