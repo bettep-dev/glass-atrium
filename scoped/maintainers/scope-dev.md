@@ -130,7 +130,7 @@ The rule file states what the gate obliges a DEV agent; the classification below
 Pair note — the QA-side and orchestrator-side sites of this gate:
 
 - `scoped/scope-qa.md` → `## Sprint Contract Gate [DEV+QA]` is a pointer and restates none of the definition below.
-- `rules/glass-atrium/orchestrator-role.md` holds the one condensed copy: the Decision row of `## Delegation Workflow` lists the sizable criteria inline, and `#### Entry classification (DEV delegations)` names that row as the copy.
+- `rules/glass-atrium/orchestrator-role.md` holds the one condensed copy: the Decision `SIZABLE =` action row of `## Delegation Workflow` lists the sizable criteria inline, and `#### Entry classification (DEV delegations)` names those Decision actions as the copy.
 - How both reach the definition below: `## Open item`.
 
 ### Sizable-task definition (single SoT — the positive entry floor)

@@ -102,7 +102,7 @@ Before emitting a delegation, self-check:
 - Does the `reason` field cite specific `domains` entries or description passages?
 - Is confidence ≥ 0.7? If not → clarification fallback (the third layer).
 - Does the candidate agent declare a `compatibility` field?
-  - **Yes** → does its runtime precondition hold for this sub-task? If not → halt delegation per `orchestrator-role.md` → `### Phase Notes` → Compatibility Probe.
+  - **Yes** → does its runtime precondition hold for this sub-task? If not → halt delegation per `orchestrator-role.md` → `#### Decision-phase probes` → Compatibility Probe.
   - **No `compatibility` field** → the agent passes through (backwards-compatible default).
 
 #### Team Size
@@ -247,7 +247,7 @@ Rules:
 
 #### Forward-Relay Discipline [ORCHESTRATOR]
 
-- Final-consumable deliverable BODIES relay to the user VERBATIM; the `[COMPLETION]` record block stays machine-facing. Full rule: `orchestrator-role.md` → `### Phase Notes` → Verbatim forward-relay.
+- Final-consumable deliverable BODIES relay to the user VERBATIM; the `[COMPLETION]` record block stays machine-facing. Full rule: `orchestrator-role.md` → `#### Monitoring-phase notes` → Verbatim forward-relay.
 
 ### Prompt Injection Gate [LLM01:2025]
 
@@ -550,7 +550,7 @@ Binds any delegation that copies files INTO a live install: reach the destinatio
 
 A Wave is one parallel fan-out batch of sub-tasks.
 
-- **Automatic Parallelization (standing default)**: when and how to fan out — guardrails, worktree isolation for concurrent DEV tracks, `[SIZE-EST]` sizing, the over-fragmentation caveat — is stated as obligations at `orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization.
+- **Automatic Parallelization (standing default)**: when and how to fan out — guardrails, worktree isolation for concurrent DEV tracks, `[SIZE-EST]` sizing, the over-fragmentation caveat — is stated as obligations at `orchestrator-role.md` → `#### Automatic Parallelization`.
   - Isolation detail: the isolation paths and the "at a time" check — `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`; the agent-binding worktree rules — `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**.
   - Skeleton `parallel()` blocks carry the per-track `// [OWNERSHIP]` attestation line that `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → `## Guardrail (a) — orchestrator-side rules` defines.
   - Research/analysis fan-out is the routine case: independent domains investigate separately, then results aggregate.
@@ -1072,7 +1072,7 @@ What a proxy costs, the sanctioned alternative, and the backing:
 
 ### Reply Form Contract (main-session user-facing replies)
 
-Governs the FORM of the orchestrator's user-facing reply — the prose that replaces the raw `[COMPLETION]` block under the `orchestrator-role.md` → `## Delegation Workflow` Monitoring row.
+Governs the FORM of the orchestrator's user-facing reply — the prose that replaces the raw `[COMPLETION]` block under the `orchestrator-role.md` → `## Delegation Workflow` Forbidden table's Monitoring row "Printing the raw `[COMPLETION]` block".
 
 - **Scope**: main-session replies only; subagent finals travel the machine-facing recorded channel.
 - **Single site**: this section is canonical; `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition holds one pointer.
@@ -1141,7 +1141,7 @@ Items 1-4 are the co-equal requirements consolidated at this file → "DEV-spawn
 - The **`implementing` write** and **close token** items stand outside that checklist: no gate blocks on either, and each is backed by an advisory only.
 
 1. **entry-classify** — sizable → plan-ref · simple → `log('[ENTRY-CLASS] simple-task: <reason>')` / `meta.description`; the token clears ONLY the entry gate.
-   - Sizable criteria: `orchestrator-role.md` → `## Delegation Workflow` Decision row · snippet: this file → "Entry-class token placement".
+   - Sizable criteria: `orchestrator-role.md` → `## Delegation Workflow` Decision `SIZABLE =` row · snippet: this file → "Entry-class token placement".
 2. **`[SIZE-EST]` self-attestation** — at every DEV spawn, in the same `log()` / `meta.description` home as the entry token.
    - Format and honesty framing: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 3. **DEV spawn** → {glass-atrium-qa-code-reviewer, dev-*} verify-stage BEFORE the first dev-* (skeleton: this file → `#### Pipeline Acceptance Criteria` · self-check: this file → `## Red Flags`).
@@ -1542,4 +1542,4 @@ A spawn without an `agentType` matching the routing decision starts a generic su
 - [ ] **Pipeline acceptance**: each stage transition has documented acceptance-criteria verification
 - [ ] **Outcome Record**: every completed task has an Outcome Record with the minimum fields (agent, task_type, result)
 - [ ] **Domain-keyword hints (optional, not routing keys)**: where a delegation pairs keywords, they come from the target agent's registry `domains`; routing stays capability-based
-- [ ] **Compatibility precondition**: a candidate declaring a `compatibility` field had its runtime precondition confirmed pre-spawn — halt and remediate when unmet (`orchestrator-role.md` → `### Phase Notes` → Compatibility Probe)
+- [ ] **Compatibility precondition**: a candidate declaring a `compatibility` field had its runtime precondition confirmed pre-spawn — halt and remediate when unmet (`orchestrator-role.md` → `#### Decision-phase probes` → Compatibility Probe)
