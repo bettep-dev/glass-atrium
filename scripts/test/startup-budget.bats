@@ -147,6 +147,7 @@ make_tree() {
   printf -- '---\npaths:\n  - "**/x"\n---\nbody\n' >"${root}/rules/glass-atrium/scoped-on-demand.md"
   printf -- '---\ndescription: d\n---\nb\n' >"${root}/rules/glass-atrium/fm-no-paths.md"
   printf 'b\n---\npaths:\n---\n' >"${root}/rules/glass-atrium/paths-in-body.md"
+  printf -- '---\ndescription: d\n---\nb\npaths:\n' >"${root}/rules/glass-atrium/paths-after-frontmatter.md"
 
   run startup_counts "${root}"
   [[ "${status}" -eq 0 ]] || {
@@ -165,7 +166,11 @@ make_tree() {
     echo "${output}"
     return 1
   }
-  [[ "${lines[${#lines[@]} - 1]}" == $'total\t45' ]] || {
+  [[ "${output}" == *$'32\trules/glass-atrium/paths-after-frontmatter.md'* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${lines[${#lines[@]} - 1]}" == $'total\t77' ]] || {
     echo "${output}"
     return 1
   }
@@ -188,21 +193,27 @@ make_tree() {
   }
 }
 
-@test "the budget passes at the threshold and fails one unit over with per-file counts" {
+@test "the budget passes at exactly the threshold" {
   local root
   root="$(make_tree)"
   printf '%*s' "${STARTUP_BUDGET}" '' >"${root}/agents/GLASS_ATRIUM_GLOBAL_RULES.md"
 
   run check_startup_budget "${root}"
   [[ "${status}" -eq 0 ]] || {
-    echo "at the threshold: ${output}"
+    echo "${output}"
     return 1
   }
+}
 
+@test "the budget fails one unit over and lists the per-file counts" {
+  local root
+  root="$(make_tree)"
+  printf '%*s' "${STARTUP_BUDGET}" '' >"${root}/agents/GLASS_ATRIUM_GLOBAL_RULES.md"
   printf 'x' >"${root}/rules/glass-atrium/core-a.md"
+
   run check_startup_budget "${root}"
   [[ "${status}" -eq 1 ]] || {
-    echo "one over: ${output}"
+    echo "${output}"
     return 1
   }
   [[ "${output}" == *$'145000\tagents/GLASS_ATRIUM_GLOBAL_RULES.md'* ]] || {
