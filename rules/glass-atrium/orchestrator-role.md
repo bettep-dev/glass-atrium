@@ -426,14 +426,13 @@ On `result: fail` or `result: blocked`:
 
 - **Debugger evidence gate**: reject a glass-atrium-qa-debugger diagnosis that carries no logs, reproduction or code reference — never re-delegate a fix on it.
 - **Backing honesty (which stages are enforced)**: only the **Circuit-breaker** is code-backed (`hooks/track-outcome.sh` → `circuit_breaker_record`); detail: `skills/glass-atrium-ops-delegation-contracts/references/failure-recovery.md`.
-  - The first three stages, `#### Retry effort escalation` included, and the **Debugger evidence gate** are honor-system.
+  - The first three stages, the **Retry effort escalation** included, and the **Debugger evidence gate** are honor-system.
 - **Checkpoint resumption**: on partial completion before a fail, resume from the last successful phase recorded in the task's `progress-{task-name}.md`.
   - A full restart is FORBIDDEN without the user's explicit confirmation.
 
-#### Retry effort escalation
+**Retry effort escalation**: a Retry after `result: fail` runs one `effort` tier above the failed attempt, topping out at `xhigh` and never below the failed attempt's tier (a fail at `xhigh` or `max` retries at that tier).
 
-- A Retry after `result: fail` runs one `effort` tier above the failed attempt, topping out at `xhigh` and never below the failed attempt's tier (a fail at `xhigh` or `max` retries at that tier).
-  - Why: the failure has surfaced the hidden edge cases extra effort helps most on.
+- Why: the failure has surfaced the hidden edge cases extra effort helps most on.
 - Workflow path only: raise the tier through the `agent()` tier option.
   - Lead the escalated spawn's label with a `retry` segment: `retry:<label of the failed attempt>`.
     - Why: no outcome field marks a retry, so a tier comparison finds and excludes escalated spawns by this label.

@@ -60,7 +60,7 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
   - `## Orchestrator Identity` · `## Delegation Criteria` · `## Delegation Workflow` · `## Document-Driven Workflow` · `## Harness Path Protection` (with its `Rule 2`, `### Write routes`, `### Staged lane`, `### Progress-file exclusion`, `### Reach of the gate`).
   - `### Phase Notes`, with `#### Entry classification (DEV delegations)` · `#### Plan edge discovery`.
   - `#### Decision-phase probes` · `#### Deliverable exposure and designer composition` · `#### Monitoring-phase notes` · `#### Scan boundary and provenance`.
-  - `### Plan Direction Verification (Stage-2 gate)` · `### Spawn Budget` (with Delegation-size discipline) · `#### Automatic Parallelization` (with guardrail `(a)`) · `### Context Handoff Size` · the Cost-Tier Selection heading · `### Failure Recovery Loop` (with `#### Retry effort escalation`).
+  - `### Plan Direction Verification (Stage-2 gate)` · `### Spawn Budget` (with Delegation-size discipline) · `#### Automatic Parallelization` (with guardrail `(a)`) · `### Context Handoff Size` · the Cost-Tier Selection heading · `### Failure Recovery Loop`.
   - Pointer sites, the `block-*` verdict table's file included: `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Reference Index.
   - Cited by that skill's reference files: `#### Backstop asymmetry (manual vs. ultracode)` · `#### Depth and concurrency ceilings`.
 - **Bolded leads** cited by name:
@@ -71,7 +71,7 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
   - under `### Spawn Budget`: Split triggers · HARD SECONDARY · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`);
   - under `#### Analysis fan-out and team cardinality`: Effort-scaling by task shape;
   - under `### Context Handoff Size`: Attestation-token placement;
-  - under `### Failure Recovery Loop`: Backing honesty (which stages are enforced);
+  - under `### Failure Recovery Loop`: Backing honesty (which stages are enforced) · Retry effort escalation;
   - under `## Document-Driven Workflow` step 6: Prompt-file tail.
 - Neither list is exhaustive: grep the corpus for a heading or bolded lead before renaming it.
 
@@ -195,7 +195,9 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 ### `### Failure Recovery Loop`
 
 - `**Debugger evidence gate**` has no other maintained copy — `scoped/shared-investigation-discipline.md` only points at it as the orchestrator half; its backing is stated in the rule file's Backing honesty bullet.
-- `#### Retry effort escalation` has no other maintained copy — `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Thinking Budget Policy [ALL]` → **Task-class rule** cites it by name as one tier mover, and `references/failure-recovery.md` carries no Retry or tier text.
+- The bolded lead **Retry effort escalation** under `### Failure Recovery Loop` has no other maintained copy.
+  - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Thinking Budget Policy [ALL]` → **Task-class rule** cites it by name as one tier mover.
+  - `references/failure-recovery.md` carries no Retry or tier text.
 - **Backing honesty (which stages are enforced)** is a pointer to `skills/glass-atrium-ops-delegation-contracts/references/failure-recovery.md`; the split between them: that skill's `SKILL.md` → Reference Index.
   - The evidence-gate citer above resolves through that pointer: it keeps the lead and names the **Debugger evidence gate** as honor-system.
 - The rule file carries no pointer to `skills/glass-atrium-ops-orchestrator.md` → `### Self-Improvement User-Approval Trigger`.
