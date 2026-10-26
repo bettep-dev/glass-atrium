@@ -41,7 +41,8 @@ Its operative content, restated once here so the decision is auditable: every de
 
 ## Decisions worth keeping
 
-- **Naming subordination**: the `Match existing style` bullet under Work Rules points at `scoped/scope-dev.md` → Project Convention Probe, which carries the mirrored axes and subordinates identifier naming to the naming canon.
+- **Naming subordination**: the `Match existing style` bullet under Work Rules points at `scoped/scope-dev.md` → Project Convention Probe.
+  - The probe points at `scoped/shared-search-first.md` → **Step 3 — Mirror** for the mirrored code-form axes; identifier form follows `scoped/shared-naming.md`.
   - The bullet keeps only the shell naming delta: the `snake_case` function casing stated in the Functions bullet.
   - It sits INSIDE an editable region, so a live install with local edits resolves that region through a merge.
 - The index-mutation class, both worktree contracts and the regeneration barrier are defined in Tier-1 `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**, which reaches this agent on the host channel. Do not copy them into the body.

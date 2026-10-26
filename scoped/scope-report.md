@@ -2,25 +2,27 @@
 
 Canonical rule text for the REPORT scope (glass-atrium-intel-reporter). A section that names `agents/glass-atrium-intel-reporter.md` as canonical states the rule's shape here and leaves its detail in that body.
 
-Maintainer material — co-edit rosters, drift reports, the machine-read byte contract and the server-400 gate list — is in `scoped/maintainers/scope-report.md`.
-
 ## Absolute Rules [REPORT]
 
 - **Citation format**: cite every external source as `URL + collected_at(YYYY-MM-DD)`; label a date-unknown source `[Date Unknown]` and never treat it as current.
 
 ## Output Format Routing [REPORT]
 
-Format follows two request signals — did the user request a document, and did the user explicitly ask for a shareable HTML artifact. There is no document category or prefix. The wiki store is a permanent exception (`scoped/scope-wiki.md`).
+- Format follows two request signals — did the user request a document, and did the user explicitly ask for a shareable HTML artifact.
+- The wiki store is an exception (`scoped/scope-wiki.md`).
 
 ### Three emission modes
 
-Agent-only record (default fallback) · user-requested HTML · user-requested non-HTML. The trigger/format/storage triple and the evaluation order are canonical at `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing`; declaring the mode before body composition is `### Turn-0 Format Guard` in the same body.
+- Agent-only record (default fallback) · user-requested HTML · user-requested non-HTML.
+- Each mode's trigger, format and storage, and the evaluation order: `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing`.
+- Declare the mode before composing the body (`agents/glass-atrium-intel-reporter.md` → `### Turn-0 Format Guard`).
 
 ### HTML request test
 
 - HTML primary is produced only on an explicit format request (HTML / web / PDF form) or an explicit share intent.
-- Not triggers: visual richness, or an LLM's own "this looks visual" judgment. A bare document request routes to non-HTML md.
-- The signal literals — Korean included, where translating one disables the detector — are canonical at `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`.
+- Not triggers: visual richness, or an LLM's own "this looks visual" judgment.
+- A bare document request routes to non-HTML md.
+- The signal literals, Korean included (translating one disables the detector), are canonical at `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`.
 
 ### Visual-Maximization Floor
 
@@ -43,11 +45,11 @@ The dark canvas, light text, the dual-encoded semantic badge palette and the pri
 ### Threshold SoT
 
 - The D8 numeric thresholds live in `monitor/src/server/clauded-docs/d8-thresholds.json`, which the HTML validator `JSON.parse`-loads at module init.
-- Every prose number in the corpus is a mirror of that JSON: editing a prose number without editing the JSON is forbidden.
+- Every prose number in the corpus is a mirror of that JSON: where the two differ, apply the JSON.
 
 ### Emission contract
 
-- Every emission mode POSTs to `POST /api/clauded-docs` (`127.0.0.1:16145`). "Agent-only record" names the body format, never a filesystem target.
+- Every emission mode POSTs to `POST /api/clauded-docs`; "Agent-only record" names the body format, never a filesystem target.
 - **Required tuple** (route source: `monitor/src/server/routes/clauded-docs.ts`): `title` (non-empty, ≤500) + `author` (non-empty, ≤64) + exactly one of `{html_body, md_body, yaml_body, json_body, txt_body}`.
   - There is no `prefix` field: the supplied body field is the format discriminator.
   - Optional: `audience`, `supersedes_id`, `folder_id`, `doc_status` (a stage — `### Document Lifecycle — completion + exposure routing`), `last_status_model` (the running model id, stored as the status actor).
@@ -56,11 +58,9 @@ The dark canvas, light text, the dual-encoded semantic badge palette and the pri
 - `memory/` is never a deliverable store — it holds session-internal `progress-*.md` state only, so writing any deliverable there is a hard violation.
 - Delegation phrasing does not override this routing.
 - **The one sanctioned carve-out is the delegation-side stamp** `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')`, attesting that the user explicitly asked for that local destination.
-  - Canonical stamped form: `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria`.
-  - Stamping without an actual user request is a violation.
-  - Absent the stamp, the author bodies' turn-0 refusal of an orchestrator-supplied local target stands unchanged.
+  - Absent the stamp, the author bodies' turn-0 refusal of an orchestrator-supplied local target stands.
 - On a user-requested HTML generation failure, halt for scope clarification — an automatic non-HTML fallback is forbidden.
-- **Sensitivity self-check before the POST of an exposed HTML primary** — one triggered by either HTML request test signal, an explicit format request included.
+- **Sensitivity self-check before the POST of an exposed HTML primary** — exposed by either HTML request test signal, including an explicit format request without share intent.
   - Record one line before POSTing: `sensitivity_scan: clear` or `sensitivity_scan: N items (category §locator, …)`.
   - Any finding blocks the POST until the user confirms; zero findings is a silent pass, and a generic "may contain sensitive data" caveat is forbidden.
   - The report is count + category + locator only — never the flagged text, in the narrative, the `[COMPLETION]`, `concerns` or any log, so the scanner cannot become the leak path.
@@ -70,7 +70,12 @@ The dark canvas, light text, the dual-encoded semantic badge palette and the pri
 
 - **Stages**: `doc_status` is one of `doc_review` · `implementing` · `impl_review` · `impl_done` · `done` (`monitor/src/server/routes/clauded-docs.ts` → `DOC_STAGES`); a POST without it stores `doc_review`.
 - **Author writes**: `doc_review` · `done` on a document you close · a supersede-POST's inherited stage (below). Other stages are orchestrator writes.
-- **Who closes** — keyed on whether a DEV spawn cites the document as its plan-ref:
+- **Exposure routing**: viewer-exposed only on a `### HTML request test` signal, default-hidden otherwise.
+  - An agent-only record follows every rule in this section — exposure is a routing choice, not a lifecycle exemption.
+
+#### Who closes
+
+Keyed on whether a DEV spawn cites the document as its plan-ref:
 
 | Document | Closer |
 |---|---|
@@ -82,44 +87,46 @@ The dark canvas, light text, the dual-encoded semantic badge palette and the pri
 - **Done transition**: `PUT /api/clauded-docs/:id` re-sending the unchanged body in its stored format's field (`<format>_body`), plus `expected_hash`, `doc_status: "done"` and `last_status_model`.
   - A bare `{"doc_status":"done"}` → `400 invalid_body`.
   - A wrong body field: HTML↔plain converts the document's format, plain↔plain is rejected `400`.
-  - An omitted `last_status_model` stores a null status actor.
-  - A `done` PUT on a folder member closes every member of that folder, whatever its stage. Close a folder member only when every other member is already `done`; otherwise the orchestrator closes it.
-- **Supersede vs new**:
+  - A `done` PUT on a folder member closes every member of that folder, whatever its stage.
+    - So close a folder member only when every other member is already `done`; otherwise the orchestrator closes it.
+
+#### Supersede vs new
 
 | New content | Path |
 |---|---|
-| same topic as a `done` document | supersede-POST carrying `supersedes_id` — the monitor closes the predecessor |
-| same topic as a document at `implementing` · `impl_review` · `impl_done` | supersede-POST at the predecessor's stage (**Every supersede-POST**) |
+| same topic as a `done` document | supersede-POST carrying `supersedes_id` |
+| same topic as a document at `implementing` · `impl_review` · `impl_done` | supersede-POST carrying the predecessor's `doc_status` (GET it first), so the revision stays open |
 | unrelated topic | new POST |
 | relatedness uncertain | new POST — never reopen a `done` document |
 
 - **Every supersede-POST** sends `last_status_model`: the monitor closes the predecessor under that actor.
-  - Predecessor at `implementing`, `impl_review` or `impl_done` (GET it) → POST the revision with that `doc_status`, keeping the revision open.
-- **Stage-2 revise cycle (carve-out)**: a plan returned `revise` or `infeasible` persists as a supersede-POST even though the predecessor is still open, so the reviewed revision becomes an immutable chain root the revising actor cannot rewrite. An instruction to PUT-edit such a document is refused.
+- **Stage-2 revise cycle (carve-out)**: a plan returned `revise` or `infeasible` persists as a supersede-POST even though the predecessor is still open.
+  - Why: the reviewed revision becomes an immutable chain root the revising actor cannot rewrite.
+  - Refuse an instruction to PUT-edit such a document.
 - **Chain-root content**: the first version carries the original user instruction verbatim plus the instruction-named file set.
-  - An empty named set falls back to the instruction's named subject set; the file-count leg is then skipped, not measured against a zero baseline.
-- **Exposure routing**: viewer-exposed only on a `### HTML request test` signal, viewer default-hidden otherwise. An agent-only record follows every rule above — exposure is a routing choice, not a lifecycle exemption.
+  - An empty named set falls back to the instruction's named subject set.
 
 ## Diagram Standard [REPORT]
 
 - Every diagram in a user-requested HTML primary is Mermaid, authored as a `<pre class="mermaid">` block; a triple-backtick fence renders only inside an MD agent-only record.
-- A block requires the external UMD runtime `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>`: the monitor sanitizer strips every inline `<script>`, so an inline `mermaid.initialize()` init ships the diagram as raw literal text standalone. No block → no runtime.
+- A block requires the external UMD runtime `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>`; no block → no runtime.
+  - Why: the monitor sanitizer strips every inline `<script>`, so an inline `mermaid.initialize()` init ships the diagram as raw literal text standalone.
 - That tag is the only permitted non-Tailwind `<script>` in an exposed HTML primary.
 - **FORBIDDEN as the diagram primitive**: ad-hoc graph notation in prose · hand-drawn inline SVG · third-party chart libraries (Chart.js · D3 · Plotly · ECharts) · ASCII art in a `<pre>` block · `<iframe>` embeds.
-- **Permitted types** = the adopted set in `monitor/src/server/clauded-docs/diagram-types.json`, enumerated at the Type step below; renderable by Mermaid is not the same as adopted.
-- Drawing an excluded type is a doctrine violation, not a server rejection: the validator's diagram scan is report-only and attaches an exclusion notice to a document that still passes.
+- **Permitted types** = the adopted set at the Type step below; renderable by Mermaid is not the same as adopted.
+- Drawing an excluded type is a doctrine violation, not a server rejection: the validator's diagram scan is report-only — it puts an exclusion notice in the write response, and the document still passes.
 - **Agent-only branch**: prefer a bullet, table or ASCII tree; a Mermaid block there uses the fence, and a diagram whose purpose is visual fidelity belongs in a requested HTML artifact.
 
 ## Pre-drawing Doctrine [REPORT]
 
 <!-- Machine-read section. scripts/test/doctrine-budget-parity.bats parses this section's own cap line, band line and preset class names. Byte contract: scoped/maintainers/scope-report.md -->
 
-Apply the order below to EVERY Mermaid block in a user-requested HTML primary, not only the first; an agent-only record stays on the Diagram Standard agent-only branch. Each step builds on the previous.
+Apply the order below to every Mermaid block in a user-requested HTML primary, not only the first; an agent-only record stays on the Diagram Standard agent-only branch. Each step builds on the previous.
 
 1. **Type** — SoT: `monitor/src/server/clauded-docs/diagram-types.json`.
    - Adopted (draw): `flowchart` · `sequenceDiagram` · `stateDiagram-v2` · `erDiagram` · `classDiagram` · `gitGraph` · C4 (`C4Context` / `C4Container` / `C4Component`).
    - Excluded (do not draw — presentation shapes, not development judgment): `quadrantChart` · `radar` · `pie` · `timeline` · `journey` · `mindmap` · `sankey` · `xychart` · `gantt` · `block`; express that content as a table or prose.
-2. **Direction** — hold ONE primary flow per diagram; a single held direction is what makes rank alignment readable.
+2. **Direction** — hold one primary flow per diagram; a single held direction is what makes rank alignment readable.
    - `TD` is the default.
    - `LR` only after re-measuring the rendered width against the preset container (Preset step).
    - `RL` / `BT` are forbidden (`diagram-types.json` `flowDirection.forbidden`).
@@ -132,7 +139,6 @@ Apply the order below to EVERY Mermaid block in a user-requested HTML primary, n
    - `doc-diagram-body` — default, column width.
    - `doc-diagram-wide` — ranks ≥ 4 along the primary flow OR a label overflows the column width.
    - `doc-diagram-full` — zones (subgraphs) ≥ 3.
-   - Those width rules are the same selectors carried by `monitor/public/src/screens/clauded-docs.jsx` (viewer) and `monitor/src/server/clauded-docs/html-export.ts` (export).
 5. **Semantic-role `classDef`** — the closed role-class set, nothing outside it: `focal` · `external` · `store` · `optional` · `security`.
    - `focal` is the accent: assigned to ≤ 2 nodes.
    - Values are hex only, derived from the `monitor/public/styles/tokens.css` dark block — a parenthesized value such as `rgb(` matches the node-census opener and inflates the node count.
@@ -144,7 +150,12 @@ Apply the order below to EVERY Mermaid block in a user-requested HTML primary, n
 
 ## Designer Co-Emission Trigger [REPORT]
 
-Gated on "is this a user-requested HTML primary?" — an agent-only record never triggers it. At 2+ co-occurring indicators the deliverable routes to the `{glass-atrium-intel-reporter, glass-atrium-design-designer}` Pre-draft consultation mode; at 1 or fewer, glass-atrium-intel-reporter solo.
+Gated on "is this a user-requested HTML primary?" — an agent-only record never triggers it.
+
+| Co-occurring indicators | Composition |
+|---|---|
+| 2+ | `{glass-atrium-intel-reporter, glass-atrium-design-designer}` Pre-draft consultation mode |
+| 1 or fewer | glass-atrium-intel-reporter solo |
 
 | Code | Indicator | Threshold |
 |------|-----------|-----------|
@@ -154,11 +165,12 @@ Gated on "is this a user-requested HTML primary?" — an agent-only record never
 | T4 | non-canonical status badges | palette expansion beyond the canonical 4-badge (✓/⚠/✕/ℹ) needed |
 | T5 | user states design quality matters OR declares explicit external-share intent | 1+ |
 
-- **Pre-draft consultation order**: the author self-assesses T1-T5 at the turn-0 outline stage → 1-2 turns of advance consultation from glass-atrium-design-designer → verdict received → author composes the HTML solo → one POST. Full parallel co-emission and a post-draft edit pass are both rejected: the POST contract is atomic (1 doc = 1 emission).
+- **Pre-draft consultation order**: the author self-assesses T1-T5 at the turn-0 outline stage → 1-2 turns of advance consultation from glass-atrium-design-designer → verdict received → author composes the HTML solo → one POST.
+  - Never a full parallel co-emission or a post-draft edit pass: the POST contract is atomic (1 doc = 1 emission).
 - **Designer contribution scope**: Mermaid type mapping and section composition are primary; non-canonical badge palette expansion (T4) and table-splitting axis selection are conditional; typography levels and the canonical 4-badge palette are mechanical and excluded.
 - **glass-atrium-dev-front is never probe-composed**: an exposed HTML primary is self-contained Tailwind CDN, not a design-token-consumption surface.
-- **Markup exception (narrow)**: markup genuinely beyond Tailwind-CDN utilities AND beyond the designer's verdict scope routes through the author's `needs_devfront_markup: true` signal and the orchestrator's Monitoring-phase judgment, at `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes`.
-- **Who counts against this table**: glass-atrium-intel-reporter, declaring the result per `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract`. The planner counts against its own body copy, the designer holds `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`, and the orchestrator counts at the Visual-Weight Probe.
+- **Markup exception (narrow)**: markup beyond both Tailwind-CDN utilities and the designer's verdict scope routes through the author's `needs_devfront_markup: true` signal to the orchestrator's Monitoring-phase judgment.
+- **Who counts against this table**: glass-atrium-intel-reporter, declaring the result per `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract`.
 
 ## Report Structure [REPORT]
 
@@ -173,6 +185,7 @@ An agent-only record is not required to carry any layer or the summary table: ad
 
 ## Self-Evaluation Obligation [REPORT]
 
-- After completing a report, self-assess on the G-Eval-style 4 dimensions — Coverage / Insight / Instruction-following / Clarity, each 1-5. Rubric canonical: `scoped/scope-qa.md` → `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]`.
+- After completing a report, self-assess on the G-Eval-style dimensions — Coverage / Insight / Instruction-following / Clarity, each 1-5.
+- Rubric canonical: `scoped/scope-qa.md` → `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]`.
 - Total < 12 → rework before delivery.
 - Record the scores at the report bottom — an HTML primary as a `<section id="self-evaluation">`, an agent-only record as a `## Self-Evaluation` section in whatever form parses most cheaply.

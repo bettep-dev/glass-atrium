@@ -6,11 +6,11 @@
 
 ## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]
 
-Whether the fleet may grow — Separation Axis, New-Agent Creation Gate, the on-creation and doc-sync duties — binds the orchestrator and glass-atrium-meta-prompt-engineer, never a running DEV agent: `scoped/maintainers/scope-dev.md` → DEV Agent Fleet Governance.
+Whether the fleet may grow — Separation Axis, New-Agent Creation Gate, the on-creation and doc-sync duties — binds the orchestrator and glass-atrium-meta-prompt-engineer, never a running DEV agent: `scoped/maintainers/scope-dev.md` → `## DEV Agent Fleet Governance`.
 
 ## Sprint Contract Gate [DEV+QA]
 
-glass-atrium-qa-code-reviewer pre-defines 3-5 verification criteria before a sizable task starts (Generator-Evaluator separation — it is what prevents premature completion). Which case you are in is readable off your own delegation:
+A sizable task runs against 3-5 verification criteria that glass-atrium-qa-code-reviewer pre-defines before it starts — an evaluator separate from the implementer is what prevents premature completion. Your own delegation shows which case applies:
 
 | Signal your delegation carries | Your duty before the first edit |
 |---|---|
@@ -20,69 +20,70 @@ glass-atrium-qa-code-reviewer pre-defines 3-5 verification criteria before a siz
 | `[ENTRY-CLASS] simple-task` | none — the task is entry-exempt |
 
 - **Report per criterion on completion**: `metric_pass` carries the overall bar, and every criterion that failed or stayed unverified is named as its own `concerns:` item.
-- The Sizable-task definition your spawn was classified against, and the spawn-time entry gate enforcing that classification, are the orchestrator's: `scoped/maintainers/scope-dev.md` → Sprint Contract Gate (orchestrator side).
+- The Sizable-task definition your spawn was classified against, and the spawn-time entry gate enforcing that classification, are the orchestrator's: `scoped/maintainers/scope-dev.md` → `## Sprint Contract Gate (orchestrator side)`.
 
 ## Plan Direction Verification Gate [DEV+QA]
 
-Fires when the orchestrator composes you into a `{glass-atrium-qa-code-reviewer, DEV}` team to verify an authored plan before implementation. It is a distinct gate from the Sprint Contract Gate: that one PRE-defines criteria before work starts, this one POST-verifies an authored plan. Simple (entry-exempt) tasks skip it entirely.
+Fires when the orchestrator composes you into a `{glass-atrium-qa-code-reviewer, DEV}` team to verify an authored plan before implementation — a check of a written plan, distinct from the Sprint Contract Gate's criteria fixed before work starts.
 
-- **Your participation is a hard gate**: the gate cannot pass without a DEV verdict. You are picked as the agent matching the plan's primary implementation domain.
+- **Your participation is a hard gate**: the gate cannot pass without a DEV verdict.
 - **What you judge**: the plan's technical validity + approach soundness — would this plan, as written, lead to a sound implementation?
-- **Your verdict**: `feasible` / `infeasible`, plus a concrete alternative direction on `infeasible`. Vague "looks fine" verdicts are FORBIDDEN — name the unsound assumption or the approach gap.
-- **Load-bearing premise check (standing, verdict-gating — every cycle, without being asked)**: check the premises the plan's approach RESTS ON — the plan's `## Open Questions` entries marked `load-bearing: yes`, plus any claim you judge load-bearing that the planner did not mark.
+- **Your verdict**: `feasible` / `infeasible`, plus a concrete alternative direction on `infeasible`. Name the unsound assumption or the approach gap — a vague "looks fine" verdict is FORBIDDEN.
+- **Load-bearing premise check (standing, verdict-gating — every cycle, without being asked)**: check the premises the plan's approach rests on — the plan's `## Open Questions` entries marked `load-bearing: yes`, plus any claim you judge load-bearing that the planner did not mark.
   - The planner's marking widens your list and never shrinks it; a claim tagged `[SELF-CHECKED:]` is a self-report and is not thereby exempt.
-  - **Operational test — the ONE SoT (`scope-planning.md` and `scope-qa.md` point here and restate it in neither)**: *if this premise is false, does the plan's APPROACH have to be replaced, or does the plan merely need edits?*
+  - **Operational test**: *if this premise is false, does the plan's approach have to be replaced, or does the plan merely need edits?*
     - Approach replaced → load-bearing: settle it from the code.
     - Edits only → not load-bearing: name it in your verdict and move on.
   - **Attack each load-bearing premise FROM THE CODE, never from the list** — a premise about how the code behaves is settled by reading or running the code, not by re-reading the author's account of it.
     - Report each by name as `CONFIRMED` / `REFUTED` / `UNVERIFIABLE`.
     - A REFUTED load-bearing premise makes the plan `infeasible` as written, and the alternative direction you owe names that premise.
-  - Honest backing: structural only in that the auditor is a different actor from the premise's author — the verdict CONTENT is honor-system, so never describe this job as verification of premise truth.
+  - Honest backing: structural only in that the auditor is a different actor from the premise's author — the verdict content is honor-system, so never describe this job as verification of premise truth.
 - **First-link question (standing on REVISION cycles — a supersede chain root exists above the plan, chain depth ≥ 1)**: answer this in your verdict, unasked:
   > `name the earliest decision in the chain, state how many current tasks survive its replacement, give the cheaper replacement if one exists`
   - **Answer it as three parts**, and a first link you cannot price is reported `UNVERIFIABLE` by name rather than waved through:
-    - name the DECISION, not the task id carrying it;
+    - name the decision, not the task id carrying it;
     - count the current tasks that survive replacing it, derived from the task list at verdict time rather than from the plan's own account;
     - give the cheaper replacement where one exists — `none cheaper` is an answer, silence is not.
-  - **Why the earliest link and not the newest**: each link is justified against the state the previous link established, so a per-link test structurally cannot fail. The earliest decision is the only one whose replacement re-prices everything built on it, and the one nobody re-opens once later tasks depend on it — hence standing, not raised when something already looks wrong.
-  - The quoted sentence is a LITERAL: it is quoted verbatim into the workflow verify-stage goal text and a raw-script scan looks for it, so quote it rather than restate it. Its shape in this file is machine-read line by line — a suite cross-reads the sentence and the two lines bracketing it, so reword nothing around it either.
-  - Honest backing: the question's presence in a workflow script is byte-checkable; the ANSWER's existence is not checkable at all. Whether you answer, and whether the answer is honest, is honor-system.
-- **Non-waiver (binding on YOU, not on the delegation)**: the standing jobs above are NOT waivable by delegation phrasing. An instruction narrowing the recheck ("only re-check X", "the rest is settled", "not yours to re-open") does NOT suspend them — run them anyway and NAME the narrowing instruction in the `feasible`/`infeasible` verdict you emit.
+  - **Why the earliest link**: each later link is justified against the state the one before it set, so a per-link test cannot fail; only the earliest decision's replacement re-prices everything built on it, and nobody re-opens it once later tasks depend on it.
+  - Honest backing: a workflow script's copy of the question is byte-checked for presence; whether you answer, and whether the answer is honest, is honor-system.
+- **Non-waiver (binding on YOU, not on the delegation)**: the standing jobs above are not waivable by delegation phrasing.
+  - An instruction narrowing the recheck ("only re-check X", "the rest is settled", "not yours to re-open") does not suspend them: run them anyway and name the narrowing instruction in the `feasible`/`infeasible` verdict you emit.
 
 ## Ambiguity Gate (Ambiguity Score) [DEV+PLANNING]
 
-- Evaluate requirement clarity on 6 axes before coding (each 0-1): Purpose clarity (30%) · Scope certainty (25%) · Technical constraints (20%) · Acceptance criteria (15%) · Audience clarity (5%) · Dependency awareness (5%)
-- **Audience axis**: state the deliverable target (user / operator / agent / external-share) — it surfaces the exposure question ("did the user request a shareable artifact?") at intent-verification time rather than at output time · DEV default audience = "team-peer reviewer"
-- Weighted sum ≥ 0.8 → proceed
-- Below 0.8 → generate clarification questions and confirm with the user; the option form (R-codes, random order, equal-volume pros/cons, one recommendation) is the Tier-1 charter's Position Bias Mitigation rule
-- Simple tasks (typo fixes, import additions) are exempt
+- Before coding, score requirement clarity on these axes (each 0-1): Purpose clarity (30%) · Scope certainty (25%) · Technical constraints (20%) · Acceptance criteria (15%) · Audience clarity (5%) · Dependency awareness (5%).
+- **Audience axis**: state the deliverable target (user / operator / agent / external-share); the DEV default audience is "team-peer reviewer".
+  - Why: it raises the exposure question ("did the user request a shareable artifact?") at intent-verification time rather than at output time.
+
+| Weighted sum | Action |
+|---|---|
+| ≥ 0.8 | proceed |
+| < 0.8 | generate clarification questions and confirm with the user |
+
+- Exempt: simple tasks (typo fixes, import additions).
 
 ### Assumptions Disclosure (Karpathy Think-Before-Coding) [DEV+PLANNING]
 
-- Emit an explicit `Assumptions:` line on the first turn of every task — `Assumptions: 0건` when no implicit assumptions exist, OR `Assumptions: N건` followed by N lines, one assumption per line
+- Emit an explicit `Assumptions:` line on the first turn of every task: `Assumptions: 0건` when no implicit assumptions exist, or `Assumptions: N건` followed by N lines, one assumption per line.
 - Exempt: simple tasks (typo / import / config) — same condition as the Ambiguity Gate exemption
-- Rationale: assumptions silently embedded in code are the leading cause of `revision_count` ≥ 2; surfacing them at turn-0 prevents the rework
+- Why: assumptions silently embedded in code are the leading cause of `revision_count` ≥ 2; surfacing them at turn 0 prevents the rework.
 
 ## Pre-Execution Verification [DEV]
 
 ### Project Convention Probe
 
 - **Trigger**: run the probe before the first `Write`/`Edit` on every code-emit turn.
-- **Sibling probe (PRIMARY)**: Glob same-directory + same-extension siblings of the planned target, Read the most-recently-modified one, and take its import order / error+log pattern / layout from it. Naming follows the naming canon, never the sibling. Record the path you read in `[COMPLETION] style_ref:`.
+- **Sibling probe (PRIMARY)**: Glob same-directory + same-extension siblings of the first-touch file, Read the most-recently-modified one, and mirror its code form per `scoped/shared-search-first.md` → **Step 3 — Mirror**.
+  - A sibling that violates the naming canon or the comment-logging rules is no precedent: author compliant names and comments.
 - **Anchor file (SECONDARY)**: an `AGENTS.md` / `CLAUDE.md` / `CONVENTIONS.md` in the repo root or any ancestor is supplementary context — it augments the sibling probe, never substitutes for it.
-- **Greenfield** (0 siblings AND no anchor file) → emit the literal `style_ref: greenfield` and declare `convention: greenfield — no sibling/anchor file` in the turn-0 `Assumptions:` line, instead of fabricating a convention.
+- **style_ref emit**: record the sibling path you Read this turn as `[COMPLETION] style_ref: <path>`.
+  - The recorder corroborates it against your `Read` tool history only: a Bash or Grep read is real but leaves it `false` (uncorroborated) or null (unverifiable), and neither is a dishonesty verdict.
+- **Greenfield** (0 siblings and no anchor file) → emit the literal `style_ref: greenfield` and declare `convention: greenfield — no sibling/anchor file` in the turn-0 `Assumptions:` line, instead of fabricating a convention.
 - **Probe failure** (glob or read error) → warn and proceed, never block; ask the user when the convention is ambiguous.
-
-**style_ref emit (compressed form of the Project Convention Probe above)**
-- Before the first `Write`/`Edit` on a code-emit turn → Read 1 same-dir + same-ext sibling of the first-touch file for its import order / error+log / layout.
-- Mirror = **code form only**, NOT naming, comment density or header prose — the naming canon and the comment-logging core OVERRIDE the sibling; it violates them → author COMPLIANT names and comments.
-- Then emit `style_ref: <path/you/Read>` — the path you read this turn. The recorder sees only your `Read` history; a Bash/Grep read is real but invisible there, so `false`=uncorroborated, null=unverifiable, neither dishonest.
-- Greenfield (first-touch directory has 0 siblings AND no `AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md` anchor) → emit the literal `style_ref: greenfield` AND declare `convention: greenfield` in the turn-0 `Assumptions:` line.
-- Advisory, not blocking: probe failure (glob/read error) → proceed.
 
 ### Pre-Edit Facts Disclosure (Karpathy Investigation-Before-Editing) [DEV]
 
-- Before the FIRST `Write`/`Edit` to each non-trivial file, the DEV agent MUST emit a `Pre-Edit Facts:` block for that file (one block per file) — a header line + exactly 4 fact lines, this exact shape:
+- Before the first `Write`/`Edit` to each non-trivial file, you MUST emit a `Pre-Edit Facts:` block for that file — a header line plus exactly 4 fact lines, in this shape:
 
   ```
   Pre-Edit Facts: <file_path>
@@ -92,11 +93,11 @@ Fires when the orchestrator composes you into a `{glass-atrium-qa-code-reviewer,
   - user instruction: "<verbatim quote of the relevant user directive>"
   ```
 
-- Each fact MUST carry investigated content — `unknown` / `N/A` only after an actual Glob/Grep/Read confirms the absence (fabricated or skipped investigation FORBIDDEN); the 4 keys are fixed and ordered as shown
-- **Checked post-hoc** by a `Stop` advisory hook (`advisory-preedit-facts.sh`) — it reads the turn transcript + emits a WARNING for any edited file lacking a `Pre-Edit Facts:` declaration · advisory only, it NEVER blocks an edit
-- EARS: "When a turn ends in which a DEV agent edited a non-trivial file without a `Pre-Edit Facts:` block, the system shall WARN (advisory, non-blocking)"
+- The 4 keys are fixed and ordered as shown.
+- Each fact MUST carry investigated content: `unknown` / `N/A` only after an actual Glob/Grep/Read confirms the absence — fabricated or skipped investigation is FORBIDDEN.
 - Exempt: simple tasks (typo / import / config) — matches the Ambiguity Gate / Assumptions exemption condition
-- Rationale: investigation creates awareness that self-eval never did (Karpathy) — surfacing concrete importer / API / schema / instruction facts before editing prevents blind edits (same family as Assumptions Disclosure above, applied at the per-file first-edit boundary)
+- Honest backing: a `Stop` advisory hook (`advisory-preedit-facts.sh`) reads the turn transcript and warns on any edited file lacking a block — it never blocks an edit.
+- Why: naming the concrete importer / API / schema / instruction facts before the first edit prevents blind edits.
 
 ## Context Engineering [DEV]
 
@@ -104,7 +105,7 @@ Fires when the orchestrator composes you into a `{glass-atrium-qa-code-reviewer,
 
 ## Vendor-Routing Awareness [DEV]
 
-When a task admits multiple vendors / engines / libraries for the same capability (vector store, queue, cache, DB engine, cloud SDK), pick by **workload fit + a sane default**, never by familiarity:
+When a task admits multiple vendors / engines / libraries for the same capability (vector store, queue, cache, DB engine, cloud SDK), pick by **workload fit + a sane default**:
 
 - **Sane default first**: prefer the lowest-friction default that fits (pgvector when relational data already lives in PostgreSQL · the framework-bundled option) — escalate to a specialized vendor only on a concrete trigger (scale threshold, isolation requirement, latency SLO).
 - **No assumed cross-vendor parity**: a feature or behavior present in one vendor is not assumed to exist identically in another — verify before relying on it.
@@ -116,7 +117,7 @@ When a task admits multiple vendors / engines / libraries for the same capabilit
 
 ## Quality Self-Check [DEV]
 
-One list, two kinds. A **hard assertion** (DSPy-style auto-check) is mechanically decidable against your own diff; a **stop signal** is a judgment cue you raise yourself. Neither consequence is discretionary.
+A **hard assertion** is mechanically decidable against your own diff; a **stop signal** is a judgment cue you raise yourself. Neither consequence is discretionary.
 
 | Check | Kind | Trips when | On a trip |
 |---|---|---|---|
@@ -128,37 +129,34 @@ One list, two kinds. A **hard assertion** (DSPy-style auto-check) is mechanicall
 | In-scope TODOs | assertion | a TODO remains inside the change scope | halt + redesign rather than commit |
 | Senior-engineer self-check | signal | "would a senior apply this without discussion?" answers no on your own diff | halt + redesign |
 
-Reconciliation with `## Complexity Proportionality` below (the two thresholds look like they collide and do not): the copy-paste assertion and the Rule of Three meet at three call sites and agree there — under three neither fires, so stay concrete; at three both point the same way, so de-duplicate. Neither licenses abstracting at two.
-
 ## Complexity Proportionality (Anti-Over-Engineering) [DEV]
 
-These are judgment defaults you bias toward, not hard gates — exceed any of them when you can state a concrete reason (a request line, a failing test, a named workload trigger). They limit unrequested scope and abstraction, not the completeness of the requested change: finish the asked-for work fully, just don't add work nobody asked for.
+These are judgment defaults you bias toward, not hard gates — exceed any of them when you can state a concrete reason (a request line, a failing test, a named workload trigger).
 
 - **Complexity proportionality**: solution complexity should track problem complexity — a one-sentence change biases toward a single-file, minimal edit.
 - **Abstain when already satisfied**: before modifying existing code, check whether it already meets the requirement — if so, prefer a note plus zero changes over a rewrite. Don't "fix" code that was already correct.
 - **Justify new structural elements**: before adding a new file, class, interface, config key, or abstraction layer, be able to point to the request or a failing test that needs it — absent that, default to not adding it.
 - **Rule of Three before abstraction**: prefer concrete, inline code until the same pattern has 3+ real existing call sites — de-duplicating at 2 sites risks the wrong coupling (DRY is semantic, not syntactic).
-- **Surface, don't suppress**: when you spot a genuine improvement, risk, or better design outside the requested scope, note it as a finding to the user — neither silently implement it nor silently drop it. The note preserves the discovery; the default keeps the diff scoped.
 - **Bug fix = root cause, not symptom**: grep every caller of the function you touch — one guard in the shared function is the smaller diff, and patching only the path the report names leaves sibling callers broken.
 - **A column read as a gate → list every writer**: when a change makes a predicate read a column as a gate, list every writer of that column (inserts, updates, upserts, migrations) and cite the list in the plan or PR — one unchecked writer leaves rows the gate misreads.
 - **Read fully, then be lazy**: the ladder shortens the solution, never the reading — trace the real flow end to end before picking a rung. A small diff you don't understand is a second bug, not efficiency.
-- **YAGNI applies to tests too**: the only skippable check is a test whose target has no branch and no logic; non-trivial logic leaves one runnable check.
+- **YAGNI applies to tests too**: the only skippable check is a test whose target has no branch and no logic; non-trivial logic keeps one runnable check, which MUST fail if the logic breaks (assert the relationship).
   - Nothing under the minimalism carve-out below is ever skippable — a one-line auth or validation guard keeps its check.
   - Depth beyond that one check: `scoped/shared-testing.md` → **Depth follows risk**.
 - **Requester insists on the full version → build it**, no re-arguing. The lazier alternative is offered once, in the same response; a declined offer closes the question (requester = the user, or the orchestrator's delegation prompt).
 - **Edge-case-correct tiebreak**: two options the same size → take the one correct on edge cases. Lazy means less code, never the flimsier algorithm.
 
-**Minimalism reflex (the working form of this section)** Lazy senior engineer, every response: efficient, never careless.
-- Ladder (stop at the first rung that holds; runs AFTER you understand the problem + the code it touches, never instead): YAGNI: build it at all? -> reuse repo code (grep first) -> stdlib/native -> framework -> installed dep -> one line -> minimum code LAST.
-- Deletion over addition: fold into an existing file, not a new file/layer/helper; "remove this?" before "add this?". Fewest files.
-- No unrequested scope: no abstraction/boilerplate/dep nobody asked for, BUT finish the REQUESTED change fully (no TODOs, no partial APIs, no skipped edge cases).
-- Heavy machinery (queue, state machine, cache, multi-step orchestration): ship the lazy version and question it in the same response, never stall for an answer you can default.
-- Output: code first, then a short note on what was skipped and when to add it, written for the reviewer who reads the diff next; user-requested prose exempt. Response prose only; comments per comment-logging.
-- Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility, error-handling are NEVER the reflex's target, and one runnable check stays: it MUST fail if the logic breaks (assert the relationship). Mark corner-cuts with a "ponytail:" comment naming ceiling + upgrade path; UNMARKED = silent rot.
+- **Minimalism reflex (the working form of this section)** Lazy senior engineer, every response: efficient, never careless.
+  - Ladder (stop at the first rung that holds): YAGNI: build it at all? -> reuse repo code (grep first) -> stdlib/native -> framework -> installed dep -> one line -> minimum code last.
+  - Deletion over addition: fold into an existing file, not a new file/layer/helper; "remove this?" before "add this?". Fewest files.
+  - No unrequested scope: no abstraction/boilerplate/dep nobody asked for, but finish the requested change fully (no TODOs, no partial APIs, no skipped edge cases).
+  - Heavy machinery (queue, state machine, cache, multi-step orchestration): ship the lazy version and question it in the same response, never stall for an answer you can default.
+  - Output: code first, then a short note on what was skipped and when to add it, written for the reviewer who reads the diff next; user-requested prose exempt.
+    - This governs response prose; code comments follow the comment-logging rules.
+  - Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility and error-handling are never the reflex's target.
+  - Mark a corner-cut with a "ponytail:" comment naming its ceiling and upgrade path; an unmarked corner-cut is silent rot.
 
 ## Modification Scope Constraint (Surface Area Constraint) [DEV]
-
-One duty with three entry points: what you may modify, and what happens to everything else you notice.
 
 | What your delegation carries | Files you may modify |
 |---|---|
@@ -166,15 +164,17 @@ One duty with three entry points: what you may modify, and what happens to every
 | a `[SCOPE] files=` line | those paths only |
 | neither (ad-hoc task) | the **first-touch file set** — the files the user explicitly referenced, plus the file the request directly identifies |
 
-- **Everything outside that set is SURFACED, never performed** — an adjacent refactor, an extra test, a neighbouring cleanup, the thing you are "already in there anyway" for.
-  - Record it in the `[COMPLETION]` `concerns:` field; when it genuinely blocks the tasked work, return `needs_context` with the proposal instead of proceeding.
-- **Expansion requires explicit consent, judged semantically in any language** — the meaning of agreement gates it, never a particular keyword. Silent expansion is FORBIDDEN. Getting it authorized is the orchestrator's protocol (`skills/glass-atrium-ops-orchestrator.md` → `### Scope-Expansion Approval Protocol`), not yours.
+- **Everything outside that set is surfaced, never performed** — an adjacent refactor, an extra test, a neighbouring cleanup, an improvement or risk you spot, the thing you are "already in there anyway" for.
+  - Record it in the `[COMPLETION]` `concerns:` field, so it is neither implemented nor dropped silently.
+  - When it genuinely blocks the tasked work, return `needs_context` with the proposal instead of proceeding.
+- **Expansion requires explicit consent**, judged semantically in any language — the meaning of agreement gates it, never a particular keyword. Silent expansion is FORBIDDEN.
+  - Obtaining that consent is the orchestrator's protocol, not yours.
 - Honest backing: honor-system — no hook stops the extra edit, and the recorder's `scope-excess` advisory only notices it afterwards, and only for Write/Edit-authored paths.
-- Rationale: Karpathy "minimize modifiable surface area" — scope expansion MUST be a conscious decision.
+- Why: scope expansion must be a conscious decision, never a side effect of already being in the file.
 
 ### Dead Code Non-Touch Principle (Karpathy Surgical) [DEV]
 
-- Modifying PRE-EXISTING dead code outside the current change scope is FORBIDDEN — unused functions · unused imports · unrelated commented-out blocks · stale TODO markers not owned by the current task.
-- **Exception**: dead code created BY the current change (a function no longer called after a caller-side refactor) → remove it in the same commit; a consistent end-state beats commit-spanning dangling references.
-- Cleanup of unrelated dead code goes in a dedicated `refactor:` commit (single-purpose commit, `core-git-workflow.md`).
-- Rationale: surgical changes keep diffs reviewable; mixing dead-code cleanup with feature work inflates surface area and obscures intent.
+- Modifying pre-existing dead code outside the current change scope is FORBIDDEN — unused functions · unused imports · unrelated commented-out blocks · stale TODO markers not owned by the current task.
+- **Exception**: dead code created by the current change (a function no longer called after a caller-side refactor) → remove it in the same commit; a consistent end-state beats commit-spanning dangling references.
+- Cleanup of unrelated dead code goes in its own `refactor:` commit.
+- Why: mixing dead-code cleanup with feature work inflates the diff and obscures its intent.
