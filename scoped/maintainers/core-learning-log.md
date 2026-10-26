@@ -35,7 +35,7 @@ Moved out of the rule file: each binds aggregator or daemon code, never an agent
 - The **Approval** pointer to the next section was dropped as a dup-in of that section's own opening line.
 - **Not a correction (negative example)** was dropped: its literal list and the three fields it must not fire are canonical in `rules/glass-atrium/core-outcome-record.md` → **Correction-emission rule**, which reaches the same reader, and **Signal origin** already points there.
 - **Signal origin** lost its emission restatement, the STUBBED-accumulation line and the lead's "regex is legacy fallback only" clause.
-  - The first two are canonical in `core-outcome-record.md` (**Correction-emission rule**, `#### Correction fields`); the clause restated the sub-bullet.
+  - The first two are canonical in `core-outcome-record.md` (**Correction-emission rule**, `### Correction fields`); the clause restated the sub-bullet.
   - The keyword-regex fallback sub-bullet stayed — it has no other site.
 - **Procedure** was dropped. Its first two steps restated the `revision_count` / `directive_hint` field rules; the third restated the Write-Gate; the fourth (tag an instruction-update candidate) named a tag no field carries and no code reads.
 - Write-Gate: the auto-path ban, the "not SUFFICIENT without it" line, **Language** and **Internal-vs-user-facing boundary** were dropped.
