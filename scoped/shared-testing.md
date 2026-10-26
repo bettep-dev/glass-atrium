@@ -8,7 +8,8 @@
 
 ### What makes a test a test
 
-- **Relationship over enumeration**: a test asserts a relationship that holds across an input class — not one hand-picked input/output pair. A test suite is sensitive to behavior change and insensitive to structure change.
+- **Relationship over enumeration**: a test asserts a relationship that holds across an input class — not one hand-picked input/output pair.
+  - A test suite is sensitive to behavior change and insensitive to structure change.
 - **The one question that decides a test's worth**: "if I broke the implementation in the smallest way that matters, would this test fail?" No → it is not a test.
 - **Watch it fail**: write the test before the code exists, or apply the deliberate-break exception (`## Rationalization Rejection (Testing)` → **Qualifier on the last row**). A test never observed to fail has not been verified.
   - Make the code correct for every valid input, not just the test's inputs — never hard-code a test's values.
@@ -93,7 +94,9 @@ Each step builds on the previous.
 ### Where a test lives
 
 - **One home file per behavior**: a new case, a regression case included, goes into the file that already owns that behavior — never into a new file per incident, plan or task.
-- **Grouping**: one `describe` block or test class per rule; each nesting level narrows exactly one condition. Split a file by behavior area, never by line count.
+- **Grouping**: one `describe` block or test class per rule.
+  - Each nesting level narrows exactly one condition.
+  - Split a file by behavior area, never by line count.
 - **Check before adding**: search the owning file for a test that already asserts the behavior — found → strengthen that test instead of adding a second.
 - **Fold-back**: when you edit a one-off incident file whose behavior has an owning file, fold its cases into that file — both files inside the **Authoring scope** bound at the head of this file.
 
@@ -103,7 +106,8 @@ Each step builds on the previous.
   - No sibling file to mirror → write the same sentence in the stack's test-name slot, e.g. `rejects a withdrawal that exceeds the balance`; the example shows content, never a template to copy.
 - **ID ban — the one hard naming rule**: no plan, task, incident or ticket ID (`AC-…`, `T19`, `P0-2`, `#14`) in a test name, test file name or helper name. The reference goes in the commit message.
   - Bad: `"T19/P2-T2: …"` · Good: `"update keeps a live model pin when the release omits it"`.
-- **Comments**: a test comment states what the test protects, never how the code or the test got here — `scoped/shared-comment-logging.md` binds test files like any other code. A test that calls itself vacuous is fixed or deleted.
+- **Comments**: a test comment states what the test protects, never how the code or the test got here — `scoped/shared-comment-logging.md` binds test files like any other code.
+  - A test that calls itself vacuous is fixed or deleted.
 - **Test data**: inline the few realistic values the assertion depends on; a placeholder (`'x'`, `'a@b.c'`) hides what matters.
 - **Shared fixture**: a large fixture repeated byte-for-byte across tests or files, whose copies can drift, becomes one named fixture — or a builder with safe defaults once its variants multiply. Small readable setup stays inline.
 
@@ -151,7 +155,7 @@ Each kind is legitimate when the stated purpose is the whole reason the test exi
 | Kind | Legitimate when |
 |---|---|
 | regression pin | it reproduces one reported defect, is named for the behavior it protects, and lives in that behavior's home file |
-| characterization test | it pins legacy behavior before a refactor, structure-sensitive by design, and is rewritten or deleted once the refactor lands |
+| characterization test | it pins legacy behavior before a refactor, is structure-sensitive by design, and is rewritten or deleted post-refactor |
 | executable-specification example | it is the one canonical worked example documenting the contract |
 | one-off verification test (a probe, an incident repro, a change check) | it is kept as a regression pin in the behavior's home file, or deleted in the change that wrote it |
 
