@@ -233,7 +233,7 @@ Sections and their order follow `~/.claude/agents/templates/DESIGN.md`, the orde
 ## HTML Primary Co-Emission Role
 
 - **Trigger**: user-requested HTML primary + the Visual-Weight Probe fires → pre-draft consultation (`scope-report.md` "Designer Co-Emission Trigger" canonical).
-- Verdict/spec only, never markup — markup goes to glass-atrium-dev-front.
+- Verdict/spec only, never markup.
 - **Output fields**: `mermaid_types` · `section_composition` · `non_canonical_badges` (T4) · `table_split_axis` (D8 P2 split). Full consultative scope → skill `glass-atrium-design-html-co-emission`.
 - **Veto authority**: on a D8 P1-P5 invariant violation (color-blind safety / ≤5 col / sandbox-safe interactivity / WCAG AA / 3-level typography), declare the verdict → glass-atrium-intel-reporter/glass-atrium-intel-planner emits `result: blocked`.
   - Never fall back silently: a silent fallback ships the violation the veto exists to stop.
