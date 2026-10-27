@@ -46,19 +46,23 @@ fi
 #   · any failure prints the unavailable line, never an empty list → absence never reads as "nothing open"
 #   · an echoed filter missing a stage = a page the monitor did not filter → treated as unreadable
 #   · curl --max-time 0.5 keeps the leg inside the ~1 s hook budget when the monitor hangs
-#   · one compact row per plan (id · stage · title prefix) → the list fits beside the core under the hook cap
+#   · one compact row per plan (id · stage · title prefix), at most OPEN_PLANS_MAX_ROWS of them, newest sync first
+#     → the rest collapse into one "+N more → GET" line, so the list never grows into the core's headroom
 # ponytail: rows past the route's 200-row cap go unshown — upgrade: page on .total once open plans near 200
 readonly OPEN_PLANS_QUERY='doc_status=implementing,impl_review,impl_done&limit=200'
-# shellcheck disable=SC2016  # $open, $fallback and $n are jq variables, not shell expansions
+readonly OPEN_PLANS_MAX_ROWS=8
+# shellcheck disable=SC2016  # $open, $fallback, $n, $max, $query and $plans are jq variables, not shell expansions
 readonly OPEN_PLANS_JQ='
   def clean($fallback): if type == "string" and length > 0 then gsub("[[:cntrl:]]"; " ") else $fallback end;
   def prefix($n): if length > $n then .[0:$n] + "…" else . end;
   ["implementing", "impl_review", "impl_done"] as $open
   | if (.rows | type) != "array" or ($open - (.filter.doc_status // [])) != [] then error("unfiltered list") else . end
-  | [.rows[] | select(.doc_status | IN($open[]))] as $plans
+  | [.rows[] | select(.doc_status | IN($open[]))]
+  | sort_by([(.last_synced_at // .created_at // ""), .id]) | reverse as $plans
   | if ($plans | length) == 0 then "[OPEN PLANS] none — no plan at implementing, impl_review or impl_done"
     else "[OPEN PLANS] \($plans | length) plan(s) past doc_review, not yet done — each closes by flow step 5 (Reconcile & Close):",
-      ($plans[] | "- clauded-docs/\(.id) · \(.doc_status) · \(.title | clean("(untitled)") | prefix(32))")
+      ($plans[0:$max][] | "- clauded-docs/\(.id) · \(.doc_status) · \(.title | clean("(untitled)") | prefix(32))"),
+      (if ($plans | length) > $max then "- +\(($plans | length) - $max) more → GET /api/clauded-docs?\($query)" else empty end)
     end'
 
 # Collection URL of the monitor clauded-docs API, rc 1 when unresolvable; a full override wins so a suite never reaches the live monitor.
@@ -86,7 +90,7 @@ get_open_plans() {
   # shellcheck disable=SC2310  # an unresolvable URL is the leg's fail-open answer
   url="$(get_monitor_docs_url)" || return 1
   body="$(curl -sf --max-time 0.5 "${url}?${OPEN_PLANS_QUERY}")" || return 1
-  jq -r "${OPEN_PLANS_JQ}" <<<"${body}"
+  jq -r --argjson max "${OPEN_PLANS_MAX_ROWS}" --arg query "${OPEN_PLANS_QUERY}" "${OPEN_PLANS_JQ}" <<<"${body}"
 }
 
 # Command substitution isolates the leg → a failure inside it cannot drop the rest of this injection.

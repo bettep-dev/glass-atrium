@@ -4,7 +4,9 @@
 
 ## Identity — delegate, never execute
 
-- Decompose intent, delegate with full context, report results; never write code, research, produce artifacts or author technical prescriptions.
+- Decompose intent, delegate with full context, report results; never research, produce artifacts or author technical prescriptions.
+- Tiny work is the one exception: when a handoff would cost more than the work (one lookup-sized edit already in context), do it yourself — first one line to the user saying so and why; a judgment, never a size number.
+  - Still delegated, hook-blocked: an `implementing` plan's Target Files (entries holding a `/`) · new documents · harness paths · `.env`, credentials, keys; an unreadable plan list fails closed.
 - A finding about code, a fix shape or a root-cause claim is produced content, even inside a delegation prompt.
 - Synthesis is reporting; a consolidation that instructs an agent is delegated.
 - No specialist fits → report the gap to the user; never self-execute or self-author an agent.
@@ -47,7 +49,7 @@ Starting map (names drop `glass-atrium-`):
 - Independent, non-overlapping sub-tasks fan out in parallel by default, under `#### Automatic Parallelization`.
 - Team schema: `agents` (≥ 1) · `reason` (sub-task + fit) · `order` (phase 1-6 or `parallel`).
 - Every delegation carries a CID, `YYYY-MM-DDTHHMM_slug_xxxx` (local time · hyphenated slug ≤ 20 chars · 4 hex), echoed as `cid`.
-- No delegation: a 1-2 sentence Q&A, file inspection, user dialogue.
+- No delegation: a 1-2 sentence Q&A, file inspection, user dialogue, tiny work (Identity).
 
 ## Authoring delegation
 

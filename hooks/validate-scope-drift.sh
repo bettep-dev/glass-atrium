@@ -49,45 +49,10 @@ CURL_TIMEOUT="${SCOPE_DRIFT_CURL_TIMEOUT:-2}"
 # shellcheck source=lib/scope-match.sh
 source "${BASH_SOURCE%/*}/lib/scope-match.sh"
 
-# Extract path-like tokens from the `<section id="target-files">` slice → newline list.
-# Relies on the T1 flat-leaf contract (slices to the first </section>). sed-only (no awk).
-# P1 nesting guard: a nested opening <section> in the slice violates the leaf contract → a
-# truncated list could mis-fire SCOPE-070, so emit empty (fail-open, no guessing).
-# Args: $1=html body. Prints cleaned list to stdout (empty on parse anomaly · always return 0).
-extract_target_files_section() {
-  local body="${1}"
-  # Flatten to one line, then slice between opening tag and first </section>.
-  local flattened from_open sliced
-  flattened="$(printf '%s' "${body}" | tr '\n' ' ')"
-
-  # After the opening tag (close not yet applied) — source for the nesting guard.
-  from_open="$(printf '%s' "${flattened}" \
-    | sed -n 's/.*<section[^>]*id="target-files"[^>]*>\(.*\)/\1/p')"
-  [[ -z "${from_open}" ]] && return 0
-
-  sliced="$(printf '%s' "${from_open}" | sed 's/<\/section>.*//')"
-  [[ -z "${sliced}" ]] && return 0
-
-  # P1 guard: nested opening <section> → leaf violation → fail-open.
-  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-  if printf '%s' "${sliced}" | drain_after grep -q '<section[^>]*>'; then
-    return 0
-  fi
-
-  # <li>/<br> → newlines (one item per line), then strip remaining tags + decode entities.
-  printf '%s' "${sliced}" \
-    | sed 's/<li[^>]*>/\n/g; s/<\/li>/\n/g; s/<br[^>]*>/\n/g' \
-    | sed 's/<[^>]*>//g' \
-    | sed 's/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g'
-}
-
-# Extract the md `## Target Files` list, up to the next `## ` heading (case-insensitive initials,
-# English-only). One definition for the PLAN_FILE leg and the monitor leg's md plans.
-# Args: $1=md body. Prints the list to stdout (empty when the heading is absent).
-extract_target_files_heading() {
-  local heading_re='^##[[:space:]]+[Tt]arget [Ff]iles'
-  printf '%s\n' "${1}" | sed -E -n "/${heading_re}/,/^## /{ /${heading_re}/d; /^## /d; p; }"
-}
+# The plan Target Files extractors live in lib/ so this hook and the delegation gate read a plan's
+# list through ONE definition (drain_after above is their pipe-end wrapper).
+# shellcheck source=lib/target-files.sh
+source "${BASH_SOURCE%/*}/lib/target-files.sh"
 
 # SCOPE-070 advisory. emit_error hands the context to jq as one argument; Linux refuses one of 131072
 # bytes or more, so a context carrying an over-long edit path goes as '{}'.
@@ -366,10 +331,14 @@ if [[ -z "${PLAN_FILE:-}" ]]; then
   PLAN_FORMAT="$(printf '%s' "${PLAN_DOC_JSON}" | jq -r '.format // empty' 2>/dev/null || true)"
 
   # 3. Parser chosen by format, never by trying both: an md plan quoting the HTML contract example
-  #    would bind its placeholder paths. Separate assignment (parsers always return 0) avoids SC2310.
+  #    would bind its placeholder paths. An html parse anomaly (rc 3) reads as no list — this
+  #    hook is advisory; the delegation gate is the one that fails closed on it.
   ALLOWED_FILES=""
   case "${PLAN_FORMAT}" in
-    html) ALLOWED_FILES="$(extract_target_files_section "${PLAN_BODY}" 2>/dev/null)" ;;
+    html)
+      # shellcheck disable=SC2310  # the anomaly status is answered by the empty-list fail-open below
+      ALLOWED_FILES="$(extract_target_files_section "${PLAN_BODY}" 2>/dev/null)" || ALLOWED_FILES=""
+      ;;
     md) ALLOWED_FILES="$(extract_target_files_heading "${PLAN_BODY}")" ;;
     *) exit 0 ;;
   esac
