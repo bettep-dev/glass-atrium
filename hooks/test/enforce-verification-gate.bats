@@ -301,6 +301,31 @@ mint_bad_sink() {
   assert_empty
 }
 
+# A simple-task spawn with no plan-reference owes none of the other attestation tokens, so every
+# token check passes it silently; a plan-reference or a missing entry signal keeps every check.
+@test "only a simple-task spawn without a plan-reference waives the other attestation tokens" {
+  local ten_files="hooks/a1.sh, hooks/a2.sh, hooks/a3.sh, hooks/a4.sh, hooks/a5.sh, hooks/a6.sh, hooks/a7.sh, hooks/a8.sh, hooks/a9.sh, hooks/a10.sh"
+  local rows=(
+    "simple-task, no other token|[ENTRY-CLASS] simple-task: one-file fix|0|"
+    "simple-task, ten-file [SCOPE], no [SIZE-EST]|[ENTRY-CLASS] simple-task: one-file fix\n[SCOPE] files=${ten_files} · deliverable=bug-fix · out=none|0|"
+    "plan-reference, no other token|implement per plan clauded-docs/1234|2|VGATE-SIZE-001"
+    "plan-reference beside simple-task, no other token|implement plan-7001 [ENTRY-CLASS] simple-task: noise|2|VGATE-SIZE-001"
+    "neither entry signal|implement the auth refactor across the service layer|2|VGATE-SIZE-001"
+  )
+  local row name prompt want_status want_code
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name prompt want_status want_code <<<"${row}"
+    prompt="${prompt//'\n'/$'\n'}"
+    run_hook "glass-atrium-dev-shell" "${prompt}"
+    [[ "${status}" -eq "${want_status}" ]] || { echo "${name}: status ${status} -- ${output}"; return 1; }
+    if [[ -z "${want_code}" ]]; then
+      [[ -z "${output}" ]] || { echo "${name}: expected silence -- ${output}"; return 1; }
+    else
+      [[ "${output}" == *"${want_code}"* ]] || { echo "${name}: expected ${want_code} -- ${output}"; return 1; }
+    fi
+  done
+}
+
 @test "token present AND plan-ref (SIZE-EST present) → plan-ref branch wins (checked first) → reviewer-miss BLOCK exit 2" {
   run_hook "glass-atrium-dev-nestjs" "implement plan-7001 [ENTRY-CLASS] simple-task: noise [SIZE-EST] bundles=1 tool_uses~=5 — small"
   assert_status 2

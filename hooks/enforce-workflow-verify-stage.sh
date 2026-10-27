@@ -13,6 +13,11 @@
 # dev is the verify partner vs the gated implementation dev) does NOT exist in the code, so any
 # inference was a guess. The author declares; the hook checks presence + consistency.
 #
+# SIMPLE-TASK ENTRY: a DEV workflow carrying [ENTRY-CLASS] simple-task and NO plan-reference owes no
+# other attestation token — the helper marks it ENTRY_SIMPLE, every [AGENT-COMPOSITION] / [SIZE-EST]
+# block resolves to PASS, and the [SIZE-EST] and [SCOPE] advisories stay silent. A plan-reference keeps
+# every check, whatever classification travels beside it. The doc-routing block is unaffected.
+#
 # DECLARATION GRAMMAR (raw-scanned, but the opening sentinel must NOT sit inside a string literal so
 # an incidental prompt/goal mention is not mistaken for a declaration; canonical home = a /* */
 # block comment):
@@ -2018,7 +2023,22 @@ def sizeest_bounds(attestation_src, slots):
         return "SIZEEST_BOUNDS_SILENT"
 
 
+# Verdicts a simple-task entry waives: every [AGENT-COMPOSITION] and [SIZE-EST] block. The doc-routing
+# block is no token check and stays.
+SIMPLE_TASK_WAIVED_BLOCKS = frozenset((
+    "BLOCK_NODECL", "BLOCK_GRAMMAR", "BLOCK_NOREV", "BLOCK_NOVERIFYDEV", "BLOCK_DECLSPAWN",
+    "BLOCK_UNDECL", "BLOCK_COMPUTED", "BLOCK_ORDER", "BLOCK_UPSTREAM", "BLOCK_SIZEEST",
+))
+
+
 def emit(verdict, entry_marker):
+    # Simple-task entry → waived blocks become PASS and the [SIZE-EST] advisories go silent; the
+    # ENTRY_SIMPLE marker tells the bash side to skip its [SCOPE] advisory too.
+    size_map, sizeest_bounds_flag = SIZE_MAP_FLAG, SIZEEST_BOUNDS_FLAG
+    if entry_marker == "ENTRY_SIMPLE":
+        if verdict in SIMPLE_TASK_WAIVED_BLOCKS:
+            verdict = "PASS"
+        size_map, sizeest_bounds_flag = "SIZE_MAP_SILENT", "SIZEEST_BOUNDS_SILENT"
     print(verdict)
     print(entry_marker)
     print(RESIL_FLAG)
@@ -2026,10 +2046,10 @@ def emit(verdict, entry_marker):
     print(SCHEMA_CAP_FLAG)
     print(DEV_FLAG)
     print("IMPL_SLOTS=" + str(IMPL_SLOTS))
-    print(SIZE_MAP_FLAG)
+    print(size_map)
     print(ENTRY_CARD_FLAG)
     print(COMPLETION_FLAG)
-    print(SIZEEST_BOUNDS_FLAG)
+    print(sizeest_bounds_flag)
     print(CLOSE_TOKEN_FLAG)
     sys.exit(0)
 
@@ -2091,6 +2111,9 @@ try:
     entry_literal_found = ENTRY_CLASS_LITERAL in attestation_src
     entry_ok = (not dev_present) or plan_ref_found or entry_literal_found
     entry_marker = "ENTRY_OK" if entry_ok else "ENTRY_ADVISORY"
+    # Simple-task entry: classified simple with no plan-reference → owes no other attestation token.
+    if dev_present and entry_literal_found and not plan_ref_found:
+        entry_marker = "ENTRY_SIMPLE"
     size_est_missing = dev_present and entry_ok and (SIZE_EST_LITERAL not in attestation_src)
     # Close-token decision: a plan-referencing DEV workflow carrying neither [PLAN-CLOSE] form (raw scan).
     if dev_present and plan_ref_found and not CLOSE_TOKEN_RE.search(attestation_src):
@@ -2356,7 +2379,7 @@ PY
     IFS= read -r close_token_flag
   } <<<"${helper_out}" || true
   [[ -z "${verdict}" ]] && verdict="PASS"
-  [[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
+  [[ "${entry_marker}" == "ENTRY_ADVISORY" || "${entry_marker}" == "ENTRY_SIMPLE" ]] || entry_marker="ENTRY_OK"
   [[ "${resil_flag}" == "RESIL_ADVISE" ]] || resil_flag="RESIL_SILENT"
   [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]] || analysis_size_flag="ANALYSIS_SIZE_SILENT"
   # The schema-cap flag carries the matched scoped rule as a `:R<n>` suffix (trace instrumentation); a
@@ -2623,7 +2646,9 @@ EOF
       # SCOPE ADVISORY — on the PASS arm only, so a fault in this newest check can never mask one of
       # the block verdicts above. Ordered before emit_trace so the tag rides the pass trace line.
       # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
+      # A simple-task entry (ENTRY_SIMPLE) owes no [SCOPE] declaration.
+      if [[ "${dev_flag}" == "yes" && "${entry_marker}" != "ENTRY_SIMPLE" ]] \
+        && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
         print_scope_advisory
         add_advisory "scope"
       fi

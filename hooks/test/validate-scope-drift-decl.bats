@@ -104,6 +104,34 @@ run_hook() {
   [[ "${output}" != *scope-decl* ]] || { echo "bypass ignored the missing transcript: ${output}" >&2; return 1; }
 }
 
+# A simple-task delegation with no plan-reference owes no [SCOPE] declaration, so its edits are never
+# compared against another lane's `implementing` plan; plan-backed or unclassified work still is.
+@test "only a simple-task delegation without a plan-reference skips the implementing-plan comparison" {
+  mkdir -p "${CACHE_DIR}"
+  printf '%s\n' "$(date +%s)" "4242" "hooks/a.sh" >"${CACHE_DIR}/${SID}.cache"
+  local rows=(
+    "simple-task, no [SCOPE]|[ENTRY-CLASS] simple-task: one file|silent"
+    "plan-reference, no [SCOPE]|Implement clauded-docs/4242|advise"
+    "plan-reference beside simple-task|Implement clauded-docs/4242 [ENTRY-CLASS] simple-task: noise|advise"
+    "neither entry signal|Fix the thing|advise"
+  )
+  local row name record0 want i=0
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name record0 want <<<"${row}"
+    i=$((i + 1))
+    AID="agent-entry-${i}"
+    TPATH="${TDIR}/agent-${AID}.jsonl"
+    seed_transcript "${record0}"
+    run_hook "/repo/hooks/other.sh"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: blocking exit ${status}"; return 1; }
+    if [[ "${want}" == silent ]]; then
+      [[ "${output}" != *SCOPE-070* ]] || { echo "${name}: expected silence -- ${output}"; return 1; }
+    else
+      [[ "${output}" == *SCOPE-070* && "${output}" == *plan-doc* ]] || { echo "${name}: expected plan-doc advisory -- ${output}"; return 1; }
+    fi
+  done
+}
+
 # grep in SHIMBIN that fails with status 2 on the selector's pattern and is the real grep otherwise.
 install_forced_grep_failure() {
   local real_grep

@@ -948,6 +948,33 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   [[ ! "${output}" =~ "entry-miss" ]] || return 1
 }
 
+# A simple-task script with no plan-reference owes none of the other attestation tokens — no
+# [AGENT-COMPOSITION], [SIZE-EST] or [SCOPE] check blocks or advises it; a plan-reference or a missing
+# entry signal keeps every check.
+@test "entry: only a simple-task script without a plan-reference waives the other attestation tokens" {
+  local dev="agent('glass-atrium-dev-shell',{goal:'fix'});"
+  local rows=(
+    "simple-task, no other token|log('[ENTRY-CLASS] simple-task: one file');\n${dev}|0|"
+    "simple-task, malformed declaration and oversize [SIZE-EST]|/* [AGENT-COMPOSITION]\nverify: nobody\n[/AGENT-COMPOSITION] */\nlog('[ENTRY-CLASS] simple-task: one file');\nlog('[SIZE-EST] bundles=1 tool_uses~=99 — one file');\n${dev}|0|"
+    "plan-reference, no other token|log('plan-ref: clauded-docs/4821');\n${dev}|2|BLOCKED"
+    "plan-reference beside simple-task, no other token|log('plan-ref: clauded-docs/4821 [ENTRY-CLASS] simple-task: noise');\n${dev}|2|BLOCKED"
+    "neither entry signal|log('fix the thing');\n${dev}|2|NEITHER a plan-reference"
+  )
+  local row name script want_status want_phrase
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name script want_status want_phrase <<<"${row}"
+    script="${script//'\n'/$'\n'}"
+    run_hook "${script}"
+    [[ "${status}" -eq "${want_status}" ]] || { echo "${name}: status ${status} -- ${output}"; return 1; }
+    if [[ -z "${want_phrase}" ]]; then
+      [[ "${output}" != *BLOCKED* && "${output}" != *"scope declaration"* && "${output}" != *"[SIZE-EST] plausibility"* ]] \
+        || { echo "${name}: expected no token block or advisory -- ${output}"; return 1; }
+    else
+      [[ "${output}" == *"${want_phrase}"* ]] || { echo "${name}: expected ${want_phrase} -- ${output}"; return 1; }
+    fi
+  done
+}
+
 # #28 word-boundary (PLAN_REF_RE mirror): an incidental 'workplan-2026' token is NOT a plan-ref, so a
 # would-be-PASS DEV workflow whose ONLY entry signal is 'workplan-2026' still lands on BLOCK_ENTRY.
 # Authored to FAIL before the anchor fix (unanchored plan-[0-9]+ matched inside 'workplan-2026' → PASS).

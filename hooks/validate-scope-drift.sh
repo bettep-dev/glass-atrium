@@ -193,6 +193,40 @@ fi
 # TTL and bypass env) — the sentinel below caches the far more common "no declaration" answer
 # too, so an undeclared delegation re-parses no transcript on later edits. An unread declaration
 # (selector status 2) has its own sentinel and is never cached, so the next edit reads it again.
+# The spawning subagent's own transcript for ($1=agent_id, $2=session_id), or empty when none exists.
+get_subagent_transcript() {
+  local tpath
+  for tpath in "${HOME}/.claude/projects/"*"/${2}/subagents/agent-${1}.jsonl" \
+    "${HOME}/.claude/projects/"*"/${2}/subagents/workflows/wf_"*"/agent-${1}.jsonl"; do
+    if [[ -f "${tpath}" ]]; then
+      printf '%s' "${tpath}"
+      return 0
+    fi
+  done
+}
+
+# Plan-reference shape — mirrors enforce-verification-gate.sh → references_plan; keep the two in sync.
+readonly PLAN_REF_ERE='clauded-docs/[0-9]+|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html|documents/[A-Za-z0-9_./-]+\.html|(^|[^A-Za-z0-9_])plan-[0-9]+([^A-Za-z0-9]|$)|(^|[^A-Za-z0-9_])[0-9]+-plan([^A-Za-z0-9]|$)'
+
+# Simple-task delegation — record 0 of the subagent transcript carries `[ENTRY-CLASS] simple-task`
+# and no plan-reference. Such work owes no [SCOPE] declaration and binds to no plan. rc 1 otherwise,
+# and on any read failure (fail toward the unchanged comparison).
+is_simple_task_delegation() {
+  local agent_id session_id tpath record0
+  agent_id="$(echo "${INPUT}" | jq -r '.agent_id // ""' 2>/dev/null || true)"
+  session_id="$(echo "${INPUT}" | jq -r '.session_id // ""' 2>/dev/null || true)"
+  [[ -n "${agent_id}" ]] && [[ -n "${session_id}" ]] || return 1
+  tpath="$(get_subagent_transcript "${agent_id}" "${session_id}")"
+  [[ -r "${tpath}" ]] || return 1
+  record0="$(head -n 1 "${tpath}" \
+    | jq -r 'if (.message.content | type) == "string" then .message.content
+             elif (.message.content | type) == "array" then ([.message.content[]? | .text? // ""] | join("\n"))
+             else "" end' 2>/dev/null)" || return 1
+  [[ "${record0}" == *"[ENTRY-CLASS] simple-task"* ]] || return 1
+  # shellcheck disable=SC2310  # the reader's status is the answer
+  ! printf '%s' "${record0}" | drain_after grep -qE "${PLAN_REF_ERE}"
+}
+
 SCOPE_DECL_NONE_SENTINEL='./no-scope-declaration'
 SCOPE_DECL_UNREAD_SENTINEL='./scope-declaration-unread'
 scope_decl_resolve() {
@@ -214,15 +248,11 @@ scope_decl_resolve() {
     return 0
   fi
 
-  tpath=""
-  for tpath in "${HOME}/.claude/projects/"*"/${session_id}/subagents/agent-${agent_id}.jsonl" \
-    "${HOME}/.claude/projects/"*"/${session_id}/subagents/workflows/wf_"*"/agent-${agent_id}.jsonl"; do
-    [[ -f "${tpath}" ]] && break
-    tpath=""
-  done
+  tpath="$(get_subagent_transcript "${agent_id}" "${session_id}")"
 
   files=""
   if [[ -n "${tpath}" ]]; then
+    # shellcheck disable=SC2310  # the selector's status IS the answer, captured by the ||
     decl_line="$(scope_decl_from_record0 "${tpath}")" || decl_status=$?
     if ((decl_status != 0)); then
       printf '%s' "${SCOPE_DECL_UNREAD_SENTINEL}"
@@ -261,8 +291,9 @@ fi
 # plan → GET its body → parse its Target Files list in the plan's own format → same match loop.
 # fail-open (a false-positive SCOPE-070 is forbidden): curl absent / monitor down / 0 or ambiguous
 # docs / GET failure / list absent / 0 path-like tokens → pass silently, never promote to SCOPE-070.
-# Accepted residual (advisory noise): a lone `implementing` plan also binds a concurrent edit outside
-# it that has no usable `[SCOPE]`, and a cached binding outlives a 2nd plan's arrival by the TTL.
+# Accepted residual (advisory noise): a lone `implementing` plan also binds a concurrent plan-backed or
+# unclassified edit outside it that has no usable `[SCOPE]` (a simple-task delegation is exempt), and a
+# cached binding outlives a 2nd plan's arrival by the TTL.
 if [[ -z "${PLAN_FILE:-}" ]]; then
   if ! command -v curl >/dev/null 2>&1; then
     exit 0
@@ -270,6 +301,12 @@ if [[ -z "${PLAN_FILE:-}" ]]; then
 
   # file_path absent → no per-file matching → skip the API call.
   [[ -z "${FILE_PATH}" ]] && exit 0
+  # A simple-task delegation binds to no plan, so another lane's `implementing` plan never judges it.
+  # shellcheck disable=SC2310
+  #   Predicate call — the exit status IS the answer.
+  if is_simple_task_delegation; then
+    exit 0
+  fi
 
   # Per-session resolution cache (plan id + target-file list) — optimization only. A hit skips
   # BOTH loopback curls + the Target Files re-parse below; a miss / stale / corrupt / unreadable cache
