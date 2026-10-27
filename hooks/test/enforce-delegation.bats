@@ -19,6 +19,8 @@ setup() {
   export DELEGATION_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   # Harness roots are anchored at HOME: the /Users/x/... rows below are harness paths under it.
   export HOME="/Users/x"
+  # Every test sandboxes HOME, so the hook's logs/data land on a per-test root, never the run-wide one.
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data-root"
 }
 
 # Drive the hook as the orchestrator (no agent_id) with a synthetic Write input.
