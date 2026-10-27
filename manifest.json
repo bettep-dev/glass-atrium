@@ -1280,7 +1280,7 @@
     "hooks/test/enforce-commit-guard-live-child-advisory.bats": "15f92637b715b086cff6bab39cd0da49abb1dea5f60d014f12437f4b3b5b96ba",
     "hooks/test/enforce-commit-guard.bats": "2d725e6fd4b072defd43515887b4b0b6fec562632fef509486472810f04555b0",
     "hooks/test/enforce-config-protection.bats": "725de72f81b14103745c900d56153473a2d7db4d2369b086e0a651c4459e607d",
-    "hooks/test/enforce-delegation.bats": "5236df1e752ef520ddff2a7fc104f87c468034196e50a0d3a0a86f42a31bb918",
+    "hooks/test/enforce-delegation.bats": "f4e4958e4cd2fbf3de0fcd82f77fafd13649a0946265b254fa2f75580e2ce88b",
     "hooks/test/enforce-foreground-harness-branch.bats": "04e0fc4c891cd867d8a2b97ce82bb4957037b1808a77d92c9cecca531fbb925e",
     "hooks/test/enforce-foreground-harness.bats": "ce877823ba0ea02a29a10a483a7c799b1562ba688d416a834ac70dfe1fbe4cb6",
     "hooks/test/enforce-harness-critical-bash-pathnorm.bats": "6ff1295d98c318b2a19de52f575938be11900afccb6a4eafadde982a4f04985f",
