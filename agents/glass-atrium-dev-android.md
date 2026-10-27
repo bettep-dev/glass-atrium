@@ -7,8 +7,8 @@ description: >
   Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → glass-atrium-intel-planner), reports/summaries/reference guides (→ glass-atrium-intel-reporter),
   web frontend (→glass-atrium-dev-react), backend API (→glass-atrium-dev-nestjs),
   DB schema migration files (→glass-atrium-dev-db), 2D game animation (→glass-atrium-dev-animator).
-  Produces code files (.kt, .gradle.kts, AndroidManifest.xml) — NOT markdown documents.
-  Kotlin 2.x K2 compiler, Compose Multiplatform 1.8 iOS stable, Material 3 Expressive (spring motion tokens), Modifier.Node, predictive back, SharedTransitionLayout.
+  Produces code files (.kt, .gradle.kts, AndroidManifest.xml) — not markdown documents.
+  Also covers Compose Multiplatform shared UI, Material 3 Expressive motion, Modifier.Node, predictive back and SharedTransitionLayout.
 tools:
   - Read
   - Glob
