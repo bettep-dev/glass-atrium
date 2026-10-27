@@ -42,34 +42,29 @@ The charter's head comment names the class of shape; what binds is below.
 - **What spends that slack**: only deletion above the heading moves it earlier, toward the floor. Added text moves it later, away from the floor, so growth above the heading is never the risk.
 - `RULE_EXCERPT_CHAR_CAP` is 120,000 and a file at or under the cap is returned verbatim, so this file cannot reach the TRUNCATED / OVERSIZED path.
 
-## Restructure + diet pass — dispositions
+## Why kept items stay
 
-A record of the charter's restructure, kept so a placement or a cut below is not re-derived as an omission. No rule was removed; nothing below removes a duty.
+- **Inclusion test**: a rule belongs in the charter only if it applies to every agent regardless of scope, model, or task type.
+- **`### Output Language`**: `hooks/inject-session-context.sh` restates it in three heredoc lines and cites "the response-language rule" by name — re-verify the hook text on any edit here.
+- **Two keep-original leads**: `Literal data` covers one class and `Names and identifiers keep their original form` the other, so a citer naming only Literal data lands on the narrower half.
+  - `agents/glass-atrium-meta-agent.md` → "the canonical's Literal data clause" is such a citer: repair it when that body is next touched — cite `### Output Language`, or name both leads.
+- **`## Context Engineering Principle [ALL]` and its "80K+" drift line**: kept for `hooks/advisory-context-budget.sh` (table below).
+- **Headings kept because a file outside the charter cites them**:
+  - `### Handoff Context` — `skills/glass-atrium-ops-orchestrator-role.md`.
+  - `#### Work-unit checkpoint dimension` — `agents/glass-atrium-meta-prompt-engineer.md`, dev-shell and dev-python notes.
+  - `## Position Bias Mitigation [ALL]` — planner and reporter bodies, the orchestrator skill.
+  - `## 3-Tier Boundary [ALL]` and `### Temporary Files [ALL]` — agent notes.
+- **Turn Budget `Exempt` bullet**: `hooks/inject-scope-rules.sh` skips the meter for the verdict-only agent and cites this bullet as the reason.
+- **`## Learning Log & Correction Signal [ALL]`**: `core-learning-log.md` → Write-Gate omits the auto-path ban because the charter states it.
+- **`## Rationalization Rejection [ALL]`**: the charter names the five domain home files, and `scoped/maintainers/shared-testing.md` cites it.
 
-- **Topic fix — sections reparented.** `### Context Compression Strategies`, `### Parallel Tool Invocation`, `### Token Budget Allocation` and `### Handoff Context` sat under `## Cross-Session Continuity (progress.md)`, which is not their topic.
-  - They now sit under `## Context Management [ALL]`, which was a one-line stub.
-  - `### Turn Budget & Graceful Exit` and `### Session-Start Continuity Header` stay under Cross-Session Continuity, where the checkpoint-to-progress-file duty genuinely lands.
-- **`## Absolute Rules [ALL]` gained sub-headings** — `### Output Language`, `### Ambiguity`, `### Verified References`.
-  - The short hard prohibitions (sensitive data, handoff payloads, log masking, Output Contract, Monitor address) stay as plain bullets above them.
-  - No heading was renamed; "Absolute Rules → Output Language" now resolves to a heading rather than a bolded lead.
-- **Reply-language duplication collapsed.** The charter stated the reply-language rule twice: a top-level bullet with eight sub-bullets, and again inside the Output Language block.
-  - One statement now leads `### Output Language`.
-  - The phrase "the response-language rule" is retained inline because `hooks/inject-session-context.sh` cites it by that name twice.
-- **`Literal data` split at its seam.** The bullet ran past the shape cap carrying two rules. It is now two siblings: `**Literal data**` keeps the class list with its FORBIDDEN clause, and `**Names and identifiers keep their original form**` carries proper nouns, project names, identifiers, API names and the report/plan prefixes.
-  - The lead `**Literal data**` survives byte-identical, so every citation of it still resolves — but it now covers ONE of the two classes, and the split is what narrowed it.
-  - **Both classes restated inline, so the narrowing strands neither reader**: `agents/glass-atrium-intel-reporter.md` → **Preservation exceptions**.
-  - **Points at the heading and names both leads, so not stranded**: `agents/glass-atrium-meta-prompt-engineer.md` → `## Body Language Policy` (cites `### Output Language`, naming **Literal data** and **Names and identifiers**).
-  - **Points at the clause without restating it, so it lands on the narrowed half**: `agents/glass-atrium-meta-agent.md` → "the canonical's Literal data clause". Repair when that body is next touched — cite `### Output Language` one level up, or name both leads.
-  - Co-edited in the same pass: the reply-language sub-bullet that read "per Literal data below" now reads "per Names and identifiers below", the half it actually needs.
-- **Machine-checked paragraphs moved here**, replaced by the one head comment: the Turn Budget position notice, the schema-cap suite notice, and the print-block-then-emit marker notice. Each described a test to a reader who is an agent, not an editor. The clauses the tests actually grep all stayed in the body.
-- **Dropped as pointer-only stubs to delivered Tier-1 files**: `## Outcome Record [ALL]` (two blockquote pointers into `core-outcome-record.md`, including its Emit Boundary pointer) and `## Wiki Reference (Knowledge Utilization) [ALL]` (one pointer into `core-wiki-reference.md`).
-  - Both targets are Tier-1 and arrive on the same host channel as the charter; every subagent also receives the compressed emit-format block from `hooks/inject-scope-rules.sh`. No corpus site cited either heading.
-  - Kept: the `## Learning Log & Correction Signal [ALL]` heading, which carries the memory-persistence rule, a duty rather than a pointer.
-- **Dated and historical fragments dropped, claims kept**: "reversed from 4.8's adaptive/as-needed default", "accepted since 4.8", "128k max output unchanged", "Structured Outputs — now GA", and the observed-count parenthesis on the schema-mode caveat.
-  - Each stated how a fact came to be, not what to do about it; the rule each tailed is unchanged.
-  - The honest-backing note on daemon auto-clustering was KEPT (it tells the reader the prohibition has no runtime gate); the `learning-aggregator.py` filename went, as detail `core-learning-log.md` already carries.
-- **Preamble merged**: the head "see bottom" sentence and the trailing per-scope-mapping blockquote were one pointer split across the file. They are now one line carrying both compliance-matrix anchors, so `rules/glass-atrium/core-compliance-matrix.md` → Headings stays true when it says the charter links to `## Scope Legend` and `## Compliance Matrix`.
-- **Not touched**: `## Rationalization Rejection [ALL]` (the charter is the home that names the five domain files, and `scoped/maintainers/shared-testing.md` cites it), the 3-Tier table, and the ETHOS bullet list.
+## Thinking Budget Policy — measured precedence
+
+- The default-tier claim was measured for a parent tier at or above settings `effortLevel`.
+- Workflow spawn: the `agent()` option beats the frontmatter key and the parent tier; a key beats a higher parent tier.
+- Manual, unnamed `Agent` call: the frontmatter key beats the parent tier in both directions.
+- Manual, named `Agent` call: a key did not lower a higher parent tier.
+- Unmeasured: whether a key alone raises a spawn above a lower parent tier — on a workflow spawn with no `agent()` option, or on a named call.
 
 ## Coupled tests and other readers
 
@@ -83,6 +78,8 @@ A record of the charter's restructure, kept so a placement or a cut below is not
 | `autoagent/daemon_cycle.py` | `GLOBAL_RULES_FILE`, sensitive-path regex, C2 prompt slot | path-keyed: a move breaks the Tier-2 safety trigger and the C2 excerpt |
 | `scripts/lib/apply-spine.sh` | basename literal | classifies the charter as a non-agent file |
 | `scripts/lib/path-guard.sh` → `ga_guard_path` | nothing of the charter — one-way: `File Deletion Policy` restates its refusal set | a guard-only refusal change splits the two sets, and no test compares them — change both in one edit |
+| `scripts/audit-rm.sh` | `File Deletion Policy`, over the repo's in-scope shell files only | other code, other repos and agent-run commands are honor-system |
+| `hooks/advisory-context-budget.sh` + its bats | heading `Context Engineering` and "80k+" in the advisory text | the advisory points at text that is gone |
 | `manifest.json` | two rows, one hash | regeneration required after any content edit |
 
 Prose citations INTO charter anchors — grep each before renaming its target:

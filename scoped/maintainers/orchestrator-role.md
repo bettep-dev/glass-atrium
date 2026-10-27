@@ -13,7 +13,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 | Kept in the stub | Reader |
 |---|---|
 | the H1 + opening blockquote, verbatim | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` ("its opening line") |
-| `## Orchestrator Identity (Control Plane Only)` + the **Pattern** bullet, verbatim | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` |
+| `## Orchestrator Identity (Control Plane Only)` + the **Pattern** bullet, verbatim | none of its verbatim text; citers name the full-text skill file |
 | `#### Deliverable exposure and designer composition (Decision phase)` + **Exposure Determination** | `agents/glass-atrium-intel-planner.md` · `agents/glass-atrium-intel-reporter.md` |
 | `#### Monitoring-phase notes` + the dev-front markup-exception and **Verbatim forward-relay** leads | GLOBAL_RULES · dev-front · intel-planner · intel-reporter |
 | `### Plan Direction Verification (Stage-2 gate)` | `agents/glass-atrium-intel-planner.md` |

@@ -65,10 +65,10 @@ Check the tree before reverting any of these.
 - Naming: `scoped/scope-dev.md` → `### Project Convention Probe` reaches this agent through `rules.scope`; the body keeps only the `snake_case` function casing.
 - Red Flags and Prohibitions intros stay: `scoped/maintainers/glass-atrium-dev-node.md` and `glass-atrium-dev-android.md` name Guardrails as the owner and list only what has no Guardrails entry, citing this body as that shape.
 - Canonicals the body states no copy of, each reaching the agent on its own channel:
-  - host: File Deletion Policy · Temporary Files · Hook Operation Policy · Cross-Session Continuity · `core-security.md` Execution Security
+  - host: File Deletion Policy · Temporary Files · Cross-Session Continuity · `core-security.md` Execution Security
   - host: `core-outcome-record.md` → `#### Self-assessment fields` and Completion Report Output Obligation
   - `rules.shared` / `rules.scope`: `shared-search-first.md` · `shared-comment-logging.md` · `shared-code-structure.md`
-  - conditional: `scoped/shared-hook-capability-contract.md` (hook input, output and exit-code channels)
+  - conditional: `scoped/shared-hook-capability-contract.md` (hook input, output and exit-code channels; `## Hook Operation Policy`)
   - The Success Criteria no-`completion_block` fallback stays: neither canonical states it.
 
 ## Early-exit pipe readers — the premise in its Why
