@@ -185,14 +185,6 @@ if [[ -n "${FILE_PATH}" ]] \
   exit 0
 fi
 
-# Second allowed-path source — the delegation's `[SCOPE] files=` declaration, read from record 0
-# of the spawning subagent's own transcript. Covers the everyday delegation that has no plan doc
-# at all. A match here is authoritative (union semantics: either source may allow the edit); a
-# non-match emits its own advisory and lets the plan-doc leg below reach its own verdict.
-# Resolution is cached per agent_id in the existing per-session cache shape (same helpers, same
-# TTL and bypass env) — the sentinel below caches the far more common "no declaration" answer
-# too, so an undeclared delegation re-parses no transcript on later edits. An unread declaration
-# (selector status 2) has its own sentinel and is never cached, so the next edit reads it again.
 # The spawning subagent's own transcript for ($1=agent_id, $2=session_id), or empty when none exists.
 get_subagent_transcript() {
   local tpath
@@ -227,6 +219,16 @@ is_simple_task_delegation() {
   ! printf '%s' "${record0}" | drain_after grep -qE "${PLAN_REF_ERE}"
 }
 
+# Second allowed-path source — the delegation's `[SCOPE] files=` declaration, read from record 0
+# of the spawning subagent's own transcript. Covers the everyday delegation that has no plan doc
+# at all. A match here is authoritative (union semantics: either source may allow the edit); a
+# non-match emits its own advisory and lets the plan-doc leg below reach its own verdict.
+# Resolution is cached per agent_id in the existing per-session cache shape (same helpers, same
+# TTL and bypass env) — the sentinel below caches the far more common "no declaration" answer
+# too, so an undeclared delegation re-resolves no declaration on later edits. The simple-task
+# check runs first and is uncached: it re-reads record 0 on every subagent edit. An unread
+# declaration (selector status 2) has its own sentinel and is never cached, so the next edit
+# reads it again.
 SCOPE_DECL_NONE_SENTINEL='./no-scope-declaration'
 SCOPE_DECL_UNREAD_SENTINEL='./scope-declaration-unread'
 scope_decl_resolve() {

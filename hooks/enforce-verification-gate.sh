@@ -17,8 +17,8 @@
 #      Runs BEFORE surfaces 1/3 so plan-bearing spawns are checked.
 #   3) entry-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — a DEV spawn with NEITHER a
 #      plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss); that token is the
-#      escape hatch for legitimate small DEV work. Non-DEV spawns exit 0; plan/token-bearing spawns
-#      clear THIS branch (but still face surface 2).
+#      escape hatch for legitimate small DEV work. Non-DEV spawns exit 0; plan-bearing spawns clear
+#      THIS branch (but still face surface 2).
 #   SIMPLE-TASK ENTRY — a spawn carrying [ENTRY-CLASS] simple-task and NO plan-reference exits 0
 #      silently before surfaces 2-5: it owes no other attestation token and no reviewer.
 #   4) scope-miss ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin DEV spawn whose
