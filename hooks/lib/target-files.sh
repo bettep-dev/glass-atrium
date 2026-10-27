@@ -10,9 +10,11 @@
 
 # Extract path-like tokens from the `<section id="target-files">` slice → newline list.
 # Relies on the T1 flat-leaf contract (slices to the first </section>). sed-only (no awk).
-# P1 nesting guard: a nested opening <section> in the slice violates the leaf contract → a
-# truncated list could mis-fire SCOPE-070, so emit empty (fail-open, no guessing).
-# Args: $1=html body. Prints cleaned list to stdout (empty on parse anomaly · always return 0).
+# P1 nesting guard: a nested opening <section> in the slice violates the leaf contract, so the
+# slice may be a truncated list — print nothing and return 3, never a guessed list. Each reader
+# picks its own answer: the drift advisory reads it as no list, the delegation gate fails closed.
+# Args: $1=html body. Prints the cleaned list to stdout (empty when the section is absent).
+# Returns 0 (list, or no section) · 3 (parse anomaly: a nested <section>).
 extract_target_files_section() {
   local body="${1}"
   # Flatten to one line, then slice between opening tag and first </section>.
@@ -27,10 +29,10 @@ extract_target_files_section() {
   sliced="$(printf '%s' "${from_open}" | sed 's/<\/section>.*//')"
   [[ -z "${sliced}" ]] && return 0
 
-  # P1 guard: nested opening <section> → leaf violation → fail-open.
+  # P1 guard: nested opening <section> → leaf violation → the parse-anomaly status.
   # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
   if printf '%s' "${sliced}" | drain_after grep -q '<section[^>]*>'; then
-    return 0
+    return 3
   fi
 
   # <li>/<br> → newlines (one item per line), then strip remaining tags + decode entities.

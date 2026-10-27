@@ -16,7 +16,8 @@
 #           `/<entry>`, a directory entry (ending in `/`) when the path holds `/<entry>`, both at a
 #           component boundary; an absolute entry is compared from the root. A bare basename
 #           (README.md) binds nothing, and nothing matches by substring.
-#   DEL-007 the implementing plans' Target Files cannot be read — fail closed
+#   DEL-007 the implementing plans' Target Files cannot be read, or an html Target Files section nests
+#           a <section> (a possibly truncated list) — fail closed
 # Block channel = stderr emit_error + exit 2 (non-substitutable with the stdout decision channel — see shared-hook-capability-contract.md)
 #
 # memory/* path-prefix exception: the orchestrator MAY directly Write/Edit session-state files under
@@ -91,9 +92,10 @@ esac
 
 # 3. Allow direct orchestrator writes to session-state files under any */memory/* segment.
 #    Normalize first so "memory/../hooks/x.sh" cannot spoof the segment. A "memory/" nested
-#    directly under a protected harness dir (agents/, rules/, hooks/, skills/, autoagent/,
-#    monitor/, scripts/) is NOT a session-state root — those stay BLOCKED so a harness write
-#    cannot bypass via a "memory" segment (e.g. agents/memory/x.md must route through delegation).
+#    directly under a protected dir name (agents/, rules/, hooks/, skills/, autoagent/, monitor/,
+#    scripts/) gets no exemption here: it falls through to the checks below like any other path.
+#    Under a harness root (e.g. ~/.claude/agents/memory/x.md) the DEL-001 check blocks it; outside
+#    the harness roots (e.g. <project>/agents/memory/x.md) it passes unless a later check blocks it.
 #
 #    DUPLICATED LIST — READ BEFORE ADDING AN EIGHTH ARM. hooks/advisory-worktree-writer-lock.sh
 #    mirrors these seven arms VERBATIM to keep its lock exemption from contradicting this gate, and
@@ -239,7 +241,8 @@ get_implementing_plan_ids() {
 }
 
 # Target Files of plan $1 as path tokens, one per line (none when the plan declares no list); rc 1
-# when the plan cannot be read. md: list items only, so prose naming a path binds nothing.
+# when the plan cannot be read, rc 3 when its html Target Files section nests a <section> (the
+# list may be truncated). md: list items only, so prose naming a path binds nothing.
 get_plan_target_files() {
   local doc body format items
   doc="$(curl -sf --max-time "${CURL_TIMEOUT}" "${PLAN_LIST_URL}/${1}" 2>/dev/null)" || return 1
@@ -249,7 +252,10 @@ get_plan_target_files() {
   format="${body%%$'\n'*}"
   body="${body#*$'\n'}"
   case "${format}" in
-    html) items="$(extract_target_files_section "${body}" 2>/dev/null)" ;;
+    html)
+      # shellcheck disable=SC2310  # the anomaly status is passed up to the DEL-007 block
+      items="$(extract_target_files_section "${body}" 2>/dev/null)" || return 3
+      ;;
     md)
       items="$(extract_target_files_heading "${body}")"
       items="$(printf '%s\n' "${items}" | sed -n -E 's/^[[:space:]]*([-*]|[0-9]+\.)[[:space:]]+//p')"
@@ -300,17 +306,25 @@ is_listed_path() {
 }
 
 check_plan_target_files() {
-  local ids id list
+  local ids id list rc
   # shellcheck disable=SC2310  # an unreadable list is answered by the DEL-007 block
   ids="$(get_implementing_plan_ids)" || block_write "DEL-007" \
     "Orchestrator direct write blocked: the implementing plans' Target Files could not be read (monitor unreachable or list unreadable), so the gate fails closed" \
     "Delegate the edit to a sub-agent, or restore the monitor at ${PLAN_LIST_URL} and retry"
   while IFS= read -r id; do
     [[ "${id}" =~ ^[0-9]+$ ]] || continue
-    # shellcheck disable=SC2310  # an unreadable plan is answered by the DEL-007 block
-    list="$(get_plan_target_files "${id}")" || block_write "DEL-007" \
-      "Orchestrator direct write blocked: the Target Files of implementing plan clauded-docs/${id} could not be read, so the gate fails closed" \
-      "Delegate the edit to a sub-agent, or fix the plan's Target Files list"
+    rc=0
+    # shellcheck disable=SC2310  # an unreadable plan is answered by the DEL-007 blocks below
+    list="$(get_plan_target_files "${id}")" || rc=$?
+    if [[ "${rc}" -eq 3 ]]; then
+      block_write "DEL-007" \
+        "Orchestrator direct write blocked: the html Target Files section of implementing plan clauded-docs/${id} contains a nested <section>, so its list may be truncated and the gate fails closed" \
+        "Delegate the edit to a sub-agent, or flatten the plan's target-files section to a leaf list"
+    elif [[ "${rc}" -ne 0 ]]; then
+      block_write "DEL-007" \
+        "Orchestrator direct write blocked: the Target Files of implementing plan clauded-docs/${id} could not be read, so the gate fails closed" \
+        "Delegate the edit to a sub-agent, or fix the plan's Target Files list"
+    fi
     # shellcheck disable=SC2310  # predicate call
     if is_listed_path "${list}"; then
       block_write "DEL-006" \

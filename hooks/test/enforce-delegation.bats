@@ -518,6 +518,29 @@ write_capturing() {
     && "${output}" != *"internal error"* ]] || { echo "exit ${status}, ${records} records: ${output}"; return 1; }
 }
 
+@test "an html Target Files section with a nested <section> blocks with one DEL-007 record naming the cause" {
+  setup_monitor
+  printf '%s\n' '{"total":1,"rows":[{"id":5,"doc_status":"implementing"}]}' >"${LIST_JSON_FILE}"
+  seed_plan 5 html '<section id=\"target-files\"><section><h3>x</h3></section><ul><li>src/owned.sh</li></ul></section>'
+  write_capturing "${WORK}/src/owned.sh"
+  local records
+  records="$(printf '%s\n' "${output}" | grep -c 'DEL-007' || true)"
+  [[ "${status}" -eq 2 && "${records}" == 1 && "${output}" == *"nested <section>"* \
+    && "${output}" == *"clauded-docs/5"* && "${output}" != *"internal error"* ]] \
+    || { echo "exit ${status}, ${records} records: ${output}"; return 1; }
+}
+
+@test "a memory/ nested under a protected dir name passes outside the harness roots, blocks under one" {
+  setup_monitor
+  mkdir -p "${WORK}/proj/agents/memory"
+  : >"${WORK}/proj/agents/memory/x.md"
+  write_capturing "${WORK}/proj/agents/memory/x.md"
+  [[ "${status}" -eq 0 ]] || { echo "outside the harness roots: exit ${status}: ${output}"; return 1; }
+  write_capturing "/Users/x/.claude/agents/memory/x.md"
+  [[ "${status}" -eq 2 && "${output}" == *"DEL-001"* ]] \
+    || { echo "under a harness root: exit ${status}: ${output}"; return 1; }
+}
+
 @test "the Target Files extractors live once in lib/target-files.sh, sourced by both hooks" {
   local lib="${HOOKS_DIR}/lib/target-files.sh" drift="${HOOKS_DIR}/validate-scope-drift.sh"
   grep -q '^extract_target_files_section() {' "${lib}" \

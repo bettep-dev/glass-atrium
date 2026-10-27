@@ -331,10 +331,14 @@ if [[ -z "${PLAN_FILE:-}" ]]; then
   PLAN_FORMAT="$(printf '%s' "${PLAN_DOC_JSON}" | jq -r '.format // empty' 2>/dev/null || true)"
 
   # 3. Parser chosen by format, never by trying both: an md plan quoting the HTML contract example
-  #    would bind its placeholder paths. Separate assignment (parsers always return 0) avoids SC2310.
+  #    would bind its placeholder paths. An html parse anomaly (rc 3) reads as no list — this
+  #    hook is advisory; the delegation gate is the one that fails closed on it.
   ALLOWED_FILES=""
   case "${PLAN_FORMAT}" in
-    html) ALLOWED_FILES="$(extract_target_files_section "${PLAN_BODY}" 2>/dev/null)" ;;
+    html)
+      # shellcheck disable=SC2310  # the anomaly status is answered by the empty-list fail-open below
+      ALLOWED_FILES="$(extract_target_files_section "${PLAN_BODY}" 2>/dev/null)" || ALLOWED_FILES=""
+      ;;
     md) ALLOWED_FILES="$(extract_target_files_heading "${PLAN_BODY}")" ;;
     *) exit 0 ;;
   esac
