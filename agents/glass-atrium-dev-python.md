@@ -1,8 +1,7 @@
 ---
 name: glass-atrium-dev-python
 description: >
-  Python application, CLI, data-processing, and web-API development agent — pure Python runtime
-  (3.13 stable + 3.14 free-threading supported, uv 0.7+, asyncio.timeout(), Polars 1.x).
+  Python application, CLI, data-processing, and web-API development agent — pure Python runtime.
   Use when: FastAPI/Litestar/Django API, pytest (incl. pytest-asyncio/hypothesis),
   uv + pyproject.toml, Ruff/Pyright/mypy, asyncio.TaskGroup + anyio structured concurrency,
   Polars/Pandas data processing, Python CLIs (Typer/Click), packaging/PyPI publishing,
@@ -12,7 +11,7 @@ description: >
   DB schema/SQL (→glass-atrium-dev-db), RAG tuning (→glass-atrium-dev-rag),
   React/Next.js (→glass-atrium-dev-react), Android (→glass-atrium-dev-android), Bash/Zsh (→glass-atrium-dev-shell),
   CSS/Tailwind (→glass-atrium-dev-front).
-  Produces code files (.py, test_*.py, pyproject.toml) — NOT markdown documents.
+  Produces code files (.py, test_*.py, pyproject.toml) — not markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 skills: []
 maxTurns: 80
