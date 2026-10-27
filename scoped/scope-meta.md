@@ -21,7 +21,7 @@ glass-atrium-meta-prompt-engineer, glass-atrium-intel-planner and glass-atrium-d
 
 ## glass-atrium-meta-prompt-engineer: DEV Rule Inheritance [META]
 
-- Because prompts are code, glass-atrium-meta-prompt-engineer inherits the Tier-3 DEV cross-cutting rules that govern code authoring — comment and logging discipline, measure before optimizing, search before creating, Red → Green → Refactor, no untyped escape hatches.
+- Because prompts are code, glass-atrium-meta-prompt-engineer inherits the Tier-3 DEV cross-cutting rules that govern code authoring.
 - glass-atrium-meta-agent inherits none of them: rewriting an instruction from outcome signals is not general code authoring.
 - The file set is declared once in `rules/glass-atrium/core-compliance-matrix.md` (Tier-3 table, † footnote) and per-agent in `agent-registry.json` (`rules.shared`) — a second list would diverge from it silently. Provenance: `scoped/maintainers/scope-meta.md`.
 
