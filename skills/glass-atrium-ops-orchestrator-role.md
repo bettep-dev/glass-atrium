@@ -96,7 +96,7 @@ Delegate to a subagent when the user request matches any row below.
 | Decision | Decompose into sub-tasks, sized per `### Spawn Budget` → Delegation-size discipline |
 | Decision | Fan out non-overlapping, independent sub-tasks in parallel by default (`#### Automatic Parallelization`) |
 | Decision | Compose team + phase order from capability hints (`domains` + descriptions), justified by that alignment |
-| Decision | Fix the scope (files, change type, constraints) in text: a `[SCOPE]` line on DEV/PLANNING delegations |
+| Decision | Fix the scope (files, change type, constraints) in text: `[SCOPE]` on DEV/PLANNING, simple-task entries excepted |
 | Decision | Probe each target path (Read/Glob) before prompt assembly, then run `#### Decision-phase probes` |
 | Decision | Classify DEV entry: SIZABLE → plan first; simple → `[ENTRY-CLASS] simple-task: <reason>` |
 | Decision | SIZABLE = any of ~3+ coordinated files · ≥2 modules · ≥3 expected turns · public-contract change; borderline → SIZABLE |
@@ -121,7 +121,7 @@ Delegate to a subagent when the user request matches any row below.
 | Decision | Collapsing compound requests into a single agent |
 | Decision | Spawning a subagent on unprobed paths, or one whose compatibility preconditions are unmet |
 | Decision | Oversized single delegation (>2 bundles / est ≳40 tool_uses) |
-| Decision | Delegating DEV/PLANNING work with no `[SCOPE]` line |
+| Decision | Delegating plan-backed DEV or any PLANNING work with no `[SCOPE]` line |
 | Delegation | Passing full conversation history |
 | Delegation | A context-free "just do it" |
 | Monitoring | Forwarding results without verification |
@@ -146,6 +146,13 @@ Classify every DEV task against the SIZABLE criteria in the Decision actions abo
 - **Classify-always**: a delegation carrying neither a plan-ref nor an `[ENTRY-CLASS]` token is blocked at spawn time, exit 2, on both paths.
   - SoT: `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]` (spawn-time entry gate); placement: `### Context Handoff Size` → Attestation-token placement.
 - **ENTRY-CLASS negative**: `simple-task` is the only recognized `[ENTRY-CLASS]` literal — any other variant blocks.
+- **Simple-task waiver**: a DEV delegation carrying `[ENTRY-CLASS] simple-task` and no plan-ref owes no other attestation token.
+  - `[SCOPE]` · `[SIZE-EST]` · `[AGENT-COMPOSITION]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` are optional, and their gates and advisories pass silently on both paths.
+  - Why: ceremony that exists only because work is split across agents costs more than it buys on small work.
+  - A plan-ref keeps every token and the reviewer-before-DEV presence check, whatever classification travels beside it.
+  - Carrying an optional token anyway is allowed; on a simple-task entry it is not checked.
+  - `[DOC-ROUTE]` and the doc-routing gate are untouched by the waiver.
+  - Honest backing: the hooks read the token's presence, never whether the work is simple — the classification is honor-system (`hooks/enforce-verification-gate.sh` · `hooks/enforce-workflow-verify-stage.sh` · `hooks/validate-scope-drift.sh`).
 
 #### Plan edge discovery (Decision phase — fires for any delegation derived from a persisted plan, whole or subset)
 
@@ -159,6 +166,7 @@ Classify every DEV task against the SIZABLE criteria in the Decision actions abo
 
 - **Attestation**: on a strict subset of a plan, emit `[PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=T1>T5b-1;T2>T3` (`order=n/a` when no edge).
   - The obligations above are unconditional and do not depend on this token.
+  - Optional on a simple-task entry (`#### Entry classification (DEV delegations)` → **Simple-task waiver**).
 - SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md` — declaration sites, the unit read, instruments, per-path ordering, why HALT, the `<id>` and no-free-text token rules, placement, honest backing.
 
 ## Decision-Phase Notes
@@ -276,13 +284,14 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 - The policy is identical on both paths; only the backstop kind differs.
 - **Manual**: `enforce-verification-gate.sh` blocks (exit 2) an orchestrator-origin, plan-referencing DEV spawn with no glass-atrium-qa-code-reviewer spawn recorded in the session — presence-only and fail-open.
-- **Ultracode**: `enforce-workflow-verify-stage.sh` blocks (exit 2) a missing, malformed or code-inconsistent `[AGENT-COMPOSITION]` declaration.
+- **Ultracode**: `enforce-workflow-verify-stage.sh` blocks (exit 2) a missing, malformed or code-inconsistent `[AGENT-COMPOSITION]` declaration, except on a simple-task entry.
 - The authoring obligation — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage before any DEV implementation, gated on `pass`+`feasible` — remains primary; never describe ultracode as "fully enforced".
 
 #### Ultracode declaration contract (the mechanically-enforced facet of this gate — `[AGENT-COMPOSITION]`)
 
 - **Standing obligation — fires when you author an ultracode Workflow script spawning a `dev-*` agent**: exactly one `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment, declaring the verify team and implementation spawns.
   - Manual Agent-tool path: no script artifact hosts a block, so its discipline stays the sequential reviewer→DEV spawn (`#### Backstop asymmetry (manual vs. ultracode)` above).
+  - A script carrying `[ENTRY-CLASS] simple-task` and no plan-ref owes no block (`#### Entry classification (DEV delegations)` → **Simple-task waiver**).
 - SoT for the line grammar, the `block-*` verdicts, the upstream waiver, the honesty floor and the compliant pre-verify Discovery routes: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`.
 
 ### Cost-Tier Selection
@@ -325,8 +334,9 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 #### Delegation-size discipline (per-delegation, distinct from runtime concurrency)
 
-- **Standing obligation — fires at every DEV spawn and at every schema-mode non-DEV analysis/research/audit spawn**:
-  - Emit a `[SIZE-EST]` token at either spawn kind; on a borderline count, round up and prefer the split (**Honesty framing**).
+- **Standing obligation — fires at every DEV spawn, its `[SIZE-EST]` token at plan-backed ones only, and at every schema-mode non-DEV analysis/research/audit spawn**:
+  - Emit a `[SIZE-EST]` token at a plan-backed DEV spawn and at an analysis-mode spawn; on a borderline count, round up and prefer the split (**Honesty framing**).
+    - On a simple-task DEV entry the token is optional (`#### Entry classification (DEV delegations)` → **Simple-task waiver**); sizing the delegation to one agent budget still binds.
   - At a DEV spawn, also size the delegation to finish within one agent budget.
   - At an analysis-mode spawn, before any read, bound the read allowlist (**Reserve-then-check**), field count (**Output-field cap**) and effort (**Effort matched to depth**) so the reserved emit budget stays unspent.
   - Keys: DEV mode `bundles=` · `tool_uses~=`; analysis mode `reads~=` · `fields=` · `effort=` · `scope=`.
@@ -392,13 +402,15 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - Manual path → inside the Agent tool's `prompt` parameter, never the user-facing narration.
   - `[PLAN-CLOSE]` has no manual form: the manual close is a reviewer spawn (`skills/glass-atrium-ops-orchestrator.md` → `## Managed Document Completion (Direct Handling)` → Step 3).
   - Ultracode path → the top-of-script `log()` string or `meta.description` (`skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`, Workflow pre-flight item 1).
-- **`[SCOPE]` — the 7th delegation element, REQUIRED on DEV and PLANNING delegations; grammar SoT.** One line opened by the token, `files=` first, ` · `-separated:
+  - Which tokens a DEV delegation owes: `[ENTRY-CLASS]` alone on a simple-task entry, every applicable token on plan-backed work (`#### Entry classification (DEV delegations)` → **Simple-task waiver**).
+- **`[SCOPE]` — the 7th delegation element, REQUIRED on plan-backed DEV and on PLANNING delegations; grammar SoT.** One line opened by the token, `files=` first, ` · `-separated:
 
   ```
   [SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>
   ```
 
   - **What it is for**: it fixes the literal scope of the user's instruction in text, for later comparison with what was built.
+  - Optional on a simple-task DEV entry (`#### Entry classification (DEV delegations)` → **Simple-task waiver**); a PLANNING delegation always carries it.
   - **Author rules** (detail: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`):
     - Write the ` · ` separators.
     - The first declaration line wins: block-quote (`> `) a relayed copy or keep it mid-line.

@@ -13,6 +13,11 @@
 # dev is the verify partner vs the gated implementation dev) does NOT exist in the code, so any
 # inference was a guess. The author declares; the hook checks presence + consistency.
 #
+# SIMPLE-TASK ENTRY: a DEV workflow carrying [ENTRY-CLASS] simple-task and NO plan-reference owes no
+# other attestation token — the helper marks it ENTRY_SIMPLE, every [AGENT-COMPOSITION] / [SIZE-EST]
+# block resolves to PASS, and the [SIZE-EST] and [SCOPE] advisories stay silent. A plan-reference keeps
+# every check, whatever classification travels beside it. The doc-routing block is unaffected.
+#
 # DECLARATION GRAMMAR (raw-scanned, but the opening sentinel must NOT sit inside a string literal so
 # an incidental prompt/goal mention is not mistaken for a declaration; canonical home = a /* */
 # block comment):
@@ -527,7 +532,7 @@ block_and_exit() {
   if [[ "${addendum_allowed}" == true && "${entry_marker:-}" == "ENTRY_ADVISORY" ]]; then
     reason="${reason}"$'\n\n'"$(
       cat <<'EOF'
-ADDITIONALLY (entry classification / plan-reference also required): beyond the block above, this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — so once the issue above is fixed it will STILL be blocked for a missing entry signal. Resolve BOTH in one pass. Two ways to supply the entry signal: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-reference token); (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate), record an [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> classification in the workflow script. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — persist a REAL plan. Placement is not enforced (these tokens are raw-scanned), so a commented token also satisfies it.
+ADDITIONALLY (entry classification / plan-reference also required): beyond the block above, this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification, so it also needs an entry signal. Two ways to supply it: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-reference token) — then fix the issue above too, in the same pass; (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate), record an [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> classification in the workflow script, with no plan-reference — path (2) alone clears the block above when it is an [AGENT-COMPOSITION] block, since a simple-task entry owes no other attestation token; a doc-routing leak still needs its own fix. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — persist a REAL plan. Placement is not enforced (these tokens are raw-scanned), so a commented token also satisfies it.
 EOF
     )"
   fi
@@ -841,7 +846,7 @@ EOF
 # skill for RECONCILE_GOAL rather than copying the goal text, so the skill skeleton stays its one home.
 print_lint_template() {
   cat <<'EOF'
-[enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE [AGENT-COMPOSITION] form into a /* */ block comment, plus ONE entry token and the [SIZE-EST] token, then preview with: enforce-workflow-verify-stage.sh --lint <file> (exit 0 = will pass the gate). The fourth section is CONDITIONAL rather than universal — it applies to a schema-mode spawn only, and a DEV verify stage is deliberately text-mode, declares no schema and needs none of it. The fifth section applies to a plan-referencing script: ONE close-token form, plus the terminal phase when the script closes the plan itself.
+[enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE entry token. A plan-referencing script also needs ONE [AGENT-COMPOSITION] form in a /* */ block comment and the [SIZE-EST] token; an [ENTRY-CLASS] simple-task script with no plan-reference needs neither. Then preview with: enforce-workflow-verify-stage.sh --lint <file> (exit 0 = will pass the gate). The fourth section is CONDITIONAL rather than universal — it applies to a schema-mode spawn only, and a DEV verify stage is deliberately text-mode, declares no schema and needs none of it. The fifth section applies to a plan-referencing script: ONE close-token form, plus the terminal phase when the script closes the plan itself.
 
 [AGENT-COMPOSITION] declaration (pick ONE form):
 EOF
@@ -853,7 +858,7 @@ EOF
   emit_entry_token_scaffold
   cat <<'EOF'
 
-Delegation-size self-attestation (at EVERY DEV spawn — ONE [SIZE-EST] token, two modes):
+Delegation-size self-attestation (ONE [SIZE-EST] token, two modes — DEV mode at every DEV spawn of a plan-referencing script; a simple-task entry owes none):
   --- DEV mode ---
   log('[SIZE-EST] bundles=N tool_uses~=N — <reason>');
   --- analysis mode (schema-mode NON-DEV researcher/planner/reporter/reviewer spawn) ---
@@ -2018,7 +2023,22 @@ def sizeest_bounds(attestation_src, slots):
         return "SIZEEST_BOUNDS_SILENT"
 
 
+# Verdicts a simple-task entry waives: every [AGENT-COMPOSITION] and [SIZE-EST] block. The doc-routing
+# block is no token check and stays.
+SIMPLE_TASK_WAIVED_BLOCKS = frozenset((
+    "BLOCK_NODECL", "BLOCK_GRAMMAR", "BLOCK_NOREV", "BLOCK_NOVERIFYDEV", "BLOCK_DECLSPAWN",
+    "BLOCK_UNDECL", "BLOCK_COMPUTED", "BLOCK_ORDER", "BLOCK_UPSTREAM", "BLOCK_SIZEEST",
+))
+
+
 def emit(verdict, entry_marker):
+    # Simple-task entry → waived blocks become PASS and the [SIZE-EST] advisories go silent; the
+    # ENTRY_SIMPLE marker tells the bash side to skip its [SCOPE] advisory too.
+    size_map, sizeest_bounds_flag = SIZE_MAP_FLAG, SIZEEST_BOUNDS_FLAG
+    if entry_marker == "ENTRY_SIMPLE":
+        if verdict in SIMPLE_TASK_WAIVED_BLOCKS:
+            verdict = "PASS"
+        size_map, sizeest_bounds_flag = "SIZE_MAP_SILENT", "SIZEEST_BOUNDS_SILENT"
     print(verdict)
     print(entry_marker)
     print(RESIL_FLAG)
@@ -2026,10 +2046,10 @@ def emit(verdict, entry_marker):
     print(SCHEMA_CAP_FLAG)
     print(DEV_FLAG)
     print("IMPL_SLOTS=" + str(IMPL_SLOTS))
-    print(SIZE_MAP_FLAG)
+    print(size_map)
     print(ENTRY_CARD_FLAG)
     print(COMPLETION_FLAG)
-    print(SIZEEST_BOUNDS_FLAG)
+    print(sizeest_bounds_flag)
     print(CLOSE_TOKEN_FLAG)
     sys.exit(0)
 
@@ -2091,6 +2111,9 @@ try:
     entry_literal_found = ENTRY_CLASS_LITERAL in attestation_src
     entry_ok = (not dev_present) or plan_ref_found or entry_literal_found
     entry_marker = "ENTRY_OK" if entry_ok else "ENTRY_ADVISORY"
+    # Simple-task entry: classified simple with no plan-reference → owes no other attestation token.
+    if dev_present and entry_literal_found and not plan_ref_found:
+        entry_marker = "ENTRY_SIMPLE"
     size_est_missing = dev_present and entry_ok and (SIZE_EST_LITERAL not in attestation_src)
     # Close-token decision: a plan-referencing DEV workflow carrying neither [PLAN-CLOSE] form (raw scan).
     if dev_present and plan_ref_found and not CLOSE_TOKEN_RE.search(attestation_src):
@@ -2356,7 +2379,7 @@ PY
     IFS= read -r close_token_flag
   } <<<"${helper_out}" || true
   [[ -z "${verdict}" ]] && verdict="PASS"
-  [[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
+  [[ "${entry_marker}" == "ENTRY_ADVISORY" || "${entry_marker}" == "ENTRY_SIMPLE" ]] || entry_marker="ENTRY_OK"
   [[ "${resil_flag}" == "RESIL_ADVISE" ]] || resil_flag="RESIL_SILENT"
   [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]] || analysis_size_flag="ANALYSIS_SIZE_SILENT"
   # The schema-cap flag carries the matched scoped rule as a `:R<n>` suffix (trace instrumentation); a
@@ -2512,7 +2535,7 @@ EOF
       trace_tag="block-nodecl"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (missing composition declaration): this Workflow script spawns DEV agent(s) but carries NO [AGENT-COMPOSITION] declaration block. Like [ENTRY-CLASS] / [SIZE-EST], the composition declaration is a MANDATORY author self-attestation — its ABSENCE on a DEV workflow is a hard block (presence parity). It declares the verify team + the implementation spawns so the gate can consistency-check them against the code. STRING-RESIDENCY NOTE: if your block IS present but sits INSIDE a string literal (e.g. quoted in a goal/prompt template), it is treated as ABSENT on purpose (a worked example quoted into a prompt must stay inert) — move it into a real /* */ block comment. HONESTY: declaration truthfulness is NOT mechanically verified — same honor-system trust model as the sibling attestation tokens; only PRESENCE + CONSISTENCY are checked.
+[enforce-workflow-verify-stage] BLOCKED (missing composition declaration): this Workflow script spawns DEV agent(s) but carries NO [AGENT-COMPOSITION] declaration block. Like [SIZE-EST], the composition declaration is a MANDATORY author self-attestation on a DEV workflow that is not an [ENTRY-CLASS] simple-task entry — its ABSENCE there is a hard block (presence parity). A genuinely simple script with no plan-reference records [ENTRY-CLASS] simple-task instead and owes no declaration. It declares the verify team + the implementation spawns so the gate can consistency-check them against the code. STRING-RESIDENCY NOTE: if your block IS present but sits INSIDE a string literal (e.g. quoted in a goal/prompt template), it is treated as ABSENT on purpose (a worked example quoted into a prompt must stay inert) — move it into a real /* */ block comment. HONESTY: declaration truthfulness is NOT mechanically verified — same honor-system trust model as the sibling attestation tokens; only PRESENCE + CONSISTENCY are checked.
 
 COPY-PASTE SCAFFOLD — pick ONE form (canonical home: a /* */ block comment):
 
@@ -2615,7 +2638,7 @@ EOF
       trace_tag="block-sizeest"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at EVERY DEV spawn: log('[SIZE-EST] bundles=N tool_uses~=N — <reason>'). Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked.
+[enforce-workflow-verify-stage] BLOCKED (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at every DEV spawn of a plan-referencing script: log('[SIZE-EST] bundles=N tool_uses~=N — <reason>'). A genuinely simple script with no plan-reference records [ENTRY-CLASS] simple-task instead and owes no [SIZE-EST]. Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked.
 EOF
       )"
       ;;
@@ -2623,7 +2646,9 @@ EOF
       # SCOPE ADVISORY — on the PASS arm only, so a fault in this newest check can never mask one of
       # the block verdicts above. Ordered before emit_trace so the tag rides the pass trace line.
       # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
+      # A simple-task entry (ENTRY_SIMPLE) owes no [SCOPE] declaration.
+      if [[ "${dev_flag}" == "yes" && "${entry_marker}" != "ENTRY_SIMPLE" ]] \
+        && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
         print_scope_advisory
         add_advisory "scope"
       fi
