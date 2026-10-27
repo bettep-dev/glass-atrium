@@ -31,7 +31,7 @@ Combinations that meet the Pipeline trigger:
 
 - **Team size** — 2-3 members for the pure Agent Teams pattern; the cap is specific to this pattern, not a global limit.
   - Overall delegation team size has no fixed-number gate: `skills/glass-atrium-ops-orchestrator.md` → `#### Team Size`.
-- **Model tiering** — assign Lead and Teammate tiers per `rules/glass-atrium/orchestrator-role.md` → `### Cost-Tier Selection`, as natural-language instructions, never a hardcoded tier or version string.
+- **Model tiering** — assign Lead and Teammate tiers per `skills/glass-atrium-ops-orchestrator-role.md` → `### Cost-Tier Selection`, as natural-language instructions, never a hardcoded tier or version string.
 - Control Wave execution (parallel → sequential) via the `blockedBy` field.
 - Clean up idle Teammates immediately.
 - Deactivate unused MCP servers.

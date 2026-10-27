@@ -66,9 +66,9 @@ The register-wide sweep, the unregistered-claim flag duty and the claim-class ma
 
 The DEV fleet roster (SoT) is the rule file's Tier-2 loading stanza. This section governs when that roster may grow. Readers: the orchestrator, which routes a capability gap back to this gate rather than self-authoring an agent · glass-atrium-meta-prompt-engineer, which writes the body · the maintainer of the CLI and of the two stanza parsers above.
 
-Cross-ref: `rules/glass-atrium/orchestrator-role.md` capability-based routing (the "starting reference, not a routing contract" clause) — concern-based separation is what keeps `domains` arrays distinct enough for that routing.
+Cross-ref: `skills/glass-atrium-ops-orchestrator-role.md` capability-based routing (the "starting reference, not a routing contract" clause) — concern-based separation is what keeps `domains` arrays distinct enough for that routing.
 
-Pair note: the growth decision is also stated at `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` (the DEV-fleet-growth-authority clause, which declares extension the default and routes creation back here) and the flow that executes it at `skills/glass-atrium-ops-orchestrator.md` → `### In-Context Agent-Lifecycle Ceremony (CREATE/EXTEND — ceremony SoT)`, so a reader loosening the gate here is loosening a rule two other files also state.
+Pair note: the growth decision is also stated at `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria` (the DEV-fleet-growth-authority clause, which declares extension the default and routes creation back here) and the flow that executes it at `skills/glass-atrium-ops-orchestrator.md` → `### In-Context Agent-Lifecycle Ceremony (CREATE/EXTEND — ceremony SoT)`, so a reader loosening the gate here is loosening a rule two other files also state.
 
 ### Separation Axis
 
@@ -122,12 +122,12 @@ glass-atrium-dev-front's narrow role co-authoring viewer-exposed clauded-docs HT
 
 - **Disjoint concern boundary**: glass-atrium-design-designer = philosophy / Mermaid-type / section-composition / palette verdict (consultative, no markup) · glass-atrium-intel-reporter | glass-atrium-intel-planner = content + the single POST · glass-atrium-dev-front = the bespoke styled-skeleton markup only.
 - **glass-atrium-dev-front is NOT a default co-author** (default = `{author, glass-atrium-design-designer}`).
-  - The entry/handoff mechanics (author `needs_devfront_markup` signal → orchestrator Monitoring-phase capability judgment, NOT user approval) are canonical in `orchestrator-role.md` → glass-atrium-dev-front markup-exception Monitoring judgment plus its reference:
+  - The entry/handoff mechanics (author `needs_devfront_markup` signal → orchestrator Monitoring-phase capability judgment, NOT user approval) are canonical in `skills/glass-atrium-ops-orchestrator-role.md` → glass-atrium-dev-front markup-exception Monitoring judgment plus its reference:
     - `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## glass-atrium-dev-front markup exception — detail`.
 - **`shared-design-token-consumption.md` does NOT gate this** — a self-contained Tailwind-CDN exposed doc is a markup-craft surface, not a token-consumption one, but markup craft is still glass-atrium-dev-front's concern.
 - **Pair note**: this passage holds the EXTEND verdict only; the exception itself is stated per actor at:
   - `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` → **Markup exception (narrow)** — author side;
-  - `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes` plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## glass-atrium-dev-front markup exception — detail` — the judgment canonical
+  - `skills/glass-atrium-ops-orchestrator-role.md` → `#### Monitoring-phase notes` plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## glass-atrium-dev-front markup exception — detail` — the judgment canonical
     - its reference cites the rule file's `## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]` stub for the EXTEND verdict;
   - `agents/glass-atrium-dev-front.md` → `## Exposed-Doc HTML Co-Emission (narrow exception)` — the dev-front side.
 
@@ -138,8 +138,8 @@ The rule file states what the gate obliges a DEV agent; the classification below
 Pair note — the other sites of this gate:
 
 - `scoped/scope-qa.md` carries no Sprint Contract Gate section: a pointer there reached no reader that receives the rule file (`scoped/maintainers/scope-qa.md` → `## What was moved here, and what was dropped`).
-- `rules/glass-atrium/orchestrator-role.md` holds the one condensed copy: the Decision `SIZABLE =` action row of `## Delegation Workflow` lists the sizable criteria inline, and `#### Entry classification (DEV delegations)` names those Decision actions as the copy.
-- How orchestrator-role.md reaches the definition below: `## Open item`.
+- `skills/glass-atrium-ops-orchestrator-role.md` holds the one condensed copy: the Decision `SIZABLE =` action row of `## Delegation Workflow` lists the sizable criteria inline, and `#### Entry classification (DEV delegations)` names those Decision actions as the copy.
+- How skills/glass-atrium-ops-orchestrator-role.md reaches the definition below: `## Open item`.
 
 ### Sizable-task definition (single SoT — the positive entry floor)
 
@@ -157,7 +157,7 @@ A DEV task is **SIZABLE** (MUST enter the Document-Driven Workflow — plan auth
 A DEV implementation spawn carrying NEITHER a plan reference NOR an `[ENTRY-CLASS] simple-task` token is BLOCKED at spawn time (channel-a, stderr + exit 2).
 
 - **Both delegation paths are covered**: the manual path via the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook (which reads `subagent_type` from the spawn payload), and the ultracode path via the `enforce-workflow-verify-stage.sh` static scan of the workflow script.
-- **The `[ENTRY-CLASS] simple-task: <reason>` token is the escape hatch** for legitimate small DEV work — a spawn judged simple/exempt emits it to pass the gate (per `orchestrator-role.md` Decision phase classify-always rule).
+- **The `[ENTRY-CLASS] simple-task: <reason>` token is the escape hatch** for legitimate small DEV work — a spawn judged simple/exempt emits it to pass the gate (per `skills/glass-atrium-ops-orchestrator-role.md` Decision phase classify-always rule).
 - **Ultracode placement**: on that path the token is recorded IN the workflow script (canonical home: a `log()` string or `meta.description`) rather than in a delegation prompt.
   - This is a greppability convention, NOT a comment prohibition — the gate raw-scans, so any placement passes; the plan-ref token shares it.
   - See `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode` (Workflow pre-flight item 1) and its Pipeline Acceptance Criteria "Entry-class token placement".
@@ -170,7 +170,7 @@ A DEV implementation spawn carrying NEITHER a plan reference NOR an `[ENTRY-CLAS
   - Error-direction asymmetry: under-classifying sizable work as simple is the DANGEROUS error (it skips the plan + Stage-2 the work actually needed); over-escalating a genuinely simple task is the SAFE error — on a borderline case prefer SIZABLE.
 - **Sibling token — `[SIZE-EST]`**: this gate answers "is this DEV spawn classified?"; `[SIZE-EST]` is a separate self-attestation answering "how big is THIS delegation?" (bundle count + rough tool_use estimate, gating per-delegation packing split vs no split).
   - Contract SoT: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token** (do not restate the format here).
-  - Standing obligation and split triggers: `orchestrator-role.md` → `### Spawn Budget` → Delegation-size discipline.
+  - Standing obligation and split triggers: `skills/glass-atrium-ops-orchestrator-role.md` → `### Spawn Budget` → Delegation-size discipline.
   - BOTH tokens' PRESENCE (never the estimate's correctness) is gate-enforced on both paths: manual via `enforce-verification-gate.sh` (`has_size_est_token`, guarded by `hook_is_subagent` → orchestrator-origin spawns only), ultracode via `enforce-workflow-verify-stage.sh` (`BLOCK_SIZEEST` under `ENTRY_OK`).
 - Cross-ref — the Sprint Contract Gate's verification criteria at completion:
   - A DEV agent reports them through `metric_pass` (the overall bar) plus one `concerns:` item per failed or unverified criterion (rule file → `## Sprint Contract Gate [DEV+QA]`).
@@ -189,9 +189,9 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 
 | Heading in `scoped/scope-dev.md` | Cited from |
 |---|---|
-| `## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]` (stub) | `rules/glass-atrium/orchestrator-role.md` |
-| `## Sprint Contract Gate [DEV+QA]` (stub) | `rules/glass-atrium/orchestrator-role.md` · `scoped/maintainers/glass-atrium-dev-node.md` · operator-facing messages in `hooks/enforce-verification-gate.sh` and `hooks/enforce-workflow-verify-stage.sh` |
-| `## Plan Direction Verification Gate [DEV+QA]` | `rules/glass-atrium/orchestrator-role.md` · `scoped/scope-qa.md` · `scoped/scope-planning.md` · `skills/glass-atrium-ops-orchestrator.md` (comment) · `hooks/enforce-workflow-verify-stage.sh` (comment) |
+| `## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]` (stub) | `skills/glass-atrium-ops-orchestrator-role.md` |
+| `## Sprint Contract Gate [DEV+QA]` (stub) | `skills/glass-atrium-ops-orchestrator-role.md` · `scoped/maintainers/glass-atrium-dev-node.md` · operator-facing messages in `hooks/enforce-verification-gate.sh` and `hooks/enforce-workflow-verify-stage.sh` |
+| `## Plan Direction Verification Gate [DEV+QA]` | `skills/glass-atrium-ops-orchestrator-role.md` · `scoped/scope-qa.md` · `scoped/scope-planning.md` · `skills/glass-atrium-ops-orchestrator.md` (comment) · `hooks/enforce-workflow-verify-stage.sh` (comment) |
 | `## Ambiguity Gate (Ambiguity Score)` → Assumptions Disclosure | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` · `agents/glass-atrium-dev-animator.md` · `scoped/scope-planning.md` |
 | `## Pre-Execution Verification` → `### Project Convention Probe` | `rules/glass-atrium/core-outcome-record.md` (`style_ref` row) · `agents/glass-atrium-dev-android.md` · `agents/glass-atrium-dev-shell.md` · `agents/glass-atrium-dev-swift.md` |
 | `### Pre-Edit Facts Disclosure` | `hooks/advisory-preedit-facts.sh` (header and the operator-visible `missing`-verdict message) |
@@ -215,7 +215,7 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 
 Open, and owned outside this note (the fix edits other files):
 
-- `rules/glass-atrium/orchestrator-role.md` still reaches the moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) through the rule-file stubs, one hop more than needed. Repointing its citations at this note removes the hop; `core-compliance-matrix.md` and `skills/glass-atrium-ops-orchestrator.md` already point here.
+- `skills/glass-atrium-ops-orchestrator-role.md` still reaches the moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) through the rule-file stubs, one hop more than needed. Repointing its citations at this note removes the hop; `core-compliance-matrix.md` and `skills/glass-atrium-ops-orchestrator.md` already point here.
 
 ## Rule-file pointers and loading stanza
 

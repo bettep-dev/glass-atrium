@@ -1,6 +1,6 @@
 # Deliverable exposure and designer composition (Decision phase)
 
-- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)`.
+- **Pointer site**: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)`.
 - **Markup-exception pointer site**: the same file → `#### Monitoring-phase notes` → **glass-atrium-dev-front markup-exception Monitoring judgment**.
 
 ## Exposure Determination — signals and routing

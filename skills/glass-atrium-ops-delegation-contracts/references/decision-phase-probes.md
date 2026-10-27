@@ -1,6 +1,6 @@
 # Decision-phase probes — detail
 
-- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `#### Decision-phase probes`.
+- **Pointer site**: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Decision-phase probes`.
 
 ## Permission Probe — detail
 
@@ -21,4 +21,4 @@
 
 ## Probe strength — backing
 
-- `rules/glass-atrium/orchestrator-role.md` → `## Delegation Workflow` → the Forbidden table's Decision rows name the advisory probes' failures, but no hook verifies them.
+- `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Workflow` → the Forbidden table's Decision rows name the advisory probes' failures, but no hook verifies them.

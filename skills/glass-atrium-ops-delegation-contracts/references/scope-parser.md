@@ -2,7 +2,7 @@
 
 The shape of a `[SCOPE]` declaration line, its `files=` separators, the author-rule detail and a worked `files=` completeness case; how each reader selects and parses the line lives in the code comments **Parser behaviour** names.
 
-- **Grammar SoT**: `rules/glass-atrium/orchestrator-role.md` → `### Context Handoff Size` → `[SCOPE]` — the grammar line and its placement, completeness and honest-backing duties.
+- **Grammar SoT**: `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size` → `[SCOPE]` — the grammar line and its placement, completeness and honest-backing duties.
   - The same site's **Author rules** lines: the ` · ` separators, first wins with relaying.
   - The space-in-path limit is stated in this file only.
 

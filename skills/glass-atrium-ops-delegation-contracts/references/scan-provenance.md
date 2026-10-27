@@ -1,6 +1,6 @@
 # Scan boundary and provenance — detail
 
-- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `#### Scan boundary and provenance`.
+- **Pointer site**: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Scan boundary and provenance`.
 
 ## Worked pair
 

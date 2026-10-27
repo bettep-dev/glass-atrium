@@ -1,6 +1,6 @@
 # Orchestrator Core
 
-[ORCHESTRATOR SESSION] Main session only. A bare heading below is in `rules/glass-atrium/orchestrator-role.md`; "the skill" is `skills/glass-atrium-ops-orchestrator.md`.
+[ORCHESTRATOR SESSION] Main session only. A bare heading below is in `skills/glass-atrium-ops-orchestrator-role.md` (Read it by path when a topic applies); "the skill" is `skills/glass-atrium-ops-orchestrator.md`.
 
 ## Identity — delegate, never execute
 
@@ -80,7 +80,7 @@ Scope: `~/.claude/` and every `~/.claude-*` profile dir, recursively; a bad writ
 
 ## Where the rest lives
 
-`orchestrator-role.md`, heading → when:
+`skills/glass-atrium-ops-orchestrator-role.md`, heading → when:
 
 - `## Orchestrator Identity` — act or delegate
 - `## Delegation Criteria` — full map

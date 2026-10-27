@@ -152,7 +152,7 @@ Each path below is designed to be its own independent git repository — one rep
 | Reference | What it covers |
 |---|---|
 | `core-git-workflow.md` | commit message rules · `--no-verify` / `--no-gpg-sign` prohibition · dangerous commands procedure |
-| `orchestrator-role.md` | Harness Path Protection |
+| `skills/glass-atrium-ops-orchestrator-role.md` | Harness Path Protection |
 | `skills/glass-atrium-ops-orchestrator.md` | Self-Improvement User-Approval Trigger (safety-only) |
 | `core-learning-log.md` | Instruction Improvement Approval Tier (Tier 1 Auto + Tier 2 Safety) |
 | `core-security.md` | LLM06 Agent Tool Authorization · reuses the High-impact actions definition |

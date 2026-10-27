@@ -46,17 +46,19 @@ fi
 #   · any failure prints the unavailable line, never an empty list → absence never reads as "nothing open"
 #   · an echoed filter missing a stage = a page the monitor did not filter → treated as unreadable
 #   · curl --max-time 0.5 keeps the leg inside the ~1 s hook budget when the monitor hangs
+#   · one compact row per plan (id · stage · title prefix) → the list fits beside the core under the hook cap
 # ponytail: rows past the route's 200-row cap go unshown — upgrade: page on .total once open plans near 200
 readonly OPEN_PLANS_QUERY='doc_status=implementing,impl_review,impl_done&limit=200'
-# shellcheck disable=SC2016  # $open and $fallback are jq variables, not shell expansions
+# shellcheck disable=SC2016  # $open, $fallback and $n are jq variables, not shell expansions
 readonly OPEN_PLANS_JQ='
   def clean($fallback): if type == "string" and length > 0 then gsub("[[:cntrl:]]"; " ") else $fallback end;
+  def prefix($n): if length > $n then .[0:$n] + "…" else . end;
   ["implementing", "impl_review", "impl_done"] as $open
   | if (.rows | type) != "array" or ($open - (.filter.doc_status // [])) != [] then error("unfiltered list") else . end
   | [.rows[] | select(.doc_status | IN($open[]))] as $plans
   | if ($plans | length) == 0 then "[OPEN PLANS] none — no plan at implementing, impl_review or impl_done"
     else "[OPEN PLANS] \($plans | length) plan(s) past doc_review, not yet done — each closes by flow step 5 (Reconcile & Close):",
-      ($plans[] | "- clauded-docs/\(.id) · \(.doc_status) · \(.last_status_model | clean("unknown")) · \(.title | clean("(untitled)"))")
+      ($plans[] | "- clauded-docs/\(.id) · \(.doc_status) · \(.title | clean("(untitled)") | prefix(32))")
     end'
 
 # Collection URL of the monitor clauded-docs API, rc 1 when unresolvable; a full override wins so a suite never reaches the live monitor.

@@ -145,7 +145,7 @@
 # SIXTH ADVISORY PASS ([SIZE-EST] plausibility bounds, advisory — NEVER exit 2): bounds the DECLARED
 # DEV-mode tool_uses~ value against the implementation-slot count the gate already computes — below
 # slots x 4.5 (the empirical per-file calibration) fires `:low`, above ~40 (the split trigger ahead of
-# the measured 46-52 truncation band) fires `:high`. Both anchors are DERIVED from orchestrator-role.md
+# the measured 46-52 truncation band) fires `:high`. Both anchors are DERIVED from skills/glass-atrium-ops-orchestrator-role.md
 # -> Spawn Budget, not counts maintained here. Fires ONLY where a DEV-mode token exists: the
 # token-absent case is the BLOCK_SIZEEST gate's, and advising it too would double-advise one miss.
 # The value rides its OWN output line rather than the completion-channel multiplex — that line's trace
@@ -199,7 +199,7 @@
 # that separates goal text from a mention, plus an explicit user decision — not more coverage of this one.
 #
 # EIGHTH ADVISORY PASS (close token, advisory — NEVER exit 2): flags a plan-referencing DEV workflow that
-# carries neither [PLAN-CLOSE] form (grammar SoT: orchestrator-role.md -> Context Handoff Size).
+# carries neither [PLAN-CLOSE] form (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size).
 #   Predicate → in the helper, raw scan: dev_present AND the entry gate's PLAN_REF_RE AND no form match;
 #     `deferred:` needs a named step, so an empty value or an unfilled <placeholder> fires.
 #   Siting → rendered on the PASS arm only (twelfth helper line), so it can mask no verdict.
@@ -592,20 +592,20 @@ print_schema_cap_advisory() {
 # print_sizeest_low_advisory / print_sizeest_high_advisory — ADVISORY-ONLY (stderr, NEVER blocks /
 # NEVER alters the exit code). The DECISION fires inside the verdict helper (sizeest_bounds) and
 # arrives as a value on the eleventh output line; these only render it. Both bounds are DERIVED from
-# orchestrator-role.md -> Spawn Budget (the `ceil(files x 4.5)` empirical tool_use calibration and the
+# skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget (the `ceil(files x 4.5)` empirical tool_use calibration and the
 # ~40 split trigger ahead of the measured 46-52 truncation band), never a count maintained here.
 print_sizeest_low_advisory() {
   # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → a block path keeps exit 2.
-  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value is BELOW the slot-count floor (implementation slots x 4.5, the empirical per-file tool_use calibration in orchestrator-role.md -> Spawn Budget). Under-declaring is the DANGEROUS direction: it smuggles an oversized delegation past the split discipline, and the sub-agent then truncates mid-work with no [COMPLETION]. Re-estimate UP against the files x 4.5 floor and, if the honest estimate exceeds ~30, SPLIT the delegation instead of re-declaring it smaller. PLAUSIBILITY-ONLY, never estimate correctness — parity with the presence-only [SIZE-EST] gate. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
+  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value is BELOW the slot-count floor (implementation slots x 4.5, the empirical per-file tool_use calibration in skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget). Under-declaring is the DANGEROUS direction: it smuggles an oversized delegation past the split discipline, and the sub-agent then truncates mid-work with no [COMPLETION]. Re-estimate UP against the files x 4.5 floor and, if the honest estimate exceeds ~30, SPLIT the delegation instead of re-declaring it smaller. PLAUSIBILITY-ONLY, never estimate correctness — parity with the presence-only [SIZE-EST] gate. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
 }
 
 print_sizeest_high_advisory() {
   # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → a block path keeps exit 2.
-  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value EXCEEDS the ~40 delegation ceiling (the HARD SECONDARY split trigger in orchestrator-role.md -> Spawn Budget, set ahead of the measured 46-52 truncation band). A delegation this size is expected to run out of budget before its terminal emit: SPLIT it into sequential checkpointed sub-delegations, keeping each implementation together with its NEW tests and peeling off run-full-suite / report-consolidation instead. PLAUSIBILITY-ONLY, never estimate correctness. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
+  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value EXCEEDS the ~40 delegation ceiling (the HARD SECONDARY split trigger in skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget, set ahead of the measured 46-52 truncation band). A delegation this size is expected to run out of budget before its terminal emit: SPLIT it into sequential checkpointed sub-delegations, keeping each implementation together with its NEW tests and peeling off run-full-suite / report-consolidation instead. PLAUSIBILITY-ONLY, never estimate correctness. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
 }
 
 print_scope_advisory() {
-  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (scope declaration, non-blocking): this workflow spawns DEV agent(s) but carries NO [SCOPE] declaration. Fix the delegation's literal scope in text before the work starts, in the canonical middot-separated grammar: log('[SCOPE] files=path/one, path/two · deliverable=<type> · out=none') (grammar SoT: orchestrator-role.md → Context Handoff Size). Declare the paths that travel WITH the implementation too — its companion tests and any mandatory co-deliverable — so a compliant edit is not read as excess later. PRESENCE-ONLY, parity with [ENTRY-CLASS] / [SIZE-EST]: whether the declaration matches the user's instruction is never checked here. ADVISORY ONLY, this check NEVER blocks." >&2
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (scope declaration, non-blocking): this workflow spawns DEV agent(s) but carries NO [SCOPE] declaration. Fix the delegation's literal scope in text before the work starts, in the canonical middot-separated grammar: log('[SCOPE] files=path/one, path/two · deliverable=<type> · out=none') (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md → Context Handoff Size). Declare the paths that travel WITH the implementation too — its companion tests and any mandatory co-deliverable — so a compliant edit is not read as excess later. PRESENCE-ONLY, parity with [ENTRY-CLASS] / [SIZE-EST]: whether the declaration matches the user's instruction is never checked here. ADVISORY ONLY, this check NEVER blocks." >&2
   return 0
 }
 
@@ -613,7 +613,7 @@ print_scope_advisory() {
 # decision arrives as the helper's twelfth line; the remediation mirrors the --lint --template section.
 print_close_token_advisory() {
   cat <<'EOF' >&2
-[enforce-workflow-verify-stage] ADVISORY (close token, non-blocking): this DEV workflow references a plan but carries neither form of the close token, so the flow declares no close for that plan. ONE-EDIT FIX — add ONE line: log('[PLAN-CLOSE] in-script') when the script ends in the terminal Reconcile & Close phase (a glass-atrium-qa-code-reviewer spawn after the last delivering phase), or log('[PLAN-CLOSE] deferred: <the later script or step that closes the plan>') with the placeholder replaced by that script or step. Grammar SoT: orchestrator-role.md -> Context Handoff Size; phase: skills/glass-atrium-ops-orchestrator.md -> In-script verify-stage (ultracode); scaffold: enforce-workflow-verify-stage.sh --lint --template. PRESENCE-ONLY: whether the form is truthful — a close form with no terminal phase in the script — is never checked here. ADVISORY ONLY, this check NEVER blocks: a multi-script track legitimately closes in a later script, which a block would false-positive on.
+[enforce-workflow-verify-stage] ADVISORY (close token, non-blocking): this DEV workflow references a plan but carries neither form of the close token, so the flow declares no close for that plan. ONE-EDIT FIX — add ONE line: log('[PLAN-CLOSE] in-script') when the script ends in the terminal Reconcile & Close phase (a glass-atrium-qa-code-reviewer spawn after the last delivering phase), or log('[PLAN-CLOSE] deferred: <the later script or step that closes the plan>') with the placeholder replaced by that script or step. Grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size; phase: skills/glass-atrium-ops-orchestrator.md -> In-script verify-stage (ultracode); scaffold: enforce-workflow-verify-stage.sh --lint --template. PRESENCE-ONLY: whether the form is truthful — a close form with no terminal phase in the script — is never checked here. ADVISORY ONLY, this check NEVER blocks: a multi-script track legitimately closes in a later script, which a block would false-positive on.
 EOF
   return 0
 }
@@ -882,7 +882,7 @@ Completion channel (schema-mode spawns ONLY — a DEV verify stage is text-mode 
   agentType: field values only — so a DECLARED type must ALSO appear as an opts agentType: string literal
   (keep both literals identical), else the gate reads it un-spawned → block-declspawn.
 
-Close token (plan-referencing DEV scripts ONLY — ONE form; grammar SoT: orchestrator-role.md → Context Handoff Size):
+Close token (plan-referencing DEV scripts ONLY — ONE form; grammar SoT: skills/glass-atrium-ops-orchestrator-role.md → Context Handoff Size):
   --- close form (the script ends in the terminal Reconcile & Close phase) ---
   log('[PLAN-CLOSE] in-script');
   // terminal phase, after the last delivering phase; RECONCILE_GOAL is the skeleton const in
@@ -1919,7 +1919,7 @@ ENTRY_CARD_FLAG = "ENTRY_CARD_SILENT"
 # ADVISORY ONLY — no verdict, no exit code, promotable later on this file's advisory-then-promote
 # precedent. The two anchors are DERIVED, not maintained here: the per-file floor is the
 # `ceil(files x 4.5)` empirical tool_use calibration and the ceiling is the ~40 split trigger ahead of
-# the measured 46-52 truncation band, both from orchestrator-role.md -> Spawn Budget
+# the measured 46-52 truncation band, both from skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget
 # ("Empirical tool_use calibration" + the HARD SECONDARY split rule).
 SIZEEST_BOUNDS_FLAG = "SIZEEST_BOUNDS_SILENT"
 SIZEEST_BOUNDS_LOW = "SIZEEST_BOUNDS_ADVISE:low"
@@ -1944,7 +1944,7 @@ COMPLETION_SCHEMA_ABSENT = "COMPLETION_ADVISE:schema-absent"
 # CLOSE_TOKEN_FLAG — the close-token nudge, printed as the TWELFTH output line and rendered on the shell
 # PASS arm only. Decided here so plan-referencing means the entry-gate PLAN_REF_RE itself, never a copy.
 CLOSE_TOKEN_FLAG = "CLOSE_TOKEN_SILENT"
-# The two [PLAN-CLOSE] forms (grammar SoT: orchestrator-role.md -> Context Handoff Size). A deferral must
+# The two [PLAN-CLOSE] forms (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size). A deferral must
 # name its closing step → an empty value or an unfilled placeholder is neither form.
 # Deferral value → optional lead punctuation — quote, backtick, path — then a word character. `<` and the
 # host string closers \x29 , ; \x7d end the lead → an empty value closed by its quote, or a quoted

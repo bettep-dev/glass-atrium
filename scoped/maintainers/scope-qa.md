@@ -27,7 +27,7 @@ A section stays when it obliges `glass-atrium-qa-code-reviewer` (delivery: **How
 
 | Section | Established reader | Where the inbound pointer lives |
 |---|---|---|
-| `## Plan Direction Verification Gate [DEV+QA]` | glass-atrium-qa-code-reviewer on a Stage-2 spawn; the orchestrator composing it | `agents/glass-atrium-qa-code-reviewer.md` · `rules/glass-atrium/orchestrator-role.md` · `scoped/scope-report.md` · `scoped/scope-planning.md` · `skills/glass-atrium-ops-orchestrator.md` |
+| `## Plan Direction Verification Gate [DEV+QA]` | glass-atrium-qa-code-reviewer on a Stage-2 spawn; the orchestrator composing it | `agents/glass-atrium-qa-code-reviewer.md` · `skills/glass-atrium-ops-orchestrator-role.md` · `scoped/scope-report.md` · `scoped/scope-planning.md` · `skills/glass-atrium-ops-orchestrator.md` |
 | `## Delegation Bars and Convergence Notes [QA]` | glass-atrium-qa-code-reviewer on every review spawn, the Stage-2 gate included | `skills/glass-atrium-ops-orchestrator.md` → `#### Review rounds and reviewer prompts` |
 | `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]` | the reviewer, the reporter, and anyone weighing a recorded `qa_score` | both QA and REPORT bodies · `scoped/scope-report.md` · `core-outcome-record.md` `qa_score` row · the 5-axis-critique skill |
 | `### Evaluator-independence posture` | a Tier-1 reader — the `qa_score` row names this file as where the caveat lives | `rules/glass-atrium/core-outcome-record.md` → `### Role-scoped fields` → `qa_score` |
@@ -74,7 +74,7 @@ Removed as redundant or false — do not re-add:
 - The rubric's "bodies that self-score point back here" clause, and the designer routing's "both are 20-point scales, so the signal stays comparable" line — neither obliges a reader.
 - The D8 split's "you score the three semantic axes" bullet — the table's `Yours to score` column states it.
 - Regression Risk's "a test that cannot fail counts as no test added" — the High row's third trigger already labels that case; the line kept is the pointer to what cannot-fail means.
-- The gate-operation bullet's pointer at `rules/glass-atrium/orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)` — that file tells subagents to ignore it, so the reviewer acts on nothing there; the bullet keeps "not yours".
+- The gate-operation bullet's pointer at `skills/glass-atrium-ops-orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)` — that file tells subagents to ignore it, so the reviewer acts on nothing there; the bullet keeps "not yours".
 - The comparand's "Never substitute `[SCOPE]` for the missing root" line — the heading and the non-comparand table's first row already rule `[SCOPE]` out unconditionally, the fallback case included.
 - The **Deletion duty** path pointer in Regression Risk — `scoped/shared-testing.md` is a `rules.shared` member of the reviewer row, so the bold names already land in its context.
 

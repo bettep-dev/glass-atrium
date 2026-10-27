@@ -57,7 +57,7 @@ A standing, verdict-gating job: every cycle, without being asked, check the prem
 
 - **Scope**: the plan's `## Open Questions` entries marked `load-bearing: yes`, plus any claim you judge load-bearing that the planner did not mark.
   - The planner's marking widens your list and never shrinks it, and a claim tagged `[SELF-CHECKED:]` is a self-report that earns no exemption.
-  - A premise register carried in the delegation is one input and not the boundary (grammar: `rules/glass-atrium/orchestrator-role.md` → `#### Scan boundary and provenance`).
+  - A premise register carried in the delegation is one input and not the boundary (grammar: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Scan boundary and provenance`).
 - **Operational test for load-bearing**: read it at `scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]` → **Operational test**, its single site.
 - **Attack each load-bearing premise FROM THE CODE, never from the list** — a premise about how the code behaves is settled by reading or running the code, not by re-reading the author's account of it.
   - Report each by name as `CONFIRMED` / `REFUTED` / `UNVERIFIABLE`.

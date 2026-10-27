@@ -60,7 +60,7 @@ Each entry is keyed by the rule text; its copies change with it.
 - **HTML request test**:
   - `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` (canonical literals);
   - `agents/glass-atrium-intel-planner.md` → `### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`;
-  - the orchestrator's copy: `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)` plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## Exposure Determination — signals and routing`.
+  - the orchestrator's copy: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)` plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## Exposure Determination — signals and routing`.
 - **Visual-Maximization Floor**: `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor` (authoring canonical) · `agents/glass-atrium-intel-planner.md` → `### Visual-Maximization Floor — Baseline (always)` and `### Visual-Maximization Floor — Content-driven escalation`.
 - **Dark base default**: `agents/glass-atrium-intel-reporter.md` → `### Dark Theme & Typography (MUST)` (canonical) · `agents/glass-atrium-intel-planner.md` → `### Dark base, typography and status vocabulary`.
 - **Emission contract / POST tuple**:
@@ -70,7 +70,7 @@ Each entry is keyed by the rule text; its copies change with it.
   - the `### Emission contract` carve-out bullet;
   - `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing`, the exception lead inside the turn-0 routing hard gate;
   - `agents/glass-atrium-intel-planner.md` → `### Turn-0 routing hard gate`, the stamp table and the `The stamp attests` bullet;
-  - the delegation-side canonical `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria`.
+  - the delegation-side canonical `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria`.
 - **Document lifecycle**:
   - `agents/glass-atrium-intel-reporter.md` → the bolded lead `**Document lifecycle duties — you are the completing agent and you own these:**`, the reporter-only deltas;
   - `agents/glass-atrium-intel-planner.md` → `### Document lifecycle duties (delivered copy — the completing agent owns these)` + its sibling `### Document stages and closing`.
@@ -83,7 +83,7 @@ Each entry is keyed by the rule text; its copies change with it.
 - **Designer Co-Emission Trigger**:
   - `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` (declaration form) · `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` (table copy);
   - `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role` · `skills/glass-atrium-design-html-co-emission/SKILL.md`;
-  - `rules/glass-atrium/orchestrator-role.md` → Visual-Weight Probe, and its Monitoring-phase markup-exception judgment (`#### Monitoring-phase notes`).
+  - `skills/glass-atrium-ops-orchestrator-role.md` → Visual-Weight Probe, and its Monitoring-phase markup-exception judgment (`#### Monitoring-phase notes`).
 - **D8 numeric thresholds**: `monitor/src/server/clauded-docs/d8-thresholds.json` is the authority, and every prose number is a mirror of it.
   - A threshold change lands in the JSON first; every prose mirror is corrected to it in the same pass — the reporter's `### Pre-Emission HTML Validation (D8 + Schema)` · the planner's `## Pre-Emission Verification Gate [PLANNING]` · the scope-qa D8 sub-pass.
   - A prose-only number edit is forbidden.
@@ -132,8 +132,8 @@ The rule file keeps the two rules no body carries, the sections a live suite or 
   - the head-of-file pointer to this note — a rule-file citation of a companion, which the companion-citation convention above drops.
   - "There is no document category or prefix" — the `prefix` bullet under `### Emission contract` carries the operative half.
   - the fixed `127.0.0.1:16145` on the POST line — `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → Monitor address carries it, with the non-default resolution a fixed address would contradict.
-  - "Stamping without an actual user request is a violation" — it binds the stamping orchestrator, whose canonical (`rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria`) states it.
-  - the "Canonical stamped form" pointer at `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` — the carve-out bullet quotes the full stamp, and that file tells subagents to ignore it; the **`[DOC-ROUTE]` stamp** co-edit entry above holds the linkage.
+  - "Stamping without an actual user request is a violation" — it binds the stamping orchestrator, whose canonical (`skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria`) states it.
+  - the "Canonical stamped form" pointer at `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria` — the carve-out bullet quotes the full stamp, and that file tells subagents to ignore it; the **`[DOC-ROUTE]` stamp** co-edit entry above holds the linkage.
   - "An omitted `last_status_model` stores a null status actor" — the Done-transition requirement and the Optional-field line state it.
   - the supersede table's row-1 "the monitor closes the predecessor" and the open-predecessor sub-bullet — folded into **Every supersede-POST** and the second table row.
   - the chain-root "file-count leg is then skipped" clause — the reviewer's half, canonical at `scoped/scope-qa.md` → **Empty named file set → skip the numeric leg, never zero-baseline it**.

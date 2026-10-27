@@ -18,7 +18,7 @@ Maintainer-facing material for that rule file. Nothing here binds a running agen
   - The Tier-3 row's tokens carry `subset`, so the orphan scan never reads the file as standing `rules.shared` membership.
   - glass-atrium-qa-debugger is left out: the QA scope default would reach it, which is why the reviewer's entry is a per-agent hand-add.
   - glass-atrium-meta-prompt-engineer is left out: it holds no Bash, so it never runs a suite, and its row keeps an empty `conditional` list.
-- Inbound pointer: `rules/glass-atrium/orchestrator-role.md` → `## Document-Driven Workflow` step 6 → **Live-suite instrument**, for the session that runs the live suite before a PR.
+- Inbound pointer: `skills/glass-atrium-ops-orchestrator-role.md` → `## Document-Driven Workflow` step 6 → **Live-suite instrument**, for the session that runs the live suite before a PR.
   - Its phrase "pointer only, the procedure is single-sited there" is the reason the whole procedure stays in this one file: moving any part elsewhere would put content out from under that pointer, which names the file.
   - `scoped/maintainers/orchestrator-role.md` records the same coupling, so reword both or neither.
 - **Heading stability**: `## Destructive-Path Suite Safety (live-postgres reach)` is named verbatim by this note only.
