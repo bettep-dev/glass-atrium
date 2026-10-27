@@ -17,10 +17,10 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 - A kept verbatim line is a mirror of its full-text canonical: edit both together.
 - Every other citer points at the full text, never at the stub; a stub heading with no remaining citer goes.
-- Drift the stub cannot fix, at citers that name a heading the stub no longer holds or quote it inexactly (all AA-scoped):
-  - `hooks/advisory-subagent-budget.sh` says "40-52 band"; the full text's **HARD SECONDARY** bullet says "measured 46-52".
-  - `autoagent/lib/editable_merge.py` quotes "NEVER ported to git"; the bullet reads "never".
-  - `autoagent/daemon_cycle.py` → "Self-Improvement User-Approval Trigger" (`### Failure Recovery Loop` linkage below).
+- Citers whose quoted text differs from the full text; each entry names the file its citation resolves to:
+  - `hooks/advisory-subagent-budget.sh` says "40-52 band"; it resolves to `skills/glass-atrium-ops-orchestrator-role.md`, whose **HARD SECONDARY** bullet says "measured 46-52".
+  - `autoagent/lib/editable_merge.py` quotes "NEVER ported to git"; it resolves to the stub's `### Cost-Tier Selection`, whose Model pins bullet reads "never".
+  - `autoagent/daemon_cycle.py` cites "Self-Improvement User-Approval Trigger" at `orchestrator-role.md`; it resolves to `skills/glass-atrium-ops-orchestrator.md` (`### Failure Recovery Loop` linkage below).
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
@@ -42,7 +42,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - The three phrases: the heuristic label on the table · the daemon config-reader module name · the pinned worker-model-id fallback.
   - Breaks when the heading is renamed, or one of the three phrases is reworded.
   - Breaks when any `###` substring — a `###` or `####` heading, or a hash-prefixed heading name in prose — lands ahead of them, truncating the parsed span.
-  - Breaks when that heading's exact literal is written a second time ANYWHERE ABOVE it, re-aiming the split at the wrong copy.
+  - Breaks when that heading's exact literal is written a second time anywhere above it, re-aiming the split at the wrong copy.
   - Runs only in the `test-python` CI job, which a markdown-only PR skips: run it locally after any edit to the rule file.
 - The close-token bats case — `hooks/test/inject-session-context.bats` → "the workflow pre-flight carries both close-token forms of the grammar SoT".
   - Reads both close-token form literals, token included: exactly one of each across the file.
@@ -75,7 +75,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 - **Attestation tokens** — `[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` · `[AGENT-COMPOSITION]` · `[DOC-ROUTE]`: the bracketed literal and its field keys or form values are what the spawn gates scan a delegation or script for.
 - **Verdict names** — `block-nodecl` · `block-grammar` · `block-norev` · `block-noverifydev` · `block-declspawn` · `block-undecl` · `block-computed` · `block-order` · `block-upstream`.
-  - Each is a trace tag `hooks/enforce-workflow-verify-stage.sh` emits. The rule file NAMES them; the hook defines them.
+  - Each is a trace tag `hooks/enforce-workflow-verify-stage.sh` emits. The rule file names them; the hook defines them.
 - **Headings** cited by name elsewhere in the corpus:
   - `## Orchestrator Identity` · `## Delegation Criteria` · `## Delegation Workflow` · `## Document-Driven Workflow` · `## Harness Path Protection` (with its `Rule 2`, `### Write routes`, `### Staged lane`, `### Progress-file exclusion`, `### Reach of the gate`).
   - `### Phase Notes`, with `#### Entry classification (DEV delegations)` · `#### Plan edge discovery`.
@@ -128,7 +128,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 ### `#### Monitoring-phase notes`
 
-- The dev-front markup-exception judgment is the orchestrator-side canonical for the JUDGMENT only.
+- The dev-front markup-exception judgment is the orchestrator-side canonical for the judgment only.
   - It is the pointer under `#### Monitoring-phase notes` plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## glass-atrium-dev-front markup exception — detail`.
   - The split between the two: that skill's `SKILL.md` → Reference Index.
 - The author-side protocol canonical is `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`, pointed to from `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]`.
@@ -148,7 +148,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 ### `### Plan Direction Verification (Stage-2 gate)`
 
-- `### Plan Direction Verification (Stage-2 gate)` is the gate-OPERATION canonical, as a pointer plus `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md`.
+- `### Plan Direction Verification (Stage-2 gate)` is the gate-operation canonical, as a pointer plus `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md`.
 - The participant-duty canonicals are `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` (reviewer) and `scoped/scope-dev.md` → the same heading (DEV).
 - The split between the pointer and that reference: that skill's `SKILL.md` → Reference Index.
   - The hooks quote only the gate heading (`hooks/enforce-verification-gate.sh` reviewer-miss reason, `hooks/enforce-workflow-verify-stage.sh` DEV hard-gate block), which stays.
@@ -182,7 +182,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The dashboard `fail_rate` the tier-escalation heuristic reads is computed read-only in monitor `agents.ts`; no code consumes it to switch a tier.
 - The rule file's "every pin is LIVE-ONLY, and the updater preserves it across updates" (`### Cost-Tier Selection` → Model pins) is implemented by `autoagent/lib/editable_merge.py` → `_LOCAL_ONLY_FRONTMATTER_KEYS`, exactly `("model",)`.
   - The identity keys `{name, tools, scope}` stay vendor-owned (`hooks/enforce-harness-critical.sh` protects them and excludes `model`).
-- A second, weaker tuple sits beside it: `_BASE_AWARE_FRONTMATTER_KEYS`, exactly `("effort",)` — a key the release DOES ship.
+- A second, weaker tuple sits beside it: `_BASE_AWARE_FRONTMATTER_KEYS`, exactly `("effort",)` — a key the release does ship.
   - So a live line is kept only when it differs from base@install, and with no base anchor it falls back to live-wins. Unlike `model`, `effort` is not unconditionally local-only.
 - Code comments in `autoagent/lib/editable_merge.py`, `autoagent/test/test_editable_merge.py` and `scripts/test/glass-atrium-update.bats` cite "Cost-Tier Selection" as the sanction for live-wins; keep that heading and the sanction sentence, in the stub and the rule file, when editing either.
 
@@ -220,7 +220,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - The evidence-gate citer above resolves through that pointer: it keeps the lead and names the **Debugger evidence gate** as honor-system.
 - The rule file carries no pointer to `skills/glass-atrium-ops-orchestrator.md` → `### Self-Improvement User-Approval Trigger`.
   - The orchestrator reaches that section through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier and `rules/glass-atrium/shared-self-improve-hygiene.md` → Cross-References.
-- A comment in `autoagent/daemon_cycle.py` still cites `orchestrator-role.md` for that name; the fix belongs at the comment (point it at the skill), not a pointer back here.
+- A comment in `autoagent/daemon_cycle.py` cites `orchestrator-role.md` for that name; the fix belongs at the comment (point it at the skill), not a pointer back here.
 
 ## Linkage — lifecycle and harness
 
