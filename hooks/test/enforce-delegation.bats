@@ -16,6 +16,7 @@ HOOK_SH="${HOOKS_DIR}/enforce-delegation.sh"
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-delegation.sh not found: ${HOOK_SH}"
   source "${BATS_TEST_DIRNAME}/lib/no-python3.bash"
+  export DELEGATION_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
 }
 
 # Drive the hook as the orchestrator (no agent_id) with a synthetic Write input.
@@ -195,4 +196,212 @@ run_raw_envelope() {
   run_raw_envelope '{"tool_input":{"file_path":"/Users/x/.claude/rules/scope-dev.md"}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"DEL-001"* ]] || return 1
+}
+
+# Orchestrator direct work: a tiny edit passes, while harness, sensitive, new-document and
+# implementing-plan targets stay blocked. Hermetic: the monitor is a curl PATH shim serving the
+# list from LIST_JSON_FILE and each plan from DOC_JSON_DIR/<id>.json; any other URL fails.
+
+setup_monitor() {
+  WORK="$(mktemp -d)"
+  mkdir -p "${WORK}/bin" "${WORK}/docs" "${WORK}/src"
+  export LIST_JSON_FILE="${WORK}/list.json" DOC_JSON_DIR="${WORK}/docs"
+  printf '%s\n' '{"total":0,"rows":[]}' >"${LIST_JSON_FILE}"
+  cat >"${WORK}/bin/curl" <<'SH'
+#!/usr/bin/env bash
+url=""
+for a in "$@"; do
+  case "${a}" in
+    http*) url="${a}" ;;
+  esac
+done
+case "${url}" in
+  */clauded-docs\?*) cat "${LIST_JSON_FILE}" ;;
+  */clauded-docs/*)
+    doc="${DOC_JSON_DIR}/${url##*/}.json"
+    [[ -f "${doc}" ]] || exit 22
+    cat "${doc}"
+    ;;
+  *) exit 22 ;;
+esac
+SH
+  chmod +x "${WORK}/bin/curl"
+  export PATH="${WORK}/bin:${PATH}"
+  : >"${WORK}/src/existing.sh"
+  : >"${WORK}/src/owned.sh"
+  : >"${WORK}/notes.md"
+}
+
+teardown() {
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
+}
+
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
+# Serve one implementing plan. Args: $1=id  $2=format  $3=body (JSON string contents).
+seed_plan() {
+  printf '{"id":%s,"format":"%s","body":"%s"}\n' "${1}" "${2}" "${3}" >"${DOC_JSON_DIR}/${1}.json"
+}
+
+# Orchestrator write with stderr merged, so the emitted error code is assertable. Args: $1=file_path.
+write_capturing() {
+  run bash -c '
+    printf "%s" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$1\"}}" | bash "$2" 2>&1
+  ' _ "${1}" "${HOOK_SH}"
+}
+
+@test "an orchestrator edit to an existing code file passes when no implementing plan lists it" {
+  setup_monitor
+  printf '%s\n' '{"total":1,"rows":[{"id":7,"doc_status":"implementing"}]}' >"${LIST_JSON_FILE}"
+  local rows=(
+    "another file listed|## Target Files\\n- \`hooks/other.sh\` — not this file\\n## Next\\n"
+    "file named only in prose under the list|## Target Files\\n- \`hooks/other.sh\`\\nSee \`src/existing.sh\` for context.\\n"
+    "plan declares no Target Files|## Goal\\nno list here\\n"
+    "list holds no path-like item|## Target Files\\n- none\\n- \`.\`\\n"
+  )
+  local row name body
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name body <<<"${row}"
+    seed_plan 7 md "${body}"
+    write_capturing "${WORK}/src/existing.sh"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "an orchestrator edit to an existing markdown document passes" {
+  setup_monitor
+  write_capturing "${WORK}/notes.md"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "an orchestrator write creating a new code file passes" {
+  setup_monitor
+  write_capturing "${WORK}/src/new-helper.sh"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "a subagent write to a sensitive or plan-owned path passes as before" {
+  setup_monitor
+  run bash -c '
+    printf "%s" "{\"agent_id\":\"a1\",\"tool_input\":{\"file_path\":\"$1\"}}" | bash "$2" 2>&1
+  ' _ "${WORK}/.env" "${HOOK_SH}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "harness paths stay blocked for the orchestrator, symlinked ones included" {
+  setup_monitor
+  mkdir -p "${WORK}/.claude/agents"
+  : >"${WORK}/.claude/agents/x.md"
+  ln -s "${WORK}/.claude" "${WORK}/dirlink"
+  ln -s "${WORK}/.claude/agents/x.md" "${WORK}/filelink.md"
+  local rows=(
+    "profile dir|/Users/x/.claude-work/settings.json"
+    "live install root|/Users/x/.glass-atrium/hooks/enforce-delegation.sh"
+    "directory symlink into a harness dir|${WORK}/dirlink/agents/x.md"
+    "file symlink into a harness dir|${WORK}/filelink.md"
+  )
+  local row name path
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name path <<<"${row}"
+    write_capturing "${path}"
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-001"* && "${output}" == *"harness"* ]] \
+      || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "sensitive files stay blocked for the orchestrator" {
+  setup_monitor
+  local rows=(
+    "dotenv|${WORK}/.env"
+    "dotenv variant|${WORK}/.env.local"
+    "envrc|${WORK}/.envrc"
+    "credentials file|${WORK}/credentials.json"
+    "secrets file|${WORK}/secrets.yaml"
+    "ssh private key|${WORK}/id_ed25519"
+    "pem key|${WORK}/server.pem"
+    "key file|${WORK}/tls.key"
+    "ssh dir|/Users/x/.ssh/config"
+    "aws dir|/Users/x/.aws/config"
+  )
+  local row name path
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name path <<<"${row}"
+    write_capturing "${path}"
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "an orchestrator write creating a new document file stays blocked as authoring" {
+  setup_monitor
+  local rows=(
+    "markdown|${WORK}/report.md"
+    "html upper-case extension|${WORK}/plan.HTML"
+    "htm|${WORK}/spec.htm"
+    "markdown in a new dir|${WORK}/docs-new/adr.md"
+  )
+  local row name path
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name path <<<"${row}"
+    write_capturing "${path}"
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-005"* && "${output}" == *"intel-"* ]] \
+      || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "a Target File of an implementing plan stays blocked, naming the plan" {
+  setup_monitor
+  local rows=(
+    "md plan, backticked entry|md|## Target Files\\n- \`src/owned.sh\` — owned by the plan\\n## Next\\n"
+    "html plan|html|<section id=\\\"target-files\\\"><ul><li>src/owned.sh</li></ul></section>"
+  )
+  local row name format body
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name format body <<<"${row}"
+    printf '%s\n' '{"total":2,"rows":[{"id":7,"doc_status":"implementing"},{"id":8,"doc_status":"implementing"}]}' \
+      >"${LIST_JSON_FILE}"
+    seed_plan 7 md '## Target Files\n- `hooks/other.sh`\n'
+    seed_plan 8 "${format}" "${body}"
+    write_capturing "${WORK}/src/owned.sh"
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-006"* && "${output}" == *"clauded-docs/8"* ]] \
+      || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "an unreadable implementing-plan list blocks the orchestrator edit (fail closed)" {
+  setup_monitor
+  local rows=(
+    "monitor refused|list|"
+    "malformed list|list|not json"
+    "no rows array|list|{\"total\":0}"
+    "page shorter than total|list|{\"total\":3,\"rows\":[]}"
+    "plan GET fails|list|{\"total\":1,\"rows\":[{\"id\":99,\"doc_status\":\"implementing\"}]}"
+    "plan GET body not JSON|plan|not json"
+    "unknown plan format|plan|{\"id\":5,\"format\":\"pdf\",\"body\":\"x\"}"
+  )
+  local row name kind value
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind value <<<"${row}"
+    export LIST_JSON_FILE="${WORK}/list.json"
+    if [[ "${kind}" == list && -z "${value}" ]]; then
+      LIST_JSON_FILE="${WORK}/absent.json"
+    elif [[ "${kind}" == list ]]; then
+      printf '%s\n' "${value}" >"${LIST_JSON_FILE}"
+    else
+      printf '%s\n' '{"total":1,"rows":[{"id":5,"doc_status":"implementing"}]}' >"${LIST_JSON_FILE}"
+      printf '%s\n' "${value}" >"${DOC_JSON_DIR}/5.json"
+    fi
+    write_capturing "${WORK}/src/existing.sh"
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-007"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "curl absent blocks the orchestrator edit (fail closed)" {
+  setup_monitor
+  local bindir
+  bindir="$(minimal_bin_without_python3 bash cat grep basename tr sed env mktemp dirname python3 jq readlink)"
+  run env "PATH=${bindir}" bash -c '
+    printf "%s" "{\"tool_input\":{\"file_path\":\"$1\"}}" | bash "$2" 2>&1
+  ' _ "${WORK}/src/existing.sh" "${HOOK_SH}"
+  [[ "${status}" -eq 2 && "${output}" == *"DEL-007"* ]] || { echo "exit ${status}: ${output}"; return 1; }
 }
