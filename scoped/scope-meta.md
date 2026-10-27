@@ -15,7 +15,7 @@ glass-atrium-meta-prompt-engineer, glass-atrium-intel-planner and glass-atrium-d
 
 ## glass-atrium-meta-agent: Outcome-Driven Rewrite Policy [META]
 
-- **Outcome signals are SUPPLIED with the task, never fetched.** They live only in PostgreSQL `core.outcomes` and neither META agent holds Bash, so a delegation that names signals without attaching them cannot be executed as written — report that rather than attempting a fetch.
+- **Outcome signals are supplied with the task, never fetched.** They live only in PostgreSQL `core.outcomes` and neither META agent holds Bash, so a delegation that names signals without attaching them cannot be executed as written — report that rather than attempting a fetch.
 - **A rewrite with no Outcome-Record evidence behind it is refused downstream** by the daemon dry-run gate: it costs a cycle instead of landing.
 - Which signal state warrants which response is stated in `agents/glass-atrium-meta-agent.md` — `## Signal Thresholds`, `## Modification Principles`, `## Hard Constraints`.
 
@@ -72,7 +72,3 @@ Every prompt, agent body, rule or skill deliverable authored by glass-atrium-met
 | a maintainer note under `scoped/maintainers/` | the reviewer its paired file's row names |
 | a file under `agents/templates/` or `agents/references/` | the agent whose body cites it; several citers or a Tier-1 citer → glass-atrium-qa-code-reviewer |
 | a code file — hook, script, Python module, test | the DEV agent whose domain covers it: glass-atrium-dev-shell for shell, glass-atrium-dev-python for Python |
-
-## Skills Array Order [META]
-
-- When authoring an agent's frontmatter `skills:` array, sort it for readability and logical grouping (core → supplementary).
