@@ -65,7 +65,7 @@ The canonical rule for what language this system writes in.
   - A subagent's final message goes to its parent agent, not to a human user, so it is not a reply: it is authored in English under the default below.
   - Text inside a reply that keeps its form (the prose around it follows the user's language):
     - fixed machine keywords the harness parses stay verbatim — bracketed tags such as `[SCOPE]`, status values such as `done_with_concerns`;
-    - reproduced text — a quoted source, or a deliverable body relayed under `orchestrator-role.md` → Verbatim forward-relay — keeps its original language, as text the system REPRODUCES under Scope, below;
+    - reproduced text — a quoted source, or a deliverable body relayed under `skills/glass-atrium-ops-orchestrator-role.md` → Verbatim forward-relay — keeps its original language, as text the system REPRODUCES under Scope, below;
     - identifiers, code, file paths, proper nouns and technical terms keep their original form, per Names and identifiers below and the technical-terms rule.
 
 #### Authored text
@@ -127,7 +127,7 @@ The canonical rule for what language this system writes in.
 | manual, named `Agent` call (in-process teammate) | no surface: a frontmatter key did not lower a higher parent tier |
 
 - **Task-class rule**: a **Task-class targets** line alone never justifies setting or changing a spawn's tier.
-  - A tier moves for a task-class reason only through a measured per-class decision, `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop` → **Retry effort escalation**, or a deliberate measurement arm listed in the run's record of its arms.
+  - A tier moves for a task-class reason only through a measured per-class decision, `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop` → **Retry effort escalation**, or a deliberate measurement arm listed in the run's record of its arms.
 - **Task-class targets**:
   - Effort buys verification depth and edge-case coverage, so verification and brownfield bug fixing target high or above.
   - xhigh or max suit autonomous end-to-end builds and other long-horizon reasoning; `max` can overthink, so keep it for the hardest tasks.
@@ -144,7 +144,7 @@ The canonical rule for what language this system writes in.
 ## Sub-Agent Spawn Policy [ALL]
 
 - Spawn only when the work is parallelizable and independent and one agent's context cannot carry it: each spawn re-tokenizes the system prompt and tool schemas, and each handoff loses context.
-- Before a wide fan-out you control, confirm rate-limit headroom; where a runtime governs fan-out, its bound applies (orchestrator detail: `orchestrator-role.md` → `### Spawn Budget`).
+- Before a wide fan-out you control, confirm rate-limit headroom; where a runtime governs fan-out, its bound applies (orchestrator detail: `skills/glass-atrium-ops-orchestrator-role.md` → `### Spawn Budget`).
 - **Typed spawn always**: every spawn passes an `agentType` matching the routing decision — an untyped/generic subagent does not inherit scope rules or the per-agent tool allowlist (OWASP LLM06).
   - Guard detail: `skills/glass-atrium-ops-orchestrator.md` → Red Flags (Generic-subagent guard).
 - **Ultracode/Workflow-tool mode**: the runtime governs spawn concurrency, but the parallelizable-and-independent judgment above still decides between a workflow and a single delegation, and typed spawn still applies.

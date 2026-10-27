@@ -147,7 +147,7 @@ Co-edit set for this test:
 - `scoped/scope-report.md` → `### HTML request test` — the rule statement, pointing here for the signal literals
 - this section — canonical for the signal literals
 - `agents/glass-atrium-intel-planner.md` → `### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`
-- `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)` and its reference — together the orchestrator's copy of the same signal set
+- `skills/glass-atrium-ops-orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)` and its reference — together the orchestrator's copy of the same signal set
   - the pointer holds the one-bit rule; `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## Exposure Determination — signals and routing` holds the signal literals
 
 ## Emission, Verification and Lifecycle
@@ -297,11 +297,11 @@ glass-atrium-design-designer stays consultative and verdict-only (no markup); yo
 - Bespoke CSS must avoid `text-[var(...)]` for font-size (Tailwind v4 parses it as COLOR).
 - Parallel HTML stitching (R2) and a post-draft review POST (R3) remain FORBIDDEN — the atomic 1-doc-1-POST contract is preserved.
 - Co-edit set for this exception — `scoped/scope-report.md` and `scoped/scope-planning.md` → Designer Co-Emission Trigger · this section · `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` · `agents/glass-atrium-dev-front.md` · the orchestrator's judging half:
-  - `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes` plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## glass-atrium-dev-front markup exception — detail`.
+  - `skills/glass-atrium-ops-orchestrator-role.md` → `#### Monitoring-phase notes` plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## glass-atrium-dev-front markup exception — detail`.
 
 ### Cross-references and completion record
 
-- `rules/glass-atrium/orchestrator-role.md` → `### Context Handoff Size` · `rules/glass-atrium/core-outcome-record.md` → Emit Boundary.
+- `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size` · `rules/glass-atrium/core-outcome-record.md` → Emit Boundary.
 - **`[COMPLETION]` task_type**: emit `task_type: doc` per the Role → Allowed task_types table in `core-outcome-record.md` — this role's sole allowed value.
 
 ### Turn-0 Format Guard

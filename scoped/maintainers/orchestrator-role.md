@@ -6,28 +6,19 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 - `rules/glass-atrium/orchestrator-role.md` is a stub; the full text sits verbatim in `skills/glass-atrium-ops-orchestrator-role.md`, an on-demand reference the main session Reads by path.
   - Why: the file at that path reaches every subagent on the host channel, while the control-plane core (`scoped/orchestrator-core.md`) already reaches the main session at SessionStart.
-- The stub keeps the path: frozen `agents/` bodies, AA-scoped code and the ORCHESTRATOR pair row in `rules/glass-atrium/core-compliance-matrix.md` cite it.
+- The stub keeps the path: AA-scoped code, `agents/GLASS_ATRIUM_GLOBAL_RULES.md` ("its opening line") and the ORCHESTRATOR pair row in `rules/glass-atrium/core-compliance-matrix.md` cite it.
 - In this note, "the rule file" means the full text; the stub is named as the stub.
 - What the stub keeps, each for a reader that cannot be repointed:
 
 | Kept in the stub | Reader |
 |---|---|
 | the H1 + opening blockquote, verbatim | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` ("its opening line") |
-| `## Orchestrator Identity (Control Plane Only)` + the **Pattern** bullet, verbatim | none of its verbatim text; citers name the full-text skill file |
-| `#### Deliverable exposure and designer composition (Decision phase)` + **Exposure Determination** | `agents/glass-atrium-intel-planner.md` · `agents/glass-atrium-intel-reporter.md` |
-| `#### Monitoring-phase notes` + the dev-front markup-exception and **Verbatim forward-relay** leads | GLOBAL_RULES · dev-front · intel-planner · intel-reporter |
-| `### Plan Direction Verification (Stage-2 gate)` | `agents/glass-atrium-intel-planner.md` |
-| `### Cost-Tier Selection` + the live-operator Model pins bullet, verbatim | `autoagent/lib/editable_merge.py` · `autoagent/test/test_editable_merge.py` |
-| `### Spawn Budget` | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` |
-| `#### Delegation-size discipline` + **HARD SECONDARY**, verbatim | `hooks/advisory-subagent-budget.sh` (the 40-52 band) |
-| `### Context Handoff Size` | `agents/glass-atrium-intel-reporter.md` |
-| `### Failure Recovery Loop` + the four-stage line, verbatim, + **Retry effort escalation** | GLOBAL_RULES · `hooks/track-outcome.sh` |
+| `### Cost-Tier Selection` + the live-operator Model pins bullet, verbatim, under its wrapper H2 | `autoagent/lib/editable_merge.py` · `autoagent/test/test_editable_merge.py` |
 
-- Each kept heading carries a one-line pointer to the same heading in the full text; the wrapper H2s and H3s stay only to hold the heading levels.
 - A kept verbatim line is a mirror of its full-text canonical: edit both together.
-- Every other citer points at the full text, never at the stub.
-- Drift the stub cannot fix, all at AA-frozen citers:
-  - `hooks/advisory-subagent-budget.sh` says "40-52 band"; the **HARD SECONDARY** bullet says "measured 46-52".
+- Every other citer points at the full text, never at the stub; a stub heading with no remaining citer goes.
+- Drift the stub cannot fix, at citers that name a heading the stub no longer holds or quote it inexactly (all AA-scoped):
+  - `hooks/advisory-subagent-budget.sh` says "40-52 band"; the full text's **HARD SECONDARY** bullet says "measured 46-52".
   - `autoagent/lib/editable_merge.py` quotes "NEVER ported to git"; the bullet reads "never".
   - `autoagent/daemon_cycle.py` → "Self-Improvement User-Approval Trigger" (`### Failure Recovery Loop` linkage below).
 
@@ -142,7 +133,6 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - The split between the two: that skill's `SKILL.md` → Reference Index.
 - The author-side protocol canonical is `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`, pointed to from `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]`.
 - Agent-body halves: `agents/glass-atrium-intel-reporter.md`, `agents/glass-atrium-intel-planner.md`, `agents/glass-atrium-dev-front.md`; `skills/glass-atrium-design-html-co-emission/SKILL.md` restates it for the consulted designer.
-- The stub keeps this heading and both leads, and it reaches every subagent through the parent's project-instruction set; the rule file and the reference do not. That is a delivery accident and gives it no authority over the author-side canonical.
 
 ### `#### Decision-phase probes` and `#### Scan boundary and provenance`
 
@@ -168,7 +158,6 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - Location-only citer that stays: `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` → the Stage 2 bullet names the gate heading for team composition, DEV hard gate, activation scope and direction-not-completeness. The pointer keeps all four.
   - Its **Stage-2 revision/escalation** bullet names the same heading for the escalation path; the pointer's **Revision + escalation** carries that path and its path-only limit.
 - No dev-* or reviewer body mirrors `scoped/scope-qa.md` or `scoped/scope-dev.md`.
-- The stub, which keeps this heading, also reaches every subagent on the host channel (see `#### Monitoring-phase notes` above), and its opening line tells subagents to ignore it.
 - The three are not a redundancy to collapse: a duty moved into the rule file is read by the wrong actors and owed by none; a duty deleted from a scope file loses its only maintained statement.
 - Do not copy the first-link question literal into the rule file or its Stage-2 reference; both point to it only.
   - The literal is cross-read between `scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]` and the ultracode gate's presence scan in `hooks/enforce-workflow-verify-stage.sh`.

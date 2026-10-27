@@ -350,7 +350,7 @@ set_harness_roots || block_write "DEL-001" \
 if is_harness_path "${NORM_PATH}" || is_harness_path "${PHYSICAL_PATH}"; then
   block_write "DEL-001" \
     "Orchestrator direct write blocked: harness path (~/.claude, a ~/.claude-* profile dir, the .glass-atrium install root or a project's .claude/settings*.json)" \
-    "Edit the repo path for an install-managed file, or take the staged lane for a profile-local file (orchestrator-role.md → Write routes)"
+    "Edit the repo path for an install-managed file, or take the staged lane for a profile-local file (skills/glass-atrium-ops-orchestrator-role.md → Write routes)"
 fi
 # shellcheck disable=SC2310  # predicate calls
 if is_sensitive_path "${NORM_PATH}" || is_sensitive_path "${PHYSICAL_PATH}"; then
