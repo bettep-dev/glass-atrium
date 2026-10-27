@@ -17,6 +17,8 @@ setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-delegation.sh not found: ${HOOK_SH}"
   source "${BATS_TEST_DIRNAME}/lib/no-python3.bash"
   export DELEGATION_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
+  # Harness roots are anchored at HOME: the /Users/x/... rows below are harness paths under it.
+  export HOME="/Users/x"
 }
 
 # Drive the hook as the orchestrator (no agent_id) with a synthetic Write input.
@@ -291,13 +293,14 @@ write_capturing() {
 
 @test "harness paths stay blocked for the orchestrator, symlinked ones included" {
   setup_monitor
+  export HOME="${WORK}"
   mkdir -p "${WORK}/.claude/agents"
   : >"${WORK}/.claude/agents/x.md"
   ln -s "${WORK}/.claude" "${WORK}/dirlink"
   ln -s "${WORK}/.claude/agents/x.md" "${WORK}/filelink.md"
   local rows=(
-    "profile dir|/Users/x/.claude-work/settings.json"
-    "live install root|/Users/x/.glass-atrium/hooks/enforce-delegation.sh"
+    "profile dir|${WORK}/.claude-work/settings.json"
+    "live install root|${WORK}/.glass-atrium/hooks/enforce-delegation.sh"
     "directory symlink into a harness dir|${WORK}/dirlink/agents/x.md"
     "file symlink into a harness dir|${WORK}/filelink.md"
   )
@@ -404,4 +407,89 @@ write_capturing() {
     printf "%s" "{\"tool_input\":{\"file_path\":\"$1\"}}" | bash "$2" 2>&1
   ' _ "${WORK}/src/existing.sh" "${HOOK_SH}"
   [[ "${status}" -eq 2 && "${output}" == *"DEL-007"* ]] || { echo "exit ${status}: ${output}"; return 1; }
+}
+
+@test "a symlink chain into a harness dir stays blocked at every hop, a loop included" {
+  setup_monitor
+  export HOME="${WORK}/home"
+  mkdir -p "${HOME}/.claude/agents"
+  : >"${HOME}/.claude/settings.json"
+  ln -s "${HOME}/.claude/settings.json" "${WORK}/hop2"
+  ln -s hop2 "${WORK}/hop1"
+  ln -s "${HOME}/.claude" "${WORK}/dirhop2"
+  ln -s dirhop2 "${WORK}/dirhop1"
+  ln -s "${HOME}/.claude-new" "${WORK}/danglehop2"
+  ln -s danglehop2 "${WORK}/danglehop1"
+  ln -s loopb "${WORK}/loopa"
+  ln -s loopa "${WORK}/loopb"
+  local rows=(
+    "two file hops|${WORK}/hop1"
+    "two directory hops|${WORK}/dirhop1/agents/x.md"
+    "dangling directory link chain|${WORK}/danglehop1/settings.json"
+    "link loop|${WORK}/loopa"
+  )
+  local row name path
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name path <<<"${row}"
+    write_capturing "${path}"
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-001"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "a project's own .claude dir is not a harness path" {
+  setup_monitor
+  export HOME="${WORK}/home"
+  mkdir -p "${HOME}" "${WORK}/proj/.claude/worktrees/wt/hooks"
+  : >"${WORK}/proj/.claude/worktrees/wt/hooks/foo.sh"
+  write_capturing "${WORK}/proj/.claude/worktrees/wt/hooks/foo.sh"
+  [[ "${status}" -eq 0 ]] || { echo "exit ${status}: ${output}"; return 1; }
+}
+
+@test "a listed path binds its checkout-relative file, never a basename or substring" {
+  setup_monitor
+  mkdir -p "${WORK}/repo/.git" "${WORK}/repo/docs" "${WORK}/repo/skills" "${WORK}/repo/src/skills" \
+    "${WORK}/repo/lib/hooks" "${WORK}/wt/hooks"
+  : >"${WORK}/wt/.git"
+  local f
+  for f in repo/README.md repo/docs/README.md repo/skills/x.sh repo/src/skills/x.sh \
+    repo/lib/hooks/foo.sh wt/hooks/foo.sh repo/abs.sh; do
+    : >"${WORK}/${f}"
+  done
+  printf '%s\n' '{"total":1,"rows":[{"id":9,"doc_status":"implementing"}]}' >"${LIST_JSON_FILE}"
+  seed_plan 9 md "## Target Files\\n- \`README.md\`\\n- \`skills/\`\\n- \`hooks/foo.sh\`\\n- \`${WORK}/repo/abs.sh\`\\n"
+  local rows=(
+    "same basename deeper in the checkout|0|repo/docs/README.md"
+    "listed dir name deeper in the checkout|0|repo/src/skills/x.sh"
+    "listed path as a deeper substring|0|repo/lib/hooks/foo.sh"
+    "listed root file|2|repo/README.md"
+    "file under a listed dir|2|repo/skills/x.sh"
+    "listed file in a worktree checkout (.git file)|2|wt/hooks/foo.sh"
+    "absolute entry|2|repo/abs.sh"
+  )
+  local row name want path
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name want path <<<"${row}"
+    write_capturing "${WORK}/${path}"
+    [[ "${status}" -eq "${want}" ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+    [[ "${want}" -eq 0 || "${output}" == *"DEL-006"* ]] || { echo "${name}: ${output}"; return 1; }
+  done
+}
+
+@test "an unreachable monitor emits one DEL-007 record naming the real cause" {
+  setup_monitor
+  LIST_JSON_FILE="${WORK}/absent.json"
+  write_capturing "${WORK}/src/existing.sh"
+  local records
+  records="$(printf '%s\n' "${output}" | grep -c 'DEL-007' || true)"
+  [[ "${status}" -eq 2 && "${records}" == 1 && "${output}" == *"could not be read"* \
+    && "${output}" != *"internal error"* ]] || { echo "exit ${status}, ${records} records: ${output}"; return 1; }
+}
+
+@test "the Target Files extractors stay out of the A/A-scope lib and mirror the drift hook's copy" {
+  local fns='/^extract_target_files_section() {/,/^}/p;/^extract_target_files_heading() {/,/^}/p'
+  local drift gate
+  drift="$(sed -n "${fns}" "${HOOKS_DIR}/validate-scope-drift.sh" | grep -v '^[[:space:]]*#')"
+  gate="$(sed -n "${fns}" "${HOOK_SH}" | grep -v '^[[:space:]]*#')"
+  ! grep -q '^extract_target_files_' "${HOOKS_DIR}/lib/scope-match.sh" \
+    && [[ -n "${drift}" && "${drift}" == "${gate}" ]]
 }

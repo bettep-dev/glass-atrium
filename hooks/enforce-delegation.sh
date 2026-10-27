@@ -3,12 +3,19 @@
 # basename (CLAUDE/MEMORY/GLASS_ATRIUM_GLOBAL_RULES.md) or a */memory/* session-state path passes.
 # An orchestrator write passes as tiny direct work unless its target is one of the kinds that stay
 # delegated, each blocked with exit 2 under its own code:
-#   DEL-001 harness path — a .claude / .claude-* segment or the .glass-atrium install root, judged on
-#           the path as written AND on its physical path (a symlink cannot launder it)
+#   DEL-001 harness path — ~/.claude, a ~/.claude-* profile dir or the ~/.glass-atrium install root,
+#           judged on the path as written AND on its physical path, every symlink hop followed (a
+#           link chain cannot launder it; an unresolvable chain blocks). A project's own .claude/ dir
+#           (e.g. .claude/worktrees/<wt>/) is not a harness path.
 #   DEL-004 sensitive file — .env-class, secrets/credentials, private keys, or an .ssh/.aws/.gnupg dir
 #   DEL-005 new document file — the target does not exist yet and carries a document extension
 #           (md/markdown/mdx/html/htm/rst/adoc/txt), anywhere: creating one is report/plan/spec authoring
-#   DEL-006 a Target File of a plan at stage implementing — plan work stays delegated
+#   DEL-006 a Target File of a plan at stage implementing — plan work stays delegated. A listed path
+#           names a file, or a directory when it ends in `/`; an absolute entry is compared with the
+#           path itself, a relative one with the path relative to its git checkout root (the nearest
+#           ancestor holding .git), or as a whole-segment path suffix outside any checkout. Never a
+#           bare basename or substring. A plan names no repository, so every implementing plan's list
+#           is checked: a same-named root file (README.md) listed by another repo's plan also blocks.
 #   DEL-007 the implementing plans' Target Files cannot be read — fail closed
 # Block channel = stderr emit_error + exit 2 (non-substitutable with the stdout decision channel — see shared-hook-capability-contract.md)
 #
@@ -23,8 +30,10 @@ IFS=$'\n\t'
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 # shellcheck source=lib/hook-utils.sh
 source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
-# shellcheck source=lib/scope-match.sh
-source "${BASH_SOURCE%/*}/lib/scope-match.sh"
+# shellcheck source=lib/pipe-drain.sh
+source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+# shellcheck source=lib/claude-config-dirs.sh
+source "${BASH_SOURCE%/*}/lib/claude-config-dirs.sh"
 
 INPUT=$(hook_read_input)
 
@@ -108,7 +117,10 @@ fi
 
 # 5. Orchestrator write → block the kinds that stay delegated; anything else is tiny direct work.
 #    Any unexpected failure past this point blocks: an exit 1 would read as allow.
-trap 'emit_error "DEL-007" "block" "Delegation gate internal error — blocking (fail closed)" "Delegate the edit to a sub-agent" "{}"; exit 2' ERR
+#    The trap acts in the hook's own shell only: set -E carries it into every $( ) subshell, where a
+#    guarded failure (an unreachable monitor) would emit a false internal-error record before the
+#    caller's real one. A subshell failure still exits that subshell, and its caller answers it.
+trap 'if [[ "${BASH_SUBSHELL}" -eq 0 ]]; then emit_error "DEL-007" "block" "Delegation gate internal error — blocking (fail closed)" "Delegate the edit to a sub-agent" "{}"; exit 2; fi' ERR
 
 # .env-class / secrets / credentials basenames (mirrors validate-secret-scan.sh SECRETS_FILE) + key files.
 readonly SENSITIVE_NAME_RE='^(\.env(\..+)?|\.envrc|secrets?(\..+)?|credentials?(\..+)?|id_(rsa|dsa|ecdsa|ed25519)|.+\.(pem|key|p12|pfx))$'
@@ -118,30 +130,64 @@ monitor_port="$(hook_monitor_port 2>/dev/null || true)"
 readonly PLAN_LIST_URL="${DELEGATION_MONITOR_URL:-http://127.0.0.1:${monitor_port}/api/clauded-docs}"
 readonly CURL_TIMEOUT="${DELEGATION_CURL_TIMEOUT:-2}"
 
-# Physical path of $1: nearest existing ancestor resolved with cd -P, plus one final-component link.
+# Physical path of $1, every symlink hop followed: the nearest existing ancestor is resolved with
+# cd -P (which also resolves `..` physically), then a link at the remaining tail — a final-component
+# link, or a dangling directory link — is replaced by its target and the walk restarts. rc 1 when a
+# hop cannot be read or the chain passes 40 hops (a loop); the caller blocks on it.
 get_physical_path() {
-  local dir base target
-  dir="$(dirname -- "${1}")"
-  base="$(basename -- "${1}")"
-  while [[ ! -d "${dir}" ]]; do
-    base="$(basename -- "${dir}")/${base}"
-    dir="$(dirname -- "${dir}")"
+  local path="${1}" dir base link tail target hops=0
+  while :; do
+    dir="$(dirname -- "${path}")"
+    base="$(basename -- "${path}")"
+    while [[ ! -d "${dir}" && ! -L "${dir}" ]]; do
+      base="$(basename -- "${dir}")/${base}"
+      dir="$(dirname -- "${dir}")"
+    done
+    if [[ -L "${dir}" && ! -d "${dir}" ]]; then
+      link="${dir}"
+      tail="/${base}"
+    else
+      dir="$(cd -P -- "${dir}" && pwd -P)" || return 1
+      path="${dir%/}/${base}"
+      if [[ ! -L "${path}" ]]; then
+        printf '%s' "${path}"
+        return 0
+      fi
+      link="${path}"
+      tail=""
+    fi
+    hops=$((hops + 1))
+    [[ "${hops}" -le 40 ]] || return 1
+    target="$(readlink -- "${link}")" || return 1
+    [[ "${target}" == /* ]] || target="$(dirname -- "${link}")/${target}"
+    path="${target}${tail}"
   done
-  dir="$(cd -P -- "${dir}" && pwd -P)"
-  if [[ -L "${dir}/${base}" ]]; then
-    target="$(readlink -- "${dir}/${base}")"
-    [[ "${target}" == /* ]] || target="${dir}/${target}"
-    printf '%s' "${target}"
-    return 0
-  fi
-  printf '%s' "${dir}/${base}"
 }
 
+# Home as written and as its physical path — the roots every harness path hangs under.
+HARNESS_HOMES=()
+set_harness_homes() {
+  local home physical
+  home="$(hook_normalize_path "${HOME:-}")"
+  [[ "${home}" == /?* ]] || return 1
+  HARNESS_HOMES=("${home}")
+  physical="$(cd -P -- "${home}" 2>/dev/null && pwd -P)" || return 0
+  [[ "${physical}" == "${home}" ]] || HARNESS_HOMES+=("${physical}")
+  return 0
+}
+
+# A harness path: ~/.claude, a ~/.claude-<branch> profile dir or ~/.glass-atrium, anchored at home —
+# a .claude segment elsewhere (a project's .claude/worktrees checkout) is not one.
 is_harness_path() {
-  case "${1}/" in
-    */.claude/* | */.claude-*/* | */.glass-atrium/*) return 0 ;;
-    *) return 1 ;;
-  esac
+  local home rest
+  for home in "${HARNESS_HOMES[@]}"; do
+    [[ "${1}/" == "${home}/"?* ]] || continue
+    rest="${1:${#home}+1}/"
+    if [[ "${rest}" == .glass-atrium/* || "${rest}" =~ ^${CLAUDE_CONFIG_ROOT_RE} ]]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 is_sensitive_path() {
@@ -168,6 +214,49 @@ block_write() {
   context="$(jq -cn --arg p "${FILE_PATH}" '{file_path:$p}' 2>/dev/null)" || context='{}'
   emit_error "${1}" "block" "${2}" "${3}" "${context}"
   exit 2
+}
+
+# Plan Target Files extractors — a VERBATIM copy of validate-scope-drift.sh's pair (code lines; the
+# test enforce-delegation.bats pins the two equal). Kept out of lib/scope-match.sh, which is an
+# A/A scope file (autoagent/daemon_cycle.py AA.SCOPE.FILES).
+# Extract path-like tokens from the `<section id="target-files">` slice → newline list.
+# Relies on the T1 flat-leaf contract (slices to the first </section>). sed-only (no awk).
+# P1 nesting guard: a nested opening <section> in the slice violates the leaf contract → a
+# truncated list could mis-fire SCOPE-070, so emit empty (fail-open, no guessing).
+# Args: $1=html body. Prints cleaned list to stdout (empty on parse anomaly · always return 0).
+extract_target_files_section() {
+  local body="${1}"
+  # Flatten to one line, then slice between opening tag and first </section>.
+  local flattened from_open sliced
+  flattened="$(printf '%s' "${body}" | tr '\n' ' ')"
+
+  # After the opening tag (close not yet applied) — source for the nesting guard.
+  from_open="$(printf '%s' "${flattened}" \
+    | sed -n 's/.*<section[^>]*id="target-files"[^>]*>\(.*\)/\1/p')"
+  [[ -z "${from_open}" ]] && return 0
+
+  sliced="$(printf '%s' "${from_open}" | sed 's/<\/section>.*//')"
+  [[ -z "${sliced}" ]] && return 0
+
+  # P1 guard: nested opening <section> → leaf violation → fail-open.
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if printf '%s' "${sliced}" | drain_after grep -q '<section[^>]*>'; then
+    return 0
+  fi
+
+  # <li>/<br> → newlines (one item per line), then strip remaining tags + decode entities.
+  printf '%s' "${sliced}" \
+    | sed 's/<li[^>]*>/\n/g; s/<\/li>/\n/g; s/<br[^>]*>/\n/g' \
+    | sed 's/<[^>]*>//g' \
+    | sed 's/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g'
+}
+
+# Extract the md `## Target Files` list, up to the next `## ` heading (case-insensitive initials,
+# English-only). One definition for the PLAN_FILE leg and the monitor leg's md plans.
+# Args: $1=md body. Prints the list to stdout (empty when the heading is absent).
+extract_target_files_heading() {
+  local heading_re='^##[[:space:]]+[Tt]arget [Ff]iles'
+  printf '%s\n' "${1}" | sed -E -n "/${heading_re}/,/^## /{ /${heading_re}/d; /^## /d; p; }"
 }
 
 # Ids of the plans at implementing, one per line; rc 1 when the full list cannot be read.
@@ -217,13 +306,60 @@ get_item_paths() {
   return 0
 }
 
-# FILE_PATH contains a listed path, or shares its basename — match_file_against_allowed's rule,
-# fork-free here because the tokens arrive already cleaned and a plan lists hundreds of them.
+# Path of $1 relative to its git checkout root (the nearest ancestor holding a .git dir or file);
+# rc 1 outside any checkout. Fork-free: it runs once per candidate path.
+repo_relative_path() {
+  local dir="${1%/*}"
+  while [[ -n "${dir}" ]]; do
+    if [[ -e "${dir}/.git" ]]; then
+      printf '%s' "${1#"${dir}"/}"
+      return 0
+    fi
+    dir="${dir%/*}"
+  done
+  return 1
+}
+
+# Candidate paths of this write, set once before the plan loop: the path as written and its physical
+# path, each with its checkout-relative form ("" outside a checkout). Index-aligned arrays.
+CANDIDATE_PATHS=()
+CANDIDATE_RELS=()
+set_candidates() {
+  local path rel
+  for path in "$@"; do
+    # shellcheck disable=SC2310  # outside a checkout is an answer (empty), not a failure
+    rel="$(repo_relative_path "${path}")" || rel=""
+    CANDIDATE_PATHS+=("${path}")
+    CANDIDATE_RELS+=("${rel}")
+  done
+}
+
+# A candidate is a listed path: an absolute entry equals the path (or contains it, for a `dir/`
+# entry); a relative entry equals the checkout-relative path (or prefixes it, for `dir/`), or, outside
+# a checkout, is a whole-segment suffix of it. Fork-free — a plan lists hundreds of entries.
 is_listed_path() {
-  local token name="${FILE_PATH##*/}"
+  local token i path rel
   while IFS= read -r token; do
-    [[ -n "${token}" ]] || continue
-    [[ "${FILE_PATH}" == *"${token}"* || "${name}" == "${token##*/}" ]] && return 0
+    token="${token#./}"
+    # shellcheck disable=SC2088  # the pattern DETECTS a literal leading ~/ to expand it here
+    [[ "${token}" == '~/'* && -n "${HOME:-}" ]] && token="${HOME}/${token#\~/}"
+    [[ -n "${token}" && "${token}" != */../* && "${token}" != ../* ]] || continue
+    i=0
+    while [[ "${i}" -lt "${#CANDIDATE_PATHS[@]}" ]]; do
+      path="${CANDIDATE_PATHS[${i}]}"
+      rel="${CANDIDATE_RELS[${i}]}"
+      i=$((i + 1))
+      if [[ "${token}" == /* ]]; then
+        [[ "${path}" == "${token}" ]] && return 0
+        [[ "${token}" == */ && "${path}" == "${token}"* ]] && return 0
+      elif [[ -n "${rel}" ]]; then
+        [[ "${rel}" == "${token}" ]] && return 0
+        [[ "${token}" == */ && "${rel}" == "${token}"* ]] && return 0
+      else
+        [[ "${path}" == */"${token}" ]] && return 0
+        [[ "${token}" == */ && "${path}" == */"${token}"* ]] && return 0
+      fi
+    done
   done <<<"${1}"
   return 1
 }
@@ -252,7 +388,14 @@ check_plan_target_files() {
 [[ "${NORM_PATH}" == /* ]] || block_write "DEL-001" \
   "Orchestrator direct write blocked: a relative path cannot be judged against the harness roots" \
   "Retry with the absolute path, or delegate the edit to a sub-agent"
-PHYSICAL_PATH="$(get_physical_path "${NORM_PATH}")"
+# shellcheck disable=SC2310  # an unresolvable chain is answered by the DEL-001 block
+PHYSICAL_PATH="$(get_physical_path "${NORM_PATH}")" || block_write "DEL-001" \
+  "Orchestrator direct write blocked: the path's symlink chain could not be resolved (unreadable link or a loop), so it cannot be judged against the harness roots" \
+  "Retry with the resolved path, or delegate the edit to a sub-agent"
+# shellcheck disable=SC2310  # an unusable HOME is answered by the DEL-001 block
+set_harness_homes || block_write "DEL-001" \
+  "Orchestrator direct write blocked: HOME is unset or not absolute, so the harness roots cannot be located" \
+  "Delegate the edit to a sub-agent"
 
 # shellcheck disable=SC2310  # predicate calls
 if is_harness_path "${NORM_PATH}" || is_harness_path "${PHYSICAL_PATH}"; then
@@ -272,5 +415,6 @@ if is_new_document "${NORM_PATH}"; then
     "Orchestrator direct write blocked: creating a new document file is report/plan/spec authoring" \
     "Delegate the document to glass-atrium-intel-reporter or glass-atrium-intel-planner, which POST it to the monitor"
 fi
+set_candidates "${NORM_PATH}" "${PHYSICAL_PATH}"
 check_plan_target_files
 exit 0
