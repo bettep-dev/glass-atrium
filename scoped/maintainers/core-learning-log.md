@@ -18,7 +18,6 @@ Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches eve
 - `autoagent/test/test_sensitive_patterns.py` names the file's path, not its text, as a row the daemon's sensitive-path matchers never refuse, so renaming the file is a multi-site edit.
 - `autoagent/daemon_cycle.py` → `_SAFETY_SENSITIVE_DIFF_PATTERNS`: the command-shaped Tier-2 trigger lines match its diff patterns. That match is why the rule file forbids reflowing them.
 - Cited headings: `## Learning Log Auto-Aggregation`, `## Instruction Improvement Approval Tier`, `## Correction Signal Capture` and `### Long-Term Memory Write-Gate` are each cited from skills, agent bodies, code comments or other rule files. Grep the corpus before renaming one.
-  - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` names the Write-Gate as "4-condition", so a fifth condition or a dropped one is a co-edit there.
 
 ## Specs with no agent reader
 
@@ -40,7 +39,8 @@ Moved out of the rule file: each binds aggregator or daemon code, never an agent
 - **Procedure** was dropped. Its first two steps restated the `revision_count` / `directive_hint` field rules; the third restated the Write-Gate; the fourth (tag an instruction-update candidate) named a tag no field carries and no code reads.
 - Write-Gate: the auto-path ban, the "not SUFFICIENT without it" line, **Language** and **Internal-vs-user-facing boundary** were dropped.
   - The AND lead already makes each condition necessary.
-  - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Learning Log & Correction Signal [ALL]` carries the ban, its absence-of-code backing and the aggregation exemption; `### Output Language` and **Persisted value** carry English.
-  - Kept: the honest-backing line naming `hooks/learning-aggregator.py`, which `scoped/maintainers/GLASS_ATRIUM_GLOBAL_RULES.md` relies on this file to carry.
+  - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Learning Log & Correction Signal [ALL]` carries the ban and the aggregation exemption, and this file's Write-Gate honest-backing line carries the absence-of-code backing.
+  - `### Output Language` and **Persisted value** carry English.
+  - Kept: the honest-backing line naming `hooks/learning-aggregator.py`.
 - Approval tiers: the Tier-1 span and every Tier-2 trigger line are byte-identical. The path-matcher honest backing (one bullet over the 300-char cap) was split into sub-bullets at its sentence boundaries, and its claims and the "Never reflow" duty are unchanged.
   - "Never reflow" stays in the rule file: it binds whoever edits the trigger list, and a pointer stating it would be as long as the rule.

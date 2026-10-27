@@ -52,7 +52,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
     - **One verb per purpose per layer** — `SKILL.md` · `references/ANTI-PATTERNS.md`
     - **Identifier-kind binary** — `SKILL.md` · `references/VARIABLES-BOOLEANS.md`
     - **No-stutter** — `references/ANTI-PATTERNS.md`
-    - **Reduction-floor guardrail** — `SKILL.md` · the reviewer
+    - **Reduction-floor guardrail** — `SKILL.md`
     - **Booleans — stative-first** — `agents/glass-atrium-dev-react.md`
     - **Prefix-family grouping** — `references/VARIABLES-BOOLEANS.md` · the reviewer
     - **Qualifier-sibling grouping** — `references/ANTI-PATTERNS.md` · the reviewer
@@ -66,8 +66,8 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 - The delta-core carries each rule, one Bad → Good pair and the exclusions a DEV agent needs to write a compliant name.
 - Every other verdict that shapes a name lives once in the edge-case sections, outside the delta-core, which DEV agents and the reviewer both receive.
   - A shape the rule text already settles word for word gets no row (a plain generic-terminal, bound-qualifier or `user`/`newUser` case); add a row only where two readers could split.
-  - The reviewer keeps review mechanics only: `### Naming Checks` (triggers, word counting, finding or no finding) and its `### Naming Edge Cases` tables.
-  - Rename `### Naming Checks`, a `### Naming Edge Cases` heading or the **Naming edge cases** lead and fix this note in the same pass.
+  - The reviewer keeps review mechanics only, in `### Naming Checks`: which identifiers it judges, the severity, and the **Naming edge cases** lead.
+  - Rename `### Naming Checks` or the **Naming edge cases** lead and fix this note in the same pass.
 - The closed fallback list under **Qualifier-sibling grouping** and the `## Edge-case verdicts — sibling sets` qualifier-stays rows must give one verdict per shape. Change either and re-read the other in the same pass.
 - `skills/glass-atrium-dev-naming/references/ANTI-PATTERNS.md` → **Sibling collision groups first**, its `fileBlock` over-reduction row and its **Reduction floor** checklist line must read group first, qualifier as the fallback, in step with **Reduction-floor guardrail**.
 - `skills/glass-atrium-dev-naming/references/VARIABLES-BOOLEANS.md` → **Parameters** and **Prefix-family grouping**'s parameter exclusion must give one verdict: a function's own parameters stay flat.
@@ -79,7 +79,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
   - Its log-or-error-text row cites `skills/glass-atrium-dev-naming/references/ANTI-PATTERNS.md` → **Cross-boundary names keep their qualifier**.
   - Its in-code `Member taken out of its group` row applies rename-at-extraction, with no floor check.
   - Keep the split at the log/error boundary, and fix the rule file in the same pass as any rename of that skill bold lead.
-- Outbound: the rule file's scope lines and the reviewer's `### Naming Edge Cases — Scope and Kind` cite `scoped/shared-testing.md` → `### Names, comments and test data`. Rename that heading and fix both in the same pass.
+- Outbound: the rule file's scope lines cite `scoped/shared-testing.md` → `### Names, comments and test data`. Rename that heading and fix them in the same pass.
 
 ## Manifest-regeneration preconditions
 

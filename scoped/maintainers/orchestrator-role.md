@@ -6,30 +6,21 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 - `rules/glass-atrium/orchestrator-role.md` is a stub; the full text sits verbatim in `skills/glass-atrium-ops-orchestrator-role.md`, an on-demand reference the main session Reads by path.
   - Why: the file at that path reaches every subagent on the host channel, while the control-plane core (`scoped/orchestrator-core.md`) already reaches the main session at SessionStart.
-- The stub keeps the path: frozen `agents/` bodies, AA-scoped code and the ORCHESTRATOR pair row in `rules/glass-atrium/core-compliance-matrix.md` cite it.
+- The stub keeps the path: AA-scoped code, `agents/GLASS_ATRIUM_GLOBAL_RULES.md` ("its opening line") and the ORCHESTRATOR pair row in `rules/glass-atrium/core-compliance-matrix.md` cite it.
 - In this note, "the rule file" means the full text; the stub is named as the stub.
 - What the stub keeps, each for a reader that cannot be repointed:
 
 | Kept in the stub | Reader |
 |---|---|
 | the H1 + opening blockquote, verbatim | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` ("its opening line") |
-| `## Orchestrator Identity (Control Plane Only)` + the **Pattern** bullet, verbatim | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` |
-| `#### Deliverable exposure and designer composition (Decision phase)` + **Exposure Determination** | `agents/glass-atrium-intel-planner.md` · `agents/glass-atrium-intel-reporter.md` |
-| `#### Monitoring-phase notes` + the dev-front markup-exception and **Verbatim forward-relay** leads | GLOBAL_RULES · dev-front · intel-planner · intel-reporter |
-| `### Plan Direction Verification (Stage-2 gate)` | `agents/glass-atrium-intel-planner.md` |
-| `### Cost-Tier Selection` + the live-operator Model pins bullet, verbatim | `autoagent/lib/editable_merge.py` · `autoagent/test/test_editable_merge.py` |
-| `### Spawn Budget` | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` |
-| `#### Delegation-size discipline` + **HARD SECONDARY**, verbatim | `hooks/advisory-subagent-budget.sh` (the 40-52 band) |
-| `### Context Handoff Size` | `agents/glass-atrium-intel-reporter.md` |
-| `### Failure Recovery Loop` + the four-stage line, verbatim, + **Retry effort escalation** | GLOBAL_RULES · `hooks/track-outcome.sh` |
+| `### Cost-Tier Selection` + the live-operator Model pins bullet, verbatim, under its wrapper H2 | `autoagent/lib/editable_merge.py` · `autoagent/test/test_editable_merge.py` |
 
-- Each kept heading carries a one-line pointer to the same heading in the full text; the wrapper H2s and H3s stay only to hold the heading levels.
 - A kept verbatim line is a mirror of its full-text canonical: edit both together.
-- Every other citer points at the full text, never at the stub.
-- Drift the stub cannot fix, all at AA-frozen citers:
-  - `hooks/advisory-subagent-budget.sh` says "40-52 band"; the **HARD SECONDARY** bullet says "measured 46-52".
-  - `autoagent/lib/editable_merge.py` quotes "NEVER ported to git"; the bullet reads "never".
-  - `autoagent/daemon_cycle.py` → "Self-Improvement User-Approval Trigger" (`### Failure Recovery Loop` linkage below).
+- Every other citer points at the full text, never at the stub; a stub heading with no remaining citer goes.
+- Citers whose quoted text differs from the full text; each entry names the file its citation resolves to:
+  - `hooks/advisory-subagent-budget.sh` says "40-52 band"; it resolves to `skills/glass-atrium-ops-orchestrator-role.md`, whose **HARD SECONDARY** bullet says "measured 46-52".
+  - `autoagent/lib/editable_merge.py` quotes "NEVER ported to git"; it resolves to the stub's `### Cost-Tier Selection`, whose Model pins bullet reads "never".
+  - `autoagent/daemon_cycle.py` cites "Self-Improvement User-Approval Trigger" at `orchestrator-role.md`; it resolves to `skills/glass-atrium-ops-orchestrator.md` (`### Failure Recovery Loop` linkage below).
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
@@ -51,7 +42,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - The three phrases: the heuristic label on the table · the daemon config-reader module name · the pinned worker-model-id fallback.
   - Breaks when the heading is renamed, or one of the three phrases is reworded.
   - Breaks when any `###` substring — a `###` or `####` heading, or a hash-prefixed heading name in prose — lands ahead of them, truncating the parsed span.
-  - Breaks when that heading's exact literal is written a second time ANYWHERE ABOVE it, re-aiming the split at the wrong copy.
+  - Breaks when that heading's exact literal is written a second time anywhere above it, re-aiming the split at the wrong copy.
   - Runs only in the `test-python` CI job, which a markdown-only PR skips: run it locally after any edit to the rule file.
 - The close-token bats case — `hooks/test/inject-session-context.bats` → "the workflow pre-flight carries both close-token forms of the grammar SoT".
   - Reads both close-token form literals, token included: exactly one of each across the file.
@@ -84,7 +75,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 - **Attestation tokens** — `[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` · `[AGENT-COMPOSITION]` · `[DOC-ROUTE]`: the bracketed literal and its field keys or form values are what the spawn gates scan a delegation or script for.
 - **Verdict names** — `block-nodecl` · `block-grammar` · `block-norev` · `block-noverifydev` · `block-declspawn` · `block-undecl` · `block-computed` · `block-order` · `block-upstream`.
-  - Each is a trace tag `hooks/enforce-workflow-verify-stage.sh` emits. The rule file NAMES them; the hook defines them.
+  - Each is a trace tag `hooks/enforce-workflow-verify-stage.sh` emits. The rule file names them; the hook defines them.
 - **Headings** cited by name elsewhere in the corpus:
   - `## Orchestrator Identity` · `## Delegation Criteria` · `## Delegation Workflow` · `## Document-Driven Workflow` · `## Harness Path Protection` (with its `Rule 2`, `### Write routes`, `### Staged lane`, `### Progress-file exclusion`, `### Reach of the gate`).
   - `### Phase Notes`, with `#### Entry classification (DEV delegations)` · `#### Plan edge discovery`.
@@ -137,12 +128,11 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 ### `#### Monitoring-phase notes`
 
-- The dev-front markup-exception judgment is the orchestrator-side canonical for the JUDGMENT only.
+- The dev-front markup-exception judgment is the orchestrator-side canonical for the judgment only.
   - It is the pointer under `#### Monitoring-phase notes` plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## glass-atrium-dev-front markup exception — detail`.
   - The split between the two: that skill's `SKILL.md` → Reference Index.
 - The author-side protocol canonical is `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`, pointed to from `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]`.
 - Agent-body halves: `agents/glass-atrium-intel-reporter.md`, `agents/glass-atrium-intel-planner.md`, `agents/glass-atrium-dev-front.md`; `skills/glass-atrium-design-html-co-emission/SKILL.md` restates it for the consulted designer.
-- The stub keeps this heading and both leads, and it reaches every subagent through the parent's project-instruction set; the rule file and the reference do not. That is a delivery accident and gives it no authority over the author-side canonical.
 
 ### `#### Decision-phase probes` and `#### Scan boundary and provenance`
 
@@ -158,7 +148,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 ### `### Plan Direction Verification (Stage-2 gate)`
 
-- `### Plan Direction Verification (Stage-2 gate)` is the gate-OPERATION canonical, as a pointer plus `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md`.
+- `### Plan Direction Verification (Stage-2 gate)` is the gate-operation canonical, as a pointer plus `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md`.
 - The participant-duty canonicals are `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` (reviewer) and `scoped/scope-dev.md` → the same heading (DEV).
 - The split between the pointer and that reference: that skill's `SKILL.md` → Reference Index.
   - The hooks quote only the gate heading (`hooks/enforce-verification-gate.sh` reviewer-miss reason, `hooks/enforce-workflow-verify-stage.sh` DEV hard-gate block), which stays.
@@ -168,7 +158,6 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - Location-only citer that stays: `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` → the Stage 2 bullet names the gate heading for team composition, DEV hard gate, activation scope and direction-not-completeness. The pointer keeps all four.
   - Its **Stage-2 revision/escalation** bullet names the same heading for the escalation path; the pointer's **Revision + escalation** carries that path and its path-only limit.
 - No dev-* or reviewer body mirrors `scoped/scope-qa.md` or `scoped/scope-dev.md`.
-- The stub, which keeps this heading, also reaches every subagent on the host channel (see `#### Monitoring-phase notes` above), and its opening line tells subagents to ignore it.
 - The three are not a redundancy to collapse: a duty moved into the rule file is read by the wrong actors and owed by none; a duty deleted from a scope file loses its only maintained statement.
 - Do not copy the first-link question literal into the rule file or its Stage-2 reference; both point to it only.
   - The literal is cross-read between `scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]` and the ultracode gate's presence scan in `hooks/enforce-workflow-verify-stage.sh`.
@@ -193,7 +182,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The dashboard `fail_rate` the tier-escalation heuristic reads is computed read-only in monitor `agents.ts`; no code consumes it to switch a tier.
 - The rule file's "every pin is LIVE-ONLY, and the updater preserves it across updates" (`### Cost-Tier Selection` → Model pins) is implemented by `autoagent/lib/editable_merge.py` → `_LOCAL_ONLY_FRONTMATTER_KEYS`, exactly `("model",)`.
   - The identity keys `{name, tools, scope}` stay vendor-owned (`hooks/enforce-harness-critical.sh` protects them and excludes `model`).
-- A second, weaker tuple sits beside it: `_BASE_AWARE_FRONTMATTER_KEYS`, exactly `("effort",)` — a key the release DOES ship.
+- A second, weaker tuple sits beside it: `_BASE_AWARE_FRONTMATTER_KEYS`, exactly `("effort",)` — a key the release does ship.
   - So a live line is kept only when it differs from base@install, and with no base anchor it falls back to live-wins. Unlike `model`, `effort` is not unconditionally local-only.
 - Code comments in `autoagent/lib/editable_merge.py`, `autoagent/test/test_editable_merge.py` and `scripts/test/glass-atrium-update.bats` cite "Cost-Tier Selection" as the sanction for live-wins; keep that heading and the sanction sentence, in the stub and the rule file, when editing either.
 
@@ -231,7 +220,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - The evidence-gate citer above resolves through that pointer: it keeps the lead and names the **Debugger evidence gate** as honor-system.
 - The rule file carries no pointer to `skills/glass-atrium-ops-orchestrator.md` → `### Self-Improvement User-Approval Trigger`.
   - The orchestrator reaches that section through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier and `rules/glass-atrium/shared-self-improve-hygiene.md` → Cross-References.
-- A comment in `autoagent/daemon_cycle.py` still cites `orchestrator-role.md` for that name; the fix belongs at the comment (point it at the skill), not a pointer back here.
+- A comment in `autoagent/daemon_cycle.py` cites `orchestrator-role.md` for that name; the fix belongs at the comment (point it at the skill), not a pointer back here.
 
 ## Linkage — lifecycle and harness
 

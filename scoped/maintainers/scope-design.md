@@ -25,7 +25,8 @@ Each counterpart is present in `agents/glass-atrium-design-designer.md`:
 - **`**No AI-generated aesthetics**` font list** → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` carries `Overused fonts: Inter · Roboto · Arial · Fraunces · generic system fonts`.
   - `### Typography` additionally resolves the fallback-versus-primary subtlety the scope-file line lacked.
   - A fallback face is a rendering substitute; selecting one as a primary is the trope.
-- **Vendor-routing sane-default and cross-vendor-parity bullets** → `### Figma Make + MCP Integration Guardrails` carries `Vendor-Routing: Figma is the default design tool; do NOT assume Sketch / XD parity in design specs.` Only the routing-rationale bullet had no counterpart, so only it survives in the rule file.
+- **Vendor-routing sane-default and cross-vendor-parity bullets** → `### Figma Make + MCP Integration Guardrails` carries `Vendor-Routing: Figma is the default design tool; specs do not assume Sketch / XD parity.`
+  - Only the routing-rationale bullet had no counterpart, so only it survives in the rule file.
 - **`Verify no prohibited fonts`** in the handoff checklist → the same AI Slop Tropes line.
 - **The WCAG AA ratios** → `## Pre-Execution Verification` pins `WCAG AA (4.5:1 text · 3:1 large-text ≥18pt) verified · AAA (7:1) recommended`.
   - `## Red Flags` → **Color & contrast** carries the derive-then-verify obligation.
