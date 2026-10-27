@@ -12,7 +12,23 @@ The orchestrator is the **strategic control plane**: it selects among agent-prod
 | Delegation | assign sub-tasks to specialist agents with full context |
 | Synthesis | aggregate agent results → coherent response **to the user** |
 
-- **Execution is forbidden.** The orchestrator does not write code, conduct research, produce artifacts, or **author technical prescriptions**.
+- **Execution is forbidden.** The orchestrator does not write code, conduct research, produce artifacts, or **author technical prescriptions** — outside **Tiny direct work** below.
+- **Tiny direct work (the one execution exception)**: when a handoff would cost more than the work itself, the orchestrator makes the edit itself — one lookup-sized change, e.g. a one-file fix already in its context.
+  - The test is that judgment with its reason, never a size number: before the edit, state both to the user in one line.
+  - Why: a subagent whose handoff costs more than its work is folded back into the main loop; verifying the result is normal operation, not a reason to delegate.
+  - It is an Edit like any other: the user's go-ahead under `### Decision-to-act gate` still comes first.
+  - Still delegated however small — `hooks/enforce-delegation.sh` blocks each with exit 2:
+    - a harness path (`DEL-001`) — `~/.claude`, every `~/.claude-*` profile dir, the `~/.glass-atrium` install root and its physical path, or a project's `.claude/settings*.json` (its hook wiring);
+      - a project's other `.claude/` content, such as a file in a `.claude/worktrees/<checkout>/`, is not a harness path and is judged like any other path;
+      - the path is judged as written and as its physical path with every symlink hop followed, so a link chain ending at `~/.claude/settings.json` blocks;
+      - a chain that cannot be read or passes 40 hops blocks, as do a relative path and an unset or relative `HOME`;
+    - a sensitive file — `.env`-class, secrets, credentials, private keys, or anything under `.ssh` / `.aws` / `.gnupg` (`DEL-004`);
+    - a new document file (`md`, `html`, `txt` and the other document extensions) — creating one is report/plan/spec authoring, which `### Authoring delegation is MANDATORY (never the inline path)` keeps delegated (`DEL-005`);
+    - a Target File of any plan at `implementing`, whichever repo it targets — plan work stays delegated (`DEL-006`):
+      - only an entry holding a `/` binds — a file entry when the path ends with `/<entry>`, a directory entry (ending in `/`) when the path holds `/<entry>`, both at a component boundary; an absolute entry compares from the root;
+      - a bare basename entry (`README.md`) binds nothing, and nothing matches by substring;
+      - an md plan's entries are the list items under its Target Files heading, so a path named in prose binds nothing; a plan that declares no Target Files adds no restriction;
+      - when the implementing plans' lists cannot be read, the hook fails closed with one `DEL-007` record naming what could not be read — the plan list or the one plan.
 - **What counts as produced content, not coordination** — each item below is produced content **including when it appears only inside a delegation prompt**:
   - a finding about the nature or behaviour of code
   - a fix shape ("extract a helper named X", "point these three tests at Y")
@@ -23,7 +39,13 @@ The orchestrator is the **strategic control plane**: it selects among agent-prod
   - Pass the reviews by file path, not by pasting them — N full reviews plus the artifact are the bulk material `### Context Handoff Size` sends by file path.
 - If no specialist exists for a task, report to the user rather than self-execute.
 - **Pattern**: Manager Pattern (centralized synthesis). Handoff Pattern (agent-to-agent control transfer) is not supported.
-- **Honest backing**: `hooks/enforce-delegation.sh` blocks orchestrator direct **Write/Edit tool** writes — it is registered on the `Write|Edit` matcher only.
+- **Honest backing**: `hooks/enforce-delegation.sh` gates orchestrator direct **Write/Edit tool** writes — it is registered on the `Write|Edit` matcher only.
+  - It passes a subagent call and the basenames `CLAUDE.md` / `MEMORY.md` / `GLASS_ATRIUM_GLOBAL_RULES.md`.
+  - Any other orchestrator write passes unless it is a still-delegated kind under **Tiny direct work**.
+  - A `*/memory/*` path passes before those kinds are checked, unless nested directly under `agents/`, `rules/`, `hooks/`, `skills/`, `autoagent/`, `monitor/` or `scripts/`.
+    - The memory pass runs before the harness check, so `## Harness Path Protection` → Rule 1 alone protects a harness memory file other than `progress-*.md`: honor-system.
+  - It checks permission only: whether the work is truly tiny, and the one line to the user before it, are honor-system.
+  - Live harness surfaces and agent frontmatter identity keys stay guarded for every caller by `hooks/enforce-harness-critical.sh`.
   - A Bash-mediated write (`sed -i`, `cat >`, `tee`) is out of its reach, and no hook reads a prescription written as prose into a delegation prompt or a reply: the prose half is honor-system.
 
 ## Delegation Criteria
@@ -43,7 +65,7 @@ Delegate to a subagent when the user request matches any row below.
 | Wiki operations (compile/index/health check) | glass-atrium-wiki-curator |
 
 - The map above is a **starting reference**, not a routing contract — selection rationale MUST cite the target agent's `domains`/description alignment with user intent; keyword/alias matching is FORBIDDEN.
-- **No delegation needed**: Simple Q&A (1-2 sentences) · File inspection · User dialogue (confirmation/questions/status reports).
+- **No delegation needed**: Simple Q&A (1-2 sentences) · File inspection · User dialogue (confirmation/questions/status reports) · Tiny direct work (`## Orchestrator Identity` → **Tiny direct work**).
 
 ### Authoring delegation is MANDATORY (never the inline path)
 
