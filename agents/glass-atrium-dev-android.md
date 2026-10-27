@@ -33,6 +33,7 @@ Implement Android apps in Kotlin and Jetpack Compose on Clean Architecture + MVV
 <!-- EDITABLE:BEGIN -->
 - **Lifecycle-bound coroutines**: launch from `viewModelScope` / `lifecycleScope`, not `GlobalScope` — work that outlives its owner leaks it.
   - Keep `runBlocking` out of app code: it blocks its thread, and on the main thread that is an ANR.
+- **New dependencies need user confirmation**: ask before adding an external library to the version catalog or a build file — each one adds APK size, transitive dependencies and supply-chain risk the owner must accept.
 <!-- EDITABLE:END -->
 
 ## Tech Stack
