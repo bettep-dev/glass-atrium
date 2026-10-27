@@ -553,7 +553,9 @@ Verify the prior stage's output against its row before the next stage enters.
 
 ##### DEV-spawn 4-requirement pre-flight checklist
 
-This is the single list the turn-0 `[WORKFLOW PRE-FLIGHT]` reminder and the Pre-submit self-check both point at. Every DEV-spawning Workflow script MUST carry all four co-equal requirements before submission, and a downstream digest never drops one:
+This is the single list the turn-0 `[WORKFLOW PRE-FLIGHT]` reminder and the Pre-submit self-check both point at. Every plan-backed DEV-spawning Workflow script MUST carry all four co-equal requirements before submission, and a downstream digest never drops one:
+
+- **Simple-task entry**: a script carrying `[ENTRY-CLASS] simple-task` and no plan-ref owes ① alone; ②-④ are optional and their blocks pass (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` → **Simple-task waiver**).
 
 - **① entry token** — a plan-ref (sizable) or `[ENTRY-CLASS] simple-task: <reason>` (simple), in the canonical home (`log()` / `meta.description`).
   - Backstop: entry-miss block (exit 2).
@@ -743,12 +745,14 @@ A DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: 
 
 - Under ultracode, that home is a top-of-script `log()` string or the `meta.description` field.
 - The home is a greppability convention, not a placement rule; each token kind's scan surface: `###### Three scan surfaces — do not conflate them` above.
-- **Independent gates**: `[ENTRY-CLASS]` satisfies only the entry-miss gate — a `dev-*` workflow still requires `[SIZE-EST]`, the verify-stage and the declaration block (requirements ②-④ of the 4-requirement checklist above):
+- **Independent gates**: on a plan-backed workflow the entry token satisfies only the entry-miss gate — `[SIZE-EST]`, the verify-stage and the declaration block (requirements ②-④ of the 4-requirement checklist above) stay required.
+  - A simple-task entry with no plan-ref owes the entry token alone (**Simple-task entry** in that checklist); a script carrying just that token and its `dev-*` spawn clears every token check.
+  - The example below is a simple-task entry that carries the optional ②-④ anyway:
 
   ```js
-  // entry token in canonical home (raw-scanned — placement is convention). dev-* still needs the
-  // [SIZE-EST] token, the verify-stage, and the AGENT-COMPOSITION declaration (co-equal requirements;
-  // unbracketed in this comment — a bracketed sentinel in an ordinary comment binds the extractor).
+  // entry token in canonical home (raw-scanned — placement is convention). On this simple-task entry the
+  // [SIZE-EST] token, the verify-stage and the AGENT-COMPOSITION declaration are optional, shown in full
+  // (unbracketed in this comment — a bracketed sentinel in an ordinary comment binds the extractor).
   // robustAgent: the helper inline in the verify-stage skeleton above.
   /* [AGENT-COMPOSITION]
   verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-python
@@ -767,7 +771,7 @@ A DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: 
 
 ##### [SIZE-EST] token placement (ultracode — DEV workflow)
 
-Same home and raw-scan convention as `[ENTRY-CLASS]`, but an independent presence gate: a `dev-*` spawn missing `[SIZE-EST]` blocks (exit 2) even with a valid entry token.
+Same home and raw-scan convention as `[ENTRY-CLASS]`, but an independent presence gate: a plan-backed `dev-*` spawn missing `[SIZE-EST]` blocks (exit 2) even with a valid entry token; a simple-task entry with no plan-ref does not.
 
 - Format, placement on both paths and honesty framing: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 
@@ -789,6 +793,7 @@ When the user explicitly requested a local destination for a deliverable (new fi
 
 - The orchestrator writes no code, documents or prompts itself; outside the exception below, every write is delegated to a sub-agent (`skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity`).
 - "Simple task" or "token savings" are not valid reasons to skip delegation.
+  - The simple-task waiver relaxes attestation tokens, never delegation (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` → **Simple-task waiver**).
 - Exception (low-risk only): the orchestrator MAY directly write `memory/*` files (session-internal state).
   - Agent instruction files (`~/.claude/agents/*.md`) are NOT in this exception — prompts = code, and frontmatter (name/tools/scope) is a Safety-tier surface, so they MUST be edited via glass-atrium-meta-prompt-engineer delegation, never by direct orchestrator write.
   - The `enforce-delegation.sh` hook enforces this split on Write/Edit (allows `memory/*`, keeps blocking `agents/*.md`).
@@ -1017,12 +1022,12 @@ Items 1-4 are the co-equal requirements consolidated at this file → "DEV-spawn
 
 - The **`implementing` write** and **close token** items stand outside that checklist: no gate blocks on either, and each is backed by an advisory only.
 
-1. **entry-classify** — sizable → plan-ref · simple → `log('[ENTRY-CLASS] simple-task: <reason>')` / `meta.description`; the token clears ONLY the entry gate.
+1. **entry-classify** — sizable → plan-ref · simple → `log('[ENTRY-CLASS] simple-task: <reason>')` / `meta.description`; with no plan-ref, items 2-4 then become optional (`##### DEV-spawn 4-requirement pre-flight checklist` → **Simple-task entry**).
    - Sizable criteria: `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Workflow` Decision `SIZABLE =` row · snippet: this file → "Entry-class token placement".
-2. **`[SIZE-EST]` self-attestation** — at every DEV spawn, in the same `log()` / `meta.description` home as the entry token.
+2. **`[SIZE-EST]` self-attestation** — at every plan-backed DEV spawn, in the same `log()` / `meta.description` home as the entry token.
    - Format and honesty framing: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 3. **DEV spawn** → {glass-atrium-qa-code-reviewer, dev-*} verify-stage BEFORE the first dev-* (skeleton: this file → `#### Pipeline Acceptance Criteria` · self-check: this file → `## Red Flags`).
-4. **`[AGENT-COMPOSITION]` declaration** — every DEV-spawning script carries exactly ONE declaration block in a `/* */` comment.
+4. **`[AGENT-COMPOSITION]` declaration** — every plan-backed DEV-spawning script carries exactly ONE declaration block in a `/* */` comment.
    - Grammar and verdicts: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`.
 5. **encode Decision outcomes into the script** — routed agentType per spawn, scoped target paths, the four probe verdicts.
    - The probes run before authoring; the engine executes but never substitutes for a probe.
@@ -1353,14 +1358,15 @@ A DEV-spawning workflow without a `{glass-atrium-qa-code-reviewer, DEV}` verify-
 
 - `#### Pre-submit self-check` is honor-system primary; the declaration-contract gate backstops it (scope: `##### In-script verify-stage (ultracode)` → **What backstops it**).
 - Skeletons: `#### Pipeline Acceptance Criteria` → "In-script verify-stage".
-- **Simple-plan exemption**: it reaches the Stage-2 gate only — a simple plan skips plan-direction verification, but its DEV-spawning script still carries all four requirements of `##### DEV-spawn 4-requirement pre-flight checklist`.
-  - `[ENTRY-CLASS] simple-task` is the simple branch of the entry-token check, not an exit from it; the declaration and `[SIZE-EST]` checks exempt only a workflow that spawns no `dev-*`.
+- **Simple-plan exemption**: it reaches the Stage-2 gate only — a simple plan skips plan-direction verification, but its plan-referencing DEV-spawning script still carries all four requirements of `##### DEV-spawn 4-requirement pre-flight checklist`.
+  - `[ENTRY-CLASS] simple-task` with no plan-ref is the one other exit: the declaration, verify-stage and `[SIZE-EST]` checks then pass (`##### DEV-spawn 4-requirement pre-flight checklist` → **Simple-task entry**).
 
 #### Pre-submit self-check — run before submitting ANY DEV-spawning Workflow script
 
 Covers the gate's DEV-relevant block branches, the plan-stage rows its advisories back, and the verdict-gating the gate cannot see; the doc-routing leak is a separate gate branch with its own stderr.
 
 - **Run the offline lint first** (`#### Workflow pre-flight (run before EVERY Workflow call)` → **PREVIEW before submit**): it mechanically covers every table row marked `lint`, and none of the obligations the gate cannot verify (listed after the table).
+- A simple-task entry with no plan-ref confirms the entry-token and JS-parse rows only (`##### DEV-spawn 4-requirement pre-flight checklist` → **Simple-task entry**).
 - Then confirm each check:
 
 | Check | Pass when | Fails as |
