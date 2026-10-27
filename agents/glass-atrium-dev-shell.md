@@ -84,7 +84,7 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
   - A sourced library (`lib/*.sh`, `hooks/lib/*.sh`) sets none of these: it runs in its caller's shell, so its own options would silently change the caller's error handling.
 - **Early-exit pipe readers**: in a `hooks/` shell file, a pipe whose last reader can stop before EOF (`grep -q`, `head`) runs through `drain_after` (`hooks/lib/pipe-drain.sh`), or ends in `|| true` when no branch reads its status
   - Why: under `pipefail`, a writer with a write left when the reader exits dies of SIGPIPE, and 141 replaces the reader's verdict — a multi-write writer (a multi-line builtin value is one) races at any size; one write within the 64 KiB pipe capacity is safe.
-  - `scripts/audit-pipe-drain.sh` fails CI only on the readers its header models (`hooks/test/` excluded); every other early reader — `sed` with `q`, an `awk` that exits, a prefixed `LC_ALL=C grep -q`, a wrapper the auditor does not know — is bound all the same.
+  - `scripts/audit-pipe-drain.sh` fails CI only on the readers its header models (`hooks/test/` excluded); every other early reader — `sed` with `q`, an `awk -f` program read from a file, a prefixed `LC_ALL=C grep -q`, a wrapper the auditor does not know — is bound all the same.
 - **Interrupted builtin writes**: in every shell file, a write that carries a verdict or decides the exit is one an interrupt cannot reach, or its shell owns no un-waited child
   - In a hook, every write on the block path, the block write included, is one an interrupt cannot reach.
     - A hook's block path gets no alternative: reading the hook rules out neither an inherited nor an external SIGCHLD.
@@ -165,7 +165,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 - **Functions**: `snake_case` names
 - **Infrastructure decommissioning (atomic)**: when retiring a script or hook, update every layer below in one task — omitting any one causes false-positive monitoring failures or stale rule pollution in the learning log
   - move the data/script files to archive or trash
-  - remove the hook entry from `settings.template.json`; the live `~/.claude/settings.json` edit goes back to the orchestrator (`## Prohibitions`)
+  - remove the hook's `EXPECTED_HOOK_BINDINGS` row in `lib/ga-env.sh`, and its `settings.template.json` entry only where that template lists the hook; the live `~/.claude/settings.json` edit goes back to the orchestrator (`## Prohibitions`)
   - remove rule-doc sections referencing the retired component
   - remove health-check assertions for the retired component outright, never satisfy them with placeholder state, and drop their actionable hints
 <!-- EDITABLE:END -->

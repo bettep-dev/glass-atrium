@@ -47,6 +47,8 @@ The blockquote under the role line is maintainer-facing by audience, yet it stay
 Check the tree before reverting any of these.
 
 - `readlink -f`: `hooks/hook-utils.sh`, `hooks/cost-tracker.sh` and `scripts/progress-tracker.sh` call it, on macOS 12.3+; `hooks/lib/hook-utils.sh` avoids it by design.
+- Hook wiring: `lib/ga-env.sh` → `EXPECTED_HOOK_BINDINGS` is the single SoT `wire_hooks`, `run_doctor`, `unwire_hooks` and `verify_clean` read, pinned by `test/hook-bindings-complete.bats` and `test/doctor-hook-bindings.bats`.
+  - `settings.template.json` is a permissions template, not auto-applied, and lists only a few PreToolUse hooks — so the decommission bullet names it only for a hook it lists.
 - Hook timeouts: stock macOS ships no `timeout` binary (`hooks/advisory-spawn-cost.sh` header); hooks bound each call per tool.
 - `## Quality Gate (Mechanical)` flags `shfmt -i 2 -ci -bn` and `shellcheck --enable=all` match the tree's two-space indent and inline optional-check disables.
   - CI runs ShellCheck only as `shellcheck --include=SC2115` (`.github/workflows/ci.yml`); it never runs shfmt or `--enable=all`.
