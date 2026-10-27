@@ -42,8 +42,7 @@ Starting map (names drop `glass-atrium-`):
 | Wiki operations | wiki-curator |
 
 - Pick by `domains`/description fit, cited in the rationale; never by keyword or alias.
-- Pick conservatively; self-assessed confidence < 0.7 → halt, offer 2-3 candidates.
-- An obvious single-agent case (`scope-orchestrator.md` → `## LLM-led Routing`) may skip the full protocol, never the one-line judgment.
+- Routing safety, the < 0.7 halt and the single-agent skip: `scope-orchestrator.md` → `## LLM-led Routing`.
 - Never collapse a compound request into one agent.
 - Independent, non-overlapping sub-tasks fan out in parallel by default, under `#### Automatic Parallelization`.
 - Team schema: `agents` (≥ 1) · `reason` (sub-task + fit) · `order` (phase 1-6 or `parallel`).
@@ -59,11 +58,14 @@ Starting map (names drop `glass-atrium-`):
 
 Inside the Agent `prompt` or a script's top `log()`/`meta.description`, never user narration.
 
-- `[SCOPE]` on DEV and PLANNING: `[SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>`.
 - DEV entry: sizable (`#### Entry classification`) → plan, then its plan-ref; simple → `[ENTRY-CLASS] simple-task: <reason>`; neither, or another variant, blocks.
-- `[SIZE-EST]` at every DEV spawn and schema-mode analysis/research/audit spawn → `#### Delegation-size discipline`.
+  - Simple-task, no plan-ref: `[SCOPE]` · `[SIZE-EST]` · `[AGENT-COMPOSITION]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` are optional; their gates pass silently.
+  - Why: split-only ceremony costs more than it buys on small work.
+  - A plan-ref keeps every token and the reviewer-before-DEV check.
+- `[SCOPE]` on plan-backed DEV and on PLANNING: `[SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>`.
+- `[SIZE-EST]` at every plan-backed DEV spawn and schema-mode analysis/research/audit spawn → `#### Delegation-size discipline`.
 - [WORKFLOW PRE-FLIGHT] a plan-ref dev-* script carries `[PLAN-CLOSE] in-script` when it ends in the Reconcile & Close phase, else `[PLAN-CLOSE] deferred: <the later script or step that closes the plan>`.
-  - Every dev-* script meets the skill → `##### DEV-spawn 4-requirement pre-flight checklist`, `[AGENT-COMPOSITION]` included.
+  - Every plan-ref dev-* script meets the skill → `##### DEV-spawn 4-requirement pre-flight checklist`, `[AGENT-COMPOSITION]` included.
   - Lint first: `hooks/enforce-workflow-verify-stage.sh --lint <file>`.
 
 ## Harness path protection
@@ -80,16 +82,14 @@ Scope: `~/.claude/` and every `~/.claude-*` profile dir, recursively; a bad writ
 
 ## Where the rest lives
 
-`skills/glass-atrium-ops-orchestrator-role.md`, heading → when:
+Role-file heading → when:
 
 - `## Orchestrator Identity` — act or delegate
 - `## Delegation Criteria` — full map
 - `### Authoring delegation` — document requests
 - `### Decision-to-act gate` — consent
-- `### Scope-inclusion externalization` — unnamed work
 - `### DEV fleet growth authority` — no DEV fits
 - `## Delegation Workflow` — every delegation
-- `#### Entry classification` — DEV entry
 - `#### Plan edge discovery` — plan-derived work
 - `#### Decision-phase probes` — before a spawn
 - `#### Deliverable exposure` — every authoring delegation
@@ -100,18 +100,15 @@ Scope: `~/.claude/` and every `~/.claude-*` profile dir, recursively; a bad writ
 - `#### Ultracode declaration contract` — `[AGENT-COMPOSITION]`
 - `### Cost-Tier Selection` — model tier
 - `#### Depth and concurrency ceilings` — fan-out
-- `#### Delegation-size discipline` — sizing a spawn
 - `#### Analysis fan-out` — multi-domain analysis
 - `#### Routing output` — team schema, CID
-- `#### Automatic Parallelization` — decomposing
 - `### Context Handoff Size` — prompt, tokens
 - `### Failure Recovery Loop` — `fail`/`blocked`
 - `## Document-Driven Workflow` — plan to deploy
-- `## Harness Path Protection`, `### Write routes`, `### Staged lane`, `### Progress-file exclusion`, `### Reach of the gate` — harness paths
+- `## Harness Path Protection`, `### Progress-file exclusion`, `### Reach of the gate` — harness paths
 
-`rules/glass-atrium/scope-orchestrator.md`:
+`scope-orchestrator.md`:
 
-- `## LLM-led Routing` — routing safety
 - `## Plan-Based Work` — plan work (`PLAN_FILE`)
 - `## Detail Reference` — the skill's topics
 

@@ -11,6 +11,7 @@
   - **Honesty framing** — why the pointer rounds a borderline count UP: under-estimating `bundles`/`tool_uses` is the DANGEROUS error, masking an oversized delegation past the split discipline; over-estimating is the SAFE error.
   - **Scope of this contract — existence/self-attestation only**: the token records the orchestrator's own estimate, and the gates check its PRESENCE, never its correctness — the same existence-only boundary as `[ENTRY-CLASS]`.
   - Enforcement, both paths — manual: `enforce-verification-gate.sh`, guarded by `hook_is_subagent` so it fires on orchestrator-origin spawns only · ultracode: `enforce-workflow-verify-stage.sh`, DEV-gated, raw-scanning the script. Both BLOCK a DEV spawn missing the token.
+    - Except a simple-task entry with no plan-ref, which both pass silently (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` → **Simple-task waiver**).
 
 ## Analysis-mode token
 

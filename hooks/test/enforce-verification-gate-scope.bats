@@ -51,10 +51,10 @@ run_gate() {
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged despite the declaration -- ${output}" >&2; return 1; }
 }
 
-@test "an entry-classified spawn is nudged on the simple-task pass path too" {
+@test "a simple-task spawn without a plan-reference is never nudged" {
   run_gate "[ENTRY-CLASS] simple-task: one file. ${SIZE_EST}"
   [[ "${status}" -eq 0 ]] || return 1
-  [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || { echo "simple-task pass path not nudged -- ${output}" >&2; return 1; }
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "simple-task pass path nudged -- ${output}" >&2; return 1; }
 }
 
 @test "a nested sub-worker origin is never nudged" {
