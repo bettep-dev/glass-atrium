@@ -994,7 +994,7 @@
   "hashes": {
     "LICENSE": "4f1fa8b64af3405e4ecc89143f3c13d1b25948336c418a53dc425bd5faca319d",
     "LICENSES-THIRD-PARTY.md": "e8ab307f7a83cce55a261130b9469b98bf5cca384259df058715baf28c41b035",
-    "agent-registry.json": "91bd0152e1648ffcdc1f743a0f76025b94a97d5bb0b947318e44dea6e083c945",
+    "agent-registry.json": "07486c1f2e3f5bfe1c2f8df03137aa35653450ebe754dda9a98dd5a60e4cafa2",
     "agents/GLASS_ATRIUM_GLOBAL_RULES.md": "746ca94418ce4082b97d39f66a4744cb2fe98445f7de582ae0229904c82a5446",
     "agents/glass-atrium-design-designer.md": "d77bfa6df77bef338809273cd034aac42a79cb0b6c259a7d678d6ef5a2bb4b28",
     "agents/glass-atrium-dev-android.md": "c96d5b627eb9abdf0da4e6d4e2892d512d2826749cfca182947a90dff49e8831",
