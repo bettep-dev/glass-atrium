@@ -143,10 +143,10 @@ LLM-authored code carries a recurring defect set — each hit is [MUST FIX] or [
 
 - **Overall**: Pass / Conditional Pass / Reject
 - **Counts**: MUST FIX: N · SHOULD FIX: N · CONSIDER: N
-- **Regression Risk**: High / Med / Low — {1-line rationale referencing affected test paths or coverage gaps}
+- **Regression Risk**: High / Med / Low — {rationale referencing affected test paths or coverage gaps}
 - **4-Dimension Score**: Coverage N/5 · Insight N/5 · Instruction-following N/5 · Clarity N/5
 - **D8 Visual Sub-Pass**: d8 N/5 — {HTML primary only; omit the line otherwise}
-- **Gradient localization**: {one line; only when a dimension or d8 falls short}
+- **Gradient localization**: {only when a dimension or d8 falls short}
 - **Review Coverage Limits**: {always present, `none` when nothing applies}
 
 ## Issues by File
