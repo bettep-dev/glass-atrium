@@ -104,31 +104,38 @@ run_hook() {
   [[ "${output}" != *scope-decl* ]] || { echo "bypass ignored the missing transcript: ${output}" >&2; return 1; }
 }
 
-# A simple-task delegation with no plan-reference owes no [SCOPE] declaration, so its edits are never
-# compared against another lane's `implementing` plan; plan-backed or unclassified work still is.
-@test "only a simple-task delegation without a plan-reference skips the implementing-plan comparison" {
+# A simple-task delegation with no plan-reference owes no [SCOPE] declaration and binds to no plan, so
+# neither comparison judges its edits — a [SCOPE] it carries anyway included; other work keeps both.
+@test "only a simple-task delegation without a plan-reference skips the [SCOPE] and implementing-plan comparisons" {
   mkdir -p "${CACHE_DIR}"
   printf '%s\n' "$(date +%s)" "4242" "hooks/a.sh" >"${CACHE_DIR}/${SID}.cache"
+  local decl='[SCOPE] files=hooks/b.sh · deliverable=fix · out=none'
   local rows=(
-    "simple-task, no [SCOPE]|[ENTRY-CLASS] simple-task: one file|silent"
-    "plan-reference, no [SCOPE]|Implement clauded-docs/4242|advise"
-    "plan-reference beside simple-task|Implement clauded-docs/4242 [ENTRY-CLASS] simple-task: noise|advise"
-    "neither entry signal|Fix the thing|advise"
+    "simple-task, no [SCOPE]|[ENTRY-CLASS] simple-task: one file|no|no"
+    "simple-task carrying a [SCOPE]|${decl} [ENTRY-CLASS] simple-task: one file|no|no"
+    "plan-reference, no [SCOPE]|Implement clauded-docs/4242|no|yes"
+    "plan-reference carrying a [SCOPE]|${decl} Implement clauded-docs/4242|yes|yes"
+    "plan-reference beside simple-task|Implement clauded-docs/4242 [ENTRY-CLASS] simple-task: noise|no|yes"
+    "neither entry signal|Fix the thing|no|yes"
   )
-  local row name record0 want i=0
+  local row name record0 want_decl want_plan source want i=0
   for row in "${rows[@]}"; do
-    IFS='|' read -r name record0 want <<<"${row}"
+    IFS='|' read -r name record0 want_decl want_plan <<<"${row}"
     i=$((i + 1))
     AID="agent-entry-${i}"
     TPATH="${TDIR}/agent-${AID}.jsonl"
     seed_transcript "${record0}"
     run_hook "/repo/hooks/other.sh"
     [[ "${status}" -eq 0 ]] || { echo "${name}: blocking exit ${status}"; return 1; }
-    if [[ "${want}" == silent ]]; then
-      [[ "${output}" != *SCOPE-070* ]] || { echo "${name}: expected silence -- ${output}"; return 1; }
-    else
-      [[ "${output}" == *SCOPE-070* && "${output}" == *plan-doc* ]] || { echo "${name}: expected plan-doc advisory -- ${output}"; return 1; }
-    fi
+    for source in scope-decl plan-doc; do
+      want="${want_plan}"
+      [[ "${source}" == scope-decl ]] && want="${want_decl}"
+      if [[ "${want}" == yes ]]; then
+        [[ "${output}" == *"${source}"* ]] || { echo "${name}: expected ${source} advisory -- ${output}"; return 1; }
+      else
+        [[ "${output}" != *"${source}"* ]] || { echo "${name}: unexpected ${source} advisory -- ${output}"; return 1; }
+      fi
+    done
   done
 }
 

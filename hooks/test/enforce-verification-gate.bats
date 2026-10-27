@@ -7,18 +7,20 @@
 #     2) size-est-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — ORCHESTRATOR-ORIGIN DEV
 #        spawn (agent_id absent) with NO [SIZE-EST] token. Guarded by hook_is_subagent: a nested
 #        sub-worker origin (agent_id present) is NEVER blocked. Applies to every DEV spawn, plan-ref
-#        included — so the DEV-spawn fixtures below all carry a [SIZE-EST] token to clear this gate.
+#        included, except a simple-task entry — so the other DEV-spawn fixtures below carry a
+#        [SIZE-EST] token to clear this gate.
 #     3) entry-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — DEV spawn with NEITHER a
 #        plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss). The token is
 #        the escape hatch.
 #     4) scope-miss ADVISORY (stderr, exit 0) — an orchestrator-origin DEV spawn carrying no [SCOPE]
 #        declaration, emitted on the PASS paths. Owned by enforce-verification-gate-scope.bats; here
-#        it only means that a case asserting EMPTY output must declare a [SCOPE] line, exactly as the
-#        [PLAN-SUBSET] nudge made those cases carry a [PLAN-SUBSET] token. "A pass is silent" is the
+#        it only means that a plan-referencing case asserting EMPTY output must declare a [SCOPE]
+#        line, exactly as the [PLAN-SUBSET] nudge made those cases carry a [PLAN-SUBSET] token; a
+#        simple-task entry with no plan-reference is silent without either. "A pass is silent" is the
 #        contract those cases hold — silence for a spawn that is compliant on EVERY surface.
 #     5) deep-review ADVISORY (stderr, exit 0) — a carried [SCOPE] listing >= 10 paths or ANY path
 #        under a sensitive prefix. Also owned by enforce-verification-gate-scope.bats; here it means
-#        an EMPTY-output case must additionally declare a scope UNDER both thresholds, since a
+#        a plan-referencing EMPTY-output case must declare a scope UNDER both thresholds, since a
 #        compliant spawn that happens to declare a hooks/ path is legitimately advised.
 #   Non-DEV / plan-bearing / token-bearing spawns exit 0 (zero false-block for the entry-miss branch).
 #   The hook is FAIL-OPEN on its OWN errors (malformed/empty/non-Agent input → exit 0).
@@ -295,12 +297,6 @@ mint_bad_sink() {
 
 # (c) ALLOW: dev-* spawn with [ENTRY-CLASS] simple-task token → exit 0 (escape hatch)
 
-@test "dev spawn with [ENTRY-CLASS] simple-task token (SIZE-EST present) → silent, exit 0, no output" {
-  run_hook "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo (sizable-floor: none) [SIZE-EST] bundles=1 tool_uses~=3 — trivial ${SCOPE_DECL}"
-  assert_status 0
-  assert_empty
-}
-
 # A simple-task spawn with no plan-reference owes none of the other attestation tokens, so every
 # token check passes it silently; a plan-reference or a missing entry signal keeps every check.
 @test "only a simple-task spawn without a plan-reference waives the other attestation tokens" {
@@ -345,11 +341,13 @@ mint_bad_sink() {
   assert_not_contains "entry-miss"
 }
 
-@test "orchestrator DEV, plain prompt, NO [SIZE-EST] → VGATE-SIZE-001 BLOCK (exit 2)" {
+# A spawn with neither entry signal meets this block first, so its message names the simple-task path too.
+@test "orchestrator DEV, plain prompt, NO [SIZE-EST] → VGATE-SIZE-001 BLOCK naming the simple-task path (exit 2)" {
   run_hook "glass-atrium-dev-nestjs" "implement the auth refactor across the service layer"
   assert_status 2
   assert_contains "VGATE-SIZE-001"
   assert_contains "size-est-miss"
+  assert_contains "[ENTRY-CLASS] simple-task"
 }
 
 @test "nested sub-worker (agent_id present), same plan-ref NO-[SIZE-EST] prompt → size guard SKIPPED, exit 0 (NOT VGATE-SIZE-001)" {
@@ -357,12 +355,6 @@ mint_bad_sink() {
   assert_status 0
   assert_contains "no qa-code-reviewer recorded"
   assert_not_contains "VGATE-SIZE-001"
-}
-
-@test "orchestrator DEV with [SIZE-EST] token + simple-task token → size gate satisfied, exit 0" {
-  run_hook "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial ${SCOPE_DECL}"
-  assert_status 0
-  assert_empty
 }
 
 # Multi-line prompt → a multi-write writer, which an early-exiting token reader races at any size and can SIGPIPE.

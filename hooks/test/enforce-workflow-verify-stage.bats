@@ -1008,6 +1008,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"missing composition declaration"* ]] || return 1
   [[ "${output}" == *"entry classification / plan-reference also required"* ]] || return 1
+  [[ "${output}" == *"path (2) alone clears the block above"* ]] || { echo "${output}"; return 1; }
   assert_trace block-nodecl || return 1
 }
 

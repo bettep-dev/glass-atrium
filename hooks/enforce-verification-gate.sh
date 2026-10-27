@@ -345,7 +345,7 @@ has_token() {
 has_simple_task_token() { has_token "${1}" '[ENTRY-CLASS] simple-task'; }
 
 # [SIZE-EST] self-attestation token — the orchestrator's per-delegation packing estimate emitted at
-# EVERY DEV spawn (format `[SIZE-EST] bundles=N tool_uses~=N — <reason>`, skills/glass-atrium-ops-orchestrator-role.md
+# every DEV spawn not classified simple-task (format `[SIZE-EST] bundles=N tool_uses~=N — <reason>`, skills/glass-atrium-ops-orchestrator-role.md
 # ### Spawn Budget). Anchored bracketed literal (grep -qF, mirrors has_simple_task_token's
 # structured-match discipline) — checks PRESENCE only, never the estimate's correctness (same
 # existence-only boundary as the [ENTRY-CLASS] entry tokens).
@@ -597,8 +597,8 @@ fi
 # SC2310: has_size_est_token is a pure predicate — set -e disable under `if` intended.
 # shellcheck disable=SC2310
 if [[ "${orchestrator_origin}" == true ]] && ! has_size_est_token "${prompt_full}"; then
-  size_reason="Spawning DEV agent '${subagent_type}' from the orchestrator with NO [SIZE-EST] self-attestation token — every DEV spawn MUST declare its delegation-size estimate (skills/glass-atrium-ops-orchestrator-role.md ### Spawn Budget)."
-  size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. On a borderline count, round up: an under-estimate hides an oversized delegation from the split discipline."
+  size_reason="Spawning DEV agent '${subagent_type}' from the orchestrator with NO [SIZE-EST] self-attestation token — a DEV spawn that is not an [ENTRY-CLASS] simple-task entry MUST declare its delegation-size estimate (skills/glass-atrium-ops-orchestrator-role.md ### Spawn Budget)."
+  size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. On a borderline count, round up: an under-estimate hides an oversized delegation from the split discipline. A genuinely simple task with no plan-reference records [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> instead: that alone clears this gate and every other token check."
   block_and_exit "VGATE-SIZE-001" "${size_reason}" "${size_fix}" \
     "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"size-est-miss\"}" "block-sizeest"
 fi

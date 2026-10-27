@@ -270,7 +270,15 @@ scope_decl_resolve() {
   printf '%s' "${files}"
 }
 
-if [[ -n "${FILE_PATH}" ]]; then
+# A simple-task delegation binds to no plan and owes no [SCOPE] → neither comparison below judges its
+# edits, a [SCOPE] it carries anyway included. The explicit PLAN_FILE leg is not a token check and stays.
+IS_SIMPLE_TASK=false
+# shellcheck disable=SC2310  # predicate call — the exit status IS the answer
+if [[ -n "${FILE_PATH}" ]] && is_simple_task_delegation; then
+  IS_SIMPLE_TASK=true
+fi
+
+if [[ -n "${FILE_PATH}" && "${IS_SIMPLE_TASK}" == false ]]; then
   SCOPE_DECL_FILES="$(scope_decl_resolve)"
   if [[ "${SCOPE_DECL_FILES}" == "${SCOPE_DECL_UNREAD_SENTINEL}" ]]; then
     (printf '[validate-scope-drift] [SCOPE] comparison did not run for this edit: the delegation [SCOPE] declaration could not be read. The plan-doc comparison still runs. Advisory only.\n') >&2 || true
@@ -301,12 +309,7 @@ if [[ -z "${PLAN_FILE:-}" ]]; then
 
   # file_path absent → no per-file matching → skip the API call.
   [[ -z "${FILE_PATH}" ]] && exit 0
-  # A simple-task delegation binds to no plan, so another lane's `implementing` plan never judges it.
-  # shellcheck disable=SC2310
-  #   Predicate call — the exit status IS the answer.
-  if is_simple_task_delegation; then
-    exit 0
-  fi
+  [[ "${IS_SIMPLE_TASK}" == true ]] && exit 0
 
   # Per-session resolution cache (plan id + target-file list) — optimization only. A hit skips
   # BOTH loopback curls + the Target Files re-parse below; a miss / stale / corrupt / unreadable cache
