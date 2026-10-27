@@ -123,7 +123,7 @@ The columns the rule file's template marks "writer does not fill": `grader_verdi
 | `hooks/test/code-based-grader.bats` → header comment | pointer to `### Grader verdict` | that heading |
 | `hooks/inject-scope-rules.sh` → `build_emit_format_block` | a shell literal restating the inline-salvage and unparseable rows | `### Recorder parse outcomes` and rule file → **Spawn-injected copy** — manual |
 | `hooks/test/track-outcome-completion-block-select.bats` → its `KNOWN_FIELDS` test | the first fence after rule file `## Completion Report Output Obligation`, up to the next `## ` | the template fence, kept first in that H2 |
-| `agents/` bodies, `hooks/inject-session-context.sh`, `orchestrator-role.md`, the ops skills | rule-file headings and leads by name | the names listed below |
+| `agents/` bodies, `hooks/inject-session-context.sh`, `skills/glass-atrium-ops-orchestrator-role.md`, the ops skills | rule-file headings and leads by name | the names listed below |
 
 - The emitter-marker literal appears in this file inside the emitter bullet under `### Grader verdict` and nowhere else. The suite counts every occurrence in the file, so quoting the literal anywhere else here breaks the count.
 - Renaming `### Recorder parse outcomes` or `### Grader verdict` dangles a pointer in a Tier-1 file.

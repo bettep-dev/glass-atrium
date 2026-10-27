@@ -1,6 +1,35 @@
 # Maintainer note — `rules/glass-atrium/orchestrator-role.md`
 
-Maintainer-facing material for that rule file. Nothing here binds the orchestrator; the rule file carries the duties.
+Maintainer-facing material for that rule file and its full text. Nothing here binds the orchestrator; the rule file carries the duties.
+
+## Stub and full-text split
+
+- `rules/glass-atrium/orchestrator-role.md` is a stub; the full text sits verbatim in `skills/glass-atrium-ops-orchestrator-role.md`, an on-demand reference the main session Reads by path.
+  - Why: the file at that path reaches every subagent on the host channel, while the control-plane core (`scoped/orchestrator-core.md`) already reaches the main session at SessionStart.
+- The stub keeps the path: frozen `agents/` bodies, AA-scoped code and the ORCHESTRATOR pair row in `rules/glass-atrium/core-compliance-matrix.md` cite it.
+- In this note, "the rule file" means the full text; the stub is named as the stub.
+- What the stub keeps, each for a reader that cannot be repointed:
+
+| Kept in the stub | Reader |
+|---|---|
+| the H1 + opening blockquote, verbatim | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` ("its opening line") |
+| `## Orchestrator Identity (Control Plane Only)` + the **Pattern** bullet, verbatim | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` |
+| `#### Deliverable exposure and designer composition (Decision phase)` + **Exposure Determination** | `agents/glass-atrium-intel-planner.md` · `agents/glass-atrium-intel-reporter.md` |
+| `#### Monitoring-phase notes` + the dev-front markup-exception and **Verbatim forward-relay** leads | GLOBAL_RULES · dev-front · intel-planner · intel-reporter |
+| `### Plan Direction Verification (Stage-2 gate)` | `agents/glass-atrium-intel-planner.md` |
+| `### Cost-Tier Selection` + the live-operator Model pins bullet, verbatim | `autoagent/lib/editable_merge.py` · `autoagent/test/test_editable_merge.py` |
+| `### Spawn Budget` | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` |
+| `#### Delegation-size discipline` + **HARD SECONDARY**, verbatim | `hooks/advisory-subagent-budget.sh` (the 40-52 band) |
+| `### Context Handoff Size` | `agents/glass-atrium-intel-reporter.md` |
+| `### Failure Recovery Loop` + the four-stage line, verbatim, + **Retry effort escalation** | GLOBAL_RULES · `hooks/track-outcome.sh` |
+
+- Each kept heading carries a one-line pointer to the same heading in the full text; the wrapper H2s and H3s stay only to hold the heading levels.
+- A kept verbatim line is a mirror of its full-text canonical: edit both together.
+- Every other citer points at the full text, never at the stub.
+- Drift the stub cannot fix, all at AA-frozen citers:
+  - `hooks/advisory-subagent-budget.sh` says "40-52 band"; the **HARD SECONDARY** bullet says "measured 46-52".
+  - `autoagent/lib/editable_merge.py` quotes "NEVER ported to git"; the bullet reads "never".
+  - `autoagent/daemon_cycle.py` → "Self-Improvement User-Approval Trigger" (`### Failure Recovery Loop` linkage below).
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
@@ -9,7 +38,7 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 - NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
 - Applied here: no pointer to this note survives in the rule file. Linkage moved out of it is recorded under the `## Linkage` headings below.
-  - The one editor-addressed HTML comment, atop the rule file's Cost-Tier Selection section, is the carve-out above: it names `CostTierRuleTextTest` and this note.
+  - The one editor-addressed HTML comment, atop the rule file's Cost-Tier Selection section, is the carve-out above: it names `CostTierRuleTextTest` and this note. The stub carries none.
 
 ## Byte contract every edit must honour
 
@@ -28,7 +57,7 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
   - Reads both close-token form literals, token included: exactly one of each across the file.
   - Breaks when either form literal is reworded, or written a second time anywhere in the file, quoted or not.
   - Runs in the bats CI leg, which an edit to the rule file triggers.
-- The citing hooks — `hooks/enforce-verification-gate.sh` · `hooks/enforce-workflow-verify-stage.sh` · `hooks/enforce-foreground-harness.sh` · `hooks/inject-session-context.sh` · `hooks/inject-scope-rules.sh`.
+- The citing hooks — `hooks/enforce-verification-gate.sh` · `hooks/enforce-workflow-verify-stage.sh` · `hooks/enforce-foreground-harness.sh`.
   - Read heading names, quoted into operator-facing block and advisory text.
   - Break when a cited heading is renamed, sending a blocked operator to a section that no longer exists.
 - The citing corpus files — `scoped/scope-dev.md` · `scope-qa.md` · `scope-planning.md` · `scope-report.md` · `skills/glass-atrium-ops-orchestrator.md` · `skills/glass-atrium-ops-delegation-contracts/` · `agents/glass-atrium-intel-reporter.md` · `agents/glass-atrium-dev-front.md`.
@@ -38,14 +67,14 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 - **Indifferent suites**: `hooks/test/enforce-workflow-verify-stage*.bats` and `hooks/test/enforce-verification-gate*.bats` drive the hooks through their own fixtures and never read the rule file.
   - They neither guard nor fail on its wording; they guard the token and verdict literals at the hook.
 - Must stay byte-exact, each at the site named — the rule file unless another file is given:
-  - the opening blockquote as first content line;
+  - the opening blockquote as first content line, in the stub and the rule file alike;
   - the attestation tokens and `block-*` verdict names, listed under `## Reserved names`;
   - the `block-*` verdict table: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`;
   - the closed lexicon, premise-register and `[PLAN-SUBSET]` grammars;
   - both `[SIZE-EST]` grammars: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md`;
   - the `[SIZE-EST]` key names on the `#### Delegation-size discipline` pointer;
   - the `[SCOPE]` grammar;
-  - the six-plus-`7th` delegation-element count — `hooks/inject-session-context.sh` mirrors it, so the two move together;
+  - the six-plus-`7th` delegation-element count — `scoped/orchestrator-core.md` → `## Request flow` mirrors the six, so the two move together;
   - `Rule 2` and the three BASENAME names;
   - `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh`;
   - the Document-Driven Workflow step numbers.
@@ -113,7 +142,7 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
   - The split between the two: that skill's `SKILL.md` → Reference Index.
 - The author-side protocol canonical is `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`, pointed to from `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]`.
 - Agent-body halves: `agents/glass-atrium-intel-reporter.md`, `agents/glass-atrium-intel-planner.md`, `agents/glass-atrium-dev-front.md`; `skills/glass-atrium-design-html-co-emission/SKILL.md` restates it for the consulted designer.
-- The rule-file pointer also reaches every subagent through the parent's project-instruction set; the reference does not. That is a delivery accident and gives it no authority over the author-side canonical.
+- The stub keeps this heading and both leads, and it reaches every subagent through the parent's project-instruction set; the rule file and the reference do not. That is a delivery accident and gives it no authority over the author-side canonical.
 
 ### `#### Decision-phase probes` and `#### Scan boundary and provenance`
 
@@ -139,7 +168,7 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 - Location-only citer that stays: `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` → the Stage 2 bullet names the gate heading for team composition, DEV hard gate, activation scope and direction-not-completeness. The pointer keeps all four.
   - Its **Stage-2 revision/escalation** bullet names the same heading for the escalation path; the pointer's **Revision + escalation** carries that path and its path-only limit.
 - No dev-* or reviewer body mirrors `scoped/scope-qa.md` or `scoped/scope-dev.md`.
-- The rule file also reaches every subagent on the host channel (see `#### Monitoring-phase notes` above), and its opening line tells subagents to ignore it.
+- The stub, which keeps this heading, also reaches every subagent on the host channel (see `#### Monitoring-phase notes` above), and its opening line tells subagents to ignore it.
 - The three are not a redundancy to collapse: a duty moved into the rule file is read by the wrong actors and owed by none; a duty deleted from a scope file loses its only maintained statement.
 - Do not copy the first-link question literal into the rule file or its Stage-2 reference; both point to it only.
   - The literal is cross-read between `scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]` and the ultracode gate's presence scan in `hooks/enforce-workflow-verify-stage.sh`.
@@ -166,7 +195,7 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
   - The identity keys `{name, tools, scope}` stay vendor-owned (`hooks/enforce-harness-critical.sh` protects them and excludes `model`).
 - A second, weaker tuple sits beside it: `_BASE_AWARE_FRONTMATTER_KEYS`, exactly `("effort",)` — a key the release DOES ship.
   - So a live line is kept only when it differs from base@install, and with no base anchor it falls back to live-wins. Unlike `model`, `effort` is not unconditionally local-only.
-- Code comments in `autoagent/lib/editable_merge.py`, `autoagent/test/test_editable_merge.py` and `scripts/test/glass-atrium-update.bats` cite "Cost-Tier Selection" as the sanction for live-wins; keep that heading and the sanction sentence when editing the rule.
+- Code comments in `autoagent/lib/editable_merge.py`, `autoagent/test/test_editable_merge.py` and `scripts/test/glass-atrium-update.bats` cite "Cost-Tier Selection" as the sanction for live-wins; keep that heading and the sanction sentence, in the stub and the rule file, when editing either.
 
 ### `#### Analysis fan-out and team cardinality`
 

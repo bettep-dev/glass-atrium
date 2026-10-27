@@ -38,7 +38,7 @@ Applies to all agents.
   - A non-empty index belongs to a predecessor — a track killed at its budget cap between `git add` and commit leaves exactly this state.
   - Do not commit it or build on it; report it and have the predecessor's owner resolve it.
 - **Who commits**: an agent commits its OWN work, in a worktree where it is the index owner.
-  - The orchestrator does not AUTHOR a commit of another agent's changes (`orchestrator-role.md` → `## Orchestrator Identity` — execution is forbidden).
+  - The orchestrator does not AUTHOR a commit of another agent's changes (`skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity` — execution is forbidden).
   - An integration **merge** of an already-committed branch under the Merge-authorization rule (`## Pull Requests` below) is a different act and is unaffected; `skills/glass-atrium-ops-orchestrator.md` → `**Commit strategy**` describes that merge.
 - **Read-only** means **mutates no index AND modifies no tracked path** in the worktree.
   - Read-only tracks may share a worktree freely.

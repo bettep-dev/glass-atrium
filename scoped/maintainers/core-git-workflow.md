@@ -23,7 +23,7 @@ Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches eve
   - `autoagent/daemon_cycle.py` → `_SAFETY_SENSITIVE_DIFF_PATTERNS` names a git-workflow rule-prose line as a residual fire of the force-push rows. No line in the rule file carries `git push`, so the comment names no current line; `autoagent/` is frozen, so it is a flag, not an edit.
 - Cited headings and leads — grep the corpus before renaming one:
   - `## Commits` → `### Concurrent worktree` and its leads **Shared index**, **Whole-tree regeneration**, **Index-owner rule**, **Regeneration barrier** — cited by:
-    - `rules/glass-atrium/orchestrator-role.md` guardrail (a)
+    - `skills/glass-atrium-ops-orchestrator-role.md` guardrail (a)
     - `skills/glass-atrium-ops-orchestrator.md`
     - `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`
     - `scoped/maintainers/glass-atrium-dev-shell.md`
@@ -31,7 +31,7 @@ Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches eve
   - `agents/glass-atrium-dev-shell.md` cites `Commits → Concurrent worktree` for the INDEX OWNER permission and the no-contract default, so both stay under that heading.
   - `### Worktree occupancy` and its leads **Entry precondition**, **Who commits**, **Read-only**: `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → **Agent-binding half of guardrail (a)**.
     - The agent-binding pointers name both H3s (`Commits → **Concurrent worktree** · **Worktree occupancy**`):
-      - `rules/glass-atrium/orchestrator-role.md` guardrail (a)
+      - `skills/glass-atrium-ops-orchestrator-role.md` guardrail (a)
       - `skills/glass-atrium-ops-orchestrator.md` ("the agent-binding worktree rules")
       - `scoped/maintainers/orchestrator-role.md` → `#### Automatic Parallelization`
     - A pointer to one heading stops at the next heading, so a pointer meant to carry **Who commits** names `### Worktree occupancy` or `## Commits`.

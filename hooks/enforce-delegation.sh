@@ -10,7 +10,7 @@
 # agent prompts are identity/PROMPTS (frontmatter name/tools/scope is a Safety-tier surface) and MUST
 # route through delegation (meta-prompt-engineer), not a direct orchestrator write.
 # SCOPE NOTE: this hook governs tool-call PERMISSION only — the Harness Path Protection user-approval
-# obligation (orchestrator-role.md) is a SEPARATE behavioral gate that this exception does NOT weaken.
+# obligation (skills/glass-atrium-ops-orchestrator-role.md) is a SEPARATE behavioral gate that this exception does NOT weaken.
 set -Eeuo pipefail
 IFS=$'\n\t'
 

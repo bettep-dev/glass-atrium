@@ -235,6 +235,21 @@ get_pointer_quote() {
   }
 }
 
+@test "a dozen long-titled open plans fit beside the core and five progress files under the hook cap" {
+  command -v jq >/dev/null 2>&1 || skip "jq required"
+  local rows
+  rows="$(jq -cn '[range(12) | {id: (43800 + .), title: ("Plan — a direction plan whose title runs on past one hundred and forty characters, as the longest of the open plans do, so a whole title per row spends the budget " + (. | tostring)), doc_status: "implementing", last_status_model: "claude-opus-5-5"}]')"
+  seed_open_plans '{"total":12,"rows":'"${rows}"','"${OPEN_STAGES_FILTER}"'}'
+  seed_tracker /p/progress-alpha-task-one.md /p/progress-beta-task-two.md /p/progress-gamma-task-three.md \
+    /p/progress-delta-task-four.md /p/progress-epsilon-task-five.md
+  run_hook
+  [[ "${status}" -eq 0 && "${output}" == *"[OPEN PLANS] 12 "* && "${output}" == *"clauded-docs/43811 "* ]] \
+    && [[ "${output}" != *"[OPEN PLANS] omitted"* && "${output}" == *"[CONTINUITY] "* ]] || {
+    echo "exit ${status}: ${output}"
+    return 1
+  }
+}
+
 @test "no progress tracker → no [CONTINUITY] header, exit 0" {
   run_hook
   [[ "${status}" -eq 0 ]] || return 1
@@ -275,7 +290,7 @@ get_pointer_quote() {
 }
 
 @test "the workflow pre-flight carries both close-token forms of the grammar SoT" {
-  local rules="${BATS_TEST_DIRNAME}/../../rules/glass-atrium/orchestrator-role.md"
+  local rules="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-orchestrator-role.md"
   [[ -f "${rules}" ]] || skip "grammar SoT absent: ${rules}"
   run_hook
   local preflight form count
@@ -290,11 +305,12 @@ get_pointer_quote() {
   done
 }
 
-@test "open plans are listed one per row with id, stage, status actor and a single-line title" {
-  seed_open_plans '{"total":4,"rows":[
+@test "open plans are listed one per row with id, stage and a single-line title prefix" {
+  seed_open_plans '{"total":5,"rows":[
     {"id":40619,"title":"Plan — reconcile and close","doc_status":"implementing","last_status_model":"claude-opus-5-5"},
     {"id":40299,"title":"Plan — reply-language pointer","doc_status":"impl_review","last_status_model":null},
     {"id":39913,"title":"Plan — effort\ntiers","doc_status":"impl_done","last_status_model":"claude-opus-5-5"},
+    {"id":40100,"title":"Plan — a title that runs well past the thirty-two unit prefix","doc_status":"implementing","last_status_model":null},
     {"id":39700,"title":"Tracker — standing decisions","doc_status":"doc_review","last_status_model":null}],
     '"${OPEN_STAGES_FILTER}"'}'
   run_hook
@@ -303,9 +319,10 @@ get_pointer_quote() {
     return 1
   }
   local rows=(
-    'implementing with an actor|- clauded-docs/40619 · implementing · claude-opus-5-5 · Plan — reconcile and close'
-    'null actor reads unknown|- clauded-docs/40299 · impl_review · unknown · Plan — reply-language pointer'
-    'embedded newline flattened|- clauded-docs/39913 · impl_done · claude-opus-5-5 · Plan — effort tiers'
+    'short title kept whole|- clauded-docs/40619 · implementing · Plan — reconcile and close'
+    'impl_review listed|- clauded-docs/40299 · impl_review · Plan — reply-language pointer'
+    'embedded newline flattened|- clauded-docs/39913 · impl_done · Plan — effort tiers'
+    'long title cut to a prefix|- clauded-docs/40100 · implementing · Plan — a title that runs well pa…'
   )
   local row name line
   for row in "${rows[@]}"; do
@@ -315,7 +332,7 @@ get_pointer_quote() {
       return 1
     }
   done
-  printf '%s\n' "${output}" | grep -q '^\[OPEN PLANS\] 3 ' && [[ "${output}" != *"clauded-docs/39700"* ]] || {
+  printf '%s\n' "${output}" | grep -q '^\[OPEN PLANS\] 4 ' && [[ "${output}" != *"clauded-docs/39700"* ]] || {
     echo "header count or doc_review exclusion wrong: ${output}"
     return 1
   }

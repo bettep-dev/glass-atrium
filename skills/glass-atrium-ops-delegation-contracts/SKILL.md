@@ -1,11 +1,11 @@
 ---
 name: glass-atrium-ops-delegation-contracts
-description: 'Orchestrator-only delegation contracts behind pointers in orchestrator-role.md and skills/glass-atrium-ops-orchestrator.md: the [AGENT-COMPOSITION] declaration, block-* verdicts, [SIZE-EST] sizing, the [SCOPE] parser and author-rule detail, worktree isolation, plan edge discovery, the pre-merge live-deploy gate, review-round routing, the Deploy-Safety Idiom, and Stage-2, exposure and failure-recovery detail. Use when authoring a Workflow script that spawns dev-* agents, sizing or splitting a DEV or schema-mode analysis spawn, reading a block-* verdict, checking why a [SCOPE] line gave no signal, isolating concurrent tracks, classifying a plan''s predecessor edges, composing or routing a review round, copying files to a live install, or deploying before the PR. Do NOT use inside a subagent, for the [SCOPE] grammar line or its binding author rules (orchestrator-role.md → Context Handoff Size), or for workflow skeletons, sentinel placement and schema caps (skills/glass-atrium-ops-orchestrator.md).'
+description: 'Orchestrator-only delegation contracts behind pointers in skills/glass-atrium-ops-orchestrator-role.md and skills/glass-atrium-ops-orchestrator.md: the [AGENT-COMPOSITION] declaration, block-* verdicts, [SIZE-EST] sizing, the [SCOPE] parser and author-rule detail, worktree isolation, plan edge discovery, the pre-merge live-deploy gate, review-round routing, the Deploy-Safety Idiom, and Stage-2, exposure and failure-recovery detail. Use when authoring a Workflow script that spawns dev-* agents, sizing or splitting a DEV or schema-mode analysis spawn, reading a block-* verdict, checking why a [SCOPE] line gave no signal, isolating concurrent tracks, classifying a plan''s predecessor edges, composing or routing a review round, copying files to a live install, or deploying before the PR. Do NOT use inside a subagent, for the [SCOPE] grammar line or its binding author rules (role file → Context Handoff Size), or for workflow skeletons, sentinel placement and schema caps (skills/glass-atrium-ops-orchestrator.md).'
 ---
 
 # Delegation Contracts (orchestrator only)
 
-- **What this skill holds**: the detail behind standing obligations that `rules/glass-atrium/orchestrator-role.md` or `skills/glass-atrium-ops-orchestrator.md` states as pointers.
+- **What this skill holds**: the detail behind standing obligations that `skills/glass-atrium-ops-orchestrator-role.md` or `skills/glass-atrium-ops-orchestrator.md` states as pointers.
 - **SoT split**: each pointer states its obligation, when it fires and its triggers, and is the SoT for them; the Reference Index names what each side is the SoT for.
 
 ## When to Use
@@ -28,7 +28,7 @@ description: 'Orchestrator-only delegation contracts behind pointers in orchestr
 
 Read only the file the task needs.
 
-| Topic | File | Pointer site in `rules/glass-atrium/orchestrator-role.md` | SoT at the pointer site | SoT in the reference file |
+| Topic | File | Pointer site in `skills/glass-atrium-ops-orchestrator-role.md` | SoT at the pointer site | SoT in the reference file |
 |---|---|---|---|---|
 | Ultracode declaration contract (`[AGENT-COMPOSITION]`) | `references/ultracode-declaration-contract.md` | `#### Ultracode declaration contract` | the one-block obligation, its `/* */` home, when it fires, the manual path's discipline | line grammar, `block-*` verdicts, upstream waiver, honest backing, pre-verify Discovery routes |
 | Delegation-size discipline (`[SIZE-EST]`) | `references/delegation-size-discipline.md` | `### Spawn Budget` → `#### Delegation-size discipline` | the sizing duties of both modes, when they fire, the split triggers and measured truncation band, COUNTER-CAVEAT | analysis-spawn roster, token formats, budget formula, field and effort values, calibration, gates, backing, notes |
