@@ -221,6 +221,8 @@ get_pointer_quote() {
   local rows
   rows="$(jq -cn '[range(200) | {id: (41000 + .), title: "Plan — a title long enough that two hundred rows overflow the cap", doc_status: "implementing", last_status_model: "claude-opus-5-5"}]')"
   seed_open_plans '{"total":200,"rows":'"${rows}"','"${OPEN_STAGES_FILTER}"'}'
+  # The open-plan list is row-capped, so a core near the cap is what pushes the context over it.
+  printf '%.0spadding ' {1..1300} >>"${CORE_SEED}"
   run_hook
   local core warning units over
   core="$(<"${CORE_SEED}")"
@@ -248,6 +250,38 @@ get_pointer_quote() {
     echo "exit ${status}: ${output}"
     return 1
   }
+}
+
+@test "open plans past the row cap show the eight most recently updated and one line counting the rest" {
+  command -v jq >/dev/null 2>&1 || skip "jq required"
+  local rows=(
+    "twelve plans|12|8|- +4 more → GET /api/clauded-docs?doc_status=implementing,impl_review,impl_done&limit=200"
+    "eight plans|8|8|"
+  )
+  local row name total shown more plans listed newest oldest
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name total shown more <<<"${row}"
+    plans="$(jq -cn --argjson n "${total}" '[range($n) | {id: (100 + .), title: "Plan", doc_status: "implementing",
+      last_synced_at: ("2026-10-" + ((10 + ((. * 7) % $n)) | tostring) + "T00:00:00.000Z")}]')"
+    seed_open_plans '{"total":'"${total}"',"rows":'"${plans}"','"${OPEN_STAGES_FILTER}"'}'
+    newest="$(jq -r 'sort_by(.last_synced_at) | reverse | .[0:8] | map("clauded-docs/\(.id) ") | .[]' <<<"${plans}")"
+    oldest="$(jq -r 'sort_by(.last_synced_at) | reverse | .[8:] | map("clauded-docs/\(.id) ") | .[]' <<<"${plans}")"
+    run_hook
+    listed="$(printf '%s\n' "${output}" | grep -c '^- clauded-docs/' || true)"
+    [[ "${status}" -eq 0 && "${output}" == *"[OPEN PLANS] ${total} "* && "${listed}" -eq "${shown}" ]] \
+      || { echo "${name}: exit ${status}, listed ${listed}: ${output}"; return 1; }
+    while IFS= read -r line; do
+      [[ -z "${line}" || "${output}" == *"${line}"* ]] || { echo "${name}: newest ${line} missing: ${output}"; return 1; }
+    done <<<"${newest}"
+    while IFS= read -r line; do
+      [[ -z "${line}" || "${output}" != *"${line}"* ]] || { echo "${name}: older ${line} listed: ${output}"; return 1; }
+    done <<<"${oldest}"
+    if [[ -n "${more}" ]]; then
+      printf '%s\n' "${output}" | grep -qxF -- "${more}" || { echo "${name}: no line '${more}': ${output}"; return 1; }
+    else
+      [[ "${output}" != *" more → GET "* ]] || { echo "${name}: unexpected more line: ${output}"; return 1; }
+    fi
+  done
 }
 
 @test "no progress tracker → no [CONTINUITY] header, exit 0" {

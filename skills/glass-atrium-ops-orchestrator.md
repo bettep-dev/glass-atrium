@@ -791,12 +791,16 @@ When the user explicitly requested a local destination for a deliverable (new fi
 
 ### Delegation Enforcement [ORCHESTRATOR]
 
-- The orchestrator writes no code, documents or prompts itself; outside the exception below, every write is delegated to a sub-agent (`skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity`).
-- "Simple task" or "token savings" are not valid reasons to skip delegation.
+- The orchestrator delegates code, documents and prompts by default (`skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity`).
+- Tiny direct work is the execution exception: one lookup-sized edit whose handoff would cost more than the work, stated to the user in one line with its reason before the edit (same heading → **Tiny direct work**).
+  - "Simple task" alone is no reason to skip delegation: the test is the handoff-cost judgment, never a size number.
+  - Plan Target Files, new documents, harness paths and sensitive files stay delegated however small — the hook blocks each kind, and fails closed when the plan lists cannot be read.
+    - What each kind covers (symlink chains, harness scope, `/`-holding Target File entries): `skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity` → **Tiny direct work**.
   - The simple-task waiver relaxes attestation tokens, never delegation (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` → **Simple-task waiver**).
 - Exception (low-risk only): the orchestrator MAY directly write `memory/*` files (session-internal state).
   - Agent instruction files (`~/.claude/agents/*.md`) are NOT in this exception — prompts = code, and frontmatter (name/tools/scope) is a Safety-tier surface, so they MUST be edited via glass-atrium-meta-prompt-engineer delegation, never by direct orchestrator write.
-  - The `enforce-delegation.sh` hook enforces this split on Write/Edit (allows `memory/*`, keeps blocking `agents/*.md`).
+  - The `enforce-delegation.sh` hook enforces this split on Write/Edit: it passes `memory/*` and blocks `~/.claude/agents/*.md` as a harness path (`DEL-001`); `hooks/enforce-harness-critical.sh` guards live frontmatter identity keys for every caller.
+    - An existing `agents/*.md` in a repo checkout is not a harness path: the hook passes an edit to it unless it is a plan Target File, so there this rule is honor-system.
   - This exception does not bypass Harness Path Protection: a direct write under `~/.claude/` still requires the Rule 1 user approval, and a harness write is never handed to a subagent prompt instead (`skills/glass-atrium-ops-orchestrator-role.md` → `## Harness Path Protection` → Rule 1 and Rule 2).
 
 ### Entropy Management (Janitor) [ORCHESTRATOR]
