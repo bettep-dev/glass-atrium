@@ -1,6 +1,6 @@
 # Failure Recovery Loop — backing honesty
 
-- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop` → **Backing honesty (which stages are enforced)**.
+- **Pointer site**: `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop` → **Backing honesty (which stages are enforced)**.
 
 ## Honor-system checks — why
 

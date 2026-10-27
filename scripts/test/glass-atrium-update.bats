@@ -1194,7 +1194,7 @@ NEW vendor rules'
 # U-A fixture: the same three-anchor shape PLUS frontmatter, where the LIVE body
 # carries an operator `model:` pin the release does NOT ship. Everything outside the
 # EDITABLE regions is rebuilt from the release skeleton, so the pin is exactly what a
-# naive merge drops (orchestrator-role.md Cost-Tier Selection sanctions it as
+# naive merge drops (skills/glass-atrium-ops-orchestrator-role.md Cost-Tier Selection sanctions it as
 # local-only config that is NEVER ported to git).
 PIN_BASE='---
 name: dev-a

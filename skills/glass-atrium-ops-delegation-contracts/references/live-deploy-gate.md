@@ -1,6 +1,6 @@
 # Live deploy + empirical verification (PRE-MERGE delivery gate — live-install bundle members only)
 
-- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `## Document-Driven Workflow` step 6.
+- **Pointer site**: `skills/glass-atrium-ops-orchestrator-role.md` → `## Document-Driven Workflow` step 6.
 
 ## Per-cycle order
 
@@ -28,5 +28,5 @@
 - **Post-merge deploy — NARROW retained cases, never the default**:
   - (a) the RELEASE flow, which re-publishes from merged `main` via the release path — this gate says nothing about when a release is cut;
   - (b) a cycle where no pre-merge deploy was possible — deploy from merged `main` and run the SAME empirical verification, late rather than never.
-- **Boundary**: deploy is DELEGATED, never self-executed (`rules/glass-atrium/orchestrator-role.md` → `## Orchestrator Identity`), and the sanctioned updater is the ONLY live write path — manual writes into the live install stay FORBIDDEN.
+- **Boundary**: deploy is DELEGATED, never self-executed (`skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity`), and the sanctioned updater is the ONLY live write path — manual writes into the live install stay FORBIDDEN.
 - **Honest framing — HONOR-SYSTEM, NOT mechanically enforced**: nothing blocks a PR opened ahead of the verification.

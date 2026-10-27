@@ -73,6 +73,9 @@ One scope file per scope; ORCHESTRATOR is the one exception, a tightly coupled f
 | `rules/glass-atrium/scope-orchestrator.md` + `rules/glass-atrium/orchestrator-role.md` | ORCHESTRATOR |
 | `scoped/scope-wiki.md` | WIKI |
 
+- **ORCHESTRATOR delivery companions** — two files serve the pair without joining the row:
+  - `scoped/orchestrator-core.md` — the pair's control-plane core, printed to the main session at SessionStart; a subagent receives no SessionStart output.
+  - `skills/glass-atrium-ops-orchestrator-role.md` — the full text of `rules/glass-atrium/orchestrator-role.md`, which is a heading-resolving stub; an on-demand reference the main session Reads by path, outside this matrix's skill jurisdiction (`## Skills Registry (Reference)`).
 - **What resolves a row to a file at spawn** is the agent's `agent-registry.json` row (`rules.scope`), never this table.
   - No `agents/*.md` frontmatter carries a `scope:` key, and the registry carries no top-level `scope` field.
 - `autoagent/daemon_cycle.py` holds a second agent→scope-file map, used only to excerpt a scope file into the daemon's rule-improvement verify prompt; no spawn path reads it.
@@ -112,7 +115,7 @@ Each file below is inherited on its own condition. DEV is the common carrier, bu
     - Its DEV `✓` is conditional, never standing: it binds a DEV agent only on a turn meeting its `when`.
       - Why a bare `✓`, no marker: a new marker needs its own `>` definition, a reserved-literal entry in `## Machine-Read Structure` and the validator's marker set, while the Tier-3 row already names the subset.
   - **`shared-investigation-discipline.md` binds both QA agents unconditionally**, so its `✓` carries no subset qualifier; glass-atrium-qa-debugger is its heaviest consumer — diagnosis is the investigation sequence.
-    - ORCHESTRATOR is deliberately absent: its half of the duty (routing the escalation, rejecting a conclusion carrying no evidence) lives in `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop`.
+    - ORCHESTRATOR is deliberately absent: its half of the duty (routing the escalation, rejecting a conclusion carrying no evidence) lives in `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop`.
 
 ### Injected Blocks (SubagentStart allowlist)
 
@@ -160,7 +163,7 @@ These injection sources are not rule files of this matrix, and none gains member
 
 ### Membership vs. Delivery (per tier)
 
-Tier membership — which rules a scope *should* load — is distinct from delivery, the channel that actually carries the text to a running agent. Two channels carry rule text, with different budgets: the HOST project-instructions and the SubagentStart channels above. Every YES below is a measurement.
+Tier membership — which rules a scope *should* load — is distinct from delivery, the channel that actually carries the text to a running agent. Two channels carry rule text to every agent, with different budgets: the HOST project-instructions and the SubagentStart channels above. A third, the SessionStart hook output, reaches the main session only. Every YES below is a measurement.
 
 | Tier | Channel | Arrives? |
 |---|---|---|
@@ -169,10 +172,12 @@ Tier membership — which rules a scope *should* load — is distinct from deliv
 | Tier 3 — unconditional `shared-*` members | the part slots, selected from `rules.shared` | YES |
 | Tier 3 — CONDITIONAL `scoped/` members (footnote or `subset` rows) | path pointer only | NO body — selection cannot key on a task at spawn |
 | `rules/glass-atrium/` members without `paths:` frontmatter, and the ALL column | HOST project-instructions | YES — and deliberately NOT selected by the part slots, to avoid delivering them twice |
+| `scoped/orchestrator-core.md` — the ORCHESTRATOR core | SessionStart hook output (`hooks/inject-session-context.sh`), main session only | YES to the main session, whole · NO to a spawned subagent |
 | `rules/glass-atrium/` members with `paths:` frontmatter — this file and `shared-self-improve-hygiene.md` | HOST project-instructions, on a Read of a file their globs match, never at session start | UNMEASURED — **Path-scoped delivery** below |
 
 - **A Tier-2 scope body is not delivered by the HOST channel.** What a spawned subagent receives there at session start is the set the main session holds — the Tier-1 files and the ORCHESTRATOR Tier-2 pair — whatever the subagent's own scope.
   - The Tier-1 files and the ORCHESTRATOR pair arriving: measured by reading a spawned subagent's received project-instructions directly.
+    - That measurement predates the stub: the pair's `rules/glass-atrium/orchestrator-role.md` now carries headings and pointers only, so a subagent receives the stub, not the full text [UNMEASURED until a live spawn reads it].
   - Not in that set [UNMEASURED]: the path-scoped members (**Path-scoped delivery** below).
 - **The host mechanism is unread — do not state it as fact anywhere.** The likeliest explanation is that the host propagates the parent session's project-instructions verbatim to each spawned subagent, but no configuration for that channel was located: treat what arrives as established and why as open.
 - **Path-scoped delivery** — this file and `rules/glass-atrium/shared-self-improve-hygiene.md` carry `paths:` frontmatter of `**/`-led globs.
@@ -245,6 +250,7 @@ Rows are grouped by tier: Tier 1 first, then Tier 2, then Tier 3.
 | scope-security.md | | | | | | | | | ✓ | | |
 | scope-orchestrator.md | | | | | | | | | | ✓ | |
 | orchestrator-role.md | | | | | | | | | | ✓ | |
+| orchestrator-core.md | | | | | | | | | | ✓ | |
 | scope-wiki.md | | | | | | | | | | | ✓ |
 | shared-comment-logging.md | | ✓ | ✓† | | | | | ✓ | | | |
 | shared-performance.md | | ✓ | ✓† | | | | | | | | |

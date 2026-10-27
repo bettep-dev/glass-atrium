@@ -41,7 +41,7 @@ Every prompt, agent body, rule or skill deliverable authored by glass-atrium-met
 
 - The composer states the verdict-only constraint inside the delegation prompt: `agents/glass-atrium-intel-reporter.md` states it nowhere, so no other channel carries it to the reviewer.
 - **Prompt-audit pass**: every prompt-file cycle runs this pass.
-  - Trigger class and position in the delivery tail: `rules/glass-atrium/orchestrator-role.md` → `## Document-Driven Workflow` step 6 → **Prompt-file tail**.
+  - Trigger class and position in the delivery tail: `skills/glass-atrium-ops-orchestrator-role.md` → `## Document-Driven Workflow` step 6 → **Prompt-file tail**.
   - Actor: glass-atrium-meta-prompt-engineer.
   - Input: only the files the cycle modified.
     - On a code file, the audited span is the file's prompt surface as guide Step 1 inventories it; the file's other code is not audited.
