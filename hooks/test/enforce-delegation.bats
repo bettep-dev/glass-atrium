@@ -445,34 +445,67 @@ write_capturing() {
   [[ "${status}" -eq 0 ]] || { echo "exit ${status}: ${output}"; return 1; }
 }
 
-@test "a listed path binds its checkout-relative file, never a basename or substring" {
+@test "a Target File binds only a path-like token, by whole-component suffix, never a basename or substring" {
   setup_monitor
-  mkdir -p "${WORK}/repo/.git" "${WORK}/repo/docs" "${WORK}/repo/skills" "${WORK}/repo/src/skills" \
-    "${WORK}/repo/lib/hooks" "${WORK}/wt/hooks"
-  : >"${WORK}/wt/.git"
+  mkdir -p "${WORK}/repo/hooks" "${WORK}/repo/skills" "${WORK}/repo/myskills"
   local f
-  for f in repo/README.md repo/docs/README.md repo/skills/x.sh repo/src/skills/x.sh \
-    repo/lib/hooks/foo.sh wt/hooks/foo.sh repo/abs.sh; do
-    : >"${WORK}/${f}"
+  for f in README.md hooks/foo.sh hooks/foo.sh.bak skills/x.md myskills/x.md abs.sh; do
+    : >"${WORK}/repo/${f}"
   done
   printf '%s\n' '{"total":1,"rows":[{"id":9,"doc_status":"implementing"}]}' >"${LIST_JSON_FILE}"
-  seed_plan 9 md "## Target Files\\n- \`README.md\`\\n- \`skills/\`\\n- \`hooks/foo.sh\`\\n- \`${WORK}/repo/abs.sh\`\\n"
+  seed_plan 9 md '## Target Files\n- `README.md`\n'
+  write_capturing "${WORK}/repo/README.md"
+  [[ "${status}" -eq 0 ]] || { echo "plan listing only a bare README.md: exit ${status}: ${output}"; return 1; }
+  seed_plan 9 md "## Target Files\\n- \`README.md\`\\n- \`hooks/foo.sh\`\\n- \`skills/\`\\n- \`${WORK}/repo/abs.sh\`\\n"
   local rows=(
-    "same basename deeper in the checkout|0|repo/docs/README.md"
-    "listed dir name deeper in the checkout|0|repo/src/skills/x.sh"
-    "listed path as a deeper substring|0|repo/lib/hooks/foo.sh"
-    "listed root file|2|repo/README.md"
-    "file under a listed dir|2|repo/skills/x.sh"
-    "listed file in a worktree checkout (.git file)|2|wt/hooks/foo.sh"
-    "absolute entry|2|repo/abs.sh"
+    "bare basename binds nothing|0|README.md"
+    "file token|2|hooks/foo.sh"
+    "file token is no prefix of a longer name|0|hooks/foo.sh.bak"
+    "directory token|2|skills/x.md"
+    "directory token only at a component boundary|0|myskills/x.md"
+    "absolute entry|2|abs.sh"
   )
   local row name want path
   for row in "${rows[@]}"; do
     IFS='|' read -r name want path <<<"${row}"
-    write_capturing "${WORK}/${path}"
+    write_capturing "${WORK}/repo/${path}"
     [[ "${status}" -eq "${want}" ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
     [[ "${want}" -eq 0 || "${output}" == *"DEL-006"* ]] || { echo "${name}: ${output}"; return 1; }
   done
+}
+
+@test "a project's .claude/settings*.json is hook wiring and stays blocked" {
+  setup_monitor
+  export HOME="${WORK}/home"
+  mkdir -p "${HOME}" "${WORK}/proj/.claude/worktrees/wt/.claude"
+  local f
+  for f in proj/.claude/settings.json proj/.claude/settings.local.json \
+    proj/.claude/worktrees/wt/.claude/settings.json; do
+    : >"${WORK}/${f}"
+  done
+  ln -s "${WORK}/proj/.claude/settings.json" "${WORK}/settings-link.json"
+  local rows=(
+    "project settings.json|proj/.claude/settings.json"
+    "project settings.local.json|proj/.claude/settings.local.json"
+    "a worktree checkout's own settings.json|proj/.claude/worktrees/wt/.claude/settings.json"
+    "symlink to a project settings.json|settings-link.json"
+  )
+  local row name path
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name path <<<"${row}"
+    write_capturing "${WORK}/${path}"
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-001"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "the install root's physical path stays blocked when ~/.glass-atrium is a symlink" {
+  setup_monitor
+  export HOME="${WORK}/home"
+  mkdir -p "${HOME}" "${WORK}/install/hooks"
+  : >"${WORK}/install/hooks/x.sh"
+  ln -s "${WORK}/install" "${HOME}/.glass-atrium"
+  write_capturing "${WORK}/install/hooks/x.sh"
+  [[ "${status}" -eq 2 && "${output}" == *"DEL-001"* ]] || { echo "exit ${status}: ${output}"; return 1; }
 }
 
 @test "an unreachable monitor emits one DEL-007 record naming the real cause" {
@@ -485,11 +518,11 @@ write_capturing() {
     && "${output}" != *"internal error"* ]] || { echo "exit ${status}, ${records} records: ${output}"; return 1; }
 }
 
-@test "the Target Files extractors stay out of the A/A-scope lib and mirror the drift hook's copy" {
-  local fns='/^extract_target_files_section() {/,/^}/p;/^extract_target_files_heading() {/,/^}/p'
-  local drift gate
-  drift="$(sed -n "${fns}" "${HOOKS_DIR}/validate-scope-drift.sh" | grep -v '^[[:space:]]*#')"
-  gate="$(sed -n "${fns}" "${HOOK_SH}" | grep -v '^[[:space:]]*#')"
-  ! grep -q '^extract_target_files_' "${HOOKS_DIR}/lib/scope-match.sh" \
-    && [[ -n "${drift}" && "${drift}" == "${gate}" ]]
+@test "the Target Files extractors live once in lib/target-files.sh, sourced by both hooks" {
+  local lib="${HOOKS_DIR}/lib/target-files.sh" drift="${HOOKS_DIR}/validate-scope-drift.sh"
+  grep -q '^extract_target_files_section() {' "${lib}" \
+    && grep -q '^extract_target_files_heading() {' "${lib}" \
+    && ! grep -q '^extract_target_files_' "${HOOK_SH}" "${drift}" "${HOOKS_DIR}/lib/scope-match.sh" \
+    && grep -qF 'source "${BASH_SOURCE%/*}/lib/target-files.sh"' "${HOOK_SH}" \
+    && grep -qF 'source "${BASH_SOURCE%/*}/lib/target-files.sh"' "${drift}"
 }
