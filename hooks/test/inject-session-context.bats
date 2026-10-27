@@ -26,6 +26,7 @@ REPLY_TARGET='the final message of each turn, your report to the user'
 # Closed loopback port → the open-plan GET is refused, so no run reaches the live monitor.
 DEAD_MONITOR_URL='http://127.0.0.1:9/api/clauded-docs'
 OPEN_STAGES_FILTER='"filter":{"doc_status":["implementing","impl_review","impl_done"],"limit":200,"offset":0}'
+CORE_SRC="${BATS_TEST_DIRNAME}/../../scoped/orchestrator-core.md"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
@@ -33,7 +34,10 @@ setup() {
   [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
   SANDBOX="$(mktemp -d -t ga-sessctx-bats.XXXXXX)"
   FAKE_HOME="${SANDBOX}/home"
-  mkdir -p "${FAKE_HOME}"
+  CORE_SEED="${FAKE_HOME}/.glass-atrium/scoped/orchestrator-core.md"
+  mkdir -p "${FAKE_HOME}/.glass-atrium/scoped"
+  [[ -f "${CORE_SRC}" ]] || skip "orchestrator core not found: ${CORE_SRC}"
+  cp -- "${CORE_SRC}" "${CORE_SEED}"
   export SESSION_CONTEXT_MONITOR_URL="${DEAD_MONITOR_URL}"
 }
 
@@ -188,6 +192,47 @@ get_pointer_quote() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"[ORCHESTRATOR SESSION]"* ]] || return 1
   [[ "${output}" == *"[WIKI] wiki search available"* ]] || return 1
+}
+
+@test "the orchestrator core leads the session context, whole and verbatim" {
+  run_hook
+  local core
+  core="$(<"${CORE_SEED}")"
+  [[ "${status}" -eq 0 && "${output}" == "${core}"$'\n'* && "${output}" != *"[ORCHESTRATOR CORE] missing"* ]] || {
+    echo "exit ${status}: ${output}"
+    return 1
+  }
+}
+
+@test "a missing core prints one line saying so and the rest of the session context, exit 0" {
+  rm -- "${CORE_SEED}"
+  run_hook
+  local missing glyphs
+  missing="$(printf '%s\n' "${output}" | grep -c '^\[ORCHESTRATOR CORE\] missing' || true)"
+  glyphs="$(glyph_count)"
+  [[ "${status}" -eq 0 && "${missing}" -eq 1 && "${output}" == *"[WIKI] wiki search available"* && "${glyphs}" -eq 1 ]] || {
+    echo "exit ${status}, missing lines ${missing}: ${output}"
+    return 1
+  }
+}
+
+@test "a context over the hook cap keeps the core first and swaps the open-plan list for a line naming the overflow" {
+  command -v jq >/dev/null 2>&1 || skip "jq required"
+  local rows
+  rows="$(jq -cn '[range(200) | {id: (41000 + .), title: "Plan — a title long enough that two hundred rows overflow the cap", doc_status: "implementing", last_status_model: "claude-opus-5-5"}]')"
+  seed_open_plans '{"total":200,"rows":'"${rows}"','"${OPEN_STAGES_FILTER}"'}'
+  run_hook
+  local core warning units over
+  core="$(<"${CORE_SEED}")"
+  warning="$(printf '%s\n' "${output}" | awk '/^\[OPEN PLANS\] omitted /')"
+  units="$(printf '%s\n' "${warning}" | sed -n 's/.* would be \([0-9][0-9]*\) UTF-16 units, \([0-9][0-9]*\) over the 10000-unit .*/\1/p')"
+  over="$(printf '%s\n' "${warning}" | sed -n 's/.* would be \([0-9][0-9]*\) UTF-16 units, \([0-9][0-9]*\) over the 10000-unit .*/\2/p')"
+  [[ "${status}" -eq 0 && "${output}" == "${core}"$'\n'* && "${warning}" != *$'\n'* ]] \
+    && [[ -n "${units}" && -n "${over}" ]] && ((units > 10000 && over == units - 10000)) \
+    && [[ "${output}" != *"clauded-docs/41000 "* ]] || {
+    echo "exit ${status}, warning '${warning}': ${output}"
+    return 1
+  }
 }
 
 @test "no progress tracker → no [CONTINUITY] header, exit 0" {
