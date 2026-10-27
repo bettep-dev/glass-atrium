@@ -31,13 +31,15 @@ Pointer only. The rules bind META, PLANNING and REPORT alike, so they live once 
 
 ## Prompt Deliverable Team Rule [META]
 
-Every prompt, agent body, rule or skill deliverable authored by glass-atrium-meta-prompt-engineer ships through a two-agent pipeline — author, then an independent structure verdict — and is complete only on an all-`pass` verdict.
+glass-atrium-meta-prompt-engineer authors and emits its own prompt, agent body, rule or skill deliverable: emitting and revising need the author's full context, so no second agent carries the deliverable to delivery.
+
+- An independent structure verdict judges it, because an author cannot be its own reviewer; the deliverable is complete only on an all-`pass` verdict.
 
 | Step | Actor | Rule |
 |---|---|---|
-| Author | glass-atrium-meta-prompt-engineer | runs `## Structure Self-Check` from its own body, then writes |
-| Structure verdict | glass-atrium-intel-reporter | returns `pass`/`revise` per Structure Self-Check row — verdict-only; rewriting the deliverable is FORBIDDEN |
-| Revise | glass-atrium-meta-prompt-engineer | takes every `revise` finding back and re-delivers |
+| Author and emit | glass-atrium-meta-prompt-engineer | runs `## Structure Self-Check` from its own body, writes, then emits with its check lines |
+| Structure verdict | glass-atrium-intel-reporter | returns `pass`/`revise` per Structure Self-Check row; verdict-only — it never rewrites the deliverable |
+| Revise | glass-atrium-meta-prompt-engineer, resumed where resumable, else respawned | takes every `revise` finding back and re-emits |
 
 - The composer states the verdict-only constraint inside the delegation prompt: `agents/glass-atrium-intel-reporter.md` states it nowhere, so no other channel carries it to the reviewer.
 - **Prompt-audit pass**: every prompt-file cycle runs this pass.
