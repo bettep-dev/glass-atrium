@@ -27,14 +27,13 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 | Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) |
 | Test Quality (with Detection signature per row) | the same adjudicator — the conditional-logic row's data-driven carve-out | `scripts/test/audit-test-smells.bats` header |
 | Test Quality · Mocking Rules · Test Structure · Authoring scope | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
-| Test Structure | glass-atrium-dev-python — its naming and test-data lines | `agents/glass-atrium-dev-python.md` → `### Tests = Specification` · `### Testing` |
 | Rationalization Rejection (Testing) | every agent — via the charter's excuse→rebuttal home-file list and the `feature` note's exception pointer | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection · `core-outcome-record.md` → the `feature` note |
 | 3-Tier Test Hierarchy | every agent — the delivered commit rule defers its which-tests-when half to here | `core-git-workflow.md` → Commits |
 | Mechanical Success Metrics | every agent — the `grader_verdict` presence-signal line under an inbound Tier-1 "See also" | `core-outcome-record.md` → Automatic Verification Criteria |
 | Test Depth and Upkeep | glass-atrium-qa-code-reviewer — its depth and coupled-test checks | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
 | Test Depth and Upkeep | glass-atrium-qa-code-reviewer — the named-removal exemption on its High risk trigger | `scoped/scope-qa.md` → `## Regression Risk Estimation [QA]` |
 | Test Depth and Upkeep | every DEV agent sizing its tests | `scoped/scope-dev.md` → **YAGNI applies to tests too** |
-| Test Depth and Upkeep | the DEV bodies that carry a local test-size line | `agents/glass-atrium-dev-python.md` → `### Testing` · `agents/glass-atrium-dev-nestjs.md` → **Tests** |
+| Test Depth and Upkeep | the DEV body that carries a local test-size line | `agents/glass-atrium-dev-nestjs.md` → **Tests** |
 | Test Depth and Upkeep | the orchestrator, reading its skill on demand | `skills/glass-atrium-ops-orchestrator.md` → `### Quality Gates [ORCHESTRATOR]` |
 | Test Depth and Upkeep | the orchestrator, declaring a DEV/PLANNING delegation's `[SCOPE] files=` | `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size` → **`files=` completeness duty** |
 
@@ -46,8 +45,6 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
     - headings: `### What makes a test a test` · `#### The prohibited shapes` · `## Mocking Rules` · `## Test Structure` · `### Where a test lives` · `### Names, comments and test data` · `### Table form per stack`;
     - bolded leads: **Authoring scope** · **Grouping** · **Fold-back** · **ID ban** · **Deletion duty** · **DAMP carve-out**.
   - Also stable, because the `Test Depth and Upkeep` ledger rows above point into it: `## Test Depth and Upkeep` and its bolded leads **Depth follows risk** · **Coupled-test check**.
-  - **Naming** is named verbatim by `agents/glass-atrium-dev-python.md` → `### Tests = Specification`.
-  - **Test data** and **Shared fixture** are named verbatim by `agents/glass-atrium-dev-python.md` → `### Testing`.
 
 ## Backing honesty — Test Quality
 
