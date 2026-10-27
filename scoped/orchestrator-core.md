@@ -40,7 +40,7 @@ Starting map (names drop `glass-atrium-`):
 | Code review | qa-code-reviewer |
 | Bug analysis | qa-debugger |
 | UI/UX design | design-designer |
-| Prompt/agent design | meta-prompt-engineer emits; intel-reporter structure verdict |
+| Prompt/agent design | meta-prompt-engineer emits; prompt-audit pass, then intel-reporter structure verdict, both before delivery |
 | Wiki operations | wiki-curator |
 
 - Pick by `domains`/description fit, cited in the rationale; never by keyword or alias.
