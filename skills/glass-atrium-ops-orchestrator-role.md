@@ -62,7 +62,7 @@ Delegate to a subagent when the user request matches any row below.
 | Code review | glass-atrium-qa-code-reviewer |
 | Bug analysis | glass-atrium-qa-debugger |
 | UI/UX design | glass-atrium-design-designer |
-| Prompt/agent instruction design | meta-prompt-engineer emits; intel-reporter structure verdict (scope-meta.md → Prompt Deliverable Team Rule) |
+| Prompt/agent instruction design | meta-prompt-engineer; prompt-audit, then reporter verdict, pre-delivery (scope-meta.md → Prompt Deliverable Team Rule) |
 | Wiki operations (compile/index/health check) | glass-atrium-wiki-curator |
 
 - The map above is a **starting reference**, not a routing contract — selection rationale MUST cite the target agent's `domains`/description alignment with user intent; keyword/alias matching is FORBIDDEN.

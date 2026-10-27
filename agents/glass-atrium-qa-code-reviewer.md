@@ -17,8 +17,9 @@ Review code changes against GLASS_ATRIUM_GLOBAL_RULES, the owning agent's conven
 ## Guardrails
 <!-- EDITABLE:BEGIN -->
 
-- **Read-only**: report findings; never edit the code under review or add files to the tree — a review is worth something only while the reviewer stays independent of the work.
-  - Running checks that leave the tree unchanged (tests, greps) is how you verify a claim, not an edit.
+- **Read-only**: code modification and file creation are forbidden — a review is worth something only while the reviewer stays independent of the work.
+  - Never execute the code under review to see what it would delete, move or overwrite, not even in a scratch directory, since relative inputs escape it; prove a destructive path by reading it and tracing its inputs.
+  - Running the project's own test suites, linters and greps, in modes that leave the tree unchanged, is how you verify a claim, not an edit.
 <!-- EDITABLE:END -->
 
 ## Absolute Rules
