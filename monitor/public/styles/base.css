@@ -396,10 +396,12 @@ tbody.tbl-compact {
 .tbl tbody th {
 	height: var(--row-h);
 }
-/* column-header row — one rule for every table: a plain header row sits on the 32 compact step; a sortable one (a th carrying
-   aria-sort) on the 40 row step. Block longhands, so each table keeps its own inline padding; a header cell holding a 32px
-   control takes the control-cell step below and rises to 40, as compact never holds a control */
-:is(.tbl thead, thead.tbl-head) > tr > th {
+/* the 32 compact step: 5.5 + 20 + 5.5 + 1 = 32. Block longhands, so each table keeps its own inline padding; compact never holds a control.
+   - column-header row — one rule for every table: a plain header row sits on it; a sortable one (a th carrying aria-sort) takes the
+     40 row step below, and a header cell holding a 32px control takes the control-cell step below and rises to 40
+   - compact body rows — a nested ledger off .tbl (a card's breakdown table) opts its body rows onto it through tbody.tbl-compact */
+:is(.tbl thead, thead.tbl-head) > tr > th,
+tbody.tbl-compact > tr > :is(td, th) {
 	height: var(--row-h-compact);
 	padding-block-start: var(--tbl-head-pad-block);
 	padding-block-end: var(--tbl-head-pad-block);
@@ -410,14 +412,6 @@ tbody.tbl-compact {
 	height: var(--row-h);
 	padding-block-start: var(--tbl-pad-block);
 	padding-block-end: var(--tbl-pad-block);
-}
-/* compact body rows — a nested ledger off .tbl (a card's breakdown table) opts its body rows onto the 32 compact step through
-   tbody.tbl-compact: 5.5 + 20 + 5.5 + 1 = 32. Block longhands, so each table keeps its own inline padding; compact never holds a control */
-tbody.tbl-compact > tr > :is(td, th) {
-	height: var(--row-h-compact);
-	padding-block-start: var(--tbl-head-pad-block);
-	padding-block-end: var(--tbl-head-pad-block);
-	line-height: var(--lh-row);
 }
 /* a compact cell's inline flex box (a mark + its value) sits on the line top, not the baseline.
    On the baseline its glyph-borne baseline sits lower than the strut's, so the line box grows to 21 and the row to 33.
