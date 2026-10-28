@@ -8,6 +8,7 @@ import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import vm from "node:vm";
 import {
   collectText,
   createReactStub,
@@ -389,9 +390,12 @@ test("the drawer's breaker line keeps loading and error apart from an unavailabl
 test("every in-screen hash link resolves to a hash-router screen id", async () => {
   const { readFile } = await import("node:fs/promises");
   const screenSource = await readFile(AGENTS_SRC, "utf8");
-  const appSource = await readFile(resolve(__dirname, "../public/src/app.jsx"), "utf8");
-  const navBlock = appSource.slice(appSource.indexOf("const NAV = ["), appSource.indexOf("];", appSource.indexOf("const NAV = [")));
-  const navIds = new Set(Array.from(navBlock.matchAll(/\bid: "([^"]+)"/g), (m) => m[1]));
+  const app = await loadScreenModule(resolve(__dirname, "../public/src/app.jsx"), {
+    ReactDOM: { createRoot: () => ({ render: () => {} }) },
+    document: { getElementById: () => null },
+  });
+  // vm read is untyped; the "improvement" check below fails on a missing or reshaped NAV
+  const navIds = new Set((vm.runInContext("NAV", app) as Array<{ id: string }>).map(({ id }) => id));
   const hashTargets = Array.from(screenSource.matchAll(/href="#([^"]*)"/g), (m) => m[1]);
 
   assert.ok(navIds.has("improvement"), "the NAV block parsed");

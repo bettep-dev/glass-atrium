@@ -23,6 +23,7 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import vm from "node:vm";
 
 import { marked } from "marked";
 import { chromium, type Browser } from "playwright";
@@ -40,6 +41,7 @@ import {
   MERMAID_RENDERED_SVG_SELECTOR,
 } from "../src/server/clauded-docs/mermaid-selector.js";
 import { evaluateMermaidConfig } from "./lib/mermaid-config-source.js";
+import { loadScreenModule } from "./lib/render-screen.js";
 import { assertFallbackWarningVisible, createFallbackWatch } from "./lib/mermaid-elk-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -246,12 +248,16 @@ async function renderInViewer(convertedHtml: string): Promise<ViewerRender> {
   }
 }
 
-test("the viewer's selector copy matches the server constant byte for byte", () => {
-  const jsx = readFileSync(VIEWER_SCREEN_PATH, "utf8");
-  const declaration = /const MERMAID_NODE_SELECTOR_CD = "([^"]*)";/.exec(jsx);
-  assert.notEqual(declaration, null, "clauded-docs.jsx declares no MERMAID_NODE_SELECTOR_CD");
+test("the viewer's selector copy matches the server constant byte for byte", async () => {
+  const ui = await loadScreenModule(resolve(MONITOR_ROOT, "public/src/ui.jsx"));
+  const docsScreen = await loadScreenModule(VIEWER_SCREEN_PATH, {
+    UI: ui.UI,
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  });
+  const selector: unknown = vm.runInContext("typeof MERMAID_NODE_SELECTOR_CD === 'undefined' ? undefined : MERMAID_NODE_SELECTOR_CD", docsScreen);
+  assert.equal(typeof selector, "string", "clauded-docs.jsx declares no MERMAID_NODE_SELECTOR_CD");
   assert.equal(
-    (declaration as RegExpExecArray)[1],
+    selector,
     MERMAID_NODE_SELECTOR,
     "the viewer's selector copy has drifted from mermaid-selector.ts — a document would " +
       "then validate, export and still show a code block, with nothing red anywhere",
