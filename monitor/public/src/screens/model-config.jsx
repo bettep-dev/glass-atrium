@@ -1455,8 +1455,8 @@ function TiersSectionMC({
 	);
 }
 
-// Mono digits → 11ch holds the "CLI default" placeholder and the widest cap (6 digits); the border box adds
-// the caret (4), both inline paddings and both 1px borders, so the placeholder shows whole.
+// Mono digits → 11ch holds the "CLI default" placeholder and the widest cap (6 digits)
+// border box: + the caret (4), both inline paddings, both 1px borders → the placeholder shows whole
 const TIER_CAP_FIELD_STYLE_MC = { width: "calc(11ch + 4px + 2 * var(--ctl-pad-x) + 2px)" };
 
 // The unset effort level: a short option label that fits the select, the whole meaning in its title.

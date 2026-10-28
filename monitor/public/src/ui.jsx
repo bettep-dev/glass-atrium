@@ -1392,9 +1392,9 @@ function NoWrap({ children, className = '' }) {
 }
 
 /**
- * A date range kept whole, alone or inside its sentence; the sentence stays a plain string and wraps around the token.
+ * A range token kept whole, alone or inside its sentence; the sentence stays a plain string and wraps around the token.
  * Text content equals the sentence, so no invisible character ever enters the copy.
- * @param range - the range token, formatDayRange's output
+ * @param range - the unbreakable token: a formatDayRange period ("09-23 – 09-29") or a day span ("30 days")
  * @param children - the plain-string sentence carrying it (e.g. a tile trend); absent → the token alone; a sentence without the token renders as is
  */
 function DateRange({ range, children = range }) {

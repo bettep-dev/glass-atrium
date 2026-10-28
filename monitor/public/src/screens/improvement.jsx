@@ -372,8 +372,7 @@ function ScreenImprovement({ onNav }) {
         .i-row-card { cursor:pointer; }
         /* nested compact table → body rows on the 32 compact step */
         .i-recurrence-tbl > tbody > tr > td { height: var(--row-h-compact); }
-        /* icon + label head: the icon centres on the label's first line (1lh) and keeps its size, so a label that wraps
-           in a narrow sub-card still reads as one atom — centring on the whole block drifts once the label takes two lines */
+        /* icon + label head: the icon centres on the label's first line (1lh), unshrunk, whether or not the label wraps */
         .i-icon-head { display:flex; align-items:flex-start; gap:var(--space-1); }
         .i-icon-head > svg { flex-shrink:0; margin-top:calc((1lh - var(--fs-meta)) / 2); }
         /* interactive tile — hover = raised-2 shadow step + faint ring, never a transform lift */

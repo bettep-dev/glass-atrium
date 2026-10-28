@@ -395,8 +395,8 @@ function crosstabConfidenceKeyO(confidence) {
 
 // 화면 전용 inline CSS — render 마다 string 재할당 회피 위해 모듈 상수.
 const SCREEN_OUTCOMES_CSS = `
-/* cross table rows on the 40 step; a count + bar cell keeps its count on the row's centre line (the middle of the 40 less
-   its 1px rule) and lets the 3px bar ride the band below it */
+/* cross table rows on the 40 step */
+/* count + bar cell: the count on the row's centre line (40 less the 1px rule), the 3px bar in the band below */
 .crosstab-tbl { --crosstab-rule: 1px; }
 .crosstab-tbl :is(tbody, tfoot) > tr > :is(th, td) { height: var(--row-h); line-height: var(--lh-row); }
 .crosstab-tbl td.crosstab-bar-cell { vertical-align: top; padding-block: calc((var(--row-h) - var(--crosstab-rule) - var(--lh-row)) / 2) 0; }

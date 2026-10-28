@@ -314,9 +314,8 @@ details[open] > summary .chevron {
 	min-width: 0;
 }
 
-/* Tile split (TileSplit) — value + badge over detail by default; from 641px to below xl the detail sits beside the lead
-   only while the tile holds both whole: the detail keeps a readable basis, and below it the detail wraps under the lead
-   instead of squeezing to one word per line */
+/* Tile split (TileSplit) — value + badge over detail by default */
+/* 641px to below xl: the detail sits beside the lead while it keeps its basis, else it wraps under the lead */
 .tile-split {
 	--tile-split-detail-basis: 16rem; /* a two-line hint's width (a size, outside the ladder) */
 	display: grid;
@@ -413,8 +412,7 @@ details[open] > summary .chevron {
 .tbl :where(tr.is-top-aligned) > td .tbl-first-line {
 	line-height: var(--lh-row);
 }
-/* value + bar cell — the value line keeps the row's centre line (the middle of a text cell's 40 less its rule) and the
-   bar rides the band below it, so the row stays --row-h: 9.5 + 20 + a bar up to 8 + 1 ≤ 40 */
+/* value + bar cell — the value on the row's centre line, the bar in the band below: pad 9.5 + line 20 + bar ≤ 8 + rule 1 ≤ 40 */
 .tbl td.tbl-bar-cell {
 	vertical-align: top;
 	padding-block-start: calc((var(--row-h) - var(--tbl-rule) - var(--lh-row)) / 2);
@@ -553,9 +551,8 @@ button.kpi:hover {
 .kpi-main .kpi-value {
 	margin-top: 0;
 }
-/* a word value keeps the figure's mono --fs-kpi line box (the block's strut), so its baseline is the figure's:
-   an equal line-height alone cannot do it, since half-leading differs by font size. The word span is set at
-   --fs-stat sans with a line box of its own size, which stays inside the strut's. */
+/* word value: the block keeps the figure's mono strut → one baseline (half-leading differs by font size) */
+/* the word span's own line box (line-height 1) stays inside that strut */
 .kpi-value--word > .kpi-value-word {
 	font-size: var(--fs-stat);
 	font-family: "Pretendard Variable", sans-serif;
