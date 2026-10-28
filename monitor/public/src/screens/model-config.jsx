@@ -445,7 +445,7 @@ function ScreenModelConfig() {
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Models & budgets"
-					right={
+					freshness={
 						<>
 							<SyncTokenMC
 								state={configState.status}
@@ -453,13 +453,15 @@ function ScreenModelConfig() {
 								freshness={freshness}
 							/>
 							<FreshnessStamp {...freshness} />
-							<RefreshButton
-								isBusy={configState.busy}
-								hasRead={asOfAt !== null}
-								onRefresh={triggerRefresh}
-								label="Reload model config"
-							/>
 						</>
+					}
+					refresh={
+						<RefreshButton
+							isBusy={configState.busy}
+							hasRead={asOfAt !== null}
+							onRefresh={triggerRefresh}
+							label="Reload model config"
+						/>
 					}
 				/>
 			</div>
@@ -707,7 +709,8 @@ function SettingsInfoMC({ caveat, lead, title, rows }) {
 }
 
 // One column grid for both ledgers — content-sized cells let the Live columns drift apart.
-const LEDGER_COL_WIDTHS_MC = ["36%", "32%", "32%"];
+// The control column is the widest, so a model select holds its longest friendly name from the 1280 side-by-side row up.
+const LEDGER_COL_WIDTHS_MC = ["32%", "36%", "32%"];
 // Skeleton columns + empty-row colSpan for both ledgers.
 const LEDGER_COL_COUNT_MC = LEDGER_COL_WIDTHS_MC.length;
 const LEDGER_TABLE_STYLE_MC = { tableLayout: "fixed" };
@@ -872,6 +875,20 @@ function groupFilesByModelMC(fileRows) {
 	return [...groups];
 }
 
+// An ID or file name is one unbreakable token, never broken at its hyphens; it ellipsizes with a title only when its own line is too narrow.
+function IdTokenMC({ title, children }) {
+	return (
+		<span className="font-mono truncate max-w-full" title={title}>
+			{children}
+		</span>
+	);
+}
+
+// A spaced inherit phrase wraps at its spaces and holds no hyphen; a bare id holds hyphens, so it stays whole on one line.
+function isSpacedLabelMC(label) {
+	return /\s/.test(label);
+}
+
 // Files toggle at the control radius every other pill uses, not the 12px card fold.
 const FILES_PILL_STYLE_MC = { borderRadius: "var(--radius-control)" };
 
@@ -904,17 +921,17 @@ function LiveValueMC({ value, drift, files, source, isStale, driftTitle }) {
 		<div className="flex flex-col gap-1 min-w-0">
 			<div className="flex items-center gap-2 min-w-0">
 				{isSteady && isStale ? (
-					<span className="fs-meta text-faint" title={`At the last good read: ${label}`}>
+					<span className="fs-meta text-faint tbl-first-line" title={`At the last good read: ${label}`}>
 						Matched at last read
 					</span>
 				) : isSteady ? (
-					<span className="fs-meta text-faint flex items-center gap-1" title={`In effect: ${label}`}>
+					<span className="fs-meta text-faint flex items-center gap-1 tbl-first-line" title={`In effect: ${label}`}>
 						<Icon name="check" size={12} className="text-ok" />
 						Matches saved
 					</span>
 				) : (
 					value != null && (
-						<span className="font-mono fs-meta truncate text-ink" title={label}>
+						<span className="font-mono fs-meta truncate text-ink tbl-first-line" title={label}>
 							{label}
 						</span>
 					)
@@ -942,10 +959,10 @@ function LiveValueMC({ value, drift, files, source, isStale, driftTitle }) {
 						aria-label={`${fileRows.length} agent files`}>
 						{fileGroups.map(([model, files]) => (
 							<div key={model}>
-								<div className="font-mono text-dim is-wrap">{model}</div>
+								<div className={`font-mono text-dim${isSpacedLabelMC(model) ? "" : " whitespace-nowrap"}`}>{model}</div>
 								<div className="font-mono flex flex-wrap gap-x-3 pl-3">
 									{files.map((file) => (
-										<AgentName key={file} name={getFileAgentNameMC(file)} />
+										<AgentName key={file} name={getFileAgentNameMC(file)} className="whitespace-nowrap" />
 									))}
 								</div>
 							</div>
@@ -954,10 +971,12 @@ function LiveValueMC({ value, drift, files, source, isStale, driftTitle }) {
 				</details>
 			)}
 			{fileRows.length === 0 && source && (
-				<div className="fs-meta text-faint">
+				<div className="fs-meta text-faint flex flex-wrap items-baseline gap-x-1">
 					{/* null live value = source unreadable or key missing → never claim a read */}
-					{value != null ? "Read from" : "No value read from"}{" "}
-					{isConfigFileMC(source) ? <span className="font-mono">{source}</span> : <AgentName name={source} />}
+					<span>{value != null ? "Read from" : "No value read from"}</span>
+					<IdTokenMC title={source}>
+						{isConfigFileMC(source) ? source : <AgentName name={source} />}
+					</IdTokenMC>
 				</div>
 			)}
 		</div>
@@ -1020,17 +1039,14 @@ function DomainRowMC({
 	// 서버 editable=false 가 우선 — UI 메타와 어긋나면 보수적으로 read-only.
 	const editable = d.editable !== false && meta.editable !== false;
 
-	// 행 간격 10px(상하 5px) — 라벨/컨트롤 묶음이 개별 행으로 읽히게.
-	const cellPad = { paddingTop: 5, paddingBottom: 5 };
-
 	return (
-		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
-			<td style={cellPad}>
-				<div className="fs-body font-medium text-ink">{meta.label}</div>
+		<tr className="is-grouped is-top-aligned">
+			<td>
+				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
 			</td>
-			<td style={cellPad}>
+			<td>
 				{editable ? (
 					<ModelSelectMC
 						domain={d.domain}
@@ -1050,7 +1066,7 @@ function DomainRowMC({
 				)}
 				<PricingNoteMC pricingKnown={d.pricing_known} />
 			</td>
-			<td style={cellPad}>
+			<td>
 				<LiveValueMC
 					value={d.actual}
 					drift={d.drift}
@@ -1105,8 +1121,8 @@ function ModelSelectMC({
 				aria-label={`${label} model`}
 			>
 				{options.map((opt) => (
-					<option key={opt} value={opt} title={MODEL_CAP_MC[opt] || undefined}>
-						{opt === "inherit" ? "session model (inherit)" : opt}
+					<option key={opt} value={opt} title={getModelOptionTitleMC(opt)}>
+						{getModelOptionLabelMC(opt)}
 					</option>
 				))}
 				<option value={CUSTOM_OPTION_MC}>custom…</option>
@@ -1121,7 +1137,7 @@ function ModelSelectMC({
 					aria-label={`${label} custom model id`}
 				/>
 			)}
-			<ModelFamilyTagMC model={value} />
+			{isListed && <ModelIdTagMC model={value} />}
 			{error && (
 				<div className="fs-meta text-crit mt-1" role="alert">
 					<span aria-hidden="true">✕ </span>
@@ -1137,16 +1153,23 @@ function ModelSelectMC({
 	);
 }
 
-// Text tag, not colour alone — the family reads without parsing the id; inherit is already worded in the select.
-function ModelFamilyTagMC({ model }) {
-	if (model === "inherit") return null;
+// The select shows the friendly name, so its column never clips an id mid-word; an id outside the naming pattern shows itself.
+function getModelOptionLabelMC(model) {
+	return getModelFamilyMC(model) ?? model;
+}
 
-	const family = getModelFamilyMC(model);
-	if (!family) return null;
+// The full id leads the option tooltip, then the capability line.
+function getModelOptionTitleMC(model) {
+	return [model, MODEL_CAP_MC[model]].filter(Boolean).join(" — ");
+}
+
+// The saved id under its friendly-name select — one nowrap token, end ellipsis + title in a narrow column; inherit is no id, and the select already words it.
+function ModelIdTagMC({ model }) {
+	if (!model || model === "inherit") return null;
 
 	return (
-		<div data-slot="family" className="fs-meta text-dim mt-1">
-			{family}
+		<div data-slot="model-id" className="font-mono fs-meta text-dim mt-1 truncate" title={model}>
+			{model}
 		</div>
 	);
 }
@@ -1296,9 +1319,9 @@ function BudgetRowMC({ budget: b, departure, value, defaultValue, error, isStale
 	const overridden = defaultValue !== undefined && value !== defaultValue;
 
 	return (
-		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
+		<tr className="is-grouped is-top-aligned">
 			<td>
-				<div className="fs-body">{meta.label}</div>
+				<div className="fs-body tbl-first-line">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
 			</td>
@@ -1432,8 +1455,12 @@ function TiersSectionMC({
 	);
 }
 
-// Mono digits → 11ch holds the "CLI default" placeholder and the widest cap (6 digits) plus the caret.
-const TIER_CAP_FIELD_STYLE_MC = { width: "calc(11ch + 4px + var(--ctl-pad-x))" };
+// Mono digits → 11ch holds the "CLI default" placeholder and the widest cap (6 digits)
+// border box: + the caret (4), both inline paddings, both 1px borders → the placeholder shows whole
+const TIER_CAP_FIELD_STYLE_MC = { width: "calc(11ch + 4px + 2 * var(--ctl-pad-x) + 2px)" };
+
+// The unset effort level: a short option label that fits the select, the whole meaning in its title.
+const EFFORT_INHERIT_TITLE_MC = `${CLI_DEFAULT_LABEL_MC} — no --effort flag`;
 
 /**
  * One knob row — an effort select (CLI default + the five levels) or a token-count field where
@@ -1448,9 +1475,9 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 	const labelOf = (v) => (v === "inherit" ? CLI_DEFAULT_LABEL_MC : v);
 
 	return (
-		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
+		<tr className="is-grouped is-top-aligned">
 			<td>
-				<div className="fs-body">{meta.label}</div>
+				<div className="fs-body tbl-first-line">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
 			</td>
@@ -1460,11 +1487,12 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 						className={`field field-select field--mono${showError ? " is-error" : ""}`}
 						value={value}
 						onChange={(e) => onChange(e.target.value)}
+						title={value === "inherit" ? EFFORT_INHERIT_TITLE_MC : value}
 						aria-label={`${meta.label} level`}
 						aria-invalid={showError ? "true" : undefined}>
 						{["inherit", ...EFFORT_LEVELS_MC].map((level) => (
-							<option key={level} value={level}>
-								{level === "inherit" ? `${CLI_DEFAULT_LABEL_MC} — no --effort` : level}
+							<option key={level} value={level} title={level === "inherit" ? EFFORT_INHERIT_TITLE_MC : undefined}>
+								{labelOf(level)}
 							</option>
 						))}
 					</select>
@@ -1496,7 +1524,7 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 			<td>
 				{/* a rejected file value is in effect nowhere — the daemon refuses the whole cycle */}
 				{t.file_error ? (
-					<div className="fs-meta text-crit" role="alert">
+					<div className="fs-meta text-crit tbl-first-line" role="alert">
 						<span aria-hidden="true">✕ </span>
 						{`The daemon rejects the file value: ${t.file_error}`}
 					</div>

@@ -596,24 +596,62 @@ test("an unread breakage or trend payload shows 'not loaded', and only a loaded 
   }
 });
 
-function renderSortedBody(mod: Record<string, unknown>, failureStatus: string): string[] {
+function renderSortedCard(mod: Record<string, unknown>, failureStatus: string): RenderedNode | string | null {
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const agents = [
     { agent_id: "glass-atrium-dev-busy", agent_name: "busy", status: "active", runs: 90 },
     { agent_id: "glass-atrium-dev-risky", agent_name: "risky", status: "active", runs: 10 },
   ];
   const failureByAgent = new Map([["glass-atrium-dev-risky", { total_breakages: 7, fail_count: 7, blocked_count: 0, breakage_rate: 0.7 }]]);
-  const tree = renderScreen(
-    React.createElement(mod.AgentSummaryBody as Component, {
-      state: { status: "ready", data: { agents }, error: null },
+  return renderScreen(
+    React.createElement(mod.AgentSummaryCard as Component, {
+      state: { status: "ready", data: { agents, meta: { total_agents: 2 } }, error: null },
       days: 30, sortBy: "failures", onSortChange: () => {}, selectedAgent: null, onSelect: () => {}, onRetry: () => {},
       trendByAgent: new Map(), failureByAgent, overageByAgent: new Map(), failureStatus, trendStatus: "ready",
     }),
   );
+}
+
+// the card head's right cluster, rendered → the sort control and its note as the head draws them
+function renderHeadRight(tree: RenderedNode | string | null): RenderedNode | string | null {
+  const [head] = findNodes(tree, (n) => n.props?.atom === "CardHead");
+  assert.ok(head, "the card draws the shared card head");
+  return renderScreen(head.props.right);
+}
+
+// rows in rendered order, then the sort note the card head announces
+function renderSortedBody(mod: Record<string, unknown>, failureStatus: string): string[] {
+  const tree = renderSortedCard(mod, failureStatus);
   const order = findNodes(tree, (n) => n.type === "AgentSummaryRow").map((n) => String((n.props.agent as { agent_id: string }).agent_id));
-  const note = findNodes(tree, (n) => n.props?.role === "status").map((n) => collectText(n)).join(" ");
+  const note = findNodes(renderHeadRight(tree), (n) => n.props?.role === "status").map((n) => collectText(n)).join(" ");
   return [...order, `note:${note}`];
 }
+
+test("the sort control sits in the card head, so no band divides the head from the ledger", async () => {
+  const mod = await loadAgentsScreen();
+  const tree = renderSortedCard(mod, "ready");
+  const [select] = findNodes(renderHeadRight(tree), (n) => n.type === "select");
+  assert.ok(select, "the head carries the sort select");
+  assert.equal(select.props["aria-label"], "Agent sort order");
+  assert.equal(select.props.value, "failures");
+  assert.equal(findNodes(tree, (n) => n.type === "select").length, 0, "the card body draws no second sort control");
+  assert.equal(findNodes(tree, (n) => n.props?.role === "status").length, 0, "the note lives in the head, not in a band above the rows");
+});
+
+test("the card head offers no sort while there is no row to order", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  for (const state of [
+    { status: "loading", data: null, error: null },
+    { status: "ready", data: { agents: [], meta: { total_agents: 0 } }, error: null },
+  ]) {
+    const tree = renderScreen(React.createElement(mod.AgentSummaryCard as Component, {
+      state, days: 30, sortBy: "failures", onSortChange: () => {}, selectedAgent: null, onSelect: () => {}, onRetry: () => {},
+      trendByAgent: null, failureByAgent: null, overageByAgent: null, failureStatus: "ready", trendStatus: "ready",
+    }));
+    assert.equal(findNodes(renderHeadRight(tree), (n) => n.type === "select").length, 0, `${state.status}: no sort select`);
+  }
+});
 
 test("the breakage sort orders by breakages only once they are read, and says so while they are not", async () => {
   const mod = await loadAgentsScreen();
@@ -642,12 +680,11 @@ function findAtoms(tree: RenderedNode | string | null, atom: string): RenderedNo
 
 test("the header's Refresh and freshness stamp read every region, so a first load is never announced as fresh", async () => {
   const [header] = findAtoms(await renderScreenAgents(), "PageHeader");
-  // The stub header keeps its right-hand slot as a prop, so render that slot on its own.
-  const tree = renderScreen(header.props.right);
-  const [refresh] = findAtoms(tree, "RefreshButton");
+  // The stub header keeps its named slots as props, so render each slot on its own.
+  const [refresh] = findAtoms(renderScreen(header.props.refresh), "RefreshButton");
   assert.equal(refresh?.props.isBusy, true, "a region in flight keeps Refresh busy");
   assert.equal(refresh?.props.hasRead, false, "before the first read Refresh says it is loading, not refreshing");
-  const [stamp] = findAtoms(tree, "FreshnessStamp");
+  const [stamp] = findAtoms(renderScreen(header.props.freshness), "FreshnessStamp");
   assert.equal((stamp?.props.regions as unknown[]).length, 9, "the stamp sees all nine page regions");
 });
 
@@ -1248,8 +1285,9 @@ test("the review-flag total sits under a card title in every state, never as a h
   }
 });
 
+// whitespace-normalized: collectText pads node boundaries, and a caption may hold an inline NoWrap token ("7 days")
 function findCaption(tree: RenderedNode | string | null, text: string): RenderedNode | undefined {
-  return findNodes(tree, (n) => typeof n.type === "string" && collectText(n) === text).at(-1);
+  return findNodes(tree, (n) => typeof n.type === "string" && collectText(n).replace(/\s+/g, " ").trim() === text).at(-1);
 }
 
 const PERFORMANCE_AGENT = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", runs: 12, needs_context_count: 0 };
@@ -1821,6 +1859,61 @@ describe("the paired failing-pairs and no-record cards keep the S row budget and
       assert.equal(bodyRows.length, 5, "the body shows the S budget of five rows");
       const foot = collectText(renderScreen(card.props.foot));
       assert.match(foot, new RegExp(`Show all ${row.total}`), `foot: ${foot}`);
+    });
+  }
+});
+
+describe("the paired failing-pairs and no-record tables take the .tbl cell geometry in their own face", () => {
+  const tokensOf = (node: RenderedNode): string[] => String(node.props.className ?? "").split(/\s+/).filter(Boolean);
+  const isAdHocGeometry = (t: string) => /^-?(p|m)[xytblrse]?-/.test(t) || /^border-b$/.test(t) || t === "border-line";
+  const pair = (task_type: string, successCount: number, rateDenominator: number) =>
+    ({ agent: "glass-atrium-dev-node", task_type, successCount, rateDenominator, pooledRate: successCount / rateDenominator, totalCount: rateDenominator });
+  const tables = [
+    { name: "Most-failing pairs", component: "TopNFailingAgentsTable", props: { pairs: [pair("solid", 5, 10), pair("low", 1, 3)], failureByAgent: new Map(), days: 14 }, rightCols: 2 },
+    { name: "No completion record", component: "LifecycleStatsTable", props: { rows: getLifecycleRows(2), onSelect: () => undefined }, rightCols: 4 },
+  ];
+  for (const row of tables) {
+    test(`${row.name}: a .tbl own-face table whose cells carry no padding, margin or rule of their own`, async () => {
+      const tree = await renderComponent(row.component, row.props) as RenderedNode;
+      const [table] = findNodes(tree, (n) => n.type === "table");
+      assert.ok(["tbl", "tbl--own-face"].every((t) => tokensOf(table).includes(t)), `table: ${tokensOf(table)}`);
+      assert.ok(["fs-meta", "font-mono"].every((t) => tokensOf(table).includes(t)), "the body keeps its mono meta face");
+      const heads = findAtoms(tree, "TableHead");
+      assert.ok(heads.length >= 4, "every column header is the shared TableHead");
+      for (const head of heads) {
+        const tokens = tokensOf(head);
+        assert.ok(["font-sans", "uppercase", "tracking-wider", "fs-meta", "text-dim", "font-medium"].every((t) => tokens.includes(t)), `header face kept: ${tokens}`);
+        assert.deepEqual(tokens.filter(isAdHocGeometry), [], `header '${collectText(head).trim()}'`);
+      }
+      const cells = findNodes(tree, (n) => n.type === "td");
+      assert.ok(cells.length > 0);
+      for (const cell of cells) {
+        assert.deepEqual(tokensOf(cell).filter(isAdHocGeometry), [], `cell '${collectText(cell).trim().slice(0, 24)}'`);
+      }
+      const [firstRow] = findNodes(tree, (n) => n.type === "tr").slice(1);
+      const rightCells = findNodes(firstRow, (n) => n.type === "td").filter((td) => tokensOf(td).includes("text-right"));
+      assert.equal(rightCells.length, row.rightCols, "numeric columns keep their right alignment");
+    });
+  }
+
+  test("the screen-local row-height override is retired with the routing", async () => {
+    const src = await import("node:fs").then((fs) => fs.readFileSync(AGENTS_SRC, "utf8"));
+    assert.doesNotMatch(src, /ag-paired-tbl/);
+  });
+
+  const cards = [
+    { name: "Most-failing pairs", component: "TopNFailingAgentsCard", ready: { rows: getFailingRows(3) }, extra: { failureByAgent: new Map() } },
+    { name: "No completion record", component: "LifecycleStatsCard", ready: { rows: getLifecycleRows(3) }, extra: { onSelect: () => undefined } },
+  ];
+  for (const row of cards) {
+    test(`${row.name}: the body is flush while its table renders and padded for loading and empty`, async () => {
+      const flushOf = async (state: unknown) => {
+        const tree = await renderComponent(row.component, { state, days: 30, onRetry: () => undefined, ...row.extra }) as RenderedNode;
+        return findAtoms(tree, "Card")[0]?.props.isFlush;
+      };
+      assert.equal(await flushOf({ status: "ready", data: row.ready, error: null }), true, "table → flush");
+      assert.equal(await flushOf(LOADING_STATE), false, "loading → padded");
+      assert.equal(await flushOf({ status: "ready", data: { rows: [] }, error: null }), false, "empty → padded");
     });
   }
 });

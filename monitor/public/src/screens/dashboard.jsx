@@ -149,7 +149,11 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-tile-hint-rest { display: flex; flex: 1 1 auto; min-width: 0; }
         .dash-tile-hint-fixed { flex-shrink: 0; white-space: pre; }
         .dash-tile-hint-data { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
+        /* detail and plain hint: at most two lines, the whole text in the title; an empty detail renders no node, so it reserves no line */
+        .dash-tile-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+        /* a band row is one height → the split fills its tile and parts value | detail + hint, so every hint (a fixed two-line box)
+           sits on the foot and siblings' hints share one line, whatever their value, delta or detail rows hold */
+        .dash-tile > .kpi-split { flex-grow: 1; align-content: space-between; }
         .dash-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ctl-min-h); }
         /* the shared .btn hover shifts ~4 RGB levels → an underline makes the drill's hover visible */
         .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
@@ -160,7 +164,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; gap: 0.5rem; }
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
         /* tracks capped at the cell cap → capped cells keep even 2px gaps instead of floating in wider tracks */
-        .dash-hour-grid { display: grid; grid-template-columns: 2.5rem repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; line-height: 1; }
+        /* the label track grows to its widest label → a folded "Wed ×2" stays on one line instead of spilling into the first cell */
+        .dash-hour-grid { display: grid; grid-template-columns: minmax(2.5rem, max-content) repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; line-height: 1; }
         .dash-hour-cell { aspect-ratio: 1; background: currentColor; border-radius: 2px; }
         .dash-hour-tick { white-space: nowrap; }
       `}</style>
@@ -169,14 +174,14 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         <PageHeader
           title="Dashboard"
           sub={<span className="fs-meta">Triage</span>}
-          right={
+          freshness={
             <>
               {version && <span className="fs-meta font-mono text-dim">{version}</span>}
               <FreshnessStamp {...getFreshnessInputD(settledAt, waveStates, harness)}/>
-              <RefreshButton isBusy={isWaveBusy} hasRead={settledAt !== null}
-                onRefresh={triggerRefresh} label="Refresh dashboard"/>
             </>
           }
+          refresh={<RefreshButton isBusy={isWaveBusy} hasRead={settledAt !== null}
+            onRefresh={triggerRefresh} label="Refresh dashboard"/>}
         />
       </div>
 
@@ -299,7 +304,7 @@ const SHARED_FAILURE_HINT = `Not loaded — ${POINTER.BANNER}.`;
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(status 자리표시) · error(공용 unavailable 카드) · unavailable/empty(중립 문구) · ready(값).
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
 function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
-  const { RetryButton, CardInfo } = window.UI;
+  const { KPI, RetryButton, CardInfo, Badge, DateRange } = window.UI;
   const cardId = getTileCardId(tile);
   const titleId = `${cardId}-title`;
   const isCovered = tile.status === 'error' && isRetryShared;
@@ -307,36 +312,54 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
   const retry = tile.canRetry && !isRetryShared && (
     <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={cardId}/>
   );
-  return (
-    <div id={cardId} className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
-      aria-busy={tile.isBusy ? 'true' : undefined}>
-      {/* every tile reserves the ⓘ row height → a tile with a note keeps its value on the band's baseline */}
-      <div className="dash-tile-head">
-        <h2 id={titleId} className="fs-meta text-dim uppercase tracking-wide">
-          {tile.label}
-          {tile.window && <span className="normal-case"> ({tile.window})</span>}
-        </h2>
-        {tile.note && (
-          <CardInfo label={tile.noteLabel ?? 'How this is counted'} describedBy={titleId}>
-            <p className="fs-body">{tile.note}</p>
-          </CardInfo>
-        )}
-      </div>
-      {/* a failure is one inset card in the tile carrying its Retry; a banner-carried one points up instead of repeating */}
-      <window.UI.TileSplit lead={<StatusTileValue tile={tile}/>}
-        detail={isFailed ? <TileFailure tile={tile} retry={retry}/> : <TileDetail tile={tile} isCovered={isCovered}/>}/>
+  const hasBadge = tile.status !== 'loading' && (tile.tone !== 'neutral' || tile.isHeld);
+  // the drill stays a foot child, a failed tile's too → the shared foot keeps the four CTAs on one baseline at xl
+  const foot = (!isFailed && retry) || tile.target ? (
+    <>
       {!isFailed && retry}
-      {/* the drill stays a card-foot child, a failed tile's too → mt-auto keeps the four CTAs on one baseline at xl */}
-      {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
-    </div>
+      {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav}/>}
+    </>
+  ) : null;
+  // a failure is one inset card in the hint slot carrying its Retry; a banner-carried one points up instead of repeating
+  return (
+    <KPI id={cardId} labelId={titleId} labelAs="h2" labelClassName="fs-meta text-dim uppercase tracking-wide"
+      label={tile.label} aside={tile.window && `(${tile.window})`}
+      info={tile.note && (
+        <CardInfo label={tile.noteLabel ?? 'How this is counted'} describedBy={titleId}>
+          <p className="fs-body">{tile.note}</p>
+        </CardInfo>
+      )}
+      state={getTileKpiState(tile.status)} loadingLabel={tile.label.toLowerCase()} isBusy={tile.isBusy}
+      value={<StatusTileValue tile={tile}/>} unit={tile.unit}
+      badge={hasBadge && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
+      delta={tile.trend && <div className="fs-meta text-dim"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></div>}
+      hint={isFailed ? <TileFailure tile={tile} retry={retry}/> : <TileDetail tile={tile} isCovered={isCovered}/>}
+      hintFace="text-dim" isSplit foot={foot} className={`dash-tile${tile.isBusy ? ' opacity-70' : ''}`}/>
   );
 }
 
+// tile status → the shared KPI state. unavailable and empty stay 'ready': their builders author the value
+// (a dash, or a low-n count that is still a real figure), so only a failed read takes the KPI's unknown dash.
+const TILE_KPI_STATE = { loading: 'loading', error: 'error' };
+
+function getTileKpiState(status) {
+  return TILE_KPI_STATE[status] ?? 'ready';
+}
+
+// a detail with no text renders no node → no blank line and no reserve; the hint still closes the slot, on the foot
 function TileDetail({ tile, isCovered }) {
+  const { DayTokens } = window.UI;
   const hintData = isCovered ? null : tile.hintData;
+  const detail = isCovered ? null : tile.detail;
+  const hint = isCovered ? SHARED_FAILURE_HINT : tile.hint;
+  const hasDetail = detail != null && detail !== false && detail !== '';
   return (
     <>
-      <div className="fs-body text-dim dash-tile-detail">{isCovered ? null : tile.detail}</div>
+      {hasDetail && (
+        <div className="fs-body text-dim dash-tile-detail dash-tile-clamp" title={getClampTitle(detail)}>
+          <DayTokens>{detail}</DayTokens>
+        </div>
+      )}
       {hintData ? (
         <div className="fs-meta text-dim dash-tile-hint dash-tile-hint-line" title={tile.hint}>
           <span className="dash-tile-hint-fixed">{hintData.lead}</span>
@@ -346,12 +369,17 @@ function TileDetail({ tile, isCovered }) {
           </span>
         </div>
       ) : (
-        <div className="fs-meta text-dim dash-tile-hint">
-          {isCovered ? SHARED_FAILURE_HINT : tile.hint}
+        <div className="fs-meta text-dim dash-tile-hint dash-tile-clamp" title={getClampTitle(hint)}>
+          <DayTokens>{hint}</DayTokens>
         </div>
       )}
     </>
   );
+}
+
+// a clamped line keeps its whole text on hover; a node (none today) carries its own
+function getClampTitle(text) {
+  return typeof text === 'string' && text !== '' ? text : undefined;
 }
 
 // the raw cause rides in the card's Details disclosure → keyboard and screen readers reach it
@@ -366,30 +394,9 @@ function getTileCardId(tile) {
   return `dash-tile-${tile.id}`;
 }
 
+// the value slot — the figure never breaks; unit, badge and trend ride the shared KPI rows beside and below it
 function StatusTileValue({ tile }) {
-  const { Badge, KpiValue, LoadingPlaceholder } = window.UI;
-  if (tile.status === 'loading') {
-    // an empty .kpi-value strut holds the loaded row's line box → the tile keeps its height when the value lands
-    return (
-      <div className="flex items-center gap-2">
-        <span className="kpi-value" aria-hidden="true">{'\u200b'}</span>
-        <LoadingPlaceholder label={tile.label.toLowerCase()}/>
-      </div>
-    );
-  }
-  // value + unit never break apart or wrap → a narrow tile drops the badge to its own line instead
-  return (
-    <div className="flex flex-col gap-0.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <div className="flex items-center gap-2">
-          <KpiValue><span className="whitespace-nowrap">{tile.value}</span></KpiValue>
-          {tile.unit && <span className="fs-body text-dim">{tile.unit}</span>}
-        </div>
-        {(tile.tone !== 'neutral' || tile.isHeld) && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
-      </div>
-      {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
-    </div>
-  );
+  return <span className="whitespace-nowrap">{tile.value}</span>;
 }
 
 // the week behind the triage band → each panel states its own span (the strip 7 days, the results 7 days + today)
@@ -462,12 +469,12 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
 }
 
 function SpendStrip({ strip }) {
-  if (strip.bars.length === 0) return <p className="fs-meta text-dim">No spend recorded in the last 7 days.</p>;
+  if (strip.bars.length === 0) return <p className="fs-meta text-dim">No spend recorded in the last <window.UI.NoWrap>7 days</window.UI.NoWrap>.</p>;
   const max = Math.max(...strip.bars.map((bar) => bar.cost)) || 1;
   const hasPartial = strip.bars.some((bar) => bar.isPartial);
   return (
     <>
-      <p className="fs-meta text-dim">{strip.span}{hasPartial ? ' · today is still accruing' : ''}</p>
+      <p className="fs-meta text-dim"><window.UI.DayTokens>{strip.span}</window.UI.DayTokens>{hasPartial ? ' · today is still accruing' : ''}</p>
       <ol className="grid grid-cols-7 gap-1" aria-label={`Spend per day, ${strip.span}`}>
         {strip.bars.map((bar) => (
           <li key={bar.date} className="flex flex-col items-center gap-1 min-w-0">
@@ -493,11 +500,11 @@ const RESULT_ROW_META = {
 };
 
 function ResultPanel({ panel }) {
-  if (panel.writerTotal <= 0) return <p className="fs-meta text-dim">No reported outcomes, {panel.span}.</p>;
+  if (panel.writerTotal <= 0) return <p className="fs-meta text-dim">No reported outcomes, <window.UI.DayTokens>{panel.span}</window.UI.DayTokens>.</p>;
   return (
     <>
       <p className="fs-meta text-dim">
-        {panel.span} · {formatInt(panel.writerTotal)} reported outcomes, the tile's count
+        <window.UI.DayTokens>{panel.span}</window.UI.DayTokens> · {formatInt(panel.writerTotal)} reported outcomes, the tile's count
       </p>
       <ul className="flex flex-col gap-1.5">
         {panel.rows.map((row) => {
@@ -550,19 +557,22 @@ const HOUR = {
 };
 
 function HourGrid({ grid }) {
-  if (grid.total <= 0) return <p className="fs-meta text-dim">No runs recorded in the last 7 days.</p>;
+  const { NoWrap } = window.UI;
+  if (grid.total <= 0) return <p className="fs-meta text-dim">No runs recorded in the last <NoWrap>7 days</NoWrap>.</p>;
   return (
     <>
-      <p className="fs-meta text-dim">{grid.span} · {formatInt(grid.total)} runs · {HOUR.GRID_BASIS}</p>
+      <p className="fs-meta text-dim"><window.UI.DayTokens>{grid.span}</window.UI.DayTokens> · {formatInt(grid.total)} runs · {HOUR.GRID_BASIS}</p>
       {grid.folds.length > 0 && (
         <p className="fs-meta text-dim">
-          {grid.folds.map((row) => `${row.day} ×2 sums ${row.fold}`).join(' · ')} — runs are counted by weekday, not by date.
+          {grid.folds.map((row, at) => (
+            <React.Fragment key={row.day}>{at > 0 && ' · '}<NoWrap>{`${row.day} ×2`}</NoWrap>{` sums ${row.fold}`}</React.Fragment>
+          ))} — runs are counted by weekday, not by date.
         </p>
       )}
       <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid fs-meta text-dim">
         {grid.rows.map((row) => (
           <React.Fragment key={row.day}>
-            <span title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
+            <span className="whitespace-nowrap" title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
             {row.counts.map((count, hour) => (
               <span key={hour} className="dash-hour-cell text-info" title={`${getRowLabel(row)} ${formatHour(hour)} — ${formatInt(count)} runs`}
                 style={{ opacity: count === 0 ? 0.06 : 0.2 + (0.8 * count) / grid.max }}/>
@@ -1007,10 +1017,13 @@ function buildOutcomeTile(outcomesState) {
   const pending = buildPendingTile(base, outcomesState);
   if (pending) return pending;
   const rate = window.UI.resolveOutcomeRate(outcomesState.data);
+  const prior = outcomesState.data?.prior_window;
+  const trend = describeOutcomeTrend(rate, prior);
+  // trend stays a plain string; the range token rides beside it so the render keeps it whole
   return {
     ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, badge: OUTCOME_VERDICT[rate.status],
     value: describeOutcomeValue(rate), detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate),
-    trend: describeOutcomeTrend(rate, outcomesState.data?.prior_window), note: OUTCOME_COUNTING_NOTE,
+    trend, trendRange: trend ? window.UI.formatDayRange(prior) : null, note: OUTCOME_COUNTING_NOTE,
   };
 }
 
@@ -1046,7 +1059,7 @@ function describeOutcomeHint(rate) {
 // shares, never counts → a busier week at the same failure rate reads level
 function describeOutcomeTrend(rate, prior) {
   if (!prior || !Object.hasOwn(OUTCOME_VERDICT, rate.status)) return null;
-  const priorRange = formatDayRange(prior);
+  const priorRange = window.UI.formatDayRange(prior);
   const priorRate = window.UI.resolveOutcomeRate(prior);
   if (!Object.hasOwn(OUTCOME_VERDICT, priorRate.status)) return `No comparison — too few reported outcomes in ${priorRange}`;
   const points = (rate.breakage / rate.writerTotal - priorRate.breakage / priorRate.writerTotal) * 100;
@@ -1059,12 +1072,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // server-anchored YYYY-MM-DD → MM-DD; never re-derived from the browser clock
 function formatDay(date) {
   return String(date).slice(5, 10);
-}
-
-// period_end is exclusive → the last day shown is the day before it
-function formatDayRange({ period_start: start, period_end: end }) {
-  const last = new Date(Date.parse(`${end}T00:00:00Z`) - DAY_MS).toISOString().slice(0, 10);
-  return `${formatDay(start)} – ${formatDay(last)}`;
 }
 
 function formatAlertLine(share) {
@@ -1096,7 +1103,7 @@ function buildFleetTile(agentsState) {
   return {
     ...base, status: 'ready', tone, badge: FLEET_VERDICT[tone], value: formatInt(suspended), unit: 'suspended',
     detail: `${formatInt(streak)} on a failing streak`,
-    trend: describeFleetReach(agentCount, Number(breaker.registry_agents)),
+    trend: describeFleetReach(agentCount, Number(breaker.registry_agents)), trendRange: FLEET_REACH_SPAN,
     ...describeBusiestAgent(agentsState.data?.agents?.[0]),
   };
 }
@@ -1104,8 +1111,11 @@ function buildFleetTile(agentsState) {
 function describeFleetReach(agentCount, registryCount) {
   if (!Number.isFinite(agentCount)) return null;
   const of = Number.isFinite(registryCount) && registryCount > 0 ? ` of ${formatInt(registryCount)} registered` : '';
-  return `${formatInt(agentCount)}${of} agents had a run in the last 7 days`;
+  return `${formatInt(agentCount)}${of} agents had a run in the last ${FLEET_REACH_SPAN}`;
 }
+
+// the reach window — the delta row keeps it whole as one token (DateRange)
+const FLEET_REACH_SPAN = '7 days';
 
 // the region reads order=runs&limit=1 → its one row is the busiest agent of the window
 function describeBusiestAgent(row) {

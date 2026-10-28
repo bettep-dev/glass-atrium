@@ -370,6 +370,9 @@ function ScreenImprovement({ onNav }) {
         @keyframes spinI { from{transform:rotate(0)} to{transform:rotate(360deg)} }
         @media (prefers-reduced-motion: reduce) { .i-act-spin { animation-duration:0.01ms !important; } }
         .i-row-card { cursor:pointer; }
+        /* icon + label head: the icon centres on the label's first line (1lh), unshrunk, whether or not the label wraps */
+        .i-icon-head { display:flex; align-items:flex-start; gap:var(--space-1); }
+        .i-icon-head > svg { flex-shrink:0; margin-top:calc((1lh - var(--fs-meta)) / 2); }
         /* interactive tile — hover = raised-2 shadow step + faint ring, never a transform lift */
         .i-tile-hover { transition:box-shadow 120ms; }
         .i-tile-hover:hover { box-shadow:0 0 0 1px rgb(var(--faint)), var(--shadow-raised-2); }
@@ -399,6 +402,9 @@ function ScreenImprovement({ onNav }) {
         .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
         /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
         .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
+        /* plain ledger rows — one pattern | agent | date grid, each row a subgrid, so agent and date line up down the list */
+        .i-plain-rows { display:grid; grid-template-columns:minmax(0,1fr) auto auto; column-gap:var(--space-2); row-gap:var(--space-1); }
+        .i-plain-rows > li { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
         /* awaiting zone — 0 rows = slim neutral idle strip · 1+ rows = the warn AlertCard over the scrolling list */
@@ -412,7 +418,7 @@ function ScreenImprovement({ onNav }) {
         /* applied hero — ink count below the status band's figure size · ✓ + label grouped so the glyph centres on the label */
         .i-applied-hero { gap:6px; }
         /* T5 — REJECTED 컴팩트 행(단일행 · rationale 숨김 · 중립 chrome). --crit 는 ✕ 심볼에만. */
-        .i-compact-row { display:flex; align-items:center; gap:6px; padding:5px 8px; }
+        .i-compact-row { display:flex; align-items:center; gap:6px; padding:var(--space-1_5) var(--space-2); }
         /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
         .i-more-btn { display:flex; flex-shrink:0; align-items:center; justify-content:center; gap:4px; width:100%;
           padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
@@ -422,20 +428,19 @@ function ScreenImprovement({ onNav }) {
       `}</style>
 
 			<div className="flex-shrink-0">
+				{/* the view switch re-lays the whole screen, so it rides `actions`, set apart from the status group */}
 				<PageHeader
 					sub="Self-improvement loop"
 					title="Learning"
-					right={
-						<div className="flex items-center gap-2">
-							<FreshnessStamp at={asOf} regions={regionStates} />
-							<ViewToggleI view={view} onChange={setView} />
-							<RefreshButton
-								isBusy={isBusy}
-								hasRead={asOf !== null}
-								onRefresh={triggerRefresh}
-								label="Refresh learning data"
-							/>
-						</div>
+					actions={<ViewToggleI view={view} onChange={setView} />}
+					freshness={<FreshnessStamp at={asOf} regions={regionStates} />}
+					refresh={
+						<RefreshButton
+							isBusy={isBusy}
+							hasRead={asOf !== null}
+							onRefresh={triggerRefresh}
+							label="Refresh learning data"
+						/>
 					}
 				/>
 			</div>
@@ -559,7 +564,7 @@ function StatusBandI({
 	onOpenInstrumentation,
 	onRetry,
 }) {
-	const { PageVerdict } = window.UI;
+	const { PageVerdict, NoWrap } = window.UI;
 	const s = statsState.data || {};
 	const cycleTotal = Number(s.cycle_total_7d ?? 0);
 	const applied = Number(s.cycles_generated_applied_7d ?? 0);
@@ -570,6 +575,9 @@ function StatusBandI({
 	);
 	const statsStatus = bandTileStatusI(statsState, statsState.data);
 	const appliedHeld = getHeldLabelI(asOf, statsState);
+	// the stamp renders as one unbreakable token; the plain-string pair also feeds the clamped hint's title
+	const appliedLead = `${appliedHeld ? `${appliedHeld} · ` : ""}of ${getCycleCountTextI(cycleTotal)} · last `;
+	const appliedStamp = formatCycleStampI(s.latest_cycle_started_at);
 	// a waiting suggestion warns whatever the read's age; only the all-clear needs a fresh read
 	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
 	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
@@ -595,7 +603,8 @@ function StatusBandI({
 			>
 				{verdict.sentence}
 			</PageVerdict>
-			<div className="grid grid-cols-4 gap-3">
+			{/* two columns below xl, as the Dashboard and Cost bands → a narrow tile keeps its label and hint readable */}
+			<div className="grid grid-cols-2 xl:grid-cols-4 gap-card">
 				<StatusTileI
 					status={bandTileStatusI(listState, listState.data)}
 					tone={awaiting > 0 ? "text-warn" : awaitingHeld ? undefined : "text-ok"}
@@ -614,7 +623,13 @@ function StatusBandI({
 					label="Applied (7 days)"
 					value={formatIntI(applied)}
 					owner="loop output"
-					population={`${appliedHeld ? `${appliedHeld} · ` : ""}of ${getCycleCountTextI(cycleTotal)} · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
+					population={
+						<>
+							{appliedLead}
+							<NoWrap>{appliedStamp}</NoWrap>
+						</>
+					}
+					populationTitle={`${appliedLead}${appliedStamp}`}
 					basis="Cycles started in the last 7 days"
 					onRetry={onRetry}
 				/>
@@ -770,7 +785,9 @@ function bandTileStatusI(state, value) {
 	return status === "error" ? "announced" : status;
 }
 
-function StatusTileI({ status, tone, symbol, label, value, population, basis, owner, onRetry }) {
+// label: the glyph stays whole and centred on the text line; the text ellipsizes in its own span, its full text in that span's title.
+// hint: ≤2 lines, clamped; the title carries the whole population line (populationTitle when the line is a node), then its basis.
+function StatusTileI({ status, tone, symbol, label, value, population, populationTitle, basis, owner, onRetry }) {
 	const { KPI } = window.UI;
 	if (status !== "ready") {
 		return (
@@ -782,16 +799,22 @@ function StatusTileI({ status, tone, symbol, label, value, population, basis, ow
 			/>
 		);
 	}
+	const hintText = populationTitle ?? (typeof population === "string" ? population : undefined);
+	const hintTitle = [hintText, basis].filter(Boolean).join("\n") || undefined;
 	return (
 		<KPI
 			label={
-				<span className="inline-flex items-center gap-1.5">
-					{symbol ? <SymI s={symbol} className={tone} size={12} /> : null}
-					{label}
+				<span className="flex items-baseline gap-1.5 min-w-0">
+					{symbol ? <SymI s={symbol} className={`${tone ?? ""} self-center shrink-0`.trim()} size={12} /> : null}
+					<span className="truncate min-w-0" title={label}>
+						{label}
+					</span>
 				</span>
 			}
 			value={value}
-			hint={basis ? <span title={basis}>{population}</span> : population}
+			hint={population}
+			hintTitle={hintTitle}
+			isHintClamped
 			hintClassName="fs-meta"
 		/>
 	);
@@ -799,34 +822,36 @@ function StatusTileI({ status, tone, symbol, label, value, population, basis, ow
 
 // 값 자리에 절대 0 을 쓰지 않는다 — 적재되지 않은 payload 가 0 으로 읽히는 것이 이 밴드가
 // 막으려는 단 하나의 오독이다. 세 상태는 문구도 형태도 서로 다르다.
+// The ready tile's own KPI anatomy carries every state → the label row and tile height hold when the value lands.
+const TILE_PLACEHOLDER_STATE_I = { loading: "loading", error: "error", unavailable: "empty", announced: "error" };
+
 function TilePlaceholderI({ status, label, owner, onRetry }) {
-	const { LoadingPlaceholder } = window.UI;
+	const { KPI } = window.UI;
+	const notes = {
+		error: "Couldn't load",
+		unavailable: "Not measured — this payload carried no value for it",
+		announced: `Not read — see the ${owner} below`,
+	};
 	return (
-		<div className="sub-card bg-elev p-2.5 min-w-0">
-			<div className="fs-meta text-faint min-h-[2.4em]">{label}</div>
-			{status === "loading" ? (
-				<LoadingPlaceholder label={label} minHeight={28} className="mt-1" />
-			) : null}
-			{status === "error" ? (
-				<button
-					className="btn ghost sm mt-1"
-					onClick={onRetry}
-					aria-label={`Retry loading ${label}`}
-				>
-					Couldn't load — retry
-				</button>
-			) : null}
-			{status === "unavailable" ? (
-				<div className="card-sub is-wrap fs-meta mt-1">
-					Not measured — this payload carried no value for it
-				</div>
-			) : null}
-			{status === "announced" ? (
-				<div className="card-sub is-wrap fs-meta mt-1">
-					Not read — see the {owner} below
-				</div>
-			) : null}
-		</div>
+		<KPI
+			label={label}
+			state={TILE_PLACEHOLDER_STATE_I[status] ?? "empty"}
+			loadingLabel={label}
+			hint={notes[status]}
+			hintFace="card-sub is-wrap"
+			foot={
+				status === "error" ? (
+					<button
+						type="button"
+						className="btn ghost sm"
+						onClick={onRetry}
+						aria-label={`Retry loading ${label}`}
+					>
+						Retry
+					</button>
+				) : null
+			}
+		/>
 	);
 }
 
@@ -885,7 +910,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.trend}
 						source="loop events"
@@ -903,7 +928,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<LoadingPlaceholder label="the trend" minHeight={60} />
 				</div>
 			</div>
@@ -916,7 +941,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<div className="placeholder">Not enough days to plot a trend</div>
 				</div>
 			</div>
@@ -1057,9 +1082,9 @@ function CycleDecompositionRowI({ stats }) {
 
 	// 카테고리 = symbol+tone+label 로 dual-encode(색 단독 아님), 수량 = neutral count Badge(color≠count 규칙).
 	return (
-		<div className="flex items-center gap-2.5 mt-2 px-5 flex-wrap">
+		<div className="flex items-center gap-2 mt-2 px-4 flex-wrap">
 			<span className="fs-meta text-faint uppercase tracking-wider">
-				Run breakdown (7 days)
+				Run breakdown (<window.UI.NoWrap>7 days</window.UI.NoWrap>)
 			</span>
 			{chips.map(([sym, tone, label, count]) => (
 				<span key={label} className="fs-meta inline-flex items-center gap-1.5">
@@ -1393,7 +1418,9 @@ function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
 			<SymI s={symbol} className="text-crit" size={13} />
 			<span className="text-dim">{label}</span>
 			<span className="text-ink tnum">{formatIntI(count)}</span>
-			<span className="text-faint normal-case tracking-normal truncate min-w-0">{basis}</span>
+			<span className="text-faint normal-case tracking-normal truncate min-w-0" title={basis}>
+				{basis}
+			</span>
 			{hasSpark ? (
 				<span className="ml-auto flex items-center gap-1">
 					<RejectSparkI trend={trend} />
@@ -1598,7 +1625,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 			<button
 				type="button"
 				onClick={onClick}
-				className="i-row-card text-left p-2.5 w-full block"
+				className="i-row-card text-left p-3 w-full block"
 				aria-label={`View suggestion ${row.id} details`}
 			>
 				{/* 반복 메타를 단일 배지 행으로 통합(USER) — 전부 canonical window.UI.Badge(.pill family)로 렌더.
@@ -1687,7 +1714,7 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 		if (!isPending) fn();
 	};
 	return (
-		<div className="px-2.5 pb-2.5 pt-0">
+		<div className="px-3 pb-3 pt-0">
 			{isSafety && (
 				<div className="fs-meta text-dim mb-1.5 flex items-center gap-1">
 					<SymI s="⚠" className="text-warn" size={11} /> Your call
@@ -1870,8 +1897,9 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 				visual: (
 					<div className="grid grid-cols-2 gap-2">
 						{cards.map(([sym, tone, label, , hint]) => (
-							<div key={label} className="sub-card bg-elev p-2.5 min-w-0">
-								<div className="flex items-start gap-1.5 fs-meta">
+							<div key={label} className="sub-card bg-elev p-3 min-w-0">
+								{/* icon + label: one atom, the meta-size icon centred on the label's first line, 4 apart */}
+								<div className="i-icon-head fs-meta">
 									<SymI s={sym} className={tone} size={13} />
 									<span>{label}</span>
 								</div>
@@ -2018,16 +2046,16 @@ function LedgerPlainRowsI({ rows }) {
 		);
 	}
 	return (
-		<ul className="mt-1.5 flex flex-col gap-1">
+		<ul className="mt-1.5 i-plain-rows">
 			{rows.map((r) => (
-				<li key={r.id} className="flex items-center gap-2 fs-body">
+				<li key={r.id} className="fs-body">
 					<span
 						className="text-ink truncate min-w-0"
 						title={patternNameI(r.pattern_signature, r.agent)}
 					>
 						{truncateI(patternNameI(r.pattern_signature, r.agent), 120)}
 					</span>
-					<window.UI.AgentName name={r.agent} className="text-dim shrink-0" />
+					<window.UI.AgentName name={r.agent} className="text-dim whitespace-nowrap" />
 					<span className="font-mono fs-meta text-faint shrink-0 tnum">
 						{formatDateFullI(r.discovered_date)}
 					</span>
@@ -2041,7 +2069,7 @@ function LedgerPlainRowsI({ rows }) {
 function LedgerSectionHeadI({ label, basis, count }) {
 	return (
 		<div className="fs-meta text-dim mb-1">
-			{label} · {basis} <span className="tnum">({formatIntI(count)})</span>
+			{label} · <window.UI.DayTokens>{basis}</window.UI.DayTokens> <span className="tnum">({formatIntI(count)})</span>
 		</div>
 	);
 }
@@ -2074,8 +2102,8 @@ function LedgerRecurrenceSectionI({ suppression }) {
 				className="fs-meta text-dim mb-1"
 				title="Recurrences, not distinct patterns — these mechanisms write no lifecycle transition, so the same row is re-suppressed on every cycle."
 			>
-				Recurrence rates — last {formatIntI(windowDays)} days ·{" "}
-				{formatIntI(windowCycles)} cycle days
+				Recurrence rates — last <window.UI.NoWrap>{formatIntI(windowDays)} days</window.UI.NoWrap> ·{" "}
+				<window.UI.NoWrap>{formatIntI(windowCycles)} cycle days</window.UI.NoWrap>
 			</div>
 			<RecurrenceRowsI buckets={buckets} windowCycles={windowCycles} />
 		</div>
@@ -2085,28 +2113,28 @@ function LedgerRecurrenceSectionI({ suppression }) {
 // 재발 행 — 영향 에이전트 + 사이클 커버리지가 앞, 이벤트 수는 뒤(항목 볼륨은 선두 금지).
 function RecurrenceRowsI({ buckets, windowCycles }) {
 	return (
-		<table className="w-full fs-meta">
-			<thead>
+		<table className="i-recurrence-tbl w-full fs-meta">
+			<thead className="tbl-head">
 				<tr className="text-faint uppercase tracking-wider">
-					<th className="text-left py-1.5 pl-1.5">Cause</th>
-					<th className="text-right py-1.5 pl-4">Agents affected</th>
-					<th className="text-right py-1.5 pl-4">Cycle days</th>
-					<th className="text-right py-1.5 pl-4 pr-1.5">Events</th>
+					<th className="text-left pl-1.5">Cause</th>
+					<th className="text-right pl-4">Agents affected</th>
+					<th className="text-right pl-4">Cycle days</th>
+					<th className="text-right pl-4 pr-1.5">Events</th>
 				</tr>
 			</thead>
-			<tbody>
+			<tbody className="tbl-compact">
 				{buckets.map((b) => (
 					<tr key={b.cause} className="border-t border-line/50">
-						<td className="text-left py-1 pl-1.5 text-ink" title={b.hint}>
+						<td className="text-left pl-1.5 text-ink" title={b.hint}>
 							{b.label}
 						</td>
-						<td className="text-right py-1 pl-4 text-ink tnum">
+						<td className="text-right pl-4 text-ink tnum">
 							{formatIntI(Number(b.agents ?? 0))}
 						</td>
-						<td className="text-right py-1 pl-4 text-ink tnum">
+						<td className="text-right pl-4 text-ink tnum">
 							{formatIntI(Number(b.cycles ?? 0))} of {formatIntI(windowCycles)}
 						</td>
-						<td className="text-right py-1 pl-4 pr-1.5 text-dim tnum">
+						<td className="text-right pl-4 pr-1.5 text-dim tnum">
 							{formatIntI(Number(b.count ?? 0))}
 						</td>
 					</tr>
@@ -2122,7 +2150,7 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 function LedgerFooterI({ total, declined }) {
 	return (
 		<div className="card-foot">
-			{`${formatIntI(total)} patterns · ${formatIntI(declined)} declined, all time · rows above: last 7 days`}
+			<window.UI.DayTokens>{`${formatIntI(total)} patterns · ${formatIntI(declined)} declined, all time · rows above: last 7 days`}</window.UI.DayTokens>
 		</div>
 	);
 }
@@ -2138,7 +2166,7 @@ function LedgerNotesI({ suppression }) {
 	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
 	return (
 		<div className="flex flex-col gap-3 fs-body">
-			<p>The live and inert rows are the last 7 days of discovery; totals and declines are all time.</p>
+			<p>The live and inert rows are the last <window.UI.NoWrap>7 days</window.UI.NoWrap> of discovery; totals and declines are all time.</p>
 			{[...causes.values()].map((b) => (
 				<p key={`${b.cause}:${b.hint}`}>
 					<span className="text-ink font-semibold">{b.label}</span> — {b.hint}
@@ -2218,7 +2246,7 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 					<div key={label}>
 						<div className={`${labelCls} mb-1`}>{label}</div>
 						{mono ? (
-							<pre className="fs-meta font-mono text-dim bg-sunken p-2.5 rounded-md whitespace-pre-wrap break-words">
+							<pre className="fs-meta font-mono text-dim bg-sunken px-3 py-2 rounded-md whitespace-pre-wrap break-words">
 								{value}
 							</pre>
 						) : (
@@ -2243,7 +2271,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 	return (
 		<div>
 			<div className={`${labelCls} mb-1`}>PRE-VERIFY</div>
-			<div className="bg-sunken p-2.5 rounded-md flex flex-col gap-2">
+			<div className="bg-sunken p-3 rounded-md flex flex-col gap-2">
 				<div className="flex items-center gap-1.5 fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
 					<span className="text-dim">{badge.label}</span>
@@ -2454,7 +2482,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.changeSummary}
 						source="loop events"
@@ -2472,7 +2500,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<LoadingPlaceholder label="applied changes" minHeight={68} />
 				</div>
 			</div>
@@ -2486,7 +2514,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -2518,7 +2546,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 						<div className="fs-meta text-faint uppercase tracking-wider">
 							Lines changed
 						</div>
-						<div className="mt-1 flex items-baseline gap-x-5 gap-y-1 flex-wrap">
+						<div className="mt-1 flex items-baseline gap-x-4 gap-y-1 flex-wrap">
 							<LineCountI
 								symbol="＋"
 								tone="text-ok"
@@ -2542,7 +2570,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	);
 }
 
-// One loop-card anatomy → metric, visual and foot start at the same offsets in all three cards.
+// One loop-card anatomy → metric, visual and foot start at the same offsets in all three cards; the foot keeps its day tokens whole.
 function getLoopSlotsI({ metric, visual, foot }) {
 	const { CARD_SLOTS } = window.UI;
 	return (
@@ -2551,15 +2579,18 @@ function getLoopSlotsI({ metric, visual, foot }) {
 			<div className="i-loop-visual" style={{ height: CARD_SLOTS.S.plotPx }}>
 				{visual}
 			</div>
-			<div className="card-foot">{foot}</div>
+			<div className="card-foot">
+				<window.UI.DayTokens>{foot}</window.UI.DayTokens>
+			</div>
 		</>
 	);
 }
 
 function LineCountI({ symbol, tone, count, word, title }) {
 	return (
+		// numeral and word share a baseline; the sign glyph centres on the numeral's line box (an svg would sit on the baseline by its bottom edge)
 		<span className="inline-flex items-baseline gap-1" title={title}>
-			<SymI s={symbol} className={tone} size={13} />
+			<SymI s={symbol} className={`${tone} self-center`} size={13} />
 			<span className="fs-display font-semibold text-ink">{formatIntI(count)}</span>
 			<span className="fs-meta text-dim">{word}</span>
 		</span>
@@ -2729,7 +2760,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 			<div className="px-3 pb-3">
 				{head}
 				<div className="placeholder">
-					No candidate patterns in the last 7 days
+					No candidate patterns in the last <window.UI.NoWrap>7 days</window.UI.NoWrap>
 				</div>
 			</div>
 		);
@@ -2778,7 +2809,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="sub-card i-row-card i-tile-hover bg-elev text-left p-2.5 w-full flex items-center gap-2"
+			className="sub-card i-row-card i-tile-hover bg-elev text-left p-3 w-full flex items-center gap-2"
 			aria-label={`Candidate ${rank}: ${label}${pattern.agent ? ` — ${pattern.agent}` : ""} — seen ${freq} times`}
 		>
 			<span

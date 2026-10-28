@@ -372,7 +372,7 @@ test("the run-history summary fits the 32-character header-meta cap at its wides
   const summary = helpers.describeRunHistoryW(cycles, helpers.buildThroughputModel(cycles), ready({ cycle_p95_ms: 125000 }));
   helpers.window.UI.formatDuration = originalFormat;
 
-  assert.match(summary, /^30 runs in 30 d\b.*p95 125000ms$/);
+  assert.match(summary, /^30 runs in 30d\b.*p95 125000ms$/);
   assert.ok(summary.length <= 32, `"${summary}" is ${summary.length} chars`);
 });
 
@@ -535,7 +535,7 @@ test("parked proposals fold into the verdict sentence with their count, oldest a
     proposalBacklog(["a", "b", "c"], { a: isoDaysAgo(79), b: isoDaysAgo(70), c: isoDaysAgo(67) }),
     unchangedCycles(30),
   );
-  assert.match(verdict.text, /3 merges parked, oldest 79 d/);
+  assert.match(verdict.text, /3 merges parked, oldest 79d/);
   assert.match(verdict.text, /0 compiled/);
   assert.equal(verdict.chips.length, 1);
   assert.equal(typeof verdict.chips[0].targetId, "string");
@@ -551,9 +551,9 @@ describe("the compiled tile names why it reads zero, adds the window total and t
   const cycles = ready({ cycles: [4, 0, 8].map((compiled_count, i) => ({ run_date: isoDaysAgo(i), compiled_count })) });
   const backlog = (waiting: number) => ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: waiting } });
   const rows = [
-    { name: "idle — nothing waiting stays quiet", compiled: 0, waiting: 0, sub: /^Nothing waiting · 12 in 3 d$/, tone: "neutral" },
-    { name: "stalled — originals waiting with none compiled tints", compiled: 0, waiting: 5, sub: /^Stalled · 5 waiting · 12 in 3 d$/, tone: "warn" },
-    { name: "producing — a compiled cycle shows the window total only", compiled: 4, waiting: 5, sub: /^12 in 3 d$/, tone: "neutral" },
+    { name: "idle — nothing waiting stays quiet", compiled: 0, waiting: 0, sub: /^Nothing waiting · 12 in 3d$/, tone: "neutral" },
+    { name: "stalled — originals waiting with none compiled tints", compiled: 0, waiting: 5, sub: /^Stalled · 5 waiting · 12 in 3d$/, tone: "warn" },
+    { name: "producing — a compiled cycle shows the window total only", compiled: 4, waiting: 5, sub: /^12 in 3d$/, tone: "neutral" },
   ];
   for (const row of rows) {
     test(row.name, () => {
@@ -584,8 +584,8 @@ describe("every tile sub fits the 40-character KPI-hint cap at its widest", () =
     ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: 9999, deadlink_dryrun: deadlinks, ...extra } });
   const index = ready({ notes_total: 9999, has_dirty_flag: true, dirty: false });
   const rows = [
-    { name: "compiled, stalled over 90 days", tile: () => glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: 0 }), backlog({}), ninetyDays), sub: /^Stalled · 9,999 waiting · 9,999 in 90 d$/ },
-    { name: "compiled, idle over 90 days", tile: () => glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: 0 }), backlog({ true_backlog: 0 }), ninetyDays), sub: /^Nothing waiting · 9,999 in 90 d$/ },
+    { name: "compiled, stalled over 90 days", tile: () => glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: 0 }), backlog({}), ninetyDays), sub: /^Stalled · 9,999 waiting · 9,999 in 90d$/ },
+    { name: "compiled, idle over 90 days", tile: () => glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: 0 }), backlog({ true_backlog: 0 }), ninetyDays), sub: /^Nothing waiting · 9,999 in 90d$/ },
     { name: "library, stale snapshot", tile: () => libraryTile(index, backlog({ run_date: isoDaysAgo(9) })), sub: /^9,999 waiting · 9,999 broken links$/ },
     { name: "library, undated snapshot", tile: () => libraryTile(index, backlog({ run_date: null })), sub: /^9,999 waiting · 9,999 broken links$/ },
     { name: "library, originals unreported", tile: () => libraryTile(index, backlog({ true_backlog: undefined })), sub: /^Waiting unreported · 9,999 broken links$/ },
@@ -687,6 +687,12 @@ test("the per-run fold's summary fits the 32-character header-meta cap at its wi
   }
 });
 
+// Compact units: the day unit is spaceless, so "30d" never breaks between the number and its unit.
+test("an empty run window names its days with the spaceless day unit", () => {
+  const h = helpers as unknown as { describeRunTableW: (state: FetchState, days: number) => string };
+  assert.equal(h.describeRunTableW(ready({ reports: [] }), 30), "No runs in 30d");
+});
+
 describe("the run trend fills every calendar day between its first and last run", () => {
   const h = helpers as unknown as {
     buildThroughputModel: (state: FetchState) => { compiledDates: string[]; compiledSeries: number[]; spanDays: number; total: number; rows: unknown[] };
@@ -728,6 +734,6 @@ test("the compiled tile and Run history name the same span for the same total", 
   const cycles = ready({ cycles: [["2026-09-01", 20], ["2026-09-18", 0], ["2026-09-29", 2]].map(([run_date, compiled_count]) => ({ run_date, compiled_count, status: "ok" })) });
   const tile = glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: 2 }), ready({ backlog: null }), cycles);
   const history = h.describeRunHistoryW(cycles, h.buildThroughputModel(cycles), ready({}));
-  assert.match(tile.sub ?? "", /\b22 in 29 d\b/);
-  assert.match(history, /^3 runs in 29 d\b/, "runs are counted as runs over the same span");
+  assert.match(tile.sub ?? "", /\b22 in 29d\b/);
+  assert.match(history, /^3 runs in 29d\b/, "runs are counted as runs over the same span");
 });

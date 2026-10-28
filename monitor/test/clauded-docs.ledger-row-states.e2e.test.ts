@@ -10,7 +10,7 @@ import vm from "node:vm";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
-import { createReactStub, collectText, findNodes, loadScreenModule, renderScreen } from "./lib/render-screen.js";
+import { createReactStub, collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { compositeOver, contrastRatio, parseColor, type Rgba } from "./lib/wcag-contrast.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -47,7 +47,7 @@ const ledgerPage = (theme: string) => `<!doctype html><html data-theme="${theme}
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
       <td><span class="doc-stage-meter"><span class="stage-pip"></span></span></td>
-      <td class="dim" style="color: rgb(var(--dim));">2026-10-04<div class="doc-age-flag"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span> stale</div></td>
+      <td class="doc-age-cell doc-col-num dim" style="color: rgb(var(--dim));"><div class="doc-age-line"><span class="doc-age-value">15d</span><span class="doc-age-flag"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
       <td><span class="faint" style="color: rgb(var(--faint));">—</span></td>
       <td class="title-cell"><span class="glyph-crit" style="color: rgb(var(--crit));">!</span> <span class="doc-title-text" style="color: rgb(var(--ink));">Plan</span></td>
     </tr>`).join("")}
@@ -241,4 +241,156 @@ describe("row-state contrast floors on every fill", () => {
       }
     });
   }
+});
+
+// host-element tree → HTML, so the browser lays out the shipped DocAgeCellCD markup, not a hand copy of it
+function toHtml(node: RenderedNode | string): string {
+  if (typeof node === "string") return node.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  if (!/^[a-z]/.test(node.type)) return node.children.map(toHtml).join("");
+  const attrs = Object.entries(node.props)
+    .filter(([key, value]) => key !== "children" && value != null && value !== false && typeof value !== "function")
+    .map(([key, value]) => {
+      const name = key === "className" ? "class" : key.startsWith("stroke") ? key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`) : key;
+      const text =
+        key === "style"
+          ? Object.entries(value as Record<string, unknown>).map(([prop, v]) => `${prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}: ${String(v)}`).join("; ")
+          : String(value);
+      return ` ${name}="${text.replace(/"/g, "&quot;")}"`;
+    })
+    .join("");
+  return `<${node.type}${attrs}>${node.children.map(toHtml).join("")}</${node.type}>`;
+}
+
+const ageCellHtml = (label: string) =>
+  toHtml(renderScreen((docsScreen.DocAgeCellCD as (props: unknown) => unknown)({ createdAt: "2026-10-04T00:00:00Z", age: { label }, isStale: true })) as RenderedNode);
+
+// a Created column at its floor holding stale rows → the age and its glyph share one line box inside the floor; --fs-meta raised on one cell stands in for a wider face.
+// The app loads Tailwind preflight and .sr-only from its CDN; the rules below are the ones this geometry depends on (as in ui.row-geometry) — the block svg among them.
+const AGE_PREFLIGHT =
+  "*, ::before, ::after { box-sizing: border-box; border: 0 solid; } html { line-height: 1.5; } svg { display: block; vertical-align: middle; } table { border-collapse: collapse; }" +
+  " .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }";
+const ageCellPage = (floor: number) => `<!doctype html><html data-theme="dark"><head><style>${AGE_PREFLIGHT}</style></head><body style="margin: 0;">
+  <div style="padding: 48px; width: 600px;"><div class="card"><table class="tbl"><thead><tr><th>Title</th><th class="doc-col-num" style="width: ${floor}px; min-width: ${floor}px;">Created</th></tr></thead><tbody>
+    <tr id="two-digit" class="doc-row"><td>Plan</td>${ageCellHtml("15d")}</tr>
+    <tr id="three-digit" class="doc-row"><td>Plan</td>${ageCellHtml("120d")}</tr>
+    <tr id="wide-face" class="doc-row" style="--fs-meta: 20px;"><td>Plan</td>${ageCellHtml("120d")}</tr>
+  </tbody></table></div></div>
+</body></html>`;
+
+describe("the Created cell keeps its age and stale glyph on one line", () => {
+  type AgeReading = {
+    rowH: number;
+    lineW: number;
+    valueTop: number;
+    valueBottom: number;
+    flagTop: number;
+    flagBottom: number;
+    glyphShown: boolean;
+    wordPainted: boolean;
+    word: string;
+    flagTitle: string;
+  };
+  const readings: Record<string, AgeReading> = {};
+  let content = 0;
+
+  before(async () => {
+    const floor = vm.runInContext("LEDGER_CD.FLOOR.created", docsScreen) as number;
+    content = floor - (vm.runInContext("LEDGER_CD.PADDING.edge", docsScreen) as number);
+    const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
+    await page.setContent(ageCellPage(floor));
+    await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+    await page.addStyleTag({ content: SCREEN_CSS });
+    for (const id of ["two-digit", "three-digit", "wide-face"])
+      // runs in the page → no named helper (see readRowStyles)
+      readings[id] = await page.evaluate((rowId) => {
+        const row = document.getElementById(rowId)!;
+        const flagEl = row.querySelector(".doc-age-flag")!;
+        const flag = flagEl.getBoundingClientRect();
+        const value = row.querySelector(".doc-age-value")!.getBoundingClientRect();
+        const glyph = row.querySelector(".doc-age-flag svg")!.getBoundingClientRect();
+        const wordEl = row.querySelector(".doc-age-flag .sr-only")!;
+        const word = wordEl.getBoundingClientRect();
+        return {
+          rowH: row.getBoundingClientRect().height,
+          lineW: flag.right - value.left,
+          valueTop: value.top,
+          valueBottom: value.bottom,
+          flagTop: flag.top,
+          flagBottom: flag.bottom,
+          glyphShown: glyph.width > 0 && glyph.top >= flag.top - 0.5 && glyph.bottom <= flag.bottom + 0.5,
+          wordPainted: word.width > 1 && word.height > 1,
+          word: wordEl.textContent ?? "",
+          flagTitle: flagEl.getAttribute("title") ?? "",
+        };
+      }, id);
+    await page.close();
+  });
+
+  for (const id of ["two-digit", "three-digit"])
+    test(`a ${id} stale age shows its glyph beside the value on one 40px row, inside the Created floor`, () => {
+      const r = readings[id];
+      assert.equal(Math.round(r.rowH), 40, `row height ${r.rowH}`);
+      assert.ok(Math.abs((r.flagTop + r.flagBottom) / 2 - (r.valueTop + r.valueBottom) / 2) <= 1, `flag ${r.flagTop}–${r.flagBottom} off the value's line ${r.valueTop}–${r.valueBottom}`);
+      assert.ok(r.lineW <= content, `age line ${r.lineW}px past the ${content}px floor content`);
+      assert.ok(r.glyphShown, "the glyph shows");
+    });
+
+  test("the glyph-only flag keeps the word stale for a screen reader and in its tooltip, never painted", () => {
+    const r = readings["three-digit"];
+    assert.equal(r.word, "stale");
+    assert.equal(r.wordPainted, false, "the word is visually hidden");
+    assert.match(r.flagTitle, /stale/i);
+  });
+
+  test("a wider face never stacks the glyph under the value", () => {
+    const r = readings["wide-face"];
+    assert.ok(Math.abs((r.flagTop + r.flagBottom) / 2 - (r.valueTop + r.valueBottom) / 2) <= 1, `flag ${r.flagTop}–${r.flagBottom} off the value's line ${r.valueTop}–${r.valueBottom}`);
+    assert.ok(r.glyphShown, "the glyph stays");
+  });
+});
+
+describe("the select column and the stage section heads sit on the ledger's grid", () => {
+  // DocCheckboxCD's 16px box, centred by auto inline margins as its mx-auto class does
+  const checkbox = `<span style="display: flex; width: 16px; height: 16px; margin-inline: auto;"><input type="checkbox" class="doc-checkbox" /></span>`;
+  // the app's preflight sizes boxes border-box → the select floor is the cell's whole width, as it renders
+  const gridPage = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; }</style></head><body style="margin: 0;">
+    <div style="padding: 48px;"><div class="card"><table class="tbl" style="width: 600px;">
+      <thead><tr><th scope="col" class="doc-checkbox-cell" id="head-select">${checkbox}</th><th scope="col">Title</th></tr></thead>
+      <tbody>
+        <tr class="doc-stage-section" id="section"><th colspan="2" scope="colgroup"><span role="heading" aria-level="2">Implementing</span><span class="doc-stage-section-count">3</span></th></tr>
+        <tr class="doc-row" id="doc"><td class="doc-checkbox-cell" id="row-select">${checkbox}</td><td>Plan</td></tr>
+      </tbody>
+    </table></div></div>
+  </body></html>`;
+  let page: Page;
+
+  before(async () => {
+    page = await browser.newPage({ viewport: { width: 900, height: 600 } });
+    await page.setContent(gridPage);
+    await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+    await page.addStyleTag({ content: SCREEN_CSS });
+  });
+
+  after(async () => {
+    await page?.close();
+  });
+
+  for (const id of ["head-select", "row-select"]) {
+    test(`the checkbox sits on its cell's centre (${id})`, async () => {
+      const { cell, box } = await page.$eval(`#${id}`, (el) => ({
+        cell: el.getBoundingClientRect().toJSON() as DOMRect,
+        box: el.querySelector("input")!.getBoundingClientRect().toJSON() as DOMRect,
+      }));
+      const offset = (box.left + box.right) / 2 - (cell.left + cell.right) / 2;
+      assert.ok(Math.abs(offset) <= 0.5, `checkbox centre ${offset}px off the cell centre`);
+    });
+  }
+
+  test("a stage section head is a 40 row like the ledger rows", async () => {
+    const [section, doc] = await Promise.all(["section", "doc"].map((id) => page.$eval(`#${id}`, (tr) => tr.getBoundingClientRect().height)));
+    assert.ok(Math.abs(section - 40) < 0.5, `section row ${section}px`);
+    assert.ok(Math.abs(doc - 40) < 0.5, `ledger row ${doc}px`);
+  });
 });

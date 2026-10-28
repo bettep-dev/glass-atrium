@@ -155,9 +155,11 @@ test("the snippet line starts at the title's x: indented by the lead slot plus t
     assert.ok(match, `${property} is set in px`);
     return Number(match[1]);
   };
+  const value = (rule: string, property: string) => rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*([^;]+?)\\s*(?:;|$)`))?.[1];
   const leadWidth = px(cssRuleBody(source, ".doc-title-lead"), "width");
-  const rowGap = px(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
-  assert.equal(px(cssRuleBody(source, ".doc-snippet"), "margin-left"), leadWidth + rowGap);
+  // the indent is derived from the two parts (ladder derived-offset rule), never a summed literal
+  const rowGap = value(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
+  assert.equal(value(cssRuleBody(source, ".doc-snippet"), "margin-left"), `calc(${leadWidth}px + ${rowGap})`);
 });
 
 test("the Tags column states the page's majority format once and prints only exceptions per row", async () => {
@@ -871,6 +873,11 @@ test("Created shows relative age with the date in a tooltip, and only an open ro
   assert.ok(staleCell, "age is the primary value");
   assert.match(String(staleCell.props.title), /^Created date\(/);
   assert.match(collectText(staleCell), /stale/i, "stale is said in words, not colour alone");
+  // the Created floor holds the glyph only → the word is screen-reader text, and the glyph's tooltip says it too
+  const flag = findNodes(staleCell, (n) => n.type === "span" && n.props.className === "doc-age-flag")[0];
+  assert.ok(flag, "the stale flag sits inline in the age line");
+  assert.match(String(flag.props.title), /stale/i);
+  assert.equal(collectText(findNodes(flag, (n) => n.props.className === "sr-only")[0]), "stale");
   assert.equal(findNodes(staleCell, (n) => n.props.atom === "Icon" && n.props.className === "text-warn").length, 1, "the warn tone rides a glyph");
   assert.equal(ageCells.filter((td) => /stale/i.test(collectText(td))).length, 1);
 });
@@ -887,6 +894,15 @@ test("the Status column keeps room for the stage name inside stage sections as i
   assert.equal(sectioned, flat);
 });
 
+// the page header's freshness and refresh slots, rendered side by side the way PageHeader groups them
+function renderHeaderSlots(screen: Record<string, unknown>, props: Record<string, unknown>) {
+  return renderScreen({
+    __element: true,
+    type: "div",
+    props: { children: [(screen.DocHeaderFreshnessCD as Component)(props), (screen.DocHeaderRefreshCD as Component)(props)] },
+  });
+}
+
 describe("the header speaks about loading only after a first read; before it the list placeholder is the one loading label", () => {
   const rows = [
     { name: "a first read in flight shows no stamp and no busy Refresh", asOf: null, busy: true, hasStamp: false, isBusy: false },
@@ -898,7 +914,7 @@ describe("the header speaks about loading only after a first read; before it the
     test(row.name, async () => {
       const screen = await loadDocsScreen();
       const listState = { status: row.asOf ? "ready" : "loading", data: null, error: null, busy: row.busy };
-      const tree = renderScreen((screen.DocHeaderActionsCD as Component)({ asOf: row.asOf, listState, onRefresh: () => undefined }));
+      const tree = renderHeaderSlots(screen, { asOf: row.asOf, listState, onRefresh: () => undefined });
 
       assert.equal(findNodes(tree, (n) => n.props.atom === "FreshnessStamp").length, row.hasStamp ? 1 : 0);
       const buttons = findNodes(tree, (n) => n.props.atom === "RefreshButton");
@@ -943,13 +959,14 @@ test("the last stage actor rides the Status cell's tooltip, never a line under t
 test("the Title header starts at the title text's x: indented by the lead slot plus the title row gap", async () => {
   const screen = await loadDocsScreen();
   const source = getScreenCss(screen);
-  const px = (rule: string, property: string) => Number(rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*(\\d+)px`))?.[1]);
-  const indent = px(cssRuleBody(source, ".doc-title-lead"), "width") + px(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
+  const value = (rule: string, property: string) => rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*([^;]+?)\\s*(?:;|$)`))?.[1];
+  // the indent is derived from the lead slot width plus the title row gap (ladder derived-offset rule)
+  const indent = `calc(${value(cssRuleBody(source, ".doc-title-lead"), "width")} + ${value(cssRuleBody(source, ".title-cell .doc-title-row"), "gap")})`;
 
   const titleHeader = findNodes(renderListCard(screen, {}), (n) => n.type === "th" && collectText(n) === "Title")[0];
   const label = findNodes(titleHeader, (n) => n.type === "span" && n.props.className === "doc-col-title-text");
   assert.equal(label.length, 1);
-  assert.equal(px(cssRuleBody(source, ".doc-col-title-text"), "margin-left"), indent);
+  assert.equal(value(cssRuleBody(source, ".doc-col-title-text"), "margin-left"), indent);
 });
 
 function renderPipelineCard(screen: Record<string, unknown>, state: Record<string, unknown>) {
@@ -998,7 +1015,7 @@ describe("the header hands its read state to the shell exactly once, with or wit
         UI: uiStub({ ...SHIPPED_ATOMS, useShellPageState: (input: unknown) => calls.push(input) }),
         React: createReactStub(),
       });
-      const tree = renderScreen((screen.DocHeaderActionsCD as Component)({ asOf: row.asOf, listState: row.state, onRefresh: () => undefined }));
+      const tree = renderHeaderSlots(screen, { asOf: row.asOf, listState: row.state, onRefresh: () => undefined });
 
       const stamps = findNodes(tree, (n) => n.props.atom === "FreshnessStamp").length;
       assert.equal(calls.length + stamps, 1, "one shell caller");

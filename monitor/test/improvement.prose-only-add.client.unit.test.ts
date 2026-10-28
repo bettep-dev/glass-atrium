@@ -134,3 +134,32 @@ describe("the add-only roster ranks by count, ties by name, before the slot cuts
     });
   }
 });
+
+// R-d: the instrumentation tables sit off .tbl, so their body rows reach the 32 compact step through the shared
+// tbody.tbl-compact atom; a cell carrying its own block padding would move the row off that step
+test("the three instrumentation tables put their body rows on the shared compact atom, no cell padding its own block", () => {
+  const tables = sandbox as unknown as Record<string, (props: Record<string, unknown>) => unknown>;
+  sandbox.React.useState = () => [false, () => {}];
+  // the screen-shared atoms improvement.jsx publishes; the badge only names a mark, which this pin does not read
+  (sandbox.window as unknown as Record<string, unknown>).ImprovementShared = {
+    SymI: () => null, confidenceBadgeMetaI: () => ({ symbol: "✓", tone: "text-ok" }),
+  };
+  const rendered = [
+    { name: "confidence lanes", tree: tables.ConfidenceLaneTableI({ buckets: [{ promotion_tier: "auto", proposal_count: 3, confidence_observed_avg: 0.7 }] }) },
+    { name: "add-only patches", tree: sandbox.ProseOnlyAddCardI({
+      state: { status: "ready", data: {}, error: null },
+      summary: { window_days: 30, agents: [{ agent: "glass-atrium-dev-db", count: 2 }], total: 2 },
+    }) },
+    { name: "style-ref agents", tree: tables.StyleRefAgentTableI({ rows: [{ agent: "glass-atrium-dev-db", emission_count: 1, emission_total: 2 }] }) },
+  ];
+  for (const { name, tree } of rendered) {
+    const bodies = findElements(tree, (el) => el.type === "tbody");
+    assert.equal(bodies.length, 1, `${name}: one body`);
+    assert.equal(bodies[0].props.className, "tbl-compact", `${name}: the body takes the compact atom`);
+    const cells = findElements(bodies[0], (el) => el.type === "td");
+    assert.ok(cells.length > 0, `${name}: the body carries cells`);
+    for (const cell of cells) {
+      assert.doesNotMatch(String(cell.props.className ?? ""), /\b(py|pt|pb)-|\bflex\b/, `${name}: a cell stays a plain table cell`);
+    }
+  }
+});
