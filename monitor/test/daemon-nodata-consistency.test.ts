@@ -25,16 +25,17 @@ interface DaemonStatusUi {
 
 const UI = await buildUiSandbox<DaemonStatusUi>();
 
-// Spread copies each sandbox-realm entry into this realm, so deepStrictEqual compares
-// values rather than failing on the foreign Object prototype.
-function getToneEntry(status: string): ToneEntry {
+/**
+ * Spread → sandbox-realm entry copied into this realm.
+ * deepStrictEqual then compares values, never failing on the foreign Object prototype.
+ */
+function getToneEntryOrFail(status: string): ToneEntry {
   const entry = UI.DAEMON_STATUS_TONE[status];
   assert.ok(entry, `ui.jsx DAEMON_STATUS_TONE must carry '${status}'`);
   return { ...entry };
 }
 
-// Call spy over the real window.UI lookups — proves delegation, not a local literal, in
-// resolveDaemonDisplayMeta, while every answer still comes from the shipped functions.
+// Call spy over the real window.UI lookups → proves resolveDaemonDisplayMeta delegates, not a local literal
 const lookups: Array<[string, string]> = [];
 interface SpyWindow {
   UI: DaemonStatusUi;
@@ -84,7 +85,7 @@ test("never-reported daemon (null last_status row) → info 'No data' via shared
   );
   assert.deepStrictEqual(
     meta,
-    getToneEntry("missing"),
+    getToneEntryOrFail("missing"),
     "health's null-status meta must equal architecture's 'missing' mapping",
   );
   assert.deepStrictEqual(meta, { tone: "info", label: "No data" });
@@ -113,7 +114,7 @@ test("overdue daemon → crit 'Overdue' via the server verdict, outranking last_
   );
   assert.deepStrictEqual(
     meta,
-    getToneEntry("stale"),
+    getToneEntryOrFail("stale"),
     "health's overdue meta must equal architecture's 'stale' mapping",
   );
   assert.deepStrictEqual(meta, { tone: "crit", label: "Overdue" });
@@ -128,6 +129,6 @@ test("within-cadence daemon → its real last_status mapping (no downgrade)", ()
   const meta = HealthModel.resolveDaemonDisplayMeta(
     daemon({ last_status: "ok", effective_status: "ok" }),
   );
-  assert.deepStrictEqual(meta, getToneEntry("ok"));
+  assert.deepStrictEqual(meta, getToneEntryOrFail("ok"));
   assert.deepStrictEqual(meta, { tone: "ok", label: "Healthy" });
 });

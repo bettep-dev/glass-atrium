@@ -220,7 +220,7 @@ const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
   "model.daemon_cycle_worker": false,
 };
 
-function getShippedInheritRosterMc(): Record<string, boolean> {
+function getShippedInheritRosterOrFailMc(): Record<string, boolean> {
   // loadMc returns the contextified sandbox itself; a top-level const is reachable only by evaluation in it.
   const domainMeta: unknown = vm.runInContext("DOMAIN_META_MC", mc as unknown as vm.Context);
   assert.ok(domainMeta && typeof domainMeta === "object", "DOMAIN_META_MC is an object in the shipped model-config.jsx");
@@ -243,7 +243,7 @@ test("modelOptionsMC: the inherit roster decides the inherit option, domain by d
   // Data-driven over the whole roster, not a hand-written case per domain.
   // A domain added to DOMAIN_META_MC is therefore covered the moment it ships.
   // Self-reference guard — an expectation read from the shipped table would shrink with it and pass vacuously.
-  const roster = getShippedInheritRosterMc();
+  const roster = getShippedInheritRosterOrFailMc();
   assert.deepStrictEqual(roster, INHERIT_ROSTER_MC, "shipped DOMAIN_META_MC inherit flags");
   for (const [domain, inherits] of Object.entries(INHERIT_ROSTER_MC)) {
     const opts = sameRealm(mc.modelOptionsMC(domain, KNOWN_MODELS_FIXTURE));
@@ -400,7 +400,7 @@ test("every server model domain has a client slot, in the server's order, with a
   const sorted = sameRealm(mc.sortDomainsMC(shuffled)).map((d) => d.domain);
   assert.deepStrictEqual(sorted, serverKeys, "DOMAIN_ORDER_MC covers every server domain in order");
 
-  const roster = getShippedInheritRosterMc();
+  const roster = getShippedInheritRosterOrFailMc();
   for (const def of MODEL_DOMAINS) {
     assert.strictEqual(roster[def.key], def.allowInherit, `${def.key}: client inherit flag = server allowInherit`);
   }

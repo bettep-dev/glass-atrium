@@ -81,8 +81,7 @@ test("a migration adds each value (schema-only addition would never reach a data
 });
 
 for (const { route, statuses } of NARROWING_SETS) {
-  // Equality, not inclusion: a missing member nulls a real value, an extra one admits a
-  // value no database can hold.
+  // Equality, not inclusion: missing member → real value nulled, extra member → impossible value admitted
   test(`${route} narrowing set equals the schema enum`, () => {
     assert.deepStrictEqual(
       [...statuses].sort(),
