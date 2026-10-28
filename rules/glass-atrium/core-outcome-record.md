@@ -4,11 +4,8 @@ Applies to all agents. [ALL]
 
 ## Core
 
-- Every completed task records its result, whatever that result is; for a team, the orchestrator consolidates the records.
-- **Location**: PostgreSQL `core.outcomes`, a DB-only sink.
-  - An Outcome Record is never a `.md` file: write and read none under `~/.claude/data/outcomes/`.
-- **Required fields**: `agent` · `task_type` · `result`.
-- **Session-end fallback**: if no Outcome Record exists at session end, record at least the required fields.
+- Every completed task records its outcome, success or not; the recorder stores it in PostgreSQL `core.outcomes`.
+  - An Outcome Record is never a `.md` file: agents write and read none under the outcomes directory (`~/.glass-atrium/data/outcomes/`, which `hooks/post-edit-outcome-sync.sh` still syncs).
 - **Lesson-free read**: every agent and main session reads prior Outcome Records only through this command — the search listing, with the `lesson` key deleted from every row before any output reaches the reader:
 
   ```
@@ -18,8 +15,6 @@ Applies to all agents. [ALL]
   - To narrow it, change only the query string (e.g. `agent=<name>`, `days=7|30|90`); keep the `jq` stage exactly as written.
   - Never read a record through `/api/outcomes/<id>` or its body: both return `lesson` in full.
   - Why: `lesson` is the writer's own unverified advice; result, summary, concerns, revision count and review flags are the facts a read needs.
-  - The port comes from the install's own resolver, so the command runs unchanged on every install.
-  - Honest backing: honor-system — no hook stops a call to the detail route.
 
 ### task_type set (canonical 9-type contract — SoT)
 
@@ -61,9 +56,6 @@ Applies to all agents. [ALL]
 | `needs_context` | information is insufficient | user response needed — not an escalation target |
 | `fail` | the task failed | glass-atrium-qa-debugger escalation target |
 
-- **Circuit breaker**: `fail` is the only value that accrues the per-agent counter — 3 in a row write a suspension signal. Any other value, `blocked` included, resets it.
-- **Survival packet**: a `blocked` row's CID is carried into the pre-compact survival packet as active; a `fail` row's is not.
-
 ### Whose outcome `result` describes
 
 - `result` reports the emitting agent's own task outcome.
@@ -83,9 +75,7 @@ Applies to all agents. [ALL]
 
 ## Completion Report Output Obligation
 
-A completion that meets `### Emit Boundary` → Mandatory MUST end with the block below; `track-outcome.sh` parses it into the Outcome Record. Per-field criteria: `### Field Input Guide`.
-
-- **Mandate scope**: which channel backs the MUST, and where the block goes — `### Emit Boundary` → Channel asymmetry.
+A completion that meets `### Emit Boundary` → Mandatory must end with the block below; `track-outcome.sh` parses it into the Outcome Record. Per-field criteria: `### Field Input Guide`.
 
 ```
 [COMPLETION]
@@ -112,7 +102,6 @@ cid: correlation_id from orchestrator                    # OPTIONAL, omit if not
 ```
 
 - **Spawn-injected copy**: `hooks/inject-scope-rules.sh` → `build_emit_format_block` restates the multi-line mandate, the inline-tolerance rule and the schema-mode `completion_block` rule as a shell `printf` literal delivered to every subagent.
-  - An edit to those rules reaches a running agent only once that literal is edited too; nothing compares the two.
 - **Multi-line form**: emit the block exactly as templated — the `[COMPLETION]` tag alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line — on every emit (subagent, schema-mode, main session). The inline single-line form is not sanctioned.
   - **Schema-mode / workflow (`agent({schema})`)**: spawns MUST put the multi-line form in the StructuredOutput payload's `completion_block` string property.
     - Absent or unparseable → `structuredoutput-derived` synthesis (`scoped/maintainers/core-outcome-record.md` → `### Recorder parse outcomes`).
@@ -125,7 +114,6 @@ cid: correlation_id from orchestrator                    # OPTIONAL, omit if not
     - The recorder never distills the hint from the user message, so it MUST come from your own emit.
   - A request that only resumes or pushes the same work forward MUST NOT emit the three fields, e.g. `진행해` / `이어서 진행해` / `계속` / `다시 이어서` / `resume` / `continue` / `try again to continue` / a status check.
     - Why: it is an episodic one-off signal, not a correction of the work's content.
-- **`## Summary` section**: `track-outcome.sh` copies the `summary` field into the record body's required `## Summary` section, so fill `summary` faithfully.
 
 ### Emit Boundary (Mandatory / Exempt / Gray-zone)
 
@@ -134,7 +122,6 @@ Emit on the terminal turn only: an every-turn emit is noise, and a skipped emit 
 - **Mandatory**: 1+ `tool_use` occurred and it contributed to a deliverable → file write/edit · code change · research synthesis · document creation · decision artifact · externally observable state change · referenceable output
 - **Exempt**: conversation only (0 tool_use) · context-gathering-only tool_use (e.g. a single Read with no downstream artifact) · mid-task status/heartbeat · clarification question / simple confirmation
 - **Gray-zone**: ambiguous → emit; a false-positive emit costs less than a false-negative non-emit
-- **Hook safety net**: `hooks/track-outcome.sh` skips exempt turns itself (`attribution_source="conversation-only"`), so emit on the mandatory condition and add nothing for exempt turns.
 - **Closing-turn discipline (prevention layer)**: emit the `[COMPLETION]` block as the run's terminal act — never end the run on a tool-result turn assuming the work is done.
   - MANUAL / TEXT mode → a dedicated final assistant text turn carrying the block, after the last tool action.
   - SCHEMA / WORKFLOW mode → the StructuredOutput call carrying `completion_block` stays the last action.
@@ -175,7 +162,6 @@ Field rules: `#### Self-assessment fields` · `### Correction fields` · `### Co
 | `low` | guess-based, or only partially working |
 
 - **`metric_pass`**: your honest claim that the task_type's bar below was met — authoritative for its own column.
-  - The grader never force-overwrites it: its view goes to `grader_verdict` (advisory), provenance to `downgrade_origin`, and a disagreement surfaces through `review_flag`.
 
 | task_type | Bar for `metric_pass=true` |
 |-----------|----------------------------|
@@ -195,7 +181,6 @@ Field rules: `#### Self-assessment fields` · `### Correction fields` · `### Co
 ### Correction fields
 
 - **`revision_count`**: N = the times the user asked to rework this same task (first try complete = 0).
-  - Your emitted value is the effective count: the hook's own prior+1 cross-outcome accumulation is stubbed to 0.
 - **`evaluative_signal`**: `-1` only on a correction (Correction-emission rule) · `+1` explicit praise or acceptance · `0` an explicitly neutral signal · no signal → omit the field.
   - Absent and `0` are distinct — the parser preserves the raw value, so never collapse `0`↔absent.
   - Any one of `revision_count` ≥ 1, `evaluative_signal: -1` or a non-empty `directive_hint` trips the correction trigger, so emit none of them beside `+1`/`0`.
@@ -205,27 +190,17 @@ Field rules: `#### Self-assessment fields` · `### Correction fields` · `### Co
 
 - **`concerns`**: one item per condition, comma-separated — the same array shape as `files:`, since the recorder splits on commas.
   - On a `done_with_concerns` row the caveat goes here rather than into `summary` — the per-item column an operator filters, counts and clusters on.
-  - No quality bar and no length expectation: a rough entry beats an empty column.
-  - The recorder stores at most 800 chars of it.
 - **`lesson`**: 1-2 sentences of discovery from this task (e.g. "X must go through Y — direct call forbidden").
-  - Recorded as outcome data and shown in the monitor; no prompt, spawn injection or self-improvement step reads it.
-- **`token_usage`**: record when cost tracking is needed; pairs with OTel `gen_ai.usage.*` for external integration.
-- **`agent_version`**: the instruction file version (e.g. from frontmatter), enabling before/after performance comparison across instruction edits.
 
 ### Role-scoped fields
 
 - **`qa_score`**: format `cov=N,ins=N,instr=N,clar=N`, each 1-5 — reserved for QA agents (glass-atrium-qa-code-reviewer / glass-atrium-qa-debugger) reviewing other agents' outputs.
   - It rates the reviewed artifact and never selects the reviewer's own `result`, which follows the Result-selection criterion alone.
-  - A self-emitted Model-Based signal, not a deterministic verdict: the LLM evaluator's own score, layered above the Code-Based grader, never overriding `metric_pass`.
   - What a low sum obliges the reviewer to do, and the evaluator-independence caveat: `scope-qa.md` → "Deliverable Quantitative Evaluation".
-- **`style_ref`**: the relative path of the sibling file used as convention reference — MUST be a path you actually read this turn.
+- **`style_ref`**: the relative path of the sibling file used as convention reference — a file you opened with the Read tool this turn, because the recorder corroborates the value against your `Read` history and a Bash/Grep/Glob read carries no `file_path`.
   - Read during: Project Convention Probe (`scope-dev.md` → Pre-Execution Verification → Project Convention Probe) or Step 2 Read (`shared-search-first.md` → Pattern recognition → Step 2 Read / Step 3 Mirror).
   - **Greenfield** (no sibling in the first-touch directory and no AGENTS.md/CLAUDE.md anchor) → emit the literal `style_ref: greenfield` and declare `convention: greenfield` in the turn-0 Assumptions line.
   - **Omission** on a non-greenfield `feature`, `bug-fix` or `refactor` row from an agent that receives `scope-dev.md` → `review_flag: true`.
-  - **Corroboration**: on SubagentStop `track-outcome.sh` checks the value against the transcript's `Read` tool_use history and records `style_ref_verified`.
-    - `true` = corroborated in that history.
-    - `null` = verification N/A: greenfield, absent, or unverifiable — an empty `Read` history, an unreadable transcript, or a missing `hooks/lib/style_ref_match.py`.
-    - `false` = a real path not corroborated by a non-empty `Read` history — a coverage fact, never an honesty verdict: a Bash/Grep/Glob read carries no `file_path`.
 
 ## Automatic Verification Criteria
 
@@ -240,7 +215,4 @@ Field rules: `#### Self-assessment fields` · `### Correction fields` · `### Co
 | Empty signal | `metric_pass` empty, any `confidence` |
 | Grader disagreement (advisory) | `metric_pass=true` + `grader_verdict=verified_fail`; `downgrade_origin=writer_true_downgraded` records it |
 
-- `review_flag` feeds learning-log aggregation only — it never rewrites `metric_pass`.
-- **Empty signal**: a missing self-assessment is read as instruction ambiguity, not an evaluation failure, and is still a learning target.
 - **Grader disagreement fires narrowly**: only the two `verified_fail` emitters in `scoped/maintainers/core-outcome-record.md` → `### Grader verdict` reach it.
-- **`grader_verdict=unverified` is not a mismatch and does not set `review_flag`** — this covers the non-code types and every off-surface or absent-signal code-type row.
