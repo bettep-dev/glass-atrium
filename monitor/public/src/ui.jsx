@@ -1916,10 +1916,11 @@ function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, d
           <Icon name={TONE_ICON[tone]} size={isInset ? 14 : 16}/>
         </span>
         <div className="alert-card-content">
+          {/* title and body ride DayTokens → a "7-day" / "30 days" token in any alert stays on one line */}
           <span className="alert-card-title fs-body font-medium">
-            <span className="sr-only">{`${ALERT_SEVERITY_WORD[tone]}: `}</span>{title}
+            <span className="sr-only">{`${ALERT_SEVERITY_WORD[tone]}: `}</span><DayTokens>{title}</DayTokens>
           </span>
-          {body && <span className="alert-card-body fs-meta text-dim">{body}</span>}
+          {body && <span className="alert-card-body fs-meta text-dim"><DayTokens>{body}</DayTokens></span>}
           {subjects?.length > 0 && (
             <div className="alert-card-subjects">{subjects.map((subject) => <Badge key={subject}>{subject}</Badge>)}</div>
           )}

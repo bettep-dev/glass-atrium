@@ -1,6 +1,6 @@
 // Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control or a
 // value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
-// a compact body row off .tbl sits on the 32 step, and a word KPI value sits on the figure's baseline.
+// a compact body row off .tbl sits on the 32 step (a mark + value cell too), and a word KPI value sits on the figure's baseline.
 // Runner: npx tsx --test test/ui.row-geometry.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -98,17 +98,23 @@ const HEAD_ROWS = [
 
 // compact body rows off .tbl, one table per border model the screens carry: a separate-border table ruled per cell (Task results
 // Failures by agent) and a collapsed table ruled per row (the Learning instrumentation tables); the second row is measured, so
-// it shares a rule above and below
+// it shares a rule above and below. The glyph row carries the Suggestion confidence value cell: an inline flex box holding an
+// 11px mark and the rate, the shape that grew its row to 33 on the baseline
 const COMPACT_CELL = `style="padding-inline: 12px; border-bottom: 1px solid;"`;
-const compactTable = (row: string, tableAttrs: string, trAttrs: string, cell: string): string =>
+const COMPACT_GLYPH_VALUE = `<span class="inline-flex" style="display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px;">` +
+  `${iconMarkup({ name: "warn", size: 11, className: "align-middle" })} 50.0%</span>`;
+const compactTable = (row: string, tableAttrs: string, trAttrs: string, cell: string, value = "12"): string =>
   `<table ${tableAttrs} style="width: 480px;"><tbody class="tbl-compact">` +
-  [0, 1, 2].map((i) => `<tr${i === 1 ? ` data-row="${row}"` : ""}${trAttrs}><td${cell}>dev-react</td><td${cell}>12</td></tr>`).join("") +
+  [0, 1, 2].map((i) => `<tr${i === 1 ? ` data-row="${row}"` : ""}${trAttrs}><td${cell}>dev-react</td><td${cell}>${value}</td></tr>`).join("") +
   `</tbody></table>`;
 const COMPACT_ROWS = [
   { name: "a separate-border table ruled per cell", row: "body-compact-separate",
     markup: compactTable("body-compact-separate", `class="fs-meta" style="border-collapse: separate; border-spacing: 0;"`, "", ` ${COMPACT_CELL}`) },
   { name: "a collapsed table ruled per row", row: "body-compact-collapse",
     markup: compactTable("body-compact-collapse", `class="fs-meta"`, ` style="border-top: 1px solid;"`, ` style="padding-inline: 6px;"`) },
+  { name: "a collapsed table whose value cell holds a mark + its rate", row: "body-compact-glyph",
+    markup: compactTable("body-compact-glyph", `class="fs-meta"`, ` style="border-top: 1px solid;"`, ` style="padding-inline: 6px; text-align: right;"`,
+      COMPACT_GLYPH_VALUE) },
 ] as const;
 
 const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
@@ -240,6 +246,21 @@ describe("a compact body row sits on the 32 step, its text on the row's centre l
       assert.ok(Math.abs(centre - text) <= 1, `text centre ${text} vs row centre ${centre}`);
     });
   }
+
+  test("a mark + rate cell keeps the rate on the centre line of the text cell beside it", async () => {
+    const { value, text } = await page.$eval(`tr[data-row="body-compact-glyph"]`, (tr) => {
+      const rate = [...tr.querySelectorAll("td")[1].querySelector("span")!.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim());
+      if (!rate) throw new Error("fixture lacks the rate text");
+      // one range per text, inline — a named helper inside the page callback would not survive the transpile
+      const [label, figure] = [tr.querySelector("td")!, rate].map((node) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return range.getClientRects()[0];
+      });
+      return { value: (figure.top + figure.bottom) / 2, text: (label.top + label.bottom) / 2 };
+    });
+    assert.ok(Math.abs(value - text) < 1, `rate centre ${value} vs text centre ${text}`);
+  });
 });
 
 describe("a value + bar cell keeps the row at 40", () => {

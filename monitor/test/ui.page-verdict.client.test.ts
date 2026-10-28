@@ -267,4 +267,17 @@ describe("DayTokens", () => {
     const empty = renderScreen(h(ui.EmptyState as Component, { message: "No runs in the last 7 days", hint: "Retried 2 days ago" })) as RenderedNode;
     assert.deepEqual(findNodes(empty, isNoWrap).map((n) => collectText(n)), ["7 days", "2 days"]);
   });
+
+  // the Dashboard spend alert's title literal sat outside the atom, so its "7-day" split across lines
+  test("the shared AlertCard title and body keep their day tokens whole", () => {
+    const card = renderScreen(h(ui.AlertCard as Component, {
+      tone: "warn",
+      title: "Spend is running ahead of the 7-day average",
+      body: "Today is 1.4× the 30-day mean, held for 2 days",
+    })) as RenderedNode;
+    const tokensIn = (className: string) => findNodes(card, (n) => String(n.props.className ?? "").split(" ").includes(className))
+      .flatMap((part) => findNodes(part, isNoWrap).map((n) => collectText(n)));
+    assert.deepEqual(tokensIn("alert-card-title"), ["7-day"]);
+    assert.deepEqual(tokensIn("alert-card-body"), ["30-day", "2 days"]);
+  });
 });

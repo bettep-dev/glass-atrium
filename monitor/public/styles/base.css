@@ -419,6 +419,13 @@ tbody.tbl-compact > tr > :is(td, th) {
 	padding-block-end: var(--tbl-head-pad-block);
 	line-height: var(--lh-row);
 }
+/* a compact cell's inline flex box (a mark + its value) sits on the line top, not the baseline.
+   On the baseline its glyph-borne baseline sits lower than the strut's, so the line box grows to 21 and the row to 33.
+   A cell height is only a minimum, so the row grows rather than holding 32. The box is one 20 line, so the top keeps the value
+   on the centre line of the text cells beside it */
+tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
+	vertical-align: top;
+}
 /* edge cells take the card padding → the first and last column line up with the card head; flush comes from an unpadded card body */
 .tbl th:first-child,
 .tbl td:first-child {
