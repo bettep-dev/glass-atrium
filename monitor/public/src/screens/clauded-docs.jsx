@@ -1106,7 +1106,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
         .doc-stage-picker { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
         /* stage pill on the shared .pill shell (geometry: min-height 24 · inline 8 · gap 4 · --radius-badge; the picker is .pill--interactive at 32)
-           — only its unchanged face stays here: no fill, ink label, the label's own weight and line box */
+           — only the pill's own face stays here: no fill, ink label, the label's own weight and line box */
         .doc-stage-pill { background: transparent; color: rgb(var(--ink)); font-weight: inherit; line-height: 1.4; }
         .doc-stage-pill.pill--interactive:hover { background: rgb(var(--line) / 0.4); }
         .doc-stage-glyph.is-terminal { display: inline-flex; color: rgb(var(--dim)); }

@@ -156,7 +156,7 @@ details[open] > summary .chevron {
 	min-height: var(--ctl-min-h);
 	border-radius: var(--radius-control);
 	font-size: var(--fs-control);
-	line-height: var(--lh-ctl); /* 6 + line + 6 + borders = exactly --ctl-min-h, so a control cell stays 4 + 32 + 4 */
+	line-height: var(--lh-ctl); /* 6 + line + 6 + borders = exactly --ctl-min-h */
 	font-weight: 500;
 	border: 1px solid rgb(var(--line));
 	background: rgb(var(--elev));
@@ -348,8 +348,8 @@ details[open] > summary .chevron {
 	border-collapse: collapse;
 }
 /* geometry-only routing — a table routed onto .tbl for its padding, row height and alignment alone takes .tbl--own-face and keeps
-   the body size, header face and row states its own classes give it. The house rules match it out through :where(), so they stay
-   at the plain .tbl specificity and every house table cascades as before. */
+   the body size, header face and row states its own classes give it. The house rules match it out through :where(), so
+   house tables keep the plain .tbl specificity. */
 .tbl:where(:not(.tbl--own-face)) {
 	font-size: var(--fs-control);
 }
