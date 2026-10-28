@@ -138,7 +138,7 @@ for (const row of rows) {
   });
 }
 
-// B2 on the inert list: pattern names and agents of different lengths still put every agent and every date on one column edge
+// On the inert list, pattern names and agents of different lengths still put every agent and every date on one column edge
 test(`inert rows line their agent and date up in columns whatever the pattern and agent lengths, at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
   const shapes = [
     ["short", "glass-atrium-dev-db"],

@@ -675,7 +675,7 @@ button.kpi:hover {
 .nav-item {
 	display: flex;
 	align-items: center;
-	gap: var(--space-1_5);                       /* B1 icon ↔ label at control size */
+	gap: var(--space-1_5);                       /* icon ↔ label at control size */
 	padding: var(--space-1_5) var(--space-2);     /* + the nav's 8 inset = 16, the brand row's inset */
 	border-radius: var(--radius-control);
 	color: rgb(var(--dim));

@@ -687,7 +687,7 @@ test("the per-run fold's summary fits the 32-character header-meta cap at its wi
   }
 });
 
-// A2 compact units: the day unit is spaceless, so "30d" never breaks between the number and its unit.
+// Compact units: the day unit is spaceless, so "30d" never breaks between the number and its unit.
 test("an empty run window names its days with the spaceless day unit", () => {
   const h = helpers as unknown as { describeRunTableW: (state: FetchState, days: number) => string };
   assert.equal(h.describeRunTableW(ready({ reports: [] }), 30), "No runs in 30d");

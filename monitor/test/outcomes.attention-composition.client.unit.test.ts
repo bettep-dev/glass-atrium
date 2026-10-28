@@ -1355,7 +1355,7 @@ describe("Task results reads opt into the prior window", () => {
   });
 });
 
-// --- ledger summary cell: every summary starts on one line, whatever pill its row carries (Appendix B, B2) ---
+// --- ledger summary cell: every summary starts on one line, whatever pill its row carries ---
 
 const summaryLineOf = (tr: RenderNode): unknown[] => {
   const summaryCell = flattenNodes(tr).filter((n) => n.type === "td").at(-1);
@@ -1390,7 +1390,7 @@ describe("ledger row: the summary starts right after the fixed flag slot, and th
   }
 });
 
-// --- sub-tables: numeric columns right-aligned, tabular and one line, every typeface as it was (B5) ---
+// --- sub-tables: numeric columns right-aligned, tabular and one line, every typeface as it was ---
 
 const B5_CLASSES = ["text-right", "tabular-nums", "whitespace-nowrap"];
 const assertB5 = (node: RenderNode, what: string): void => {

@@ -97,7 +97,7 @@ for (const width of [1440, 1920]) {
 }
 
 // the three tier tables on the shared .tbl geometry: one padding per cell kind, edges at the card padding, the house header face kept;
-// the rows are B4 top-aligned, so a text cell starts half the control-to-line difference (32 − 20) / 2 below a control cell
+// the rows are top-aligned, so a text cell starts half the control-to-line difference (32 − 20) / 2 below a control cell
 test("every tier-table cell takes the shared .tbl padding, a text cell starting B4's half-step below a control cell, and the header keeps its face", async () => {
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
@@ -153,7 +153,7 @@ test("every tier-table cell takes the shared .tbl padding, a text cell starting 
   }
 });
 
-// B4 + A2 on the shipped roster at every side-by-side width and the stacked one: the first text line of a cell centers on the
+// On the shipped roster, with top-aligned rows and compact units, at every side-by-side width and the stacked one: the first text line of a cell centers on the
 // control in its row, every model select holds its longest option label, and an In effect file name never breaks at its hyphens
 const LONG_ROSTER = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-fable-5-1"];
 for (const width of [1024, 1280, 1440, 1920]) {
