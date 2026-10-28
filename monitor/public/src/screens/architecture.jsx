@@ -653,13 +653,18 @@ function ScreenArchitecture(
 					// an undrawn map sizes to its slot — the page-tall floor would open a void under the loader or failure card
 					".arch-page .arch-main.arch-main-pending { flex: none; min-height: 0; } " +
 					".arch-part-health { flex-shrink: 0; } " +
-					".arch-part-health-title { font-size: var(--fs-control); font-weight: 600; margin: 0; } " +
-					".arch-part-col-title { font-size: var(--fs-meta); font-weight: 600; margin: 0 0 6px; } " +
+					// the card title outranks its rows — body-size row text under a control-size title read upside down
+					".arch-part-health-title { font-size: var(--fs-title); font-weight: 600; margin: 0; } " +
+					".arch-part-col-title { font-size: var(--fs-meta); font-weight: 600; margin: 0 0 var(--space-2); } " +
 					".arch-drawer-title { margin: 0; font-size: inherit; font-weight: inherit; } " +
 					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-meta); font-weight: 400; } " +
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
-					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; } " +
-					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; align-items: center; } " +
+					// Part health list · one line per part: name | status atom | button, meta below — body text centred on the 32px button (B3)
+					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); } " +
+					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: var(--space-2); row-gap: var(--space-0_5); align-items: center; " +
+					"font-size: var(--fs-body); line-height: var(--lh-row); } " +
+					".arch-part-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
+					".arch-part-status { display: inline-flex; align-items: center; gap: var(--space-1_5); white-space: nowrap; } " +
 					".arch-part-meta { grid-column: 1 / -1; font-size: var(--fs-meta); } " +
 					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
 					// max-height 를 여기서 풂 — styles/base.css 의 `.card-body { max-height: 70vh }` 는 무한히 긴
@@ -750,7 +755,8 @@ function ScreenArchitecture(
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; ' +
 					// hover colours only — a transition on `all` also animated the shared focus outline in
 					"transition: color .12s, border-color .12s, background-color .12s; } " +
-					".arch-zoom-btn-labelled { padding: 0 8px; font-family: inherit; font-size: var(--fs-meta); } " +
+					// a button label never wraps — the button grows to it
+					".arch-zoom-btn-labelled { padding: 0 var(--space-2); font-family: inherit; font-size: var(--fs-meta); white-space: nowrap; } " +
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					// 상태 링과 같은 사각형 채널·같은 반경 가족이되 그 바깥 한 겹에 섬 — 상태 링의 색·두께·자리는 포커스와 무관함.
@@ -761,7 +767,7 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .node:focus-visible { outline: none; } ` +
 					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-focus { display: inline; stroke: rgb(var(--focus-ring)) !important; } ` +
 					// 노드 상세의 부품 목록 — 드로어 폭 안이라 표의 nowrap 대신 줄바꿈이 기본임.
-					".arch-part-list { display: flex; flex-direction: column; gap: 10px; } " +
+					".arch-drawer-part-list { display: flex; flex-direction: column; gap: var(--space-3); } " +
 					".arch-part-entry { display: flex; flex-direction: column; gap: 4px; min-width: 0; } " +
 					".arch-part-entry + .arch-part-entry { border-top: 1px solid rgb(var(--line)); padding-top: var(--space-3); } " +
 					".arch-part-head { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; min-width: 0; } " +
@@ -1440,7 +1446,7 @@ function MermaidCanvas({
 // Reset 아이콘 — Icon SoT 의 'target' 마크업 재사용 (currentColor 상속).
 function ArchIconTargetAR() {
 	const { Icon } = window.UI;
-	return <Icon name="target" size={15} />;
+	return <Icon name="target" size={14} />;
 }
 
 // 끊긴 health 응답의 표시 이름 — 사실 행과 로드 실패 경보가 같은 이름을 부르게 묶어 둠.
@@ -1701,7 +1707,7 @@ function NodePartHealth({
 			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
 				Health ({rows.length + looseDaemons.length})
 			</h3>
-			<div className="arch-part-list">
+			<div className="arch-drawer-part-list">
 				{rows.map((row) => {
 					const renderDetail = HEALTH_ROW_DETAILS[row.kind];
 					// 드릴다운 응답은 한 번에 한 데몬 것임 — 다른 데몬의 실행 목록을 이 데몬의 것으로
@@ -3002,11 +3008,13 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 
 	return (
 		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row">
-			<span>{row.name}</span>
+			<span className="arch-part-name" title={row.name}>
+				{row.name}
+			</span>
 			{/* verdict word stays neutral, tone on the glyph only · an unjudged row reads faint */}
-			<span className={status.tone ? "text-dim" : "text-faint"}>
+			<span className={`arch-part-status ${status.tone ? "text-dim" : "text-faint"}`}>
 				{status.tone && status.tone !== "neutral" && (
-					<Icon name={TONE_ICON[status.tone]} size={12} className={`${TONE_GLYPH_CLASS[status.tone]} mr-1`} />
+					<Icon name={TONE_ICON[status.tone]} size={12} className={TONE_GLYPH_CLASS[status.tone]} />
 				)}
 				{status.text}
 			</span>
