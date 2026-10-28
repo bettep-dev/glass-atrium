@@ -244,7 +244,7 @@ run_hook_command() {
     $'second line wipes root@@rm -rf ~/.Trash/x\nrm -rf /' # GA-RM[not-executed]: hook payload on stdin, never run
     'inline shell wipes home@@rm -rf ~/.Trash/x; bash -c "rm -rf ~"' # GA-RM[not-executed]: hook payload, never run
     'xargs appends targets@@echo ~ | xargs rm -rf ~/.Trash/x' # GA-RM[not-executed]: hook payload on stdin, never run
-    'HOME reassigned@@HOME=/ rm -rf ~/.Trash/x ~' # GA-RM[not-executed]: hook payload on stdin, never run
+    'HOME reassigned before the delete@@export HOME=.. && rm -rf $HOME/.Trash/y' # GA-RM[not-executed]: hook payload, never run
   )
   local row
   for row in "${rows[@]}"; do
