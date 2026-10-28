@@ -887,6 +887,15 @@ test("the Status column keeps room for the stage name inside stage sections as i
   assert.equal(sectioned, flat);
 });
 
+// the page header's freshness and refresh slots, rendered side by side the way PageHeader groups them
+function renderHeaderSlots(screen: Record<string, unknown>, props: Record<string, unknown>) {
+  return renderScreen({
+    __element: true,
+    type: "div",
+    props: { children: [(screen.DocHeaderFreshnessCD as Component)(props), (screen.DocHeaderRefreshCD as Component)(props)] },
+  });
+}
+
 describe("the header speaks about loading only after a first read; before it the list placeholder is the one loading label", () => {
   const rows = [
     { name: "a first read in flight shows no stamp and no busy Refresh", asOf: null, busy: true, hasStamp: false, isBusy: false },
@@ -898,7 +907,7 @@ describe("the header speaks about loading only after a first read; before it the
     test(row.name, async () => {
       const screen = await loadDocsScreen();
       const listState = { status: row.asOf ? "ready" : "loading", data: null, error: null, busy: row.busy };
-      const tree = renderScreen((screen.DocHeaderActionsCD as Component)({ asOf: row.asOf, listState, onRefresh: () => undefined }));
+      const tree = renderHeaderSlots(screen, { asOf: row.asOf, listState, onRefresh: () => undefined });
 
       assert.equal(findNodes(tree, (n) => n.props.atom === "FreshnessStamp").length, row.hasStamp ? 1 : 0);
       const buttons = findNodes(tree, (n) => n.props.atom === "RefreshButton");
@@ -998,7 +1007,7 @@ describe("the header hands its read state to the shell exactly once, with or wit
         UI: uiStub({ ...SHIPPED_ATOMS, useShellPageState: (input: unknown) => calls.push(input) }),
         React: createReactStub(),
       });
-      const tree = renderScreen((screen.DocHeaderActionsCD as Component)({ asOf: row.asOf, listState: row.state, onRefresh: () => undefined }));
+      const tree = renderHeaderSlots(screen, { asOf: row.asOf, listState: row.state, onRefresh: () => undefined });
 
       const stamps = findNodes(tree, (n) => n.props.atom === "FreshnessStamp").length;
       assert.equal(calls.length + stamps, 1, "one shell caller");

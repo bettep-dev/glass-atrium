@@ -916,8 +916,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const loadMoreRemaining = canLoadMore ? Math.max(0, total - consumedCount) : 0;
 	const isLoadingMore = listState.busy && currentOffset > 0 && !isSearchMode;
 
-	const headerRight = <DocHeaderActionsCD asOf={asOf} listState={listState} onRefresh={triggerRefresh} />;
-
 	return (
 		<div className="flex flex-col min-h-0 flex-1">
 			{/* 타입 스케일 토큰 (ui.jsx SoT) — 멱등 마운트. .fs-* 유틸 + --fs-* CSS var 공급. */}
@@ -1167,7 +1165,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Documents"
-					right={headerRight}
+					freshness={<DocHeaderFreshnessCD asOf={asOf} listState={listState} />}
+					refresh={<DocHeaderRefreshCD asOf={asOf} listState={listState} onRefresh={triggerRefresh} />}
 				/>
 			</div>
 
@@ -1292,21 +1291,24 @@ function ToneGlyphCD({ tone }) {
 }
 
 // before the first read the list placeholder is the one loading label → no stamp, and Refresh is not busy yet
-function DocHeaderActionsCD({ asOf, listState, onRefresh }) {
-	const { FreshnessStamp, RefreshButton } = window.UI;
-	const hasRead = asOf != null;
+// the freshness slot: the stamp after a first read, otherwise the page hands the shell its read state itself
+function DocHeaderFreshnessCD({ asOf, listState }) {
+	const { FreshnessStamp } = window.UI;
 	const freshness = getFreshnessInputCD(asOf, listState);
+	return asOf != null ? <FreshnessStamp {...freshness} /> : <ShellPageStateCD input={freshness} />;
+}
 
+// the refresh slot: busy only over a held read
+function DocHeaderRefreshCD({ asOf, listState, onRefresh }) {
+	const { RefreshButton } = window.UI;
+	const hasRead = asOf != null;
 	return (
-		<>
-			{hasRead ? <FreshnessStamp {...freshness} /> : <ShellPageStateCD input={freshness} />}
-			<RefreshButton
-				isBusy={hasRead && listState.busy === true}
-				hasRead={hasRead}
-				onRefresh={onRefresh}
-				label="Refresh documents"
-			/>
-		</>
+		<RefreshButton
+			isBusy={hasRead && listState.busy === true}
+			hasRead={hasRead}
+			onRefresh={onRefresh}
+			label="Refresh documents"
+		/>
 	);
 }
 
@@ -1390,7 +1392,7 @@ function DocListCardCD({
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
 	// the header Refresh already says Refreshing… → only a search, which it never names, speaks here
 	const busyText = isHeldBusy && isSearchMode ? "Searching…" : null;
-	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (외부 headerRight 와 동일 규칙, F40) ·
+	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (same rule as hiddenCount, F40) ·
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
 	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
 	// 건수는 아는 경우에만 — loading / error 에서 total 은 0 으로 강등되므로 미수신 수치가 '0 matched' 로 읽힌다 (chip 과 동일 규칙).

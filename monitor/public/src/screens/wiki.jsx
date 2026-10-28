@@ -110,16 +110,14 @@ function ScreenWiki() {
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Wiki"
-					right={
-						<>
-							<FreshnessStamp at={settledAt} regions={waveStates} />
-							<RefreshButton
-								isBusy={isBusy}
-								hasRead={hasRead}
-								onRefresh={triggerRefresh}
-								label="Refresh wiki"
-							/>
-						</>
+					freshness={<FreshnessStamp at={settledAt} regions={waveStates} />}
+					refresh={
+						<RefreshButton
+							isBusy={isBusy}
+							hasRead={hasRead}
+							onRefresh={triggerRefresh}
+							label="Refresh wiki"
+						/>
 					}
 				/>
 			</div>

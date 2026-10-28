@@ -800,16 +800,14 @@ function ScreenArchitecture(
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="System map"
-					right={
-						<>
-							<FreshnessStamp {...freshnessInput} />
-							<RefreshButton
-								isBusy={isRefreshBusy}
-								hasRead={diagState.data != null}
-								onRefresh={triggerRefresh}
-								label="Refresh system map"
-							/>
-						</>
+					freshness={<FreshnessStamp {...freshnessInput} />}
+					refresh={
+						<RefreshButton
+							isBusy={isRefreshBusy}
+							hasRead={diagState.data != null}
+							onRefresh={triggerRefresh}
+							label="Refresh system map"
+						/>
 					}
 				/>
 				<MapCaptionAR verdict={pageVerdict} hasMap={diagState.data != null} />

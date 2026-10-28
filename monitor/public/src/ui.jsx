@@ -1248,12 +1248,11 @@ function DetailField({ label, value, mono = false }) {
  * @param freshness - the status group: the FreshnessStamp and any status token read beside it
  * @param range - the time-range control · @param refresh - the RefreshButton
  * @param actions - optional page actions, set apart from the status group
- * @param right - legacy free cluster, rendered after the slots until every caller is on them (slice 0b-8)
  */
-function PageHeader({ title, sub, actions, freshness, range, refresh, right }) {
+function PageHeader({ title, sub, actions, freshness, range, refresh }) {
   const hasSub = sub && sub !== title;
   const hasStatus = Boolean(freshness || range || refresh);
-  const hasCluster = Boolean(actions || hasStatus || right);
+  const hasCluster = Boolean(actions || hasStatus);
   return <div className="page-head">
     <div className="min-w-0">
       <h1 className="page-head-title fs-display font-semibold">{title}</h1>
@@ -1262,7 +1261,6 @@ function PageHeader({ title, sub, actions, freshness, range, refresh, right }) {
     {hasCluster && <div className="page-head-cluster">
       {actions && <div className="page-head-group">{actions}</div>}
       {hasStatus && <div className="page-head-group">{freshness}{range}{refresh}</div>}
-      {right && <div className="page-head-group">{right}</div>}
     </div>}
   </div>;
 }

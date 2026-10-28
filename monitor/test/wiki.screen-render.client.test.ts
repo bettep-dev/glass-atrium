@@ -252,15 +252,14 @@ test("the page header carries the shared Refresh control, busy on the mount wave
   const mod = await loadWikiScreen();
   const screen = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
   const header = findNodes(screen, (n) => n.props.atom === "PageHeader")[0];
-  const headerRight = renderScreen(header.props.right);
-
-  const refresh = findNodes(headerRight, (n) => n.props.atom === "RefreshButton");
+  // each control rides its own named slot
+  const refresh = findNodes(renderScreen(header.props.refresh), (n) => n.props.atom === "RefreshButton");
   assert.equal(refresh.length, 1, "the header carries one Refresh control");
   assert.equal(refresh[0].props.label, "Refresh wiki", "the accessible name stays stable");
   assert.equal(refresh[0].props.isBusy, true, "the mount wave is in flight");
   assert.equal(refresh[0].props.hasRead, false, "nothing has been read yet, so the first wave reads as loading");
 
-  const stamp = findNodes(headerRight, (n) => n.props.atom === "FreshnessStamp")[0];
+  const stamp = findNodes(renderScreen(header.props.freshness), (n) => n.props.atom === "FreshnessStamp")[0];
   assert.equal((stamp.props.regions as unknown[]).length, 5, "every fetched region feeds the stamp");
 });
 

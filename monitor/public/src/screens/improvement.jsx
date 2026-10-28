@@ -422,20 +422,19 @@ function ScreenImprovement({ onNav }) {
       `}</style>
 
 			<div className="flex-shrink-0">
+				{/* the view switch re-lays the whole screen, so it rides `actions`, set apart from the status group */}
 				<PageHeader
 					sub="Self-improvement loop"
 					title="Learning"
-					right={
-						<div className="flex items-center gap-2">
-							<FreshnessStamp at={asOf} regions={regionStates} />
-							<ViewToggleI view={view} onChange={setView} />
-							<RefreshButton
-								isBusy={isBusy}
-								hasRead={asOf !== null}
-								onRefresh={triggerRefresh}
-								label="Refresh learning data"
-							/>
-						</div>
+					actions={<ViewToggleI view={view} onChange={setView} />}
+					freshness={<FreshnessStamp at={asOf} regions={regionStates} />}
+					refresh={
+						<RefreshButton
+							isBusy={isBusy}
+							hasRead={asOf !== null}
+							onRefresh={triggerRefresh}
+							label="Refresh learning data"
+						/>
 					}
 				/>
 			</div>
