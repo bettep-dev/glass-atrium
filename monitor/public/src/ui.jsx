@@ -588,16 +588,18 @@ const KPI_SPARK = { w: 68, h: 26 };
  *   5 foot       drill link / Retry, pinned to the tile bottom
  * state: 'ready' | 'loading' | 'error' | 'empty' — error and empty show the faint unknown dash, never a 0.
  * onClick → the tile is a button (no info or foot inside it then); otherwise a group labelled by its label row.
+ * aria-label → the tile's own accessible name (a sentence the label row cannot carry), on the button or the group.
+ * hasValue=false → a fact-list tile: no value row, the hint carries the facts; the label row and states stay.
  * isSplit → value + delta | hint as the shared TileSplit columns between 641px and xl.
  */
 function KPI({
   id, label, labelId, labelAs = 'div', labelClassName = 'fs-meta text-dim font-medium', labelTitle,
   aside, asideClassName = 'fs-meta text-dim', info,
-  value, unit, tone, isWord = false, badge,
+  value, unit, tone, isWord = false, badge, hasValue = true,
   delta, deltaInverse = false,
   hint, hintClassName = 'fs-meta', hintFace = 'text-faint font-mono', hintTitle,
   foot, sparkData, sparkColor = 'currentColor', onClick,
-  state = 'ready', loadingLabel, isBusy = false, isSplit = false, className = '',
+  state = 'ready', loadingLabel, isBusy = false, isSplit = false, className = '', 'aria-label': ariaLabel,
 }) {
   const isLoading = state === 'loading';
   const isUnknown = KPI_UNKNOWN_STATES.has(state);
@@ -617,7 +619,7 @@ function KPI({
       <span className="kpi-value" aria-hidden="true">{'​'}</span>
       <LoadingPlaceholder label={loadingLabel}/>
     </div>
-  ) : (
+  ) : !hasValue ? null : (
     <div className="kpi-main">
       <KpiValue unit={unit} tone={isUnknown ? undefined : tone} isWord={isWord} isFaint={isUnknown}>
         {isUnknown ? (value ?? '—') : value}
@@ -637,7 +639,8 @@ function KPI({
     <TileSplit className="kpi-split" lead={<>{main}{deltaRow}</>} detail={hintRow || null}/>
   ) : <>{main}{deltaRow}{hintRow}</>;
 
-  const rootClass = ['kpi kpi-tile', info && 'kpi--info', sparkData && 'kpi--spark', className].filter(Boolean).join(' ');
+  const rootClass = ['kpi kpi-tile', info && 'kpi--info', sparkData && 'kpi--spark', !hasValue && 'kpi--facts', className]
+    .filter(Boolean).join(' ');
   const children = <>
     {head}
     {info && <div className="kpi-info">{info}</div>}
@@ -647,10 +650,13 @@ function KPI({
   </>;
   const busy = isLoading || isBusy ? 'true' : undefined;
   if (onClick) {
-    return <button type="button" id={id} onClick={onClick} className={`${rootClass} text-left`} aria-busy={busy}>{children}</button>;
+    return <button type="button" id={id} onClick={onClick} className={`${rootClass} text-left`} aria-label={ariaLabel}
+      aria-busy={busy}>{children}</button>;
   }
+  // an own name outranks the label row (aria-labelledby would win over aria-label otherwise)
   return (
-    <div id={id} role="group" aria-labelledby={headId} aria-label={headId ? undefined : (isTextLabel ? label : undefined)}
+    <div id={id} role="group" aria-labelledby={ariaLabel ? undefined : headId}
+      aria-label={ariaLabel ?? (headId ? undefined : (isTextLabel ? label : undefined))}
       className={rootClass} aria-busy={busy}>
       {children}
     </div>

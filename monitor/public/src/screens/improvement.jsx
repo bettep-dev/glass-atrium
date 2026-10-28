@@ -595,7 +595,7 @@ function StatusBandI({
 			>
 				{verdict.sentence}
 			</PageVerdict>
-			<div className="grid grid-cols-4 gap-3">
+			<div className="grid grid-cols-4 gap-card">
 				<StatusTileI
 					status={bandTileStatusI(listState, listState.data)}
 					tone={awaiting > 0 ? "text-warn" : awaitingHeld ? undefined : "text-ok"}
@@ -799,34 +799,36 @@ function StatusTileI({ status, tone, symbol, label, value, population, basis, ow
 
 // 값 자리에 절대 0 을 쓰지 않는다 — 적재되지 않은 payload 가 0 으로 읽히는 것이 이 밴드가
 // 막으려는 단 하나의 오독이다. 세 상태는 문구도 형태도 서로 다르다.
+// The ready tile's own KPI anatomy carries every state → the label row and tile height hold when the value lands.
+const TILE_PLACEHOLDER_STATE_I = { loading: "loading", error: "error", unavailable: "empty", announced: "error" };
+
 function TilePlaceholderI({ status, label, owner, onRetry }) {
-	const { LoadingPlaceholder } = window.UI;
+	const { KPI } = window.UI;
+	const notes = {
+		error: "Couldn't load",
+		unavailable: "Not measured — this payload carried no value for it",
+		announced: `Not read — see the ${owner} below`,
+	};
 	return (
-		<div className="sub-card bg-elev p-2.5 min-w-0">
-			<div className="fs-meta text-faint min-h-[2.4em]">{label}</div>
-			{status === "loading" ? (
-				<LoadingPlaceholder label={label} minHeight={28} className="mt-1" />
-			) : null}
-			{status === "error" ? (
-				<button
-					className="btn ghost sm mt-1"
-					onClick={onRetry}
-					aria-label={`Retry loading ${label}`}
-				>
-					Couldn't load — retry
-				</button>
-			) : null}
-			{status === "unavailable" ? (
-				<div className="card-sub is-wrap fs-meta mt-1">
-					Not measured — this payload carried no value for it
-				</div>
-			) : null}
-			{status === "announced" ? (
-				<div className="card-sub is-wrap fs-meta mt-1">
-					Not read — see the {owner} below
-				</div>
-			) : null}
-		</div>
+		<KPI
+			label={label}
+			state={TILE_PLACEHOLDER_STATE_I[status] ?? "empty"}
+			loadingLabel={label}
+			hint={notes[status]}
+			hintFace="card-sub is-wrap"
+			foot={
+				status === "error" ? (
+					<button
+						type="button"
+						className="btn ghost sm"
+						onClick={onRetry}
+						aria-label={`Retry loading ${label}`}
+					>
+						Retry
+					</button>
+				) : null
+			}
+		/>
 	);
 }
 

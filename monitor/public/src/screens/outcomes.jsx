@@ -993,10 +993,10 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   const view = getRegionView(analyticsState);
   if (view === 'loading') {
     return (
-      <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
+      <div className="grid grid-cols-4 gap-card mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
         {/* hero + volume column, as loaded → nothing shifts on arrival */}
-        <KpiSkeletonO className="col-span-3"/>
-        <KpiSkeletonO/>
+        <KpiSkeletonO loadingLabel="needs you" className="col-span-3"/>
+        <KpiSkeletonO loadingLabel="volume"/>
       </div>
     );
   }
@@ -1049,7 +1049,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   return (
     <div id={REGION_CARD_IDS.statusBand} className="mb-4 flex-shrink-0">
       <span id={labelId} className="sr-only">Status band</span>
-      <div className="grid grid-cols-4 gap-3" role="group" aria-labelledby={labelId}>
+      <div className="grid grid-cols-4 gap-card" role="group" aria-labelledby={labelId}>
         <BandTileO
           tile={heroTile}
           windowLabel={windowLabel}
@@ -1066,8 +1066,9 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
 }
 
 // unloadedText → a pending or failed count says so instead of a dash that reads as data
+// One KPI anatomy: label row · count · share and trend under it · the reasons as the split detail column.
 function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, className = '' }) {
-  const { KpiValue, TileSplit, formatPctWithDenominator } = window.UI;
+  const { KPI, formatPctWithDenominator } = window.UI;
   const glyph = getBandTileGlyphO(tile.tone);
   const loaded = tile.count !== null && tile.count !== undefined;
   const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
@@ -1077,30 +1078,29 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
     : '';
   const trendText = tile.trend ? ` — ${tile.trend}` : '';
   const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'}${trendText}${reasonText} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
-  const Tag = canJump ? 'button' : 'div';
-  const lead = (
-    <>
-      <div className="kpi-label">
-        {glyph && (
-          <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
-            <GlyphO name={glyph} size={12}/>
-          </span>
-        )}
-        {tile.label}
-      </div>
-      <KpiValue>{loaded ? formatIntO(tile.count) : <span className="fs-body text-dim">{unloadedText}</span>}</KpiValue>
-      <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
-      {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
-    </>
-  );
 
   return (
-    <Tag
-      {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : { role: 'group' })}
-      className={`${canJump ? 'kpi' : 'kpi cursor-default'} ${className}`.trim()}
-      aria-label={ariaLabel}>
-      {reasons ? <TileSplit lead={lead} detail={<NeedsYouReasonsO reasons={reasons}/>}/> : lead}
-    </Tag>
+    <KPI
+      label={
+        <span className="inline-flex items-center gap-1">
+          {glyph && (
+            <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
+              <GlyphO name={glyph} size={12}/>
+            </span>
+          )}
+          {tile.label}
+        </span>
+      }
+      value={loaded ? formatIntO(tile.count) : <span className="fs-body text-dim">{unloadedText}</span>}
+      delta={
+        <>
+          <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
+          {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
+        </>
+      }
+      hint={reasons && <NeedsYouReasonsO reasons={reasons}/>} hintFace="" isSplit={Boolean(reasons)}
+      onClick={canJump ? () => focusLedgerSectionO(tile.jumpTo) : undefined}
+      aria-label={ariaLabel} className={className}/>
   );
 }
 
@@ -1211,24 +1211,27 @@ function getVolumeTilesO(tiles) {
 }
 
 // volume facts demoted beside the hero; the Self-reported glyph stays the missing-report grade channel
+// a fact-list KPI: the ⓘ on the label row, level with the hero's label; the facts start where the hero's value does
 function VolumeTilesO({ tiles, windowLabel, info = null }) {
-  const { formatPctWithDenominator } = window.UI;
+  const { KPI, formatPctWithDenominator } = window.UI;
   return (
-    <div className="kpi cursor-default fs-meta flex flex-col justify-between gap-2" role="group" aria-label={`Volume · ${windowLabel}`}>
-      {info && <div className="flex justify-end">{info}</div>}
-      {tiles.map((tile) => {
-        const glyph = getBandTileGlyphO(tile.tone);
-        return (
-          <div key={tile.key} className="flex flex-wrap items-center gap-x-1 text-dim">
-            {glyph && <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}><GlyphO name={glyph} size={12}/></span>}
-            {tile.label}
-            <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
-            <span className="w-full text-right font-mono text-faint">{formatPctWithDenominator(tile.count, tile.population)}</span>
-            {tile.trend && <span className="w-full text-right">{tile.trend}</span>}
-          </div>
-        );
-      })}
-    </div>
+    <KPI hasValue={false} info={info} aria-label={`Volume · ${windowLabel}`} hintFace=""
+      hint={
+        <div className="flex flex-col gap-2">
+          {tiles.map((tile) => {
+            const glyph = getBandTileGlyphO(tile.tone);
+            return (
+              <div key={tile.key} className="flex flex-wrap items-center gap-x-1 text-dim">
+                {glyph && <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}><GlyphO name={glyph} size={12}/></span>}
+                {tile.label}
+                <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
+                <span className="w-full text-right font-mono text-faint">{formatPctWithDenominator(tile.count, tile.population)}</span>
+                {tile.trend && <span className="w-full text-right">{tile.trend}</span>}
+              </div>
+            );
+          })}
+        </div>
+      }/>
   );
 }
 
@@ -1426,19 +1429,10 @@ function OpenCaveatCellO({ count }) {
   );
 }
 
-function KpiSkeletonO({ className = '' }) {
-  return (
-    <div className={`kpi ${className}`.trim()} aria-busy="true">
-      <div
-        className="skel-pulse-o"
-        style={{
-          height: 70,
-          borderRadius: 6,
-          background: 'rgb(var(--sunken))',
-          opacity: 0.7,
-        }}/>
-    </div>
-  );
+// the band's loading state is the KPI's own: strut + placeholder in the value row, aria-busy on the tile
+function KpiSkeletonO({ loadingLabel, className = '' }) {
+  const { KPI } = window.UI;
+  return <KPI state="loading" loadingLabel={loadingLabel} className={className}/>;
 }
 
 // ----- Attribution Health (텔레메트리 귀속 품질) ------------------------------

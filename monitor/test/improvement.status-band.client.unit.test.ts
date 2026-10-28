@@ -120,11 +120,14 @@ test("a tile's state follows its own payload, and a missing value is never ready
 test("the three non-ready states render distinctly", () => {
   const retries: string[] = [];
   const shapes = ["loading", "error", "unavailable"].map((status) => {
-    const tree = sandbox.TilePlaceholderI({
+    const tile = sandbox.TilePlaceholderI({
       status,
       label: "Applied (7 days)",
       onRetry: () => retries.push(status),
     });
+    assert.equal(tile.type, sandbox.window.UI.KPI, `a ${status} tile is the ready tile's own KPI anatomy`);
+    // rendered one level → the KPI's rows (value, hint, foot) are reachable
+    const tree = (tile.type as (props: Record<string, unknown>) => unknown)(tile.props);
     const nodes = collectElements(tree, []);
     return {
       status,

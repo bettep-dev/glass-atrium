@@ -136,3 +136,22 @@ test("a KPI hint keeps the face its caller names, and the mono face when none is
   const named = findNodes(render("KPI", { label: "A", value: "1", hint: "h", hintFace: "text-dim" }), (n) => hasClass(n, "kpi-hint"))[0];
   assert.ok(!hasClass(named, "font-mono") && hasClass(named, "text-dim"), classOf(named));
 });
+
+test("a tile's own accessible name rides the button or the group, and replaces the label-row naming", () => {
+  const name = "Needs you: 3 — failed or flagged records";
+  const button = findNodes(render("KPI", { id: "t", label: "Needs you", value: "3", onClick: () => undefined, "aria-label": name }), (n) => n.type === "button")[0];
+  assert.equal(button.props["aria-label"], name);
+  const tree = render("KPI", { id: "t", label: "Needs you", value: "3", "aria-label": name });
+  const [group] = findNodes(tree, (n) => n.props.role === "group");
+  assert.equal(group.props["aria-label"], name);
+  assert.equal(group.props["aria-labelledby"], undefined, "a label-row reference would outrank the own name");
+});
+
+test("a fact-list tile drops the value row and keeps its label row and its facts", () => {
+  const tree = render("KPI", { label: "Volume", hasValue: false, hint: "Done 12", hintFace: "" });
+  assert.deepEqual(rowOrder(tree), ["kpi-head", "kpi-hint"], "no value row, the facts follow the label row");
+  assert.equal(findNodes(tree, (n) => n.type === "KpiValue").length, 0, "no figure is drawn");
+  assert.ok(hasClass(findNodes(tree, (n) => hasClass(n, "kpi"))[0], "kpi--facts"), "the root takes the fact-list spacing");
+  const loading = render("KPI", { label: "Volume", hasValue: false, state: "loading", loadingLabel: "volume" });
+  assert.ok(rowOrder(loading).includes("kpi-main"), "a loading fact-list tile still holds its row with the placeholder");
+});

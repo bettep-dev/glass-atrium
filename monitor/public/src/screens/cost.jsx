@@ -129,9 +129,6 @@ function ScreenCost({ onNav }) {
           - .cost-foot: 카드 하단 footnote/helper line — fs-meta --dim (text-faint mono 보다 한 단 밝게, 읽기용).
           - .kpi-hint --dim override: KPI 타일 sub-caption 을 --faint 에서 --dim 으로 (ui.jsx 정의 셀프 보존, cost 화면만 승격). */}
       <style>{`
-        @keyframes skelPulseC { 0%,100%{opacity:.7} 50%{opacity:.35} }
-        .skel-pulse-c { animation: skelPulseC 1.4s ease-in-out infinite; }
-        @media (prefers-reduced-motion: reduce) { .skel-pulse-c { animation: none; } }
         .cost-tbl tbody td { color: rgb(var(--dim)); }
         .cost-tbl tbody td.num { color: rgb(var(--dim)); }
         .cost-foot { font-size: var(--fs-meta); line-height: 1.5; color: rgb(var(--dim)); }
@@ -567,18 +564,19 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
         <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
           focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures} className="mb-4"/>
       )}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-card mb-4">
         <CostTileC
+          id="cost-tile-today"
           label="Today vs. normal"
           windowTag="today"
           status={getTileStatus(kpiState, hot.ratio, false)}
           value={hot.todayCost === null ? '—' : formatUsdC(hot.todayCost)}
           hint={hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`}
-          unavailableNote="No cost in the last 7 days — no normal to compare against.">
-          <HotBulletC hot={hot}/>
-        </CostTileC>
+          unavailableNote="No cost in the last 7 days — no normal to compare against."
+          delta={<HotBulletC hot={hot}/>}/>
 
         <CostTileC
+          id="cost-tile-window"
           label={`Cost, last ${trendDays} days`}
           windowTag={`${trendDays}d`}
           status={getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty)}
@@ -586,37 +584,37 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
           hint={windowTotal.total === null
             ? ''
             : `${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
-          labelId="cost-tile-window-label"
           info="Recorded cost: the sum of the cost events recorded on each day of the window, today's partial day included. The average divides that total by the days shown; the peak is the costliest single day."
-          unavailableNote="Trend payload carries no cost figure.">
-          <TrendDeltaC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>
-        </CostTileC>
+          unavailableNote="Trend payload carries no cost figure."
+          delta={<TrendDeltaC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>}/>
 
         <CostTileC
+          id="cost-tile-per-task"
           label="Cost per finished task"
           windowTag="7d fixed"
           status={getTileStatus(kpiState, costPerDone, false)}
           value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
           hint={`7-day cost / ${formatIntC(doneCount)} finished`}
-          unavailableNote="No finished task in the last 7 days.">
-          <div className="cost-foot mt-1.5">Fixed 7-day window — the range above does not change it.</div>
-        </CostTileC>
+          unavailableNote="No finished task in the last 7 days."
+          foot={<div className="cost-foot">Fixed 7-day window — the range above does not change it.</div>}/>
 
         <CostTileC
+          id="cost-tile-cache"
           label="Cache share of cost"
           windowTag={`${modelDays}d`}
           status={getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty)}
           value={cacheShare.share === null ? '—' : `${(cacheShare.share * 100).toFixed(0)}%`}
           hint={cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`}
-          unavailableNote="No priced model cost in this window.">
-          <div className="cost-foot mt-1.5">
-            {getCacheTotalNoteC({
-              listTotal: cacheShare.totalCost,
-              recordedTotal: trendDays === modelDays ? windowTotal.total : null,
-              days: modelDays,
-            })}
-          </div>
-        </CostTileC>
+          unavailableNote="No priced model cost in this window."
+          foot={
+            <div className="cost-foot">
+              {getCacheTotalNoteC({
+                listTotal: cacheShare.totalCost,
+                recordedTotal: trendDays === modelDays ? windowTotal.total : null,
+                days: modelDays,
+              })}
+            </div>
+          }/>
       </div>
     </>
   );
@@ -641,32 +639,29 @@ function getShownDays(state, requestedDays) {
   return match ? Number(match[1]) : requestedDays;
 }
 
+// Cost tile status → the shared KPI state: a window holding nothing and an underivable measure both read as the unknown dash.
+const COST_TILE_KPI_STATE = { loading: 'loading', error: 'error', empty: 'empty', unavailable: 'empty' };
+
 /**
- * Cost-local tile shell — the shared KPI atom is a single-value button, tile 1 carries a bar + a verdict.
- * All four tiles take this one shell rather than mixing two tile idioms in one band.
+ * One Cost tile on the shared KPI anatomy — the window tag rides the label row's right edge on every tile,
+ * so the four windows compare at one glance; a non-ready tile says why in its hint, under the unknown dash.
+ * delta → the comparison under the value (tile 1's bar, tile 2's prior-window line) · foot → the tile's footnote.
  */
-function CostTileC({ label, labelId, info, windowTag, status, value, hint, unavailableNote, children }) {
-  const { CardInfo, KpiValue } = window.UI;
+function CostTileC({ id, label, info, windowTag, status, value, hint, unavailableNote, delta = null, foot = null }) {
+  const { KPI, CardInfo } = window.UI;
   const isReady = status === 'ready';
-  const note = getTileNote(status, unavailableNote);
+  // the ⓘ is described by the label alone; the tile's group name is the whole label row, window tag included
+  const nameId = `${id}-name`;
 
   return (
-    <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
-      {/* window tag at the label's right edge on every tile → the four windows compare at one glance */}
-      {/* one control-height label row on every tile → an ⓘ on one tile never drops its value below its peers' */}
-      <div className="flex items-center justify-between gap-2 min-h-[32px]">
-        <div className="flex items-center gap-1 min-w-0">
-          <div id={labelId} className="kpi-label">{label}</div>
-          {info && <CardInfo label={`How ${label} is counted`} describedBy={labelId}>{info}</CardInfo>}
-        </div>
-        <span className="kpi-window fs-meta font-mono text-faint shrink-0">{windowTag}</span>
-      </div>
-      <KpiValue>
-        {status === 'loading' ? <SkelC w={110} h={26}/> : isReady ? value : '—'}
-      </KpiValue>
-      {isReady && hint && <div className="fs-meta kpi-hint mt-1">{hint}</div>}
-      {isReady ? children : note && <div className="cost-foot mt-1.5">{note}</div>}
-    </div>
+    <KPI labelId={`${id}-label`} label={<span id={nameId}>{label}</span>} labelTitle={label}
+      aside={windowTag} asideClassName="kpi-window ml-auto fs-meta font-mono text-faint"
+      info={info && <CardInfo label={`How ${label} is counted`} describedBy={nameId}>{info}</CardInfo>}
+      state={COST_TILE_KPI_STATE[status] ?? 'ready'} loadingLabel={label.toLowerCase()}
+      value={isReady ? value : undefined}
+      delta={isReady ? delta : null}
+      hint={isReady ? (hint || null) : getTileNote(status, unavailableNote)} hintFace=""
+      foot={isReady ? foot : null}/>
   );
 }
 
@@ -680,7 +675,7 @@ function HotBulletC({ hot }) {
   const valueNorm = Math.min(hot.ratio / 2, 1);
 
   return (
-    <div className="mt-2">
+    <div>
       <BulletBar
         value={valueNorm}
         target={0.5}
@@ -2460,25 +2455,6 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
 function EmptyStateC({ message }) {
   const { EmptyState } = window.UI;
   return <EmptyState message={message} />;
-}
-
-// 인라인 skeleton — sunken 토큰 pulse placeholder.
-function SkelC({ w = '100%', h = 14, style }) {
-  return (
-    <span
-      aria-hidden="true"
-      className="skel-pulse-c"
-      style={{
-        display: 'inline-block',
-        width: w,
-        height: h,
-        background: 'rgb(var(--sunken))',
-        borderRadius: 4,
-        opacity: 0.7,
-        ...style,
-      }}
-    />
-  );
 }
 
 // 순수 helper

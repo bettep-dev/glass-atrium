@@ -986,12 +986,17 @@ interface RenderModule {
   [name: string]: unknown;
 }
 
-// real ui.jsx helpers, with every rendered atom a host element carrying its props
+// the tiles are thin wrappers over the shared KPI anatomy → the real KPI renders, its slots stay stub atoms
+const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
+const realKpi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI.KPI;
+
+// real ui.jsx helpers, with every rendered atom a host element carrying its props (the KPI anatomy itself real)
 function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
   const real = cost.window.UI as Record<string, unknown>;
   return new Proxy({}, {
     get: (_target, name: string) => {
       if (name in overrides) return overrides[name];
+      if (name === "KPI") return realKpi;
       const value = real[name];
       if (typeof value !== "function" || /^[a-z]/.test(name)) return value;
       return (props: Record<string, unknown>) => ({ __element: true, type: "ui-atom", props: { ...props, atom: name } });
@@ -1034,7 +1039,7 @@ test("a cold-failed KPI payload retrying reads as failed on its tiles, never a s
   const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
   assert.equal(cards.length, 1, "the KPI error card stays mounted");
   assert.equal(cards[0].props.isBusy, true);
-  const tiles = findNodes(tree, (n) => n.type === "div" && n.props.className === "kpi");
+  const tiles = findNodes(tree, (n) => n.type === "div" && String(n.props.className ?? "").split(/\s+/).includes("kpi"));
   assert.equal(tiles.length, 4);
   assert.equal(tiles.filter((t) => t.props["aria-busy"] === "true").length, 0, "no tile reads as loading beside the card");
 });
@@ -1471,17 +1476,26 @@ test("every chart tooltip floats on the opaque overlay surface and follows the p
   }
 });
 
-test("a loading skeleton pulses through a class the screen's reduced-motion rule holds still", async () => {
+// the tiles load through the shared KPI loading row → its indicator, not a screen-local skeleton, carries the motion
+test("a loading tile's indicator animates only through a motion-safe class, so reduced motion holds it still", async () => {
   const mod = await loadCostRender();
-  const skeleton = findNodes(renderIn(mod, "SkelC", {}), (n) => n.type === "span")[0];
-  assert.equal((skeleton?.props.style as Record<string, unknown>).animation, undefined, "no inline loop a stylesheet cannot override");
-  const classes = String(skeleton?.props.className ?? "").split(/\s+/).filter(Boolean);
-  const css = findNodes(renderIn(mod, "ScreenCost", { onNav: () => {} }), (n) => n.type === "style").map(collectText).join("\n");
-  const reduceStart = css.search(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
-  assert.ok(reduceStart >= 0, "the screen declares a reduced-motion block");
-  const pulsing = classes.filter((c) => new RegExp(`\\.${c}\\s*\\{[^}]*animation:\\s*skelPulseC`).test(css));
-  assert.equal(pulsing.length, 1, `one skeleton class runs the pulse: ${classes.join(" ")}`);
-  assert.match(css.slice(reduceStart), new RegExp(`\\.${pulsing[0]}\\s*\\{[^}]*animation:\\s*none`), "reduced motion stops that class");
+  const loading: PanelState = { status: "loading", data: null, error: null, busy: false };
+  const tree = renderIn(mod, "KpiRowC", {
+    kpiState: loading, hot: cost.computeHotVerdict({}), trendState: loading, modelState: loading, days: 30, onRetry: () => {},
+  });
+  const isTile = (n: RenderedNode) => n.type === "div" && String(n.props.className ?? "").split(/\s+/).includes("kpi");
+  const tiles = findNodes(tree, isTile);
+  assert.equal(tiles.length, 4);
+  for (const tile of tiles) {
+    assert.equal(tile.props["aria-busy"], "true", "a loading tile says so");
+    const animated = findNodes(tile, (n) => /\banimate-/.test(String(n.props.className ?? "")));
+    assert.ok(animated.length > 0, "each loading tile shows a moving indicator");
+    for (const node of animated) {
+      assert.equal((node.props.style as Record<string, unknown> | undefined)?.animation, undefined, "no inline loop a stylesheet cannot override");
+      const loops = String(node.props.className).split(/\s+/).filter((c) => /animate-/.test(c));
+      for (const loop of loops) assert.match(loop, /^motion-safe:/, `${loop} runs under reduced motion`);
+    }
+  }
 });
 
 test("a refreshing region dims at the 120ms state timing, and only when motion is allowed", async () => {

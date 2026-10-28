@@ -829,7 +829,7 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
   assert.ok(heading, "the ledger renders the jump target");
   assert.strictEqual(heading!.props!.tabIndex, -1, "the heading can take focus without joining the tab order");
 
-  const asRendered = (tile: BandTile) => helpers.BandTileO({ tile, windowLabel: "30d" });
+  const asRendered = (tile: BandTile) => renderKpiO(helpers.BandTileO({ tile, windowLabel: "30d" }));
   const live = asRendered(attention);
   assert.strictEqual(live.type, "button", "a reachable count is an operable control");
   assert.strictEqual(typeof live.props!.onClick, "function");
@@ -838,6 +838,12 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
   }
   assert.strictEqual(asRendered(tileOf(tiles, "broken")).type, "div", "tiles without a target stay static");
 });
+
+// the band tiles are thin wrappers over the shared KPI anatomy → render that KPI one level to reach its elements
+function renderKpiO(node: RenderNode): RenderNode {
+  assert.strictEqual(node.type, (helpers.window.UI as unknown as Record<string, unknown>).KPI, "the tile is the shared KPI");
+  return (node.type as (props: unknown) => RenderNode)({ ...node.props, children: node.children });
+}
 
 // design.md copy rule: a definition over a cap opens from a focusable ⓘ, never a hover-only title
 describe("StatusBandO: the tile rules open from one focusable ⓘ described by the band label, never from a hover-only title", () => {
@@ -852,9 +858,9 @@ describe("StatusBandO: the tile rules open from one focusable ⓘ described by t
   test("no tile carries a hover-only title", () => {
     const hero = tileOf(tiles, "attention");
     const rendered = [
-      { name: "a jumpable hero", node: helpers.BandTileO({ tile: hero, windowLabel: "30d" }) },
-      { name: "a static hero", node: helpers.BandTileO({ tile: { ...hero, count: 0 }, windowLabel: "30d" }) },
-      { name: "the volume column", node: helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d" }) },
+      { name: "a jumpable hero", node: renderKpiO(helpers.BandTileO({ tile: hero, windowLabel: "30d" })) },
+      { name: "a static hero", node: renderKpiO(helpers.BandTileO({ tile: { ...hero, count: 0 }, windowLabel: "30d" })) },
+      { name: "the volume column", node: renderKpiO(helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d" })) },
     ];
     for (const row of rendered) assert.deepStrictEqual(hoverTitled(row.node).length, 0, `${row.name} has no hover-only title`);
   });
@@ -879,7 +885,7 @@ describe("StatusBandO: the tile rules open from one focusable ⓘ described by t
 
   test("the volume column renders the ⓘ it is handed", () => {
     const marker = { type: "marker", props: {}, children: [] };
-    const column = helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d", info: marker });
+    const column = renderKpiO(helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d", info: marker }));
     assert.ok(flattenNodes(column).includes(marker as RenderNode));
   });
 });
