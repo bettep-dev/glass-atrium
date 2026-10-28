@@ -215,7 +215,7 @@ function ScreenCost({ onNav }) {
         {/* both cards fit the 920px lg column at 2:1 → split from lg (a 1:1 half overlaps the stop-reason table); the decision pair's session table does not, so it keeps xl */}
         <SplitRow ratio="2:1" layout="equal" className="lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <Disclosure kind="status" level={3} title="Turn statistics" sub="Stop reasons and turn counts"
-            className="cost-inst">
+            isFlush={hasTableRowsC(turnState, turnState.data?.stop_reasons ?? [])} className="cost-inst">
             <RefreshingRegionC id={COST_REGION_IDS.turns} states={[turnState]}>
               <TurnStatsBody state={turnState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
             </RefreshingRegionC>
@@ -1322,6 +1322,11 @@ function isUnattributedModel(model) {
   return UNATTRIBUTED_MODEL_KEYS.has(model);
 }
 
+// A card whose table renders sits flush (the table's edge cells carry the card padding); loading, failure and empty keep the padded body.
+function hasTableRowsC(state, rows) {
+  return window.UI.getRegionView(state) === 'ready' && rows.length > 0;
+}
+
 function ModelCostCard({ state, days, failures, onRetry, onNav }) {
   const { Card, Pill } = window.UI;
   const [isShowingAll, setShowingAll] = useStateC(false);
@@ -1340,6 +1345,7 @@ function ModelCostCard({ state, days, failures, onRetry, onNav }) {
     <Card
       size={CARD_SIZE.MODEL}
       title="Cost by model"
+      isFlush={hasTableRowsC(state, state.data?.rows ?? [])}
       info="Cost per agent is not available — cost events carry a model, not an agent. A session using several models counts under each, so the Total row carries no session count."
       foot={other && (
         <ModelCostFootC other={other} modelCount={rows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
@@ -1425,9 +1431,12 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
 
   return (
     <>
-      <SectionLabel level={3} className="mb-2">By token type</SectionLabel>
-      <CategoryShareRowC rows={computeCategoryCostRows(modelRows)}/>
-      <SectionLabel level={3} className="mb-2 mt-4">By model</SectionLabel>
+      {/* the body is flush for the ledger → the share block and the footnote take the card padding themselves */}
+      <div className="px-4 pt-4">
+        <SectionLabel level={3} className="mb-2">By token type</SectionLabel>
+        <CategoryShareRowC rows={computeCategoryCostRows(modelRows)}/>
+        <SectionLabel level={3} className="mb-2 mt-4">By model</SectionLabel>
+      </div>
       <table className="tbl cost-tbl">
         <caption className="sr-only">{`Cost by model, last ${days} days — the costliest ${top.length} of ${modelRows.length}`}</caption>
         <thead>
@@ -1454,7 +1463,7 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
         </tfoot>
       </table>
       {/* Named gap, never proxied — the per-agent gap sits behind the card's info button. */}
-      <div className="cost-foot mt-2">Multi-model sessions count once per model</div>
+      <div className="cost-foot px-4 pt-2 pb-4">Multi-model sessions count once per model</div>
     </>
   );
 }
@@ -1769,6 +1778,7 @@ function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
     <Card
       size={CARD_SIZE.SESSION}
       title="Most expensive sessions"
+      isFlush={hasTableRowsC(state, rollup.top)}
       sub={state.status === 'ready'
         ? concentrationText || `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}`
         : undefined}
@@ -2365,7 +2375,7 @@ function TurnAggregateRow({ turns, sessionPopulation }) {
   ];
 
   return (
-    <div className="mb-4">
+    <div className="px-4 mb-4">
       <div className="flex items-baseline gap-2 flex-wrap">
         {headline.value && <span className="font-mono fs-display font-semibold tracking-tight">{headline.value}</span>}
         <span className="fs-meta text-dim">{headline.note}</span>
@@ -2392,7 +2402,7 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
 
   return (
     <table className="tbl cost-tbl">
-      <caption className="fs-meta text-dim text-left pb-2">
+      <caption className="fs-meta text-dim text-left px-4 pb-2">
         Counted once per stop reason
       </caption>
       <thead>

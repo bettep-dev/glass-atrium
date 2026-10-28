@@ -158,8 +158,6 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
 const AGENTS_INLINE_CSS = '.ag-card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; } '
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
   + '.tbl td { vertical-align: top; } '
-  // paired S cards: every row on the shared row-height token → five rows end at one pixel in both cards
-  + '.ag-paired-tbl td { height: var(--row-h); } '
   // row fills its scroller edge to edge → the global outset ring is clipped; inset keeps the focus-ring token visible
   + 'tr[data-roving-row]:focus-visible { outline-offset: calc(var(--focus-ring-width) * -1); }';
 
@@ -2501,6 +2499,8 @@ function SuccessRateSparkline({ points, colorVar, name }) {
 
 // Ledger `.tbl th` face for the dense mono tables → one header idiom per page.
 const TABLE_HEAD_CLASS = 'font-sans uppercase tracking-wider fs-meta text-dim font-medium px-2 py-1.5 border-b border-line';
+// the paired S tables sit on .tbl--own-face → .tbl gives the cell geometry, this keeps their header face
+const PAIRED_HEAD_CLASS = 'font-sans uppercase tracking-wider fs-meta text-dim font-medium';
 
 function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent }) {
   const [isShowingAll, setShowingAll] = useStateAg(false);
@@ -2519,6 +2519,7 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
         size={PAIRED_CARD_SIZE}
         title="Most-failing pairs"
         sub={getFailingPairsSub(state.status, failingTotal, measuredPairs, days)}
+        isFlush={hasPairedTableAg(state, failingPairs)}
         foot={state.status === 'ready' && (
           <PairedCardFootAg note={`Below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · solid samples first`} total={failingPairs.length}
             hiddenCount={hiddenCount} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
@@ -2534,6 +2535,11 @@ function getFailingPairsSub(status, failingTotal, measuredCount, days) {
   if (status === 'loading') return `last ${days} days`;
   if (status !== 'ready') return 'Unavailable — not loaded';
   return `${failingTotal} of ${measuredCount} below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · ${days}d`;
+}
+
+// A paired card's table sits flush in its body (its edge cells carry the card padding); the loading, failure and empty states keep the padded body.
+function hasPairedTableAg(state, rows) {
+  return window.UI.getRegionView(state) === 'ready' && rows.length > 0;
 }
 
 /**
@@ -2616,14 +2622,14 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
     const isLowSample = p.rateDenominator < lowN;
     return (
       <tr key={`${p.agent}|${p.task_type}`}>
-        <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
+        <td className="text-ink truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
           <a className="underline decoration-dotted" href={getPairOutcomesHref(p, days)}><window.UI.AgentName name={p.agent}/></a>
         </td>
-        <td className="text-left text-dim px-2 py-1.5 border-b border-line">
+        <td className="text-dim">
           {p.task_type}
         </td>
         <td
-          className="text-right px-2 py-1.5 border-b border-line font-semibold whitespace-nowrap"
+          className="text-right font-semibold whitespace-nowrap"
           title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${lowN})` : ''}`}>
           {/* every listed pair is failing → the glyph marks it whatever its sample size */}
           <span className="inline-flex items-center justify-end gap-1">
@@ -2639,7 +2645,7 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
           />
         </td>
         <td
-          className={`text-right px-2 py-1.5 border-b border-line whitespace-nowrap ${breakage.fromServer ? 'text-dim' : 'text-faint'}`}
+          className={`text-right whitespace-nowrap ${breakage.fromServer ? 'text-dim' : 'text-faint'}`}
           title={breakage.title}>
           {breakage.text}
         </td>
@@ -2649,11 +2655,11 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
 
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
-      <table className="ag-paired-tbl w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+      <table className="tbl tbl--own-face fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
             {TOPN_FAILING_COLUMNS.map((c) => (
-              <TableHead key={c.key} isSticky className={`text-${c.align} ${TABLE_HEAD_CLASS} whitespace-nowrap${c.width ? ' ' + c.width : ''}`}>
+              <TableHead key={c.key} isSticky className={`text-${c.align} ${PAIRED_HEAD_CLASS} whitespace-nowrap${c.width ? ' ' + c.width : ''}`}>
                 <span title={c.title}>{c.label}</span>
               </TableHead>
             ))}
@@ -2663,7 +2669,7 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
           {solidPairs.map(renderPairRow)}
           {lowPairs.length > 0 && (
             <tr>
-              <td colSpan={TOPN_FAILING_COLUMNS.length} className="text-left fs-meta text-dim px-2 pt-3 pb-1 border-b border-line">
+              <td colSpan={TOPN_FAILING_COLUMNS.length} className="fs-meta text-dim">
                 Low sample — n under {lowN}, read as a hint
               </td>
             </tr>
@@ -2923,6 +2929,7 @@ function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
         size={PAIRED_CARD_SIZE}
         title="No completion record"
         sub={`Last ${days} days`}
+        isFlush={hasPairedTableAg(state, lifecycleRows)}
         info={NOTE.UNFINISHED}
         infoLabel="How Unfinished is counted"
         right={state.status === 'ready' && totalOrphans > 0
@@ -2976,11 +2983,11 @@ function LifecycleStatsTable({ rows, onSelect }) {
 
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
-      <table className="ag-paired-tbl w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+      <table className="tbl tbl--own-face fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
             {LIFECYCLE_COLUMNS.map((c) => (
-              <TableHead key={c.key} isSticky className={`text-${c.align} ${TABLE_HEAD_CLASS}`}>
+              <TableHead key={c.key} isSticky className={`text-${c.align} ${PAIRED_HEAD_CLASS}`}>
                 <span title={c.title}>{c.label}</span>
               </TableHead>
             ))}
@@ -3023,18 +3030,18 @@ function LifecycleStatsRow({ row, onSelect, focusProps }) {
       onClick={handleClick}
       className={onSelect ? 'cursor-pointer hover:bg-sunken motion-safe:transition-colors motion-safe:duration-[120ms]' : undefined}
       title={`${row.agent_type} — start ${startCount} · stop ${formatIntAg(row.stop_count)} · completed ${completedCount} · orphan ${orphanCount} (${(orphanRatio * 100).toFixed(0)}%)`}>
-      <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }}>
+      <td className="text-ink truncate" style={{ maxWidth: 160 }}>
         <span className="flex items-center gap-1.5">
           <window.UI.AgentName name={row.agent_type} className="truncate"/>
         </span>
       </td>
-      <td className="text-right text-dim px-2 py-1.5 border-b border-line">{formatIntAg(startCount)}</td>
-      <td className="text-right text-dim px-2 py-1.5 border-b border-line">{formatIntAg(completedCount)}</td>
-      <td className={`text-right px-2 py-1.5 border-b border-line font-semibold ${orphanTone ? 'text-ink' : 'text-dim'}`}>
+      <td className="text-right text-dim">{formatIntAg(startCount)}</td>
+      <td className="text-right text-dim">{formatIntAg(completedCount)}</td>
+      <td className={`text-right font-semibold ${orphanTone ? 'text-ink' : 'text-dim'}`}>
         {orphanTone && <StatusDot status={orphanTone}/>}
         {orphanCount > 0 ? `${formatIntAg(orphanCount)} · ${(orphanRatio * 100).toFixed(0)}%` : '0'}
       </td>
-      <td className="text-right text-dim px-2 py-1.5 border-b border-line">
+      <td className="text-right text-dim">
         {p95Sec == null ? '—' : formatDurationSecAg(p95Sec)}
       </td>
     </tr>

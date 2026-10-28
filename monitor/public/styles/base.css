@@ -322,11 +322,18 @@ details[open] > summary .chevron {
 	padding: var(--tbl-pad-block) var(--space-3);
 	line-height: var(--lh-row);
 	vertical-align: middle;
-	text-align: left;
 	border-bottom: var(--tbl-rule) solid rgb(var(--line));
 }
 .tbl th {
 	font-size: var(--fs-meta);
+}
+/* house cells read left at the plain .tbl cell specificity; an own-face table starts left at zero specificity,
+   so its cells' own text-right / text-center classes keep the alignment they carried before the routing */
+.tbl:where(:not(.tbl--own-face)) :is(th, td) {
+	text-align: left;
+}
+:where(.tbl--own-face) :where(th, td) {
+	text-align: left;
 }
 .tbl:where(:not(.tbl--own-face)) th {
 	font-weight: 500;

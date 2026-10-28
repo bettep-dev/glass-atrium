@@ -1043,8 +1043,9 @@ function getDisclosureOpen(kind, tone) {
  * Card-level fold carrying the one status/detail rule every page shares.
  * kind 'status' — headline state, starts open · kind 'detail' — per-row lists / history / breakdowns, starts collapsed.
  * A detail fold opens itself when `tone` escalates to warn/crit; a later recovery never force-closes it.
+ * @param isFlush - unpadded body, for a table whose edge cells carry the card padding; other content insets itself
  */
-function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, className = '' }) {
+function Disclosure({ kind = 'detail', title, sub, tone, level = 2, isFlush = false, children, className = '' }) {
   const [isOpen, setOpen] = useState(() => getDisclosureOpen(kind, tone));
   const idRef = useRef(null);
   const isAlerting = DISCLOSURE_ALERT_TONES.has(tone);
@@ -1059,7 +1060,7 @@ function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, cl
         className="w-full text-left gap-2"
         label={<><span className="font-medium text-ink">{title}</span>{sub && <span className="text-faint fs-meta ml-2">{sub}</span>}</>} />
     </Heading>
-    {isOpen && <div id={idRef.current} className="px-4 pb-4">{children}</div>}
+    {isOpen && <div id={idRef.current} className={isFlush ? undefined : 'px-4 pb-4'}>{children}</div>}
   </div>;
 }
 

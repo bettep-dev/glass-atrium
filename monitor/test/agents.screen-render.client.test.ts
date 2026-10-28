@@ -1825,6 +1825,61 @@ describe("the paired failing-pairs and no-record cards keep the S row budget and
   }
 });
 
+describe("the paired failing-pairs and no-record tables take the .tbl cell geometry in their own face", () => {
+  const tokensOf = (node: RenderedNode): string[] => String(node.props.className ?? "").split(/\s+/).filter(Boolean);
+  const isAdHocGeometry = (t: string) => /^-?(p|m)[xytblrse]?-/.test(t) || /^border-b$/.test(t) || t === "border-line";
+  const pair = (task_type: string, successCount: number, rateDenominator: number) =>
+    ({ agent: "glass-atrium-dev-node", task_type, successCount, rateDenominator, pooledRate: successCount / rateDenominator, totalCount: rateDenominator });
+  const tables = [
+    { name: "Most-failing pairs", component: "TopNFailingAgentsTable", props: { pairs: [pair("solid", 5, 10), pair("low", 1, 3)], failureByAgent: new Map(), days: 14 }, rightCols: 2 },
+    { name: "No completion record", component: "LifecycleStatsTable", props: { rows: getLifecycleRows(2), onSelect: () => undefined }, rightCols: 4 },
+  ];
+  for (const row of tables) {
+    test(`${row.name}: a .tbl own-face table whose cells carry no padding, margin or rule of their own`, async () => {
+      const tree = await renderComponent(row.component, row.props) as RenderedNode;
+      const [table] = findNodes(tree, (n) => n.type === "table");
+      assert.ok(["tbl", "tbl--own-face"].every((t) => tokensOf(table).includes(t)), `table: ${tokensOf(table)}`);
+      assert.ok(["fs-meta", "font-mono"].every((t) => tokensOf(table).includes(t)), "the body keeps its mono meta face");
+      const heads = findAtoms(tree, "TableHead");
+      assert.ok(heads.length >= 4, "every column header is the shared TableHead");
+      for (const head of heads) {
+        const tokens = tokensOf(head);
+        assert.ok(["font-sans", "uppercase", "tracking-wider", "fs-meta", "text-dim", "font-medium"].every((t) => tokens.includes(t)), `header face kept: ${tokens}`);
+        assert.deepEqual(tokens.filter(isAdHocGeometry), [], `header '${collectText(head).trim()}'`);
+      }
+      const cells = findNodes(tree, (n) => n.type === "td");
+      assert.ok(cells.length > 0);
+      for (const cell of cells) {
+        assert.deepEqual(tokensOf(cell).filter(isAdHocGeometry), [], `cell '${collectText(cell).trim().slice(0, 24)}'`);
+      }
+      const [firstRow] = findNodes(tree, (n) => n.type === "tr").slice(1);
+      const rightCells = findNodes(firstRow, (n) => n.type === "td").filter((td) => tokensOf(td).includes("text-right"));
+      assert.equal(rightCells.length, row.rightCols, "numeric columns keep their right alignment");
+    });
+  }
+
+  test("the screen-local row-height override is retired with the routing", async () => {
+    const src = await import("node:fs").then((fs) => fs.readFileSync(AGENTS_SRC, "utf8"));
+    assert.doesNotMatch(src, /ag-paired-tbl/);
+  });
+
+  const cards = [
+    { name: "Most-failing pairs", component: "TopNFailingAgentsCard", ready: { rows: getFailingRows(3) }, extra: { failureByAgent: new Map() } },
+    { name: "No completion record", component: "LifecycleStatsCard", ready: { rows: getLifecycleRows(3) }, extra: { onSelect: () => undefined } },
+  ];
+  for (const row of cards) {
+    test(`${row.name}: the body is flush while its table renders and padded for loading and empty`, async () => {
+      const flushOf = async (state: unknown) => {
+        const tree = await renderComponent(row.component, { state, days: 30, onRetry: () => undefined, ...row.extra }) as RenderedNode;
+        return findAtoms(tree, "Card")[0]?.props.isFlush;
+      };
+      assert.equal(await flushOf({ status: "ready", data: row.ready, error: null }), true, "table → flush");
+      assert.equal(await flushOf(LOADING_STATE), false, "loading → padded");
+      assert.equal(await flushOf({ status: "ready", data: { rows: [] }, error: null }), false, "empty → padded");
+    });
+  }
+});
+
 test("every status-band hint fits the 40-character KPI-hint cap", async () => {
   const ready = { status: "ready", data: [], error: null };
   const failureByAgent = new Map([0, 1].map((i) => [`glass-atrium-dev-${i}`, { fail_count: 1, blocked_count: 5, total_breakages: 6, breakage_rate: 0.1 }]));
