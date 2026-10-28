@@ -1466,6 +1466,31 @@ test("both ledgers sit on one column grid, so their Live columns line up", () =>
   }
 });
 
+test("all three tier tables take the shared .tbl geometry in the house face, with no cell padding of their own", () => {
+  const PADDING_KEYS_MC = /^padding/i;
+  const PADDING_CLASS_MC = /(^|\s)-?(p|px|py|pt|pb|pl|pr|ps|pe)-/;
+  for (const [name, props] of [
+    ["DomainsSectionMC", domainsPropsMc()],
+    ["BudgetsSectionMC", budgetsPropsMc()],
+    ["TiersSectionMC", tiersPropsMc()],
+  ] as const) {
+    const tree = renderComponentMc(screens[name], props);
+    const [table] = tagsMc(tree, "table");
+    assert.strictEqual(table.props.className, "tbl", `${name}: a house .tbl table — no own-face modifier, so the face stays`);
+    const headers = tagsMc(tree, "th");
+    assert.strictEqual(headers.length, 3, `${name}: three headers`);
+    for (const th of headers) assert.strictEqual(th.props["data-atom"], "TableHead", `${name}: '${textMc(th.children)}' is a TableHead`);
+    const cells = [...headers, ...tagsMc(tree, "td")];
+    assert.ok(tagsMc(tree, "td").length >= 3, `${name}: a ready row renders its cells`);
+    for (const cell of cells) {
+      const style = (cell.props.style ?? {}) as Record<string, unknown>;
+      const own = Object.keys(style).filter((key) => PADDING_KEYS_MC.test(key));
+      assert.deepStrictEqual(own, [], `${name}: '${textMc(cell.children)}' carries no inline padding — .tbl sets it`);
+      assert.ok(!PADDING_CLASS_MC.test(String(cell.props.className ?? "")), `${name}: no padding utility on '${textMc(cell.children)}'`);
+    }
+  }
+});
+
 const THREE_TIERS_MC = ["model.dev", "model.research", "model.meta"].map((domain) => ({
   ...DOMAIN_ROW_FIXTURE_MC[0],
   domain,

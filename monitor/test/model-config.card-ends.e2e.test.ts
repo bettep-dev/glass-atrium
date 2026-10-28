@@ -95,3 +95,59 @@ for (const width of [1440, 1920]) {
     }
   });
 }
+
+// the three tier tables on the shared .tbl geometry: one padding per cell kind, edges at the card padding, the house header face kept
+test("every tier-table cell takes the shared .tbl padding — text and control cells alike — and the header keeps its face", async () => {
+  const app = Fastify({ logger: false });
+  await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+  app.get("/api/model-config", async () => CONFIG);
+  app.get("/api/*", async () => ({ rows: [] }));
+  const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+  const browser = await chromium.launch({ headless: true });
+
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(`${serverUrl}/#model-config`, { waitUntil: "load" });
+    await page.waitForSelector(".split-row .split-col table tbody tr td input", { timeout: 30_000 });
+    // no named helper inside evaluate — tsx would wrap it in a __name call the page does not define
+    const tables = await page.evaluate(() => {
+      const controls = ".btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h";
+      return [...document.querySelectorAll(".split-row table")].map((table) => {
+        const th = getComputedStyle(table.querySelector("thead th")!);
+        return {
+          caption: table.querySelector("caption")?.textContent ?? "",
+          header: { transform: th.textTransform, fill: th.backgroundColor },
+          cells: [...table.querySelectorAll("tbody td")].map((td) => {
+            const style = getComputedStyle(td);
+            const row = td.parentElement as HTMLTableRowElement;
+            return {
+              isControl: td.querySelector(controls) !== null,
+              isFirst: td === row.cells[0],
+              isLast: td === row.cells[row.cells.length - 1],
+              top: Math.round(parseFloat(style.paddingTop) * 10) / 10,
+              bottom: Math.round(parseFloat(style.paddingBottom) * 10) / 10,
+              start: Math.round(parseFloat(style.paddingLeft) * 10) / 10,
+              end: Math.round(parseFloat(style.paddingRight) * 10) / 10,
+            };
+          }),
+        };
+      });
+    });
+
+    assert.strictEqual(tables.length, 3, "model, cap and call-tier tables render");
+    for (const table of tables) {
+      assert.strictEqual(table.header.transform, "uppercase", `${table.caption}: the house header case stays`);
+      assert.ok(table.cells.length >= 6, `${table.caption}: rows render`);
+      for (const cell of table.cells) {
+        const block = cell.isControl ? 3.5 : 7.5;
+        assert.deepStrictEqual([cell.top, cell.bottom], [block, block], `${table.caption}: ${cell.isControl ? "control" : "text"} cell block padding`);
+        assert.strictEqual(cell.start, cell.isFirst ? 16 : 12, `${table.caption}: inline start padding`);
+        assert.strictEqual(cell.end, cell.isLast ? 16 : 12, `${table.caption}: inline end padding`);
+      }
+      assert.ok(table.cells.some((cell) => cell.isControl), `${table.caption}: its control column is a control cell`);
+    }
+  } finally {
+    await browser.close();
+    await app.close();
+  }
+});

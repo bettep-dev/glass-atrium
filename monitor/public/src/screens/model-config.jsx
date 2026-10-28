@@ -1020,17 +1020,14 @@ function DomainRowMC({
 	// 서버 editable=false 가 우선 — UI 메타와 어긋나면 보수적으로 read-only.
 	const editable = d.editable !== false && meta.editable !== false;
 
-	// 행 간격 10px(상하 5px) — 라벨/컨트롤 묶음이 개별 행으로 읽히게.
-	const cellPad = { paddingTop: 5, paddingBottom: 5 };
-
 	return (
 		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
-			<td style={cellPad}>
+			<td>
 				<div className="fs-body font-medium text-ink">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
 			</td>
-			<td style={cellPad}>
+			<td>
 				{editable ? (
 					<ModelSelectMC
 						domain={d.domain}
@@ -1050,7 +1047,7 @@ function DomainRowMC({
 				)}
 				<PricingNoteMC pricingKnown={d.pricing_known} />
 			</td>
-			<td style={cellPad}>
+			<td>
 				<LiveValueMC
 					value={d.actual}
 					drift={d.drift}
