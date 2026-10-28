@@ -397,3 +397,12 @@ test("the learning-memory card heads its card with both counts, its tiles keepin
   assert.match(metricText, /\b4\b/, metricText);
   assert.doesNotMatch(getPrintedText(visual), /\b12\b|\b4\b/, "a count printed twice reads as two figures");
 });
+
+// numeral and word share a baseline; the sign glyph centres on the numeral's line box instead of sitting on the baseline by its bottom edge
+test("a line count centres its sign glyph on the numeral and keeps the numeral and word on one baseline", () => {
+  const count = sandbox.LineCountI({ symbol: "＋", tone: "text-ok", count: 6, word: "added", title: "6 lines added" });
+  assert.match(String(count.props.className), /\bitems-baseline\b/, "numeral and word share a baseline");
+  const [glyph] = count.props.children as RecordedElement[];
+  assert.match(String(glyph.props.className), /\bself-center\b/, String(glyph.props.className));
+  assert.match(String(glyph.props.className), /\btext-ok\b/, "the tone stays on the glyph");
+});

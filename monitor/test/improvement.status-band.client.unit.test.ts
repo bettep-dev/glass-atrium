@@ -187,6 +187,39 @@ test("a ready tile renders its value and its population", () => {
   assert.match(textOf(tile), /Applied \(7 days\)/);
 });
 
+// a narrow tile ellipsizes the label text alone (an inline-flex atom would clip without an ellipsis), and clamps the hint
+test("a ready tile ellipsizes its label text with the full label in the title, and clamps its hint with the whole line in the title", () => {
+  const label = "Awaiting your decision";
+  const tile = sandbox.StatusTileI({
+    status: "ready",
+    tone: "text-warn",
+    symbol: "⚠",
+    label,
+    value: "2",
+    population: "Suggestions that need your approval",
+    basis: "Pending or snoozed, any age",
+  });
+  const labelNodes = collectElements(tile.props.label, []);
+  const [text] = labelNodes.filter((el) => el.props.title === label);
+  assert.ok(text, "the label text sits in its own titled span");
+  assert.match(String(text.props.className), /\btruncate\b/, "the innermost text span takes the ellipsis");
+  assert.equal(text.props.children, label, "the span holds the label text itself");
+  assert.doesNotMatch(String(labelNodes[0]?.props.className), /\binline-flex\b/, "an atomic inline box would clip without an ellipsis");
+  assert.equal(tile.props.hint, "Suggestions that need your approval");
+  assert.equal(tile.props.isHintClamped, true, "the hint is held to two lines");
+  assert.equal(tile.props.hintTitle, "Suggestions that need your approval\nPending or snoozed, any age", "the title leads with the whole hint, its basis after");
+
+  const stamped = sandbox.StatusTileI({
+    status: "ready",
+    label: "Applied (7 days)",
+    value: "3",
+    population: { type: "span", props: { children: ["of 6 cycles · last ", "10/28, 04:30 AM"] } },
+    populationTitle: "of 6 cycles · last 10/28, 04:30 AM",
+    basis: "Cycles started in the last 7 days",
+  });
+  assert.match(String(stamped.props.hintTitle), /^of 6 cycles · last 10\/28, 04:30 AM\n/, "a node hint's title is its caller's plain-string twin");
+});
+
 // the population line is body text, not a micro caption
 test("a ready tile renders its population at the body type scale", () => {
   const tile = sandbox.StatusTileI({

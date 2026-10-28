@@ -584,7 +584,8 @@ const KPI_SPARK = { w: 68, h: 26 };
  *   1 label row  label (one line, ellipsis) · optional aside window tag · ⓘ placed on the row, never pushing the value
  *   2 value row  value + unit · optional badge, baseline-aligned; loading holds the row with a strut + placeholder
  *   3 delta      number → the shared Delta; a node renders as the caller wrote it
- *   4 hint       after the value, always; the caller's own face (hintFace) is kept
+ *   4 hint       after the value, always; the caller's own face (hintFace) is kept; ≤2 lines + title for a plain hint,
+ *                or a node hint passing isHintClamped with its whole text in hintTitle
  *   5 foot       drill link / Retry, pinned to the tile bottom
  * state: 'ready' | 'loading' | 'error' | 'empty' — error and empty show the faint unknown dash, never a 0.
  * onClick → the tile is a button (no info or foot inside it then); otherwise a group labelled by its label row.
@@ -597,7 +598,7 @@ function KPI({
   aside, asideClassName = 'fs-meta text-dim', info,
   value, unit, tone, isWord = false, badge, hasValue = true,
   delta, deltaInverse = false,
-  hint, hintClassName = 'fs-meta', hintFace = 'text-faint font-mono', hintTitle,
+  hint, hintClassName = 'fs-meta', hintFace = 'text-faint font-mono', hintTitle, isHintClamped,
   foot, sparkData, sparkColor = 'currentColor', onClick,
   state = 'ready', loadingLabel, isBusy = false, isSplit = false, className = '', 'aria-label': ariaLabel,
 }) {
@@ -628,12 +629,14 @@ function KPI({
     </div>
   );
   const isPlainHint = typeof hint === 'string' || typeof hint === 'number';
+  // a node hint clamps only when its caller asks and hands its whole text in hintTitle → a block-built hint keeps its own layout
+  const isClamped = isHintClamped ?? isPlainHint;
   const row = {
     delta: typeof delta === 'number'
       ? <div className="kpi-delta-row"><Delta value={delta} inverse={deltaInverse}/></div>
       : delta != null && delta !== false && <div className="kpi-delta-row">{delta}</div>,
     hint: hint != null && hint !== false && (
-      <div className={`kpi-hint ${hintClassName} ${hintFace}${isPlainHint ? ' kpi-hint--clamp' : ''}`.trim()}
+      <div className={`kpi-hint ${hintClassName} ${hintFace}${isClamped ? ' kpi-hint--clamp' : ''}`.trim()}
         title={hintTitle ?? (isPlainHint ? String(hint) : undefined)}>{hint}</div>
     ),
   };

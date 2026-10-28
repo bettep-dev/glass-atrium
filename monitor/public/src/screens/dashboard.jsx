@@ -149,8 +149,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-tile-hint-rest { display: flex; flex: 1 1 auto; min-width: 0; }
         .dash-tile-hint-fixed { flex-shrink: 0; white-space: pre; }
         .dash-tile-hint-data { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
-        /* detail and plain hint: at most two lines, the whole text in the title */
+        /* detail and plain hint: at most two lines, the whole text in the title; an empty detail reserves no line, so the hint sits 4 below the delta row */
         .dash-tile-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
         .dash-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ctl-min-h); }
         /* the shared .btn hover shifts ~4 RGB levels → an underline makes the drill's hover visible */

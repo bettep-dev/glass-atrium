@@ -166,3 +166,15 @@ test("a fact-list tile drops the value row and keeps its label row and its facts
   const loading = render("KPI", { label: "Volume", hasValue: false, state: "loading", loadingLabel: "volume" });
   assert.ok(rowOrder(loading).includes("kpi-main"), "a loading fact-list tile still holds its row with the placeholder");
 });
+
+test("a node hint clamps at two lines only when its caller asks, with the whole text it hands in the title", () => {
+  const hintOf = (props: Record<string, unknown>) =>
+    findNodes(render("KPI", { label: "A", value: "1", ...props }), (n) => hasClass(n, "kpi-hint"))[0];
+  const node = React.createElement("span", null, "of 6 cycles · last ", React.createElement("span", null, "10/28, 04:30 AM"));
+  const clamped = hintOf({ hint: node, isHintClamped: true, hintTitle: "of 6 cycles · last 10/28, 04:30 AM" });
+  assert.ok(hasClass(clamped, "kpi-hint--clamp"), classOf(clamped));
+  assert.equal(clamped.props.title, "of 6 cycles · last 10/28, 04:30 AM");
+  const free = hintOf({ hint: node });
+  assert.ok(!hasClass(free, "kpi-hint--clamp"), "a block-built node hint keeps its own layout");
+  assert.ok(hasClass(hintOf({ hint: "plain" }), "kpi-hint--clamp"), "a plain hint still clamps by default");
+});

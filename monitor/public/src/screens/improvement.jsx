@@ -577,6 +577,9 @@ function StatusBandI({
 	);
 	const statsStatus = bandTileStatusI(statsState, statsState.data);
 	const appliedHeld = getHeldLabelI(asOf, statsState);
+	// the stamp renders as one unbreakable token; the plain-string pair also feeds the clamped hint's title
+	const appliedLead = `${appliedHeld ? `${appliedHeld} · ` : ""}of ${getCycleCountTextI(cycleTotal)} · last `;
+	const appliedStamp = formatCycleStampI(s.latest_cycle_started_at);
 	// a waiting suggestion warns whatever the read's age; only the all-clear needs a fresh read
 	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
 	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
@@ -602,7 +605,8 @@ function StatusBandI({
 			>
 				{verdict.sentence}
 			</PageVerdict>
-			<div className="grid grid-cols-4 gap-card">
+			{/* two columns below xl, as the Dashboard and Cost bands → a narrow tile keeps its label and hint readable */}
+			<div className="grid grid-cols-2 xl:grid-cols-4 gap-card">
 				<StatusTileI
 					status={bandTileStatusI(listState, listState.data)}
 					tone={awaiting > 0 ? "text-warn" : awaitingHeld ? undefined : "text-ok"}
@@ -623,10 +627,11 @@ function StatusBandI({
 					owner="loop output"
 					population={
 						<>
-							{`${appliedHeld ? `${appliedHeld} · ` : ""}of ${getCycleCountTextI(cycleTotal)} · last `}
-							<NoWrap>{formatCycleStampI(s.latest_cycle_started_at)}</NoWrap>
+							{appliedLead}
+							<NoWrap>{appliedStamp}</NoWrap>
 						</>
 					}
+					populationTitle={`${appliedLead}${appliedStamp}`}
 					basis="Cycles started in the last 7 days"
 					onRetry={onRetry}
 				/>
@@ -782,7 +787,9 @@ function bandTileStatusI(state, value) {
 	return status === "error" ? "announced" : status;
 }
 
-function StatusTileI({ status, tone, symbol, label, value, population, basis, owner, onRetry }) {
+// label: the glyph stays whole and centred on the text line; the text ellipsizes in its own span, its full text in that span's title.
+// hint: ≤2 lines, clamped; the title carries the whole population line (populationTitle when the line is a node), then its basis.
+function StatusTileI({ status, tone, symbol, label, value, population, populationTitle, basis, owner, onRetry }) {
 	const { KPI } = window.UI;
 	if (status !== "ready") {
 		return (
@@ -794,16 +801,22 @@ function StatusTileI({ status, tone, symbol, label, value, population, basis, ow
 			/>
 		);
 	}
+	const hintText = populationTitle ?? (typeof population === "string" ? population : undefined);
+	const hintTitle = [hintText, basis].filter(Boolean).join("\n") || undefined;
 	return (
 		<KPI
 			label={
-				<span className="inline-flex items-center gap-1.5">
-					{symbol ? <SymI s={symbol} className={tone} size={12} /> : null}
-					{label}
+				<span className="flex items-baseline gap-1.5 min-w-0">
+					{symbol ? <SymI s={symbol} className={`${tone ?? ""} self-center shrink-0`.trim()} size={12} /> : null}
+					<span className="truncate min-w-0" title={label}>
+						{label}
+					</span>
 				</span>
 			}
 			value={value}
-			hint={basis ? <span title={basis}>{population}</span> : population}
+			hint={population}
+			hintTitle={hintTitle}
+			isHintClamped
 			hintClassName="fs-meta"
 		/>
 	);
@@ -2575,8 +2588,9 @@ function getLoopSlotsI({ metric, visual, foot }) {
 
 function LineCountI({ symbol, tone, count, word, title }) {
 	return (
+		// numeral and word share a baseline; the sign glyph centres on the numeral's line box (an svg would sit on the baseline by its bottom edge)
 		<span className="inline-flex items-baseline gap-1" title={title}>
-			<SymI s={symbol} className={tone} size={13} />
+			<SymI s={symbol} className={`${tone} self-center`} size={13} />
 			<span className="fs-display font-semibold text-ink">{formatIntI(count)}</span>
 			<span className="fs-meta text-dim">{word}</span>
 		</span>

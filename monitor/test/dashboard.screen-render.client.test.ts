@@ -8,6 +8,7 @@ import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import {
   collectText,
   createReactStub,
@@ -606,13 +607,15 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
   }
 });
 
-test("a loading tile says so in a status placeholder and reserves the detail slot the loaded tile fills", () => {
+test("a loading tile says so in a status placeholder and keeps the one detail slot the loaded tile fills, reserving no blank line", () => {
   const loadingTile = { ...READY_TILE, status: "loading", value: "—", hint: null };
   for (const tile of [loadingTile, READY_TILE]) {
     const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
     const detailSlots = findNodes(tree, (n) => classOf(n).includes("dash-tile-detail"));
-    assert.equal(detailSlots.length, 1, `${tile.status}: the detail line is reserved whether or not it has text`);
+    assert.equal(detailSlots.length, 1, `${tile.status}: the detail slot is one element whether or not it has text`);
   }
+  // an empty slot collapses → the hint sits 4 below the delta row instead of a blank body line lower
+  assert.doesNotMatch(readFileSync(DASH_SRC, "utf8"), /\.dash-tile-detail\s*\{[^}]*min-height/, "the empty detail slot reserves no line");
   const loading = render("StatusTile", { tile: loadingTile, onNav: () => {}, onRetry: () => {} });
   assert.equal(findNodes(loading, (n) => n.type === "LoadingPlaceholder").length, 1);
   assert.equal(findNodes(loading, isKpiValue).length, 0, "no value renders before one loads");

@@ -385,7 +385,9 @@ details[open] > summary .chevron {
 	letter-spacing: 0.04em;
 	background: rgb(var(--sunken));
 }
-.tbl td {
+/* a body row header (a group-label row, a row's th) takes the row step too → a label-only row is 40, never its 36 line box */
+.tbl td,
+.tbl tbody th {
 	height: var(--row-h);
 }
 /* edge cells take the card padding → the first and last column line up with the card head; flush comes from an unpadded card body */
