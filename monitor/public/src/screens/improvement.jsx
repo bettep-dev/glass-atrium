@@ -399,6 +399,9 @@ function ScreenImprovement({ onNav }) {
         .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
         /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
         .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
+        /* plain ledger rows — one pattern | agent | date grid, each row a subgrid, so agent and date line up down the list */
+        .i-plain-rows { display:grid; grid-template-columns:minmax(0,1fr) auto auto; column-gap:var(--space-2); row-gap:var(--space-1); }
+        .i-plain-rows > li { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
         /* awaiting zone — 0 rows = slim neutral idle strip · 1+ rows = the warn AlertCard over the scrolling list */
@@ -1399,7 +1402,9 @@ function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
 			<SymI s={symbol} className="text-crit" size={13} />
 			<span className="text-dim">{label}</span>
 			<span className="text-ink tnum">{formatIntI(count)}</span>
-			<span className="text-faint normal-case tracking-normal truncate min-w-0">{basis}</span>
+			<span className="text-faint normal-case tracking-normal truncate min-w-0" title={basis}>
+				{basis}
+			</span>
 			{hasSpark ? (
 				<span className="ml-auto flex items-center gap-1">
 					<RejectSparkI trend={trend} />
@@ -2024,16 +2029,16 @@ function LedgerPlainRowsI({ rows }) {
 		);
 	}
 	return (
-		<ul className="mt-1.5 flex flex-col gap-1">
+		<ul className="mt-1.5 i-plain-rows">
 			{rows.map((r) => (
-				<li key={r.id} className="flex items-center gap-2 fs-body">
+				<li key={r.id} className="fs-body">
 					<span
 						className="text-ink truncate min-w-0"
 						title={patternNameI(r.pattern_signature, r.agent)}
 					>
 						{truncateI(patternNameI(r.pattern_signature, r.agent), 120)}
 					</span>
-					<window.UI.AgentName name={r.agent} className="text-dim shrink-0" />
+					<window.UI.AgentName name={r.agent} className="text-dim whitespace-nowrap" />
 					<span className="font-mono fs-meta text-faint shrink-0 tnum">
 						{formatDateFullI(r.discovered_date)}
 					</span>

@@ -137,3 +137,59 @@ for (const row of rows) {
     );
   });
 }
+
+// B2 on the inert list: pattern names and agents of different lengths still put every agent and every date on one column edge
+test(`inert rows line their agent and date up in columns whatever the pattern and agent lengths, at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const shapes = [
+    ["short", "glass-atrium-dev-db"],
+    ["a much longer inert signature that keeps on going past the others", "glass-atrium-qa-code-reviewer"],
+    ["mid-length inert signature", "glass-atrium-dev-react"],
+  ];
+  const learningLog = getLearningLog(10, 0, 0);
+  learningLog.patterns.push(
+    ...shapes.map(([signature, agent], i) => ({
+      id: 900 + i,
+      pattern_signature: signature,
+      frequency: 1,
+      agent,
+      status: "identified",
+      discovered_date: `2026-09-${String(20 + i).padStart(2, "0")}`,
+      intake_skipped: true,
+    })),
+  );
+
+  const app = Fastify({ logger: false });
+  await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+  app.get("/api/improvement/learning-log", async () => learningLog);
+  app.get("/api/*", async () => ({ rows: [] }));
+  const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+  const browser = await chromium.launch({ headless: true });
+
+  try {
+    const page = await browser.newPage({ viewport: { width: SIDE_BY_SIDE_WIDTH, height: 900 } });
+    await page.goto(`${serverUrl}/#improvement`, { waitUntil: "load" });
+    await page.waitForSelector(COLUMNS, { timeout: 30_000 });
+    await page.evaluate(() => document.fonts.ready);
+    // the list right after the section head that names the inert rows — the innermost div opening with its label
+    const rows = await page.evaluate(() => {
+      const head = [...document.querySelectorAll<HTMLElement>("#improvement-pattern-ledger div")]
+        .filter((el) => (el.textContent ?? "").startsWith("Inert —"))
+        .at(-1)!;
+      return [...head.nextElementSibling!.children].map((item) => {
+        const [name, agent, date] = [...item.children].map((cell) => cell.getBoundingClientRect());
+        return { nameRight: name!.right, agentLeft: agent!.left, dateLeft: date!.left, height: item.getBoundingClientRect().height };
+      });
+    });
+
+    assert.equal(rows.length, shapes.length, "every inert row renders");
+    for (const row of rows) {
+      assert.ok(Math.abs(row.agentLeft - rows[0]!.agentLeft) <= 0.5, `agent column starts at ${row.agentLeft}, not ${rows[0]!.agentLeft}`);
+      assert.ok(Math.abs(row.dateLeft - rows[0]!.dateLeft) <= 0.5, `date column starts at ${row.dateLeft}, not ${rows[0]!.dateLeft}`);
+      assert.ok(row.nameRight <= row.agentLeft, "a long pattern name ellipsizes before the agent column");
+      assert.ok(Math.abs(row.height - rows[0]!.height) <= 0.5, "every row keeps one line");
+    }
+  } finally {
+    await browser.close();
+    await app.close();
+  }
+});
