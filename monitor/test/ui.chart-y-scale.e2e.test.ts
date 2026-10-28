@@ -29,10 +29,10 @@ const chart = renderToStaticMarkup(React.createElement(TrendChart, {
   yScale: true,
   formatValue: (v: number) => `${Math.round(v * 100)}% rejected`,
 }));
-// px-5 pb-4 body inside an overflow:hidden card, half the page wide like a split-row column
+// px-4 pb-4 body inside an overflow:hidden card, half the page wide like a split-row column
 const CARD_PAGE = `<!doctype html><html data-theme="light"><body style="margin: 0;">
   <div style="padding: 24px; width: 50%;">
-    <div class="card" id="card"><div style="padding: 0 20px 16px;">${chart}</div></div>
+    <div class="card" id="card"><div style="padding: 0 16px 16px;">${chart}</div></div>
   </div>
 </body></html>`;
 

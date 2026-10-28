@@ -280,7 +280,7 @@ details[open] > summary .chevron {
 	text-transform: uppercase;
 	letter-spacing: 0.06em;
 }
-.sub-card-label { margin-bottom: 10px; }
+.sub-card-label { margin-bottom: var(--space-2); }
 
 /* ── Spacing standard (W1-T3) — 16px 카드 채널 / 24px 섹션 채널 (8px 리듬 배수) ────────
    카드 그리드/스택 간격은 16px, 독립 섹션 사이는 24px. Tailwind gap/space-y 와 병용 가능. */
@@ -666,8 +666,8 @@ button.kpi:hover {
 .nav-item {
 	display: flex;
 	align-items: center;
-	gap: 10px;
-	padding: 6px 10px;
+	gap: var(--space-1_5);                       /* B1 icon ↔ label at control size */
+	padding: var(--space-1_5) var(--space-2);     /* + the nav's 8 inset = 16, the brand row's inset */
 	border-radius: var(--radius-control);
 	color: rgb(var(--dim));
 	font-size: var(--fs-control);
@@ -693,7 +693,7 @@ button.kpi:hover {
 	font-size: var(--fs-meta);
 	background: rgb(var(--sunken));
 	border: 1px solid rgb(var(--line));
-	padding: 1px 6px;
+	padding: 0 var(--space-1_5);
 	border-radius: 999px;
 	color: rgb(var(--dim));
 }
@@ -1127,11 +1127,13 @@ button.kpi:hover {
    인라인 SVG data-uri 를 우측에 배치 → 다크/라이트 양쪽 동일 톤. 우측 padding 으로
    chevron 자리 확보. background 는 fill(elev) + chevron 2겹 합성. */
 .field-select {
-	padding-right: 28px;
+	--select-chevron: 12px;  /* the chevron's size (a size, outside the ladder) */
+	/* the chevron gutter = inset + chevron + the same gap before the value text (28 today) */
+	padding-right: calc(2 * var(--space-2) + var(--select-chevron));
 	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23706a65' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 	background-repeat: no-repeat;
-	background-position: right 9px center;
-	background-size: 12px 12px;
+	background-position: right var(--space-2) center;
+	background-size: var(--select-chevron) var(--select-chevron);
 	cursor: pointer;
 }
 /* 다크 테마 chevron — --faint(dark)=160 154 150 톤으로 교체해 어두운 면에서 가시화 */
@@ -1140,7 +1142,7 @@ button.kpi:hover {
 }
 .field-select:focus-visible,
 .field-select:focus {
-	background-position: right 9px center; /* focus 시 ring 추가돼도 chevron 고정 */
+	background-position: right var(--space-2) center; /* focus 시 ring 추가돼도 chevron 고정 */
 }
 /* 옵션 목록은 OS 네이티브 렌더 — 다크 일관성은 [data-theme] 무관(브라우저 소관) */
 
@@ -1156,7 +1158,7 @@ button.kpi:hover {
 	border-radius: var(--radius-control);
 	transition: border-color 0.12s, box-shadow 0.12s;
 	min-height: var(--ctl-h);          /* the wrapper owns the border → it, not the inner field, holds the 32px control height */
-	padding-left: 9px;                 /* affix 좌측 gutter — input 자체 좌패딩은 제거 */
+	padding-left: var(--ctl-pad-x);    /* affix 좌측 gutter = a field's own inline padding — input 자체 좌패딩은 제거 */
 }
 .field-affix:hover:not(:focus-within) { border-color: rgb(var(--faint)); }
 .field-affix:focus-within {
@@ -1205,7 +1207,7 @@ button.kpi:hover {
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	padding: 12px 20px;
+	padding: var(--space-3) var(--space-6);   /* overlay foot 12 / 24 */
 	background: rgb(var(--elev));
 	border-top: 1px solid rgb(var(--line));
 	box-shadow: var(--shadow-overlay);
@@ -1224,7 +1226,7 @@ button.kpi:hover {
 	position: fixed;
 	bottom: 24px;
 	right: 24px;
-	padding: 10px 14px;
+	padding: var(--space-3) var(--space-4);
 	border-radius: var(--radius-tile);
 	font-size: var(--fs-body);
 	box-shadow: var(--shadow-overlay);

@@ -33,6 +33,9 @@ const RETIRED_STAGE_ALIAS_CD = "progress";
 // absent value, so the screen renders it distinctly from a model id.
 const OPERATOR_ACTOR_CD = "operator";
 
+// Title-cell lead slot width (a size, not spacing) — the snippet and the Title header indent by it plus the row gap.
+const DOC_LEAD_SLOT_PX_CD = 20;
+
 const LEDGER_CD = {
 	// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
 	//   · Tags drops out when no row carries a tag of its own → one column fewer.
@@ -930,8 +933,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* title-cell 레이아웃 — 고정폭 leading slot(20px) + 제목 main(flex).
            사유 — chevron toggle 이 group-root 행에만 있어 일반/멤버 행은 제목 시작 x 가 어긋남.
            모든 행에 동일폭 slot 예약 → 제목 컬럼 정렬 통일 + 행 높이 차이 제거. */
-        .title-cell .doc-title-row { display: flex; align-items: center; gap: 6px; }
-        .doc-title-lead { flex: 0 0 20px; width: 20px; display: flex; align-items: center; justify-content: center; min-height: 20px; }
+        .title-cell .doc-title-row { display: flex; align-items: center; gap: var(--space-1_5); }
+        .doc-title-lead { flex: 0 0 ${DOC_LEAD_SLOT_PX_CD}px; width: ${DOC_LEAD_SLOT_PX_CD}px; display: flex; align-items: center; justify-content: center; min-height: 20px; }
         .doc-title-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; }
         /* 1줄 클램프 — 제목·작성자 셀 공용. 초과분은 말줄임, 전체 값은 title= 툴팁이 운반.
            white-space:nowrap 대신 클램프인 사유 — auto-layout 표에서 nowrap 은 셀 min-content 를
@@ -951,8 +954,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* awaiting delete confirmation → struck-through title + aria-busy; the crit glyph before the title carries the tone.
            no row opacity — any fade drops the light empty pip on a checked row below 3:1 (default accent: 0.85 → 2.72; unfaded 3.41) */
         .doc-row.is-pending-delete .doc-title-text { text-decoration: line-through; }
-        /* margin-left = lead slot 20px + title row gap 6px → the snippet starts under the title */
-        .doc-snippet { margin-left: 26px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+        /* margin-left = lead slot + title row gap → the snippet starts under the title */
+        .doc-snippet { margin-left: calc(${DOC_LEAD_SLOT_PX_CD}px + var(--space-1_5)); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
         /* trailing title-line pills never shrink → the title text ellipsizes first */
         button.doc-lineage { flex: none; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
         .doc-revision-count { flex: none; }
@@ -983,14 +986,14 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
         /* wraps between words; a single over-long token still breaks rather than spill */
         .doc-meta-value { color: rgb(var(--ink)); word-break: normal; overflow-wrap: break-word; font-size: var(--fs-meta); }
-        .doc-search-input { width: 100%; padding: 7px 10px 7px 32px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+        .doc-search-input { width: 100%; padding: var(--space-1_5) var(--space-2) var(--space-1_5) var(--space-8); font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         .doc-search-input:focus { border-color: rgb(var(--accent)); }
         /* .doc-toast → shared SoT in base.css */
-        .doc-empty { padding: 28px; border: 1px dashed rgb(var(--faint) / 0.5); border-radius: 8px; color: rgb(var(--faint)); text-align: center; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-body); }
+        .doc-empty { padding: var(--space-6); border: 1px dashed rgb(var(--faint) / 0.5); border-radius: 8px; color: rgb(var(--faint)); text-align: center; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-body); }
         .doc-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: rgb(var(--faint)); }
-        .doc-editor-input { width: 100%; padding: 8px 10px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
+        .doc-editor-input { width: 100%; padding: var(--space-1_5) var(--space-2); font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
         .doc-editor-input:focus { border-color: rgb(var(--accent)); }
-        .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: 10px 12px; font-size: var(--fs-meta); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
+        .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: var(--space-2); font-size: var(--fs-meta); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
         .doc-editor-textarea:focus { border-color: rgb(var(--accent)); }
         /* (retired) format('H')/audience/format-row/chain 표시 배지 — 전부 canonical window.UI.Badge 로 이전, screen-local CSS 미사용분 제거. */
         /* version-history — predecessor 전용 dim 룰.
@@ -1010,9 +1013,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* split grid: main(fluid) | meta(clamp 260-300). 가독성 본문 확폭 — meta col 소폭 축소(320→300)로 본문 여유 확보 + 모바일 collapse 분기. */
         .doc-fs-split { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 1fr clamp(260px, 20vw, 300px); overflow: hidden; }
         /* body wrap = 스크롤 컨테이너(구조 수정 핵심) — overflow:hidden → overflow-y:auto 전환 → 스크롤바가 body 셀 우측 끝(meta border 접점)에 안착("스크롤 우측 이동" 요청 충족) · grid 셀 높이 bound(상위 split flex:1+min-height:0) 가 scrollport 생성 → min-height:0 체인 유지 필수.
-           bg cool zinc-950(rgb 9 9 11) 정합 + 좌우 padding clamp(32-72) gutter 보존.
+           bg cool zinc-950(rgb 9 9 11) 정합 + 좌우 padding clamp(32-72) gutter 보존 (72 = 3 × --space-6).
            container-type — 본문 다이어그램 breakout 이 기준으로 삼는 상자(위 크기 프리셋의 cqi). */
-        .doc-fs-body-wrap { min-height: 0; container-type: inline-size; padding: 24px clamp(32px, 4vw, 72px) 32px; background: rgb(9 9 11); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(63 63 70 / 0.6) transparent; }
+        .doc-fs-body-wrap { min-height: 0; container-type: inline-size; padding: var(--space-6) clamp(var(--space-8), 4vw, calc(3 * var(--space-6))) var(--space-8); background: rgb(9 9 11); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(63 63 70 / 0.6) transparent; }
         /* 얇은 다크 스크롤바 — tokens.css 글로벌 *::-webkit-scrollbar(10px·--line warm)를 .doc-fs-* 스코프 한정 override(specificity 0,1,1 > 0,0,1). 8px·zinc thumb. */
         .doc-fs-body-wrap::-webkit-scrollbar { width: 8px; }
         .doc-fs-body-wrap::-webkit-scrollbar-track { background: transparent; }
@@ -1030,18 +1033,16 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* meta sidebar — grid cell 풀높이 sticky · cool zinc(rgb 13 13 16 solid · 0.6 alpha 제거 → 본문 위 비침 제거) · border-left cool zinc(rgb 34 34 38 · --line warm 대체). */
         /* inherited text colour was computed under the app theme → each chrome scope re-resolves it from its own ink */
         .doc-fs-container [data-theme="dark"] { color: rgb(var(--ink)); }
-        .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(34 34 38); background: rgb(13 13 16); padding: 20px 24px; }
+        .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(34 34 38); background: rgb(13 13 16); padding: var(--space-4) var(--space-6); }
         /* 모바일 <768px — meta 하단 stack + border-top · wrap padding 축소 · bg 통일 반복(데스크톱 룰의 cool zinc 를 미디어 블록에서 재확인).
            max-width min(90%,1280px) 는 폰에서 90% 자동 승리(1280 캡 미발동) → px floor 없음 → overflow 무발생. 스크롤은 wrap 에서 동일 동작. */
         @media (max-width: 768px) {
           .doc-fs-split { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
-          .doc-fs-body-wrap { padding: 16px 20px 20px; background: rgb(9 9 11); }
-          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(34 34 38); background: rgb(13 13 16); max-height: 40vh; padding: 16px 20px; }
+          .doc-fs-body-wrap { padding: var(--space-4); background: rgb(9 9 11); }
+          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(34 34 38); background: rgb(13 13 16); max-height: 40vh; padding: var(--space-4); }
         }
-        /* T-DOC-5 뷰어 thin header — fullscreen viewer 의 CardHead 를 압축 (공용 .card-head 16×20 → 10×16).
-           ui.jsx CardHead 미수정(scope discipline) · .doc-fs-container 스코프 한정 override.
-           본문 가독 영역 확폭 + 헤더는 메타/액션 chrome 으로 물러남(design §1 중심 명료). */
-        .doc-fs-container .card-head { padding: 10px 16px; }
+        /* T-DOC-5 viewer thin header — the fullscreen CardHead keeps the shared .card-head geometry (4 / --card-pad, min 48);
+           only its type steps down here, so the reading area stays wide and the head reads as chrome. */
         .doc-fs-container .card-head .card-title { font-size: var(--fs-control); }
         .doc-fs-container .card-head .card-sub { font-size: var(--fs-meta); }
         /* WCAG 2.2 §2.5.8 Target Size (AA) — 24×24 px floor (본 화면 스코프 한정 · padding 보존). */
@@ -1099,8 +1100,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-reorder-error { color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; }
         .doc-inline-alert { display: inline-flex; align-items: center; gap: 6px; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
-        /* header text at the title text's x — lead slot 20px + title row gap 6px */
-        .doc-col-title-text { margin-left: 26px; }
+        /* header text at the title text's x — lead slot + title row gap */
+        .doc-col-title-text { margin-left: calc(${DOC_LEAD_SLOT_PX_CD}px + var(--space-1_5)); }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
@@ -1158,7 +1159,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* chip 안 건수 — 그룹 단위 corpus 집계. 없는 수치는 자리도 만들지 않는다. */
         .doc-chip-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
         /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
-        tr.doc-stage-section > th { padding: 10px 12px 4px; text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
+        tr.doc-stage-section > th { padding-block: var(--space-3) var(--space-1); text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
         .doc-stage-section-count { margin-left: 8px; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); font-variant-numeric: tabular-nums; }
       `}</style>
 
@@ -1475,7 +1476,7 @@ function DocListCardCD({
 		>
 			<div style={{ borderBottom: "1px solid rgb(var(--line))" }}>
 				{/* 단일 툴바 행 — 검색 · 열림/종료/전체 chip(그룹 단위 건수) · 대상 chip · 건수. */}
-				<div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
+				<div className="px-4 py-2 flex items-center gap-2 flex-wrap">
 					<div className="relative" style={{ flex: "1 1 200px", minWidth: 180 }}>
 						<span className="doc-search-icon" aria-hidden="true">
 							<Icon name="search" size={14} />
@@ -3361,7 +3362,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 						<Icon name="x" size={14} />
 					</button>
 				</div>
-				<div className="modal-body" style={{ padding: 18 }}>
+				<div className="modal-body">
 					{seedFetchState.status === "loading" && (
 						<div className="doc-empty mb-3">Loading current body…</div>
 					)}

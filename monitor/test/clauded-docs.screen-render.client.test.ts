@@ -155,9 +155,11 @@ test("the snippet line starts at the title's x: indented by the lead slot plus t
     assert.ok(match, `${property} is set in px`);
     return Number(match[1]);
   };
+  const value = (rule: string, property: string) => rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*([^;]+?)\\s*(?:;|$)`))?.[1];
   const leadWidth = px(cssRuleBody(source, ".doc-title-lead"), "width");
-  const rowGap = px(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
-  assert.equal(px(cssRuleBody(source, ".doc-snippet"), "margin-left"), leadWidth + rowGap);
+  // the indent is derived from the two parts (ladder derived-offset rule), never a summed literal
+  const rowGap = value(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
+  assert.equal(value(cssRuleBody(source, ".doc-snippet"), "margin-left"), `calc(${leadWidth}px + ${rowGap})`);
 });
 
 test("the Tags column states the page's majority format once and prints only exceptions per row", async () => {
@@ -952,13 +954,14 @@ test("the last stage actor rides the Status cell's tooltip, never a line under t
 test("the Title header starts at the title text's x: indented by the lead slot plus the title row gap", async () => {
   const screen = await loadDocsScreen();
   const source = getScreenCss(screen);
-  const px = (rule: string, property: string) => Number(rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*(\\d+)px`))?.[1]);
-  const indent = px(cssRuleBody(source, ".doc-title-lead"), "width") + px(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
+  const value = (rule: string, property: string) => rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*([^;]+?)\\s*(?:;|$)`))?.[1];
+  // the indent is derived from the lead slot width plus the title row gap (ladder derived-offset rule)
+  const indent = `calc(${value(cssRuleBody(source, ".doc-title-lead"), "width")} + ${value(cssRuleBody(source, ".title-cell .doc-title-row"), "gap")})`;
 
   const titleHeader = findNodes(renderListCard(screen, {}), (n) => n.type === "th" && collectText(n) === "Title")[0];
   const label = findNodes(titleHeader, (n) => n.type === "span" && n.props.className === "doc-col-title-text");
   assert.equal(label.length, 1);
-  assert.equal(px(cssRuleBody(source, ".doc-col-title-text"), "margin-left"), indent);
+  assert.equal(value(cssRuleBody(source, ".doc-col-title-text"), "margin-left"), indent);
 });
 
 function renderPipelineCard(screen: Record<string, unknown>, state: Record<string, unknown>) {

@@ -39,6 +39,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
 const VENDOR_ELK_PATH = resolve(MONITOR_ROOT, "public/assets/vendor/mermaid-layout-elk-0.2.3.min.js");
 const VIEWER_SCREEN_PATH = resolve(MONITOR_ROOT, "public/src/screens/clauded-docs.jsx");
+const TOKENS_PATH = resolve(MONITOR_ROOT, "public/styles/tokens.css");
 const MAP_SCREEN_PATH = resolve(MONITOR_ROOT, "public/src/screens/architecture.jsx");
 const DECLARATION_PATH = resolve(MONITOR_ROOT, "src/server/clauded-docs/diagram-types.json");
 
@@ -177,7 +178,10 @@ function getViewerDocBodyCss(): string {
   const open = jsx.indexOf("<style>{`");
   const close = jsx.indexOf("`}</style>", open);
   assert.ok(open !== -1 && close !== -1, "clauded-docs.jsx 의 인라인 <style> 블록을 찾지 못함");
-  return jsx.slice(open + "<style>{`".length, close);
+  // the block spells its spacing with the --space-* ladder, which the app always loads from tokens.css
+  const ladder = readFileSync(TOKENS_PATH, "utf8").match(/--space-[\w]+\s*:\s*[^;]+;/g) ?? [];
+  assert.ok(ladder.length > 0, "tokens.css 의 --space-* 사다리를 찾지 못함");
+  return `:root{${ladder.join("")}}` + jsx.slice(open + "<style>{`".length, close);
 }
 
 const TYPE_NODES = FIXTURE_TYPES.map(

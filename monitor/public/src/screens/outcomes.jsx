@@ -257,14 +257,14 @@ function AttributionDevScopeO({ devScope }) {
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div
-          className="bg-elev rounded-md p-2.5 border border-line"
+          className="bg-elev rounded-md p-3 border border-line"
           title="Rate at which DEV agents ran out of budget before reporting a result over the selected window — the rolling baseline to watch for recurrence">
           <div className="fs-meta text-dim">Budget-kill rate</div>
           <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.budget_truncation_rate)}</div>
           <div className="fs-meta font-mono text-dim mt-0.5">{formatIntO(truncCount)} of {formatIntO(total)}</div>
         </div>
         <div
-          className="bg-elev rounded-md p-2.5 border border-line"
+          className="bg-elev rounded-md p-3 border border-line"
           title="Synthesized-outcome rate for DEV agents — harness recovery when the agent reported no result (not a failure, a recovery artifact)">
           <div className="fs-meta text-dim">Synthesized rate</div>
           <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.synthesized_rate)}</div>
@@ -399,13 +399,13 @@ const SCREEN_OUTCOMES_CSS = `
 .skel-pulse-o { animation: skelPulseO 1.4s ease-in-out infinite; }
 .outcome-md { font-size: var(--fs-body); line-height: 1.65; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
 /* md 헤딩 3레벨 → title 토큰 공통 (동일 content-level) · 시각 위계는 font-weight 600 + margin 으로 보존 */
-.outcome-md h1, .outcome-md h2, .outcome-md h3, .outcome-md h4 { font-weight: 600; margin: 14px 0 6px; line-height: 1.3; }
+.outcome-md h1, .outcome-md h2, .outcome-md h3, .outcome-md h4 { font-weight: 600; margin: var(--space-3) 0 var(--space-1_5); line-height: 1.3; }
 .outcome-md h1, .outcome-md h2, .outcome-md h3 { font-size: var(--fs-title); }
 .outcome-md p { margin: 6px 0; }
-.outcome-md ul, .outcome-md ol { margin: 6px 0; padding-left: 22px; }
+.outcome-md ul, .outcome-md ol { margin: 6px 0; padding-left: var(--space-6); }
 .outcome-md li { margin: 2px 0; }
-.outcome-md code { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); background: rgb(var(--sunken)); padding: 1px 5px; border-radius: 3px; }
-.outcome-md pre { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); background: rgb(var(--sunken)); padding: 10px 12px; border-radius: 6px; border: 1px solid rgb(var(--line)); overflow-x: auto; }
+.outcome-md code { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); background: rgb(var(--sunken)); padding: 0 var(--space-1); border-radius: 3px; }
+.outcome-md pre { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); background: rgb(var(--sunken)); padding: var(--space-2) var(--space-3); border-radius: 6px; border: 1px solid rgb(var(--line)); overflow-x: auto; }
 .outcome-md pre code { background: transparent; padding: 0; }
 .outcome-md blockquote { border-left: 3px solid rgb(var(--accent)); padding: 2px 12px; margin: 8px 0; color: rgb(var(--dim)); background: rgb(var(--sunken) / 0.4); }
 .outcome-md a { color: rgb(var(--ink)); text-decoration: underline; text-underline-offset: 2px; }
@@ -1535,7 +1535,7 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
           const rate = summary ? summary[`${key}_rate`] : null;
           const count = Math.round((Number(rate) || 0) * totalAttributed);
           return (
-            <div key={key} className="bg-elev rounded-md p-2.5 border border-line min-w-0" role="group"
+            <div key={key} className="bg-elev rounded-md p-3 border border-line min-w-0" role="group"
               aria-label={`${meta.label}: ${formatRateO(rate)}, ${formatIntO(count)} runs`}>
               <div className="flex items-start gap-1.5 fs-meta min-h-[2.2em]">
                 <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
@@ -2028,7 +2028,7 @@ function TaskTypeGraderCrosstabO({ rows }) {
   const byDesign = rows.filter((r) => r.by_design_unverified === true);
 
   return (
-    <div className="mt-4 flex flex-col gap-2.5">
+    <div className="mt-4 flex flex-col gap-3">
       <TaskTypeGraderGroupO label="By task type — checkable types" rows={measured} maxTotal={maxTotal}/>
       <TaskTypeGraderGroupO label="Types with nothing to check" rows={byDesign} maxTotal={maxTotal} isMuted/>
     </div>
@@ -2294,8 +2294,8 @@ function LoopEventsBody({ state, onRetry, shared }) {
 
   if (total === 0 || events.length === 0) {
     // 카드 card-body 는 padding:0(populated 테이블 소유) → empty 브랜치만 별도 패딩으로
-    // 'Task results' 레퍼런스(card-body 기본 20px)와 간격 일치. populated 테이블은 padding:0 유지.
-    return <div style={{ padding: 20 }}><EmptyStateO message="No run events recorded yet."/></div>;
+    // the card-body default (--card-pad) 와 간격 일치. populated 테이블은 padding:0 유지.
+    return <div style={{ padding: 'var(--card-pad)' }}><EmptyStateO message="No run events recorded yet."/></div>;
   }
 
   const distMap = {};
@@ -2312,7 +2312,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
 
   return (
     <div className="p-4">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3">
         {summary.map(([tone, iconName, label, count]) => (
           <span key={label} className="fs-body inline-flex items-center gap-1.5">
             <span style={{ color: `rgb(var(--${tone}))` }} aria-hidden="true"><GlyphO name={iconName}/></span>
@@ -2465,7 +2465,7 @@ function FilterPanelO({
 
 function FilterAxisGroup({ label, children }) {
   return (
-    <div className="mb-2.5">
+    <div className="mb-3">
       <div className="fs-meta text-faint mb-1">
         {label}
       </div>
@@ -2565,7 +2565,7 @@ function ResultTableCard({
         />
       </div>
       {state.status === 'ready' && totalMatched > 0 && (
-        <div className="px-4 py-2.5 border-t border-line flex items-center justify-between fs-meta text-dim font-mono">
+        <div className="px-4 py-2 border-t border-line flex items-center justify-between fs-meta text-dim font-mono">
           <span>{formatIntO(page * limit + 1)}–{formatIntO(Math.min((page + 1) * limit, totalMatched))} / {formatIntO(totalMatched)}</span>
           <div className="flex items-center gap-2">
             <button

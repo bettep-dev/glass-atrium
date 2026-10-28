@@ -954,7 +954,7 @@ function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selecte
 
   return (
     <>
-      <div className="px-4 py-2.5 border-b border-line flex items-center justify-end gap-3 fs-meta text-faint">
+      <div className="px-4 py-2 border-b border-line flex items-center justify-end gap-3 fs-meta text-faint">
         <span role="status" className="font-mono">{sortNote}</span>
         <div className="flex items-center gap-2">
           <span>Sort:</span>
@@ -1920,9 +1920,9 @@ function AgentLatencyRow({ latency, state, onRetry }) {
 // (b) Lifecycle = unfinished pill + Started/Finished 2-col + duration triplet 1 mono 라인 (2번째 3-box grid 폐지).
 function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureState, detailState, blockedState, lifecycleState, days, onRetry }) {
   // 단일 separator 전략 (#6b) — top-hairline 은 AgentDrawerSection 경계에만. 두 sub-block 은
-  // 순수 spacing(space-y-5=20px)으로 분리, 내부 border-t 폐지 (divider 어휘 하나).
+  // 순수 spacing(space-y-6=24px, section step)으로 분리, 내부 border-t 폐지 (divider 어휘 하나).
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <AgentReliabilityBreakages
         drawerAgent={drawerAgent}
         failureByAgent={failureByAgent}

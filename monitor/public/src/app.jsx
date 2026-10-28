@@ -68,7 +68,7 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 	return (
 		<aside aria-label="Sidebar" className="shell-sidebar flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
 			<div className="shell-brand px-4 py-4 border-b border-line">
-				<div className="flex items-center gap-2.5">
+				<div className="flex items-center gap-2">
 					<div className="w-7 h-7 rounded-md overflow-hidden bg-ink">
 						<img src="/assets/favicon/icon-192.png" alt="Atrium Monitor" className="w-full h-full object-cover" />
 					</div>
@@ -79,7 +79,7 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 					</div>
 				</div>
 			</div>
-			<nav aria-label="Primary" className="flex-1 p-2.5 overflow-y-auto">
+			<nav aria-label="Primary" className="flex-1 p-2 overflow-y-auto">
 				<div className="space-y-0.5">
 					{NAV.map((n) => {
 						// dynamicBadges 키 존재 = polled (null 이어도 정적 fallback 차단)
@@ -125,7 +125,7 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 				</div>
 			</nav>
 			<div className="p-3 border-t border-line">
-				<div className="bg-sunken rounded-md p-2.5" style={META_TEXT_STYLE}>
+				<div className="bg-sunken rounded-md p-3" style={META_TEXT_STYLE}>
 					<div className="flex items-center gap-1.5 mb-1">
 						{/* 라이브 롤업 파생 — ok 상태만 pulse(live-dot), 그 외 정적 (가짜 상시-green 제거). */}
 						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}${systems.tone === "ok" ? " live-dot" : ""}`}></span>

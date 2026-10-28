@@ -205,7 +205,7 @@ function ScreenCost({ onNav }) {
             <TokenStackedBody state={tokenState} days={days} onRetry={triggerRefresh}
               failures={sourceFailures}/>
           </RefreshingRegionC>
-          <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-5">
+          <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-4">
             <CacheHitBody state={cacheState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
           </RefreshingRegionC>
         </Disclosure>

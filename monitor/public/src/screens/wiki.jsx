@@ -1499,7 +1499,7 @@ function MergeSuggestionItem({ proposal }) {
 	const action = readProposalActionW(proposal);
 
 	return (
-		<li className="rounded border border-line bg-card px-2.5 py-1.5">
+		<li className="rounded border border-line bg-card px-3 py-1.5">
 			<div className="flex items-baseline gap-2 flex-wrap fs-meta font-mono">
 				<span className="text-ink font-medium break-words min-w-0">{target}</span>
 				<span className="inline-flex items-center text-faint">
@@ -1693,7 +1693,7 @@ function SparseTrendW({ label, series, dates, stat }) {
 			<div className="fs-body text-ink mb-1">{headline}</div>
 			<div className="card-sub mb-1.5">{label}</div>
 			{sparse ? (
-				<div className="rounded-md border border-line bg-sunken px-3 py-2.5 fs-meta text-faint">
+				<div className="rounded-md border border-line bg-sunken px-3 py-2 fs-meta text-faint">
 					Too few active days to draw a trend.
 				</div>
 			) : (

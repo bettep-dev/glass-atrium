@@ -412,7 +412,7 @@ function ScreenImprovement({ onNav }) {
         /* applied hero — ink count below the status band's figure size · ✓ + label grouped so the glyph centres on the label */
         .i-applied-hero { gap:6px; }
         /* T5 — REJECTED 컴팩트 행(단일행 · rationale 숨김 · 중립 chrome). --crit 는 ✕ 심볼에만. */
-        .i-compact-row { display:flex; align-items:center; gap:6px; padding:5px 8px; }
+        .i-compact-row { display:flex; align-items:center; gap:6px; padding:var(--space-1_5) var(--space-2); }
         /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
         .i-more-btn { display:flex; flex-shrink:0; align-items:center; justify-content:center; gap:4px; width:100%;
           padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
@@ -886,7 +886,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.trend}
 						source="loop events"
@@ -904,7 +904,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<LoadingPlaceholder label="the trend" minHeight={60} />
 				</div>
 			</div>
@@ -917,7 +917,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<div className="placeholder">Not enough days to plot a trend</div>
 				</div>
 			</div>
@@ -1058,7 +1058,7 @@ function CycleDecompositionRowI({ stats }) {
 
 	// 카테고리 = symbol+tone+label 로 dual-encode(색 단독 아님), 수량 = neutral count Badge(color≠count 규칙).
 	return (
-		<div className="flex items-center gap-2.5 mt-2 px-5 flex-wrap">
+		<div className="flex items-center gap-2 mt-2 px-4 flex-wrap">
 			<span className="fs-meta text-faint uppercase tracking-wider">
 				Run breakdown (7 days)
 			</span>
@@ -1599,7 +1599,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 			<button
 				type="button"
 				onClick={onClick}
-				className="i-row-card text-left p-2.5 w-full block"
+				className="i-row-card text-left p-3 w-full block"
 				aria-label={`View suggestion ${row.id} details`}
 			>
 				{/* 반복 메타를 단일 배지 행으로 통합(USER) — 전부 canonical window.UI.Badge(.pill family)로 렌더.
@@ -1688,7 +1688,7 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 		if (!isPending) fn();
 	};
 	return (
-		<div className="px-2.5 pb-2.5 pt-0">
+		<div className="px-3 pb-3 pt-0">
 			{isSafety && (
 				<div className="fs-meta text-dim mb-1.5 flex items-center gap-1">
 					<SymI s="⚠" className="text-warn" size={11} /> Your call
@@ -1871,7 +1871,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 				visual: (
 					<div className="grid grid-cols-2 gap-2">
 						{cards.map(([sym, tone, label, , hint]) => (
-							<div key={label} className="sub-card bg-elev p-2.5 min-w-0">
+							<div key={label} className="sub-card bg-elev p-3 min-w-0">
 								<div className="flex items-start gap-1.5 fs-meta">
 									<SymI s={sym} className={tone} size={13} />
 									<span>{label}</span>
@@ -2219,7 +2219,7 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 					<div key={label}>
 						<div className={`${labelCls} mb-1`}>{label}</div>
 						{mono ? (
-							<pre className="fs-meta font-mono text-dim bg-sunken p-2.5 rounded-md whitespace-pre-wrap break-words">
+							<pre className="fs-meta font-mono text-dim bg-sunken px-3 py-2 rounded-md whitespace-pre-wrap break-words">
 								{value}
 							</pre>
 						) : (
@@ -2244,7 +2244,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 	return (
 		<div>
 			<div className={`${labelCls} mb-1`}>PRE-VERIFY</div>
-			<div className="bg-sunken p-2.5 rounded-md flex flex-col gap-2">
+			<div className="bg-sunken p-3 rounded-md flex flex-col gap-2">
 				<div className="flex items-center gap-1.5 fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
 					<span className="text-dim">{badge.label}</span>
@@ -2455,7 +2455,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.changeSummary}
 						source="loop events"
@@ -2473,7 +2473,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<LoadingPlaceholder label="applied changes" minHeight={68} />
 				</div>
 			</div>
@@ -2487,7 +2487,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -2519,7 +2519,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 						<div className="fs-meta text-faint uppercase tracking-wider">
 							Lines changed
 						</div>
-						<div className="mt-1 flex items-baseline gap-x-5 gap-y-1 flex-wrap">
+						<div className="mt-1 flex items-baseline gap-x-4 gap-y-1 flex-wrap">
 							<LineCountI
 								symbol="＋"
 								tone="text-ok"
@@ -2779,7 +2779,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="sub-card i-row-card i-tile-hover bg-elev text-left p-2.5 w-full flex items-center gap-2"
+			className="sub-card i-row-card i-tile-hover bg-elev text-left p-3 w-full flex items-center gap-2"
 			aria-label={`Candidate ${rank}: ${label}${pattern.agent ? ` — ${pattern.agent}` : ""} — seen ${freq} times`}
 		>
 			<span

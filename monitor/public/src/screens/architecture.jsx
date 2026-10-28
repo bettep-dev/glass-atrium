@@ -668,7 +668,7 @@ function ScreenArchitecture(
 					".arch-col-card .card-body { flex: 1; min-height: 0; max-height: none; overflow: hidden; display: flex; flex-direction: column; } " +
 					// 훅 구성 — 이벤트 > matcher > 훅 3단 들여쓰기. 목록 표식 없이 들여쓰기만으로 계층을 냄.
 					".arch-hook-events, .arch-hook-groups, .arch-hook-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; } " +
-					".arch-hook-groups, .arch-hook-list { padding-left: 14px; } " +
+					".arch-hook-groups, .arch-hook-list { padding-left: var(--space-3); } " +
 					".arch-hook-event, .arch-hook-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; } " +
 					".arch-hook-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; } " +
 					// 경보 레인 — 지도 위에 서는 단 하나의 상자. 행이 없으면 레인도 없음(빈 상태 없음).
@@ -694,7 +694,7 @@ function ScreenArchitecture(
 					// 캔버스 우하단 작은 안내 — 박스 클릭 = 상세.
 					".arch-canvas-hint { position: absolute; right: 8px; bottom: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--faint)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
-					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
+					"background: rgb(var(--surface) / 0.7); padding: 0 var(--space-1_5); border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; } " +
 					// hover and keyboard focus brighten the shape, border included (hue kept) — the planted ring rects and the label keep their paint, the box keeps its size
 					`#${ARCH_CANVAS_ID} .node > ${NODE_SHAPE_SELECTOR} { transition: filter .12s; } ` +
@@ -732,7 +732,7 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .node.security > ${NODE_SHAPE_SELECTOR} { stroke-dasharray: none !important; } ` +
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
-					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
+					"background: rgb(var(--surface) / 0.7); padding: 0 var(--space-1_5); border-radius: 4px; } " +
 					// corner badge at the label size, so it holds the same 13px floor; its opaque pill keeps the ring and the border out of the text
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL.fontPx}px; font-weight: 700; pointer-events: none; ` +
 					"text-anchor: start; } " +
@@ -763,18 +763,18 @@ function ScreenArchitecture(
 					// 노드 상세의 부품 목록 — 드로어 폭 안이라 표의 nowrap 대신 줄바꿈이 기본임.
 					".arch-part-list { display: flex; flex-direction: column; gap: 10px; } " +
 					".arch-part-entry { display: flex; flex-direction: column; gap: 4px; min-width: 0; } " +
-					".arch-part-entry + .arch-part-entry { border-top: 1px solid rgb(var(--line)); padding-top: 10px; } " +
-					".arch-part-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
+					".arch-part-entry + .arch-part-entry { border-top: 1px solid rgb(var(--line)); padding-top: var(--space-3); } " +
+					".arch-part-head { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; min-width: 0; } " +
 					// 로그 목록은 부품 이름 아래로 한 칸 들여씀 — 어느 부품의 로그인지 들여쓰기만으로 냄.
-					".arch-part-detail { padding-left: 10px; display: flex; flex-direction: column; gap: 8px; } " +
+					".arch-part-detail { padding-left: var(--space-3); display: flex; flex-direction: column; gap: 8px; } " +
 					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬. 진짜 button 이라
 					// 키보드 활성과 포커스 순서를 브라우저에서 그대로 받음.
-					".arch-part-drill { align-self: flex-start; min-height: 32px; margin: 0 0 0 10px; padding: 0 10px; " +
+					".arch-part-drill { align-self: flex-start; min-height: 32px; margin: 0 0 0 var(--space-3); padding: 0 var(--space-2); " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; " +
 					"color: rgb(var(--dim)); font: inherit; font-size: var(--fs-meta); cursor: pointer; text-align: left; } " +
 					".arch-part-drill:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); } " +
-					".arch-map-copy-note { display: flex; align-items: center; gap: 6px; padding: 8px 10px 0; } " +
-					".arch-caption { display: flex; flex-direction: column; gap: 6px; margin: -8px 0 12px; } " +
+					".arch-map-copy-note { display: flex; align-items: center; gap: var(--space-1_5); padding: var(--space-2) var(--space-2) 0; } " +
+					".arch-caption { display: flex; flex-direction: column; gap: var(--space-1_5); margin: 0 0 var(--space-3); } " +
 					".arch-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-legend-item { display: inline-flex; align-items: center; gap: 6px; } " +
 					// height = the meta line + both 2px borders, so the swatch's mark never spills over its ring
@@ -783,14 +783,14 @@ function ScreenArchitecture(
 					".arch-legend-swatch-warn { border-color: rgb(var(--warn)); color: rgb(var(--warn)); } " +
 					".arch-legend-swatch-crit { border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
 					".arch-legend-swatch-dashed { border-style: dashed; } " +
-					".arch-legend-swatch-count { width: auto; padding: 0 3px; border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
+					".arch-legend-swatch-count { width: auto; padding: 0 var(--space-1); border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
 					".arch-run-summary { display: flex; flex-direction: column; gap: 6px; } " +
 					`#${ARCH_CANVAS_ID} .${ZONE_TITLE_REDUNDANT_CLASS} > .cluster-label { display: none; } ` +
 					".arch-run-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; } " +
-					".arch-run-entry { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
+					".arch-run-entry { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; min-width: 0; } " +
 					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; } " +
-					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음.
-					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; " +
+					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음. Absolute, so margin 0 takes no layout space (no negative margin).
+					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: 0; " +
 					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
 					// 모션 게이트 — 노드/줌 컨트롤 transition 정지 (§8.4 계약).
 					"@media (prefers-reduced-motion: reduce) { " +
@@ -849,7 +849,7 @@ function ScreenArchitecture(
 							)}
 							<div
 								className="card-body"
-								style={{ padding: 10, opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
+								style={{ padding: 8, opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
 							>
 								<DiagramBody
 									diagState={diagState}
@@ -2088,7 +2088,7 @@ function getZoneFullTitleAR(scopedId) {
 
 function EmptyStateAR({ message }) {
 	return (
-		<div className="placeholder" style={{ padding: 20 }}>
+		<div className="placeholder">
 			{message}
 		</div>
 	);

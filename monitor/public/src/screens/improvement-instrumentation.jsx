@@ -30,7 +30,7 @@ function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTarge
 	return (
 		<div className="card">
 			<CardHead title={title} />
-			<div className="px-5 py-4">
+			<div className="px-4 py-4">
 				<RegionFailure
 					source={source}
 					error={state.error}
@@ -55,7 +55,7 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 		return (
 			<div className="card">
 				<CardHead title={title} />
-				<div className="px-5 py-4">
+				<div className="px-4 py-4">
 					<LoadingPlaceholder label="flagged results" minHeight={60} />
 				</div>
 			</div>
@@ -79,7 +79,7 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 					</button>
 				}
 			/>
-			<div className="px-5 pb-4">
+			<div className="px-4 pb-4">
 				<div className="fs-display font-mono text-ink tnum">
 					{formatIntI(Number(state.data.review_flag_last_7d ?? 0))}
 				</div>
@@ -254,7 +254,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 		return (
 			<div className="card">
 				<CardHead title="Results by check status" sub={TIER_BREAKDOWN_SUB_I} />
-				<div className="px-5 py-4">
+				<div className="px-4 py-4">
 					<LoadingPlaceholder label="check-status results" minHeight={68} />
 				</div>
 			</div>
@@ -272,7 +272,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 		return (
 			<div className="card">
 				<CardHead title="Results by check status" sub={TIER_BREAKDOWN_SUB_I} />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -322,11 +322,11 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 				sub={TIER_BREAKDOWN_SUB_I}
 				info="Pass and Fail are each task's self-reported result, recorded since automatic checking began; the pass rate uses these two only. Legacy counts tasks recorded before automatic checking."
 			/>
-			<div className="grid grid-cols-4 gap-2 px-5 py-4">
+			<div className="grid grid-cols-4 gap-2 px-4 py-4">
 				{cards.map(([sym, tone, label, value, hint]) => (
 					<div
 						key={label}
-						className="sub-card bg-elev p-2.5 min-w-0"
+						className="sub-card bg-elev p-3 min-w-0"
 					>
 						<div className="flex items-center gap-1.5 fs-meta font-mono">
 							<SymI s={sym} className={tone} size={12} />
@@ -368,7 +368,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 		return (
 			<div className="card">
 				<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
-				<div className="px-5 py-4">
+				<div className="px-4 py-4">
 					<LoadingPlaceholder label="suggestion confidence" minHeight={68} />
 				</div>
 			</div>
@@ -401,7 +401,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 		return (
 			<div className="card">
 				<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -445,11 +445,11 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 	return (
 		<div className="card">
 			<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
-			<div className="grid grid-cols-1 gap-2 px-5 py-4">
+			<div className="grid grid-cols-1 gap-2 px-4 py-4">
 				{cards.map(([sym, tone, label, value, hint, bar]) => (
 					<div
 						key={label}
-						className="sub-card bg-elev p-2.5 min-w-0"
+						className="sub-card bg-elev p-3 min-w-0"
 					>
 						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
@@ -484,7 +484,7 @@ function laneLabelI(promotionTier) {
 // confidence_avg NULL → "—" (formatRateI null-safe).
 function ConfidenceLaneTableI({ buckets }) {
 	return (
-		<div className="px-5 pb-4">
+		<div className="px-4 pb-4">
 			<table className="w-full fs-meta font-mono">
 				<thead>
 					<tr className="text-faint uppercase tracking-wider">
@@ -550,13 +550,13 @@ function ProseOnlyAddCardI({ state, summary }) {
 				info={summary.truncation_caveat || null}
 			/>
 			{rows.length === 0 ? (
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<div className="placeholder">
 						No add-only patches in this window
 					</div>
 				</div>
 			) : (
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<table className="w-full fs-meta font-mono">
 						<thead>
 							<tr className="text-faint uppercase tracking-wider">
@@ -628,7 +628,7 @@ function StyleRefCardI({ state, styleRef }) {
 					title="Style-check rate"
 					sub="7 days · checked before coding"
 				/>
-				<div className="px-5 py-4">
+				<div className="px-4 py-4">
 					<LoadingPlaceholder label="style-check rates" minHeight={68} />
 				</div>
 			</div>
@@ -713,11 +713,11 @@ function StyleRefCardI({ state, styleRef }) {
 				title="Style-check rate"
 				sub="7 days · checked before coding"
 			/>
-			<div className="grid grid-cols-3 gap-2 px-5 py-4">
+			<div className="grid grid-cols-3 gap-2 px-4 py-4">
 				{headlineCards.map(([sym, tone, label, value, hint, bar]) => (
 					<div
 						key={label}
-						className="sub-card bg-elev p-2.5 min-w-0"
+						className="sub-card bg-elev p-3 min-w-0"
 					>
 						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
@@ -750,7 +750,7 @@ function StyleRefCardI({ state, styleRef }) {
 			{hasData ? (
 				<StyleRefAgentTableI rows={agentRows} />
 			) : (
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -767,7 +767,7 @@ function StyleRefAgentTableI({ rows }) {
 	// per-agent rate 열은 없다 — 세 bucket 을 하나의 비율로 접으면 adjudicated 여부가 사라진다.
 	// 헤더는 dim text + uppercase tracking · 본문은 mono.
 	return (
-		<div className="px-5 pb-4">
+		<div className="px-4 pb-4">
 			<table className="w-full fs-meta font-mono">
 				<thead>
 					<tr className="text-faint uppercase tracking-wider">
@@ -830,7 +830,7 @@ function StyleRefSplitI({
 		["Greenfield", greenfield, "ℹ", "text-info"],
 	];
 	return (
-		<div className="px-5 pb-1">
+		<div className="px-4 pb-1">
 			<div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 fs-meta font-mono">
 				{cells.map(([label, count, symbol, tone]) => (
 					<span key={label} className="inline-flex items-baseline gap-1">
@@ -932,7 +932,7 @@ function CorrectionSignalsCardI({ state }) {
 		return (
 			<div className="card">
 				<CardHead title={title} sub="Correction signals" />
-				<div className="px-5 py-4">
+				<div className="px-4 py-4">
 					<LoadingPlaceholder label="correction signals" minHeight={60} />
 				</div>
 			</div>
@@ -945,7 +945,7 @@ function CorrectionSignalsCardI({ state }) {
 		return (
 			<div className="card">
 				<CardHead title={title} sub="Correction signals" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<div className="placeholder">
 						No correction signals recorded yet — appears once a run logs a
 						stage1/stage2 detection.
@@ -967,7 +967,7 @@ function CorrectionSignalsCardI({ state }) {
 				title={title}
 				sub={`${formatIntI(total)} signals${latest ? ` · latest ${latest}` : ""}`}
 			/>
-			<div className="px-5 pb-4 space-y-2">
+			<div className="px-4 pb-4 space-y-2">
 				<div className="fs-body">
 					<span className="font-mono text-ink">{agreePct}%</span>{" "}
 					<span className="text-faint">stage1/stage2 agreement</span>
@@ -1014,7 +1014,7 @@ function CorpusGrowthCardI({ state }) {
 		return (
 			<div className="card">
 				<CardHead title={title} sub="Per-cycle audit" />
-				<div className="px-5 py-4">
+				<div className="px-4 py-4">
 					<LoadingPlaceholder label="corpus audits" minHeight={60} />
 				</div>
 			</div>
@@ -1027,7 +1027,7 @@ function CorpusGrowthCardI({ state }) {
 		return (
 			<div className="card" data-testid="corpus-growth-card">
 				<CardHead title={title} sub="Per-cycle audit" />
-				<div className="px-5 pb-4">
+				<div className="px-4 pb-4">
 					<div className="placeholder">
 						No corpus readings yet — appears once a daemon cycle writes one.
 					</div>
@@ -1061,7 +1061,7 @@ function CorpusGrowthCardI({ state }) {
 				title={title}
 				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} audits · latest ${latest.cycle_date}`}
 			/>
-			<div className="px-5 pb-4 space-y-2">
+			<div className="px-4 pb-4 space-y-2">
 				<div className="flex items-center gap-3 flex-wrap">
 					<span className="fs-display font-mono text-ink">
 						{formatIntI(Number(latest.word_count ?? 0))}
