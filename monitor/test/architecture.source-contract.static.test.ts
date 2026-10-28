@@ -68,9 +68,10 @@ test("no rule or wiring of the retired interactive legend survives in the screen
 // CDN 실패 시 증발하므로, 이 CSS 가 mermaid 인라인 max-width 스탬프의 유일한 상시 방어선임.
 // 초록에서 초록으로 남는 회귀 잠금이지 AC 가 아님.
 test("the canvas svg width override survives legend excision", () => {
-  const rule = SCREEN_SRC.match(/"\.arch-mermaid-canvas svg \{[^"]*"/);
+  // scoped to the diagram host's svg → the zoom controls' icons keep their own size
+  const rule = SCREEN_SRC.match(/"\.arch-mermaid-canvas \.arch-mermaid-host > svg \{[^"]*"/);
 
-  assert.ok(rule, "the .arch-mermaid-canvas svg rule must still be declared in the inline style block");
+  assert.ok(rule, "the canvas diagram-svg rule must still be declared in the inline style block");
   assert.match(rule[0], /max-width:\s*none\s*!important/);
   assert.match(rule[0], /width:\s*100%\s*!important/);
 });

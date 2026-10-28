@@ -566,11 +566,13 @@ function AgentName({ name, className = '' }) {
 
 // Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
 // isWord → a word value at --fs-stat sans on the same baseline · isFaint → the unknown dash of a non-ready state.
+// A word rides its own span inside the figure's line box → the box (and its baseline) is the figure's, whatever the word's size.
 function KpiValue({ children, unit, tone, isWord = false, isFaint = false }) {
   const className = `kpi-value${isWord ? ' kpi-value--word' : ''}${isFaint ? ' text-faint' : ''}`;
+  const glyph = tone && <span className={`text-${tone}`} aria-hidden="true">{TONE_GLYPH[tone]} </span>;
   return <div className={className}>
-    {tone && <span className={`text-${tone}`} aria-hidden="true">{TONE_GLYPH[tone]} </span>}
-    {children}{unit && <span className="unit">{unit}</span>}
+    {isWord ? <span className="kpi-value-word">{glyph}{children}</span> : <>{glyph}{children}</>}
+    {unit && <span className="unit">{unit}</span>}
   </div>;
 }
 

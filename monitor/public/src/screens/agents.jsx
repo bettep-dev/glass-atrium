@@ -1126,7 +1126,8 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
       style={isUnknownAgent ? { opacity: 0.65 } : undefined}
       title={isUnknownAgent ? nonActionableTitle : `Show details for ${agent.agent_name}`}>
       <td>
-        <div className="flex items-center gap-1.5 flex-wrap">
+        {/* an agent name is an ID → one line; a narrow page scrolls the table sideways instead of breaking it at its hyphens */}
+        <div className="flex items-center gap-1.5 whitespace-nowrap">
           <ActivityMark status={agent.status} lastRunAt={agent.last_run_at}/>
           {isUnknownAgent
             ? <span className="font-medium">{nonActionableLabel}</span>
@@ -1138,7 +1139,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
       <td className="num" title={`${noRecord.title} · ${formatInvocationsTitle(invocations, days)}`}>
         {noRecord.count == null ? <span className="text-faint">—</span> : formatIntAg(noRecord.count)}
       </td>
-      <td className="num" title={successTitle}>
+      <td className="num tbl-bar-cell" title={successTitle}>
         <span className="inline-flex items-center justify-end gap-1">
           <FailShareGlyph tone={failShareTone}/>
           <span className={successDenominator > 0 ? '' : 'text-faint'}>
@@ -1156,7 +1157,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
           />
         )}
       </td>
-      <td className="num" title={failTitle}>
+      <td className="num tbl-bar-cell" title={failTitle}>
         {!isFailureRead ? (
           <NotLoadedMarkAg title={failTitle}/>
         ) : breakage.count > 0 ? (
@@ -1178,7 +1179,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
         )}
       </td>
       <td
-        className="num"
+        className="num tbl-bar-cell"
         title={p95Sec == null ? undefined : [`p95 latency tier: ${p95Glyph} (warn >${Math.round(p95WarnSec / 60)}m, fleet p75 · crit >${P95_AGENT.CRIT_SEC / 60}m)`, overageNote].filter(Boolean).join(' · ')}>
         {/* tier 글리프 — 초-도메인 톤(p95GlyphTone warn=fleet p75·하한 600s / crit 1200s) KEY 의 ✓/⚠/✕ (shape = 색 외 인코딩).
             종전 StatusDot 은 tone KEY 를 status enum 으로 오인받아 의미가 흐려졌고, 컷 도메인까지 어긋나
@@ -2639,7 +2640,7 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
           {p.task_type}
         </td>
         <td
-          className="text-right font-semibold whitespace-nowrap"
+          className="text-right font-semibold whitespace-nowrap tbl-bar-cell"
           title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${lowN})` : ''}`}>
           {/* every listed pair is failing → the glyph marks it whatever its sample size */}
           <span className="inline-flex items-center justify-end gap-1">

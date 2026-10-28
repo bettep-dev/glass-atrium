@@ -395,6 +395,11 @@ function crosstabConfidenceKeyO(confidence) {
 
 // 화면 전용 inline CSS — render 마다 string 재할당 회피 위해 모듈 상수.
 const SCREEN_OUTCOMES_CSS = `
+/* cross table rows on the 40 step; a count + bar cell keeps its count on the row's centre line (the middle of the 40 less
+   its 1px rule) and lets the 3px bar ride the band below it */
+.crosstab-tbl { --crosstab-rule: 1px; }
+.crosstab-tbl :is(tbody, tfoot) > tr > :is(th, td) { height: var(--row-h); line-height: var(--lh-row); }
+.crosstab-tbl td.crosstab-bar-cell { vertical-align: top; padding-block: calc((var(--row-h) - var(--crosstab-rule) - var(--lh-row)) / 2) 0; }
 @keyframes skelPulseO { 0%,100%{opacity:.7} 50%{opacity:.35} }
 .skel-pulse-o { animation: skelPulseO 1.4s ease-in-out infinite; }
 .outcome-md { font-size: var(--fs-body); line-height: 1.65; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
@@ -2143,7 +2148,7 @@ function CrosstabBody({ state, onRetry, shared }) {
   return (
     <div>
       <div className="overflow-x-auto">
-        <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+        <table className="crosstab-tbl w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead>
             <tr>
               <th scope="col" className="text-left text-dim font-medium px-2 py-1.5 border-b border-line">confidence \ self-check</th>
@@ -2200,7 +2205,7 @@ function CrosstabCell({ cell, max, rowLabel, colLabel }) {
 
   return (
     <td
-      className={`${NUM_ALIGN_O} px-2 pt-1.5 pb-1 border-b border-line`}
+      className={`${NUM_ALIGN_O} crosstab-bar-cell px-2 border-b border-line`}
       title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
       aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
       <span className="inline-flex items-center gap-1 justify-end">

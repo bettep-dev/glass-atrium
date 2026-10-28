@@ -1054,6 +1054,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
         /* the checkbox is block and centered in its cell; the cell takes the select floor (checkbox + edge padding) */
         .doc-checkbox-cell { width: ${LEDGER_CD.FLOOR.select}px; text-align: center; vertical-align: middle; }
+        /* the edge cell's 16 + 12 split evenly (the same 28) → the checkbox sits on the cell centre */
+        .tbl tr > :is(th, td).doc-checkbox-cell { padding-inline: calc((var(--space-4) + var(--space-3)) / 2); }
         .doc-checkbox-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: rgb(var(--accent)); }
         /* ledger checkbox — neutral at rest, the one selected state when checked or mixed; a toggle is discrete → no transition */
         .doc-checkbox { appearance: none; width: 16px; height: 16px; margin: 0; border: 1.5px solid rgb(var(--faint)); border-radius: var(--radius-inline); background: rgb(var(--elev)); cursor: pointer; }
@@ -1165,7 +1167,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* chip 안 건수 — 그룹 단위 corpus 집계. 없는 수치는 자리도 만들지 않는다. */
         .doc-chip-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
         /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
-        tr.doc-stage-section > th { padding-block: var(--space-3) var(--space-1); text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
+        /* a section head is a 40 row like the ledger rows (its th takes the td row height) → every section starts at one height */
+        tr.doc-stage-section > th { height: var(--row-h); padding-block: var(--space-3) var(--space-1); text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
         .doc-stage-section-count { margin-left: 8px; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); font-variant-numeric: tabular-nums; }
       `}</style>
 

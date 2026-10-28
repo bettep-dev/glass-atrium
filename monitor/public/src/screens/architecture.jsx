@@ -682,7 +682,7 @@ function ScreenArchitecture(
 					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨 마스크가 드러나지 않음.
 					// 세 톤(캔버스 < 존 < 노드)의 맨 아래 칸 — 여기만 바꾸면 사다리가 어긋난다.
 					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
-					".arch-mermaid-canvas svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
+					".arch-mermaid-canvas .arch-mermaid-host > svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
 					// 노드 라벨 — 색만 보정한다.
 					// mermaid 는 이 규칙이 걸리지 않는 캔버스 밖에서 라벨을 재고 그 폭으로 foreignObject 를 자름.
 					// 서체(size·weight·family)를 건드리면 잰 상자보다 넓은 글리프 런이 그려져 끝 글자가 잘린다.
@@ -1383,8 +1383,10 @@ function MermaidCanvas({
 				tabIndex={0}
 				onKeyDown={handleKeyDown}
 			>
+				{/* the diagram host — the canvas sizing rule targets its svg alone, never a control icon */}
 				<div
 					ref={containerRef}
+					className="arch-mermaid-host"
 					style={{ width: "100%", height: "100%" }}
 					onMouseDown={handleMouseDown}
 					onClick={handleClick}

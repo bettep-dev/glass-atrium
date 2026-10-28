@@ -314,18 +314,27 @@ details[open] > summary .chevron {
 	min-width: 0;
 }
 
-/* Tile split (TileSplit) — value + badge over detail by default; lead | detail columns from 641px to below xl */
+/* Tile split (TileSplit) — value + badge over detail by default; from 641px to below xl the detail sits beside the lead
+   only while the tile holds both whole: the detail keeps a readable basis, and below it the detail wraps under the lead
+   instead of squeezing to one word per line */
 .tile-split {
+	--tile-split-detail-basis: 16rem; /* a two-line hint's width (a size, outside the ladder) */
 	display: grid;
 	grid-template-columns: minmax(0, 1fr);
-	gap: 4px 16px;
+	gap: var(--space-1) var(--space-4);
 	align-items: start;
 }
 .tile-split-lead,
 .tile-split-detail { min-width: 0; }
 
 @media (min-width: 641px) and (max-width: 1279px) {
-	.tile-split { grid-template-columns: auto minmax(0, 1fr); }
+	.tile-split {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+	}
+	.tile-split-lead { flex: 0 1 auto; max-width: 100%; }
+	.tile-split-detail { flex: 1 1 var(--tile-split-detail-basis); }
 }
 
 @media (min-width: 1280px) {
@@ -403,6 +412,13 @@ details[open] > summary .chevron {
 }
 .tbl :where(tr.is-top-aligned) > td .tbl-first-line {
 	line-height: var(--lh-row);
+}
+/* value + bar cell — the value line keeps the row's centre line (the middle of a text cell's 40 less its rule) and the
+   bar rides the band below it, so the row stays --row-h: 9.5 + 20 + a bar up to 8 + 1 ≤ 40 */
+.tbl td.tbl-bar-cell {
+	vertical-align: top;
+	padding-block-start: calc((var(--row-h) - var(--tbl-rule) - var(--lh-row)) / 2);
+	padding-block-end: 0;
 }
 .tbl:where(:not(.tbl--own-face)) tbody tr {
 	cursor: pointer;
@@ -537,12 +553,15 @@ button.kpi:hover {
 .kpi-main .kpi-value {
 	margin-top: 0;
 }
-.kpi-value.kpi-value--word {
+/* a word value keeps the figure's mono --fs-kpi line box (the block's strut), so its baseline is the figure's:
+   an equal line-height alone cannot do it, since half-leading differs by font size. The word span is set at
+   --fs-stat sans with a line box of its own size, which stays inside the strut's. */
+.kpi-value--word > .kpi-value-word {
 	font-size: var(--fs-stat);
 	font-family: "Pretendard Variable", sans-serif;
+	font-weight: 600;
 	letter-spacing: normal;
-	/* the word sits on the figure's baseline, inside the same reserved line box */
-	line-height: calc(var(--fs-kpi) * 1.15);
+	line-height: 1;
 }
 /* 3 delta · 4 hint — each 4 below the row above it */
 .kpi-delta-row {

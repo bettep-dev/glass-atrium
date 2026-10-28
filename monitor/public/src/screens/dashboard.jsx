@@ -150,6 +150,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-tile-hint-fixed { flex-shrink: 0; white-space: pre; }
         .dash-tile-hint-data { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
+        /* detail and plain hint: at most two lines, the whole text in the title */
+        .dash-tile-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
         .dash-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ctl-min-h); }
         /* the shared .btn hover shifts ~4 RGB levels → an underline makes the drill's hover visible */
         .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
@@ -344,9 +346,11 @@ function getTileKpiState(status) {
 
 function TileDetail({ tile, isCovered }) {
   const hintData = isCovered ? null : tile.hintData;
+  const detail = isCovered ? null : tile.detail;
+  const hint = isCovered ? SHARED_FAILURE_HINT : tile.hint;
   return (
     <>
-      <div className="fs-body text-dim dash-tile-detail">{isCovered ? null : tile.detail}</div>
+      <div className="fs-body text-dim dash-tile-detail dash-tile-clamp" title={getClampTitle(detail)}>{detail}</div>
       {hintData ? (
         <div className="fs-meta text-dim dash-tile-hint dash-tile-hint-line" title={tile.hint}>
           <span className="dash-tile-hint-fixed">{hintData.lead}</span>
@@ -356,12 +360,17 @@ function TileDetail({ tile, isCovered }) {
           </span>
         </div>
       ) : (
-        <div className="fs-meta text-dim dash-tile-hint">
-          {isCovered ? SHARED_FAILURE_HINT : tile.hint}
+        <div className="fs-meta text-dim dash-tile-hint dash-tile-clamp" title={getClampTitle(hint)}>
+          {hint}
         </div>
       )}
     </>
   );
+}
+
+// a clamped line keeps its whole text on hover; a node (none today) carries its own
+function getClampTitle(text) {
+  return typeof text === 'string' && text !== '' ? text : undefined;
 }
 
 // the raw cause rides in the card's Details disclosure → keyboard and screen readers reach it
@@ -1085,7 +1094,7 @@ function buildFleetTile(agentsState) {
   return {
     ...base, status: 'ready', tone, badge: FLEET_VERDICT[tone], value: formatInt(suspended), unit: 'suspended',
     detail: `${formatInt(streak)} on a failing streak`,
-    trend: describeFleetReach(agentCount, Number(breaker.registry_agents)),
+    trend: describeFleetReach(agentCount, Number(breaker.registry_agents)), trendRange: FLEET_REACH_SPAN,
     ...describeBusiestAgent(agentsState.data?.agents?.[0]),
   };
 }
@@ -1093,8 +1102,11 @@ function buildFleetTile(agentsState) {
 function describeFleetReach(agentCount, registryCount) {
   if (!Number.isFinite(agentCount)) return null;
   const of = Number.isFinite(registryCount) && registryCount > 0 ? ` of ${formatInt(registryCount)} registered` : '';
-  return `${formatInt(agentCount)}${of} agents had a run in the last 7 days`;
+  return `${formatInt(agentCount)}${of} agents had a run in the last ${FLEET_REACH_SPAN}`;
 }
+
+// the reach window — the delta row keeps it whole as one token (DateRange)
+const FLEET_REACH_SPAN = '7 days';
 
 // the region reads order=runs&limit=1 → its one row is the busiest agent of the window
 function describeBusiestAgent(row) {

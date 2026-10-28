@@ -1693,9 +1693,7 @@ function SparseTrendW({ label, series, dates, stat }) {
 			<div className="fs-body text-ink mb-1">{headline}</div>
 			<div className="card-sub mb-1.5">{label}</div>
 			{sparse ? (
-				<div className="rounded-md border border-line bg-sunken px-3 py-2 fs-meta text-faint">
-					Too few active days to draw a trend.
-				</div>
+				<div className="placeholder">Too few active days to draw a trend.</div>
 			) : (
 				<TrendChart
 					label={label}

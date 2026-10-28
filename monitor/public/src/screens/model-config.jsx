@@ -1455,8 +1455,12 @@ function TiersSectionMC({
 	);
 }
 
-// Mono digits → 11ch holds the "CLI default" placeholder and the widest cap (6 digits) plus the caret.
-const TIER_CAP_FIELD_STYLE_MC = { width: "calc(11ch + 4px + var(--ctl-pad-x))" };
+// Mono digits → 11ch holds the "CLI default" placeholder and the widest cap (6 digits); the border box adds
+// the caret (4), both inline paddings and both 1px borders, so the placeholder shows whole.
+const TIER_CAP_FIELD_STYLE_MC = { width: "calc(11ch + 4px + 2 * var(--ctl-pad-x) + 2px)" };
+
+// The unset effort level: a short option label that fits the select, the whole meaning in its title.
+const EFFORT_INHERIT_TITLE_MC = `${CLI_DEFAULT_LABEL_MC} — no --effort flag`;
 
 /**
  * One knob row — an effort select (CLI default + the five levels) or a token-count field where
@@ -1483,11 +1487,12 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 						className={`field field-select field--mono${showError ? " is-error" : ""}`}
 						value={value}
 						onChange={(e) => onChange(e.target.value)}
+						title={value === "inherit" ? EFFORT_INHERIT_TITLE_MC : value}
 						aria-label={`${meta.label} level`}
 						aria-invalid={showError ? "true" : undefined}>
 						{["inherit", ...EFFORT_LEVELS_MC].map((level) => (
-							<option key={level} value={level}>
-								{level === "inherit" ? `${CLI_DEFAULT_LABEL_MC} — no --effort` : level}
+							<option key={level} value={level} title={level === "inherit" ? EFFORT_INHERIT_TITLE_MC : undefined}>
+								{labelOf(level)}
 							</option>
 						))}
 					</select>

@@ -370,6 +370,8 @@ function ScreenImprovement({ onNav }) {
         @keyframes spinI { from{transform:rotate(0)} to{transform:rotate(360deg)} }
         @media (prefers-reduced-motion: reduce) { .i-act-spin { animation-duration:0.01ms !important; } }
         .i-row-card { cursor:pointer; }
+        /* nested compact table → body rows on the 32 compact step */
+        .i-recurrence-tbl > tbody > tr > td { height: var(--row-h-compact); }
         /* interactive tile — hover = raised-2 shadow step + faint ring, never a transform lift */
         .i-tile-hover { transition:box-shadow 120ms; }
         .i-tile-hover:hover { box-shadow:0 0 0 1px rgb(var(--faint)), var(--shadow-raised-2); }
@@ -1882,7 +1884,8 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 					<div className="grid grid-cols-2 gap-2">
 						{cards.map(([sym, tone, label, , hint]) => (
 							<div key={label} className="sub-card bg-elev p-3 min-w-0">
-								<div className="flex items-start gap-1.5 fs-meta">
+								{/* icon + label: one centre-aligned atom, 4 apart at meta size */}
+								<div className="flex items-center gap-1 fs-meta">
 									<SymI s={sym} className={tone} size={13} />
 									<span>{label}</span>
 								</div>
@@ -2096,7 +2099,7 @@ function LedgerRecurrenceSectionI({ suppression }) {
 // 재발 행 — 영향 에이전트 + 사이클 커버리지가 앞, 이벤트 수는 뒤(항목 볼륨은 선두 금지).
 function RecurrenceRowsI({ buckets, windowCycles }) {
 	return (
-		<table className="w-full fs-meta">
+		<table className="i-recurrence-tbl w-full fs-meta">
 			<thead>
 				<tr className="text-faint uppercase tracking-wider">
 					<th className="text-left py-1.5 pl-1.5">Cause</th>

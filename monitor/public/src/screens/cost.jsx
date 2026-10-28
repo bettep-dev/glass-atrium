@@ -606,11 +606,14 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
           unavailableNote="No priced model cost in this window."
           foot={
             <div className="cost-foot">
-              {getCacheTotalNoteC({
-                listTotal: cacheShare.totalCost,
-                recordedTotal: trendDays === modelDays ? windowTotal.total : null,
-                days: modelDays,
-              })}
+              {/* the window ("30 days") stays one token; the sentence wraps around it */}
+              <window.UI.DateRange range={getDaySpanC(modelDays)}>
+                {getCacheTotalNoteC({
+                  listTotal: cacheShare.totalCost,
+                  recordedTotal: trendDays === modelDays ? windowTotal.total : null,
+                  days: modelDays,
+                })}
+              </window.UI.DateRange>
             </div>
           }/>
       </div>
@@ -618,10 +621,15 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
   );
 }
 
+// a day count + its unit — one unbreakable token in the copy that names it
+function getDaySpanC(days) {
+  return `${days} days`;
+}
+
 // List-price total set beside the recorded total only when both read one window → equal figures never read as a contradiction.
 function getCacheTotalNoteC({ listTotal, recordedTotal, days }) {
   const listLabel = formatUsdC(listTotal);
-  const base = `of ${listLabel} at list token prices, last ${days} days`;
+  const base = `of ${listLabel} at list token prices, last ${getDaySpanC(days)}`;
   if (recordedTotal === null) return base;
   return listLabel === formatUsdC(recordedTotal)
     ? `${base} — matches the recorded total`
