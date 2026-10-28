@@ -1237,6 +1237,21 @@ test("the cache tile's list-price note keeps its window (\"30 days\") whole as o
   assert.match(String(ranges[0].props.children), /, last 30 days\b/, "the sentence carries the token as a plain string");
 });
 
+test("the window delta foot hands its sentence to DayTokens, so \"30 days\" before its end date never breaks", async () => {
+  const mod = await loadCostRender();
+  const prior = { days: 30, period_end: "2026-09-30" };
+  const rows = [
+    { delta: 12, sentence: "12% vs the 30 days before 09-30, cut at this time of day" },
+    { delta: null, sentence: "No comparison — the 30 days before 09-30 held no cost." },
+  ];
+  for (const row of rows) {
+    const tree = renderIn(mod, "TrendDeltaC", { delta: row.delta, prior, noun: "cost" });
+    const tokens = findNodes(tree, (n) => n.props.atom === "DayTokens");
+    assert.equal(tokens.length, 1, `delta ${row.delta}: the sentence rides one DayTokens`);
+    assert.equal(String(tokens[0].props.children), row.sentence, "the sentence reaches DayTokens whole, as one string");
+  }
+});
+
 test("the window-cost tile keeps its counting rule behind an info trigger described by the tile label", async () => {
   const mod = await loadCostRender();
   const kpi = getKpiAtRatio(1, 1);

@@ -123,8 +123,8 @@ function Pill({ children, tone='neutral' }) {
 function EmptyState({ message, hint, action, className='' }) {
   return (
     <div className={`placeholder ${className}`.trim()}>
-      <div className="fs-meta">{message}</div>
-      {hint && <div className="fs-meta text-faint mt-1">{hint}</div>}
+      <div className="fs-meta"><DayTokens>{message}</DayTokens></div>
+      {hint && <div className="fs-meta text-faint mt-1"><DayTokens>{hint}</DayTokens></div>}
       {action && <div className="mt-2 flex">{action}</div>}
     </div>
   );
@@ -1394,6 +1394,34 @@ function NoWrap({ children, className = '' }) {
   return <span className={`whitespace-nowrap ${className}`.trim()}>{children}</span>;
 }
 
+// a day count or day range + its unit ("30 days", "1 day", "3–7 days") — the number + unit token the sentence wraps around
+const DAY_TOKEN_RE = /\d[\d,]*(?:\s*[–-]\s*\d[\d,]*)?\s+days?\b/g;
+
+// one string → its parts, each day token in its own NoWrap; keyed by the part's place and the token's offset
+function getDayTokenParts(text, place) {
+  const parts = [];
+  let at = 0;
+  for (const m of text.matchAll(DAY_TOKEN_RE)) {
+    if (m.index > at) parts.push(text.slice(at, m.index));
+    parts.push(<NoWrap key={`${place}:${m.index}`}>{m[0]}</NoWrap>);
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) parts.push(text.slice(at));
+  return parts;
+}
+
+/**
+ * A plain sentence with every day-count token kept whole in its own NoWrap; text content stays the sentence.
+ * @param children - the sentence; a list of children (nested lists too) is read part by part, and a non-string part (a node, null) renders as is
+ */
+function DayTokens({ children }) {
+  const parts = [children].flat(Infinity)
+    .flatMap((part, place) => (typeof part === 'string' ? getDayTokenParts(part, place) : [part]));
+  if (parts.length <= 1) return parts[0] ?? null;
+  // spread, not a list → a caller's own unkeyed element part needs no key
+  return React.createElement(React.Fragment, null, ...parts);
+}
+
 /**
  * A range token kept whole, alone or inside its sentence; the sentence stays a plain string and wraps around the token.
  * Text content equals the sentence, so no invisible character ever enters the copy.
@@ -2200,7 +2228,7 @@ function PageVerdict({ tone = 'neutral', label, children, chips = [], freshness,
       <span className="page-verdict-glyph" aria-hidden="true">{TONE_GLYPH[toneKey]}</span>
       {verdict.label || VERDICT_TONE_LABEL[toneKey]}
     </span>
-    {sentence && <span className="page-verdict-text">{sentence}</span>}
+    {sentence && <span className="page-verdict-text"><DayTokens>{sentence}</DayTokens></span>}
     {verdict.note && <span className="page-verdict-text fs-meta text-dim">{verdict.note}</span>}
     {chips.length > 0 && <span className="page-verdict-chips">
       {chips.map((chip) => <VerdictChip key={chip.key || chip.label} chip={chip} />)}
@@ -2327,7 +2355,7 @@ window.UI = {
   getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
-  formatKstDateTime, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DateRange,
+  formatKstDateTime, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,
   formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,

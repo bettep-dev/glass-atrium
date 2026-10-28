@@ -373,7 +373,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 							{alarm.label}
 						</span>
 						<span className="fs-meta text-faint block leading-tight">
-							{alarm.detail}
+							<window.UI.DayTokens>{alarm.detail}</window.UI.DayTokens>
 						</span>
 					</span>
 				</li>

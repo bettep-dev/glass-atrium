@@ -1086,7 +1086,7 @@ function CycleDecompositionRowI({ stats }) {
 	return (
 		<div className="flex items-center gap-2 mt-2 px-4 flex-wrap">
 			<span className="fs-meta text-faint uppercase tracking-wider">
-				Run breakdown (7 days)
+				Run breakdown (<window.UI.NoWrap>7 days</window.UI.NoWrap>)
 			</span>
 			{chips.map(([sym, tone, label, count]) => (
 				<span key={label} className="fs-meta inline-flex items-center gap-1.5">
@@ -2071,7 +2071,7 @@ function LedgerPlainRowsI({ rows }) {
 function LedgerSectionHeadI({ label, basis, count }) {
 	return (
 		<div className="fs-meta text-dim mb-1">
-			{label} · {basis} <span className="tnum">({formatIntI(count)})</span>
+			{label} · <window.UI.DayTokens>{basis}</window.UI.DayTokens> <span className="tnum">({formatIntI(count)})</span>
 		</div>
 	);
 }
@@ -2104,8 +2104,8 @@ function LedgerRecurrenceSectionI({ suppression }) {
 				className="fs-meta text-dim mb-1"
 				title="Recurrences, not distinct patterns — these mechanisms write no lifecycle transition, so the same row is re-suppressed on every cycle."
 			>
-				Recurrence rates — last {formatIntI(windowDays)} days ·{" "}
-				{formatIntI(windowCycles)} cycle days
+				Recurrence rates — last <window.UI.NoWrap>{formatIntI(windowDays)} days</window.UI.NoWrap> ·{" "}
+				<window.UI.NoWrap>{formatIntI(windowCycles)} cycle days</window.UI.NoWrap>
 			</div>
 			<RecurrenceRowsI buckets={buckets} windowCycles={windowCycles} />
 		</div>
@@ -2116,12 +2116,12 @@ function LedgerRecurrenceSectionI({ suppression }) {
 function RecurrenceRowsI({ buckets, windowCycles }) {
 	return (
 		<table className="i-recurrence-tbl w-full fs-meta">
-			<thead>
+			<thead className="tbl-head">
 				<tr className="text-faint uppercase tracking-wider">
-					<th className="text-left py-1.5 pl-1.5">Cause</th>
-					<th className="text-right py-1.5 pl-4">Agents affected</th>
-					<th className="text-right py-1.5 pl-4">Cycle days</th>
-					<th className="text-right py-1.5 pl-4 pr-1.5">Events</th>
+					<th className="text-left pl-1.5">Cause</th>
+					<th className="text-right pl-4">Agents affected</th>
+					<th className="text-right pl-4">Cycle days</th>
+					<th className="text-right pl-4 pr-1.5">Events</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -2152,7 +2152,7 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 function LedgerFooterI({ total, declined }) {
 	return (
 		<div className="card-foot">
-			{`${formatIntI(total)} patterns · ${formatIntI(declined)} declined, all time · rows above: last 7 days`}
+			<window.UI.DayTokens>{`${formatIntI(total)} patterns · ${formatIntI(declined)} declined, all time · rows above: last 7 days`}</window.UI.DayTokens>
 		</div>
 	);
 }
@@ -2168,7 +2168,7 @@ function LedgerNotesI({ suppression }) {
 	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
 	return (
 		<div className="flex flex-col gap-3 fs-body">
-			<p>The live and inert rows are the last 7 days of discovery; totals and declines are all time.</p>
+			<p>The live and inert rows are the last <window.UI.NoWrap>7 days</window.UI.NoWrap> of discovery; totals and declines are all time.</p>
 			{[...causes.values()].map((b) => (
 				<p key={`${b.cause}:${b.hint}`}>
 					<span className="text-ink font-semibold">{b.label}</span> — {b.hint}
@@ -2760,7 +2760,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 			<div className="px-3 pb-3">
 				{head}
 				<div className="placeholder">
-					No candidate patterns in the last 7 days
+					No candidate patterns in the last <window.UI.NoWrap>7 days</window.UI.NoWrap>
 				</div>
 			</div>
 		);

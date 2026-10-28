@@ -1337,10 +1337,10 @@ const AGENT_FAILURE_COLUMNS_O = [
 
 function AgentFailureHeadO({ stickyStyle }) {
   return (
-    <thead>
+    <thead className="tbl-head">
       <tr>
         {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
-          <th key={label} scope="col" className={`${align === 'right' ? NUM_ALIGN_O : 'text-left'} text-dim font-medium px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
+          <th key={label} scope="col" className={`${align === 'right' ? NUM_ALIGN_O : 'text-left'} text-dim font-medium px-3 border-b border-line`} style={stickyStyle}>{label}</th>
         ))}
       </tr>
     </thead>
@@ -1466,7 +1466,7 @@ function AttributionHealthCard({ state, period, onRetry, shared }) {
             tone={toneFromColorVarO(badge.colorVar)}
             icon
             title={`Missing-report (literal_omission) rate, last ${period} days — hygiene signal over the full selected window`}>
-            Missing reports, {period} days: {badge.text}
+            Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}
           </Badge>
         }
       />
@@ -2149,15 +2149,15 @@ function CrosstabBody({ state, onRetry, shared }) {
     <div>
       <div className="overflow-x-auto">
         <table className="crosstab-tbl w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-          <thead>
+          <thead className="tbl-head">
             <tr>
-              <th scope="col" className="text-left text-dim font-medium px-2 py-1.5 border-b border-line">confidence \ self-check</th>
+              <th scope="col" className="text-left text-dim font-medium px-2 border-b border-line">confidence \ self-check</th>
               {CROSSTAB_METRIC_COLS.map((col) => (
-                <th key={col.key} scope="col" className={`${NUM_ALIGN_O} text-dim font-medium px-2 py-1.5 border-b border-line`}>
+                <th key={col.key} scope="col" className={`${NUM_ALIGN_O} text-dim font-medium px-2 border-b border-line`}>
                   {col.label}
                 </th>
               ))}
-              <th scope="col" className={`${NUM_ALIGN_O} text-dim font-medium px-2 py-1.5 border-b border-line`}>Total</th>
+              <th scope="col" className={`${NUM_ALIGN_O} text-dim font-medium px-2 border-b border-line`}>Total</th>
             </tr>
           </thead>
           <tbody>
@@ -2336,13 +2336,13 @@ function LoopEventsBody({ state, onRetry, shared }) {
       {/* position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page. */}
       <div className="overflow-y-auto" style={{ maxHeight: '42vh', position: 'relative' }}>
         <table className="w-full fs-meta">
-          <thead>
+          <thead className="tbl-head">
             <tr className="text-dim uppercase tracking-wider" style={{ position: 'sticky', top: 0, background: 'rgb(var(--elev))' }}>
-              <th className="text-left font-medium px-2 py-1.5 border-b border-line">Time</th>
-              <th className="text-left font-medium px-2 py-1.5 border-b border-line">Agent</th>
-              <th className="text-left font-medium px-2 py-1.5 border-b border-line">Result</th>
-              <th className={`${NUM_ALIGN_O} font-medium px-2 py-1.5 border-b border-line`}>Added</th>
-              <th className={`${NUM_ALIGN_O} font-medium px-2 py-1.5 border-b border-line`}>Removed</th>
+              <th className="text-left font-medium px-2 border-b border-line">Time</th>
+              <th className="text-left font-medium px-2 border-b border-line">Agent</th>
+              <th className="text-left font-medium px-2 border-b border-line">Result</th>
+              <th className={`${NUM_ALIGN_O} font-medium px-2 border-b border-line`}>Added</th>
+              <th className={`${NUM_ALIGN_O} font-medium px-2 border-b border-line`}>Removed</th>
             </tr>
           </thead>
           <tbody>

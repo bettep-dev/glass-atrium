@@ -1630,7 +1630,7 @@ function DrawerSectionSkeleton({ rows = 2, label }) {
 function DrawerSectionEmpty({ message }) {
   return (
     <div className="rounded-md border border-dashed border-line px-3 py-3 fs-meta font-mono text-faint">
-      {message}
+      <window.UI.DayTokens>{message}</window.UI.DayTokens>
     </div>
   );
 }
@@ -1875,7 +1875,7 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
 
       {/* 7일 성공-기반 추세 — 데이터 없으면 미렌더 (추정값 주입 금지). */}
       <div>
-        <div className="fs-meta text-faint mb-2">Runs per day · last 7 days</div>
+        <div className="fs-meta text-faint mb-2">Runs per day · last <window.UI.NoWrap>7 days</window.UI.NoWrap></div>
         {hasTrend ? (
           <TrendChart
             label={`${agent.agent_name || drawerAgent} runs per day`}
@@ -2349,7 +2349,7 @@ function SuccessRateMatrixTable({ matrix }) {
       <SuccessRateLegend/>
       <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Success rate per agent and task type — scrolls sideways">
         <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-          <thead>
+          <thead className="tbl-head">
             <tr>
               <th
                 scope="col"
@@ -2511,7 +2511,7 @@ function SuccessRateSparkline({ points, colorVar, name }) {
 // Ledger `.tbl th` face for the dense mono tables → one header idiom per page.
 const HEAD = { FACE: 'font-sans uppercase tracking-wider fs-meta text-dim font-medium' };
 // TABLE carries its own cell geometry; the PAIRED S tables sit on .tbl--own-face, so .tbl gives theirs and they take the face alone
-HEAD.CLASS = { TABLE: `${HEAD.FACE} px-2 py-1.5 border-b border-line`, PAIRED: HEAD.FACE };
+HEAD.CLASS = { TABLE: `${HEAD.FACE} px-2 border-b border-line`, PAIRED: HEAD.FACE };
 
 function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent }) {
   const [isShowingAll, setShowingAll] = useStateAg(false);
@@ -2587,7 +2587,7 @@ function TopNFailingAgentsBody({ failures, state, days, onRetry, pairs, failureB
           Every (agent, task_type) success_rate ≥ {(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}%
         </Badge>
         <div className="fs-meta text-faint mt-3 font-mono">
-          Nothing under the threshold in the last {days} days
+          Nothing under the threshold in the last <window.UI.NoWrap>{days} days</window.UI.NoWrap>
         </div>
       </div>
     );

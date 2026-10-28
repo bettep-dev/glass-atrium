@@ -346,12 +346,17 @@ details[open] > summary .chevron {
 	}
 }
 
-.tbl {
-	/* each cell's 1px bottom rule sits inside the 40 row → every cell gives up half of it on each side of its block padding,
-	   so a text cell is 7.5 + 20 + 7.5 + 1 (rising to 40), a 24px pill cell 7.5 + 24 + 7.5 + 1 = 40, a control cell 3.5 + 32 + 3.5 + 1 = 40 */
+/* each cell's 1px bottom rule sits inside the 40 row → every cell gives up half of it on each side of its block padding,
+   so a text cell is 7.5 + 20 + 7.5 + 1 (rising to 40), a 24px pill cell 7.5 + 24 + 7.5 + 1 = 40, a control cell 3.5 + 32 + 3.5 + 1 = 40;
+   a header row on the compact step is 5.5 + 20 + 5.5 + 1 = 32. A table off .tbl (a matrix, a crosstab) takes the header row through thead.tbl-head */
+.tbl,
+thead.tbl-head {
 	--tbl-rule: 1px;
 	--tbl-pad-block: calc(var(--space-2) - var(--tbl-rule) / 2);
 	--tbl-ctl-pad-block: calc(var(--space-1) - var(--tbl-rule) / 2);
+	--tbl-head-pad-block: calc((var(--row-h-compact) - var(--lh-row) - var(--tbl-rule)) / 2);
+}
+.tbl {
 	width: 100%;
 	border-collapse: collapse;
 }
@@ -390,6 +395,21 @@ details[open] > summary .chevron {
 .tbl tbody th {
 	height: var(--row-h);
 }
+/* column-header row — one rule for every table: a plain header row sits on the 32 compact step; a sortable one (a th carrying
+   aria-sort) on the 40 row step. Block longhands, so each table keeps its own inline padding; a header cell holding a 32px
+   control takes the control-cell step below and rises to 40, as compact never holds a control */
+:is(.tbl thead, thead.tbl-head) > tr > th {
+	height: var(--row-h-compact);
+	padding-block-start: var(--tbl-head-pad-block);
+	padding-block-end: var(--tbl-head-pad-block);
+	line-height: var(--lh-row);
+}
+/* the sortable match sits in :where() → this rule keeps the plain header rule's specificity, so the control-cell step below still wins */
+:is(.tbl thead, thead.tbl-head) > tr:where(:has(> th[aria-sort])) > th {
+	height: var(--row-h);
+	padding-block-start: var(--tbl-pad-block);
+	padding-block-end: var(--tbl-pad-block);
+}
 /* edge cells take the card padding → the first and last column line up with the card head; flush comes from an unpadded card body */
 .tbl th:first-child,
 .tbl td:first-child {
@@ -400,8 +420,10 @@ details[open] > summary .chevron {
 	padding-inline-end: var(--space-4);
 }
 /* control cell — a cell holding a --ctl-min-h control takes the --space-1 step (less half the rule), so the row stays --row-h beside its text cells.
-   Block longhands, so the inline edge rule above still applies. A new 32px control class joins this list in the change that creates it. */
+   Block longhands, so the inline edge rule above still applies. A new 32px control class joins this list in the change that creates it.
+   The row step is the cell's own height too → a header row, which has no rule above it to share, still rises to 40, not 39.5 */
 .tbl :is(th, td):has(.btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h) {
+	height: var(--row-h);
 	padding-block-start: var(--tbl-ctl-pad-block);
 	padding-block-end: var(--tbl-ctl-pad-block);
 }

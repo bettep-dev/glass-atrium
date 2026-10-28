@@ -276,7 +276,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 					<div
 						className="placeholder"
 					>
-						No tasks in the last {windowDays} days
+						No tasks in the last <window.UI.NoWrap>{windowDays} days</window.UI.NoWrap>
 					</div>
 				</div>
 			</div>
@@ -405,7 +405,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 					<div
 						className="placeholder"
 					>
-						No suggestions in the last 30 days
+						No suggestions in the last <window.UI.NoWrap>30 days</window.UI.NoWrap>
 					</div>
 				</div>
 			</div>
@@ -486,11 +486,11 @@ function ConfidenceLaneTableI({ buckets }) {
 	return (
 		<div className="px-4 pb-4">
 			<table className="w-full fs-meta font-mono">
-				<thead>
+				<thead className="tbl-head">
 					<tr className="text-faint uppercase tracking-wider">
-						<th className="text-left py-1.5 pl-1.5">Group</th>
-						<th className="text-right py-1.5">Suggestions</th>
-						<th className="text-right py-1.5 pr-1.5">Avg confidence</th>
+						<th className="text-left pl-1.5">Group</th>
+						<th className="text-right">Suggestions</th>
+						<th className="text-right pr-1.5">Avg confidence</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -558,10 +558,10 @@ function ProseOnlyAddCardI({ state, summary }) {
 			) : (
 				<div className="px-4 pb-4">
 					<table className="w-full fs-meta font-mono">
-						<thead>
+						<thead className="tbl-head">
 							<tr className="text-faint uppercase tracking-wider">
-								<th className="text-left py-1.5 pl-1.5">Agent</th>
-								<th className="text-right py-1.5 pr-1.5">Add-only</th>
+								<th className="text-left pl-1.5">Agent</th>
+								<th className="text-right pr-1.5">Add-only</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -769,14 +769,14 @@ function StyleRefAgentTableI({ rows }) {
 	return (
 		<div className="px-4 pb-4">
 			<table className="w-full fs-meta font-mono">
-				<thead>
+				<thead className="tbl-head">
 					<tr className="text-faint uppercase tracking-wider">
-						<th className="text-left py-1.5 pl-1.5">Agent</th>
-						<th className="text-right py-1.5">Reported</th>
-						<th className="text-right py-1.5">Rate</th>
-						<th className="text-right py-1.5">Corrob.</th>
-						<th className="text-right py-1.5">Uncorrob.</th>
-						<th className="text-right py-1.5 pr-1.5">Unverifiable</th>
+						<th className="text-left pl-1.5">Agent</th>
+						<th className="text-right">Reported</th>
+						<th className="text-right">Rate</th>
+						<th className="text-right">Corrob.</th>
+						<th className="text-right">Uncorrob.</th>
+						<th className="text-right pr-1.5">Unverifiable</th>
 					</tr>
 				</thead>
 				<tbody>

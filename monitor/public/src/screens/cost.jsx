@@ -382,7 +382,7 @@ function AlarmLaneC({ rows }) {
       {rows.map((r) => (
         <div key={r.key} role="alert" className="alarm-row" data-tone={r.tone}>
           <span className="alarm-row-glyph"><Icon name="warn" size={16}/></span>
-          <div className="fs-body text-ink">{r.text}</div>
+          <div className="fs-body text-ink"><window.UI.DayTokens>{r.text}</window.UI.DayTokens></div>
         </div>
       ))}
     </div>
@@ -700,15 +700,16 @@ function TrendDeltaC({ delta, prior, noun }) {
     return <div className="cost-foot mt-1.5">No comparison — the prior window did not arrive with this range.</div>;
   }
   const span = `the ${prior.days} days before ${prior.period_end.slice(5)}`;
+  const { DayTokens } = window.UI;
   if (delta === null) {
-    return <div className="cost-foot mt-1.5">{`No comparison — ${span} held no ${noun}.`}</div>;
+    return <div className="cost-foot mt-1.5"><DayTokens>{`No comparison — ${span} held no ${noun}.`}</DayTokens></div>;
   }
   const [glyph, direction] = delta > 0 ? ['\u25b2', 'up'] : delta < 0 ? ['\u25bc', 'down'] : ['\u2014', 'unchanged'];
   return (
     <div className="cost-foot mt-1.5">
       <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
       <span className="sr-only">{direction} </span>
-      {`${Math.abs(delta).toFixed(0)}% vs ${span}, cut at this time of day`}
+      <DayTokens>{`${Math.abs(delta).toFixed(0)}% vs ${span}, cut at this time of day`}</DayTokens>
     </div>
   );
 }
@@ -2094,7 +2095,7 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
           {critDays > 0 && (
             <div className="mb-2">
               {/* The lane owns this alarm; inside the disclosure the count is a neutral fact. */}
-              <Badge role="metadata">{critDays} of {dayCount} days over threshold</Badge>
+              <Badge role="metadata">{critDays} of <window.UI.NoWrap>{dayCount} days</window.UI.NoWrap> over threshold</Badge>
             </div>
           )}
           <div style={{ width: '100%', height: window.UI.CARD_SLOTS.M.plotPx }}
@@ -2106,9 +2107,9 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
         </>
       ) : (
         <div className="fs-body text-dim text-center py-8" aria-label="no parse_error — chart omitted">
-          No parse_error in the last {days} days.
+          No parse_error in the last <window.UI.NoWrap>{days} days</window.UI.NoWrap>.
           <div className="fs-meta text-faint mt-2 font-mono">
-            {rows.length} days analyzed · {formatIntC(totalEvents)} events total
+            <window.UI.NoWrap>{rows.length} days</window.UI.NoWrap> analyzed · {formatIntC(totalEvents)} events total
           </div>
         </div>
       )}

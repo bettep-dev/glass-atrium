@@ -149,8 +149,11 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-tile-hint-rest { display: flex; flex: 1 1 auto; min-width: 0; }
         .dash-tile-hint-fixed { flex-shrink: 0; white-space: pre; }
         .dash-tile-hint-data { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        /* detail and plain hint: at most two lines, the whole text in the title; an empty detail reserves no line, so the hint sits 4 below the delta row */
+        /* detail and plain hint: at most two lines, the whole text in the title; an empty detail renders no node, so it reserves no line */
         .dash-tile-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+        /* a band row is one height → the split fills its tile and parts value | detail + hint, so every hint (a fixed two-line box)
+           sits on the foot and siblings' hints share one line, whatever their value, delta or detail rows hold */
+        .dash-tile > .kpi-split { flex-grow: 1; align-content: space-between; }
         .dash-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ctl-min-h); }
         /* the shared .btn hover shifts ~4 RGB levels → an underline makes the drill's hover visible */
         .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
@@ -331,7 +334,7 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
       badge={hasBadge && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
       delta={tile.trend && <div className="fs-meta text-dim"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></div>}
       hint={isFailed ? <TileFailure tile={tile} retry={retry}/> : <TileDetail tile={tile} isCovered={isCovered}/>}
-      hintFace="text-dim" isSplit foot={foot} className={tile.isBusy ? 'opacity-70' : ''}/>
+      hintFace="text-dim" isSplit foot={foot} className={`dash-tile${tile.isBusy ? ' opacity-70' : ''}`}/>
   );
 }
 
@@ -343,13 +346,20 @@ function getTileKpiState(status) {
   return TILE_KPI_STATE[status] ?? 'ready';
 }
 
+// a detail with no text renders no node → no blank line and no reserve; the hint still closes the slot, on the foot
 function TileDetail({ tile, isCovered }) {
+  const { DayTokens } = window.UI;
   const hintData = isCovered ? null : tile.hintData;
   const detail = isCovered ? null : tile.detail;
   const hint = isCovered ? SHARED_FAILURE_HINT : tile.hint;
+  const hasDetail = detail != null && detail !== false && detail !== '';
   return (
     <>
-      <div className="fs-body text-dim dash-tile-detail dash-tile-clamp" title={getClampTitle(detail)}>{detail}</div>
+      {hasDetail && (
+        <div className="fs-body text-dim dash-tile-detail dash-tile-clamp" title={getClampTitle(detail)}>
+          <DayTokens>{detail}</DayTokens>
+        </div>
+      )}
       {hintData ? (
         <div className="fs-meta text-dim dash-tile-hint dash-tile-hint-line" title={tile.hint}>
           <span className="dash-tile-hint-fixed">{hintData.lead}</span>
@@ -360,7 +370,7 @@ function TileDetail({ tile, isCovered }) {
         </div>
       ) : (
         <div className="fs-meta text-dim dash-tile-hint dash-tile-clamp" title={getClampTitle(hint)}>
-          {hint}
+          <DayTokens>{hint}</DayTokens>
         </div>
       )}
     </>
@@ -459,12 +469,12 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
 }
 
 function SpendStrip({ strip }) {
-  if (strip.bars.length === 0) return <p className="fs-meta text-dim">No spend recorded in the last 7 days.</p>;
+  if (strip.bars.length === 0) return <p className="fs-meta text-dim">No spend recorded in the last <window.UI.NoWrap>7 days</window.UI.NoWrap>.</p>;
   const max = Math.max(...strip.bars.map((bar) => bar.cost)) || 1;
   const hasPartial = strip.bars.some((bar) => bar.isPartial);
   return (
     <>
-      <p className="fs-meta text-dim">{strip.span}{hasPartial ? ' · today is still accruing' : ''}</p>
+      <p className="fs-meta text-dim"><window.UI.DayTokens>{strip.span}</window.UI.DayTokens>{hasPartial ? ' · today is still accruing' : ''}</p>
       <ol className="grid grid-cols-7 gap-1" aria-label={`Spend per day, ${strip.span}`}>
         {strip.bars.map((bar) => (
           <li key={bar.date} className="flex flex-col items-center gap-1 min-w-0">
@@ -490,11 +500,11 @@ const RESULT_ROW_META = {
 };
 
 function ResultPanel({ panel }) {
-  if (panel.writerTotal <= 0) return <p className="fs-meta text-dim">No reported outcomes, {panel.span}.</p>;
+  if (panel.writerTotal <= 0) return <p className="fs-meta text-dim">No reported outcomes, <window.UI.DayTokens>{panel.span}</window.UI.DayTokens>.</p>;
   return (
     <>
       <p className="fs-meta text-dim">
-        {panel.span} · {formatInt(panel.writerTotal)} reported outcomes, the tile's count
+        <window.UI.DayTokens>{panel.span}</window.UI.DayTokens> · {formatInt(panel.writerTotal)} reported outcomes, the tile's count
       </p>
       <ul className="flex flex-col gap-1.5">
         {panel.rows.map((row) => {
@@ -548,10 +558,10 @@ const HOUR = {
 
 function HourGrid({ grid }) {
   const { NoWrap } = window.UI;
-  if (grid.total <= 0) return <p className="fs-meta text-dim">No runs recorded in the last 7 days.</p>;
+  if (grid.total <= 0) return <p className="fs-meta text-dim">No runs recorded in the last <NoWrap>7 days</NoWrap>.</p>;
   return (
     <>
-      <p className="fs-meta text-dim">{grid.span} · {formatInt(grid.total)} runs · {HOUR.GRID_BASIS}</p>
+      <p className="fs-meta text-dim"><window.UI.DayTokens>{grid.span}</window.UI.DayTokens> · {formatInt(grid.total)} runs · {HOUR.GRID_BASIS}</p>
       {grid.folds.length > 0 && (
         <p className="fs-meta text-dim">
           {grid.folds.map((row, at) => (

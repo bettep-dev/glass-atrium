@@ -132,6 +132,56 @@ describe("Dashboard density at 1024", () => {
   });
 });
 
+// R-b: tiles of one band row are one height, so each tile's hint closes its value side on the same line as its siblings',
+// whatever its detail holds — and a tile with no detail text draws no detail line at all
+interface TileHint {
+  id: string;
+  top: number;
+  hintBottom: number | null;
+  detailNodes: number;
+  detailText: string;
+}
+
+async function getTileHints(page: Page): Promise<TileHint[]> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>("#dash-status .kpi")].map((tile) => {
+      const hint = tile.querySelector(".dash-tile-hint");
+      const details = tile.querySelectorAll(".dash-tile-detail");
+      return {
+        id: tile.id,
+        top: Math.round(tile.getBoundingClientRect().top),
+        hintBottom: hint ? hint.getBoundingClientRect().bottom : null,
+        detailNodes: details.length,
+        detailText: [...details].map((node) => node.textContent ?? "").join("").trim(),
+      };
+    }),
+  );
+}
+
+describe("Status-band hints share one line per band row", () => {
+  for (const width of [1440, 1024, 820]) {
+    test(`siblings' hints end on one line and an empty detail draws nothing at ${width}`, async () => {
+      const page = await openDashboard({ width, height: 900 });
+      await page.evaluate(() => document.fonts.ready);
+      const tiles = await getTileHints(page);
+      await page.close();
+      assert.equal(tiles.length, TILE_IDS.length, "every status tile renders");
+      for (const tile of tiles) {
+        assert.ok(tile.detailNodes === 0 || tile.detailText !== "", `${tile.id} draws an empty detail line`);
+      }
+      const rows = new Map<number, TileHint[]>();
+      for (const tile of tiles.filter((t) => t.hintBottom !== null)) rows.set(tile.top, [...(rows.get(tile.top) ?? []), tile]);
+      const shared = [...rows.values()].filter((row) => row.length > 1);
+      assert.ok(shared.length > 0, "the fixture puts two hinted tiles on one band row");
+      for (const row of shared) {
+        const bottoms = row.map((tile) => tile.hintBottom as number);
+        assert.ok(Math.max(...bottoms) - Math.min(...bottoms) < 0.5,
+          `hints end apart in one row: ${row.map((tile) => `${tile.id} ${tile.hintBottom}`).join(", ")}`);
+      }
+    });
+  }
+});
+
 // A data hint clamps its data, never the authored words around it: each part stays inside the hint box,
 // and the data keeps a visible fragment even when the tile column is narrow.
 interface HintSpan {

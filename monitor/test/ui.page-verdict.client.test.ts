@@ -228,3 +228,37 @@ describe("freshness-driven verdict", () => {
     assert.equal(tree.props["aria-busy"], "true");
   });
 });
+
+// R-c: a number + day token ("30 days", "1 day", "3–7 days") never breaks across lines inside its sentence
+describe("DayTokens", () => {
+  const isNoWrap = (n: RenderedNode) => /\bwhitespace-nowrap\b/.test(String(n.props.className ?? ""));
+  const renderTokens = (sentence: unknown) => renderScreen(h(ui.DayTokens as Component, {}, sentence)) as RenderedNode;
+  // the strings as rendered, joined with nothing between them (collectText pads node boundaries)
+  const rawText = (n: RenderedNode | string): string => (typeof n === "string" ? n : n.children.map(rawText).join(""));
+  const ROWS = [
+    { sentence: "12% vs the 30 days before 09-30, cut at this time of day", tokens: ["30 days"] },
+    { sentence: "No runs in the last 1 day", tokens: ["1 day"] },
+    { sentence: "Window 3–7 days · 1,200 days kept", tokens: ["3–7 days", "1,200 days"] },
+  ];
+  for (const row of ROWS) {
+    test(`"${row.sentence}" keeps ${row.tokens.join(" and ")} whole, its text unchanged`, () => {
+      const tree = renderTokens(row.sentence);
+      assert.deepEqual(findNodes(tree, isNoWrap).map((n) => collectText(n)), row.tokens);
+      assert.equal(rawText(tree), row.sentence, "no character enters or leaves the sentence");
+    });
+  }
+
+  test("a sentence with no day token, or a non-string child, renders as it came", () => {
+    assert.equal(findNodes(renderTokens("Spend is on track."), isNoWrap).length, 0);
+    assert.equal(rawText(renderTokens("Spend is on track.")), "Spend is on track.");
+    const node = h("span", { className: "x" }, "7 days");
+    assert.equal(findNodes(renderTokens(node), isNoWrap).length, 0, "an element child is left to its own author");
+  });
+
+  test("the shared PageVerdict sentence and EmptyState lines keep their day tokens whole", () => {
+    const verdict = renderVerdict({ tone: "ok" }, "No failures in the last 30 days.");
+    assert.deepEqual(findNodes(verdict, isNoWrap).map((n) => collectText(n)), ["30 days"]);
+    const empty = renderScreen(h(ui.EmptyState as Component, { message: "No runs in the last 7 days", hint: "Retried 2 days ago" })) as RenderedNode;
+    assert.deepEqual(findNodes(empty, isNoWrap).map((n) => collectText(n)), ["7 days", "2 days"]);
+  });
+});

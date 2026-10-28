@@ -326,16 +326,16 @@ test("a tile's detail and plain hint clamp at two lines, each keeping its whole 
   assert.ok(!hasClass(dataHint, "dash-tile-clamp"), "a data hint clamps its data part alone");
 });
 
-test("a clamped slot sets a title only for a non-empty string — an empty or element slot carries none", () => {
-  const titleOfDetail = (detail: unknown) =>
-    findNodes(render("StatusTile", { tile: { ...READY_TILE, detail }, onNav: () => {}, onRetry: () => {} }), (n) => hasClass(n, "dash-tile-detail"))[0].props.title;
-  assert.equal(titleOfDetail(""), undefined);
-  assert.equal(titleOfDetail(undefined), undefined);
-  assert.equal(titleOfDetail(mod.React.createElement("span", { children: "7 failed" })), undefined);
+test("a clamped slot sets a title only for a non-empty string — an element slot carries none, and an empty slot renders no node", () => {
+  const detailsOf = (detail: unknown) =>
+    findNodes(render("StatusTile", { tile: { ...READY_TILE, detail }, onNav: () => {}, onRetry: () => {} }), (n) => hasClass(n, "dash-tile-detail"));
+  for (const empty of ["", undefined, null, false]) {
+    assert.equal(detailsOf(empty).length, 0, `${JSON.stringify(empty)}: no detail node, so no blank line and no title`);
+  }
+  assert.equal(detailsOf(mod.React.createElement("span", { children: "7 failed" }))[0].props.title, undefined);
   const covered = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
-  const [detail] = findNodes(covered, (n) => hasClass(n, "dash-tile-detail"));
   const [hint] = findNodes(covered, (n) => hasClass(n, "dash-tile-hint"));
-  assert.equal(detail.props.title, undefined, "a banner-covered tile drops its detail and its title");
+  assert.equal(findNodes(covered, (n) => hasClass(n, "dash-tile-detail")).length, 0, "a banner-covered tile drops its detail line");
   assert.equal(hint.props.title, collectText(hint).trim(), "the shared pointer hint keeps its whole text in the title");
 });
 
@@ -607,15 +607,17 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
   }
 });
 
-test("a loading tile says so in a status placeholder and keeps the one detail slot the loaded tile fills, reserving no blank line", () => {
+// R-b: a detail with no text renders no line and no reserve; a detail with text is the one line the tile shows
+test("a loading tile says so in a status placeholder, and a tile renders its detail line only when the detail has text", () => {
   const loadingTile = { ...READY_TILE, status: "loading", value: "—", hint: null };
   for (const tile of [loadingTile, READY_TILE]) {
     const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
     const detailSlots = findNodes(tree, (n) => classOf(n).includes("dash-tile-detail"));
-    assert.equal(detailSlots.length, 1, `${tile.status}: the detail slot is one element whether or not it has text`);
+    assert.equal(detailSlots.length, 0, `${tile.status}: a tile without detail text has no detail line`);
   }
-  // an empty slot collapses → the hint sits 4 below the delta row instead of a blank body line lower
-  assert.doesNotMatch(readFileSync(DASH_SRC, "utf8"), /\.dash-tile-detail\s*\{[^}]*min-height/, "the empty detail slot reserves no line");
+  const withDetail = render("StatusTile", { tile: { ...READY_TILE, detail: "7 of 40 failed" }, onNav: () => {}, onRetry: () => {} });
+  assert.equal(findNodes(withDetail, (n) => classOf(n).includes("dash-tile-detail")).length, 1, "a detail with text is one line");
+  assert.doesNotMatch(readFileSync(DASH_SRC, "utf8"), /\.dash-tile-detail\s*\{[^}]*min-height/, "no detail line reserves a height");
   const loading = render("StatusTile", { tile: loadingTile, onNav: () => {}, onRetry: () => {} });
   assert.equal(findNodes(loading, (n) => n.type === "LoadingPlaceholder").length, 1);
   assert.equal(findNodes(loading, isKpiValue).length, 0, "no value renders before one loads");

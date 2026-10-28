@@ -1925,7 +1925,7 @@ function DocOpenSummaryCD({ summary, isPartial, isLastKnown = false, onSelect })
 							<React.Fragment key={bucket.key}>
 								<dt>
 									{isStaleShown && <ToneGlyphCD tone="warn" />}
-									{bucket.label}
+									<window.UI.DayTokens>{bucket.label}</window.UI.DayTokens>
 								</dt>
 								<dd>{formatIntCD(summary.buckets[bucket.key])}</dd>
 							</React.Fragment>

@@ -1,5 +1,6 @@
 // Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control or a
-// value + bar cell stays 40, and a word KPI value sits on the figure's baseline.
+// value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
+// and a word KPI value sits on the figure's baseline.
 // Runner: npx tsx --test test/ui.row-geometry.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -73,6 +74,28 @@ const CONTROL_ROWS = [
   { name: "an interactive pill", control: `<button type="button" class="pill pill--interactive">Implementing</button>` },
 ] as const;
 
+// column-header rows, one table each: a house .tbl, a geometry-only .tbl--own-face, a table off .tbl that opts in through
+// thead.tbl-head (its own rule and inline padding, as the matrix and crosstab tables carry), and the sortable and control cases
+const headTable = (row: string, tableAttrs: string, theadAttrs: string, cells: string): string =>
+  `<table ${tableAttrs} style="width: 480px;"><thead${theadAttrs}><tr data-row="${row}">${cells}</tr></thead>` +
+  `<tbody><tr><td>dev-react</td><td>12</td></tr></tbody></table>`;
+const OFF_TBL_TH = `style="padding-inline: 8px; border-bottom: 1px solid;"`;
+const HEAD_ROWS = [
+  { name: "a house .tbl header row", row: "head-house", px: 32,
+    markup: headTable("head-house", `class="tbl"`, "", `<th>Agent</th><th class="num">Runs</th>`) },
+  { name: "an own-face .tbl header row", row: "head-own-face", px: 32,
+    markup: headTable("head-own-face", `class="tbl tbl--own-face fs-meta"`, "", `<th>Pair</th><th>Fails</th>`) },
+  { name: "a header row off .tbl, through thead.tbl-head", row: "head-off-tbl", px: 32,
+    markup: headTable("head-off-tbl", `class="fs-meta" style="border-collapse: separate; border-spacing: 0;"`, ` class="tbl-head"`,
+      `<th ${OFF_TBL_TH}>Cause</th><th ${OFF_TBL_TH}>Events</th>`) },
+  { name: "a sortable header row (a th carrying aria-sort)", row: "head-sortable", px: 40,
+    markup: headTable("head-sortable", `class="tbl"`, "", `<th aria-sort="descending"><span style="display: inline-flex;">Time</span></th><th>Agent</th>`) },
+  { name: "a header row holding a 32px control", row: "head-control", px: 40,
+    markup: headTable("head-control", `class="tbl"`, "", `<th>Agent</th><th><button type="button" class="btn sm">Filter</button></th>`) },
+  { name: "a sortable header row holding a 32px control", row: "head-sortable-control", px: 40,
+    markup: headTable("head-sortable-control", `class="tbl"`, "", `<th aria-sort="none"><button type="button" class="btn sm">Time</button></th><th>Agent</th>`) },
+] as const;
+
 const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
   ${ICON_ROWS.map((row) => `<p id="${row.id}" style="width: 320px;">${row.markup} Healthy</p>`).join("\n  ")}
   <p id="bare" style="width: 320px;"><svg width="14" height="14" viewBox="0 0 24 24"></svg> Healthy</p>
@@ -83,6 +106,7 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
     ${CONTROL_ROWS.map((row, i) => `<tr data-row="control-${i}"><td>dev-react</td><td>${row.control}</td></tr>`).join("\n    ")}
     <tr data-row="last"><td>last row</td><td>no rule below — keeps every measured row ruled</td></tr>
   </tbody></table>
+  ${HEAD_ROWS.map((row) => row.markup).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
     ${KPI_VALUES.map((value) => `<div id="${value.id}">${value.markup}</div>`).join("\n    ")}
   </div>
@@ -155,6 +179,30 @@ describe("a .tbl row is one 40px line whatever its cells hold", () => {
       assert.equal(controlHeight, 32, `${row.name} is a 32px control`);
       assert.equal(await rowHeight(`control-${i}`), ROW_PX);
     });
+  });
+});
+
+// R-a: one header-row system — a plain header row sits on the 32 compact step, a sortable one on the 40 row step, at the
+// shared rule, so a table routed off .tbl reads the same; a header cell holding a control keeps the control step (40)
+describe("a column-header row sits on the compact step, a sortable one on the row step", () => {
+  for (const row of HEAD_ROWS) {
+    test(`${row.name} is ${row.px}`, async () => {
+      assert.equal(await rowHeight(row.row), row.px);
+    });
+  }
+
+  test("a header cell's text sits on its row's centre line", async () => {
+    for (const row of ["head-house", "head-off-tbl"]) {
+      const { cell, text } = await page.$eval(`tr[data-row="${row}"]`, (tr) => {
+        const th = tr.querySelector("th")!;
+        const range = document.createRange();
+        range.selectNodeContents(th);
+        const line = range.getClientRects()[0];
+        const box = tr.getBoundingClientRect();
+        return { cell: (box.top + box.bottom - 1) / 2, text: (line.top + line.bottom) / 2 };
+      });
+      assert.ok(Math.abs(cell - text) < 1, `${row}: text centre ${text} vs row centre ${cell} (above its 1px rule)`);
+    }
   });
 });
 

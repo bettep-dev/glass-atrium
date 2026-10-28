@@ -1285,8 +1285,9 @@ test("the review-flag total sits under a card title in every state, never as a h
   }
 });
 
+// whitespace-normalized: collectText pads node boundaries, and a caption may hold an inline NoWrap token ("7 days")
 function findCaption(tree: RenderedNode | string | null, text: string): RenderedNode | undefined {
-  return findNodes(tree, (n) => typeof n.type === "string" && collectText(n) === text).at(-1);
+  return findNodes(tree, (n) => typeof n.type === "string" && collectText(n).replace(/\s+/g, " ").trim() === text).at(-1);
 }
 
 const PERFORMANCE_AGENT = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", runs: 12, needs_context_count: 0 };

@@ -1613,7 +1613,7 @@ function HookFailureDetail({ state }) {
 				{/* 0 도 사실로 냄 — 창이 비었다는 것 자체가 아래 최종기록과 짝을 이루는 문장임 */}
 				<span className="text-ink">
 					{rows.length} {rows.length === 1 ? "failure" : "failures"} in the last{" "}
-					{days ?? "—"} days
+					<window.UI.NoWrap>{days ?? "—"} days</window.UI.NoWrap>
 				</span>
 				{lastFailure ? (
 					<span>
