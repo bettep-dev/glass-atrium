@@ -558,7 +558,7 @@ function StatusBandI({
 	onOpenInstrumentation,
 	onRetry,
 }) {
-	const { PageVerdict } = window.UI;
+	const { PageVerdict, NoWrap } = window.UI;
 	const s = statsState.data || {};
 	const cycleTotal = Number(s.cycle_total_7d ?? 0);
 	const applied = Number(s.cycles_generated_applied_7d ?? 0);
@@ -613,7 +613,12 @@ function StatusBandI({
 					label="Applied (7 days)"
 					value={formatIntI(applied)}
 					owner="loop output"
-					population={`${appliedHeld ? `${appliedHeld} · ` : ""}of ${getCycleCountTextI(cycleTotal)} · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
+					population={
+						<>
+							{`${appliedHeld ? `${appliedHeld} · ` : ""}of ${getCycleCountTextI(cycleTotal)} · last `}
+							<NoWrap>{formatCycleStampI(s.latest_cycle_started_at)}</NoWrap>
+						</>
+					}
 					basis="Cycles started in the last 7 days"
 					onRetry={onRetry}
 				/>

@@ -625,17 +625,19 @@ function KPI({
       {badge}
     </div>
   );
-  const deltaRow = typeof delta === 'number'
-    ? <div className="kpi-delta-row"><Delta value={delta} inverse={deltaInverse}/></div>
-    : delta != null && delta !== false && <div className="kpi-delta-row">{delta}</div>;
   const isPlainHint = typeof hint === 'string' || typeof hint === 'number';
-  const hintRow = hint != null && hint !== false && (
-    <div className={`kpi-hint ${hintClassName} ${hintFace}${isPlainHint ? ' kpi-hint--clamp' : ''}`.trim()}
-      title={hintTitle ?? (isPlainHint ? String(hint) : undefined)}>{hint}</div>
-  );
+  const row = {
+    delta: typeof delta === 'number'
+      ? <div className="kpi-delta-row"><Delta value={delta} inverse={deltaInverse}/></div>
+      : delta != null && delta !== false && <div className="kpi-delta-row">{delta}</div>,
+    hint: hint != null && hint !== false && (
+      <div className={`kpi-hint ${hintClassName} ${hintFace}${isPlainHint ? ' kpi-hint--clamp' : ''}`.trim()}
+        title={hintTitle ?? (isPlainHint ? String(hint) : undefined)}>{hint}</div>
+    ),
+  };
   const body = isSplit ? (
-    <TileSplit className="kpi-split" lead={<>{main}{deltaRow}</>} detail={hintRow || null}/>
-  ) : <>{main}{deltaRow}{hintRow}</>;
+    <TileSplit className="kpi-split" lead={<>{main}{row.delta}</>} detail={row.hint || null}/>
+  ) : <>{main}{row.delta}{row.hint}</>;
 
   const rootClass = ['kpi kpi-tile', info && 'kpi--info', sparkData && 'kpi--spark', !hasValue && 'kpi--facts', className]
     .filter(Boolean).join(' ');

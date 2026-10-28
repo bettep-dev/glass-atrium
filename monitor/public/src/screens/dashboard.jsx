@@ -160,7 +160,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; gap: 0.5rem; }
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
         /* tracks capped at the cell cap → capped cells keep even 2px gaps instead of floating in wider tracks */
-        .dash-hour-grid { display: grid; grid-template-columns: 2.5rem repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; line-height: 1; }
+        /* the label track grows to its widest label → a folded "Wed ×2" stays on one line instead of spilling into the first cell */
+        .dash-hour-grid { display: grid; grid-template-columns: minmax(2.5rem, max-content) repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; line-height: 1; }
         .dash-hour-cell { aspect-ratio: 1; background: currentColor; border-radius: 2px; }
         .dash-hour-tick { white-space: nowrap; }
       `}</style>
@@ -538,19 +539,22 @@ const HOUR = {
 };
 
 function HourGrid({ grid }) {
+  const { NoWrap } = window.UI;
   if (grid.total <= 0) return <p className="fs-meta text-dim">No runs recorded in the last 7 days.</p>;
   return (
     <>
       <p className="fs-meta text-dim">{grid.span} · {formatInt(grid.total)} runs · {HOUR.GRID_BASIS}</p>
       {grid.folds.length > 0 && (
         <p className="fs-meta text-dim">
-          {grid.folds.map((row) => `${row.day} ×2 sums ${row.fold}`).join(' · ')} — runs are counted by weekday, not by date.
+          {grid.folds.map((row, at) => (
+            <React.Fragment key={row.day}>{at > 0 && ' · '}<NoWrap>{`${row.day} ×2`}</NoWrap>{` sums ${row.fold}`}</React.Fragment>
+          ))} — runs are counted by weekday, not by date.
         </p>
       )}
       <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid fs-meta text-dim">
         {grid.rows.map((row) => (
           <React.Fragment key={row.day}>
-            <span title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
+            <span className="whitespace-nowrap" title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
             {row.counts.map((count, hour) => (
               <span key={hour} className="dash-hour-cell text-info" title={`${getRowLabel(row)} ${formatHour(hour)} — ${formatInt(count)} runs`}
                 style={{ opacity: count === 0 ? 0.06 : 0.2 + (0.8 * count) / grid.max }}/>

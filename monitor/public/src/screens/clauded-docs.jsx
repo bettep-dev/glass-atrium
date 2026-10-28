@@ -1041,7 +1041,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
           .doc-fs-body-wrap { padding: var(--space-4); background: rgb(9 9 11); }
           .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(34 34 38); background: rgb(13 13 16); max-height: 40vh; padding: var(--space-4); }
         }
-        /* T-DOC-5 viewer thin header — the fullscreen CardHead keeps the shared .card-head geometry (4 / --card-pad, min 48);
+        /* Viewer thin header — the fullscreen CardHead keeps the shared .card-head geometry (4 / --card-pad, min 48);
            only its type steps down here, so the reading area stays wide and the head reads as chrome. */
         .doc-fs-container .card-head .card-title { font-size: var(--fs-control); }
         .doc-fs-container .card-head .card-sub { font-size: var(--fs-meta); }

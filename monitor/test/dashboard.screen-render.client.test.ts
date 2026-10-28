@@ -712,3 +712,19 @@ test("hour ticks read as bare two-digit hours while each cell's tooltip keeps th
   // formatInt is a stubbed atom here → the hour prefix is the asserted part
   assert.match(String(cells[5].props.title), /^Mon 05:00 — /);
 });
+
+// "Wed ×2" is one unbreakable token → it never splits, in the fold sentence or in the row-label column
+test("a folded weekday keeps its ×2 token on one line in the fold sentence and the row label", () => {
+  const counts = Array.from({ length: 24 }, (_, hour) => (hour === 14 ? 9 : 0));
+  const grid = {
+    rows: [{ day: "Wed", counts, fold: "09-23 + today" }], total: 9, max: 9, span: "Sep 24 – Sep 30",
+    folds: [{ day: "Wed", fold: "09-23 + today" }], peak: { day: "Wed", hour: 14, count: 9, fold: "09-23 + today" },
+  };
+  const tree = render("HourGrid", { grid });
+  const tokens = findNodes(tree, (n) => n.props.atom === "NoWrap").map(collectText);
+  assert.deepEqual(tokens, ["Wed ×2"], "the fold sentence holds the token in one nowrap span");
+  const [chart] = findNodes(tree, (n) => n.props.role === "img");
+  const [label] = findNodes(chart, (n) => n.props.title === "09-23 + today");
+  assert.equal(label && collectText(label), "Wed ×2", "the row label names the folded weekday");
+  assert.match(classOf(label), /\bwhitespace-nowrap\b/, "the row label never wraps inside its track");
+});

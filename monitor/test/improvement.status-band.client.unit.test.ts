@@ -239,7 +239,7 @@ test("the applied tile is counted over the same population it names", () => {
     "3",
     "the value must be the cycle count its population denominates, not the proposal count",
   );
-  assert.match(String(applied.props.population), /of 12 cycles/);
+  assert.match(textOf(applied.props.population), /of 12 cycles/);
   assert.match(String(applied.props.basis), /last 7 days/);
 });
 
@@ -257,7 +257,28 @@ test("the applied tile names a one-cycle week in the singular", () => {
   });
   const applied = collectElements(band, []).find((el) => el.props.label === "Applied (7 days)");
 
-  assert.match(String(applied?.props.population), /^of 1 cycle · last /);
+  assert.match(textOf(applied?.props.population), /^of 1 cycle · last /);
+});
+
+// the last-cycle clock time is one unbreakable token → "09:05 AM" never splits before AM
+test("the applied tile keeps its last-cycle stamp whole in one nowrap token", () => {
+  const band = sandbox.StatusBandI({
+    statsState: {
+      status: "ready",
+      data: { cycle_total_7d: 2, cycles_generated_applied_7d: 1, latest_cycle_started_at: "2026-09-16T10:05:00.000Z" },
+    },
+    listState: { status: "ready", data: {} },
+    learningLogState: { status: "ready" },
+    suppression: { pending_total: 0, parked: [] },
+    awaiting: 0,
+    onRetry: () => {},
+  });
+  const applied = collectElements(band, []).find((el) => el.props.label === "Applied (7 days)");
+  const tokens = collectElements(applied?.props.population, []).filter((el) => el.type === sandbox.window.UI.NoWrap);
+
+  assert.equal(tokens.length, 1, "the stamp renders in exactly one nowrap span");
+  assert.match(textOf(tokens[0]), /\d{2}:05/, "the nowrap span carries the clock time");
+  assert.ok(textOf(applied?.props.population).trimEnd().endsWith(textOf(tokens[0])), "the whole stamp sits in the span");
 });
 
 test("the decision tile reads ok at zero and warns while something awaits a decision", () => {
@@ -422,7 +443,7 @@ test("a failed refresh drops the held applied tile's ok tone under a Last known 
   assert.equal(settled.props.tone, "text-ok");
   assert.notEqual(warmError.props.tone, "text-ok", "held numbers under a failed read never keep the ok tone");
   assert.equal(warmError.props.symbol, null);
-  assert.match(String(warmError.props.population), /^Last known · of 4 cycles/);
+  assert.match(textOf(warmError.props.population), /^Last known · of 4 cycles/);
 });
 
 describe("the corpus growth chip keeps the shared freshness rule over a failed refresh", () => {
