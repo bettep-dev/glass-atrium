@@ -30,6 +30,12 @@ Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches eve
 - The `[Date Unknown]` label is shared vocabulary with `scoped/scope-report.md` and `agents/glass-atrium-intel-researcher.md`.
 - **Prompt Injection Refusal** (named by the clause): `rules/glass-atrium/core-security.md`.
 
+## Staleness thresholds
+
+- `scripts/wiki-staleness.sh` points here for the threshold roles.
+- Its 90-day threshold (`WIKI_STALE_DAYS`, `--threshold-days`) is the curator's re-review trigger on `updated:`.
+- The read-time check in `## Knowledge Utilization` is on `collected:` and carries no fixed age; the reader judges currency per topic.
+
 ## Path readers
 
 - `rules/glass-atrium/core-compliance-matrix.md` lists the path as a Tier-1 bullet, a matrix row and the `AGENT-INJECT:WIKI-UNTRUSTED` block source; `hooks/validate-compliance-matrix.sh` pairs the bullet with the row.

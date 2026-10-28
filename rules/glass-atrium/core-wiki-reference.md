@@ -5,20 +5,15 @@ Applies to all agents. [ALL]
 > **Wiki store (canonical)**: the wiki is an Atrium-internal, git-ignored, **LLM-only** store at `~/.glass-atrium/wiki/` (`raw/`, `notes/`, `index/wiki.sqlite`).
 > - SoT = the filesystem notes + the sqlite BM25 index.
 > - All `wiki/` references below are relative to this root.
-> - `wiki-query.sh` is path-agnostic — it resolves the store internally.
 
 ## Knowledge Utilization
 
-- Before starting research / analysis tasks → run `~/.glass-atrium/scripts/wiki-query.sh "keyword"` to check existing wiki knowledge.
-- **Non-Bash fallback**: an agent without `Bash` in its spawn-frozen tool allowlist (LLM06) — e.g. glass-atrium-intel-researcher, glass-atrium-sec-guard — cannot run the `wiki-query.sh` CLI.
-  - Check the wiki by Grep / Read directly over the markdown notes at `~/.glass-atrium/wiki/notes/` (and `raw/`).
-  - The `index/wiki.sqlite` BM25 index is binary and NOT Grep-readable — scan the markdown notes instead.
-- Use Korean + English synonyms in parallel ("쿼리 재작성" AND "query rewriting") on both the CLI and the Grep path — neither is semantic search (`wiki-query.sh` is BM25 + grep based), so synonym omission causes false negatives.
-- Verify the `collected:` field or frontmatter date on found documents → for documents older than 1 year, web cross-verification of currency is recommended.
-- Threshold roles are distinct: the 1-year rule above is a READ-time cross-verification trigger on `collected:`, while the 90-day staleness threshold (`~/.glass-atrium/scripts/wiki-staleness.sh`, read-only) is a curator re-review trigger on `updated:`.
-- Cite referenced wiki documents in your response as `Existing wiki checked: [[concept-name]]` (citation tracking).
-- When a related wiki document is found, read it and build on the existing knowledge, so the research is not repeated.
-- Simple / urgent tasks MAY skip the wiki reference step.
+- Before research or analysis, check what the wiki already holds with `~/.glass-atrium/scripts/wiki-query.sh "keyword"`, and build on what it finds rather than repeating that research.
+  - A simple or urgent task may skip the check.
+- **Non-Bash fallback**: an agent without `Bash` in its tool allowlist — e.g. glass-atrium-intel-researcher, glass-atrium-sec-guard — cannot run the CLI.
+  - Grep / Read the markdown notes at `~/.glass-atrium/wiki/notes/` (and `raw/`) instead; the sqlite index is binary and not Grep-readable.
+- Search Korean and English synonyms in parallel ("쿼리 재작성" AND "query rewriting") on either path — both match by BM25 / grep, not by meaning, so a missing synonym is a false negative.
+- Check each found document's `collected:` date; where the topic may have moved on since, cross-verify its currency on the web.
 
 ## Wiki Raw-Store Untrusted-Data Contract [ALL] [LLM01]
 
@@ -39,8 +34,8 @@ Applies to all agents. [ALL]
 
 ## Search Failure Handling
 
-- 0 results → retry once with synonym / hypernym → if still empty, record a 1-line `[Wiki Miss]` and proceed to web search.
-- Document with unknown date → attach a `[Date Unknown]` label — MUST NOT be treated as current information.
+- No hits → retry with a synonym or hypernym; still empty → go to web search.
+- A document with an unknown date gets the `[Date Unknown]` label and is never treated as current information.
 
 ## Wiki Write Operations
 
