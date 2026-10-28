@@ -31,7 +31,7 @@ PIECE_KINDS = "sdeu"
 
 
 def get_words(command):
-    """(text, kinds) per shell word and operator run; kinds holds one PIECE_KINDS letter per text character."""
+    """(text, kinds, start, end) per shell word and operator run; kinds holds one PIECE_KINDS letter per text character."""
     if PATTERN.UNREADABLE.search(command):
         raise ValueError("unreadable construct")
     words, index = [], 0
@@ -43,7 +43,8 @@ def get_words(command):
         if lexeme[0] in " \t\r":
             continue
         is_operator_run = set(lexeme) <= CHARS.OPERATOR
-        words.append((lexeme, "u" * len(lexeme)) if is_operator_run else get_dequoted(lexeme))
+        text, kinds = (lexeme, "u" * len(lexeme)) if is_operator_run else get_dequoted(lexeme)
+        words.append((text, kinds, match.start(), match.end()))
     return words
 
 
@@ -81,13 +82,22 @@ def is_control(word):
 
 def is_trash_entry(word, prefixes):
     """One literal name directly under the Trash, its expanding head in one quoting kind the shell expands."""
-    text, kinds = word
+    text, kinds, *_ = word
     for prefix, head_length, head_kinds in prefixes:
         head = set(kinds[:head_length])
         if text.startswith(prefix) and len(head) <= 1 and head <= set(head_kinds):
             name = text[len(prefix):]
             return name not in ("", ".", "..") and not (CHARS.GLOB | CHARS.EXPANSION | {"/"}) & set(name)
     return False
+
+
+def is_redirect_fd(words, index):
+    """An unquoted digit word ending where a redirect begins is that redirect's fd; a blank or a quote makes it an operand."""
+    text, kinds, _, end = words[index]
+    if not (text.isdigit() and set(kinds) == {"u"} and index + 1 < len(words)):
+        return False
+    after = words[index + 1]
+    return is_redirect(after[0]) and after[2] == end
 
 
 def get_rm_end(words, index, prefixes):
@@ -98,7 +108,7 @@ def get_rm_end(words, index, prefixes):
         if is_redirect(word) and "<" not in word:  # zsh reads <-> and <1-9> as a numeric glob → an operand
             index += 2
             continue
-        if word.isdigit() and index + 1 < len(words) and is_redirect(words[index + 1][0]):
+        if is_redirect_fd(words, index):
             pass
         elif is_option and word == "--":
             is_option = False
@@ -133,7 +143,7 @@ def get_residual(words, prefixes):
 def main():
     try:
         words = get_words(sys.stdin.read())
-        if not any(os.path.basename(text) == "rm" for text, _ in words):
+        if not any(os.path.basename(word[0]) == "rm" for word in words):
             return 1
         sys.stdout.write(" ".join(get_residual(words, get_trash_prefixes())))
     except Exception:  # every parse doubt, a malformed quote included, keeps the hook's block

@@ -252,6 +252,9 @@ run_hook_command() {
     "single-quoted \$HOME beside an entry (no expansion)@@rm -rf ~/.Trash/y '\$HOME/.Trash/x'" # GA-RM[not-executed]: hook payload, never run
     "ANSI-C quoted HOME name beside an entry (no expansion)@@rm -rf ~/.Trash/y \$'HOME'/.Trash/x" # GA-RM[not-executed]: hook payload, never run
     'sudo wrapper@@sudo rm -rf ~/.Trash/x' # GA-RM[not-executed]: hook payload on stdin, never run
+    'env wrapper@@env rm -rf ~/.Trash/x' # GA-RM[not-executed]: hook payload on stdin, never run
+    'digit operand before a spaced redirect@@rm -rf ~/.Trash/x 2 >/dev/null' # GA-RM[not-executed]: hook payload, never run
+    'quoted digit glued to a redirect (an operand)@@rm -rf ~/.Trash/x "2">/dev/null' # GA-RM[not-executed]: hook payload, never run
     'IFS changed before an unquoted $HOME@@IFS=/; rm -rf $HOME/.Trash/x' # GA-RM[not-executed]: hook payload, never run
     'HOME read from input before the delete@@read HOME; rm -rf $HOME/.Trash/x' # GA-RM[not-executed]: hook payload, never run
     'zsh numeric glob after an entry@@rm -rf ~/.Trash/x <->' # GA-RM[not-executed]: hook payload on stdin, never run
