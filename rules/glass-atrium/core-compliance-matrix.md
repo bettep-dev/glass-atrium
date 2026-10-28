@@ -75,7 +75,8 @@ One scope file per scope; ORCHESTRATOR is the one exception, a tightly coupled f
 
 - **ORCHESTRATOR delivery companions** — two files serve the pair without joining the row:
   - `scoped/orchestrator-core.md` — the pair's control-plane core, printed to the main session at SessionStart; a subagent receives no SessionStart output.
-  - `skills/glass-atrium-ops-orchestrator-role.md` — the full text of `rules/glass-atrium/orchestrator-role.md`, which is a heading-resolving stub; an on-demand reference the main session Reads by path, outside this matrix's skill jurisdiction (`## Skills Registry (Reference)`).
+  - `skills/glass-atrium-ops-orchestrator-role.md` — the full text of `rules/glass-atrium/orchestrator-role.md`; an on-demand reference the main session Reads by path, outside this matrix's skill jurisdiction (`## Skills Registry (Reference)`).
+    - That path is a stub keeping its opening lines and the one heading code cites there.
 - **What resolves a row to a file at spawn** is the agent's `agent-registry.json` row (`rules.scope`), never this table.
   - No `agents/*.md` frontmatter carries a `scope:` key, and the registry carries no top-level `scope` field.
 - `autoagent/daemon_cycle.py` holds a second agent→scope-file map, used only to excerpt a scope file into the daemon's rule-improvement verify prompt; no spawn path reads it.
@@ -177,7 +178,7 @@ Tier membership — which rules a scope *should* load — is distinct from deliv
 
 - **A Tier-2 scope body is not delivered by the HOST channel.** What a spawned subagent receives there at session start is the set the main session holds — the Tier-1 files and the ORCHESTRATOR Tier-2 pair — whatever the subagent's own scope.
   - The Tier-1 files and the ORCHESTRATOR pair arriving: measured by reading a spawned subagent's received project-instructions directly.
-    - That measurement predates the stub: the pair's `rules/glass-atrium/orchestrator-role.md` now carries headings and pointers only, so a subagent receives the stub, not the full text [UNMEASURED until a live spawn reads it].
+    - That measurement predates the stub: the pair's `rules/glass-atrium/orchestrator-role.md` is a pointer stub, so a subagent receives the stub, not the full text [UNMEASURED until a live spawn reads it].
   - Not in that set [UNMEASURED]: the path-scoped members (**Path-scoped delivery** below).
 - **The host mechanism is unread — do not state it as fact anywhere.** The likeliest explanation is that the host propagates the parent session's project-instructions verbatim to each spawned subagent, but no configuration for that channel was located: treat what arrives as established and why as open.
 - **Path-scoped delivery** — this file and `rules/glass-atrium/shared-self-improve-hygiene.md` carry `paths:` frontmatter of `**/`-led globs.

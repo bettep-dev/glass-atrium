@@ -15,8 +15,8 @@
 #
 # UNIT HONESTY: maxTurns is a TURN cap; this hook counts TOOL_USES — applying "% of maxTurns" to a
 # tool_use count is a category error. So the threshold is an explicit TOOL_USE budget anchored to the
-# observed 40-52 tool_use truncation band (orchestrator-role.md Delegation-size discipline), NOT any
-# maxTurns. The SubagentStart meter speaks in TURNS; this one speaks in TOOL_USES.
+# observed 40-52 tool_use truncation band (skills/glass-atrium-ops-orchestrator-role.md
+# → Delegation-size discipline), NOT any maxTurns. The SubagentStart meter speaks in TURNS; this one speaks in TOOL_USES.
 #
 # PREMISE (validated, not assumed): a PreToolUse hook DOES fire on a subagent's own inner tool call
 # and the envelope carries agent_id (confirmed by enforce-delegation.sh + validate-secret-scan.sh).
@@ -159,8 +159,8 @@ print(hashlib.sha256((tool + "\x00" + canon).encode("utf-8", "replace")).hexdige
 ' 2>/dev/null || true
 }
 
-# TUNE: TOOL_USE budget — anchored to the 40-52 tool_use truncation band (orchestrator-role.md HARD
-# SECONDARY trigger). 40 = the band's lower edge, so the 80% advisory lands at 32, before the danger
+# TUNE: TOOL_USE budget — anchored to the 40-52 tool_use truncation band (skills/glass-atrium-ops-orchestrator-role.md
+# → Delegation-size discipline, HARD SECONDARY trigger). 40 = the band's lower edge, so the 80% advisory lands at 32, before the danger
 # zone. Env-overridable.
 readonly DEFAULT_TOOL_BUDGET=40
 tool_budget="${SUBAGENT_TOOL_BUDGET:-${DEFAULT_TOOL_BUDGET}}"
@@ -303,7 +303,7 @@ fi
 # 6. Threshold comparison. Fire ONCE at each crossing (equality test → not repeated every call).
 if ((new_count == crit_threshold)); then
   printf '[subagent-tool-budget-advisory] %s\n' \
-    "TOOL_USE budget advisory: this subagent has made ${new_count} tool calls, crossing 80% of the ${tool_budget}-tool_use budget (anchored to the observed 40-52 tool_use truncation band, orchestrator-role.md). NOTE: this is a TOOL_USE count, NOT a maxTurns/% — distinct units. Consider checkpointing to memory/progress-{task}.md and emitting a terminal [COMPLETION] (result: needs_context) with a resume point before truncation. Non-blocking — the tool call proceeds." >&2
+    "TOOL_USE budget advisory: this subagent has made ${new_count} tool calls, crossing 80% of the ${tool_budget}-tool_use budget (anchored to the observed 40-52 tool_use truncation band, skills/glass-atrium-ops-orchestrator-role.md → Delegation-size discipline). NOTE: this is a TOOL_USE count, NOT a maxTurns/% — distinct units. Consider checkpointing to memory/progress-{task}.md and emitting a terminal [COMPLETION] (result: needs_context) with a resume point before truncation. Non-blocking — the tool call proceeds." >&2
 elif ((new_count == warn_threshold)); then
   printf '[subagent-tool-budget-advisory] %s\n' \
     "TOOL_USE budget advisory: this subagent has made ${new_count} tool calls, crossing 70% of the ${tool_budget}-tool_use budget. NOTE: TOOL_USE count, NOT maxTurns/%. Plan to wrap up: finish the current work-unit, checkpoint remaining work to memory/progress-{task}.md. Non-blocking — the tool call proceeds." >&2

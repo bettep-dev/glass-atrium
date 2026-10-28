@@ -575,7 +575,8 @@
         "adr",
         "requirements",
         "spec-driven-development",
-        "rice-prioritization"
+        "rice-prioritization",
+        "plan-documentation"
       ],
       "tools": [
         "Read",
@@ -816,7 +817,6 @@
         "progressive-disclosure",
         "self-refine",
         "markdown-report",
-        "plan-documentation",
         "rag-domain-report",
         "search-domain-report",
         "embedding-domain-report"

@@ -90,3 +90,12 @@ A failed check has one of five dispositions. This is a shared vocabulary for des
 - **Channel discipline**: pick channel a or channel b per the registering event's contract, and document which in the hook header. Mixing is allowed only where an existing hook already does so deliberately (`validate-output.sh`).
 - **Fail-open default**: a lifecycle hook that cannot block (`SessionStart`, `SubagentStart`, `Stop`/`SubagentStop`) MUST `exit 0` on internal error — never break a session on hook failure. Exception: `~/.glass-atrium/autoagent/` pipeline hooks follow the loud-fail principle (`shared-self-improve-hygiene.md` → Precondition Loud-Fail Principle).
 - **No secret/PII in hook output**: hook stdout/stderr is session-visible — never echo `.env` contents, tokens, or PII.
+
+## Hook Operation Policy
+
+- **Default behavior**: `exit 0` by default · return non-zero only when blocking is intended.
+- **Timeout**: the host's command-hook default is 600 seconds, but a hook runs on every matching event, so design it to finish fast.
+- **Rollback**: identify the problematic hook → remove its entry from `settings.json` → restart the session.
+- **Pre-deployment verification**: confirm blocking behavior with an intentional-violation probe before treating rollout as complete.
+  - Claude Code snapshots the hook config at session start, so a `settings.json` binding added mid-session stays inert in every running session (and any pre-warmed background process) until restart.
+  - Envelope injection (`echo '{...}' | hook.sh`) tests the script in isolation, not live dispatch — rollout is complete only after a restart plus a live intentional-violation tool-call probe in a fresh session.

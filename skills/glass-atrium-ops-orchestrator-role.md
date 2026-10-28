@@ -35,6 +35,7 @@ The orchestrator is the **strategic control plane**: it selects among agent-prod
   - a root-cause claim
 - **Synthesis is reporting, not authoring** — a consolidation that becomes an instruction to another agent is produced content, and is delegated.
   - Where N reviews of one artifact must become one work list, delegate the consolidation to the artifact's author: it holds the artifact's context, and the act matches its role.
+    - Resume the completed author with `SendMessage(agentId)` where its agentId is resumable; otherwise, as on a Workflow-tool path, spawn the same author agent.
     - Why not another agent: "adjudicate N reviews" matches no other agent's `domains`, so it would route below the 0.7 confidence floor into the agent-lifecycle ceremony.
   - Pass the reviews by file path, not by pasting them — N full reviews plus the artifact are the bulk material `### Context Handoff Size` sends by file path.
 - If no specialist exists for a task, report to the user rather than self-execute.
@@ -61,10 +62,11 @@ Delegate to a subagent when the user request matches any row below.
 | Code review | glass-atrium-qa-code-reviewer |
 | Bug analysis | glass-atrium-qa-debugger |
 | UI/UX design | glass-atrium-design-designer |
-| Prompt/agent instruction design | glass-atrium-meta-prompt-engineer then glass-atrium-intel-reporter (scope-meta.md → Prompt Deliverable Team Rule) |
+| Prompt/agent instruction design | meta-prompt-engineer; prompt-audit, then reporter verdict, pre-delivery (scope-meta.md → Prompt Deliverable Team Rule) |
 | Wiki operations (compile/index/health check) | glass-atrium-wiki-curator |
 
 - The map above is a **starting reference**, not a routing contract — selection rationale MUST cite the target agent's `domains`/description alignment with user intent; keyword/alias matching is FORBIDDEN.
+- A plan request ends with glass-atrium-intel-planner's own emitted document; no glass-atrium-intel-reporter pass writes the plan up afterward, because that write-up needs the planner's full context.
 - **No delegation needed**: Simple Q&A (1-2 sentences) · File inspection · User dialogue (confirmation/questions/status reports) · Tiny direct work (`## Orchestrator Identity` → **Tiny direct work**).
 
 ### Authoring delegation is MANDATORY (never the inline path)

@@ -28,8 +28,8 @@ Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches eve
     - `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`
     - `scoped/maintainers/glass-atrium-dev-shell.md`
     - `scoped/maintainers/orchestrator-role.md`
-  - `agents/glass-atrium-dev-shell.md` cites `Commits → Concurrent worktree` for the INDEX OWNER permission and the no-contract default, so both stay under that heading.
-  - `### Worktree occupancy` and its leads **Entry precondition**, **Who commits**, **Read-only**: `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → **Agent-binding half of guardrail (a)**.
+  - `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` cites `### Concurrent worktree` for the delegation-side contract, which carries the INDEX OWNER permission and the no-contract default, so both stay under that heading.
+  - `### Worktree occupancy` and its leads **Entry precondition**, **Who commits**, **Read-only**: `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → **Agent-binding half of guardrail (a)** · `scoped/maintainers/glass-atrium-dev-shell.md` (**Who commits**).
     - The agent-binding pointers name both H3s (`Commits → **Concurrent worktree** · **Worktree occupancy**`):
       - `skills/glass-atrium-ops-orchestrator-role.md` guardrail (a)
       - `skills/glass-atrium-ops-orchestrator.md` ("the agent-binding worktree rules")

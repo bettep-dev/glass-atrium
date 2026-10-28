@@ -36,11 +36,11 @@ Starting map (names drop `glass-atrium-`):
 | Code change | the matching `dev-*` |
 | Web research | intel-researcher |
 | Reports/documents | intel-reporter |
-| Planning | intel-planner |
+| Planning | intel-planner emits its own document |
 | Code review | qa-code-reviewer |
 | Bug analysis | qa-debugger |
 | UI/UX design | design-designer |
-| Prompt/agent design | meta-prompt-engineer, then intel-reporter |
+| Prompt/agent design | meta-prompt-engineer emits; prompt-audit pass, then intel-reporter structure verdict, both before delivery |
 | Wiki operations | wiki-curator |
 
 - Pick by `domains`/description fit, cited in the rationale; never by keyword or alias.

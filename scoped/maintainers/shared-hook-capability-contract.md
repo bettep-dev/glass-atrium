@@ -44,6 +44,7 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
   - `hooks/enforce-config-protection.sh` cites "Block Channels";
   - `hooks/advisory-preedit-facts.sh` cites the "Per-Event table" and the Stop-lifecycle row.
 - Keep those cited headings unrenamed, and also `## on_fail Action Taxonomy (validation-failure disposition vocabulary)`, `## Event Registration Status (file-verified)` and `## Authoring Rules`.
+- `## Hook Operation Policy` is cited by name from the `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Hook Operation Policy [ALL]` pointer; keep it unrenamed too.
 - A heading rename here dangles the comments citing it — nothing breaks mechanically, and nothing catches it either.
 - These cite `### PreToolUse(Agent) measured record` by name; keep that heading unrenamed too:
   - `skills/glass-atrium-ops-orchestrator-role.md` → `### Reach of the gate`, as the record behind its Workflow-spawn item;
