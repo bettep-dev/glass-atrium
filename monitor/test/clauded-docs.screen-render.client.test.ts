@@ -873,6 +873,11 @@ test("Created shows relative age with the date in a tooltip, and only an open ro
   assert.ok(staleCell, "age is the primary value");
   assert.match(String(staleCell.props.title), /^Created date\(/);
   assert.match(collectText(staleCell), /stale/i, "stale is said in words, not colour alone");
+  // the Created floor holds the glyph only → the word is screen-reader text, and the glyph's tooltip says it too
+  const flag = findNodes(staleCell, (n) => n.type === "span" && n.props.className === "doc-age-flag")[0];
+  assert.ok(flag, "the stale flag sits inline in the age line");
+  assert.match(String(flag.props.title), /stale/i);
+  assert.equal(collectText(findNodes(flag, (n) => n.props.className === "sr-only")[0]), "stale");
   assert.equal(findNodes(staleCell, (n) => n.props.atom === "Icon" && n.props.className === "text-warn").length, 1, "the warn tone rides a glyph");
   assert.equal(ageCells.filter((td) => /stale/i.test(collectText(td))).length, 1);
 });

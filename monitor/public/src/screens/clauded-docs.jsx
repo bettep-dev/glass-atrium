@@ -54,7 +54,7 @@ const LEDGER_CD = {
 		title: 434, // a title beside its trailing "rev of #N" pill · the Documents title floor stays
 		tags: 148, // 124 content allowance + interior 24
 		author: 106, // 82 content allowance + interior 24
-		created: 100, // 72 content allowance + edge 28
+		created: 100, // 72 content allowance (a 3-digit age, then the stale glyph inline: gap 4 · glyph 12 — the word rides the glyph's title and sr-only text) + edge 28
 		titleNarrow: 240,
 		// Tags drops first + the narrow title floor applies only below this sum → both left out
 		get sum() {
@@ -1118,7 +1118,13 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* a max-width caps the pill's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
         .doc-ledger-scroll .doc-stage-picker, .doc-ledger-scroll .doc-stage-pill { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
         .doc-ledger-scroll .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        .doc-age-flag { display: flex; align-items: center; gap: 4px; font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--dim)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+        /* numeric columns (B5): ID and Created read right-aligned in tabular figures on one line — each keeps its own typeface */
+        .tbl :is(th, td).doc-col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        /* age, then the stale glyph inline after it (gap 4) — one line, never stacked. The Created floor holds no room for the word,
+           so the column takes the glyph-only form: the word "stale" rides the glyph's title and sr-only text (relative → the sr-only box resolves here) */
+        .doc-age-line { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-1); }
+        .doc-age-value, .doc-age-flag { flex: none; }
+        .doc-age-flag { position: relative; display: inline-flex; align-items: center; color: rgb(var(--dim)); }
         /* .card overflow:hidden = a scroll container → traps the rail's sticky in the card · clip trims the corners only, sticky stays viewport-relative */
         .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
         /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
@@ -1651,7 +1657,7 @@ function DocListCardCD({
 								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
 								<th scope="col" style={{ width: LEDGER_CD.FLOOR.status, minWidth: LEDGER_CD.FLOOR.status }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호). */}
-								<th scope="col" style={{ width: LEDGER_CD.FLOOR.id, minWidth: LEDGER_CD.FLOOR.id }}>ID</th>
+								<th scope="col" className="doc-col-num" style={{ width: LEDGER_CD.FLOOR.id, minWidth: LEDGER_CD.FLOOR.id }}>ID</th>
 								<th scope="col" className="doc-col-title">
 									<span className="doc-col-title-text">Title</span>
 								</th>
@@ -1662,7 +1668,7 @@ function DocListCardCD({
 									</th>
 								)}
 								<th scope="col" style={{ width: LEDGER_CD.FLOOR.author, minWidth: LEDGER_CD.FLOOR.author }}>Author</th>
-								<th scope="col" style={{ width: LEDGER_CD.FLOOR.created, minWidth: LEDGER_CD.FLOOR.created }}>Created</th>
+								<th scope="col" className="doc-col-num" style={{ width: LEDGER_CD.FLOOR.created, minWidth: LEDGER_CD.FLOOR.created }}>Created</th>
 							</tr>
 						</thead>
 						<tbody onKeyDown={moveRowFocusCD}>
@@ -1745,7 +1751,7 @@ function DocListCardCD({
 														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
 												</td>
-											<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
+											<td className="doc-meta-text-mono doc-col-num" style={{ color: "rgb(var(--dim))" }}>
 													#{row.id}
 												</td>
 											<td className="title-cell">
@@ -1938,16 +1944,18 @@ function DocOpenSummaryCD({ summary, isPartial, isLastKnown = false, onSelect })
 function DocAgeCellCD({ createdAt, age, isStale }) {
 	return (
 		<td
-			className="doc-age-cell doc-meta-text-mono"
+			className="doc-age-cell doc-meta-text-mono doc-col-num"
 			style={{ color: "rgb(var(--dim))" }}
 			title={`Created ${formatDateCD(createdAt)}`}>
-			{age ? age.label : "—"}
-			{isStale && (
-				<div className="doc-age-flag">
-					<ToneGlyphCD tone="warn" />
-					stale
-				</div>
-			)}
+			<div className="doc-age-line">
+				<span className="doc-age-value">{age ? age.label : "—"}</span>
+				{isStale && (
+					<span className="doc-age-flag" title={`Stale: open over ${STALE_AGE_DAYS_CD} days`}>
+						<ToneGlyphCD tone="warn" />
+						<span className="sr-only">stale</span>
+					</span>
+				)}
+			</div>
 		</td>
 	);
 }
