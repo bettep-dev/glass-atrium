@@ -654,15 +654,17 @@ function KPI({
     {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={KPI_SPARK.w} h={KPI_SPARK.h} color={sparkColor}/></div>}
   </>;
   const busy = isLoading || isBusy ? 'true' : undefined;
+  // the spark's width has one home (KPI_SPARK) → the tile hands it to CSS, which reserves the hint's room from it
+  const sparkStyle = sparkData ? { '--kpi-spark-w': `${KPI_SPARK.w}px` } : undefined;
   if (onClick) {
     return <button type="button" id={id} onClick={onClick} className={`${rootClass} text-left`} aria-label={ariaLabel}
-      aria-busy={busy}>{children}</button>;
+      aria-busy={busy} style={sparkStyle}>{children}</button>;
   }
   // an own name outranks the label row (aria-labelledby would win over aria-label otherwise)
   return (
     <div id={id} role="group" aria-labelledby={ariaLabel ? undefined : headId}
       aria-label={ariaLabel ?? (headId ? undefined : (isTextLabel ? label : undefined))}
-      className={rootClass} aria-busy={busy}>
+      className={rootClass} aria-busy={busy} style={sparkStyle}>
       {children}
     </div>
   );

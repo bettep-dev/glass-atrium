@@ -612,7 +612,7 @@ button.kpi:hover {
 	margin-top: var(--space-2);
 }
 .kpi--spark .kpi-hint {
-	padding-right: calc(68px + var(--space-2)); /* the spark's width (ui.jsx KPI_SPARK.w) + 8 */
+	padding-right: calc(var(--kpi-spark-w) + var(--space-2)); /* the spark's width, set on the tile by KPI (ui.jsx KPI_SPARK.w), + 8 */
 }
 /* split tile — the value column carries the row's top margin; the detail column starts level with it */
 .kpi-split {

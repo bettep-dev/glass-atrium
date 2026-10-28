@@ -2509,9 +2509,9 @@ function SuccessRateSparkline({ points, colorVar, name }) {
 // 매트릭스 companion — 합산 성공률 < threshold 쌍만 노출 → 대부분 green 이어도 action item 가시 유지 (research R2).
 
 // Ledger `.tbl th` face for the dense mono tables → one header idiom per page.
-const HEAD = { FACE: 'font-sans uppercase tracking-wider fs-meta text-dim font-medium' };
+const HEAD_FACE = 'font-sans uppercase tracking-wider fs-meta text-dim font-medium';
 // TABLE carries its own cell geometry; the PAIRED S tables sit on .tbl--own-face, so .tbl gives theirs and they take the face alone
-HEAD.CLASS = { TABLE: `${HEAD.FACE} px-2 border-b border-line`, PAIRED: HEAD.FACE };
+const HEAD = { FACE: HEAD_FACE, CLASS: { TABLE: `${HEAD_FACE} px-2 border-b border-line`, PAIRED: HEAD_FACE } };
 
 function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent }) {
   const [isShowingAll, setShowingAll] = useStateAg(false);

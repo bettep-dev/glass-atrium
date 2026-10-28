@@ -947,7 +947,8 @@ test("ledger row: the accessible name carries the word that tells Done from Clos
 // --- ledger layout: the page is the only vertical scroller; wide tables scroll sideways inside their card ---
 
 const LEDGER_AGENT = "glass-atrium-dev-shell";
-const ledgerRowOf = (result: string, extra: Record<string, unknown> = {}) => ({
+// the return type carries the optional summary so a loop over built rows can read it back
+const ledgerRowOf = (result: string, extra: Record<string, unknown> = {}): LedgerRow & { agent: string; task_type: string; closed_at: string | null; summary?: string } => ({
   id: 11, agent: LEDGER_AGENT, task_type: "feature", result, closed_at: null, ...extra,
 });
 const renderLedgerRow = (row: ReturnType<typeof ledgerRowOf>) => helpers.ResultTableRow({
@@ -1409,7 +1410,7 @@ describe("ledger row: the summary starts right after the fixed flag slot, and th
         return;
       }
       assert.strictEqual(rest.length, 1, "the reason pill ends the line");
-      assert.strictEqual(rest[0].type, helpers.window.UI.Badge as unknown);
+      assert.strictEqual(rest[0].type, (helpers.window.UI as unknown as Record<string, unknown>).Badge);
       assert.match(renderText(rest[0]), pill);
       assert.match(String(rest[0].props?.className), /\bshrink-0\b/, "the pill is never truncated");
     });

@@ -357,7 +357,7 @@
 
 - **floor**: 렌더되는 모든 text node ≥ 13px — default view 의 System map label · tweaks 패널 포함. `--fs-micro` 는 `--fs-meta` alias. px 리터럴 font-size 금지.
 - **named exception**: `.hero-stat` 30px (`TypeScaleStyle`) — 패널당 하나의 지배 수치 (drawer hero), 스케일 밖 step, 소비처 `agents.jsx` 1곳.
-- **line-height** (토큰 없음, class 리터럴): `.fs-title` 1.4 · `.fs-body` 1.45 · `.fs-meta` 1.4 · `.card-sub` 1.5 · `.kpi-value` 1.15 · control `--lh-ctl` 18 · table cell and KPI label row `--lh-row` 20.
+- **line-height** (텍스트 class 는 리터럴, control · table 행은 `--lh-ctl` · `--lh-row` 토큰 — §3.2): `.fs-title` 1.4 · `.fs-body` 1.45 · `.fs-meta` 1.4 · `.card-sub` 1.5 · `.kpi-value` 1.15 · control `--lh-ctl` 18 · table cell and KPI label row `--lh-row` 20.
 - **weight (≤ 3 · signature 1)**: 400 regular · 500 medium (label · nav active · button · badge) · 600 semibold (card title · KPI value · page title). signature = 600 + mono 수치. glass 표면 위 라벨은 한 step 무겁게 (600).
 - **수치**: 큰 KPI value 는 `letter-spacing: -0.025em`. **값:단위 = 2:1** — `.kpi-value` 32 ↔ `.unit` 16 (`--fs-title`, "half of --fs-kpi"), 다른 수치 UI 도 자기 스케일 안에서 2:1.
 - **page header** (`PageHeader`): h1 = `--fs-display` 600 · line-height `--ctl-min-h` 32 (one line box with the header controls) · sub = `--fs-meta` mono `--faint` uppercase (제목과 같으면 생략) · subtitle 문장 ≤ 60자.

@@ -1,6 +1,7 @@
 // Shared KPI value atom: one type scale for headline figures, tone on the glyph only.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
@@ -177,4 +178,22 @@ test("a node hint clamps at two lines only when its caller asks, with the whole 
   const free = hintOf({ hint: node });
   assert.ok(!hasClass(free, "kpi-hint--clamp"), "a block-built node hint keeps its own layout");
   assert.ok(hasClass(hintOf({ hint: "plain" }), "kpi-hint--clamp"), "a plain hint still clamps by default");
+});
+
+// the spark's width has one home: KPI hands the drawn width to the tile, and the hint's reserve derives from it
+test("a spark tile carries the drawn spark width as a custom property, and the hint reserve reads it rather than a literal", () => {
+  for (const props of [{}, { onClick: () => undefined }]) {
+    const tree = render("KPI", { label: "Spend", value: "4", hint: "last 7 days", sparkData: [1, 3, 2], ...props });
+    const [root] = findNodes(tree, (n) => hasClass(n, "kpi--spark"));
+    const [svg] = findNodes(tree, (n) => n.type === "svg");
+    assert.ok(root && svg, "a spark tile draws its spark");
+    assert.equal((root.props.style as Record<string, unknown> | undefined)?.["--kpi-spark-w"], `${svg.props.width}px`);
+  }
+  const [plain] = findNodes(render("KPI", { label: "Spend", value: "4" }), (n) => hasClass(n, "kpi"));
+  assert.equal(plain.props.style, undefined, "a tile without a spark sets no width");
+  const css = readFileSync(resolve(__dirname, "../public/styles/base.css"), "utf8");
+  const rule = /\.kpi--spark \.kpi-hint\s*\{([^}]*)\}/.exec(css);
+  assert.ok(rule, "the spark hint rule exists");
+  assert.match(rule[1], /padding-right:\s*calc\(var\(--kpi-spark-w\) \+ var\(--space-2\)\)/);
+  assert.doesNotMatch(rule[1], /\d+px/, "no width literal repeats the spark's");
 });
