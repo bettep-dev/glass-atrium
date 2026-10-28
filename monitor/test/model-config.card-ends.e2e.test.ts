@@ -98,7 +98,7 @@ for (const width of [1440, 1920]) {
 
 // the three tier tables on the shared .tbl geometry: one padding per cell kind, edges at the card padding, the house header face kept;
 // the rows are top-aligned, so a text cell starts half the control-to-line difference (32 − 20) / 2 below a control cell
-test("every tier-table cell takes the shared .tbl padding, a text cell starting B4's half-step below a control cell, and the header keeps its face", async () => {
+test("every tier-table cell takes the shared .tbl padding, a text cell starting half the control-to-line step below a control cell, and the header keeps its face", async () => {
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   app.get("/api/model-config", async () => CONFIG);
