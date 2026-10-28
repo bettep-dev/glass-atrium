@@ -78,7 +78,6 @@ This file stopped mirroring the report-side canonicals, and the sites still call
 - The visual-floor row additionally states that this file carries no dark-base copy in any form, so the entry cannot be read as a second copy.
 - `skills/glass-atrium-ops-orchestrator.md`: the lifecycle-SoT bullet and the completing-agent bullet name the same pointer section. The `[DOC-ROUTE]` paragraph's mirror clause was DROPPED instead — its claimed counterpart, the delegation-phrasing sentence, has no match in this file at HEAD, so there was no pointer left to name.
 - `rules/glass-atrium/core-git-workflow.md` → `## Pull Requests`: the whole `.html`-deliverable bullet is gone, so that file carries no pointer into this one and no co-edit edge remains.
-  - Why it went: `scoped/maintainers/core-git-workflow.md` → `## Restructure + diet pass — dispositions`.
 - `skills/glass-atrium-design-contrast-check/SKILL.md`: the `scope-planning.md` half of its `### Dark base default` cross-reference was dropped on the same ground.
 - The two rows naming this file as CANONICAL — Open Questions / claim marking, and Ambiguity Gate — are correct; for both, the planner body holds a pointer plus the planner-only delta.
 - The row for the dev-front markup exception names `## Designer Co-Emission Trigger [PLANNING]`, which resolves, and was left as it stands.

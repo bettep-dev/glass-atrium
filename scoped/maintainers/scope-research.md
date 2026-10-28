@@ -31,7 +31,7 @@ Maintainer-facing material for that source file, plus the record of what the cut
   - Repaired at the citer, not by keeping the anchor: the clause now makes the assigned scope file itself the authority — the whole file, never a named section.
   - Why no signpost heading was kept: an `## Absolute Rules [RESEARCH]` heading over the retrieval rules would state no rule of its own and would label the wrong content, which is the signpost convention's failure case rather than its use case.
   - Why no bullet needed to survive: each was either duplicated in text the agent already holds or ordered an instrument outside the frozen grant, so the deletion moved no authority away from the agent.
-- **`Wiki false-negative handling`** — same unavailable instrument. `rules/glass-atrium/core-wiki-reference.md` → `## Search Failure Handling` states the retry-once-with-a-synonym procedure, and that Tier-1 file reaches the researcher on the host channel.
+- **`Wiki false-negative handling`** — same unavailable instrument. `rules/glass-atrium/core-wiki-reference.md` → `## Search Failure Handling` states the retry-with-a-synonym procedure, and that Tier-1 file reaches the researcher on the host channel.
 - **`Corrective pass trigger`** — the body's `## Corrective Pass Decision Tree (Failure Prevention)` carries four triggers where this carried two, and `## Pre-Execution Checkpoint` already flags `[Single Source — Unverified]`.
 - **The `[Date Unknown]` half of the recency-label bullet** — body `### Single Source Verification Checklist` carries the date check, and the Tier-1 wiki rule carries the label.
   - What survived is the residue neither carries:
