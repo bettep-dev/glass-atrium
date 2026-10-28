@@ -15,32 +15,20 @@ Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches eve
   - Each bound appears exactly once in the file.
   - The span carries `no generator call` and `no auto-apply until live trials`, and never `auto-applies`.
   - Every `` `<file>.py` → `<symbol>` `` anchor in the span resolves to a top-level definition in `autoagent/daemon_cycle.py` or `scripts/_pg_dual_write_daemon.py`.
-- `autoagent/test/test_sensitive_patterns.py` names the file's path, not its text, as a row the daemon's sensitive-path matchers never refuse, so renaming the file is a multi-site edit.
-- `autoagent/daemon_cycle.py` → `_SAFETY_SENSITIVE_DIFF_PATTERNS`: the command-shaped Tier-2 trigger lines match its diff patterns. That match is why the rule file forbids reflowing them.
+- `autoagent/test/test_sensitive_patterns.py` → `RuleFileRowsAreOutOfReach` names the file's path, not its text, as a row the daemon's sensitive-path matchers never refuse; both matcher consumers are handed an `agents/<name>.md` body path. Renaming the file is a multi-site edit.
+  - So the trigger clause "any change to `core-learning-log.md`" is policy, not a path matcher: a benign edit to the rule file classifies auto.
+- `autoagent/daemon_cycle.py` → `_SAFETY_SENSITIVE_DIFF_PATTERNS`: the command-shaped Tier-2 trigger lines match its diff patterns, and its comment names the clause line as a residual fire.
+  - A patch re-adding one of those lines as a `+` line routes to safety, so keep every trigger line byte-identical when editing — a reflowed line is an added line.
+- Aggregation table numbers: `hooks/learning-aggregator.py` → `AUTO_FAILURE_THRESHOLD` (3) and its revision-average floor (2) are the table's two triggers.
+  - `hooks/_outcome_signal.py` → `NEGATIVE_REVISION_MIN` and `monitor/public/src/screens/outcomes.jsx` cite the "revision_count 2+" bar. Change the table with them.
+- Correction signal: `hooks/track-outcome.sh` keys `core.correction_signals` on the three correction fields; a Korean/English keyword regex on the user message is a legacy fallback that fires only when no correction field was emitted.
+- Write-Gate overriding gate: no daemon auto-clustering path exists (`hooks/learning-aggregator.py` carries no `directive_hint`→`feedback_*.md` clustering), so on that path the gate is held by the absence of code, not by a runtime check.
+  - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Learning Log & Correction Signal [ALL]` states the same backing.
 - Cited headings: `## Learning Log Auto-Aggregation`, `## Instruction Improvement Approval Tier`, `## Correction Signal Capture` and `### Long-Term Memory Write-Gate` are each cited from skills, agent bodies, code comments or other rule files. Grep the corpus before renaming one.
 
 ## Specs with no agent reader
 
-Moved out of the rule file: each binds aggregator or daemon code, never an agent.
+The spec below binds aggregator code, never an agent.
 
 - **Duplicate-append prevention**: if the same pattern + agent combo already exists, update its frequency only — never append a second entry.
   - Backing: `hooks/learning-aggregator.py` UPSERTs `core.learning_log` keyed on `pattern_signature`.
-- **Candidate variants**: each tier MAY generate up to 3 variants; the chosen variant goes to apply, and the rest are not kept.
-  - Honest backing: a spec, not running code — the generation loop builds one proposal per candidate agent (`autoagent/daemon_cycle.py` → `_run_generation_loop`), so no non-chosen variant exists.
-
-## Restructure + diet pass — dispositions
-
-- The aggregation sink line now names `core.learning_log`: the aggregator writes PostgreSQL only, and the daemon neither reads nor writes a learning-log markdown file.
-- The **Approval** pointer to the next section was dropped as a dup-in of that section's own opening line.
-- **Not a correction (negative example)** was dropped: its literal list and the three fields it must not fire are canonical in `rules/glass-atrium/core-outcome-record.md` → **Correction-emission rule**, which reaches the same reader, and **Signal origin** already points there.
-- **Signal origin** lost its emission restatement, the STUBBED-accumulation line and the lead's "regex is legacy fallback only" clause.
-  - The first two are canonical in `core-outcome-record.md` (**Correction-emission rule**, `### Correction fields`); the clause restated the sub-bullet.
-  - The keyword-regex fallback sub-bullet stayed — it has no other site.
-- **Procedure** was dropped. Its first two steps restated the `revision_count` / `directive_hint` field rules; the third restated the Write-Gate; the fourth (tag an instruction-update candidate) named a tag no field carries and no code reads.
-- Write-Gate: the auto-path ban, the "not SUFFICIENT without it" line, **Language** and **Internal-vs-user-facing boundary** were dropped.
-  - The AND lead already makes each condition necessary.
-  - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Learning Log & Correction Signal [ALL]` carries the ban and the aggregation exemption, and this file's Write-Gate honest-backing line carries the absence-of-code backing.
-  - `### Output Language` and **Persisted value** carry English.
-  - Kept: the honest-backing line naming `hooks/learning-aggregator.py`.
-- Approval tiers: the Tier-1 span and every Tier-2 trigger line are byte-identical. The path-matcher honest backing (one bullet over the 300-char cap) was split into sub-bullets at its sentence boundaries, and its claims and the "Never reflow" duty are unchanged.
-  - "Never reflow" stays in the rule file: it binds whoever edits the trigger list, and a pointer stating it would be as long as the rule.

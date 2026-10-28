@@ -38,7 +38,8 @@ Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches eve
   - `## Pull Requests` → **Merge authorization**: `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md`.
 - Literals copied verbatim into delegation prompts: the two `worktree <path> — …` contract lines. Keep them byte-identical.
 - Canonical + mirror:
-  - `CONTRIBUTING.md` → `## Commits, branches, and PRs` restates the subject format, body, `--no-verify` ban, branch naming and PR contract for human contributors; **Message format** stays byte-identical because that mirror copies its literal.
+  - `CONTRIBUTING.md` → `## Commits, branches, and PRs` restates the subject format, `--no-verify` ban, branch naming and PR contract for human contributors; **Message format** stays byte-identical because that mirror copies its literal.
+    - Its commit-body guidance (optional, blank-line separated, explains why) has no counterpart in the rule file, which states only that bodies are English.
     - Drift, reported: the mirror says never use `--no-verify`, the rule says "in normal flow".
   - `.github/PULL_REQUEST_TEMPLATE.md` restates the 400-line split as a checklist item.
 
