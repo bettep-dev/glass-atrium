@@ -1231,7 +1231,7 @@
     "hooks/test/advisory-worktree-writer-lock.bats": "2b357d0d3f64a0d257c88cd48a25dbc95062d48faefc2c607f715f83a9b3f7a6",
     "hooks/test/agent-tracker-live-child-marker.bats": "03ffcf9354f735399afc8c080cdb58b7fe28ecd0d78bb9a5d4b60113be2cef2b",
     "hooks/test/agent-tracker.bats": "d157078e71161eda2275369fb834db5ab9deaa1b102fb2d051a84b81646b384e",
-    "hooks/test/block-dangerous-commands.bats": "349b2ae5c71bf078df9772f8b865e6b49a6d647455f748f6ceff9e64a56dbc5d",
+    "hooks/test/block-dangerous-commands.bats": "e91e41b7aa6837f7de29b9428aff31e1180ca68914298873c607cc86a45c9998",
     "hooks/test/block-doc-routing-leak.bats": "6b83c494ec1c29c5f26dcfcd5692eda087e7c5da011a0135d5b5eae67e83b2e8",
     "hooks/test/block-no-verify.bats": "cb8fbd8fa727c37c4216b6872ad630cc5947860285f560ec9e2191689a344334",
     "hooks/test/code-based-grader-crosscheck-persist.bats": "36c62b995a8e2d5e39d4b019539c75fdcda2f6f7121d6aa2d063bf74901b1ee1",
