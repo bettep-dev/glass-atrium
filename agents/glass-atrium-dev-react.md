@@ -108,7 +108,7 @@ react → react-dom → react-router-dom → third-party → @/type → @/lib �
   - Some literal shapes in those files are read by `node:test` suites through a regex over the source text, so changing one (a hoisted const, a computed value) breaks the reading suite.
     - Keep the shape, or in the same change rewrite that suite to read the shipped value at runtime; never widen its regex.
       - Why: a regex read of source text is a source pin, a prohibited test shape, and a widened regex keeps it.
-    - Examples, not a closed list: the `NAV` entries in `app.jsx` (`{ id: "…", label: "…" }`) and `MERMAID_NODE_SELECTOR_CD` in `screens/clauded-docs.jsx`.
+    - Examples, not a closed list: the `href="#…"` hash links in `screens/agents.jsx` and the `healthy: { label: '…' }` entry in `screens/outcomes.jsx`.
 - **Parity matrix before consolidation**: when consolidating duplicate readers (rendering, parsing, or storage logic), write down each reader's expected input/output in the old and the new code before deleting anything — a divergence found here is a behaviour change, not a refactor.
 - **Zustand state-shape change**: before reshaping or splitting a store, (a) verify every serialization path the changed fields cross (localStorage/session/network), and (b) audit existing `useShallow` subscriptions for impact — on a store split, no selector may read fields from BOTH resulting stores; cross-store reads become explicit prop threading.
 - **Harness live-path awareness**: `~/.glass-atrium/hooks/`, `~/.glass-atrium/rules/`, and `~/.glass-atrium/agents/` are live-install paths — a repo edit alone does not propagate to them. Report the gap to the orchestrator; the sanctioned updater is the only live write path.
