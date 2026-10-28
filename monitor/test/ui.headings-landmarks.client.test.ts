@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import vm from "node:vm";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -12,12 +13,17 @@ const APP_SRC = readFileSync(resolve(SRC, "app.jsx"), "utf8");
 
 type Component = (props: Record<string, unknown>) => unknown;
 
-function getNavEntries(): Array<{ id: string; label: string }> {
-  return [...APP_SRC.matchAll(/\{\s*id:\s*"([^"]+)",\s*label:\s*"([^"]+)"/g)].map((m) => ({ id: m[1], label: m[2] }));
+async function getNavEntries(): Promise<Array<{ id: string; label: string }>> {
+  const app = await loadScreenModule(resolve(SRC, "app.jsx"), {
+    ReactDOM: { createRoot: () => ({ render: () => {} }) },
+    document: { getElementById: () => null },
+  });
+  // vm read is untyped; the entry-count check in the caller fails on a missing or reshaped NAV
+  return vm.runInContext("NAV", app) as Array<{ id: string; label: string }>;
 }
 
-test("every screen's page h1 is its nav label", () => {
-  const entries = getNavEntries();
+test("every screen's page h1 is its nav label", async () => {
+  const entries = await getNavEntries();
   assert.ok(entries.length >= 9, `NAV parse found ${entries.length} entries`);
   for (const { id, label } of entries) {
     const path = resolve(SRC, "screens", `${id}.jsx`);
