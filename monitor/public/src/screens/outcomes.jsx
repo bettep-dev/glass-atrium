@@ -2701,22 +2701,6 @@ function ResultTableZeroStateO({ filter, onResetFilter }) {
   );
 }
 
-const STICKY_HEADER_STYLE = { position: 'sticky', top: 0, background: 'rgb(var(--elev))' };
-
-function PlainHeader({ label, align = 'left', minWidth, width }) {
-  const style = { ...STICKY_HEADER_STYLE };
-  if (minWidth != null) style.minWidth = minWidth;
-  if (width != null) style.width = width;
-  return (
-    <th
-      scope="col"
-      className={`text-${align} text-dim font-medium px-2 py-1.5 border-b border-line whitespace-nowrap`}
-      style={style}>
-      {label}
-    </th>
-  );
-}
-
 // 서버 attention 술어의 클라이언트 미러 — 한 곳에서만 판정해 같은 행이 두 섹션에 겹치지 않게 한다.
 function isNeedsYouRowO(row, closedAt) {
   if (row.review_flag === true) return true;
@@ -2780,18 +2764,21 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
   const [activeRow, setActiveRow] = useStateO(0);
   const rowStarts = getLedgerRowStartsO(sections);
   const rowCount = getLedgerDisplayRowsO(sections).length;
+  const { TableHead } = window.UI;
 
   return (
     // position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page.
+    // .tbl--own-face: the .tbl cell geometry (40 rows, 16 edge cells, the control-cell step) under this ledger's own header and body face.
+    // separate borders: a collapsed border would not travel with the sticky header row.
     <div className="overflow-x-auto" style={{ position: 'relative' }}>
-      <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+      <table className="tbl tbl--own-face fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
-            <SortableHeader label="Time" sortKey="record_ts" currentSort={sort} onSortChange={onSortChange} align="left" width={120}/>
-            <PlainHeader label="Agent" minWidth={110}/>
-            <PlainHeader label="Task type"/>
-            <PlainHeader label="Result"/>
-            <PlainHeader label="Summary"/>
+            <SortableHeader label="Time" sortKey="record_ts" currentSort={sort} onSortChange={onSortChange} width={120}/>
+            <TableHead isSticky className={LEDGER_HEAD_CLASS} style={{ minWidth: 110 }}>Agent</TableHead>
+            <TableHead isSticky className={LEDGER_HEAD_CLASS}>Task type</TableHead>
+            <TableHead isSticky className={LEDGER_HEAD_CLASS}>Result</TableHead>
+            <TableHead isSticky className={LEDGER_HEAD_CLASS}>Summary</TableHead>
           </tr>
         </thead>
         <tbody>
@@ -2804,7 +2791,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
                     tabIndex={section.anchorId ? -1 : undefined}
                     colSpan={LEDGER_COLUMN_COUNT}
                     scope="colgroup"
-                    className="text-left fs-meta font-mono uppercase tracking-wider text-faint px-2 pt-3 pb-1 border-b border-line">
+                    className="fs-meta font-mono uppercase tracking-wider text-faint">
                     {section.heading}
                   </th>
                 </tr>
@@ -2836,6 +2823,8 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
 }
 
 const LEDGER_COLUMN_COUNT = 5;
+// the ledger's own header face (sentence case, dim, medium) — .tbl--own-face leaves it to these classes; one line, never wrapping
+const LEDGER_HEAD_CLASS = 'text-dim font-medium whitespace-nowrap';
 
 // Capped → 'Show all N'; expanded past the cap → 'Show first N'; nothing to toggle → no row.
 function NeedsYouToggleRowO({ section, isCapped, onToggle }) {
@@ -2845,7 +2834,7 @@ function NeedsYouToggleRowO({ section, isCapped, onToggle }) {
   if (!hasToggle) return null;
   return (
     <tr>
-      <td colSpan={LEDGER_COLUMN_COUNT} className="px-2 py-1.5 border-b border-line">
+      <td colSpan={LEDGER_COLUMN_COUNT}>
         <button type="button" className="btn ghost sm" aria-expanded={!isCapped} onClick={onToggle}>
           {isCapped ? `Show all ${formatIntO(needsYouTotal)} needs-you rows` : `Show first ${NEEDS_YOU_PAGE_CAP} only`}
         </button>
@@ -2874,7 +2863,8 @@ function getAriaSort(isActive, dir) {
   return dir === 'asc' ? 'ascending' : 'descending';
 }
 
-function SortableHeader({ label, sortKey, currentSort, onSortChange, align, width, descOnly }) {
+function SortableHeader({ label, sortKey, currentSort, onSortChange, width, descOnly }) {
+  const { TableHead } = window.UI;
   const [field, dir] = currentSort.split(':');
   const isActive = field === sortKey;
   const arrowIcon = getSortArrowIcon(isActive, dir);
@@ -2889,16 +2879,19 @@ function SortableHeader({ label, sortKey, currentSort, onSortChange, align, widt
     onSortChange(`${sortKey}:${nextDir}`);
   };
 
+  // the label and its sort glyph are one inline-flex line (gap 4), so the arrow never drops under the label
   return (
-    <th
-      scope="col"
-      className={`text-${align} text-dim font-medium px-2 py-1.5 border-b border-line cursor-pointer select-none`}
-      style={{ ...STICKY_HEADER_STYLE, minWidth: width }}
+    <TableHead
+      isSticky
+      className={`${LEDGER_HEAD_CLASS} cursor-pointer select-none`}
+      style={{ minWidth: width }}
       onClick={handleClick}
       aria-sort={getAriaSort(isActive, dir)}>
-      {label}
-      {arrowIcon && <GlyphO name={arrowIcon} className="ml-1 text-accent"/>}
-    </th>
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {arrowIcon && <GlyphO name={arrowIcon} className="text-accent"/>}
+      </span>
+    </TableHead>
   );
 }
 
@@ -2962,14 +2955,14 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
       onClick={() => onRowClick(row)}
       {...focusProps}
       aria-label={[row.agent, row.task_type, resultMeta.label, needsYouReason, row.summary].filter(Boolean).join(' ')}>
-      <td className="text-left text-ink font-mono px-2 py-1.5 border-b border-line whitespace-nowrap">
+      <td className="text-ink font-mono whitespace-nowrap">
         {ts}
       </td>
-      <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 140 }} title={row.agent}>
+      <td className="text-ink truncate" style={{ maxWidth: 140 }} title={row.agent}>
         <window.UI.AgentName name={row.agent}/>
       </td>
-      <td className="text-left text-dim px-2 py-1.5 border-b border-line whitespace-nowrap">{row.task_type}</td>
-      <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
+      <td className="text-dim whitespace-nowrap">{row.task_type}</td>
+      <td title={resultMeta.label}>
         {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
         <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
           <span data-group="result" className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
@@ -2981,11 +2974,11 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
             <span data-group="closure" className="shrink-0"><window.UI.Badge role="metadata">{resultMeta.label}</window.UI.Badge></span>
           )}
           {canClose && (
-            // -my-1 = 24px 타깃을 유지한 채 행 높이 기여만 상쇄 (셀 패딩 안으로 겹침) → 형제 행과 높이 동일.
+            // a 32px control → the .tbl control-cell rule steps this cell's padding down, so the row stays 40 beside its text rows.
             // pending 은 색 회전 없이 투명도만 (DocStatusBadgeCD 선례 — 새 의미 카테고리 시사 차단 + reduced-motion 무관).
             <button
               {...window.UI.ROW_CONTROL_PROPS}
-              className="btn ghost sm icon shrink-0 -my-1"
+              className="btn ghost sm icon shrink-0"
               aria-busy={isClosing}
               aria-label={`Mark outcome ${row.id} closed`}
               title={isClosing ? 'Closing…' : 'Mark closed'}
@@ -3001,7 +2994,7 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
         </span>
       </td>
       {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card. */}
-      <td className="text-left text-ink px-2 py-1.5 border-b border-line" style={{ width: '100%', maxWidth: 0 }} title={summary}>
+      <td className="text-ink" style={{ width: '100%', maxWidth: 0 }} title={summary}>
         <div className="flex items-center">
           <SummaryFlagSlotO row={row}/>
           {needsYouReason && (

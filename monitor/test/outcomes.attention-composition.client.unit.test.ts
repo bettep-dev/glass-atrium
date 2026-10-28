@@ -930,6 +930,14 @@ const renderLedgerRow = (row: ReturnType<typeof ledgerRowOf>) => helpers.ResultT
 const textOf = (node: RenderNode): string => flattenNodes(node)
   .flatMap((n) => n.children.filter((c) => typeof c === "string" || typeof c === "number"))
   .join("");
+// the ledger's column headers: the sortable Time header by its label, every other column as the shared TableHead atom by its text
+const ledgerHeaderLabelsO = (table: unknown): string[] => {
+  const { TableHead } = helpers.window.UI as unknown as Record<string, unknown>;
+  const sortable = (helpers as unknown as Record<string, unknown>).SortableHeader;
+  return flattenNodes(table)
+    .filter((n) => n.type === sortable || n.type === TableHead)
+    .map((n) => (n.type === sortable ? String(n.props!.label) : textOf(n)));
+};
 
 test("ledger: every scroller is the containing block of its visually hidden names, so they cannot stretch the page", () => {
   const ledger = helpers.ResultTable({
@@ -981,9 +989,7 @@ test("ledger: every column header uses sentence case, never a raw field name", (
   const table = helpers.ResultTable({
     rows: [ledgerRowOf("done")], sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
   });
-  const labels = flattenNodes(table)
-    .filter((n) => typeof n.type === "function" && /Header$/.test((n.type as { name: string }).name))
-    .map((n) => String(n.props!.label));
+  const labels = ledgerHeaderLabelsO(table);
   assert.strictEqual(labels.length, 5);
   for (const label of labels) assert.match(label, /^[A-Z][a-z]*(?: [a-z]+)*$/, `header '${label}'`);
 });
@@ -1070,7 +1076,7 @@ test("ResultTable: no Check column, and a capped Needs-you offers one control to
     rows: needsYouRows(12), sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
     needsYouCap: 10, onToggleNeedsYou: () => { toggled += 1; },
   }));
-  const headerLabels = nodes.map((n) => n.props?.label).filter((l) => typeof l === "string");
+  const headerLabels = ledgerHeaderLabelsO(nodes);
   assert.ok(headerLabels.includes("Summary"), "the header row still renders");
   assert.ok(!headerLabels.includes("Check"), "the check verdict lives in the drawer, not a mostly-N/A column");
 

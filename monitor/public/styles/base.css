@@ -310,6 +310,11 @@ details[open] > summary .chevron {
 	--tbl-ctl-pad-block: calc(var(--space-1) - var(--tbl-rule) / 2);
 	width: 100%;
 	border-collapse: collapse;
+}
+/* geometry-only routing — a table routed onto .tbl for its padding, row height and alignment alone takes .tbl--own-face and keeps
+   the body size, header face and row states its own classes give it. The house rules match it out through :where(), so they stay
+   at the plain .tbl specificity and every house table cascades as before. */
+.tbl:where(:not(.tbl--own-face)) {
 	font-size: var(--fs-control);
 }
 .tbl th,
@@ -321,9 +326,11 @@ details[open] > summary .chevron {
 	border-bottom: var(--tbl-rule) solid rgb(var(--line));
 }
 .tbl th {
+	font-size: var(--fs-meta);
+}
+.tbl:where(:not(.tbl--own-face)) th {
 	font-weight: 500;
 	color: rgb(var(--dim));
-	font-size: var(--fs-meta);
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
 	background: rgb(var(--sunken));
@@ -346,10 +353,10 @@ details[open] > summary .chevron {
 	padding-block-start: var(--tbl-ctl-pad-block);
 	padding-block-end: var(--tbl-ctl-pad-block);
 }
-.tbl tbody tr {
+.tbl:where(:not(.tbl--own-face)) tbody tr {
 	cursor: pointer;
 }
-.tbl tbody tr:hover {
+.tbl:where(:not(.tbl--own-face)) tbody tr:hover {
 	background: rgb(var(--sunken));
 }
 .tbl tbody tr:last-child td {

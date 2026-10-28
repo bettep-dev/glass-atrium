@@ -992,9 +992,11 @@ function SectionLabel({ children, level = 2, id, className = '' }) {
 }
 
 // The one column-header idiom → every table's headers read alike and carry scope="col".
-function TableHead({ children, isNumeric = false, isSticky = false, className = '' }) {
-  return <th scope="col" className={`${isNumeric ? 'num' : ''} ${className}`.trim() || undefined}
-    style={isSticky ? STICKY_TH_STYLE : undefined}>{children}</th>;
+// style merges over the sticky style (a column's min width); rest carries a sortable header's onClick and aria-sort.
+function TableHead({ children, isNumeric = false, isSticky = false, className = '', style, ...rest }) {
+  const thStyle = isSticky ? { ...STICKY_TH_STYLE, ...style } : style;
+  return <th {...rest} scope="col" className={`${isNumeric ? 'num' : ''} ${className}`.trim() || undefined}
+    style={thStyle}>{children}</th>;
 }
 
 /**

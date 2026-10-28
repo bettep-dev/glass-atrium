@@ -296,6 +296,70 @@ test("a closed caveat row shows its result and its closure as two separate group
   assert.equal(findNodes(resultGroup, (n) => n === closureGroup).length, 0, "the closure group is not nested inside the result group");
 });
 
+describe("the task ledger takes the .tbl cell geometry under its own header and body face", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  // 12 needs-you rows shown uncapped → the Show-first control row; the open caveat among them → the Mark-closed icon button; a routine row
+  const rows = [
+    ...Array.from({ length: 11 }, (_, i) => ({ id: i + 1, agent: "glass-atrium-dev-react", task_type: "feature", result: "fail", record_ts: "2026-09-01T10:00:00.000Z", summary: "Broke" })),
+    { id: 20, agent: "glass-atrium-dev-react", task_type: "feature", result: "done_with_concerns", closed_at: null, record_ts: "2026-09-01T10:00:00.000Z", summary: "Caveat" },
+    { id: 21, agent: "glass-atrium-dev-react", task_type: "review", result: "done", record_ts: "2026-09-01T10:00:00.000Z", summary: "Routine" },
+  ];
+  const closure = { pendingIds: new Set(), closedOverrides: new Map(), onMarkClosed: () => undefined };
+  const tree = renderScreen(create(mod.ResultTable as Component, {
+    rows, sort: "record_ts:desc", onSortChange: () => undefined, onRowClick: () => undefined, closure,
+    needsYouCap: null, onToggleNeedsYou: () => undefined,
+  })) as RenderedNode;
+  const tokensOf = (node: RenderedNode): string[] => String(node.props.className ?? "").split(/\s+/).filter(Boolean);
+  const columnHeads = findNodes(tree, (n) => n.type === "th" && n.props.scope === "col");
+
+  test("the ledger is a .tbl table marked own-face, not the shared Table component", () => {
+    const tables = findNodes(tree, (n) => n.type === "table");
+    assert.equal(tables.length, 1);
+    assert.ok(tokensOf(tables[0]).includes("tbl"), "the .tbl cell geometry applies");
+    assert.ok(tokensOf(tables[0]).includes("tbl--own-face"), "the house header face and row states stay off");
+    assert.equal(findNodes(tree, (n) => n.type === "Table").length, 0);
+  });
+
+  test("every column header is the shared TableHead in the ledger's own sentence-case face, one line each", () => {
+    assert.deepEqual(findNodes(tree, (n) => n.type === "TableHead").length, 5);
+    assert.deepEqual(columnHeads.map((th) => collectText(th).trim()), ["Time", "Agent", "Task type", "Result", "Summary"]);
+    for (const th of columnHeads) {
+      const tokens = tokensOf(th);
+      assert.ok(["text-dim", "font-medium", "whitespace-nowrap"].every((t) => tokens.includes(t)), `'${collectText(th)}' keeps its face: ${tokens}`);
+      assert.ok(!tokens.includes("uppercase"), `'${collectText(th)}' is not upper-cased`);
+      assert.equal((th.props.style as Record<string, unknown>).position, "sticky");
+    }
+  });
+
+  test("the sort arrow sits on the Time label's line", () => {
+    const [time] = columnHeads;
+    assert.equal(time.props["aria-sort"], "descending");
+    const [line] = findNodes(time, (n) => n.type === "span" && tokensOf(n).includes("inline-flex"));
+    assert.ok(line, "label and glyph share one inline-flex line");
+    assert.match(collectText(line), /Time/);
+    assert.equal(findNodes(line, (n) => n.type === "svg").length, 1, "the arrow is inside that line");
+  });
+
+  test("no cell, and no control in a cell, carries its own padding, margin or rule", () => {
+    const cells = findNodes(tree, (n) => n.type === "th" || n.type === "td");
+    const controls = findNodes(tree, (n) => n.type === "button");
+    assert.ok(cells.some((n) => n.type === "td") && controls.length >= 2, "rows, the Mark-closed button and the Show-all control render");
+    for (const node of [...cells, ...controls]) {
+      const adHoc = tokensOf(node).filter((t) => /^-?(p|m)[xytblrse]?-/.test(t) || /^border-b$/.test(t));
+      assert.deepEqual(adHoc, [], `${node.type} '${collectText(node).trim().slice(0, 24)}'`);
+    }
+  });
+
+  test("a section heading keeps its own mono upper-case face", () => {
+    const headings = findNodes(tree, (n) => n.type === "th" && n.props.scope === "colgroup");
+    assert.ok(headings.length >= 2, "Needs you and Routine");
+    for (const heading of headings) {
+      assert.ok(["font-mono", "uppercase", "tracking-wider", "text-faint"].every((t) => tokensOf(heading).includes(t)));
+    }
+  });
+});
+
 test("a channel row keeps to two single lines, the detail line carrying its full text as a tooltip", async () => {
   const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
   const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
