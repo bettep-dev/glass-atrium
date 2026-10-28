@@ -395,6 +395,16 @@ details[open] > summary .chevron {
 	padding-block-start: var(--tbl-ctl-pad-block);
 	padding-block-end: var(--tbl-ctl-pad-block);
 }
+/* B4 top-aligned multi-line row — a text cell starts half the control-to-line difference below a control cell, so its first
+   line (the --lh-row box) centers on the 32px control beside it. Zero-specificity row match → the control-cell rule above keeps
+   its own start padding. */
+.tbl :where(tr.is-top-aligned) > td {
+	vertical-align: top;
+	padding-block-start: calc(var(--tbl-ctl-pad-block) + (var(--ctl-min-h) - var(--lh-row)) / 2);
+}
+.tbl :where(tr.is-top-aligned) > td .tbl-first-line {
+	line-height: var(--lh-row);
+}
 .tbl:where(:not(.tbl--own-face)) tbody tr {
 	cursor: pointer;
 }

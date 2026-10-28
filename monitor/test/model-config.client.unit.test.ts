@@ -903,7 +903,7 @@ test("a mixed review or docs pair reads as a labelled row with both files and a 
     assert.ok(text.includes("2 files"), `${domain}: per-file disclosure counts the pair`);
     const options = tagsMc(tree, "option");
     assert.strictEqual(options[0]?.props.value, "inherit", `${domain}: inherit is the first option`);
-    assert.strictEqual(textMc([options[0]]), "session model (inherit)", `${domain}: inherit reads as the session model`);
+    assert.strictEqual(textMc([options[0]]), "Session model", `${domain}: inherit reads as the session model`);
   }
 });
 
@@ -1716,7 +1716,7 @@ test("a model id reads as its family and version; an id outside the naming patte
   }
 });
 
-test("the model mix counts every tier once under its family, and each select names its family in text", () => {
+test("the model mix counts every tier once under its family, and each select names its family in text with its id below", () => {
   const models = { "model.dev": "claude-opus-4-8", "model.research": "claude-sonnet-5", "model.meta": "claude-opus-4-8" };
   const tree = renderComponentMc(screens.DomainsSectionMC, {
     ...domainsPropsMc(THREE_TIERS_MC),
@@ -1724,9 +1724,33 @@ test("the model mix counts every tier once under its family, and each select nam
     baseline: { models: { ...models }, budgets: {} },
   });
   assert.ok(textMc(tree).includes("Opus 4.8 ×2 · Sonnet 5 ×1"), "the mix totals the tiers per family");
-  const tags = textsMc(findAllMc(tree, (n) => n.props["data-slot"] === "family"));
-  assert.strictEqual(tags.length, tagsMc(tree, "select").length, "one family tag per select");
-  assert.ok(tags.every((t) => t === "Opus 4.8" || t === "Sonnet 5"), "each tag names its select's family");
+  const selects = tagsMc(tree, "select");
+  const shown = selects.map((select) => {
+    const picked = tagsMc(select.children, "option").find((o) => o.props.value === select.props.value)!;
+    return textMc(picked.children);
+  });
+  assert.deepStrictEqual(shown, ["Opus 4.8", "Sonnet 5", "Opus 4.8"], "each select names its tier's family");
+  const ids = findAllMc(tree, (n) => n.props["data-slot"] === "model-id");
+  assert.deepStrictEqual(textsMc(ids), Object.values(models), "one id tag per select, naming its saved id");
+  for (const id of ids) {
+    assert.match(String(id.props.className), /\btruncate\b/, "the id is one nowrap token with an end ellipsis");
+    assert.strictEqual(id.props.title, textMc(id.children), "a clipped id keeps its full value in the title");
+  }
+});
+
+test("a model option reads as its friendly name with the id leading its title; an id outside the pattern reads as itself", () => {
+  const roster = ["claude-opus-5-5", "claude-sonnet-5-5", "my-local-model"];
+  const tree = renderComponentMc(screens.DomainsSectionMC, {
+    ...domainsPropsMc(THREE_TIERS_MC.slice(0, 1)),
+    knownModels: roster,
+    form: { models: { "model.dev": "claude-sonnet-5-5" }, budgets: {} },
+    baseline: { models: { "model.dev": "claude-sonnet-5-5" }, budgets: {} },
+  });
+  const options = tagsMc(tree, "option").filter((o) => roster.includes(String(o.props.value)));
+  assert.deepStrictEqual(textsMc(options), ["Opus 5.5", "Sonnet 5.5", "my-local-model"], "friendly names, never a clipped id");
+  for (const option of options) {
+    assert.ok(String(option.props.title).startsWith(String(option.props.value)), `${option.props.value}: the id leads the title`);
+  }
 });
 
 test("the file list toggle is a control-radius pill, not a heading or a card", () => {
