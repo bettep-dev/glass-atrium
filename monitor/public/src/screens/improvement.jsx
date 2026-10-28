@@ -372,6 +372,10 @@ function ScreenImprovement({ onNav }) {
         .i-row-card { cursor:pointer; }
         /* nested compact table → body rows on the 32 compact step */
         .i-recurrence-tbl > tbody > tr > td { height: var(--row-h-compact); }
+        /* icon + label head: the icon centres on the label's first line (1lh) and keeps its size, so a label that wraps
+           in a narrow sub-card still reads as one atom — centring on the whole block drifts once the label takes two lines */
+        .i-icon-head { display:flex; align-items:flex-start; gap:var(--space-1); }
+        .i-icon-head > svg { flex-shrink:0; margin-top:calc((1lh - var(--fs-meta)) / 2); }
         /* interactive tile — hover = raised-2 shadow step + faint ring, never a transform lift */
         .i-tile-hover { transition:box-shadow 120ms; }
         .i-tile-hover:hover { box-shadow:0 0 0 1px rgb(var(--faint)), var(--shadow-raised-2); }
@@ -1884,8 +1888,8 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 					<div className="grid grid-cols-2 gap-2">
 						{cards.map(([sym, tone, label, , hint]) => (
 							<div key={label} className="sub-card bg-elev p-3 min-w-0">
-								{/* icon + label: one centre-aligned atom, 4 apart at meta size */}
-								<div className="flex items-center gap-1 fs-meta">
+								{/* icon + label: one atom, the meta-size icon centred on the label's first line, 4 apart */}
+								<div className="i-icon-head fs-meta">
 									<SymI s={sym} className={tone} size={13} />
 									<span>{label}</span>
 								</div>
