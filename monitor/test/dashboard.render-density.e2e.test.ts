@@ -85,9 +85,11 @@ async function getDensity(page: Page): Promise<DensityProbe> {
     const statusBandHeight = document.querySelector("#dash-status")?.getBoundingClientRect().height ?? 0;
     const tileBands: Record<string, number> = {};
     for (const id of tileIds) {
+      // the shared KPI foot holds the drill → the band is the drill's top against the last fact row above the foot
       const card = document.querySelector(`#dash-tile-${id}`);
-      const drill = card?.lastElementChild;
-      const fact = drill?.previousElementSibling;
+      const foot = card?.querySelector(":scope > .kpi-foot");
+      const drill = foot?.querySelector("a");
+      const fact = foot?.previousElementSibling;
       if (!card || !drill || !fact) continue;
       tileBands[id] = Math.round(drill.getBoundingClientRect().top - fact.getBoundingClientRect().bottom);
     }

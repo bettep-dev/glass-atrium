@@ -408,16 +408,116 @@ details[open] > summary .chevron {
 	background: rgb(var(--elev));
 	border: 1px solid rgb(var(--line));
 	border-radius: var(--radius-card);
-	padding: 14px 16px;
+	padding: var(--card-pad);
 	position: relative;
-	cursor: pointer;
 	transition: border-color 0.12s;
 	min-height: 110px;
 	width: 100%;
 	text-align: left;
 }
-.kpi:hover {
+/* only a clickable tile reads as one — a labelled group keeps the default cursor and a still border */
+button.kpi {
+	cursor: pointer;
+}
+button.kpi:hover {
 	border-color: rgb(var(--faint));
+}
+
+/* UI.KPI anatomy (amendment (c)) — label row · value row · delta · hint · foot */
+.kpi-tile {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+/* 1 label row — one --lh-row line box; the label ellipsizes, the aside window tag never does */
+.kpi-head {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-1);
+	min-width: 0;
+	height: var(--lh-row);
+	line-height: var(--lh-row); /* an h2 label row takes preflight's inherited size and zero margin */
+}
+.kpi--info .kpi-head {
+	/* room for the ⓘ: its 32px box ends at the edge offset below */
+	padding-right: calc(var(--ctl-min-h) - var(--space-2));
+}
+.kpi-label-text {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	line-height: var(--lh-row);
+}
+.kpi-aside {
+	flex-shrink: 0;
+	white-space: nowrap;
+	line-height: var(--lh-row);
+}
+/* the ⓘ is placed on the label row's centre line, so a tile with one keeps its value on the band's baseline */
+.kpi-info {
+	position: absolute;
+	top: calc(var(--card-pad) + var(--lh-row) / 2);
+	right: calc(var(--card-pad) - var(--space-2));
+	transform: translateY(-50%);
+	display: flex;
+}
+/* 2 value row — figure, unit and badge on one baseline; a badge that does not fit wraps below, whole */
+.kpi-main {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	column-gap: var(--space-2);
+	row-gap: var(--space-1);
+	margin-top: var(--space-2);
+	min-width: 0;
+}
+.kpi-main--loading {
+	align-items: center;
+}
+.kpi-main .kpi-value {
+	margin-top: 0;
+}
+.kpi-value.kpi-value--word {
+	font-size: var(--fs-stat);
+	font-family: "Pretendard Variable", sans-serif;
+	letter-spacing: normal;
+	/* the word sits on the figure's baseline, inside the same reserved line box */
+	line-height: calc(var(--fs-kpi) * 1.15);
+}
+/* 3 delta · 4 hint — each 4 below the row above it */
+.kpi-delta-row {
+	margin-top: var(--space-1);
+}
+.kpi-delta-row .kpi-delta {
+	margin-top: 0;
+}
+.kpi-hint--clamp {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	overflow: hidden;
+}
+.kpi--spark .kpi-hint {
+	padding-right: calc(68px + var(--space-2)); /* the spark's width (ui.jsx KPI_SPARK.w) + 8 */
+}
+/* split tile — the value column carries the row's top margin; the detail column starts level with it */
+.kpi-split {
+	margin-top: var(--space-2);
+}
+.kpi-split .kpi-main,
+.kpi-split .tile-split-detail > .kpi-hint:first-child {
+	margin-top: 0;
+}
+/* 5 foot — drill link / Retry pinned to the bottom, at least 8 below the last fact */
+.kpi-foot {
+	margin-top: auto;
+	padding-top: var(--space-2);
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
 }
 .kpi-label {
 	font-size: var(--fs-meta);
@@ -430,21 +530,21 @@ details[open] > summary .chevron {
 }
 .kpi-hint {
 	line-height: 1.45;
-	margin-top: 2px;
+	margin-top: var(--space-1);
 }
 .kpi-value {
 	font-size: var(--fs-kpi);
 	line-height: 1.15;
 	font-weight: 600;
 	letter-spacing: -0.025em;
-	margin-top: 6px;
+	margin-top: var(--space-2);
 	font-family: "JetBrains Mono", monospace;
 }
 .kpi-value .unit {
 	font-size: var(--fs-title); /* half of --fs-kpi → 2:1 figure-to-unit */
 	color: rgb(var(--dim));
 	font-weight: 500;
-	margin-left: 3px;
+	margin-left: var(--space-1);
 	font-family: "Pretendard Variable", sans-serif;
 }
 .kpi-delta {
@@ -458,8 +558,8 @@ details[open] > summary .chevron {
 }
 .kpi-spark {
 	position: absolute;
-	right: 12px;
-	bottom: 10px;
+	right: var(--card-pad);
+	bottom: var(--card-pad);
 	opacity: 0.85;
 	pointer-events: none;
 }

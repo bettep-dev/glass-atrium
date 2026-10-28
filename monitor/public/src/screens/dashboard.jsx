@@ -299,7 +299,7 @@ const SHARED_FAILURE_HINT = `Not loaded — ${POINTER.BANNER}.`;
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(status 자리표시) · error(공용 unavailable 카드) · unavailable/empty(중립 문구) · ready(값).
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
 function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
-  const { RetryButton, CardInfo } = window.UI;
+  const { KPI, RetryButton, CardInfo, Badge, DateRange } = window.UI;
   const cardId = getTileCardId(tile);
   const titleId = `${cardId}-title`;
   const isCovered = tile.status === 'error' && isRetryShared;
@@ -307,29 +307,38 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
   const retry = tile.canRetry && !isRetryShared && (
     <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={cardId}/>
   );
-  return (
-    <div id={cardId} className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
-      aria-busy={tile.isBusy ? 'true' : undefined}>
-      {/* every tile reserves the ⓘ row height → a tile with a note keeps its value on the band's baseline */}
-      <div className="dash-tile-head">
-        <h2 id={titleId} className="fs-meta text-dim uppercase tracking-wide">
-          {tile.label}
-          {tile.window && <span className="normal-case"> ({tile.window})</span>}
-        </h2>
-        {tile.note && (
-          <CardInfo label={tile.noteLabel ?? 'How this is counted'} describedBy={titleId}>
-            <p className="fs-body">{tile.note}</p>
-          </CardInfo>
-        )}
-      </div>
-      {/* a failure is one inset card in the tile carrying its Retry; a banner-carried one points up instead of repeating */}
-      <window.UI.TileSplit lead={<StatusTileValue tile={tile}/>}
-        detail={isFailed ? <TileFailure tile={tile} retry={retry}/> : <TileDetail tile={tile} isCovered={isCovered}/>}/>
+  const hasBadge = tile.status !== 'loading' && (tile.tone !== 'neutral' || tile.isHeld);
+  // the drill stays a foot child, a failed tile's too → the shared foot keeps the four CTAs on one baseline at xl
+  const foot = (!isFailed && retry) || tile.target ? (
+    <>
       {!isFailed && retry}
-      {/* the drill stays a card-foot child, a failed tile's too → mt-auto keeps the four CTAs on one baseline at xl */}
-      {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
-    </div>
+      {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav}/>}
+    </>
+  ) : null;
+  // a failure is one inset card in the hint slot carrying its Retry; a banner-carried one points up instead of repeating
+  return (
+    <KPI id={cardId} labelId={titleId} labelAs="h2" labelClassName="fs-meta text-dim uppercase tracking-wide"
+      label={tile.label} aside={tile.window && `(${tile.window})`}
+      info={tile.note && (
+        <CardInfo label={tile.noteLabel ?? 'How this is counted'} describedBy={titleId}>
+          <p className="fs-body">{tile.note}</p>
+        </CardInfo>
+      )}
+      state={getTileKpiState(tile.status)} loadingLabel={tile.label.toLowerCase()} isBusy={tile.isBusy}
+      value={<StatusTileValue tile={tile}/>} unit={tile.unit}
+      badge={hasBadge && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
+      delta={tile.trend && <div className="fs-meta text-dim"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></div>}
+      hint={isFailed ? <TileFailure tile={tile} retry={retry}/> : <TileDetail tile={tile} isCovered={isCovered}/>}
+      hintFace="text-dim" isSplit foot={foot} className={tile.isBusy ? 'opacity-70' : ''}/>
   );
+}
+
+// tile status → the shared KPI state. unavailable and empty stay 'ready': their builders author the value
+// (a dash, or a low-n count that is still a real figure), so only a failed read takes the KPI's unknown dash.
+const TILE_KPI_STATE = { loading: 'loading', error: 'error' };
+
+function getTileKpiState(status) {
+  return TILE_KPI_STATE[status] ?? 'ready';
 }
 
 function TileDetail({ tile, isCovered }) {
@@ -366,30 +375,9 @@ function getTileCardId(tile) {
   return `dash-tile-${tile.id}`;
 }
 
+// the value slot — the figure never breaks; unit, badge and trend ride the shared KPI rows beside and below it
 function StatusTileValue({ tile }) {
-  const { Badge, KpiValue, LoadingPlaceholder, DateRange } = window.UI;
-  if (tile.status === 'loading') {
-    // an empty .kpi-value strut holds the loaded row's line box → the tile keeps its height when the value lands
-    return (
-      <div className="flex items-center gap-2">
-        <span className="kpi-value" aria-hidden="true">{'\u200b'}</span>
-        <LoadingPlaceholder label={tile.label.toLowerCase()}/>
-      </div>
-    );
-  }
-  // value + unit never break apart or wrap → a narrow tile drops the badge to its own line instead
-  return (
-    <div className="flex flex-col gap-0.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <div className="flex items-center gap-2">
-          <KpiValue><span className="whitespace-nowrap">{tile.value}</span></KpiValue>
-          {tile.unit && <span className="fs-body text-dim">{tile.unit}</span>}
-        </div>
-        {(tile.tone !== 'neutral' || tile.isHeld) && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
-      </div>
-      {tile.trend && <div className="fs-meta text-dim"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></div>}
-    </div>
-  );
+  return <span className="whitespace-nowrap">{tile.value}</span>;
 }
 
 // the week behind the triage band → each panel states its own span (the strip 7 days, the results 7 days + today)

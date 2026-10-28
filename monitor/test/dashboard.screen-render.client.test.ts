@@ -19,14 +19,19 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DASH_SRC = resolve(__dirname, "../public/src/screens/dashboard.jsx");
+const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
+// the tile is a thin wrapper over the shared KPI anatomy → the real KPI renders here, its slots stay stub atoms
+const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
 
-// window.UI stub — every atom resolves to a transparent host element.
+// window.UI stub — every atom resolves to a transparent host element, except the real KPI anatomy.
 function uiStub(): unknown {
   return new Proxy(
     {},
     {
       get: (_target, name: string) =>
-        name === "TONE_ICON"
+        name === "KPI"
+          ? realUi.KPI
+          : name === "TONE_ICON"
           ? new Proxy({}, { get: () => "dot" })
           : name === "getRegionView"
           ? getRegionViewStub
@@ -81,6 +86,14 @@ function render(name: string, props: Record<string, unknown>): RenderedNode {
 function classOf(node: RenderedNode): string {
   return String(node.props.className ?? "");
 }
+function hasClass(node: RenderedNode, name: string): boolean {
+  return classOf(node).split(/\s+/).includes(name);
+}
+// the KPI's own figure atom (ui.jsx KpiValue) renders as a named component node
+const isKpiValue = (n: RenderedNode) => n.type === "KpiValue";
+const isKpiTile = (n: RenderedNode) => hasClass(n, "kpi");
+// a rendered element, not the component node that passed it its props (render-screen keeps both)
+const isHost = (n: RenderedNode) => /^[a-z]/.test(n.type);
 
 const HARNESS_ALARM = {
   id: "harness", tone: "crit", title: "1 harness part is down", detail: "autoagent",
@@ -132,14 +145,19 @@ test("every drill is an anchor to its screen's hash; a plain click routes in-app
   }
 });
 
-test("a tile heads with an h2 whose window keeps its own case, and leads with the KPI-scale value", () => {
+test("a tile heads with an h2 whose window rides the aside beside the uppercase label, and leads with the KPI-scale value", () => {
   const tree = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
   const headings = findNodes(tree, (n) => n.type === "h2");
   assert.equal(headings.length, 1);
-  const windowSpan = findNodes(headings[0], (n) => classOf(n).includes("normal-case"));
-  assert.equal(windowSpan.length, 1, "the window escapes the label's uppercase");
-  assert.equal(collectText(windowSpan[0]).replace(/\s+/g, ""), "(7d)");
-  const value = findNodes(tree, (n) => n.props.atom === "KpiValue");
+  const [label] = findNodes(headings[0], (n) => hasClass(n, "kpi-label-text"));
+  assert.ok(hasClass(label, "uppercase"), "the label keeps its uppercase");
+  assert.equal(collectText(label), "Task results");
+  const asides = findNodes(headings[0], (n) => hasClass(n, "kpi-aside"));
+  assert.equal(asides.length, 1, "the window is the heading's aside");
+  assert.equal(collectText(asides[0]).replace(/\s+/g, ""), "(7d)");
+  assert.equal(findNodes(label, (n) => hasClass(n, "kpi-aside")).length, 0, "the aside sits outside the uppercase label, so it keeps its own case");
+  assert.ok(!hasClass(asides[0], "uppercase"), "the aside is never uppercased itself");
+  const value = findNodes(tree, isKpiValue);
   assert.equal(value.length, 1, "the value uses the Cost page's KPI scale");
   assert.equal(collectText(value[0]), "40");
 });
@@ -240,7 +258,7 @@ test("the fleet tile names suspension once across its value, verdict and detail,
 test("a tile renders its number as the KPI value, its verdict as the badge, and the detail after both", () => {
   const tile = { ...READY_TILE, tone: "crit", value: "17.5% (7/40)", badge: "Failures above line", detail: "failed · 9/40 with caveats" };
   const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
-  const value = findNodes(tree, (n) => n.props.atom === "KpiValue");
+  const value = findNodes(tree, isKpiValue);
   assert.equal(value.length, 1);
   assert.equal(collectText(value[0]), "17.5% (7/40)");
   const badges = findNodes(tree, (n) => n.props.atom === "Badge");
@@ -253,7 +271,9 @@ test("a tile renders its number as the KPI value, its verdict as the badge, and 
 test("a tile's drill sits at the tile foot, and a tile with no destination has none", () => {
   const drills = findNodes(render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} }), (n) => n.type === "a");
   assert.equal(drills.length, 1);
-  assert.match(classOf(drills[0]), /\bmt-auto\b/, "the CTA is pinned to the foot so baselines line up");
+  const [foot] = findNodes(render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} }), (n) => hasClass(n, "kpi-foot"));
+  assert.ok(foot, "the tile has the shared KPI foot, pinned to the bottom so the band's CTAs line up");
+  assert.equal(findNodes(foot, (n) => n.type === "a").length, 1, "the CTA sits in the foot");
   const undrilled = render("StatusTile", { tile: { ...READY_TILE, target: null }, onNav: () => {}, onRetry: () => {} });
   assert.equal(findNodes(undrilled, (n) => n.type === "a").length, 0);
 });
@@ -263,7 +283,7 @@ test("a ready tile puts its value on the lead side and its detail and hint on th
   const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
   const [lead] = findNodes(tree, (n) => classOf(n) === "tile-split-lead");
   const [detail] = findNodes(tree, (n) => classOf(n) === "tile-split-detail");
-  assert.equal(findNodes(lead, (n) => n.props.atom === "KpiValue").length, 1, "the value leads");
+  assert.equal(findNodes(lead, isKpiValue).length, 1, "the value leads");
   assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-detail")).length, 1);
   assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-hint")).length, 1);
 });
@@ -298,7 +318,9 @@ test("a tile's note opens from a focusable ⓘ described by the tile heading, ne
     const tree = render("StatusTile", { tile: row.tile, onNav: () => {}, onRetry: () => {} });
     const infos = findNodes(tree, (n) => n.props.atom === "CardInfo");
     assert.equal(infos.length, row.infoCount, row.name);
-    assert.equal(findNodes(tree, (n) => n.props.title != null && n.props.atom == null).length, 0, `${row.name}: no hover-only title`);
+    // a title that repeats its own visible text (the label's ellipsis fallback) carries nothing hover-only
+    const hoverOnly = (n: RenderedNode) => n.props.title != null && n.props.atom == null && n.props.title !== collectText(n).trim();
+    assert.equal(findNodes(tree, hoverOnly).length, 0, `${row.name}: no hover-only title`);
   }
   const tree = render("StatusTile", { tile: rows[0].tile, onNav: () => {}, onRetry: () => {} });
   const [heading] = findNodes(tree, (n) => n.type === "h2");
@@ -426,9 +448,9 @@ test("a failed tile's Retry shows itself in flight and hands focus to its own ti
     const tree = render("StatusTile", { tile: { ...FAILED_TILE, isBusy }, onNav: () => {}, onRetry: () => {} });
     const [retry] = findNodes(tree, (n) => n.props.atom === "RetryButton");
     assert.equal(retry.props.isBusy, isBusy);
-    const targets = findNodes(tree, (n) => n.props.id === retry.props.focusTargetId);
+    const targets = findNodes(tree, (n) => isHost(n) && n.props.id === retry.props.focusTargetId);
     assert.equal(targets.length, 1, "the focus target is the tile card that stays mounted");
-    assert.ok(/\bcard\b/.test(classOf(targets[0])), classOf(targets[0]));
+    assert.ok(isKpiTile(targets[0]), classOf(targets[0]));
   }
 });
 
@@ -437,9 +459,10 @@ test("a tile whose outage the page banner already carries stays one level: no ne
   assert.equal(findNodes(tree, (n) => n.props.atom === "RegionUnavailable").length, 0, "the banner already states the error");
   assert.doesNotMatch(collectText(tree), /Couldn't load/, "the tile does not repeat the banner's sentence");
   assert.equal(findNodes(tree, (n) => n.props.atom === "RetryButton").length, 0, "the banner owns the only Retry");
-  assert.equal(findNodes(tree, (n) => /\b(sub-)?card\b/.test(classOf(n))).length, 1, "only the tile itself is a card");
+  assert.equal(findNodes(tree, isKpiTile).length, 1, "the tile is one KPI surface");
+  assert.equal(findNodes(tree, (n) => /\b(sub-)?card\b/.test(classOf(n))).length, 0, "no card nests inside the tile");
   assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the banner owns the only Retry");
-  assert.equal(collectText(findNodes(tree, (n) => n.props.atom === "KpiValue")[0]), "—", "the value slot keeps its unknown dash");
+  assert.equal(collectText(findNodes(tree, isKpiValue)[0]), "—", "the value slot keeps its unknown dash");
 });
 
 test("an unavailable harness tile offers a Retry that re-polls the harness, unless the page banner lists it", () => {
@@ -479,9 +502,9 @@ test("a held tile's Retry is the shared control: in flight while busy, handing f
     assert.equal(retries[0].props.isBusy, isBusy);
     (retries[0].props.onRetry as () => void)();
     assert.deepEqual(retried, ["outcomes"], "the Retry reloads only the tile's own region");
-    const targets = findNodes(tree, (n) => n.props.id === retries[0].props.focusTargetId);
+    const targets = findNodes(tree, (n) => isHost(n) && n.props.id === retries[0].props.focusTargetId);
     assert.equal(targets.length, 1, "the focus target is the tile card that outlives the Retry");
-    assert.ok(/\bcard\b/.test(classOf(targets[0])), classOf(targets[0]));
+    assert.ok(isKpiTile(targets[0]), classOf(targets[0]));
   }
 });
 
@@ -550,8 +573,8 @@ test("a loading tile says so in a status placeholder and reserves the detail slo
     assert.equal(detailSlots.length, 1, `${tile.status}: the detail line is reserved whether or not it has text`);
   }
   const loading = render("StatusTile", { tile: loadingTile, onNav: () => {}, onRetry: () => {} });
-  assert.equal(findNodes(loading, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
-  assert.equal(findNodes(loading, (n) => n.props.atom === "KpiValue").length, 0, "no value renders before one loads");
+  assert.equal(findNodes(loading, (n) => n.type === "LoadingPlaceholder").length, 1);
+  assert.equal(findNodes(loading, isKpiValue).length, 0, "no value renders before one loads");
   const struts = findNodes(loading, (n) => n.type === "span" && classOf(n) === "kpi-value");
   assert.equal(struts.length, 1, "an empty KPI-scale strut holds the value row's height");
   assert.equal(struts[0].props["aria-hidden"], "true");
@@ -560,9 +583,9 @@ test("a loading tile says so in a status placeholder and reserves the detail slo
 test("a tile refreshing over held data keeps its value and marks itself busy", () => {
   for (const isBusy of [true, false]) {
     const tree = render("StatusTile", { tile: { ...READY_TILE, isBusy }, onNav: () => {}, onRetry: () => {} });
-    const card = findNodes(tree, (n) => classOf(n).includes("card"))[0];
+    const card = findNodes(tree, isKpiTile)[0];
     assert.equal(card.props["aria-busy"], isBusy ? "true" : undefined);
-    assert.equal(collectText(findNodes(tree, (n) => n.props.atom === "KpiValue")[0]), "40");
+    assert.equal(collectText(findNodes(tree, isKpiValue)[0]), "40");
   }
 });
 
@@ -635,12 +658,14 @@ test("alarm cards stack in one full-width column with no list roles", () => {
 test("a tile's headline value never wraps, so its badge moves to the next line instead", () => {
   const tile = { ...READY_TILE, id: "harness", tone: "crit", value: "2 of 7 down", badge: "Action needed" };
   const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
-  const [value] = findNodes(tree, (n) => n.props.atom === "KpiValue");
+  const [value] = findNodes(tree, isKpiValue);
   const unbroken = findNodes(value, (n) => classOf(n).includes("whitespace-nowrap"));
   assert.equal(unbroken.length, 1);
   assert.equal(collectText(unbroken[0]), "2 of 7 down");
-  const [row] = findNodes(tree, (n) => findNodes(n, (m) => m.props.atom === "Badge").length === 1 && classOf(n).includes("flex-wrap"));
-  assert.ok(row, "the value row lets the badge wrap below the value");
+  const [row] = findNodes(tree, (n) => hasClass(n, "kpi-main"));
+  assert.equal(findNodes(row, (m) => m.props.atom === "Badge").length, 1, "the badge rides the value row");
+  assert.equal(findNodes(row, isKpiValue).length, 1, "beside the value");
+  // .kpi-main wraps (base.css) → a badge that does not fit drops below the value, whole
 });
 
 test("a tile's trend renders on the lead side under its value, and a tile without one renders none", () => {

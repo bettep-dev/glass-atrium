@@ -605,7 +605,7 @@ test("the last-run age reads as words, so its space never widens into a mono gap
   assert.doesNotMatch(classOf(age[0]), /\bfont-mono\b/);
 });
 
-test("tile labels and captions wrap instead of cutting the figure's words", async () => {
+test("tile captions wrap instead of cutting the figure's words, and a one-line label keeps its full text in its title", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const band = renderScreen(
@@ -618,6 +618,10 @@ test("tile labels and captions wrap instead of cutting the figure's words", asyn
   );
   assert.ok(collectText(band).includes("22 in 29 d"), "the window total is on the page");
   for (const node of findNodes(band, () => true)) assert.doesNotMatch(classOf(node), /\btruncate\b/);
+  // the KPI label row is one line (amendment (c)) → its ellipsis fallback is the full label in the title
+  const labels = findNodes(band, (n) => /\bkpi-label-text\b/.test(classOf(n)));
+  assert.equal(labels.length, 4);
+  for (const label of labels) assert.equal(label.props.title, collectText(label));
 });
 
 test("a tile whose detail moved off its caption opens it from an info trigger described by the tile label", async () => {
@@ -659,10 +663,20 @@ test("a loading open card or tile states loading once, through its placeholder, 
     renderScreen(mod.React.createElement(mod.WikiNotesByTypeSection as Component, { state: LOADING, onRetry: () => {} })),
     renderScreen(mod.React.createElement(mod.WikiTileBand as Component, { summaryState: LOADING, indexState: LOADING, backlogState: LOADING, cyclesState: LOADING, onRetry: () => {} })),
   ];
-  for (const tree of trees) assert.doesNotMatch(collectText(tree), /loading/i);
+  for (const tree of trees.slice(0, 2)) assert.doesNotMatch(collectText(tree), /loading/i);
   assert.equal(findNodes(trees[0], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
   assert.equal(findNodes(trees[1], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
-  assert.equal(findNodes(trees[2], (n) => n.props["aria-busy"] === "true").length, 4, "each tile still reports busy");
+  // a tile renders the shared KPI anatomy (real here) → its loading state is the KPI's own placeholder in the value row
+  const tiles = findNodes(trees[2], (n) => n.props.role === "group");
+  assert.equal(tiles.length, 4, "four tiles");
+  for (const tile of tiles) {
+    const placeholders = findNodes(tile, (n) => n.type === "LoadingPlaceholder");
+    assert.equal(placeholders.length, 1, "each tile states loading once, through its placeholder");
+    const outside = (n: RenderedNode | string): string =>
+      typeof n === "string" ? n : n.type === "LoadingPlaceholder" ? "" : n.children.map(outside).join(" ");
+    assert.doesNotMatch(outside(tile), /loading|…/i, "not through its count or caption");
+    assert.equal(tile.props["aria-busy"], "true", "each tile still reports busy");
+  }
 });
 
 test("the two status cards share the S slot inside their region hosts, the coverage line pinned to the foot", async () => {

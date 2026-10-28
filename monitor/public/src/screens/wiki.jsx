@@ -591,7 +591,7 @@ function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at,
 					onRetry={onRetry}
 				/>
 			)}
-			<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+			<div className="grid grid-cols-2 lg:grid-cols-4 gap-card">
 				{tiles.map((tile) => (
 					<WikiTile key={tile.key} tile={tile} />
 				))}
@@ -610,51 +610,48 @@ function readTileBandFailuresW(summaryState, indexState) {
 
 // Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
 // figure, leaving tinted containers to the alarm lane (39578 §C/§D).
-// detail past the 40-char caption cap opens from an ⓘ beside the label
+// detail past the 40-char caption cap opens from an ⓘ placed on the label row
 function WikiTile({ tile }) {
-	const { Icon, TONE_ICON, CardInfo } = window.UI;
+	const { Icon, TONE_ICON, CardInfo, KPI } = window.UI;
 	const alarmed = tile.tone === "warn" || tile.tone === "crit";
 	const labelId = `wiki-tile-${tile.key}-label`;
+	const value = alarmed ? (
+		<>
+			<span className={`text-${tile.tone} mr-1.5`} aria-hidden="true" title={tile.toneLabel}>
+				<Icon name={TONE_ICON[tile.tone]} size={13} />
+			</span>
+			{tile.toneLabel && <span className="sr-only">{`${tile.toneLabel}:`}</span>}
+			{tile.value}
+		</>
+	) : (
+		tile.value
+	);
 
 	return (
-		<div className="rounded-md border border-line bg-sunken p-2.5 min-w-0">
-			<div className="flex items-center gap-1">
-				<span
-					id={labelId}
-					className="fs-meta text-faint leading-tight break-words min-w-0"
-					title={tile.label}
-				>
-					{tile.label}
-				</span>
-				{tile.info && (
+		<KPI
+			labelId={labelId}
+			label={tile.label}
+			labelClassName="fs-meta text-faint"
+			info={
+				tile.info && (
 					<CardInfo label={`How ${tile.label} is counted`} describedBy={labelId}>
 						{tile.info}
 					</CardInfo>
-				)}
-			</div>
-			<div
-				className={`${tile.isWord ? "" : "font-mono "}fs-stat font-semibold mt-0.5 flex items-center gap-1.5 ${tile.state === "ready" ? "" : "text-faint"}`}
-				aria-busy={tile.state === "loading" ? "true" : undefined}
-			>
-				{alarmed && (
-					<span className={`text-${tile.tone} flex-shrink-0`} aria-hidden="true" title={tile.toneLabel}>
-						<Icon name={TONE_ICON[tile.tone]} size={13} />
-					</span>
-				)}
-				{alarmed && tile.toneLabel && <span className="sr-only">{`${tile.toneLabel}:`}</span>}
-				{tile.value}
-			</div>
-			{tile.sub && (
-				<div
-					className="fs-meta text-faint mt-1 leading-tight break-words"
-					title={tile.hint || tile.sub}
-				>
-					{tile.sub}
-				</div>
-			)}
-		</div>
+				)
+			}
+			state={WIKI_TILE_KPI_STATE[tile.state] ?? "ready"}
+			loadingLabel={tile.label.toLowerCase()}
+			value={value}
+			isWord={tile.isWord}
+			hint={tile.sub}
+			hintFace="text-faint"
+			hintTitle={tile.hint || tile.sub}
+		/>
 	);
 }
+
+// tile model state → the shared KPI state; unavailable and empty share the unknown dash, their sub says which
+const WIKI_TILE_KPI_STATE = { loading: "loading", error: "error", unavailable: "empty", empty: "empty" };
 
 function buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at) {
 	return [

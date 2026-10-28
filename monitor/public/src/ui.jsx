@@ -567,22 +567,94 @@ function AgentName({ name, className = '' }) {
 }
 
 // Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
-function KpiValue({ children, unit, tone }) {
-  return <div className="kpi-value">
+// isWord → a word value at --fs-stat sans on the same baseline · isFaint → the unknown dash of a non-ready state.
+function KpiValue({ children, unit, tone, isWord = false, isFaint = false }) {
+  const className = `kpi-value${isWord ? ' kpi-value--word' : ''}${isFaint ? ' text-faint' : ''}`;
+  return <div className={className}>
     {tone && <span className={`text-${tone}`} aria-hidden="true">{TONE_GLYPH[tone]} </span>}
     {children}{unit && <span className="unit">{unit}</span>}
   </div>;
 }
 
-// label + --fs-kpi mono value + delta + 68×26 inline sparkline
-function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint, hintClassName='fs-meta' }) {
-  return <button onClick={onClick} className="kpi text-left">
-    <div className="kpi-label">{label}</div>
-    {hint && <div className={`${hintClassName} text-faint font-mono kpi-hint`}>{hint}</div>}
-    <KpiValue unit={unit}>{value}</KpiValue>
-    {typeof delta === 'number' && <Delta value={delta} inverse={deltaInverse} />}
-    {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={68} h={26} color={sparkColor}/></div>}
-  </button>;
+const KPI_UNKNOWN_STATES = new Set(['error', 'empty']);
+const KPI_SPARK = { w: 68, h: 26 };
+
+/**
+ * One KPI anatomy (design spec amendment (c)) — every tile row sits in one place, whatever its state:
+ *   1 label row  label (one line, ellipsis) · optional aside window tag · ⓘ placed on the row, never pushing the value
+ *   2 value row  value + unit · optional badge, baseline-aligned; loading holds the row with a strut + placeholder
+ *   3 delta      number → the shared Delta; a node renders as the caller wrote it
+ *   4 hint       after the value, always; the caller's own face (hintFace) is kept
+ *   5 foot       drill link / Retry, pinned to the tile bottom
+ * state: 'ready' | 'loading' | 'error' | 'empty' — error and empty show the faint unknown dash, never a 0.
+ * onClick → the tile is a button (no info or foot inside it then); otherwise a group labelled by its label row.
+ * isSplit → value + delta | hint as the shared TileSplit columns between 641px and xl.
+ */
+function KPI({
+  id, label, labelId, labelAs = 'div', labelClassName = 'fs-meta text-dim font-medium', labelTitle,
+  aside, asideClassName = 'fs-meta text-dim', info,
+  value, unit, tone, isWord = false, badge,
+  delta, deltaInverse = false,
+  hint, hintClassName = 'fs-meta', hintFace = 'text-faint font-mono', hintTitle,
+  foot, sparkData, sparkColor = 'currentColor', onClick,
+  state = 'ready', loadingLabel, isBusy = false, isSplit = false, className = '',
+}) {
+  const isLoading = state === 'loading';
+  const isUnknown = KPI_UNKNOWN_STATES.has(state);
+  const headId = labelId ?? (id ? `${id}-label` : undefined);
+  const LabelTag = labelAs;
+  const isTextLabel = typeof label === 'string';
+
+  const head = (
+    <LabelTag id={headId} className="kpi-head">
+      <span className={`kpi-label-text ${labelClassName}`.trim()} title={labelTitle ?? (isTextLabel ? label : undefined)}>{label}</span>
+      {aside != null && aside !== false && <span className={`kpi-aside ${asideClassName}`.trim()}>{aside}</span>}
+    </LabelTag>
+  );
+  // an empty .kpi-value strut holds the loaded row's line box → the tile keeps its height when the value lands
+  const main = isLoading ? (
+    <div className="kpi-main kpi-main--loading">
+      <span className="kpi-value" aria-hidden="true">{'​'}</span>
+      <LoadingPlaceholder label={loadingLabel}/>
+    </div>
+  ) : (
+    <div className="kpi-main">
+      <KpiValue unit={unit} tone={isUnknown ? undefined : tone} isWord={isWord} isFaint={isUnknown}>
+        {isUnknown ? (value ?? '—') : value}
+      </KpiValue>
+      {badge}
+    </div>
+  );
+  const deltaRow = typeof delta === 'number'
+    ? <div className="kpi-delta-row"><Delta value={delta} inverse={deltaInverse}/></div>
+    : delta != null && delta !== false && <div className="kpi-delta-row">{delta}</div>;
+  const isPlainHint = typeof hint === 'string' || typeof hint === 'number';
+  const hintRow = hint != null && hint !== false && (
+    <div className={`kpi-hint ${hintClassName} ${hintFace}${isPlainHint ? ' kpi-hint--clamp' : ''}`.trim()}
+      title={hintTitle ?? (isPlainHint ? String(hint) : undefined)}>{hint}</div>
+  );
+  const body = isSplit ? (
+    <TileSplit className="kpi-split" lead={<>{main}{deltaRow}</>} detail={hintRow || null}/>
+  ) : <>{main}{deltaRow}{hintRow}</>;
+
+  const rootClass = ['kpi kpi-tile', info && 'kpi--info', sparkData && 'kpi--spark', className].filter(Boolean).join(' ');
+  const children = <>
+    {head}
+    {info && <div className="kpi-info">{info}</div>}
+    {body}
+    {foot && <div className="kpi-foot">{foot}</div>}
+    {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={KPI_SPARK.w} h={KPI_SPARK.h} color={sparkColor}/></div>}
+  </>;
+  const busy = isLoading || isBusy ? 'true' : undefined;
+  if (onClick) {
+    return <button type="button" id={id} onClick={onClick} className={`${rootClass} text-left`} aria-busy={busy}>{children}</button>;
+  }
+  return (
+    <div id={id} role="group" aria-labelledby={headId} aria-label={headId ? undefined : (isTextLabel ? label : undefined)}
+      className={rootClass} aria-busy={busy}>
+      {children}
+    </div>
+  );
 }
 
 // 공용 오버레이 surface — variant 로 배치만 전환, 상호작용 계약은 단일 (presentation-only).
