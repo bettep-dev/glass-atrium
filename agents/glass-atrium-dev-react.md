@@ -45,7 +45,6 @@ React 19 · Next.js 15 / 16 (Cache Components stable) · TailwindCSS 4 · clsx (
 - **Secrets stay on the server**: only `NEXT_PUBLIC_` env vars reach the client bundle — read secrets in server code, guard such modules with `import 'server-only'`, never pass one as a prop to a CC.
 - **Server Actions & Forms**: `useActionState` (built-in pending/error) · Server Action input = public API → **Zod validation required**, and authorize inside the action · Progressive Enhancement via form action prop
 - **Rendering safety**: React escapes rendered text, so `dangerouslySetInnerHTML` is the XSS path — pass it only sanitized HTML (DOMPurify).
-- **Errors**: async and data-dependent regions sit under an ErrorBoundary (a route `error.tsx` in the App Router).
 - **Zustand stores**: fields that reach localStorage/sessionStorage stay JSON-serializable — plain Records/Arrays/primitives, never Map/Set/Date, which do not survive the JSON round trip.
   - Before reshaping or splitting a store, trace every serialization path the changed fields cross (localStorage/session/network) and audit existing `useShallow` subscriptions for impact.
   - After a split, no selector reads fields from both resulting stores; cross-store reads become explicit prop threading.
@@ -65,8 +64,9 @@ React 19 · Next.js 15 / 16 (Cache Components stable) · TailwindCSS 4 · clsx (
 - `'use cache'` directive at file / component / function scope; opt-in caching only — non-cached paths are dynamic by default.
 - `cacheLife('hours')` profile + `cacheTag('user-{id}')` for tag-based invalidation; `updateTag('user-{id}')` triggers on-demand revalidation.
 - PPR (Partial Prerendering) = `use cache` boundary + `<Suspense>` fallback; static shell + streamed dynamic holes.
-- Inside a `use cache` scope, read no `cookies()` / `headers()` / `searchParams` directly: read them outside and pass them in as arguments, so they become part of the cache key.
-- `use cache: remote` and `use cache: private` variants for distributed caches (Redis) and per-user caches respectively.
+- Inside a plain or `use cache: remote` scope, read no `cookies()` / `headers()` / `searchParams` directly: read them outside and pass them in as arguments, so they become part of the cache key.
+- `use cache: remote` stores entries in a remote cache handler (Redis/KV) shared across server instances.
+- `use cache: private` is the variant that may read those runtime APIs: per-client, with no server cache across requests — for compliance needs or code that cannot pass them as arguments.
 <!-- EDITABLE:END -->
 
 ## Work Rules
@@ -86,7 +86,8 @@ React 19 · Next.js 15 / 16 (Cache Components stable) · TailwindCSS 4 · clsx (
   - Several existing utilities of the same kind (formatters, registries, status maps) mean the work is consolidation: plan that refactor upfront and size it in.
 - **Tooling and parsing awareness**: browser JSX under `monitor/public/src` is bundled by esbuild and sits outside `tsc` (`monitor/tsconfig.json` includes only `src/**/*`), so a clean type check proves nothing about it.
   - Some literal shapes in those files are read by `node:test` suites through a regex over the source text, so changing one (a hoisted const, a computed value) breaks the reading suite.
-    - Keep the shape, or in the same change rewrite that suite to read the shipped value at runtime through the test seams: `monitor/test/lib/render-screen.ts` → `loadScreenModule` (plus `vm.runInContext` for a top-level const) and `monitor/test/client-sandbox.ts` → `buildUiSandbox`; never widen its regex.
+    - Keep the shape, or in the same change rewrite that suite to read the shipped value at runtime through the test seams; never widen its regex.
+      - The test seams: `monitor/test/lib/render-screen.ts` → `loadScreenModule` (plus `vm.runInContext` for a top-level const) and `monitor/test/client-sandbox.ts` → `buildUiSandbox`.
       - Why: a regex read of source text is a source pin, a prohibited test shape, and a widened regex keeps it.
     - Examples, not a closed list: the `href="#…"` hash links in `screens/agents.jsx` and the `healthy: { label: '…' }` entry in `screens/outcomes.jsx`.
 - **Parity matrix before consolidation**: when consolidating duplicate readers (rendering, parsing, or storage logic), write down each reader's expected input/output in the old and the new code before deleting anything — a divergence found here is a behaviour change, not a refactor.
@@ -105,5 +106,4 @@ React 19 · Next.js 15 / 16 (Cache Components stable) · TailwindCSS 4 · clsx (
 
 ## Success Criteria
 
-- **Typed props**: every component declares Props via interface or type alias, and a component accepting `children` types it explicitly — React 18+ `FC` no longer supplies `children` implicitly.
 - **Schema with no `completion_block`**: print the `[COMPLETION]` block in a dedicated text turn as a best-effort fallback; never invent an undeclared key (schema validation fails).
