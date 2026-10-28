@@ -126,7 +126,7 @@ test("the run-history chart title states the number of days its bars show", asyn
     const chart = findNodes(tree, (n) => n.props.atom === "TrendChart")[0];
     const shown = (chart.props.points as unknown[]).length;
     assert.match(String(chart.props.label), new RegExp(`\\b${shown} days\\b`), "the title's day count is the bar count");
-    assert.ok(collectText(tree).includes(`in ${shown} d`), "the headline total covers the same days");
+    assert.ok(collectText(tree).includes(`in ${shown}d`), "the headline total covers the same days");
   }
 });
 
@@ -615,7 +615,7 @@ test("tile captions wrap instead of cutting the figure's words, and a one-line l
       onRetry: () => {},
     }),
   );
-  assert.ok(collectText(band).includes("22 in 29 d"), "the window total is on the page");
+  assert.ok(collectText(band).includes("22 in 29d"), "the window total is on the page");
   for (const node of findNodes(band, () => true)) assert.doesNotMatch(classOf(node), /\btruncate\b/);
   // the KPI label row is one line (amendment (c)) → its ellipsis fallback is the full label in the title
   const labels = findNodes(band, (n) => /\bkpi-label-text\b/.test(classOf(n)));

@@ -474,7 +474,7 @@ function buildProposalAlarmsW(backlog, proposals, cyclesState) {
 			parked,
 			age: typeof age === "number" ? age : 0,
 			ageLabel: wait
-				? `${wait.days} d`
+				? `${wait.days}d`
 				: typeof runs === "number"
 					? `${runs} ${runs === 1 ? "run" : "runs"}`
 					: null,
@@ -758,7 +758,7 @@ function buildCompiledTileW(
 	// same span as Run history → the two totals read alike
 	const trend = buildThroughputModel(cyclesState);
 	const windowTotal =
-		trend.rows.length > 0 ? `${formatCountW(trend.total)} in ${trend.spanDays} d` : null;
+		trend.rows.length > 0 ? `${formatCountW(trend.total)} in ${trend.spanDays}d` : null;
 
 	return {
 		key: "compiled",
@@ -1069,7 +1069,7 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 							label={`Notes per day · ${model.spanDays} ${model.spanDays === 1 ? "day" : "days"}`}
 							series={model.compiledSeries}
 							dates={model.compiledDates}
-							stat={`${formatCountW(model.total)} notes in ${model.spanDays} d · ${model.activeDays} active days`}
+							stat={`${formatCountW(model.total)} notes in ${model.spanDays}d · ${model.activeDays} active days`}
 						/>
 						{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
 						{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
@@ -1127,7 +1127,7 @@ function describeRunTableW(state, days) {
 	if (window.UI.getRegionView(state) === "error") return "Unavailable";
 
 	const reports = state.data?.reports || [];
-	if (reports.length === 0) return `No runs in ${days} d`;
+	if (reports.length === 0) return `No runs in ${days}d`;
 
 	const groups = groupConstantRunsW(sortRunsNewestFirstW(reports));
 	if (groups.length > 1) {
@@ -1158,7 +1158,7 @@ function describeRunHistoryW(cyclesState, model, summaryState) {
 	const p95 =
 		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
 	const runs = model.rows.length === 1 ? "run" : "runs";
-	return `${model.rows.length} ${runs} in ${model.spanDays} d${describeP95W(p95)}`;
+	return `${model.rows.length} ${runs} in ${model.spanDays}d${describeP95W(p95)}`;
 }
 
 /**
