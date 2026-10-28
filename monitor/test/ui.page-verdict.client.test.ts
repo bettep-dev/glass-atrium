@@ -14,6 +14,7 @@ type CreateElement = (type: unknown, props: unknown, ...children: unknown[]) => 
 const doc = createFakeDocument();
 const ui = await loadScreenModule(UI_SRC, { document: doc });
 const h = (ui.React as { createElement: CreateElement }).createElement;
+const Fragment = (ui.React as { Fragment: unknown }).Fragment;
 // top-level consts stay off the sandbox context → read them through the window.UI export.
 const exported = ui.UI as Record<string, unknown>;
 const TONE_GLYPH = exported.TONE_GLYPH as Record<string, string>;
@@ -279,5 +280,24 @@ describe("DayTokens", () => {
       .flatMap((part) => findNodes(part, isNoWrap).map((n) => collectText(n)));
     assert.deepEqual(tokensIn("alert-card-title"), ["7-day"]);
     assert.deepEqual(tokensIn("alert-card-body"), ["30-day", "2 days"]);
+  });
+
+  // a caller-composed title (the Dashboard alarm's `<>{title} <Badge/></>`) is a Fragment, not a string: the atom steps into it
+  test("a Fragment child, nested too, keeps its strings' day tokens whole and its element parts as they came", () => {
+    const badge = h("span", { className: "badge" }, "Last known 7 days");
+    const tree = renderTokens(h(Fragment, null, "Spend is running ahead of the 7-day average",
+      h(Fragment, null, " ", badge), [" over 30 days"]));
+    assert.deepEqual(findNodes(tree, isNoWrap).map((n) => collectText(n)), ["7-day", "30 days"]);
+    assert.equal(findNodes(tree, (n) => n.props.className === "badge").length, 1, "the element part renders as it came");
+    assert.equal(rawText(tree), "Spend is running ahead of the 7-day average Last known 7 days over 30 days", "no character enters or leaves");
+  });
+
+  test("an AlertCard title composed as a Fragment with a badge keeps its day token whole", () => {
+    const title = h(Fragment, null, "Spend is running ahead of the 7-day average",
+      h(Fragment, null, " ", h(ui.Badge as Component, { tone: "neutral" }, "Last known")));
+    const card = renderScreen(h(ui.AlertCard as Component, { tone: "warn", title, body: "Today is 1.4× the 30-day mean" })) as RenderedNode;
+    const [titleNode] = findNodes(card, (n) => String(n.props.className ?? "").split(" ").includes("alert-card-title"));
+    assert.deepEqual(findNodes(titleNode, isNoWrap).map((n) => collectText(n)), ["7-day"]);
+    assert.match(collectText(titleNode), /Last known/, "the badge still rides the title");
   });
 });

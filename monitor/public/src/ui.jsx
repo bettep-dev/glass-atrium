@@ -1411,13 +1411,26 @@ function getDayTokenParts(text, place) {
   return parts;
 }
 
+const isFragmentPart = (part) => part !== null && typeof part === 'object' && part.type === React.Fragment;
+
+// children → their parts: a string splits around its day tokens, a Fragment is stepped into (a caller-composed title
+// such as `<>{title} <Badge/></>` keeps its literal's tokens whole), any other part is left to its own author
+function getDayTokenNodes(children, place) {
+  return [children].flat(Infinity).flatMap((part, at) => {
+    const key = `${place}${at}`;
+    if (typeof part === 'string') return getDayTokenParts(part, key);
+    if (!isFragmentPart(part)) return [part];
+    return [React.createElement(React.Fragment, { key }, ...getDayTokenNodes(part.props.children, `${key}.`))];
+  });
+}
+
 /**
  * A plain sentence with every day-count token kept whole in its own NoWrap; text content stays the sentence.
- * @param children - the sentence; a list of children (nested lists too) is read part by part, and a non-string part (a node, null) renders as is
+ * @param children - the sentence; a list of children (nested lists too) and a Fragment (nested too) are read part by part,
+ *   and any other non-string part (an element, null) renders as is
  */
 function DayTokens({ children }) {
-  const parts = [children].flat(Infinity)
-    .flatMap((part, place) => (typeof part === 'string' ? getDayTokenParts(part, place) : [part]));
+  const parts = getDayTokenNodes(children, '');
   if (parts.length <= 1) return parts[0] ?? null;
   // spread, not a list → a caller's own unkeyed element part needs no key
   return React.createElement(React.Fragment, null, ...parts);

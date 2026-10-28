@@ -413,6 +413,16 @@ test("an alarm card whose source's latest read failed says Last known beside its
   }
 });
 
+// the held spend alarm composes its title as a Fragment (literal + Last known badge) → the shared DayTokens atom still keeps "7-day" whole
+test("a held spend alarm's composed title keeps its 7-day token whole through the shared DayTokens atom", () => {
+  const SPEND_ALARM = { id: "spend", tone: "warn", title: "Spend is running ahead of the 7-day average", detail: "1.4× today", isHeld: true };
+  const [card] = alertCardsOf(render("AlarmCard", { alarm: SPEND_ALARM, onNav: () => {} }));
+  const title = renderScreen(mod.React.createElement(realUi.DayTokens as Component, { children: card.props.title })) as RenderedNode;
+  const noWraps = findNodes(title, (n) => /\bwhitespace-nowrap\b/.test(classOf(n))).map((n) => collectText(n));
+  assert.deepEqual(noWraps, ["7-day"]);
+  assert.deepEqual(findNodes(title, (n) => n.props.atom === "Badge").map((n) => collectText(n)), ["Last known"]);
+});
+
 test("a failed tile keeps its drill to the owning screen, whether it shows its own error card or defers to the banner", () => {
   for (const isRetryShared of [false, true]) {
     const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared });
