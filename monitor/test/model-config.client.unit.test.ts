@@ -541,7 +541,8 @@ async function loadMcScreens(
   Object.assign(reactStub, overrides.react ?? {});
   // ui.jsx atoms — rendered as tagged wrappers so their children stay readable in the tree.
   const uiStub = {
-    PageHeader: (p: Record<string, unknown>) => hMc("header", { className: "page-header" }, p.sub, p.right),
+    PageHeader: (p: Record<string, unknown>) =>
+      hMc("header", { className: "page-header" }, p.sub, p.actions, p.freshness, p.range, p.refresh),
     Icon: (p: Record<string, unknown>) => hMc("i", { "data-icon": p.name, className: p.className }),
     TypeScaleStyle: () => null,
     Badge: (p: Record<string, unknown>) =>

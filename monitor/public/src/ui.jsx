@@ -1242,15 +1242,28 @@ function DetailField({ label, value, mono = false }) {
   </div>;
 }
 
-// title = the page h1 (callers pass the nav label); a sub-line echoing the title is dropped.
-function PageHeader({ title, sub, right }) {
+/**
+ * Page title row: the h1 (callers pass the nav label) and its sub-line, then the right-anchored cluster.
+ * Cluster, left → right: actions · 24 · freshness · range · refresh, gap 12 — Refresh is always right-most.
+ * @param freshness - the status group: the FreshnessStamp and any status token read beside it
+ * @param range - the time-range control · @param refresh - the RefreshButton
+ * @param actions - optional page actions, set apart from the status group
+ * @param right - legacy free cluster, rendered after the slots until every caller is on them (slice 0b-8)
+ */
+function PageHeader({ title, sub, actions, freshness, range, refresh, right }) {
   const hasSub = sub && sub !== title;
-  return <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4">
+  const hasStatus = Boolean(freshness || range || refresh);
+  const hasCluster = Boolean(actions || hasStatus || right);
+  return <div className="page-head">
     <div className="min-w-0">
-      <h1 className="fs-display font-semibold leading-tight">{title}</h1>
-      {hasSub && <div className="fs-meta font-mono text-faint tracking-wider uppercase">{sub}</div>}
+      <h1 className="page-head-title fs-display font-semibold">{title}</h1>
+      {hasSub && <div className="page-head-sub fs-meta font-mono text-faint tracking-wider uppercase">{sub}</div>}
     </div>
-    {right && <div className="ml-auto flex flex-wrap items-center justify-end gap-2 min-w-0">{right}</div>}
+    {hasCluster && <div className="page-head-cluster">
+      {actions && <div className="page-head-group">{actions}</div>}
+      {hasStatus && <div className="page-head-group">{freshness}{range}{refresh}</div>}
+      {right && <div className="page-head-group">{right}</div>}
+    </div>}
   </div>;
 }
 

@@ -169,14 +169,14 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         <PageHeader
           title="Dashboard"
           sub={<span className="fs-meta">Triage</span>}
-          right={
+          freshness={
             <>
               {version && <span className="fs-meta font-mono text-dim">{version}</span>}
               <FreshnessStamp {...getFreshnessInputD(settledAt, waveStates, harness)}/>
-              <RefreshButton isBusy={isWaveBusy} hasRead={settledAt !== null}
-                onRefresh={triggerRefresh} label="Refresh dashboard"/>
             </>
           }
+          refresh={<RefreshButton isBusy={isWaveBusy} hasRead={settledAt !== null}
+            onRefresh={triggerRefresh} label="Refresh dashboard"/>}
         />
       </div>
 

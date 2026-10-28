@@ -137,26 +137,24 @@ function ScreenCost({ onNav }) {
       <div className="flex-shrink-0">
         <PageHeader
           title="Cost & usage"
-          right={
-            <>
-              <div className="seg" role="group" aria-label="Time range">
-                {COST_PERIODS.map((p) => (
-                  <button
-                    key={p.value}
-                    type="button"
-                    className={days === p.value ? 'active' : ''}
-                    disabled={isBusy && days !== p.value}
-                    onClick={() => setDays(p.value)}
-                    aria-pressed={days === p.value}
-                    aria-label={`Last ${p.label}`}>
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-              <RefreshButton isBusy={isBusy} hasRead={asOfAt !== null} onRefresh={triggerRefresh} label="Refresh cost data"/>
-              <FreshnessStamp {...freshnessInput}/>
-            </>
+          freshness={<FreshnessStamp {...freshnessInput}/>}
+          range={
+            <div className="seg" role="group" aria-label="Time range">
+              {COST_PERIODS.map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  className={days === p.value ? 'active' : ''}
+                  disabled={isBusy && days !== p.value}
+                  onClick={() => setDays(p.value)}
+                  aria-pressed={days === p.value}
+                  aria-label={`Last ${p.label}`}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
           }
+          refresh={<RefreshButton isBusy={isBusy} hasRead={asOfAt !== null} onRefresh={triggerRefresh} label="Refresh cost data"/>}
         />
       </div>
 

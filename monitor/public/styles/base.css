@@ -11,6 +11,42 @@ details[open] > summary .chevron {
 	transform: rotate(180deg);
 }
 
+/* page header — top-aligned row; the h1 line box is one control height, so the controls and the
+   freshness line center on the title line with or without a sub-line. Narrow → the cluster wraps below the title. */
+.page-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	column-gap: var(--space-3);
+	row-gap: var(--space-2);
+	margin-bottom: var(--space-4);
+}
+.page-head-title {
+	line-height: var(--ctl-min-h);
+}
+/* the h1 takes focus on a route change → the sub-line starts past the focus ring's reach */
+.page-head-sub {
+	margin-top: max(var(--space-1), calc(var(--focus-ring-width) + var(--focus-ring-offset)));
+}
+/* actions group ↔ status group 24; inside a group 12 (freshness · range · refresh) */
+.page-head-cluster,
+.page-head-group {
+	min-width: 0;
+	min-height: var(--ctl-min-h);
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	row-gap: var(--space-2);
+}
+.page-head-cluster {
+	margin-left: auto;
+	column-gap: var(--space-6);
+}
+.page-head-group {
+	column-gap: var(--space-3);
+}
+
 /* flex column → the body takes the remaining height and the foot pins to the bottom edge.
    Light rests on its 1px border alone (border-first elevation). */
 .card {

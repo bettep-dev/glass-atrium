@@ -445,7 +445,7 @@ function ScreenModelConfig() {
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Models & budgets"
-					right={
+					freshness={
 						<>
 							<SyncTokenMC
 								state={configState.status}
@@ -453,13 +453,15 @@ function ScreenModelConfig() {
 								freshness={freshness}
 							/>
 							<FreshnessStamp {...freshness} />
-							<RefreshButton
-								isBusy={configState.busy}
-								hasRead={asOfAt !== null}
-								onRefresh={triggerRefresh}
-								label="Reload model config"
-							/>
 						</>
+					}
+					refresh={
+						<RefreshButton
+							isBusy={configState.busy}
+							hasRead={asOfAt !== null}
+							onRefresh={triggerRefresh}
+							label="Reload model config"
+						/>
 					}
 				/>
 			</div>

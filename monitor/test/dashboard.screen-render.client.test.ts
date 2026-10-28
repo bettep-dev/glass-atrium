@@ -70,6 +70,8 @@ function alertCardStub(props: Record<string, unknown>): unknown {
   const children = [props.title, props.body, props.actions].filter((slot) => slot != null && slot !== false);
   return { __element: true, type: "ui-atom", props: { ...props, atom: "AlertCard", children } };
 }
+// PageHeader named slots, left → right
+const HEADER_SLOTS = ["actions", "freshness", "range", "refresh"];
 const alertCardsOf = (tree: RenderedNode) => findNodes(tree, (n) => n.props.atom === "AlertCard");
 
 type Component = (props: unknown) => unknown;
@@ -554,9 +556,9 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
       const tree = renderScreen(screen.React.createElement(screen.ScreenDashboard as Component, {
         onNav: () => {}, harness: FAILED, onRetryHarness: () => { polls += 1; },
       })) as RenderedNode;
-      // the header's controls ride the PageHeader atom's `right` slot, outside its children
+      // the header's controls ride the PageHeader atom's named slots, outside its children
       const [header] = findNodes(tree, (n) => n.props.atom === "PageHeader");
-      const slots = [tree, renderScreen(header.props.right) as RenderedNode];
+      const slots = [tree, ...HEADER_SLOTS.map((slot) => renderScreen(header.props[slot]) as RenderedNode)];
       const controls = slots.flatMap((slot) => findNodes(slot, (n) => n.props.atom === row.atom));
       assert.equal(controls.length, 1, `${row.name} is mounted`);
       (controls[0].props[row.handler] as () => void)();

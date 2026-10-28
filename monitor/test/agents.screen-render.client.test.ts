@@ -642,12 +642,11 @@ function findAtoms(tree: RenderedNode | string | null, atom: string): RenderedNo
 
 test("the header's Refresh and freshness stamp read every region, so a first load is never announced as fresh", async () => {
   const [header] = findAtoms(await renderScreenAgents(), "PageHeader");
-  // The stub header keeps its right-hand slot as a prop, so render that slot on its own.
-  const tree = renderScreen(header.props.right);
-  const [refresh] = findAtoms(tree, "RefreshButton");
+  // The stub header keeps its named slots as props, so render each slot on its own.
+  const [refresh] = findAtoms(renderScreen(header.props.refresh), "RefreshButton");
   assert.equal(refresh?.props.isBusy, true, "a region in flight keeps Refresh busy");
   assert.equal(refresh?.props.hasRead, false, "before the first read Refresh says it is loading, not refreshing");
-  const [stamp] = findAtoms(tree, "FreshnessStamp");
+  const [stamp] = findAtoms(renderScreen(header.props.freshness), "FreshnessStamp");
   assert.equal((stamp?.props.regions as unknown[]).length, 9, "the stamp sees all nine page regions");
 });
 

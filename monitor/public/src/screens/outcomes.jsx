@@ -689,16 +689,14 @@ function ScreenOutcomes({ onNav }) {
         <PageHeader
           title="Task results"
           sub="Agent task outcomes"
-          right={
-            <>
-              <FreshnessStamp {...getFreshnessInputO(asOfAt, stampRegions)}/>
-              <WindowSeg value={filter.days} onChange={setWindowDays}/>
-              <RefreshButton
-                isBusy={isRefreshing}
-                hasRead={asOfAt != null}
-                onRefresh={triggerRefresh}
-                label="Refresh task results"/>
-            </>
+          freshness={<FreshnessStamp {...getFreshnessInputO(asOfAt, stampRegions)}/>}
+          range={<WindowSeg value={filter.days} onChange={setWindowDays}/>}
+          refresh={
+            <RefreshButton
+              isBusy={isRefreshing}
+              hasRead={asOfAt != null}
+              onRefresh={triggerRefresh}
+              label="Refresh task results"/>
           }
         />
       </div>

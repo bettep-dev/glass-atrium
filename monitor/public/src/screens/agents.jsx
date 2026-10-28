@@ -371,28 +371,28 @@ function ScreenAgents() {
         <PageHeader
           title="Agents"
           sub="Triage — who is unsafe to route to, and what is breaking"
-          right={
-            <>
-              <div className="seg" aria-label="Time range">
-                {AGENT_PERIODS.map((p) => (
-                  <button
-                    key={p.value}
-                    className={days === p.value ? 'active' : ''}
-                    disabled={isAnyRegionBusy && days !== p.value}
-                    onClick={() => setDays(p.value)}
-                    aria-pressed={days === p.value}
-                    aria-label={`Last ${p.label}`}>
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-              <FreshnessStamp at={summaryAsOfAt} regions={regionStates}/>
-              <RefreshButton
-                isBusy={isAnyRegionBusy}
-                hasRead={summaryAsOfAt != null}
-                onRefresh={triggerRefresh}
-                label="Refresh agent data"/>
-            </>
+          freshness={<FreshnessStamp at={summaryAsOfAt} regions={regionStates}/>}
+          range={
+            <div className="seg" aria-label="Time range">
+              {AGENT_PERIODS.map((p) => (
+                <button
+                  key={p.value}
+                  className={days === p.value ? 'active' : ''}
+                  disabled={isAnyRegionBusy && days !== p.value}
+                  onClick={() => setDays(p.value)}
+                  aria-pressed={days === p.value}
+                  aria-label={`Last ${p.label}`}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          }
+          refresh={
+            <RefreshButton
+              isBusy={isAnyRegionBusy}
+              hasRead={summaryAsOfAt != null}
+              onRefresh={triggerRefresh}
+              label="Refresh agent data"/>
           }
         />
       </div>
