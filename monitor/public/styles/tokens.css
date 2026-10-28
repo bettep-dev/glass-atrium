@@ -54,13 +54,32 @@
   --radius-tile:     8px;
   --radius-card:    12px;
 
+  /* spacing ladder — 4px base, the only spacing steps; JSX spells them as the Tailwind steps 0.5/1/1.5/2/3/4/6/8.
+     An offset derived from these by calc() is on the ladder; a literal for the same value is not. */
+  --space-0_5: 2px;  /* stacked title → sub-line inside one cell or tile */
+  --space-1:   4px;  /* icon ↔ label at meta size · pill gap · control-cell padding-block · title → subtitle floor */
+  --space-1_5: 6px;  /* icon ↔ label at control/body size · control padding-block */
+  --space-2:   8px;  /* between controls · list items · small-control and pill padding-inline · cell padding-block */
+  --space-3:  12px;  /* .btn padding-inline · card-head column gap · interior cell padding-inline · sub-blocks */
+  --space-4:  16px;  /* card/tile padding · card ↔ card gap · page header → content · edge cell padding-inline */
+  --space-6:  24px;  /* page gutter · section ↔ section · overlay padding-inline */
+  --space-8:  32px;  /* break before a titled section group */
+
   /* minimum hit height for every interactive atom */
   --ctl-min-h: 32px;
+  /* control line box — what is left of the 32px control after its 6px padding-block and 1px borders,
+     so every bordered control (.btn, .field) lands on exactly --ctl-min-h; a borderless .seg button rises to it by min-height */
+  --lh-ctl: calc(var(--ctl-min-h) - 2 * var(--space-1_5) - 2px);
 
   /* card anatomy — one-line header · inner padding · single-line list/table row */
   --card-head-h: 48px;
-  --card-pad:    16px;
-  --row-h:       40px;
+  --card-pad:    var(--space-4); /* alias kept — the ladder step it always was */
+  /* row heights are min-heights in three steps: default · two-line (also a control cell with a wrapped line) · compact nested (never holds a control) */
+  --row-h:         40px;
+  --row-h-2:       56px;
+  --row-h-compact: 32px;
+  /* one line box per row (B2) for 13–15px text: a text cell 8 + 20 + 8 rises to 40, a control cell 4 + 32 + 4 is 40 */
+  --lh-row: 20px;
 
   /* one filled selected state — pressed toggles, active segments, checked items */
   --selected-fill:  28  25  23;
@@ -125,6 +144,7 @@
 html, body { margin: 0; padding: 0; }
 body {
   font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif;
+  font-size: var(--fs-body);
   font-feature-settings: 'tnum' 1, 'cv11' 1;
   -webkit-font-smoothing: antialiased;
 }

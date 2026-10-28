@@ -115,11 +115,12 @@ details[open] > summary .chevron {
 .btn {
 	display: inline-flex;
 	align-items: center;
-	gap: 6px;
-	padding: 6px 12px;
+	gap: var(--space-1_5);
+	padding: var(--space-1_5) var(--space-3);
 	min-height: var(--ctl-min-h);
 	border-radius: var(--radius-control);
 	font-size: var(--fs-control);
+	line-height: var(--lh-ctl); /* 6 + line + 6 + borders = exactly --ctl-min-h, so a control cell stays 4 + 32 + 4 */
 	font-weight: 500;
 	border: 1px solid rgb(var(--line));
 	background: rgb(var(--elev));
@@ -153,7 +154,7 @@ details[open] > summary .chevron {
 	color: rgb(var(--ink));
 }
 .btn.sm {
-	padding: 4px 9px;
+	padding: var(--space-1_5) var(--space-2);
 	font-size: var(--fs-meta);
 }
 /* 라벨 없는 아이콘 전용 버튼 — 정사각 --ctl-min-h 로 WCAG 2.2 §2.5.8 최소 타깃 확보 (.sm 뒤 = 패딩 override 순서 의존). */
@@ -171,15 +172,15 @@ details[open] > summary .chevron {
 
 /* ── Badge shell — 단일 canonical FORM (전 role/변형 공용) ────────────────────
    window.UI.Badge(ui.jsx) 의 styling layer. 모든 role 이 이 neutral shell FORM 을 공유한다:
-   neutral(--sunken/--dim/--line) · min-height 22px + padding 3/8(border-box, 폼요소 패밀리 호흡) · --radius-badge · --fs-meta · weight 500.
+   neutral(--sunken/--dim/--line) · min-height 24px + padding-block 0 / inline 8 · gap 4 (border-box) · --radius-badge · --fs-meta · weight 500.
    tone 은 shell 에 칠하지 않는다 — 내부 심볼(Icon/glyph)에 text-{tone} 로만 (dead .pill.crit/.warn/.info/.ok 제거). */
 .pill {
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
+	gap: var(--space-1);
 	box-sizing: border-box;
-	min-height: 22px;
-	padding: 3px 8px;
+	min-height: 24px;
+	padding: 0 var(--space-2);
 	font-size: var(--fs-meta);
 	font-weight: 500;
 	line-height: 1;
@@ -206,7 +207,7 @@ details[open] > summary .chevron {
 	font-variant-numeric: tabular-nums;
 }
 /* height-match variant — model-config 메타/상태 배지를 같은 행 폼컨트롤(<select> · $ 입력, 둘 다 .field) 과 동일 HEIGHT 로 세로 정렬.
-   canonical FORM(너비/폰트/radius) 유지 · HEIGHT 만 --ctl-h 로 .field 와 lockstep — min-height 가 base 22px 를 지배.
+   canonical FORM(너비/폰트/radius) 유지 · HEIGHT 만 --ctl-h 로 .field 와 lockstep — min-height 가 base 24px 를 지배.
    box-sizing 은 base .pill 의 border-box 상속. */
 .pill--ctl-h {
 	height: auto;
@@ -302,15 +303,22 @@ details[open] > summary .chevron {
 }
 
 .tbl {
+	/* each cell's 1px bottom rule sits inside the 40 row → every cell gives up half of it on each side of its block padding,
+	   so a text cell is 7.5 + 20 + 7.5 + 1 (rising to 40), a 24px pill cell 7.5 + 24 + 7.5 + 1 = 40, a control cell 3.5 + 32 + 3.5 + 1 = 40 */
+	--tbl-rule: 1px;
+	--tbl-pad-block: calc(var(--space-2) - var(--tbl-rule) / 2);
+	--tbl-ctl-pad-block: calc(var(--space-1) - var(--tbl-rule) / 2);
 	width: 100%;
 	border-collapse: collapse;
 	font-size: var(--fs-control);
 }
 .tbl th,
 .tbl td {
-	padding: 9px 14px;
+	padding: var(--tbl-pad-block) var(--space-3);
+	line-height: var(--lh-row);
+	vertical-align: middle;
 	text-align: left;
-	border-bottom: 1px solid rgb(var(--line));
+	border-bottom: var(--tbl-rule) solid rgb(var(--line));
 }
 .tbl th {
 	font-weight: 500;
@@ -322,6 +330,21 @@ details[open] > summary .chevron {
 }
 .tbl td {
 	height: var(--row-h);
+}
+/* edge cells take the card padding → the first and last column line up with the card head; flush comes from an unpadded card body */
+.tbl th:first-child,
+.tbl td:first-child {
+	padding-inline-start: var(--space-4);
+}
+.tbl th:last-child,
+.tbl td:last-child {
+	padding-inline-end: var(--space-4);
+}
+/* control cell — a cell holding a --ctl-min-h control takes the --space-1 step (less half the rule), so the row stays --row-h beside its text cells.
+   Block longhands, so the inline edge rule above still applies. A new 32px control class joins this list in the change that creates it. */
+.tbl :is(th, td):has(.btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h) {
+	padding-block-start: var(--tbl-ctl-pad-block);
+	padding-block-end: var(--tbl-ctl-pad-block);
 }
 .tbl tbody tr {
 	cursor: pointer;
@@ -335,6 +358,7 @@ details[open] > summary .chevron {
 .tbl td.num,
 .tbl th.num {
 	font-family: "JetBrains Mono", monospace;
+	font-variant-numeric: tabular-nums;
 	text-align: right;
 	white-space: nowrap;
 }
@@ -343,17 +367,19 @@ details[open] > summary .chevron {
 	border-bottom: none;
 }
 
+/* the outline is a shadow ring, not a border → the group is exactly its 32px buttons tall, so it fits the 40 control cell like every other control */
 .seg {
 	display: inline-flex;
-	border: 1px solid rgb(var(--line));
+	box-shadow: 0 0 0 1px rgb(var(--line));
 	border-radius: var(--radius-control);
 	overflow: hidden;
 	background: rgb(var(--elev));
 }
 .seg button {
-	padding: 5px 10px;
+	padding: var(--space-1_5) var(--space-2);
 	min-height: var(--ctl-min-h);
 	font-size: var(--fs-meta);
+	line-height: var(--lh-ctl);
 	background: none;
 	border: none;
 	color: rgb(var(--dim));
@@ -671,18 +697,19 @@ details[open] > summary .chevron {
 	flex-direction: column;
 }
 .modal-head {
-	padding: 14px 20px;
+	min-height: var(--card-head-h);
+	padding: var(--space-1) var(--space-6);
 	border-bottom: 1px solid rgb(var(--line));
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 }
 .modal-body {
-	padding: 18px 20px;
+	padding: var(--space-4) var(--space-6);
 	overflow-y: auto;
 }
 .modal-foot {
-	padding: 12px 20px;
+	padding: var(--space-3) var(--space-6);
 	border-top: 1px solid rgb(var(--line));
 	display: flex;
 	justify-content: flex-end;
@@ -813,8 +840,10 @@ details[open] > summary .chevron {
 	animation: detailPop 180ms ease-out;
 }
 
+/* head as card-head: min 48, inline 24 · a one-line title beside the 32px close button is 8 + 32 + 8 = 48 */
 .detail-head {
-	padding: 14px 20px;
+	min-height: var(--card-head-h);
+	padding: var(--space-2) var(--space-6);
 	border-bottom: 1px solid rgb(var(--line));
 	display: flex;
 	align-items: flex-start;
@@ -822,12 +851,12 @@ details[open] > summary .chevron {
 	flex-shrink: 0;
 }
 .detail-title { font-weight: 600; font-size: var(--fs-title); color: rgb(var(--ink)); }
-.detail-sub { margin-top: 2px; font-size: var(--fs-meta); color: rgb(var(--faint)); }
-.detail-body { padding: 18px 20px; overflow-y: auto; flex: 1 1 auto; }
+.detail-sub { margin-top: var(--space-0_5); font-size: var(--fs-meta); color: rgb(var(--faint)); }
+.detail-body { padding: var(--space-4) var(--space-6); overflow-y: auto; flex: 1 1 auto; }
 /* bare — children 이 자체 header/close 소유 시 padding 만 제거 (overflow/flex 스크롤 거동 유지) */
 .detail-body--bare { padding: 0; }
 .detail-foot {
-	padding: 12px 20px;
+	padding: var(--space-3) var(--space-6);
 	border-top: 1px solid rgb(var(--line));
 	display: flex;
 	align-items: center;
@@ -855,13 +884,13 @@ details[open] > summary .chevron {
 	.detail-confirm .detail-panel { animation-duration: 0.01ms !important; }
 }
 
+/* the one empty-state form — padding 24, left-aligned, sans meta size, dim */
 .placeholder {
-	padding: 28px;
+	padding: var(--space-6);
 	border: 1px dashed rgb(var(--faint) / 0.5);
 	border-radius: var(--radius-tile);
-	color: rgb(var(--faint));
-	text-align: center;
-	font-family: "JetBrains Mono", monospace;
+	color: rgb(var(--dim));
+	text-align: left;
 	font-size: var(--fs-meta);
 }
 
@@ -885,16 +914,16 @@ details[open] > summary .chevron {
    Chrome 정합: .btn(radius 6px·1px line border·elev fill·0.12s transition·
    disabled opacity 0.5) + .seg/.kpi(elev resting fill) + .doc-filter-input:focus
    (accent border + 2px accent/0.2 ring) 미러. 신규 토큰 없음 — 전부 tokens.css 재참조.
-   높이 ~30px = padding 5px+5px + font 12.5px(line ~17.5) + 1px×2 border ≈ 29.5px. */
+   높이 = padding 6px+6px + --lh-ctl line box + 1px×2 border = --ctl-min-h(32px) 정확히. */
 
 /* 폼컨트롤 박스 치수 SoT — .field(<select>)와 .pill--ctl-h(height-match 배지)가 공유.
    한 곳만 바꾸면 SAVED TARGET <select> 와 MODEL ASSIGNMENT 메타 배지가 같은 높이로 움직임(lockstep).
    --ctl-h = .field 외곽 박스 최소 높이(border-box) = --ctl-min-h(32px). */
 :root {
-	--ctl-pad-y: 5px;
-	--ctl-pad-x: 9px;
+	--ctl-pad-y: var(--space-1_5);
+	--ctl-pad-x: var(--space-2);
 	--ctl-font: var(--fs-control);
-	--ctl-line: 1.4;
+	--ctl-line: var(--lh-ctl);
 	--ctl-radius: var(--radius-control);
 	--ctl-h: var(--ctl-min-h);
 }
@@ -982,6 +1011,7 @@ details[open] > summary .chevron {
 	border: 1px solid rgb(var(--line));
 	border-radius: var(--radius-control);
 	transition: border-color 0.12s, box-shadow 0.12s;
+	min-height: var(--ctl-h);          /* the wrapper owns the border → it, not the inner field, holds the 32px control height */
 	padding-left: 9px;                 /* affix 좌측 gutter — input 자체 좌패딩은 제거 */
 }
 .field-affix:hover:not(:focus-within) { border-color: rgb(var(--faint)); }
@@ -1005,6 +1035,7 @@ details[open] > summary .chevron {
 	background: transparent;
 	box-shadow: none;
 	padding-left: 4px;                 /* sym 과 값 사이 간격 */
+	min-height: 0;                     /* borderless inside the wrapper → 6 + line + 6, the wrapper borders make it 32 */
 	width: 100%;
 }
 .field-affix .field:focus-visible,

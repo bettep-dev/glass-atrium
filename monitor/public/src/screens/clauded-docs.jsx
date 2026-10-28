@@ -37,19 +37,21 @@ const LEDGER_CD = {
 	// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
 	//   · Tags drops out when no row carries a tag of its own → one column fewer.
 	COLUMN_COUNT: 7,
-	CELL_PADDING: 28, // .tbl th/td horizontal padding (base.css 14px each side)
+	// .tbl th/td inline padding per column class (base.css): an edge cell is 16 + 12, an interior cell 12 + 12
+	PADDING: { edge: 28, interior: 24 },
 	/**
 	 * px floor each ledger column holds before the table scrolls sideways → th widths + every ledger/rail container threshold derive from here.
+	 * Each floor = measured content + its column's padding class (select and created are the edge columns).
 	 * Container queries cannot read var() → the <style> block interpolates these.
 	 */
 	FLOOR: {
-		select: 44, // ponytail: .doc-checkbox-cell as rendered (measured) — the cell CSS sets it, this mirrors it; a checkbox-cell change → re-measure
-		status: 191, // "Implementing" pill 160.8px (macOS, 1440) + cell padding — the ledger caps the pill at this floor and ellipsizes a wider label → font-independent
-		id: 90, // "#123456" — 7 mono glyphs × 7.8px (13px × 0.6em) + padding 28px
-		title: 434, // a title beside its trailing "rev of #N" pill · id + title keep the sum the container thresholds read
-		tags: 152,
-		author: 110,
-		created: 100,
+		select: 44, // 16px checkbox + edge 28 — .doc-checkbox-cell takes this width
+		status: 197, // widest face, the "Implementing" picker, 172.8px uncapped (macOS, 1440: shell 2 + 16 · meter 56 · label 79 · caret 12 · gaps 8) + interior 24 — the ledger caps the pill at this floor minus interior and ellipsizes a wider label → font-independent
+		id: 88, // "#" + 6 digits = 64 + interior 24
+		title: 434, // a title beside its trailing "rev of #N" pill · the Documents title floor stays
+		tags: 148, // 124 content allowance (the 152 floor less the old 28 padding) + interior 24
+		author: 106, // 82 content allowance (the 110 floor less the old 28 padding) + interior 24
+		created: 100, // 72 content allowance + edge 28 (unchanged: an edge column keeps its 28)
 		titleNarrow: 240,
 		// Tags drops first + the narrow title floor applies only below this sum → both left out
 		get sum() {
@@ -1051,7 +1053,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* (retired) .doc-status-badge — 스테이지 pill 이 .doc-stage-pill 로 대체. */
         /* multi-select + group UI tokens. */
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
-        .doc-checkbox-cell { width: 28px; padding: 4px 6px 4px 12px; text-align: center; vertical-align: middle; }
+        /* B6 — the checkbox is block and centered in its cell; the cell takes the select floor (checkbox + edge padding) */
+        .doc-checkbox-cell { width: ${LEDGER_CD.FLOOR.select}px; text-align: center; vertical-align: middle; }
         .doc-checkbox-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: rgb(var(--accent)); }
         /* ledger checkbox — neutral at rest, the one selected state when checked or mixed; a toggle is discrete → no transition */
         .doc-checkbox { appearance: none; width: 16px; height: 16px; margin: 0; border: 1.5px solid rgb(var(--faint)); border-radius: var(--radius-inline); background: rgb(var(--elev)); cursor: pointer; }
@@ -1104,20 +1107,18 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
         .doc-stage-picker { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-        .doc-stage-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: transparent; color: rgb(var(--ink)); font-size: var(--fs-meta); line-height: 1.4; white-space: nowrap; }
-        .doc-stage-pill.is-interactive { cursor: pointer; border-radius: 6px; }
-        .doc-stage-pill.is-interactive:hover { background: rgb(var(--line) / 0.4); }
+        /* stage pill on the shared .pill shell (geometry: min-height 24 · inline 8 · gap 4 · --radius-badge; the picker is .pill--interactive at 32)
+           — only its unchanged face stays here: no fill, ink label, the label's own weight and line box */
+        .doc-stage-pill { background: transparent; color: rgb(var(--ink)); font-weight: inherit; line-height: 1.4; }
+        .doc-stage-pill.pill--interactive:hover { background: rgb(var(--line) / 0.4); }
         .doc-stage-glyph.is-terminal { display: inline-flex; color: rgb(var(--dim)); }
         .doc-meta-danger { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgb(var(--line)); }
         .doc-stage-caret { display: inline-flex; color: rgb(var(--dim)); }
-        .doc-stage-meter { display: inline-flex; align-items: center; gap: 3px; }
+        .doc-stage-meter { display: inline-flex; align-items: center; gap: var(--space-1); }
         .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* a max-width caps the pill's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
-        .doc-ledger-scroll .doc-stage-picker, .doc-ledger-scroll .doc-stage-pill { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.CELL_PADDING}px; min-width: 0; }
+        .doc-ledger-scroll .doc-stage-picker, .doc-ledger-scroll .doc-stage-pill { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
         .doc-ledger-scroll .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        /* one-line rows → the --row-h cell height sets the row; the 24px pill stays the WCAG 2.5.8 target floor */
-        .doc-ledger-scroll .tbl tr.doc-row > td { padding-block: 4px; }
-        .doc-ledger-scroll .doc-stage-pill { padding-block: 2px; }
         .doc-age-flag { display: flex; align-items: center; gap: 4px; font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--dim)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* .card overflow:hidden = a scroll container → traps the rail's sticky in the card · clip trims the corners only, sticky stays viewport-relative */
         .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
@@ -3024,7 +3025,7 @@ function DocStagePillCD({
 
 	if (typeof onPickStage !== "function") {
 		return (
-			<span className="doc-stage-pill" title={accessibleName}>
+			<span className="pill doc-stage-pill" title={accessibleName}>
 				{face}
 			</span>
 		);
@@ -3045,7 +3046,7 @@ function DocStagePillCD({
 			}}>
 			<button
 				type="button"
-				className="doc-stage-pill is-interactive"
+				className="pill pill--interactive doc-stage-pill"
 				aria-haspopup="menu"
 				aria-expanded={menuOpen}
 				aria-busy={isChanging || undefined}
@@ -3127,7 +3128,7 @@ function DocCheckboxCD({
 
 	return (
 		<span
-			className="relative inline-flex items-center justify-center"
+			className="relative flex items-center justify-center mx-auto"
 			style={{ width: 16, height: 16, cursor: "pointer" }}
 		>
 			<input

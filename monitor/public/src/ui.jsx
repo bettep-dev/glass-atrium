@@ -49,6 +49,9 @@ function getIconChildren(key, node) {
   return children;
 }
 
+// a Tailwind display utility the caller set on purpose (hidden, block, sm:inline …) → Icon leaves display to it
+const ICON_DISPLAY_CLASS = /(^|[\s:])(hidden|block|inline|inline-block|flex|inline-flex|grid|contents)(\s|$)/;
+
 // ariaHidden 기본 true — 아이콘은 장식(decorative)이고 의미는 인접 텍스트 라벨이 운반한다(색+기호+텍스트 3중 인코딩 유지).
 // stroke='currentColor' 보존 → 자체(className=text-{tone}) 또는 상위 tone 컬러 클래스가 세팅한 color 를 그대로 상속(색 인코딩 무퇴행).
 // 내부 구현: Lucide UMD 전역(window.lucide) 단일 소스에서 이름으로 IconNode 를 조회해 자식만 렌더 —
@@ -57,8 +60,13 @@ function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
   // 인라인(비-flex) 텍스트 옆 svg 를 텍스트와 수직 중앙 정렬하는 전역 additive 기본값.
   //   · className 에 명시 정렬(align-*/vertical-align)이 있으면 양보 — inline style 가 class 를 이기므로 조건부로만 적용(SymI 의 align-middle 무회귀).
   //   · inline-flex 컨테이너(.pill 등)에선 vertical-align 이 무시되므로 보드 배지에 무해.
+  // display is set apart from that skip (B1): Tailwind preflight makes every svg a block, which drops an icon onto its own
+  //   line above its label in inline text — and an align class does not undo that. A flex/grid parent blockifies it anyway,
+  //   so chart and flex callers are unaffected; a display utility in className still wins.
   const alignStyle = /align-|vertical-align/.test(className) ? undefined : { verticalAlign: '-0.125em' };
-  const props = { width:size, height:size, viewBox:'0 0 24 24', fill:'none', stroke:'currentColor', strokeWidth:stroke, strokeLinecap:'round', strokeLinejoin:'round', className, style: alignStyle, 'aria-hidden': ariaHidden || undefined };
+  const displayStyle = ICON_DISPLAY_CLASS.test(className) ? undefined : { display: 'inline-block' };
+  const style = alignStyle || displayStyle ? { ...displayStyle, ...alignStyle } : undefined;
+  const props = { width:size, height:size, viewBox:'0 0 24 24', fill:'none', stroke:'currentColor', strokeWidth:stroke, strokeLinecap:'round', strokeLinejoin:'round', className, style, 'aria-hidden': ariaHidden || undefined };
   // falsy name(예: HOOK_ERROR_KIND_MODEL 의 icon:null) → 빈 svg (기존 paths[null] 동작 보존, throw 금지).
   if (!name) return <svg {...props} />;
   // 1차: Lucide UMD 전역에서 조회 (전체 카탈로그). icons[key] 우선, top-level 키 폴백. IconNode = [tag, attrs, children].
@@ -119,7 +127,7 @@ function EmptyState({ message, hint, action, className='' }) {
     <div className={`placeholder ${className}`.trim()}>
       <div className="fs-meta">{message}</div>
       {hint && <div className="fs-meta text-faint mt-1">{hint}</div>}
-      {action && <div className="mt-2 flex justify-center">{action}</div>}
+      {action && <div className="mt-2 flex">{action}</div>}
     </div>
   );
 }
