@@ -4,7 +4,8 @@ Applies to all agents. [ALL]
 
 ## Core
 
-- Every completed task records its outcome, success or not; the recorder stores it in PostgreSQL `core.outcomes`, never as a `.md` file.
+- Every completed task records its outcome, success or not; the recorder stores it in PostgreSQL `core.outcomes`.
+  - An Outcome Record is never a `.md` file: agents write and read none under the outcomes directory (`~/.glass-atrium/data/outcomes/`, which `hooks/post-edit-outcome-sync.sh` still syncs).
 - **Lesson-free read**: every agent and main session reads prior Outcome Records only through this command — the search listing, with the `lesson` key deleted from every row before any output reaches the reader:
 
   ```
