@@ -1022,13 +1022,13 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   const trends = buildBandTrendsO(analyticsState.data, bandTiles, attentionState.data?.priorTotal ?? null);
   const prior = analyticsState.data?.overall?.prior_window;
   // trend stays a plain string (the aria-label reads it); the range token rides beside it for the render
-  const withTrend = (tile) => {
+  const getTrendTile = (tile) => {
     const trend = trends[tile.key] ?? null;
     return { ...tile, trend, trendRange: trend ? window.UI.formatDayRange(prior) : null };
   };
   // stale or partial read → an ok tile drops to neutral, warn/crit kept (the verdict's rule)
   const tiles = bandTiles
-    .map(withTrend)
+    .map(getTrendTile)
     .map((tile) => (freshness ? { ...tile, tone: getFreshnessVerdict({ ...freshness, tone: tile.tone }).tone } : tile));
   // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.
   const windowLabel = `${windowDays}d`;

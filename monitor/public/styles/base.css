@@ -363,8 +363,7 @@ details[open] > summary .chevron {
 .tbl th {
 	font-size: var(--fs-meta);
 }
-/* house cells read left at the plain .tbl cell specificity; an own-face table starts left at zero specificity,
-   so its cells' own text-right / text-center classes keep the alignment they carried before the routing */
+/* house cells read left at plain .tbl specificity; an own-face table reads left at zero specificity, so its cells' text-right / text-center classes win */
 .tbl:where(:not(.tbl--own-face)) :is(th, td) {
 	text-align: left;
 }
@@ -473,7 +472,7 @@ button.kpi:hover {
 	border-color: rgb(var(--faint));
 }
 
-/* UI.KPI anatomy (amendment (c)) — label row · value row · delta · hint · foot */
+/* UI.KPI anatomy — label row · value row · delta · hint · foot */
 .kpi-tile {
 	display: flex;
 	flex-direction: column;
@@ -572,15 +571,6 @@ button.kpi:hover {
 	flex-wrap: wrap;
 	align-items: center;
 	gap: var(--space-2);
-}
-.kpi-label {
-	font-size: var(--fs-meta);
-	color: rgb(var(--dim));
-	font-weight: 500;
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	min-width: 0;
 }
 .kpi-hint {
 	line-height: 1.45;

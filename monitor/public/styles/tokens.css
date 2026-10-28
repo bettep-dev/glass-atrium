@@ -73,12 +73,12 @@
 
   /* card anatomy — one-line header · inner padding · single-line list/table row */
   --card-head-h: 48px;
-  --card-pad:    var(--space-4); /* alias kept — the ladder step it always was */
+  --card-pad:    var(--space-4); /* the card's inner padding, one ladder step */
   /* row heights are min-heights in three steps: default · two-line (also a control cell with a wrapped line) · compact nested (never holds a control) */
   --row-h:         40px;
   --row-h-2:       56px;
   --row-h-compact: 32px;
-  /* one line box per row (B2) for 13–15px text: a text cell 8 + 20 + 8 rises to 40, a control cell 4 + 32 + 4 is 40 */
+  /* one line box per row for 13–15px text — .tbl derives its cell block padding from it and the 40 row */
   --lh-row: 20px;
 
   /* one filled selected state — pressed toggles, active segments, checked items */

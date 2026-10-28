@@ -2342,7 +2342,7 @@ function SuccessRateMatrixTable({ matrix }) {
             <tr>
               <th
                 scope="col"
-                className={`text-left ${TABLE_HEAD_CLASS}`}
+                className={`text-left ${HEAD_CLASS.TABLE}`}
                 style={MATRIX_CORNER_TH_STYLE}>
                 Agent
               </th>
@@ -2350,7 +2350,7 @@ function SuccessRateMatrixTable({ matrix }) {
                 <th
                   key={c.key}
                   scope="col"
-                  className={`text-center ${TABLE_HEAD_CLASS}`}
+                  className={`text-center ${HEAD_CLASS.TABLE}`}
                   style={MATRIX_HEADER_TH_STYLE}>
                   {c.label}
                 </th>
@@ -2498,9 +2498,9 @@ function SuccessRateSparkline({ points, colorVar, name }) {
 // 매트릭스 companion — 합산 성공률 < threshold 쌍만 노출 → 대부분 green 이어도 action item 가시 유지 (research R2).
 
 // Ledger `.tbl th` face for the dense mono tables → one header idiom per page.
-const TABLE_HEAD_CLASS = 'font-sans uppercase tracking-wider fs-meta text-dim font-medium px-2 py-1.5 border-b border-line';
-// the paired S tables sit on .tbl--own-face → .tbl gives the cell geometry, this keeps their header face
-const PAIRED_HEAD_CLASS = 'font-sans uppercase tracking-wider fs-meta text-dim font-medium';
+const HEAD_FACE = 'font-sans uppercase tracking-wider fs-meta text-dim font-medium';
+// TABLE carries its own cell geometry; the PAIRED S tables sit on .tbl--own-face, so .tbl gives theirs and they take the face alone
+const HEAD_CLASS = { TABLE: `${HEAD_FACE} px-2 py-1.5 border-b border-line`, PAIRED: HEAD_FACE };
 
 function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent }) {
   const [isShowingAll, setShowingAll] = useStateAg(false);
@@ -2659,7 +2659,7 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
         <thead>
           <tr>
             {TOPN_FAILING_COLUMNS.map((c) => (
-              <TableHead key={c.key} isSticky className={`text-${c.align} ${PAIRED_HEAD_CLASS} whitespace-nowrap${c.width ? ' ' + c.width : ''}`}>
+              <TableHead key={c.key} isSticky className={`text-${c.align} ${HEAD_CLASS.PAIRED} whitespace-nowrap${c.width ? ' ' + c.width : ''}`}>
                 <span title={c.title}>{c.label}</span>
               </TableHead>
             ))}
@@ -2987,7 +2987,7 @@ function LifecycleStatsTable({ rows, onSelect }) {
         <thead>
           <tr>
             {LIFECYCLE_COLUMNS.map((c) => (
-              <TableHead key={c.key} isSticky className={`text-${c.align} ${PAIRED_HEAD_CLASS}`}>
+              <TableHead key={c.key} isSticky className={`text-${c.align} ${HEAD_CLASS.PAIRED}`}>
                 <span title={c.title}>{c.label}</span>
               </TableHead>
             ))}

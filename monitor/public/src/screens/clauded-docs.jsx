@@ -49,9 +49,9 @@ const LEDGER_CD = {
 		status: 197, // widest face, the "Implementing" picker, 172.8px uncapped (macOS, 1440: shell 2 + 16 · meter 56 · label 79 · caret 12 · gaps 8) + interior 24 — the ledger caps the pill at this floor minus interior and ellipsizes a wider label → font-independent
 		id: 88, // "#" + 6 digits = 64 + interior 24
 		title: 434, // a title beside its trailing "rev of #N" pill · the Documents title floor stays
-		tags: 148, // 124 content allowance (the 152 floor less the old 28 padding) + interior 24
-		author: 106, // 82 content allowance (the 110 floor less the old 28 padding) + interior 24
-		created: 100, // 72 content allowance + edge 28 (unchanged: an edge column keeps its 28)
+		tags: 148, // 124 content allowance + interior 24
+		author: 106, // 82 content allowance + interior 24
+		created: 100, // 72 content allowance + edge 28
 		titleNarrow: 240,
 		// Tags drops first + the narrow title floor applies only below this sum → both left out
 		get sum() {
@@ -1051,7 +1051,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* (retired) .doc-status-badge — 스테이지 pill 이 .doc-stage-pill 로 대체. */
         /* multi-select + group UI tokens. */
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
-        /* B6 — the checkbox is block and centered in its cell; the cell takes the select floor (checkbox + edge padding) */
+        /* the checkbox is block and centered in its cell; the cell takes the select floor (checkbox + edge padding) */
         .doc-checkbox-cell { width: ${LEDGER_CD.FLOOR.select}px; text-align: center; vertical-align: middle; }
         .doc-checkbox-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: rgb(var(--accent)); }
         /* ledger checkbox — neutral at rest, the one selected state when checked or mixed; a toggle is discrete → no transition */

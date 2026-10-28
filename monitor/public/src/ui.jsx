@@ -60,9 +60,7 @@ function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
   // 인라인(비-flex) 텍스트 옆 svg 를 텍스트와 수직 중앙 정렬하는 전역 additive 기본값.
   //   · className 에 명시 정렬(align-*/vertical-align)이 있으면 양보 — inline style 가 class 를 이기므로 조건부로만 적용(SymI 의 align-middle 무회귀).
   //   · inline-flex 컨테이너(.pill 등)에선 vertical-align 이 무시되므로 보드 배지에 무해.
-  // display is set apart from that skip (B1): Tailwind preflight makes every svg a block, which drops an icon onto its own
-  //   line above its label in inline text — and an align class does not undo that. A flex/grid parent blockifies it anyway,
-  //   so chart and flex callers are unaffected; a display utility in className still wins.
+  // inline-block unless className sets a display: Tailwind preflight blocks every svg, which drops an inline icon onto its own line
   const alignStyle = /align-|vertical-align/.test(className) ? undefined : { verticalAlign: '-0.125em' };
   const displayStyle = ICON_DISPLAY_CLASS.test(className) ? undefined : { display: 'inline-block' };
   const style = alignStyle || displayStyle ? { ...displayStyle, ...alignStyle } : undefined;
@@ -580,7 +578,7 @@ const KPI_UNKNOWN_STATES = new Set(['error', 'empty']);
 const KPI_SPARK = { w: 68, h: 26 };
 
 /**
- * One KPI anatomy (design spec amendment (c)) — every tile row sits in one place, whatever its state:
+ * One KPI anatomy — every tile row sits in one place, whatever its state:
  *   1 label row  label (one line, ellipsis) · optional aside window tag · ⓘ placed on the row, never pushing the value
  *   2 value row  value + unit · optional badge, baseline-aligned; loading holds the row with a strut + placeholder
  *   3 delta      number → the shared Delta; a node renders as the caller wrote it
@@ -613,10 +611,10 @@ function KPI({
       {aside != null && aside !== false && <span className={`kpi-aside ${asideClassName}`.trim()}>{aside}</span>}
     </LabelTag>
   );
-  // an empty .kpi-value strut holds the loaded row's line box → the tile keeps its height when the value lands
+  // a zero-width .kpi-value strut holds the loaded row's line box → the tile keeps its height when the value lands
   const main = isLoading ? (
     <div className="kpi-main kpi-main--loading">
-      <span className="kpi-value" aria-hidden="true">{'​'}</span>
+      <span className="kpi-value" aria-hidden="true">{'\u200b'}</span>
       <LoadingPlaceholder label={loadingLabel}/>
     </div>
   ) : !hasValue ? null : (
