@@ -8,8 +8,8 @@
 #   - encoding / obfuscation         — base64 -d <<<… | sh
 #   - redirect / inline interpreter  — writes outside the matched forms
 #
-# Trash exception (rm-wipe row only): a command whose every rm deletes only entries strictly inside the home
-# Trash passes; the judge (lib/trash_rm.py) reads the text alone, and any parse doubt keeps the block.
+# Trash exception (rm-wipe row only): a command whose every rm deletes only single named entries directly in the
+# home Trash passes; the judge (lib/trash_rm.py) reads the text alone, and any parse doubt keeps the block.
 #
 # Confinement belongs to the tool-grant layer, not here. See plan clauded-docs/290 UD-1 (the blanket shell grant makes the config path-allowlists decorative).
 #
