@@ -7,8 +7,10 @@ Applies to all agents.
 - **Message format**: `- [x] <English imperative description>`
   - Bodies are English as well (public OSS repository, no Korean subjects).
   - A Conventional Commits prefix (`feat:`, `fix:`) is optional; when used it follows the checkbox: `- [x] feat: <description>`.
+  - **Issue / ticket references**: a footer block after a blank line, as `Refs: #123` or `Refs: PROJ-123`.
 - Commit only after the tests pass, so every commit is a working base for whoever builds on it (see `scoped/shared-testing.md`)
-- `--no-verify` / `--no-gpg-sign` are forbidden in normal flow: they skip the pre-commit hooks and signing that vet every commit (`hooks/block-no-verify.sh` blocks them)
+- `--no-verify` / `--no-gpg-sign` are forbidden in normal flow: they skip the git hooks (pre-commit, pre-push, …) and signing that vet every change
+  - Honest backing: `hooks/block-no-verify.sh` blocks them on `git commit`; the ban binds every other spelling.
   - Agent execution context without configured signing key → configure SSH/GPG key or set `git config commit.gpgsign false` explicitly (silent `--no-verify` bypass remains forbidden)
 - Stage changed files by explicit path — `git add .` / `git add -A` are forbidden: they sweep in unrelated files and other tracks' work
 
@@ -44,12 +46,6 @@ Applies to all agents.
   - An integration **merge** of an already-committed branch under the Merge-authorization rule (`## Pull Requests` below) is a different act and is unaffected; `skills/glass-atrium-ops-orchestrator.md` → `**Commit strategy**` describes that merge.
 - **Read-only** means **mutates no index and modifies no tracked path** in the worktree.
   - Read-only tracks may share a worktree freely.
-
-### Subject and Body
-
-- A blank line separates subject and body — git tooling (`log`, `shortlog`, `rebase`) parses on this boundary.
-- **Body is optional** — write one only when the "why" of the change is not self-evident from the subject and diff; the diff already shows what changed.
-- **Issue / ticket references**: a footer block after a blank line, as `Refs: #123` or `Refs: PROJ-123`.
 
 ## AI Commit Attribution
 
