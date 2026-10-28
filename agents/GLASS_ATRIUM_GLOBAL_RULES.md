@@ -173,6 +173,8 @@ The canonical rule for what language this system writes in.
 | code in any other language, and shell code anywhere else | a path guard defined in that code or its own repository | a comment at the delete site stating why the target cannot be a guarded variable |
 | a command the agent runs, anywhere | a path guard inside the command | none — a command has no site to annotate, so move the target to `~/.Trash/` instead |
 
+- Exception: `rm` may delete a single named entry directly in `~/.Trash/` — one literal name, no glob, no deeper path, no trailing slash — and for that delete this exception overrides the table's "a command the agent runs" row, so no path guard is required; the Trash directory itself, a path below an entry, and anything outside the Trash keep the move-to-Trash rule.
+
 ### Temporary Files [ALL]
 
 - Default: create temporary files and directories with bare `mktemp` / `mktemp -d` — no template path — so they land under the per-user `$TMPDIR`.
