@@ -46,6 +46,17 @@ test("a unit trails the figure inside the same scaled value", () => {
   assert.equal(collectText(scaled[0]).replace(/\s+/g, ""), "92%");
 });
 
+test("a word value rides its own span inside the figure's block — glyph and word in it, the unit beside it", () => {
+  const [block] = findNodes(render("KpiValue", { isWord: true, tone: "warn", unit: "x" }, "Stale"), hasKpiScale);
+  assert.ok(String(block.props.className).split(/\s+/).includes("kpi-value--word"), "the block keeps the figure's scale class");
+  const words = findNodes(block, (n) => n.props.className === "kpi-value-word");
+  assert.equal(words.length, 1, "one word span");
+  assert.ok(collectText(words[0]).includes("Stale"), "the word is in the span");
+  assert.equal(findNodes(words[0], (n) => n.props["aria-hidden"] === "true").length, 1, "the glyph rides with the word");
+  assert.equal(findNodes(words[0], (n) => n.props.className === "unit").length, 0, "the unit stays outside the word span");
+  assert.equal(findNodes(render("KpiValue", {}, "42"), (n) => n.props.className === "kpi-value-word").length, 0, "a figure takes no word span");
+});
+
 test("a KPI hint renders at the scale its caller names, and at the meta floor when none is named", () => {
   const rows = [
     { name: "no scale named", props: {}, scale: "fs-meta" },

@@ -311,6 +311,45 @@ test("a hint carrying data clamps only the data, keeping its authored words and 
   assert.doesNotMatch(classOf(plainHint), /dash-tile-hint-line/, "an authored hint keeps its two-line wrap");
 });
 
+test("a tile's detail and plain hint clamp at two lines, each keeping its whole text in its title", () => {
+  const tile = { ...READY_TILE, detail: "7 of 40 failed since the last cycle", hint: "40 outcomes in the window" };
+  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
+  const [detail] = findNodes(tree, (n) => hasClass(n, "dash-tile-detail"));
+  const [hint] = findNodes(tree, (n) => hasClass(n, "dash-tile-hint"));
+  for (const [node, text] of [[detail, tile.detail], [hint, tile.hint]] as const) {
+    assert.ok(hasClass(node, "dash-tile-clamp"), classOf(node));
+    assert.equal(node.props.title, text);
+  }
+  const hintData = { lead: "Most runs: ", data: "dev-react", tail: ", 12" };
+  const [dataHint] = findNodes(render("StatusTile", { tile: { ...tile, hintData }, onNav: () => {}, onRetry: () => {} }), (n) => hasClass(n, "dash-tile-hint"));
+  assert.ok(!hasClass(dataHint, "dash-tile-clamp"), "a data hint clamps its data part alone");
+});
+
+test("a clamped slot sets a title only for a non-empty string — an empty or element slot carries none", () => {
+  const titleOfDetail = (detail: unknown) =>
+    findNodes(render("StatusTile", { tile: { ...READY_TILE, detail }, onNav: () => {}, onRetry: () => {} }), (n) => hasClass(n, "dash-tile-detail"))[0].props.title;
+  assert.equal(titleOfDetail(""), undefined);
+  assert.equal(titleOfDetail(undefined), undefined);
+  assert.equal(titleOfDetail(mod.React.createElement("span", { children: "7 failed" })), undefined);
+  const covered = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
+  const [detail] = findNodes(covered, (n) => hasClass(n, "dash-tile-detail"));
+  const [hint] = findNodes(covered, (n) => hasClass(n, "dash-tile-hint"));
+  assert.equal(detail.props.title, undefined, "a banner-covered tile drops its detail and its title");
+  assert.equal(hint.props.title, collectText(hint).trim(), "the shared pointer hint keeps its whole text in the title");
+});
+
+test("the fleet tile's reach window rides its delta row as one DateRange token", () => {
+  const breaker = { source: "loaded", suspended_count: 0, streak_count: 0 };
+  const tile = buildFleetTile({ status: "ready", data: { meta: { total_agents: 12, circuit_breaker: breaker, registry_agents: 20 } } });
+  assert.equal(tile.trendRange, "7 days");
+  assert.ok(tile.trend.endsWith(`last ${tile.trendRange}`), tile.trend);
+  const tree = render("StatusTile", { tile: { ...tile, label: "Fleet", window: "7 d", target: "agents", targetLabel: "Agents" }, onNav: () => {}, onRetry: () => {} });
+  const ranges = findNodes(tree, (n) => n.props.atom === "DateRange");
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0].props.range, "7 days");
+  assert.equal(collectText(ranges[0]), tile.trend, "the sentence stays a plain string around the token");
+});
+
 test("a tile's note opens from a focusable ⓘ described by the tile heading, never from a hover-only title", () => {
   const rows = [
     { name: "a tile with a note", tile: { ...READY_TILE, note: "Counts writer-emitted outcomes only." }, infoCount: 1 },

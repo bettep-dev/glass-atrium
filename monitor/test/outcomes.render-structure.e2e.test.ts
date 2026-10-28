@@ -74,6 +74,29 @@ describe("outcomes crosstab header", () => {
       }
     });
   }
+
+  test("the cross table's body and total rows sit on the 40 step, each count on its row's centre line", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+      await page.waitForSelector("#outcomes-crosstab table tbody tr", { timeout: 30_000 });
+      await page.evaluate(() => document.fonts.ready);
+      // inline callbacks only — a named helper inside the page function picks up tsx's __name shim, absent in the page
+      const rows = await page.$$eval("#outcomes-crosstab table :is(tbody, tfoot) > tr", (trs) => trs.map((tr) => {
+        const [label, ...counts] = [tr.querySelector("th"), ...tr.querySelectorAll("td[aria-label] > span:first-child")]
+          .map((el) => (el ? (el.getBoundingClientRect().top + el.getBoundingClientRect().bottom) / 2 : NaN));
+        return { height: tr.getBoundingClientRect().height, label, counts };
+      }));
+      assert.ok(rows.length >= 4, `${rows.length} rows (three confidence rows and the total)`);
+      for (const row of rows) {
+        assert.ok(Math.abs(row.height - 40) < 0.5, `row ${row.height}px`);
+        for (const count of row.counts) assert.ok(Math.abs(count - row.label) < 1, `count centre ${count} vs label ${row.label}`);
+      }
+      assert.ok(rows.some((row) => row.counts.length > 0), "the body rows carry count + bar cells");
+    } finally {
+      await page.close();
+    }
+  });
 });
 
 // The status band and the ledger as painted: a stretched "Needs you" hero keeps its body at the top,

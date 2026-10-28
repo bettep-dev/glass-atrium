@@ -349,3 +349,48 @@ describe("the Created cell keeps its age and stale glyph on one line", () => {
     assert.ok(r.glyphShown, "the glyph stays");
   });
 });
+
+describe("the select column and the stage section heads sit on the ledger's grid", () => {
+  // DocCheckboxCD's 16px box, centred by auto inline margins as its mx-auto class does
+  const checkbox = `<span style="display: flex; width: 16px; height: 16px; margin-inline: auto;"><input type="checkbox" class="doc-checkbox" /></span>`;
+  // the app's preflight sizes boxes border-box → the select floor is the cell's whole width, as it renders
+  const gridPage = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; }</style></head><body style="margin: 0;">
+    <div style="padding: 48px;"><div class="card"><table class="tbl" style="width: 600px;">
+      <thead><tr><th scope="col" class="doc-checkbox-cell" id="head-select">${checkbox}</th><th scope="col">Title</th></tr></thead>
+      <tbody>
+        <tr class="doc-stage-section" id="section"><th colspan="2" scope="colgroup"><span role="heading" aria-level="2">Implementing</span><span class="doc-stage-section-count">3</span></th></tr>
+        <tr class="doc-row" id="doc"><td class="doc-checkbox-cell" id="row-select">${checkbox}</td><td>Plan</td></tr>
+      </tbody>
+    </table></div></div>
+  </body></html>`;
+  let page: Page;
+
+  before(async () => {
+    page = await browser.newPage({ viewport: { width: 900, height: 600 } });
+    await page.setContent(gridPage);
+    await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+    await page.addStyleTag({ content: SCREEN_CSS });
+  });
+
+  after(async () => {
+    await page?.close();
+  });
+
+  for (const id of ["head-select", "row-select"]) {
+    test(`the checkbox sits on its cell's centre (${id})`, async () => {
+      const { cell, box } = await page.$eval(`#${id}`, (el) => ({
+        cell: el.getBoundingClientRect().toJSON() as DOMRect,
+        box: el.querySelector("input")!.getBoundingClientRect().toJSON() as DOMRect,
+      }));
+      const offset = (box.left + box.right) / 2 - (cell.left + cell.right) / 2;
+      assert.ok(Math.abs(offset) <= 0.5, `checkbox centre ${offset}px off the cell centre`);
+    });
+  }
+
+  test("a stage section head is a 40 row like the ledger rows", async () => {
+    const [section, doc] = await Promise.all(["section", "doc"].map((id) => page.$eval(`#${id}`, (tr) => tr.getBoundingClientRect().height)));
+    assert.ok(Math.abs(section - 40) < 0.5, `section row ${section}px`);
+    assert.ok(Math.abs(doc - 40) < 0.5, `ledger row ${doc}px`);
+  });
+});

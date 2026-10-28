@@ -1215,6 +1215,28 @@ test("every KPI hint fits the 40-character KPI-hint cap at the widest realistic 
   for (const hint of hints) assert.ok(hint.length <= 40, `"${hint}" is ${hint.length} chars`);
 });
 
+test("the cache tile's list-price note keeps its window (\"30 days\") whole as one DateRange token", async () => {
+  const mod = (await loadScreenModule(COST_SRC, {
+    UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
+    getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
+  })) as RenderModule;
+  const kpi = getKpiAtRatio(1, 1);
+  const modelRows = [{
+    model: "claude-opus-4", cost_usd: 120, session_count: 3,
+    input_tokens: 1e6, output_tokens: 1e6, cache_read_tokens: 1e7, cache_creation_tokens: 1e6,
+  }];
+  const tree = renderIn(mod, "KpiRowC", {
+    kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
+    modelState: ready({ rows: modelRows }), days: 30, onRetry: () => {},
+  });
+  const [foot] = findNodes(tree, (n) => n.props.className === "cost-foot");
+  assert.ok(foot, "the cache tile carries its list-price note");
+  const ranges = findNodes(foot, (n) => n.props.atom === "DateRange");
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0].props.range, "30 days");
+  assert.match(String(ranges[0].props.children), /, last 30 days\b/, "the sentence carries the token as a plain string");
+});
+
 test("the window-cost tile keeps its counting rule behind an info trigger described by the tile label", async () => {
   const mod = await loadCostRender();
   const kpi = getKpiAtRatio(1, 1);
