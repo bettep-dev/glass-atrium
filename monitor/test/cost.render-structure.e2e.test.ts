@@ -319,6 +319,38 @@ describe("calm fixture — nothing is running hot", () => {
     );
   });
 
+  test("every cost table sits flush in its card, its edge cells carrying the card padding, in the house table face", async () => {
+    const tables = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll(".cost-screen table.cost-tbl")).map((table) => {
+        const card = table.closest(".card")!;
+        const cardBox = card.getBoundingClientRect();
+        const border = parseFloat(getComputedStyle(card).borderLeftWidth);
+        const tableBox = table.getBoundingClientRect();
+        const firstCell = table.querySelector("tbody td")!;
+        const lastCell = table.querySelector("tbody tr td:last-child")!;
+        const head = getComputedStyle(table.querySelector("thead th")!);
+        return {
+          caption: (table.querySelector("caption")?.textContent || "").trim().slice(0, 32),
+          inset: [Math.round(tableBox.left - cardBox.left - border), Math.round(cardBox.right - border - tableBox.right)],
+          edge: [getComputedStyle(firstCell).paddingLeft, getComputedStyle(lastCell).paddingRight],
+          headCase: head.textTransform,
+          // the share block, the turn aggregates and the footnote inset themselves to the card padding
+          contentInsets: Array.from(card.querySelectorAll(".section-label, .cost-foot, dl"))
+            .filter((el) => el.closest("thead, .card-head") === null)
+            .map((el) => Math.round(el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft) - cardBox.left - border)),
+        };
+      }),
+    );
+    assert.equal(tables.length, 3, `the model ledger, the session list and the stop-reason table: ${JSON.stringify(tables)}`);
+    for (const table of tables) {
+      const label = JSON.stringify(table);
+      assert.deepEqual(table.inset, [0, 0], `flush, never nested in a padded body — ${label}`);
+      assert.deepEqual(table.edge, ["16px", "16px"], `edge cells line up with the card head — ${label}`);
+      assert.equal(table.headCase, "uppercase", `the house header face stays — ${label}`);
+      assert.ok(table.contentInsets.every((x) => x === 16), `content beside the table keeps the card padding — ${label}`);
+    }
+  });
+
   test("the ledger Total row carries no session count — per-model counts do not sum", async () => {
     const totalCells = await ctx.page.evaluate(() =>
       Array.from(document.querySelectorAll(".cost-screen .cost-tbl tfoot td")).map((td) =>

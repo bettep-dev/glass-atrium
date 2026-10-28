@@ -791,6 +791,32 @@ test("AgentFailureBodyO: loading draws the table's own skeleton rows, not a blan
   assert.ok(nodes.filter((n) => n.type === "tr").length > 1, "skeleton rows sit under the header");
 });
 
+// R-d: the by-agent table sits off .tbl, so its body rows (and the skeleton rows standing in for them) reach the 32 compact
+// step through the shared tbody.tbl-compact atom; a cell carrying its own block padding would move the row off that step
+test("AgentFailureBodyO: body and skeleton rows ride the shared compact atom, no cell padding its own block", () => {
+  // a row's cell components render one level, so their own td is read too
+  const renderCells = (nodes: RenderNode[]): RenderNode[] => nodes.flatMap((n) =>
+    typeof n.type === "function" ? flattenNodes((n.type as (p: unknown) => unknown)({ ...n.props, children: n.children })) : [n]);
+  const ready = helpers.AgentFailureBodyO({
+    state: {
+      status: "ok",
+      data: helpers.buildAnalyticsDataO({ by_agent_result: [{ agent: LEDGER_AGENT, result: "fail", count: 1 }], by_agent_top_10: [] }),
+    } as unknown as PayloadState<unknown>,
+    onRetry: () => {},
+  });
+  const loading = helpers.AgentFailureBodyO({ state: { status: "loading" }, onRetry: () => {} });
+  const skeleton = typeof loading.type === "function" ? (loading.type as (p: unknown) => RenderNode)(loading.props) : loading;
+  for (const [name, tree] of [["ready", ready], ["loading", skeleton]] as const) {
+    const nodes = renderCells(flattenNodes(tree));
+    const bodies = nodes.filter((n) => n.type === "tbody");
+    assert.strictEqual(bodies.length, 1, `${name}: one body`);
+    assert.strictEqual(bodies[0].props?.className, "tbl-compact", `${name}: the body takes the compact atom`);
+    const cells = renderCells(flattenNodes(bodies[0])).filter((n) => n.type === "td");
+    assert.ok(cells.length > 0, `${name}: the body carries cells`);
+    for (const cell of cells) assert.doesNotMatch(String(cell.props?.className ?? ""), /\b(py|pt|pb)-/, `${name}: a cell keeps its block padding off`);
+  }
+});
+
 test("reportingHealthSummaryO: a silent channel is named in the closed summary line", () => {
   assert.strictEqual(
     helpers.reportingHealthSummaryO({ status: "ready", data: { alerting: ["subagent_stop", "stop"] } }),
@@ -829,7 +855,7 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
   assert.ok(heading, "the ledger renders the jump target");
   assert.strictEqual(heading!.props!.tabIndex, -1, "the heading can take focus without joining the tab order");
 
-  const asRendered = (tile: BandTile) => helpers.BandTileO({ tile, windowLabel: "30d" });
+  const asRendered = (tile: BandTile) => renderKpiO(helpers.BandTileO({ tile, windowLabel: "30d" }));
   const live = asRendered(attention);
   assert.strictEqual(live.type, "button", "a reachable count is an operable control");
   assert.strictEqual(typeof live.props!.onClick, "function");
@@ -838,6 +864,12 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
   }
   assert.strictEqual(asRendered(tileOf(tiles, "broken")).type, "div", "tiles without a target stay static");
 });
+
+// the band tiles are thin wrappers over the shared KPI anatomy → render that KPI one level to reach its elements
+function renderKpiO(node: RenderNode): RenderNode {
+  assert.strictEqual(node.type, (helpers.window.UI as unknown as Record<string, unknown>).KPI, "the tile is the shared KPI");
+  return (node.type as (props: unknown) => RenderNode)({ ...node.props, children: node.children });
+}
 
 // design.md copy rule: a definition over a cap opens from a focusable ⓘ, never a hover-only title
 describe("StatusBandO: the tile rules open from one focusable ⓘ described by the band label, never from a hover-only title", () => {
@@ -852,9 +884,9 @@ describe("StatusBandO: the tile rules open from one focusable ⓘ described by t
   test("no tile carries a hover-only title", () => {
     const hero = tileOf(tiles, "attention");
     const rendered = [
-      { name: "a jumpable hero", node: helpers.BandTileO({ tile: hero, windowLabel: "30d" }) },
-      { name: "a static hero", node: helpers.BandTileO({ tile: { ...hero, count: 0 }, windowLabel: "30d" }) },
-      { name: "the volume column", node: helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d" }) },
+      { name: "a jumpable hero", node: renderKpiO(helpers.BandTileO({ tile: hero, windowLabel: "30d" })) },
+      { name: "a static hero", node: renderKpiO(helpers.BandTileO({ tile: { ...hero, count: 0 }, windowLabel: "30d" })) },
+      { name: "the volume column", node: renderKpiO(helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d" })) },
     ];
     for (const row of rendered) assert.deepStrictEqual(hoverTitled(row.node).length, 0, `${row.name} has no hover-only title`);
   });
@@ -879,7 +911,7 @@ describe("StatusBandO: the tile rules open from one focusable ⓘ described by t
 
   test("the volume column renders the ⓘ it is handed", () => {
     const marker = { type: "marker", props: {}, children: [] };
-    const column = helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d", info: marker });
+    const column = renderKpiO(helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d", info: marker }));
     assert.ok(flattenNodes(column).includes(marker as RenderNode));
   });
 });
@@ -915,7 +947,8 @@ test("ledger row: the accessible name carries the word that tells Done from Clos
 // --- ledger layout: the page is the only vertical scroller; wide tables scroll sideways inside their card ---
 
 const LEDGER_AGENT = "glass-atrium-dev-shell";
-const ledgerRowOf = (result: string, extra: Record<string, unknown> = {}) => ({
+// the return type carries the optional summary so a loop over built rows can read it back
+const ledgerRowOf = (result: string, extra: Record<string, unknown> = {}): LedgerRow & { agent: string; task_type: string; closed_at: string | null; summary?: string } => ({
   id: 11, agent: LEDGER_AGENT, task_type: "feature", result, closed_at: null, ...extra,
 });
 const renderLedgerRow = (row: ReturnType<typeof ledgerRowOf>) => helpers.ResultTableRow({
@@ -924,6 +957,14 @@ const renderLedgerRow = (row: ReturnType<typeof ledgerRowOf>) => helpers.ResultT
 const textOf = (node: RenderNode): string => flattenNodes(node)
   .flatMap((n) => n.children.filter((c) => typeof c === "string" || typeof c === "number"))
   .join("");
+// the ledger's column headers: the sortable Time header by its label, every other column as the shared TableHead atom by its text
+const ledgerHeaderLabelsO = (table: unknown): string[] => {
+  const { TableHead } = helpers.window.UI as unknown as Record<string, unknown>;
+  const sortable = (helpers as unknown as Record<string, unknown>).SortableHeader;
+  return flattenNodes(table)
+    .filter((n) => n.type === sortable || n.type === TableHead)
+    .map((n) => (n.type === sortable ? String(n.props!.label) : textOf(n)));
+};
 
 test("ledger: every scroller is the containing block of its visually hidden names, so they cannot stretch the page", () => {
   const ledger = helpers.ResultTable({
@@ -975,9 +1016,7 @@ test("ledger: every column header uses sentence case, never a raw field name", (
   const table = helpers.ResultTable({
     rows: [ledgerRowOf("done")], sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
   });
-  const labels = flattenNodes(table)
-    .filter((n) => typeof n.type === "function" && /Header$/.test((n.type as { name: string }).name))
-    .map((n) => String(n.props!.label));
+  const labels = ledgerHeaderLabelsO(table);
   assert.strictEqual(labels.length, 5);
   for (const label of labels) assert.match(label, /^[A-Z][a-z]*(?: [a-z]+)*$/, `header '${label}'`);
 });
@@ -1064,7 +1103,7 @@ test("ResultTable: no Check column, and a capped Needs-you offers one control to
     rows: needsYouRows(12), sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
     needsYouCap: 10, onToggleNeedsYou: () => { toggled += 1; },
   }));
-  const headerLabels = nodes.map((n) => n.props?.label).filter((l) => typeof l === "string");
+  const headerLabels = ledgerHeaderLabelsO(nodes);
   assert.ok(headerLabels.includes("Summary"), "the header row still renders");
   assert.ok(!headerLabels.includes("Check"), "the check verdict lives in the drawer, not a mostly-N/A column");
 
@@ -1216,16 +1255,32 @@ interface PriorTrendHelpers {
 }
 const trendHelpers = helpers as unknown as PriorTrendHelpers;
 
-// function components expand → the text a reader sees, wherever a sub-component draws it
-const renderText = (node: unknown): string => {
+// one child arrives as itself, as React passes it → a component reading a string child (DateRange) takes its real path
+const getChildrenProp = (el: RenderNode): unknown => (el.children.length === 1 ? el.children[0] : el.children);
+
+// function components expand → the text a reader sees, wherever a sub-component draws it.
+// Sibling nodes join with a space, so a token in its own span leaves a double space beside it → whitespace folds to one.
+const renderRawText = (node: unknown): string => {
   if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(renderText).join(" ");
+  if (Array.isArray(node)) return node.map(renderRawText).join(" ");
   if (node === null || typeof node !== "object" || !("type" in node)) return "";
   const el = node as RenderNode;
   if (typeof el.type === "function") {
-    return renderText((el.type as (p: unknown) => unknown)({ ...el.props, children: el.children }));
+    return renderRawText((el.type as (p: unknown) => unknown)({ ...el.props, children: getChildrenProp(el) }));
   }
-  return el.children.map(renderText).join(" ");
+  return el.children.map(renderRawText).join(" ");
+};
+const renderText = (node: unknown): string => renderRawText(node).replace(/\s+/g, " ");
+
+// the element tree with function components expanded → a span a sub-component draws is findable by its class
+const expandNodes = (node: unknown): RenderNode[] => {
+  if (Array.isArray(node)) return node.flatMap(expandNodes);
+  if (node === null || typeof node !== "object" || !("type" in node)) return [];
+  const el = node as RenderNode;
+  if (typeof el.type === "function") {
+    return expandNodes((el.type as (p: unknown) => unknown)({ ...el.props, children: getChildrenProp(el) }));
+  }
+  return [el, ...el.children.flatMap(expandNodes)];
 };
 
 const buildPriorWindow = (total: number, byResult: Record<string, number>) => ({
@@ -1279,6 +1334,17 @@ describe("StatusBandO: every tile states its share change against the prior wind
     assert.match(small, /No comparison — too few records in 08-02 – 08-31/);
     assert.doesNotMatch(small, /pts since/);
   });
+  test("every tile's prior range renders whole in one nowrap span, so the sentence wraps around the dates", () => {
+    for (const band of [
+      buildBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), 10),
+      buildBand(buildPriorWindow(12, { done: 10, fail: 2 }), 2),
+    ]) {
+      const ranges = expandNodes(band).filter((n) => /\bwhitespace-nowrap\b/.test(String(n.props?.className ?? ""))
+        && renderText(n) === "08-02 – 08-31");
+      // the hero and the three volume facts each state a change line
+      assert.strictEqual(ranges.length, 4, `nowrap range spans: ${ranges.length}`);
+    }
+  });
   test("a response without a prior window draws no change line", () => {
     assert.doesNotMatch(renderBand(undefined, null), /since|No comparison/);
   });
@@ -1313,5 +1379,99 @@ describe("Task results reads opt into the prior window", () => {
     const attention = await trendHelpers.fetchAttentionO(30);
     assert.strictEqual(attention.priorTotal, 11);
     assert.deepStrictEqual(urls.map((u) => new URL(u, "http://x").searchParams.has("prior_window")), [true, false, false, false, false]);
+  });
+});
+
+// --- ledger summary cell: every summary starts on one line, whatever pill its row carries ---
+
+const summaryLineOf = (tr: RenderNode): unknown[] => {
+  const summaryCell = flattenNodes(tr).filter((n) => n.type === "td").at(-1);
+  const line = flattenNodes(summaryCell).find((n) => n.type === "div");
+  assert.ok(line, "the summary cell lays its parts out on one line");
+  return line.children.filter((child) => child !== null && child !== false && child !== undefined);
+};
+
+describe("ledger row: the summary starts right after the fixed flag slot, and the variable reason pill follows it", () => {
+  const sub = helpers as unknown as Record<string, unknown>;
+  const rows = [
+    { name: "an open caveat", row: ledgerRowOf("done_with_concerns", { summary: "Caveat" }), pill: /caveat open/ },
+    { name: "a flagged row", row: ledgerRowOf("done", { summary: "Flagged", review_flag: true, review_flag_reasons: ["scope-excess", "overconfidence"] }), pill: /flagged: overconfident \+1/ },
+    { name: "a routine row", row: ledgerRowOf("done", { summary: "Routine" }), pill: null },
+  ];
+  for (const { name, row, pill } of rows) {
+    test(name, () => {
+      const [slot, text, ...rest] = summaryLineOf(renderLedgerRow(row)) as RenderNode[];
+      assert.strictEqual(slot.type, sub.SummaryFlagSlotO, "the fixed-width flag slot leads");
+      assert.strictEqual(text.type, "span", "the summary text comes second");
+      assert.deepStrictEqual(text.children, [row.summary]);
+      assert.match(String(text.props?.className), /\btruncate\b/);
+      if (pill === null) {
+        assert.strictEqual(rest.length, 0, "a routine row carries no pill");
+        return;
+      }
+      assert.strictEqual(rest.length, 1, "the reason pill ends the line");
+      assert.strictEqual(rest[0].type, (helpers.window.UI as unknown as Record<string, unknown>).Badge);
+      assert.match(renderText(rest[0]), pill);
+      assert.match(String(rest[0].props?.className), /\bshrink-0\b/, "the pill is never truncated");
+    });
+  }
+});
+
+// --- sub-tables: numeric columns right-aligned, tabular and one line, every typeface as it was ---
+
+const B5_CLASSES = ["text-right", "tabular-nums", "whitespace-nowrap"];
+const assertB5 = (node: RenderNode, what: string): void => {
+  const className = String(node.props?.className ?? "");
+  for (const cls of B5_CLASSES) assert.ok(className.split(/\s+/).includes(cls), `${what} lacks ${cls}: "${className}"`);
+  assert.doesNotMatch(className, /\btext-center\b/, `${what} is centred`);
+};
+
+describe("sub-tables: every numeric value and its header are right-aligned, tabular and one line (B5)", () => {
+  const sub = helpers as unknown as Record<string, (arg: unknown) => unknown>;
+
+  test("by-agent failures: the count columns and the failure-rate share", () => {
+    const failures = helpers.AgentFailureBodyO({
+      state: {
+        status: "ok",
+        data: helpers.buildAnalyticsDataO({
+          by_agent_result: [{ agent: LEDGER_AGENT, result: "fail", count: 3 }, { agent: LEDGER_AGENT, result: "done", count: 30 }],
+          by_agent_top_10: [],
+        }),
+      } as unknown as PayloadState<unknown>,
+      onRetry: () => {},
+    });
+    const nodes = expandNodes(failures);
+    const heads = nodes.filter((n) => n.type === "th");
+    assert.strictEqual(heads.length, 6);
+    assert.match(String(heads[0].props?.className), /\btext-left\b/, "the agent column stays left");
+    heads.slice(1).forEach((th) => assertB5(th, `header "${renderText(th).trim()}"`));
+
+    const cells = nodes.filter((n) => n.type === "td");
+    assert.strictEqual(cells.length, 6);
+    // the rate cell holds a bar → its share, not the cell, carries the alignment, and it ends the cell
+    const [, rateCell, ...countCells] = cells;
+    countCells.forEach((td) => assertB5(td, `cell "${renderText(td).trim()}"`));
+    const rateLine = flattenNodes(rateCell).find((n) => n.type === "span")!;
+    const share = rateLine.children.filter((child) => child !== null && child !== false && child !== undefined).at(-1) as RenderNode;
+    assert.strictEqual(renderText(share).trim(), "9.1%", "the share ends the rate cell");
+    assertB5(share, "the failure-rate share");
+    assert.match(String(share.props?.className), /\bfont-mono\b/, "the share keeps its mono face");
+  });
+
+  test("the cross table: no centred count, header, cell or total", () => {
+    const crosstab = sub.buildCrosstabO([
+      { confidence: "high", metric_pass: true, count: 9_000, is_polar_mismatch: false },
+      { confidence: "high", metric_pass: false, count: 12, is_polar_mismatch: true },
+    ]);
+    const nodes = expandNodes(sub.CrosstabBody({ state: { status: "ok", data: { crosstab } }, onRetry: () => {} }));
+    const table = nodes.find((n) => n.type === "table");
+    assert.ok(table, "a ready cross table renders");
+    const tableNodes = expandNodes(table);
+    assert.match(String(table.props?.className), /\bfont-mono\b/, "the table keeps its mono face");
+    for (const n of tableNodes) assert.doesNotMatch(String(n.props?.className ?? ""), /\b(text|justify)-center\b/);
+    const colHeads = tableNodes.filter((n) => n.type === "th" && n.props?.scope === "col");
+    assert.match(renderText(colHeads[0]), /confidence/);
+    colHeads.slice(1).forEach((th) => assertB5(th, `header "${renderText(th).trim()}"`));
+    tableNodes.filter((n) => n.type === "td").forEach((td) => assertB5(td, `cell "${renderText(td).trim()}"`));
   });
 });

@@ -381,6 +381,20 @@ describe("every loop card stacks one metric, one visual and one pinned foot, in 
   }
 });
 
+// R-c: a loop-card foot hands its sentence to the shared DayTokens atom, so "28 cycle days" and "7-day" never break
+test("every loop-card foot rides DayTokens, so its cycle-day and 7-day tokens stay whole", () => {
+  const expected: Record<string, RegExp> = {
+    trend: /^Share rejected per day · all 2 cycle days: /,
+    "learning memory": /^All agents · not the group's 7-day window$/,
+  };
+  for (const { name, card } of getLoopCards()) {
+    const [foot] = getSlotOf(card, "card-foot");
+    const tokens = collectElements(foot, []).filter((el) => el.type === sandbox.window.UI.DayTokens);
+    assert.equal(tokens.length, 1, `${name}: the foot rides one DayTokens`);
+    if (expected[name]) assert.match(String(tokens[0].props.children), expected[name], `${name}: the sentence reaches it whole`);
+  }
+});
+
 test("the applied card leads with its reject rate, in the metric slot", () => {
   const [applied] = getLoopCards();
   const [metric] = getSlotOf(applied.card, "i-loop-metric");
@@ -396,4 +410,13 @@ test("the learning-memory card heads its card with both counts, its tiles keepin
   assert.match(metricText, /\b12\b/, metricText);
   assert.match(metricText, /\b4\b/, metricText);
   assert.doesNotMatch(getPrintedText(visual), /\b12\b|\b4\b/, "a count printed twice reads as two figures");
+});
+
+// numeral and word share a baseline; the sign glyph centres on the numeral's line box instead of sitting on the baseline by its bottom edge
+test("a line count centres its sign glyph on the numeral and keeps the numeral and word on one baseline", () => {
+  const count = sandbox.LineCountI({ symbol: "＋", tone: "text-ok", count: 6, word: "added", title: "6 lines added" });
+  assert.match(String(count.props.className), /\bitems-baseline\b/, "numeral and word share a baseline");
+  const [glyph] = count.props.children as RecordedElement[];
+  assert.match(String(glyph.props.className), /\bself-center\b/, String(glyph.props.className));
+  assert.match(String(glyph.props.className), /\btext-ok\b/, "the tone stays on the glyph");
 });

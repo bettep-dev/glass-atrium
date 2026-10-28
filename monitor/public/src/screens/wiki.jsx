@@ -110,16 +110,14 @@ function ScreenWiki() {
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Wiki"
-					right={
-						<>
-							<FreshnessStamp at={settledAt} regions={waveStates} />
-							<RefreshButton
-								isBusy={isBusy}
-								hasRead={hasRead}
-								onRefresh={triggerRefresh}
-								label="Refresh wiki"
-							/>
-						</>
+					freshness={<FreshnessStamp at={settledAt} regions={waveStates} />}
+					refresh={
+						<RefreshButton
+							isBusy={isBusy}
+							hasRead={hasRead}
+							onRefresh={triggerRefresh}
+							label="Refresh wiki"
+						/>
 					}
 				/>
 			</div>
@@ -375,7 +373,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 							{alarm.label}
 						</span>
 						<span className="fs-meta text-faint block leading-tight">
-							{alarm.detail}
+							<window.UI.DayTokens>{alarm.detail}</window.UI.DayTokens>
 						</span>
 					</span>
 				</li>
@@ -476,7 +474,7 @@ function buildProposalAlarmsW(backlog, proposals, cyclesState) {
 			parked,
 			age: typeof age === "number" ? age : 0,
 			ageLabel: wait
-				? `${wait.days} d`
+				? `${wait.days}d`
 				: typeof runs === "number"
 					? `${runs} ${runs === 1 ? "run" : "runs"}`
 					: null,
@@ -591,7 +589,7 @@ function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at,
 					onRetry={onRetry}
 				/>
 			)}
-			<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+			<div className="grid grid-cols-2 lg:grid-cols-4 gap-card">
 				{tiles.map((tile) => (
 					<WikiTile key={tile.key} tile={tile} />
 				))}
@@ -610,51 +608,48 @@ function readTileBandFailuresW(summaryState, indexState) {
 
 // Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
 // figure, leaving tinted containers to the alarm lane (39578 §C/§D).
-// detail past the 40-char caption cap opens from an ⓘ beside the label
+// detail past the 40-char caption cap opens from an ⓘ placed on the label row
 function WikiTile({ tile }) {
-	const { Icon, TONE_ICON, CardInfo } = window.UI;
+	const { Icon, TONE_ICON, CardInfo, KPI } = window.UI;
 	const alarmed = tile.tone === "warn" || tile.tone === "crit";
 	const labelId = `wiki-tile-${tile.key}-label`;
+	const value = alarmed ? (
+		<>
+			<span className={`text-${tile.tone} mr-1.5`} aria-hidden="true" title={tile.toneLabel}>
+				<Icon name={TONE_ICON[tile.tone]} size={13} />
+			</span>
+			{tile.toneLabel && <span className="sr-only">{`${tile.toneLabel}:`}</span>}
+			{tile.value}
+		</>
+	) : (
+		tile.value
+	);
 
 	return (
-		<div className="rounded-md border border-line bg-sunken p-2.5 min-w-0">
-			<div className="flex items-center gap-1">
-				<span
-					id={labelId}
-					className="fs-meta text-faint leading-tight break-words min-w-0"
-					title={tile.label}
-				>
-					{tile.label}
-				</span>
-				{tile.info && (
+		<KPI
+			labelId={labelId}
+			label={tile.label}
+			labelClassName="fs-meta text-faint"
+			info={
+				tile.info && (
 					<CardInfo label={`How ${tile.label} is counted`} describedBy={labelId}>
 						{tile.info}
 					</CardInfo>
-				)}
-			</div>
-			<div
-				className={`${tile.isWord ? "" : "font-mono "}fs-stat font-semibold mt-0.5 flex items-center gap-1.5 ${tile.state === "ready" ? "" : "text-faint"}`}
-				aria-busy={tile.state === "loading" ? "true" : undefined}
-			>
-				{alarmed && (
-					<span className={`text-${tile.tone} flex-shrink-0`} aria-hidden="true" title={tile.toneLabel}>
-						<Icon name={TONE_ICON[tile.tone]} size={13} />
-					</span>
-				)}
-				{alarmed && tile.toneLabel && <span className="sr-only">{`${tile.toneLabel}:`}</span>}
-				{tile.value}
-			</div>
-			{tile.sub && (
-				<div
-					className="fs-meta text-faint mt-1 leading-tight break-words"
-					title={tile.hint || tile.sub}
-				>
-					{tile.sub}
-				</div>
-			)}
-		</div>
+				)
+			}
+			state={WIKI_TILE_KPI_STATE[tile.state] ?? "ready"}
+			loadingLabel={tile.label.toLowerCase()}
+			value={value}
+			isWord={tile.isWord}
+			hint={tile.sub}
+			hintFace="text-faint"
+			hintTitle={tile.hint || tile.sub}
+		/>
 	);
 }
+
+// tile model state → the shared KPI state; unavailable and empty share the unknown dash, their sub says which
+const WIKI_TILE_KPI_STATE = { loading: "loading", error: "error", unavailable: "empty", empty: "empty" };
 
 function buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at) {
 	return [
@@ -763,7 +758,7 @@ function buildCompiledTileW(
 	// same span as Run history → the two totals read alike
 	const trend = buildThroughputModel(cyclesState);
 	const windowTotal =
-		trend.rows.length > 0 ? `${formatCountW(trend.total)} in ${trend.spanDays} d` : null;
+		trend.rows.length > 0 ? `${formatCountW(trend.total)} in ${trend.spanDays}d` : null;
 
 	return {
 		key: "compiled",
@@ -1074,7 +1069,7 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 							label={`Notes per day · ${model.spanDays} ${model.spanDays === 1 ? "day" : "days"}`}
 							series={model.compiledSeries}
 							dates={model.compiledDates}
-							stat={`${formatCountW(model.total)} notes in ${model.spanDays} d · ${model.activeDays} active days`}
+							stat={`${formatCountW(model.total)} notes in ${model.spanDays}d · ${model.activeDays} active days`}
 						/>
 						{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
 						{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
@@ -1098,7 +1093,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 		>
 			<div className="flex items-center gap-2 flex-wrap">
 				<span className="fs-meta text-faint leading-tight">
-					{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}
+					<window.UI.DayTokens>{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}</window.UI.DayTokens>
 				</span>
 				<CardInfo label="How a change is counted" describedBy={`${WIKI_REGION_IDS.runTable}-title`}>
 					A change is a run whose status or backlog differs from the run before.
@@ -1132,7 +1127,7 @@ function describeRunTableW(state, days) {
 	if (window.UI.getRegionView(state) === "error") return "Unavailable";
 
 	const reports = state.data?.reports || [];
-	if (reports.length === 0) return `No runs in ${days} d`;
+	if (reports.length === 0) return `No runs in ${days}d`;
 
 	const groups = groupConstantRunsW(sortRunsNewestFirstW(reports));
 	if (groups.length > 1) {
@@ -1163,7 +1158,7 @@ function describeRunHistoryW(cyclesState, model, summaryState) {
 	const p95 =
 		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
 	const runs = model.rows.length === 1 ? "run" : "runs";
-	return `${model.rows.length} ${runs} in ${model.spanDays} d${describeP95W(p95)}`;
+	return `${model.rows.length} ${runs} in ${model.spanDays}d${describeP95W(p95)}`;
 }
 
 /**
@@ -1504,7 +1499,7 @@ function MergeSuggestionItem({ proposal }) {
 	const action = readProposalActionW(proposal);
 
 	return (
-		<li className="rounded border border-line bg-card px-2.5 py-1.5">
+		<li className="rounded border border-line bg-card px-3 py-1.5">
 			<div className="flex items-baseline gap-2 flex-wrap fs-meta font-mono">
 				<span className="text-ink font-medium break-words min-w-0">{target}</span>
 				<span className="inline-flex items-center text-faint">
@@ -1698,9 +1693,7 @@ function SparseTrendW({ label, series, dates, stat }) {
 			<div className="fs-body text-ink mb-1">{headline}</div>
 			<div className="card-sub mb-1.5">{label}</div>
 			{sparse ? (
-				<div className="rounded-md border border-line bg-sunken px-3 py-2.5 fs-meta text-faint">
-					Too few active days to draw a trend.
-				</div>
+				<div className="placeholder">Too few active days to draw a trend.</div>
 			) : (
 				<TrendChart
 					label={label}

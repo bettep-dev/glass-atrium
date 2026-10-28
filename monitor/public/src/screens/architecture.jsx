@@ -653,13 +653,18 @@ function ScreenArchitecture(
 					// an undrawn map sizes to its slot — the page-tall floor would open a void under the loader or failure card
 					".arch-page .arch-main.arch-main-pending { flex: none; min-height: 0; } " +
 					".arch-part-health { flex-shrink: 0; } " +
-					".arch-part-health-title { font-size: var(--fs-control); font-weight: 600; margin: 0; } " +
-					".arch-part-col-title { font-size: var(--fs-meta); font-weight: 600; margin: 0 0 6px; } " +
+					// the card title outranks its rows — body-size row text under a control-size title read upside down
+					".arch-part-health-title { font-size: var(--fs-title); font-weight: 600; margin: 0; } " +
+					".arch-part-col-title { font-size: var(--fs-meta); font-weight: 600; margin: 0 0 var(--space-2); } " +
 					".arch-drawer-title { margin: 0; font-size: inherit; font-weight: inherit; } " +
 					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-meta); font-weight: 400; } " +
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
-					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; } " +
-					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; align-items: center; } " +
+					// Part health list · one line per part: name | status atom | button, meta below — body text centred on the 32px button
+					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); } " +
+					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: var(--space-2); row-gap: var(--space-0_5); align-items: center; " +
+					"font-size: var(--fs-body); line-height: var(--lh-row); } " +
+					".arch-part-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
+					".arch-part-status { display: inline-flex; align-items: center; gap: var(--space-1_5); white-space: nowrap; } " +
 					".arch-part-meta { grid-column: 1 / -1; font-size: var(--fs-meta); } " +
 					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
 					// max-height 를 여기서 풂 — styles/base.css 의 `.card-body { max-height: 70vh }` 는 무한히 긴
@@ -668,7 +673,7 @@ function ScreenArchitecture(
 					".arch-col-card .card-body { flex: 1; min-height: 0; max-height: none; overflow: hidden; display: flex; flex-direction: column; } " +
 					// 훅 구성 — 이벤트 > matcher > 훅 3단 들여쓰기. 목록 표식 없이 들여쓰기만으로 계층을 냄.
 					".arch-hook-events, .arch-hook-groups, .arch-hook-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; } " +
-					".arch-hook-groups, .arch-hook-list { padding-left: 14px; } " +
+					".arch-hook-groups, .arch-hook-list { padding-left: var(--space-3); } " +
 					".arch-hook-event, .arch-hook-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; } " +
 					".arch-hook-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; } " +
 					// 경보 레인 — 지도 위에 서는 단 하나의 상자. 행이 없으면 레인도 없음(빈 상태 없음).
@@ -677,7 +682,7 @@ function ScreenArchitecture(
 					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨 마스크가 드러나지 않음.
 					// 세 톤(캔버스 < 존 < 노드)의 맨 아래 칸 — 여기만 바꾸면 사다리가 어긋난다.
 					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
-					".arch-mermaid-canvas svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
+					".arch-mermaid-canvas .arch-mermaid-host > svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
 					// 노드 라벨 — 색만 보정한다.
 					// mermaid 는 이 규칙이 걸리지 않는 캔버스 밖에서 라벨을 재고 그 폭으로 foreignObject 를 자름.
 					// 서체(size·weight·family)를 건드리면 잰 상자보다 넓은 글리프 런이 그려져 끝 글자가 잘린다.
@@ -694,7 +699,7 @@ function ScreenArchitecture(
 					// 캔버스 우하단 작은 안내 — 박스 클릭 = 상세.
 					".arch-canvas-hint { position: absolute; right: 8px; bottom: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--faint)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
-					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
+					"background: rgb(var(--surface) / 0.7); padding: 0 var(--space-1_5); border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; } " +
 					// hover and keyboard focus brighten the shape, border included (hue kept) — the planted ring rects and the label keep their paint, the box keeps its size
 					`#${ARCH_CANVAS_ID} .node > ${NODE_SHAPE_SELECTOR} { transition: filter .12s; } ` +
@@ -732,7 +737,7 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .node.security > ${NODE_SHAPE_SELECTOR} { stroke-dasharray: none !important; } ` +
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
-					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
+					"background: rgb(var(--surface) / 0.7); padding: 0 var(--space-1_5); border-radius: 4px; } " +
 					// corner badge at the label size, so it holds the same 13px floor; its opaque pill keeps the ring and the border out of the text
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL.fontPx}px; font-weight: 700; pointer-events: none; ` +
 					"text-anchor: start; } " +
@@ -750,7 +755,8 @@ function ScreenArchitecture(
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; ' +
 					// hover colours only — a transition on `all` also animated the shared focus outline in
 					"transition: color .12s, border-color .12s, background-color .12s; } " +
-					".arch-zoom-btn-labelled { padding: 0 8px; font-family: inherit; font-size: var(--fs-meta); } " +
+					// a button label never wraps — the button grows to it
+					".arch-zoom-btn-labelled { padding: 0 var(--space-2); font-family: inherit; font-size: var(--fs-meta); white-space: nowrap; } " +
 					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					// 상태 링과 같은 사각형 채널·같은 반경 가족이되 그 바깥 한 겹에 섬 — 상태 링의 색·두께·자리는 포커스와 무관함.
@@ -761,20 +767,20 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .node:focus-visible { outline: none; } ` +
 					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-focus { display: inline; stroke: rgb(var(--focus-ring)) !important; } ` +
 					// 노드 상세의 부품 목록 — 드로어 폭 안이라 표의 nowrap 대신 줄바꿈이 기본임.
-					".arch-part-list { display: flex; flex-direction: column; gap: 10px; } " +
+					".arch-drawer-part-list { display: flex; flex-direction: column; gap: var(--space-3); } " +
 					".arch-part-entry { display: flex; flex-direction: column; gap: 4px; min-width: 0; } " +
-					".arch-part-entry + .arch-part-entry { border-top: 1px solid rgb(var(--line)); padding-top: 10px; } " +
-					".arch-part-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
+					".arch-part-entry + .arch-part-entry { border-top: 1px solid rgb(var(--line)); padding-top: var(--space-3); } " +
+					".arch-part-head { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; min-width: 0; } " +
 					// 로그 목록은 부품 이름 아래로 한 칸 들여씀 — 어느 부품의 로그인지 들여쓰기만으로 냄.
-					".arch-part-detail { padding-left: 10px; display: flex; flex-direction: column; gap: 8px; } " +
+					".arch-part-detail { padding-left: var(--space-3); display: flex; flex-direction: column; gap: 8px; } " +
 					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬. 진짜 button 이라
 					// 키보드 활성과 포커스 순서를 브라우저에서 그대로 받음.
-					".arch-part-drill { align-self: flex-start; min-height: 32px; margin: 0 0 0 10px; padding: 0 10px; " +
+					".arch-part-drill { align-self: flex-start; min-height: 32px; margin: 0 0 0 var(--space-3); padding: 0 var(--space-2); " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; " +
 					"color: rgb(var(--dim)); font: inherit; font-size: var(--fs-meta); cursor: pointer; text-align: left; } " +
 					".arch-part-drill:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); } " +
-					".arch-map-copy-note { display: flex; align-items: center; gap: 6px; padding: 8px 10px 0; } " +
-					".arch-caption { display: flex; flex-direction: column; gap: 6px; margin: -8px 0 12px; } " +
+					".arch-map-copy-note { display: flex; align-items: center; gap: var(--space-1_5); padding: var(--space-2) var(--space-2) 0; } " +
+					".arch-caption { display: flex; flex-direction: column; gap: var(--space-1_5); margin: 0 0 var(--space-3); } " +
 					".arch-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-legend-item { display: inline-flex; align-items: center; gap: 6px; } " +
 					// height = the meta line + both 2px borders, so the swatch's mark never spills over its ring
@@ -783,14 +789,14 @@ function ScreenArchitecture(
 					".arch-legend-swatch-warn { border-color: rgb(var(--warn)); color: rgb(var(--warn)); } " +
 					".arch-legend-swatch-crit { border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
 					".arch-legend-swatch-dashed { border-style: dashed; } " +
-					".arch-legend-swatch-count { width: auto; padding: 0 3px; border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
+					".arch-legend-swatch-count { width: auto; padding: 0 var(--space-1); border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
 					".arch-run-summary { display: flex; flex-direction: column; gap: 6px; } " +
 					`#${ARCH_CANVAS_ID} .${ZONE_TITLE_REDUNDANT_CLASS} > .cluster-label { display: none; } ` +
 					".arch-run-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; } " +
-					".arch-run-entry { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
+					".arch-run-entry { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; min-width: 0; } " +
 					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; } " +
-					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음.
-					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; " +
+					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음. Absolute, so margin 0 takes no layout space (no negative margin).
+					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: 0; " +
 					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
 					// 모션 게이트 — 노드/줌 컨트롤 transition 정지 (§8.4 계약).
 					"@media (prefers-reduced-motion: reduce) { " +
@@ -800,16 +806,14 @@ function ScreenArchitecture(
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="System map"
-					right={
-						<>
-							<FreshnessStamp {...freshnessInput} />
-							<RefreshButton
-								isBusy={isRefreshBusy}
-								hasRead={diagState.data != null}
-								onRefresh={triggerRefresh}
-								label="Refresh system map"
-							/>
-						</>
+					freshness={<FreshnessStamp {...freshnessInput} />}
+					refresh={
+						<RefreshButton
+							isBusy={isRefreshBusy}
+							hasRead={diagState.data != null}
+							onRefresh={triggerRefresh}
+							label="Refresh system map"
+						/>
 					}
 				/>
 				<MapCaptionAR verdict={pageVerdict} hasMap={diagState.data != null} />
@@ -851,7 +855,7 @@ function ScreenArchitecture(
 							)}
 							<div
 								className="card-body"
-								style={{ padding: 10, opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
+								style={{ padding: 8, opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
 							>
 								<DiagramBody
 									diagState={diagState}
@@ -1379,8 +1383,10 @@ function MermaidCanvas({
 				tabIndex={0}
 				onKeyDown={handleKeyDown}
 			>
+				{/* the diagram host — the canvas sizing rule targets its svg alone, never a control icon */}
 				<div
 					ref={containerRef}
+					className="arch-mermaid-host"
 					style={{ width: "100%", height: "100%" }}
 					onMouseDown={handleMouseDown}
 					onClick={handleClick}
@@ -1442,7 +1448,7 @@ function MermaidCanvas({
 // Reset 아이콘 — Icon SoT 의 'target' 마크업 재사용 (currentColor 상속).
 function ArchIconTargetAR() {
 	const { Icon } = window.UI;
-	return <Icon name="target" size={15} />;
+	return <Icon name="target" size={14} />;
 }
 
 // 끊긴 health 응답의 표시 이름 — 사실 행과 로드 실패 경보가 같은 이름을 부르게 묶어 둠.
@@ -1607,7 +1613,7 @@ function HookFailureDetail({ state }) {
 				{/* 0 도 사실로 냄 — 창이 비었다는 것 자체가 아래 최종기록과 짝을 이루는 문장임 */}
 				<span className="text-ink">
 					{rows.length} {rows.length === 1 ? "failure" : "failures"} in the last{" "}
-					{days ?? "—"} days
+					<window.UI.NoWrap>{days ?? "—"} days</window.UI.NoWrap>
 				</span>
 				{lastFailure ? (
 					<span>
@@ -1703,7 +1709,7 @@ function NodePartHealth({
 			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
 				Health ({rows.length + looseDaemons.length})
 			</h3>
-			<div className="arch-part-list">
+			<div className="arch-drawer-part-list">
 				{rows.map((row) => {
 					const renderDetail = HEALTH_ROW_DETAILS[row.kind];
 					// 드릴다운 응답은 한 번에 한 데몬 것임 — 다른 데몬의 실행 목록을 이 데몬의 것으로
@@ -2090,7 +2096,7 @@ function getZoneFullTitleAR(scopedId) {
 
 function EmptyStateAR({ message }) {
 	return (
-		<div className="placeholder" style={{ padding: 20 }}>
+		<div className="placeholder">
 			{message}
 		</div>
 	);
@@ -3004,11 +3010,13 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 
 	return (
 		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row">
-			<span>{row.name}</span>
+			<span className="arch-part-name" title={row.name}>
+				{row.name}
+			</span>
 			{/* verdict word stays neutral, tone on the glyph only · an unjudged row reads faint */}
-			<span className={status.tone ? "text-dim" : "text-faint"}>
+			<span className={`arch-part-status ${status.tone ? "text-dim" : "text-faint"}`}>
 				{status.tone && status.tone !== "neutral" && (
-					<Icon name={TONE_ICON[status.tone]} size={12} className={`${TONE_GLYPH_CLASS[status.tone]} mr-1`} />
+					<Icon name={TONE_ICON[status.tone]} size={12} className={TONE_GLYPH_CLASS[status.tone]} />
 				)}
 				{status.text}
 			</span>

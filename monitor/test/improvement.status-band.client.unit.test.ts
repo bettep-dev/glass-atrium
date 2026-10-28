@@ -120,11 +120,14 @@ test("a tile's state follows its own payload, and a missing value is never ready
 test("the three non-ready states render distinctly", () => {
   const retries: string[] = [];
   const shapes = ["loading", "error", "unavailable"].map((status) => {
-    const tree = sandbox.TilePlaceholderI({
+    const tile = sandbox.TilePlaceholderI({
       status,
       label: "Applied (7 days)",
       onRetry: () => retries.push(status),
     });
+    assert.equal(tile.type, sandbox.window.UI.KPI, `a ${status} tile is the ready tile's own KPI anatomy`);
+    // rendered one level → the KPI's rows (value, hint, foot) are reachable
+    const tree = (tile.type as (props: Record<string, unknown>) => unknown)(tile.props);
     const nodes = collectElements(tree, []);
     return {
       status,
@@ -184,6 +187,39 @@ test("a ready tile renders its value and its population", () => {
   assert.match(textOf(tile), /Applied \(7 days\)/);
 });
 
+// a narrow tile ellipsizes the label text alone (an inline-flex atom would clip without an ellipsis), and clamps the hint
+test("a ready tile ellipsizes its label text with the full label in the title, and clamps its hint with the whole line in the title", () => {
+  const label = "Awaiting your decision";
+  const tile = sandbox.StatusTileI({
+    status: "ready",
+    tone: "text-warn",
+    symbol: "⚠",
+    label,
+    value: "2",
+    population: "Suggestions that need your approval",
+    basis: "Pending or snoozed, any age",
+  });
+  const labelNodes = collectElements(tile.props.label, []);
+  const [text] = labelNodes.filter((el) => el.props.title === label);
+  assert.ok(text, "the label text sits in its own titled span");
+  assert.match(String(text.props.className), /\btruncate\b/, "the innermost text span takes the ellipsis");
+  assert.equal(text.props.children, label, "the span holds the label text itself");
+  assert.doesNotMatch(String(labelNodes[0]?.props.className), /\binline-flex\b/, "an atomic inline box would clip without an ellipsis");
+  assert.equal(tile.props.hint, "Suggestions that need your approval");
+  assert.equal(tile.props.isHintClamped, true, "the hint is held to two lines");
+  assert.equal(tile.props.hintTitle, "Suggestions that need your approval\nPending or snoozed, any age", "the title leads with the whole hint, its basis after");
+
+  const stamped = sandbox.StatusTileI({
+    status: "ready",
+    label: "Applied (7 days)",
+    value: "3",
+    population: { type: "span", props: { children: ["of 6 cycles · last ", "10/28, 04:30 AM"] } },
+    populationTitle: "of 6 cycles · last 10/28, 04:30 AM",
+    basis: "Cycles started in the last 7 days",
+  });
+  assert.match(String(stamped.props.hintTitle), /^of 6 cycles · last 10\/28, 04:30 AM\n/, "a node hint's title is its caller's plain-string twin");
+});
+
 // the population line is body text, not a micro caption
 test("a ready tile renders its population at the body type scale", () => {
   const tile = sandbox.StatusTileI({
@@ -236,7 +272,7 @@ test("the applied tile is counted over the same population it names", () => {
     "3",
     "the value must be the cycle count its population denominates, not the proposal count",
   );
-  assert.match(String(applied.props.population), /of 12 cycles/);
+  assert.match(textOf(applied.props.population), /of 12 cycles/);
   assert.match(String(applied.props.basis), /last 7 days/);
 });
 
@@ -254,7 +290,28 @@ test("the applied tile names a one-cycle week in the singular", () => {
   });
   const applied = collectElements(band, []).find((el) => el.props.label === "Applied (7 days)");
 
-  assert.match(String(applied?.props.population), /^of 1 cycle · last /);
+  assert.match(textOf(applied?.props.population), /^of 1 cycle · last /);
+});
+
+// the last-cycle clock time is one unbreakable token → "09:05 AM" never splits before AM
+test("the applied tile keeps its last-cycle stamp whole in one nowrap token", () => {
+  const band = sandbox.StatusBandI({
+    statsState: {
+      status: "ready",
+      data: { cycle_total_7d: 2, cycles_generated_applied_7d: 1, latest_cycle_started_at: "2026-09-16T10:05:00.000Z" },
+    },
+    listState: { status: "ready", data: {} },
+    learningLogState: { status: "ready" },
+    suppression: { pending_total: 0, parked: [] },
+    awaiting: 0,
+    onRetry: () => {},
+  });
+  const applied = collectElements(band, []).find((el) => el.props.label === "Applied (7 days)");
+  const tokens = collectElements(applied?.props.population, []).filter((el) => el.type === sandbox.window.UI.NoWrap);
+
+  assert.equal(tokens.length, 1, "the stamp renders in exactly one nowrap span");
+  assert.match(textOf(tokens[0]), /\d{2}:05/, "the nowrap span carries the clock time");
+  assert.ok(textOf(applied?.props.population).trimEnd().endsWith(textOf(tokens[0])), "the whole stamp sits in the span");
 });
 
 test("the decision tile reads ok at zero and warns while something awaits a decision", () => {
@@ -419,7 +476,7 @@ test("a failed refresh drops the held applied tile's ok tone under a Last known 
   assert.equal(settled.props.tone, "text-ok");
   assert.notEqual(warmError.props.tone, "text-ok", "held numbers under a failed read never keep the ok tone");
   assert.equal(warmError.props.symbol, null);
-  assert.match(String(warmError.props.population), /^Last known · of 4 cycles/);
+  assert.match(textOf(warmError.props.population), /^Last known · of 4 cycles/);
 });
 
 describe("the corpus growth chip keeps the shared freshness rule over a failed refresh", () => {

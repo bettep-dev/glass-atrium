@@ -33,6 +33,48 @@ test("every screen's page h1 is its nav label", async () => {
   }
 });
 
+// Documents wraps each slot's atom in a screen-local component (its stamp waits for a first read);
+// clauded-docs.screen-render pins that the wrappers render FreshnessStamp and RefreshButton
+const SLOT_ATOMS: Record<string, { freshness: string; refresh: string }> = {
+  "clauded-docs": { freshness: "DocHeaderFreshnessCD", refresh: "DocHeaderRefreshCD" },
+};
+
+test("every screen passes its header controls through the named slots, the title ahead of them", async () => {
+  const entries = await getNavEntries();
+  assert.ok(entries.length >= 9, `NAV parse found ${entries.length} entries`);
+  for (const { id } of entries) {
+    const src = readFileSync(resolve(SRC, "screens", `${id}.jsx`), "utf8");
+    // the element runs to the `/>` at its own indent — slot JSX inside self-closes deeper
+    const open = src.match(/^([ \t]*)<PageHeader\b[\s\S]*?\n\1\/>/m)?.[0] ?? "";
+    assert.ok(open, `${id}.jsx renders a PageHeader`);
+    assert.doesNotMatch(open, /\bright=/, `${id}.jsx header carries no free right cluster`);
+    const atoms = SLOT_ATOMS[id] ?? { freshness: "FreshnessStamp", refresh: "RefreshButton" };
+    assert.match(open, new RegExp(`\\brefresh=\\{\\s*<${atoms.refresh}\\b`), `${id}.jsx Refresh rides the refresh slot`);
+    assert.match(open, new RegExp(`\\bfreshness=\\{[\\s\\S]*?<${atoms.freshness}\\b`), `${id}.jsx stamp rides the freshness slot`);
+    const slotAt = open.search(/\b(?:actions|freshness|range|refresh)=\{/);
+    assert.ok(open.indexOf('title="') < slotAt, `${id}.jsx title comes before the first JSX slot prop`);
+  }
+});
+
+test("the header renders only its named slots — a free right cluster is no longer drawn", async () => {
+  const ui = await loadScreenModule(resolve(SRC, "ui.jsx"));
+  const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const tree = renderScreen(React.createElement(ui.PageHeader as Component, { title: "Wiki", right: "legacy", refresh: "refresh" }));
+  assert.doesNotMatch(collectText(tree), /legacy/, "the retired prop renders nothing");
+  const groups = findNodes(tree, (n) => n.type === "div" && /(^|\s)page-head-group(\s|$)/.test(String(n.props.className ?? "")));
+  assert.deepEqual(groups.map((g) => collectText(g)), ["refresh"], "one status group, holding the refresh slot");
+});
+
+test("the page title line is one control high and its sub-line clears the focus ring", () => {
+  const css = readFileSync(resolve(__dirname, "../public/styles/base.css"), "utf8");
+  const rule = (selector: string) => css.match(new RegExp(`(?:^|(?<!,)\\n)${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  assert.match(rule("\\.page-head"), /align-items:\s*flex-start/, "the header row is top-aligned");
+  assert.match(rule("\\.page-head"), /margin-bottom:\s*var\(--space-4\)/, "header → content 16");
+  assert.match(rule("\\.page-head-title"), /line-height:\s*var\(--ctl-min-h\)/, "controls center on the title line");
+  assert.match(rule("\\.page-head-sub"), /margin-top:\s*max\(var\(--space-1\),\s*calc\(var\(--focus-ring-width\)\s*\+\s*var\(--focus-ring-offset\)\)\)/,
+    "title → sub-line gap is the larger of 4 and the ring reach");
+});
+
 test("a card heading is a section h2, below the page h1 in the outline", async () => {
   const ui = await loadScreenModule(resolve(SRC, "ui.jsx"));
   const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };

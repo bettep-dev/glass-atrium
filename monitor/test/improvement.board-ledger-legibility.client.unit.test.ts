@@ -505,6 +505,15 @@ test("the rejected column header never wraps its label, count or basis", () => {
   assert.match(classOf(tree), /\bwhitespace-nowrap\b/);
 });
 
+test("the rejected column header's basis ellipsizes with its full text in the title", () => {
+  const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: { window_days: 30, total: 12 }, label: "Rejected", symbol: "✕", trend: [] });
+  const [basis] = findAll(tree, (el) => /\btruncate\b/.test(classOf(el)));
+
+  assert.ok(basis, "the basis is the header's truncating slot");
+  assert.equal(visibleText(basis), "last 30 days");
+  assert.equal(basis.props.title, "last 30 days", "a clipped basis keeps its whole text in the title");
+});
+
 test("the drawer names the approval tier in words, never echoing the raw tier key", () => {
   const text = visibleText(sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 1, approval_tier: "auto" })));
 

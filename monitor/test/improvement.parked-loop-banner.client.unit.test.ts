@@ -484,15 +484,22 @@ test("approve and reject are shared buttons: approve keeps a neutral label, reje
   assert.equal(style.background, undefined, "the destructive outline carries no fill");
 });
 
-describe("tiles rest on the shared sub-card, and only an interactive tile answers hover", () => {
+describe("tiles rest on a shared surface, and only an interactive tile answers hover", () => {
   const rows = [
     {
+      // the metric tile is the shared KPI in its loading state → rendered one level to its root element
       name: "a loading metric tile",
+      surface: /\bkpi\b/,
       isInteractive: false,
-      render: () => component("TilePlaceholderI")({ status: "loading", label: "Applied", owner: "x", onRetry: () => {} }),
+      render: () => {
+        const tile = component("TilePlaceholderI")({ status: "loading", label: "Applied", owner: "x", onRetry: () => {} }) as RecordedElement;
+        assert.equal(tile.type, sandbox.window.UI.KPI, "the metric tile is the shared KPI");
+        return (tile.type as ScreenComponent)(tile.props);
+      },
     },
     {
       name: "a live candidate row",
+      surface: /\bsub-card\b/,
       isInteractive: true,
       render: () =>
         component("CandidateRowI")({
@@ -507,7 +514,7 @@ describe("tiles rest on the shared sub-card, and only an interactive tile answer
     test(row.name, () => {
       const root = row.render() as RecordedElement;
       const className = String(root.props.className ?? "");
-      assert.match(className, /\bsub-card\b/, "a tile drawing its own ring or shadow");
+      assert.match(className, row.surface, "a tile drawing its own ring or shadow");
       assert.equal(/\bi-tile-hover\b/.test(className), row.isInteractive, "hover affordance on a tile that does nothing");
     });
   }

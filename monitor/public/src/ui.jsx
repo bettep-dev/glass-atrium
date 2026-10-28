@@ -49,6 +49,9 @@ function getIconChildren(key, node) {
   return children;
 }
 
+// a Tailwind display utility the caller set on purpose (hidden, block, sm:inline …) → Icon leaves display to it
+const ICON_DISPLAY_CLASS = /(^|[\s:])(hidden|block|inline|inline-block|flex|inline-flex|grid|contents)(\s|$)/;
+
 // ariaHidden 기본 true — 아이콘은 장식(decorative)이고 의미는 인접 텍스트 라벨이 운반한다(색+기호+텍스트 3중 인코딩 유지).
 // stroke='currentColor' 보존 → 자체(className=text-{tone}) 또는 상위 tone 컬러 클래스가 세팅한 color 를 그대로 상속(색 인코딩 무퇴행).
 // 내부 구현: Lucide UMD 전역(window.lucide) 단일 소스에서 이름으로 IconNode 를 조회해 자식만 렌더 —
@@ -57,8 +60,11 @@ function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
   // 인라인(비-flex) 텍스트 옆 svg 를 텍스트와 수직 중앙 정렬하는 전역 additive 기본값.
   //   · className 에 명시 정렬(align-*/vertical-align)이 있으면 양보 — inline style 가 class 를 이기므로 조건부로만 적용(SymI 의 align-middle 무회귀).
   //   · inline-flex 컨테이너(.pill 등)에선 vertical-align 이 무시되므로 보드 배지에 무해.
+  // inline-block unless className sets a display: Tailwind preflight blocks every svg, which drops an inline icon onto its own line
   const alignStyle = /align-|vertical-align/.test(className) ? undefined : { verticalAlign: '-0.125em' };
-  const props = { width:size, height:size, viewBox:'0 0 24 24', fill:'none', stroke:'currentColor', strokeWidth:stroke, strokeLinecap:'round', strokeLinejoin:'round', className, style: alignStyle, 'aria-hidden': ariaHidden || undefined };
+  const displayStyle = ICON_DISPLAY_CLASS.test(className) ? undefined : { display: 'inline-block' };
+  const style = alignStyle || displayStyle ? { ...displayStyle, ...alignStyle } : undefined;
+  const props = { width:size, height:size, viewBox:'0 0 24 24', fill:'none', stroke:'currentColor', strokeWidth:stroke, strokeLinecap:'round', strokeLinejoin:'round', className, style, 'aria-hidden': ariaHidden || undefined };
   // falsy name(예: HOOK_ERROR_KIND_MODEL 의 icon:null) → 빈 svg (기존 paths[null] 동작 보존, throw 금지).
   if (!name) return <svg {...props} />;
   // 1차: Lucide UMD 전역에서 조회 (전체 카탈로그). icons[key] 우선, top-level 키 폴백. IconNode = [tag, attrs, children].
@@ -117,9 +123,9 @@ function Pill({ children, tone='neutral' }) {
 function EmptyState({ message, hint, action, className='' }) {
   return (
     <div className={`placeholder ${className}`.trim()}>
-      <div className="fs-meta">{message}</div>
-      {hint && <div className="fs-meta text-faint mt-1">{hint}</div>}
-      {action && <div className="mt-2 flex justify-center">{action}</div>}
+      <div className="fs-meta"><DayTokens>{message}</DayTokens></div>
+      {hint && <div className="fs-meta text-faint mt-1"><DayTokens>{hint}</DayTokens></div>}
+      {action && <div className="mt-2 flex">{action}</div>}
     </div>
   );
 }
@@ -559,22 +565,109 @@ function AgentName({ name, className = '' }) {
 }
 
 // Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
-function KpiValue({ children, unit, tone }) {
-  return <div className="kpi-value">
-    {tone && <span className={`text-${tone}`} aria-hidden="true">{TONE_GLYPH[tone]} </span>}
-    {children}{unit && <span className="unit">{unit}</span>}
+// isWord → a word value at --fs-stat sans on the same baseline · isFaint → the unknown dash of a non-ready state.
+// A word rides its own span inside the figure's line box → the box (and its baseline) is the figure's, whatever the word's size.
+function KpiValue({ children, unit, tone, isWord = false, isFaint = false }) {
+  const className = `kpi-value${isWord ? ' kpi-value--word' : ''}${isFaint ? ' text-faint' : ''}`;
+  const glyph = tone && <span className={`text-${tone}`} aria-hidden="true">{TONE_GLYPH[tone]} </span>;
+  return <div className={className}>
+    {isWord ? <span className="kpi-value-word">{glyph}{children}</span> : <>{glyph}{children}</>}
+    {unit && <span className="unit">{unit}</span>}
   </div>;
 }
 
-// label + --fs-kpi mono value + delta + 68×26 inline sparkline
-function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint, hintClassName='fs-meta' }) {
-  return <button onClick={onClick} className="kpi text-left">
-    <div className="kpi-label">{label}</div>
-    {hint && <div className={`${hintClassName} text-faint font-mono kpi-hint`}>{hint}</div>}
-    <KpiValue unit={unit}>{value}</KpiValue>
-    {typeof delta === 'number' && <Delta value={delta} inverse={deltaInverse} />}
-    {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={68} h={26} color={sparkColor}/></div>}
-  </button>;
+const KPI_UNKNOWN_STATES = new Set(['error', 'empty']);
+const KPI_SPARK = { w: 68, h: 26 };
+
+/**
+ * One KPI anatomy — every tile row sits in one place, whatever its state:
+ *   1 label row  label (one line, ellipsis) · optional aside window tag · ⓘ placed on the row, never pushing the value
+ *   2 value row  value + unit · optional badge, baseline-aligned; loading holds the row with a strut + placeholder
+ *   3 delta      number → the shared Delta; a node renders as the caller wrote it
+ *   4 hint       after the value, always; the caller's own face (hintFace) is kept; ≤2 lines + title for a plain hint,
+ *                or a node hint passing isHintClamped with its whole text in hintTitle
+ *   5 foot       drill link / Retry, pinned to the tile bottom
+ * state: 'ready' | 'loading' | 'error' | 'empty' — error and empty show the faint unknown dash, never a 0.
+ * onClick → the tile is a button (no info or foot inside it then); otherwise a group labelled by its label row.
+ * aria-label → the tile's own accessible name (a sentence the label row cannot carry), on the button or the group.
+ * hasValue=false → a fact-list tile: no value row, the hint carries the facts; the label row and states stay.
+ * isSplit → value + delta | hint as the shared TileSplit columns between 641px and xl.
+ */
+function KPI({
+  id, label, labelId, labelAs = 'div', labelClassName = 'fs-meta text-dim font-medium', labelTitle,
+  aside, asideClassName = 'fs-meta text-dim', info,
+  value, unit, tone, isWord = false, badge, hasValue = true,
+  delta, deltaInverse = false,
+  hint, hintClassName = 'fs-meta', hintFace = 'text-faint font-mono', hintTitle, isHintClamped,
+  foot, sparkData, sparkColor = 'currentColor', onClick,
+  state = 'ready', loadingLabel, isBusy = false, isSplit = false, className = '', 'aria-label': ariaLabel,
+}) {
+  const isLoading = state === 'loading';
+  const isUnknown = KPI_UNKNOWN_STATES.has(state);
+  const headId = labelId ?? (id ? `${id}-label` : undefined);
+  const LabelTag = labelAs;
+  const isTextLabel = typeof label === 'string';
+
+  const head = (
+    <LabelTag id={headId} className="kpi-head">
+      <span className={`kpi-label-text ${labelClassName}`.trim()} title={labelTitle ?? (isTextLabel ? label : undefined)}>{label}</span>
+      {aside != null && aside !== false && <span className={`kpi-aside ${asideClassName}`.trim()}>{aside}</span>}
+    </LabelTag>
+  );
+  // a zero-width .kpi-value strut holds the loaded row's line box → the tile keeps its height when the value lands
+  const main = isLoading ? (
+    <div className="kpi-main kpi-main--loading">
+      <span className="kpi-value" aria-hidden="true">{'\u200b'}</span>
+      <LoadingPlaceholder label={loadingLabel}/>
+    </div>
+  ) : !hasValue ? null : (
+    <div className="kpi-main">
+      <KpiValue unit={unit} tone={isUnknown ? undefined : tone} isWord={isWord} isFaint={isUnknown}>
+        {isUnknown ? (value ?? '—') : value}
+      </KpiValue>
+      {badge}
+    </div>
+  );
+  const isPlainHint = typeof hint === 'string' || typeof hint === 'number';
+  // a node hint clamps only when its caller asks and hands its whole text in hintTitle → a block-built hint keeps its own layout
+  const isClamped = isHintClamped ?? isPlainHint;
+  const row = {
+    delta: typeof delta === 'number'
+      ? <div className="kpi-delta-row"><Delta value={delta} inverse={deltaInverse}/></div>
+      : delta != null && delta !== false && <div className="kpi-delta-row">{delta}</div>,
+    hint: hint != null && hint !== false && (
+      <div className={`kpi-hint ${hintClassName} ${hintFace}${isClamped ? ' kpi-hint--clamp' : ''}`.trim()}
+        title={hintTitle ?? (isPlainHint ? String(hint) : undefined)}>{hint}</div>
+    ),
+  };
+  const body = isSplit ? (
+    <TileSplit className="kpi-split" lead={<>{main}{row.delta}</>} detail={row.hint || null}/>
+  ) : <>{main}{row.delta}{row.hint}</>;
+
+  const rootClass = ['kpi kpi-tile', info && 'kpi--info', sparkData && 'kpi--spark', !hasValue && 'kpi--facts', className]
+    .filter(Boolean).join(' ');
+  const children = <>
+    {head}
+    {info && <div className="kpi-info">{info}</div>}
+    {body}
+    {foot && <div className="kpi-foot">{foot}</div>}
+    {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={KPI_SPARK.w} h={KPI_SPARK.h} color={sparkColor}/></div>}
+  </>;
+  const busy = isLoading || isBusy ? 'true' : undefined;
+  // the spark's width has one home (KPI_SPARK) → the tile hands it to CSS, which reserves the hint's room from it
+  const sparkStyle = sparkData ? { '--kpi-spark-w': `${KPI_SPARK.w}px` } : undefined;
+  if (onClick) {
+    return <button type="button" id={id} onClick={onClick} className={`${rootClass} text-left`} aria-label={ariaLabel}
+      aria-busy={busy} style={sparkStyle}>{children}</button>;
+  }
+  // an own name outranks the label row (aria-labelledby would win over aria-label otherwise)
+  return (
+    <div id={id} role="group" aria-labelledby={ariaLabel ? undefined : headId}
+      aria-label={ariaLabel ?? (headId ? undefined : (isTextLabel ? label : undefined))}
+      className={rootClass} aria-busy={busy} style={sparkStyle}>
+      {children}
+    </div>
+  );
 }
 
 // 공용 오버레이 surface — variant 로 배치만 전환, 상호작용 계약은 단일 (presentation-only).
@@ -906,9 +999,11 @@ function SectionLabel({ children, level = 2, id, className = '' }) {
 }
 
 // The one column-header idiom → every table's headers read alike and carry scope="col".
-function TableHead({ children, isNumeric = false, isSticky = false, className = '' }) {
-  return <th scope="col" className={`${isNumeric ? 'num' : ''} ${className}`.trim() || undefined}
-    style={isSticky ? STICKY_TH_STYLE : undefined}>{children}</th>;
+// style merges over the sticky style (a column's min width); rest carries a sortable header's onClick and aria-sort.
+function TableHead({ children, isNumeric = false, isSticky = false, className = '', style, ...rest }) {
+  const thStyle = isSticky ? { ...STICKY_TH_STYLE, ...style } : style;
+  return <th {...rest} scope="col" className={`${isNumeric ? 'num' : ''} ${className}`.trim() || undefined}
+    style={thStyle}>{children}</th>;
 }
 
 /**
@@ -955,8 +1050,9 @@ function getDisclosureOpen(kind, tone) {
  * Card-level fold carrying the one status/detail rule every page shares.
  * kind 'status' — headline state, starts open · kind 'detail' — per-row lists / history / breakdowns, starts collapsed.
  * A detail fold opens itself when `tone` escalates to warn/crit; a later recovery never force-closes it.
+ * @param isFlush - unpadded body, for a table whose edge cells carry the card padding; other content insets itself
  */
-function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, className = '' }) {
+function Disclosure({ kind = 'detail', title, sub, tone, level = 2, isFlush = false, children, className = '' }) {
   const [isOpen, setOpen] = useState(() => getDisclosureOpen(kind, tone));
   const idRef = useRef(null);
   const isAlerting = DISCLOSURE_ALERT_TONES.has(tone);
@@ -971,7 +1067,7 @@ function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, cl
         className="w-full text-left gap-2"
         label={<><span className="font-medium text-ink">{title}</span>{sub && <span className="text-faint fs-meta ml-2">{sub}</span>}</>} />
     </Heading>
-    {isOpen && <div id={idRef.current} className="px-4 pb-4">{children}</div>}
+    {isOpen && <div id={idRef.current} className={isFlush ? undefined : 'px-4 pb-4'}>{children}</div>}
   </div>;
 }
 
@@ -1153,15 +1249,26 @@ function DetailField({ label, value, mono = false }) {
   </div>;
 }
 
-// title = the page h1 (callers pass the nav label); a sub-line echoing the title is dropped.
-function PageHeader({ title, sub, right }) {
+/**
+ * Page title row: the h1 (callers pass the nav label) and its sub-line, then the right-anchored cluster.
+ * Cluster, left → right: actions · 24 · freshness · range · refresh, gap 12 — Refresh is always right-most.
+ * @param freshness - the status group: the FreshnessStamp and any status token read beside it
+ * @param range - the time-range control · @param refresh - the RefreshButton
+ * @param actions - optional page actions, set apart from the status group
+ */
+function PageHeader({ title, sub, actions, freshness, range, refresh }) {
   const hasSub = sub && sub !== title;
-  return <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4">
+  const hasStatus = Boolean(freshness || range || refresh);
+  const hasCluster = Boolean(actions || hasStatus);
+  return <div className="page-head">
     <div className="min-w-0">
-      <h1 className="fs-display font-semibold leading-tight">{title}</h1>
-      {hasSub && <div className="fs-meta font-mono text-faint tracking-wider uppercase">{sub}</div>}
+      <h1 className="page-head-title fs-display font-semibold">{title}</h1>
+      {hasSub && <div className="page-head-sub fs-meta font-mono text-faint tracking-wider uppercase">{sub}</div>}
     </div>
-    {right && <div className="ml-auto flex flex-wrap items-center justify-end gap-2 min-w-0">{right}</div>}
+    {hasCluster && <div className="page-head-cluster">
+      {actions && <div className="page-head-group">{actions}</div>}
+      {hasStatus && <div className="page-head-group">{freshness}{range}{refresh}</div>}
+    </div>}
   </div>;
 }
 
@@ -1270,6 +1377,78 @@ function formatKstFull(iso) {
   const p = kstParts(iso);
   if (!p) return iso || '—';
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second} ${tzShortLabel()}`;
+}
+
+const DAY_RANGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Server-anchored period → "MM-DD – MM-DD", never re-derived from the browser clock.
+ * A plain string, so a title, an aria-label and the clipboard read it as is; render it whole through DateRange.
+ * @param period - { period_start, period_end } as YYYY-MM-DD; period_end is exclusive → the last day shown is the day before it
+ */
+function formatDayRange({ period_start: start, period_end: end }) {
+  const last = new Date(Date.parse(`${end}T00:00:00Z`) - DAY_RANGE_MS).toISOString().slice(0, 10);
+  return `${String(start).slice(5, 10)} – ${last.slice(5, 10)}`;
+}
+
+/** One unbreakable token (a date, a range, a clock time, a number with a spaced unit) → the line wraps around it, never inside it. */
+function NoWrap({ children, className = '' }) {
+  return <span className={`whitespace-nowrap ${className}`.trim()}>{children}</span>;
+}
+
+// a day count or day range + its unit — the number + unit token the sentence wraps around, in three forms:
+// spaced ("30 days", "1 day", "3–7 days"), dashed compound ("7-day", "30-day", "3–7-day") and qualified noun ("28 cycle days")
+const DAY_TOKEN_RE = /\d[\d,]*(?:\s*[–-]\s*\d[\d,]*)?(?:\s+cycle)?(?:\s+|-)days?\b/g;
+
+// one string → its parts, each day token in its own NoWrap; keyed by the part's place and the token's offset
+function getDayTokenParts(text, place) {
+  const parts = [];
+  let at = 0;
+  for (const m of text.matchAll(DAY_TOKEN_RE)) {
+    if (m.index > at) parts.push(text.slice(at, m.index));
+    parts.push(<NoWrap key={`${place}:${m.index}`}>{m[0]}</NoWrap>);
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) parts.push(text.slice(at));
+  return parts;
+}
+
+const isFragmentPart = (part) => part !== null && typeof part === 'object' && part.type === React.Fragment;
+
+// children → their parts: a string splits around its day tokens, a Fragment is stepped into (a caller-composed title
+// such as `<>{title} <Badge/></>` keeps its literal's tokens whole), any other part is left to its own author
+function getDayTokenNodes(children, place) {
+  return [children].flat(Infinity).flatMap((part, at) => {
+    const key = `${place}${at}`;
+    if (typeof part === 'string') return getDayTokenParts(part, key);
+    if (!isFragmentPart(part)) return [part];
+    return [React.createElement(React.Fragment, { key }, ...getDayTokenNodes(part.props.children, `${key}.`))];
+  });
+}
+
+/**
+ * A plain sentence with every day-count token kept whole in its own NoWrap; text content stays the sentence.
+ * @param children - the sentence; a list of children (nested lists too) and a Fragment (nested too) are read part by part,
+ *   and any other non-string part (an element, null) renders as is
+ */
+function DayTokens({ children }) {
+  const parts = getDayTokenNodes(children, '');
+  if (parts.length <= 1) return parts[0] ?? null;
+  // spread, not a list → a caller's own unkeyed element part needs no key
+  return React.createElement(React.Fragment, null, ...parts);
+}
+
+/**
+ * A range token kept whole, alone or inside its sentence; the sentence stays a plain string and wraps around the token.
+ * Text content equals the sentence, so no invisible character ever enters the copy.
+ * @param range - the unbreakable token: a formatDayRange period ("09-23 – 09-29") or a day span ("30 days")
+ * @param children - the plain-string sentence carrying it (e.g. a tile trend); absent → the token alone; a sentence without the token renders as is
+ */
+function DateRange({ range, children = range }) {
+  const text = children ?? '';
+  const at = range && typeof text === 'string' ? text.lastIndexOf(range) : -1;
+  if (at < 0) return text;
+  return <>{text.slice(0, at)}<NoWrap>{range}</NoWrap>{text.slice(at + range.length)}</>;
 }
 
 /**
@@ -1477,7 +1656,8 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, shellReg
     <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={isBusy ? 'true' : undefined}>
       <span aria-hidden="true" className={`mr-1 ${toneClass}`}>{glyph}</span>
       {hasSrWord && <span className="sr-only">{word}</span>}
-      {state !== 'loading' && <span data-stamp-text="true">{text}</span>}
+      {/* the clock time never breaks from "as of", whatever the header cluster around the stamp does */}
+      {state !== 'loading' && <span data-stamp-text="true" className="whitespace-nowrap">{text}</span>}
     </span>
   );
 }
@@ -1751,10 +1931,11 @@ function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, d
           <Icon name={TONE_ICON[tone]} size={isInset ? 14 : 16}/>
         </span>
         <div className="alert-card-content">
+          {/* title and body ride DayTokens → a "7-day" / "30 days" token in any alert stays on one line */}
           <span className="alert-card-title fs-body font-medium">
-            <span className="sr-only">{`${ALERT_SEVERITY_WORD[tone]}: `}</span>{title}
+            <span className="sr-only">{`${ALERT_SEVERITY_WORD[tone]}: `}</span><DayTokens>{title}</DayTokens>
           </span>
-          {body && <span className="alert-card-body fs-meta text-dim">{body}</span>}
+          {body && <span className="alert-card-body fs-meta text-dim"><DayTokens>{body}</DayTokens></span>}
           {subjects?.length > 0 && (
             <div className="alert-card-subjects">{subjects.map((subject) => <Badge key={subject}>{subject}</Badge>)}</div>
           )}
@@ -2064,7 +2245,7 @@ function PageVerdict({ tone = 'neutral', label, children, chips = [], freshness,
       <span className="page-verdict-glyph" aria-hidden="true">{TONE_GLYPH[toneKey]}</span>
       {verdict.label || VERDICT_TONE_LABEL[toneKey]}
     </span>
-    {sentence && <span className="page-verdict-text">{sentence}</span>}
+    {sentence && <span className="page-verdict-text"><DayTokens>{sentence}</DayTokens></span>}
     {verdict.note && <span className="page-verdict-text fs-meta text-dim">{verdict.note}</span>}
     {chips.length > 0 && <span className="page-verdict-chips">
       {chips.map((chip) => <VerdictChip key={chip.key || chip.label} chip={chip} />)}
@@ -2191,7 +2372,7 @@ window.UI = {
   getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
-  formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
+  formatKstDateTime, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,
   formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,

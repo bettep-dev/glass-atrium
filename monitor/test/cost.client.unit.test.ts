@@ -986,12 +986,17 @@ interface RenderModule {
   [name: string]: unknown;
 }
 
-// real ui.jsx helpers, with every rendered atom a host element carrying its props
+// the tiles are thin wrappers over the shared KPI anatomy → the real KPI renders, its slots stay stub atoms
+const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
+const realKpi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI.KPI;
+
+// real ui.jsx helpers, with every rendered atom a host element carrying its props (the KPI anatomy itself real)
 function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
   const real = cost.window.UI as Record<string, unknown>;
   return new Proxy({}, {
     get: (_target, name: string) => {
       if (name in overrides) return overrides[name];
+      if (name === "KPI") return realKpi;
       const value = real[name];
       if (typeof value !== "function" || /^[a-z]/.test(name)) return value;
       return (props: Record<string, unknown>) => ({ __element: true, type: "ui-atom", props: { ...props, atom: name } });
@@ -1034,7 +1039,7 @@ test("a cold-failed KPI payload retrying reads as failed on its tiles, never a s
   const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
   assert.equal(cards.length, 1, "the KPI error card stays mounted");
   assert.equal(cards[0].props.isBusy, true);
-  const tiles = findNodes(tree, (n) => n.type === "div" && n.props.className === "kpi");
+  const tiles = findNodes(tree, (n) => n.type === "div" && String(n.props.className ?? "").split(/\s+/).includes("kpi"));
   assert.equal(tiles.length, 4);
   assert.equal(tiles.filter((t) => t.props["aria-busy"] === "true").length, 0, "no tile reads as loading beside the card");
 });
@@ -1208,6 +1213,62 @@ test("every KPI hint fits the 40-character KPI-hint cap at the widest realistic 
   const hints = findNodes(tree, (n) => /\bkpi-hint\b/.test(String(n.props.className ?? ""))).map((n) => collectText(n));
   assert.equal(hints.length, 4, "every tile states a hint at these figures");
   for (const hint of hints) assert.ok(hint.length <= 40, `"${hint}" is ${hint.length} chars`);
+});
+
+test("the cache tile's list-price note keeps its window (\"30 days\") whole as one DateRange token", async () => {
+  const mod = (await loadScreenModule(COST_SRC, {
+    UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
+    getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
+  })) as RenderModule;
+  const kpi = getKpiAtRatio(1, 1);
+  const modelRows = [{
+    model: "claude-opus-4", cost_usd: 120, session_count: 3,
+    input_tokens: 1e6, output_tokens: 1e6, cache_read_tokens: 1e7, cache_creation_tokens: 1e6,
+  }];
+  const tree = renderIn(mod, "KpiRowC", {
+    kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
+    modelState: ready({ rows: modelRows }), days: 30, onRetry: () => {},
+  });
+  const [foot] = findNodes(tree, (n) => n.props.className === "cost-foot");
+  assert.ok(foot, "the cache tile carries its list-price note");
+  const ranges = findNodes(foot, (n) => n.props.atom === "DateRange");
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0].props.range, "30 days");
+  assert.match(String(ranges[0].props.children), /, last 30 days\b/, "the sentence carries the token as a plain string");
+});
+
+test("the window delta foot hands its sentence to DayTokens, so \"30 days\" before its end date never breaks", async () => {
+  const mod = await loadCostRender();
+  const prior = { days: 30, period_end: "2026-09-30" };
+  const rows = [
+    { delta: 12, sentence: "12% vs the 30 days before 09-30, cut at this time of day" },
+    { delta: null, sentence: "No comparison — the 30 days before 09-30 held no cost." },
+  ];
+  for (const row of rows) {
+    const tree = renderIn(mod, "TrendDeltaC", { delta: row.delta, prior, noun: "cost" });
+    const tokens = findNodes(tree, (n) => n.props.atom === "DayTokens");
+    assert.equal(tokens.length, 1, `delta ${row.delta}: the sentence rides one DayTokens`);
+    assert.equal(String(tokens[0].props.children), row.sentence, "the sentence reaches DayTokens whole, as one string");
+  }
+});
+
+// R-c: every KPI-band sentence carrying a dashed "7-day" token hands it to DayTokens, so the compound never breaks at its hyphen
+test("the KPI band's 7-day sentences (today hint and verdict, per-task hint and foot) each ride one DayTokens", async () => {
+  const mod = await loadCostRender();
+  const kpi = { ...getKpiAtRatio(0.15, null), cost_per_done_usd: 0.39, done_count_7d: 2_396 };
+  const tree = renderIn(mod, "KpiRowC", {
+    kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
+    modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
+  });
+  const sentences = findNodes(tree, (n) => n.props.atom === "DayTokens").map((n) => String(n.props.children));
+  for (const sentence of [
+    "$10.00 7-day normal/day",
+    "Today is 15% of the 7-day daily normal so far.",
+    "7-day cost / 2,396 finished",
+    "Fixed 7-day window — the range above does not change it.",
+  ]) {
+    assert.ok(sentences.includes(sentence), `"${sentence}" reaches DayTokens whole; got ${JSON.stringify(sentences)}`);
+  }
 });
 
 test("the window-cost tile keeps its counting rule behind an info trigger described by the tile label", async () => {
@@ -1471,17 +1532,26 @@ test("every chart tooltip floats on the opaque overlay surface and follows the p
   }
 });
 
-test("a loading skeleton pulses through a class the screen's reduced-motion rule holds still", async () => {
+// the tiles load through the shared KPI loading row → its indicator, not a screen-local skeleton, carries the motion
+test("a loading tile's indicator animates only through a motion-safe class, so reduced motion holds it still", async () => {
   const mod = await loadCostRender();
-  const skeleton = findNodes(renderIn(mod, "SkelC", {}), (n) => n.type === "span")[0];
-  assert.equal((skeleton?.props.style as Record<string, unknown>).animation, undefined, "no inline loop a stylesheet cannot override");
-  const classes = String(skeleton?.props.className ?? "").split(/\s+/).filter(Boolean);
-  const css = findNodes(renderIn(mod, "ScreenCost", { onNav: () => {} }), (n) => n.type === "style").map(collectText).join("\n");
-  const reduceStart = css.search(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
-  assert.ok(reduceStart >= 0, "the screen declares a reduced-motion block");
-  const pulsing = classes.filter((c) => new RegExp(`\\.${c}\\s*\\{[^}]*animation:\\s*skelPulseC`).test(css));
-  assert.equal(pulsing.length, 1, `one skeleton class runs the pulse: ${classes.join(" ")}`);
-  assert.match(css.slice(reduceStart), new RegExp(`\\.${pulsing[0]}\\s*\\{[^}]*animation:\\s*none`), "reduced motion stops that class");
+  const loading: PanelState = { status: "loading", data: null, error: null, busy: false };
+  const tree = renderIn(mod, "KpiRowC", {
+    kpiState: loading, hot: cost.computeHotVerdict({}), trendState: loading, modelState: loading, days: 30, onRetry: () => {},
+  });
+  const isTile = (n: RenderedNode) => n.type === "div" && String(n.props.className ?? "").split(/\s+/).includes("kpi");
+  const tiles = findNodes(tree, isTile);
+  assert.equal(tiles.length, 4);
+  for (const tile of tiles) {
+    assert.equal(tile.props["aria-busy"], "true", "a loading tile says so");
+    const animated = findNodes(tile, (n) => /\banimate-/.test(String(n.props.className ?? "")));
+    assert.ok(animated.length > 0, "each loading tile shows a moving indicator");
+    for (const node of animated) {
+      assert.equal((node.props.style as Record<string, unknown> | undefined)?.animation, undefined, "no inline loop a stylesheet cannot override");
+      const loops = String(node.props.className).split(/\s+/).filter((c) => /animate-/.test(c));
+      for (const loop of loops) assert.match(loop, /^motion-safe:/, `${loop} runs under reduced motion`);
+    }
+  }
 });
 
 test("a refreshing region dims at the 120ms state timing, and only when motion is allowed", async () => {

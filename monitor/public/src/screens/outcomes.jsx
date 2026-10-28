@@ -257,14 +257,14 @@ function AttributionDevScopeO({ devScope }) {
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div
-          className="bg-elev rounded-md p-2.5 border border-line"
+          className="bg-elev rounded-md p-3 border border-line"
           title="Rate at which DEV agents ran out of budget before reporting a result over the selected window — the rolling baseline to watch for recurrence">
           <div className="fs-meta text-dim">Budget-kill rate</div>
           <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.budget_truncation_rate)}</div>
           <div className="fs-meta font-mono text-dim mt-0.5">{formatIntO(truncCount)} of {formatIntO(total)}</div>
         </div>
         <div
-          className="bg-elev rounded-md p-2.5 border border-line"
+          className="bg-elev rounded-md p-3 border border-line"
           title="Synthesized-outcome rate for DEV agents — harness recovery when the agent reported no result (not a failure, a recovery artifact)">
           <div className="fs-meta text-dim">Synthesized rate</div>
           <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.synthesized_rate)}</div>
@@ -395,17 +395,22 @@ function crosstabConfidenceKeyO(confidence) {
 
 // 화면 전용 inline CSS — render 마다 string 재할당 회피 위해 모듈 상수.
 const SCREEN_OUTCOMES_CSS = `
+/* cross table rows on the 40 step */
+/* count + bar cell: the count on the row's centre line (40 less the 1px rule), the 3px bar in the band below */
+.crosstab-tbl { --crosstab-rule: 1px; }
+.crosstab-tbl :is(tbody, tfoot) > tr > :is(th, td) { height: var(--row-h); line-height: var(--lh-row); }
+.crosstab-tbl td.crosstab-bar-cell { vertical-align: top; padding-block: calc((var(--row-h) - var(--crosstab-rule) - var(--lh-row)) / 2) 0; }
 @keyframes skelPulseO { 0%,100%{opacity:.7} 50%{opacity:.35} }
 .skel-pulse-o { animation: skelPulseO 1.4s ease-in-out infinite; }
 .outcome-md { font-size: var(--fs-body); line-height: 1.65; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
 /* md 헤딩 3레벨 → title 토큰 공통 (동일 content-level) · 시각 위계는 font-weight 600 + margin 으로 보존 */
-.outcome-md h1, .outcome-md h2, .outcome-md h3, .outcome-md h4 { font-weight: 600; margin: 14px 0 6px; line-height: 1.3; }
+.outcome-md h1, .outcome-md h2, .outcome-md h3, .outcome-md h4 { font-weight: 600; margin: var(--space-3) 0 var(--space-1_5); line-height: 1.3; }
 .outcome-md h1, .outcome-md h2, .outcome-md h3 { font-size: var(--fs-title); }
 .outcome-md p { margin: 6px 0; }
-.outcome-md ul, .outcome-md ol { margin: 6px 0; padding-left: 22px; }
+.outcome-md ul, .outcome-md ol { margin: 6px 0; padding-left: var(--space-6); }
 .outcome-md li { margin: 2px 0; }
-.outcome-md code { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); background: rgb(var(--sunken)); padding: 1px 5px; border-radius: 3px; }
-.outcome-md pre { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); background: rgb(var(--sunken)); padding: 10px 12px; border-radius: 6px; border: 1px solid rgb(var(--line)); overflow-x: auto; }
+.outcome-md code { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); background: rgb(var(--sunken)); padding: 0 var(--space-1); border-radius: 3px; }
+.outcome-md pre { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); background: rgb(var(--sunken)); padding: var(--space-2) var(--space-3); border-radius: 6px; border: 1px solid rgb(var(--line)); overflow-x: auto; }
 .outcome-md pre code { background: transparent; padding: 0; }
 .outcome-md blockquote { border-left: 3px solid rgb(var(--accent)); padding: 2px 12px; margin: 8px 0; color: rgb(var(--dim)); background: rgb(var(--sunken) / 0.4); }
 .outcome-md a { color: rgb(var(--ink)); text-decoration: underline; text-underline-offset: 2px; }
@@ -689,16 +694,14 @@ function ScreenOutcomes({ onNav }) {
         <PageHeader
           title="Task results"
           sub="Agent task outcomes"
-          right={
-            <>
-              <FreshnessStamp {...getFreshnessInputO(asOfAt, stampRegions)}/>
-              <WindowSeg value={filter.days} onChange={setWindowDays}/>
-              <RefreshButton
-                isBusy={isRefreshing}
-                hasRead={asOfAt != null}
-                onRefresh={triggerRefresh}
-                label="Refresh task results"/>
-            </>
+          freshness={<FreshnessStamp {...getFreshnessInputO(asOfAt, stampRegions)}/>}
+          range={<WindowSeg value={filter.days} onChange={setWindowDays}/>}
+          refresh={
+            <RefreshButton
+              isBusy={isRefreshing}
+              hasRead={asOfAt != null}
+              onRefresh={triggerRefresh}
+              label="Refresh task results"/>
           }
         />
       </div>
@@ -976,7 +979,7 @@ function buildBandTrendsO(data, tiles, priorAttentionCount) {
 function getBandTrendO(tile, priorTile, prior) {
   const { LOW_N_MIN } = window.UI;
   if (tile.count === null || priorTile.count === null || tile.population < LOW_N_MIN) return null;
-  const priorRange = formatDayRangeO(prior);
+  const priorRange = window.UI.formatDayRange(prior);
   if (priorTile.population < LOW_N_MIN) return `No comparison — too few records in ${priorRange}`;
   const points = (tile.count / tile.population - priorTile.count / priorTile.population) * 100;
   const change = Math.abs(points) < 0.05 ? 'Level' : `${points > 0 ? 'Up' : 'Down'} ${Math.abs(points).toFixed(1)} pts`;
@@ -988,21 +991,15 @@ function formatDayO(date) {
   return String(date).slice(5, 10);
 }
 
-// period_end is exclusive → the last day shown is the day before it
-function formatDayRangeO({ period_start: start, period_end: end }) {
-  const last = new Date(Date.parse(`${end}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
-  return `${formatDayO(start)} – ${formatDayO(last)}`;
-}
-
 function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry, shared }) {
   const { getRegionView, getFreshnessVerdict, CardInfo } = window.UI;
   const view = getRegionView(analyticsState);
   if (view === 'loading') {
     return (
-      <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
+      <div className="grid grid-cols-4 gap-card mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
         {/* hero + volume column, as loaded → nothing shifts on arrival */}
-        <KpiSkeletonO className="col-span-3"/>
-        <KpiSkeletonO/>
+        <KpiSkeletonO loadingLabel="needs you" className="col-span-3"/>
+        <KpiSkeletonO loadingLabel="volume"/>
       </div>
     );
   }
@@ -1028,9 +1025,15 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
     : null;
   const bandTiles = buildStatusBandTilesO(analyticsState.data, attentionCount);
   const trends = buildBandTrendsO(analyticsState.data, bandTiles, attentionState.data?.priorTotal ?? null);
+  const prior = analyticsState.data?.overall?.prior_window;
+  // trend stays a plain string (the aria-label reads it); the range token rides beside it for the render
+  const getTrendTile = (tile) => {
+    const trend = trends[tile.key] ?? null;
+    return { ...tile, trend, trendRange: trend ? window.UI.formatDayRange(prior) : null };
+  };
   // stale or partial read → an ok tile drops to neutral, warn/crit kept (the verdict's rule)
   const tiles = bandTiles
-    .map((tile) => ({ ...tile, trend: trends[tile.key] ?? null }))
+    .map(getTrendTile)
     .map((tile) => (freshness ? { ...tile, tone: getFreshnessVerdict({ ...freshness, tone: tile.tone }).tone } : tile));
   // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.
   const windowLabel = `${windowDays}d`;
@@ -1049,7 +1052,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   return (
     <div id={REGION_CARD_IDS.statusBand} className="mb-4 flex-shrink-0">
       <span id={labelId} className="sr-only">Status band</span>
-      <div className="grid grid-cols-4 gap-3" role="group" aria-labelledby={labelId}>
+      <div className="grid grid-cols-4 gap-card" role="group" aria-labelledby={labelId}>
         <BandTileO
           tile={heroTile}
           windowLabel={windowLabel}
@@ -1066,8 +1069,9 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
 }
 
 // unloadedText → a pending or failed count says so instead of a dash that reads as data
+// One KPI anatomy: label row · count · share and trend under it · the reasons as the split detail column.
 function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, className = '' }) {
-  const { KpiValue, TileSplit, formatPctWithDenominator } = window.UI;
+  const { KPI, formatPctWithDenominator, DateRange } = window.UI;
   const glyph = getBandTileGlyphO(tile.tone);
   const loaded = tile.count !== null && tile.count !== undefined;
   const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
@@ -1077,30 +1081,30 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
     : '';
   const trendText = tile.trend ? ` — ${tile.trend}` : '';
   const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'}${trendText}${reasonText} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
-  const Tag = canJump ? 'button' : 'div';
-  const lead = (
-    <>
-      <div className="kpi-label">
-        {glyph && (
-          <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
-            <GlyphO name={glyph} size={12}/>
-          </span>
-        )}
-        {tile.label}
-      </div>
-      <KpiValue>{loaded ? formatIntO(tile.count) : <span className="fs-body text-dim">{unloadedText}</span>}</KpiValue>
-      <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
-      {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
-    </>
-  );
 
   return (
-    <Tag
-      {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : { role: 'group' })}
-      className={`${canJump ? 'kpi' : 'kpi cursor-default'} ${className}`.trim()}
-      aria-label={ariaLabel}>
-      {reasons ? <TileSplit lead={lead} detail={<NeedsYouReasonsO reasons={reasons}/>}/> : lead}
-    </Tag>
+    <KPI
+      label={
+        <span className="inline-flex items-center gap-1">
+          {glyph && (
+            <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
+              <GlyphO name={glyph} size={12}/>
+            </span>
+          )}
+          {tile.label}
+        </span>
+      }
+      value={loaded ? formatIntO(tile.count) : <span className="fs-body text-dim">{unloadedText}</span>}
+      delta={
+        <>
+          <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
+          {/* the range rides in its own nowrap span → the sentence wraps around it, never inside the dates */}
+          {tile.trend && <div className="fs-meta text-dim"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></div>}
+        </>
+      }
+      hint={reasons && <NeedsYouReasonsO reasons={reasons}/>} hintFace="" isSplit={Boolean(reasons)}
+      onClick={canJump ? () => focusLedgerSectionO(tile.jumpTo) : undefined}
+      aria-label={ariaLabel} className={className}/>
   );
 }
 
@@ -1211,24 +1215,27 @@ function getVolumeTilesO(tiles) {
 }
 
 // volume facts demoted beside the hero; the Self-reported glyph stays the missing-report grade channel
+// a fact-list KPI: the ⓘ on the label row, level with the hero's label; the facts start where the hero's value does
 function VolumeTilesO({ tiles, windowLabel, info = null }) {
-  const { formatPctWithDenominator } = window.UI;
+  const { KPI, formatPctWithDenominator, DateRange } = window.UI;
   return (
-    <div className="kpi cursor-default fs-meta flex flex-col justify-between gap-2" role="group" aria-label={`Volume · ${windowLabel}`}>
-      {info && <div className="flex justify-end">{info}</div>}
-      {tiles.map((tile) => {
-        const glyph = getBandTileGlyphO(tile.tone);
-        return (
-          <div key={tile.key} className="flex flex-wrap items-center gap-x-1 text-dim">
-            {glyph && <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}><GlyphO name={glyph} size={12}/></span>}
-            {tile.label}
-            <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
-            <span className="w-full text-right font-mono text-faint">{formatPctWithDenominator(tile.count, tile.population)}</span>
-            {tile.trend && <span className="w-full text-right">{tile.trend}</span>}
-          </div>
-        );
-      })}
-    </div>
+    <KPI hasValue={false} info={info} aria-label={`Volume · ${windowLabel}`} hintFace=""
+      hint={
+        <div className="flex flex-col gap-2">
+          {tiles.map((tile) => {
+            const glyph = getBandTileGlyphO(tile.tone);
+            return (
+              <div key={tile.key} className="flex flex-wrap items-center gap-x-1 text-dim">
+                {glyph && <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}><GlyphO name={glyph} size={12}/></span>}
+                {tile.label}
+                <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
+                <span className="w-full text-right font-mono text-faint">{formatPctWithDenominator(tile.count, tile.population)}</span>
+                {tile.trend && <span className="w-full text-right"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></span>}
+              </div>
+            );
+          })}
+        </div>
+      }/>
   );
 }
 
@@ -1316,9 +1323,12 @@ function AgentFailureTableO({ state, onRetry, shared }) {
   );
 }
 
+// Numeric columns, alignment only: values and headers right-aligned, tabular figures, one line — every typeface stays as it is
+const NUM_ALIGN_O = 'text-right tabular-nums whitespace-nowrap';
+
 const AGENT_FAILURE_COLUMNS_O = [
   { label: 'Agent', align: 'left' },
-  { label: 'Failure rate', align: 'left' },
+  { label: 'Failure rate', align: 'right' },
   { label: 'Failed', align: 'right' },
   { label: 'Blocked', align: 'right' },
   { label: 'Open caveats', align: 'right' },
@@ -1327,10 +1337,10 @@ const AGENT_FAILURE_COLUMNS_O = [
 
 function AgentFailureHeadO({ stickyStyle }) {
   return (
-    <thead>
+    <thead className="tbl-head">
       <tr>
         {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
-          <th key={label} scope="col" className={`text-${align} text-dim font-medium px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
+          <th key={label} scope="col" className={`${align === 'right' ? NUM_ALIGN_O : 'text-left'} text-dim font-medium px-3 border-b border-line`} style={stickyStyle}>{label}</th>
         ))}
       </tr>
     </thead>
@@ -1343,10 +1353,10 @@ function AgentFailureSkeletonO({ stickyStyle }) {
     <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }} aria-busy={true} aria-label="Loading by-agent failures">
       {/* called, not mounted → <thead> stays a direct child in the element tree */}
       {AgentFailureHeadO({ stickyStyle })}
-      <tbody>
+      <tbody className="tbl-compact">
         {[0, 1, 2].map((i) => (
           <tr key={i}>
-            <td colSpan={AGENT_FAILURE_COLUMNS_O.length} className="px-3 py-2 border-b border-line">
+            <td colSpan={AGENT_FAILURE_COLUMNS_O.length} className="px-3 border-b border-line">
               <div className="skel-pulse-o" style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))' }}/>
             </td>
           </tr>
@@ -1372,15 +1382,15 @@ function AgentFailureBodyO({ state, onRetry, shared, stickyStyle }) {
     <div className="overflow-x-auto" style={{ position: 'relative' }}>
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         {AgentFailureHeadO({ stickyStyle })}
-        <tbody>
+        <tbody className="tbl-compact">
           {rows.map((row) => (
             <tr key={row.agent} className="outcome-row">
-              <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
+              <td className="text-left text-ink px-3 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
               <AgentFailureRateCellO row={row}/>
-              <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.failed)}</td>
-              <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.blocked)}</td>
+              <td className={`${NUM_ALIGN_O} text-ink font-mono px-3 border-b border-line`}>{formatIntO(row.failed)}</td>
+              <td className={`${NUM_ALIGN_O} text-ink font-mono px-3 border-b border-line`}>{formatIntO(row.blocked)}</td>
               <OpenCaveatCellO count={row.openCaveats}/>
-              <td className="text-right text-faint font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.total)}</td>
+              <td className={`${NUM_ALIGN_O} text-faint font-mono px-3 border-b border-line`}>{formatIntO(row.total)}</td>
             </tr>
           ))}
         </tbody>
@@ -1401,14 +1411,15 @@ function AgentFailureRateCellO({ row }) {
   const pct = row.rate * 100;
   return (
     <td
-      className="px-3 py-1.5 border-b border-line"
+      className="px-3 border-b border-line"
       title={`${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`}>
+      {/* the share ends the cell → every rate shares one right edge under its right-aligned header; the bar and the low-sample mark lead it */}
       <span className="flex items-center gap-2">
-        <span className={`font-mono ${row.isLowSample ? 'text-faint italic' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
         <span aria-hidden="true" className="flex-1" style={{ minWidth: 40, height: 6, borderRadius: 3, background: 'rgb(var(--sunken))' }}>
           <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${getFailureRateFillO(row)}))` }}/>
         </span>
         <LowSampleMark n={row.total}/>
+        <span className={`${NUM_ALIGN_O} font-mono ${row.isLowSample ? 'text-faint italic' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
       </span>
     </td>
   );
@@ -1419,26 +1430,17 @@ function OpenCaveatCellO({ count }) {
   const isLoaded = count !== null;
   return (
     <td
-      className="text-right text-ink font-mono px-3 py-1.5 border-b border-line"
+      className={`${NUM_ALIGN_O} text-ink font-mono px-3 border-b border-line`}
       title={isLoaded ? undefined : 'Not loaded — only the top 10 agents by volume carry an open-caveat count'}>
       {isLoaded ? formatIntO(count) : '—'}
     </td>
   );
 }
 
-function KpiSkeletonO({ className = '' }) {
-  return (
-    <div className={`kpi ${className}`.trim()} aria-busy="true">
-      <div
-        className="skel-pulse-o"
-        style={{
-          height: 70,
-          borderRadius: 6,
-          background: 'rgb(var(--sunken))',
-          opacity: 0.7,
-        }}/>
-    </div>
-  );
+// the band's loading state is the KPI's own: strut + placeholder in the value row, aria-busy on the tile
+function KpiSkeletonO({ loadingLabel, className = '' }) {
+  const { KPI } = window.UI;
+  return <KPI state="loading" loadingLabel={loadingLabel} className={className}/>;
 }
 
 // ----- Attribution Health (텔레메트리 귀속 품질) ------------------------------
@@ -1464,7 +1466,7 @@ function AttributionHealthCard({ state, period, onRetry, shared }) {
             tone={toneFromColorVarO(badge.colorVar)}
             icon
             title={`Missing-report (literal_omission) rate, last ${period} days — hygiene signal over the full selected window`}>
-            Missing reports, {period} days: {badge.text}
+            Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}
           </Badge>
         }
       />
@@ -1543,7 +1545,7 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
           const rate = summary ? summary[`${key}_rate`] : null;
           const count = Math.round((Number(rate) || 0) * totalAttributed);
           return (
-            <div key={key} className="bg-elev rounded-md p-2.5 border border-line min-w-0" role="group"
+            <div key={key} className="bg-elev rounded-md p-3 border border-line min-w-0" role="group"
               aria-label={`${meta.label}: ${formatRateO(rate)}, ${formatIntO(count)} runs`}>
               <div className="flex items-start gap-1.5 fs-meta min-h-[2.2em]">
                 <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
@@ -2036,7 +2038,7 @@ function TaskTypeGraderCrosstabO({ rows }) {
   const byDesign = rows.filter((r) => r.by_design_unverified === true);
 
   return (
-    <div className="mt-4 flex flex-col gap-2.5">
+    <div className="mt-4 flex flex-col gap-3">
       <TaskTypeGraderGroupO label="By task type — checkable types" rows={measured} maxTotal={maxTotal}/>
       <TaskTypeGraderGroupO label="Types with nothing to check" rows={byDesign} maxTotal={maxTotal} isMuted/>
     </div>
@@ -2146,16 +2148,16 @@ function CrosstabBody({ state, onRetry, shared }) {
   return (
     <div>
       <div className="overflow-x-auto">
-        <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-          <thead>
+        <table className="crosstab-tbl w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+          <thead className="tbl-head">
             <tr>
-              <th scope="col" className="text-left text-dim font-medium px-2 py-1.5 border-b border-line">confidence \ self-check</th>
+              <th scope="col" className="text-left text-dim font-medium px-2 border-b border-line">confidence \ self-check</th>
               {CROSSTAB_METRIC_COLS.map((col) => (
-                <th key={col.key} scope="col" className="text-center text-dim font-medium px-2 py-1.5 border-b border-line">
+                <th key={col.key} scope="col" className={`${NUM_ALIGN_O} text-dim font-medium px-2 border-b border-line`}>
                   {col.label}
                 </th>
               ))}
-              <th scope="col" className="text-right text-dim font-medium px-2 py-1.5 border-b border-line">Total</th>
+              <th scope="col" className={`${NUM_ALIGN_O} text-dim font-medium px-2 border-b border-line`}>Total</th>
             </tr>
           </thead>
           <tbody>
@@ -2192,7 +2194,7 @@ function CrosstabRow({ rowKey, byCell, max }) {
         const cell = byCell[`${rowKey}|${col.key}`] || { count: 0, isPolar: false };
         return <CrosstabCell key={col.key} cell={cell} max={max} rowLabel={rowKey} colLabel={col.label}/>;
       })}
-      <td className="text-right text-dim px-2 py-1.5 border-b border-line">{formatIntO(rowTotal)}</td>
+      <td className={`${NUM_ALIGN_O} text-dim px-2 py-1.5 border-b border-line`}>{formatIntO(rowTotal)}</td>
     </tr>
   );
 }
@@ -2203,15 +2205,16 @@ function CrosstabCell({ cell, max, rowLabel, colLabel }) {
 
   return (
     <td
-      className="text-center px-2 pt-1.5 pb-1 border-b border-line"
+      className={`${NUM_ALIGN_O} crosstab-bar-cell px-2 border-b border-line`}
       title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
       aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
-      <span className="inline-flex items-center gap-1 justify-center">
+      <span className="inline-flex items-center gap-1 justify-end">
         {cell.isPolar && count > 0 && <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>}
         <span className="text-ink">{count > 0 ? formatIntO(count) : '·'}</span>
       </span>
       <span className="block mt-1" aria-hidden="true" style={{ height: 3 }}>
-        {bar && <span className="block" style={{ height: '100%', width: `${bar.widthPct}%`, background: `rgb(var(${bar.colorVar}))`, borderRadius: 1 }}/>}
+        {/* anchored to the right edge → the bar ends under its right-aligned count */}
+        {bar && <span className="block ml-auto" style={{ height: '100%', width: `${bar.widthPct}%`, background: `rgb(var(${bar.colorVar}))`, borderRadius: 1 }}/>}
       </span>
     </td>
   );
@@ -2235,10 +2238,10 @@ function CrosstabTotalRow({ byCell, total }) {
           colTotal += (byCell[`${rowKey}|${col.key}`]?.count) || 0;
         }
         return (
-          <td key={col.key} className="text-center text-dim px-2 py-1.5">{formatIntO(colTotal)}</td>
+          <td key={col.key} className={`${NUM_ALIGN_O} text-dim px-2 py-1.5`}>{formatIntO(colTotal)}</td>
         );
       })}
-      <td className="text-right text-ink font-semibold px-2 py-1.5">{formatIntO(total)}</td>
+      <td className={`${NUM_ALIGN_O} text-ink font-semibold px-2 py-1.5`}>{formatIntO(total)}</td>
     </tr>
   );
 }
@@ -2302,8 +2305,8 @@ function LoopEventsBody({ state, onRetry, shared }) {
 
   if (total === 0 || events.length === 0) {
     // 카드 card-body 는 padding:0(populated 테이블 소유) → empty 브랜치만 별도 패딩으로
-    // 'Task results' 레퍼런스(card-body 기본 20px)와 간격 일치. populated 테이블은 padding:0 유지.
-    return <div style={{ padding: 20 }}><EmptyStateO message="No run events recorded yet."/></div>;
+    // the card-body default (--card-pad) 와 간격 일치. populated 테이블은 padding:0 유지.
+    return <div style={{ padding: 'var(--card-pad)' }}><EmptyStateO message="No run events recorded yet."/></div>;
   }
 
   const distMap = {};
@@ -2320,7 +2323,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
 
   return (
     <div className="p-4">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3">
         {summary.map(([tone, iconName, label, count]) => (
           <span key={label} className="fs-body inline-flex items-center gap-1.5">
             <span style={{ color: `rgb(var(--${tone}))` }} aria-hidden="true"><GlyphO name={iconName}/></span>
@@ -2333,13 +2336,13 @@ function LoopEventsBody({ state, onRetry, shared }) {
       {/* position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page. */}
       <div className="overflow-y-auto" style={{ maxHeight: '42vh', position: 'relative' }}>
         <table className="w-full fs-meta">
-          <thead>
+          <thead className="tbl-head">
             <tr className="text-dim uppercase tracking-wider" style={{ position: 'sticky', top: 0, background: 'rgb(var(--elev))' }}>
-              <th className="text-left font-medium px-2 py-1.5 border-b border-line">Time</th>
-              <th className="text-left font-medium px-2 py-1.5 border-b border-line">Agent</th>
-              <th className="text-left font-medium px-2 py-1.5 border-b border-line">Result</th>
-              <th className="text-right font-medium px-2 py-1.5 border-b border-line">Added</th>
-              <th className="text-right font-medium px-2 py-1.5 border-b border-line">Removed</th>
+              <th className="text-left font-medium px-2 border-b border-line">Time</th>
+              <th className="text-left font-medium px-2 border-b border-line">Agent</th>
+              <th className="text-left font-medium px-2 border-b border-line">Result</th>
+              <th className={`${NUM_ALIGN_O} font-medium px-2 border-b border-line`}>Added</th>
+              <th className={`${NUM_ALIGN_O} font-medium px-2 border-b border-line`}>Removed</th>
             </tr>
           </thead>
           <tbody>
@@ -2357,8 +2360,8 @@ function LoopEventsBody({ state, onRetry, shared }) {
                   <td className="text-left px-2 py-1.5 border-b border-line" title={String(e.eval_result || '')}>
                     <Badge role="status" tone={meta.tone} icon>{meta.label}</Badge>
                   </td>
-                  <td className="text-right text-dim font-mono px-2 py-1.5 border-b border-line">+{formatIntO(Number(e.changes_added ?? 0))}</td>
-                  <td className="text-right text-dim font-mono px-2 py-1.5 border-b border-line">-{formatIntO(Number(e.changes_removed ?? 0))}</td>
+                  <td className={`${NUM_ALIGN_O} text-dim font-mono px-2 py-1.5 border-b border-line`}>+{formatIntO(Number(e.changes_added ?? 0))}</td>
+                  <td className={`${NUM_ALIGN_O} text-dim font-mono px-2 py-1.5 border-b border-line`}>-{formatIntO(Number(e.changes_removed ?? 0))}</td>
                 </tr>
               );
             })}
@@ -2473,7 +2476,7 @@ function FilterPanelO({
 
 function FilterAxisGroup({ label, children }) {
   return (
-    <div className="mb-2.5">
+    <div className="mb-3">
       <div className="fs-meta text-faint mb-1">
         {label}
       </div>
@@ -2573,7 +2576,7 @@ function ResultTableCard({
         />
       </div>
       {state.status === 'ready' && totalMatched > 0 && (
-        <div className="px-4 py-2.5 border-t border-line flex items-center justify-between fs-meta text-dim font-mono">
+        <div className="px-4 py-2 border-t border-line flex items-center justify-between fs-meta text-dim font-mono">
           <span>{formatIntO(page * limit + 1)}–{formatIntO(Math.min((page + 1) * limit, totalMatched))} / {formatIntO(totalMatched)}</span>
           <div className="flex items-center gap-2">
             <button
@@ -2707,22 +2710,6 @@ function ResultTableZeroStateO({ filter, onResetFilter }) {
   );
 }
 
-const STICKY_HEADER_STYLE = { position: 'sticky', top: 0, background: 'rgb(var(--elev))' };
-
-function PlainHeader({ label, align = 'left', minWidth, width }) {
-  const style = { ...STICKY_HEADER_STYLE };
-  if (minWidth != null) style.minWidth = minWidth;
-  if (width != null) style.width = width;
-  return (
-    <th
-      scope="col"
-      className={`text-${align} text-dim font-medium px-2 py-1.5 border-b border-line whitespace-nowrap`}
-      style={style}>
-      {label}
-    </th>
-  );
-}
-
 // 서버 attention 술어의 클라이언트 미러 — 한 곳에서만 판정해 같은 행이 두 섹션에 겹치지 않게 한다.
 function isNeedsYouRowO(row, closedAt) {
   if (row.review_flag === true) return true;
@@ -2786,18 +2773,21 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
   const [activeRow, setActiveRow] = useStateO(0);
   const rowStarts = getLedgerRowStartsO(sections);
   const rowCount = getLedgerDisplayRowsO(sections).length;
+  const { TableHead } = window.UI;
 
   return (
     // position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page.
+    // .tbl--own-face: the .tbl cell geometry (40 rows, 16 edge cells, the control-cell step) under this ledger's own header and body face.
+    // separate borders: a collapsed border would not travel with the sticky header row.
     <div className="overflow-x-auto" style={{ position: 'relative' }}>
-      <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+      <table className="tbl tbl--own-face fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
-            <SortableHeader label="Time" sortKey="record_ts" currentSort={sort} onSortChange={onSortChange} align="left" width={120}/>
-            <PlainHeader label="Agent" minWidth={110}/>
-            <PlainHeader label="Task type"/>
-            <PlainHeader label="Result"/>
-            <PlainHeader label="Summary"/>
+            <SortableHeader label="Time" sortKey="record_ts" currentSort={sort} onSortChange={onSortChange} width={120}/>
+            <TableHead isSticky className={LEDGER_HEAD_CLASS} style={{ minWidth: 110 }}>Agent</TableHead>
+            <TableHead isSticky className={LEDGER_HEAD_CLASS}>Task type</TableHead>
+            <TableHead isSticky className={LEDGER_HEAD_CLASS}>Result</TableHead>
+            <TableHead isSticky className={LEDGER_HEAD_CLASS}>Summary</TableHead>
           </tr>
         </thead>
         <tbody>
@@ -2810,7 +2800,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
                     tabIndex={section.anchorId ? -1 : undefined}
                     colSpan={LEDGER_COLUMN_COUNT}
                     scope="colgroup"
-                    className="text-left fs-meta font-mono uppercase tracking-wider text-faint px-2 pt-3 pb-1 border-b border-line">
+                    className="fs-meta font-mono uppercase tracking-wider text-faint">
                     {section.heading}
                   </th>
                 </tr>
@@ -2842,6 +2832,8 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
 }
 
 const LEDGER_COLUMN_COUNT = 5;
+// the ledger's own header face (sentence case, dim, medium) — .tbl--own-face leaves it to these classes; one line, never wrapping
+const LEDGER_HEAD_CLASS = 'text-dim font-medium whitespace-nowrap';
 
 // Capped → 'Show all N'; expanded past the cap → 'Show first N'; nothing to toggle → no row.
 function NeedsYouToggleRowO({ section, isCapped, onToggle }) {
@@ -2851,7 +2843,7 @@ function NeedsYouToggleRowO({ section, isCapped, onToggle }) {
   if (!hasToggle) return null;
   return (
     <tr>
-      <td colSpan={LEDGER_COLUMN_COUNT} className="px-2 py-1.5 border-b border-line">
+      <td colSpan={LEDGER_COLUMN_COUNT}>
         <button type="button" className="btn ghost sm" aria-expanded={!isCapped} onClick={onToggle}>
           {isCapped ? `Show all ${formatIntO(needsYouTotal)} needs-you rows` : `Show first ${NEEDS_YOU_PAGE_CAP} only`}
         </button>
@@ -2880,7 +2872,8 @@ function getAriaSort(isActive, dir) {
   return dir === 'asc' ? 'ascending' : 'descending';
 }
 
-function SortableHeader({ label, sortKey, currentSort, onSortChange, align, width, descOnly }) {
+function SortableHeader({ label, sortKey, currentSort, onSortChange, width, descOnly }) {
+  const { TableHead } = window.UI;
   const [field, dir] = currentSort.split(':');
   const isActive = field === sortKey;
   const arrowIcon = getSortArrowIcon(isActive, dir);
@@ -2895,16 +2888,19 @@ function SortableHeader({ label, sortKey, currentSort, onSortChange, align, widt
     onSortChange(`${sortKey}:${nextDir}`);
   };
 
+  // the label and its sort glyph are one inline-flex line (gap 4), so the arrow never drops under the label
   return (
-    <th
-      scope="col"
-      className={`text-${align} text-dim font-medium px-2 py-1.5 border-b border-line cursor-pointer select-none`}
-      style={{ ...STICKY_HEADER_STYLE, minWidth: width }}
+    <TableHead
+      isSticky
+      className={`${LEDGER_HEAD_CLASS} cursor-pointer select-none`}
+      style={{ minWidth: width }}
       onClick={handleClick}
       aria-sort={getAriaSort(isActive, dir)}>
-      {label}
-      {arrowIcon && <GlyphO name={arrowIcon} className="ml-1 text-accent"/>}
-    </th>
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {arrowIcon && <GlyphO name={arrowIcon} className="text-accent"/>}
+      </span>
+    </TableHead>
   );
 }
 
@@ -2968,14 +2964,14 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
       onClick={() => onRowClick(row)}
       {...focusProps}
       aria-label={[row.agent, row.task_type, resultMeta.label, needsYouReason, row.summary].filter(Boolean).join(' ')}>
-      <td className="text-left text-ink font-mono px-2 py-1.5 border-b border-line whitespace-nowrap">
+      <td className="text-ink font-mono whitespace-nowrap">
         {ts}
       </td>
-      <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 140 }} title={row.agent}>
+      <td className="text-ink truncate" style={{ maxWidth: 140 }} title={row.agent}>
         <window.UI.AgentName name={row.agent}/>
       </td>
-      <td className="text-left text-dim px-2 py-1.5 border-b border-line whitespace-nowrap">{row.task_type}</td>
-      <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
+      <td className="text-dim whitespace-nowrap">{row.task_type}</td>
+      <td title={resultMeta.label}>
         {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
         <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
           <span data-group="result" className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
@@ -2987,11 +2983,11 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
             <span data-group="closure" className="shrink-0"><window.UI.Badge role="metadata">{resultMeta.label}</window.UI.Badge></span>
           )}
           {canClose && (
-            // -my-1 = 24px 타깃을 유지한 채 행 높이 기여만 상쇄 (셀 패딩 안으로 겹침) → 형제 행과 높이 동일.
+            // a 32px control → the .tbl control-cell rule steps this cell's padding down, so the row stays 40 beside its text rows.
             // pending 은 색 회전 없이 투명도만 (DocStatusBadgeCD 선례 — 새 의미 카테고리 시사 차단 + reduced-motion 무관).
             <button
               {...window.UI.ROW_CONTROL_PROPS}
-              className="btn ghost sm icon shrink-0 -my-1"
+              className="btn ghost sm icon shrink-0"
               aria-busy={isClosing}
               aria-label={`Mark outcome ${row.id} closed`}
               title={isClosing ? 'Closing…' : 'Mark closed'}
@@ -3007,13 +3003,14 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
         </span>
       </td>
       {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card. */}
-      <td className="text-left text-ink px-2 py-1.5 border-b border-line" style={{ width: '100%', maxWidth: 0 }} title={summary}>
+      {/* fixed flag slot | summary | reason pill → every summary starts at one x; the variable-width pill sits at the cell's end, never truncated. */}
+      <td className="text-ink" style={{ width: '100%', maxWidth: 0 }} title={summary}>
         <div className="flex items-center">
           <SummaryFlagSlotO row={row}/>
+          <span className="flex-1 truncate" style={{ minWidth: 0 }}>{summary}</span>
           {needsYouReason && (
-            <window.UI.Badge role="metadata" className="shrink-0 whitespace-nowrap mr-1.5">{needsYouReason}</window.UI.Badge>
+            <window.UI.Badge role="metadata" className="shrink-0 whitespace-nowrap ml-2">{needsYouReason}</window.UI.Badge>
           )}
-          <span className="truncate" style={{ minWidth: 0 }}>{summary}</span>
         </div>
       </td>
     </tr>

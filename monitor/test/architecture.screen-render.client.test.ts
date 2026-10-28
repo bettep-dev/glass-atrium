@@ -181,6 +181,47 @@ test("every heading on the page and in the drawer is no larger than the heading 
     assert.ok(getRuleFontPx(css, ladder.upper) >= getRuleFontPx(css, ladder.lower), `${ladder.name}: the lower heading outsizes the one above it`);
 });
 
+// a rule body for one class in the screen's style block — every match, so a class defined twice shows up as two
+function getRuleBodies(css: string, className: string): string[] {
+  return [...css.matchAll(new RegExp(`\\.${className}\\s*\\{([^}]*)\\}`, "g"))].map((m) => m[1]);
+}
+
+test("the Part health title is no smaller than the row text under it", async () => {
+  const mod = await loadArch();
+  const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
+  const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
+  assert.ok(getRuleFontPx(css, "arch-part-health-title") >= getRuleFontPx(css, "arch-part-row"), "the Part health rows outsize the card title");
+});
+
+test("the Part health list and the drawer's part list each own one rule, so their gaps never cross-apply", async () => {
+  const mod = await loadArch();
+  const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
+  const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
+  assert.equal(getRuleBodies(css, "arch-part-list").length, 1, "the Part health list is defined once");
+  assert.equal(getRuleBodies(css, "arch-drawer-part-list").length, 1, "the drawer's part list is defined once");
+});
+
+test("a Part health row keeps the name, the status and the Reset label on one line each", async () => {
+  const mod = await loadArch();
+  const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
+  const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
+  const [name] = getRuleBodies(css, "arch-part-name");
+  const [status] = getRuleBodies(css, "arch-part-status");
+  const [reset] = getRuleBodies(css, "arch-zoom-btn-labelled");
+  assert.match(name ?? "", /white-space:\s*nowrap/, "the part name stays on one line");
+  assert.match(name ?? "", /text-overflow:\s*ellipsis/, "a long part name ends in an ellipsis");
+  assert.match(status ?? "", /display:\s*inline-flex/, "the glyph and the verdict word are one inline atom");
+  assert.match(status ?? "", /white-space:\s*nowrap/, "the verdict word never wraps under its glyph");
+  assert.match(reset ?? "", /white-space:\s*nowrap/, "the Reset label never wraps beside its icon");
+
+  const nodeIndex = new Map([["canonical.cron", { id: "canonical.cron", label: "Scheduled background jobs" }]]);
+  const row = { id: "cron", name: "cron-scheduler", tone: "ok", statusLabel: "Healthy", nodeIds: ["cron"], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };
+  const freshness = { at: new Date().toISOString(), regions: [], now: Date.now() };
+  const rowTree = renderScreen(mod.React.createElement(mod.PartHealthRowAR, { row, freshness, nodeIndex, onSelectNode: () => {} }));
+  const [nameEl] = findNodes(rowTree, (n) => /\barch-part-name\b/.test(String(n.props.className)));
+  assert.equal(nameEl?.props.title, "cron-scheduler", "a truncated name keeps its full text in title");
+});
+
 test("the node drawer's title is a heading that ranks above its section headings", async () => {
   const mod = await loadArch();
   const nodeId = "canonical.hook_pipeline";

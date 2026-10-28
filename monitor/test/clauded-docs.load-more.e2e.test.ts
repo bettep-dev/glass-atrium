@@ -1140,7 +1140,7 @@ test("list card: a mouse click never rings the card, a Retry handoff rings it in
 });
 
 // mirrors LEDGER_CD.FLOOR in screens/clauded-docs.jsx (browser JSX, outside the test import graph) → a floor change there moves every boundary row below
-const LEDGER_FLOOR = { sum: 969, title: 434, tags: 152 };
+const LEDGER_FLOOR = { sum: 969, title: 434, tags: 148 };
 const WIDTH = {
   OPEN_SUMMARY_RAIL: 200,
   // app shell beside the card: viewport − shell = the doc-layout container width (asserted per row)

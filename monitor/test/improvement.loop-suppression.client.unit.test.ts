@@ -465,7 +465,8 @@ test("the ledger reports its own payload's loading and error states distinctly",
 });
 
 test("every ledger section header states its window and its count", () => {
-  const text = ledger(SUPPRESSION).replace(/\s+/g, " ");
+  // textOf walks every string prop → a NoWrap day token's class rides the text; drop it so the sentence reads as rendered
+  const text = ledger(SUPPRESSION).replace(/\bwhitespace-nowrap\s+/g, "").replace(/\s+/g, " ");
   assert.match(text, /Live — can propose · discovered in the last 7 days[^(]*\( 1 \)/);
   assert.match(text, /Inert — [^(]*· discovered in the last 7 days[^(]*\( 1 \)/);
   // 1 + 7 held rows across the two parked buckets — the untruncated bucket total.

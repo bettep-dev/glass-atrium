@@ -151,19 +151,23 @@
   --radius-badge: 6px;
   /* hit height · card anatomy */
   --ctl-min-h: 32px;
-  --card-head-h: 48px;  --card-pad: 16px;  --row-h: 40px;
+  --card-head-h: 48px;  --card-pad: var(--space-4);  --row-h: 40px;  --row-h-2: 56px;  --row-h-compact: 32px;
+  /* spacing ladder — every padding · margin · gap is a step, a token or a token-derived calc() */
+  --space-0_5: 2px;  --space-1: 4px;  --space-1_5: 6px;  --space-2: 8px;  --space-3: 12px;  --space-4: 16px;  --space-6: 24px;  --space-8: 32px;
+  /* line boxes — a bordered control lands on --ctl-min-h, a table row on --row-h */
+  --lh-ctl: calc(var(--ctl-min-h) - 2 * var(--space-1_5) - 2px);  --lh-row: 20px;
   /* focus */
   --focus-ring-width: 2px;  --focus-ring-offset: 2px;
   /* z stack */
   --z-overlay: 100;  --z-confirm: 150;  --z-toast: 200;
   /* form-control box (base.css) */
-  --ctl-pad-y: 5px;  --ctl-pad-x: 9px;  --ctl-font: var(--fs-control);  --ctl-line: 1.4;
+  --ctl-pad-y: var(--space-1_5);  --ctl-pad-x: var(--space-2);  --ctl-font: var(--fs-control);  --ctl-line: var(--lh-ctl);
   --ctl-radius: var(--radius-control);  --ctl-h: var(--ctl-min-h);
 }
 ```
 
 - 새 **색/표면** 토큰은 kind A 로만 추가. kind B 는 length · scalar · shadow · z 에 한정.
-- line-height 는 토큰이 없다 — class 별 리터럴(§5.2).
+- line-height: control and table rows take `--lh-ctl` · `--lh-row`; text classes keep literals (§5.2).
 
 ### 3.3 Tier 3 — COMPONENT (`window.UI` atom + `base.css` class)
 
@@ -353,10 +357,10 @@
 
 - **floor**: 렌더되는 모든 text node ≥ 13px — default view 의 System map label · tweaks 패널 포함. `--fs-micro` 는 `--fs-meta` alias. px 리터럴 font-size 금지.
 - **named exception**: `.hero-stat` 30px (`TypeScaleStyle`) — 패널당 하나의 지배 수치 (drawer hero), 스케일 밖 step, 소비처 `agents.jsx` 1곳.
-- **line-height** (토큰 없음, class 리터럴): `.fs-title` 1.4 · `.fs-body` 1.45 · `.fs-meta` 1.4 · `.card-sub` 1.5 · `.kpi-value` 1.15 · `--ctl-line` 1.4.
+- **line-height** (텍스트 class 는 리터럴, control · table 행은 `--lh-ctl` · `--lh-row` 토큰 — §3.2): `.fs-title` 1.4 · `.fs-body` 1.45 · `.fs-meta` 1.4 · `.card-sub` 1.5 · `.kpi-value` 1.15 · control `--lh-ctl` 18 · table cell and KPI label row `--lh-row` 20.
 - **weight (≤ 3 · signature 1)**: 400 regular · 500 medium (label · nav active · button · badge) · 600 semibold (card title · KPI value · page title). signature = 600 + mono 수치. glass 표면 위 라벨은 한 step 무겁게 (600).
 - **수치**: 큰 KPI value 는 `letter-spacing: -0.025em`. **값:단위 = 2:1** — `.kpi-value` 32 ↔ `.unit` 16 (`--fs-title`, "half of --fs-kpi"), 다른 수치 UI 도 자기 스케일 안에서 2:1.
-- **page header** (`PageHeader`): h1 = `--fs-display` 600 leading-tight · sub = `--fs-meta` mono `--faint` uppercase (제목과 같으면 생략) · subtitle 문장 ≤ 60자.
+- **page header** (`PageHeader`): h1 = `--fs-display` 600 · line-height `--ctl-min-h` 32 (one line box with the header controls) · sub = `--fs-meta` mono `--faint` uppercase (제목과 같으면 생략) · subtitle 문장 ≤ 60자.
 - **chart tick**: `CHART_AXIS_TICK_STYLE` = `--fs-meta` · JetBrains Mono · `--faint`. 겹침 판정 문자 폭 `CHART_TICK_CHAR_PX` 8 · tick 간 최소 간격 `CHART_TICK_MIN_GAP_PX` 8.
 
 ### 5.3 카피 규칙 (Copy Rules)
@@ -483,8 +487,8 @@
 
 ### 7.2 KPI — `KPI` · `KpiValue` (`.kpi*`)
 
-- `.kpi`: `<button>` · `--elev` · 1px `--line` · `--radius-card` · padding 14px 16px · min-height 110 · hover border `--faint` 120ms · 양 테마 shadow · inset 없음 (§6.1).
-- `.kpi-label`: `--fs-meta` `--dim` 500 · hint: `--fs-meta` mono `--faint`.
+- `.kpi`: `<button>` with `onClick`, otherwise `role="group"` · `--elev` · 1px `--line` · `--radius-card` · padding `--card-pad` 16 · min-height 110 · pointer + hover border `--faint` 120ms on `button.kpi` only · 양 테마 shadow · inset 없음 (§6.1).
+- anatomy (`KPI`), one row order in every state: label row `.kpi-head` (`--lh-row` · `.kpi-label-text` `--fs-meta` `--dim` 500, one line + ellipsis + title · `.kpi-aside` · ⓘ `.kpi-info` placed on the row) → value row `.kpi-main` (baseline, margin-top 8) → delta → `.kpi-hint` (margin-top 4 · default `--fs-meta` mono `--faint`, `hintFace` keeps the caller's face) → `.kpi-foot` pinned to the bottom.
 - `.kpi-value`: `--fs-kpi` 32 mono 600 · -0.025em · line-height 1.15 · `.unit`: `--fs-title` 16 `--dim` 500 Pretendard (2:1).
 - `.kpi-delta`: `--fs-meta` mono · 수치 `--dim`. tone 은 화살표 `Icon` 에만 — up `--crit` · down `--ok` · flat `--faint` (`Delta inverse` 로 반전). `delta` 를 넘기는 화면은 없다.
 - `.kpi-spark`: 68×26 sparkline · 우하단 · opacity 0.85.
@@ -507,12 +511,14 @@
   - `agents.jsx` → `DELETE_OUTLINE_STYLE` "Delete" · `improvement.jsx` → `REJECT_OUTLINE_STYLE` "Reject": `.btn` 의 `--elev` 위 light 5.05 · dark 6.32 · hover `--sunken` light 4.63 · dark 6.62.
   - `model-config.jsx` → `DiscardConfirmMC` "Discard changes": `background: transparent` → `.detail-foot` `--sunken` 위, rest · hover light 4.63 · dark 6.62.
 - 긍정 action (improvement Approve) = `.btn sm` + ✓ glyph `text-ok`, 라벨 `--ink`.
-- `.sm`: padding 4px 9px · `--fs-meta`. `.icon`: 32×32 정사각, padding 0.
+- `.sm`: padding 6px 8px (`--space-1_5` × `--space-2`) · `--fs-meta`. `.icon`: 32×32 정사각, padding 0.
 - disabled: opacity 0.5 · `not-allowed`. pressed (`aria-pressed="true"`) = `--selected-fill` / `--selected-ink`.
 
 ### 7.5 Table — `Table` · `TableHead` (`.tbl`)
 
-- `.tbl`: `--fs-control` · cell padding 9px 14px · 하단 1px `--line` · `td` height `--row-h` 40 · `.num` mono 우측 정렬 nowrap.
+- `.tbl`: `--fs-control` · line-height `--lh-row` 20 · `td` height `--row-h` 40 · 하단 1px `--line` · `.num` mono 우측 정렬 nowrap.
+  - cell padding: block `--tbl-pad-block` (8 less half the rule) · inline 12 interior, 16 at the edge columns · a cell holding a 32px control takes `--tbl-ctl-pad-block` (4 less half the rule).
+  - `.tbl--own-face`: geometry-only routing — padding, row height and alignment from `.tbl`, body size · header face · row states from the table's own classes.
 - `th`: `--fs-meta` · uppercase · 0.04em · 500 · `--dim` on `--sunken` · `TableHead` 가 `scope="col"`.
 - sticky head (`isHeadSticky` → `STICKY_TH_STYLE`): 불투명 `--elev`, z 1 — 스크롤 시 본문을 가리지 않게.
 - row: cursor pointer · hover `--sunken` · 마지막 행 border 없음. **row blur 금지.**
@@ -526,7 +532,7 @@
 
 ### 7.6 Segmented — `.seg`
 
-- `.seg`: `--elev` · 1px `--line` · `--radius-control` · clip. 버튼 padding 5px 10px · min-height 32 · `--fs-meta` · `--dim` · 사이 1px `--line`.
+- `.seg`: `--elev` · 1px `--line` · `--radius-control` · clip. 버튼 padding 6px 8px · line-height `--lh-ctl` · min-height 32 · `--fs-meta` · `--dim` · 사이 1px `--line`.
 - **filled selected 상태는 하나**: `.seg button.active` · `[aria-pressed]` · `.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · stage menu `[aria-checked]` 모두 `--selected-fill` / `--selected-ink` · 500.
   - stage menu 의 checked 항목은 fill 에 더해 check mark — 색이 유일한 신호가 되지 않게.
 - `.seg` focus ring 은 inset (`outline-offset` = −ring width) — `.seg` 가 자식을 clip 하므로.
@@ -554,7 +560,7 @@
 | `confirm` | 중앙 소형 | min(560px, 92vw) · max-h 86vh · `--radius-card` | opacity + scale 0.97→1, 180ms ease-out |
 
 - 면: `.detail-panel` = `--overlay-surface` 불투명 + `--shadow-overlay` + 1px `--line` (텍스트 대비 보장).
-- head 14px 20px (`.detail-title` `--fs-title` 600 · `.detail-sub` `--fs-meta` `--faint`) · body 18px 20px · foot 12px 20px `--sunken`.
+- head min-height `--card-head-h` 48 · padding 8px 24px (`.detail-title` `--fs-title` 600 · `.detail-sub` `--fs-meta` `--faint`) · body 16px 24px · foot 12px 24px `--sunken`.
 - **상호작용 계약**: 닫기 X · Esc · backdrop · focus trap (진입 포커스 + Tab 순환 + 닫힐 때 트리거 복귀) · 배경 `inert` + body scroll-lock · 가장 나중에 열린 surface 가 키보드 소유 (drawer 위 confirm) · `nav` 제공 시 foot 에 Prev/Next + Arrow 키.
 - **scrim**: 솔리드 `rgba(0,0,0,0.42)` 기본, smoke 는 조건부 (§6.3 · §9.3). z: §6.5.
 - `.modal` / `.modal-backdrop` class 는 `clauded-docs.jsx` 다이얼로그 1곳에만 남아 있다. 새 다이얼로그는 `DetailSurface`.
@@ -579,7 +585,7 @@
 
 ### 7.10 Empty state — `EmptyState` (`.placeholder`)
 
-- `.placeholder`: dashed `--faint` 0.5 · `--radius-tile` · padding 28 · `--faint` mono `--fs-meta` · 가운데 정렬.
+- `.placeholder`: dashed `--faint` 0.5 · `--radius-tile` · padding 24 · `--dim` sans `--fs-meta` · 좌측 정렬.
 - `EmptyState`: message 1줄 (원인) + 선택 hint (다음 단계) + 선택 action (재시도 버튼).
 - 가짜 SVG 일러스트 · 더미 데이터 금지. 실 자산은 사용자에게 요청.
 
