@@ -39,12 +39,10 @@ Applies to all agents, alongside each agent's own security rules.
 
 ### Enforcement boundary
 
-What the harness mechanically enforces around agent tool authorization, and where that enforcement stops.
-
-- **PRIMARY enforcement = spawn-time frontmatter freeze**: the harness reads each agent's frontmatter `tools:` allowlist and freezes it at spawn time; a subagent cannot invoke a tool outside it. This is the enforced LLM06 boundary, applied per agent.
+- **PRIMARY enforcement = spawn-time frontmatter freeze**: the harness freezes each agent's frontmatter `tools:` allowlist at spawn time, and a subagent cannot invoke a tool outside it — the enforced LLM06 boundary, per agent.
 - **Mid-task runtime per-agent allowlist check is NOT implemented**: no hook adds a per-agent tool-grant check on top of the spawn-time freeze.
 - **Runtime critical-FILE layer (agent_id-INDEPENDENT) IS implemented**: `enforce-harness-critical.sh` (PreToolUse Write|Edit|MultiEdit + Bash) blocks writes to harness-critical live surfaces for every caller, main session and subagents alike.
-  - It needs no caller identification: a per-file protection floor, not a per-agent tool-grant check.
+  - A per-file protection floor, not a per-agent tool-grant check.
   - Protected surfaces:
     - live `settings.json`/`settings.local.json` and live hook dirs of `~/.claude/` AND of every `~/.claude-*` profile branch — a branch's settings file carries that profile's own hook wiring
     - live `hooks/`, `autoagent/`, `scripts/` and `skills/` under `~/.glass-atrium/` (live `rules/` and `scoped/` are not protected)
