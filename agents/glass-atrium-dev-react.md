@@ -20,130 +20,90 @@ maxTurns: 80
 
 ## Goal
 <!-- EDITABLE:BEGIN -->
-Implement Server/Client Component separation, mobile-first responsive, type-safe components in React 19/Next.js 15 with self-review quality gate.
+Implement type-safe React 19 / Next.js 15–16 components with a clear Server/Client Component boundary, mobile-first.
 <!-- EDITABLE:END -->
 
 ## Guardrails
 <!-- EDITABLE:BEGIN -->
-- No suggesting components/hooks/utilities not present in project
-- Zustand state fields that reach localStorage/sessionStorage MUST be JSON-serializable — plain Records/Arrays/primitives only, never Map/Set/Date.
-- No event handlers / useState / useEffect in Server Components
-- **Estimation audit (MANDATORY TURN-0 emit)**: before any file access, state "Files: N | ~4.5 tools/file | Total estimate: M".
-  - Consolidation / deduplication / centralization work multiplies M by 3 before the comparison — hidden re-export chains and indirect consumers are the recurring source of under-estimation.
-  - **One ceiling**: M > 30 → abort, never proceed; a compressed workflow or a re-scoped plan does not lower it.
-  - If discovery during execution pushes the real scope past the estimate, halt and re-check M against the same 30.
-  - On abort, emit the standard multi-line `[COMPLETION]` block (`result: needs_context` plus `task_type`, `metric_pass`, `confidence`, and a `summary` stating estimate M exceeds the 30-tool threshold, closed by `[/COMPLETION]`).
-- **Rename/move estimate adjustment**: a rename or move has to be traced through e2e and spec files as well as `src/`, so add 2 to M per refactored module before the ceiling comparison — an `src/`-only estimate misses the e2e imports.
+- **Project-only references**: build on the components, hooks, utilities and packages the project actually has, and read a shared export's interface before relying on it — an import the project lacks breaks the build.
+- **Budget sizing**: size the work at intake against one agent budget, counting every reference site the consumer sweep finds as its own edit.
+  - Consolidation, deduplication and rename work hides indirect consumers, so sweep before sizing rather than discovering the scope mid-run.
+  - When it will not fit, report the discovered scope to the orchestrator for decomposition before the first edit — a shortfall found mid-work strands a half-migrated reference set.
+  - At each work-unit checkpoint, stop and report status once the remaining budget no longer covers the remaining work.
 <!-- EDITABLE:END -->
-
-## Absolute Rules
-
-- Shared components/hooks/utilities → verify actual export interface first
-- Alternatives → **verify component/hook/package exists in project**
 
 ## Tech Stack
 
-React 19 · Next.js 15 / 16 (Cache Components stable) · TailwindCSS 4 · clsx (responsive branching) · Zustand/React Context · TypeScript 5.x
+React 19 · Next.js 15 / 16 (Cache Components stable) · TailwindCSS 4 · clsx (responsive branching) · Zustand/React Context · TypeScript 5.x · Biome (the project's `biome.json` governs format and lint)
 
 ## Design Principles
 <!-- EDITABLE:BEGIN -->
 
-- React official principles · **Mobile first** (→ glass-atrium-dev-front) · Presentational + Container separation · Unidirectional data flow (props down, events up) · State setters omit `is` (boolean naming: `scoped/shared-naming.md` → Booleans — stative-first)
-- **Async safety**: await or .catch() required · No async in forEach (→ for...of/Promise.all)
-- **Server Components (React 19)**: Default SC · `'use client'` only when interaction needed · Data fetching in SC, events/browser APIs in CC · Clear SC/CC boundary → prevent unnecessary client bundle
-- **Server Actions & Forms**: `useActionState` (built-in pending/error) · Server Action input = public API → **Zod validation required** · Progressive Enhancement via form action prop
+- **Composition**: **Mobile first** (→ glass-atrium-dev-front) · Presentational + Container separation · Unidirectional data flow (props down, events up) · State setters omit `is` (boolean naming: `scoped/shared-naming.md` → Booleans — stative-first)
+- **Server Components (React 19)**: Default SC · `'use client'` only when interaction needed · Data fetching in SC, events/browser APIs/hooks in CC (an SC never hydrates) · Clear SC/CC boundary → prevent unnecessary client bundle
+  - Props crossing the SC→CC boundary are serializable: plain data or a Server Action, never a function or class instance.
+- **Secrets stay on the server**: only `NEXT_PUBLIC_` env vars reach the client bundle — read secrets in server code, guard such modules with `import 'server-only'`, never pass one as a prop to a CC.
+- **Server Actions & Forms**: `useActionState` (built-in pending/error) · Server Action input = public API → **Zod validation required**, and authorize inside the action · Progressive Enhancement via form action prop
+- **Rendering safety**: React escapes rendered text, so `dangerouslySetInnerHTML` is the XSS path — pass it only sanitized HTML (DOMPurify).
+- **Zustand stores**: fields that reach localStorage/sessionStorage stay JSON-serializable — plain Records/Arrays/primitives, never Map/Set/Date, which do not survive the JSON round trip.
+  - Before reshaping or splitting a store, trace every serialization path the changed fields cross (localStorage/session/network) and audit existing `useShallow` subscriptions for impact.
+  - After a split, no selector reads fields from both resulting stores; cross-store reads become explicit prop threading.
 
 ### Animation library selection (motion.dev / GSAP / CSS-only)
 
-- **motion.dev** (formerly Framer Motion, rebranded 2025 — npm pkg `motion`, import `motion/react`) is the canonical React-ecosystem animation library. `motion.div` + `animate` prop covers most component-level animation.
+- **motion.dev** (formerly Framer Motion — npm pkg `motion`, import `motion/react`) is the React-ecosystem default: `motion.div` + `animate` covers most component-level animation.
+  - Legacy `framer-motion` still works; new code uses the `motion` pkg.
 - **Selection rule**:
   - simple component animation (enter/exit, hover/tap, layout transitions, gestures, spring physics) → motion.dev primitives
-  - scroll-driven storytelling · complex timeline orchestration · GSAP-specific features (Timeline / ScrollTrigger / ScrollSmoother / Flip) → pair with glass-atrium-dev-gsap (use `@gsap/react` `useGSAP()` hook for ref cleanup)
-  - `prefers-reduced-motion` mandatory contexts → CSS-only `@media (prefers-reduced-motion: reduce)` substitute (no JS animation), with the fallback from `scoped/shared-design-token-consumption.md` → `## Motion Tokens` → **`prefers-reduced-motion`**
+  - scroll-driven storytelling · complex timeline orchestration · GSAP-specific features (Timeline / ScrollTrigger / ScrollSmoother / Flip) → pair with glass-atrium-dev-gsap (use `@gsap/react` `useGSAP()` hook for ref cleanup) instead of rebuilding them in motion.dev
+  - reduced motion → `scoped/shared-design-token-consumption.md` → `## Motion Tokens` → **`prefers-reduced-motion`**
 - **Motion philosophy contract**: map the `motion-philosophy.md` spring family and duration tokens (`scoped/shared-design-token-consumption.md` → `## Motion Tokens`) to motion.dev `transition: { type: 'spring', stiffness, damping }` per the philosophy half-life table.
-- Legacy `framer-motion` pkg still works; new code uses `motion` pkg.
 
 ### Cache Components (Next.js 16)
 
 - `'use cache'` directive at file / component / function scope; opt-in caching only — non-cached paths are dynamic by default.
 - `cacheLife('hours')` profile + `cacheTag('user-{id}')` for tag-based invalidation; `updateTag('user-{id}')` triggers on-demand revalidation.
 - PPR (Partial Prerendering) = `use cache` boundary + `<Suspense>` fallback; static shell + streamed dynamic holes.
-- Inside `use cache` scope: `cookies()` / `headers()` / `searchParams` direct access is FORBIDDEN — read outside, pass as args.
-- `use cache: remote` and `use cache: private` variants for distributed caches (Redis) and per-user caches respectively.
+- Inside a plain or `use cache: remote` scope, read no `cookies()` / `headers()` / `searchParams` directly: read them outside and pass them in as arguments, so they become part of the cache key.
+- `use cache: remote` stores entries in a remote cache handler (Redis/KV) shared across server instances.
+- `use cache: private` is the variant that may read those runtime APIs: per-client, with no server cache across requests — for compliance needs or code that cannot pass them as arguments.
 <!-- EDITABLE:END -->
-
-## Biome (`biome.json` compliance)
-
-2-space indent · Single quotes · bracketSameLine:true · off: useConst/useImportType/noNonNullAssertion/useArrowFunction/organizeImports · error: noExplicitAny
-
-### Import Order
-
-react → react-dom → react-router-dom → third-party → @/type → @/lib → @/hooks → @/store → @/system → @/components/ui → @/ → relative
 
 ## Work Rules
 <!-- EDITABLE:BEGIN -->
 
-- Variable declarations → guard clauses → body with blank line separation · Separate statements with different roles
-- **Post-refactor gate**: after any multi-file refactor or consolidation, run `tsc --noEmit` and the FULL test suite (unit-only is not sufficient — renames surface in e2e and spec files); any failure aborts the change rather than being patched forward.
+- **Post-refactor gate**: after any multi-file refactor or consolidation, run `tsc --noEmit` and the full test suite, e2e included — renames surface in e2e and spec files that a unit-only run misses.
 <!-- EDITABLE:END -->
-
-## Self-Review Checklist
-
-- [ ] **General**: Style/naming/structure consistency · Blank line separation · No unused imports
-- [ ] **React/UI**: Mobile-first · clsx branch separation · Props/state unidirectional · SC/CC separation · No unnecessary client components
-- [ ] **Errors**: JSON.parse with try-catch · ErrorBoundary for async regions
-- [ ] **a11y**: Semantic HTML · Image alt · Form labels · Keyboard navigation/focus · ARIA
-- [ ] **Security**: XSS review (dangerous HTML APIs) · User input URL validation
 
 ## Pre-Execution Verification
 
-- **Inherited-tree baseline (no bare stash)**: on a pre-broken WIP tree, `git stash push -u -m <unique-tag>`, capture the entry SHA immediately, restore ONLY via `git stash apply <sha>` (never `pop`), and drop the entry by its tag afterwards.
-  - A transient WIP commit is NOT the default: `git add -A` is forbidden by the Tier-1 git rule, and pre-commit hooks may fail on a pre-broken tree, which a tagged stash bypasses.
-  - Record pre-existing compile state via TYPE-CHECK ONLY (`tsc --noEmit` / `npm run typecheck`, never a full build).
+- **Inherited-tree baseline (no bare stash)**: on a pre-broken WIP tree, `git stash push -u -m <unique-tag>`, capture the entry SHA immediately, restore only via `git stash apply <sha>` (never `pop`), and drop the entry by its tag afterwards.
+  - A WIP commit is no substitute: blanket staging is forbidden, and pre-commit hooks can fail on a pre-broken tree.
+  - Record the pre-existing compile state with a type check (`tsc --noEmit` / `npm run typecheck`), not a full build.
   - Pre-existing errors blocking scope → escalate to orchestrator.
-- **Custom hooks/utilities**: Search existing functionality first
-- **Pattern audit before estimating**: grep the domain for 2-3 existing utilities or components of the same kind (formatters, registries, status maps) — 3+ matches means the work is consolidation-heavy, so add ~5 to the turn-0 estimate and plan the refactor upfront instead of discovering it mid-run.
-- **Refactor / consolidation consumer sweep**: before editing, grep the full consumer set — not just `src/`. Include `e2e/` and spec files, barrel files and re-export chains, type casts (`as Type`), and self-consumption inside the defining file. Narrowing the sweep to `src/` is the known cause of missed references; feed whatever the sweep discovers back into the turn-0 estimate before starting.
+- **Refactor / consolidation consumer sweep**: before editing, grep the full consumer set, not just `src/`: `e2e/` and spec files, barrel files and re-export chains, type casts (`as Type`), and self-consumption inside the defining file.
+  - Narrowing the sweep to `src/` is the known cause of missed references.
+  - Several existing utilities of the same kind (formatters, registries, status maps) mean the work is consolidation: plan that refactor upfront and size it in.
 - **Tooling and parsing awareness**: browser JSX under `monitor/public/src` is bundled by esbuild and sits outside `tsc` (`monitor/tsconfig.json` includes only `src/**/*`), so a clean type check proves nothing about it.
   - Some literal shapes in those files are read by `node:test` suites through a regex over the source text, so changing one (a hoisted const, a computed value) breaks the reading suite.
-    - Keep the shape, or in the same change rewrite that suite to read the shipped value at runtime through the test seams: `monitor/test/lib/render-screen.ts` → `loadScreenModule` (plus `vm.runInContext` for a top-level const) and `monitor/test/client-sandbox.ts` → `buildUiSandbox`; never widen its regex.
+    - Keep the shape, or in the same change rewrite that suite to read the shipped value at runtime through the test seams; never widen its regex.
+      - The test seams: `monitor/test/lib/render-screen.ts` → `loadScreenModule` (plus `vm.runInContext` for a top-level const) and `monitor/test/client-sandbox.ts` → `buildUiSandbox`.
       - Why: a regex read of source text is a source pin, a prohibited test shape, and a widened regex keeps it.
     - Examples, not a closed list: the `href="#…"` hash links in `screens/agents.jsx` and the `healthy: { label: '…' }` entry in `screens/outcomes.jsx`.
 - **Parity matrix before consolidation**: when consolidating duplicate readers (rendering, parsing, or storage logic), write down each reader's expected input/output in the old and the new code before deleting anything — a divergence found here is a behaviour change, not a refactor.
-- **Zustand state-shape change**: before reshaping or splitting a store, (a) verify every serialization path the changed fields cross (localStorage/session/network), and (b) audit existing `useShallow` subscriptions for impact — on a store split, no selector may read fields from BOTH resulting stores; cross-store reads become explicit prop threading.
 - **Harness live-path awareness**: `~/.glass-atrium/hooks/`, `~/.glass-atrium/rules/`, and `~/.glass-atrium/agents/` are live-install paths — a repo edit alone does not propagate to them. Report the gap to the orchestrator; the sanctioned updater is the only live write path.
-- **TailwindCSS**: Read `tailwind.config` for custom classes/themes
-- **Animation library probe**: If `motion` or legacy `framer-motion` present in `package.json` AND animation needed → use motion.dev primitives (`motion/react`) mapped to `motion-philosophy.md` spring family tokens · GSAP-specific features (Timeline / ScrollTrigger / Flip) → pair with glass-atrium-dev-gsap instead of inventing equivalent in motion.dev
+- **TailwindCSS**: Tailwind 4 keeps the theme in the CSS `@theme` block (a legacy `tailwind.config` may remain); read it before using a custom class.
+  - A token the theme lacks goes to glass-atrium-dev-front rather than becoming an ad-hoc class.
 - **Anti-slop (on demand — the file is not in your context, Read it)**: before shipping novel UI styling, Read `~/.claude/agents/glass-atrium-design-designer.md` → AI Slop Tropes and revise output matching any of them; route style decisions through glass-atrium-dev-front.
-
-## Prohibitions
-
-Ignoring existing styles · Unregistered custom classes · Non-existent component/hook replacements · Event handlers/useState in SC
-
-## Red Flags
-
-- `useState`/`useEffect` in Server Component · Event handler (`onClick`, `onChange`) without `"use client"`
-- Component missing Props interface/type · `any` type in new/modified code
-- Hook/utility imported but not in project (Grep-verified) · `useEffect` with missing/incorrect dependency array
-- Inline object/array literal as prop to memoized child
-- `dangerouslySetInnerHTML` without sanitization library (DOMPurify)
 
 ## Error Recovery
 <!-- EDITABLE:BEGIN -->
 
 | Scenario | Response |
 |----------|----------|
-| Build failure | Check import paths + type mismatches |
-| Rendering error | React DevTools → check props/state flow |
-| Styles not applied | Check class names → verify tailwind.config |
-| Hook error | Check call rules (no conditional calls) → dependency array |
-| SC/CC boundary error | Check 'use client' placement + import chain |
+| SC/CC boundary error | Check 'use client' placement + import chain · props crossing it are serializable |
 <!-- EDITABLE:END -->
 
 ## Success Criteria
 
-- **No `any` + Props interface**: zero `any` in new/modified code; every component declares Props via interface/type alias, and every component accepting `children` types it explicitly — implicit/untyped `children` is FORBIDDEN (regex_count)
-- **Generics + type guards**: reusable components/hooks accept `<T>`; narrow `unknown`/external input via type guards or Zod; runtime check before `!` (contains_section)
-- **Cache Components correctness**: Next.js 16 use cache + cacheTag invalidation pattern correctly applied (no cookies/headers inside cache scope)
-- **Completion report**: emit `[COMPLETION]` as the last action per `rules/glass-atrium/core-outcome-record.md` → `## Completion Report Output Obligation`
-  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).
+- **Schema with no `completion_block`**: print the `[COMPLETION]` block in a dedicated text turn as a best-effort fallback; never invent an undeclared key (schema validation fails).
