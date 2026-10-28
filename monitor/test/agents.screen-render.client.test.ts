@@ -596,24 +596,62 @@ test("an unread breakage or trend payload shows 'not loaded', and only a loaded 
   }
 });
 
-function renderSortedBody(mod: Record<string, unknown>, failureStatus: string): string[] {
+function renderSortedCard(mod: Record<string, unknown>, failureStatus: string): RenderedNode | string | null {
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const agents = [
     { agent_id: "glass-atrium-dev-busy", agent_name: "busy", status: "active", runs: 90 },
     { agent_id: "glass-atrium-dev-risky", agent_name: "risky", status: "active", runs: 10 },
   ];
   const failureByAgent = new Map([["glass-atrium-dev-risky", { total_breakages: 7, fail_count: 7, blocked_count: 0, breakage_rate: 0.7 }]]);
-  const tree = renderScreen(
-    React.createElement(mod.AgentSummaryBody as Component, {
-      state: { status: "ready", data: { agents }, error: null },
+  return renderScreen(
+    React.createElement(mod.AgentSummaryCard as Component, {
+      state: { status: "ready", data: { agents, meta: { total_agents: 2 } }, error: null },
       days: 30, sortBy: "failures", onSortChange: () => {}, selectedAgent: null, onSelect: () => {}, onRetry: () => {},
       trendByAgent: new Map(), failureByAgent, overageByAgent: new Map(), failureStatus, trendStatus: "ready",
     }),
   );
+}
+
+// the card head's right cluster, rendered → the sort control and its note as the head draws them
+function renderHeadRight(tree: RenderedNode | string | null): RenderedNode | string | null {
+  const [head] = findNodes(tree, (n) => n.props?.atom === "CardHead");
+  assert.ok(head, "the card draws the shared card head");
+  return renderScreen(head.props.right);
+}
+
+// rows in rendered order, then the sort note the card head announces
+function renderSortedBody(mod: Record<string, unknown>, failureStatus: string): string[] {
+  const tree = renderSortedCard(mod, failureStatus);
   const order = findNodes(tree, (n) => n.type === "AgentSummaryRow").map((n) => String((n.props.agent as { agent_id: string }).agent_id));
-  const note = findNodes(tree, (n) => n.props?.role === "status").map((n) => collectText(n)).join(" ");
+  const note = findNodes(renderHeadRight(tree), (n) => n.props?.role === "status").map((n) => collectText(n)).join(" ");
   return [...order, `note:${note}`];
 }
+
+test("the sort control sits in the card head, so no band divides the head from the ledger", async () => {
+  const mod = await loadAgentsScreen();
+  const tree = renderSortedCard(mod, "ready");
+  const [select] = findNodes(renderHeadRight(tree), (n) => n.type === "select");
+  assert.ok(select, "the head carries the sort select");
+  assert.equal(select.props["aria-label"], "Agent sort order");
+  assert.equal(select.props.value, "failures");
+  assert.equal(findNodes(tree, (n) => n.type === "select").length, 0, "the card body draws no second sort control");
+  assert.equal(findNodes(tree, (n) => n.props?.role === "status").length, 0, "the note lives in the head, not in a band above the rows");
+});
+
+test("the card head offers no sort while there is no row to order", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  for (const state of [
+    { status: "loading", data: null, error: null },
+    { status: "ready", data: { agents: [], meta: { total_agents: 0 } }, error: null },
+  ]) {
+    const tree = renderScreen(React.createElement(mod.AgentSummaryCard as Component, {
+      state, days: 30, sortBy: "failures", onSortChange: () => {}, selectedAgent: null, onSelect: () => {}, onRetry: () => {},
+      trendByAgent: null, failureByAgent: null, overageByAgent: null, failureStatus: "ready", trendStatus: "ready",
+    }));
+    assert.equal(findNodes(renderHeadRight(tree), (n) => n.type === "select").length, 0, `${state.status}: no sort select`);
+  }
+});
 
 test("the breakage sort orders by breakages only once they are read, and says so while they are not", async () => {
   const mod = await loadAgentsScreen();

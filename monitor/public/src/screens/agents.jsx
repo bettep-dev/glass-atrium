@@ -897,6 +897,9 @@ function AgentSummaryCard({ failures, state, days, sortBy, onSortChange, selecte
     ? `${totalAgents} active`
     : (window.UI.getRegionView(state) === 'loading' ? 'Loading…' : "Couldn't load");
 
+  // the sort control is the card's action → it rides the head's right cluster (card-head contract), only while there are rows to order
+  const hasRows = (data?.agents ?? []).length > 0;
+
   return (
     <div id={IDS.REGION_CARD.summary} className="card h-full flex flex-col min-h-0 min-w-0 mb-0">
       <CardHead
@@ -904,13 +907,13 @@ function AgentSummaryCard({ failures, state, days, sortBy, onSortChange, selecte
         sub={subText}
         info={NOTE.NO_RECORD}
         infoLabel="How No record is counted"
+        right={hasRows && <SummarySortAg sortBy={sortBy} onSortChange={onSortChange} note={getSummarySortNoteAg(sortBy, failureStatus)}/>}
       />
       <AgentSummaryBody
         failures={failures}
         state={state}
         days={days}
         sortBy={sortBy}
-        onSortChange={onSortChange}
         selectedAgent={selectedAgent}
         onSelect={onSelect}
         onRetry={onRetry}
@@ -925,12 +928,39 @@ function AgentSummaryCard({ failures, state, days, sortBy, onSortChange, selecte
   );
 }
 
+// unread breakages → run order, announced rather than labelled 'Most breakages'
+function getSummarySortNoteAg(sortBy, failureStatus) {
+  return sortBy === 'failures' && failureStatus !== 'ready' ? 'Breakages not loaded — rows in run order' : '';
+}
+
+// The ledger's sort order in the card head: the fallback note (a live region, kept mounted so a change is announced), then the select.
+// The note carries its own trailing gap → while empty it adds no width beside the info button.
+function SummarySortAg({ sortBy, onSortChange, note }) {
+  return (
+    <div className="flex items-center fs-meta text-faint">
+      <span role="status" className={`font-mono whitespace-nowrap${note ? ' mr-2' : ''}`}>{note}</span>
+      <div className="flex items-center gap-2">
+        <span>Sort:</span>
+        <select
+          className="field field-select"
+          value={sortBy}
+          onChange={(e) => onSortChange(e.target.value)}
+          aria-label="Agent sort order">
+          {SUMMARY_SORT_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
 // A count whose sibling card counts differently states its definition beside it, not only in a header tooltip.
 function CountDefinitionAg({ note }) {
   return <p className="card-body pt-0 mb-0 fs-meta text-dim">{note}</p>;
 }
 
-function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
+function AgentSummaryBody({ failures, state, days, sortBy, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
     return <div className="card-body"><window.UI.LoadingPlaceholder label="agent performance" minHeight={240}/></div>;
@@ -946,44 +976,25 @@ function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selecte
   // pseudo-agent(subagent_stop_missing / unknown) 는 정렬 대상 아님 → 하단 collapsed footer 로 분리.
   const actionable = agents.filter((a) => !isNonActionableAgentAg(a.agent_id));
   const pseudoAgents = agents.filter((a) => isNonActionableAgentAg(a.agent_id));
-  const isFailureRead = failureStatus === 'ready';
-  // unread breakages → run order, announced rather than labelled 'Most breakages'
-  const sorted = sortAgentSummary(actionable, sortBy, isFailureRead ? failureByAgent : null);
-  const sortNote = sortBy === 'failures' && !isFailureRead ? 'Breakages not loaded — rows in run order' : '';
+  // unread breakages → run order; the card head announces it (getSummarySortNoteAg)
+  const sorted = sortAgentSummary(actionable, sortBy, failureStatus === 'ready' ? failureByAgent : null);
 
   return (
-    <>
-      <div className="px-4 py-2 border-b border-line flex items-center justify-end gap-3 fs-meta text-faint">
-        <span role="status" className="font-mono">{sortNote}</span>
-        <div className="flex items-center gap-2">
-          <span>Sort:</span>
-          <select
-            className="field field-select"
-            value={sortBy}
-            onChange={(e) => onSortChange(e.target.value)}
-            aria-label="Agent sort order">
-            {SUMMARY_SORT_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-      {/* page scroll only — the card-body 70vh cap cut the last row and hid the Warning agents below it */}
-      <div className="card-body flush" style={{ maxHeight: 'none', overflowY: 'visible' }}>
-        <AgentSummaryTable
-          agents={sorted}
-          pseudoAgents={pseudoAgents}
-          days={days}
-          selectedAgent={selectedAgent}
-          onSelect={onSelect}
-          trendByAgent={trendByAgent}
-          failureByAgent={failureByAgent}
-          overageByAgent={overageByAgent}
-          failureStatus={failureStatus}
-          trendStatus={trendStatus}
-        />
-      </div>
-    </>
+    // page scroll only — the card-body 70vh cap cut the last row and hid the Warning agents below it
+    <div className="card-body flush" style={{ maxHeight: 'none', overflowY: 'visible' }}>
+      <AgentSummaryTable
+        agents={sorted}
+        pseudoAgents={pseudoAgents}
+        days={days}
+        selectedAgent={selectedAgent}
+        onSelect={onSelect}
+        trendByAgent={trendByAgent}
+        failureByAgent={failureByAgent}
+        overageByAgent={overageByAgent}
+        failureStatus={failureStatus}
+        trendStatus={trendStatus}
+      />
+    </div>
   );
 }
 
