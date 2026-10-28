@@ -1353,10 +1353,10 @@ function AgentFailureSkeletonO({ stickyStyle }) {
     <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }} aria-busy={true} aria-label="Loading by-agent failures">
       {/* called, not mounted → <thead> stays a direct child in the element tree */}
       {AgentFailureHeadO({ stickyStyle })}
-      <tbody>
+      <tbody className="tbl-compact">
         {[0, 1, 2].map((i) => (
           <tr key={i}>
-            <td colSpan={AGENT_FAILURE_COLUMNS_O.length} className="px-3 py-2 border-b border-line">
+            <td colSpan={AGENT_FAILURE_COLUMNS_O.length} className="px-3 border-b border-line">
               <div className="skel-pulse-o" style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))' }}/>
             </td>
           </tr>
@@ -1382,15 +1382,15 @@ function AgentFailureBodyO({ state, onRetry, shared, stickyStyle }) {
     <div className="overflow-x-auto" style={{ position: 'relative' }}>
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         {AgentFailureHeadO({ stickyStyle })}
-        <tbody>
+        <tbody className="tbl-compact">
           {rows.map((row) => (
             <tr key={row.agent} className="outcome-row">
-              <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
+              <td className="text-left text-ink px-3 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
               <AgentFailureRateCellO row={row}/>
-              <td className={`${NUM_ALIGN_O} text-ink font-mono px-3 py-1.5 border-b border-line`}>{formatIntO(row.failed)}</td>
-              <td className={`${NUM_ALIGN_O} text-ink font-mono px-3 py-1.5 border-b border-line`}>{formatIntO(row.blocked)}</td>
+              <td className={`${NUM_ALIGN_O} text-ink font-mono px-3 border-b border-line`}>{formatIntO(row.failed)}</td>
+              <td className={`${NUM_ALIGN_O} text-ink font-mono px-3 border-b border-line`}>{formatIntO(row.blocked)}</td>
               <OpenCaveatCellO count={row.openCaveats}/>
-              <td className={`${NUM_ALIGN_O} text-faint font-mono px-3 py-1.5 border-b border-line`}>{formatIntO(row.total)}</td>
+              <td className={`${NUM_ALIGN_O} text-faint font-mono px-3 border-b border-line`}>{formatIntO(row.total)}</td>
             </tr>
           ))}
         </tbody>
@@ -1411,7 +1411,7 @@ function AgentFailureRateCellO({ row }) {
   const pct = row.rate * 100;
   return (
     <td
-      className="px-3 py-1.5 border-b border-line"
+      className="px-3 border-b border-line"
       title={`${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`}>
       {/* the share ends the cell → every rate shares one right edge under its right-aligned header; the bar and the low-sample mark lead it */}
       <span className="flex items-center gap-2">
@@ -1430,7 +1430,7 @@ function OpenCaveatCellO({ count }) {
   const isLoaded = count !== null;
   return (
     <td
-      className={`${NUM_ALIGN_O} text-ink font-mono px-3 py-1.5 border-b border-line`}
+      className={`${NUM_ALIGN_O} text-ink font-mono px-3 border-b border-line`}
       title={isLoaded ? undefined : 'Not loaded — only the top 10 agents by volume carry an open-caveat count'}>
       {isLoaded ? formatIntO(count) : '—'}
     </td>

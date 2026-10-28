@@ -493,25 +493,28 @@ function ConfidenceLaneTableI({ buckets }) {
 						<th className="text-right pr-1.5">Avg confidence</th>
 					</tr>
 				</thead>
-				<tbody>
+				<tbody className="tbl-compact">
 					{buckets.map((b) => {
 						const avg = b.confidence_observed_avg;
 						const badge = confidenceBadgeMetaI(avg);
 						return (
 							<tr key={b.promotion_tier} className="border-t border-line/50">
-								<td className="text-left py-1.5 pl-1.5 text-ink">
+								<td className="text-left pl-1.5 text-ink">
 									{laneLabelI(b.promotion_tier)}
 								</td>
-								<td className="text-right py-1.5 text-dim">
+								<td className="text-right text-dim">
 									{formatIntI(Number(b.proposal_count ?? 0))}
 								</td>
-								<td className="py-1.5 pr-1.5 text-ink flex items-center justify-end gap-1.5">
-									<SymI
-										s={avg === null || avg === undefined ? "ℹ" : badge.symbol}
-										className={badge.tone}
-										size={11}
-									/>{" "}
-									{formatRateI(avg)}
+								{/* a table cell, never a flex box → the row step and the rule reach it; the mark + rate sit inline at its right edge */}
+								<td className="text-right pr-1.5 text-ink">
+									<span className="inline-flex items-center justify-end gap-1.5">
+										<SymI
+											s={avg === null || avg === undefined ? "ℹ" : badge.symbol}
+											className={badge.tone}
+											size={11}
+										/>{" "}
+										{formatRateI(avg)}
+									</span>
 								</td>
 							</tr>
 						);
@@ -564,20 +567,20 @@ function ProseOnlyAddCardI({ state, summary }) {
 								<th className="text-right pr-1.5">Add-only</th>
 							</tr>
 						</thead>
-						<tbody>
+						<tbody className="tbl-compact">
 							{rows.map((r) => (
 								<tr key={r.agent} className="border-t border-line/50">
-									<td className="text-left py-1.5 pl-1.5 text-ink">
+									<td className="text-left pl-1.5 text-ink">
 										{r.agent}
 									</td>
-									<td className="text-right py-1.5 pr-1.5 text-ink">
+									<td className="text-right pr-1.5 text-ink">
 										{formatIntI(Number(r.count ?? 0))}
 									</td>
 								</tr>
 							))}
 							<tr className="border-t border-line">
-								<td className="text-left py-1.5 pl-1.5 text-dim">Total</td>
-								<td className="text-right py-1.5 pr-1.5 text-ink">
+								<td className="text-left pl-1.5 text-dim">Total</td>
+								<td className="text-right pr-1.5 text-ink">
 									{formatIntI(total)}
 								</td>
 							</tr>
@@ -779,7 +782,7 @@ function StyleRefAgentTableI({ rows }) {
 						<th className="text-right pr-1.5">Unverifiable</th>
 					</tr>
 				</thead>
-				<tbody>
+				<tbody className="tbl-compact">
 					{rows.map((r) => {
 						const emCount = Number(r.emission_count ?? 0);
 						const emTotal = Number(r.emission_total ?? 0);
@@ -789,20 +792,20 @@ function StyleRefAgentTableI({ rows }) {
 						const eligible = Number(r.eligible_count ?? 0);
 						return (
 							<tr key={r.agent} className="border-t border-line/50">
-								<td className="text-left py-1.5 pl-1.5 text-ink">{r.agent}</td>
-								<td className="text-right py-1.5 text-dim">
+								<td className="text-left pl-1.5 text-ink">{r.agent}</td>
+								<td className="text-right text-dim">
 									{formatIntI(emCount)} / {formatIntI(emTotal)}
 								</td>
-								<td className="text-right py-1.5 text-ink">
+								<td className="text-right text-ink">
 									{formatRateI(r.emission_rate)}
 								</td>
-								<td className="text-right py-1.5 text-ink">
+								<td className="text-right text-ink">
 									{formatIntI(corroborated)} / {formatIntI(eligible)}
 								</td>
-								<td className="text-right py-1.5 text-ink">
+								<td className="text-right text-ink">
 									{formatIntI(uncorroborated)}
 								</td>
-								<td className="text-right py-1.5 pr-1.5 text-faint">
+								<td className="text-right pr-1.5 text-faint">
 									{formatIntI(unverifiable)}
 								</td>
 							</tr>

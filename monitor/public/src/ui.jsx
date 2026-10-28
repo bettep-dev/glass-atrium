@@ -1394,8 +1394,9 @@ function NoWrap({ children, className = '' }) {
   return <span className={`whitespace-nowrap ${className}`.trim()}>{children}</span>;
 }
 
-// a day count or day range + its unit ("30 days", "1 day", "3–7 days") — the number + unit token the sentence wraps around
-const DAY_TOKEN_RE = /\d[\d,]*(?:\s*[–-]\s*\d[\d,]*)?\s+days?\b/g;
+// a day count or day range + its unit — the number + unit token the sentence wraps around, in three forms:
+// spaced ("30 days", "1 day", "3–7 days"), dashed compound ("7-day", "30-day", "3–7-day") and qualified noun ("28 cycle days")
+const DAY_TOKEN_RE = /\d[\d,]*(?:\s*[–-]\s*\d[\d,]*)?(?:\s+cycle)?(?:\s+|-)days?\b/g;
 
 // one string → its parts, each day token in its own NoWrap; keyed by the part's place and the token's offset
 function getDayTokenParts(text, place) {

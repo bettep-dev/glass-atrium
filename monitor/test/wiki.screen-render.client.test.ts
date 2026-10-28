@@ -192,6 +192,15 @@ test("the Per-run fold's body prose fits the 90-char footnote cap, a longer qual
   assert.equal(findNodes(fold, (n) => n.props.atom === "CardInfo").length, 1, "the change definition opens from one ⓘ");
 });
 
+// R-c: the trend note hands its sentence to the shared DayTokens atom, so "30-day" never breaks at its hyphen
+test("the Per-run fold's trend note rides DayTokens, so its N-day window stays whole", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
+  const notes = findNodes(tree, (n) => n.props.atom === "DayTokens").map((n) => String(n.props.children));
+  assert.equal(notes.length, 1, "one note rides DayTokens");
+  assert.match(notes[0], /^The window drives the table only — the trend keeps a fixed \d+-day window\.$/);
+});
+
 test("the Per-run fold's ⓘ is described by the fold's own heading", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));

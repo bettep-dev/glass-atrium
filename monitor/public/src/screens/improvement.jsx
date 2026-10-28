@@ -370,8 +370,6 @@ function ScreenImprovement({ onNav }) {
         @keyframes spinI { from{transform:rotate(0)} to{transform:rotate(360deg)} }
         @media (prefers-reduced-motion: reduce) { .i-act-spin { animation-duration:0.01ms !important; } }
         .i-row-card { cursor:pointer; }
-        /* nested compact table → body rows on the 32 compact step */
-        .i-recurrence-tbl > tbody > tr > td { height: var(--row-h-compact); }
         /* icon + label head: the icon centres on the label's first line (1lh), unshrunk, whether or not the label wraps */
         .i-icon-head { display:flex; align-items:flex-start; gap:var(--space-1); }
         .i-icon-head > svg { flex-shrink:0; margin-top:calc((1lh - var(--fs-meta)) / 2); }
@@ -2124,19 +2122,19 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 					<th className="text-right pl-4 pr-1.5">Events</th>
 				</tr>
 			</thead>
-			<tbody>
+			<tbody className="tbl-compact">
 				{buckets.map((b) => (
 					<tr key={b.cause} className="border-t border-line/50">
-						<td className="text-left py-1 pl-1.5 text-ink" title={b.hint}>
+						<td className="text-left pl-1.5 text-ink" title={b.hint}>
 							{b.label}
 						</td>
-						<td className="text-right py-1 pl-4 text-ink tnum">
+						<td className="text-right pl-4 text-ink tnum">
 							{formatIntI(Number(b.agents ?? 0))}
 						</td>
-						<td className="text-right py-1 pl-4 text-ink tnum">
+						<td className="text-right pl-4 text-ink tnum">
 							{formatIntI(Number(b.cycles ?? 0))} of {formatIntI(windowCycles)}
 						</td>
-						<td className="text-right py-1 pl-4 pr-1.5 text-dim tnum">
+						<td className="text-right pl-4 pr-1.5 text-dim tnum">
 							{formatIntI(Number(b.count ?? 0))}
 						</td>
 					</tr>
@@ -2572,7 +2570,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	);
 }
 
-// One loop-card anatomy → metric, visual and foot start at the same offsets in all three cards.
+// One loop-card anatomy → metric, visual and foot start at the same offsets in all three cards; the foot keeps its day tokens whole.
 function getLoopSlotsI({ metric, visual, foot }) {
 	const { CARD_SLOTS } = window.UI;
 	return (
@@ -2581,7 +2579,9 @@ function getLoopSlotsI({ metric, visual, foot }) {
 			<div className="i-loop-visual" style={{ height: CARD_SLOTS.S.plotPx }}>
 				{visual}
 			</div>
-			<div className="card-foot">{foot}</div>
+			<div className="card-foot">
+				<window.UI.DayTokens>{foot}</window.UI.DayTokens>
+			</div>
 		</>
 	);
 }

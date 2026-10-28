@@ -350,7 +350,8 @@ details[open] > summary .chevron {
    so a text cell is 7.5 + 20 + 7.5 + 1 (rising to 40), a 24px pill cell 7.5 + 24 + 7.5 + 1 = 40, a control cell 3.5 + 32 + 3.5 + 1 = 40;
    a header row on the compact step is 5.5 + 20 + 5.5 + 1 = 32. A table off .tbl (a matrix, a crosstab) takes the header row through thead.tbl-head */
 .tbl,
-thead.tbl-head {
+thead.tbl-head,
+tbody.tbl-compact {
 	--tbl-rule: 1px;
 	--tbl-pad-block: calc(var(--space-2) - var(--tbl-rule) / 2);
 	--tbl-ctl-pad-block: calc(var(--space-1) - var(--tbl-rule) / 2);
@@ -409,6 +410,14 @@ thead.tbl-head {
 	height: var(--row-h);
 	padding-block-start: var(--tbl-pad-block);
 	padding-block-end: var(--tbl-pad-block);
+}
+/* compact body rows — a nested ledger off .tbl (a card's breakdown table) opts its body rows onto the 32 compact step through
+   tbody.tbl-compact: 5.5 + 20 + 5.5 + 1 = 32. Block longhands, so each table keeps its own inline padding; compact never holds a control */
+tbody.tbl-compact > tr > :is(td, th) {
+	height: var(--row-h-compact);
+	padding-block-start: var(--tbl-head-pad-block);
+	padding-block-end: var(--tbl-head-pad-block);
+	line-height: var(--lh-row);
 }
 /* edge cells take the card padding → the first and last column line up with the card head; flush comes from an unpadded card body */
 .tbl th:first-child,

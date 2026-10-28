@@ -791,6 +791,32 @@ test("AgentFailureBodyO: loading draws the table's own skeleton rows, not a blan
   assert.ok(nodes.filter((n) => n.type === "tr").length > 1, "skeleton rows sit under the header");
 });
 
+// R-d: the by-agent table sits off .tbl, so its body rows (and the skeleton rows standing in for them) reach the 32 compact
+// step through the shared tbody.tbl-compact atom; a cell carrying its own block padding would move the row off that step
+test("AgentFailureBodyO: body and skeleton rows ride the shared compact atom, no cell padding its own block", () => {
+  // a row's cell components render one level, so their own td is read too
+  const renderCells = (nodes: RenderNode[]): RenderNode[] => nodes.flatMap((n) =>
+    typeof n.type === "function" ? flattenNodes((n.type as (p: unknown) => unknown)({ ...n.props, children: n.children })) : [n]);
+  const ready = helpers.AgentFailureBodyO({
+    state: {
+      status: "ok",
+      data: helpers.buildAnalyticsDataO({ by_agent_result: [{ agent: LEDGER_AGENT, result: "fail", count: 1 }], by_agent_top_10: [] }),
+    } as unknown as PayloadState<unknown>,
+    onRetry: () => {},
+  });
+  const loading = helpers.AgentFailureBodyO({ state: { status: "loading" }, onRetry: () => {} });
+  const skeleton = typeof loading.type === "function" ? (loading.type as (p: unknown) => RenderNode)(loading.props) : loading;
+  for (const [name, tree] of [["ready", ready], ["loading", skeleton]] as const) {
+    const nodes = renderCells(flattenNodes(tree));
+    const bodies = nodes.filter((n) => n.type === "tbody");
+    assert.strictEqual(bodies.length, 1, `${name}: one body`);
+    assert.strictEqual(bodies[0].props?.className, "tbl-compact", `${name}: the body takes the compact atom`);
+    const cells = renderCells(flattenNodes(bodies[0])).filter((n) => n.type === "td");
+    assert.ok(cells.length > 0, `${name}: the body carries cells`);
+    for (const cell of cells) assert.doesNotMatch(String(cell.props?.className ?? ""), /\b(py|pt|pb)-/, `${name}: a cell keeps its block padding off`);
+  }
+});
+
 test("reportingHealthSummaryO: a silent channel is named in the closed summary line", () => {
   assert.strictEqual(
     helpers.reportingHealthSummaryO({ status: "ready", data: { alerting: ["subagent_stop", "stop"] } }),

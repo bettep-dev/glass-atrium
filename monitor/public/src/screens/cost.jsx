@@ -594,7 +594,7 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
           value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
           hint={`7-day cost / ${formatIntC(doneCount)} finished`}
           unavailableNote="No finished task in the last 7 days."
-          foot={<div className="cost-foot">Fixed 7-day window — the range above does not change it.</div>}/>
+          foot={<div className="cost-foot"><window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens></div>}/>
 
         <CostTileC
           id="cost-tile-cache"
@@ -654,8 +654,10 @@ const COST_TILE_KPI_STATE = { loading: 'loading', error: 'error', empty: 'empty'
  * delta → the comparison under the value (tile 1's bar, tile 2's prior-window line) · foot → the tile's footnote.
  */
 function CostTileC({ id, label, info, windowTag, status, value, hint, unavailableNote, delta = null, foot = null }) {
-  const { KPI, CardInfo } = window.UI;
+  const { KPI, CardInfo, DayTokens } = window.UI;
   const isReady = status === 'ready';
+  // the hint or the state note, one plain string → it keeps its title and clamp, and its day tokens stay whole
+  const note = isReady ? (hint || null) : getTileNote(status, unavailableNote);
   // the ⓘ is described by the label alone; the tile's group name is the whole label row, window tag included
   const nameId = `${id}-name`;
 
@@ -666,7 +668,8 @@ function CostTileC({ id, label, info, windowTag, status, value, hint, unavailabl
       state={COST_TILE_KPI_STATE[status] ?? 'ready'} loadingLabel={label.toLowerCase()}
       value={isReady ? value : undefined}
       delta={isReady ? delta : null}
-      hint={isReady ? (hint || null) : getTileNote(status, unavailableNote)} hintFace=""
+      hint={note && <DayTokens>{note}</DayTokens>} hintTitle={typeof note === 'string' ? note : undefined}
+      isHintClamped={typeof note === 'string'} hintFace=""
       foot={isReady ? foot : null}/>
   );
 }
@@ -689,7 +692,7 @@ function HotBulletC({ hot }) {
         ariaLabel={`Today ${formatUsdC(hot.todayCost)} against a 7-day normal of ${formatUsdC(hot.normalDaily)} per day`}
         showValue={false}
       />
-      <div className="cost-foot mt-1.5">{getTileVerdictTextC(hot)}</div>
+      <div className="cost-foot mt-1.5"><window.UI.DayTokens>{getTileVerdictTextC(hot)}</window.UI.DayTokens></div>
     </div>
   );
 }

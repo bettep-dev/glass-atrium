@@ -381,6 +381,20 @@ describe("every loop card stacks one metric, one visual and one pinned foot, in 
   }
 });
 
+// R-c: a loop-card foot hands its sentence to the shared DayTokens atom, so "28 cycle days" and "7-day" never break
+test("every loop-card foot rides DayTokens, so its cycle-day and 7-day tokens stay whole", () => {
+  const expected: Record<string, RegExp> = {
+    trend: /^Share rejected per day · all 2 cycle days: /,
+    "learning memory": /^All agents · not the group's 7-day window$/,
+  };
+  for (const { name, card } of getLoopCards()) {
+    const [foot] = getSlotOf(card, "card-foot");
+    const tokens = collectElements(foot, []).filter((el) => el.type === sandbox.window.UI.DayTokens);
+    assert.equal(tokens.length, 1, `${name}: the foot rides one DayTokens`);
+    if (expected[name]) assert.match(String(tokens[0].props.children), expected[name], `${name}: the sentence reaches it whole`);
+  }
+});
+
 test("the applied card leads with its reject rate, in the metric slot", () => {
   const [applied] = getLoopCards();
   const [metric] = getSlotOf(applied.card, "i-loop-metric");

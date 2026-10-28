@@ -1252,6 +1252,25 @@ test("the window delta foot hands its sentence to DayTokens, so \"30 days\" befo
   }
 });
 
+// R-c: every KPI-band sentence carrying a dashed "7-day" token hands it to DayTokens, so the compound never breaks at its hyphen
+test("the KPI band's 7-day sentences (today hint and verdict, per-task hint and foot) each ride one DayTokens", async () => {
+  const mod = await loadCostRender();
+  const kpi = { ...getKpiAtRatio(0.15, null), cost_per_done_usd: 0.39, done_count_7d: 2_396 };
+  const tree = renderIn(mod, "KpiRowC", {
+    kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
+    modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
+  });
+  const sentences = findNodes(tree, (n) => n.props.atom === "DayTokens").map((n) => String(n.props.children));
+  for (const sentence of [
+    "$10.00 7-day normal/day",
+    "Today is 15% of the 7-day daily normal so far.",
+    "7-day cost / 2,396 finished",
+    "Fixed 7-day window — the range above does not change it.",
+  ]) {
+    assert.ok(sentences.includes(sentence), `"${sentence}" reaches DayTokens whole; got ${JSON.stringify(sentences)}`);
+  }
+});
+
 test("the window-cost tile keeps its counting rule behind an info trigger described by the tile label", async () => {
   const mod = await loadCostRender();
   const kpi = getKpiAtRatio(1, 1);

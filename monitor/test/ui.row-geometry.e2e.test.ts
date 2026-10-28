@@ -1,6 +1,6 @@
 // Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control or a
 // value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
-// and a word KPI value sits on the figure's baseline.
+// a compact body row off .tbl sits on the 32 step, and a word KPI value sits on the figure's baseline.
 // Runner: npx tsx --test test/ui.row-geometry.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -96,6 +96,21 @@ const HEAD_ROWS = [
     markup: headTable("head-sortable-control", `class="tbl"`, "", `<th aria-sort="none"><button type="button" class="btn sm">Time</button></th><th>Agent</th>`) },
 ] as const;
 
+// compact body rows off .tbl, one table per border model the screens carry: a separate-border table ruled per cell (Task results
+// Failures by agent) and a collapsed table ruled per row (the Learning instrumentation tables); the second row is measured, so
+// it shares a rule above and below
+const COMPACT_CELL = `style="padding-inline: 12px; border-bottom: 1px solid;"`;
+const compactTable = (row: string, tableAttrs: string, trAttrs: string, cell: string): string =>
+  `<table ${tableAttrs} style="width: 480px;"><tbody class="tbl-compact">` +
+  [0, 1, 2].map((i) => `<tr${i === 1 ? ` data-row="${row}"` : ""}${trAttrs}><td${cell}>dev-react</td><td${cell}>12</td></tr>`).join("") +
+  `</tbody></table>`;
+const COMPACT_ROWS = [
+  { name: "a separate-border table ruled per cell", row: "body-compact-separate",
+    markup: compactTable("body-compact-separate", `class="fs-meta" style="border-collapse: separate; border-spacing: 0;"`, "", ` ${COMPACT_CELL}`) },
+  { name: "a collapsed table ruled per row", row: "body-compact-collapse",
+    markup: compactTable("body-compact-collapse", `class="fs-meta"`, ` style="border-top: 1px solid;"`, ` style="padding-inline: 6px;"`) },
+] as const;
+
 const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
   ${ICON_ROWS.map((row) => `<p id="${row.id}" style="width: 320px;">${row.markup} Healthy</p>`).join("\n  ")}
   <p id="bare" style="width: 320px;"><svg width="14" height="14" viewBox="0 0 24 24"></svg> Healthy</p>
@@ -107,6 +122,7 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
     <tr data-row="last"><td>last row</td><td>no rule below — keeps every measured row ruled</td></tr>
   </tbody></table>
   ${HEAD_ROWS.map((row) => row.markup).join("\n  ")}
+  ${COMPACT_ROWS.map((row) => row.markup).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
     ${KPI_VALUES.map((value) => `<div id="${value.id}">${value.markup}</div>`).join("\n    ")}
   </div>
@@ -204,6 +220,26 @@ describe("a column-header row sits on the compact step, a sortable one on the ro
       assert.ok(Math.abs(cell - text) < 1, `${row}: text centre ${text} vs row centre ${cell} (above its 1px rule)`);
     }
   });
+});
+
+// R-d: a nested ledger off .tbl puts its body rows on the 32 compact step through tbody.tbl-compact, whichever border model it uses
+describe("a compact body row sits on the 32 step, its text on the row's centre line", () => {
+  for (const row of COMPACT_ROWS) {
+    test(`${row.name} is 32`, async () => {
+      assert.equal(await rowHeight(row.row), 32);
+    });
+    test(`${row.name}: the cell text sits on the row's centre line`, async () => {
+      const { box, text } = await page.$eval(`tr[data-row="${row.row}"]`, (tr) => {
+        const range = document.createRange();
+        range.selectNodeContents(tr.querySelector("td")!);
+        const line = range.getClientRects()[0];
+        const rect = tr.getBoundingClientRect();
+        return { box: { top: rect.top, bottom: rect.bottom }, text: (line.top + line.bottom) / 2 };
+      });
+      const centre = (box.top + box.bottom) / 2;
+      assert.ok(Math.abs(centre - text) <= 1, `text centre ${text} vs row centre ${centre}`);
+    });
+  }
 });
 
 describe("a value + bar cell keeps the row at 40", () => {

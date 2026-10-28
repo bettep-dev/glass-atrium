@@ -229,7 +229,8 @@ describe("freshness-driven verdict", () => {
   });
 });
 
-// R-c: a number + day token ("30 days", "1 day", "3–7 days") never breaks across lines inside its sentence
+// R-c: a number + day token never breaks across lines inside its sentence, in each of its three forms — spaced ("30 days",
+// "1 day", "3–7 days"), dashed compound ("7-day", "30-day", "3–7-day") and qualified noun ("28 cycle days")
 describe("DayTokens", () => {
   const isNoWrap = (n: RenderedNode) => /\bwhitespace-nowrap\b/.test(String(n.props.className ?? ""));
   const renderTokens = (sentence: unknown) => renderScreen(h(ui.DayTokens as Component, {}, sentence)) as RenderedNode;
@@ -239,6 +240,10 @@ describe("DayTokens", () => {
     { sentence: "12% vs the 30 days before 09-30, cut at this time of day", tokens: ["30 days"] },
     { sentence: "No runs in the last 1 day", tokens: ["1 day"] },
     { sentence: "Window 3–7 days · 1,200 days kept", tokens: ["3–7 days", "1,200 days"] },
+    // dashed compound: Chrome breaks after the hyphen, so "7-day" outside a nowrap span splits across lines
+    { sentence: "Alarm at 1.25× the 7-day avg/day · a fixed 30-day window · a 3–7-day span", tokens: ["7-day", "30-day", "3–7-day"] },
+    // qualified noun: the count, its qualifier and the unit are one token
+    { sentence: "Share rejected per day · all 28 cycle days: 3 verified · last 1 cycle day", tokens: ["28 cycle days", "1 cycle day"] },
   ];
   for (const row of ROWS) {
     test(`"${row.sentence}" keeps ${row.tokens.join(" and ")} whole, its text unchanged`, () => {
@@ -251,6 +256,7 @@ describe("DayTokens", () => {
   test("a sentence with no day token, or a non-string child, renders as it came", () => {
     assert.equal(findNodes(renderTokens("Spend is on track."), isNoWrap).length, 0);
     assert.equal(rawText(renderTokens("Spend is on track.")), "Spend is on track.");
+    assert.equal(findNodes(renderTokens("A day-over-day change, a day ago"), isNoWrap).length, 0, "a day word with no count is no token");
     const node = h("span", { className: "x" }, "7 days");
     assert.equal(findNodes(renderTokens(node), isNoWrap).length, 0, "an element child is left to its own author");
   });

@@ -1093,7 +1093,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 		>
 			<div className="flex items-center gap-2 flex-wrap">
 				<span className="fs-meta text-faint leading-tight">
-					{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}
+					<window.UI.DayTokens>{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}</window.UI.DayTokens>
 				</span>
 				<CardInfo label="How a change is counted" describedBy={`${WIKI_REGION_IDS.runTable}-title`}>
 					A change is a run whose status or backlog differs from the run before.
