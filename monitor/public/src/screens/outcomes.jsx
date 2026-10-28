@@ -1066,7 +1066,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
 // unloadedText → a pending or failed count says so instead of a dash that reads as data
 // One KPI anatomy: label row · count · share and trend under it · the reasons as the split detail column.
 function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, className = '' }) {
-  const { KPI, formatPctWithDenominator } = window.UI;
+  const { KPI, formatPctWithDenominator, DateRange } = window.UI;
   const glyph = getBandTileGlyphO(tile.tone);
   const loaded = tile.count !== null && tile.count !== undefined;
   const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
@@ -1093,7 +1093,8 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
       delta={
         <>
           <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
-          {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
+          {/* the range rides in its own nowrap span → the sentence wraps around it, never inside the dates */}
+          {tile.trend && <div className="fs-meta text-dim"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></div>}
         </>
       }
       hint={reasons && <NeedsYouReasonsO reasons={reasons}/>} hintFace="" isSplit={Boolean(reasons)}
@@ -1211,7 +1212,7 @@ function getVolumeTilesO(tiles) {
 // volume facts demoted beside the hero; the Self-reported glyph stays the missing-report grade channel
 // a fact-list KPI: the ⓘ on the label row, level with the hero's label; the facts start where the hero's value does
 function VolumeTilesO({ tiles, windowLabel, info = null }) {
-  const { KPI, formatPctWithDenominator } = window.UI;
+  const { KPI, formatPctWithDenominator, DateRange } = window.UI;
   return (
     <KPI hasValue={false} info={info} aria-label={`Volume · ${windowLabel}`} hintFace=""
       hint={
@@ -1224,7 +1225,7 @@ function VolumeTilesO({ tiles, windowLabel, info = null }) {
                 {tile.label}
                 <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
                 <span className="w-full text-right font-mono text-faint">{formatPctWithDenominator(tile.count, tile.population)}</span>
-                {tile.trend && <span className="w-full text-right">{tile.trend}</span>}
+                {tile.trend && <span className="w-full text-right"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></span>}
               </div>
             );
           })}
@@ -1317,9 +1318,12 @@ function AgentFailureTableO({ state, onRetry, shared }) {
   );
 }
 
+// B5 numeric columns, alignment only: values and headers right-aligned, tabular figures, one line — every typeface stays as it is
+const NUM_ALIGN_O = 'text-right tabular-nums whitespace-nowrap';
+
 const AGENT_FAILURE_COLUMNS_O = [
   { label: 'Agent', align: 'left' },
-  { label: 'Failure rate', align: 'left' },
+  { label: 'Failure rate', align: 'right' },
   { label: 'Failed', align: 'right' },
   { label: 'Blocked', align: 'right' },
   { label: 'Open caveats', align: 'right' },
@@ -1331,7 +1335,7 @@ function AgentFailureHeadO({ stickyStyle }) {
     <thead>
       <tr>
         {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
-          <th key={label} scope="col" className={`text-${align} text-dim font-medium px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
+          <th key={label} scope="col" className={`${align === 'right' ? NUM_ALIGN_O : 'text-left'} text-dim font-medium px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
         ))}
       </tr>
     </thead>
@@ -1378,10 +1382,10 @@ function AgentFailureBodyO({ state, onRetry, shared, stickyStyle }) {
             <tr key={row.agent} className="outcome-row">
               <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
               <AgentFailureRateCellO row={row}/>
-              <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.failed)}</td>
-              <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.blocked)}</td>
+              <td className={`${NUM_ALIGN_O} text-ink font-mono px-3 py-1.5 border-b border-line`}>{formatIntO(row.failed)}</td>
+              <td className={`${NUM_ALIGN_O} text-ink font-mono px-3 py-1.5 border-b border-line`}>{formatIntO(row.blocked)}</td>
               <OpenCaveatCellO count={row.openCaveats}/>
-              <td className="text-right text-faint font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.total)}</td>
+              <td className={`${NUM_ALIGN_O} text-faint font-mono px-3 py-1.5 border-b border-line`}>{formatIntO(row.total)}</td>
             </tr>
           ))}
         </tbody>
@@ -1404,12 +1408,13 @@ function AgentFailureRateCellO({ row }) {
     <td
       className="px-3 py-1.5 border-b border-line"
       title={`${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`}>
+      {/* the share ends the cell (B5) → every rate shares one right edge under its right-aligned header; the bar and the low-sample mark lead it */}
       <span className="flex items-center gap-2">
-        <span className={`font-mono ${row.isLowSample ? 'text-faint italic' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
         <span aria-hidden="true" className="flex-1" style={{ minWidth: 40, height: 6, borderRadius: 3, background: 'rgb(var(--sunken))' }}>
           <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${getFailureRateFillO(row)}))` }}/>
         </span>
         <LowSampleMark n={row.total}/>
+        <span className={`${NUM_ALIGN_O} font-mono ${row.isLowSample ? 'text-faint italic' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
       </span>
     </td>
   );
@@ -1420,7 +1425,7 @@ function OpenCaveatCellO({ count }) {
   const isLoaded = count !== null;
   return (
     <td
-      className="text-right text-ink font-mono px-3 py-1.5 border-b border-line"
+      className={`${NUM_ALIGN_O} text-ink font-mono px-3 py-1.5 border-b border-line`}
       title={isLoaded ? undefined : 'Not loaded — only the top 10 agents by volume carry an open-caveat count'}>
       {isLoaded ? formatIntO(count) : '—'}
     </td>
@@ -2143,11 +2148,11 @@ function CrosstabBody({ state, onRetry, shared }) {
             <tr>
               <th scope="col" className="text-left text-dim font-medium px-2 py-1.5 border-b border-line">confidence \ self-check</th>
               {CROSSTAB_METRIC_COLS.map((col) => (
-                <th key={col.key} scope="col" className="text-center text-dim font-medium px-2 py-1.5 border-b border-line">
+                <th key={col.key} scope="col" className={`${NUM_ALIGN_O} text-dim font-medium px-2 py-1.5 border-b border-line`}>
                   {col.label}
                 </th>
               ))}
-              <th scope="col" className="text-right text-dim font-medium px-2 py-1.5 border-b border-line">Total</th>
+              <th scope="col" className={`${NUM_ALIGN_O} text-dim font-medium px-2 py-1.5 border-b border-line`}>Total</th>
             </tr>
           </thead>
           <tbody>
@@ -2184,7 +2189,7 @@ function CrosstabRow({ rowKey, byCell, max }) {
         const cell = byCell[`${rowKey}|${col.key}`] || { count: 0, isPolar: false };
         return <CrosstabCell key={col.key} cell={cell} max={max} rowLabel={rowKey} colLabel={col.label}/>;
       })}
-      <td className="text-right text-dim px-2 py-1.5 border-b border-line">{formatIntO(rowTotal)}</td>
+      <td className={`${NUM_ALIGN_O} text-dim px-2 py-1.5 border-b border-line`}>{formatIntO(rowTotal)}</td>
     </tr>
   );
 }
@@ -2195,15 +2200,16 @@ function CrosstabCell({ cell, max, rowLabel, colLabel }) {
 
   return (
     <td
-      className="text-center px-2 pt-1.5 pb-1 border-b border-line"
+      className={`${NUM_ALIGN_O} px-2 pt-1.5 pb-1 border-b border-line`}
       title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
       aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
-      <span className="inline-flex items-center gap-1 justify-center">
+      <span className="inline-flex items-center gap-1 justify-end">
         {cell.isPolar && count > 0 && <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>}
         <span className="text-ink">{count > 0 ? formatIntO(count) : '·'}</span>
       </span>
       <span className="block mt-1" aria-hidden="true" style={{ height: 3 }}>
-        {bar && <span className="block" style={{ height: '100%', width: `${bar.widthPct}%`, background: `rgb(var(${bar.colorVar}))`, borderRadius: 1 }}/>}
+        {/* anchored to the right edge → the bar ends under its right-aligned count */}
+        {bar && <span className="block ml-auto" style={{ height: '100%', width: `${bar.widthPct}%`, background: `rgb(var(${bar.colorVar}))`, borderRadius: 1 }}/>}
       </span>
     </td>
   );
@@ -2227,10 +2233,10 @@ function CrosstabTotalRow({ byCell, total }) {
           colTotal += (byCell[`${rowKey}|${col.key}`]?.count) || 0;
         }
         return (
-          <td key={col.key} className="text-center text-dim px-2 py-1.5">{formatIntO(colTotal)}</td>
+          <td key={col.key} className={`${NUM_ALIGN_O} text-dim px-2 py-1.5`}>{formatIntO(colTotal)}</td>
         );
       })}
-      <td className="text-right text-ink font-semibold px-2 py-1.5">{formatIntO(total)}</td>
+      <td className={`${NUM_ALIGN_O} text-ink font-semibold px-2 py-1.5`}>{formatIntO(total)}</td>
     </tr>
   );
 }
@@ -2330,8 +2336,8 @@ function LoopEventsBody({ state, onRetry, shared }) {
               <th className="text-left font-medium px-2 py-1.5 border-b border-line">Time</th>
               <th className="text-left font-medium px-2 py-1.5 border-b border-line">Agent</th>
               <th className="text-left font-medium px-2 py-1.5 border-b border-line">Result</th>
-              <th className="text-right font-medium px-2 py-1.5 border-b border-line">Added</th>
-              <th className="text-right font-medium px-2 py-1.5 border-b border-line">Removed</th>
+              <th className={`${NUM_ALIGN_O} font-medium px-2 py-1.5 border-b border-line`}>Added</th>
+              <th className={`${NUM_ALIGN_O} font-medium px-2 py-1.5 border-b border-line`}>Removed</th>
             </tr>
           </thead>
           <tbody>
@@ -2349,8 +2355,8 @@ function LoopEventsBody({ state, onRetry, shared }) {
                   <td className="text-left px-2 py-1.5 border-b border-line" title={String(e.eval_result || '')}>
                     <Badge role="status" tone={meta.tone} icon>{meta.label}</Badge>
                   </td>
-                  <td className="text-right text-dim font-mono px-2 py-1.5 border-b border-line">+{formatIntO(Number(e.changes_added ?? 0))}</td>
-                  <td className="text-right text-dim font-mono px-2 py-1.5 border-b border-line">-{formatIntO(Number(e.changes_removed ?? 0))}</td>
+                  <td className={`${NUM_ALIGN_O} text-dim font-mono px-2 py-1.5 border-b border-line`}>+{formatIntO(Number(e.changes_added ?? 0))}</td>
+                  <td className={`${NUM_ALIGN_O} text-dim font-mono px-2 py-1.5 border-b border-line`}>-{formatIntO(Number(e.changes_removed ?? 0))}</td>
                 </tr>
               );
             })}
@@ -2992,13 +2998,14 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
         </span>
       </td>
       {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card. */}
+      {/* fixed flag slot | summary | reason pill → every summary starts at one x; the variable-width pill sits at the cell's end, never truncated. */}
       <td className="text-ink" style={{ width: '100%', maxWidth: 0 }} title={summary}>
         <div className="flex items-center">
           <SummaryFlagSlotO row={row}/>
+          <span className="flex-1 truncate" style={{ minWidth: 0 }}>{summary}</span>
           {needsYouReason && (
-            <window.UI.Badge role="metadata" className="shrink-0 whitespace-nowrap mr-1.5">{needsYouReason}</window.UI.Badge>
+            <window.UI.Badge role="metadata" className="shrink-0 whitespace-nowrap ml-2">{needsYouReason}</window.UI.Badge>
           )}
-          <span className="truncate" style={{ minWidth: 0 }}>{summary}</span>
         </div>
       </td>
     </tr>

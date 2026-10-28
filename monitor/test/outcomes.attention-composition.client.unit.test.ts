@@ -1228,16 +1228,32 @@ interface PriorTrendHelpers {
 }
 const trendHelpers = helpers as unknown as PriorTrendHelpers;
 
-// function components expand → the text a reader sees, wherever a sub-component draws it
-const renderText = (node: unknown): string => {
+// one child arrives as itself, as React passes it → a component reading a string child (DateRange) takes its real path
+const getChildrenProp = (el: RenderNode): unknown => (el.children.length === 1 ? el.children[0] : el.children);
+
+// function components expand → the text a reader sees, wherever a sub-component draws it.
+// Sibling nodes join with a space, so a token in its own span leaves a double space beside it → whitespace folds to one.
+const renderRawText = (node: unknown): string => {
   if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(renderText).join(" ");
+  if (Array.isArray(node)) return node.map(renderRawText).join(" ");
   if (node === null || typeof node !== "object" || !("type" in node)) return "";
   const el = node as RenderNode;
   if (typeof el.type === "function") {
-    return renderText((el.type as (p: unknown) => unknown)({ ...el.props, children: el.children }));
+    return renderRawText((el.type as (p: unknown) => unknown)({ ...el.props, children: getChildrenProp(el) }));
   }
-  return el.children.map(renderText).join(" ");
+  return el.children.map(renderRawText).join(" ");
+};
+const renderText = (node: unknown): string => renderRawText(node).replace(/\s+/g, " ");
+
+// the element tree with function components expanded → a span a sub-component draws is findable by its class
+const expandNodes = (node: unknown): RenderNode[] => {
+  if (Array.isArray(node)) return node.flatMap(expandNodes);
+  if (node === null || typeof node !== "object" || !("type" in node)) return [];
+  const el = node as RenderNode;
+  if (typeof el.type === "function") {
+    return expandNodes((el.type as (p: unknown) => unknown)({ ...el.props, children: getChildrenProp(el) }));
+  }
+  return [el, ...el.children.flatMap(expandNodes)];
 };
 
 const buildPriorWindow = (total: number, byResult: Record<string, number>) => ({
@@ -1291,6 +1307,17 @@ describe("StatusBandO: every tile states its share change against the prior wind
     assert.match(small, /No comparison — too few records in 08-02 – 08-31/);
     assert.doesNotMatch(small, /pts since/);
   });
+  test("every tile's prior range renders whole in one nowrap span, so the sentence wraps around the dates", () => {
+    for (const band of [
+      buildBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), 10),
+      buildBand(buildPriorWindow(12, { done: 10, fail: 2 }), 2),
+    ]) {
+      const ranges = expandNodes(band).filter((n) => /\bwhitespace-nowrap\b/.test(String(n.props?.className ?? ""))
+        && renderText(n) === "08-02 – 08-31");
+      // the hero and the three volume facts each state a change line
+      assert.strictEqual(ranges.length, 4, `nowrap range spans: ${ranges.length}`);
+    }
+  });
   test("a response without a prior window draws no change line", () => {
     assert.doesNotMatch(renderBand(undefined, null), /since|No comparison/);
   });
@@ -1325,5 +1352,99 @@ describe("Task results reads opt into the prior window", () => {
     const attention = await trendHelpers.fetchAttentionO(30);
     assert.strictEqual(attention.priorTotal, 11);
     assert.deepStrictEqual(urls.map((u) => new URL(u, "http://x").searchParams.has("prior_window")), [true, false, false, false, false]);
+  });
+});
+
+// --- ledger summary cell: every summary starts on one line, whatever pill its row carries (Appendix B, B2) ---
+
+const summaryLineOf = (tr: RenderNode): unknown[] => {
+  const summaryCell = flattenNodes(tr).filter((n) => n.type === "td").at(-1);
+  const line = flattenNodes(summaryCell).find((n) => n.type === "div");
+  assert.ok(line, "the summary cell lays its parts out on one line");
+  return line.children.filter((child) => child !== null && child !== false && child !== undefined);
+};
+
+describe("ledger row: the summary starts right after the fixed flag slot, and the variable reason pill follows it", () => {
+  const sub = helpers as unknown as Record<string, unknown>;
+  const rows = [
+    { name: "an open caveat", row: ledgerRowOf("done_with_concerns", { summary: "Caveat" }), pill: /caveat open/ },
+    { name: "a flagged row", row: ledgerRowOf("done", { summary: "Flagged", review_flag: true, review_flag_reasons: ["scope-excess", "overconfidence"] }), pill: /flagged: overconfident \+1/ },
+    { name: "a routine row", row: ledgerRowOf("done", { summary: "Routine" }), pill: null },
+  ];
+  for (const { name, row, pill } of rows) {
+    test(name, () => {
+      const [slot, text, ...rest] = summaryLineOf(renderLedgerRow(row)) as RenderNode[];
+      assert.strictEqual(slot.type, sub.SummaryFlagSlotO, "the fixed-width flag slot leads");
+      assert.strictEqual(text.type, "span", "the summary text comes second");
+      assert.deepStrictEqual(text.children, [row.summary]);
+      assert.match(String(text.props?.className), /\btruncate\b/);
+      if (pill === null) {
+        assert.strictEqual(rest.length, 0, "a routine row carries no pill");
+        return;
+      }
+      assert.strictEqual(rest.length, 1, "the reason pill ends the line");
+      assert.strictEqual(rest[0].type, helpers.window.UI.Badge as unknown);
+      assert.match(renderText(rest[0]), pill);
+      assert.match(String(rest[0].props?.className), /\bshrink-0\b/, "the pill is never truncated");
+    });
+  }
+});
+
+// --- sub-tables: numeric columns right-aligned, tabular and one line, every typeface as it was (B5) ---
+
+const B5_CLASSES = ["text-right", "tabular-nums", "whitespace-nowrap"];
+const assertB5 = (node: RenderNode, what: string): void => {
+  const className = String(node.props?.className ?? "");
+  for (const cls of B5_CLASSES) assert.ok(className.split(/\s+/).includes(cls), `${what} lacks ${cls}: "${className}"`);
+  assert.doesNotMatch(className, /\btext-center\b/, `${what} is centred`);
+};
+
+describe("sub-tables: every numeric value and its header are right-aligned, tabular and one line (B5)", () => {
+  const sub = helpers as unknown as Record<string, (arg: unknown) => unknown>;
+
+  test("by-agent failures: the count columns and the failure-rate share", () => {
+    const failures = helpers.AgentFailureBodyO({
+      state: {
+        status: "ok",
+        data: helpers.buildAnalyticsDataO({
+          by_agent_result: [{ agent: LEDGER_AGENT, result: "fail", count: 3 }, { agent: LEDGER_AGENT, result: "done", count: 30 }],
+          by_agent_top_10: [],
+        }),
+      } as unknown as PayloadState<unknown>,
+      onRetry: () => {},
+    });
+    const nodes = expandNodes(failures);
+    const heads = nodes.filter((n) => n.type === "th");
+    assert.strictEqual(heads.length, 6);
+    assert.match(String(heads[0].props?.className), /\btext-left\b/, "the agent column stays left");
+    heads.slice(1).forEach((th) => assertB5(th, `header "${renderText(th).trim()}"`));
+
+    const cells = nodes.filter((n) => n.type === "td");
+    assert.strictEqual(cells.length, 6);
+    // the rate cell holds a bar → its share, not the cell, carries the alignment, and it ends the cell
+    const [, rateCell, ...countCells] = cells;
+    countCells.forEach((td) => assertB5(td, `cell "${renderText(td).trim()}"`));
+    const rateLine = flattenNodes(rateCell).find((n) => n.type === "span")!;
+    const share = rateLine.children.filter((child) => child !== null && child !== false && child !== undefined).at(-1) as RenderNode;
+    assert.strictEqual(renderText(share).trim(), "9.1%", "the share ends the rate cell");
+    assertB5(share, "the failure-rate share");
+    assert.match(String(share.props?.className), /\bfont-mono\b/, "the share keeps its mono face");
+  });
+
+  test("the cross table: no centred count, header, cell or total", () => {
+    const crosstab = sub.buildCrosstabO([
+      { confidence: "high", metric_pass: true, count: 9_000, is_polar_mismatch: false },
+      { confidence: "high", metric_pass: false, count: 12, is_polar_mismatch: true },
+    ]);
+    const nodes = expandNodes(sub.CrosstabBody({ state: { status: "ok", data: { crosstab } }, onRetry: () => {} }));
+    const table = nodes.find((n) => n.type === "table");
+    assert.ok(table, "a ready cross table renders");
+    const tableNodes = expandNodes(table);
+    assert.match(String(table.props?.className), /\bfont-mono\b/, "the table keeps its mono face");
+    for (const n of tableNodes) assert.doesNotMatch(String(n.props?.className ?? ""), /\b(text|justify)-center\b/);
+    const colHeads = tableNodes.filter((n) => n.type === "th" && n.props?.scope === "col");
+    assert.match(renderText(colHeads[0]), /confidence/);
+    colHeads.slice(1).forEach((th) => assertB5(th, `header "${renderText(th).trim()}"`));
+    tableNodes.filter((n) => n.type === "td").forEach((td) => assertB5(td, `cell "${renderText(td).trim()}"`));
   });
 });
