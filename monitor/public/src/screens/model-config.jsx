@@ -875,8 +875,7 @@ function groupFilesByModelMC(fileRows) {
 	return [...groups];
 }
 
-// An ID or file name is one unbreakable token: whole on its own line when the sentence wraps, end ellipsis + title only when
-// even that line is too narrow — never broken at its hyphens.
+// An ID or file name is one unbreakable token, never broken at its hyphens; it ellipsizes with a title only when its own line is too narrow.
 function IdTokenMC({ title, children }) {
 	return (
 		<span className="font-mono truncate max-w-full" title={title}>
@@ -1164,9 +1163,9 @@ function getModelOptionTitleMC(model) {
 	return [model, MODEL_CAP_MC[model]].filter(Boolean).join(" — ");
 }
 
-// The saved id under its friendly-name select — one nowrap token, end ellipsis + title in a narrow column.
+// The saved id under its friendly-name select — one nowrap token, end ellipsis + title in a narrow column; inherit is no id, and the select already words it.
 function ModelIdTagMC({ model }) {
-	if (!model) return null;
+	if (!model || model === "inherit") return null;
 
 	return (
 		<div data-slot="model-id" className="font-mono fs-meta text-dim mt-1 truncate" title={model}>

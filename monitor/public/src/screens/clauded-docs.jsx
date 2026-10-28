@@ -1118,12 +1118,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* a max-width caps the pill's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
         .doc-ledger-scroll .doc-stage-picker, .doc-ledger-scroll .doc-stage-pill { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
         .doc-ledger-scroll .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        /* numeric columns (B5): ID and Created read right-aligned in tabular figures on one line — each keeps its own typeface */
+        /* numeric columns: ID and Created read right-aligned in tabular figures on one line — each keeps its own typeface */
         .tbl :is(th, td).doc-col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-        /* age, then the stale glyph inline after it (gap 4) — one line, never stacked. The Created floor holds no room for the word,
-           so the column takes the glyph-only form: the word "stale" rides the glyph's title and sr-only text (relative → the sr-only box resolves here) */
+        /* age, then the stale glyph inline on one line, never stacked */
         .doc-age-line { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-1); }
         .doc-age-value, .doc-age-flag { flex: none; }
+        /* the Created floor holds no room for the word → glyph-only; "stale" rides the title and sr-only text (relative → the sr-only box resolves here) */
         .doc-age-flag { position: relative; display: inline-flex; align-items: center; color: rgb(var(--dim)); }
         /* .card overflow:hidden = a scroll container → traps the rail's sticky in the card · clip trims the corners only, sticky stays viewport-relative */
         .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }

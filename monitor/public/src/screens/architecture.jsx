@@ -659,7 +659,7 @@ function ScreenArchitecture(
 					".arch-drawer-title { margin: 0; font-size: inherit; font-weight: inherit; } " +
 					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-meta); font-weight: 400; } " +
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
-					// Part health list · one line per part: name | status atom | button, meta below — body text centred on the 32px button (B3)
+					// Part health list · one line per part: name | status atom | button, meta below — body text centred on the 32px button
 					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); } " +
 					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: var(--space-2); row-gap: var(--space-0_5); align-items: center; " +
 					"font-size: var(--fs-body); line-height: var(--lh-row); } " +

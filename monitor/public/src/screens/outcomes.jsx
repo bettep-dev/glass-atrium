@@ -1318,7 +1318,7 @@ function AgentFailureTableO({ state, onRetry, shared }) {
   );
 }
 
-// B5 numeric columns, alignment only: values and headers right-aligned, tabular figures, one line — every typeface stays as it is
+// Numeric columns, alignment only: values and headers right-aligned, tabular figures, one line — every typeface stays as it is
 const NUM_ALIGN_O = 'text-right tabular-nums whitespace-nowrap';
 
 const AGENT_FAILURE_COLUMNS_O = [
@@ -1408,7 +1408,7 @@ function AgentFailureRateCellO({ row }) {
     <td
       className="px-3 py-1.5 border-b border-line"
       title={`${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`}>
-      {/* the share ends the cell (B5) → every rate shares one right edge under its right-aligned header; the bar and the low-sample mark lead it */}
+      {/* the share ends the cell → every rate shares one right edge under its right-aligned header; the bar and the low-sample mark lead it */}
       <span className="flex items-center gap-2">
         <span aria-hidden="true" className="flex-1" style={{ minWidth: 40, height: 6, borderRadius: 3, background: 'rgb(var(--sunken))' }}>
           <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${getFailureRateFillO(row)}))` }}/>

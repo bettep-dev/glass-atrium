@@ -1738,6 +1738,22 @@ test("the model mix counts every tier once under its family, and each select nam
   }
 });
 
+test("a tier set to inherit reads as the session model in its select and shows no id tag", () => {
+  const models = { "model.dev": "claude-opus-4-8", "model.research": "inherit", "model.meta": "claude-sonnet-5" };
+  const tree = renderComponentMc(screens.DomainsSectionMC, {
+    ...domainsPropsMc(THREE_TIERS_MC),
+    form: { models, budgets: {} },
+    baseline: { models: { ...models }, budgets: {} },
+  });
+  const research = tagsMc(tree, "select").find((s) => s.props.value === "inherit");
+  assert.ok(research, "the inherit tier is a listed select value, not custom mode");
+  const picked = tagsMc(research!.children, "option").find((o) => o.props.value === "inherit")!;
+  assert.strictEqual(textMc(picked.children), "Session model", "the select words inherit");
+  const ids = textsMc(findAllMc(tree, (n) => n.props["data-slot"] === "model-id"));
+  assert.deepStrictEqual(ids, ["claude-opus-4-8", "claude-sonnet-5"], "only the tiers with a real id carry an id tag");
+  assert.ok(!ids.includes("inherit"), "the raw inherit key never shows as an id");
+});
+
 test("a model option reads as its friendly name with the id leading its title; an id outside the pattern reads as itself", () => {
   const roster = ["claude-opus-5-5", "claude-sonnet-5-5", "my-local-model"];
   const tree = renderComponentMc(screens.DomainsSectionMC, {
