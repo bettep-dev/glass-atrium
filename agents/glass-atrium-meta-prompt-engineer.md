@@ -242,7 +242,7 @@ The canonical is `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Output Language`: the E
 | canonical + mirror | both stay; report any drift between them |
 | false pair — two rules that only read alike | both stay |
 
-- Output: one `<check>: pass|revise` line per row, with the deliverable, for the reviewer (glass-atrium-intel-reporter) to compare.
+- Output: one `<check>: pass|revise` line per row, with the deliverable, for the structure-verdict reviewer (glass-atrium-intel-reporter) to compare.
 
 ## Corpus Edit Pass
 

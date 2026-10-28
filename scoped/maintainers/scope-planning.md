@@ -40,7 +40,7 @@ The rule file reaches glass-atrium-intel-planner whole at spawn through the part
 | No code in plans | `agents/glass-atrium-intel-planner.md` → `## Design Expression Rules (No Code — Zero Tolerance)`, the stronger copy: it carries the detector patterns and the Mermaid carve-out |
 | Ambiguity Gate axes | axis canonical `scoped/scope-dev.md` → Ambiguity Gate — a weight changed there is hand-carried into the rule file; the planner body points at the rule file and restates no weight |
 | Claim-marking tag literals | reviewer-side consumer `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`, which quotes `[SELF-CHECKED:]` · `agents/glass-atrium-intel-planner.md` → `## Open Questions Section (plan body slot)` points at the rule file and carries `[UNCHECKED: …]` only inside its entry shape |
-| `[DOC-ROUTE]` stamp | delivered `agents/glass-atrium-intel-planner.md` → `### Turn-0 routing hard gate`, the stamp table and the `The stamp attests` bullet · delegation-side canonical `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` · the static gate `hooks/enforce-workflow-verify-stage.sh`, which scans workflow scripts and never this file |
+| `[DOC-ROUTE]` stamp | delivered `agents/glass-atrium-intel-planner.md` → `### Turn-0 routing hard gate`, the stamp table and the `The stamp attests` bullet · delegation-side canonical `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria` · the static gate `hooks/enforce-workflow-verify-stage.sh`, which scans workflow scripts and never this file |
 | Pre-drawing doctrine, designer trigger | canonical `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` and `## Designer Co-Emission Trigger [REPORT]`; the planner's own copies are `## Visual Design Spec (applies to user-requested HTML primary)` and `## Designer Handoff Contract` |
 | Emission routing | canonical per row of `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` (split across scope-report and the reporter body); the planner's own copy is `## Output Format Routing` |
 
@@ -63,12 +63,12 @@ The rule file reaches glass-atrium-intel-planner whole at spawn through the part
 
 ## `needs_domain_consult` — decision recorded
 
-Kept, with its honest backing stated at the bullet. Tree-wide, the token appears in this file alone: `agents/glass-atrium-intel-planner.md` never emits it, and `rules/glass-atrium/orchestrator-role.md` carries no Monitoring-phase duty to consume it, unlike the `needs_devfront_markup:` precedent it was modelled on. Deleting it would remove the design rather than the defect, so it stays on record and the rule file says the route does not work today.
+Kept, with its honest backing stated at the bullet. Tree-wide, the token appears in this file alone: `agents/glass-atrium-intel-planner.md` never emits it, and `skills/glass-atrium-ops-orchestrator-role.md` carries no Monitoring-phase duty to consume it, unlike the `needs_devfront_markup:` precedent it was modelled on. Deleting it would remove the design rather than the defect, so it stays on record and the rule file says the route does not work today.
 
 Two edits would make it live, and neither is in this pass's scope:
 
 - `agents/glass-atrium-intel-planner.md` — an emit duty beside the existing `needs_devfront_markup:` signal in `## Designer Handoff Contract`.
-- `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes` — a consuming judgment beside the dev-front markup one, which is where the precedent already sits.
+- `skills/glass-atrium-ops-orchestrator-role.md` → `#### Monitoring-phase notes` — a consuming judgment beside the dev-front markup one, which is where the precedent already sits.
 
 ## Pointers into the removed mirrors — repaired
 
@@ -77,7 +77,7 @@ This file stopped mirroring the report-side canonicals, and the sites still call
 - `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register`: the rows for three emission modes / emission contract, HTML request test, document lifecycle duties, D8 thresholds and visual-maximization floor / dark base default now name `## Output Format Routing [PLANNING]` as a pointer; the designer-handoff row names `## Designer Co-Emission Trigger [PLANNING]`, which always resolved — only the word mirror was wrong.
 - The visual-floor row additionally states that this file carries no dark-base copy in any form, so the entry cannot be read as a second copy.
 - `skills/glass-atrium-ops-orchestrator.md`: the lifecycle-SoT bullet and the completing-agent bullet name the same pointer section. The `[DOC-ROUTE]` paragraph's mirror clause was DROPPED instead — its claimed counterpart, the delegation-phrasing sentence, has no match in this file at HEAD, so there was no pointer left to name.
-- `rules/glass-atrium/core-git-workflow.md` → `## Pull Requests`: the `scope-planning.md` half of the `.html`-deliverable bullet was dropped, the citation being to an Emission contract only `scope-report.md` carries. That file is Tier 1 and reaches every agent, which is why the half was removed rather than softened.
+- `rules/glass-atrium/core-git-workflow.md` → `## Pull Requests`: the whole `.html`-deliverable bullet is gone, so that file carries no pointer into this one and no co-edit edge remains.
 - `skills/glass-atrium-design-contrast-check/SKILL.md`: the `scope-planning.md` half of its `### Dark base default` cross-reference was dropped on the same ground.
 - The two rows naming this file as CANONICAL — Open Questions / claim marking, and Ambiguity Gate — are correct; for both, the planner body holds a pointer plus the planner-only delta.
 - The row for the dev-front markup exception names `## Designer Co-Emission Trigger [PLANNING]`, which resolves, and was left as it stands.

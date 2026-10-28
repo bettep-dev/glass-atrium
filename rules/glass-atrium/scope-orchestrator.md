@@ -12,7 +12,7 @@
   - clarification fallback: present 2-3 candidates for the user to choose.
 - **Skip condition**: an obvious single-agent case MAY skip the full routing protocol.
   - Obvious means no compound verb structure and none of the multi-agent conditions met: context contamination · parallelizable · specialization benefit (`skills/glass-atrium-ops-orchestrator.md` → Multi-agent Conditions).
-  - Skipping the protocol never skips the one-line routing judgment that `orchestrator-role.md` → `## Delegation Workflow` still requires of a simple delegation.
+  - Skipping the protocol never skips the one-line routing judgment that `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Workflow` still requires of a simple delegation.
 
 ## Plan-Based Work [ORCHESTRATOR]
 
@@ -25,5 +25,6 @@
 ## Detail Reference [ORCHESTRATOR]
 
 - `skills/glass-atrium-ops-orchestrator.md` holds the detail behind this file and `orchestrator-role.md`. It is a flat reference file, not a Skill-loadable SKILL.md, so it never arrives on its own: Read the path when a topic below applies.
+- `orchestrator-role.md` is a stub; its full text, every heading included, is in `skills/glass-atrium-ops-orchestrator-role.md`, a flat reference read the same way.
 - Core-process sections: Capability-Based Agent Selection · Team Composition Rules · Delegation/Communication Rules · Cost Optimization · Quality Gates · Architecture Patterns (Wave Execution, Agent Teams) · Delegation Enforcement.
 - Standing policies: Entropy Management (Janitor) · Numeric Threshold Adjustment Policy · feature-dev Plugin Usage Scope · Agent Performance Metrics · Consensus Protocol · Experimental Features.

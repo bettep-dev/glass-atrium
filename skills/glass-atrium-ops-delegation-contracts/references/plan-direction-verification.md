@@ -1,6 +1,6 @@
 # Plan Direction Verification (Stage-2 gate) — team, standing jobs and outcome
 
-- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
+- **Pointer site**: `skills/glass-atrium-ops-orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
 - **Backstop pointer site**: `#### Backstop asymmetry (manual vs. ultracode)` in the same file.
 
 ## Team composition and verdicts
@@ -24,7 +24,7 @@
 - **Orchestrator's part**: supplying each job's inputs and never adjudicating a job's answer are pointer-site duties.
 - **Load-bearing premise check — detail**: verdict-gating on BOTH verdicts — both Stage-2 actors check the premises the plan's approach rests on, attacking each from the code rather than from a list.
   - The inputs the pointer names do not bound the check — either actor may add a claim neither names.
-  - Premise-register grammar: `rules/glass-atrium/orchestrator-role.md` → `#### Scan boundary and provenance`.
+  - Premise-register grammar: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Scan boundary and provenance`.
   - Duty text: reviewer `scoped/scope-qa.md` → `### Load-bearing premise check` · DEV `scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]`.
   - Both carry a non-waiver clause: a delegation phrase narrowing the recheck does NOT suspend the job, and the actor names the narrowing instruction in its verdict.
 - **First-link question — detail**: verdict-gating on the DEV verdict — the DEV member also answers a standing first-link question inside its `feasible`/`infeasible` verdict, unasked.
@@ -41,7 +41,7 @@
 
 - **Identical policy — what it covers**: team composition · DEV hard-gate · complex-only scope · max-1-revision.
 - **Manual backstop**: `enforce-verification-gate.sh` runs on `PreToolUse(Agent)`; mechanical surface: reviewer-spawn presence only, fail-open (see `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`).
-- **Ultracode backstop**: `enforce-workflow-verify-stage.sh` runs on `PreToolUse(Workflow)`; the declaration it checks: `rules/glass-atrium/orchestrator-role.md` → `#### Ultracode declaration contract`.
+- **Ultracode backstop**: `enforce-workflow-verify-stage.sh` runs on `PreToolUse(Workflow)`; the declaration it checks: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Ultracode declaration contract`.
   - Mechanical surface: declaration PRESENCE + line GRAMMAR (the DEV hard-gate included, `block-noverifydev`) + declaration↔code CONSISTENCY, fail-open on any parse uncertainty.
   - It does NOT validate DEV-verdict or gating-expression correctness, and role truthfulness is honor-system (HONESTY bullet in `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`).
   - These limits are why the authoring obligation at the pointer site REMAINS PRIMARY.

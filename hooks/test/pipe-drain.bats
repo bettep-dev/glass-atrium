@@ -279,6 +279,9 @@ row_padding() {
   local padding payload data_root="${BATS_TEST_TMPDIR}/ga"
   local -a exported rows
   bin="$(linux_exec_limit_bin "${refused}")"
+  # A recorded reviewer lets the plan-backed DEV spawn reach the gate's [SCOPE] depth advisory.
+  mkdir -p "${data_root}/data/session-spawns"
+  printf '%s\n' "glass-atrium-qa-code-reviewer" >"${data_root}/data/session-spawns/pipe-drain"
   export WIKI_ROOT="${BATS_TEST_TMPDIR}/wiki"
   mkdir -p "${WIKI_ROOT}/raw"
   ln -s "${WIKI_ROOT}" "${WIKI_ROOT}-link"
@@ -286,7 +289,7 @@ row_padding() {
   rows=(
     "no-verify flag|block-no-verify.sh|bash|git commit -m msg --no-verify|context:131071|context ctx|2|SEC-011"
     "destructive git|enforce-commit-guard.sh|bash|git reset --hard|context:131071|context ctx|2|GIT-002"
-    "DEV spawn declaring a wide scope|enforce-verification-gate.sh|agent|[SIZE-EST] bundles=1 tool_uses~=5 [ENTRY-CLASS] simple-task: probe|scope:132000|decl scope_line files line scan|0|declares 11 [SCOPE] file(s)"
+    "DEV spawn declaring a wide scope|enforce-verification-gate.sh|agent|[SIZE-EST] bundles=1 tool_uses~=5 implement plan-4242|scope:132000|decl scope_line files line scan|0|declares 11 [SCOPE] file(s)"
     "DEV spawn under a long hook event name|enforce-verification-gate.sh|agent-event|fix the parser|dots:131100|hook_event|2|VGATE-SIZE-001"
     "DEV spawn under a long session id|enforce-verification-gate.sh|agent-session|fix the parser|dots:131100|session_id|2|VGATE-SIZE-001"
     "raw write without envelope at a long path|validate-pre-write-raw.sh|raw-path|Fetched content with no envelope wrapper.|path:131100|FILE_PATH PARENT_DIR ctx|2|SCOPE-006"

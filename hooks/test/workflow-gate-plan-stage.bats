@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # workflow-gate-plan-stage.bats — the plan-stage advisories of enforce-workflow-verify-stage.sh: the
-#   close token (grammar SoT: orchestrator-role.md → Context Handoff Size, `[PLAN-CLOSE]`) with its
+#   close token (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md → Context Handoff Size, `[PLAN-CLOSE]`) with its
 #   --lint --template section, and the `implementing` stage nudge. Advisory only: every row exits 0 or
 #   keeps its block verdict.
 #

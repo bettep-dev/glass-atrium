@@ -39,7 +39,7 @@ Both channels exist, they are not substitutable, and a hook MUST pick the one it
 
 - Every hook this section names pairs its channel with `exit 2`. A stdout decision at `exit 0` is a documented path none of them uses, and it is unmeasured.
 - **Channel a — stderr `emit_error` JSON + `exit 2`**: `emit_error` writes a structured JSON error to stderr (`hook-utils.sh` `hook_emit_error` → `>&2`), then the hook exits 2. No stdout `decision` field. Used by `validate-secret-scan.sh`, `block-dangerous-commands.sh`, `enforce-commit-guard.sh`, `block-no-verify.sh`, `block-md-creation.sh`, `enforce-delegation.sh`, `enforce-harness-critical.sh`.
-  - A plain-text stderr reason + `exit 2` with silent stdout is the same channel: `enforce-foreground-harness.sh` writes its reason to stderr as plain text — a candidate or cap block puts its cause ahead of the Rule 2 text (`rules/glass-atrium/orchestrator-role.md` → `## Harness Path Protection`).
+  - A plain-text stderr reason + `exit 2` with silent stdout is the same channel: `enforce-foreground-harness.sh` writes its reason to stderr as plain text — a candidate or cap block puts its cause ahead of the Rule 2 text (`skills/glass-atrium-ops-orchestrator-role.md` → `## Harness Path Protection`).
 - **Channel b — stdout `{"decision":"block"}` + exit**: the hook prints a JSON object carrying `"decision":"block"` to stdout, then exits. Used by `validate-output.sh` (its blocking LLM05 path, on PostToolUse).
 - **`"advisory"` is not a channel-b form**: the PostToolUse decision schema rejects it (`"Hook JSON output validation failed"`), so a non-blocking advisory emits a stderr `emit_error` + `exit 0` instead — `validate-output.sh`'s LLM07 path is the worked case.
 - **Discriminator is the stdout `"decision"` JSON, never the exit code**: `exit 2` is not exclusive to channel a — `validate-output.sh` emits a stdout decision and `exit 2` together. Channel-a hooks carry no stdout `decision` at all.
@@ -90,3 +90,12 @@ A failed check has one of five dispositions. This is a shared vocabulary for des
 - **Channel discipline**: pick channel a or channel b per the registering event's contract, and document which in the hook header. Mixing is allowed only where an existing hook already does so deliberately (`validate-output.sh`).
 - **Fail-open default**: a lifecycle hook that cannot block (`SessionStart`, `SubagentStart`, `Stop`/`SubagentStop`) MUST `exit 0` on internal error — never break a session on hook failure. Exception: `~/.glass-atrium/autoagent/` pipeline hooks follow the loud-fail principle (`shared-self-improve-hygiene.md` → Precondition Loud-Fail Principle).
 - **No secret/PII in hook output**: hook stdout/stderr is session-visible — never echo `.env` contents, tokens, or PII.
+
+## Hook Operation Policy
+
+- **Default behavior**: `exit 0` by default · return non-zero only when blocking is intended.
+- **Timeout**: the host's command-hook default is 600 seconds, but a hook runs on every matching event, so design it to finish fast.
+- **Rollback**: identify the problematic hook → remove its entry from `settings.json` → restart the session.
+- **Pre-deployment verification**: confirm blocking behavior with an intentional-violation probe before treating rollout as complete.
+  - Claude Code snapshots the hook config at session start, so a `settings.json` binding added mid-session stays inert in every running session (and any pre-warmed background process) until restart.
+  - Envelope injection (`echo '{...}' | hook.sh`) tests the script in isolation, not live dispatch — rollout is complete only after a restart plus a live intentional-violation tool-call probe in a fresh session.

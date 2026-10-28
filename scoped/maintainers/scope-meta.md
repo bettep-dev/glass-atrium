@@ -29,9 +29,7 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 - **`## Absolute Rules [META]` — the precedence line was realigned to its citee, not softened.**
   - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution` makes the assigned scope file the final authority, the whole file and never a named section inside it.
   - The section preamble therefore states that this file governs and that the section concentrates that authority, and sends the precedence order to the charter anchor — the shape `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]` already carries.
-- **Tag**: `Absolute Rules` and `Skills Array Order` carry `[META]` only — no DEV rule file holds either heading or a matching pointer, so a DEV half would name no counterpart.
-- **Skills Array Order kept as a sort rule**: the bullet obliges a readability sort (core → supplementary) and nothing more; its null-result clause is cut, not the section.
-  - Why: that clause steered where the author spends effort and changed neither the sort nor its acceptance.
+- **Tag**: `Absolute Rules` carries `[META]` only — no DEV rule file holds that heading or a matching pointer, so a DEV half would name no counterpart.
 - **Add-review routing resolves every target class to an existing agent** — no owner review, no exempt class.
   - The ORCHESTRATOR pair and `rules/glass-atrium/core-compliance-matrix.md` take the Tier-1 reviewer: the pair's only member is the main session, and the matrix is neither a Tier-1 rule nor a scope file, so neither has a member agent.
   - A `shared-*` file with no member agent takes the same reviewer: its policy SoT is a Tier-1 rule and its text reaches several agents.
@@ -49,23 +47,21 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 |---|---|
 | `Absolute Rules` | nothing cites it by name — kept because the heading names the content beneath it |
 | `CQRS Exception` | `scoped/scope-planning.md` and `scoped/scope-design.md`, both by pointer |
-| `Outcome-Driven Rewrite Policy` | `rules/glass-atrium/orchestrator-role.md` → Capability Probe |
+| `Outcome-Driven Rewrite Policy` | `skills/glass-atrium-ops-delegation-contracts/references/decision-phase-probes.md` → Capability Probe — detail |
 | `Prompt Deliverable Team Rule` | the citer list under this table |
 | `DEV Rule Inheritance` | `rules/glass-atrium/core-compliance-matrix.md` → Tier-3 META-inheritance bullet |
 
 - `Prompt Deliverable Team Rule` is cited from:
-  - `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` and step 6 of `## Document-Driven Workflow`;
+  - `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria` and step 6 of `## Document-Driven Workflow`;
   - `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring and `##### Stage gates`;
   - `scoped/shared-authoring-hygiene.md` → `## Prompt-Audit Overrides`.
-- `Skills Array Order` has no external citer (it occurs only in `scoped/scope-meta.md` and this note), so it stays out of the register.
 
 ## Stale material removed
 
 Do not restore any item below.
 
 - **Loading stanza** (`> **Loading**: Tier 2 … agent_scope ∈ {…}` plus `> **Inherits**` and `> **See**`). The `agent_scope ∈ { … }` brace-list parsers (`scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster`, `autoagent/lib/roster_merge.py` → `_get_markdown_slots`) are anchored on `scoped/scope-dev.md` alone, so no reader needs it here.
-- **Pair note under `## Absolute Rules`** tying this file to `## Absolute Rules` and `## Skills Array Order` in `scoped/scope-dev.md` — that file carries neither heading, so there is no pair to maintain.
-- **`Skills Array Order` evidence claim and null-result clause** ("Order has no significant effect on model behaviour, so spend the effort on content quality instead."). What survives: `## Decisions taken on review, with their reasoning` → **Skills Array Order kept as a sort rule**.
+- **Pair note under `## Absolute Rules`** tying this file to `## Absolute Rules` in `scoped/scope-dev.md` — that file carries no such heading, so there is no pair to maintain.
 - **`## CQRS Exception` antecedent** — the "DEV CQRS separation" the heading excepts is stated in no DEV rule file. Read the positive grant in the rule file rather than inferring a DEV rule from the heading name.
 
 ## Duplicates dropped, with the delivered copy that made them redundant

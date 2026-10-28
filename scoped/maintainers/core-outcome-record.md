@@ -12,6 +12,23 @@ Recorder and grader reference for that Tier-1 rule file: what `hooks/track-outco
 
 ## Recorder behaviour
 
+### Record storage
+
+- **Writer**: `hooks/_pg_outcome_dualwrite.py` writes `core.outcomes`; its `body_md` column carries the full markdown body, which the renderer CLI re-synthesizes to frontmatter.
+- **Record-side names**: the record stores the template's `files` as `files_modified`, and `cid` both as `cid` and as `correlation_id`; `metric_type` shares the 9-type task_type value set.
+- **`concerns`**: `track-outcome.sh` copies the value into the record's `## Concerns` section, reads that section back when a `done_with_concerns` row has no `concerns:` line, and clamps the stored value to 800 chars.
+  - An absent `concerns` is stored as an empty array.
+- **`revision_count`**: a missing or non-integer value falls back to 0.
+  - The hook's prior+1 cross-outcome accumulation is stubbed to 0 until a project-keyed PG restoration lands.
+  - Why: DB-only tracking has no cwd/project key, so a same-task_type prior lookup would miscount another project's correction.
+- **task_type agreement**: the rule file's `### Role → Allowed task_types` table is the single authority that `guess_task_type`, the grader's unknown-case branch and the dual-write `_norm_task_type` helper MUST agree on — divergence is a defect.
+- **`## Summary` section**: `track-outcome.sh` copies the `summary` field into the record body's required `## Summary` section; the renderer and the daemon consume that label. The hook's comment above the estimate-vs-actual pairing cites this requirement by the bare `core-outcome-record.md` name.
+- **`lesson`**: recorded as outcome data and shown in the monitor; no prompt, spawn injection or self-improvement step reads it.
+- **Lesson-free read backing**: honor-system — no hook stops a call to the `/api/outcomes/<id>` detail route.
+- **`result` side effects in `track-outcome.sh`**:
+  - Circuit breaker (`circuit_breaker_record`): `fail` is the only value that accrues the per-agent counter; `CIRCUIT_BREAKER_THRESHOLD` (default 3) in a row writes a suspension signal. Any other value, `blocked` included, resets it.
+  - Survival packet (`hooks/pre-compact.sh`): a `blocked` row's CID is carried into the pre-compact survival packet as active; a `fail` row's is not.
+
 ### Recorder parse outcomes
 
 What `track-outcome.sh` records for each emit shape.
@@ -22,6 +39,7 @@ What `track-outcome.sh` records for each emit shape.
 | block opened, closing sentinel missing | `parse_tier=2`, `truncated_completion` — writer-parsed, fields kept; attribution degrades to a truncation signal |
 | inline single-line with ≥1 core field | `parse_tier=1` via the inline tolerance tier — fields preserved |
 | no core field, or no block after ≥1 tool_use | synthesized: `done_with_concerns` / `confidence=low` / `metric_pass=false`, guessed `task_type` |
+| schema-mode run, `completion_block` present and parseable in the terminal StructuredOutput input | writer-emitted, attribution `structuredoutput-completion` — a healthy row |
 | schema-mode run whose terminal StructuredOutput was consumed, `completion_block` unusable | `structuredoutput-derived` synthesis: `result=done`, NOT `done_with_concerns` |
 
 - `structuredoutput-derived`: still `confidence=low` / `metric_pass=false` / lesson-absent, writer-unverified.
@@ -29,10 +47,11 @@ What `track-outcome.sh` records for each emit shape.
   - Those tiers anchor on the `[COMPLETION]\n` boundary.
   - A tolerance tier tried only after they miss recovers it: a line-anchored regex plus a guard requiring ≥1 of {result, task_type, metric_pass, confidence, summary}, with complete-block semantics.
 - **Unparseable emit → synthesized**: e.g. prose merely mentioning `[COMPLETION]` with a stray delimiter. `task_type` is keyword-guessed (reduced accuracy); the attribution is `completion-synthesized` or `budget-truncation`.
+- **Exempt turns**: the recorder skips them itself (`attribution_source="conversation-only"`), which is why the rule file's `### Emit Boundary` → Exempt asks for nothing on those turns.
 
 ## Grader- and daemon-populated fields
 
-The columns the rule file's template marks writer-does-NOT-fill: `grader_verdict`, `downgrade_origin`, `confidence_observed`.
+The columns the rule file's template marks "writer does not fill": `grader_verdict`, `downgrade_origin`, `confidence_observed`.
 
 ### Grader verdict
 
@@ -91,9 +110,20 @@ The columns the rule file's template marks writer-does-NOT-fill: `grader_verdict
   - It corrects the systematically inflated writer `confidence` enum and is NOT the same field.
   - Backing: its storage column is the `core.autoagent_proposals` per-pattern aggregate; the parser only recognizes the field passively and does not persist it yet, so an absent value is silently ignored.
 
+## `style_ref` review flag
+
+- **Omission parser**: `hooks/lib/style-ref-consts.sh` → `style_ref_compute_review_flag`; its task_type allowlist is the single SoT for the production hook and its Bats test.
+- **Corroboration**: on SubagentStop `track-outcome.sh` checks the value against the transcript's `Read` tool_use history and records `style_ref_verified`.
+  - `true` = corroborated in that history.
+  - `null` = verification N/A: greenfield, absent, or unverifiable — an empty `Read` history, an unreadable transcript, or a missing `hooks/lib/style_ref_match.py`.
+  - `false` = a real path not corroborated by a non-empty `Read` history — a coverage fact, never an honesty verdict: a Bash/Grep/Glob read carries no `file_path`.
+- **Mandatory graduation** is a separate future cycle requiring user approval, gated by `styleRefGradeBadgeI` in `monitor/public/src/screens/improvement.jsx`: emission ≥ 50% and the uncorroborated share of the adjudicated subset < 10% across the DEV agents.
+  - Adjudicated = corroborated + uncorroborated, never eligible — an eligible denominator could be passed by widening the blind spot.
+  - Publish corroborated / uncorroborated / unverifiable as three counts, not one derived rate that reads as an honesty verdict.
+
 ## Linkage
 
-- Each fact lives once. The rule file keeps the writer-facing half: each field's template line and `### Field Input Guide` row, the `metric_pass` no-overwrite clause, and the `## Automatic Verification Criteria` rows. This note keeps the rest.
+- Each fact lives once. The rule file keeps the writer-facing half: each field's template line and `### Field Input Guide` row, the `metric_pass` no-overwrite comment on the template line, and the `## Automatic Verification Criteria` rows. This note keeps the rest.
 
 | Reader or citer | Reads | Keep in step with |
 |---|---|---|
@@ -102,10 +132,17 @@ The columns the rule file's template marks writer-does-NOT-fill: `grader_verdict
 | `hooks/test/emit-discipline-doc-consistency.bats` → its two `EMITTER` tests | this file's emitter-marker count and both names, against the grader source | the emitter bullet under `### Grader verdict` |
 | `hooks/lib/code-based-grader.sh` → header comments | pointers to `### Grader verdict` (Outputs stanza, Input-surface invariant) | the Input-surface invariant bullet |
 | `hooks/test/code-based-grader.bats` → header comment | pointer to `### Grader verdict` | that heading |
-| `hooks/inject-scope-rules.sh` → `build_emit_format_block` | a shell literal restating the inline-salvage and unparseable rows | `### Recorder parse outcomes` — manual, unenforced |
+| `hooks/inject-scope-rules.sh` → `build_emit_format_block` | a shell literal restating the inline-salvage and unparseable rows | `### Recorder parse outcomes` and rule file → **Spawn-injected copy** — manual |
+| `hooks/test/track-outcome-completion-block-select.bats` → its `KNOWN_FIELDS` test | the first fence after rule file `## Completion Report Output Obligation`, up to the next `## ` | the template fence, kept first in that H2 |
+| `agents/` bodies, `hooks/inject-session-context.sh`, `skills/glass-atrium-ops-orchestrator-role.md`, the ops skills | rule-file headings and leads by name | the names listed below |
 
 - The emitter-marker literal appears in this file inside the emitter bullet under `### Grader verdict` and nowhere else. The suite counts every occurrence in the file, so quoting the literal anywhere else here breaks the count.
 - Renaming `### Recorder parse outcomes` or `### Grader verdict` dangles a pointer in a Tier-1 file.
+- **The emit-format copy**: no test or hook compares it with the rule file; `hooks/test/inject-scope-rules-nodrop.bats` pins only the needle `REQUIRED by the outcome recorder`.
+  - The hook's header comment above `build_emit_format_block` says the rule file "carries the reciprocal pointer" — that is **Spawn-injected copy**; dropping that bullet falsifies the comment.
+- **Rule-file names cited from outside** — never rename one: `## Core` → **Lesson-free read** · `### Role → Allowed task_types` · `## Completion Report Output Obligation` · `### Emit Boundary` → Channel asymmetry · **Correction-emission rule** · `### Field Input Guide` → `metric_pass`.
+  - `#### Self-assessment fields` stays under `### Field Input Guide`: frozen `agents/` bodies and the ops skill cite the path Field Input Guide → `metric_pass`.
+  - The correction, content and role-scoped field rules sit in sibling `###` sections under `## Field Reference`, keeping each H2 and H3 inside the shape caps; the Field Input Guide opening line names them.
 
 ## Outstanding
 
@@ -113,7 +150,3 @@ The columns the rule file's template marks writer-does-NOT-fill: `grader_verdict
 - Monitor comments not retargeted — each still resolves to a `### Field Input Guide` row in the rule file, while the semantics it cites live here:
   - `monitor/prisma/schema.prisma` → the doc comments above `enum GraderVerdict` and `enum DowngradeOrigin`;
   - `monitor/src/server/routes/outcomes.ts` → the comment above `BY_DESIGN_UNVERIFIED_TASK_TYPES`.
-- Delivered-scope citer not retargeted: `scoped/scope-qa.md` → `### Evaluator-independence posture` → **Partial mitigation** still says the `grader_verdict` column semantics "live in Tier-1 `core-outcome-record.md` → Field Input Guide".
-  - The 3-state semantics and both emitters live here, under `### Grader verdict`.
-  - Owner: the next lane whose `[SCOPE]` holds `scoped/scope-qa.md`.
-  - A retarget into this note is rule-file prose citing a companion, which `## Companion-citation convention` → "Every other citation goes" excludes: settle the open call on the two rule-file prose pointers first.

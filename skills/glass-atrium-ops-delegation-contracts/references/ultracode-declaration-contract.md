@@ -1,7 +1,7 @@
 # Ultracode declaration contract (the mechanically-enforced facet of the Stage-2 gate — `[AGENT-COMPOSITION]`)
 
 - **Why authors declare roles**: role information does not exist in code, so `enforce-workflow-verify-stage.sh` cannot infer verify roles from script layout: the AUTHOR declares them, in parity with `[ENTRY-CLASS]` / `[SIZE-EST]` / `[DOC-ROUTE]` / plan-ref.
-- **This gate**: `rules/glass-atrium/orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`; its manual-vs-ultracode backstop split is `#### Backstop asymmetry (manual vs. ultracode)` in the same file.
+- **This gate**: `skills/glass-atrium-ops-orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`; its manual-vs-ultracode backstop split is `#### Backstop asymmetry (manual vs. ultracode)` in the same file.
 - **Pointer site**: `#### Ultracode declaration contract` in that file.
 - **Strict line grammar** — keys `{verify, impl, impl-computed}`, ONE line per key, names validated against the runtime DEV_SET roster (fed by agent_lifecycle sync-gate-roster — never a second hardcoded list):
   - `verify:` takes one of exactly two forms.
@@ -29,6 +29,7 @@
     - A type present ONLY as a wrapper argument like `robustAgent('<type>',…)` has no spawn position and trips `block-declspawn`: use the opts `agentType:` literal or declare it `impl-computed:`.
   - `block-undecl` fires on a real spawn AND on Tier-A coverage: a config-array dev literal or an exact-quoted dev-* prose mention with zero spawns — one-edit fix: declare the type, or de-quote the mention.
   - `block-order` binds on the greedy-earliest same-type dual-role binding; computed spawns have no static position → declared-order honor-system.
+- **Simple-task waiver**: a script carrying `[ENTRY-CLASS] simple-task` and no plan-ref resolves every verdict in the table above to pass, `block-norev` included; a plan-ref keeps them all (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` → **Simple-task waiver**).
 - **Upstream waiver scope**: the upstream form waives the in-script pair-mapping + ordering ONLY — the `block-norev` zero-reviewer hard guarantee is evaluated independently of declaration form and SURVIVES upstream, so a fake upstream line can never delete reviewer presence.
 - **HONESTY (the accepted floor, stated once)**: declaration presence + grammar + declaration↔code consistency are MECHANICAL; role TRUTHFULNESS is honor-system — a LYING declaration passes, the same trust model as the sibling attestation tokens. NEVER describe this gate as semantic enforcement of the verify contract.
 - **A legitimate pre-verify Discovery/Design phase stays compliant** via the declaration + ordering check, by either route:

@@ -15,7 +15,7 @@ Mandatory bug fix sequence: **Confirm symptoms → Formulate cause hypothesis �
 
 - "Just try fixing it" / hypothesis-free fixes are forbidden
 - 1st failure → reformulate hypothesis + retry
-- 2nd failure → STOP and hand the bug to glass-atrium-qa-debugger. Stopping is your duty; routing the escalation, and rejecting a debugger conclusion that carries no logs, reproduction or code reference, is the orchestrator's — that half is `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop`.
+- 2nd failure → STOP and hand the bug to glass-atrium-qa-debugger. Stopping is your duty; routing the escalation, and rejecting a debugger conclusion that carries no logs, reproduction or code reference, is the orchestrator's — that half is `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop`.
 
 ## Common Rationalizations
 

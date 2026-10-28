@@ -72,6 +72,9 @@
 # and a `git rm --cached` behind a new .gitignore entry leaves it on disk. Neither
 # arm reads git history, so generation and --check work on a depth-1 checkout.
 # Barred families (spine_is_retired_excluded_path) never enter the map at all.
+# Bare --check cannot see a key dropped from the committed map: the expected map
+# is carried forward from that same map. --check --reference FILE closes the gap
+# against a manifest the caller supplies (the PR target tip) — still no git history.
 #
 # Output is LC_ALL=C sorted and written atomically (temp + jq re-validation + mv).
 #
@@ -84,12 +87,16 @@
 #                                  set unequal to files, an ABSENT retired key, a
 #                                  retired key or value of invalid shape, OR a
 #                                  retired-map delta
+#   generate-manifest.sh --check --reference FILE
+#                                  --check, plus exit 1 naming each retired key of
+#                                  FILE the current map dropped (reference_dropped_keys)
 #   generate-manifest.sh --validate FILE
 #                                  structural validation of an arbitrary manifest
 #                                  against the same invariants the regeneration
 #                                  asserts on its temp before the swap
 #
-# Named exit codes: 1=--check divergence · 2=usage · 3=git absent/not a work tree ·
+# Named exit codes: 1=--check divergence · 2=usage, or a --reference FILE that is
+# not a readable manifest with an object retired map · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
 # manifest that fails structural validation · 7=apply-spine.sh or
 # tracked-paths.sh missing or failed to load · 8=a tracked manifest path carries
@@ -99,7 +106,7 @@ set -euo pipefail
 # Single Atrium system version-of-record. Stamped into manifest.version on
 # regeneration and asserted by --check. The monitor health endpoint and the
 # update badge read THIS via the manifest (D1 — one version SoT).
-readonly ATRIUM_VERSION="1.0.1"
+readonly ATRIUM_VERSION="1.0.2"
 
 # Repo root = parent of this script's scripts/ dir (portable, same idiom as
 # the engine's root resolution).
@@ -375,6 +382,21 @@ build_retired_json() {
   } | LC_ALL=C sort -u | spine_build_retired_map
 }
 
+# Emit each retired key of reference manifest $1 that the current retired map $3
+# (compact JSON) lacks, unless the path is back in the generated files[] list $2
+# (the disjointness invariant) or belongs to a barred family.
+reference_dropped_keys() {
+  local reference="$1" shipped_set=$'\n'"$2"$'\n' committed="$3" missing key
+  missing="$(jq -r --argjson cur "${committed}" '(.retired // {}) | keys - ($cur | keys) | .[]' \
+    -- "${reference}")"
+  while IFS= read -r key; do
+    [[ -n "${key}" ]] || continue
+    if [[ "${shipped_set}" == *$'\n'"${key}"$'\n'* ]]; then continue; fi
+    if spine_is_retired_excluded_path "${key}"; then continue; fi
+    printf '%s\n' "${key}"
+  done <<<"${missing}"
+}
+
 # jq definitions shared by --validate and --check. A key escapes when it is empty,
 # absolute or carries a `..` segment (the installers write and the updater removes what
 # a key names) — the same rule as the spine's spine_is_escaping_key.
@@ -447,12 +469,28 @@ require_manifest() {
   }
 }
 
+# A --reference manifest the check cannot read is a caller error, never a pass.
+require_reference_manifest() {
+  [[ -f "$1" && -r "$1" ]] || {
+    echo "generate-manifest --check: reference manifest not found: $1" >&2
+    exit 2
+  }
+  jq -e '(.retired // {}) | type == "object"' -- "$1" >/dev/null 2>&1 || {
+    echo "generate-manifest --check: reference manifest is not JSON with an object retired map: $1" >&2
+    exit 2
+  }
+}
+
+# $1 = optional reference manifest path; empty runs the bare check.
 run_check() {
+  local reference="${1:-}"
   local orphans missing mismatches manifest_version gen_count rc=0
   local modes_count mode_mismatches files files_invalid modes_key_delta hashes_key_delta
   local committed_retired generated_retired dropped dropped_count retired_invalid
+  local reference_dropped reference_dropped_count
   require_tree_tools
   require_manifest
+  [[ -z "${reference}" ]] || require_reference_manifest "${reference}"
 
   # Single git ls-files pass — the sorted list feeds the count, both comm diffs,
   # and both emitters. An empty set means the scope/exclusion config is broken —
@@ -576,6 +614,15 @@ run_check() {
     echo "generate-manifest --check: RETIRED delta (committed=$(jq -r 'length' <<<"${committed_retired}") keys, generated=$(jq -r 'length' <<<"${generated_retired}") keys)" >&2
     rc=1
   fi
+  if [[ -n "${reference}" ]]; then
+    reference_dropped="$(reference_dropped_keys "${reference}" "${files}" "${committed_retired}")"
+    if [[ -n "${reference_dropped}" ]]; then
+      reference_dropped_count="$(printf '%s\n' "${reference_dropped}" | wc -l | tr -d ' ')"
+      echo "generate-manifest --check: RETIRED-DROPPED (${reference_dropped_count}): reference retired keys absent from the current map:" >&2
+      printf '%s\n' "${reference_dropped}" | sed 's/^/  - /' >&2
+      rc=1
+    fi
+  fi
 
   if [[ "${rc}" -eq 0 ]]; then
     echo "generate-manifest --check: manifest matches generated set (${gen_count} files, version ${ATRIUM_VERSION}, hashes + both directions clean)"
@@ -682,7 +729,16 @@ refresh_deployed_farm() {
 }
 
 case "${1:-}" in
-  --check) run_check ;;
+  --check)
+    if [[ "$#" -eq 1 ]]; then
+      run_check
+    elif [[ "$#" -eq 3 && "$2" == "--reference" && -n "$3" ]]; then
+      run_check "$3"
+    else
+      echo "usage: ${0##*/} --check [--reference <manifest.json>]" >&2
+      exit 2
+    fi
+    ;;
   --validate)
     [[ -n "${2:-}" && -f "${2}" ]] || {
       echo "usage: ${0##*/} --validate <manifest.json>" >&2
@@ -697,7 +753,7 @@ case "${1:-}" in
     ;;
   "") run_generate ;;
   *)
-    echo "usage: ${0##*/} [--check | --validate <manifest.json>]" >&2
+    echo "usage: ${0##*/} [--check [--reference <manifest.json>] | --validate <manifest.json>]" >&2
     exit 2
     ;;
 esac

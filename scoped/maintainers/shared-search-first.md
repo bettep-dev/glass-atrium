@@ -17,7 +17,7 @@ DEV agents, plus glass-atrium-meta-prompt-engineer under the "prompts = code" Ti
 
 No code reads this file's body, but prose citations resolve INTO it by name, one of them from a Tier-1 rule that reaches every agent:
 
-- `rules/glass-atrium/core-outcome-record.md` → Field Input Guide → `style_ref` cites "Pattern recognition → Step 2 Read / Step 3 Mirror".
+- `rules/glass-atrium/core-outcome-record.md` → `### Role-scoped fields` → `style_ref` cites "Pattern recognition → Step 2 Read / Step 3 Mirror".
 - `agents/glass-atrium-dev-rag.md` → Work Rules → **Codebase exploration** cites "Pattern recognition → **Inconclusive probe**".
 
 So the bolded leads **Pattern recognition** and **Inconclusive probe** and the three **Step 1 — Search** / **Step 2 — Read** / **Step 3 — Mirror** names are the file's reserved anchors. Compress around them; do not rename one without editing every site above that cites it.

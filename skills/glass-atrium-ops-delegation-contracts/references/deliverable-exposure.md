@@ -1,6 +1,6 @@
 # Deliverable exposure and designer composition (Decision phase)
 
-- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `### Phase Notes` → `#### Deliverable exposure and designer composition (Decision phase)`.
+- **Pointer site**: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)`.
 - **Markup-exception pointer site**: the same file → `#### Monitoring-phase notes` → **glass-atrium-dev-front markup-exception Monitoring judgment**.
 
 ## Exposure Determination — signals and routing
@@ -13,11 +13,6 @@
 - **When in doubt — why agent-only**: asymmetric cost: a surplus hidden record is cheap; an unwanted shared HTML is not.
 - Canonical signal list: `scoped/scope-report.md` → `### HTML request test`, under `## Output Format Routing [REPORT]`.
 - Format/exposure finalization stays the authoring agent's turn-0 call — this bit is a delegation-time intent hint, not an override.
-
-## Local-destination hint — scope and canonical
-
-- A LOCAL destination is a new file OR an edit of an existing user file.
-- Canonical stamped form + carve-out: `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` authoring bullet.
 
 ## Visual-Weight Probe — detail
 

@@ -13,6 +13,11 @@
 # dev is the verify partner vs the gated implementation dev) does NOT exist in the code, so any
 # inference was a guess. The author declares; the hook checks presence + consistency.
 #
+# SIMPLE-TASK ENTRY: a DEV workflow carrying [ENTRY-CLASS] simple-task and NO plan-reference owes no
+# other attestation token — the helper marks it ENTRY_SIMPLE, every [AGENT-COMPOSITION] / [SIZE-EST]
+# block resolves to PASS, and the [SIZE-EST] and [SCOPE] advisories stay silent. A plan-reference keeps
+# every check, whatever classification travels beside it. The doc-routing block is unaffected.
+#
 # DECLARATION GRAMMAR (raw-scanned, but the opening sentinel must NOT sit inside a string literal so
 # an incidental prompt/goal mention is not mistaken for a declaration; canonical home = a /* */
 # block comment):
@@ -145,7 +150,7 @@
 # SIXTH ADVISORY PASS ([SIZE-EST] plausibility bounds, advisory — NEVER exit 2): bounds the DECLARED
 # DEV-mode tool_uses~ value against the implementation-slot count the gate already computes — below
 # slots x 4.5 (the empirical per-file calibration) fires `:low`, above ~40 (the split trigger ahead of
-# the measured 46-52 truncation band) fires `:high`. Both anchors are DERIVED from orchestrator-role.md
+# the measured 46-52 truncation band) fires `:high`. Both anchors are DERIVED from skills/glass-atrium-ops-orchestrator-role.md
 # -> Spawn Budget, not counts maintained here. Fires ONLY where a DEV-mode token exists: the
 # token-absent case is the BLOCK_SIZEEST gate's, and advising it too would double-advise one miss.
 # The value rides its OWN output line rather than the completion-channel multiplex — that line's trace
@@ -199,7 +204,7 @@
 # that separates goal text from a mention, plus an explicit user decision — not more coverage of this one.
 #
 # EIGHTH ADVISORY PASS (close token, advisory — NEVER exit 2): flags a plan-referencing DEV workflow that
-# carries neither [PLAN-CLOSE] form (grammar SoT: orchestrator-role.md -> Context Handoff Size).
+# carries neither [PLAN-CLOSE] form (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size).
 #   Predicate → in the helper, raw scan: dev_present AND the entry gate's PLAN_REF_RE AND no form match;
 #     `deferred:` needs a named step, so an empty value or an unfilled <placeholder> fires.
 #   Siting → rendered on the PASS arm only (twelfth helper line), so it can mask no verdict.
@@ -527,7 +532,7 @@ block_and_exit() {
   if [[ "${addendum_allowed}" == true && "${entry_marker:-}" == "ENTRY_ADVISORY" ]]; then
     reason="${reason}"$'\n\n'"$(
       cat <<'EOF'
-ADDITIONALLY (entry classification / plan-reference also required): beyond the block above, this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — so once the issue above is fixed it will STILL be blocked for a missing entry signal. Resolve BOTH in one pass. Two ways to supply the entry signal: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-reference token); (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate), record an [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> classification in the workflow script. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — persist a REAL plan. Placement is not enforced (these tokens are raw-scanned), so a commented token also satisfies it.
+ADDITIONALLY (entry classification / plan-reference also required): beyond the block above, this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification, so it also needs an entry signal. Two ways to supply it: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-reference token) — then fix the issue above too, in the same pass; (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate), record an [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> classification in the workflow script, with no plan-reference — path (2) alone clears the block above when it is an [AGENT-COMPOSITION] block, since a simple-task entry owes no other attestation token; a doc-routing leak still needs its own fix. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — persist a REAL plan. Placement is not enforced (these tokens are raw-scanned), so a commented token also satisfies it.
 EOF
     )"
   fi
@@ -592,20 +597,20 @@ print_schema_cap_advisory() {
 # print_sizeest_low_advisory / print_sizeest_high_advisory — ADVISORY-ONLY (stderr, NEVER blocks /
 # NEVER alters the exit code). The DECISION fires inside the verdict helper (sizeest_bounds) and
 # arrives as a value on the eleventh output line; these only render it. Both bounds are DERIVED from
-# orchestrator-role.md -> Spawn Budget (the `ceil(files x 4.5)` empirical tool_use calibration and the
+# skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget (the `ceil(files x 4.5)` empirical tool_use calibration and the
 # ~40 split trigger ahead of the measured 46-52 truncation band), never a count maintained here.
 print_sizeest_low_advisory() {
   # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → a block path keeps exit 2.
-  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value is BELOW the slot-count floor (implementation slots x 4.5, the empirical per-file tool_use calibration in orchestrator-role.md -> Spawn Budget). Under-declaring is the DANGEROUS direction: it smuggles an oversized delegation past the split discipline, and the sub-agent then truncates mid-work with no [COMPLETION]. Re-estimate UP against the files x 4.5 floor and, if the honest estimate exceeds ~30, SPLIT the delegation instead of re-declaring it smaller. PLAUSIBILITY-ONLY, never estimate correctness — parity with the presence-only [SIZE-EST] gate. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
+  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value is BELOW the slot-count floor (implementation slots x 4.5, the empirical per-file tool_use calibration in skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget). Under-declaring is the DANGEROUS direction: it smuggles an oversized delegation past the split discipline, and the sub-agent then truncates mid-work with no [COMPLETION]. Re-estimate UP against the files x 4.5 floor and, if the honest estimate exceeds ~30, SPLIT the delegation instead of re-declaring it smaller. PLAUSIBILITY-ONLY, never estimate correctness — parity with the presence-only [SIZE-EST] gate. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
 }
 
 print_sizeest_high_advisory() {
   # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → a block path keeps exit 2.
-  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value EXCEEDS the ~40 delegation ceiling (the HARD SECONDARY split trigger in orchestrator-role.md -> Spawn Budget, set ahead of the measured 46-52 truncation band). A delegation this size is expected to run out of budget before its terminal emit: SPLIT it into sequential checkpointed sub-delegations, keeping each implementation together with its NEW tests and peeling off run-full-suite / report-consolidation instead. PLAUSIBILITY-ONLY, never estimate correctness. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
+  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value EXCEEDS the ~40 delegation ceiling (the HARD SECONDARY split trigger in skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget, set ahead of the measured 46-52 truncation band). A delegation this size is expected to run out of budget before its terminal emit: SPLIT it into sequential checkpointed sub-delegations, keeping each implementation together with its NEW tests and peeling off run-full-suite / report-consolidation instead. PLAUSIBILITY-ONLY, never estimate correctness. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
 }
 
 print_scope_advisory() {
-  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (scope declaration, non-blocking): this workflow spawns DEV agent(s) but carries NO [SCOPE] declaration. Fix the delegation's literal scope in text before the work starts, in the canonical middot-separated grammar: log('[SCOPE] files=path/one, path/two · deliverable=<type> · out=none') (grammar SoT: orchestrator-role.md → Context Handoff Size). Declare the paths that travel WITH the implementation too — its companion tests and any mandatory co-deliverable — so a compliant edit is not read as excess later. PRESENCE-ONLY, parity with [ENTRY-CLASS] / [SIZE-EST]: whether the declaration matches the user's instruction is never checked here. ADVISORY ONLY, this check NEVER blocks." >&2
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (scope declaration, non-blocking): this workflow spawns DEV agent(s) but carries NO [SCOPE] declaration. Fix the delegation's literal scope in text before the work starts, in the canonical middot-separated grammar: log('[SCOPE] files=path/one, path/two · deliverable=<type> · out=none') (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md → Context Handoff Size). Declare the paths that travel WITH the implementation too — its companion tests and any mandatory co-deliverable — so a compliant edit is not read as excess later. PRESENCE-ONLY, parity with [ENTRY-CLASS] / [SIZE-EST]: whether the declaration matches the user's instruction is never checked here. ADVISORY ONLY, this check NEVER blocks." >&2
   return 0
 }
 
@@ -613,7 +618,7 @@ print_scope_advisory() {
 # decision arrives as the helper's twelfth line; the remediation mirrors the --lint --template section.
 print_close_token_advisory() {
   cat <<'EOF' >&2
-[enforce-workflow-verify-stage] ADVISORY (close token, non-blocking): this DEV workflow references a plan but carries neither form of the close token, so the flow declares no close for that plan. ONE-EDIT FIX — add ONE line: log('[PLAN-CLOSE] in-script') when the script ends in the terminal Reconcile & Close phase (a glass-atrium-qa-code-reviewer spawn after the last delivering phase), or log('[PLAN-CLOSE] deferred: <the later script or step that closes the plan>') with the placeholder replaced by that script or step. Grammar SoT: orchestrator-role.md -> Context Handoff Size; phase: skills/glass-atrium-ops-orchestrator.md -> In-script verify-stage (ultracode); scaffold: enforce-workflow-verify-stage.sh --lint --template. PRESENCE-ONLY: whether the form is truthful — a close form with no terminal phase in the script — is never checked here. ADVISORY ONLY, this check NEVER blocks: a multi-script track legitimately closes in a later script, which a block would false-positive on.
+[enforce-workflow-verify-stage] ADVISORY (close token, non-blocking): this DEV workflow references a plan but carries neither form of the close token, so the flow declares no close for that plan. ONE-EDIT FIX — add ONE line: log('[PLAN-CLOSE] in-script') when the script ends in the terminal Reconcile & Close phase (a glass-atrium-qa-code-reviewer spawn after the last delivering phase), or log('[PLAN-CLOSE] deferred: <the later script or step that closes the plan>') with the placeholder replaced by that script or step. Grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size; phase: skills/glass-atrium-ops-orchestrator.md -> In-script verify-stage (ultracode); scaffold: enforce-workflow-verify-stage.sh --lint --template. PRESENCE-ONLY: whether the form is truthful — a close form with no terminal phase in the script — is never checked here. ADVISORY ONLY, this check NEVER blocks: a multi-script track legitimately closes in a later script, which a block would false-positive on.
 EOF
   return 0
 }
@@ -841,7 +846,7 @@ EOF
 # skill for RECONCILE_GOAL rather than copying the goal text, so the skill skeleton stays its one home.
 print_lint_template() {
   cat <<'EOF'
-[enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE [AGENT-COMPOSITION] form into a /* */ block comment, plus ONE entry token and the [SIZE-EST] token, then preview with: enforce-workflow-verify-stage.sh --lint <file> (exit 0 = will pass the gate). The fourth section is CONDITIONAL rather than universal — it applies to a schema-mode spawn only, and a DEV verify stage is deliberately text-mode, declares no schema and needs none of it. The fifth section applies to a plan-referencing script: ONE close-token form, plus the terminal phase when the script closes the plan itself.
+[enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE entry token. A plan-referencing script also needs ONE [AGENT-COMPOSITION] form in a /* */ block comment and the [SIZE-EST] token; an [ENTRY-CLASS] simple-task script with no plan-reference needs neither. Then preview with: enforce-workflow-verify-stage.sh --lint <file> (exit 0 = will pass the gate). The fourth section is CONDITIONAL rather than universal — it applies to a schema-mode spawn only, and a DEV verify stage is deliberately text-mode, declares no schema and needs none of it. The fifth section applies to a plan-referencing script: ONE close-token form, plus the terminal phase when the script closes the plan itself.
 
 [AGENT-COMPOSITION] declaration (pick ONE form):
 EOF
@@ -853,7 +858,7 @@ EOF
   emit_entry_token_scaffold
   cat <<'EOF'
 
-Delegation-size self-attestation (at EVERY DEV spawn — ONE [SIZE-EST] token, two modes):
+Delegation-size self-attestation (ONE [SIZE-EST] token, two modes — DEV mode at every DEV spawn of a plan-referencing script; a simple-task entry owes none):
   --- DEV mode ---
   log('[SIZE-EST] bundles=N tool_uses~=N — <reason>');
   --- analysis mode (schema-mode NON-DEV researcher/planner/reporter/reviewer spawn) ---
@@ -882,7 +887,7 @@ Completion channel (schema-mode spawns ONLY — a DEV verify stage is text-mode 
   agentType: field values only — so a DECLARED type must ALSO appear as an opts agentType: string literal
   (keep both literals identical), else the gate reads it un-spawned → block-declspawn.
 
-Close token (plan-referencing DEV scripts ONLY — ONE form; grammar SoT: orchestrator-role.md → Context Handoff Size):
+Close token (plan-referencing DEV scripts ONLY — ONE form; grammar SoT: skills/glass-atrium-ops-orchestrator-role.md → Context Handoff Size):
   --- close form (the script ends in the terminal Reconcile & Close phase) ---
   log('[PLAN-CLOSE] in-script');
   // terminal phase, after the last delivering phase; RECONCILE_GOAL is the skeleton const in
@@ -1919,7 +1924,7 @@ ENTRY_CARD_FLAG = "ENTRY_CARD_SILENT"
 # ADVISORY ONLY — no verdict, no exit code, promotable later on this file's advisory-then-promote
 # precedent. The two anchors are DERIVED, not maintained here: the per-file floor is the
 # `ceil(files x 4.5)` empirical tool_use calibration and the ceiling is the ~40 split trigger ahead of
-# the measured 46-52 truncation band, both from orchestrator-role.md -> Spawn Budget
+# the measured 46-52 truncation band, both from skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget
 # ("Empirical tool_use calibration" + the HARD SECONDARY split rule).
 SIZEEST_BOUNDS_FLAG = "SIZEEST_BOUNDS_SILENT"
 SIZEEST_BOUNDS_LOW = "SIZEEST_BOUNDS_ADVISE:low"
@@ -1944,7 +1949,7 @@ COMPLETION_SCHEMA_ABSENT = "COMPLETION_ADVISE:schema-absent"
 # CLOSE_TOKEN_FLAG — the close-token nudge, printed as the TWELFTH output line and rendered on the shell
 # PASS arm only. Decided here so plan-referencing means the entry-gate PLAN_REF_RE itself, never a copy.
 CLOSE_TOKEN_FLAG = "CLOSE_TOKEN_SILENT"
-# The two [PLAN-CLOSE] forms (grammar SoT: orchestrator-role.md -> Context Handoff Size). A deferral must
+# The two [PLAN-CLOSE] forms (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size). A deferral must
 # name its closing step → an empty value or an unfilled placeholder is neither form.
 # Deferral value → optional lead punctuation — quote, backtick, path — then a word character. `<` and the
 # host string closers \x29 , ; \x7d end the lead → an empty value closed by its quote, or a quoted
@@ -2018,7 +2023,22 @@ def sizeest_bounds(attestation_src, slots):
         return "SIZEEST_BOUNDS_SILENT"
 
 
+# Verdicts a simple-task entry waives: every [AGENT-COMPOSITION] and [SIZE-EST] block. The doc-routing
+# block is no token check and stays.
+SIMPLE_TASK_WAIVED_BLOCKS = frozenset((
+    "BLOCK_NODECL", "BLOCK_GRAMMAR", "BLOCK_NOREV", "BLOCK_NOVERIFYDEV", "BLOCK_DECLSPAWN",
+    "BLOCK_UNDECL", "BLOCK_COMPUTED", "BLOCK_ORDER", "BLOCK_UPSTREAM", "BLOCK_SIZEEST",
+))
+
+
 def emit(verdict, entry_marker):
+    # Simple-task entry → waived blocks become PASS and the [SIZE-EST] advisories go silent; the
+    # ENTRY_SIMPLE marker tells the bash side to skip its [SCOPE] advisory too.
+    size_map, sizeest_bounds_flag = SIZE_MAP_FLAG, SIZEEST_BOUNDS_FLAG
+    if entry_marker == "ENTRY_SIMPLE":
+        if verdict in SIMPLE_TASK_WAIVED_BLOCKS:
+            verdict = "PASS"
+        size_map, sizeest_bounds_flag = "SIZE_MAP_SILENT", "SIZEEST_BOUNDS_SILENT"
     print(verdict)
     print(entry_marker)
     print(RESIL_FLAG)
@@ -2026,10 +2046,10 @@ def emit(verdict, entry_marker):
     print(SCHEMA_CAP_FLAG)
     print(DEV_FLAG)
     print("IMPL_SLOTS=" + str(IMPL_SLOTS))
-    print(SIZE_MAP_FLAG)
+    print(size_map)
     print(ENTRY_CARD_FLAG)
     print(COMPLETION_FLAG)
-    print(SIZEEST_BOUNDS_FLAG)
+    print(sizeest_bounds_flag)
     print(CLOSE_TOKEN_FLAG)
     sys.exit(0)
 
@@ -2091,6 +2111,9 @@ try:
     entry_literal_found = ENTRY_CLASS_LITERAL in attestation_src
     entry_ok = (not dev_present) or plan_ref_found or entry_literal_found
     entry_marker = "ENTRY_OK" if entry_ok else "ENTRY_ADVISORY"
+    # Simple-task entry: classified simple with no plan-reference → owes no other attestation token.
+    if dev_present and entry_literal_found and not plan_ref_found:
+        entry_marker = "ENTRY_SIMPLE"
     size_est_missing = dev_present and entry_ok and (SIZE_EST_LITERAL not in attestation_src)
     # Close-token decision: a plan-referencing DEV workflow carrying neither [PLAN-CLOSE] form (raw scan).
     if dev_present and plan_ref_found and not CLOSE_TOKEN_RE.search(attestation_src):
@@ -2356,7 +2379,7 @@ PY
     IFS= read -r close_token_flag
   } <<<"${helper_out}" || true
   [[ -z "${verdict}" ]] && verdict="PASS"
-  [[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
+  [[ "${entry_marker}" == "ENTRY_ADVISORY" || "${entry_marker}" == "ENTRY_SIMPLE" ]] || entry_marker="ENTRY_OK"
   [[ "${resil_flag}" == "RESIL_ADVISE" ]] || resil_flag="RESIL_SILENT"
   [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]] || analysis_size_flag="ANALYSIS_SIZE_SILENT"
   # The schema-cap flag carries the matched scoped rule as a `:R<n>` suffix (trace instrumentation); a
@@ -2512,7 +2535,7 @@ EOF
       trace_tag="block-nodecl"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (missing composition declaration): this Workflow script spawns DEV agent(s) but carries NO [AGENT-COMPOSITION] declaration block. Like [ENTRY-CLASS] / [SIZE-EST], the composition declaration is a MANDATORY author self-attestation — its ABSENCE on a DEV workflow is a hard block (presence parity). It declares the verify team + the implementation spawns so the gate can consistency-check them against the code. STRING-RESIDENCY NOTE: if your block IS present but sits INSIDE a string literal (e.g. quoted in a goal/prompt template), it is treated as ABSENT on purpose (a worked example quoted into a prompt must stay inert) — move it into a real /* */ block comment. HONESTY: declaration truthfulness is NOT mechanically verified — same honor-system trust model as the sibling attestation tokens; only PRESENCE + CONSISTENCY are checked.
+[enforce-workflow-verify-stage] BLOCKED (missing composition declaration): this Workflow script spawns DEV agent(s) but carries NO [AGENT-COMPOSITION] declaration block. Like [SIZE-EST], the composition declaration is a MANDATORY author self-attestation on a DEV workflow that is not an [ENTRY-CLASS] simple-task entry — its ABSENCE there is a hard block (presence parity). A genuinely simple script with no plan-reference records [ENTRY-CLASS] simple-task instead and owes no declaration. It declares the verify team + the implementation spawns so the gate can consistency-check them against the code. STRING-RESIDENCY NOTE: if your block IS present but sits INSIDE a string literal (e.g. quoted in a goal/prompt template), it is treated as ABSENT on purpose (a worked example quoted into a prompt must stay inert) — move it into a real /* */ block comment. HONESTY: declaration truthfulness is NOT mechanically verified — same honor-system trust model as the sibling attestation tokens; only PRESENCE + CONSISTENCY are checked.
 
 COPY-PASTE SCAFFOLD — pick ONE form (canonical home: a /* */ block comment):
 
@@ -2615,7 +2638,7 @@ EOF
       trace_tag="block-sizeest"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at EVERY DEV spawn: log('[SIZE-EST] bundles=N tool_uses~=N — <reason>'). Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked.
+[enforce-workflow-verify-stage] BLOCKED (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at every DEV spawn of a plan-referencing script: log('[SIZE-EST] bundles=N tool_uses~=N — <reason>'). A genuinely simple script with no plan-reference records [ENTRY-CLASS] simple-task instead and owes no [SIZE-EST]. Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked.
 EOF
       )"
       ;;
@@ -2623,7 +2646,9 @@ EOF
       # SCOPE ADVISORY — on the PASS arm only, so a fault in this newest check can never mask one of
       # the block verdicts above. Ordered before emit_trace so the tag rides the pass trace line.
       # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
+      # A simple-task entry (ENTRY_SIMPLE) owes no [SCOPE] declaration.
+      if [[ "${dev_flag}" == "yes" && "${entry_marker}" != "ENTRY_SIMPLE" ]] \
+        && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
         print_scope_advisory
         add_advisory "scope"
       fi

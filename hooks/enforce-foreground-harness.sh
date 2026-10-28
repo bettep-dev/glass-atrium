@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # enforce-foreground-harness.sh — PreToolUse(Agent) gate enforcing
-# Harness Path Protection Rule 2 (orchestrator-role.md): staged lane MANDATORY.
+# Harness Path Protection Rule 2 (skills/glass-atrium-ops-orchestrator-role.md): staged lane MANDATORY.
 #
 # Blocks an Agent call whose prompt names a non-exempt path under ~/.claude/ or any ~/.claude-* profile
 # branch config dir, whatever run_in_background holds or omits — the field is model-sent and proves
@@ -44,7 +44,7 @@
 #   - Past 128 unique candidates the prompt is protected, fail-safe, with none of them walked.
 #   Not read as home: any other expansion — `${HOME:-}/`, `${HOME%/}/`, `$(echo ~)/`.
 #
-# Source: rules/glass-atrium/orchestrator-role.md → Harness Path Protection.
+# Source: skills/glass-atrium-ops-orchestrator-role.md → Harness Path Protection.
 # Measured envelope (run_in_background never delivered): scoped/shared-hook-capability-contract.md →
 #   ### PreToolUse(Agent) measured record.
 
@@ -237,7 +237,7 @@ fi
 block() {
   (
     [[ -z "${1:-}" ]] || printf '%s\n' "${1}"
-    printf '%s %s %s\n' '[enforce-foreground-harness] Harness Path Protection Rule 2: staged lane MANDATORY. An Agent prompt may not name a path under ~/.claude/ or any ~/.claude-* profile branch config dir, whatever run_in_background holds or omits: the user must see and approve a harness change before it lands.' "${routes_text}" 'Source: rules/glass-atrium/orchestrator-role.md -> Harness Path Protection.'
+    printf '%s %s %s\n' '[enforce-foreground-harness] Harness Path Protection Rule 2: staged lane MANDATORY. An Agent prompt may not name a path under ~/.claude/ or any ~/.claude-* profile branch config dir, whatever run_in_background holds or omits: the user must see and approve a harness change before it lands.' "${routes_text}" 'Source: skills/glass-atrium-ops-orchestrator-role.md -> Harness Path Protection.'
   ) >&2 || true
   exit 2
 }

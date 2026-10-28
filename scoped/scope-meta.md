@@ -15,13 +15,13 @@ glass-atrium-meta-prompt-engineer, glass-atrium-intel-planner and glass-atrium-d
 
 ## glass-atrium-meta-agent: Outcome-Driven Rewrite Policy [META]
 
-- **Outcome signals are SUPPLIED with the task, never fetched.** They live only in PostgreSQL `core.outcomes` and neither META agent holds Bash, so a delegation that names signals without attaching them cannot be executed as written — report that rather than attempting a fetch.
+- **Outcome signals are supplied with the task, never fetched.** They live only in PostgreSQL `core.outcomes` and neither META agent holds Bash, so a delegation that names signals without attaching them cannot be executed as written — report that rather than attempting a fetch.
 - **A rewrite with no Outcome-Record evidence behind it is refused downstream** by the daemon dry-run gate: it costs a cycle instead of landing.
 - Which signal state warrants which response is stated in `agents/glass-atrium-meta-agent.md` — `## Signal Thresholds`, `## Modification Principles`, `## Hard Constraints`.
 
 ## glass-atrium-meta-prompt-engineer: DEV Rule Inheritance [META]
 
-- Because prompts are code, glass-atrium-meta-prompt-engineer inherits the Tier-3 DEV cross-cutting rules that govern code authoring — comment and logging discipline, measure before optimizing, search before creating, Red → Green → Refactor, no untyped escape hatches.
+- Because prompts are code, glass-atrium-meta-prompt-engineer inherits the Tier-3 DEV cross-cutting rules that govern code authoring.
 - glass-atrium-meta-agent inherits none of them: rewriting an instruction from outcome signals is not general code authoring.
 - The file set is declared once in `rules/glass-atrium/core-compliance-matrix.md` (Tier-3 table, † footnote) and per-agent in `agent-registry.json` (`rules.shared`) — a second list would diverge from it silently. Provenance: `scoped/maintainers/scope-meta.md`.
 
@@ -31,17 +31,19 @@ Pointer only. The rules bind META, PLANNING and REPORT alike, so they live once 
 
 ## Prompt Deliverable Team Rule [META]
 
-Every prompt, agent body, rule or skill deliverable authored by glass-atrium-meta-prompt-engineer ships through a two-agent pipeline — author, then an independent structure verdict — and is complete only on an all-`pass` verdict.
+glass-atrium-meta-prompt-engineer authors and emits its own prompt, agent body, rule or skill deliverable: emitting and revising need the author's full context, so no second agent carries the deliverable to delivery.
+
+- An independent structure verdict judges it, because an author cannot be its own reviewer; the deliverable is complete only on an all-`pass` verdict.
 
 | Step | Actor | Rule |
 |---|---|---|
-| Author | glass-atrium-meta-prompt-engineer | runs `## Structure Self-Check` from its own body, then writes |
-| Structure verdict | glass-atrium-intel-reporter | returns `pass`/`revise` per Structure Self-Check row — verdict-only; rewriting the deliverable is FORBIDDEN |
-| Revise | glass-atrium-meta-prompt-engineer | takes every `revise` finding back and re-delivers |
+| Author and emit | glass-atrium-meta-prompt-engineer | runs `## Structure Self-Check` from its own body, writes, then emits with its check lines |
+| Structure verdict | glass-atrium-intel-reporter | returns `pass`/`revise` per Structure Self-Check row; verdict-only — it never rewrites the deliverable |
+| Revise | glass-atrium-meta-prompt-engineer, resumed where resumable, else respawned | takes every `revise` finding back and re-emits |
 
 - The composer states the verdict-only constraint inside the delegation prompt: `agents/glass-atrium-intel-reporter.md` states it nowhere, so no other channel carries it to the reviewer.
 - **Prompt-audit pass**: every prompt-file cycle runs this pass.
-  - Trigger class and position in the delivery tail: `rules/glass-atrium/orchestrator-role.md` → `## Document-Driven Workflow` step 6 → **Prompt-file tail**.
+  - Trigger class and position in the delivery tail: `skills/glass-atrium-ops-orchestrator-role.md` → `## Document-Driven Workflow` step 6 → **Prompt-file tail**.
   - Actor: glass-atrium-meta-prompt-engineer.
   - Input: only the files the cycle modified.
     - On a code file, the audited span is the file's prompt surface as guide Step 1 inventories it; the file's other code is not audited.
@@ -72,7 +74,3 @@ Every prompt, agent body, rule or skill deliverable authored by glass-atrium-met
 | a maintainer note under `scoped/maintainers/` | the reviewer its paired file's row names |
 | a file under `agents/templates/` or `agents/references/` | the agent whose body cites it; several citers or a Tier-1 citer → glass-atrium-qa-code-reviewer |
 | a code file — hook, script, Python module, test | the DEV agent whose domain covers it: glass-atrium-dev-shell for shell, glass-atrium-dev-python for Python |
-
-## Skills Array Order [META]
-
-- When authoring an agent's frontmatter `skills:` array, sort it for readability and logical grouping (core → supplementary).
