@@ -367,7 +367,7 @@ function getTileCardId(tile) {
 }
 
 function StatusTileValue({ tile }) {
-  const { Badge, KpiValue, LoadingPlaceholder } = window.UI;
+  const { Badge, KpiValue, LoadingPlaceholder, DateRange } = window.UI;
   if (tile.status === 'loading') {
     // an empty .kpi-value strut holds the loaded row's line box → the tile keeps its height when the value lands
     return (
@@ -387,7 +387,7 @@ function StatusTileValue({ tile }) {
         </div>
         {(tile.tone !== 'neutral' || tile.isHeld) && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
       </div>
-      {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
+      {tile.trend && <div className="fs-meta text-dim"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></div>}
     </div>
   );
 }
@@ -1007,10 +1007,13 @@ function buildOutcomeTile(outcomesState) {
   const pending = buildPendingTile(base, outcomesState);
   if (pending) return pending;
   const rate = window.UI.resolveOutcomeRate(outcomesState.data);
+  const prior = outcomesState.data?.prior_window;
+  const trend = describeOutcomeTrend(rate, prior);
+  // trend stays a plain string; the range token rides beside it so the render keeps it whole
   return {
     ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, badge: OUTCOME_VERDICT[rate.status],
     value: describeOutcomeValue(rate), detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate),
-    trend: describeOutcomeTrend(rate, outcomesState.data?.prior_window), note: OUTCOME_COUNTING_NOTE,
+    trend, trendRange: trend ? window.UI.formatDayRange(prior) : null, note: OUTCOME_COUNTING_NOTE,
   };
 }
 
@@ -1046,7 +1049,7 @@ function describeOutcomeHint(rate) {
 // shares, never counts → a busier week at the same failure rate reads level
 function describeOutcomeTrend(rate, prior) {
   if (!prior || !Object.hasOwn(OUTCOME_VERDICT, rate.status)) return null;
-  const priorRange = formatDayRange(prior);
+  const priorRange = window.UI.formatDayRange(prior);
   const priorRate = window.UI.resolveOutcomeRate(prior);
   if (!Object.hasOwn(OUTCOME_VERDICT, priorRate.status)) return `No comparison — too few reported outcomes in ${priorRange}`;
   const points = (rate.breakage / rate.writerTotal - priorRate.breakage / priorRate.writerTotal) * 100;
@@ -1059,12 +1062,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // server-anchored YYYY-MM-DD → MM-DD; never re-derived from the browser clock
 function formatDay(date) {
   return String(date).slice(5, 10);
-}
-
-// period_end is exclusive → the last day shown is the day before it
-function formatDayRange({ period_start: start, period_end: end }) {
-  const last = new Date(Date.parse(`${end}T00:00:00Z`) - DAY_MS).toISOString().slice(0, 10);
-  return `${formatDay(start)} – ${formatDay(last)}`;
 }
 
 function formatAlertLine(share) {

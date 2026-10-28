@@ -1280,6 +1280,36 @@ function formatKstFull(iso) {
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second} ${tzShortLabel()}`;
 }
 
+const DAY_RANGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Server-anchored period → "MM-DD – MM-DD", never re-derived from the browser clock.
+ * A plain string, so a title, an aria-label and the clipboard read it as is; render it whole through DateRange.
+ * @param period - { period_start, period_end } as YYYY-MM-DD; period_end is exclusive → the last day shown is the day before it
+ */
+function formatDayRange({ period_start: start, period_end: end }) {
+  const last = new Date(Date.parse(`${end}T00:00:00Z`) - DAY_RANGE_MS).toISOString().slice(0, 10);
+  return `${String(start).slice(5, 10)} – ${last.slice(5, 10)}`;
+}
+
+/** One unbreakable token (a date, a range, a clock time, a number with a spaced unit) → the line wraps around it, never inside it. */
+function NoWrap({ children, className = '' }) {
+  return <span className={`whitespace-nowrap ${className}`.trim()}>{children}</span>;
+}
+
+/**
+ * A date range kept whole, alone or inside its sentence; the sentence stays a plain string and wraps around the token.
+ * Text content equals the sentence, so no invisible character ever enters the copy.
+ * @param range - the range token, formatDayRange's output
+ * @param children - the plain-string sentence carrying it (e.g. a tile trend); absent → the token alone; a sentence without the token renders as is
+ */
+function DateRange({ range, children = range }) {
+  const text = children ?? '';
+  const at = range && typeof text === 'string' ? text.lastIndexOf(range) : -1;
+  if (at < 0) return text;
+  return <>{text.slice(0, at)}<NoWrap>{range}</NoWrap>{text.slice(at + range.length)}</>;
+}
+
 /**
  * Per-region fetch state, stale-while-revalidate. `status` says what is showable
  * ('loading' | 'ready' | 'error'), `busy` says a request is in flight, `error` may sit beside held data.
@@ -1485,7 +1515,8 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, shellReg
     <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={isBusy ? 'true' : undefined}>
       <span aria-hidden="true" className={`mr-1 ${toneClass}`}>{glyph}</span>
       {hasSrWord && <span className="sr-only">{word}</span>}
-      {state !== 'loading' && <span data-stamp-text="true">{text}</span>}
+      {/* the clock time never breaks from "as of", whatever the header cluster around the stamp does */}
+      {state !== 'loading' && <span data-stamp-text="true" className="whitespace-nowrap">{text}</span>}
     </span>
   );
 }
@@ -2199,7 +2230,7 @@ window.UI = {
   getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
-  formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
+  formatKstDateTime, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DateRange,
   formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,

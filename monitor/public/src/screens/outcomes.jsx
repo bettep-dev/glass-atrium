@@ -976,7 +976,7 @@ function buildBandTrendsO(data, tiles, priorAttentionCount) {
 function getBandTrendO(tile, priorTile, prior) {
   const { LOW_N_MIN } = window.UI;
   if (tile.count === null || priorTile.count === null || tile.population < LOW_N_MIN) return null;
-  const priorRange = formatDayRangeO(prior);
+  const priorRange = window.UI.formatDayRange(prior);
   if (priorTile.population < LOW_N_MIN) return `No comparison — too few records in ${priorRange}`;
   const points = (tile.count / tile.population - priorTile.count / priorTile.population) * 100;
   const change = Math.abs(points) < 0.05 ? 'Level' : `${points > 0 ? 'Up' : 'Down'} ${Math.abs(points).toFixed(1)} pts`;
@@ -986,12 +986,6 @@ function getBandTrendO(tile, priorTile, prior) {
 
 function formatDayO(date) {
   return String(date).slice(5, 10);
-}
-
-// period_end is exclusive → the last day shown is the day before it
-function formatDayRangeO({ period_start: start, period_end: end }) {
-  const last = new Date(Date.parse(`${end}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
-  return `${formatDayO(start)} – ${formatDayO(last)}`;
 }
 
 function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry, shared }) {
@@ -1028,9 +1022,15 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
     : null;
   const bandTiles = buildStatusBandTilesO(analyticsState.data, attentionCount);
   const trends = buildBandTrendsO(analyticsState.data, bandTiles, attentionState.data?.priorTotal ?? null);
+  const prior = analyticsState.data?.overall?.prior_window;
+  // trend stays a plain string (the aria-label reads it); the range token rides beside it for the render
+  const withTrend = (tile) => {
+    const trend = trends[tile.key] ?? null;
+    return { ...tile, trend, trendRange: trend ? window.UI.formatDayRange(prior) : null };
+  };
   // stale or partial read → an ok tile drops to neutral, warn/crit kept (the verdict's rule)
   const tiles = bandTiles
-    .map((tile) => ({ ...tile, trend: trends[tile.key] ?? null }))
+    .map(withTrend)
     .map((tile) => (freshness ? { ...tile, tone: getFreshnessVerdict({ ...freshness, tone: tile.tone }).tone } : tile));
   // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.
   const windowLabel = `${windowDays}d`;
