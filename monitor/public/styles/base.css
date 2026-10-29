@@ -166,6 +166,10 @@ details[open] > summary .chevron {
 		border-color 0.12s;
 	cursor: pointer;
 }
+/* a toggle rests on the control edge; declared before :hover (equal specificity) so hover still lifts it to --faint */
+.btn[aria-pressed] {
+	border-color: rgb(var(--control-edge));
+}
 .btn:hover {
 	background: rgb(var(--sunken));
 	border-color: rgb(var(--faint));
@@ -258,6 +262,10 @@ details[open] > summary .chevron {
 	appearance: none;
 	margin: 0;
 	cursor: pointer;
+}
+/* a toggle chip rests on the control edge → its box reads at rest, not only once selected; non-toggle pills keep --line */
+.pill--interactive[aria-pressed] {
+	border-color: rgb(var(--control-edge));
 }
 
 /* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────
@@ -473,10 +481,11 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	border-bottom: none;
 }
 
-/* the outline is a shadow ring, not a border → the group is exactly its 32px buttons tall, so it fits the 40 control cell like every other control */
+/* the outline is a shadow ring, not a border → the group is exactly its 32px buttons tall, so it fits the 40 control cell like every other control.
+   The ring takes the control edge and the dividers stay --line → the group reads as one box, not as separate buttons */
 .seg {
 	display: inline-flex;
-	box-shadow: 0 0 0 1px rgb(var(--line));
+	box-shadow: 0 0 0 1px rgb(var(--control-edge));
 	border-radius: var(--radius-control);
 	overflow: hidden;
 	background: rgb(var(--elev));

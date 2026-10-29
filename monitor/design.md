@@ -502,7 +502,7 @@
 - **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · 1px `--line` · min-height 22 · padding 3px 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
 - tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status).
   - glyph 명암 (`--sunken` shell 위): light warn 3.15 · info 3.38 · ok 3.45 · crit 4.63 · dark ≥ 6.62.
-- 변형: `.pill--absent` (투명 · `--faint` · dashed `--line`) · `.pill--meta` (소문자) · `.pill--count` (mono tabular) · `.pill--ctl-h` (같은 행 `.field` 와 높이, `--ctl-h`) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · pressed = selected fill).
+- 변형: `.pill--absent` (투명 · `--faint` · dashed `--line`) · `.pill--meta` (소문자) · `.pill--count` (mono tabular) · `.pill--ctl-h` (같은 행 `.field` 와 높이, `--ctl-h`) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · pressed = selected fill · a toggle (`[aria-pressed]`) rests on a `--control-edge` border, non-toggle pills keep `--line`).
 - glass 위에 올리지 않는다 (AP-6).
 
 ### 7.4 Button — `.btn`
@@ -516,6 +516,7 @@
 - 긍정 action (improvement Approve) = `.btn sm` + ✓ glyph `text-ok`, 라벨 `--ink`.
 - `.sm`: padding 6px 8px (`--space-1_5` × `--space-2`) · `--fs-meta`. `.icon`: 32×32 정사각, padding 0.
 - disabled: opacity 0.5 · `not-allowed`. pressed (`aria-pressed="true"`) = `--selected-fill` / `--selected-ink`.
+- toggle (`[aria-pressed]`) rests on a `--control-edge` border; the rule sits before `.btn:hover` (equal specificity) so hover still lifts the edge to `--faint`.
 
 ### 7.5 Table — `Table` · `TableHead` (`.tbl`)
 
@@ -535,7 +536,7 @@
 
 ### 7.6 Segmented — `.seg`
 
-- `.seg`: `--elev` · 1px `--line` · `--radius-control` · clip. 버튼 padding 6px 8px · line-height `--lh-ctl` · min-height 32 · `--fs-meta` · 500 in every state · `--dim` · 사이 1px `--line`.
+- `.seg`: `--elev` · 1px `--control-edge` ring (box-shadow) · `--radius-control` · clip. 버튼 padding 6px 8px · line-height `--lh-ctl` · min-height 32 · `--fs-meta` · 500 in every state · `--dim` · 사이 1px `--line` — dividers stay on `--line`, so the 3:1 ring reads as one box and the group never splits into separate buttons.
 - **filled selected 상태는 하나**: `.seg button.active` · `[aria-pressed]` · `.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · stage menu `[aria-checked]` 모두 `--selected-fill` / `--selected-ink`. The selected rule sets no weight — each atom keeps its one resting weight (500), so selecting never widens the box (`test/ui.control-state.e2e.test.ts`).
   - stage menu 의 checked 항목은 fill 에 더해 check mark — 색이 유일한 신호가 되지 않게.
 - `.seg` focus ring 은 inset (`outline-offset` = −ring width) — `.seg` 가 자식을 clip 하므로.

@@ -1,5 +1,6 @@
 // Control-atom state invariance read in a real browser: no state of .btn, a .seg option or .pill--interactive changes its
-// border-box, so a selected option never reads as a bigger box than its siblings.
+// border-box, so a selected option never reads as a bigger box than its siblings; a resting toggle's edge reads against its card
+// at 3:1 in both themes, so its box is visible before it is selected.
 // Runner: npx tsx --test test/ui.control-state.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -8,6 +9,8 @@ import { fileURLToPath } from "node:url";
 
 import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
+
+import { contrastRatio, parseColor } from "./lib/wcag-contrast.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -22,7 +25,7 @@ const ATOMS = [
   { name: "a toggle button", id: "btn", markup: `<button type="button" class="btn" data-atom="btn" aria-pressed="false">Normal range</button>` },
   { name: "a small toggle button", id: "btn-sm", markup: `<button type="button" class="btn sm" data-atom="btn-sm" aria-pressed="false">Normal range</button>` },
   { name: "a segmented option", id: "seg",
-    markup: `<div class="seg"><button type="button" data-atom="seg" aria-pressed="false">30d</button><button type="button" aria-pressed="false">90d</button></div>` },
+    markup: `<div class="seg" data-atom="seg-group"><button type="button" data-atom="seg" aria-pressed="false">30d</button><button type="button" aria-pressed="false">90d</button></div>` },
   { name: "a filter chip", id: "pill",
     markup: `<button type="button" class="pill pill--interactive" data-atom="pill" aria-pressed="false">Open 17</button>` },
 ] as const;
@@ -30,6 +33,7 @@ const ATOMS = [
 const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
   <div class="card" style="padding: 16px; flex-direction: row; align-items: flex-start; gap: 8px;">
     ${ATOMS.map((atom) => atom.markup).join("\n    ")}
+    <button type="button" class="btn" data-atom="btn-plain">Refresh</button>
   </div>
 </body></html>`;
 
@@ -120,3 +124,48 @@ for (const atom of ATOMS) {
     }
   });
 }
+
+// the edge each toggle rests on: a bordered atom's border, the .seg group's shadow ring
+const RESTING_EDGES = [
+  { name: "a toggle button's border", id: "btn", prop: "border-top-color" },
+  { name: "a small toggle button's border", id: "btn-sm", prop: "border-top-color" },
+  { name: "a filter chip's border", id: "pill", prop: "border-top-color" },
+  { name: "a segmented group's ring", id: "seg-group", prop: "box-shadow" },
+] as const;
+const THEMES = ["light", "dark"] as const;
+const UI_CONTRAST = 3;
+
+const readCardFill = (): Promise<string> =>
+  page.$eval(".card", (el) => getComputedStyle(el).backgroundColor);
+
+// box-shadow computes as `rgb(…) 0px 0px 0px 1px` → its colour alone
+const getEdgeColor = (value: string): string => {
+  const color = value.match(/rgba?\([^)]*\)/)?.[0];
+  assert.ok(color, `"${value}" carries no rgb() colour`);
+  return color;
+};
+
+async function withTheme<T>(theme: (typeof THEMES)[number], read: () => Promise<T>): Promise<T> {
+  await page.evaluate((next) => { document.documentElement.dataset.theme = next; }, theme);
+  try { return await read(); } finally { await page.evaluate(() => { document.documentElement.dataset.theme = "light"; }); }
+}
+
+describe("a resting toggle draws an edge that reads against its card at 3:1", () => {
+  for (const edge of RESTING_EDGES) {
+    for (const theme of THEMES) {
+      test(`${edge.name} in ${theme}`, async () => {
+        const [color, fill] = await withTheme(theme, async () => [getEdgeColor(await readStyle(edge.id, edge.prop)), await readCardFill()]);
+        const ratio = contrastRatio(parseColor(color), parseColor(fill));
+        assert.ok(ratio >= UI_CONTRAST, `${theme} ${edge.id} edge ${color} on card ${fill} = ${ratio.toFixed(2)}:1 < ${UI_CONTRAST}:1`);
+      });
+    }
+  }
+});
+
+test("a toggle button's hover edge is the plain button's hover edge, so the resting edge never outranks hover", async () => {
+  const readHoverEdge = async (id: string): Promise<string> => {
+    await forcePseudo(id, ["hover"]);
+    try { return await readStyle(id, "border-top-color"); } finally { await forcePseudo(id, []); }
+  };
+  assert.equal(await readHoverEdge("btn"), await readHoverEdge("btn-plain"));
+});
