@@ -283,6 +283,22 @@ run_hook_command() {
   [[ "${row}" == "fetch-pipe-shell" ]] || { echo "row: ${row}"; return 1; }
 }
 
+@test "trash purge command: an invocation of the installed scripts/ga-trash-purge.sh → pass" {
+  # The command must ship, or the row below pins a call to nothing.
+  [[ -x "${BATS_TEST_DIRNAME}/../../scripts/ga-trash-purge.sh" ]] || { echo "scripts/ga-trash-purge.sh missing or not executable"; return 1; }
+  # shellcheck disable=SC2016  # literal ~ / $HOME text the hook must judge, never expanded here
+  local rows=(
+    'bare entry@@~/.glass-atrium/scripts/ga-trash-purge.sh old-build'
+    'quoted $HOME script and entry with a space@@"$HOME/.glass-atrium/scripts/ga-trash-purge.sh" "$HOME/.Trash/old build"'
+    'absolute script, tilde entry, chained@@bash /Users/someone/.glass-atrium/scripts/ga-trash-purge.sh ~/.Trash/x && echo done'
+  )
+  local row
+  for row in "${rows[@]}"; do
+    run_hook_command "${row#*@@}"
+    [[ "${status}" -eq 0 && -z "${output}" ]] || { echo "row: ${row%%@@*} → status ${status}: ${output}"; return 1; }
+  done
+}
+
 # Header relabel (clauded-docs/290 T18): the hook is a heuristic backstop, not a
 # security boundary. These assertions grep the script header — they gate the
 # labeling ACs, not matching behavior (byte-identical behavior is covered by the
