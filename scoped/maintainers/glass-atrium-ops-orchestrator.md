@@ -22,16 +22,30 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 | `#### Resilient Workflow Authoring [ORCHESTRATOR]` and its `#####` children | frozen `agents/` citations at this level · `schema-cap-authority-single-site.bats` |
 | `##### Absolute schema-cap rules` | the rule phrases `orchestrator-skill-schema-example.bats` greps in this file |
 | `##### Copyable helper (robustAgent)` | its `js` fence, replayed by `workflow-gate-completion-channel.bats` |
-| `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]` | the `AnalysisSchema` fence `orchestrator-skill-schema-example.bats` reads — repointable (below) |
 | `##### Stage gates` | revision caps cited by `references/review-rounds.md` · `scoped/maintainers/orchestrator-role.md` |
 | `###### Copyable skeletons — 2-phase (verify → implement) and its 3-phase variant` | `###### Machine-checked skeletons` suites · the gate hook header's promotion condition |
 | `##### Entry-class token placement (ultracode — DEV workflow)` | its declaration fence, read by the same suites |
 
-### Relocatable — `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]`
+### Relocated — `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]`
 
-- This block and its `AnalysisSchema` fence are relocatable: no frozen `agents/` file and no hook message cites them.
-- Every pin is repointable in the pass that moves it:
-  - `hooks/test/orchestrator-skill-schema-example.bats` — reads the `AnalysisSchema` fence and its `completion_block` member from the skill file.
-  - the **Print-block-then-emit** bullet under `##### Authoring idioms that implement those rules` — its reference form and machine-checked-repetition sub-bullets cite the fence.
-  - in-file prose cites — `#### Resource Budget` (the FLOOR bullet) · `#### Read-Extent Discipline [ORCHESTRATOR]` → **Scope of this duty**.
-- Owner of the move: the follow-on prompt-slimming plan (clauded-docs/43821 brief), which supersedes the remaining rank-14 sub-passes.
+- The heading stays in the skill as a two-line pointer; its body and `AnalysisSchema` fence live in `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → `## Analysis-Track Right-Sizing (input-side)`.
+- Pins that read the moved fence from the reference, so a further move repoints them in the same pass:
+  - `hooks/test/orchestrator-skill-schema-example.bats` → `EXEMPLAR` (D1–D3, AC13).
+  - `hooks/test/workflow-gate-completion-channel.bats` → `ANALYSIS_REF` (both skeleton floors).
+- Citers of the moved section:
+  - `references/delegation-prompt.md` → `## Resource Budget` (the floor bullet) · `## Read-Extent Discipline` → **Scope of this duty**.
+  - the skill's **Print-block-then-emit** bullet (via the kept heading).
+  - `hooks/enforce-workflow-verify-stage.sh` → `PROMOTION CONDITION` — both sentences name the reference beside the skill; verbatim pin: `enforce-workflow-verify-stage.bats` → `schema-cap(promotion)`.
+
+### Held cap exception — `## Core Process`
+
+- This H2 stays over the 8 KB H2 cap because it contains the held `### Architecture Patterns [ORCHESTRATOR]`, itself over 8 KB.
+- Every other H3 under it is held to the 3 KB H3 cap, read as 3,000 B (UTF-8, heading to the next H3); re-measure the H2 once that H3's pins retire.
+
+### Relocated — Agent selection and delegation-prompt detail
+
+- Each heading stays in the skill as a pointer stating its duty; bodies live in `skills/glass-atrium-ops-delegation-contracts/references/`:
+  - `agent-selection.md` ← `#### Selection procedure` · the `#### Ordering caveat` heading · `#### Compound Task Examples` · `#### Routing-Decision Record (observability convention)` · `#### Routing Verification (LLM-as-Judge)`.
+  - `delegation-prompt.md` ← `#### Resource Budget` · `#### Prompt-content aids` · `#### Read-Extent Discipline [ORCHESTRATOR]` · `#### Delegation Information-Hiding [ORCHESTRATOR]`.
+- External citer repointed: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Routing output: team schema, size, and correlation ID` → **Example**.
+- No test, hook message or `agents/` file reads the moved text.

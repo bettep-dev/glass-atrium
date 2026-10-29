@@ -1,6 +1,6 @@
 ---
 name: glass-atrium-ops-delegation-contracts
-description: 'Orchestrator-only delegation contracts behind pointers in skills/glass-atrium-ops-orchestrator-role.md and skills/glass-atrium-ops-orchestrator.md: the [AGENT-COMPOSITION] declaration, block-* verdicts, [SIZE-EST] sizing, the [SCOPE] parser and author-rule detail, worktree isolation, plan edge discovery, the pre-merge live-deploy gate, review-round routing, the Deploy-Safety Idiom, and Stage-2, exposure and failure-recovery detail. Use when authoring a Workflow script that spawns dev-* agents, sizing or splitting a DEV or schema-mode analysis spawn, reading a block-* verdict, checking why a [SCOPE] line gave no signal, isolating concurrent tracks, classifying a plan''s predecessor edges, composing or routing a review round, copying files to a live install, or deploying before the PR. Do NOT use inside a subagent, for the [SCOPE] grammar line or its binding author rules (role file → Context Handoff Size), or for workflow skeletons, sentinel placement and schema caps (skills/glass-atrium-ops-orchestrator.md).'
+description: 'Orchestrator-only delegation contracts behind pointers in skills/glass-atrium-ops-orchestrator(-role).md: the [AGENT-COMPOSITION] declaration, block-* verdicts, [SIZE-EST] sizing, [SCOPE] parser and author-rule detail, and Stage-2, exposure and failure-recovery detail. Use when routing a request to agents or writing a delegation''s budget fields, read extents or plan content; authoring a Workflow script that spawns dev-* agents; sizing or splitting a DEV or schema-mode analysis spawn; reading a block-* verdict; checking why a [SCOPE] line gave no signal; isolating concurrent tracks; classifying a plan''s predecessor edges; composing or routing a review round; copying files to a live install (Deploy-Safety Idiom); or deploying before the PR (pre-merge live-deploy gate). Do NOT use inside a subagent, for the [SCOPE] grammar line or its binding author rules (role file → Context Handoff Size), or for verify-stage workflow skeletons, sentinel placement and schema caps (skills/glass-atrium-ops-orchestrator.md).'
 ---
 
 # Delegation Contracts (orchestrator only)
@@ -22,6 +22,7 @@ description: 'Orchestrator-only delegation contracts behind pointers in skills/g
 - Reading why a Failure Recovery stage is or is not enforced → the failure-recovery backing.
 - Composing a review round, or routing one that does not converge → Review rounds and reviewer prompts.
 - Copying files toward a live install → the Deploy-Safety Idiom.
+- Routing a request to agents, or writing a delegation's budget fields, read extents or plan content → Agent selection · Delegation prompt content.
 - A spawn gate blocked or advised on one of these tokens → the reference file for that token (Reference Index).
 
 ## Reference Index
@@ -52,7 +53,12 @@ References whose pointer site is `skills/glass-atrium-ops-orchestrator.md`, not 
 | Review rounds and reviewer prompts | `references/review-rounds.md` | `### Quality Gates [ORCHESTRATOR]` → `#### Review rounds and reviewer prompts` | the trigger (every review round, both paths), the reviewer-side counterpart | non-convergence routing table, reviewer-prompt content |
 | Architecture patterns (pipeline combinations, Agent Teams) | `references/architecture-patterns.md` | `#### Explicit Pipeline Combinations [ORCHESTRATOR]` · `#### Agent Teams Hybrid [ORCHESTRATOR]` | when a Pipeline is enforced, when Agent Teams apply | combinations, stage ordering, ultracode mapping, the Agent Teams table, rules, anti-patterns, priority |
 | Workflow JS parse hazards | `references/workflow-js-parse-hazards.md` | `#### Resilient Workflow Authoring [ORCHESTRATOR]` → `##### JS parse hazards (a workflow script is plain JavaScript)` | what it binds (every workflow script), when it fires | the two forms, their remedies, the Bad/Good example, hook coverage |
+| Analysis-Track Right-Sizing | `references/delegation-size-discipline.md` | `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]` | the per-track bounds duty, when it fires | rule SoT per bound, the three deltas, the `AnalysisSchema` skeleton and its pins |
 | Deploy-Safety Idiom | `references/deploy-safety-idiom.md` | `#### Deploy-Safety Idiom (drift-preserving live-copy + verify) [ORCHESTRATOR]` | what it binds, advisory status, when in the cycle the deploy runs | the sanctioned flows, copy-step anti-patterns, the bash 3.2-safe idiom |
+| Agent selection | `references/agent-selection.md` | `### Capability-Based Agent Selection [ORCHESTRATOR]` | each routing duty and when it fires, the Return Schema, 3-layer safety | the four steps, ordering caveat, compound examples, record format, verification checklist |
+| Delegation prompt content | `references/delegation-prompt.md` | `### Delegation/Communication Rules [ORCHESTRATOR]` | the six elements, the budget fields, read-extent and plan-not-request duties | budget tables, prompt aids, read-extent rules and backing, information-hiding rules |
+
+- Skeleton exception: the `AnalysisSchema` fan-out skeleton (Analysis-Track Right-Sizing row) is the one workflow skeleton this skill holds; verify-stage skeletons stay in `skills/glass-atrium-ops-orchestrator.md`.
 
 ## Edit Rules
 
@@ -69,3 +75,6 @@ References whose pointer site is `skills/glass-atrium-ops-orchestrator.md`, not 
   - `references/deliverable-exposure.md` → `## Exposure Determination — signals and routing` · `## glass-atrium-dev-front markup exception — detail`.
   - `references/architecture-patterns.md` → `## Explicit Pipeline Combinations` · `## Agent Teams Hybrid`.
   - `references/workflow-js-parse-hazards.md` → `## The two forms and their remedies`.
+  - `references/delegation-size-discipline.md` → `## Effort-scaling table` · `## Analysis-Track Right-Sizing (input-side)`.
+  - `references/agent-selection.md` → `## Selection procedure` · `## Ordering caveat (ultracode verify-gate)` · `## Compound Task Examples` · `## Routing-Decision Record` · `## Routing Verification (LLM-as-Judge)`.
+  - `references/delegation-prompt.md` → `## Resource Budget` · `## Prompt-content aids` · `## Read-Extent Discipline` · `## Delegation Information-Hiding`.

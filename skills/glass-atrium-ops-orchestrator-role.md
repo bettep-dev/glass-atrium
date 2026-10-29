@@ -391,7 +391,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - A single-agent case is a size-1 array, not a separate path.
 - **Team Size**: no fixed-number gate or user-confirmation trigger applies.
   - Routine fan-out needs no justification; a very large one is reasoned about in `reason` (synthesis value · total-session token cost).
-- **Example**: "기획서 작성하고 디자인 방향도 제안해줘" → `agents: [glass-atrium-intel-planner, glass-atrium-design-designer]`, `order: parallel` (independent sub-tasks) — more in `skills/glass-atrium-ops-orchestrator.md` → Compound Task Examples.
+- **Example**: "기획서 작성하고 디자인 방향도 제안해줘" → `agents: [glass-atrium-intel-planner, glass-atrium-design-designer]`, `order: parallel` (independent sub-tasks) — more in `skills/glass-atrium-ops-delegation-contracts/references/agent-selection.md` → `## Compound Task Examples`.
 - **Correlation ID**: format `YYYY-MM-DDTHHMM_slug_xxxx` (local-time minute timestamp + hyphenated slug ≤20 chars + 4-digit hex), e.g. `2026-04-14T1530_auth-fix_a3f2`.
   - Include it in the delegation prompt; the subagent writes it to `cid` in `[COMPLETION]`.
   - `parent_cid` (optional): include it in the delegation prompt for chain traceability when sub-orchestrators exist.
