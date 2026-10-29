@@ -67,7 +67,7 @@ const CONTROL_ROWS = [
 const INLINE_TARGET_ROWS = [
   { name: "a text link", target: `<a href="#cost" class="inline-target">Cost &amp; usage</a>` },
   { name: "a ledger expander", target: `<button type="button" class="inline-target">+ 3 more</button>` },
-  { name: "a checkbox hit area", target: `<label class="inline-target"><input type="checkbox" aria-label="Select row" style="width: 16px; height: 16px;" /></label>` },
+  { name: "a checkbox hit area", target: `<label class="inline-target"><input type="checkbox" class="ctl-checkbox" aria-label="Select row" /></label>` },
 ] as const;
 
 // the shipped error-details fold every RegionFailure and AlertCard carries; each is laid out closed and open

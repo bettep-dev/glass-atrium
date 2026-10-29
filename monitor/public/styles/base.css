@@ -35,6 +35,14 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	vertical-align: middle;
 	min-height: 24px;
 }
+/* native checkbox visual (C24 inline target, §7.15) — 16 box on the accent; its label takes .inline-target for the 24 hit area */
+.ctl-checkbox {
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	accent-color: rgb(var(--accent));
+	cursor: pointer;
+}
 
 /* page header — top-aligned row; the h1 line box is one control height, so the controls and the
    freshness line center on the title line with or without a sub-line. Narrow → the cluster wraps below the title. */

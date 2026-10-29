@@ -2451,16 +2451,20 @@ function FilterPanelO({
 
           {/* Forensic 'show all' — include_all=1 lifts the server registry gate. */}
           <FilterAxisGroup label="Record scope">
-            <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={includeAll}
-                onChange={(e) => onToggleIncludeAll(e.target.checked)}
-                aria-label="Show all records including non-registry and de-registered agents"/>
-              <span className={includeAll ? 'text-ink' : 'text-dim'}>
-                Show all (incl. non-registry)
-              </span>
-            </label>
+            {/* a flex item has no line box → the 24 target sits on the group's 4 label step */}
+            <div className="flex">
+              <label className="inline-target gap-2 fs-meta cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="ctl-checkbox"
+                  checked={includeAll}
+                  onChange={(e) => onToggleIncludeAll(e.target.checked)}
+                  aria-label="Show all records including non-registry and de-registered agents"/>
+                <span className={includeAll ? 'text-ink' : 'text-dim'}>
+                  Show all (incl. non-registry)
+                </span>
+              </label>
+            </div>
           </FilterAxisGroup>
         </div>
       </details>

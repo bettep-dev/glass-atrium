@@ -1,7 +1,8 @@
 // Task results controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the
 // screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" and the result drawer's record
 // "Previous / Next" draw the same small ghost button at rest and on hover, the filter panel's "More filters" fold opens on the
-// disclosure atom, each keeps one box in every state, and a card head's static pill stands on the 32 control height (§7.16).
+// disclosure atom, each keeps one box in every state, the panel's Record scope checkbox stands on the C24 inline-target tier, and a
+// card head's static pill stands on the 32 control height (§7.16).
 // Runner: npx tsx --test test/outcomes.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -38,7 +39,7 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   button { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; background-color: transparent; }
   .flex { display: flex; } .items-center { align-items: center; } .justify-between { justify-content: space-between; }
   summary { display: list-item; }
-  .gap-2 { gap: 0.5rem; } .mr-auto { margin-right: auto; } .px-4 { padding-left: 1rem; padding-right: 1rem; }
+  .gap-2 { gap: 0.5rem; } .mb-1 { margin-bottom: 0.25rem; } .mr-auto { margin-right: auto; } .px-4 { padding-left: 1rem; padding-right: 1rem; }
   .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .border-t { border-top-width: 1px; }
   .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
   .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; }`;
@@ -90,7 +91,7 @@ const VARIANT_PROPS = ["border-top-color", "border-top-width", "background-color
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
-const { readBox, forcePseudo, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
+const { readBox, readStyle, setOpen, forcePseudo, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -161,6 +162,32 @@ describe("the filter panel's More filters fold opens on the disclosure atom", ()
   test("its summary is a 32 disclosure with the chevron as the one open-state cue, turned 90 once open", () => assertFoldOnOneBox(MORE_FILTERS, summary));
 
   test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(summary));
+});
+
+describe("the filter panel's Record scope checkbox stands on the C24 inline-target tier", () => {
+  const hit = `${MORE_FILTERS} label:has(> input[type="checkbox"])`;
+  const box = `${hit} > input`;
+
+  test("its label is a 24 hit area around a 16 accent box, the text on the box's centre line, 4 below the group label", async () => {
+    await setOpen(MORE_FILTERS, true);
+    try {
+      const [hitBox, visual, text, groupLabel] = await Promise.all([readBox(hit), readBox(box), readBox(`${hit} > span`), readBox(`${MORE_FILTERS} div:has(input[type="checkbox"]) > div.fs-meta`)]);
+      const accent = await page.$eval(hit, (el) => {
+        const probe = el.appendChild(document.createElement("i"));
+        probe.style.accentColor = "rgb(var(--accent))";
+        const value = getComputedStyle(probe).accentColor;
+        probe.remove();
+        return value;
+      });
+      assert.ok(hitBox.height >= 24 && hitBox.width >= 24, `hit ${hitBox.width}x${hitBox.height}`);
+      assert.deepEqual([visual.width, visual.height], [16, 16], "checkbox visual");
+      assert.equal(await readStyle(box, "accent-color"), accent);
+      assert.ok(Math.abs(text.top + text.height / 2 - (visual.top + visual.height / 2)) < 0.5, "one centre line");
+      assert.equal(hitBox.top - groupLabel.bottom, 4, "label-to-content step");
+    } finally {
+      await setOpen(MORE_FILTERS, false);
+    }
+  });
 });
 
 describe("a static pill in a card head stands on the head's 32 control height", () => {
