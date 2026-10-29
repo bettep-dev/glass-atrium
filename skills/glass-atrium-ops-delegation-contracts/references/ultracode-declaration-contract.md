@@ -40,7 +40,8 @@
 - **HONESTY (the accepted floor, stated once)**: declaration presence, grammar and declaration↔code consistency are mechanical; role truthfulness is honor-system.
   - A lying declaration passes — the same trust model as the sibling attestation tokens.
   - Never describe this gate as semantic enforcement of the verify contract.
-- **A legitimate pre-verify Discovery/Design phase stays compliant** by either route; a Discovery `dev-*` is truthfully a declared `impl:` spawn, so one ahead of every reviewer trips `block-order`:
+- **A legitimate pre-verify Discovery/Design phase stays compliant** by either route; a Discovery `dev-*` is truthfully a declared `impl:` spawn, and bound as an impl slot ahead of every reviewer it trips `block-order` (slot binding: **Exit-2 verdicts** → the `block-order` bullet):
   - **(a) non-DEV Discovery** — run pre-verify analysis with a non-DEV agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / Explore), so no dev-* precedes the reviewer.
   - **(b) reviewer-first Contract phase** — front-load a reviewer-first `{glass-atrium-qa-code-reviewer, DEV}` verify (a real Contract phase, never a lone reviewer inserted only to satisfy ordering) before any Discovery dev-*.
+  - Honest scope: a first-spawned Discovery `dev-*` of the verify-dev type is bound as the verify slot, which the gate does not catch — there the routes are an honor-system duty.
 - Sentinel placement, the copy-verbatim declaration-bearing skeletons and the grammar deltas they rely on: `skills/glass-atrium-ops-orchestrator.md` → `##### In-script verify-stage (ultracode)`.
