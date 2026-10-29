@@ -7,9 +7,6 @@
 	outline-offset: var(--focus-ring-offset);
 }
 /* a disclosure chevron marks the open state — instant, so nothing to reduce under prefers-reduced-motion */
-details[open] > summary .chevron {
-	transform: rotate(180deg);
-}
 details[open] > summary.disclosure > .disclosure-chevron {
 	transform: rotate(90deg);
 }
