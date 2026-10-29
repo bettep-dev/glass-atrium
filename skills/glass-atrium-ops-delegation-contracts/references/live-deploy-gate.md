@@ -7,7 +7,7 @@
 `implementation → simplify → review of the modified files → local deploy of the combined unmerged tree → empirical verification on the live install → PR → CI → merge → sha-parity + recovery-snapshot reconcile`
 
 - A prompt-file cycle inserts steps into this order: the pointer site, step 6's **Prompt-file tail**.
-- Why pre-merge: a defect found before the merge is fixed on its branch, while one found after is already in `main`; and a fix delivered to the repo alone leaves live agents running the defect it fixes until it merges.
+- Why pre-merge: a defect found before the merge is fixed on its branch, while one found after is already in `main`; and a fix delivered to the repo alone leaves live agents running the defect it fixes until a post-merge deploy or release delivers it.
 
 ## Steps of the order
 
