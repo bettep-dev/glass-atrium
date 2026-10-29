@@ -73,7 +73,12 @@ const INLINE_TARGET_ROWS = [
   { name: "a ledger expander", target: `<button type="button" class="inline-target">+ 3 more</button>` },
   { name: "a checkbox hit area", target: `<label class="inline-target"><input type="checkbox" class="ctl-checkbox" aria-label="Select row" /></label>` },
 ] as const;
-// each kind again under a same-element type-scale class, as the screens set .fs-meta on a 24 target
+// each kind again under a same-element type-scale class, as the screens set .fs-meta on a 24 target — plus a kind no screen
+// uses yet, so the line-box hold never rests on the element list
+const TYPE_SCALED_ROWS = [
+  ...INLINE_TARGET_ROWS,
+  { name: "an undocumented element kind (a span)", target: `<span class="inline-target">Recent costs</span>` },
+] as const;
 const typeScaled = (target: string): string => target.replace(`class="inline-target"`, `class="inline-target fs-meta"`);
 
 // the shipped error-details fold every RegionFailure and AlertCard carries; each is laid out closed and open
@@ -148,7 +153,7 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
   ${ERROR_DETAILS_ROWS.map((row) => `<div id="${row.id}" style="width: 480px;">${row.markup}</div>` +
     `<div id="${row.id}-open" style="width: 480px;">${row.markup.replace("<details", "<details open")}</div>`).join("\n  ")}
   ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
-  ${INLINE_TARGET_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
+  ${TYPE_SCALED_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
     ${KPI_VALUES.map((value) => `<div id="${value.id}">${value.markup}</div>`).join("\n    ")}
   </div>
@@ -241,7 +246,7 @@ describe("a .tbl row is one 40px line whatever its cells hold", () => {
 
 // flex-centred 24 box + engine-floored half-leading → a fractional line box sets an odd-height face off centre; face-independent check
 describe("an inline target keeps a whole-pixel line box under a type-scale class on the same element", () => {
-  INLINE_TARGET_ROWS.forEach((row, i) => {
+  TYPE_SCALED_ROWS.forEach((row, i) => {
     test(`${row.name} carrying .fs-meta computes a whole-pixel line-height`, async () => {
       const { isScaled, lineHeight } = await page.$eval(`#type-scaled-target-${i} > *`,
         (el) => ({ isScaled: el.matches(".inline-target.fs-meta"), lineHeight: getComputedStyle(el).lineHeight }));

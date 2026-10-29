@@ -37,8 +37,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-height: 24px;
 }
 /* engine-floored half-leading → a fractional ratio box (.fs-meta 13 × 1.4) sets an odd-height face 0.59 off the centre line
-   tier element kinds in the selector → outrank a same-element type-scale class, which keeps only its font size */
-.inline-target:is(a, button, label) {
+   doubled class → outranks a same-element type-scale class on any element kind, which keeps only its font size */
+.inline-target.inline-target {
 	line-height: var(--lh-row);
 }
 /* the one checkbox visual (C24 inline target, §7.15) — a 16 token-drawn box, never the UA widget (light-scheme on a dark surface);
