@@ -1,6 +1,6 @@
 // Learning controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the screen's
 // own style block, rendered from the shipped components: the view toggle, the suggestion board rows and the held-cause fold —
-// each keeps one box in every state (§7.16).
+// each keeps one box in every state (§7.16) — and the Instrumentation corpus-growth value row on one baseline.
 // Runner: npx tsx --test test/improvement.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -22,8 +22,13 @@ const learningScreen = await loadScreenModule(resolve(HERE, "../public/src/scree
   React: createReactStub(),
   localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
 });
-const getMarkup = (component: string, props: Record<string, unknown>): string =>
-  getHtml(renderScreen((learningScreen[component] as Component)(props)) as RenderedNode);
+const instrumentationScreen = await loadScreenModule(resolve(HERE, "../public/src/screens/improvement-instrumentation.jsx"), {
+  UI: ui.UI,
+  React: createReactStub(),
+  ImprovementShared: learningScreen.ImprovementShared,
+});
+const getMarkup = (component: string, props: Record<string, unknown>, screen = learningScreen): string =>
+  getHtml(renderScreen((screen[component] as Component)(props)) as RenderedNode);
 // the screen's style block carries the .fs-* type scale too (TypeScaleStyle renders inside it)
 const SCREEN_CSS = findNodes(renderScreen((learningScreen.ScreenImprovement as Component)({})), (n) => n.type === "style")
   .map((n) => collectText(n))
@@ -67,6 +72,16 @@ const getLane = () =>
     getMarkup("ProposalCardI", { row: { id: 44, pattern_label: LONG, rationale: LONG, status: "applied" }, onClick: noop }),
   ].join("");
 const HELD_CAUSE = getMarkup("HeldCauseGroupI", { bucket: { cause: "missing-approval", label: "Missing approval" }, rows: [] });
+const CORPUS_GROWTH = getMarkup(
+  "CorpusGrowthCardI",
+  {
+    state: {
+      status: "ready",
+      data: { total_audits: 2, audits: [{ cycle_date: "2026-10-28", word_count: 77003, trend_delta: 120 }, { cycle_date: "2026-10-27", word_count: 76883 }] },
+    },
+  },
+  instrumentationScreen,
+);
 
 // the board lane widths the audit measured: 1440 (378) and 820 (226)
 const LANE_WIDTHS = [378, 226] as const;
@@ -77,6 +92,7 @@ const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</
   </div>
   ${LANE_WIDTHS.map((w) => `<div id="lane-${w}" style="width: ${w}px; padding: 0; display: flex; flex-direction: column; gap: 8px;">${getLane()}</div>`).join("")}
   <div id="held" style="width: 420px; padding: 24px;">${HELD_CAUSE}</div>
+  <div id="corpus" style="width: 560px; padding: 24px;">${CORPUS_GROWTH}</div>
 </body></html>`;
 
 const TOGGLE_OPTIONS = ["Operator", "Instrumentation"] as const;
@@ -200,4 +216,39 @@ describe("the held-cause fold opens on the disclosure atom", () => {
   });
 
   test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(SUMMARY));
+});
+
+// the value row's text items, found by their text: the 24 mono figure, its unit, the delta line
+const CORPUS_TEXT = { value: "77,003", unit: "words", delta: "▲ +120 words vs previous" } as const;
+
+describe("the corpus-growth value row sets its figure, unit and delta on one baseline", () => {
+  // a 0 x 0 inline-block appended to an item sits on that item's baseline, so its bottom is the baseline
+  const readTextItem = (text: string) =>
+    page.$eval("[data-testid=corpus-growth-card]", (card, wanted) => {
+      const el = [...card.querySelectorAll("span")].find((span) => span.textContent?.trim() === wanted);
+      if (!el) throw new Error(`no span reads "${wanted}"`);
+      const probe = document.createElement("span");
+      probe.style.cssText = "display: inline-block; width: 0; height: 0;";
+      el.append(probe);
+      const baseline = probe.getBoundingClientRect().bottom;
+      probe.remove();
+      const { left, right } = el.getBoundingClientRect();
+      return { baseline, left, right };
+    }, text);
+
+  test("the figure, its unit and the delta share one baseline", async () => {
+    const value = await readTextItem(CORPUS_TEXT.value);
+    for (const name of ["unit", "delta"] as const) {
+      const { baseline } = await readTextItem(CORPUS_TEXT[name]);
+      assert.ok(Math.abs(baseline - value.baseline) <= 0.5, `${name} baseline ${baseline} vs figure ${value.baseline}`);
+    }
+  });
+
+  test("the unit sits 4 from its figure, and the delta one group step (12) after the unit", async () => {
+    const value = await readTextItem(CORPUS_TEXT.value);
+    const unit = await readTextItem(CORPUS_TEXT.unit);
+    const delta = await readTextItem(CORPUS_TEXT.delta);
+    assert.ok(Math.abs(unit.left - value.right - 4) < 0.01, `figure ↔ unit ${unit.left - value.right}`);
+    assert.ok(Math.abs(delta.left - unit.right - 12) < 0.01, `unit ↔ delta ${delta.left - unit.right}`);
+  });
 });
