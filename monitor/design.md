@@ -699,8 +699,9 @@
   - hover and focus never unclamp truncated text (§5.3 clamp stands)
 - A toggle with a filled selected state rests on the control edge, 3:1 or more against every surface it sits on in both themes; the selected fill's luminance inversion is the non-color cue.
 - A control row has one tier height, every item centered on one line, and ladder gaps: 8 between controls, 12 between groups, 4 from a label to its group, 4 between chips in one group.
-  - `.control-row` ships the card-head geometry (padding 4 / 16 · min-height 48 · gap 8 row / 12 column, no rule below); where the row is the card's head, `.card-head` is the class. Its direct children are groups.
-  - A label and its group wrap as one unit; trailing meta wraps as one right-aligned unit; a static pill takes `.pill--ctl-h`; a text target is 24 or taller (`.inline-target`).
+  - `.control-row` ships the card-head geometry at an 8 block inset (padding 8 / 16 · min-height 48 · gap 8 row / 12 column, no rule below): one line of 32 controls is the card-head's 48, and a wrapped row keeps 8 above its first line and below its last. Where the row is the card's head, `.card-head` is the class. Its direct children are groups.
+  - A label and its group wrap as one unit; a static pill takes `.pill--ctl-h`; a text target is 24 or taller (`.inline-target`).
+  - Trailing meta whose text follows a filter (the Documents count) takes its own right-aligned line in every state, so its length never picks its line or frees room for a growing control; it wraps inside as one right-aligned unit.
 - An overlay head is 48; its title's first line centers on its 32 close button within 1px (§7.8).
 
 ---

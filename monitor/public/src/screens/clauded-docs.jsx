@@ -1177,8 +1177,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-filter-group { display: flex; align-items: baseline; gap: var(--space-1); min-width: 0; }
         /* 4 short of the controls' 32 each way → a rule between the groups, not a box edge */
         .doc-filter-divider { align-self: stretch; width: 1px; margin-block: var(--space-1); background: rgb(var(--line)); }
-        /* trailing meta → one right-aligned wrap unit; it breaks inside only once it alone outgrows the row */
-        .doc-list-meta { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; column-gap: var(--space-2); }
+        /* trailing meta → its own right-aligned line in every state: the count's length never picks its line nor hands its room to the search; it breaks inside only once it alone outgrows the row */
+        .doc-list-meta { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; column-gap: var(--space-2); }
         /* number + unit never split (§5.3) */
         .doc-list-count { white-space: nowrap; }
         /* chip 안 건수 — 그룹 단위 corpus 집계. 없는 수치는 자리도 만들지 않는다. */
@@ -1501,7 +1501,7 @@ function DocListCardCD({
 			style={{ height: "100%", flex: "1 1 auto", width: "100%" }}
 		>
 			<div style={{ borderBottom: "1px solid rgb(var(--line))" }}>
-				{/* one control row — search · the Show and Audience groups, each label wrapping with its chips · the count meta, right-aligned */}
+				{/* one control row — search · the Show and Audience groups, each label wrapping with its chips · the count meta on its own right-aligned line */}
 				<div className="control-row">
 					<div className="relative" style={{ flex: "1 1 200px", minWidth: 180 }}>
 						<span className="doc-search-icon" aria-hidden="true">

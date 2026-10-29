@@ -53,7 +53,7 @@ const docRow = (id: number, extra: Record<string, unknown> = {}) => ({
   author: "glass-atrium-intel-planner", created_at: getDaysAgo(2), member_count: 1, folder_id: null, ...extra,
 });
 // the owner's case: the Open filter pressed with group counts, a revision row, and one row tagged apart → the "unless tagged" meta
-const LIST_CARD = getMarkup("DocListCardCD", {
+const LIST_CARD_PROPS = {
   state: { status: "ready", data: {} },
   rows: [docRow(39825, { supersedes_id: 39801, created_at: getDaysAgo(37) }), docRow(39826, { doc_status: "doc_review" }), docRow(39827, { format: "html" })],
   isSearchMode: false, selectedId: null, pendingDelete: null, hiddenCount: 0, total: 17, docTotal: 25,
@@ -62,7 +62,8 @@ const LIST_CARD = getMarkup("DocListCardCD", {
   expandedFolderIds: new Set(), onToggleExpand: noop, onGroupCreate: noop, onUngroup: noop, onExportZip: noop, onReorder: noop,
   onPickStage: noop, togglingIds: new Set(), optimisticStatusOverrides: new Map(), onSelect: noop, onRetry: noop,
   inlineFilterProps: { keyword: "", docStatusFilter: "open", audienceFilter: "all", onKeywordChange: noop, onDocStatusChange: noop, onAudienceChange: noop },
-});
+};
+const LIST_CARD = getMarkup("DocListCardCD", LIST_CARD_PROPS);
 const VERSION_HISTORY = getMarkup("PredecessorPanelCD", { predecessorId: 39801, currentDoc: { id: 39825 }, onNavigate: noop });
 
 // reference atoms the Documents controls must match
@@ -104,12 +105,17 @@ const setCardWidth = (width: number) => page.$eval("#frame", (el, w) => { (el as
 const centreOf = (box: Box) => (box.top + box.bottom) / 2;
 
 describe("the Documents list toolbar is one control row", () => {
-  test("at a width that holds it on one line, the row is 48 tall and every item centres on its one line", async () => {
+  test("at a width that holds the controls on one line, they centre on the row's first 48 band and the count takes the line below", async () => {
     await setCardWidth(1300);
     const row = await readBox(TOOLBAR);
-    assert.equal(Math.round(row.height), 48, `toolbar row ${row.height}`);
-    const items = await page.$$eval(`${TOOLBAR} > *`, (els) => els.map((el) => { const r = el.getBoundingClientRect(); return (r.top + r.bottom) / 2; }));
-    for (const [index, centre] of items.entries()) assert.ok(Math.abs(centre - centreOf(row)) <= 0.5, `item ${index} centre ${centre} vs row ${centreOf(row)}`);
+    const { controlCentres, metaTop } = await page.$eval(TOOLBAR, (el) => ({
+      controlCentres: [...el.children].filter((child) => !child.classList.contains("doc-list-meta")).map((child) => { const r = child.getBoundingClientRect(); return (r.top + r.bottom) / 2; }),
+      metaTop: el.querySelector(".doc-list-meta")!.getBoundingClientRect().top,
+    }));
+    const bandCentre = row.top + 48 / 2;
+    assert.ok(controlCentres.length >= 2, `${controlCentres.length} control groups`);
+    for (const [index, centre] of controlCentres.entries()) assert.ok(Math.abs(centre - bandCentre) <= 0.5, `item ${index} centre ${centre} vs band centre ${bandCentre}`);
+    assert.equal(metaTop - row.top, 48, "the count line starts one row gap below the band's 32 line");
   });
 
   for (const width of CARD_WIDTHS) {
@@ -184,6 +190,72 @@ describe("each toolbar label wraps with its group, and the count meta wraps as o
     const { text, title } = await page.$eval(counter, (el) => ({ text: el.textContent, title: el.getAttribute("title") }));
     assert.equal(title, text);
   });
+});
+
+// one card per filter state, all at one width → every state is compared box for box with the first; the corpus counts the
+// chips carry stay the same in every state (the server never narrows them by the filter), so only the state itself differs
+const FILTERS = LIST_CARD_PROPS.inlineFilterProps;
+const CORPUS_COUNTS = { open: 23, done: 1094, total: 1117 };
+const FILTER_STATES = [
+  { name: "Open with a short count", props: { total: 23, docTotal: 23, inlineFilterProps: FILTERS } },
+  { name: "Done with a long count", props: { total: 1094, docTotal: 1203, hiddenCount: 12, inlineFilterProps: { ...FILTERS, docStatusFilter: "done" } } },
+  { name: "All with a long count", props: { total: 1117, docTotal: 1240, hiddenCount: 12, inlineFilterProps: { ...FILTERS, docStatusFilter: "" } } },
+  { name: "Agent-only audience", props: { total: 23, docTotal: 23, inlineFilterProps: { ...FILTERS, audienceFilter: "agent-only" } } },
+] as const;
+// the 1440 and 1180 viewports' cards, where the audit saw the count change lines, then the band above
+const STATE_WIDTHS = [1170, 1074, ...CARD_WIDTHS] as const;
+
+describe("no Show or Audience state moves the Documents search, a group, a chip or the count line", () => {
+  let statePage: Page;
+
+  before(async () => {
+    statePage = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+    const cards = FILTER_STATES.map((state, index) =>
+      `<div data-state="${index}">${getMarkup("DocListCardCD", { ...LIST_CARD_PROPS, groupCounts: CORPUS_COUNTS, ...state.props })}</div>`);
+    await statePage.setContent(`<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">${cards.join("")}</body></html>`);
+    await statePage.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await statePage.addStyleTag({ path: resolve(STYLES, "base.css") });
+    await statePage.addStyleTag({ content: SCREEN_CSS });
+  });
+
+  after(async () => {
+    await statePage?.close();
+  });
+
+  for (const width of STATE_WIDTHS) {
+    test(`at a ${width} card every state matches ${FILTER_STATES[0].name}`, async () => {
+      await statePage.$$eval("[data-state]", (frames, w) => { for (const frame of frames) (frame as HTMLElement).style.width = `${w}px`; }, width);
+      // runs in the page → no named helper (tsx keepNames); positions are read from each card's own corner
+      const readings = await statePage.$$eval("[data-state]", (frames, toolbar) => frames.map((frame) => {
+        const origin = frame.getBoundingClientRect();
+        const row = frame.querySelector(toolbar)!;
+        const named = [
+          ["search", row.querySelector("input[type=search]")!],
+          ...[...row.querySelectorAll(".doc-filter-group")].map((el, i) => [`group ${i + 1}`, el]),
+          ...[...row.querySelectorAll("[role=toolbar] button")].map((el) => [`chip ${el.textContent}`, el]),
+        ] as Array<[string, Element]>;
+        return {
+          items: named.map(([name, el]) => {
+            const r = el.getBoundingClientRect();
+            return { name, x: r.left - origin.left, y: r.top - origin.top, width: r.width, height: r.height };
+          }),
+          countLine: row.querySelector("[aria-live]")!.getBoundingClientRect().top - origin.top,
+        };
+      }), TOOLBAR);
+      const [reference, ...others] = readings;
+      for (const [index, reading] of others.entries()) {
+        const state = FILTER_STATES[index + 1].name;
+        assert.deepEqual(reading.items.map((item) => item.name), reference.items.map((item) => item.name), `${state}: the same controls`);
+        for (const [i, item] of reading.items.entries()) {
+          for (const key of ["x", "y", "width", "height"] as const) {
+            const expected = reference.items[i][key];
+            assert.ok(Math.abs(item[key] - expected) <= 0.5, `${state}: ${item.name} ${key} ${item[key]} vs ${expected}`);
+          }
+        }
+        assert.ok(Math.abs(reading.countLine - reference.countLine) <= 0.5, `${state}: count line at ${reading.countLine} vs ${reference.countLine}`);
+      }
+    });
+  }
 });
 
 describe("the ledger's pills sit on the interactive pill tier", () => {

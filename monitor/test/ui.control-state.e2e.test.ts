@@ -39,6 +39,13 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
       <button type="button" class="btn" data-atom="btn-plain">Refresh</button>
     </div>
   </div>
+  <div class="card" style="width: 240px; margin-top: 24px;">
+    <div class="control-row" data-row="wrapped">
+      <button type="button" class="btn">Normal range</button>
+      <button type="button" class="btn">Refresh</button>
+      <span class="pill pill--count pill--ctl-h">17 open</span>
+    </div>
+  </div>
 </body></html>`;
 
 interface Box { width: number; height: number }
@@ -154,6 +161,16 @@ describe("a control row is one 48 line: every item centred on it, 12 between ite
   test("adjacent items — each a group of one here — sit the 12 between-groups step apart", async () => {
     const { items } = await readToolbar();
     for (let i = 1; i < items.length; i += 1) assert.equal(items[i].left - items[i - 1].right, 12, `gap before item ${i}`);
+  });
+
+  test("a row wrapped onto more lines keeps the one-line 8 inset above its first line and below its last", async () => {
+    const { row, items } = await page.$eval('[data-row="wrapped"]', (el) => ({
+      row: el.getBoundingClientRect().toJSON() as DOMRect,
+      items: [...el.children].map((child) => child.getBoundingClientRect().toJSON() as DOMRect),
+    }));
+    assert.ok(items.some((item) => item.top > items[0].bottom), "precondition: the narrow row wraps");
+    assert.equal(Math.min(...items.map((item) => item.top)) - row.top, 8, "inset above the first line");
+    assert.equal(row.bottom - Math.max(...items.map((item) => item.bottom)), 8, "inset below the last line");
   });
 });
 
