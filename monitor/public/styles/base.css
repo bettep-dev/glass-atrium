@@ -554,8 +554,8 @@ button.kpi:hover {
 	line-height: var(--lh-row); /* an h2 label row takes preflight's inherited size and zero margin */
 }
 .kpi--info .kpi-head {
-	/* room for the ⓘ: its 32px box ends at the edge offset below */
-	padding-right: calc(var(--ctl-min-h) - var(--space-2));
+	/* room for the ⓘ (its 32px box ends at the edge offset below) + the 4px meta gap before it */
+	padding-right: calc(var(--ctl-min-h) - var(--space-2) + var(--space-1));
 }
 .kpi-label-text {
 	flex: 0 1 auto;
@@ -571,11 +571,11 @@ button.kpi:hover {
 	line-height: var(--lh-row);
 }
 /* the ⓘ is placed on the label row's centre line, so a tile with one keeps its value on the band's baseline */
+/* offset, never a transform: a transform would trap the fixed drawer this slot renders into a 32px box */
 .kpi-info {
 	position: absolute;
-	top: calc(var(--card-pad) + var(--lh-row) / 2);
+	top: calc(var(--card-pad) + (var(--lh-row) - var(--ctl-min-h)) / 2);
 	right: calc(var(--card-pad) - var(--space-2));
-	transform: translateY(-50%);
 	display: flex;
 }
 /* 2 value row — figure, unit and badge on one baseline; a badge that does not fit wraps below, whole */

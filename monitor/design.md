@@ -492,6 +492,7 @@
 
 - `.kpi`: `<button>` with `onClick`, otherwise `role="group"` · `--elev` · 1px `--line` · `--radius-card` · padding `--card-pad` 16 · min-height 110 · pointer + hover border `--faint` 120ms on `button.kpi` only · 양 테마 shadow · inset 없음 (§6.1).
 - anatomy (`KPI`), one row order in every state: label row `.kpi-head` (`--lh-row` · `.kpi-label-text` `--fs-meta` `--dim` 500, one line + ellipsis + title · `.kpi-aside` · ⓘ `.kpi-info` placed on the row) → value row `.kpi-main` (baseline, margin-top 8) → delta → `.kpi-hint` (margin-top 4 · default `--fs-meta` mono `--faint`, `hintFace` keeps the caller's face) → `.kpi-foot` pinned to the bottom.
+- ⓘ `.kpi-info`: the 32 `CardInfo` button, absolutely placed by offset only — top `--card-pad` + (`--lh-row` − `--ctl-min-h`) / 2 = 10 (its centre on the label row's), right `--card-pad` − 8. No transform: the drawer it opens renders inside this slot, and a transform would make the slot the fixed overlay's containing block. `.kpi--info .kpi-head` reserves `--ctl-min-h` − 8 + 4, so the aside keeps the 4 meta gap before the ⓘ.
 - `.kpi-value`: `--fs-kpi` 32 mono 600 · -0.025em · line-height 1.15 · `.unit`: `--fs-title` 16 `--dim` 500 Pretendard (2:1).
 - `.kpi-delta`: `--fs-meta` mono · 수치 `--dim`. tone 은 화살표 `Icon` 에만 — up `--crit` · down `--ok` · flat `--faint` (`Delta inverse` 로 반전). `delta` 를 넘기는 화면은 없다.
 - `.kpi-spark`: 68×26 sparkline · 우하단 · opacity 0.85.
