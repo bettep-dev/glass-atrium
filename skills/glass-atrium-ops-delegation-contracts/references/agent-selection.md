@@ -8,7 +8,7 @@
 Each step consumes the previous step's output — run them in order.
 
 1. **Task Decomposition**: decompose the request into sub-tasks.
-   - A verb/conjunction structure with 2+ elements ("do A and also B" / "find the cause and fix it" / "research and turn it into a report") is compound — never short-circuit it to a single agent.
+   - Compound shapes the pointer site's 2+-element rule covers: "do A and also B" / "find the cause and fix it" / "research and turn it into a report".
    - **Task Decomposition Questions**: Self-contained? · Boundary interface contract explicit? · Causal chain unsplit?
 2. **Capability Consultation** (hints only, no forced match):
    - **`domains` array** (`~/.glass-atrium/agent-registry.json`): each agent's capability list, compared semantically against each sub-task.
@@ -28,7 +28,7 @@ Each step consumes the previous step's output — run them in order.
   - Verdict: `references/ultracode-declaration-contract.md` → Exit-2 verdicts → `block-order`.
 - The fix is compositional: either route of `skills/glass-atrium-ops-orchestrator.md` → ``### Pre-verify Discovery `dev-*` order guard (ultracode)``.
   - The plain reorder the `block-order` exit-2 message (`hooks/enforce-workflow-verify-stage.sh`) also offers rarely applies, because the analysis has to come first.
-- Declaring it `impl-computed:` (the key for indirectly spawned types) is a false declaration and forbidden, whether or not the gate accepts it.
+- Why `impl-computed:` is wrong here: it is the key for indirectly spawned types, so declaring this direct spawn under it is a false declaration, whether or not the gate accepts it.
 
 ## Compound Task Examples
 
@@ -44,7 +44,7 @@ Representative cases where a compound team return outperforms single matching.
 ## Routing-Decision Record
 
 - The three routing safety layers are LLM self-judgment with no runtime trace, so a low-confidence mis-route cannot be detected after the fact.
-- The orchestrator SHOULD emit a one-line routing-decision record at the point of delegation:
+- Record format, at the point of delegation:
   - `route: <selected agentType(s)> | confidence: <0.0-1.0> | rationale: <≤1 line, cite the matched domains/description>`
   - When confidence < 0.7, append the action taken: `halt+clarify` with the 2-3 candidates presented.
 - **Honest backing**: a recommended self-logged audit trail, not a runtime gate.

@@ -5,7 +5,7 @@
 
 ## Resource Budget
 
-Every delegation prompt MUST declare these fields, so a sub-agent never exhausts its tool chain before emitting a synthesis:
+Field meanings and defaults for the six fields the pointer site requires — they exist so a sub-agent never exhausts its tool chain before emitting a synthesis:
 
 | Field | Meaning | Default |
 |-------|---------|---------|
@@ -44,11 +44,11 @@ Both aids help the sub-agent self-anchor; neither is hook-enforced.
 
 ## Read-Extent Discipline
 
-A read allowlist bounds *which* artifacts a delegation may open; it says nothing about *how much* of each.
-Both halves belong in every delegation prompt — a two-entry allowlist of large artifacts passes a no-sweep rule and still charges the whole document to every member of the fan-out.
+Detail for the extent duty the pointer site states.
+A read allowlist bounds *which* artifacts a delegation may open, never *how much* of each: a two-entry allowlist of large artifacts passes a no-sweep rule and still charges the whole document to every member of the fan-out.
 
-- **Scope of this duty**: every delegation that instructs a read — not only the schema-mode analysis spawns `## Analysis-Track Right-Sizing (input-side)` sizes (`references/delegation-size-discipline.md`).
-- **Bounds the context consulted, never the artifact under work** — extent governs the supporting documents a role opens to do its job; the artifact it is reviewing, debugging, or rewriting is read at whatever depth the role's own body mandates.
+- **Scope of this duty**: it reaches beyond the schema-mode analysis spawns `## Analysis-Track Right-Sizing (input-side)` sizes (`references/delegation-size-discipline.md`).
+- **Bounds the context consulted, never the artifact under work** — the two cases of the pointer site's artifact carve-out, and the role-body text that settles each:
   - **Artifact case** — where a role body mandates a full read of what it works on (`glass-atrium-qa-code-reviewer` "Read changed files in full"), that body governs and this duty does not reach it: changed files are the artifact under review.
   - **Context case — a role body can override the extent duty on context too, stated rather than implied**: `glass-atrium-qa-debugger` "Read related code in full" reaches supporting context, the half this duty otherwise bounds, and it still governs.
     - The override reaches only the context class that body names, for the work that body describes.
@@ -57,7 +57,7 @@ Both halves belong in every delegation prompt — a two-entry allowlist of large
 
 ### Authoring rules
 
-- **Name the extent beside every path** — each entry in a delegation's read scope states the portion the role needs (the section, the heading, the extracted atom), never the bare path alone.
+- **Name the extent beside every path** — the pointer site's duty, met entry by entry; the rules below are how to pick each extent.
 - **Read the passage, not the document containing it** — where the unit of work is an atom already extracted into a scratch file, that file is the read scope; its source file is a pointer to consult on a specific question, never a reading assignment.
 - **Bind only the clauses that bind the role** — an authority document read "in full first" charges every role the whole text while most of it governs neither; cite the clauses the role must honor, and let it fetch the rest by name when a question actually arises.
 - **No open-ended latitude clause** — "if you need its surroundings" / "read more if helpful" is always taken, and taken once per member. State the fallback as a condition with a named target (`on an unresolved cross-reference, read <named section>`), or omit it.
@@ -73,9 +73,8 @@ Both halves belong in every delegation prompt — a two-entry allowlist of large
 
 ## Delegation Information-Hiding
 
-- A DEV (or any implementation) sub-agent receives the verified plan, not the raw user-request transcript.
-  - The plan part it receives: its work stream (direction + the files it touches) · acceptance criteria where the plan or the delegation states them · scoped files · binding constraints.
-  - The orchestrator translates intent into a plan; the DEV executes it.
+- The plan part the implementation sub-agent receives: its work stream (direction + the files it touches) · acceptance criteria where the plan or the delegation states them · scoped files · binding constraints.
+- The orchestrator translates intent into a plan; the DEV executes it.
 
 Rules:
 
@@ -83,4 +82,4 @@ Rules:
   - Why: a DEV cannot honor a constraint it never received.
 - **Hide the ambiguity, not the requirements** — the plan is the disambiguated, constraint-complete contract: what to build plus the binding constraints.
   - Why: a raw request carries off-task detail and unresolved ambiguity the DEV would re-interpret, possibly wrongly.
-- Complements `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size`: that rule caps size (summary only, no raw history); this rule fixes the shape (plan, not request).
+- Complements `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size`: that rule caps size (summary only, no raw history); the pointer site's duty fixes the shape.

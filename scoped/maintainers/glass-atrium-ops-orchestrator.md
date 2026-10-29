@@ -28,7 +28,7 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 
 ### Relocated — `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]`
 
-- The heading stays in the skill as a two-line pointer; its body and `AnalysisSchema` fence live in `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → `## Analysis-Track Right-Sizing (input-side)`.
+- The heading stays in the skill as a three-bullet pointer; its body and `AnalysisSchema` fence live in `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → `## Analysis-Track Right-Sizing (input-side)`.
 - Pins that read the moved fence from the reference, so a further move repoints them in the same pass:
   - `hooks/test/orchestrator-skill-schema-example.bats` → `EXEMPLAR` (D1–D3, AC13).
   - `hooks/test/workflow-gate-completion-channel.bats` → `ANALYSIS_REF` (both skeleton floors).

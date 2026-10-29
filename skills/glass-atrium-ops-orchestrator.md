@@ -127,7 +127,7 @@ Every delegation carries all six: **Goal · Target files/paths · Constraints ·
 
 #### Resource Budget
 
-- Every delegation prompt declares six fields — `tool_budget` · `output_cap` · `reserved_output` · `scope_cap` · `tool_preference` · `spawn_budget`.
+- Every delegation prompt MUST declare six fields — `tool_budget` · `output_cap` · `reserved_output` · `scope_cap` · `tool_preference` · `spawn_budget`.
   - Field meanings and per-role defaults: `skills/glass-atrium-ops-delegation-contracts/references/delegation-prompt.md` → `## Resource Budget`.
 
 #### Handoff rules
