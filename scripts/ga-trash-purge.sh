@@ -9,11 +9,15 @@
 # wider — a pass-through or general rm wrapper would be the smuggling settings.template.json warns of.
 #
 # Behavior:
-#   1. Refuse anything but one operand naming one existing entry directly in a real-directory Trash
+#   1. Refuse anything but one operand naming one existing entry directly in a real-directory Trash; an
+#      operand or HOME holding a control character is refused before any parsing, and every parsed value
+#      is returned through a variable, never $(...), which would strip a trailing newline after validation
 #   2. Ask the rm-wipe exception's own judge (hooks/lib/trash_rm.py, the one home of that rule) about the
 #      canonical delete `rm -rf -- '<HOME>/.Trash/<entry>'`, and require its allow
-#   3. Delete that one path through ga_guard_path (scripts/lib/path-guard.sh); a link entry goes as the
-#      link alone, never followed — a dangling link included
+#   3. Pin the Trash as the working directory (cd -P, then the same inode as the Trash name, which is
+#      still no link), check the absolute path through ga_guard_path (scripts/lib/path-guard.sh), and
+#      delete ./<entry> from that pinned directory, so a Trash swapped for a link mid-run cannot redirect
+#      the delete; a link entry goes as the link alone, never followed — a dangling link included
 #   4. Append one line to ${GA_DATA_ROOT:-$HOME/.glass-atrium}/logs/trash-purge.log, so a Trash
 #      instrument can attribute the purge instead of counting a loss:
 #      <UTC ISO time> TAB purge TAB kind=dir|file|link TAB kib=<N|-> TAB name=<%q> TAB cwd=<%q>
@@ -24,11 +28,13 @@
 #   0  = entry purged and logged
 #   1  = unexpected internal error
 #   2  = usage error (zero or several operands)
-#   3  = HOME unset, empty, relative or the filesystem root
-#   4  = invalid entry name (empty, ".", "..", or a relative path holding "/")
+#   3  = HOME unset, empty, relative, the filesystem root, holding a "." or ".." component, or holding a
+#        control character
+#   4  = invalid entry name (empty, ".", "..", a relative path holding "/", or an operand holding a
+#        newline or other control character)
 #   5  = the operand is the Trash directory itself
 #   6  = the operand lies outside the Trash or deeper than one level below it
-#   7  = the Trash is a symlink or not a directory
+#   7  = the Trash is a symlink or not a directory, or changed into one before the delete
 #   8  = the entry does not exist (lstat: a dangling link exists)
 #   9  = the shared judge hooks/lib/trash_rm.py denied the delete, or could not run
 #   10 = the shared path guard is missing or refused the path
@@ -37,7 +43,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-trap 'echo "ga-trash-purge: ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+trap 'echo "ga-trash-purge: ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2; exit 1' ERR
 
 # Physical directory, so the sibling hooks/ tree resolves from the real install root the way the hook
 # resolves its own lib/ from its own directory.
@@ -57,15 +63,28 @@ refuse() {
   exit "${1}"
 }
 
-# Strips every trailing slash; an all-slash value becomes empty. Args: $1=value
-strip_slashes() {
-  printf '%s' "${1%"${1##*[!/]}"}"
+# Status 0 when the value holds a newline, tab or other control character. Args: $1=value
+has_control_char() {
+  [[ "${1}" == *[[:cntrl:]]* ]]
 }
 
-# The operand's entry name, or a refusal. Args: $1=operand, $2=absolute Trash path
-get_entry_name() {
-  local operand="${1}" trash_dir="${2}" bare name
-  bare="$(strip_slashes "${operand}")"
+# Stores the value with every trailing slash stripped in the named variable; an all-slash value becomes
+# empty. printf -v, never $(...), so no trailing newline is lost. Args: $1=variable name, $2=value
+set_stripped() {
+  printf -v "${1}" '%s' "${2%"${2##*[!/]}"}"
+}
+
+# Status 0 for a name that is one entry directly in the Trash. Args: $1=name
+is_entry_name() {
+  # shellcheck disable=SC2310  # a pure test; its status is the verdict
+  [[ -n "${1}" && "${1}" != "." && "${1}" != ".." && "${1}" != */* ]] && ! has_control_char "${1}"
+}
+
+# Sets ENTRY_NAME to the operand's entry name, or refuses. A variable, never $(...), carries the result,
+# so the name validated here is the name deleted. Args: $1=operand, $2=absolute Trash path
+set_entry_name() {
+  local operand="${1}" trash_dir="${2}" bare="" name
+  set_stripped bare "${operand}"
   # shellcheck disable=SC2016,SC2088  # literal ~ / $HOME text a caller may pass unexpanded
   case "${bare}" in
     "${trash_dir}" | '~/.Trash' | '$HOME/.Trash' | '${HOME}/.Trash')
@@ -93,7 +112,7 @@ get_entry_name() {
   if [[ "${name}" == */* ]]; then
     refuse 6 "deeper than one level below ${trash_dir}: ${operand}"
   fi
-  printf '%s' "${name}"
+  ENTRY_NAME="${name}"
 }
 
 # The shell text of the one delete this run performs, single-quoted for the judge. Args: $1=path
@@ -113,17 +132,26 @@ is_judge_allow() {
   [[ -z "${residual}" ]]
 }
 
-# Deletes one guarded path. Status 10 = the guard refused it, any other non-zero = the delete failed.
-# Args: $1=absolute entry path
-delete_entry() {
-  local target="${1}"
+# Deletes one entry from inside the pinned Trash, in a subshell so the caller's cwd stays as it was.
+# Status 7 = the Trash is no longer the directory checked, 10 = the guard refused the path,
+# 11 = the delete failed or left the entry. Args: $1=absolute Trash path, $2=entry name
+delete_entry() (
+  local trash_dir="${1}" name="${2}"
+  local target="${trash_dir}/${name}"
+  cd -P -- "${trash_dir}" 2>/dev/null || return 7
+  # . is pinned now; the Trash name must still be no link and the same inode, or a swap redirected the cd
+  if [[ -L "${trash_dir}" ]] || ! [[ . -ef "${trash_dir}" ]]; then
+    return 7
+  fi
   # shellcheck disable=SC2310  # the guard verdict is branched on, never an error trap
   if ga_guard_path "${target}"; then
-    rm -rf -- "${target:?}"
+    # GA-RM[unvalidatable]: ./<entry> from the pinned Trash cwd; ga_guard_path refuses a relative path, so it checks the absolute twin above
+    rm -rf -- "./${name:?}" || return 11
   else
     return 10
   fi
-}
+  [[ ! -e "./${name}" && ! -L "./${name}" ]] || return 11
+)
 
 # kind of an entry, lstat-wise. Args: $1=path
 get_kind() {
@@ -154,17 +182,38 @@ main() {
     usage
     refuse 2 "exactly one operand expected, got $#"
   fi
-  local operand="${1}" home trash_dir name target kind size_kib canonical rc=0
+  local operand="${1}" home="" trash_dir name target kind size_kib canonical rc=0 shown
   local log_dir log_file stamp
 
-  home="$(strip_slashes "${HOME:-}")"
+  # Before any parsing: a control character is never part of a name this command purges.
+  # shellcheck disable=SC2310  # the predicate verdicts below are branched on, never an error trap
+  if has_control_char "${operand}"; then
+    printf -v shown '%q' "${operand}"
+    refuse 4 "the operand holds a newline or other control character: ${shown}"
+  fi
+  # shellcheck disable=SC2310  # branched on, never an error trap
+  if has_control_char "${HOME:-}"; then
+    refuse 3 "HOME holds a newline or other control character"
+  fi
+  set_stripped home "${HOME:-}"
   if [[ -z "${home}" || "${home}" != /* ]]; then
     refuse 3 "HOME is unset, empty, relative or the filesystem root"
   fi
+  # A "." or ".." component spells the root or another directory without being canonical.
+  case "${home}/" in
+    */./* | */../*) refuse 3 "HOME holds a '.' or '..' component: ${home}" ;;
+    *) ;;
+  esac
   trash_dir="${home}/.Trash"
 
-  # shellcheck disable=SC2310  # a refusal exits the substitution with its code; it is passed on as is
-  name="$(get_entry_name "${operand}" "${trash_dir}")" || exit "$?"
+  ENTRY_NAME=""
+  set_entry_name "${operand}" "${trash_dir}"
+  name="${ENTRY_NAME}"
+  # Re-check what main will delete, independent of the parser that produced it.
+  # shellcheck disable=SC2310  # branched on, never an error trap
+  if ! is_entry_name "${name}"; then
+    refuse 4 "invalid entry name after parsing: '${name}'"
+  fi
 
   if [[ -L "${trash_dir}" || ! -d "${trash_dir}" ]]; then
     refuse 7 "the Trash is a symlink or not a directory: ${trash_dir}"
@@ -190,14 +239,16 @@ main() {
   size_kib="$(get_size_kib "${target}")"
 
   # shellcheck disable=SC2310  # the delete status is branched on below
-  delete_entry "${target}" || rc=$?
-  if ((rc == 10)); then
-    refuse 10 "the shared path guard refused ${target}"
-  fi
-  if ((rc != 0)) || [[ -e "${target}" || -L "${target}" ]]; then
-    printf 'ga-trash-purge: FAILED: the delete left the entry in place: %s\n' "${name}" >&2
-    exit 11
-  fi
+  delete_entry "${trash_dir}" "${name}" || rc=$?
+  case "${rc}" in
+    0) ;;
+    7) refuse 7 "the Trash changed before the delete: ${trash_dir}" ;;
+    10) refuse 10 "the shared path guard refused ${target}" ;;
+    *)
+      printf 'ga-trash-purge: FAILED: the delete left the entry in place: %s\n' "${name}" >&2
+      exit 11
+      ;;
+  esac
 
   log_dir="${GA_DATA_ROOT:-${home}/.glass-atrium}/logs"
   log_file="${log_dir}/trash-purge.log"

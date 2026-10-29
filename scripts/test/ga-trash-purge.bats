@@ -227,3 +227,97 @@ assert_gone() {
   [[ "${lines_read[1]}" == *$'\tkind=file\tkib='[0-9]*$'\tname=a-file\tcwd='* ]] || { echo "file line: ${lines_read[1]}"; return 1; }
   [[ "${lines_read[2]}" == *$'\tkind=link\tkib='*$'\tname=a-link\tcwd='* ]] || { echo "link line: ${lines_read[2]}"; return 1; }
 }
+
+@test "refusal: an operand holding a newline or other control character → exit 4, nothing deleted" {
+  local operand
+  printf 'x\n' >"${TRASH}/foo"
+  # $(...) strips trailing newlines, so a name returned through it would lose them after validation:
+  # $'foo\n' would name foo, and $'\n' would name the Trash directory itself.
+  for operand in $'foo\n' $'\n' $'.\n' $'..\n' $'foo\n\n' $'\nfoo' $'fo\tobar' $'\x01foo' $'foo\x7f' \
+    "${TRASH}/"$'foo\n' "${TRASH}"$'/\n'; do
+    run_purge "${operand}"
+    assert_refused 4 || { echo "operand: $(printf '%q' "${operand}")"; return 1; }
+  done
+  [[ -f "${TRASH}/foo" && -d "${TRASH}" ]] || { echo "foo or the Trash was deleted"; return 1; }
+}
+
+@test "refusal: HOME holding a control character or a '.' / '..' component → exit 3" {
+  local home_value fake_home="${TRASH%/.Trash}"
+  printf 'x\n' >"${TRASH}/foo"
+  cd "${FAKE_ROOT}" || return 1
+  for home_value in $'/\n' $'//\n' $'\n/' "${fake_home}"$'\n' "${fake_home}"$'\x01' '/.' '/..' '/tmp/..' '/./' \
+    "${fake_home}/." "${fake_home}/../home" "${FAKE_ROOT}/./home"; do
+    run env HOME="${home_value}" bash "${PURGE_SH}" foo
+    assert_refused 3 || { echo "HOME: $(printf '%q' "${home_value}")"; return 1; }
+  done
+  [[ -f "${TRASH}/foo" ]] || { echo "entry deleted"; return 1; }
+}
+
+@test "purge: option-looking names and a single-quote name → exit 0, only that entry goes" {
+  local name
+  for name in '-rf' '--' '-' "it's" "'" "a'b'c"; do
+    printf 'x\n' >"${TRASH}/${name}"
+    run_purge "${name}"
+    [[ "${status}" -eq 0 ]] || { echo "name '${name}': exit ${status}: ${output}"; return 1; }
+    assert_gone "${TRASH}/${name}" || return 1
+    assert_untouched || return 1
+  done
+  printf 'x\n' >"${TRASH}/-rf"
+  run_purge "${TRASH}/-rf"
+  [[ "${status}" -eq 0 ]] || { echo "absolute -rf: exit ${status}: ${output}"; return 1; }
+  assert_gone "${TRASH}/-rf" || return 1
+  assert_untouched
+}
+
+@test "refusal: a missing shared path guard → exit 10, the entry survives" {
+  local install="${FAKE_ROOT}/install"
+  mkdir -p "${install}/scripts" "${install}/hooks/lib"
+  cp "${PURGE_SH}" "${install}/scripts/ga-trash-purge.sh"
+  cp "${BATS_TEST_DIRNAME}/../../hooks/lib/trash_rm.py" "${install}/hooks/lib/trash_rm.py"
+  printf 'x\n' >"${TRASH}/foo"
+  cd "${FAKE_ROOT}" || return 1
+  run bash "${install}/scripts/ga-trash-purge.sh" foo
+  assert_refused 10 || return 1
+  [[ "${output}" == *"path guard"* ]] || { echo "not the guard refusal: ${output}"; return 1; }
+  [[ -f "${TRASH}/foo" ]] || { echo "entry deleted"; return 1; }
+}
+
+@test "failure: an entry rm cannot remove → exit 11, no log line" {
+  [[ "$(id -u)" -ne 0 ]] || skip "root removes a non-writable directory's contents"
+  mkdir -p "${TRASH}/locked/sub"
+  printf 'x\n' >"${TRASH}/locked/sub/f"
+  chmod 555 "${TRASH}/locked/sub"
+  run_purge locked
+  chmod 755 "${TRASH}/locked/sub"
+  [[ "${status}" -eq 11 ]] || { echo "expected exit 11, got ${status}: ${output}"; return 1; }
+  [[ "${output}" == *"ga-trash-purge: FAILED"* ]] || { echo "no failure message: ${output}"; return 1; }
+  [[ -f "${TRASH}/locked/sub/f" ]] || { echo "the protected file went"; return 1; }
+  [[ ! -e "${LOG_FILE}" ]] || { echo "a failed delete wrote a log line: $(cat "${LOG_FILE}")"; return 1; }
+  assert_untouched
+}
+
+@test "failure: an unwritable log → exit 12, the entry is gone and no log line exists" {
+  printf 'not a dir\n' >"${FAKE_ROOT}/data-file"
+  export GA_DATA_ROOT="${FAKE_ROOT}/data-file"
+  printf 'x\n' >"${TRASH}/foo"
+  run_purge foo
+  [[ "${status}" -eq 12 ]] || { echo "expected exit 12, got ${status}: ${output}"; return 1; }
+  [[ "${output}" == *"ga-trash-purge: WARNING"* ]] || { echo "no warning: ${output}"; return 1; }
+  assert_gone "${TRASH}/foo" || return 1
+  [[ "$(cat "${FAKE_ROOT}/data-file")" == "not a dir" ]] || { echo "data file touched"; return 1; }
+  [[ ! -e "${LOG_FILE}" && ! -e "${FAKE_ROOT}/data/logs/trash-purge.log" ]] || { echo "a log line exists"; return 1; }
+  assert_untouched
+}
+
+@test "failure: an unexpected command failure → exit 1 with the internal-error message" {
+  # A date that fails with 42: without a trap exit, errexit would end the run with 42 instead of 1.
+  mkdir -p "${FAKE_ROOT}/bin"
+  printf '#!/bin/sh\nexit 42\n' >"${FAKE_ROOT}/bin/date"
+  chmod 755 "${FAKE_ROOT}/bin/date"
+  printf 'x\n' >"${TRASH}/foo"
+  cd "${FAKE_ROOT}" || return 1
+  run env PATH="${FAKE_ROOT}/bin:${PATH}" bash "${PURGE_SH}" foo
+  [[ "${status}" -eq 1 ]] || { echo "expected exit 1, got ${status}: ${output}"; return 1; }
+  [[ "${output}" == *"ga-trash-purge: ERROR"* ]] || { echo "no internal-error message: ${output}"; return 1; }
+  assert_untouched
+}
