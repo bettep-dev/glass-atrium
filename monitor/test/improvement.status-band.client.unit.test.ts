@@ -613,7 +613,7 @@ test("a failed suggestions read speaks once, from the first board region it feed
   assert.deepEqual(resolved, ["RegionUnavailable", "RegionCovered"]);
 });
 
-describe("a suggestion board row keeps its full text, clipped only until hover or focus", () => {
+describe("a suggestion board row keeps its full text, clipped in every state with the whole of it in a title", () => {
   const long =
     "Move the verification gate ahead of the regex removal so reviewers see the API change before the three matching suite edits";
   const rows = [
@@ -633,7 +633,8 @@ describe("a suggestion board row keeps its full text, clipped only until hover o
     test(row.name, () => {
       const text = collectElements(row.render(), []).find((el) => el.props.children === long);
       assert.ok(text, "the row must render the whole text, never a character-cut copy");
-      assert.match(String(text.props.className), /\bi-clip\b/, "the clipped text must unclip on hover and focus");
+      const titled = collectElements(row.render(), []).find((el) => el.props.title === long);
+      assert.ok(titled, "the clipped text's full value must ride in a title, since hover and focus never unclip it");
     });
   }
 });
