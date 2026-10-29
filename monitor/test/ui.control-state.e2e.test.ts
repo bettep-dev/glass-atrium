@@ -1,6 +1,6 @@
 // Control-atom state invariance read in a real browser: no state of .btn, a .seg option or .pill--interactive changes its
 // border-box, so a selected option never reads as a bigger box than its siblings; a resting toggle's edge reads against its card
-// at 3:1 in both themes, so its box is visible before it is selected, and a resting field's edge does so on every surface it sits on;
+// at 3:1 in both themes, so its box is visible before it is selected, and a resting field rests on that same edge, 3:1 on every surface;
 // the shipped control row holds them on one 48 line.
 // Runner: npx tsx --test test/ui.control-state.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
@@ -245,6 +245,21 @@ describe("a resting field-family control draws an edge that reads against the su
         });
       }
     }
+  }
+});
+
+// one resting edge for toggles and fields → an edge that merely clears 3:1 (--dim, --ink) is still the wrong edge
+describe("a resting field-family control draws the toggle's resting edge", () => {
+  for (const field of FIELDS) {
+    test(`${field.name} rests on a toggle button's edge in both themes`, async () => {
+      for (const theme of THEMES) {
+        const [fieldEdge, toggleEdge] = await withTheme(theme, () => Promise.all([
+          probe.readStyle(getFieldSelector("elev", field.id), "border-top-color"),
+          readStyle("btn", "border-top-color"),
+        ]));
+        assert.equal(fieldEdge, toggleEdge, `${theme} ${field.id} resting edge vs the resting toggle edge`);
+      }
+    });
   }
 });
 
