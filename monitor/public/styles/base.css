@@ -1229,8 +1229,8 @@ button.kpi:hover {
 	font-feature-settings: "tnum" 1;
 }
 
-/* hover — control-edge→faint 한 단계 */
-.field:hover:not(:disabled):not(:focus-visible) {
+/* hover — control-edge→faint 한 단계 · 오류 필드는 --crit 유지 (error 가 hover 보다 우선) */
+.field:hover:not(:disabled):not(:focus-visible):not(.is-error) {
 	border-color: rgb(var(--faint));
 }
 
@@ -1294,7 +1294,7 @@ button.kpi:hover {
 	min-height: var(--ctl-h);          /* the wrapper owns the border → it, not the inner field, holds the 32px control height */
 	padding-left: var(--ctl-pad-x);    /* affix 좌측 gutter = a field's own inline padding — input 자체 좌패딩은 제거 */
 }
-.field-affix:hover:not(:focus-within) { border-color: rgb(var(--faint)); }
+.field-affix:hover:not(:focus-within):not(.is-error) { border-color: rgb(var(--faint)); }
 .field-affix:focus-within {
 	border-color: rgb(var(--accent));
 }

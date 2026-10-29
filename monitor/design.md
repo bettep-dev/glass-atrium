@@ -285,7 +285,7 @@
   - `StatusDot`: glyph + sr-only 단어(`STATUS_DOT_WORD` OK/Warning/Critical/Info) · 미지 status 는 `–` + "Unknown" (`--faint`).
   - `KpiValue tone`: glyph 장식(aria-hidden), 수치는 neutral ink. `PageVerdict`: glyph 만 tone, 단어 · 문장은 ink.
 - **허용 예외** — tone border/stroke 가 glyph 또는 단어와 짝을 이룰 때만:
-  - **폼 오류** (`.field.is-error` · `.field-affix.is-error`, §7.13): full-opacity `--crit` border (focus 중에도 유지) + 메시지 `fs-meta text-crit` `role="alert"` = 단어.
+  - **폼 오류** (`.field.is-error` · `.field-affix.is-error`, §7.13): full-opacity `--crit` border (hover · focus 중에도 유지) + 메시지 `fs-meta text-crit` `role="alert"` = 단어.
     - 메시지 crit 은 모든 불투명 면에서 ≥ 4.5: light 최저 4.63 (`--sunken` — hover 된 `.tbl` 행 포함; `--elev` 5.05 · `--surface` 4.83) · dark 최저 5.84 (`--elev-2`).
   - **System map 상태 링** (`architecture.jsx` → `LIVE_RING_CLASS` / `ZONE_RING_CLASS`, §7.14): warn · crit 노드와 zone.
     - 링 = 노드 도형 밖의 별도 `rect.arch-ring-state`, 2.5px full-opacity tone stroke. 노드 자체 border 는 범주 border(map border key) → shell 에 tone 없음.
@@ -638,7 +638,7 @@
 ### 7.13 폼 · 기타 atom
 
 - **`.field`** (input · select): min-height `--ctl-h` 32 · padding `--ctl-pad-y` × `--ctl-pad-x` · `--ctl-font` · `--elev` · 1px `--control-edge` (resting edge, §7.16) · `--ctl-radius` · disabled opacity 0.5.
-  - hover border `--faint` · focus = `--accent` border + 전역 focus outline · error `.is-error` = `--crit` border + `--fs-meta` crit 메시지 — §4.2 허용 예외 (메시지는 crit ≥ 4.5 인 면 위에서만).
+  - hover border `--faint` · focus = `--accent` border + 전역 focus outline · error `.is-error` = `--crit` border (error 가 hover 보다 우선 — hover 중에도 `--crit`) + `--fs-meta` crit 메시지 — §4.2 허용 예외 (메시지는 crit ≥ 4.5 인 면 위에서만).
   - `.field--mono`: mono tnum · `.field-select`: 테마별 `--faint` chevron · `.field-affix` (`$` 등): wrapper 가 border (`--control-edge`) · focus 소유, `:has(:focus-visible)` 로 outline.
 - **`.stage-pip`**: 8px 원 · 빈 pip `--pip-empty` · 채움 `--ink`.
 - **`.low-sample`** (`LowSampleMark`): 작은 표본 비율 옆 italic `--faint` `(n=N)`.
@@ -706,6 +706,7 @@
   - A label and its group wrap as one unit; a static pill takes `.pill--ctl-h`; a text target is 24 or taller (`.inline-target`).
   - Trailing meta whose text follows a filter (the Documents count) takes its own right-aligned line in every state, so its length never picks its line or frees room for a growing control; it wraps inside as one right-aligned unit.
   - Content a mode swaps inside a group (the Documents stage chips and the "All stages while searching" note) shares one cell, both always laid out and the idle one hidden, so the mode never resizes the group or reflows the row; the chips keep their last counts through a search response that carries none.
+  - A trigger whose label gains a count (the Task results Filters trigger) lays its label over a hidden twin at the highest count in one cell, end-aligned, so a count appearing never moves the head; the count covers only the filters set inside its popover.
 - An overlay head is 48; its title's first line centers on its 32 close button within 1px (§7.8).
 
 ---

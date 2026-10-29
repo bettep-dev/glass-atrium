@@ -3,7 +3,8 @@
 // "Previous / Next" draw the same small ghost button at rest and on hover, the filter panel's "More filters" fold opens on the
 // disclosure atom, each keeps one box in every state, the panel's Record scope checkbox stands on the C24 inline-target tier and
 // draws the Documents ledger's checkbox in both themes, a card head's static pill stands on the 32 control height (§7.16), and the
-// active-filter row under the Results head is one 48 control row above its rule.
+// active-filter row under the Results head is one 48 control row above its rule, and the Results head holds still as a keyword lands or a
+// popover filter is counted.
 // Runner: npx tsx --test test/outcomes.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -40,6 +41,9 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   button { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; background-color: transparent; }
   .flex { display: flex; } .items-center { align-items: center; } .justify-between { justify-content: space-between; }
   summary { display: list-item; }
+  .ml-auto { margin-left: auto; } .shrink-0 { flex-shrink: 0; } .inline-grid { display: inline-grid; } .justify-items-end { justify-items: end; }
+  .col-start-1 { grid-column-start: 1; } .row-start-1 { grid-row-start: 1; } .invisible { visibility: hidden; }
+  .tabular-nums { font-variant-numeric: tabular-nums; }
   .gap-2 { gap: 0.5rem; } .mb-1 { margin-bottom: 0.25rem; } .mr-auto { margin-right: auto; } .px-4 { padding-left: 1rem; padding-right: 1rem; }
   .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .border-t { border-top-width: 1px; } .border-b { border-bottom-width: 1px; }
   .border-line { border-color: rgb(var(--line)); } .gap-1 { gap: 0.25rem; } .flex-wrap { flex-wrap: wrap; }
@@ -48,12 +52,20 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
 
 const noop = () => undefined;
 const READY = { status: "ready", busy: false, data: null, error: null };
-const getLedger = (page: number) =>
-  getMarkup("ResultTableCard", {
-    state: READY, rows: [], totalMatched: 120, page, limit: 50, sort: "newest", filter: {},
-    onPageChange: noop, onSortChange: noop, onResetFilter: noop, onRowClick: noop, onRetry: noop,
-    closure: { pendingIds: new Set(), closedOverrides: new Map() }, needsYou: { rows: [], hiddenCount: 0 }, needsYouCap: 5,
-  });
+const LEDGER_PROPS = {
+  state: READY, rows: [], totalMatched: 120, limit: 50, sort: "newest",
+  onPageChange: noop, onSortChange: noop, onResetFilter: noop, onRowClick: noop, onRetry: noop,
+  closure: { pendingIds: new Set(), closedOverrides: new Map() }, needsYou: { rows: [], hiddenCount: 0 }, needsYouCap: 5,
+};
+const getLedger = (page: number) => getMarkup("ResultTableCard", { ...LEDGER_PROPS, page, filter: {} });
+// the Results head while the search is idle, once a typed keyword reaches the filter, and with a popover filter set
+const getResultsHead = (filter: Record<string, unknown>, keywordInput: string) =>
+  getMarkup("ResultTableCard", { ...LEDGER_PROPS, page: 0, filter, filterControls: { keywordInput, distinctAgents: [], includeAll: false } });
+const HEADS = {
+  idle: getResultsHead({ days: 30 }, ""),
+  typed: getResultsHead({ days: 30, q: "phase" }, "phase"),
+  filtered: getResultsHead({ days: 30, agent: "glass-atrium-dev-front" }, ""),
+};
 const RECORDS = [41, 42, 43].map((id) => ({ id, agent: "glass-atrium-dev-front", task_type: "refactor", result: "done", record_ts: "2026-10-29T10:00:00Z" }));
 const DRAWER = getMarkup("DetailModal", {
   detailRow: RECORDS[1], detailState: { status: "loading", data: null, error: null }, rows: RECORDS, onClose: noop, onNav: noop,
@@ -94,6 +106,7 @@ const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</
   <div id="crosstab" style="width: 560px; padding: 24px;">${CROSSTAB}</div>
   <div id="attribution" style="width: 560px; padding: 24px;">${ATTRIBUTION}</div>
   <div id="channels" style="width: 560px; padding: 24px;">${CHANNELS}</div>
+  ${Object.entries(HEADS).map(([name, markup]) => `<div id="head-${name}" style="width: 1170px; padding: 24px;">${markup}</div>`).join("\n  ")}
   <div id="chips" style="width: 1170px; padding: 24px;"><div class="card">${CHIPS}<div class="card-body" style="height: 40px;"></div></div></div>
 </body></html>`;
 
@@ -320,5 +333,22 @@ describe("the active-filter row under the Results head is one 48 control row", (
       page.$eval("#crosstab .card-head", (head) => getComputedStyle(head).borderBottomColor),
     ]);
     assert.deepEqual(rule, { width: "1px", color: headRule, below: 1 });
+  });
+});
+
+describe("the Results head holds still as its filters change", () => {
+  const SEARCH = 'input[aria-label="Keyword search"]';
+  const TRIGGER = 'button[aria-haspopup="dialog"]';
+  const readHead = (name: keyof typeof HEADS) =>
+    Promise.all([SEARCH, TRIGGER].map((control) => readBox(`#head-${name} .card-head ${control}`)))
+      .then((boxes) => boxes.map(({ left, width, height }) => ({ left, width, height })));
+
+  test("a typed keyword reaching the filter leaves the search's box and the Filters trigger in place", async () => {
+    assert.deepEqual(await readHead("typed"), await readHead("idle"), "[search, trigger] typed vs idle");
+  });
+
+  test("a popover filter's count appearing on the trigger moves nothing in the head", async () => {
+    assert.match((await page.$eval(`#head-filtered .card-head ${TRIGGER}`, (el) => el.textContent)) ?? "", /Filters · 1/);
+    assert.deepEqual(await readHead("filtered"), await readHead("idle"), "[search, trigger] filtered vs idle");
   });
 });

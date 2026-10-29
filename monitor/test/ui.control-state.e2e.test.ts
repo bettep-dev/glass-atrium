@@ -1,7 +1,7 @@
 // Control-atom state invariance read in a real browser: no state of .btn, a .seg option or .pill--interactive changes its
 // border-box, so a selected option never reads as a bigger box than its siblings; a resting toggle's edge reads against its card
 // at 3:1 in both themes, so its box is visible before it is selected, and a resting field rests on that same edge, 3:1 on every surface;
-// the shipped control row holds them on one 48 line.
+// an errored field keeps its error edge under hover; the shipped control row holds them on one 48 line.
 // Runner: npx tsx --test test/ui.control-state.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -43,6 +43,13 @@ const FIELDS = [
   { name: "a search field", id: "search", focus: ["focus-visible"],
     markup: `<input type="search" class="field" data-field="search" placeholder="Search…" aria-label="Search documents">` },
 ] as const;
+// the error lives on the text field itself, and on the affix's wrapper, which owns the affixed field's edge
+const ERRORED_FIELDS = [
+  { name: "an errored text field", id: "input-error",
+    markup: `<input type="text" class="field field--mono is-error" data-field="input-error" aria-label="Custom model id" value="claude-">` },
+  { name: "an errored affixed field", id: "affix-error",
+    markup: `<span class="field-affix is-error" data-field="affix-error"><span class="field-affix__sym">$</span><input type="text" class="field field--mono" aria-label="Per-call cap" value="-1"></span>` },
+] as const;
 // the opaque fills a field sits on: a card (elev), the page (surface), a recessed well (sunken)
 const SURFACES = ["elev", "surface", "sunken"] as const;
 
@@ -66,6 +73,10 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
     style="background: rgb(var(--${surface})); width: 320px; padding: 16px; gap: 8px; margin-top: 24px;">
     ${FIELDS.map((field) => field.markup).join("\n    ")}
   </div>`).join("\n  ")}
+  <div class="card" data-card="errored" style="width: 320px; padding: 16px; margin-top: 24px;">
+    ${ERRORED_FIELDS.map((field) => field.markup).join("\n    ")}
+    <span data-probe="crit" style="color: rgb(var(--crit));">crit</span>
+  </div>
 </body></html>`;
 
 // each state is applied to the one measured element and undone after reading; hover and focus-visible are forced through CDP,
@@ -282,5 +293,25 @@ describe("a field-family control's hover and focus repaint only its edge, never 
         }
       });
     }
+  }
+});
+
+// error outranks hover → the pointer never hides an errored control's --crit edge, nor resizes its box
+describe("an errored field-family control keeps its error edge under hover", () => {
+  for (const field of ERRORED_FIELDS) {
+    test(`${field.name} stays on --crit in both themes`, async () => {
+      const selector = `[data-field="${field.id}"]`;
+      const rest = await probe.readBox(selector);
+      for (const theme of THEMES) {
+        const [crit, hoverEdge, hoverBox] = await withTheme(theme, async () => {
+          const critColor = await probe.readStyle('[data-probe="crit"]', "color");
+          await probe.forcePseudo(selector, ["hover"]);
+          try { return [critColor, await probe.readStyle(selector, "border-top-color"), await probe.readBox(selector)] as const; }
+          finally { await probe.forcePseudo(selector, []); }
+        });
+        assert.equal(hoverEdge, crit, `${theme} ${field.id} hover edge vs --crit`);
+        assert.ok(isSameBox(hoverBox, rest), `${theme} ${field.id} hover ${hoverBox.width}x${hoverBox.height} vs resting ${rest.width}x${rest.height}`);
+      }
+    });
   }
 });
