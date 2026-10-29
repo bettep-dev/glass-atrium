@@ -160,38 +160,32 @@ Delegate to a subagent when the user request matches any row below.
 
 #### Entry classification (DEV delegations)
 
-Classify every DEV task against the SIZABLE criteria in the Decision actions above — the one condensed copy of the Sizable-task definition (canonical: `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]`).
-
-| Classification | Entry signal carried into the delegation |
-|---|---|
-| SIZABLE | author a plan first, then carry the plan-ref token — there is no `[ENTRY-CLASS]` form for sizable work |
-| simple / exempt | `[ENTRY-CLASS] simple-task: <reason>` |
+Classify every DEV task against the Decision SIZABLE criteria above, a condensed copy of the canonical at `scoped/maintainers/scope-dev.md` → `## Sprint Contract Gate (orchestrator side)`, which also holds the spawn-time entry gate.
 
 - **Classify-always**: a delegation carrying neither a plan-ref nor an `[ENTRY-CLASS]` token is blocked at spawn time, exit 2, on both paths.
-  - SoT: `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]` (spawn-time entry gate); placement: `### Context Handoff Size` → Attestation-token placement.
-- **ENTRY-CLASS negative**: `simple-task` is the only recognized `[ENTRY-CLASS]` literal — any other variant blocks.
+  - Placement: `### Context Handoff Size` → Attestation-token placement.
+- **ENTRY-CLASS negative**: `simple-task` is the only recognized `[ENTRY-CLASS]` literal — any other variant blocks, so sizable work carries a plan-ref instead.
 - **Simple-task waiver**: a DEV delegation carrying `[ENTRY-CLASS] simple-task` and no plan-ref owes no other attestation token.
   - `[SCOPE]` · `[SIZE-EST]` · `[AGENT-COMPOSITION]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` are optional, and their gates and advisories pass silently on both paths.
   - Why: ceremony that exists only because work is split across agents costs more than it buys on small work.
-  - A plan-ref keeps every token and the reviewer-before-DEV presence check, whatever classification travels beside it.
-  - Carrying an optional token anyway is allowed; on a simple-task entry it is not checked.
-  - `[DOC-ROUTE]` and the doc-routing gate are untouched by the waiver.
-  - Honest backing: the hooks read the token's presence, never whether the work is simple — the classification is honor-system (`hooks/enforce-verification-gate.sh` · `hooks/enforce-workflow-verify-stage.sh` · `hooks/validate-scope-drift.sh`).
+  - A plan-ref keeps every token and the reviewer-before-DEV check, whatever classification rides beside it.
+  - Carrying an optional token anyway is allowed.
+  - Exception: `[DOC-ROUTE]` and the doc-routing gate are untouched by the waiver.
+  - Honest backing: the hooks read token presence, never whether the work is simple, so the classification is honor-system.
 
 #### Plan edge discovery (Decision phase — fires for any delegation derived from a persisted plan, whole or subset)
 
-- **Standing obligation**: read the declared predecessors of each included work stream from **any declaration site in the plan**; an edge stated at any of them binds. Then classify each predecessor:
+- **Standing obligation**: read each included work stream's declared predecessors from **any declaration site in the plan** — an edge stated at any of them binds — then classify each predecessor:
   - **LANDED** — verified against the tree or history with an instrument, never from the plan's status field, a wave note, or memory.
   - **INCLUDED** — guardrail (c) under `#### Automatic Parallelization` applies: the predecessor lands and is verified before the dependent runs.
   - **EXCLUDED and not landed** — a scoping defect. **HALT.**
     - Exactly two exits: pull the predecessor into the subset, or route the soundness question to a second party in the Stage-2 **team shape** and proceed only on `pass` + `feasible`.
-    - The team shape is invoked regardless of Stage-2's own complex-plan activation scope — a delegation carrying `[ENTRY-CLASS] simple-task` still routes here.
+    - Stage-2's complex-plan activation scope does not limit this — a `[ENTRY-CLASS] simple-task` delegation still routes here.
     - **The composing role may not clear itself.**
 
 - **Attestation**: on a strict subset of a plan, emit `[PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=T1>T5b-1;T2>T3` (`order=n/a` when no edge).
-  - The obligations above are unconditional and do not depend on this token.
-  - Optional on a simple-task entry (`#### Entry classification (DEV delegations)` → **Simple-task waiver**).
-- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md` — declaration sites, the unit read, instruments, per-path ordering, why HALT, the `<id>` and no-free-text token rules, placement, honest backing.
+  - The obligations above do not depend on this token.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md` — declaration sites, instruments, per-path ordering, the `<id>` and no-free-text token rules.
 
 ## Decision-Phase Notes
 

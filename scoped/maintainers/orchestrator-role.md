@@ -101,7 +101,8 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - Its H3s `### Pre-spawn Probes` · `### Deliverable Exposure` · `### Monitoring Notes` · `### Provenance` · `### Stage-2 Backstops` · `### Team Composition` · `### Parallel Fan-out` wrap cited H4s, so that no H3 carries more than one cap's worth of them.
 - `### Context Handoff Size` has no wrapper and no H4: its citers name it for the summary-only rule, the delegation-element count, the token placement and both token grammars, so all of them stay directly under it.
   - The `[SCOPE]` author-rule detail sits in `references/scope-parser.md`, and the rest of its moved text is recorded in this note's Context Handoff Size linkage entry.
-- `### Spawn Budget`, `### Provenance` and `### Context Handoff Size` sit near the 3 KB H3 cap: byte-measure each, H4 children included, before any addition to it.
+- `### Spawn Budget`, `### Provenance`, `### Context Handoff Size` and `### Phase Notes` sit near the 3 KB H3 cap: byte-measure each, H4 children included, before any addition to it.
+  - A line that would push `### Phase Notes` over the cap moves plan-edge detail to `references/plan-edge-discovery.md` first.
   - A line that would push `### Context Handoff Size` over the cap moves `[SCOPE]` detail to `references/scope-parser.md` first.
 - A section that grows past a cap splits the same way: insert a wrapper heading, never change a cited heading's level.
   - Why: hooks quote `### Spawn Budget`, `### Context Handoff Size` and `### Phase Notes`, and `CostTierRuleTextTest` splits on the next `###`.
@@ -140,9 +141,15 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - Each keeps its binding lines in the rule file; the detail sits in `skills/glass-atrium-ops-delegation-contracts/references/decision-phase-probes.md` and `references/scan-provenance.md`. The split: that skill's `SKILL.md` → Reference Index.
 - The closed lexicon's recall is unknown: its quantifier group was pruned against a single incident, so a hook reading the list stays advisory until a false-positive record justifies promotion.
 
+### `#### Entry classification (DEV delegations)`
+
+- Its SIZABLE criteria are the Decision action rows of `## Delegation Workflow`, a condensed copy of `scoped/maintainers/scope-dev.md` → `### Sizable-task definition (single SoT — the positive entry floor)`: edit the two together.
+- The hooks behind the waiver's honest-backing line, each reading token presence only: `hooks/enforce-verification-gate.sh` · `hooks/enforce-workflow-verify-stage.sh` · `hooks/validate-scope-drift.sh`.
+
 ### `#### Plan edge discovery`
 
 - The split between the rule-file heading and `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md`: that skill's `SKILL.md` → Reference Index.
+- The H4 does not restate the simple-task waiver: `[PLAN-SUBSET]` is listed in the waiver itself, and the HALT's reach line keeps simple-task entries bound.
 - The `[PLAN-SUBSET]` grammar stays in the rule file because the byte contract above names the rule file as its site. Move it only together with that line.
 
 ## Linkage — gates, tiers and budgets
