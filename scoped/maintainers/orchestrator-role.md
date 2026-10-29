@@ -60,7 +60,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - Must stay byte-exact, each at the site named — the rule file unless another file is given:
   - the opening blockquote as first content line, in the stub and the rule file alike;
   - the attestation tokens and `block-*` verdict names, listed under `## Reserved names`;
-  - the `block-*` verdict table: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`;
+  - the `block-*` verdict names in the verdict table's Verdict column: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`;
   - the closed lexicon, premise-register and `[PLAN-SUBSET]` grammars;
   - both `[SIZE-EST]` grammars: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md`;
   - the `[SIZE-EST]` key names on the `#### Delegation-size discipline` pointer;

@@ -458,7 +458,6 @@ Exactly one `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home
 
 The line grammar (`verify` team/upstream forms · `impl` · `impl-computed`), the exit-2 verdict table and the upstream waiver scope are canonical at the contract. Deltas the skeletons rely on:
 
-- Names are validated against the runtime DEV_SET roster plus the reviewer literal; free text is allowed only after a spaced dash.
 - **impl-computed negative**: omit the `impl-computed` line entirely when there are no computed spawns — only `impl:` accepts the `none` literal; `impl-computed: none` is malformed and blocks as `block-grammar` (unknown-name).
 - `block-order` slot binding (greedy-earliest, same-type dual-role): the first spawn token of a declared verify-dev type is the verify slot, the remaining declared-impl-type tokens are impl slots, and some reviewer must precede the first impl slot.
 
