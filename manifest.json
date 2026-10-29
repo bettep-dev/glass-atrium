@@ -1511,7 +1511,7 @@
     "monitor/public/src/screens/wiki.jsx": "d861c5933f10b53623869b575b7d028b8b43db3ae117240c4d4ddf479e00806e",
     "monitor/public/src/tweaks-panel.jsx": "2a636aed72aa9cf1850a142e7aa51608a7677b52d48d067ef42be9f4e2cd0d1f",
     "monitor/public/src/ui.jsx": "70a3e71dce38466ead3210cebcd4b8a80911be4e3450b54a83ede8c9fe016e90",
-    "monitor/public/styles/base.css": "b220040193a09c3d58e124990b0e56b73f8bf01b81bcc2eb520c23a30aecff04",
+    "monitor/public/styles/base.css": "b2284c4c6ea32a095fa3b4628b285996574f370429edbf99faaa34a3a0427c47",
     "monitor/public/styles/tokens.css": "ae72b7622ea283698132e055aa51fffb2fa4ac744f5d89cfc3b00a2d95804982",
     "monitor/scripts/oss-db-setup.sh": "361cf95e95df5ef5d3f38f900d1f7cb60c25321cec2c70c56915e5a2ab15a34e",
     "monitor/scripts/prune-dist.sh": "32c18313c1012de0a28f9bfb76939b4e207c464c7586513821868f64ebbd9347",
