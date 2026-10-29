@@ -486,6 +486,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	min-height: var(--ctl-min-h);
 	font-size: var(--fs-meta);
 	line-height: var(--lh-ctl);
+	font-weight: 500; /* the weight of every state, as .btn and .pill--interactive → selecting an option never widens it */
 	background: none;
 	border: none;
 	color: rgb(var(--dim));
@@ -503,7 +504,6 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	background: rgb(var(--selected-fill));
 	color: rgb(var(--selected-ink));
 	border-color: rgb(var(--selected-fill));
-	font-weight: 500;
 }
 /* inset ring — .seg clips its children (overflow: hidden) */
 .seg button:focus-visible {

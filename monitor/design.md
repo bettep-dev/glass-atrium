@@ -535,8 +535,8 @@
 
 ### 7.6 Segmented — `.seg`
 
-- `.seg`: `--elev` · 1px `--line` · `--radius-control` · clip. 버튼 padding 6px 8px · line-height `--lh-ctl` · min-height 32 · `--fs-meta` · `--dim` · 사이 1px `--line`.
-- **filled selected 상태는 하나**: `.seg button.active` · `[aria-pressed]` · `.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · stage menu `[aria-checked]` 모두 `--selected-fill` / `--selected-ink` · 500.
+- `.seg`: `--elev` · 1px `--line` · `--radius-control` · clip. 버튼 padding 6px 8px · line-height `--lh-ctl` · min-height 32 · `--fs-meta` · 500 in every state · `--dim` · 사이 1px `--line`.
+- **filled selected 상태는 하나**: `.seg button.active` · `[aria-pressed]` · `.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · stage menu `[aria-checked]` 모두 `--selected-fill` / `--selected-ink`. The selected rule sets no weight — each atom keeps its one resting weight (500), so selecting never widens the box (`test/ui.control-state.e2e.test.ts`).
   - stage menu 의 checked 항목은 fill 에 더해 check mark — 색이 유일한 신호가 되지 않게.
 - `.seg` focus ring 은 inset (`outline-offset` = −ring width) — `.seg` 가 자식을 clip 하므로.
 
