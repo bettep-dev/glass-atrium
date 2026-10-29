@@ -97,3 +97,37 @@ test("every light tone reads as a glyph on every opaque light surface at 3:1", (
     }
   }
 });
+
+// `--name: var(--target)` in the `:root, [data-theme]` alias rule → the target's name, since the triplet parser reads literals only
+function getAliasTarget(source: string, name: string): string {
+  const m = source.match(/:root,\s*\[data-theme\]\s*\{([^}]*)\}/);
+  assert.ok(m, "tokens.css must contain the :root, [data-theme] alias rule");
+  const target = m[1].match(new RegExp(`${name}\\s*:\\s*var\\((--[\\w-]+)\\)`))?.[1];
+  assert.ok(target, `the alias rule must declare ${name} as the var() of one token`);
+  return target;
+}
+
+const THEMES = [
+  ["light", light, LIGHT_SURFACES],
+  ["dark", dark, [...LIGHT_SURFACES, "--elev-2"]],
+] as const;
+
+test("a resting toggle edge clears 3:1 against every surface it sits on, in both themes", () => {
+  const edge = getAliasTarget(css, "--control-edge");
+  for (const [theme, block, surfaces] of THEMES) {
+    for (const surface of surfaces) {
+      const ratio = contrastRatio(parseTriplet(block, edge), parseTriplet(block, surface));
+      assert.ok(ratio >= UI_GLYPH, `${theme} --control-edge (${edge}) on ${surface} = ${ratio.toFixed(2)}:1 < ${UI_GLYPH}:1`);
+    }
+  }
+});
+
+test("the hover edge stays a visible step above the resting toggle edge, in both themes", () => {
+  const edge = getAliasTarget(css, "--control-edge");
+  for (const [theme, block] of THEMES) {
+    const elev = parseTriplet(block, "--elev");
+    const rest = contrastRatio(parseTriplet(block, edge), elev);
+    const hover = contrastRatio(parseTriplet(block, "--faint"), elev);
+    assert.ok(hover > rest, `${theme} hover --faint ${hover.toFixed(2)}:1 must exceed the resting edge ${rest.toFixed(2)}:1 on --elev`);
+  }
+});

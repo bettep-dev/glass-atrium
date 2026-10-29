@@ -299,14 +299,14 @@ test("a transient shell stays neutral in every tone, and a toast's tone rides on
 });
 
 // A nested [data-theme="dark"] scope (viewer chrome) must resolve aliases against its own tokens and keep the user's accent tweak.
-test("a nested dark scope resolves the surface aliases against its own tokens and inherits the accent tweak", () => {
+test("a nested dark scope resolves the surface and edge aliases against its own tokens and inherits the accent tweak", () => {
   const rules = [...TOKENS_CSS.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
     selectors: m[1].split(",").map((s) => s.trim()),
     body: m[2],
   }));
   const isNestedThemed = (s: string) => /^\[data-theme(="dark")?\]$/.test(s);
 
-  for (const alias of ["--surface-raised-2", "--surface-overlay"]) {
+  for (const alias of ["--surface-raised-2", "--surface-overlay", "--control-edge"]) {
     const declaring = rules.filter((r) => getDecl(r.body, alias) !== undefined);
     assert.ok(declaring.length > 0, `${alias} is declared`);
     assert.ok(declaring.every((r) => r.selectors.some(isNestedThemed)), `${alias} is declared only where a nested themed scope re-resolves it`);

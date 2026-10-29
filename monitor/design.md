@@ -114,6 +114,7 @@
 :root, [data-theme] {
   --surface-raised-2: var(--elev);            /* light: 순백 유지, 떠오름은 shadow */
   --surface-overlay:  var(--overlay-surface);
+  --control-edge:     var(--pip-empty);       /* resting toggle edge — ≥3:1 on every opaque surface, under the --faint hover edge (§4.1) */
 }
 :root {
   /* shadow (kind B box-shadow list) */
@@ -246,6 +247,7 @@
 | `--focus-ring` | focus outline — theme-owned, accent 와 분리 |
 | `--selected-fill` / `--selected-ink` | 유일한 filled selected 상태 (§7.6) |
 | `--pip-empty` | 빈 stage pip — 불투명 면(surface · elev · sunken · elev-2)에서 ≥ 3:1 |
+| `--control-edge` | alias of `--pip-empty` — the resting edge of a toggle with a filled selected state (`.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · the `.seg` ring), ≥ 3:1 on every opaque surface (WCAG 1.4.11) and one step under the `--faint` hover edge |
 
 - **계산된 명암비** (WCAG 2.2 상대휘도):
 
@@ -256,6 +258,7 @@
 | `--faint` | 5.33 / 5.11 / 4.89 | 6.29 / 7.11 / 6.59 / 5.81 |
 | `--focus-ring` (≥3:1 UI) | 5.17 / 4.95 / 4.74 | 6.88 / 7.77 / 7.20 / 6.35 |
 | `--pip-empty` (≥3:1 UI) | 3.69 / 3.54 / 3.38 | 3.65 / 4.12 / 3.82 / 3.37 |
+| `--control-edge` → `--pip-empty` (≥3:1 UI, resting toggle edge) | 3.69 / 3.54 / 3.38 | 3.65 / 4.12 / 3.82 / 3.37 |
 | `--selected-ink` on `--selected-fill` | 16.74 | 13.26 |
 | `--crit` (텍스트 ≥4.5 — 단어를 싣는 유일한 tone) | 5.05 / 4.83 / 4.63 | 6.32 / 7.14 / 6.62 / 5.84 |
 | `--warn` (glyph ≥3:1) | 3.44 / 3.29 / 3.15 | 10.48 / 11.83 / 10.97 / 9.67 |
@@ -263,7 +266,7 @@
 | `--info` (glyph ≥3:1) | 3.68 / 3.53 / 3.38 | 9.68 / 10.93 / 10.13 / 8.94 |
 
 - 모든 텍스트 쌍 ≥ 4.5 (AA), 모든 UI 쌍 ≥ 3.0 — 불투명 토큰 면 기준.
-- 회귀 테스트: `test/tokens.contrast.unit.test.ts` — light · dark 블록 둘 다 파싱, light `--crit` ≥ 4.5 와 모든 light tone ≥ 3.0 (elev · surface · sunken) 고정.
+- 회귀 테스트: `test/tokens.contrast.unit.test.ts` — light · dark 블록 둘 다 파싱, light `--crit` ≥ 4.5 와 모든 light tone ≥ 3.0 (elev · surface · sunken) 고정. `--control-edge` 는 alias 를 target 으로 풀어 light elev · surface · sunken 과 dark 에 elev-2 를 더해 ≥ 3.0, `--faint` hover edge 가 그보다 한 step 위임을 고정.
 
 ### 4.2 Severity (crit / warn / info / ok) — 색만 쓰지 말 것
 
