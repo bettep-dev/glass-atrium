@@ -114,7 +114,7 @@
 :root, [data-theme] {
   --surface-raised-2: var(--elev);            /* light: 순백 유지, 떠오름은 shadow */
   --surface-overlay:  var(--overlay-surface);
-  --control-edge:     var(--pip-empty);       /* resting toggle edge — ≥3:1 on every opaque surface, under the --faint hover edge (§4.1) */
+  --control-edge:     var(--pip-empty);       /* resting toggle and field edge — ≥3:1 on every opaque surface, under the --faint hover edge (§4.1) */
 }
 :root {
   /* shadow (kind B box-shadow list) */
@@ -248,7 +248,7 @@
 | `--focus-ring` | focus outline — theme-owned, accent 와 분리 |
 | `--selected-fill` / `--selected-ink` | 유일한 filled selected 상태 (§7.6) |
 | `--pip-empty` | 빈 stage pip — 불투명 면(surface · elev · sunken · elev-2)에서 ≥ 3:1 |
-| `--control-edge` | alias of `--pip-empty` — the resting edge of a toggle with a filled selected state (`.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · the `.seg` ring), ≥ 3:1 on every opaque surface (WCAG 1.4.11) and one step under the `--faint` hover edge |
+| `--control-edge` | alias of `--pip-empty` — the resting edge of a toggle with a filled selected state (`.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · the `.seg` ring) and of the field family (`.field`, so `.field-select` and the search inputs · the `.field-affix` wrapper), ≥ 3:1 on every opaque surface (WCAG 1.4.11) and one step under the `--faint` hover edge |
 
 - **계산된 명암비** (WCAG 2.2 상대휘도):
 
@@ -259,7 +259,7 @@
 | `--faint` | 5.33 / 5.11 / 4.89 | 6.29 / 7.11 / 6.59 / 5.81 |
 | `--focus-ring` (≥3:1 UI) | 5.17 / 4.95 / 4.74 | 6.88 / 7.77 / 7.20 / 6.35 |
 | `--pip-empty` (≥3:1 UI) | 3.69 / 3.54 / 3.38 | 3.65 / 4.12 / 3.82 / 3.37 |
-| `--control-edge` → `--pip-empty` (≥3:1 UI, resting toggle edge) | 3.69 / 3.54 / 3.38 | 3.65 / 4.12 / 3.82 / 3.37 |
+| `--control-edge` → `--pip-empty` (≥3:1 UI, resting toggle and field edge) | 3.69 / 3.54 / 3.38 | 3.65 / 4.12 / 3.82 / 3.37 |
 | `--selected-ink` on `--selected-fill` | 16.74 | 13.26 |
 | `--crit` (텍스트 ≥4.5 — 단어를 싣는 유일한 tone) | 5.05 / 4.83 / 4.63 | 6.32 / 7.14 / 6.62 / 5.84 |
 | `--warn` (glyph ≥3:1) | 3.44 / 3.29 / 3.15 | 10.48 / 11.83 / 10.97 / 9.67 |
@@ -267,7 +267,7 @@
 | `--info` (glyph ≥3:1) | 3.68 / 3.53 / 3.38 | 9.68 / 10.93 / 10.13 / 8.94 |
 
 - 모든 텍스트 쌍 ≥ 4.5 (AA), 모든 UI 쌍 ≥ 3.0 — 불투명 토큰 면 기준.
-- 회귀 테스트: `test/tokens.contrast.unit.test.ts` — light · dark 블록 둘 다 파싱, light `--crit` ≥ 4.5 와 모든 light tone ≥ 3.0 (elev · surface · sunken) 고정. `--control-edge` 는 alias 를 target 으로 풀어 light elev · surface · sunken 과 dark 에 elev-2 를 더해 ≥ 3.0, `--faint` hover edge 가 그보다 한 step 위임을 고정.
+- 회귀 테스트: `test/tokens.contrast.unit.test.ts` — light · dark 블록 둘 다 파싱, light `--crit` ≥ 4.5 와 모든 light tone ≥ 3.0 (elev · surface · sunken) 고정. `--control-edge` 는 alias 를 target 으로 풀어 light elev · surface · sunken 과 dark 에 elev-2 를 더해 ≥ 3.0, `--faint` hover edge 가 그보다 한 step 위임을 고정. 렌더된 값은 `test/ui.control-state.e2e.test.ts` 가 고정 — toggle 은 card 위, field family 는 elev · surface · sunken 위, 두 테마 모두 ≥ 3.0.
 
 ### 4.2 Severity (crit / warn / info / ok) — 색만 쓰지 말 것
 
@@ -637,9 +637,9 @@
 
 ### 7.13 폼 · 기타 atom
 
-- **`.field`** (input · select): min-height `--ctl-h` 32 · padding `--ctl-pad-y` × `--ctl-pad-x` · `--ctl-font` · `--elev` · 1px `--line` · `--ctl-radius` · disabled opacity 0.5.
+- **`.field`** (input · select): min-height `--ctl-h` 32 · padding `--ctl-pad-y` × `--ctl-pad-x` · `--ctl-font` · `--elev` · 1px `--control-edge` (resting edge, §7.16) · `--ctl-radius` · disabled opacity 0.5.
   - hover border `--faint` · focus = `--accent` border + 전역 focus outline · error `.is-error` = `--crit` border + `--fs-meta` crit 메시지 — §4.2 허용 예외 (메시지는 crit ≥ 4.5 인 면 위에서만).
-  - `.field--mono`: mono tnum · `.field-select`: 테마별 `--faint` chevron · `.field-affix` (`$` 등): wrapper 가 border · focus 소유, `:has(:focus-visible)` 로 outline.
+  - `.field--mono`: mono tnum · `.field-select`: 테마별 `--faint` chevron · `.field-affix` (`$` 등): wrapper 가 border (`--control-edge`) · focus 소유, `:has(:focus-visible)` 로 outline.
 - **`.stage-pip`**: 8px 원 · 빈 pip `--pip-empty` · 채움 `--ink`.
 - **`.low-sample`** (`LowSampleMark`): 작은 표본 비율 옆 italic `--faint` `(n=N)`.
 - **`.page-verdict`** (`PageVerdict`): glyph 가 tone, 단어 · 문장은 ink. chip 은 resting button chrome (`--elev` · `--line` · `--ink`), 맨 텍스트 금지.
@@ -677,7 +677,7 @@
 | C32 small · `.btn.sm`, pagination, drawer nav, load-more, Refresh | 32 | 6 / 8 | 13 / 18 / 500 | as C32 button |
 | C32 icon-only · `.btn.icon` (close, zoom +/−) | 32 x 32 | 0 | glyph 14 | as C32 button |
 | C32 segment · `.seg` option (range, view toggle) | 32 | 6 / 8 | 13 / 18 / 500 in every state | group ring as box-shadow on the control edge; 1px `--line` dividers; focus outline inset −2 |
-| C32 field · `.field`, `.field-select`, `.field-affix`, search | 32 | 6 / 8; select inline-end = chevron gutter; search inline-start = icon gutter | 14 / 18 / 400 | 1px border; focus = border color plus global outline |
+| C32 field · `.field`, `.field-select`, `.field-affix`, search | 32 | 6 / 8; select inline-end = chevron gutter; search inline-start = icon gutter | 14 / 18 / 400 | 1px border resting on the control edge; focus = border color plus global outline |
 | C32 interactive pill · `.pill--interactive` (filter chip, stage picker, lineage, file-count disclosure) | 32 | 0 / 8 | 13 / 1 / 500 | 1px border; `[aria-pressed]` toggles rest on the control edge; selected = fill plus border color |
 | C32 disclosure · `.disclosure` (`DisclosureButton`, every `summary`) | 32 | 0 (inline 8 when bordered) | inherits body or meta | no border; global focus outline |
 | C32 tab | 32 | 6 / 8 | 13 / 18 / 500 | constant border or indicator thickness; selected swaps color only |
@@ -698,7 +698,9 @@
   - one weight per atom in every state
   - no state-conditional content inside an inline-sized box; block-width menu rows are exempt
   - hover and focus never unclamp truncated text (§5.3 clamp stands)
-- A toggle with a filled selected state rests on the control edge, 3:1 or more against every surface it sits on in both themes; the selected fill's luminance inversion is the non-color cue.
+- The resting edge (`--control-edge`, 3:1 or more against every surface it sits on in both themes) applies to toggles and the field family, and to nothing else:
+  - a toggle with a filled selected state rests on it; the selected fill's luminance inversion is the non-color cue
+  - `.field`, `.field-select`, `.field-affix` and the search inputs rest on it; hover lifts it to `--faint`, and focus keeps its border color plus the global outline
 - A control row has one tier height, every item centered on one line, and ladder gaps: 8 between controls, 12 between groups, 4 from a label to its group, 4 between chips in one group.
   - `.control-row` ships the card-head geometry at an 8 block inset (padding 8 / 16 · min-height 48 · gap 8 row / 12 column, no rule below): one line of 32 controls is the card-head's 48, and a wrapped row keeps 8 above its first line and below its last. Where the row is the card's head, `.card-head` is the class. Its direct children are groups.
   - A label and its group wrap as one unit; a static pill takes `.pill--ctl-h`; a text target is 24 or taller (`.inline-target`).

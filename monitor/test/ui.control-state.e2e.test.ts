@@ -1,6 +1,7 @@
 // Control-atom state invariance read in a real browser: no state of .btn, a .seg option or .pill--interactive changes its
 // border-box, so a selected option never reads as a bigger box than its siblings; a resting toggle's edge reads against its card
-// at 3:1 in both themes, so its box is visible before it is selected; the shipped control row holds them on one 48 line.
+// at 3:1 in both themes, so its box is visible before it is selected, and a resting field's edge does so on every surface it sits on;
+// the shipped control row holds them on one 48 line.
 // Runner: npx tsx --test test/ui.control-state.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -10,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
-import { type Box, createControlProbe } from "./lib/control-probe.js";
+import { type Box, createControlProbe, isSameBox } from "./lib/control-probe.js";
 import { contrastRatio, parseColor } from "./lib/wcag-contrast.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,20 @@ const ATOMS = [
     markup: `<button type="button" class="pill pill--interactive" data-atom="pill" aria-pressed="false">Open 17</button>` },
 ] as const;
 
+// one field-family control per atom, each with the focus state its own rule keys on: the affix wrapper owns border and focus
+const FIELDS = [
+  { name: "a text field", id: "input", focus: ["focus-visible"],
+    markup: `<input type="text" class="field field--mono" data-field="input" aria-label="Model id" value="claude-opus">` },
+  { name: "a select field", id: "select", focus: ["focus-visible"],
+    markup: `<select class="field field-select" data-field="select" aria-label="Saved target"><option>Default</option></select>` },
+  { name: "an affixed field", id: "affix", focus: ["focus-within"],
+    markup: `<span class="field-affix" data-field="affix"><span class="field-affix__sym">$</span><input type="text" class="field field--mono" aria-label="Monthly budget" value="40"></span>` },
+  { name: "a search field", id: "search", focus: ["focus-visible"],
+    markup: `<input type="search" class="field" data-field="search" placeholder="Search…" aria-label="Search documents">` },
+] as const;
+// the opaque fills a field sits on: a card (elev), the page (surface), a recessed well (sunken)
+const SURFACES = ["elev", "surface", "sunken"] as const;
+
 // the toolbar is the shipped control row; a static count pill rides it at the control height
 const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
   <div class="card">
@@ -47,6 +62,10 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
       <span class="pill pill--count pill--ctl-h">17 open</span>
     </div>
   </div>
+  ${SURFACES.map((surface) => `<div class="card" data-surface="${surface}"
+    style="background: rgb(var(--${surface})); width: 320px; padding: 16px; gap: 8px; margin-top: 24px;">
+    ${FIELDS.map((field) => field.markup).join("\n    ")}
+  </div>`).join("\n  ")}
 </body></html>`;
 
 // each state is applied to the one measured element and undone after reading; hover and focus-visible are forced through CDP,
@@ -208,4 +227,45 @@ test("a toggle button's hover edge is the plain button's hover edge, so the rest
     try { return await readStyle(id, "border-top-color"); } finally { await forcePseudo(id, []); }
   };
   assert.equal(await readHoverEdge("btn"), await readHoverEdge("btn-plain"));
+});
+
+const getFieldSelector = (surface: (typeof SURFACES)[number], id: string) => `[data-surface="${surface}"] [data-field="${id}"]`;
+
+describe("a resting field-family control draws an edge that reads against the surface it sits on at 3:1", () => {
+  for (const field of FIELDS) {
+    for (const theme of THEMES) {
+      for (const surface of SURFACES) {
+        test(`${field.name} on ${surface} in ${theme}`, async () => {
+          const [color, fill] = await withTheme(theme, () => Promise.all([
+            probe.readStyle(getFieldSelector(surface, field.id), "border-top-color"),
+            probe.readStyle(`[data-surface="${surface}"]`, "background-color"),
+          ]));
+          const ratio = contrastRatio(parseColor(color), parseColor(fill));
+          assert.ok(ratio >= UI_CONTRAST, `${theme} ${field.id} edge ${color} on ${surface} ${fill} = ${ratio.toFixed(2)}:1 < ${UI_CONTRAST}:1`);
+        });
+      }
+    }
+  }
+});
+
+// hover lifts the edge to --faint and focus paints it --accent; neither may resolve to the resting edge, nor resize the box
+describe("a field-family control's hover and focus repaint only its edge, never back to the resting edge", () => {
+  for (const field of FIELDS) {
+    for (const state of [{ name: "hover", pseudo: ["hover"] }, { name: "focus", pseudo: field.focus }] as const) {
+      test(`${field.name} under ${state.name}`, async () => {
+        const selector = getFieldSelector("elev", field.id);
+        const rest = await probe.readBox(selector);
+        for (const theme of THEMES) {
+          const [restEdge, stateEdge, stateBox] = await withTheme(theme, async () => {
+            const edge = await probe.readStyle(selector, "border-top-color");
+            await probe.forcePseudo(selector, state.pseudo);
+            try { return [edge, await probe.readStyle(selector, "border-top-color"), await probe.readBox(selector)] as const; }
+            finally { await probe.forcePseudo(selector, []); }
+          });
+          assert.notEqual(stateEdge, restEdge, `${theme} ${field.id} ${state.name} edge equals the resting edge`);
+          assert.ok(isSameBox(stateBox, rest), `${theme} ${field.id} ${state.name} ${stateBox.width}x${stateBox.height} vs resting ${rest.width}x${rest.height}`);
+        }
+      });
+    }
+  }
 });

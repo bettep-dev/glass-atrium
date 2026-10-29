@@ -1215,7 +1215,7 @@ button.kpi:hover {
 	line-height: var(--ctl-line);
 	color: rgb(var(--ink));
 	background: rgb(var(--elev));       /* .btn/.seg/.kpi resting fill 정합 */
-	border: 1px solid rgb(var(--line));
+	border: 1px solid rgb(var(--control-edge)); /* the control edge → the box reads at rest on every surface, one step under the --faint hover */
 	border-radius: var(--ctl-radius);  /* .btn radius 정합 */
 	transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
 	-webkit-appearance: none;
@@ -1229,7 +1229,7 @@ button.kpi:hover {
 	font-feature-settings: "tnum" 1;
 }
 
-/* hover — line→faint 한 단계 (.kpi:hover 와 동일 강조 단계) */
+/* hover — control-edge→faint 한 단계 */
 .field:hover:not(:disabled):not(:focus-visible) {
 	border-color: rgb(var(--faint));
 }
@@ -1288,7 +1288,7 @@ button.kpi:hover {
 	align-items: center;
 	box-sizing: border-box;
 	background: rgb(var(--elev));
-	border: 1px solid rgb(var(--line));
+	border: 1px solid rgb(var(--control-edge)); /* the wrapper is the field's box → it rests on the control edge */
 	border-radius: var(--radius-control);
 	transition: border-color 0.12s, box-shadow 0.12s;
 	min-height: var(--ctl-h);          /* the wrapper owns the border → it, not the inner field, holds the 32px control height */
