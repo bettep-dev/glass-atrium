@@ -1,7 +1,7 @@
 // Task results controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the
 // screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" and the result drawer's record
 // "Previous / Next" draw the same small ghost button at rest and on hover, the filter panel's "More filters" fold opens on the
-// disclosure atom, each keeps one box in every state, the panel's Record scope checkbox stands on the C24 inline-target tier and
+// disclosure atom, each keeps one box in every state, the panel's Record scope checkbox stands on the 24 inline-target tier and
 // draws the Documents ledger's checkbox in both themes, a card head's static pill stands on the 32 control height (§7.16), and the
 // active-filter row under the Results head is one 48 control row above its rule, and the Results head holds still as a keyword lands or a
 // popover filter is counted.
