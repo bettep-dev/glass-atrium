@@ -158,22 +158,28 @@ describe("the save-results fold opens on the disclosure atom", () => {
   test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(RESULTS_SUMMARY));
 });
 
+// a 24 target centres its line box by flex, and the engine floors the half-leading inside it to a whole pixel → only a whole-pixel line box
+// keeps the text within 0.5 of the centre for a face of either ascent + descent parity; the line-height check fails in every face
+const assertTextOnTargetCentre = async (selector: string) => {
+  const box = await readBox(selector);
+  assert.equal(box.height, 24);
+  const lineHeight = await readStyle(selector, "line-height");
+  assert.ok(Number.isInteger(parseFloat(lineHeight)), `line box ${lineHeight} is not a whole pixel`);
+  const text = await page.$eval(selector, (el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const { top, height } = range.getClientRects()[0];
+    return top + height / 2;
+  });
+  assert.ok(Math.abs(text - (box.top + box.height / 2)) <= 0.5, `text centre ${text} vs box centre ${box.top + box.height / 2}`);
+};
+
 describe("the Cost & usage links are 24 targets", () => {
   for (const [name, selector] of [
     ["the model card's Cost & usage link", "#models a[href='#cost']"],
     ["a cap's Recent costs link", "#caps a[href='#cost']"],
   ] as const) {
-    test(`${name} is 24 tall with its text on the box's centre line`, async () => {
-      const box = await readBox(selector);
-      assert.equal(box.height, 24);
-      const text = await page.$eval(selector, (el) => {
-        const range = document.createRange();
-        range.selectNodeContents(el);
-        const { top, height } = range.getClientRects()[0];
-        return top + height / 2;
-      });
-      assert.ok(Math.abs(text - (box.top + box.height / 2)) <= 0.5, `text centre ${text} vs box centre ${box.top + box.height / 2}`);
-    });
+    test(`${name} is 24 tall with its text on the box's centre line`, () => assertTextOnTargetCentre(selector));
   }
 });
 
@@ -181,17 +187,7 @@ describe("a field's inline Reset is a 24 target in a slot that holds its height"
   const RESET = "#saved-overridden button[aria-label='Reset this field to the saved value']";
   const SLOT = (state: "overridden" | "empty") => `#saved-${state} [data-slot='saved-line']`;
 
-  test("Reset is 24 tall with its text on the box's centre line", async () => {
-    const box = await readBox(RESET);
-    assert.equal(box.height, 24);
-    const text = await page.$eval(RESET, (el) => {
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      const { top, height } = range.getClientRects()[0];
-      return top + height / 2;
-    });
-    assert.ok(Math.abs(text - (box.top + box.height / 2)) <= 0.5, `text centre ${text} vs box centre ${box.top + box.height / 2}`);
-  });
+  test("Reset is 24 tall with its text on the box's centre line", () => assertTextOnTargetCentre(RESET));
 
   test("the saved line is as tall overridden as back at the saved value", async () => {
     const overridden = await readBox(SLOT("overridden"));
