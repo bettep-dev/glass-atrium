@@ -1088,12 +1088,15 @@ test("open-summary rail: beside the ledger (1920px) labels and counts share one 
       assert.equal(columns.tracks, 2, "labels and counts share one two-column grid");
       assert.ok(columns.sameRow, "a count sits on its label's row");
 
-      const edges = await rail.evaluate((el) => ({
-        label: el.querySelector("dt")?.getBoundingClientRect().left,
-        oldest: el.querySelector(".doc-open-oldest")?.getBoundingClientRect().left,
-      }));
+      // the link's text, not its box: the small-button box hangs its padding into the rail gutter
+      const edges = await rail.evaluate((el) => {
+        const link = el.querySelector(".doc-open-oldest");
+        const text = link ? document.createRange() : null;
+        text?.selectNodeContents(link!);
+        return { label: el.querySelector("dt")?.getBoundingClientRect().left, oldest: text?.getBoundingClientRect().left };
+      });
       assert.ok(edges.label != null && edges.oldest != null, "rail shows a label and an Oldest open link");
-      assert.ok(Math.abs(edges.oldest - edges.label) < 1, `Oldest open starts at the label edge (${edges.oldest} vs ${edges.label})`);
+      assert.ok(Math.abs(edges.oldest - edges.label) < 1, `Oldest open's text starts at the label edge (${edges.oldest} vs ${edges.label})`);
     } finally {
       await context.close();
     }

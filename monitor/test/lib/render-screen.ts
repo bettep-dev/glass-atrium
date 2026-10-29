@@ -235,9 +235,20 @@ export function renderScreen(node: unknown, depth = 0): RenderedNode | string | 
 
 const getKebabCase = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
+// React's unitless style properties (react-dom isUnitlessNumber, the subset a screen can set) → every other number takes px
+const UNITLESS_STYLES = new Set([
+  "animationIterationCount", "aspectRatio", "columnCount", "columns", "flex", "flexGrow", "flexShrink", "flexOrder", "fontWeight",
+  "gridColumn", "gridColumnEnd", "gridColumnStart", "gridRow", "gridRowEnd", "gridRowStart", "lineClamp", "lineHeight", "opacity",
+  "order", "orphans", "scale", "tabSize", "widows", "zIndex", "zoom", "fillOpacity", "floodOpacity", "stopOpacity", "strokeDasharray",
+  "strokeDashoffset", "strokeMiterlimit", "strokeOpacity", "strokeWidth", "WebkitLineClamp",
+]);
+const getStyleValue = (prop: string, value: unknown): string =>
+  typeof value === "number" && value !== 0 && !UNITLESS_STYLES.has(prop) ? `${value}px` : String(value);
+
 /**
  * Host-element tree → HTML, so a browser suite lays out the shipped markup, not a hand copy of it.
- * Component wrappers unwrap to their output; handlers, refs and false/null props drop; style objects and stroke props kebab-case.
+ * Component wrappers unwrap to their output; handlers, refs and false/null props drop; style objects and stroke props kebab-case,
+ * and a numeric style value takes px as react-dom writes it.
  */
 export function getHtml(node: RenderedNode | string): string {
   if (typeof node === "string") return node.replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -248,7 +259,7 @@ export function getHtml(node: RenderedNode | string): string {
       const name = key === "className" ? "class" : key.startsWith("stroke") ? getKebabCase(key) : key;
       const text =
         key === "style"
-          ? Object.entries(value as Record<string, unknown>).map(([prop, v]) => `${getKebabCase(prop)}: ${String(v)}`).join("; ")
+          ? Object.entries(value as Record<string, unknown>).map(([prop, v]) => `${getKebabCase(prop)}: ${getStyleValue(prop, v)}`).join("; ")
           : String(value);
       return ` ${name}="${text.replace(/"/g, "&quot;")}"`;
     })

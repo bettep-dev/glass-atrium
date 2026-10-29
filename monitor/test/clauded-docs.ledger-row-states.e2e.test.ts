@@ -333,10 +333,12 @@ describe("the Created cell keeps its age and stale glyph on one line", () => {
 });
 
 describe("the select column and the stage section heads sit on the ledger's grid", () => {
-  // DocCheckboxCD's 16px box, centred by auto inline margins as its mx-auto class does
-  const checkbox = `<span style="display: flex; width: 16px; height: 16px; margin-inline: auto;"><input type="checkbox" class="doc-checkbox" /></span>`;
+  // the shipped DocCheckboxCD; its wrapper lays out on Tailwind utilities, which the app loads from its CDN → their rules ride the page
+  const checkbox = getHtml(renderScreen((docsScreen.DocCheckboxCD as (props: unknown) => unknown)({ checked: false, onChange: () => {}, ariaLabel: "Select Plan" })) as RenderedNode);
+  const UTILITIES = ".relative { position: relative; } .absolute { position: absolute; } .flex { display: flex; } .items-center { align-items: center; }" +
+    " .justify-center { justify-content: center; } .mx-auto { margin-left: auto; margin-right: auto; } .pointer-events-none { pointer-events: none; }";
   // the app's preflight sizes boxes border-box → the select floor is the cell's whole width, as it renders
-  const gridPage = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; }</style></head><body style="margin: 0;">
+  const gridPage = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } ${UTILITIES}</style></head><body style="margin: 0;">
     <div style="padding: 48px;"><div class="card"><table class="tbl" style="width: 600px;">
       <thead><tr><th scope="col" class="doc-checkbox-cell" id="head-select">${checkbox}</th><th scope="col">Title</th></tr></thead>
       <tbody>
@@ -369,6 +371,33 @@ describe("the select column and the stage section heads sit on the ledger's grid
       assert.ok(Math.abs(offset) <= 0.5, `checkbox centre ${offset}px off the cell centre`);
     });
   }
+
+  // a click 3px past the 16 box on each side still toggles it; the cell keeps the select floor and the row its 40
+  test("the checkbox keeps its 16 box inside the select floor and takes a 24 hit area that toggles it", async () => {
+    const floor = vm.runInContext("LEDGER_CD.FLOOR.select", docsScreen) as number;
+    const { cell, box, rowH } = await page.$eval("#row-select", (el) => ({
+      cell: el.getBoundingClientRect().toJSON() as DOMRect,
+      box: el.querySelector("input")!.getBoundingClientRect().toJSON() as DOMRect,
+      rowH: el.parentElement!.getBoundingClientRect().height,
+    }));
+    assert.equal(box.width, 16);
+    assert.equal(box.height, 16);
+    assert.ok(Math.abs(cell.width - floor) < 0.5, `select cell ${cell.width}px vs the ${floor}px floor`);
+    assert.ok(Math.abs(rowH - 40) < 0.5, `row ${rowH}px`);
+    const centre = { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 };
+    const edges = [
+      { name: "left", x: box.left - 3, y: centre.y },
+      { name: "right", x: box.right + 3, y: centre.y },
+      { name: "top", x: centre.x, y: box.top - 3 },
+      { name: "bottom", x: centre.x, y: box.bottom + 3 },
+    ];
+    for (const edge of edges) {
+      const before = await page.$eval("#row-select input", (el) => (el as HTMLInputElement).checked);
+      await page.mouse.click(edge.x, edge.y);
+      const after = await page.$eval("#row-select input", (el) => (el as HTMLInputElement).checked);
+      assert.notEqual(after, before, `a click 3px past the ${edge.name} edge toggles the checkbox`);
+    }
+  });
 
   test("a stage section head is a 40 row like the ledger rows", async () => {
     const [section, doc] = await Promise.all(["section", "doc"].map((id) => page.$eval(`#${id}`, (tr) => tr.getBoundingClientRect().height)));
