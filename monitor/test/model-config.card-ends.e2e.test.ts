@@ -112,7 +112,7 @@ test("every tier-table cell takes the shared .tbl padding, a text cell starting 
     await page.waitForSelector(".split-row .split-col table tbody tr td input", { timeout: 30_000 });
     // no named helper inside evaluate — tsx would wrap it in a __name call the page does not define
     const tables = await page.evaluate(() => {
-      const controls = ".btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h";
+      const controls = ".btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h, .disclosure";
       return [...document.querySelectorAll(".split-row table")].map((table) => {
         const th = getComputedStyle(table.querySelector("thead th")!);
         return {
@@ -171,7 +171,7 @@ for (const width of [1024, 1280, 1440, 1920]) {
       await page.waitForSelector(".split-row .split-col table tbody tr td input", { timeout: 30_000 });
       // no named helper inside evaluate — tsx would wrap it in a __name call the page does not define
       const geometry = await page.evaluate(() => {
-        const controls = ".btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h";
+        const controls = ".btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h, .disclosure";
         const offsets: { row: string; offset: number }[] = [];
         for (const tr of document.querySelectorAll<HTMLTableRowElement>("tbody tr.is-top-aligned")) {
           const control = tr.querySelector(controls)!.getBoundingClientRect();

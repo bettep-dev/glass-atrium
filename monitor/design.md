@@ -180,7 +180,7 @@
 | 카드 | `Card` · `CardHead` · `CardInfo` · `SubCard` | `.card*` · `.sub-card` |
 | 레이아웃 | `SplitRow` · `SplitColumn` · `TileSplit` | `.split-row*` · `.split-col*` · `.tile-split` |
 | overlay | `DetailSurface` · `Modal`(= confirm 위임) · `Popover` | `.detail-*` · `.popover-*` |
-| 공개 | `Disclosure` · `DisclosureButton` | `.card.is-collapsed` |
+| 공개 | `Disclosure` · `DisclosureButton` | `.disclosure` (also on a `summary`) · `.card.is-collapsed` |
 | 배지·상태 | `Badge` · `Pill`(→ Badge) · `StatusDot` | `.pill*` |
 | agent 이름 | `AgentName` | caller `className` (텍스트만) |
 | 수치 | `KPI` · `KpiValue` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.kpi*` |
@@ -190,6 +190,7 @@
 | 로딩 | `LoadingPlaceholder` · `SkeletonRows` | `role="status"` `.fs-meta` `--dim` · inline bar |
 | 오류 · region | `RegionFailure`(→ `RegionUnavailable` / `RegionCovered`) · `PageErrorBanner`(→ `AlertCard`) · `AlertCard` · `RetryButton` | `.sub-card.bg-sunken` · `.alert-card*` · `.btn.sm` |
 | 기타 | `Icon` · `ChipGroup` · `DetailField` | `.seg` |
+| control row · inline target | — (class only) | `.control-row` · `.inline-target` (§7.15 · §7.16) |
 
 - **KPI 내부 전용**: `Delta` (`.kpi-delta`) 는 `KPI` 의 `delta` prop 으로만 렌더 — `window.UI` export 아님.
 - **`AgentName`**: `glass-atrium-` prefix 를 뗀 짧은 이름 + 전체 이름은 sr-only 텍스트 · `title`. agent 식별은 이 텍스트로만 (아바타 없음 — §4.3).
@@ -500,7 +501,7 @@
 
 ### 7.3 Badge — `Badge` · `Pill` (`.pill*`)
 
-- **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · 1px `--line` · min-height 22 · padding 3px 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
+- **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · 1px `--line` · min-height 24 · padding 0 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
 - tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status).
   - glyph 명암 (`--sunken` shell 위): light warn 3.15 · info 3.38 · ok 3.45 · crit 4.63 · dark ≥ 6.62.
 - 변형: `.pill--absent` (투명 · `--faint` · dashed `--line`) · `.pill--meta` (소문자) · `.pill--count` (mono tabular) · `.pill--ctl-h` (같은 행 `.field` 와 높이, `--ctl-h`) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · pressed = selected fill · a toggle (`[aria-pressed]`) rests on a `--control-edge` border, non-toggle pills keep `--line`).
@@ -539,7 +540,7 @@
 
 - `.seg`: `--elev` · 1px `--control-edge` ring (box-shadow) · `--radius-control` · clip. 버튼 padding 6px 8px · line-height `--lh-ctl` · min-height 32 · `--fs-meta` · 500 in every state · `--dim` · 사이 1px `--line` — dividers stay on `--line`, so the 3:1 ring reads as one box and the group never splits into separate buttons.
 - **filled selected 상태는 하나**: `.seg button.active` · `[aria-pressed]` · `.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · stage menu `[aria-checked]` 모두 `--selected-fill` / `--selected-ink`. The selected rule sets no weight — each atom keeps its one resting weight (500), so selecting never widens the box (`test/ui.control-state.e2e.test.ts`).
-  - stage menu 의 checked 항목은 fill 에 더해 check mark — 색이 유일한 신호가 되지 않게.
+  - stage menu 의 checked 항목은 fill 에 더해 check mark — 색이 유일한 신호가 되지 않게. A block-width menu row keeps its box with or without the mark, so it is the one exemption from the no-state-glyph rule (§7.16).
 - `.seg` focus ring 은 inset (`outline-offset` = −ring width) — `.seg` 가 자식을 clip 하므로.
 
 ### 7.7 Sidebar — `.shell-sidebar` · `.nav-item`
@@ -624,7 +625,10 @@
 
 ### 7.12 Disclosure · Popover
 
-- **`Disclosure({ kind, title, sub, tone })`**: `.card` 위 fold. header = `DisclosureButton` (chevron 14 · `aria-expanded` · min-height 32) — 제목 500 `--ink` + sub `--fs-meta` `--faint`. 열림 규칙: §1 의 4).
+- **`.disclosure`** (C32 disclosure, §7.15): inline-flex · chevron 14 + label, gap 4, on one centre line · min-height `--ctl-min-h` 32 · `--dim` → hover `--ink` · no border · global focus outline.
+  - `DisclosureButton` renders on it (`aria-expanded` · `aria-controls`). A `summary` takes the same class: the UA marker drops, so the chevron is the one open-state cue.
+  - A `.tbl` cell holding one takes the control-cell step, so the row stays 40.
+- **`Disclosure({ kind, title, sub, tone })`**: `.card` 위 fold. header = `DisclosureButton` — 제목 500 `--ink` + sub `--fs-meta` `--faint`. 열림 규칙: §1 의 4).
 - **`Popover({ label, title })`**: 트리거 = `btn ghost sm` (`aria-haspopup="dialog"` · `aria-expanded`) · 패널 `role="dialog"`.
   - non-modal: inert · scroll-lock · trap 없음. Esc 또는 바깥 press 로 닫히고 포커스는 트리거로. 치수 §6.5.
 
@@ -661,6 +665,40 @@
   - zoom 컨트롤용 우측 inset ≥ 48px (`CONTROLS_MIN_INSET_PX`) — 컨트롤 아래 box 0개.
 - **Tab 순서**: sources 컬럼 위→아래, 그다음 spine 위→아래 (`data-arch-rank`).
 - **상태 링**: warn · crit 노드/zone = tone 링 + 모서리 `!` / `!!` badge + accessible name health word, caption 범례가 key — §4.2 허용 예외.
+
+### 7.15 Control size tiers
+
+| Tier · members | Height | Padding (block / inline) | Font (size / line / weight) | Outline mechanism |
+|---|---|---|---|---|
+| C32 button · `.btn` | 32 | 6 / 12 | 14 / 18 / 500 | 1px border, width constant, color swaps only; `[aria-pressed]` rests on the control edge; ghost = transparent border |
+| C32 small · `.btn.sm`, pagination, drawer nav, load-more, Refresh | 32 | 6 / 8 | 13 / 18 / 500 | as C32 button |
+| C32 icon-only · `.btn.icon` (close, zoom +/−) | 32 x 32 | 0 | glyph 14 | as C32 button |
+| C32 segment · `.seg` option (range, view toggle) | 32 | 6 / 8 | 13 / 18 / 500 in every state | group ring as box-shadow on the control edge; 1px `--line` dividers; focus outline inset −2 |
+| C32 field · `.field`, `.field-select`, `.field-affix`, search | 32 | 6 / 8; select inline-end = chevron gutter; search inline-start = icon gutter | 14 / 18 / 400 | 1px border; focus = border color plus global outline |
+| C32 interactive pill · `.pill--interactive` (filter chip, stage picker, lineage, file-count disclosure) | 32 | 0 / 8 | 13 / 1 / 500 | 1px border; `[aria-pressed]` toggles rest on the control edge; selected = fill plus border color |
+| C32 disclosure · `.disclosure` (`DisclosureButton`, every `summary`) | 32 | 0 (inline 8 when bordered) | inherits body or meta | no border; global focus outline |
+| C32 tab | 32 | 6 / 8 | 13 / 18 / 500 | constant border or indicator thickness; selected swaps color only |
+| C24 static pill · `.pill`, `--meta`, `--count` (never on a button) | 24; 32 via `.pill--ctl-h` in a control row | 0 / 8 | 13 / 1 / 500 | 1px border |
+| C24 inline target · `.inline-target` on links, ledger expanders, checkbox hit areas | min 24 (checkbox visual 16) | 0 | inherits | no border; global focus outline |
+
+- Row mapping: a 40 `.tbl` row holds a 24 target (7.5 + 24 + 7.5 + 1) or a 32 control through the control-cell rule. Card-head, `.control-row` and the overlay head are min 48. A card-foot is 40. A 32 compact row holds no control and no target.
+- A new 32 class joins the `.tbl` control-cell `:has` list, the 32 floor in `test/styles.shared-atoms.unit.test.ts` and the controls selectors in `test/model-config.card-ends.e2e.test.ts` in the change that creates it.
+- `.inline-target` is opt-in, never a global link rule: prose links sit under WCAG 2.5.8's inline exception. It is middle-aligned, so a 24 box keeps a 40 row and its text on the line.
+- Regression tests: `test/ui.row-geometry.e2e.test.ts` (40 rows per control and target) · `test/ui.control-state.e2e.test.ts` (state boxes, resting edge, the control row).
+
+### 7.16 State invariance · control rows
+
+- No state changes a control's border-box or a sibling's position (hover, focus-visible, pressed/selected/active, disabled, loading, open):
+  - border width is constant across states
+  - focus is an outline (offset 2, or −2 inset where the parent clips)
+  - one weight per atom in every state
+  - no state-conditional content inside an inline-sized box; block-width menu rows are exempt
+  - hover and focus never unclamp truncated text (§5.3 clamp stands)
+- A toggle with a filled selected state rests on the control edge, 3:1 or more against every surface it sits on in both themes; the selected fill's luminance inversion is the non-color cue.
+- A control row has one tier height, every item centered on one line, and ladder gaps: 8 between controls, 12 between groups, 4 from a label to its group, 4 between chips in one group.
+  - `.control-row` ships the card-head geometry (padding 4 / 16 · min-height 48 · gap 8 row / 12 column, no rule below); where the row is the card's head, `.card-head` is the class. Its direct children are groups.
+  - A label and its group wrap as one unit; trailing meta wraps as one right-aligned unit; a static pill takes `.pill--ctl-h`; a text target is 24 or taller (`.inline-target`).
+- An overlay head is 48; its title's first line centers on its 32 close button within 1px (§7.8).
 
 ---
 

@@ -1029,10 +1029,10 @@ function DisclosureChevron({ isOpen }) {
     className={`text-dim group-hover:text-ink ${isOpen ? 'rotate-90' : ''}`.trim()} />;
 }
 
-// Expand/collapse control: state rides aria-expanded, the visible label names it.
+// Expand/collapse control on the .disclosure atom: state rides aria-expanded, the visible label names it.
 function DisclosureButton({ isOpen, onToggle, label, controls, className = '' }) {
   return <button type="button" onClick={onToggle} aria-expanded={isOpen} aria-controls={controls}
-    className={`group inline-flex items-center gap-1 min-h-[32px] text-dim hover:text-ink ${className}`.trim()}>
+    className={`group disclosure ${className}`.trim()}>
     <DisclosureChevron isOpen={isOpen} />
     <span>{label}</span>
   </button>;

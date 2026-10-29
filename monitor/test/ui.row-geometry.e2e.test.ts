@@ -1,5 +1,5 @@
-// Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control or a
-// value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
+// Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control, a 24px
+// inline target or a value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
 // a compact body row off .tbl sits on the 32 step (a mark + value cell too), and a word KPI value sits on the figure's baseline.
 // Runner: npx tsx --test test/ui.row-geometry.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
@@ -64,6 +64,12 @@ const ICON_ROWS = [
   { name: "an icon whose caller passes an align class", id: "aligned", markup: iconMarkup({ name: "check", size: 14, className: "align-middle" }) },
 ] as const;
 
+// the shipped DisclosureButton as markup — its own class list, its chevron and label; a `summary` takes the same atom class
+const disclosureButton = (renderScreen(React.createElement(ui.DisclosureButton, { isOpen: false, onToggle: () => {}, label: "2 more buckets" })) as RenderedNode)
+  .children[0] as RenderedNode;
+const DISCLOSURE_CHEVRON = iconMarkup({ name: "chevR", size: 14 });
+const DISCLOSURE_BUTTON = `<button type="button" class="${String(disclosureButton.props.className)}">${DISCLOSURE_CHEVRON}<span>2 more buckets</span></button>`;
+
 // control family of the .tbl control-cell rule — each sits in a row beside a text cell
 const CONTROL_ROWS = [
   { name: "a small button", control: `<button type="button" class="btn sm">Edit</button>` },
@@ -72,6 +78,15 @@ const CONTROL_ROWS = [
   { name: "a select field", control: `<select class="field field-select"><option>claude-opus</option></select>` },
   { name: "an affixed field", control: `<span class="field-affix"><span class="field-affix__sym">$</span><input class="field" value="12" /></span>` },
   { name: "an interactive pill", control: `<button type="button" class="pill pill--interactive">Implementing</button>` },
+  { name: "a disclosure button", control: DISCLOSURE_BUTTON },
+  { name: "a disclosure summary", control: `<details><summary class="disclosure">${DISCLOSURE_CHEVRON}<span>Details</span></summary><p>body</p></details>` },
+] as const;
+
+// opt-in 24 targets the screens put in ledger rows: a text link, a ledger expander, a checkbox hit area (16 visual)
+const INLINE_TARGET_ROWS = [
+  { name: "a text link", target: `<a href="#cost" class="inline-target">Cost &amp; usage</a>` },
+  { name: "a ledger expander", target: `<button type="button" class="inline-target">+ 3 more</button>` },
+  { name: "a checkbox hit area", target: `<label class="inline-target"><input type="checkbox" aria-label="Select row" style="width: 16px; height: 16px;" /></label>` },
 ] as const;
 
 // column-header rows, one table each: a house .tbl, a geometry-only .tbl--own-face, a table off .tbl that opts in through
@@ -125,6 +140,7 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
     <tr data-row="pill"><td>dev-react</td><td><span class="pill">Done</span></td></tr>
     <tr data-row="bar"><td>dev-react</td><td class="num tbl-bar-cell"><span id="bar-value" style="display: inline-flex;">92.0%</span><div style="height: 8px;"></div></td></tr>
     ${CONTROL_ROWS.map((row, i) => `<tr data-row="control-${i}"><td>dev-react</td><td>${row.control}</td></tr>`).join("\n    ")}
+    ${INLINE_TARGET_ROWS.map((row, i) => `<tr data-row="target-${i}"><td>dev-react</td><td>${row.target}</td></tr>`).join("\n    ")}
     <tr data-row="last"><td>last row</td><td>no rule below — keeps every measured row ruled</td></tr>
   </tbody></table>
   ${HEAD_ROWS.map((row) => row.markup).join("\n  ")}
@@ -201,6 +217,20 @@ describe("a .tbl row is one 40px line whatever its cells hold", () => {
       assert.equal(controlHeight, 32, `${row.name} is a 32px control`);
       assert.equal(await rowHeight(`control-${i}`), ROW_PX);
     });
+  });
+
+  INLINE_TARGET_ROWS.forEach((row, i) => {
+    test(`a row holding ${row.name} (24px inline target) stays 40`, async () => {
+      const targetHeight = await page.$eval(`tr[data-row="target-${i}"] td:last-child > *`, (el) => el.getBoundingClientRect().height);
+      assert.ok(targetHeight >= 24, `${row.name} target ${targetHeight} < 24`);
+      assert.equal(await rowHeight(`target-${i}`), ROW_PX);
+    });
+  });
+
+  test("a disclosure summary draws its chevron alone, never the UA marker beside it", async () => {
+    const summary = await page.$eval("summary.disclosure", (el) => ({ display: getComputedStyle(el).display, list: getComputedStyle(el).listStyleType }));
+    assert.notEqual(summary.display, "list-item", "a list-item summary draws the UA marker");
+    assert.equal(summary.list, "none");
   });
 });
 

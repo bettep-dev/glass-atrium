@@ -126,7 +126,7 @@ test("mono stays on numeric atoms and off word-carrying atoms", () => {
 });
 
 test("every interactive control atom is at least 32px tall", () => {
-  for (const selector of [".btn", ".btn.sm", ".btn.icon", ".seg button", ".pill--interactive", ".field"]) {
+  for (const selector of [".btn", ".btn.sm", ".btn.icon", ".seg button", ".pill--interactive", ".field", ".disclosure"]) {
     const heights = getRuleBodies(BASE_CSS, selector).flatMap((b) =>
       ["min-height", "height"].map((p) => getDecl(b, p)).filter((v): v is string => !!v && v !== "auto"),
     );

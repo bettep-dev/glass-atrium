@@ -10,6 +10,31 @@
 details[open] > summary .chevron {
 	transform: rotate(180deg);
 }
+/* disclosure trigger — DisclosureButton or a <summary>: chevron + label on one centre line at the 32 control height, no border.
+   A non-list-item display drops the UA marker (WebKit keeps its own pseudo) → the chevron is the one open-state cue */
+.disclosure {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	min-height: var(--ctl-min-h);
+	list-style: none;
+	color: rgb(var(--dim));
+	cursor: pointer;
+}
+.disclosure::-webkit-details-marker {
+	display: none;
+}
+.disclosure:hover {
+	color: rgb(var(--ink));
+}
+/* opt-in 24 hit target (WCAG 2.5.8) for a text link, a ledger expander or a checkbox hit area — never a global link rule, since
+   prose links sit under the criterion's inline exception. Middle-aligned → the box keeps a 40 .tbl row and its text on the line */
+.inline-target {
+	display: inline-flex;
+	align-items: center;
+	vertical-align: middle;
+	min-height: 24px;
+}
 
 /* page header — top-aligned row; the h1 line box is one control height, so the controls and the
    freshness line center on the title line with or without a sub-line. Narrow → the cluster wraps below the title. */
@@ -61,15 +86,19 @@ details[open] > summary .chevron {
 [data-theme="dark"] .card {
 	box-shadow: var(--shadow-raised), inset 0 1px 0 rgb(var(--glass-border) / 0.06);
 }
-/* one 48px line: title + meta left, actions right · wraps only when the controls do not fit */
-.card-head {
+/* one 48px line: title + meta left, actions right · wraps only when the controls do not fit.
+   .control-row = the same geometry for a toolbar that is not the card's head — its direct children are groups, 12 apart */
+.card-head,
+.control-row {
 	flex: none;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
-	gap: 8px 12px;
+	gap: var(--space-2) var(--space-3);
 	min-height: var(--card-head-h);
-	padding: 4px var(--card-pad);
+	padding: var(--space-1) var(--card-pad);
+}
+.card-head {
 	border-bottom: 1px solid rgb(var(--line));
 }
 .card-head-text {
@@ -440,7 +469,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 /* control cell — a cell holding a --ctl-min-h control takes the --space-1 step (less half the rule), so the row stays --row-h beside its text cells.
    Block longhands, so the inline edge rule above still applies. A new 32px control class joins this list in the change that creates it.
    The row step is the cell's own height too → a header row, which has no rule above it to share, still rises to 40, not 39.5 */
-.tbl :is(th, td):has(.btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h) {
+.tbl :is(th, td):has(.btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h, .disclosure) {
 	height: var(--row-h);
 	padding-block-start: var(--tbl-ctl-pad-block);
 	padding-block-end: var(--tbl-ctl-pad-block);

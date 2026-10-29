@@ -1,6 +1,6 @@
 // Control-atom state invariance read in a real browser: no state of .btn, a .seg option or .pill--interactive changes its
 // border-box, so a selected option never reads as a bigger box than its siblings; a resting toggle's edge reads against its card
-// at 3:1 in both themes, so its box is visible before it is selected.
+// at 3:1 in both themes, so its box is visible before it is selected; the shipped control row holds them on one 48 line.
 // Runner: npx tsx --test test/ui.control-state.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -30,10 +30,14 @@ const ATOMS = [
     markup: `<button type="button" class="pill pill--interactive" data-atom="pill" aria-pressed="false">Open 17</button>` },
 ] as const;
 
+// the toolbar is the shipped control row; a static count pill rides it at the control height
 const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
-  <div class="card" style="padding: 16px; flex-direction: row; align-items: flex-start; gap: 8px;">
-    ${ATOMS.map((atom) => atom.markup).join("\n    ")}
-    <button type="button" class="btn" data-atom="btn-plain">Refresh</button>
+  <div class="card">
+    <div class="control-row" data-row="toolbar">
+      ${ATOMS.map((atom) => atom.markup).join("\n      ")}
+      <span class="pill pill--count pill--ctl-h">17 open</span>
+      <button type="button" class="btn" data-atom="btn-plain">Refresh</button>
+    </div>
   </div>
 </body></html>`;
 
@@ -124,6 +128,34 @@ for (const atom of ATOMS) {
     }
   });
 }
+
+describe("a control row is one 48 line: every item centred on it, 12 between items", () => {
+  const readToolbar = () =>
+    page.$eval('[data-row="toolbar"]', (row) => ({
+      row: row.getBoundingClientRect().toJSON() as DOMRect,
+      items: [...row.children].map((el) => el.getBoundingClientRect().toJSON() as DOMRect),
+    }));
+
+  test("the row is 48 and holds every item on one line", async () => {
+    const { row, items } = await readToolbar();
+    assert.equal(row.height, 48);
+    assert.ok(items.every((item) => Math.abs(item.top - items[0].top) < 16), "every item sits on the first line");
+  });
+
+  test("every item centres on the row's centre line, the static pill at the control height", async () => {
+    const { row, items } = await readToolbar();
+    const centre = row.top + row.height / 2;
+    for (const [i, item] of items.entries()) {
+      assert.ok(Math.abs(item.top + item.height / 2 - centre) <= 0.5, `item ${i} centre ${item.top + item.height / 2} vs row centre ${centre}`);
+      assert.equal(item.height, 32, `item ${i} height`);
+    }
+  });
+
+  test("adjacent items — each a group of one here — sit the 12 between-groups step apart", async () => {
+    const { items } = await readToolbar();
+    for (let i = 1; i < items.length; i += 1) assert.equal(items[i].left - items[i - 1].right, 12, `gap before item ${i}`);
+  });
+});
 
 // the edge each toggle rests on: a bordered atom's border, the .seg group's shadow ring
 const RESTING_EDGES = [
