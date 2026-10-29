@@ -1,7 +1,7 @@
 // Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control, a 24px
 // inline target or a value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
-// a compact body row off .tbl sits on the 32 step (a mark + value cell too), a word KPI value sits on the figure's baseline, and the
-// shared error-details summary is the 32 disclosure atom.
+// a compact body row off .tbl sits on the 32 step (a mark + value cell too), a word KPI value sits on the figure's baseline, the
+// shared error-details summary is the 32 disclosure atom, and the page-header Refresh ends its label on its box's content edge.
 // Runner: npx tsx --test test/ui.row-geometry.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -25,7 +25,8 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   html { line-height: 1.5; }
   svg { display: block; vertical-align: middle; }
   table { border-collapse: collapse; }
-  button, input, select { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; }`;
+  button, input, select { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; }
+  .w-28 { width: 7rem; } .justify-center { justify-content: center; } .justify-end { justify-content: flex-end; }`;
 
 const render = (type: unknown, props: Record<string, unknown>, ...children: unknown[]): string =>
   getHtml(renderScreen(React.createElement(type, props, ...children)) as RenderedNode);
@@ -119,6 +120,12 @@ const COMPACT_ROWS = [
       COMPACT_GLYPH_VALUE) },
 ] as const;
 
+// the page-header Refresh at rest and mid-read — the busy label is the widest it draws
+const REFRESH_STATES = [
+  { name: "at rest", id: "refresh-idle", markup: render(ui.RefreshButton, { onRefresh: () => {} }) },
+  { name: "refreshing", id: "refresh-busy", markup: render(ui.RefreshButton, { isBusy: true, hasRead: true, onRefresh: () => {} }) },
+] as const;
+
 const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
   ${ICON_ROWS.map((row) => `<p id="${row.id}" style="width: 320px;">${row.markup} Healthy</p>`).join("\n  ")}
   <p id="bare" style="width: 320px;"><svg width="14" height="14" viewBox="0 0 24 24"></svg> Healthy</p>
@@ -134,6 +141,7 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
   ${COMPACT_ROWS.map((row) => row.markup).join("\n  ")}
   ${ERROR_DETAILS_ROWS.map((row) => `<div id="${row.id}" style="width: 480px;">${row.markup}</div>` +
     `<div id="${row.id}-open" style="width: 480px;">${row.markup.replace("<details", "<details open")}</div>`).join("\n  ")}
+  ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
     ${KPI_VALUES.map((value) => `<div id="${value.id}">${value.markup}</div>`).join("\n    ")}
   </div>
@@ -360,6 +368,25 @@ describe("a word KPI value shares the figure's baseline", () => {
       const [figureH, wordH] = await Promise.all(["kpi-figure", id].map((key) =>
         page.$eval(`#${key} .kpi-value`, (value) => value.getBoundingClientRect().height)));
       assert.ok(Math.abs(wordH - figureH) < 0.5, `${id} height ${wordH} vs figure ${figureH}`);
+    });
+  }
+});
+
+describe("the page-header Refresh ends its label on the content column's edge", () => {
+  for (const state of REFRESH_STATES) {
+    test(`${state.name}, its label ends on the box's content edge and the box stays 112 wide`, async () => {
+      const fit = await page.$eval(`#${state.id} button`, (button) => {
+        const label = [...button.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim()).at(-1);
+        if (!label) throw new Error("the Refresh button draws no label");
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        const box = button.getBoundingClientRect();
+        const style = getComputedStyle(button);
+        const inset = parseFloat(style.borderRightWidth) + parseFloat(style.paddingRight);
+        return { labelRight: range.getBoundingClientRect().right, contentRight: box.right - inset, width: box.width };
+      });
+      assert.equal(fit.width, 112);
+      assert.ok(Math.abs(fit.labelRight - fit.contentRight) < 0.5, `label ends at ${fit.labelRight}, content edge at ${fit.contentRight}`);
     });
   }
 });

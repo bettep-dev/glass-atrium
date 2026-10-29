@@ -1678,8 +1678,9 @@ function RefreshButton({ isBusy = false, hasRead = false, onRefresh, label = 'Re
     getHarnessRead();
   };
 
+  // fixed width → the busy label moves nothing; end-aligned → the visible label, not the invisible ghost box, meets the column's right edge
   return (
-    <button type="button" className="btn ghost sm w-28 justify-center" onClick={handleClick}
+    <button type="button" className="btn ghost sm w-28 justify-end" onClick={handleClick}
       aria-disabled={isBusy ? 'true' : undefined} aria-busy={isBusy ? 'true' : undefined} aria-label={label}>
       <Icon name="refresh" size={14} className={iconClass}/>
       {isBusy ? busyText : 'Refresh'}

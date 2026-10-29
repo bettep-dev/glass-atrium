@@ -197,7 +197,7 @@
 - **`MiniBars`**: `Sparkline` 과 같은 60×22 SVG 막대 · `label` 있으면 `role="img"`, 없으면 aria-hidden.
 - **신선도**:
   - `FreshnessStamp` = "as of HH:MM" · `--fs-meta` mono `--faint` · nowrap. 선행 glyph 만 색 — Fresh ✓ `--ok` · Stale / Partial ⚠ `--warn` · Not read ✕ `--crit` · Loading / Refreshing `…` `--faint`. 단어 sr-only, 전체 시각 `title`. 새로고침 중엔 직전 stamp 유지 + `aria-busy`.
-  - `RefreshButton` = `btn ghost sm` 고정 폭 `w-28` · refresh icon `motion-safe:animate-spin` · 라벨 "Refreshing…"(직전 read 있음) / "Loading…"(첫 read).
+  - `RefreshButton` = `btn ghost sm` 고정 폭 `w-28` · 라벨 끝 정렬(`justify-end`) → 보이는 라벨 끝이 콘텐츠 열 오른쪽 가장자리에 맞음 · refresh icon `motion-safe:animate-spin` · 라벨 "Refreshing…"(직전 read 있음) / "Loading…"(첫 read).
 - **로딩**:
   - `LoadingPlaceholder` = `role="status"` · `--fs-meta` `--dim` · refresh icon `motion-safe:animate-spin` + "Loading <label>…" · `minHeight` 로 settled 높이 예약 → layout shift 0.
   - `SkeletonRows` = 실제 `tbody` 안 · 실제 header 아래 · 실제 row 높이의 aria-hidden 행. 셀마다 정적 bar (높이 10 · 폭 70% · `--radius-inline` · `--faint` 0.3), pulse 없음.
