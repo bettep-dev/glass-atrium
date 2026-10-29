@@ -36,8 +36,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	vertical-align: middle;
 	min-height: 24px;
 }
-/* the engine floors the half-leading to a whole pixel → a fractional ratio box (.fs-meta 13 × 1.4) sets an odd-height face 0.59 off the centre line.
-   The tier's element kinds outrank a type-scale class on the same element, which keeps only the font size */
+/* engine-floored half-leading → a fractional ratio box (.fs-meta 13 × 1.4) sets an odd-height face 0.59 off the centre line
+   tier element kinds in the selector → outrank a same-element type-scale class, which keeps only its font size */
 .inline-target:is(a, button, label) {
 	line-height: var(--lh-row);
 }
