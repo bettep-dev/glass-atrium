@@ -12,14 +12,18 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 
 ## Delivery — what actually reads this file
 
-- Both META agents receive the file whole at spawn. Each row's `rules.scope` in `agent-registry.json` names `scoped/scope-meta.md`, which the part-slot channel delivers (`rules/glass-atrium/core-compliance-matrix.md` → `### Injected Blocks (SubagentStart allowlist)`). `python3 hooks/lib/inject_chunk.py --audit` reports the parts per agent.
+- Both META agents receive the file whole at spawn.
+  - Each row's `rules.scope` in `agent-registry.json` names `scoped/scope-meta.md`, which the part-slot channel delivers (`rules/glass-atrium/core-compliance-matrix.md` → `### Injected Blocks (SubagentStart allowlist)`).
+  - `python3 hooks/lib/inject_chunk.py --audit` reports the parts per agent.
 - A second reader, not a delivery channel: `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP` excerpts whole `##` heading blocks into the daemon's rule-improvement verify prompt (axis C3) for a META-agent patch.
 - **Consequence for authors**: a duty stated in the rule file binds both META agents; no conditional-load line in a body is needed.
 - **Consequence for editors**: a passage in either META body that mirrors the rule file is a duplicate of delivered text. The rule file is the site that survives; the body keeps only its agent-specific delta.
 
 ## Authoring hygiene — where the rules live
 
-- The rules bind META, PLANNING and REPORT alike, so they live once at `scoped/shared-authoring-hygiene.md` → `## Authoring Hygiene`. `## Prompt Authoring Hygiene [META]` in the rule file is the pointer that keeps that heading resolving; maintainer material for the rules is in `scoped/maintainers/shared-authoring-hygiene.md`.
+- The rules bind META, PLANNING and REPORT alike, so they live once at `scoped/shared-authoring-hygiene.md` → `## Authoring Hygiene`.
+  - `## Prompt Authoring Hygiene [META]` in the rule file is the pointer that keeps that heading resolving.
+  - Maintainer material for the rules is in `scoped/maintainers/shared-authoring-hygiene.md`.
 - Both META rows carry the file in `rules.shared`. Delivery and the no-body-copy rule: `scoped/maintainers/shared-authoring-hygiene.md` → `## Delivery — how the rules reach their agents`.
 - No hook checks authored text against these rules; adherence is honor-system.
 
@@ -53,28 +57,32 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 
 - `Prompt Deliverable Team Rule` is cited from:
   - `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria` and step 6 of `## Document-Driven Workflow`;
-  - `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring and `##### Stage gates`;
+  - `skills/glass-atrium-ops-delegation-contracts/references/agent-selection.md` → `## Compound Task Examples` (the prompt/rule row);
+  - `skills/glass-atrium-ops-orchestrator.md` → `##### Stage gates`;
   - `scoped/shared-authoring-hygiene.md` → `## Prompt-Audit Overrides`.
 
 ## Stale material removed
 
 Do not restore any item below.
 
-- **Loading stanza** (`> **Loading**: Tier 2 … agent_scope ∈ {…}` plus `> **Inherits**` and `> **See**`). The `agent_scope ∈ { … }` brace-list parsers (`scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster`, `autoagent/lib/roster_merge.py` → `_get_markdown_slots`) are anchored on `scoped/scope-dev.md` alone, so no reader needs it here.
+- **Loading stanza** (`> **Loading**: Tier 2 … agent_scope ∈ {…}` plus `> **Inherits**` and `> **See**`).
+  - The `agent_scope ∈ { … }` brace-list parsers (`scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster`, `autoagent/lib/roster_merge.py` → `_get_markdown_slots`) are anchored on `scoped/scope-dev.md` alone, so no reader needs it here.
 - **Pair note under `## Absolute Rules`** tying this file to `## Absolute Rules` in `scoped/scope-dev.md` — that file carries no such heading, so there is no pair to maintain.
 - **`## CQRS Exception` antecedent** — the "DEV CQRS separation" the heading excepts is stated in no DEV rule file. Read the positive grant in the rule file rather than inferring a DEV rule from the heading name.
 
 ## Duplicates dropped, with the delivered copy that made them redundant
 
-- Self-review procedure beyond the four-item checklist: `agents/glass-atrium-meta-prompt-engineer.md` → `## Structure Self-Check (MANDATORY · pre-emit)` is the delivered, stronger gate. The four-item checklist itself stays, because `scope-planning.md` and `scope-design.md` resolve their pointers into it.
+- Self-review procedure beyond the four-item checklist: `agents/glass-atrium-meta-prompt-engineer.md` → `## Structure Self-Check (MANDATORY · pre-emit)` is the delivered, stronger gate.
+  - The four-item checklist itself stays, because `scope-planning.md` and `scope-design.md` resolve their pointers into it.
 - The `## glass-atrium-meta-agent: Outcome-Driven Rewrite Policy` redirect paragraph — one line naming the body sections replaces it; the body remains the operative site.
 - The `## DEV Rule Inheritance` explanation of the Compliance Matrix footnote and of where `agent-registry.json` declares the inheritance — the rule file states the rationale and the two declaration sites.
 - The meta-prompt-engineer body's top-of-body inheritance blockquote and its `**Prompts = Code**` Absolute Rules bullet — both restated this rule file, which reaches that agent whole.
 
 ## Prompt Deliverable Team Rule — the delivery gap that was NOT moved
 
-The composer-facing line stays in the rule file rather than moving here, because it changes what the delegation author does: `agents/glass-atrium-intel-reporter.md` states the verdict-only constraint nowhere, so the delegation prompt is the only channel that carries it to the reviewer. If that constraint ever lands in the reporter body, the line becomes a duplicate and should be cut then.
-
+- The composer-facing line stays in the rule file rather than moving here, because it changes what the delegation author does.
+  - Why: `agents/glass-atrium-intel-reporter.md` states the verdict-only constraint nowhere, so the delegation prompt is the only channel that carries it to the reviewer.
+  - If that constraint ever lands in the reporter body, the line becomes a duplicate and should be cut then.
 - The add-review composer line under **Add review** follows the same reasoning for the add reviewers; cut it only once every reviewer the add-review table names carries the constraint in its own body.
 
 ## Open questions
@@ -83,6 +91,12 @@ None open.
 
 ## Readers, coupled tests, and operational constraints
 
-- **No test pins this file's text.** Searching `test/`, `hooks/test/`, `scripts/test/` and `autoagent/test/` returns no hit for `scope-meta`. That is the correct state: the file carries no machine-read literal of its own, and what consumers depend on is its `##` heading structure plus the heading names sibling files cite.
-- **Path-only consumers** break on a rename or a move out of `scoped/`, never on a content edit: `agent-registry.json` (`rules.scope`, which `hooks/lib/inject_chunk.py` resolves at spawn), `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP`, `scripts/agent_lifecycle/registry_ops.py`, `scripts/test/test_agent_lifecycle_overhaul.py` (asserts exact path strings), and `manifest.json`.
+- **No test pins this file's text.** Searching `test/`, `hooks/test/`, `scripts/test/` and `autoagent/test/` returns no hit for `scope-meta`.
+  - That is the correct state: the file carries no machine-read literal of its own, and what consumers depend on is its `##` heading structure plus the heading names sibling files cite.
+- **Path-only consumers** break on a rename or a move out of `scoped/`, never on a content edit:
+  - `agent-registry.json` (`rules.scope`, which `hooks/lib/inject_chunk.py` resolves at spawn);
+  - `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP`;
+  - `scripts/agent_lifecycle/registry_ops.py`;
+  - `scripts/test/test_agent_lifecycle_overhaul.py` (asserts exact path strings);
+  - `manifest.json`.
 - **Never diet the file to zero bytes**: `autoagent/daemon_cycle.py` → `_read_sections` emits SCOPE-FILE-EMPTY and directs a `C3: FAIL` verdict on an empty scope file.

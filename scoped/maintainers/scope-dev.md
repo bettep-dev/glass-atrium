@@ -114,7 +114,7 @@ A successful `add` writes some of the sites a new name must appear in, and not o
 - **Auto-written**: the agent file · the `agent-registry.json` entry (whose `rules` object selects the scope and Tier-3 files the part slots deliver) · (via the post-commit reconcile gate) the reconcile-tracked arrays `BUDGET_DEV_AGENTS` in `hooks/inject-scope-rules.sh` and `STYLEREF_AGENTS` in `hooks/lib/styleref-roster.sh`.
 - **Deliberately UNTRACKED by that gate**: the manual-curated rosters `BUDGET_ANALYSIS_AGENTS` and `WIKI_UNTRUSTED_AGENTS`. Their membership is a governance decision rather than a roster-derivable set, so their absence from the auto-written set is design, never an omission for a later editor to repair.
 - **NOT written at all**: the `core-compliance-matrix.md` **Scope Legend** DEV row and the **Compliance Matrix** rows — a SEPARATE post-creation doc update for the new agent name.
-- **Mirror pointer**: the same tracked-array list is stated at `skills/glass-atrium-ops-orchestrator.md` → the numbered step **Reconcile (MANDATORY post-commit gate)** and at `skills/glass-atrium-ops-reconcile-inject/SKILL.md` → the **Names reconciled** bullet — edit those sites together with this one.
+- **Mirror pointer**: the same tracked-array list is stated at `skills/glass-atrium-ops-delegation-contracts/references/agent-lifecycle-ceremony.md` → the numbered step **Reconcile (MANDATORY post-commit gate)** and at `skills/glass-atrium-ops-reconcile-inject/SKILL.md` → the **Names reconciled** bullet — edit those sites together with this one.
 
 ### glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation
 
@@ -139,7 +139,7 @@ Pair note — the other sites of this gate:
 
 - `scoped/scope-qa.md` carries no Sprint Contract Gate section: a pointer there reached no reader that receives the rule file (`scoped/maintainers/scope-qa.md` → `## What was moved here, and what was dropped`).
 - `skills/glass-atrium-ops-orchestrator-role.md` holds the one condensed copy: the Decision `SIZABLE =` action row of `## Delegation Workflow` lists the sizable criteria inline, and `#### Entry classification (DEV delegations)` names those Decision actions as the copy.
-- How skills/glass-atrium-ops-orchestrator-role.md reaches the definition below: `## Open item`.
+- That H4 points here directly, not through the rule-file stub.
 
 ### Sizable-task definition (single SoT — the positive entry floor)
 
@@ -190,7 +190,7 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 | Heading in `scoped/scope-dev.md` | Cited from |
 |---|---|
 | `## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]` (stub) | `skills/glass-atrium-ops-orchestrator-role.md` |
-| `## Sprint Contract Gate [DEV+QA]` (stub) | `skills/glass-atrium-ops-orchestrator-role.md` · `scoped/maintainers/glass-atrium-dev-node.md` · operator-facing messages in `hooks/enforce-verification-gate.sh` and `hooks/enforce-workflow-verify-stage.sh` |
+| `## Sprint Contract Gate [DEV+QA]` (stub) | `scoped/maintainers/glass-atrium-dev-node.md` · operator-facing messages in `hooks/enforce-verification-gate.sh` and `hooks/enforce-workflow-verify-stage.sh` |
 | `## Plan Direction Verification Gate [DEV+QA]` | `skills/glass-atrium-ops-orchestrator-role.md` · `scoped/scope-qa.md` · `scoped/scope-planning.md` · `skills/glass-atrium-ops-orchestrator.md` (comment) · `hooks/enforce-workflow-verify-stage.sh` (comment) |
 | `## Ambiguity Gate (Ambiguity Score)` → Assumptions Disclosure | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` · `agents/glass-atrium-dev-animator.md` · `scoped/scope-planning.md` |
 | `## Pre-Execution Verification` → `### Project Convention Probe` | `rules/glass-atrium/core-outcome-record.md` (`style_ref` row) · `agents/glass-atrium-dev-android.md` · `agents/glass-atrium-dev-swift.md` · `scoped/maintainers/glass-atrium-dev-shell.md` |
@@ -207,7 +207,7 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 | `## DEV Agent Fleet Governance` | `scoped/scope-dev.md` (stub) · `skills/glass-atrium-ops-orchestrator.md` |
 | `### New-Agent Creation Gate` | `skills/glass-atrium-ops-orchestrator.md` |
 | `### Doc-sync note (CLI auto-writes vs. manual matrix update)` | `rules/glass-atrium/core-compliance-matrix.md` → Scope Legend doc-sync note |
-| `## Sprint Contract Gate (orchestrator side)` | `scoped/scope-dev.md` (stub) |
+| `## Sprint Contract Gate (orchestrator side)` | `scoped/scope-dev.md` (stub) · `skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` |
 | `### Sizable-task definition (single SoT — the positive entry floor)` | `scoped/scope-dev.md` (stub) · `hooks/enforce-verification-gate.sh` (`entry_fix=` block text, VGATE-ENTRY-001) |
 | `### glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation` | `scoped/maintainers/shared-design-token-consumption.md` → `## Readers, coupled tests, and one stale citation` |
 
@@ -215,7 +215,7 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 
 Open, and owned outside this note (the fix edits other files):
 
-- `skills/glass-atrium-ops-orchestrator-role.md` still reaches the moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) through the rule-file stubs, one hop more than needed. Repointing its citations at this note removes the hop; `core-compliance-matrix.md` and `skills/glass-atrium-ops-orchestrator.md` already point here.
+- `skills/glass-atrium-ops-orchestrator-role.md` → `### DEV fleet growth authority` still reaches fleet governance through the rule-file stub, one hop more than needed. Repointing it at this note removes the hop; `core-compliance-matrix.md`, `skills/glass-atrium-ops-orchestrator.md` and the role file's `#### Entry classification (DEV delegations)` already point here.
 
 ## Rule-file pointers and loading stanza
 

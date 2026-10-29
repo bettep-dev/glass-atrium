@@ -160,38 +160,32 @@ Delegate to a subagent when the user request matches any row below.
 
 #### Entry classification (DEV delegations)
 
-Classify every DEV task against the SIZABLE criteria in the Decision actions above — the one condensed copy of the Sizable-task definition (canonical: `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]`).
-
-| Classification | Entry signal carried into the delegation |
-|---|---|
-| SIZABLE | author a plan first, then carry the plan-ref token — there is no `[ENTRY-CLASS]` form for sizable work |
-| simple / exempt | `[ENTRY-CLASS] simple-task: <reason>` |
+Classify every DEV task against the Decision SIZABLE criteria above, a condensed copy of the canonical at `scoped/maintainers/scope-dev.md` → `## Sprint Contract Gate (orchestrator side)`, which also holds the spawn-time entry gate.
 
 - **Classify-always**: a delegation carrying neither a plan-ref nor an `[ENTRY-CLASS]` token is blocked at spawn time, exit 2, on both paths.
-  - SoT: `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]` (spawn-time entry gate); placement: `### Context Handoff Size` → Attestation-token placement.
-- **ENTRY-CLASS negative**: `simple-task` is the only recognized `[ENTRY-CLASS]` literal — any other variant blocks.
+  - Placement: `### Context Handoff Size` → Attestation-token placement.
+- **ENTRY-CLASS negative**: `simple-task` is the only recognized `[ENTRY-CLASS]` literal — any other variant blocks, so sizable work carries a plan-ref instead.
 - **Simple-task waiver**: a DEV delegation carrying `[ENTRY-CLASS] simple-task` and no plan-ref owes no other attestation token.
   - `[SCOPE]` · `[SIZE-EST]` · `[AGENT-COMPOSITION]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` are optional, and their gates and advisories pass silently on both paths.
   - Why: ceremony that exists only because work is split across agents costs more than it buys on small work.
-  - A plan-ref keeps every token and the reviewer-before-DEV presence check, whatever classification travels beside it.
-  - Carrying an optional token anyway is allowed; on a simple-task entry it is not checked.
-  - `[DOC-ROUTE]` and the doc-routing gate are untouched by the waiver.
-  - Honest backing: the hooks read the token's presence, never whether the work is simple — the classification is honor-system (`hooks/enforce-verification-gate.sh` · `hooks/enforce-workflow-verify-stage.sh` · `hooks/validate-scope-drift.sh`).
+  - A plan-ref keeps every token and the reviewer-before-DEV check, whatever classification rides beside it.
+  - Carrying an optional token anyway is allowed.
+  - Exception: `[DOC-ROUTE]` and the doc-routing gate are untouched by the waiver.
+  - Honest backing: the hooks read token presence, never whether the work is simple, so the classification is honor-system.
 
 #### Plan edge discovery (Decision phase — fires for any delegation derived from a persisted plan, whole or subset)
 
-- **Standing obligation**: read the declared predecessors of each included work stream from **any declaration site in the plan**; an edge stated at any of them binds. Then classify each predecessor:
+- **Standing obligation**: read each included work stream's declared predecessors from **any declaration site in the plan** — an edge stated at any of them binds — then classify each predecessor:
   - **LANDED** — verified against the tree or history with an instrument, never from the plan's status field, a wave note, or memory.
   - **INCLUDED** — guardrail (c) under `#### Automatic Parallelization` applies: the predecessor lands and is verified before the dependent runs.
   - **EXCLUDED and not landed** — a scoping defect. **HALT.**
     - Exactly two exits: pull the predecessor into the subset, or route the soundness question to a second party in the Stage-2 **team shape** and proceed only on `pass` + `feasible`.
-    - The team shape is invoked regardless of Stage-2's own complex-plan activation scope — a delegation carrying `[ENTRY-CLASS] simple-task` still routes here.
+    - Stage-2's complex-plan activation scope does not limit this — a `[ENTRY-CLASS] simple-task` delegation still routes here.
     - **The composing role may not clear itself.**
 
 - **Attestation**: on a strict subset of a plan, emit `[PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=T1>T5b-1;T2>T3` (`order=n/a` when no edge).
-  - The obligations above are unconditional and do not depend on this token.
-  - Optional on a simple-task entry (`#### Entry classification (DEV delegations)` → **Simple-task waiver**).
-- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md` — declaration sites, the unit read, instruments, per-path ordering, why HALT, the `<id>` and no-free-text token rules, placement, honest backing.
+  - The obligations above do not depend on this token.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md` — declaration sites, instruments, per-path ordering, the `<id>` and no-free-text token rules.
 
 ## Decision-Phase Notes
 
@@ -391,7 +385,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - A single-agent case is a size-1 array, not a separate path.
 - **Team Size**: no fixed-number gate or user-confirmation trigger applies.
   - Routine fan-out needs no justification; a very large one is reasoned about in `reason` (synthesis value · total-session token cost).
-- **Example**: "기획서 작성하고 디자인 방향도 제안해줘" → `agents: [glass-atrium-intel-planner, glass-atrium-design-designer]`, `order: parallel` (independent sub-tasks) — more in `skills/glass-atrium-ops-orchestrator.md` → Compound Task Examples.
+- **Example**: "기획서 작성하고 디자인 방향도 제안해줘" → `agents: [glass-atrium-intel-planner, glass-atrium-design-designer]`, `order: parallel` (independent sub-tasks) — more in `skills/glass-atrium-ops-delegation-contracts/references/agent-selection.md` → `## Compound Task Examples`.
 - **Correlation ID**: format `YYYY-MM-DDTHHMM_slug_xxxx` (local-time minute timestamp + hyphenated slug ≤20 chars + 4-digit hex), e.g. `2026-04-14T1530_auth-fix_a3f2`.
   - Include it in the delegation prompt; the subagent writes it to `cid` in `[COMPLETION]`.
   - `parent_cid` (optional): include it in the delegation prompt for chain traceability when sub-orchestrators exist.
@@ -422,26 +416,23 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 - Summary only: what the recipient cannot get elsewhere, never raw conversation history.
   - Bulk material — reviews, logs, prior reports — goes by file path.
 - Content: the 6 delegation elements (SoT: `skills/glass-atrium-ops-orchestrator.md` → `#### Delegation required elements`).
-- **Attestation-token placement** — for the whole family: `[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` · `[DOC-ROUTE]`.
-  - Manual path → inside the Agent tool's `prompt` parameter, never the user-facing narration.
+- **Attestation-token placement** — for the whole family: `[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` · `[DOC-ROUTE]` · `[SCOPE-EXPANSION-APPROVED]`.
+  - Manual path → the Agent tool's `prompt` parameter, never the user-facing narration.
   - `[PLAN-CLOSE]` has no manual form: the manual close is a reviewer spawn (`skills/glass-atrium-ops-orchestrator.md` → `## Managed Document Completion (Direct Handling)` → Step 3).
   - Ultracode path → the top-of-script `log()` string or `meta.description` (`skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`, Workflow pre-flight item 1).
-  - Which tokens a DEV delegation owes: `[ENTRY-CLASS]` alone on a simple-task entry, every applicable token on plan-backed work (`#### Entry classification (DEV delegations)` → **Simple-task waiver**).
-- **`[SCOPE]` — the 7th delegation element, REQUIRED on plan-backed DEV and on PLANNING delegations; grammar SoT.** One line opened by the token, `files=` first, ` · `-separated:
+- **`[SCOPE]` — the 7th delegation element, required on plan-backed DEV and on PLANNING delegations; grammar SoT.** One line opened by the token, `files=` first:
 
   ```
   [SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>
   ```
 
-  - **What it is for**: it fixes the literal scope of the user's instruction in text, for later comparison with what was built.
-  - Optional on a simple-task DEV entry (`#### Entry classification (DEV delegations)` → **Simple-task waiver**); a PLANNING delegation always carries it.
+  - Why: it fixes the user instruction's literal scope in text, to compare later with what was built.
   - **Author rules** (detail: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`):
     - Write the ` · ` separators.
     - The first declaration line wins: block-quote (`> `) a relayed copy or keep it mid-line.
   - **`files=` completeness duty**: declare every path the sanctioned work touches — its travelling tests, every required co-deliverable, and the coupled tests it makes stale, obsolete or wrong (`scoped/shared-testing.md` → **Coupled-test check**).
-    - Declare what the work needs, never a safety margin — under- and over-declaring both defeat the excess check.
-  - **Honest backing — presence-checked only**: an absent line draws a stderr advisory, never a block; every downstream check then fails open.
-    - Fidelity is honor-system: it buys auditability, never enforcement.
+    - No safety margin: under- and over-declaring both defeat the excess check.
+  - **Honest backing — presence-checked only**: an absent line draws a stderr advisory, never a block, and every downstream check then fails open; fidelity is honor-system.
 - **`[PLAN-CLOSE]` — the close token, required on every plan-referencing DEV-spawning Workflow script; grammar SoT.** One line, in one of two forms:
 
   `[PLAN-CLOSE] in-script`
@@ -449,10 +440,9 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   `[PLAN-CLOSE] deferred: <the later script or step that closes the plan>`
 
   - **Close form** (`in-script`): the script ends in the terminal Reconcile & Close phase (`skills/glass-atrium-ops-orchestrator.md` → `##### In-script verify-stage (ultracode)`).
-  - **Deferral form** (`deferred:`): it does not; the value names the later script or step that runs the close.
-  - These are the only form values; the plan closed is the one the script's plan-ref cites.
-  - **Honest backing — advisory only**: a script carrying neither form draws a stderr advisory, never a block (`hooks/enforce-workflow-verify-stage.sh`).
-    - Truthfulness is honor-system.
+  - **Deferral form** (`deferred:`): it does not.
+  - The plan closed is the one the script's plan-ref cites.
+  - **Honest backing — advisory only**: a script carrying neither form draws a stderr advisory, never a block (`hooks/enforce-workflow-verify-stage.sh`); truthfulness is honor-system.
 
 ### Failure Recovery Loop
 
@@ -524,7 +514,9 @@ The standard plan/report-then-build flow as one lifecycle.
 
 > Detail: skills/glass-atrium-ops-orchestrator.md → Managed Document Deletion (Direct Handling) (`DELETE /api/clauded-docs/:id` procedure — DB row first, best-effort FS cleanup; direct `mv` forbidden)
 
-> Detail: skills/glass-atrium-ops-orchestrator.md → Managed Document Completion (Direct Handling) (the stages and who closes · Step 1 stage write recipe · Step 2 supersede-vs-new decision tree incl. the Stage-2 revise-case supersede-POST carve-out · Step 3 delivery-point close with its folder check)
+> Detail: skills/glass-atrium-ops-orchestrator.md → Managed Document Completion (Direct Handling) (the stages and who closes · Step 1 stage write recipe · Step 2 supersede-vs-new choice · Step 3 delivery-point close with its folder check)
+
+> Detail behind Step 2's pointer: skills/glass-atrium-ops-delegation-contracts/references/managed-document-completion.md → Supersede vs new document (the decision table and the Stage-2 revise-case supersede-POST carve-out)
 
 ## Harness Path Protection (`~/.claude/` and every `~/.claude-*` profile branch)
 
