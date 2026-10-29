@@ -169,7 +169,7 @@ Tier membership — which rules a scope *should* load — is distinct from deliv
 ### Membership source, standing duties and chunk budget
 
 - **Membership source**: membership MUST be read from the registry row, not from this file; this matrix stays the governance SoT the rows are authored from.
-  - What resolves a Tier-2 row to a file at spawn is the row's `rules.scope`: no `agents/*.md` frontmatter carries a `scope:` key, and the registry carries no top-level `scope` field.
+  - What resolves an agent's Tier-2 file at spawn is its `agent-registry.json` row's `rules.scope`, never the Tier 2 table: no `agents/*.md` frontmatter carries a `scope:` key, and the registry carries no top-level `scope` field.
   - The reconcile binding the two is `agent_lifecycle orphan-scan --mode rules-membership-mismatch`, run off the delivery path.
   - **Why the registry and not this file:** the registry is merge-claimed by the updater (`autoagent/lib/roster_merge.py`) and this file is not, so a lifecycle-created agent's row survives a deploy and a hand-added Scope Legend row does not.
 - **Standing consequence**: a standing duty, binding an agent on every turn, may live in that agent's `rules.scope` or `rules.shared` member file. It may never live in a conditional `scoped/` member, an un-membered file, or a skill the reader never loads — those deliver a pointer at most.
