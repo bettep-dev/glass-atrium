@@ -1338,7 +1338,7 @@ function hasTableRowsC(state, rows) {
 }
 
 function ModelCostCard({ state, days, failures, onRetry, onNav }) {
-  const { Card, Pill } = window.UI;
+  const { Badge, Card } = window.UI;
   const [isShowingAll, setShowingAll] = useStateC(false);
 
   const rows = state.status === 'ready' ? (state.data?.rows ?? []) : [];
@@ -1363,9 +1363,10 @@ function ModelCostCard({ state, days, failures, onRetry, onNav }) {
       right={
           <div className="flex items-center gap-2">
             {fallbackCount > 0 && (
-              <span title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
-                <Pill>{fallbackCount} est. rate</Pill>
-              </span>
+              <Badge role="metadata" className="pill--ctl-h"
+                title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
+                {fallbackCount} est. rate
+              </Badge>
             )}
             <button type="button" className="btn sm" onClick={() => onNav('model-config')}>
               Models &amp; budgets ›
@@ -1483,6 +1484,7 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
  * The default table stays at the four columns a spend decision needs.
  */
 function ModelCostRow({ r }) {
+  const { DisclosureChevron } = window.UI;
   const [expanded, setExpanded] = useStateC(false);
   const avgPerSession = r.session_count > 0 ? r.cost_usd / r.session_count : null;
 
@@ -1492,12 +1494,12 @@ function ModelCostRow({ r }) {
         <td>
           <button
             type="button"
-            className="flex items-center gap-2 text-left"
+            className="group inline-target gap-1 text-left"
             aria-expanded={expanded}
             title={r.fullModel}
             onClick={() => setExpanded((v) => !v)}>
-            <span className="text-faint" aria-hidden="true">{expanded ? '−' : '+'}</span>
-            {r.model}
+            <DisclosureChevron isOpen={expanded}/>
+            <span>{r.model}</span>
           </button>
         </td>
         <td className="num">{formatUsdC(r.cost_usd)}</td>
