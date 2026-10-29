@@ -397,7 +397,7 @@
 | **sunken** | `--sunken` | 홈 · `th` · 배지 shell · 미니바 트랙 | 245 fill | 24 fill |
 | **base** | `--surface` | 페이지 바탕 | 250 | 12 (가장 어두움) |
 | **raised** | `--elev` | 카드 · KPI · 사이드바 | 255 fill + 1px `--line`, **shadow 없음** | 28 fill + 1px `--line`. `.card` 만 + `--shadow-raised` + inset 하이라이트 |
-| raised-2 (상태) | `--surface-raised-2` | 인터랙티브 타일 · 컨트롤 hover (`.i-tile-hover` · `.arch-zoom-btn`) | raised + `--shadow-raised-2` + border `--faint` | 36 fill + `--shadow-raised-2` |
+| raised-2 (상태) | `--surface-raised-2` | 인터랙티브 타일 hover (`.i-tile-hover`) | raised + `--shadow-raised-2` + border `--faint` | 36 fill + `--shadow-raised-2` |
 | **overlay** | `--surface-overlay` | drawer · dialog · popover | 255 fill + `--shadow-overlay` | 28 fill + `--shadow-overlay` |
 
 - 5단계 이상 금지. overlay 는 그림자 필수, raised 는 테마별로 다르다.
@@ -718,7 +718,7 @@
   - drawer: `detailDrawerSlide` translateX 100%→0, 240ms `cubic-bezier(0.16, 1, 0.3, 1)`.
   - fullscreen: `detailFade` opacity, 180ms ease-out · confirm: `detailPop` opacity + scale 0.97→1, 180ms ease-out.
   - alert-card: `detailFade` 150ms `cubic-bezier(0.2, 0, 0, 1)` (effects-fast).
-- **secondary — hover 깊이 · 상태**: `border-color` + `box-shadow` (+ `background`) 120ms — `.btn` · `.kpi` · `.field` · 화면 행 `.doc-row` · `.outcome-row` (background) · improvement 타일 `.i-tile-hover` (box-shadow, transform lift 없음) · `.arch-zoom-btn`. Tailwind 유틸은 `motion-safe:` + `duration-[120ms]`.
+- **secondary — hover 깊이 · 상태**: `border-color` + `box-shadow` (+ `background`) 120ms — `.btn` · `.kpi` · `.field` · 화면 행 `.doc-row` · `.outcome-row` (background) · improvement 타일 `.i-tile-hover` (box-shadow, transform lift 없음). Tailwind 유틸은 `motion-safe:` + `duration-[120ms]`.
 - **ambient**: `.live-dot` 만.
 - **즉시** (transition 없음): disclosure chevron 회전 · checkbox toggle (`.doc-checkbox`) · Recharts `Tooltip` 추종 (`isAnimationActive={false}`, series 와 동일).
 
@@ -737,7 +737,7 @@
 
 - 모든 모션은 `@media (prefers-reduced-motion: reduce)` 게이트를 갖는다. reduce 범위:
   - `base.css` (파일 순서): `DetailSurface` 3 variant 진입 (`.detail-drawer` · `.detail-fullscreen` · `.detail-confirm` 의 `.detail-panel`) `animation-duration: 0.01ms !important` · `.live-dot` `animation: none` + opacity 0.8 · `.alert-card` 애니메이션 정지 · `.btn` · `.kpi` transition 제거 · `.field` · `.field-affix` transition 제거.
-  - 화면별 `<style>`: `.ga-spin` · `.skel-pulse-c` · `.skel-pulse-o` · `.outcome-row` · `.doc-action-spinner` · `.doc-row` · `.tbl.doc-ledger-busy` · `.i-act-spin` (`animation-duration: 0.01ms`) · `.i-tile-hover` · architecture 노드 · `.arch-zoom-btn` · dev-only `.twk-seg-thumb` · `.twk-toggle` (`__TWEAKS_STYLE`).
+  - 화면별 `<style>`: `.ga-spin` · `.skel-pulse-c` · `.skel-pulse-o` · `.outcome-row` · `.doc-action-spinner` · `.doc-row` · `.tbl.doc-ledger-busy` · `.i-act-spin` (`animation-duration: 0.01ms`) · `.i-tile-hover` · architecture 노드 · dev-only `.twk-seg-thumb` · `.twk-toggle` (`__TWEAKS_STYLE`).
   - Tailwind 유틸: `motion-safe:` prefix 가 게이트 (`animate-spin` · `transition-colors` · `transition-opacity`).
 - **finder** (merged tree 에서 허용 hit 만):
   - CSS: `grep -rnE "@keyframes|animation *:|transition *:|translateY" public/src public/styles` — hit 마다 같은 selector 의 reduce 블록이 있어야 한다. 허용 hit: 위 reduce 범위의 rule 과 그 keyframe · 정적 `translateY(-50%)` ×2 · 주석.
