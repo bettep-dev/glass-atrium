@@ -544,6 +544,7 @@ async function loadMcScreens(
     PageHeader: (p: Record<string, unknown>) =>
       hMc("header", { className: "page-header" }, p.sub, p.actions, p.freshness, p.range, p.refresh),
     Icon: (p: Record<string, unknown>) => hMc("i", { "data-icon": p.name, className: p.className }),
+    DisclosureChevron: () => hMc("i", { "data-icon": "chevR", className: "disclosure-chevron" }),
     TypeScaleStyle: () => null,
     Badge: (p: Record<string, unknown>) =>
       hMc("span", { className: `badge ${p.className ?? ""}`.trim(), "data-tone": p.tone ?? "neutral" }, p.children),
@@ -1769,7 +1770,7 @@ test("a model option reads as its friendly name with the id leading its title; a
   }
 });
 
-test("the file list toggle is a control-radius pill, not a heading or a card", () => {
+test("the file list toggle is an interactive pill on the disclosure atom, not a heading or a card", () => {
   const tree = renderComponentMc(screens.LiveValueMC, {
     value: "claude-opus-4-8",
     drift: false,
@@ -1778,7 +1779,8 @@ test("the file list toggle is a control-radius pill, not a heading or a card", (
   const [summary] = tagsMc(tree, "summary");
   assert.ok(summary, "the toggle is a native summary");
   assert.ok(textMc(summary.children).includes("1 file"), "the toggle names the file count");
-  assert.strictEqual((summary.props.style as Record<string, string>)?.borderRadius, "var(--radius-control)");
+  const classes = String(summary.props.className ?? "").split(/\s+/);
+  for (const name of ["disclosure", "pill", "pill--interactive"]) assert.ok(classes.includes(name), `summary class ${name}: ${classes}`);
   assert.strictEqual(findAllMc(tree, (n) => /^h[1-6]$/.test(n.tag) || "data-kind" in n.props).length, 0, "no heading, no card fold");
 });
 
@@ -2098,11 +2100,11 @@ test("the file list toggle shows a chevron and its opened list is never clipped 
   const [summary] = tagsMc(tree, "summary");
   const [list] = findAllMc(tree, (n) => n.props.role === "region");
 
-  const chevron = tagsMc([summary], "i").find((n) => String(n.props["data-icon"]).startsWith("chevron"));
+  const chevron = tagsMc([summary], "i").find((n) => String(n.props["data-icon"]).startsWith("chev"));
 
   assert.ok(chevron, "the pill carries a chevron");
-  // the class ui.shared-states.e2e turns over while the disclosure is open
-  assert.ok(String(chevron.props.className ?? "").split(/\s+/).includes("chevron"), "the chevron takes the shared open-state turn");
+  // the class base.css turns while the summary's details is open
+  assert.ok(String(chevron.props.className ?? "").split(/\s+/).includes("disclosure-chevron"), "the chevron takes the shared open-state turn");
   assert.strictEqual((list.props.style as Record<string, unknown> | undefined)?.maxHeight, undefined, "no height cap");
   assert.ok(!String(list.props.className).includes("overflow-y-auto"), "no inner scroller");
   assert.strictEqual(tagsMc(list.children, "span").length, files.length, "every file is listed");

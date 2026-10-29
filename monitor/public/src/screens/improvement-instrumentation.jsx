@@ -1065,17 +1065,20 @@ function CorpusGrowthCardI({ state }) {
 				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} audits · latest ${latest.cycle_date}`}
 			/>
 			<div className="px-4 pb-4 space-y-2">
-				<div className="flex items-center gap-3 flex-wrap">
-					<span className="fs-display font-mono text-ink">
-						{formatIntI(Number(latest.word_count ?? 0))}
+				{/* figure 24 ↔ meta 13 → one baseline, not one centre line; figure + unit = one group (gap 4), groups 12 apart */}
+				<div className="flex items-baseline gap-3 flex-wrap">
+					<span className="flex items-baseline gap-1">
+						<span className="fs-display font-mono text-ink">
+							{formatIntI(Number(latest.word_count ?? 0))}
+						</span>
+						<span className="fs-meta text-faint">words</span>
 					</span>
-					<span className="fs-meta text-faint">words</span>
 					<span className="fs-meta font-mono text-dim">
 						<SymI s={deltaSymbol} className={deltaTone} /> {deltaLabel}
 					</span>
 					{/* 스파크는 텍스트 수치의 중복 표현 → 스크린리더에서 제외. */}
 					{wordSeries.length > 1 && (
-						<span className="ml-auto" aria-hidden="true">
+						<span className="ml-auto self-center" aria-hidden="true">
 							<Sparkline
 								data={wordSeries}
 								w={90}

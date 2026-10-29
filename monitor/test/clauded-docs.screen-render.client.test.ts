@@ -6,6 +6,7 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
   createReactStub,
@@ -718,9 +719,12 @@ test("while searching, the stage filter visibly steps aside for all stages, and 
   const filters = { ...(props.inlineFilterProps as Record<string, unknown>), keyword: "plan", docStatusFilter: "open" };
   const searching = renderListCard(screen, { isSearchMode: true, inlineFilterProps: filters });
 
-  const groups = findNodes(searching, (n) => n.props.atom === "ChipGroup");
-  assert.deepEqual(groups.map((g) => g.props.label), ["Audience filter"], "no stage chip reads as pressed while it is not applied");
-  assert.match(collectText(searching), /All stages while searching/);
+  const [slot] = findNodes(searching, (n) => String(n.props.className ?? "").includes("doc-show-slot--searching"));
+  assert.ok(slot, "the Show cell is marked as searching, which sets the stage chips aside");
+  const stageChips = findNodes(slot, (n) => n.props.atom === "ChipGroup").flatMap((g) => g.props.chips as Array<{ isPressed: boolean }>);
+  assert.ok(stageChips.length > 0, "the stage chips keep their cell");
+  assert.ok(stageChips.every((chip) => chip.isPressed === false), "no stage chip reads as pressed while it is not applied");
+  assert.match(collectText(slot), /All stages while searching/);
 
   const empty = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: true, inlineFilterProps: filters }));
   assert.doesNotMatch(collectText(empty), /status:/);
@@ -1234,23 +1238,23 @@ test("the checked stage-menu item draws the one filled selected state at rest an
   assert.match(cssRuleBody(css, '.doc-stage-menu-item[aria-checked="true"] .doc-stage-menu-rank'), /color\s*:\s*inherit/);
 });
 
-test("a ledger checkbox draws on theme tokens: neutral at rest, the one selected state when checked or mixed, and no transition", async () => {
+test("a ledger checkbox draws the shared checkbox on theme tokens: neutral at rest, the one selected state when checked or mixed, and no transition", async () => {
   const screen = await loadDocsScreen();
-  const css = getScreenCss(screen);
+  const css = readFileSync(resolve(__dirname, "../public/styles/base.css"), "utf8");
   for (const props of [{ checked: false }, { checked: true }, { checked: false, indeterminate: true }]) {
     const tree = renderScreen((screen.DocCheckboxCD as Component)({ ...props, onChange: noop, ariaLabel: "Select" }));
     const [input] = findNodes(tree, (n) => n.type === "input");
     const classes = String(input.props.className);
-    assert.ok(hasClass("doc-checkbox")(input), "token-drawn class");
+    assert.ok(hasClass("ctl-checkbox")(input), "token-drawn class");
     assert.doesNotMatch(classes, /zinc-|emerald-|transition|duration-/);
     const marks = findNodes(tree, (n) => n.props.atom === "Icon");
     assert.equal(marks.length, props.checked || props.indeterminate ? 1 : 0);
-    for (const mark of marks) assert.ok(String(mark.props.className).includes("doc-checkbox-mark"));
+    for (const mark of marks) assert.ok(String(mark.props.className).includes("ctl-checkbox-mark"));
   }
-  assert.match(cssRuleBody(css, ".doc-checkbox"), /background\s*:\s*rgb\(var\(--elev\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox"), /border\s*:\s*1\.5px solid rgb\(var\(--faint\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox:checked, .doc-checkbox:indeterminate"), /background\s*:\s*rgb\(var\(--selected-fill\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox-mark"), /color\s*:\s*rgb\(var\(--selected-ink\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox"), /background\s*:\s*rgb\(var\(--elev\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox"), /border\s*:\s*1\.5px solid rgb\(var\(--faint\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox:checked,\n.ctl-checkbox:indeterminate"), /background\s*:\s*rgb\(var\(--selected-fill\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox-mark"), /color\s*:\s*rgb\(var\(--selected-ink\)\)/);
 });
 
 function getReduceBlocks(css: string): { inside: string; outside: string } {

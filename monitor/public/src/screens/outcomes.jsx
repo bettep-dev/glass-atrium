@@ -1465,6 +1465,7 @@ function AttributionHealthCard({ state, period, onRetry, shared }) {
             role="status"
             tone={toneFromColorVarO(badge.colorVar)}
             icon
+            className="pill--ctl-h"
             title={`Missing-report (literal_omission) rate, last ${period} days — hygiene signal over the full selected window`}>
             Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}
           </Badge>
@@ -1792,6 +1793,7 @@ function ChannelLivenessCard({ state, onRetry, shared }) {
             role="status"
             tone={badge.tone}
             icon
+            className="pill--ctl-h"
             title="A high-volume recording channel that stops writing looks like a quality change on every other card here">
             {badge.text}
           </Badge>
@@ -2116,7 +2118,7 @@ function CrosstabCard({ state, onRetry, shared }) {
         info={<p className="fs-body m-0">Records whose writer reported high confidence while the record's own check failed.</p>}
         right={
           state.status === 'ready' && (
-            <Badge role="status" tone="warn" icon>
+            <Badge role="status" tone="warn" icon className="pill--ctl-h">
               {formatIntO(polarTotal)} mismatches
             </Badge>
           )
@@ -2422,8 +2424,9 @@ function FilterPanelO({
       ))}
 
       <details className="mb-3">
-        <summary className="fs-meta text-faint uppercase tracking-wider cursor-pointer select-none mb-1.5">
-          More filters
+        <summary className="group disclosure fs-meta uppercase tracking-wider select-none">
+          <window.UI.DisclosureChevron />
+          <span>More filters</span>
         </summary>
         <div className="pt-2">
           {MORE_FILTER_AXES.map(({ axis, label, options }) => (
@@ -2448,16 +2451,25 @@ function FilterPanelO({
 
           {/* Forensic 'show all' — include_all=1 lifts the server registry gate. */}
           <FilterAxisGroup label="Record scope">
-            <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={includeAll}
-                onChange={(e) => onToggleIncludeAll(e.target.checked)}
-                aria-label="Show all records including non-registry and de-registered agents"/>
-              <span className={includeAll ? 'text-ink' : 'text-dim'}>
-                Show all (incl. non-registry)
-              </span>
-            </label>
+            {/* a flex item has no line box → the 24 target sits on the group's 4 label step */}
+            <div className="flex">
+              <label className="inline-target gap-2 fs-meta cursor-pointer select-none">
+                <span className="relative flex items-center justify-center">
+                  <input
+                    type="checkbox"
+                    className="ctl-checkbox"
+                    checked={includeAll}
+                    onChange={(e) => onToggleIncludeAll(e.target.checked)}
+                    aria-label="Show all records including non-registry and de-registered agents"/>
+                  {includeAll && (
+                    <window.UI.Icon name="check" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute"/>
+                  )}
+                </span>
+                <span className={includeAll ? 'text-ink' : 'text-dim'}>
+                  Show all (incl. non-registry)
+                </span>
+              </label>
+            </div>
           </FilterAxisGroup>
         </div>
       </details>
@@ -2580,7 +2592,7 @@ function ResultTableCard({
           <span>{formatIntO(page * limit + 1)}–{formatIntO(Math.min((page + 1) * limit, totalMatched))} / {formatIntO(totalMatched)}</span>
           <div className="flex items-center gap-2">
             <button
-              className="btn sm"
+              className="btn ghost sm"
               disabled={page <= 0}
               onClick={() => onPageChange(Math.max(0, page - 1))}
               aria-label="Previous page">
@@ -2588,7 +2600,7 @@ function ResultTableCard({
             </button>
             <span>page {currentPage} / {totalPages}</span>
             <button
-              className="btn sm"
+              className="btn ghost sm"
               disabled={currentPage >= totalPages}
               onClick={() => onPageChange(page + 1)}
               aria-label="Next page">

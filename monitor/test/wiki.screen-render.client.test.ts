@@ -57,24 +57,22 @@ function classOf(node: RenderedNode): string {
   return String(node.props.className ?? "");
 }
 
-test("every disclosure leads its summary with a chevron the screen's own style turns on open", async () => {
+test("every disclosure leads its summary with the shared chevron the disclosure atom turns on open", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
 
   const disclosures = findNodes(tree, (n) => n.type === "details");
   assert.ok(disclosures.length > 0, "the loading screen still renders its run-history disclosure");
   for (const details of disclosures) {
-    assert.ok(classOf(details).includes("w-disclosure"), "the details carries the class the screen style targets");
     const summary = details.children[0] as RenderedNode;
     assert.equal(summary.type, "summary");
+    assert.ok(classOf(summary).split(/\s+/).includes("disclosure"), "the summary sits on the shared disclosure atom");
     const chevron = summary.children[0] as RenderedNode;
-    assert.ok(classOf(chevron).includes("w-chevron"), "the chevron is the summary's first child");
-    assert.equal(chevron.props["aria-hidden"], "true", "the chevron is decoration — the details reports its own state");
+    assert.equal(chevron.type, "DisclosureChevron", "the shared decorative chevron is the summary's first child");
   }
 
   const style = collectText(findNodes(tree, (n) => n.type === "style")[0]);
-  assert.match(style, /\.w-disclosure > summary::-webkit-details-marker\s*\{\s*display:\s*none/);
-  assert.match(style, /\.w-disclosure\[open\] > summary \.w-chevron\s*\{\s*transform:\s*rotate\(90deg\)/);
+  assert.doesNotMatch(style, /details-marker|rotate\(/, "the marker and the open turn come from the atom, not the screen");
 });
 
 test("the notes-per-day chart fills its panel with one dated bar per day and keeps the peak caption", async () => {
@@ -167,7 +165,7 @@ test("detail sections fold behind an h2 in their summary; status sections render
     assert.ok(heading, `${row.name} names itself with an h2`);
     const summary = findNodes(tree, (n) => n.type === "summary").find((s) => findNodes(s, (n) => n === heading).length > 0);
     assert.ok(summary, `${row.name} keeps its h2 inside the toggling summary`);
-    assert.equal((summary?.children[0] as RenderedNode).props["aria-hidden"], "true", `${row.name} keeps the chevron first`);
+    assert.equal((summary?.children[0] as RenderedNode).type, "DisclosureChevron", `${row.name} keeps the chevron first`);
   }
 });
 

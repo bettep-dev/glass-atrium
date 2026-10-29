@@ -1,6 +1,7 @@
-// Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control or a
-// value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
-// a compact body row off .tbl sits on the 32 step (a mark + value cell too), and a word KPI value sits on the figure's baseline.
+// Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control, a 24px
+// inline target or a value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
+// a compact body row off .tbl sits on the 32 step (a mark + value cell too), a word KPI value sits on the figure's baseline, the
+// shared error-details summary is the 32 disclosure atom, and the page-header Refresh ends its label on its box's content edge.
 // Runner: npx tsx --test test/ui.row-geometry.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -10,15 +11,12 @@ import { fileURLToPath } from "node:url";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
-import { loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
 
-interface SvgElement { type: string; props: Record<string, unknown> }
-
 const ui = await loadScreenModule(resolve(HERE, "../public/src/ui.jsx"));
-const Icon = ui.Icon as (props: Record<string, unknown>) => SvgElement;
 const React = ui.React as { createElement: (type: unknown, props: unknown, ...children: unknown[]) => unknown };
 
 // The app loads Tailwind preflight from its CDN; these are the preflight rules the measured geometry depends on — the block svg
@@ -27,31 +25,16 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   html { line-height: 1.5; }
   svg { display: block; vertical-align: middle; }
   table { border-collapse: collapse; }
-  button, input, select { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; }`;
+  button, input, select { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; }
+  .w-28 { width: 7rem; } .justify-center { justify-content: center; } .justify-end { justify-content: flex-end; }`;
 
-const kebab = (key: string): string => key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+const render = (type: unknown, props: Record<string, unknown>, ...children: unknown[]): string =>
+  getHtml(renderScreen(React.createElement(type, props, ...children)) as RenderedNode);
 
-// one rendered Icon as markup — the inline style is what this suite is about, so it is carried over verbatim
-function iconMarkup(props: Record<string, unknown>): string {
-  const { props: attrs } = Icon(props);
-  const style = Object.entries((attrs.style as Record<string, string> | undefined) ?? {})
-    .map(([key, value]) => `${kebab(key)}: ${value}`)
-    .join("; ");
-  const className = String(attrs.className ?? "");
-  return `<svg width="${attrs.width}" height="${attrs.height}" viewBox="0 0 24 24"${className ? ` class="${className}"` : ""}${style ? ` style="${style}"` : ""}></svg>`;
-}
+// one rendered Icon as markup — its inline style is what this suite is about
+const iconMarkup = (props: Record<string, unknown>): string => render(ui.Icon, props);
 
-// a rendered host tree as markup — class and children only, enough for the KpiValue atom
-function toMarkup(node: RenderedNode | string): string {
-  if (typeof node === "string") return node;
-  const inner = node.children.map(toMarkup).join("");
-  if (!/^[a-z]/.test(node.type)) return inner;
-  const className = String(node.props.className ?? "");
-  return `<${node.type}${className ? ` class="${className}"` : ""}>${inner}</${node.type}>`;
-}
-
-const kpiValueMarkup = (props: Record<string, unknown>, value: string): string =>
-  toMarkup(renderScreen(React.createElement(ui.KpiValue, props, value)) as RenderedNode);
+const kpiValueMarkup = (props: Record<string, unknown>, value: string): string => render(ui.KpiValue, props, value);
 
 const KPI_VALUES = [
   { id: "kpi-figure", markup: kpiValueMarkup({}, "1,284") },
@@ -64,6 +47,10 @@ const ICON_ROWS = [
   { name: "an icon whose caller passes an align class", id: "aligned", markup: iconMarkup({ name: "check", size: 14, className: "align-middle" }) },
 ] as const;
 
+// the shipped DisclosureButton; a `summary` takes the same atom class
+const DISCLOSURE_CHEVRON = iconMarkup({ name: "chevR", size: 14 });
+const DISCLOSURE_BUTTON = render(ui.DisclosureButton, { isOpen: false, onToggle: () => {}, label: "2 more buckets" });
+
 // control family of the .tbl control-cell rule — each sits in a row beside a text cell
 const CONTROL_ROWS = [
   { name: "a small button", control: `<button type="button" class="btn sm">Edit</button>` },
@@ -72,6 +59,22 @@ const CONTROL_ROWS = [
   { name: "a select field", control: `<select class="field field-select"><option>claude-opus</option></select>` },
   { name: "an affixed field", control: `<span class="field-affix"><span class="field-affix__sym">$</span><input class="field" value="12" /></span>` },
   { name: "an interactive pill", control: `<button type="button" class="pill pill--interactive">Implementing</button>` },
+  { name: "a disclosure button", control: DISCLOSURE_BUTTON },
+  { name: "a disclosure summary", control: `<details><summary class="disclosure">${DISCLOSURE_CHEVRON}<span>Details</span></summary><p>body</p></details>` },
+] as const;
+
+// opt-in 24 targets the screens put in ledger rows: a text link, a ledger expander, a checkbox hit area (16 visual)
+const INLINE_TARGET_ROWS = [
+  { name: "a text link", target: `<a href="#cost" class="inline-target">Cost &amp; usage</a>` },
+  { name: "a ledger expander", target: `<button type="button" class="inline-target">+ 3 more</button>` },
+  { name: "a checkbox hit area", target: `<label class="inline-target"><input type="checkbox" class="ctl-checkbox" aria-label="Select row" /></label>` },
+] as const;
+
+// the shipped error-details fold every RegionFailure and AlertCard carries; each is laid out closed and open
+const ERROR_DETAIL = "HTTP 503 Service Unavailable";
+const ERROR_DETAILS_ROWS = [
+  { name: "a failed region", id: "details-region", markup: render(ui.RegionUnavailable, { source: "outcomes", error: new Error(ERROR_DETAIL) }) },
+  { name: "an alert card", id: "details-alert", markup: render(ui.AlertCard, { tone: "crit", title: "Couldn't load outcomes.", details: ERROR_DETAIL }) },
 ] as const;
 
 // column-header rows, one table each: a house .tbl, a geometry-only .tbl--own-face, a table off .tbl that opts in through
@@ -117,6 +120,12 @@ const COMPACT_ROWS = [
       COMPACT_GLYPH_VALUE) },
 ] as const;
 
+// the page-header Refresh at rest and mid-read — the busy label is the widest it draws
+const REFRESH_STATES = [
+  { name: "at rest", id: "refresh-idle", markup: render(ui.RefreshButton, { onRefresh: () => {} }) },
+  { name: "refreshing", id: "refresh-busy", markup: render(ui.RefreshButton, { isBusy: true, hasRead: true, onRefresh: () => {} }) },
+] as const;
+
 const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
   ${ICON_ROWS.map((row) => `<p id="${row.id}" style="width: 320px;">${row.markup} Healthy</p>`).join("\n  ")}
   <p id="bare" style="width: 320px;"><svg width="14" height="14" viewBox="0 0 24 24"></svg> Healthy</p>
@@ -125,10 +134,14 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
     <tr data-row="pill"><td>dev-react</td><td><span class="pill">Done</span></td></tr>
     <tr data-row="bar"><td>dev-react</td><td class="num tbl-bar-cell"><span id="bar-value" style="display: inline-flex;">92.0%</span><div style="height: 8px;"></div></td></tr>
     ${CONTROL_ROWS.map((row, i) => `<tr data-row="control-${i}"><td>dev-react</td><td>${row.control}</td></tr>`).join("\n    ")}
+    ${INLINE_TARGET_ROWS.map((row, i) => `<tr data-row="target-${i}"><td>dev-react</td><td>${row.target}</td></tr>`).join("\n    ")}
     <tr data-row="last"><td>last row</td><td>no rule below — keeps every measured row ruled</td></tr>
   </tbody></table>
   ${HEAD_ROWS.map((row) => row.markup).join("\n  ")}
   ${COMPACT_ROWS.map((row) => row.markup).join("\n  ")}
+  ${ERROR_DETAILS_ROWS.map((row) => `<div id="${row.id}" style="width: 480px;">${row.markup}</div>` +
+    `<div id="${row.id}-open" style="width: 480px;">${row.markup.replace("<details", "<details open")}</div>`).join("\n  ")}
+  ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
     ${KPI_VALUES.map((value) => `<div id="${value.id}">${value.markup}</div>`).join("\n    ")}
   </div>
@@ -202,6 +215,56 @@ describe("a .tbl row is one 40px line whatever its cells hold", () => {
       assert.equal(await rowHeight(`control-${i}`), ROW_PX);
     });
   });
+
+  INLINE_TARGET_ROWS.forEach((row, i) => {
+    test(`a row holding ${row.name} (24px inline target) stays 40`, async () => {
+      const targetHeight = await page.$eval(`tr[data-row="target-${i}"] td:last-child > *`, (el) => el.getBoundingClientRect().height);
+      assert.ok(targetHeight >= 24, `${row.name} target ${targetHeight} < 24`);
+      assert.equal(await rowHeight(`target-${i}`), ROW_PX);
+    });
+  });
+
+  test("a disclosure summary draws its chevron alone, never the UA marker beside it", async () => {
+    const summary = await page.$eval("summary.disclosure", (el) => ({ display: getComputedStyle(el).display, list: getComputedStyle(el).listStyleType }));
+    assert.notEqual(summary.display, "list-item", "a list-item summary draws the UA marker");
+    assert.equal(summary.list, "none");
+  });
+});
+
+// RegionFailure and AlertCard share one error-details fold: its summary sits on the C32 disclosure atom, the chevron the one open-state cue
+describe("the shared error-details summary is the disclosure atom", () => {
+  interface SummaryReading { height: number; display: string; list: string; chevronCentre: number | null; labelCentre: number | null; chevronTurn: number }
+
+  const readSummary = (id: string): Promise<SummaryReading> =>
+    page.$eval(`#${id} summary`, (summary) => {
+      // a named helper here would pick up the runner's __name wrapper, which the page does not define
+      const [chevronCentre, labelCentre] = [summary.querySelector(":scope > svg"), summary.querySelector(":scope > span")]
+        .map((el) => (el ? (el.getBoundingClientRect().top + el.getBoundingClientRect().bottom) / 2 : null));
+      const chevron = summary.querySelector(":scope > svg");
+      const transform = chevron ? getComputedStyle(chevron).transform : "none";
+      const turn = transform === "none" ? new DOMMatrix() : new DOMMatrix(transform);
+      const style = getComputedStyle(summary);
+      return {
+        height: summary.getBoundingClientRect().height, display: style.display, list: style.listStyleType, chevronCentre, labelCentre,
+        chevronTurn: Math.round((Math.atan2(turn.b, turn.a) * 180) / Math.PI),
+      };
+    });
+
+  for (const row of ERROR_DETAILS_ROWS) {
+    test(`${row.name}: the summary is one 32 line, chevron then label on its centre, no UA marker`, async () => {
+      const summary = await readSummary(row.id);
+      assert.equal(summary.height, 32, "the C32 disclosure height");
+      assert.notEqual(summary.display, "list-item", "a list-item summary draws the UA marker");
+      assert.equal(summary.list, "none");
+      assert.ok(summary.chevronCentre !== null && summary.labelCentre !== null, "a chevron and a label span inside the summary");
+      assert.ok(Math.abs(summary.chevronCentre - summary.labelCentre) < 1, `chevron centre ${summary.chevronCentre} vs label ${summary.labelCentre}`);
+    });
+
+    test(`${row.name}: the chevron turns a quarter only while the details are open`, async () => {
+      assert.equal((await readSummary(row.id)).chevronTurn, 0, "closed");
+      assert.equal((await readSummary(`${row.id}-open`)).chevronTurn, 90, "open");
+    });
+  }
 });
 
 // R-a: one header-row system — a plain header row sits on the 32 compact step, a sortable one on the 40 row step, at the
@@ -305,6 +368,25 @@ describe("a word KPI value shares the figure's baseline", () => {
       const [figureH, wordH] = await Promise.all(["kpi-figure", id].map((key) =>
         page.$eval(`#${key} .kpi-value`, (value) => value.getBoundingClientRect().height)));
       assert.ok(Math.abs(wordH - figureH) < 0.5, `${id} height ${wordH} vs figure ${figureH}`);
+    });
+  }
+});
+
+describe("the page-header Refresh ends its label on the content column's edge", () => {
+  for (const state of REFRESH_STATES) {
+    test(`${state.name}, its label ends on the box's content edge and the box stays 112 wide`, async () => {
+      const fit = await page.$eval(`#${state.id} button`, (button) => {
+        const label = [...button.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim()).at(-1);
+        if (!label) throw new Error("the Refresh button draws no label");
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        const box = button.getBoundingClientRect();
+        const style = getComputedStyle(button);
+        const inset = parseFloat(style.borderRightWidth) + parseFloat(style.paddingRight);
+        return { labelRight: range.getBoundingClientRect().right, contentRight: box.right - inset, width: box.width };
+      });
+      assert.equal(fit.width, 112);
+      assert.ok(Math.abs(fit.labelRight - fit.contentRight) < 0.5, `label ends at ${fit.labelRight}, content edge at ${fit.contentRight}`);
     });
   }
 });

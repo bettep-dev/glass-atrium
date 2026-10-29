@@ -1033,6 +1033,40 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
   }
 });
 
+test("search mode: entering and leaving it moves neither the focused search field nor the Audience group", async () => {
+  // a search response carries no group counts → this pins that the stage chips keep theirs, and so their width, across it
+  const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page: Page = await context.newPage();
+  try {
+    await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+    const search = page.locator("input.doc-search-input");
+    const audience = page.getByRole("toolbar", { name: "Audience filter" });
+    const count = page.locator(".doc-list-count");
+    await page.getByRole("toolbar", { name: "Stage filter" }).locator(".doc-chip-count").first().waitFor();
+    const readBoxes = async () => ({ search: await search.boundingBox(), audience: await audience.boundingBox() });
+    const listed = await readBoxes();
+
+    await clickAndWaitForListResponse(page, () => search.fill(`modepin${randomUUID().slice(0, 8)}`), (url) => url.includes("/search?"));
+    await count.filter({ hasText: /matched|shown/ }).waitFor();
+    const searching = await readBoxes();
+
+    await clickAndWaitForListResponse(page, () => search.fill(""), (url) => url.includes("/groups?"));
+    await count.filter({ hasText: /documents/ }).waitFor();
+    const relisted = await readBoxes();
+
+    for (const [phase, boxes] of [["while searching", searching], ["after the query clears", relisted]] as const) {
+      for (const name of ["search", "audience"] as const) {
+        for (const key of ["x", "y", "width", "height"] as const) {
+          const [before, now] = [listed[name]![key], boxes[name]![key]];
+          assert.ok(Math.abs(now - before) <= 0.5, `${phase}: ${name} ${key} ${now} vs ${before} in list mode`);
+        }
+      }
+    }
+  } finally {
+    await context.close();
+  }
+});
+
 // lineage and stage actor ride the title line and the cell tooltip → every list row is one --row-h line
 test("list rows: a row with a lineage, a stage actor or both is one row-height line like a plain row", async () => {
   const seeded: number[] = [];
@@ -1088,12 +1122,15 @@ test("open-summary rail: beside the ledger (1920px) labels and counts share one 
       assert.equal(columns.tracks, 2, "labels and counts share one two-column grid");
       assert.ok(columns.sameRow, "a count sits on its label's row");
 
-      const edges = await rail.evaluate((el) => ({
-        label: el.querySelector("dt")?.getBoundingClientRect().left,
-        oldest: el.querySelector(".doc-open-oldest")?.getBoundingClientRect().left,
-      }));
+      // the link's text, not its box: the small-button box hangs its padding into the rail gutter
+      const edges = await rail.evaluate((el) => {
+        const link = el.querySelector(".doc-open-oldest");
+        const text = link ? document.createRange() : null;
+        text?.selectNodeContents(link!);
+        return { label: el.querySelector("dt")?.getBoundingClientRect().left, oldest: text?.getBoundingClientRect().left };
+      });
       assert.ok(edges.label != null && edges.oldest != null, "rail shows a label and an Oldest open link");
-      assert.ok(Math.abs(edges.oldest - edges.label) < 1, `Oldest open starts at the label edge (${edges.oldest} vs ${edges.label})`);
+      assert.ok(Math.abs(edges.oldest - edges.label) < 1, `Oldest open's text starts at the label edge (${edges.oldest} vs ${edges.label})`);
     } finally {
       await context.close();
     }
