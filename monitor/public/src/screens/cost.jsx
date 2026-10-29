@@ -1795,7 +1795,7 @@ function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
         ? concentrationText || `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}`
         : undefined}
       right={truncated
-        ? <span title={`Showing ${sessions.length} of ${totalCount} sessions`}><Pill>{`${sessions.length} of ${totalCount} loaded`}</Pill></span>
+        ? <Pill className="pill--ctl-h" title={`Showing ${sessions.length} of ${totalCount} sessions`}>{`${sessions.length} of ${totalCount} loaded`}</Pill>
         : null}
       foot={rollup.other && (
         <>

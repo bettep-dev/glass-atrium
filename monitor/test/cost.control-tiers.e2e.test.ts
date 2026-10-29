@@ -61,10 +61,18 @@ const LEDGER_ROW = { ...ROWS[0], fullModel: ROWS[0].model };
 const getLedger = (screen: Record<string, unknown>) =>
   `<table class="tbl cost-tbl" style="width: 560px;"><tbody>${getMarkup(screen, "ModelCostRow", { r: LEDGER_ROW })}</tbody></table>`;
 
+// the server capped the session read → the head says how many of the window's sessions loaded
+const SESSION_ROW = { session_id: "s-1", cost_usd: 4.2, started_at: "2026-10-29T10:00:00Z", agent_count: 2 };
+const SESSIONS_CARD = getMarkup(closedScreen, "SessionDistributionCard", {
+  state: { status: "ready", data: { rows: [SESSION_ROW], truncated: true, total_session_count: 1800 }, error: null },
+  days: 30, failures: {}, onRetry: noop, onNav: noop,
+});
+
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="card" style="width: 640px; padding: 24px;">${MODEL_CARD}</div>
   <div id="closed" style="padding: 24px;">${getLedger(closedScreen)}</div>
   <div id="open" style="padding: 24px;">${getLedger(openScreen)}</div>
+  <div id="sessions" style="width: 640px; padding: 24px;">${SESSIONS_CARD}</div>
 </body></html>`;
 
 const EXPANDER = (id: string) => `#${id} tbody tr:first-child td:first-child > button`;
@@ -103,6 +111,15 @@ describe("the Cost by model head holds one control height", () => {
     assert.equal(pill.height, button.height, `pill ${pill.height} vs button ${button.height}`);
     assert.equal(button.height, 32);
     assert.ok(Math.abs(pill.top + pill.height / 2 - centreOf(button)) < 0.5, "one centre line");
+  });
+});
+
+describe("the Most expensive sessions head holds the loaded-count pill on the control height", () => {
+  test("the pill is 32 and carries its own hover title", async () => {
+    const selector = "#sessions .card-head .pill";
+    assert.match((await page.$eval(selector, (el) => el.textContent)) ?? "", /1 of 1800 loaded/);
+    assert.equal((await readBox(selector)).height, 32);
+    assert.equal(await page.$eval(selector, (el) => el.getAttribute("title")), "Showing 1 of 1800 sessions");
   });
 });
 

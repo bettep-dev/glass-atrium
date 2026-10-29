@@ -2299,9 +2299,9 @@ function SuccessRateMatrixCard({ failures, state, days, onRetry }) {
         right={
           <>
             {isTruncated && (
-              <span title="Server row limit hit — matrix incomplete. Shorten the time range for complete data.">
-                <Pill tone="warn">Row limit hit — some rows missing</Pill>
-              </span>
+              <Pill tone="warn" className="pill--ctl-h" title="Server row limit hit — matrix incomplete. Shorten the time range for complete data.">
+                Row limit hit — some rows missing
+              </Pill>
             )}
           </>
         }
@@ -2944,7 +2944,7 @@ function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
         info={NOTE.UNFINISHED}
         infoLabel="How Unfinished is counted"
         right={state.status === 'ready' && totalOrphans > 0
-          ? <Pill tone="warn">{formatIntAg(totalOrphans)} unfinished</Pill>
+          ? <Pill tone="warn" className="pill--ctl-h">{formatIntAg(totalOrphans)} unfinished</Pill>
           : null}
         foot={state.status === 'ready' && (
           <PairedCardFootAg note={NOTE_SHORT.UNFINISHED} total={lifecycleRows.length}

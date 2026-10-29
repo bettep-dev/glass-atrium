@@ -99,7 +99,7 @@ function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=
   //   (shell 이 --dim 이라 상속으론 tone 이 안 옴). aria-hidden 장식, 의미는 인접 label.
   const leadIcon = showLead && icon ? <Icon name={TONE_ICON[tone]} size={12} className={toneTextClass} /> : null;
   const leadGlyph = showLead && !icon ? <span className={toneTextClass}>{TONE_GLYPH[tone]} </span> : null;
-  // className passthrough — 호출부가 일회성 .pill 변형을 이 인스턴스에만 덧붙이게 (현재 상시 소비자 없음).
+  // className passthrough — 호출부가 .pill 변형(.pill--ctl-h 등)을 이 인스턴스에만 덧붙이게.
   const cls = ['pill', sizeClass, absent ? 'pill--absent' : '', interactive ? 'pill--interactive' : '', className].filter(Boolean).join(' ');
   const a11y = title ? { title } : {};
   const content = <>{leadIcon}{leadGlyph}{children}</>;
@@ -110,10 +110,10 @@ function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=
 
 // 기존 Pill 호출부 호환 — Badge styling layer 로 routing (두 번째 status idiom 방지).
 // neutral 톤은 metadata role, 그 외(ok/warn/crit/info)는 status role 로 자동 매핑 (color=status 규칙 정합).
-function Pill({ children, tone='neutral' }) {
+function Pill({ children, tone='neutral', title, className }) {
   return tone === 'neutral'
-    ? <Badge role="metadata" glyph={false}>{children}</Badge>
-    : <Badge role="status" tone={tone}>{children}</Badge>;
+    ? <Badge role="metadata" glyph={false} title={title} className={className}>{children}</Badge>
+    : <Badge role="status" tone={tone} title={title} className={className}>{children}</Badge>;
 }
 
 // 공용 빈-상태 atom (canonical) — 화면별 EmptyState* 복제 + 보드 dashed-col idiom 의 단일 SoT.

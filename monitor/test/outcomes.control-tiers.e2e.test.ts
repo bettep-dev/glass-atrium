@@ -1,7 +1,7 @@
 // Task results controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the
 // screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" and the result drawer's record
 // "Previous / Next" draw the same small ghost button at rest and on hover, the filter panel's "More filters" fold opens on the
-// disclosure atom, and each keeps one box in every state (§7.16).
+// disclosure atom, each keeps one box in every state, and a card head's static pill stands on the 32 control height (§7.16).
 // Runner: npx tsx --test test/outcomes.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -61,11 +61,23 @@ const FILTERS = getMarkup("FilterPanelO", {
   onPatchFilter: noop, onToggleIncludeAll: noop, onSortChange: noop, onReset: noop,
 });
 
+// a card head whose right slot holds a static status pill: beside the info button (Confident but failed) or alone
+const CROSSTAB = getMarkup("CrosstabCard", {
+  state: { status: "ready", data: { crosstab: { polarTotal: 4, total: 40, byCell: { "high|false": { count: 3 } }, cells: [] } }, error: null },
+  onRetry: noop, shared: {},
+});
+const LOADING = { status: "loading", data: null, error: null };
+const ATTRIBUTION = getMarkup("AttributionHealthCard", { state: LOADING, period: 30, onRetry: noop, shared: {} });
+const CHANNELS = getMarkup("ChannelLivenessCard", { state: LOADING, onRetry: noop, shared: {} });
+
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="first-page" style="width: 1170px; padding: 24px;">${getLedger(0)}</div>
   <div id="mid-page" style="width: 1170px; padding: 24px;">${getLedger(1)}</div>
   <div id="drawer">${DRAWER}</div>
   <div id="filters" style="width: 280px; padding: 12px;">${FILTERS}</div>
+  <div id="crosstab" style="width: 560px; padding: 24px;">${CROSSTAB}</div>
+  <div id="attribution" style="width: 560px; padding: 24px;">${ATTRIBUTION}</div>
+  <div id="channels" style="width: 560px; padding: 24px;">${CHANNELS}</div>
 </body></html>`;
 
 const LEDGER_BUTTON = (id: string, label: string) => `#${id} button[aria-label="${label} page"]`;
@@ -149,4 +161,21 @@ describe("the filter panel's More filters fold opens on the disclosure atom", ()
   test("its summary is a 32 disclosure with the chevron as the one open-state cue, turned 90 once open", () => assertFoldOnOneBox(MORE_FILTERS, summary));
 
   test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(summary));
+});
+
+describe("a static pill in a card head stands on the head's 32 control height", () => {
+  test("Confident but failed: the mismatches pill matches the info button's height and centre line", async () => {
+    const pill = await readBox("#crosstab .card-head .pill");
+    const info = await readBox("#crosstab .card-head .btn.icon");
+    assert.match((await page.$eval("#crosstab .card-head .pill", (el) => el.textContent)) ?? "", /4 mismatches/);
+    assert.equal(info.height, 32);
+    assert.equal(pill.height, info.height, `pill ${pill.height} vs info ${info.height}`);
+    assert.ok(Math.abs(pill.top + pill.height / 2 - (info.top + info.height / 2)) < 0.5, "one centre line");
+  });
+
+  for (const card of ["attribution", "channels"]) {
+    test(`${card}: the head's lone status pill is 32 too`, async () => {
+      assert.equal((await readBox(`#${card} .card-head .pill`)).height, 32);
+    });
+  }
 });

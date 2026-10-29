@@ -1465,6 +1465,7 @@ function AttributionHealthCard({ state, period, onRetry, shared }) {
             role="status"
             tone={toneFromColorVarO(badge.colorVar)}
             icon
+            className="pill--ctl-h"
             title={`Missing-report (literal_omission) rate, last ${period} days — hygiene signal over the full selected window`}>
             Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}
           </Badge>
@@ -1792,6 +1793,7 @@ function ChannelLivenessCard({ state, onRetry, shared }) {
             role="status"
             tone={badge.tone}
             icon
+            className="pill--ctl-h"
             title="A high-volume recording channel that stops writing looks like a quality change on every other card here">
             {badge.text}
           </Badge>
@@ -2116,7 +2118,7 @@ function CrosstabCard({ state, onRetry, shared }) {
         info={<p className="fs-body m-0">Records whose writer reported high confidence while the record's own check failed.</p>}
         right={
           state.status === 'ready' && (
-            <Badge role="status" tone="warn" icon>
+            <Badge role="status" tone="warn" icon className="pill--ctl-h">
               {formatIntO(polarTotal)} mismatches
             </Badge>
           )
