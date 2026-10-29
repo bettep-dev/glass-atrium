@@ -27,7 +27,7 @@ Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches eve
     - Comments in `test/ga-db-sql-binding.bats` and `test/deps-preflight-noninteractive.bats`.
   - Before renaming, grep `core-security.md` across `scripts/test`, `hooks/test`, `autoagent/test`, `monitor/test`, `test` and `scripts/fixtures`; this list goes stale as tests change.
 - Cited phrases — grep the corpus before rewording one:
-  - "High-impact actions": `autoagent/daemon_cycle.py`, `autoagent/daemon-apply.sh`, `rules/glass-atrium/core-learning-log.md` (the Tier-2 trigger reuses the definition) and `rules/glass-atrium/shared-self-improve-hygiene.md`.
+  - "High-impact actions": `autoagent/daemon_cycle.py`, `autoagent/daemon-apply.sh`, and `rules/glass-atrium/core-learning-log.md` (the Tier-2 trigger reuses the definition).
   - **Prompt Injection Refusal**: `rules/glass-atrium/core-wiki-reference.md` → its untrusted-data clause, which is machine-extracted.
   - `## Secret Management`, `## Input Validation`, `## Execution Security`, `## Dependency Auditing`, `## Agent Tool Authorization [LLM06:2025]` → `### Enforcement boundary`, Unbounded consumption: hook and script comments, agent bodies under `agents/` and other maintainer notes.
 

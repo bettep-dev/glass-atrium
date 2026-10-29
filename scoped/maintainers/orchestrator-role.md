@@ -228,7 +228,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - **Backing honesty (which stages are enforced)** is a pointer to `skills/glass-atrium-ops-delegation-contracts/references/failure-recovery.md`; the split between them: that skill's `SKILL.md` → Reference Index.
   - The evidence-gate citer above resolves through that pointer: it keeps the lead and names the **Debugger evidence gate** as honor-system.
 - The rule file carries no pointer to `skills/glass-atrium-ops-orchestrator.md` → `### Self-Improvement User-Approval Trigger`.
-  - The orchestrator reaches that section through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier and `rules/glass-atrium/shared-self-improve-hygiene.md` → Cross-References.
+  - The orchestrator reaches that section through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier.
 - A comment in `autoagent/daemon_cycle.py` cites `orchestrator-role.md` for that name; the fix belongs at the comment (point it at the skill), not a pointer back here.
 
 ## Linkage — lifecycle and harness
