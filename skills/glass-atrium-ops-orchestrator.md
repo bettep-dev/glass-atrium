@@ -642,7 +642,9 @@ Same home and raw-scan convention as `[ENTRY-CLASS]`, but an independent presenc
 
 When the user explicitly requested a local destination for a deliverable (new file or edit of an existing user file), the workflow records the stamp `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')`.
 
-- The stamp is the one sanctioned carrier of the explicit-redirect exception to POST-only routing — carve-out: `skills/glass-atrium-ops-orchestrator-role.md` → `### Authoring delegation is MANDATORY (never the inline path)`; routing rule: `scoped/scope-report.md` → `## Output Format Routing [REPORT]`.
+- The stamp is the one sanctioned carrier of the explicit-redirect exception to POST-only routing.
+  - Carve-out: `skills/glass-atrium-ops-orchestrator-role.md` → `### Authoring delegation is MANDATORY (never the inline path)`.
+  - Routing rule: `scoped/scope-report.md` → `## Output Format Routing [REPORT]`.
 - Same raw-scan convention as `[ENTRY-CLASS]` above (any placement passes).
 - The stamp MUST carry the actual `<path>` after the colon — a bare stamp clears nothing; path-scoping mechanics live in `enforce-workflow-verify-stage.sh`.
 - Never stamp without an actual explicit user request — stamping to silence the doc-routing gate is a violation (self-check: `## Red Flags`).
@@ -1105,7 +1107,7 @@ A DEV-spawning workflow without a `{glass-atrium-qa-code-reviewer, DEV}` verify-
 
 - `#### Pre-submit self-check` is honor-system primary; the declaration-contract gate backstops it (scope: `##### In-script verify-stage (ultracode)` → **What backstops it**).
 - Skeletons: `#### Pipeline Acceptance Criteria` → "In-script verify-stage".
-- **Simple-plan exemption**: it skips the Stage-2 gate only; the plan-referencing DEV-spawning script still carries all four requirements of `##### DEV-spawn 4-requirement pre-flight checklist`.
+- **Simple-plan exemption**: a simple plan skips the Stage-2 gate only; the plan-referencing DEV-spawning script still carries all four requirements of `##### DEV-spawn 4-requirement pre-flight checklist`; a simple-task entry with no plan-ref exits it (**Simple-task entry**).
 
 #### Pre-submit self-check — run before submitting ANY DEV-spawning Workflow script
 
