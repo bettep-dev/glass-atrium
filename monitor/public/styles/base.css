@@ -36,6 +36,11 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	vertical-align: middle;
 	min-height: 24px;
 }
+/* the engine floors the half-leading to a whole pixel → a fractional ratio box (.fs-meta 13 × 1.4) sets an odd-height face 0.59 off the centre line.
+   The tier's element kinds outrank a type-scale class on the same element, which keeps only the font size */
+.inline-target:is(a, button, label) {
+	line-height: var(--lh-row);
+}
 /* the one checkbox visual (C24 inline target, §7.15) — a 16 token-drawn box, never the UA widget (light-scheme on a dark surface);
    neutral at rest, the one selected state when checked or mixed. Its label takes .inline-target for the 24 hit area.
    An input carries no pseudo-element in every engine → the check / minus glyph is a .ctl-checkbox-mark overlay. A toggle is discrete → no transition */

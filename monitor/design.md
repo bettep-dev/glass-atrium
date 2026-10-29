@@ -361,7 +361,7 @@
 
 - **floor**: 렌더되는 모든 text node ≥ 13px — default view 의 System map label · tweaks 패널 포함. `--fs-micro` 는 `--fs-meta` alias. px 리터럴 font-size 금지.
 - **named exception**: `.hero-stat` 30px (`TypeScaleStyle`) — 패널당 하나의 지배 수치 (drawer hero), 스케일 밖 step, 소비처 `agents.jsx` 1곳.
-- **line-height** (텍스트 class 는 리터럴, control · table 행은 `--lh-ctl` · `--lh-row` 토큰 — §3.2): `.fs-title` 1.4 · `.fs-body` 1.45 · `.fs-meta` 1.4 · `.card-sub` 1.5 · `.kpi-value` 1.15 · control `--lh-ctl` 18 · table cell and KPI label row `--lh-row` 20.
+- **line-height** (텍스트 class 는 리터럴, control · table 행은 `--lh-ctl` · `--lh-row` 토큰 — §3.2): `.fs-title` 1.4 · `.fs-body` 1.45 · `.fs-meta` 1.4 · `.card-sub` 1.5 · `.kpi-value` 1.15 · control `--lh-ctl` 18 · table cell, KPI label row and `.inline-target` `--lh-row` 20.
 - **weight (≤ 3 · signature 1)**: 400 regular · 500 medium (label · nav active · button · badge) · 600 semibold (card title · KPI value · page title). signature = 600 + mono 수치. glass 표면 위 라벨은 한 step 무겁게 (600).
 - **수치**: 큰 KPI value 는 `letter-spacing: -0.025em`. **값:단위 = 2:1** — `.kpi-value` 32 ↔ `.unit` 16 (`--fs-title`, "half of --fs-kpi"), 다른 수치 UI 도 자기 스케일 안에서 2:1.
 - **page header** (`PageHeader`): h1 = `--fs-display` 600 · line-height `--ctl-min-h` 32 (one line box with the header controls) · sub = `--fs-meta` mono `--faint` uppercase (제목과 같으면 생략) · subtitle 문장 ≤ 60자.
@@ -682,11 +682,12 @@
 | C32 disclosure · `.disclosure` (`DisclosureButton`, every `summary`) | 32 | 0 (inline 8 when bordered) | inherits body or meta | no border; global focus outline |
 | C32 tab | 32 | 6 / 8 | 13 / 18 / 500 | constant border or indicator thickness; selected swaps color only |
 | C24 static pill · `.pill`, `--meta`, `--count` (never on a button) | 24; 32 via `.pill--ctl-h` in a control row | 0 / 8 | 13 / 1 / 500 | 1px border |
-| C24 inline target · `.inline-target` on links, ledger expanders, checkbox hit areas | min 24 (checkbox visual 16: `.ctl-checkbox` — `--elev` box, 1.5px `--faint` edge, `--radius-inline`; checked or mixed = `--selected-fill` with a `--selected-ink` `.ctl-checkbox-mark`) | 0 | inherits | no border; global focus outline |
+| C24 inline target · `.inline-target` on links, ledger expanders, checkbox hit areas | min 24 (checkbox visual 16: `.ctl-checkbox` — `--elev` box, 1.5px `--faint` edge, `--radius-inline`; checked or mixed = `--selected-fill` with a `--selected-ink` `.ctl-checkbox-mark`) | 0 | inherits size and weight / `--lh-row` 20 | no border; global focus outline |
 
 - Row mapping: a 40 `.tbl` row holds a 24 target (7.5 + 24 + 7.5 + 1) or a 32 control through the control-cell rule. Card-head, `.control-row` and the overlay head are min 48. A card-foot is 40. A 32 compact row holds no control and no target.
 - A new 32 class joins the `.tbl` control-cell `:has` list, the 32 floor in `test/styles.shared-atoms.unit.test.ts` and the controls selectors in `test/model-config.card-ends.e2e.test.ts` in the change that creates it.
 - `.inline-target` is opt-in, never a global link rule: prose links sit under WCAG 2.5.8's inline exception. It is middle-aligned, so a 24 box keeps a 40 row and its text on the line.
+- A control that centres its text by flex takes a `--lh-*` token, never a type-scale ratio, including one on the same element: the engine floors the half-leading to a whole pixel, so a fractional line box (`.fs-meta` 13 × 1.4) puts an odd-height face 0.59 off the centre line.
 - A checkbox label in a block group (the Task results Record scope) is `.inline-target` inside a flex row: a flex item has no line box, so the 24 target keeps the group's 4 label step.
 - Regression tests: `test/ui.row-geometry.e2e.test.ts` (40 rows per control and target) · `test/ui.control-state.e2e.test.ts` (state boxes, resting edge, the control row).
 
