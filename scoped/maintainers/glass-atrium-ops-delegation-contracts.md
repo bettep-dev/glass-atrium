@@ -31,4 +31,9 @@ Maintainer-facing material for that skill's `SKILL.md` and its `references/` fil
   - `references/delegation-prompt.md` → `## Resource Budget` · `## Prompt-content aids` · `## Read-Extent Discipline` · `## Delegation Information-Hiding`.
   - `references/managed-document-completion.md` → `## Supersede vs new document`.
   - `references/workflow-pre-submit-check.md` → `## Check table`.
+- **Coupled tests on `references/delegation-size-discipline.md`** — paraphrase none of these pins away:
+  - `hooks/test/orchestrator-skill-schema-example.bats` requires `const AnalysisSchema = {`, `findings: 'string'` and `completion_block: 'string'`, the last as a declared member inside that fence.
+    - It also requires the capped-property notation and the withdrawn per-row cap-sizing floor literal absent.
+  - `hooks/test/workflow-gate-completion-channel.bats` replays every `js` fence in the file through the gate, so a fence added there must pass it unmodified.
+  - The path is pinned verbatim: the `hooks/enforce-workflow-verify-stage.sh` header promotion condition names it, and `hooks/test/enforce-workflow-verify-stage.bats` asserts that header text.
 - `SKILL.md` keeps its `## Reference Index` tables as the split authority the other maintainer notes cite ("that skill's `SKILL.md` → Reference Index"); a pointer-site or reference-file SoT change edits its row there.
