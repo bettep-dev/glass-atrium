@@ -1,7 +1,8 @@
 // Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control, a 24px
 // inline target or a value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
-// a compact body row off .tbl sits on the 32 step (a mark + value cell too), a word KPI value sits on the figure's baseline, the
-// shared error-details summary is the 32 disclosure atom, and the page-header Refresh ends its label on its box's content edge.
+// a compact body row off .tbl sits on the 32 step (a mark + value cell too), a word KPI value sits on the figure's baseline, a 24
+// inline target keeps a whole-pixel line box under a type-scale class, the shared error-details summary is the 32 disclosure atom,
+// and the page-header Refresh ends its label on its box's content edge.
 // Runner: npx tsx --test test/ui.row-geometry.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -11,13 +12,16 @@ import { fileURLToPath } from "node:url";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
-import { getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
 
 const ui = await loadScreenModule(resolve(HERE, "../public/src/ui.jsx"));
 const React = ui.React as { createElement: (type: unknown, props: unknown, ...children: unknown[]) => unknown };
+const TYPE_SCALE_CSS = findNodes(renderScreen((ui.UI as { TypeScaleStyle: (props: unknown) => unknown }).TypeScaleStyle({})), (n) => n.type === "style")
+  .map((n) => collectText(n))
+  .join("\n");
 
 // The app loads Tailwind preflight from its CDN; these are the preflight rules the measured geometry depends on — the block svg
 // is the cause of the icon-over-label defect, so the fixture has to carry it for the test to mean anything.
@@ -69,6 +73,8 @@ const INLINE_TARGET_ROWS = [
   { name: "a ledger expander", target: `<button type="button" class="inline-target">+ 3 more</button>` },
   { name: "a checkbox hit area", target: `<label class="inline-target"><input type="checkbox" class="ctl-checkbox" aria-label="Select row" /></label>` },
 ] as const;
+// each kind again under a same-element type-scale class, as the screens set .fs-meta on a 24 target
+const typeScaled = (target: string): string => target.replace(`class="inline-target"`, `class="inline-target fs-meta"`);
 
 // the shipped error-details fold every RegionFailure and AlertCard carries; each is laid out closed and open
 const ERROR_DETAIL = "HTTP 503 Service Unavailable";
@@ -142,6 +148,7 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
   ${ERROR_DETAILS_ROWS.map((row) => `<div id="${row.id}" style="width: 480px;">${row.markup}</div>` +
     `<div id="${row.id}-open" style="width: 480px;">${row.markup.replace("<details", "<details open")}</div>`).join("\n  ")}
   ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
+  ${INLINE_TARGET_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
     ${KPI_VALUES.map((value) => `<div id="${value.id}">${value.markup}</div>`).join("\n    ")}
   </div>
@@ -156,6 +163,7 @@ before(async () => {
   await page.setContent(PAGE);
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+  await page.addStyleTag({ content: TYPE_SCALE_CSS });
 });
 
 after(async () => {
@@ -228,6 +236,18 @@ describe("a .tbl row is one 40px line whatever its cells hold", () => {
     const summary = await page.$eval("summary.disclosure", (el) => ({ display: getComputedStyle(el).display, list: getComputedStyle(el).listStyleType }));
     assert.notEqual(summary.display, "list-item", "a list-item summary draws the UA marker");
     assert.equal(summary.list, "none");
+  });
+});
+
+// flex-centred 24 box + engine-floored half-leading → a fractional line box sets an odd-height face off centre; face-independent check
+describe("an inline target keeps a whole-pixel line box under a type-scale class on the same element", () => {
+  INLINE_TARGET_ROWS.forEach((row, i) => {
+    test(`${row.name} carrying .fs-meta computes a whole-pixel line-height`, async () => {
+      const { isScaled, lineHeight } = await page.$eval(`#type-scaled-target-${i} > *`,
+        (el) => ({ isScaled: el.matches(".inline-target.fs-meta"), lineHeight: getComputedStyle(el).lineHeight }));
+      assert.ok(isScaled, `${row.name} fixture lacks .inline-target.fs-meta`);
+      assert.ok(Number.isInteger(parseFloat(lineHeight)), `line box ${lineHeight} is not a whole pixel`);
+    });
   });
 });
 

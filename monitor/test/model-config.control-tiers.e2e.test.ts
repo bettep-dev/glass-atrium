@@ -158,8 +158,7 @@ describe("the save-results fold opens on the disclosure atom", () => {
   test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(RESULTS_SUMMARY));
 });
 
-// a 24 target centres its line box by flex, and the engine floors the half-leading inside it to a whole pixel → only a whole-pixel line box
-// keeps the text within 0.5 of the centre for a face of either ascent + descent parity; the line-height check fails in every face
+// engine floors the half-leading → only a whole-pixel line box keeps any face within 0.5; the line-height check is face-independent
 const assertTextOnTargetCentre = async (selector: string) => {
   const box = await readBox(selector);
   assert.equal(box.height, 24);
