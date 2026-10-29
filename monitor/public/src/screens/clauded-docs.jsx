@@ -36,6 +36,9 @@ const OPERATOR_ACTOR_CD = "operator";
 // Title-cell lead slot width (a size, not spacing) — the snippet and the Title header indent by it plus the row gap.
 const DOC_LEAD_SLOT_PX_CD = 20;
 
+// Search glyph size — the search field's inline-start gutter is sized from the same value.
+const SEARCH_ICON_PX_CD = 14;
+
 const LEDGER_CD = {
 	// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
 	//   · Tags drops out when no row carries a tag of its own → one column fewer.
@@ -50,7 +53,7 @@ const LEDGER_CD = {
 	FLOOR: {
 		select: 44, // 16px checkbox + edge 28 — .doc-checkbox-cell takes this width
 		status: 199, // widest face, the "Implementing" picker, 174.8px uncapped (macOS, 1440, Pretendard 500: shell 2 + 16 · meter 56 · label 81 · caret 12 · gaps 8) + interior 24 — the ledger caps the pill at this floor minus interior and ellipsizes a wider label → font-independent
-		id: 86, // "#" + 6 digits in 13px mono, 54.6 (7 × 0.6em) + 7.4 slack = 62 + interior 24 — 2 below the earlier 64 so status takes them and the floor sum, and with it the 1440 rail, holds
+		id: 86, // "#" + 6 digits in 13px mono, 54.6 (7 × 0.6em) + 7.4 slack = 62 + interior 24 — slack held there → floor sum 969 + rail 200 fits the 1440 layout's 1170, so the rail shows at 1440
 		title: 434, // a title beside its trailing "rev of #N" pill · the Documents title floor stays
 		tags: 148, // 124 content allowance + interior 24
 		author: 106, // 82 content allowance + interior 24
@@ -987,7 +990,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* wraps between words; a single over-long token still breaks rather than spill */
         .doc-meta-value { color: rgb(var(--ink)); word-break: normal; overflow-wrap: break-word; font-size: var(--fs-meta); }
         /* search on the .field atom → only the inline-start icon gutter is its own: field padding + icon + field padding */
-        .field.doc-search-input { --search-icon: 14px; padding-inline-start: calc(2 * var(--ctl-pad-x) + var(--search-icon)); }
+        .field.doc-search-input { --search-icon: ${SEARCH_ICON_PX_CD}px; padding-inline-start: calc(2 * var(--ctl-pad-x) + var(--search-icon)); }
         /* .doc-toast → shared SoT in base.css */
         .doc-empty { padding: var(--space-6); border: 1px dashed rgb(var(--faint) / 0.5); border-radius: 8px; color: rgb(var(--faint)); text-align: center; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-body); }
         /* one field padding inside the 1px field border → the gutter above centres the icon between edge and text */
@@ -1502,7 +1505,7 @@ function DocListCardCD({
 				<div className="control-row">
 					<div className="relative" style={{ flex: "1 1 200px", minWidth: 180 }}>
 						<span className="doc-search-icon" aria-hidden="true">
-							<Icon name="search" size={14} />
+							<Icon name="search" size={SEARCH_ICON_PX_CD} />
 						</span>
 						<input
 							type="search"

@@ -891,7 +891,7 @@ function isSpacedLabelMC(label) {
 	return /\s/.test(label);
 }
 
-// A file pill or drift badge makes the In effect cell a control cell (4 block padding) → the first line takes the control height to centre on the row's control.
+// A file pill or drift badge makes the In effect cell a control cell (block padding --tbl-ctl-pad-block) → the first line takes the control height to centre on the row's control.
 const CONTROL_LINE_STYLE_MC = { minHeight: "var(--ctl-min-h)" };
 
 // source = an agent name or a config file name — kept a flat string so the meta tables stay one level deep.
