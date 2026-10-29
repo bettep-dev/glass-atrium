@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
+import { type Box, createControlProbe } from "./lib/control-probe.js";
 import { contrastRatio, parseColor } from "./lib/wcag-contrast.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -48,8 +49,6 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
   </div>
 </body></html>`;
 
-interface Box { width: number; height: number }
-
 // each state is applied to the one measured element and undone after reading; hover and focus-visible are forced through CDP,
 // so neither depends on pointer position or on how a focus call decides keyboard modality
 const STATES = [
@@ -79,17 +78,11 @@ after(async () => {
   await browser?.close();
 });
 
-const readBox = (id: string): Promise<Box> =>
-  page.$eval(`[data-atom="${id}"]`, (el) => {
-    const rect = el.getBoundingClientRect();
-    return { width: rect.width, height: rect.height };
-  });
-
-async function forcePseudo(id: string, classes: readonly string[]): Promise<void> {
-  const { root } = await cdp.send("DOM.getDocument");
-  const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector: `[data-atom="${id}"]` });
-  await cdp.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: [...classes] });
-}
+const probe = createControlProbe(() => page, () => cdp);
+const getAtomSelector = (id: string) => `[data-atom="${id}"]`;
+const readBox = (id: string): Promise<Box> => probe.readBox(getAtomSelector(id));
+const forcePseudo = (id: string, classes: readonly string[]) => probe.forcePseudo(getAtomSelector(id), classes);
+const readStyle = (id: string, prop: string) => probe.readStyle(getAtomSelector(id), prop);
 
 async function readBoxInState(id: string, state: (typeof STATES)[number]): Promise<Box> {
   if ("pseudo" in state) {
@@ -97,18 +90,16 @@ async function readBoxInState(id: string, state: (typeof STATES)[number]): Promi
     try { return await readBox(id); } finally { await forcePseudo(id, []); }
   }
   const [attr, value] = state.attr;
-  const previous = await page.$eval(`[data-atom="${id}"]`, (el, name) => el.getAttribute(name), attr);
-  await page.$eval(`[data-atom="${id}"]`, (el, [name, next]) => el.setAttribute(name, next), [attr, value] as const);
+  const selector = getAtomSelector(id);
+  const previous = await page.$eval(selector, (el, name) => el.getAttribute(name), attr);
+  await page.$eval(selector, (el, [name, next]) => el.setAttribute(name, next), [attr, value] as const);
   try {
     return await readBox(id);
   } finally {
-    await page.$eval(`[data-atom="${id}"]`, (el, [name, prior]) => (prior === null ? el.removeAttribute(name) : el.setAttribute(name, prior)),
+    await page.$eval(selector, (el, [name, prior]) => (prior === null ? el.removeAttribute(name) : el.setAttribute(name, prior)),
       [attr, previous] as const);
   }
 }
-
-const readStyle = (id: string, prop: string): Promise<string> =>
-  page.$eval(`[data-atom="${id}"]`, (el, name) => getComputedStyle(el).getPropertyValue(name), prop);
 
 describe("precondition: a forced state reaches the cascade", () => {
   test("forced hover repaints a button's fill", async () => {

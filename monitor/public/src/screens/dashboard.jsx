@@ -535,7 +535,6 @@ function BreakageAgents({ agents }) {
         {agents.map((row) => (
           <li key={row.agent} className="flex items-center justify-between gap-2 fs-body">
             {/* a real href, not onNav → the query reaches the Task results filter through hashchange */}
-            {/* an inline-flex link takes no ellipsis of its own → the name clips inside it */}
             <a href={getAgentOutcomesHref(row.agent)} className="dash-drill inline-target min-w-0"
               aria-label={`${row.agent}: ${formatInt(row.count)} failed or blocked — open its task results`}>
               <span className="truncate">{row.agent}</span>

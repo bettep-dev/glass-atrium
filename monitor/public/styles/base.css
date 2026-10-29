@@ -28,7 +28,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	color: rgb(var(--ink));
 }
 /* opt-in 24 hit target (WCAG 2.5.8) for a text link, a ledger expander or a checkbox hit area — never a global link rule, since
-   prose links sit under the criterion's inline exception. Middle-aligned → the box keeps a 40 .tbl row and its text on the line */
+   prose links sit under the criterion's inline exception. Middle-aligned → the box keeps a 40 .tbl row and its text on the line.
+   An inline-flex box takes no ellipsis of its own → a clipped label truncates on an inner span, so the target stays in its cell */
 .inline-target {
 	display: inline-flex;
 	align-items: center;

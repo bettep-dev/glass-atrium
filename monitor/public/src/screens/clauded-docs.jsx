@@ -1926,6 +1926,7 @@ function DocListCardCD({
 // A failed refresh keeps the held counts → they read as Last known, like the verdict above them.
 function DocOpenSummaryCD({ summary, isPartial, isLastKnown = false, onSelect }) {
 	const { oldest } = summary;
+	const oldestLabel = oldest ? `Oldest open #${oldest.id} · ${getAgeLabelCD(oldest.days)}` : null;
 	return (
 		<aside
 			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2"
@@ -1960,8 +1961,8 @@ function DocOpenSummaryCD({ summary, isPartial, isLastKnown = false, onSelect })
 				</dl>
 			</div>
 			{oldest && (
-				<button type="button" className="btn ghost sm doc-open-oldest" title={`Oldest open #${oldest.id} · ${getAgeLabelCD(oldest.days)}`} onClick={() => onSelect(oldest.id)}>
-					<span className="doc-open-oldest-label">{`Oldest open #${oldest.id} · ${getAgeLabelCD(oldest.days)}`}</span>
+				<button type="button" className="btn ghost sm doc-open-oldest" title={oldestLabel} onClick={() => onSelect(oldest.id)}>
+					<span className="doc-open-oldest-label">{oldestLabel}</span>
 				</button>
 			)}
 			{isPartial && <span className="doc-open-summary-note">Loaded rows only</span>}

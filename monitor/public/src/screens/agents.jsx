@@ -2635,7 +2635,6 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
       <tr key={`${p.agent}|${p.task_type}`}>
         <td className="text-ink truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
           <a className="inline-target max-w-full underline decoration-dotted" href={getPairOutcomesHref(p, days)}>
-            {/* an inline-flex link takes no ellipsis of its own → the name clips inside it, so the target stays in its cell */}
             <window.UI.AgentName name={p.agent} className="truncate"/>
           </a>
         </td>
