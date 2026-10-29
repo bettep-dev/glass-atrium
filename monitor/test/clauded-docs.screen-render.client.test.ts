@@ -718,9 +718,12 @@ test("while searching, the stage filter visibly steps aside for all stages, and 
   const filters = { ...(props.inlineFilterProps as Record<string, unknown>), keyword: "plan", docStatusFilter: "open" };
   const searching = renderListCard(screen, { isSearchMode: true, inlineFilterProps: filters });
 
-  const groups = findNodes(searching, (n) => n.props.atom === "ChipGroup");
-  assert.deepEqual(groups.map((g) => g.props.label), ["Audience filter"], "no stage chip reads as pressed while it is not applied");
-  assert.match(collectText(searching), /All stages while searching/);
+  const [slot] = findNodes(searching, (n) => String(n.props.className ?? "").includes("doc-show-slot--searching"));
+  assert.ok(slot, "the Show cell is marked as searching, which sets the stage chips aside");
+  const stageChips = findNodes(slot, (n) => n.props.atom === "ChipGroup").flatMap((g) => g.props.chips as Array<{ isPressed: boolean }>);
+  assert.ok(stageChips.length > 0, "the stage chips keep their cell");
+  assert.ok(stageChips.every((chip) => chip.isPressed === false), "no stage chip reads as pressed while it is not applied");
+  assert.match(collectText(slot), /All stages while searching/);
 
   const empty = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: true, inlineFilterProps: filters }));
   assert.doesNotMatch(collectText(empty), /status:/);

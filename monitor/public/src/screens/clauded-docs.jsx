@@ -451,7 +451,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
 						setAsOf(managedData.fetched_at);
 					}
 					setListState((s) =>
-						putRegionData(s, ctrl, { rows, total, docTotal, hiddenDocTotal, bigmEnabled, groupCounts }),
+						putRegionData(s, ctrl, {
+							rows, total, docTotal, hiddenDocTotal, bigmEnabled,
+							// a search response carries none → the last corpus counts stay, so the stage chips keep one width across the mode
+							groupCounts: groupCounts ?? s.data?.groupCounts ?? null,
+						}),
 					);
 				// Load More — 기존 누적 + 신규 page · 첫 페이지 / search — 교체.
 				setLoadedRows((prev) => (isLoadMore ? getMergedGroupRowsCD(prev, rows) : rows));
@@ -1175,6 +1179,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-filter-cluster { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
         /* a label and its chips → one wrap unit, 4 apart; baseline → the label stays on the first chip line when the chips wrap */
         .doc-filter-group { display: flex; align-items: baseline; gap: var(--space-1); min-width: 0; }
+        /* one grid cell for the stage chips and the search note, both always laid out → the cell is the wider of the two in either mode; baseline → the note reads on the chips' text line */
+        .doc-show-slot { display: grid; min-width: 0; }
+        .doc-show-slot > * { grid-area: 1 / 1; align-self: baseline; }
+        /* the idle one is hidden from sight, focus and the accessibility tree, yet keeps its share of the cell */
+        .doc-show-slot:not(.doc-show-slot--searching) > .doc-search-stage-note, .doc-show-slot--searching > .doc-stage-chips { visibility: hidden; }
         /* 4 short of the controls' 32 each way → a rule between the groups, not a box edge */
         .doc-filter-divider { align-self: stretch; width: 1px; margin-block: var(--space-1); background: rgb(var(--line)); }
         /* trailing meta → its own right-aligned line in every state: the count's length never picks its line nor hands its room to the search; it breaks inside only once it alone outgrows the row */
@@ -1519,30 +1528,30 @@ function DocListCardCD({
 					<div className="doc-filter-cluster">
 						<div className="doc-filter-group">
 							<span className="doc-filter-label">Show</span>
-							{/* search reads every stage → the chips step aside rather than show a pressed filter it ignores */}
-							{isSearchMode ? (
+							{/* search reads every stage → the chips step aside rather than show a pressed filter it ignores; chips and note share one cell, so the mode never resizes the group */}
+							<div className={`doc-show-slot${isSearchMode ? " doc-show-slot--searching" : ""}`}>
+								<window.UI.ChipGroup
+									label="Stage filter"
+									className="doc-stage-chips"
+									chips={DOC_STATUS_OPTIONS_CD.map((opt) => ({
+										key: opt.value,
+										isPressed: !isSearchMode && inlineFilterProps.docStatusFilter === opt.value,
+										label: (
+											<>
+												{opt.label}
+												{/* 건수는 아는 경우에만 — 못 받은 수치가 0 으로 읽히면 안 된다. */}
+												{groupCounts && typeof groupCounts[opt.countKey] === "number" && (
+													<span className="doc-chip-count">{formatIntCD(groupCounts[opt.countKey])}</span>
+												)}
+											</>
+										),
+									}))}
+									onToggle={inlineFilterProps.onDocStatusChange}
+								/>
 								<span className="doc-search-stage-note fs-meta" style={{ color: "rgb(var(--dim))" }}>
 									All stages while searching
 								</span>
-							) : (
-							<window.UI.ChipGroup
-								label="Stage filter"
-								chips={DOC_STATUS_OPTIONS_CD.map((opt) => ({
-									key: opt.value,
-									isPressed: inlineFilterProps.docStatusFilter === opt.value,
-									label: (
-										<>
-											{opt.label}
-											{/* 건수는 아는 경우에만 — 못 받은 수치가 0 으로 읽히면 안 된다. */}
-											{groupCounts && typeof groupCounts[opt.countKey] === "number" && (
-												<span className="doc-chip-count">{formatIntCD(groupCounts[opt.countKey])}</span>
-											)}
-										</>
-									),
-								}))}
-								onToggle={inlineFilterProps.onDocStatusChange}
-							/>
-							)}
+							</div>
 						</div>
 						<span className="doc-filter-divider" aria-hidden="true" />
 						<div className="doc-filter-group">

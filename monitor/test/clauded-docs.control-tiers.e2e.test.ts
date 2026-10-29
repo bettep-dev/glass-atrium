@@ -201,11 +201,13 @@ const FILTER_STATES = [
   { name: "Done with a long count", props: { total: 1094, docTotal: 1203, hiddenCount: 12, inlineFilterProps: { ...FILTERS, docStatusFilter: "done" } } },
   { name: "All with a long count", props: { total: 1117, docTotal: 1240, hiddenCount: 12, inlineFilterProps: { ...FILTERS, docStatusFilter: "" } } },
   { name: "Agent-only audience", props: { total: 23, docTotal: 23, inlineFilterProps: { ...FILTERS, audienceFilter: "agent-only" } } },
+  // the screen keeps the last corpus counts while a search response, which carries none, is shown
+  { name: "Searching", props: { isSearchMode: true, total: 3, docTotal: null, inlineFilterProps: { ...FILTERS, keyword: "plan" } } },
 ] as const;
 // the 1440 and 1180 viewports' cards, where the audit saw the count change lines, then the band above
 const STATE_WIDTHS = [1170, 1074, ...CARD_WIDTHS] as const;
 
-describe("no Show or Audience state moves the Documents search, a group, a chip or the count line", () => {
+describe("no Show, Audience or search state moves the Documents search, a group, a chip or the count line", () => {
   let statePage: Page;
 
   before(async () => {
@@ -220,6 +222,18 @@ describe("no Show or Audience state moves the Documents search, a group, a chip 
 
   after(async () => {
     await statePage?.close();
+  });
+
+  test("the Show cell paints the stage chips in list mode and only the note while searching", async () => {
+    const searchingIndex = FILTER_STATES.findIndex((state) => state.name === "Searching");
+    const painted = await statePage.$$eval("[data-state]", (frames) => frames.map((frame) => ({
+      chips: getComputedStyle(frame.querySelector(".doc-stage-chips")!).visibility,
+      note: getComputedStyle(frame.querySelector(".doc-search-stage-note")!).visibility,
+    })));
+    for (const [index, { chips, note }] of painted.entries()) {
+      const isSearching = index === searchingIndex;
+      assert.deepEqual({ chips, note }, isSearching ? { chips: "hidden", note: "visible" } : { chips: "visible", note: "hidden" }, FILTER_STATES[index].name);
+    }
   });
 
   for (const width of STATE_WIDTHS) {
