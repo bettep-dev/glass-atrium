@@ -1,8 +1,8 @@
 // Task results controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the
 // screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" and the result drawer's record
 // "Previous / Next" draw the same small ghost button at rest and on hover, the filter panel's "More filters" fold opens on the
-// disclosure atom, each keeps one box in every state, the panel's Record scope checkbox stands on the C24 inline-target tier, and a
-// card head's static pill stands on the 32 control height (§7.16).
+// disclosure atom, each keeps one box in every state, the panel's Record scope checkbox stands on the C24 inline-target tier and
+// draws the Documents ledger's checkbox in both themes, and a card head's static pill stands on the 32 control height (§7.16).
 // Runner: npx tsx --test test/outcomes.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -57,6 +57,16 @@ const DRAWER = getMarkup("DetailModal", {
   detailRow: RECORDS[1], detailState: { status: "loading", data: null, error: null }, rows: RECORDS, onClose: noop, onNav: noop,
 });
 
+// the reference is the shipped ledger box under the Documents screen's own style block, beside the Task results panel
+const docsScreen = await loadScreenModule(resolve(HERE, "../public/src/screens/clauded-docs.jsx"), {
+  UI: ui.UI,
+  React: createReactStub(),
+  localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+});
+const DOCS_CSS = findNodes(renderScreen((docsScreen.ScreenClaudedDocs as Component)({})), (n) => n.type === "style")
+  .map((n) => collectText(n))
+  .join("\n");
+
 const FILTERS = getMarkup("FilterPanelO", {
   filter: {}, distinctAgents: ["glass-atrium-dev-front"], includeAll: false, sort: "newest",
   onPatchFilter: noop, onToggleIncludeAll: noop, onSortChange: noop, onReset: noop,
@@ -91,7 +101,7 @@ const VARIANT_PROPS = ["border-top-color", "border-top-width", "background-color
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
-const { readBox, readStyle, setOpen, forcePseudo, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
+const { readBox, setOpen, forcePseudo, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -165,29 +175,76 @@ describe("the filter panel's More filters fold opens on the disclosure atom", ()
 });
 
 describe("the filter panel's Record scope checkbox stands on the C24 inline-target tier", () => {
-  const hit = `${MORE_FILTERS} label:has(> input[type="checkbox"])`;
-  const box = `${hit} > input`;
+  const hit = `${MORE_FILTERS} label:has(input[type="checkbox"])`;
+  const box = `${hit} input`;
 
-  test("its label is a 24 hit area around a 16 accent box, the text on the box's centre line, 4 below the group label", async () => {
+  test("its label is a 24 hit area around a 16 box, the text on the box's centre line, 4 below the group label", async () => {
     await setOpen(MORE_FILTERS, true);
     try {
-      const [hitBox, visual, text, groupLabel] = await Promise.all([readBox(hit), readBox(box), readBox(`${hit} > span`), readBox(`${MORE_FILTERS} div:has(input[type="checkbox"]) > div.fs-meta`)]);
-      const accent = await page.$eval(hit, (el) => {
-        const probe = el.appendChild(document.createElement("i"));
-        probe.style.accentColor = "rgb(var(--accent))";
-        const value = getComputedStyle(probe).accentColor;
-        probe.remove();
-        return value;
-      });
+      const [hitBox, visual, text, groupLabel] = await Promise.all([readBox(hit), readBox(box), readBox(`${hit} > span:last-child`), readBox(`${MORE_FILTERS} div:has(input[type="checkbox"]) > div.fs-meta`)]);
       assert.ok(hitBox.height >= 24 && hitBox.width >= 24, `hit ${hitBox.width}x${hitBox.height}`);
       assert.deepEqual([visual.width, visual.height], [16, 16], "checkbox visual");
-      assert.equal(await readStyle(box, "accent-color"), accent);
       assert.ok(Math.abs(text.top + text.height / 2 - (visual.top + visual.height / 2)) < 0.5, "one centre line");
       assert.equal(hitBox.top - groupLabel.bottom, 4, "label-to-content step");
     } finally {
       await setOpen(MORE_FILTERS, false);
     }
   });
+});
+
+describe("the Record scope checkbox draws the Documents ledger checkbox in both themes", () => {
+  const getLedgerBox = (checked: boolean) =>
+    getHtml(renderScreen((docsScreen.DocCheckboxCD as Component)({ checked, onChange: noop, ariaLabel: "Select Plan" })) as RenderedNode);
+  const getScope = (includeAll: boolean) =>
+    getMarkup("FilterPanelO", { filter: {}, distinctAgents: [], includeAll, sort: "newest", onPatchFilter: noop, onToggleIncludeAll: noop, onSortChange: noop, onReset: noop });
+  // the ledger box's wrapper and mark lay out on these Tailwind utilities, at their shipped values
+  const UTILITIES = ".relative { position: relative; } .absolute { position: absolute; } .justify-center { justify-content: center; }" +
+    " .mx-auto { margin-left: auto; margin-right: auto; } .pointer-events-none { pointer-events: none; }";
+  const PAIR_PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
+    <div id="scope-off" style="width: 280px;">${getScope(false)}</div>
+    <div id="scope-on" style="width: 280px;">${getScope(true)}</div>
+    <div class="card"><table class="tbl"><tbody><tr>
+      <td class="doc-checkbox-cell" id="ledger-off">${getLedgerBox(false)}</td>
+      <td class="doc-checkbox-cell" id="ledger-on">${getLedgerBox(true)}</td>
+    </tr></tbody></table></div>
+  </body></html>`;
+  // the properties that make the box: its kind, edge, corner, fill and visual size
+  const BOX_PROPS = ["appearance", "border-top-width", "border-top-color", "border-top-left-radius", "background-color", "width", "height"] as const;
+  let pairPage: Page;
+
+  before(async () => {
+    pairPage = await browser.newPage({ viewport: { width: 900, height: 900 }, reducedMotion: "reduce" });
+    await pairPage.setContent(PAIR_PAGE);
+    await pairPage.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await pairPage.addStyleTag({ path: resolve(STYLES, "base.css") });
+    await pairPage.addStyleTag({ content: SCREEN_CSS });
+    await pairPage.addStyleTag({ content: DOCS_CSS });
+    await pairPage.$$eval("details", (folds) => folds.forEach((fold) => { (fold as HTMLDetailsElement).open = true; }));
+  });
+
+  after(async () => {
+    await pairPage?.close();
+  });
+
+  const readCheckbox = (root: string) =>
+    pairPage.$eval(`${root} input[type="checkbox"]`, (input, props) => {
+      const style = getComputedStyle(input);
+      const box = Object.fromEntries(props.map((p) => [p, style.getPropertyValue(p)]));
+      const mark = input.closest("label")?.parentElement?.querySelector("svg");
+      if (!mark) return { ...box, mark: "none" };
+      // the glyph's ink and its offset inside the box
+      const [glyph, frame] = [mark.getBoundingClientRect(), input.getBoundingClientRect()];
+      return { ...box, mark: getComputedStyle(mark).color, markOffset: [glyph.left - frame.left, glyph.top - frame.top] };
+    }, [...BOX_PROPS]);
+
+  for (const theme of ["dark", "light"]) {
+    for (const [state, scope, ledger] of [["at rest", "#scope-off", "#ledger-off"], ["checked", "#scope-on", "#ledger-on"]]) {
+      test(`${theme}, ${state}: the same box, edge, corner, fill and mark`, async () => {
+        await pairPage.evaluate((name) => { document.documentElement.dataset.theme = name; }, theme);
+        assert.deepEqual(await readCheckbox(scope), await readCheckbox(ledger));
+      });
+    }
+  }
 });
 
 describe("a static pill in a card head stands on the head's 32 control height", () => {

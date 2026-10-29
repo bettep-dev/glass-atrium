@@ -6,6 +6,7 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
   createReactStub,
@@ -1237,23 +1238,23 @@ test("the checked stage-menu item draws the one filled selected state at rest an
   assert.match(cssRuleBody(css, '.doc-stage-menu-item[aria-checked="true"] .doc-stage-menu-rank'), /color\s*:\s*inherit/);
 });
 
-test("a ledger checkbox draws on theme tokens: neutral at rest, the one selected state when checked or mixed, and no transition", async () => {
+test("a ledger checkbox draws the shared checkbox on theme tokens: neutral at rest, the one selected state when checked or mixed, and no transition", async () => {
   const screen = await loadDocsScreen();
-  const css = getScreenCss(screen);
+  const css = readFileSync(resolve(__dirname, "../public/styles/base.css"), "utf8");
   for (const props of [{ checked: false }, { checked: true }, { checked: false, indeterminate: true }]) {
     const tree = renderScreen((screen.DocCheckboxCD as Component)({ ...props, onChange: noop, ariaLabel: "Select" }));
     const [input] = findNodes(tree, (n) => n.type === "input");
     const classes = String(input.props.className);
-    assert.ok(hasClass("doc-checkbox")(input), "token-drawn class");
+    assert.ok(hasClass("ctl-checkbox")(input), "token-drawn class");
     assert.doesNotMatch(classes, /zinc-|emerald-|transition|duration-/);
     const marks = findNodes(tree, (n) => n.props.atom === "Icon");
     assert.equal(marks.length, props.checked || props.indeterminate ? 1 : 0);
-    for (const mark of marks) assert.ok(String(mark.props.className).includes("doc-checkbox-mark"));
+    for (const mark of marks) assert.ok(String(mark.props.className).includes("ctl-checkbox-mark"));
   }
-  assert.match(cssRuleBody(css, ".doc-checkbox"), /background\s*:\s*rgb\(var\(--elev\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox"), /border\s*:\s*1\.5px solid rgb\(var\(--faint\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox:checked, .doc-checkbox:indeterminate"), /background\s*:\s*rgb\(var\(--selected-fill\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox-mark"), /color\s*:\s*rgb\(var\(--selected-ink\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox"), /background\s*:\s*rgb\(var\(--elev\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox"), /border\s*:\s*1\.5px solid rgb\(var\(--faint\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox:checked,\n.ctl-checkbox:indeterminate"), /background\s*:\s*rgb\(var\(--selected-fill\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox-mark"), /color\s*:\s*rgb\(var\(--selected-ink\)\)/);
 });
 
 function getReduceBlocks(css: string): { inside: string; outside: string } {

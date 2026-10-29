@@ -2454,12 +2454,17 @@ function FilterPanelO({
             {/* a flex item has no line box → the 24 target sits on the group's 4 label step */}
             <div className="flex">
               <label className="inline-target gap-2 fs-meta cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  className="ctl-checkbox"
-                  checked={includeAll}
-                  onChange={(e) => onToggleIncludeAll(e.target.checked)}
-                  aria-label="Show all records including non-registry and de-registered agents"/>
+                <span className="relative flex items-center justify-center">
+                  <input
+                    type="checkbox"
+                    className="ctl-checkbox"
+                    checked={includeAll}
+                    onChange={(e) => onToggleIncludeAll(e.target.checked)}
+                    aria-label="Show all records including non-registry and de-registered agents"/>
+                  {includeAll && (
+                    <window.UI.Icon name="check" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute"/>
+                  )}
+                </span>
                 <span className={includeAll ? 'text-ink' : 'text-dim'}>
                   Show all (incl. non-registry)
                 </span>

@@ -682,7 +682,7 @@
 | C32 disclosure · `.disclosure` (`DisclosureButton`, every `summary`) | 32 | 0 (inline 8 when bordered) | inherits body or meta | no border; global focus outline |
 | C32 tab | 32 | 6 / 8 | 13 / 18 / 500 | constant border or indicator thickness; selected swaps color only |
 | C24 static pill · `.pill`, `--meta`, `--count` (never on a button) | 24; 32 via `.pill--ctl-h` in a control row | 0 / 8 | 13 / 1 / 500 | 1px border |
-| C24 inline target · `.inline-target` on links, ledger expanders, checkbox hit areas | min 24 (checkbox visual 16: `.doc-checkbox` in the ledger, `.ctl-checkbox` for a native box) | 0 | inherits | no border; global focus outline |
+| C24 inline target · `.inline-target` on links, ledger expanders, checkbox hit areas | min 24 (checkbox visual 16: `.ctl-checkbox` — `--elev` box, 1.5px `--faint` edge, `--radius-inline`; checked or mixed = `--selected-fill` with a `--selected-ink` `.ctl-checkbox-mark`) | 0 | inherits | no border; global focus outline |
 
 - Row mapping: a 40 `.tbl` row holds a 24 target (7.5 + 24 + 7.5 + 1) or a 32 control through the control-cell rule. Card-head, `.control-row` and the overlay head are min 48. A card-foot is 40. A 32 compact row holds no control and no target.
 - A new 32 class joins the `.tbl` control-cell `:has` list, the 32 floor in `test/styles.shared-atoms.unit.test.ts` and the controls selectors in `test/model-config.card-ends.e2e.test.ts` in the change that creates it.
@@ -725,7 +725,7 @@
   - alert-card: `detailFade` 150ms `cubic-bezier(0.2, 0, 0, 1)` (effects-fast).
 - **secondary — hover 깊이 · 상태**: `border-color` + `box-shadow` (+ `background`) 120ms — `.btn` · `.kpi` · `.field` · 화면 행 `.doc-row` · `.outcome-row` (background) · improvement 타일 `.i-tile-hover` (box-shadow, transform lift 없음). Tailwind 유틸은 `motion-safe:` + `duration-[120ms]`.
 - **ambient**: `.live-dot` 만.
-- **즉시** (transition 없음): disclosure chevron 회전 · checkbox toggle (`.doc-checkbox`) · Recharts `Tooltip` 추종 (`isAnimationActive={false}`, series 와 동일).
+- **즉시** (transition 없음): disclosure chevron 회전 · checkbox toggle (`.ctl-checkbox`) · Recharts `Tooltip` 추종 (`isAnimationActive={false}`, series 와 동일).
 
 ### 8.2 데이터 변경 신호
 

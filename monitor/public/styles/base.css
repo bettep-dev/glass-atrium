@@ -35,13 +35,29 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	vertical-align: middle;
 	min-height: 24px;
 }
-/* native checkbox visual (C24 inline target, §7.15) — 16 box on the accent; its label takes .inline-target for the 24 hit area */
+/* the one checkbox visual (C24 inline target, §7.15) — a 16 token-drawn box, never the UA widget (light-scheme on a dark surface);
+   neutral at rest, the one selected state when checked or mixed. Its label takes .inline-target for the 24 hit area.
+   An input carries no pseudo-element in every engine → the check / minus glyph is a .ctl-checkbox-mark overlay. A toggle is discrete → no transition */
 .ctl-checkbox {
+	appearance: none;
 	width: 16px;
 	height: 16px;
 	margin: 0;
-	accent-color: rgb(var(--accent));
+	border: 1.5px solid rgb(var(--faint));
+	border-radius: var(--radius-inline);
+	background: rgb(var(--elev));
 	cursor: pointer;
+}
+.ctl-checkbox:hover {
+	border-color: rgb(var(--dim));
+}
+.ctl-checkbox:checked,
+.ctl-checkbox:indeterminate {
+	background: rgb(var(--selected-fill));
+	border-color: rgb(var(--selected-fill));
+}
+.ctl-checkbox-mark {
+	color: rgb(var(--selected-ink));
 }
 
 /* page header — top-aligned row; the h1 line box is one control height, so the controls and the

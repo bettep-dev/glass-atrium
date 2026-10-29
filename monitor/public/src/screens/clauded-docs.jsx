@@ -1063,12 +1063,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-checkbox-cell { width: ${LEDGER_CD.FLOOR.select}px; text-align: center; vertical-align: middle; }
         /* the edge cell's 16 + 12 split evenly (the same 28) → the checkbox sits on the cell centre */
         .tbl tr > :is(th, td).doc-checkbox-cell { padding-inline: calc((var(--space-4) + var(--space-3)) / 2); }
-        .doc-checkbox-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: rgb(var(--accent)); }
-        /* ledger checkbox — neutral at rest, the one selected state when checked or mixed; a toggle is discrete → no transition */
-        .doc-checkbox { appearance: none; width: 16px; height: 16px; margin: 0; border: 1.5px solid rgb(var(--faint)); border-radius: var(--radius-inline); background: rgb(var(--elev)); cursor: pointer; }
-        .doc-checkbox:hover { border-color: rgb(var(--dim)); }
-        .doc-checkbox:checked, .doc-checkbox:indeterminate { background: rgb(var(--selected-fill)); border-color: rgb(var(--selected-fill)); }
-        .doc-checkbox-mark { color: rgb(var(--selected-ink)); }
         /* C24 hit area (§7.15) — padding out to 24, the equal negative margin keeps the 16 layout box → the select floor holds */
         .doc-checkbox-hit { padding: var(--space-1); margin: calc(-1 * var(--space-1)); cursor: pointer; }
         .doc-col-title { min-width: ${LEDGER_CD.FLOOR.title}px; }
@@ -3144,7 +3138,7 @@ function formatActorCD(model) {
 	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", String(model).replace(MODEL_CONTEXT_TAG_CD, ""));
 }
 
-// DocCheckboxCD — 16px square drawn by the screen's .doc-checkbox rules (theme tokens, single selected state)
+// DocCheckboxCD — the shared 16 .ctl-checkbox box (base.css, theme tokens, single selected state) in its ledger cell
 //   · focus-visible — global :focus-visible outline (base.css)
 //
 // Implementation 결정 (glass-atrium-design-designer 자문 4-Axis 16/20 정합):
@@ -3187,16 +3181,16 @@ function DocCheckboxCD({
 					onClick={onClick}
 					aria-label={ariaLabel}
 					{...(isRowControl ? ROW_CONTROL_PROPS : null)}
-					className="doc-checkbox"
+					className="ctl-checkbox"
 				/>
 			</label>
 			{/* check SVG — checked 단독 시 표시 (indeterminate 우선) */}
 			{checked && !indeterminate && (
-				<Icon name="check" size={12} stroke={3} className="doc-checkbox-mark pointer-events-none absolute" />
+				<Icon name="check" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />
 			)}
 			{/* minus SVG — indeterminate 시 표시 (체크박스 자체는 checked attribute 무시) */}
 			{indeterminate && (
-				<Icon name="minus" size={12} stroke={3} className="doc-checkbox-mark pointer-events-none absolute" />
+				<Icon name="minus" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />
 			)}
 		</span>
 	);
