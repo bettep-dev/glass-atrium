@@ -10,15 +10,12 @@ import { fileURLToPath } from "node:url";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
-import { loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
 
-interface SvgElement { type: string; props: Record<string, unknown> }
-
 const ui = await loadScreenModule(resolve(HERE, "../public/src/ui.jsx"));
-const Icon = ui.Icon as (props: Record<string, unknown>) => SvgElement;
 const React = ui.React as { createElement: (type: unknown, props: unknown, ...children: unknown[]) => unknown };
 
 // The app loads Tailwind preflight from its CDN; these are the preflight rules the measured geometry depends on — the block svg
@@ -29,29 +26,13 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   table { border-collapse: collapse; }
   button, input, select { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; }`;
 
-const kebab = (key: string): string => key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+const render = (type: unknown, props: Record<string, unknown>, ...children: unknown[]): string =>
+  getHtml(renderScreen(React.createElement(type, props, ...children)) as RenderedNode);
 
-// one rendered Icon as markup — the inline style is what this suite is about, so it is carried over verbatim
-function iconMarkup(props: Record<string, unknown>): string {
-  const { props: attrs } = Icon(props);
-  const style = Object.entries((attrs.style as Record<string, string> | undefined) ?? {})
-    .map(([key, value]) => `${kebab(key)}: ${value}`)
-    .join("; ");
-  const className = String(attrs.className ?? "");
-  return `<svg width="${attrs.width}" height="${attrs.height}" viewBox="0 0 24 24"${className ? ` class="${className}"` : ""}${style ? ` style="${style}"` : ""}></svg>`;
-}
+// one rendered Icon as markup — its inline style is what this suite is about
+const iconMarkup = (props: Record<string, unknown>): string => render(ui.Icon, props);
 
-// a rendered host tree as markup — class and children only, enough for the KpiValue atom
-function toMarkup(node: RenderedNode | string): string {
-  if (typeof node === "string") return node;
-  const inner = node.children.map(toMarkup).join("");
-  if (!/^[a-z]/.test(node.type)) return inner;
-  const className = String(node.props.className ?? "");
-  return `<${node.type}${className ? ` class="${className}"` : ""}>${inner}</${node.type}>`;
-}
-
-const kpiValueMarkup = (props: Record<string, unknown>, value: string): string =>
-  toMarkup(renderScreen(React.createElement(ui.KpiValue, props, value)) as RenderedNode);
+const kpiValueMarkup = (props: Record<string, unknown>, value: string): string => render(ui.KpiValue, props, value);
 
 const KPI_VALUES = [
   { id: "kpi-figure", markup: kpiValueMarkup({}, "1,284") },
@@ -64,11 +45,9 @@ const ICON_ROWS = [
   { name: "an icon whose caller passes an align class", id: "aligned", markup: iconMarkup({ name: "check", size: 14, className: "align-middle" }) },
 ] as const;
 
-// the shipped DisclosureButton as markup — its own class list, its chevron and label; a `summary` takes the same atom class
-const disclosureButton = (renderScreen(React.createElement(ui.DisclosureButton, { isOpen: false, onToggle: () => {}, label: "2 more buckets" })) as RenderedNode)
-  .children[0] as RenderedNode;
+// the shipped DisclosureButton; a `summary` takes the same atom class
 const DISCLOSURE_CHEVRON = iconMarkup({ name: "chevR", size: 14 });
-const DISCLOSURE_BUTTON = `<button type="button" class="${String(disclosureButton.props.className)}">${DISCLOSURE_CHEVRON}<span>2 more buckets</span></button>`;
+const DISCLOSURE_BUTTON = render(ui.DisclosureButton, { isOpen: false, onToggle: () => {}, label: "2 more buckets" });
 
 // control family of the .tbl control-cell rule — each sits in a row beside a text cell
 const CONTROL_ROWS = [

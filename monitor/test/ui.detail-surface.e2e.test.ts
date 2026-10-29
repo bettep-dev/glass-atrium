@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
-import { loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -26,26 +26,8 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   svg { display: block; vertical-align: middle; }
   button { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; }`;
 
-// host-element tree → HTML, so the browser lays out the shipped KPI and DetailSurface markup, not a hand copy of it
-function toHtml(node: RenderedNode | string): string {
-  if (typeof node === "string") return node.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  if (!/^[a-z]/.test(node.type)) return node.children.map(toHtml).join("");
-  const attrs = Object.entries(node.props)
-    .filter(([key, value]) => key !== "children" && key !== "ref" && value != null && value !== false && typeof value !== "function")
-    .map(([key, value]) => {
-      const name = key === "className" ? "class" : key.startsWith("stroke") ? key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`) : key;
-      const text =
-        key === "style"
-          ? Object.entries(value as Record<string, unknown>).map(([prop, v]) => `${prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}: ${String(v)}`).join("; ")
-          : String(value);
-      return ` ${name}="${text.replace(/"/g, "&quot;")}"`;
-    })
-    .join("");
-  return `<${node.type}${attrs}>${node.children.map(toHtml).join("")}</${node.type}>`;
-}
-
 const render = (type: unknown, props: Record<string, unknown>, ...children: unknown[]): string =>
-  toHtml(renderScreen(h(type, props, ...children)) as RenderedNode);
+  getHtml(renderScreen(h(type, props, ...children)) as RenderedNode);
 
 const pageOf = (body: string): string =>
   `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">${body}</body></html>`;

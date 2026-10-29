@@ -233,6 +233,29 @@ export function renderScreen(node: unknown, depth = 0): RenderedNode | string | 
   };
 }
 
+const toKebab = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+
+/**
+ * Host-element tree → HTML, so a browser suite lays out the shipped markup, not a hand copy of it.
+ * Component wrappers unwrap to their output; handlers, refs and false/null props drop; style objects and stroke props kebab-case.
+ */
+export function getHtml(node: RenderedNode | string): string {
+  if (typeof node === "string") return node.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  if (!/^[a-z]/.test(node.type)) return node.children.map(getHtml).join("");
+  const attrs = Object.entries(node.props)
+    .filter(([key, value]) => key !== "children" && key !== "ref" && value != null && value !== false && typeof value !== "function")
+    .map(([key, value]) => {
+      const name = key === "className" ? "class" : key.startsWith("stroke") ? toKebab(key) : key;
+      const text =
+        key === "style"
+          ? Object.entries(value as Record<string, unknown>).map(([prop, v]) => `${toKebab(prop)}: ${String(v)}`).join("; ")
+          : String(value);
+      return ` ${name}="${text.replace(/"/g, "&quot;")}"`;
+    })
+    .join("");
+  return `<${node.type}${attrs}>${node.children.map(getHtml).join("")}</${node.type}>`;
+}
+
 export function findNodes(
   node: RenderedNode | string | null,
   predicate: (candidate: RenderedNode) => boolean,
