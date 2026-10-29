@@ -502,9 +502,9 @@
 ### 7.3 Badge — `Badge` · `Pill` (`.pill*`)
 
 - **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · 1px `--line` · min-height 24 · padding 0 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
-- tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status).
+- tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status) · `title` · `className` 은 그대로 전달.
   - glyph 명암 (`--sunken` shell 위): light warn 3.15 · info 3.38 · ok 3.45 · crit 4.63 · dark ≥ 6.62.
-- 변형: `.pill--absent` (투명 · `--faint` · dashed `--line`) · `.pill--meta` (소문자) · `.pill--count` (mono tabular) · `.pill--ctl-h` (같은 행 `.field` 와 높이, `--ctl-h`) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · pressed = selected fill · a toggle (`[aria-pressed]`) rests on a `--control-edge` border, non-toggle pills keep `--line`).
+- 변형: `.pill--absent` (투명 · `--faint` · dashed `--line`) · `.pill--meta` (소문자) · `.pill--count` (mono tabular) · `.pill--ctl-h` (control row 의 static pill — 같은 행 `.field` · card-head 버튼과 높이, `--ctl-h`) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · pressed = selected fill · a toggle (`[aria-pressed]`) rests on a `--control-edge` border, non-toggle pills keep `--line`).
 - glass 위에 올리지 않는다 (AP-6).
 
 ### 7.4 Button — `.btn`
