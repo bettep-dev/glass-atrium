@@ -422,7 +422,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 - Summary only: what the recipient cannot get elsewhere, never raw conversation history.
   - Bulk material — reviews, logs, prior reports — goes by file path.
 - Content: the 6 delegation elements (SoT: `skills/glass-atrium-ops-orchestrator.md` → `#### Delegation required elements`).
-- **Attestation-token placement** — for the whole family: `[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` · `[DOC-ROUTE]`.
+- **Attestation-token placement** — for the whole family: `[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` · `[DOC-ROUTE]` · `[SCOPE-EXPANSION-APPROVED]`.
   - Manual path → inside the Agent tool's `prompt` parameter, never the user-facing narration.
   - `[PLAN-CLOSE]` has no manual form: the manual close is a reviewer spawn (`skills/glass-atrium-ops-orchestrator.md` → `## Managed Document Completion (Direct Handling)` → Step 3).
   - Ultracode path → the top-of-script `log()` string or `meta.description` (`skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`, Workflow pre-flight item 1).

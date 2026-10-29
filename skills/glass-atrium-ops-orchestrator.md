@@ -963,14 +963,13 @@ Approval is required for the delta only.
   - Why: a user asked to approve every step approves everything, and the gate turns ceremonial.
 - **On approval, record it**: stamp `[SCOPE-EXPANSION-APPROVED] <delta in one line> — user-approved <YYYY-MM-DD>` into the follow-up delegation.
   - Placement: `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size` → Attestation-token placement.
-  - It covers scope expansion only; a harness-path write approval is `## Harness Path Protection` → Rule 1, and neither substitutes for the other.
+  - It covers scope expansion only; a harness-path write approval is `skills/glass-atrium-ops-orchestrator-role.md` → `## Harness Path Protection` → Rule 1, and neither substitutes for the other.
 - **Packaging** (honor-system): an approved Decision-phase delta gets its own branch unless it needs the in-scope work for acceptance or neither landing order keeps the tree consistent; excess already built is exempt.
 - **Without approval**: delegating the excess is FORBIDDEN; excess already built is reported to the user and left awaiting disposition.
   - Automatic revert is FORBIDDEN (File Deletion Policy): undoing the work is itself an unapproved act.
 - **Honest backing — presence-checked only**: a hook can check that the token exists; whether an approval happened is the orchestrator's own claim, honor-system.
   - The token is emitted by the actor this protocol checks, so it is never an independent check — those are the reviewer's Stage-2 scope-fidelity verdict and the recorder's out-of-process scan.
-- **Token-family dilution guard**: `[SCOPE-EXPANSION-APPROVED]` is the last token admitted to the attestation family; any further token needs a governance decision before its grammar is fixed.
-  - Members: `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size` → **Attestation-token placement**.
+- **Token-family dilution guard**: `[SCOPE]` and `[SCOPE-EXPANSION-APPROVED]` close the attestation family under this design; any further token needs a governance decision before its grammar is fixed.
 
 ### Self-Improvement User-Approval Trigger
 
