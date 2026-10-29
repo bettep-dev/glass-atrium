@@ -309,6 +309,21 @@ assert_gone() {
   assert_untouched
 }
 
+@test "purge: a failing du → exit 0, the entry gone, kib=- and no ERROR line" {
+  # Under set -E the ERR trap reaches the du substitution; a size probe failing must not read as an error.
+  mkdir -p "${FAKE_ROOT}/bin"
+  printf '#!/bin/sh\nexit 1\n' >"${FAKE_ROOT}/bin/du"
+  chmod 755 "${FAKE_ROOT}/bin/du"
+  mkdir -p "${TRASH}/sized"
+  cd "${FAKE_ROOT}" || return 1
+  run env PATH="${FAKE_ROOT}/bin:${PATH}" bash "${PURGE_SH}" sized
+  [[ "${status}" -eq 0 ]] || { echo "expected exit 0, got ${status}: ${output}"; return 1; }
+  [[ "${output}" != *"ERROR"* ]] || { echo "an internal-error line on a successful purge: ${output}"; return 1; }
+  assert_gone "${TRASH}/sized" || return 1
+  [[ "$(cat "${LOG_FILE}")" == *$'\tkib=-\tname=sized\t'* ]] || { echo "log line: $(cat "${LOG_FILE}")"; return 1; }
+  assert_untouched
+}
+
 @test "failure: an unexpected command failure → exit 1 with the internal-error message" {
   # A date that fails with 42: without a trap exit, errexit would end the run with 42 instead of 1.
   mkdir -p "${FAKE_ROOT}/bin"

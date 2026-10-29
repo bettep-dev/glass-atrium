@@ -3,6 +3,7 @@
 # Usage: ga-trash-purge.sh <entry>
 #   <entry>  a bare entry name, or a path whose parent is the home Trash: ~/.Trash/<entry>,
 #            $HOME/.Trash/<entry>, ${HOME}/.Trash/<entry> (each also as unexpanded text) or the absolute path
+# Caller contract: callers purge only entries they moved into the Trash themselves; the owner's own Trash entries are never purged.
 #
 # Why it exists: every live profile denies rm by its leading token, and a deny outranks any allow, so an
 # agent that moved an entry to the Trash cannot purge it. This command is that one purge and nothing
@@ -36,7 +37,11 @@
 #   6  = the operand lies outside the Trash or deeper than one level below it
 #   7  = the Trash is a symlink or not a directory, or changed into one before the delete
 #   8  = the entry does not exist (lstat: a dangling link exists)
-#   9  = the shared judge hooks/lib/trash_rm.py denied the delete, or could not run
+#   9  = the shared judge hooks/lib/trash_rm.py denied the delete, or could not run. It refuses names
+#        that hold the substring IFS or HOME, a glob character (* ? [ ]), a parenthesis (so a
+#        Finder-style "shot (1).png"), a backtick, $, or any of ; < > | &. Remedy: the caller moves its
+#        entry into the Trash under a judge-readable name, e.g. [A-Za-z0-9._-] plus a timestamp
+#        (build-cache-20261029T0700Z), and purges that name
 #   10 = the shared path guard is missing or refused the path
 #   11 = the delete failed; the entry is still present
 #   12 = the entry was purged but its log line could not be written
@@ -168,7 +173,9 @@ get_kind() {
 # walks anyway, so it costs no more than the purge itself. Args: $1=path
 get_size_kib() {
   local usage_line=""
-  usage_line="$(du -sk -- "${1}" 2>/dev/null)" || true
+  # The inner `|| exit 0` keeps a du failure out of the ERR trap the substitution inherits (set -E);
+  # an outer `|| true` alone runs too late, after the trap has already printed its error line.
+  usage_line="$(du -sk -- "${1}" 2>/dev/null || exit 0)"
   usage_line="${usage_line%%[[:space:]]*}"
   if [[ "${usage_line}" =~ ^[0-9]+$ ]]; then
     printf '%s' "${usage_line}"
