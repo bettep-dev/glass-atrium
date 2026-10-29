@@ -2647,28 +2647,33 @@ function FilterChipsO({ chips }) {
 }
 
 // Active filters under the Results head — one remove button per chip, plus Clear all.
+// the rule sits on the holder, outside the 48 control row, as on the Documents toolbar
 function ActiveFilterChips({ filter, onRemove, onClearAll }) {
   const { Badge } = window.UI;
   const entries = buildActiveFilterEntriesO(filter);
   if (entries.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-1 flex-wrap px-4 py-2 border-b border-line">
-      {entries.map((entry) => (entry.patch === null
-        ? <Badge key={entry.key} role="metadata">{entry.label}</Badge>
-        : (
-          <button
-            key={entry.key}
-            type="button"
-            className="btn ghost sm"
-            aria-label={`Remove filter ${entry.label}`}
-            onClick={() => onRemove(entry.patch)}>
-            {entry.label}<span aria-hidden="true"> ×</span>
-          </button>
-        )))}
-      <button type="button" className="btn ghost sm" aria-label="Clear all filters" onClick={onClearAll}>
-        Clear all
-      </button>
+    <div className="border-b border-line">
+      <div className="control-row">
+        <div className="flex items-center gap-1 flex-wrap">
+          {entries.map((entry) => (entry.patch === null
+            ? <Badge key={entry.key} role="metadata" className="pill--ctl-h">{entry.label}</Badge>
+            : (
+              <button
+                key={entry.key}
+                type="button"
+                className="btn ghost sm"
+                aria-label={`Remove filter ${entry.label}`}
+                onClick={() => onRemove(entry.patch)}>
+                {entry.label}<span aria-hidden="true"> ×</span>
+              </button>
+            )))}
+        </div>
+        <button type="button" className="btn ghost sm" aria-label="Clear all filters" onClick={onClearAll}>
+          Clear all
+        </button>
+      </div>
     </div>
   );
 }

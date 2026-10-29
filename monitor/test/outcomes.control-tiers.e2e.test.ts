@@ -2,7 +2,8 @@
 // screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" and the result drawer's record
 // "Previous / Next" draw the same small ghost button at rest and on hover, the filter panel's "More filters" fold opens on the
 // disclosure atom, each keeps one box in every state, the panel's Record scope checkbox stands on the C24 inline-target tier and
-// draws the Documents ledger's checkbox in both themes, and a card head's static pill stands on the 32 control height (§7.16).
+// draws the Documents ledger's checkbox in both themes, a card head's static pill stands on the 32 control height (§7.16), and the
+// active-filter row under the Results head is one 48 control row above its rule.
 // Runner: npx tsx --test test/outcomes.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -40,7 +41,8 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .flex { display: flex; } .items-center { align-items: center; } .justify-between { justify-content: space-between; }
   summary { display: list-item; }
   .gap-2 { gap: 0.5rem; } .mb-1 { margin-bottom: 0.25rem; } .mr-auto { margin-right: auto; } .px-4 { padding-left: 1rem; padding-right: 1rem; }
-  .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .border-t { border-top-width: 1px; }
+  .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .border-t { border-top-width: 1px; } .border-b { border-bottom-width: 1px; }
+  .border-line { border-color: rgb(var(--line)); } .gap-1 { gap: 0.25rem; } .flex-wrap { flex-wrap: wrap; }
   .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
   .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; }`;
 
@@ -81,6 +83,9 @@ const LOADING = { status: "loading", data: null, error: null };
 const ATTRIBUTION = getMarkup("AttributionHealthCard", { state: LOADING, period: 30, onRetry: noop, shared: {} });
 const CHANNELS = getMarkup("ChannelLivenessCard", { state: LOADING, onRetry: noop, shared: {} });
 
+// the active-filter row: the page-owned Period pill, two removable chips and Clear all
+const CHIPS = getMarkup("ActiveFilterChips", { filter: { days: 7, agent: "glass-atrium-dev-front", q: "phase" }, onRemove: noop, onClearAll: noop });
+
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="first-page" style="width: 1170px; padding: 24px;">${getLedger(0)}</div>
   <div id="mid-page" style="width: 1170px; padding: 24px;">${getLedger(1)}</div>
@@ -89,6 +94,7 @@ const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</
   <div id="crosstab" style="width: 560px; padding: 24px;">${CROSSTAB}</div>
   <div id="attribution" style="width: 560px; padding: 24px;">${ATTRIBUTION}</div>
   <div id="channels" style="width: 560px; padding: 24px;">${CHANNELS}</div>
+  <div id="chips" style="width: 1170px; padding: 24px;"><div class="card">${CHIPS}<div class="card-body" style="height: 40px;"></div></div></div>
 </body></html>`;
 
 const LEDGER_BUTTON = (id: string, label: string) => `#${id} button[aria-label="${label} page"]`;
@@ -275,4 +281,44 @@ describe("a static pill in a card head stands on the head's 32 control height", 
       assert.equal((await readBox(`#${card} .card-head .pill`)).height, 32);
     });
   }
+});
+
+describe("the active-filter row under the Results head is one 48 control row", () => {
+  const CLEAR_ALL = '#chips button[aria-label="Clear all filters"]';
+  const readChipRow = () =>
+    page.$eval(CLEAR_ALL, (clear) => {
+      const row = clear.parentElement!;
+      const items = [...row.querySelectorAll(".pill, button")].map((el) => el.getBoundingClientRect().toJSON() as DOMRect);
+      return { row: row.getBoundingClientRect().toJSON() as DOMRect, items };
+    });
+
+  test("the row is 48 and every chip, the period pill included, is a 32 item on its centre line", async () => {
+    const { row, items } = await readChipRow();
+    assert.equal(items.length, 4, "period pill, two remove chips, Clear all");
+    assert.equal(row.height, 48);
+    const centre = row.top + row.height / 2;
+    for (const [i, item] of items.entries()) {
+      assert.equal(item.height, 32, `item ${i} height`);
+      assert.ok(Math.abs(item.top + item.height / 2 - centre) <= 0.5, `item ${i} centre ${item.top + item.height / 2} vs row centre ${centre}`);
+    }
+  });
+
+  test("the chips sit 4 apart as one group, Clear all the 12 between-groups step after them", async () => {
+    const { items } = await readChipRow();
+    const gaps = items.slice(1).map((item, i) => item.left - items[i].right);
+    assert.deepEqual(gaps, [4, 4, 12]);
+  });
+
+  test("the head-to-body rule runs directly under the row, in the card head's rule colour", async () => {
+    const [rule, headRule] = await Promise.all([
+      page.$eval(CLEAR_ALL, (clear) => {
+        const row = clear.parentElement!;
+        const holder = row.parentElement!;
+        const style = getComputedStyle(holder);
+        return { width: style.borderBottomWidth, color: style.borderBottomColor, below: holder.getBoundingClientRect().bottom - row.getBoundingClientRect().bottom };
+      }),
+      page.$eval("#crosstab .card-head", (head) => getComputedStyle(head).borderBottomColor),
+    ]);
+    assert.deepEqual(rule, { width: "1px", color: headRule, below: 1 });
+  });
 });
