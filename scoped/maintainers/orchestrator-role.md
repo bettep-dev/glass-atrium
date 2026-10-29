@@ -114,8 +114,11 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 ### `#### Deliverable exposure and designer composition (Decision phase)`
 
-- The explicit format/share signal list behind **Exposure Determination** restates `scoped/scope-report.md` → `### HTML request test`. It sits in `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## Exposure Determination — signals and routing`.
-- The signal literals live in the author bodies: `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`.
+- The explicit format/share signal list behind **Exposure Determination** restates the signal literals.
+  - Canonical literals: `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`.
+  - Mirror: `agents/glass-atrium-intel-planner.md` → `### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`, under `## Output Format Routing`.
+  - Routing rule: `scoped/scope-report.md` → `### HTML request test`.
+  - It sits in `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## Exposure Determination — signals and routing`.
 - The orchestrator's copy is the pointer plus that reference, together. The pointer's one-bit rule reaches the orchestrator without a read; the signal literals sit one read away in the reference.
   - One read away is enough because the authoring agent re-decides the format at turn-0, so the orchestrator's bit is a hint.
   - The relocation is not a redundancy-collapse: edit the pointer and the reference with the set, and never delete either as redundant.
