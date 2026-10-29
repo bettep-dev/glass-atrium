@@ -2580,7 +2580,7 @@ function ResultTableCard({
           <span>{formatIntO(page * limit + 1)}–{formatIntO(Math.min((page + 1) * limit, totalMatched))} / {formatIntO(totalMatched)}</span>
           <div className="flex items-center gap-2">
             <button
-              className="btn sm"
+              className="btn ghost sm"
               disabled={page <= 0}
               onClick={() => onPageChange(Math.max(0, page - 1))}
               aria-label="Previous page">
@@ -2588,7 +2588,7 @@ function ResultTableCard({
             </button>
             <span>page {currentPage} / {totalPages}</span>
             <button
-              className="btn sm"
+              className="btn ghost sm"
               disabled={currentPage >= totalPages}
               onClick={() => onPageChange(page + 1)}
               aria-label="Next page">

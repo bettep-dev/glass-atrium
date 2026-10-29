@@ -535,6 +535,7 @@
   - accent ladder 상한 = light warn glyph ≥ 3:1 (런타임 기본 accent 59 130 246 → α ≤ 0.12). binding: light both warn 3.03 · dark both pip 3.22 · light both pip 3.26 · light both faint 4.70. 사용자가 고른 다른 accent 는 측정 밖.
 - 그룹 행 (`.is-grouped`, `model-config.jsx`): 하단 border 없음.
 - caption: 기본 sr-only, `isCaptionShown` 이면 section-label 스타일.
+- ledger pagination (card foot, Task results): "Previous / Next" at `btn ghost sm`, the DetailSurface record nav's variant (§7.8) — one variant per pagination role.
 
 ### 7.6 Segmented — `.seg`
 
