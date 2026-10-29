@@ -23,6 +23,8 @@ description: 'Orchestrator-only delegation contracts behind pointers in skills/g
 - Composing a review round, or routing one that does not converge → Review rounds and reviewer prompts.
 - Copying files toward a live install → the Deploy-Safety Idiom.
 - Routing a request to agents, or writing a delegation's budget fields, read extents or plan content → Agent selection · Delegation prompt content.
+- Running the agent-lifecycle CLI to create or extend a DEV agent, or reading its exit code → the agent-lifecycle ceremony.
+- Locating or reading a delegated agent's transcript to judge whether it finished → Completion signals.
 - A spawn gate blocked or advised on one of these tokens → the reference file for that token (Reference Index).
 
 ## Reference Index
@@ -57,6 +59,8 @@ References whose pointer site is `skills/glass-atrium-ops-orchestrator.md`, not 
 | Deploy-Safety Idiom | `references/deploy-safety-idiom.md` | `#### Deploy-Safety Idiom (drift-preserving live-copy + verify) [ORCHESTRATOR]` | what it binds, advisory status, when in the cycle the deploy runs | the sanctioned flows, copy-step anti-patterns, the bash 3.2-safe idiom |
 | Agent selection | `references/agent-selection.md` | `### Capability-Based Agent Selection [ORCHESTRATOR]` | each routing duty and when it fires, the Return Schema, 3-layer safety | the four steps, ordering caveat, compound examples, record format, verification checklist |
 | Delegation prompt content | `references/delegation-prompt.md` | `### Delegation/Communication Rules [ORCHESTRATOR]` | the six elements, the budget fields, read-extent and plan-not-request duties | budget tables, prompt aids, read-extent rules and backing, information-hiding rules |
+| Agent-lifecycle ceremony | `references/agent-lifecycle-ceremony.md` | `### In-Context Agent-Lifecycle Ceremony (CREATE/EXTEND — ceremony SoT)` | trigger, EXTEND default, direct CLI, no self-authored body, two human pauses, reconcile gate | the six steps, EXTEND path, CLI refusals, exit-code recovery table |
+| Completion signals | `references/completion-signals.md` | `#### Completion signals` | the three signals, forbidden proxies, reversible-action escape, backing | transcript location, sidecar identification, terminality test, ledger writer, proxy reasons |
 
 - Skeleton exception: the `AnalysisSchema` fan-out skeleton (Analysis-Track Right-Sizing row) is the one workflow skeleton this skill holds; verify-stage skeletons stay in `skills/glass-atrium-ops-orchestrator.md`.
 
@@ -71,7 +75,7 @@ References whose pointer site is `skills/glass-atrium-ops-orchestrator.md`, not 
   - `references/automatic-parallelization.md` → **Three sanctioned isolation paths** · **Deciding "at a time"**.
 - **Cited headings**: a heading in a reference file cited by name elsewhere keeps its text and level — grep the corpus before renaming one:
   - `references/scope-parser.md` → `## Worked completeness case`.
-  - `references/plan-direction-verification.md` → `## Team composition and verdicts` · `## Standing jobs inside the gate` · `## Gate outcome and activation scope`.
+  - `references/plan-direction-verification.md` → `## Team composition and verdicts` · `## Standing jobs inside the gate` · `## Gate outcome and activation scope` · `## Backstop detail`.
   - `references/deliverable-exposure.md` → `## Exposure Determination — signals and routing` · `## glass-atrium-dev-front markup exception — detail`.
   - `references/architecture-patterns.md` → `## Explicit Pipeline Combinations` · `## Agent Teams Hybrid`.
   - `references/workflow-js-parse-hazards.md` → `## The two forms and their remedies`.

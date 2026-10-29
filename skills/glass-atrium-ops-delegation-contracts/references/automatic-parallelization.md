@@ -21,7 +21,7 @@
     - Why the pointer requires target paths rooted in that worktree: a `cwd` is a default, not a container, and an absolute path resolves past it.
   - `isolation: worktree` on the manual Agent path — never with `background: true` (Issue #33045);
   - `opts.isolation:'worktree'` on the ultracode `agent()`/`parallel()` path — background interaction unverified, so do not assume parity.
-- **Deciding "at a time"**: whether another index mutator is still live is answered by `skills/glass-atrium-ops-orchestrator.md` → Completion signals, signal (iii) — the liveness ledger is the only signal that answers ABSENCE.
+- **Deciding "at a time"**: whether another index mutator is still live is answered by `skills/glass-atrium-ops-orchestrator.md` → Completion signals, signal (iii) — the liveness ledger is the only signal that answers absence.
 - Attestation: the isolation-unit field of a per-track `// [OWNERSHIP]` line is `worktree: <path|isolated>` — author-attested, engine-unverified.
 - **HONEST BACKING**: honor-system orchestrator discipline plus an honor-system prompt contract. No hook enforces one index-mutator per worktree, the barrier or the entry precondition.
 

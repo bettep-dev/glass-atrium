@@ -114,7 +114,7 @@ A successful `add` writes some of the sites a new name must appear in, and not o
 - **Auto-written**: the agent file · the `agent-registry.json` entry (whose `rules` object selects the scope and Tier-3 files the part slots deliver) · (via the post-commit reconcile gate) the reconcile-tracked arrays `BUDGET_DEV_AGENTS` in `hooks/inject-scope-rules.sh` and `STYLEREF_AGENTS` in `hooks/lib/styleref-roster.sh`.
 - **Deliberately UNTRACKED by that gate**: the manual-curated rosters `BUDGET_ANALYSIS_AGENTS` and `WIKI_UNTRUSTED_AGENTS`. Their membership is a governance decision rather than a roster-derivable set, so their absence from the auto-written set is design, never an omission for a later editor to repair.
 - **NOT written at all**: the `core-compliance-matrix.md` **Scope Legend** DEV row and the **Compliance Matrix** rows — a SEPARATE post-creation doc update for the new agent name.
-- **Mirror pointer**: the same tracked-array list is stated at `skills/glass-atrium-ops-orchestrator.md` → the numbered step **Reconcile (MANDATORY post-commit gate)** and at `skills/glass-atrium-ops-reconcile-inject/SKILL.md` → the **Names reconciled** bullet — edit those sites together with this one.
+- **Mirror pointer**: the same tracked-array list is stated at `skills/glass-atrium-ops-delegation-contracts/references/agent-lifecycle-ceremony.md` → the numbered step **Reconcile (MANDATORY post-commit gate)** and at `skills/glass-atrium-ops-reconcile-inject/SKILL.md` → the **Names reconciled** bullet — edit those sites together with this one.
 
 ### glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation
 
