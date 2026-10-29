@@ -11,6 +11,7 @@ import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { type Box, createControlProbe } from "./lib/control-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -77,11 +78,10 @@ const TOOLBAR = "#docs-list > div:first-child > div:first-child";
 // card widths: the rail layout, then the 1024–1280 band the audit wrapped in, then the 820 viewport's card and below
 const CARD_WIDTHS = [1300, 1100, 960, 760, 640, 520] as const;
 
-interface Box { left: number; right: number; top: number; bottom: number; width: number; height: number }
-
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
+const { readBox, readStyle, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -100,38 +100,6 @@ after(async () => {
 });
 
 const setCardWidth = (width: number) => page.$eval("#frame", (el, w) => { (el as HTMLElement).style.width = `${w + 48}px`; }, width);
-
-const readBox = (selector: string): Promise<Box> =>
-  page.$eval(selector, (el) => {
-    const { left, right, top, bottom, width, height } = el.getBoundingClientRect();
-    return { left, right, top, bottom, width, height };
-  });
-
-const readStyle = (selector: string, prop: string): Promise<string> =>
-  page.$eval(selector, (el, name) => getComputedStyle(el).getPropertyValue(name), prop);
-
-async function forcePseudo(selector: string, classes: readonly string[]): Promise<void> {
-  const { root } = await cdp.send("DOM.getDocument", { depth: -1 });
-  const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
-  await cdp.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: [...classes] });
-}
-
-const PSEUDO_STATES = [["hover"], ["focus-visible"], ["active"]] as const;
-
-// a control's border-box at rest, then under each forced pseudo state
-async function assertBoxHeldAcrossStates(selector: string): Promise<void> {
-  const rest = await readBox(selector);
-  for (const state of PSEUDO_STATES) {
-    await forcePseudo(selector, state);
-    try {
-      const changed = await readBox(selector);
-      assert.ok(Math.abs(changed.width - rest.width) < 0.01 && Math.abs(changed.height - rest.height) < 0.01,
-        `${selector} ${state[0]} ${changed.width}x${changed.height} vs resting ${rest.width}x${rest.height}`);
-    } finally {
-      await forcePseudo(selector, []);
-    }
-  }
-}
 
 const centreOf = (box: Box) => (box.top + box.bottom) / 2;
 
@@ -266,22 +234,7 @@ describe("the open-summary rail's Oldest open link is a small button", () => {
 describe("the version-history fold opens on the disclosure atom", () => {
   const SUMMARY = "details.doc-version-history > summary";
 
-  test("its summary is a 32 disclosure with the chevron as the one open-state cue, turned 90 once open", async () => {
-    const closed = await readBox(SUMMARY);
-    assert.equal(closed.height, 32);
-    assert.notEqual(await readStyle(SUMMARY, "display"), "list-item", "no UA marker");
-    const chevron = `${SUMMARY} .disclosure-chevron`;
-    assert.equal(await readStyle(chevron, "transform"), "none");
-    await page.$eval("details.doc-version-history", (el) => { (el as HTMLDetailsElement).open = true; });
-    try {
-      const open = await readBox(SUMMARY);
-      assert.ok(Math.abs(open.width - closed.width) < 0.01 && Math.abs(open.height - closed.height) < 0.01, `open ${open.width}x${open.height} vs closed ${closed.width}x${closed.height}`);
-      const turn = await readStyle(chevron, "transform");
-      assert.match(turn, /^matrix\(6\.1\d*e-17, 1, -1, 6\.1\d*e-17, 0, 0\)$|^matrix\(0, 1, -1, 0, 0, 0\)$/, `open chevron ${turn}`);
-    } finally {
-      await page.$eval("details.doc-version-history", (el) => { (el as HTMLDetailsElement).open = false; });
-    }
-  });
+  test("its summary is a 32 disclosure with the chevron as the one open-state cue, turned 90 once open", () => assertFoldOnOneBox("details.doc-version-history", SUMMARY));
 
   test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(SUMMARY));
 });

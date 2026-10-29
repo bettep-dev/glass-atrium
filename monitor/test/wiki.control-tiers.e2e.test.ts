@@ -11,6 +11,7 @@ import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { type Box, createControlProbe, QUARTER_TURN, isSameBox } from "./lib/control-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -58,11 +59,10 @@ const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</
 const FOLDS = [...FOLD_WIDTHS.map((w) => ({ name: `Per-run table at ${w}`, id: `runs-${w}` })), { name: "Merge proposals", id: "merge" }];
 const SUMMARY = (id: string) => `#${id} details > summary`;
 
-interface Box { left: number; right: number; top: number; bottom: number; width: number; height: number }
-
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
+const { readBox, readStyle, assertBoxHeldAcrossStates } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -80,29 +80,11 @@ after(async () => {
   await browser?.close();
 });
 
-const readBox = (selector: string): Promise<Box> =>
-  page.$eval(selector, (el) => {
-    const { left, right, top, bottom, width, height } = el.getBoundingClientRect();
-    return { left, right, top, bottom, width, height };
-  });
-
-const readStyle = (selector: string, prop: string): Promise<string> =>
-  page.$eval(selector, (el, name) => getComputedStyle(el).getPropertyValue(name), prop);
-
-async function forcePseudo(selector: string, classes: readonly string[]): Promise<void> {
-  const { root } = await cdp.send("DOM.getDocument", { depth: -1 });
-  const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
-  await cdp.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: [...classes] });
-}
-
 async function setOpen(id: string, isOpen: boolean): Promise<void> {
   await page.$eval(`#${id} details`, (el, value) => { (el as HTMLDetailsElement).open = value; }, isOpen);
 }
 
-const PSEUDO_STATES = [["hover"], ["focus-visible"], ["active"]] as const;
-const isSameBox = (a: Box, b: Box) => Math.abs(a.width - b.width) < 0.01 && Math.abs(a.height - b.height) < 0.01;
 const centreOf = (box: Box) => box.top + box.height / 2;
-const QUARTER_TURN = /^matrix\(6\.1\d*e-17, 1, -1, 6\.1\d*e-17, 0, 0\)$|^matrix\(0, 1, -1, 0, 0, 0\)$/;
 
 for (const fold of FOLDS) {
   describe(`the ${fold.name} fold opens from a 32 disclosure row`, () => {
@@ -140,17 +122,6 @@ for (const fold of FOLDS) {
       }
     });
 
-    test("hover, focus-visible and active keep its box", async () => {
-      const rest = await readBox(summary);
-      for (const state of PSEUDO_STATES) {
-        await forcePseudo(summary, state);
-        try {
-          const changed = await readBox(summary);
-          assert.ok(isSameBox(changed, rest), `${state[0]} ${changed.width}x${changed.height} vs resting ${rest.width}x${rest.height}`);
-        } finally {
-          await forcePseudo(summary, []);
-        }
-      }
-    });
+    test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(summary));
   });
 }

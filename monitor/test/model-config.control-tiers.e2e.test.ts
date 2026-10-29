@@ -11,6 +11,7 @@ import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { createControlProbe } from "./lib/control-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -101,11 +102,10 @@ const FILES_SUMMARY = `${FILES} > summary`;
 const RESULTS_FOLD = "#results details";
 const RESULTS_SUMMARY = `${RESULTS_FOLD} > summary`;
 
-interface Box { left: number; right: number; top: number; bottom: number; width: number; height: number }
-
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
+const { readBox, readStyle, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -122,58 +122,6 @@ before(async () => {
 after(async () => {
   await browser?.close();
 });
-
-const readBox = (selector: string): Promise<Box> =>
-  page.$eval(selector, (el) => {
-    const { left, right, top, bottom, width, height } = el.getBoundingClientRect();
-    return { left, right, top, bottom, width, height };
-  });
-
-const readStyle = (selector: string, prop: string): Promise<string> =>
-  page.$eval(selector, (el, name) => getComputedStyle(el).getPropertyValue(name), prop);
-
-const setOpen = (selector: string, isOpen: boolean) =>
-  page.$eval(selector, (el, open) => { (el as HTMLDetailsElement).open = open; }, isOpen);
-
-async function forcePseudo(selector: string, classes: readonly string[]): Promise<void> {
-  const { root } = await cdp.send("DOM.getDocument", { depth: -1 });
-  const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
-  await cdp.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: [...classes] });
-}
-
-const PSEUDO_STATES = [["hover"], ["focus-visible"], ["active"]] as const;
-const isSameBox = (a: Box, b: Box) => Math.abs(a.width - b.width) < 0.01 && Math.abs(a.height - b.height) < 0.01;
-const QUARTER_TURN = /^matrix\(6\.1\d*e-17, 1, -1, 6\.1\d*e-17, 0, 0\)$|^matrix\(0, 1, -1, 0, 0, 0\)$/;
-
-async function assertBoxHeldAcrossStates(selector: string): Promise<void> {
-  const rest = await readBox(selector);
-  for (const state of PSEUDO_STATES) {
-    await forcePseudo(selector, state);
-    try {
-      const changed = await readBox(selector);
-      assert.ok(isSameBox(changed, rest), `${selector} ${state[0]} ${changed.width}x${changed.height} vs resting ${rest.width}x${rest.height}`);
-    } finally {
-      await forcePseudo(selector, []);
-    }
-  }
-}
-
-// closed → open: one box, no UA marker, the chevron the one open-state cue and turned a quarter once open
-async function assertFoldOnOneBox(fold: string, summary: string): Promise<void> {
-  const closed = await readBox(summary);
-  assert.equal(closed.height, 32);
-  assert.notEqual(await readStyle(summary, "display"), "list-item", "no UA marker");
-  const chevron = `${summary} .disclosure-chevron`;
-  assert.equal(await readStyle(chevron, "transform"), "none");
-  await setOpen(fold, true);
-  try {
-    const open = await readBox(summary);
-    assert.ok(isSameBox(open, closed), `open ${open.width}x${open.height} vs closed ${closed.width}x${closed.height}`);
-    assert.match(await readStyle(chevron, "transform"), QUARTER_TURN);
-  } finally {
-    await setOpen(fold, false);
-  }
-}
 
 describe("the In effect file-count fold sits on the interactive pill", () => {
   test("its summary is a 32 bordered pill whose chevron alone marks it open", () => assertFoldOnOneBox(FILES, FILES_SUMMARY));

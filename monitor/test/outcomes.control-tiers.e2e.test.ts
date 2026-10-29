@@ -11,6 +11,7 @@ import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { createControlProbe, isSameBox } from "./lib/control-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -64,11 +65,10 @@ const LABELS = ["Previous", "Next"] as const;
 // the properties that make a button variant: its edge, fill, ink, type and box
 const VARIANT_PROPS = ["border-top-color", "border-top-width", "background-color", "color", "font-size", "font-weight", "padding-top", "padding-left", "height"] as const;
 
-interface Box { width: number; height: number }
-
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
+const { readBox, forcePseudo, assertBoxHeldAcrossStates } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -86,12 +86,6 @@ after(async () => {
   await browser?.close();
 });
 
-const readBox = (selector: string): Promise<Box> =>
-  page.$eval(selector, (el) => {
-    const { width, height } = el.getBoundingClientRect();
-    return { width, height };
-  });
-
 // .btn eases its fill and edge (0.12s) → read once the state's transition settles, not a mid-flight value
 const readVariant = (selector: string): Promise<Record<string, string>> =>
   page.$eval(selector, async (el, props) => {
@@ -99,12 +93,6 @@ const readVariant = (selector: string): Promise<Record<string, string>> =>
     const style = getComputedStyle(el);
     return Object.fromEntries(props.map((p) => [p, style.getPropertyValue(p)]));
   }, [...VARIANT_PROPS]);
-
-async function forcePseudo(selector: string, classes: readonly string[]): Promise<void> {
-  const { root } = await cdp.send("DOM.getDocument", { depth: -1 });
-  const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
-  await cdp.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: [...classes] });
-}
 
 async function readVariantIn(selector: string, state: readonly string[]): Promise<Record<string, string>> {
   await forcePseudo(selector, state);
@@ -114,9 +102,6 @@ async function readVariantIn(selector: string, state: readonly string[]): Promis
     await forcePseudo(selector, []);
   }
 }
-
-const PSEUDO_STATES = [["hover"], ["focus-visible"], ["active"]] as const;
-const isSameBox = (a: Box, b: Box) => Math.abs(a.width - b.width) < 0.01 && Math.abs(a.height - b.height) < 0.01;
 
 describe("the ledger pages with the drawer's Previous / Next variant", () => {
   for (const label of LABELS) {
@@ -134,17 +119,8 @@ describe("each pagination button keeps one 32 box in every state", () => {
   for (const label of LABELS) {
     test(`ledger ${label} keeps its box under hover, focus-visible and active`, async () => {
       const selector = LEDGER_BUTTON("mid-page", label);
-      const rest = await readBox(selector);
-      assert.equal(rest.height, 32);
-      for (const state of PSEUDO_STATES) {
-        await forcePseudo(selector, state);
-        try {
-          const changed = await readBox(selector);
-          assert.ok(isSameBox(changed, rest), `${state[0]} ${changed.width}x${changed.height} vs resting ${rest.width}x${rest.height}`);
-        } finally {
-          await forcePseudo(selector, []);
-        }
-      }
+      assert.equal((await readBox(selector)).height, 32);
+      await assertBoxHeldAcrossStates(selector);
     });
   }
 
