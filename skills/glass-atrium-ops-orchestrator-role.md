@@ -524,7 +524,9 @@ The standard plan/report-then-build flow as one lifecycle.
 
 > Detail: skills/glass-atrium-ops-orchestrator.md → Managed Document Deletion (Direct Handling) (`DELETE /api/clauded-docs/:id` procedure — DB row first, best-effort FS cleanup; direct `mv` forbidden)
 
-> Detail: skills/glass-atrium-ops-orchestrator.md → Managed Document Completion (Direct Handling) (the stages and who closes · Step 1 stage write recipe · Step 2 supersede-vs-new decision tree incl. the Stage-2 revise-case supersede-POST carve-out · Step 3 delivery-point close with its folder check)
+> Detail: skills/glass-atrium-ops-orchestrator.md → Managed Document Completion (Direct Handling) (the stages and who closes · Step 1 stage write recipe · Step 2 supersede-vs-new choice · Step 3 delivery-point close with its folder check)
+
+> Detail behind Step 2's pointer: skills/glass-atrium-ops-delegation-contracts/references/managed-document-completion.md → Supersede vs new document (the decision table and the Stage-2 revise-case supersede-POST carve-out)
 
 ## Harness Path Protection (`~/.claude/` and every `~/.claude-*` profile branch)
 

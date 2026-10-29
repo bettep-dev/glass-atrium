@@ -102,3 +102,12 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 - `skills/glass-atrium-ops-delegation-contracts/references/completion-signals.md` ← the evidence detail of `#### Completion signals`, which stays as the pointer site (cited by `scoped/orchestrator-core.md`, the role file and `references/automatic-parallelization.md`).
 - `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` → `## Backstop detail` ← the manual-gate race and nested-origin detail from `#### Hook layer split under the engine`.
 - No test, hook message or `agents/` file read the moved text; the three moved headings had no citer outside the skill.
+
+## `## Managed Document Completion (Direct Handling)` and `## Red Flags` — relocations
+
+- `skills/glass-atrium-ops-delegation-contracts/references/managed-document-completion.md` ← Step 1's error cases and `sh` worked call; Step 2's decision table, row notes and honor-system residual.
+  - Step 1 and Step 2 stay as pointer sites: `hooks/enforce-workflow-verify-stage.sh` and `hooks/enforce-verification-gate.sh` messages name the H2 and Step 1 as the stage write recipe; the role file and `scoped/orchestrator-core.md` cite Step 1 and Step 3.
+- `skills/glass-atrium-ops-delegation-contracts/references/workflow-pre-submit-check.md` ← the `#### Pre-submit self-check …` check table and its per-check detail pointers.
+  - The H4 stays under `## Red Flags`: earlier sections of the skill cite it there.
+- `### Generic-subagent guard [LLM06/LLM01/LLM10]` and `## Red Flags` stay in place: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` cites "Red Flags (Generic-subagent guard)" (frozen).
+- No test reads the moved text: the suites that read this skill replay its `js` fences or grep phrases outside these sections, and the moved fence is `sh`.

@@ -25,6 +25,8 @@ description: 'Orchestrator-only delegation contracts behind pointers in skills/g
 - Routing a request to agents, or writing a delegation's budget fields, read extents or plan content → Agent selection · Delegation prompt content.
 - Running the agent-lifecycle CLI to create or extend a DEV agent, or reading its exit code → the agent-lifecycle ceremony.
 - Locating or reading a delegated agent's transcript to judge whether it finished → Completion signals.
+- Writing a managed document's stage, or choosing supersede vs new for new content → Managed Document Completion detail.
+- Confirming a DEV-spawning script's pre-submit checks, or mapping a failed check to its verdict → the pre-submit check table.
 - A spawn gate blocked or advised on one of these tokens → the reference file for that token (Reference Index).
 
 ## Reference Index
@@ -61,6 +63,8 @@ References whose pointer site is `skills/glass-atrium-ops-orchestrator.md`, not 
 | Delegation prompt content | `references/delegation-prompt.md` | `### Delegation/Communication Rules [ORCHESTRATOR]` | the six elements, the budget fields, read-extent and plan-not-request duties | budget tables, prompt aids, read-extent rules and backing, information-hiding rules |
 | Agent-lifecycle ceremony | `references/agent-lifecycle-ceremony.md` | `### In-Context Agent-Lifecycle Ceremony (CREATE/EXTEND — ceremony SoT)` | trigger, EXTEND default, direct CLI, no self-authored body, two human pauses, reconcile gate | the six steps, EXTEND path, CLI refusals, exit-code recovery table |
 | Completion signals | `references/completion-signals.md` | `#### Completion signals` | the three signals, forbidden proxies, reversible-action escape, backing | transcript location, sidecar identification, terminality test, ledger writer, proxy reasons |
+| Managed Document Completion | `references/managed-document-completion.md` | `## Managed Document Completion (Direct Handling)` → Step 1 · Step 2 | stages, closers, `implementing` timing, the recipe, `done` immutability, the revise carve-out, the close | recipe error cases and worked call, supersede table, row notes, carve-out, backing |
+| Pre-submit check table | `references/workflow-pre-submit-check.md` | `#### Pre-submit self-check — run before submitting ANY DEV-spawning Workflow script` | lint-first order, hand-checked rows, simple-task subset, unverifiable obligations | each check's pass condition and verdict, where each check's detail lives |
 
 - Skeleton exception: the `AnalysisSchema` fan-out skeleton (Analysis-Track Right-Sizing row) is the one workflow skeleton this skill holds; verify-stage skeletons stay in `skills/glass-atrium-ops-orchestrator.md`.
 
@@ -82,3 +86,5 @@ References whose pointer site is `skills/glass-atrium-ops-orchestrator.md`, not 
   - `references/delegation-size-discipline.md` → `## Effort-scaling table` · `## Analysis-Track Right-Sizing (input-side)`.
   - `references/agent-selection.md` → `## Selection procedure` · `## Ordering caveat (ultracode verify-gate)` · `## Compound Task Examples` · `## Routing-Decision Record` · `## Routing Verification (LLM-as-Judge)`.
   - `references/delegation-prompt.md` → `## Resource Budget` · `## Prompt-content aids` · `## Read-Extent Discipline` · `## Delegation Information-Hiding`.
+  - `references/managed-document-completion.md` → `## Supersede vs new document`.
+  - `references/workflow-pre-submit-check.md` → `## Check table`.

@@ -993,26 +993,18 @@ Monitoring does not duplicate the mechanical checks below; it focuses on semanti
 The orchestrator handles monitor-managed clauded-docs deletion directly — no subagent delegation.
 
 - **Target store and scope**: every `monitor.ClaudedDoc` managed doc (monitor-internal root, `$CLAUDED_DOCS_HTML_ROOT`), identified by its `id`.
-- **Permanent exception**: the wiki (`~/.glass-atrium/wiki/` — `core-wiki-reference.md`, `scope-wiki.md`) is outside this policy.
+- **Permanent exception**: the wiki (`~/.glass-atrium/wiki/` — `rules/glass-atrium/core-wiki-reference.md`, `scoped/scope-wiki.md`) is outside this policy.
 
 ### Procedure
 
-The storage model a delete accounts for:
-
-- A user-requested **HTML primary** is a single slug-named file in the monitor-internal root, with no MD companion — new rows store `md_copy_path` NULL, and the DELETE API removes the HTML file and the DB row.
-- An **agent-only record** carries a token-optimized body (`md`/`yaml`/`json`/`txt`).
-
-The two steps, in order:
-
-- **Step 1 — delete the row**: `DELETE /api/clauded-docs/:id` (handler: `monitor/src/server/routes/clauded-docs.ts` → `handleDelete`).
-  - The handler deletes the DB row first (atomic `DELETE … RETURNING`), then removes the HTML primary as best-effort FS cleanup: an unlink failure is logged and the delete still succeeds.
+- **Storage model**: every managed doc is one DB row plus one body file at the row's `html_path` in the monitor-internal root.
+  - The body file is the HTML primary of a user-requested HTML deliverable, or the token-optimized body (`md`/`yaml`/`json`/`txt`) of an agent-only record.
+  - No MD companion: new rows store `md_copy_path` NULL.
+- **Delete**: `DELETE /api/clauded-docs/:id` (handler: `monitor/src/server/routes/clauded-docs.ts` → `handleDelete`), then confirm `200 OK`.
+  - The handler deletes the DB row first (atomic `DELETE … RETURNING`), then removes the body file as best-effort FS cleanup: an unlink failure is logged and the delete still succeeds.
   - Why not one joint DB+FS transaction: the row is the SoT for existence, and orphan files are recoverable by a sweep.
   - Example: `curl -sf -X DELETE http://127.0.0.1:16145/api/clauded-docs/123`.
-- **Step 2 — verify**: confirm `200 OK` from the API.
-
-Constraints on the whole procedure:
-
-- Deleting a managed doc by direct `mv`, skipping the API, is FORBIDDEN — it orphans the HTML primary in the monitor-internal root.
+- Deleting a managed doc by direct `mv`, skipping the API, is FORBIDDEN — the DB row survives, pointing at a body file that is gone.
 - Managed clauded-docs are per-project internal artifacts: never move one into `wiki/raw/`, which holds web-sourced raw material only.
 
 ## Managed Document Completion (Direct Handling)
@@ -1035,108 +1027,77 @@ The orchestrator records the stages of a document a DEV spawn builds from, from 
 
 | Document | Closer |
 |---|---|
-| a DEV spawn's plan-ref — a plan, spec, PRD, ADR or roadmap built from | the orchestrator, from the first DEV spawn through the close |
+| a DEV spawn's plan-ref — a plan, spec, PRD, ADR or roadmap built from | the orchestrator |
 | any other — its work ends at authoring (report, reference, research) | its author, once no work remains |
 
-- **Split of a close**: glass-atrium-qa-code-reviewer reconciles; the orchestrator performs only the stage writes and copies the reviewer's gap list into the document verbatim.
+- **Split of a close**: glass-atrium-qa-code-reviewer reconciles; the orchestrator performs only the stage writes, the **Gap-list write** included.
   - Why: reconciling built work against a plan is produced content (`skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity`); a stage write is coordination.
 
 ### Procedure
-
-Step 1 is the recipe every stage write uses, Step 2 the write-path decision before any new content, and Step 3 the close at the delivery point.
 
 #### Step 1 — stage write recipe (orchestrator)
 
 - **`implementing`**: written before the plan's first DEV spawn, and skipped when the plan is already past `doc_review`.
   - Manual path: before the first DEV Agent call carrying the plan-ref.
   - Ultracode: before submitting the first DEV-spawning script.
-- **Recipe**: GET the document, then re-PUT its unchanged body with `expected_hash`, `doc_status` and `last_status_model` (the running model id); on `409 hash_conflict`, re-GET and retry once.
-  - The body goes in the field of the stored `format` (`<format>_body`): another format's field converts the document (HTML↔plain) or is rejected `400` (plain↔plain).
-  - An omitted `last_status_model` stores a null status actor.
-  - A status-only PUT (bare `{"doc_status":…}`) → `400 invalid_body`.
-
-  ```sh
-  DOC=$(curl -sf http://127.0.0.1:16145/api/clauded-docs/123)
-  curl -sf -X PUT http://127.0.0.1:16145/api/clauded-docs/123 -H 'content-type: application/json' \
-    --data "$(jq -n --argjson d "$DOC" --arg s implementing --arg m '<running model id>' \
-      '{($d.format + "_body"): $d.body, expected_hash: $d.content_hash, doc_status: $s, last_status_model: $m}')"
-  ```
+- **Recipe**: GET the document, then re-PUT its unchanged body in its stored format's field (`<format>_body`) with `expected_hash`, `doc_status` and `last_status_model` (the running model id); on `409 hash_conflict`, re-GET and retry once.
+  - Error cases and a worked call: `skills/glass-atrium-ops-delegation-contracts/references/managed-document-completion.md`.
 
 #### Step 2 — supersede vs new document (decision tree)
 
-When new content arises, decide the path before any write. Two axes decide it: topic sameness, and the predecessor's stage — at `doc_review`, also whether this is a Stage-2 revise cycle.
-
-| Topic | Predecessor | Path |
-|-------|-------------|------|
-| same topic | `done` | **supersede** — new POST with `supersedes_id` set |
-| same topic | `doc_review`, and NOT a Stage-2 revise cycle | **PUT-edit** the existing document (continue working the same doc) |
-| same topic | `doc_review`, and returned `revise`/`infeasible` by the Stage-2 gate | **supersede-POST** — new POST with `supersedes_id` set, NEVER a PUT-edit |
-| same topic | `implementing` · `impl_review` · `impl_done` | **supersede-POST at the predecessor's stage** — the new POST carries its `doc_status` |
-| unrelated topic | any | **new-document POST** (`supersedes_id` omitted) |
-| topic-relatedness uncertain | any | default to a **new POST**, never reopen a done document |
-
-Row notes, and the rule binding every row:
-
+- Before writing new content, choose supersede-POST, PUT-edit or new POST by topic and the predecessor's stage.
 - **A `done` document MUST NOT be reopened or edited** — revisions reach it only via supersede.
-- **Every supersede-POST** sends `last_status_model`: the monitor sets the predecessor to `done` under that actor.
-- **supersede-POST at the predecessor's stage**: GET the predecessor for its stage; the revision stays open, so a mid-implementation revision stays on the session-start open-plan list.
-- **supersede-POST** (the Stage-2 revise carve-out; gate: `skills/glass-atrium-ops-orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`): the only branch where a `doc_review` predecessor is superseded.
-  - Why: it makes the reviewed revision an immutable, fetchable chain root the revising actor cannot rewrite, so the next pass compares against the origin rather than the declaration that actor just authored.
-  - The completing agent's own duty, including what the chain root must contain: `scope-report.md` → `### Document Lifecycle — completion + exposure routing`.
-- **new POST on uncertain relatedness** breaks ties because the cost is asymmetric: a surplus new document is cheap and recoverable, whereas reopening a done document undoes a close.
-- **Residual — the per-cycle persist-path choice is honor-system and fails open silently**: no hook tells a revise-case PUT-edit from a sanctioned same-topic `doc_review` edit.
-  - Skipping the carve-out raises no error: no chain root is created, the next Stage-2 pass has no immutable comparand, and the scope-fidelity check degrades to the declaration it exists to replace.
-  - That is why the duty sits in the completing agent's own loaded rules rather than in the delegation asking for the edit: a control the acting agent can suspend by phrasing is not a control.
+- A same-topic `doc_review` predecessor returned `revise`/`infeasible` by the Stage-2 gate is superseded by a new POST, never PUT-edited.
+- Decision table, row notes and backing: `skills/glass-atrium-ops-delegation-contracts/references/managed-document-completion.md` → `## Supersede vs new document`.
 
 #### Step 3 — delivery-point close (orchestrator)
 
-At the delivery point — the last phase that delivers the plan's work (merge or deploy) — glass-atrium-qa-code-reviewer reconciles, and its verdict, with the correctness gates, decides the stage write.
-
-- **Where it runs**:
+- **Where it runs** — at the delivery point, the last phase that delivers the plan's work (merge or deploy):
   - Ultracode: the script's terminal Reconcile & Close phase (`##### In-script verify-stage (ultracode)`), or the later script or step its deferral close token names.
   - Manual path: a reviewer spawn after the delivering step.
 - **Delegation inputs**: the plan's document id and the `[SCOPE] files=` line of each DEV delegation built from it.
 - **Verdict**: coverage N/N over the plan's work streams, the excess, and the gap list.
 - **Excess**: route it through `### Scope-Expansion Approval Protocol` before any `done` or `impl_done` write; silent acceptance is forbidden.
-- **Stage write**, by the Step 1 recipe:
+- **Correctness gates** — judged outside the reviewer's verdict (`skills/glass-atrium-ops-orchestrator-role.md` → `## Document-Driven Workflow` step 5); until they pass, write neither `done` nor `impl_done`.
+- **Stage write**, by the Step 1 recipe; an N/N row applies only once the excess clears:
 
 | Verdict | Stage write |
 |---|---|
-| gaps (coverage below N/N) | `impl_review`, the gap list appended to the body verbatim |
-| N/N, no excess outstanding, correctness gates passed, no folder | `done` |
-| N/N, no excess outstanding, correctness gates passed, every other folder member at `impl_done` or `done` | `done` — the PUT closes the whole folder |
-| N/N, no excess outstanding, correctness gates passed, another folder member at any other stage | `impl_done` — the last member to pass closes the folder |
+| gaps (coverage below N/N) | `impl_review` + the **Gap-list write** |
+| N/N, no folder | `done` |
+| N/N, every other folder member at `impl_done` or `done` | `done` (**Only `done` cascades**) |
+| N/N, another folder member at any other stage | `impl_done` |
 
-- **Correctness gates** — judged outside the reviewer's verdict (`skills/glass-atrium-ops-orchestrator-role.md` → `## Document-Driven Workflow` step 5); until they pass, write neither `done` nor `impl_done`.
-- **Folder check** — on an N/N verdict, before choosing `done` or `impl_done`: the GET returns `folder_id`; a non-null id → `GET /api/clauded-docs?folder_id=<id>&limit=200` (no slash before `?`) and read each member's `doc_status`.
-- **Gap-list write**: the one stage write that changes the body — the stored body plus the reviewer's gap list, appended verbatim in the document's own format; it is a stage write, not new content under Step 2.
+- **Folder check** — on an N/N verdict: a non-null `folder_id` on the GET → `GET /api/clauded-docs?folder_id=<id>&limit=200` (no slash before `?`), then read each member's `doc_status`.
+- **Gap-list write**: the one stage write that changes the body — the reviewer's gap list appended verbatim to the stored body in its own format, never new content under Step 2.
 
 ## Common Rationalizations
 
 | Excuse | Rebuttal |
 |--------|----------|
-| "It's faster if I just write it directly" | Orchestrator writing code bypasses review, testing, and specialization — delegation is not overhead, it is quality assurance |
-| "This task is too simple for a sub-agent" | Simplicity is not a delegation exemption — consistency matters more than per-task optimization |
+| "It's faster if I just write it directly" · "This task is too simple for a sub-agent" | Only **Tiny direct work** (below) exempts; everything else is delegated, so review and testing run |
 | "Setting up a team costs too many tokens" | Measure ROI: team overhead vs. single-agent context bloat on complex tasks. Simple tasks use Router, not teams |
 | "The agents will figure out file ownership" | Unspecified ownership = merge conflicts. Ownership matrix must be explicit before parallel execution |
 | "Pipeline is too slow, let's run everything in parallel" | Dependent stages in parallel produce garbage input for downstream agents — Pipeline order exists for a reason |
+
+- The one exemption and its handoff-cost test: `skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity` → **Tiny direct work**.
 
 ## Red Flags
 
 Signals that an orchestration is defective: the scan list, then the named guards, each with its own remedy.
 
-- Orchestrator session contains `Edit` or `Write` tool calls for non-exception files
+- Orchestrator session contains `Edit` or `Write` tool calls for non-exception files (exceptions: `skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity`)
 - Sub-agent invoked without every element of `#### Delegation required elements`
-- Two index-mutating agents in one worktree, regardless of file overlap (`rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Index-owner rule**)
-- Pipeline stage started before the prior stage's acceptance criteria are verified
+- Two index-mutating agents in one worktree, regardless of file overlap (`rules/glass-atrium/core-git-workflow.md` → `### Concurrent worktree` → **Index-owner rule**)
+- Pipeline stage started before the prior stage's acceptance criteria are verified and that verification documented
 - A very large fan-out (well beyond a normal team) composed without reasoning in `reason` about synthesis value and total-session token cost
 - `background: true` + `isolation: worktree` used together (Issue #33045)
 - Free-text delegation prompt without structured format
-- Sub-agent chain depth > 2 (orchestrator → worker → sub-worker) — nesting forbidden (`skills/glass-atrium-ops-orchestrator-role.md` → `### Spawn Budget`)
+- Sub-agent chain deeper than `skills/glass-atrium-ops-orchestrator-role.md` → `### Spawn Budget` → `#### Depth and concurrency ceilings` → **MAX_DEPTH**
 - A single Wave fanning out beyond the Workflow engine's runtime concurrency self-cap — split into sequential Waves
 - Routing decided by keyword/alias match instead of `domains` semantic match
 - Subagent spawned despite an unmet `compatibility` precondition (e.g. glass-atrium-intel-reporter dispatched for user-requested HTML while the monitor at 127.0.0.1:16145 is down)
-  - The Compatibility Probe halts delegation pre-spawn instead of absorbing a post-spawn `result: blocked`.
+  - The Compatibility Probe (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Decision-phase probes`) halts delegation pre-spawn instead of absorbing a post-spawn `result: blocked`.
 
 ### Missing-verify-stage guard (ultracode)
 
@@ -1144,40 +1105,19 @@ A DEV-spawning workflow without a `{glass-atrium-qa-code-reviewer, DEV}` verify-
 
 - `#### Pre-submit self-check` is honor-system primary; the declaration-contract gate backstops it (scope: `##### In-script verify-stage (ultracode)` → **What backstops it**).
 - Skeletons: `#### Pipeline Acceptance Criteria` → "In-script verify-stage".
-- **Simple-plan exemption**: it reaches the Stage-2 gate only — a simple plan skips plan-direction verification, but its plan-referencing DEV-spawning script still carries all four requirements of `##### DEV-spawn 4-requirement pre-flight checklist`.
-  - `[ENTRY-CLASS] simple-task` with no plan-ref is the one other exit: the declaration, verify-stage and `[SIZE-EST]` checks then pass (`##### DEV-spawn 4-requirement pre-flight checklist` → **Simple-task entry**).
+- **Simple-plan exemption**: it skips the Stage-2 gate only; the plan-referencing DEV-spawning script still carries all four requirements of `##### DEV-spawn 4-requirement pre-flight checklist`.
 
 #### Pre-submit self-check — run before submitting ANY DEV-spawning Workflow script
 
-Covers the gate's DEV-relevant block branches, the plan-stage rows its advisories back, and the verdict-gating the gate cannot see; the doc-routing leak is a separate gate branch with its own stderr.
-
-- **Run the offline lint first** (`#### Workflow pre-flight (run before EVERY Workflow call)` → **PREVIEW before submit**): it mechanically covers every table row marked `lint`, and none of the obligations the gate cannot verify (listed after the table).
+- **Run the offline lint first** (`#### Workflow pre-flight (run before EVERY Workflow call)` → **PREVIEW before submit**): it covers the check rows marked `lint`, never the obligations below.
+- Then confirm every row of `skills/glass-atrium-ops-delegation-contracts/references/workflow-pre-submit-check.md` → `## Check table`.
+  - By hand: the rows the lint leaves — JS parse hazards, the `implementing` write, the close token.
 - A simple-task entry with no plan-ref confirms the entry-token and JS-parse rows only (`##### DEV-spawn 4-requirement pre-flight checklist` → **Simple-task entry**).
-- Then confirm each check:
-
-| Check | Pass when | Fails as |
-|---|---|---|
-| entry token | a plan-ref or `[ENTRY-CLASS] simple-task: <reason>` token (raw-scanned, any placement) | entry-miss BLOCK · `lint` |
-| `[SIZE-EST]` presence | a `[SIZE-EST]` token at every `dev-*` spawn — presence only, never correctness | size-est-miss BLOCK · `lint` |
-| declaration present + well-formed | exactly one `[AGENT-COMPOSITION]` block in a `/* */` comment, parsing under the contract grammar | `block-nodecl` · `block-grammar` · `lint` |
-| verify clause carries the DEV hard-gate | team form: reviewer + exactly one `dev-*` · or upstream form with `<N>` cited by a plan-ref token | `block-noverifydev` · `block-upstream` · `lint` |
-| declaration matches the code | declared roles all spawn · code dev types all declared · `impl-computed:` types have data literals | `block-declspawn` · `block-undecl` · `block-computed` · `lint` |
-| reviewer present and first | a reviewer spawn exists, and no declared impl `dev-*` spawn precedes every reviewer | `block-norev` · `block-order` · `lint` |
-| JS parse hazards | no bash `${…}` form and no nested backtick inside `${…}` in a template literal | Workflow parse error |
-| `implementing` write | the plan the plan-ref cites is at `implementing` or a later stage before submit | `implementing` advisory — stderr only |
-| close token | the close form with a terminal Reconcile & Close phase, or the deferral form naming the closing step | close-token advisory — stderr only |
-
-Each BLOCK and `block-*` verdict exits 2. Detail lives at its single site:
-
-- grammar, verdicts and the upstream waiver — `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`;
-- sentinel placement and the opts `agentType:` literal a spawn needs — `##### In-script verify-stage (ultracode)`;
-- the two parse-hazard forms and their remedies — `skills/glass-atrium-ops-delegation-contracts/references/workflow-js-parse-hazards.md` → `## The two forms and their remedies`;
-- a pre-verify Discovery `dev-*` tripping the ordering check — ``### Pre-verify Discovery `dev-*` order guard (ultracode)``;
-- the stage write and the close — `## Managed Document Completion (Direct Handling)`; the close-token grammar — `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size`.
+- The doc-routing leak is a separate gate branch: `### Reflexive [DOC-ROUTE] stamping guard`.
 
 Obligations the gate cannot verify:
 
-- implementation is gated on the combined `pass`+`feasible` verdict, and the DEV verdict is a genuine hard gate (no pass without `feasible`);
+- the DEV verdict is a genuine hard gate: implementation waits on the combined `pass`+`feasible` verdict, never on `pass` alone;
 - the declaration is truthful — a lying declaration passes the gate and still violates this discipline;
 - the close token is truthful — a close form needs the terminal Reconcile & Close phase in the same script.
 
@@ -1185,16 +1125,14 @@ Obligations the gate cannot verify:
 
 A `dev-*` used for Discovery/Design analysis ahead of the `glass-atrium-qa-code-reviewer` verify spawn precedes every reviewer, so it trips `block-order` although it is not the implement stage.
 
-- Fix, by either route of `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md` (pre-verify Discovery/Design bullet):
-  - a non-DEV Discovery agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`);
-  - or a reviewer-first `{qa,dev}` Contract phase before any Discovery `dev-*`.
+- Fix by either route of `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md` (pre-verify Discovery/Design bullet): a non-DEV Discovery agent, or a reviewer-first `{qa,dev}` Contract phase before any Discovery `dev-*`.
 - Skeleton: `#### Pipeline Acceptance Criteria` → "In-script verify-stage" 3-phase variant.
 
 ### Reflexive [DOC-ROUTE] stamping guard
 
 A `[DOC-ROUTE] user-requested-local:` token stamped without an actual explicit user request for that local destination (new file or edit of an existing user file) → violation: the token carries a real user redirect and never silences the doc-routing gate.
 
-- Halt, remove the stamp, and route the deliverable per `scope-report.md` → `## Output Format Routing [REPORT]`.
+- Halt, remove the stamp, and route the deliverable per `scoped/scope-report.md` → `## Output Format Routing [REPORT]`.
 - Canonical form and placement: `#### Pipeline Acceptance Criteria` → "[DOC-ROUTE] token placement".
 
 ### Generic-subagent guard [LLM06/LLM01/LLM10]
@@ -1206,9 +1144,6 @@ A spawn without an `agentType` matching the routing decision starts a generic su
 
 ## Verification
 
-- [ ] **Delegation completeness**: every sub-agent invocation carries every element of `#### Delegation required elements` (spot-check 2-3 recent delegations)
-- [ ] **File ownership**: no two agents in one Wave/Team mutate the index in one worktree (`rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Index-owner rule**); within a worktree, an explicit ownership matrix
-- [ ] **Pipeline acceptance**: each stage transition has documented acceptance-criteria verification
-- [ ] **Outcome Record**: every completed task has an Outcome Record with the minimum fields (agent, task_type, result)
+- [ ] **Red Flags clear**: no signal of `## Red Flags` holds; for delegation completeness, spot-check 2-3 recent delegations
+- [ ] **Outcome Record**: every completed task has an Outcome Record
 - [ ] **Domain-keyword hints (optional, not routing keys)**: where a delegation pairs keywords, they come from the target agent's registry `domains`; routing stays capability-based
-- [ ] **Compatibility precondition**: a candidate declaring a `compatibility` field had its runtime precondition confirmed pre-spawn — halt and remediate when unmet (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Decision-phase probes` → Compatibility Probe)
