@@ -1,6 +1,6 @@
 // System map controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the screen's
-// own style block, rendered from the shipped components: the zoom cluster on the canvas and the hook chain's event fold — each keeps
-// one box in every state (§7.16).
+// own style block, rendered from the shipped components: the zoom cluster on the canvas, the hook chain's event fold and the node
+// drawer's recent-runs toggle — each keeps one box in every state (§7.16).
 // Runner: npx tsx --test test/architecture.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -11,7 +11,7 @@ import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
-import { type Box, createControlProbe } from "./lib/control-probe.js";
+import { type Box, QUARTER_TURN, createControlProbe, isSameBox } from "./lib/control-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -50,6 +50,15 @@ const HOOK_CHAIN = getMarkup("HookChainDetail", {
   },
 });
 
+// a daemon part in the node drawer: another daemon drilled → its recent runs closed · this daemon drilled → open
+const DAEMON = "learning-aggregator";
+const getPartHealth = (payloadDaemon: string | null) =>
+  getMarkup("NodePartHealth", {
+    nodeId: "daemons",
+    partRows: [{ id: "learning", kind: "daemon", name: "Learning aggregator", daemonName: DAEMON, nodeIds: ["daemons"], tone: null, lastRunAt: null }],
+    daemons: [], payloadDaemon, onSelectDaemon: () => undefined, payloadState: { status: "loading" }, hookState: null, hookFailState: null,
+  });
+
 // The app loads Tailwind preflight and utilities from its CDN and .fs-meta from ui.jsx; these are the rules the measured
 // geometry depends on, at their shipped values.
 const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 solid; }
@@ -58,15 +67,18 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   button { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; background-color: transparent; }
   summary { display: list-item; }
   .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
-  .fs-meta { font-size: var(--fs-meta); line-height: 1.4; }`;
+  .fs-meta { font-size: var(--fs-meta); line-height: 1.4; } .rotate-90 { transform: rotate(90deg); }`;
 
 // reference atoms the System map controls must match
 const REFERENCES = `<button id="ref-btn-icon" type="button" class="btn icon"><svg width="14" height="14"></svg></button>
-  <button id="ref-btn-sm" type="button" class="btn sm">Reset</button>`;
+  <button id="ref-btn-sm" type="button" class="btn sm">Reset</button>
+  <button id="ref-disclosure" type="button" class="group disclosure fs-meta"><span>Runs</span></button>`;
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="refs" style="padding: 24px; display: flex; gap: 8px;">${REFERENCES}</div>
   <div style="width: 900px; height: 520px; padding: 24px; display: flex; flex-direction: column;">${CANVAS}</div>
   <div style="width: 420px; padding: 24px;">${HOOK_CHAIN}</div>
+  <div id="runs-closed" style="width: 420px; padding: 24px;">${getPartHealth(null)}</div>
+  <div id="runs-open" style="width: 420px; padding: 24px;">${getPartHealth(DAEMON)}</div>
 </body></html>`;
 
 const CLUSTER = ".arch-zoom-controls";
@@ -74,6 +86,7 @@ const ZOOM_IN = `${CLUSTER} button[aria-label="Zoom in"]`;
 const ZOOM_OUT = `${CLUSTER} button[aria-label="Zoom out"]`;
 const RESET = `${CLUSTER} button[aria-label="Reset diagram view"]`;
 const SUMMARY = ".arch-hook-event > details > summary";
+const RUNS_TOGGLE = (state: "closed" | "open") => `#runs-${state} .arch-part-drill`;
 
 let browser: Browser;
 let page: Page;
@@ -140,4 +153,23 @@ describe("the hook chain's event fold opens on the disclosure atom", () => {
   test("its summary is a 32 disclosure with the chevron as the one open-state cue, turned 90 once open", () => assertFoldOnOneBox(".arch-hook-event > details", SUMMARY));
 
   test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(SUMMARY));
+});
+
+describe("the node drawer's recent-runs toggle opens on the disclosure atom", () => {
+  test("closed and open it keeps one 32 box, the chevron turned 90 only once open", async () => {
+    const closed = await readBox(RUNS_TOGGLE("closed"));
+    const open = await readBox(RUNS_TOGGLE("open"));
+    assert.ok(isSameBox(open, closed), `open ${open.width}x${open.height} vs closed ${closed.width}x${closed.height}`);
+    assert.equal(closed.height, 32);
+    assert.equal(await readStyle(`${RUNS_TOGGLE("closed")} .disclosure-chevron`, "transform"), "none");
+    assert.match(await readStyle(`${RUNS_TOGGLE("open")} .disclosure-chevron`, "transform"), QUARTER_TURN);
+  });
+
+  test("it draws the disclosure atom's edge, fill, corner, padding, type and ink", async () => {
+    for (const prop of [...BUTTON_CHROME, ...PADDING, "font-size", "font-weight", "color"]) {
+      assert.equal(await readStyle(RUNS_TOGGLE("closed"), prop), await readStyle("#ref-disclosure", prop), prop);
+    }
+  });
+
+  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(RUNS_TOGGLE("closed")));
 });

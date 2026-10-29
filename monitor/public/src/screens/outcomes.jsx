@@ -2521,6 +2521,20 @@ function getFilterChipValueO(key) {
 
 // ----- Panel 2: Result table -------------------------------------------------
 
+/**
+ * Filters trigger label — the label and a hidden twin at the highest count share one cell → the trigger is always that wide, so a count appearing moves nothing.
+ * End-aligned → the visible label, not the reserved room, meets the head's right edge (RefreshButton's fixed-width pattern).
+ */
+function buildFiltersLabelO(activeCount) {
+  const cellClass = 'col-start-1 row-start-1';
+  return (
+    <span className="inline-grid justify-items-end tabular-nums">
+      <span className={cellClass}>{activeCount > 0 ? `Filters · ${activeCount}` : 'Filters'}</span>
+      <span className={`${cellClass} invisible`} aria-hidden="true">{`Filters · ${POPOVER_FILTER_AXES_O.length}`}</span>
+    </span>
+  );
+}
+
 function ResultTableCard({
   state, rows, totalMatched, page, limit, sort, filter,
   onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, shared, closure, needsYou, needsYouCap, onToggleNeedsYou,
@@ -2553,7 +2567,7 @@ function ResultTableCard({
               onChange={(e) => onKeywordChange(e.target.value)}
               aria-label="Keyword search"
             />
-            <Popover label={activeCount > 0 ? `Filters · ${activeCount}` : 'Filters'} title="Filters">
+            <Popover label={buildFiltersLabelO(activeCount)} title="Filters">
               <FilterPanelO
                 filter={filter}
                 distinctAgents={distinctAgents}
@@ -2588,7 +2602,7 @@ function ResultTableCard({
         />
       </div>
       {state.status === 'ready' && totalMatched > 0 && (
-        <div className="px-4 py-2 border-t border-line flex items-center justify-between fs-meta text-dim font-mono">
+        <div className="card-foot justify-between font-mono">
           <span>{formatIntO(page * limit + 1)}–{formatIntO(Math.min((page + 1) * limit, totalMatched))} / {formatIntO(totalMatched)}</span>
           <div className="flex items-center gap-2">
             <button
@@ -2647,28 +2661,33 @@ function FilterChipsO({ chips }) {
 }
 
 // Active filters under the Results head — one remove button per chip, plus Clear all.
+// the rule sits on the holder, outside the 48 control row, as on the Documents toolbar
 function ActiveFilterChips({ filter, onRemove, onClearAll }) {
   const { Badge } = window.UI;
   const entries = buildActiveFilterEntriesO(filter);
   if (entries.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-1 flex-wrap px-4 py-2 border-b border-line">
-      {entries.map((entry) => (entry.patch === null
-        ? <Badge key={entry.key} role="metadata">{entry.label}</Badge>
-        : (
-          <button
-            key={entry.key}
-            type="button"
-            className="btn ghost sm"
-            aria-label={`Remove filter ${entry.label}`}
-            onClick={() => onRemove(entry.patch)}>
-            {entry.label}<span aria-hidden="true"> ×</span>
-          </button>
-        )))}
-      <button type="button" className="btn ghost sm" aria-label="Clear all filters" onClick={onClearAll}>
-        Clear all
-      </button>
+    <div className="border-b border-line">
+      <div className="control-row">
+        <div className="flex items-center gap-1 flex-wrap">
+          {entries.map((entry) => (entry.patch === null
+            ? <Badge key={entry.key} role="metadata" className="pill--ctl-h">{entry.label}</Badge>
+            : (
+              <button
+                key={entry.key}
+                type="button"
+                className="btn ghost sm"
+                aria-label={`Remove filter ${entry.label}`}
+                onClick={() => onRemove(entry.patch)}>
+                {entry.label}<span aria-hidden="true"> ×</span>
+              </button>
+            )))}
+        </div>
+        <button type="button" className="btn ghost sm" aria-label="Clear all filters" onClick={onClearAll}>
+          Clear all
+        </button>
+      </div>
     </div>
   );
 }
@@ -3403,18 +3422,12 @@ function defaultFilterO() {
   };
 }
 
-// 선택 가능한 faceted 축 — 'N of M active' 카운터 분모. period(days)는 항상-설정 기본축이라 제외.
-const FACET_AXES = ['agent', 'task_type', 'result', 'confidence', 'metric_pass', 'review_flag', 'attribution_source', 'q'];
+// the Filters popover's own axes → its trigger counts only what is set inside it (period → page header, keyword → Results head)
+const POPOVER_FILTER_AXES_O = ['agent', ...FILTER_AXES_O.map(({ axis }) => axis)];
 
-// 활성 facet 수 (기본값이 아닌 축) — period 는 30 기본과 다를 때만 1 카운트.
 function countActiveFacetsO(filter) {
-  let active = FACET_AXES.reduce((acc, axis) => acc + (filter[axis] ? 1 : 0), 0);
-  if (filter.days && filter.days !== 30) active += 1;
-  return active;
+  return POPOVER_FILTER_AXES_O.filter((axis) => filter[axis]).length;
 }
-
-// faceted 분모 = 선택 가능 축 총수 (period 포함 → FACET_AXES + 1).
-const FACET_AXIS_TOTAL = FACET_AXES.length + 1;
 
 // URL hash format: #outcomes?days=30&agent=glass-atrium-dev-react&q=phase&sort=record_ts:desc
 // 'outcomes' prefix 는 app.jsx 라우팅 소유, '?' 이후만 파싱. RFC 3986 fragment 내 ':' 안전.

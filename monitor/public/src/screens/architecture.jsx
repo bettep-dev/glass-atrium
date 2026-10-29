@@ -749,7 +749,7 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
-					// 컨트롤은 .btn atom · flex-end → 32 정사각과 더 넓은 Reset 이 캔버스 쪽 가장자리 하나를 공유.
+					// controls on the .btn atom · flex-end → the 32 squares and the wider Reset share the canvas-side edge
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; z-index: 2; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					// 상태 링과 같은 사각형 채널·같은 반경 가족이되 그 바깥 한 겹에 섬 — 상태 링의 색·두께·자리는 포커스와 무관함.
@@ -768,10 +768,8 @@ function ScreenArchitecture(
 					".arch-part-detail { padding-left: var(--space-3); display: flex; flex-direction: column; gap: 8px; } " +
 					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬. 진짜 button 이라
 					// 키보드 활성과 포커스 순서를 브라우저에서 그대로 받음.
-					".arch-part-drill { align-self: flex-start; min-height: 32px; margin: 0 0 0 var(--space-3); padding: 0 var(--space-2); " +
-					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; " +
-					"color: rgb(var(--dim)); font: inherit; font-size: var(--fs-meta); cursor: pointer; text-align: left; } " +
-					".arch-part-drill:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); } " +
+					// placement only — the .disclosure atom draws it; flex-start → the column never stretches its box
+					".arch-part-drill { align-self: flex-start; margin: 0 0 0 var(--space-3); } " +
 					".arch-map-copy-note { display: flex; align-items: center; gap: var(--space-1_5); padding: var(--space-2) var(--space-2) 0; } " +
 					".arch-caption { display: flex; flex-direction: column; gap: var(--space-1_5); margin: 0 0 var(--space-3); } " +
 					".arch-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; } " +
@@ -1754,14 +1752,14 @@ function NodePartHealth({
 							{/* 펼칠 것이 없는 kind(pg · browser)는 아무것도 그리지 않음 — 빈 영역을 여는
 							    자리는 읽을 것이 있다고 거짓말함. 있는 kind 는 드릴된 데몬이면 바로 폄(트리거로 접힘). */}
 							{renderDetail && row.daemonName && (
-								<button
-									type="button"
-									className="arch-part-drill"
-									aria-expanded={isRunsOpen}
-									aria-controls={isRunsOpen ? runsId : undefined}
-									onClick={() => toggleRuns(row, isRunsOpen)}>
-									{isRunsOpen ? "Hide" : "Show"} recent runs for {row.daemonName}
-								</button>
+								// one label in both states → the open state rides aria-expanded and the chevron (§7.16)
+								<window.UI.DisclosureButton
+									isOpen={isRunsOpen}
+									onToggle={() => toggleRuns(row, isRunsOpen)}
+									controls={isRunsOpen ? runsId : undefined}
+									className="arch-part-drill fs-meta"
+									label={`Recent runs for ${row.daemonName}`}
+								/>
 							)}
 							{renderDetail && (!row.daemonName || isRunsOpen) && (
 								<div

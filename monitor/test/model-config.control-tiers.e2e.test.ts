@@ -1,6 +1,7 @@
 // Models & budgets controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and type
 // scale, rendered from the shipped components: the file-count fold on the interactive pill, the save-results fold on the disclosure
-// atom — each keeps one box closed, open and in every pointer/keyboard state (§7.16) — and the Cost & usage links as 24 targets.
+// atom — each keeps one box closed, open and in every pointer/keyboard state (§7.16) — the Cost & usage links as 24 targets, and a
+// field's inline Reset as a 24 target in a saved line that keeps its height whether the field is overridden or not.
 // Runner: npx tsx --test test/model-config.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -91,10 +92,15 @@ const RESULTS = getMarkup("SurfaceResultsCardMC", {
   onDismiss: noop,
 });
 
+// a field's saved line: overridden (Saved value + Reset) and back at the saved value (the empty slot)
+const getSavedLine = (overridden: boolean) => getMarkup("GhostResetMC", { overridden, defaultValue: overridden ? MODEL : null, onReset: noop });
+
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="models" style="width: 760px; padding: 24px;">${MODELS}</div>
   <div id="caps" style="width: 560px; padding: 24px;">${CAPS}</div>
   <div id="results" style="width: 560px; padding: 24px;">${RESULTS}</div>
+  <div id="saved-overridden" style="width: 280px; padding: 24px;">${getSavedLine(true)}</div>
+  <div id="saved-empty" style="width: 280px; padding: 24px;">${getSavedLine(false)}</div>
 </body></html>`;
 
 const FILES = "#models td details";
@@ -169,4 +175,27 @@ describe("the Cost & usage links are 24 targets", () => {
       assert.ok(Math.abs(text - (box.top + box.height / 2)) <= 0.5, `text centre ${text} vs box centre ${box.top + box.height / 2}`);
     });
   }
+});
+
+describe("a field's inline Reset is a 24 target in a slot that holds its height", () => {
+  const RESET = "#saved-overridden button[aria-label='Reset this field to the saved value']";
+  const SLOT = (state: "overridden" | "empty") => `#saved-${state} [data-slot='saved-line']`;
+
+  test("Reset is 24 tall with its text on the box's centre line", async () => {
+    const box = await readBox(RESET);
+    assert.equal(box.height, 24);
+    const text = await page.$eval(RESET, (el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const { top, height } = range.getClientRects()[0];
+      return top + height / 2;
+    });
+    assert.ok(Math.abs(text - (box.top + box.height / 2)) <= 0.5, `text centre ${text} vs box centre ${box.top + box.height / 2}`);
+  });
+
+  test("the saved line is as tall overridden as back at the saved value", async () => {
+    const overridden = await readBox(SLOT("overridden"));
+    const empty = await readBox(SLOT("empty"));
+    assert.equal(overridden.height, empty.height, `overridden ${overridden.height} vs empty ${empty.height}`);
+  });
 });

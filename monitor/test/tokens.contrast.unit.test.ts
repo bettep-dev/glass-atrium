@@ -112,7 +112,7 @@ const THEMES = [
   ["dark", dark, [...LIGHT_SURFACES, "--elev-2"]],
 ] as const;
 
-test("a resting toggle edge clears 3:1 against every surface it sits on, in both themes", () => {
+test("the resting control edge of toggles and fields clears 3:1 against every surface it sits on, in both themes", () => {
   const edge = getAliasTarget(css, "--control-edge");
   for (const [theme, block, surfaces] of THEMES) {
     for (const surface of surfaces) {
@@ -122,7 +122,7 @@ test("a resting toggle edge clears 3:1 against every surface it sits on, in both
   }
 });
 
-test("the hover edge stays a visible step above the resting toggle edge, in both themes", () => {
+test("the hover edge stays a visible step above the resting control edge, in both themes", () => {
   const edge = getAliasTarget(css, "--control-edge");
   for (const [theme, block] of THEMES) {
     const elev = parseTriplet(block, "--elev");

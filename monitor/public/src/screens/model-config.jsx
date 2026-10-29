@@ -714,8 +714,8 @@ const LEDGER_COL_WIDTHS_MC = ["32%", "36%", "32%"];
 // Skeleton columns + empty-row colSpan for both ledgers.
 const LEDGER_COL_COUNT_MC = LEDGER_COL_WIDTHS_MC.length;
 const LEDGER_TABLE_STYLE_MC = { tableLayout: "fixed" };
-// One line of fs-meta — the saved/reset slot holds this height while empty.
-const SAVED_LINE_STYLE_MC = { minHeight: "1.5em" };
+// the inline Reset's 24 target height (§7.15 C24) → the saved/reset slot holds it while empty, so a reset never moves the row
+const SAVED_LINE_STYLE_MC = { minHeight: "24px" };
 // The page's one link token — section link and inline reset read alike.
 const LINK_CLASS_MC = "text-dim underline underline-offset-2";
 // a link beside a card's or a row's controls → the 24 target (§7.15)
@@ -1207,7 +1207,7 @@ function GhostResetMC({ overridden, defaultValue, onReset }) {
 					)}
 					<button
 						type="button"
-						className={LINK_CLASS_MC}
+						className={LINK_TARGET_CLASS_MC}
 						onClick={onReset}
 						aria-label="Reset this field to the saved value"
 					>

@@ -101,7 +101,7 @@
 :root, [data-theme] {
   --surface-raised-2: var(--elev);            /* 라이트=elev 순백 유지(떠오름은 shadow/ring); 다크는 아래 elev-2 override */
   --surface-overlay:  var(--overlay-surface);
-  /* resting edge of a toggle with a filled selected state — ≥3:1 on surface/elev/sunken/elev-2 (WCAG 1.4.11), one step under the --faint hover edge */
+  /* resting edge of a toggle with a filled selected state and of the field family — ≥3:1 on surface/elev/sunken/elev-2 (WCAG 1.4.11), one step under the --faint hover edge */
   --control-edge:     var(--pip-empty);
 }
 [data-theme="dark"] {

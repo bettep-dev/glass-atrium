@@ -1885,7 +1885,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 			/>
 			{getLoopSlotsI({
 				metric: cards.map(([sym, tone, label, value]) => (
-					<span key={label} className="inline-flex items-baseline gap-1.5">
+					<span key={label} className="inline-flex items-baseline gap-1">
 						<SymI s={sym} className={tone} size={13} />
 						<span className="fs-stat font-semibold text-ink font-mono">{formatIntI(value)}</span>
 						<span className="fs-meta text-dim">{label}</span>

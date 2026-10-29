@@ -1178,10 +1178,21 @@ test("ActiveFilterChips: Clear all resets every filter, and no active filter ren
   assert.strictEqual(helpers.ActiveFilterChips({ filter: { days: 30 } }), null);
 });
 
-test("Results card: the head's Filters button counts the active filters, and Results carries no filter column", () => {
+// a node's text as the accessibility tree reads it → an aria-hidden subtree adds nothing
+const accessibleTextOf = (node: unknown): string => {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(accessibleTextOf).join("");
+  if (node === null || typeof node !== "object" || !("type" in node)) return "";
+  const el = node as RenderNode;
+  return el.props?.["aria-hidden"] === "true" ? "" : el.children.map(accessibleTextOf).join("");
+};
+
+test("Results card: the head's Filters button counts the filters set inside its popover, and Results carries no filter column", () => {
   const rows = [
     { name: "no active filter", filter: { days: 30 }, label: "Filters" },
     { name: "two active filters", filter: { days: 30, agent: LEDGER_AGENT, result: "fail" }, label: "Filters · 2" },
+    { name: "keyword and period live outside the popover", filter: { days: 7, q: "phase" }, label: "Filters" },
+    { name: "a popover filter beside keyword and period", filter: { days: 7, q: "phase", confidence: "low" }, label: "Filters · 1" },
   ];
   for (const row of rows) {
     const card = flattenNodes(helpers.ResultTableCard({
@@ -1190,7 +1201,7 @@ test("Results card: the head's Filters button counts the active filters, and Res
     }));
     const headRight = flattenNodes(card.find((n) => n.props?.title === "Results")!.props!.right);
     const popover = headRight.find((n) => n.type === helpers.window.UI.Popover);
-    assert.strictEqual(popover?.props?.label, row.label, row.name);
+    assert.strictEqual(accessibleTextOf(popover?.props?.label), row.label, row.name);
     assert.ok(headRight.some((n) => n.type === "input" && n.props?.["aria-label"] === "Keyword search"), `${row.name}: keyword stays inline`);
     assert.ok(card.some((n) => n.type === helpers.ActiveFilterChips), `${row.name}: active chips sit under the head`);
   }
