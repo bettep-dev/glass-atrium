@@ -76,6 +76,8 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
   <div class="card" data-card="errored" style="width: 320px; padding: 16px; margin-top: 24px;">
     ${ERRORED_FIELDS.map((field) => field.markup).join("\n    ")}
     <span data-probe="crit" style="color: rgb(var(--crit));">crit</span>
+    <span data-probe="faint" style="color: rgb(var(--faint));">faint</span>
+    <span data-probe="accent" style="color: rgb(var(--accent));">accent</span>
   </div>
 </body></html>`;
 
@@ -274,20 +276,22 @@ describe("a resting field-family control draws the toggle's resting edge", () =>
   }
 });
 
-// hover lifts the edge to --faint and focus paints it --accent; neither may resolve to the resting edge, nor resize the box
-describe("a field-family control's hover and focus repaint only its edge, never back to the resting edge", () => {
+// each state edge is pinned to its own token, read off a probe → an edge that merely differs from rest (--dim, --ink) still fails
+describe("a field-family control's hover lifts its edge to --faint and focus paints it --accent, never resizing the box", () => {
   for (const field of FIELDS) {
-    for (const state of [{ name: "hover", pseudo: ["hover"] }, { name: "focus", pseudo: field.focus }] as const) {
+    for (const state of [{ name: "hover", pseudo: ["hover"], token: "faint" }, { name: "focus", pseudo: field.focus, token: "accent" }] as const) {
       test(`${field.name} under ${state.name}`, async () => {
         const selector = getFieldSelector("elev", field.id);
         const rest = await probe.readBox(selector);
         for (const theme of THEMES) {
-          const [restEdge, stateEdge, stateBox] = await withTheme(theme, async () => {
+          const [restEdge, tokenColor, stateEdge, stateBox] = await withTheme(theme, async () => {
             const edge = await probe.readStyle(selector, "border-top-color");
+            const color = await probe.readStyle(`[data-probe="${state.token}"]`, "color");
             await probe.forcePseudo(selector, state.pseudo);
-            try { return [edge, await probe.readStyle(selector, "border-top-color"), await probe.readBox(selector)] as const; }
+            try { return [edge, color, await probe.readStyle(selector, "border-top-color"), await probe.readBox(selector)] as const; }
             finally { await probe.forcePseudo(selector, []); }
           });
+          assert.equal(stateEdge, tokenColor, `${theme} ${field.id} ${state.name} edge vs --${state.token}`);
           assert.notEqual(stateEdge, restEdge, `${theme} ${field.id} ${state.name} edge equals the resting edge`);
           assert.ok(isSameBox(stateBox, rest), `${theme} ${field.id} ${state.name} ${stateBox.width}x${stateBox.height} vs resting ${rest.width}x${rest.height}`);
         }
