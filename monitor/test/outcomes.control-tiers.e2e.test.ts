@@ -1,6 +1,7 @@
-// Task results pagination on one DESIGN.md §7.15 variant, measured in a real browser on the shipped tokens.css, base.css and the
+// Task results controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the
 // screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" and the result drawer's record
-// "Previous / Next" draw the same small ghost button at rest and on hover, and each keeps one box in every state (§7.16).
+// "Previous / Next" draw the same small ghost button at rest and on hover, the filter panel's "More filters" fold opens on the
+// disclosure atom, and each keeps one box in every state (§7.16).
 // Runner: npx tsx --test test/outcomes.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -36,9 +37,11 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   svg { display: block; vertical-align: middle; }
   button { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; background-color: transparent; }
   .flex { display: flex; } .items-center { align-items: center; } .justify-between { justify-content: space-between; }
+  summary { display: list-item; }
   .gap-2 { gap: 0.5rem; } .mr-auto { margin-right: auto; } .px-4 { padding-left: 1rem; padding-right: 1rem; }
   .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .border-t { border-top-width: 1px; }
-  .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }`;
+  .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
+  .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; }`;
 
 const noop = () => undefined;
 const READY = { status: "ready", busy: false, data: null, error: null };
@@ -53,22 +56,29 @@ const DRAWER = getMarkup("DetailModal", {
   detailRow: RECORDS[1], detailState: { status: "loading", data: null, error: null }, rows: RECORDS, onClose: noop, onNav: noop,
 });
 
+const FILTERS = getMarkup("FilterPanelO", {
+  filter: {}, distinctAgents: ["glass-atrium-dev-front"], includeAll: false, sort: "newest",
+  onPatchFilter: noop, onToggleIncludeAll: noop, onSortChange: noop, onReset: noop,
+});
+
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="first-page" style="width: 1170px; padding: 24px;">${getLedger(0)}</div>
   <div id="mid-page" style="width: 1170px; padding: 24px;">${getLedger(1)}</div>
   <div id="drawer">${DRAWER}</div>
+  <div id="filters" style="width: 280px; padding: 12px;">${FILTERS}</div>
 </body></html>`;
 
 const LEDGER_BUTTON = (id: string, label: string) => `#${id} button[aria-label="${label} page"]`;
 const DRAWER_BUTTON = (label: string) => `#drawer .detail-nav button[aria-label="${label} record"]`;
 const LABELS = ["Previous", "Next"] as const;
+const MORE_FILTERS = "#filters details";
 // the properties that make a button variant: its edge, fill, ink, type and box
 const VARIANT_PROPS = ["border-top-color", "border-top-width", "background-color", "color", "font-size", "font-weight", "padding-top", "padding-left", "height"] as const;
 
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
-const { readBox, forcePseudo, assertBoxHeldAcrossStates } = createControlProbe(() => page, () => cdp);
+const { readBox, forcePseudo, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -131,4 +141,12 @@ describe("each pagination button keeps one 32 box in every state", () => {
     const box = await readBox(disabled);
     assert.ok(isSameBox(box, enabled), `disabled ${box.width}x${box.height} vs enabled ${enabled.width}x${enabled.height}`);
   });
+});
+
+describe("the filter panel's More filters fold opens on the disclosure atom", () => {
+  const summary = `${MORE_FILTERS} > summary`;
+
+  test("its summary is a 32 disclosure with the chevron as the one open-state cue, turned 90 once open", () => assertFoldOnOneBox(MORE_FILTERS, summary));
+
+  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(summary));
 });

@@ -2422,8 +2422,9 @@ function FilterPanelO({
       ))}
 
       <details className="mb-3">
-        <summary className="fs-meta text-faint uppercase tracking-wider cursor-pointer select-none mb-1.5">
-          More filters
+        <summary className="group disclosure fs-meta uppercase tracking-wider select-none">
+          <window.UI.DisclosureChevron />
+          <span>More filters</span>
         </summary>
         <div className="pt-2">
           {MORE_FILTER_AXES.map(({ axis, label, options }) => (
