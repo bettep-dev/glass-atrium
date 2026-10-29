@@ -1,6 +1,7 @@
 // Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control, a 24px
 // inline target or a value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
-// a compact body row off .tbl sits on the 32 step (a mark + value cell too), and a word KPI value sits on the figure's baseline.
+// a compact body row off .tbl sits on the 32 step (a mark + value cell too), a word KPI value sits on the figure's baseline, and the
+// shared error-details summary is the 32 disclosure atom.
 // Runner: npx tsx --test test/ui.row-geometry.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -68,6 +69,13 @@ const INLINE_TARGET_ROWS = [
   { name: "a checkbox hit area", target: `<label class="inline-target"><input type="checkbox" aria-label="Select row" style="width: 16px; height: 16px;" /></label>` },
 ] as const;
 
+// the shipped error-details fold every RegionFailure and AlertCard carries; each is laid out closed and open
+const ERROR_DETAIL = "HTTP 503 Service Unavailable";
+const ERROR_DETAILS_ROWS = [
+  { name: "a failed region", id: "details-region", markup: render(ui.RegionUnavailable, { source: "outcomes", error: new Error(ERROR_DETAIL) }) },
+  { name: "an alert card", id: "details-alert", markup: render(ui.AlertCard, { tone: "crit", title: "Couldn't load outcomes.", details: ERROR_DETAIL }) },
+] as const;
+
 // column-header rows, one table each: a house .tbl, a geometry-only .tbl--own-face, a table off .tbl that opts in through
 // thead.tbl-head (its own rule and inline padding, as the matrix and crosstab tables carry), and the sortable and control cases
 const headTable = (row: string, tableAttrs: string, theadAttrs: string, cells: string): string =>
@@ -124,6 +132,8 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
   </tbody></table>
   ${HEAD_ROWS.map((row) => row.markup).join("\n  ")}
   ${COMPACT_ROWS.map((row) => row.markup).join("\n  ")}
+  ${ERROR_DETAILS_ROWS.map((row) => `<div id="${row.id}" style="width: 480px;">${row.markup}</div>` +
+    `<div id="${row.id}-open" style="width: 480px;">${row.markup.replace("<details", "<details open")}</div>`).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
     ${KPI_VALUES.map((value) => `<div id="${value.id}">${value.markup}</div>`).join("\n    ")}
   </div>
@@ -211,6 +221,42 @@ describe("a .tbl row is one 40px line whatever its cells hold", () => {
     assert.notEqual(summary.display, "list-item", "a list-item summary draws the UA marker");
     assert.equal(summary.list, "none");
   });
+});
+
+// RegionFailure and AlertCard share one error-details fold: its summary sits on the C32 disclosure atom, the chevron the one open-state cue
+describe("the shared error-details summary is the disclosure atom", () => {
+  interface SummaryReading { height: number; display: string; list: string; chevronCentre: number | null; labelCentre: number | null; chevronTurn: number }
+
+  const readSummary = (id: string): Promise<SummaryReading> =>
+    page.$eval(`#${id} summary`, (summary) => {
+      // a named helper here would pick up the runner's __name wrapper, which the page does not define
+      const [chevronCentre, labelCentre] = [summary.querySelector(":scope > svg"), summary.querySelector(":scope > span")]
+        .map((el) => (el ? (el.getBoundingClientRect().top + el.getBoundingClientRect().bottom) / 2 : null));
+      const chevron = summary.querySelector(":scope > svg");
+      const transform = chevron ? getComputedStyle(chevron).transform : "none";
+      const turn = transform === "none" ? new DOMMatrix() : new DOMMatrix(transform);
+      const style = getComputedStyle(summary);
+      return {
+        height: summary.getBoundingClientRect().height, display: style.display, list: style.listStyleType, chevronCentre, labelCentre,
+        chevronTurn: Math.round((Math.atan2(turn.b, turn.a) * 180) / Math.PI),
+      };
+    });
+
+  for (const row of ERROR_DETAILS_ROWS) {
+    test(`${row.name}: the summary is one 32 line, chevron then label on its centre, no UA marker`, async () => {
+      const summary = await readSummary(row.id);
+      assert.equal(summary.height, 32, "the C32 disclosure height");
+      assert.notEqual(summary.display, "list-item", "a list-item summary draws the UA marker");
+      assert.equal(summary.list, "none");
+      assert.ok(summary.chevronCentre !== null && summary.labelCentre !== null, "a chevron and a label span inside the summary");
+      assert.ok(Math.abs(summary.chevronCentre - summary.labelCentre) < 1, `chevron centre ${summary.chevronCentre} vs label ${summary.labelCentre}`);
+    });
+
+    test(`${row.name}: the chevron turns a quarter only while the details are open`, async () => {
+      assert.equal((await readSummary(row.id)).chevronTurn, 0, "closed");
+      assert.equal((await readSummary(`${row.id}-open`)).chevronTurn, 90, "open");
+    });
+  }
 });
 
 // R-a: one header-row system — a plain header row sits on the 32 compact step, a sortable one on the 40 row step, at the

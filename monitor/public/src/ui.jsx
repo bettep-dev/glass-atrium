@@ -1023,10 +1023,10 @@ function Table({ caption, isCaptionShown = false, isHeadSticky = false, columns,
 
 const DISCLOSURE_CHEVRON_PX = 14;
 
-// Brightens with its `group` ancestor's hover; a 90° turn marks the open state.
+// Brightens with its `group` ancestor's hover; a 90° turn marks the open state — through isOpen, or through details[open] in a summary.
 function DisclosureChevron({ isOpen }) {
   return <Icon name="chevR" size={DISCLOSURE_CHEVRON_PX}
-    className={`text-dim group-hover:text-ink ${isOpen ? 'rotate-90' : ''}`.trim()} />;
+    className={`disclosure-chevron text-dim group-hover:text-ink ${isOpen ? 'rotate-90' : ''}`.trim()} />;
 }
 
 // Expand/collapse control on the .disclosure atom: state rides aria-expanded, the visible label names it.
@@ -1775,7 +1775,7 @@ function ErrorDetails({ detail }) {
   if (!detail) return null;
   return (
     <details className="fs-meta text-faint">
-      <summary className="cursor-pointer">Details</summary>
+      <summary className="group disclosure"><DisclosureChevron /><span>Details</span></summary>
       <code className="block mt-1 font-mono break-all">{detail}</code>
     </details>
   );

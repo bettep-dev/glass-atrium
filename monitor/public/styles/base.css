@@ -10,6 +10,9 @@
 details[open] > summary .chevron {
 	transform: rotate(180deg);
 }
+details[open] > summary.disclosure > .disclosure-chevron {
+	transform: rotate(90deg);
+}
 /* disclosure trigger — DisclosureButton or a <summary>: chevron + label on one centre line at the 32 control height, no border.
    A non-list-item display drops the UA marker (WebKit keeps its own pseudo) → the chevron is the one open-state cue */
 .disclosure {
