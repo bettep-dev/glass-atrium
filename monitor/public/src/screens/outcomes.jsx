@@ -2588,7 +2588,7 @@ function ResultTableCard({
         />
       </div>
       {state.status === 'ready' && totalMatched > 0 && (
-        <div className="px-4 py-2 border-t border-line flex items-center justify-between fs-meta text-dim font-mono">
+        <div className="card-foot justify-between font-mono">
           <span>{formatIntO(page * limit + 1)}–{formatIntO(Math.min((page + 1) * limit, totalMatched))} / {formatIntO(totalMatched)}</span>
           <div className="flex items-center gap-2">
             <button

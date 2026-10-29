@@ -1,6 +1,7 @@
 // Learning controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the screen's
 // own style block, rendered from the shipped components: the view toggle, the suggestion board rows and the held-cause fold —
-// each keeps one box in every state (§7.16) — and the Instrumentation corpus-growth value row on one baseline.
+// each keeps one box in every state (§7.16) — the Instrumentation corpus-growth value row on one baseline, and the Learning memory
+// headline counts on the ladder's 4 value step.
 // Runner: npx tsx --test test/improvement.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -83,6 +84,9 @@ const CORPUS_GROWTH = getMarkup(
   },
   instrumentationScreen,
 );
+const LEARNING_MEMORY = getMarkup("BucketRowI", {
+  state: { status: "ready", busy: false, data: {}, error: null }, buckets: { ctm: 12, epm: 3 }, failures: [], onRetry: noop,
+});
 
 // the board lane widths the audit measured: 1440 (378) and 820 (226)
 const LANE_WIDTHS = [378, 226] as const;
@@ -94,6 +98,7 @@ const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</
   ${LANE_WIDTHS.map((w) => `<div id="lane-${w}" style="width: ${w}px; padding: 0; display: flex; flex-direction: column; gap: 8px;">${getLane()}</div>`).join("")}
   <div id="held" style="width: 420px; padding: 24px;">${HELD_CAUSE}</div>
   <div id="corpus" style="width: 560px; padding: 24px;">${CORPUS_GROWTH}</div>
+  <div id="learning-memory" style="width: 560px; padding: 24px;">${LEARNING_MEMORY}</div>
 </body></html>`;
 
 const TOGGLE_OPTIONS = ["Operator", "Instrumentation"] as const;
@@ -198,5 +203,25 @@ describe("the corpus-growth value row sets its figure, unit and delta on one bas
     const delta = await readTextItem(CORPUS_TEXT.delta);
     assert.ok(Math.abs(unit.left - value.right - 4) < 0.01, `figure ↔ unit ${unit.left - value.right}`);
     assert.ok(Math.abs(delta.left - unit.right - 12) < 0.01, `unit ↔ delta ${delta.left - unit.right}`);
+  });
+});
+
+describe("the Learning memory headline sets each count on the ladder's value step", () => {
+  // per count: its glyph, figure and label in order — each 4 from the one before
+  const readMetricSteps = () =>
+    page.$$eval("#learning-memory .i-loop-metric > span", (counts) =>
+      counts.map((count) => {
+        const [glyph, figure, label] = [...count.children].map((el) => el.getBoundingClientRect());
+        return { text: count.textContent ?? "", glyphToFigure: figure.left - glyph.right, figureToLabel: label.left - figure.right };
+      }),
+    );
+
+  test("glyph to figure and figure to label are 4 apart in both counts", async () => {
+    const counts = await readMetricSteps();
+    assert.equal(counts.length, 2, "Confirmed wins and Mistake patterns");
+    for (const { text, glyphToFigure, figureToLabel } of counts) {
+      assert.ok(Math.abs(glyphToFigure - 4) < 0.01, `${text}: glyph ↔ figure ${glyphToFigure}`);
+      assert.ok(Math.abs(figureToLabel - 4) < 0.01, `${text}: figure ↔ label ${figureToLabel}`);
+    }
   });
 });

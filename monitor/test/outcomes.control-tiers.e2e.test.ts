@@ -166,6 +166,19 @@ describe("each pagination button keeps one 32 box in every state", () => {
   });
 });
 
+describe("the ledger's pagination row is the card's 40 foot", () => {
+  test("it is 40 tall with its page buttons centred below its top rule", async () => {
+    const { foot, button } = await page.$eval(LEDGER_BUTTON("mid-page", "Next"), (el) => ({
+      foot: el.closest(".card > *")!.getBoundingClientRect().toJSON() as DOMRect,
+      button: el.getBoundingClientRect().toJSON() as DOMRect,
+    }));
+    assert.equal(foot.height, 40);
+    const centre = (button.top + button.bottom) / 2;
+    const below = (foot.top + 1 + foot.bottom) / 2;
+    assert.ok(Math.abs(centre - below) <= 0.5, `button centre ${centre} vs the foot's ${below} below its rule`);
+  });
+});
+
 describe("the filter panel's More filters fold opens on the disclosure atom", () => {
   const summary = `${MORE_FILTERS} > summary`;
 
