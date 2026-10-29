@@ -127,10 +127,12 @@ Every sanctioned suppression in the enforced scope carries an adjacent annotatio
 |---|---|---|
 | git-initialized | `git log` / `git restore` | redundant |
 | `.git` absent on this machine | none | REQUIRED; MUST NOT be skipped on the strength of this doc |
-| untracked: `~/.glass-atrium/skills/`, `hooks/` and `scripts/` (minus their `test/` repos), the root's own files | none | not prescribed — lower stakes |
+| untracked rule text: `~/.glass-atrium/scoped/` and `skills/` | none | REQUIRED — the rule bodies and rule detail there have no git recovery |
+| untracked: every other path under `~/.glass-atrium/` | none | not prescribed — lower stakes |
 
 - Git-initialized coverage: the self-improvement core code (daemon-apply.sh / daemon_cycle.py / daemon-cycle.sh) and every rule file under `~/.glass-atrium/rules/`, this one included.
-- Why the untracked surface is lower-stakes: it holds no self-improvement core code and no rule SoT.
+- The untracked catch-all covers `lib/`, `hooks/` and `scripts/` (minus their `test/` repos), the root's own files, and any path neither table above names.
+- Why the untracked catch-all is lower-stakes: it holds no self-improvement core code and no rule SoT.
 
 ## Cross-References
 
