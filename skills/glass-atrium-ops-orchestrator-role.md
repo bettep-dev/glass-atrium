@@ -423,25 +423,22 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - Bulk material — reviews, logs, prior reports — goes by file path.
 - Content: the 6 delegation elements (SoT: `skills/glass-atrium-ops-orchestrator.md` → `#### Delegation required elements`).
 - **Attestation-token placement** — for the whole family: `[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` · `[DOC-ROUTE]` · `[SCOPE-EXPANSION-APPROVED]`.
-  - Manual path → inside the Agent tool's `prompt` parameter, never the user-facing narration.
+  - Manual path → the Agent tool's `prompt` parameter, never the user-facing narration.
   - `[PLAN-CLOSE]` has no manual form: the manual close is a reviewer spawn (`skills/glass-atrium-ops-orchestrator.md` → `## Managed Document Completion (Direct Handling)` → Step 3).
   - Ultracode path → the top-of-script `log()` string or `meta.description` (`skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`, Workflow pre-flight item 1).
-  - Which tokens a DEV delegation owes: `[ENTRY-CLASS]` alone on a simple-task entry, every applicable token on plan-backed work (`#### Entry classification (DEV delegations)` → **Simple-task waiver**).
-- **`[SCOPE]` — the 7th delegation element, REQUIRED on plan-backed DEV and on PLANNING delegations; grammar SoT.** One line opened by the token, `files=` first, ` · `-separated:
+- **`[SCOPE]` — the 7th delegation element, required on plan-backed DEV and on PLANNING delegations; grammar SoT.** One line opened by the token, `files=` first:
 
   ```
   [SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>
   ```
 
-  - **What it is for**: it fixes the literal scope of the user's instruction in text, for later comparison with what was built.
-  - Optional on a simple-task DEV entry (`#### Entry classification (DEV delegations)` → **Simple-task waiver**); a PLANNING delegation always carries it.
+  - Why: it fixes the user instruction's literal scope in text, to compare later with what was built.
   - **Author rules** (detail: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`):
     - Write the ` · ` separators.
     - The first declaration line wins: block-quote (`> `) a relayed copy or keep it mid-line.
   - **`files=` completeness duty**: declare every path the sanctioned work touches — its travelling tests, every required co-deliverable, and the coupled tests it makes stale, obsolete or wrong (`scoped/shared-testing.md` → **Coupled-test check**).
-    - Declare what the work needs, never a safety margin — under- and over-declaring both defeat the excess check.
-  - **Honest backing — presence-checked only**: an absent line draws a stderr advisory, never a block; every downstream check then fails open.
-    - Fidelity is honor-system: it buys auditability, never enforcement.
+    - No safety margin: under- and over-declaring both defeat the excess check.
+  - **Honest backing — presence-checked only**: an absent line draws a stderr advisory, never a block, and every downstream check then fails open; fidelity is honor-system.
 - **`[PLAN-CLOSE]` — the close token, required on every plan-referencing DEV-spawning Workflow script; grammar SoT.** One line, in one of two forms:
 
   `[PLAN-CLOSE] in-script`
@@ -449,10 +446,9 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   `[PLAN-CLOSE] deferred: <the later script or step that closes the plan>`
 
   - **Close form** (`in-script`): the script ends in the terminal Reconcile & Close phase (`skills/glass-atrium-ops-orchestrator.md` → `##### In-script verify-stage (ultracode)`).
-  - **Deferral form** (`deferred:`): it does not; the value names the later script or step that runs the close.
-  - These are the only form values; the plan closed is the one the script's plan-ref cites.
-  - **Honest backing — advisory only**: a script carrying neither form draws a stderr advisory, never a block (`hooks/enforce-workflow-verify-stage.sh`).
-    - Truthfulness is honor-system.
+  - **Deferral form** (`deferred:`): it does not.
+  - The plan closed is the one the script's plan-ref cites.
+  - **Honest backing — advisory only**: a script carrying neither form draws a stderr advisory, never a block (`hooks/enforce-workflow-verify-stage.sh`); truthfulness is honor-system.
 
 ### Failure Recovery Loop
 

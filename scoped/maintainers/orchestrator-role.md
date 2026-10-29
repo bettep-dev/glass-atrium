@@ -100,8 +100,9 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The rule file's H2s `## Decision-Phase Notes` · `## Monitoring and Provenance Notes` · `## Verification Gates and Cost Tiers` · `## Spawn Sizing and Team Composition` · `## Handoff and Failure Recovery` are split points that hold each H2 under the 8 KB cap.
 - Its H3s `### Pre-spawn Probes` · `### Deliverable Exposure` · `### Monitoring Notes` · `### Provenance` · `### Stage-2 Backstops` · `### Team Composition` · `### Parallel Fan-out` wrap cited H4s, so that no H3 carries more than one cap's worth of them.
 - `### Context Handoff Size` has no wrapper and no H4: its citers name it for the summary-only rule, the delegation-element count, the token placement and both token grammars, so all of them stay directly under it.
-  - It is held under the 3 KB H3 cap by compression alone; the `[SCOPE]` author-rule detail sits in `references/scope-parser.md`, and the rest of its moved text is recorded in this note's Context Handoff Size linkage entry.
-  - `### Provenance` is the other H3 near the cap; measure both after any edit to them.
+  - The `[SCOPE]` author-rule detail sits in `references/scope-parser.md`, and the rest of its moved text is recorded in this note's Context Handoff Size linkage entry.
+- `### Spawn Budget`, `### Provenance` and `### Context Handoff Size` sit near the 3 KB H3 cap: byte-measure each, H4 children included, before any addition to it.
+  - A line that would push `### Context Handoff Size` over the cap moves `[SCOPE]` detail to `references/scope-parser.md` first.
 - A section that grows past a cap splits the same way: insert a wrapper heading, never change a cited heading's level.
   - Why: hooks quote `### Spawn Budget`, `### Context Handoff Size` and `### Phase Notes`, and `CostTierRuleTextTest` splits on the next `###`.
 - A wrapper is a split point, not a citation target: cite the heading inside it.
@@ -205,6 +206,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The `[SCOPE]` and `[PLAN-CLOSE]` grammar SoTs sit in the rule file; every other file carries a pointer only.
 - The `[SCOPE]` author rules keep two binding lines in the rule file, the separators and first-wins with relaying.
   - `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md` → `## Author rules — detail` holds only what the rule file does not say: never-merged, the bare-form relay case, the space-in-path limit and skip-not-block.
+- The simple-task waiver lives once at `#### Entry classification (DEV delegations)` → **Simple-task waiver**; the H3 does not repeat it; its `[SCOPE]` and `[PLAN-CLOSE]` grammar leads state only where each token is required.
 - The `[PLAN-CLOSE]` advisory is advisory, not a block, because a multi-script track legitimately closes in a later script, which a block would false-positive on.
 - The delegation-prompt language rule is the Tier-1 `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Output Language` (delegation prompts in English, literal data in its own language).
   - The rule file keeps only the delta, a Delegation action row: injected literal strings set apart in backticks or a blockquote.
