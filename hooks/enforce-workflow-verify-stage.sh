@@ -238,12 +238,15 @@
 # rather than restating it):
 #   Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false
 #   positives across a full rolling firing-log window, the copy-verbatim skeletons in
-#   skills/glass-atrium-ops-orchestrator.md passing the check unmodified, and a named one-edit
-#   remediation in the advisory text for each of the three scoped rules.
+#   skills/glass-atrium-ops-orchestrator.md and
+#   skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md passing the
+#   check unmodified, and a named one-edit remediation in the advisory text for each of the three
+#   scoped rules.
 #   Promotion of the completion-channel advisory to blocking requires, verbatim: zero adjudicated false
 #   positives across a full rolling firing-log window; every copy-verbatim declaration-bearing skeleton
-#   in skills/glass-atrium-ops-orchestrator.md passing unmodified; and the remediation round-trip green
-#   with a paired negative control.
+#   in skills/glass-atrium-ops-orchestrator.md and
+#   skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md passing
+#   unmodified; and the remediation round-trip green with a paired negative control.
 #
 # ROLLBACK LEVER (the operator-reversible counterpart of the promotion condition above): while a MARKER
 # FILE exists at WORKFLOW_GATE_COMPLETION_ROLLBACK_MARKER, the completion-channel property-absent value

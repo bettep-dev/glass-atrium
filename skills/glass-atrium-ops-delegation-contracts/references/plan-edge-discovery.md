@@ -24,7 +24,6 @@
 
 ## `[PLAN-SUBSET]` notes
 
-- **What the token is**: evidence of the check, never the rule itself.
 - **Placement**: `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size` → Attestation-token placement.
 - **What an `<id>` resolves to**: the plan's own task id where it carries one; on a brief plan, whose work streams carry no identifier, the stream's ordinal in the execution-order list (`included=2,3 order=2>3`).
 - **Ids and flags only — no free text**: sibling token parsers are strict enough to carry a dedicated `block-grammar` verdict, and spaces and commas inside a single-line token break them. Justifications go in the delegation body.

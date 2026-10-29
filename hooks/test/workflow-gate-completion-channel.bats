@@ -38,6 +38,9 @@
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-workflow-verify-stage.sh"
 SKILL_MD="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-orchestrator.md"
+# The Analysis-Track copy-verbatim skeleton moved out of the skill into this reference; the floors
+# harvest both files so it stays covered.
+ANALYSIS_REF="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
@@ -361,9 +364,9 @@ agent('b', { schema: { properties: { completion_block: { type: 'string' } } } })
   # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
   # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
   # Every path below is one the repository always ships, so its absence is drift and FAILS.
-  [[ -f "${SKILL_MD}" ]] || {
-    printf 'skill file absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
-      "${SKILL_MD}" >&2
+  [[ -f "${SKILL_MD}" && -f "${ANALYSIS_REF}" ]] || {
+    printf 'skeleton file absent: %s or %s — the repository always ships both, so this is drift, not an optional dependency\n' \
+      "${SKILL_MD}" "${ANALYSIS_REF}" >&2
     return 1
   }
   local outdir="${BATS_TEST_TMPDIR}/skill-fences"
@@ -375,7 +378,7 @@ agent('b', { schema: { properties: { completion_block: { type: 'string' } } } })
       next
     }
     infence { buf = buf $0 "\n" }
-  ' "${SKILL_MD}"
+  ' "${SKILL_MD}" "${ANALYSIS_REF}"
   local fails="" fence name body
   # Absence of a fence is itself a failure: a floor over nothing is vacuous green.
   [[ -f "${outdir}/fence_1.js" ]] || {
@@ -689,9 +692,9 @@ PYX
 # author would paste it.
 @test "schema-absent(floor): no skill JS skeleton fires the nudge" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
-  [[ -f "${SKILL_MD}" ]] || {
-    printf 'skill file absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
-      "${SKILL_MD}" >&2
+  [[ -f "${SKILL_MD}" && -f "${ANALYSIS_REF}" ]] || {
+    printf 'skeleton file absent: %s or %s — the repository always ships both, so this is drift, not an optional dependency\n' \
+      "${SKILL_MD}" "${ANALYSIS_REF}" >&2
     return 1
   }
   local outdir="${BATS_TEST_TMPDIR}/absent-fences"
@@ -703,7 +706,7 @@ PYX
       next
     }
     infence { buf = buf $0 "\n" }
-  ' "${SKILL_MD}"
+  ' "${SKILL_MD}" "${ANALYSIS_REF}"
   local fails="" fence name
   # Absence of a fence is itself a failure: a floor over nothing is vacuous green.
   [[ -f "${outdir}/fence_1.js" ]] || {

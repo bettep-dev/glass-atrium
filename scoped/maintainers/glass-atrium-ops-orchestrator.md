@@ -22,16 +22,92 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 | `#### Resilient Workflow Authoring [ORCHESTRATOR]` and its `#####` children | frozen `agents/` citations at this level · `schema-cap-authority-single-site.bats` |
 | `##### Absolute schema-cap rules` | the rule phrases `orchestrator-skill-schema-example.bats` greps in this file |
 | `##### Copyable helper (robustAgent)` | its `js` fence, replayed by `workflow-gate-completion-channel.bats` |
-| `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]` | the `AnalysisSchema` fence `orchestrator-skill-schema-example.bats` reads — repointable (below) |
 | `##### Stage gates` | revision caps cited by `references/review-rounds.md` · `scoped/maintainers/orchestrator-role.md` |
 | `###### Copyable skeletons — 2-phase (verify → implement) and its 3-phase variant` | `###### Machine-checked skeletons` suites · the gate hook header's promotion condition |
 | `##### Entry-class token placement (ultracode — DEV workflow)` | its declaration fence, read by the same suites |
 
-### Relocatable — `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]`
+### Relocated — `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]`
 
-- This block and its `AnalysisSchema` fence are relocatable: no frozen `agents/` file and no hook message cites them.
-- Every pin is repointable in the pass that moves it:
-  - `hooks/test/orchestrator-skill-schema-example.bats` — reads the `AnalysisSchema` fence and its `completion_block` member from the skill file.
-  - the **Print-block-then-emit** bullet under `##### Authoring idioms that implement those rules` — its reference form and machine-checked-repetition sub-bullets cite the fence.
-  - in-file prose cites — `#### Resource Budget` (the FLOOR bullet) · `#### Read-Extent Discipline [ORCHESTRATOR]` → **Scope of this duty**.
-- Owner of the move: the follow-on prompt-slimming plan (clauded-docs/43821 brief), which supersedes the remaining rank-14 sub-passes.
+- The heading stays in the skill as a three-bullet pointer; its body and `AnalysisSchema` fence live in `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → `## Analysis-Track Right-Sizing (input-side)`.
+- Pins that read the moved fence from the reference, so a further move repoints them in the same pass:
+  - `hooks/test/orchestrator-skill-schema-example.bats` → `EXEMPLAR` (D1–D3, AC13).
+  - `hooks/test/workflow-gate-completion-channel.bats` → `ANALYSIS_REF` (both skeleton floors).
+- Citers of the moved section:
+  - `references/delegation-prompt.md` → `## Resource Budget` (the floor bullet) · `## Read-Extent Discipline` → **Scope of this duty**.
+  - the skill's **Print-block-then-emit** bullet (via the kept heading).
+  - `hooks/enforce-workflow-verify-stage.sh` → `PROMOTION CONDITION` — both sentences name the reference beside the skill; verbatim pin: `enforce-workflow-verify-stage.bats` → `schema-cap(promotion)`.
+
+### Held cap exception — `## Core Process`
+
+- This H2 stays over the 8 KB H2 cap because it contains the held `### Architecture Patterns [ORCHESTRATOR]`, itself over 8 KB.
+- Every other H3 under it is held to the 3 KB H3 cap, read as 3,000 B (UTF-8, heading to the next H3); re-measure the H2 once that H3's pins retire.
+
+### Relocated — Agent selection and delegation-prompt detail
+
+- Each heading stays in the skill as a pointer stating its duty; bodies live in `skills/glass-atrium-ops-delegation-contracts/references/`:
+  - `agent-selection.md` ← `#### Selection procedure` · the `#### Ordering caveat` heading · `#### Compound Task Examples` · `#### Routing-Decision Record (observability convention)` · `#### Routing Verification (LLM-as-Judge)`.
+  - `delegation-prompt.md` ← `#### Resource Budget` · `#### Prompt-content aids` · `#### Read-Extent Discipline [ORCHESTRATOR]` · `#### Delegation Information-Hiding [ORCHESTRATOR]`.
+- External citer repointed: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Routing output: team schema, size, and correlation ID` → **Example**.
+- No test, hook message or `agents/` file reads the moved text.
+
+## `## Orchestrator On-Demand Mechanisms` — linkage and held cap
+
+- The group is split across three H2s so each H2 not holding a held H3 stays within the 8 KB cap:
+  - `## Orchestrator On-Demand Mechanisms` — the ceremony and `### Reply Form Contract (main-session user-facing replies)`.
+  - `## Workflow-Tool Execution (On-Demand)` — `### Ultracode / Workflow-tool Mode` alone.
+  - `## Approval Protocols (On-Demand)` — `### Scope-Expansion Approval Protocol` and `### Self-Improvement User-Approval Trigger`.
+  - Every citer names an H3, never one of these H2s, so the split repointed nothing; the first H2's lead sentence names all three and the two `## Managed Document …` sections.
+- Reached from `skills/glass-atrium-ops-orchestrator-role.md` through `> Detail:` pointers, except `### Self-Improvement User-Approval Trigger`, which Tier-1 `core-learning-log.md` → Instruction Improvement Approval Tier points at.
+  - `autoagent/daemon_cycle.py` also cites that heading by name (frozen; keep it byte-identical).
+- `### Reply Form Contract (main-session user-facing replies)` is the canonical; `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition holds its one pointer.
+  - Single-siting is checked only at PR review (diff inspection).
+
+### Held cap exception — `### Ultracode / Workflow-tool Mode`
+
+- This H3 stays over the 3 KB H3 cap, and so its own H2, `## Workflow-Tool Execution (On-Demand)`, stays over the 8 KB H2 cap.
+- Every other H3 of the group is held to 3,000 B, and the group's other two H2s to 8 KB; re-measure with `wc -c` after any edit there.
+- Each block is held in place by a citer that cannot be repointed without a frozen or hook edit:
+
+| Block (under this H3) | Pin that holds it in place |
+|---|---|
+| the H3 itself · `#### Engine-vs-orchestrator layering` | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` ("Layering detail") |
+| **Persist-intent research stage (explicit side-effect exception)** | `agents/glass-atrium-intel-researcher.md` |
+| `#### Workflow pre-flight (run before EVERY Workflow call)` item numbers | `core-outcome-record.md` (item 8) · `scoped/maintainers/scope-dev.md` and the role file (item 1) |
+| pre-flight item 8 text (343 B, over the 300 B bullet cap) | kept byte-identical by delegation as a hook-quoted literal |
+| `#### Completion-channel non-emission …` heading, population and recipe | `hooks/enforce-workflow-verify-stage.sh` messages name the section and say it carries both |
+
+### Completion-channel measurement — editor duties
+
+- The sub-section is the measurement SoT for the non-emission share: change its shape there first, then propagate; never fork the wording.
+- `hooks/enforce-workflow-verify-stage.sh` quotes the shape at three sites, each naming the sub-section as SoT; a new quoting site joins this list:
+  - the header's fifth-advisory-pass block;
+  - `print_completion_channel_advisory` (property-absent);
+  - `print_completion_schema_absent_advisory` (schema-absent).
+- Machine-checked: `hooks/test/workflow-gate-completion-channel.bats` asserts the shape phrase in that hook's stderr — change it in the skill, then in the hook, or that suite goes red.
+- Why the SoT sits in the skill: a hook message is a fixed nudge, whereas the re-derivation recipe needs a home that is re-read and re-run.
+- The schema-absent silencer (c), the wrapper case, is inherited from the shared roster predicate; the schema-absent acceptance criterion decides direct-spawn firing only and does not cover it.
+- The cross-module-schema false positive is not a fail-open — the two read oppositely, so never relabel it.
+
+### Other editor facts from that H2
+
+- `### Scope-Expansion Approval Protocol`: promotion of the token check to an exit-2 block is structurally blocked, not deferred — a prompt scan cannot tell an expansion intent from a mention of one.
+  - Re-opening it needs a new pre-tool intent signal, not more coverage data.
+- `#### Automation Boundary`: `scripts/llm-preflight.sh` is not dead code — `autoagent/autoagents-eval.sh` sources it for its `llm_preflight 10.00` call, a manually invoked eval path CI does not run.
+
+### Relocated — ceremony steps and completion-signal detail
+
+- `skills/glass-atrium-ops-delegation-contracts/references/agent-lifecycle-ceremony.md` ← the ceremony's CLI refusal list and three H4s, now `##` headings there:
+  - `#### The 6 steps, each building on the previous` · `#### EXTEND path (step 3-alt — the DEFAULT branch)` · `#### Failure recovery (exit code → action)`.
+  - The ceremony H3 keeps the trigger and standing conditions.
+- `skills/glass-atrium-ops-delegation-contracts/references/completion-signals.md` ← the evidence detail of `#### Completion signals`, which stays as the pointer site (cited by `scoped/orchestrator-core.md`, the role file and `references/automatic-parallelization.md`).
+- `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` → `## Backstop detail` ← the manual-gate race and nested-origin detail from `#### Hook layer split under the engine`.
+- No test, hook message or `agents/` file read the moved text; the three moved headings had no citer outside the skill.
+
+## `## Managed Document Completion (Direct Handling)` and `## Red Flags` — relocations
+
+- `skills/glass-atrium-ops-delegation-contracts/references/managed-document-completion.md` ← Step 1's error cases and `sh` worked call; Step 2's decision table, row notes and honor-system residual.
+  - Step 1 and Step 2 stay as pointer sites: `hooks/enforce-workflow-verify-stage.sh` and `hooks/enforce-verification-gate.sh` messages name the H2 and Step 1 as the stage write recipe; the role file and `scoped/orchestrator-core.md` cite Step 1 and Step 3.
+- `skills/glass-atrium-ops-delegation-contracts/references/workflow-pre-submit-check.md` ← the `#### Pre-submit self-check …` check table and its per-check detail pointers.
+  - The H4 stays under `## Red Flags`: earlier sections of the skill cite it there.
+- `### Generic-subagent guard [LLM06/LLM01/LLM10]` and `## Red Flags` stay in place: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` cites "Red Flags (Generic-subagent guard)" (frozen).
+- No test reads the moved text: the suites that read this skill replay its `js` fences or grep phrases outside these sections, and the moved fence is `sh`.

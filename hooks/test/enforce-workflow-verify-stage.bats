@@ -1513,7 +1513,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
   # The window is the leading contiguous comment block, derived rather than a line number: a fixed
   # bound makes any later header paragraph break this assertion for a reason unrelated to it.
   header="$(awk '/^#/ { print; next } { exit }' "${HOOK_SH}" | sed 's/^# \{0,3\}//' | tr '\n' ' ' | tr -s ' ')"
-  [[ "${header}" == *"Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false positives across a full rolling firing-log window, the copy-verbatim skeletons in skills/glass-atrium-ops-orchestrator.md passing the check unmodified, and a named one-edit remediation in the advisory text for each of the three scoped rules."* ]] || {
+  [[ "${header}" == *"Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false positives across a full rolling firing-log window, the copy-verbatim skeletons in skills/glass-atrium-ops-orchestrator.md and skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md passing the check unmodified, and a named one-edit remediation in the advisory text for each of the three scoped rules."* ]] || {
     echo "PROMOTION CONDITION not recorded verbatim in the hook header" >&2
     return 1
   }

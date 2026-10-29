@@ -30,6 +30,9 @@
 
 REPO_ROOT="${BATS_TEST_DIRNAME}/../.."
 SKILL="${REPO_ROOT}/skills/glass-atrium-ops-orchestrator.md"
+# The Analysis-Track worked example (its AnalysisSchema fence) lives in this reference; the skill keeps
+# the rule phrases and a pointer to it.
+EXEMPLAR="${REPO_ROOT}/skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md"
 
 # The exact capped-property notation the defective worked example declared.
 DEFECT_LITERAL="findings: 'string(maxLength)'"
@@ -41,30 +44,35 @@ setup() {
   # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
   # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
   # Every path below is one the repository always ships, so its absence is drift and FAILS.
-  [[ -f "${SKILL}" ]] || {
-    printf 'skill file absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
-      "${SKILL}" >&2
-    return 1
-  }
+  local f
+  for f in "${SKILL}" "${EXEMPLAR}"; do
+    [[ -f "${f}" ]] || {
+      printf 'pin target absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
+        "${f}" >&2
+      return 1
+    }
+  done
 }
 
 # helper: fixed-string, case-insensitive presence assertion with a legible failure message
+# (optional second arg: the file to read; default the skill)
 assert_present() {
-  local needle="$1"
-  grep -Fiq -- "${needle}" "${SKILL}" || {
-    printf 'required marker absent from %s:\n  %s\n' "${SKILL}" "${needle}" >&2
+  local needle="$1" file="${2:-${SKILL}}"
+  grep -Fiq -- "${needle}" "${file}" || {
+    printf 'required marker absent from %s:\n  %s\n' "${file}" "${needle}" >&2
     return 1
   }
 }
 
 # helper: fixed-string absence assertion that reports the surviving occurrences
+# (optional second arg: the file to read; default the skill)
 assert_absent() {
-  local needle="$1" hits
-  hits="$(grep -Fc -- "${needle}" "${SKILL}" || true)"
+  local needle="$1" file="${2:-${SKILL}}" hits
+  hits="$(grep -Fc -- "${needle}" "${file}" || true)"
   [[ "${hits}" == "0" ]] || {
     printf 'forbidden literal still present in %s (%s occurrence(s)):\n  %s\n' \
-      "${SKILL}" "${hits}" "${needle}" >&2
-    grep -Fn -- "${needle}" "${SKILL}" >&2 || true
+      "${file}" "${hits}" "${needle}" >&2
+    grep -Fn -- "${needle}" "${file}" >&2 || true
     return 1
   }
 }
@@ -72,19 +80,21 @@ assert_absent() {
 # ── D1: the worked example no longer declares the capped property ────────────────────────
 
 @test "D1 the defective capped-property notation is absent from the analysis-schema example" {
-  assert_absent "${DEFECT_LITERAL}"
+  assert_absent "${DEFECT_LITERAL}" || return 1
+  assert_absent "${DEFECT_LITERAL}" "${EXEMPLAR}"
 }
 
 @test "D2 the analysis-schema example declares its properties UNCAPPED" {
-  assert_present "const AnalysisSchema = {"
-  assert_present "findings: 'string'"
-  assert_present "completion_block: 'string'"
+  assert_present "const AnalysisSchema = {" "${EXEMPLAR}" || return 1
+  assert_present "findings: 'string'" "${EXEMPLAR}" || return 1
+  assert_present "completion_block: 'string'" "${EXEMPLAR}"
 }
 
 # ── D3: no surviving per-array-element / per-item cap-sizing endorsement ─────────────────
 
 @test "D3 the withdrawn per-row cap-sizing floor is gone (no per-element cap endorsement)" {
-  assert_absent "${WITHDRAWN_FLOOR_LITERAL}"
+  assert_absent "${WITHDRAWN_FLOOR_LITERAL}" || return 1
+  assert_absent "${WITHDRAWN_FLOOR_LITERAL}" "${EXEMPLAR}"
 }
 
 # ── The five positive rules are stated explicitly ────────────────────────────────────────
@@ -123,19 +133,19 @@ assert_absent() {
 # fence. A prose mention elsewhere in the file — or a comment inside the fence — cannot satisfy
 # it, which is what makes the exemplar decidable as a reference form rather than as narration.
 
-# helper: print the js fence containing the given needle (first match only)
+# helper: print the js fence containing the given needle (first match only) from the given file
 fence_with() {
   awk -v needle="$1" '
     /^```/ { if (infence) { if (hit) { printf "%s", buf; exit } ; infence=0; buf=""; hit=0 } else { infence=1 } ; next }
     infence { buf = buf $0 "\n"; if (index($0, needle)) hit=1 }
-  ' "${SKILL}"
+  ' "$2"
 }
 
 @test "AC13 the exemplar fence declares completion_block as a schema member, not prose" {
   local fence
-  fence="$(fence_with "const AnalysisSchema")"
+  fence="$(fence_with "const AnalysisSchema" "${EXEMPLAR}")"
   [[ -n "${fence}" ]] || {
-    printf 'no fenced block declaring AnalysisSchema found in %s\n' "${SKILL}" >&2
+    printf 'no fenced block declaring AnalysisSchema found in %s\n' "${EXEMPLAR}" >&2
     return 1
   }
   # strip full-line comments so a commented mention cannot satisfy membership
