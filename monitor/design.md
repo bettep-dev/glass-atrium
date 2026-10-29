@@ -628,6 +628,7 @@
 - **`.disclosure`** (C32 disclosure, §7.15): inline-flex · chevron 14 + label, gap 4, on one centre line · min-height `--ctl-min-h` 32 · `--dim` → hover `--ink` · no border · global focus outline.
   - `DisclosureButton` renders on it (`aria-expanded` · `aria-controls`). A `summary` takes the same class: the UA marker drops, so the chevron is the one open-state cue.
   - In a `summary`, `DisclosureChevron` turns through `details[open]` instead of `isOpen`; the shared `ErrorDetails` fold (every RegionFailure and AlertCard) is one.
+  - A fold whose summary is its full-width head row (label left, count at the far end — the Wiki folds) sets that `summary` to block flex screen-locally; the 32 height, the gap and the states stay the atom's.
   - A `.tbl` cell holding one takes the control-cell step, so the row stays 40.
 - **`Disclosure({ kind, title, sub, tone })`**: `.card` 위 fold. header = `DisclosureButton` — 제목 500 `--ink` + sub `--fs-meta` `--faint`. 열림 규칙: §1 의 4).
 - **`Popover({ label, title })`**: 트리거 = `btn ghost sm` (`aria-haspopup="dialog"` · `aria-expanded`) · 패널 `role="dialog"`.
