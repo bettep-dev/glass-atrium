@@ -565,8 +565,11 @@
 | `confirm` | 중앙 소형 | min(560px, 92vw) · max-h 86vh · `--radius-card` | opacity + scale 0.97→1, 180ms ease-out |
 
 - 면: `.detail-panel` = `--overlay-surface` 불투명 + `--shadow-overlay` + 1px `--line` (텍스트 대비 보장).
-- head min-height `--card-head-h` 48 · padding 8px 24px (`.detail-title` `--fs-title` 600 · `.detail-sub` `--fs-meta` `--faint`) · body 16px 24px · foot 12px 24px `--sunken`.
-- **상호작용 계약**: 닫기 X · Esc · backdrop · focus trap (진입 포커스 + Tab 순환 + 닫힐 때 트리거 복귀) · 배경 `inert` + body scroll-lock · 가장 나중에 열린 surface 가 키보드 소유 (drawer 위 confirm) · `nav` 제공 시 foot 에 Prev/Next + Arrow 키.
+- head = card-head: min-height `--card-head-h` 48 including its 1px rule · padding-block (48 − `--ctl-min-h` − 1) / 2 = 7.5 · inline 24 · top-aligned, so a one-line head is exactly 48.
+  - `.detail-title` `--fs-title` 600 on a 24 line box (1.5 × `--fs-title`) offset 4 = (32 − 24) / 2 → its first line centres on the 32 close button whether a `.detail-sub` (`--fs-meta` `--faint`) follows or the title wraps; a wrapped title keeps normal leading.
+  - close = `btn ghost sm icon` 32×32, the one icon-only close class (`CardInfo` and the Documents viewer use the same).
+- body 16px 24px · foot 12px 24px `--sunken`.
+- **상호작용 계약**: 닫기 X · Esc · backdrop · focus trap (진입 포커스 + Tab 순환 + 닫힐 때 트리거 복귀) · 배경 `inert` + body scroll-lock · 가장 나중에 열린 surface 가 키보드 소유 (drawer 위 confirm) · `nav` 제공 시 foot 에 "Previous / Next" (`btn ghost sm`) + Arrow 키.
 - **scrim**: 솔리드 `rgba(0,0,0,0.42)` 기본, smoke 는 조건부 (§6.3 · §9.3). z: §6.5.
 - `.modal` / `.modal-backdrop` class 는 `clauded-docs.jsx` 다이얼로그 1곳에만 남아 있다. 새 다이얼로그는 `DetailSurface`.
 

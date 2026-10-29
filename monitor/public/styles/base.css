@@ -1052,17 +1052,25 @@ button.kpi:hover {
 	animation: detailPop 180ms ease-out;
 }
 
-/* head as card-head: min 48, inline 24 · a one-line title beside the 32px close button is 8 + 32 + 8 = 48 */
+/* head as card-head: min 48, inline 24 */
 .detail-head {
+	--detail-title-lh: calc(var(--fs-title) * 1.5);
 	min-height: var(--card-head-h);
-	padding: var(--space-2) var(--space-6);
+	padding: calc((var(--card-head-h) - var(--ctl-min-h) - 1px) / 2) var(--space-6); /* 7.5 + 32 + 7.5 + the 1px rule = 48 */
 	border-bottom: 1px solid rgb(var(--line));
 	display: flex;
-	align-items: flex-start;
+	align-items: flex-start; /* top, not centre → a sub-line or a wrapped title never moves the first line off the close button */
 	gap: 8px;
 	flex-shrink: 0;
 }
-.detail-title { font-weight: 600; font-size: var(--fs-title); color: rgb(var(--ink)); }
+/* a normal-leading line box, offset onto the close button's centre line */
+.detail-title {
+	margin-top: calc((var(--ctl-min-h) - var(--detail-title-lh)) / 2);
+	font-weight: 600;
+	font-size: var(--fs-title);
+	line-height: var(--detail-title-lh);
+	color: rgb(var(--ink));
+}
 .detail-sub { margin-top: var(--space-0_5); font-size: var(--fs-meta); color: rgb(var(--faint)); }
 .detail-body { padding: var(--space-4) var(--space-6); overflow-y: auto; flex: 1 1 auto; }
 /* bare — children 이 자체 header/close 소유 시 padding 만 제거 (overflow/flex 스크롤 거동 유지) */

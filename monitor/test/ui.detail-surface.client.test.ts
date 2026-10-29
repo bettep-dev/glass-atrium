@@ -79,6 +79,32 @@ describe("DetailSurface accessible name", () => {
   });
 });
 
+describe("DetailSurface chrome", () => {
+  const classesOf = (node: RenderedNode): string[] => String(node.props.className ?? "").split(/\s+/);
+  const getButton = (tree: RenderedNode, label: string): RenderedNode => {
+    const [button] = findNodes(tree, (n: RenderedNode) => n.type === "button" && n.props["aria-label"] === label);
+    assert.ok(button, `a "${label}" button`);
+    return button;
+  };
+
+  test("the close button is the square icon-only control, as every other icon-only close", () => {
+    const close = getButton(renderSurface({ title: "Session cost" }), "Close details");
+
+    for (const name of ["btn", "ghost", "sm", "icon"]) assert.ok(classesOf(close).includes(name), `close lacks .${name}: ${close.props.className}`);
+  });
+
+  test("record nav reads Previous / Next on the ghost-small button", () => {
+    const tree = renderSurface({ title: "Run", nav: { hasPrev: true, hasNext: true, onPrev: () => undefined, onNext: () => undefined } });
+    const rows = [{ label: "Previous record", text: "Previous" }, { label: "Next record", text: "Next" }];
+
+    for (const row of rows) {
+      const button = getButton(tree, row.label);
+      assert.equal(collectText(button).trim(), row.text);
+      for (const name of ["btn", "ghost", "sm"]) assert.ok(classesOf(button).includes(name), `${row.label} lacks .${name}: ${button.props.className}`);
+    }
+  });
+});
+
 interface FakeNode {
   name: string;
   tagName: string;

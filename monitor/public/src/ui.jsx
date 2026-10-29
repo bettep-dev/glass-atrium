@@ -751,7 +751,7 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   const dialogProps = titleId ? { 'aria-labelledby': titleId } : { 'aria-label': title };
   const bareTitle = bare && isElementTitle && !labelledBy ? <div id={titleId} hidden>{title}</div> : null;
 
-  const closeBtn = <button className="btn ghost sm" onClick={onClose} aria-label="Close details"><Icon name="x" size={14}/></button>;
+  const closeBtn = <button className="btn ghost sm icon" onClick={onClose} aria-label="Close details"><Icon name="x" size={14}/></button>;
   const head = <div className="detail-head">
     <div className="flex-1 min-w-0">
       <div id={titleId} className="detail-title">{title}</div>
@@ -763,7 +763,7 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   // nav 제공 시 footer 에 Prev/Next 승격 — 명시 footer 와 병존.
   const navFoot = nav ? <div className="detail-nav">
     <button className="btn ghost sm" onClick={nav.onPrev} disabled={!nav.hasPrev} aria-label="Previous record">
-      <Icon name="arrowU" size={14}/> Prev
+      <Icon name="arrowU" size={14}/> Previous
     </button>
     <button className="btn ghost sm" onClick={nav.onNext} disabled={!nav.hasNext} aria-label="Next record">
       Next <Icon name="arrowD" size={14}/>
