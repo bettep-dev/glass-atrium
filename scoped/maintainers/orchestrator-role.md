@@ -163,8 +163,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 ### `### Cost-Tier Selection`
 
-- `hooks/daemon_config.py` → `load_daemon_config` takes a pinned fallback id when its config file or model key is missing or invalid.
-  - Why a pinned id: the monitor rejects a bare alias for the worker model, and `hooks/pricing.json` cannot price one.
+- Why the rule file's `load_daemon_config` fallback is a pinned id: the monitor rejects a bare alias for the worker model, and `hooks/pricing.json` cannot price one.
 - That id sits in every seam holding the fallback:
   - `hooks/daemon_config.py` → `_FALLBACK`;
   - `scripts/lib/atrium-config.sh` → `atrium_resolve_worker_model`;
@@ -178,7 +177,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - The repo-body ban that binds authors — no `model:` key and no hardcoded tier/version string in repo agent bodies or daemon body proposals — lives in the rule file's Model pins.
 - The dashboard `fail_rate` the tier-escalation heuristic reads is computed read-only in monitor `agents.ts`; no code consumes it to switch a tier.
 - The rule file's "every pin is LIVE-ONLY, and the updater preserves it across updates" (`### Cost-Tier Selection` → Model pins) is implemented by `autoagent/lib/editable_merge.py` → `_LOCAL_ONLY_FRONTMATTER_KEYS`, exactly `("model",)`.
-  - `effort` is not in it: `_BASE_AWARE_FRONTMATTER_KEYS` keeps a live `effort` line only when it differs from base@install, so the LIVE-ONLY sentence never extends to `effort`.
+  - `effort` is not in it: `_BASE_AWARE_FRONTMATTER_KEYS` keeps a live `effort` line only when it differs from base@install, or always when no base anchor exists (live-wins), so the LIVE-ONLY sentence never extends to `effort`.
 - `scripts/test/glass-atrium-update.bats` cites the full text's "Cost-Tier Selection" as the sanction for live-wins, as the stub's two readers in the table above do: keep that heading and the sanction sentence in both files.
 
 ### `#### Analysis fan-out and team cardinality`
