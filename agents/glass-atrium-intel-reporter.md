@@ -193,8 +193,10 @@ curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: appli
 ### FINAL STEP (mode-split, REQUIRED)
 
 - After the deliverable is complete and the monitor POST has succeeded, emit the multi-line `[COMPLETION]` block per `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation.
-- Placement: NEVER inside the report body and NEVER inside a POSTed `*_body` field, in either mode.
-- Schema declares no `completion_block` → print the block as a dedicated final text turn (`core-outcome-record.md` → `### Emit Boundary` → Closing-turn discipline) as a best-effort fallback, and NEVER invent an undeclared key (schema validation would fail).
+- Placement: NEVER inside the report body and NEVER inside a POSTed `*_body` field, in any mode.
+- Schema-mode emits go in the schema's `completion_block` (`core-outcome-record.md` → Multi-line form).
+  - A schema that declares none → print the block as a dedicated final text turn (`core-outcome-record.md` → `### Emit Boundary` → Closing-turn discipline) as a best-effort fallback.
+  - Never invent an undeclared key there: schema validation would fail.
 
 ## Agent-Only Record Authoring Contract (token-optimized format)
 
