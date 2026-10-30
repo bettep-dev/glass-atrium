@@ -13,7 +13,7 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 ## Delivery — what actually reads this file
 
 - Both META agents receive the file whole at spawn.
-  - Each row's `rules.scope` in `agent-registry.json` names `scoped/scope-meta.md`, which the part-slot channel delivers (`rules/glass-atrium/core-compliance-matrix.md` → `### Injected Blocks (SubagentStart allowlist)`).
+  - Each row's `rules.scope` in `agent-registry.json` names `scoped/scope-meta.md`, which the part-slot channel delivers (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership declaration and SubagentStart channels`).
   - `python3 hooks/lib/inject_chunk.py --audit` reports the parts per agent.
 - A second reader, not a delivery channel: `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP` excerpts whole `##` heading blocks into the daemon's rule-improvement verify prompt (axis C3) for a META-agent patch.
 - **Consequence for authors**: a duty stated in the rule file binds both META agents; no conditional-load line in a body is needed.

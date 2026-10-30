@@ -18,7 +18,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 ## Delivery — how the rules reach their agents
 
-- The file arrives whole at spawn for every agent whose `agent-registry.json` row lists it in `rules.shared`, which the part-slot channel delivers (`rules/glass-atrium/core-compliance-matrix.md` → `### Injected Blocks (SubagentStart allowlist)`). The file carries no marker, so slot 1 (`hooks/inject-scope-rules.sh`) delivers none of it.
+- The file arrives whole at spawn for every agent whose `agent-registry.json` row lists it in `rules.shared`, which the part-slot channel delivers (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership declaration and SubagentStart channels`). The file carries no marker, so slot 1 (`hooks/inject-scope-rules.sh`) delivers none of it.
 - **Consequence for editors**: do not copy the bullets into an agent body — a body copy duplicates delivered text and has to be retired from a second direction.
 
 ## Decisions taken, with their reasoning
