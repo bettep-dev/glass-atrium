@@ -70,26 +70,32 @@ run_hook() {
 
 @test "Write channel: a generic credential assignment passes only in a test-fixture file and blocks with SEC-013 elsewhere" {
   local fixture_assign row name path want
+  # p/ and test/shop/ are repo roots; test/shop/ sits inside a dir named test above its own root
+  mkdir -p "${BATS_TEST_TMPDIR}/p/.git" "${BATS_TEST_TMPDIR}/test/shop/.git"
   fixture_assign="password"
   fixture_assign="${fixture_assign}: 'correct-horse-battery'"
   for row in \
-    'jest spec|/p/src/users/users.service.spec.ts|0' \
-    'vitest test file|/p/src/login.test.tsx|0' \
-    'pytest module in a tests dir|/p/tests/test_login.py|0' \
-    'file in a __tests__ dir|/p/src/__tests__/login.js|0' \
-    'fixture data file|/p/test/fixtures/users.json|0' \
-    'go test file|/p/auth/login_test.go|0' \
-    'production source|/p/src/users/users.service.ts|2' \
-    'test word inside a longer name|/p/src/latest.ts|2' \
-    'test word inside a dir name|/p/contest/app.ts|2' \
-    'dotenv file in a test dir|/p/test/.env|2' \
-    'secrets file in a test dir|/p/test/secrets.json|2' \
-    'dotenv-suffixed file in a fixtures dir|/p/test/fixtures/prod.env|2' \
-    'dotenv variant in a fixtures dir|/p/test/fixtures/.env-staging|2' \
-    'secrets stem inside a longer name|/p/tests/app.secrets.json|2' \
-    'capitalised secrets file|/p/test/Secrets.json|2' \
-    'credentials stem inside a longer name|/p/spec/aws-credentials.yml|2'; do
+    'jest spec|p/src/users/users.service.spec.ts|0' \
+    'vitest test file|p/src/login.test.tsx|0' \
+    'pytest module in a tests dir|p/tests/test_login.py|0' \
+    'file in a __tests__ dir|p/src/__tests__/login.js|0' \
+    'fixture data file|p/test/fixtures/users.json|0' \
+    'go test file|p/auth/login_test.go|0' \
+    'production source|p/src/users/users.service.ts|2' \
+    'test word inside a longer name|p/src/latest.ts|2' \
+    'test word inside a dir name|p/contest/app.ts|2' \
+    'dotenv file in a test dir|p/test/.env|2' \
+    'secrets file in a test dir|p/test/secrets.json|2' \
+    'dotenv-suffixed file in a fixtures dir|p/test/fixtures/prod.env|2' \
+    'dotenv variant in a fixtures dir|p/test/fixtures/.env-staging|2' \
+    'secrets stem inside a longer name|p/tests/app.secrets.json|2' \
+    'capitalised secrets file|p/test/Secrets.json|2' \
+    'credentials stem inside a longer name|p/spec/aws-credentials.yml|2' \
+    'production source in a repo below a dir named test|test/shop/src/config/prod.ts|2' \
+    'traversal out of a test dir|p/test/../src/config/prod.ts|2' \
+    'fixtures dir under no repo root|/p/test/fixtures/users.json|2'; do
     name="${row%%|*}" path="${row#*|}" want="${row##*|}" path="${path%|*}"
+    [[ "${path}" == /* ]] || path="${BATS_TEST_TMPDIR}/${path}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { email: 'ada@example.com', ${fixture_assign} }\"}}"
     [[ "${status}" -eq "${want}" ]] || { echo "${name}: status ${status}, want ${want}: ${output}"; return 1; }
     [[ "${want}" -eq 0 || "${output}" == *"SEC-013"* ]] || { echo "${name}: ${output}"; return 1; }

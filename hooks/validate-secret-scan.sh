@@ -74,19 +74,42 @@ NAMES_EN=(
 
 # Status 0 → a test or fixture file, where a generic credential assignment is test data (a spec's login
 # password), not a credential; a basename of a SECRETS_FILE shape, in any case, stays a secrets file there.
+# A fixture dir is read below the file's repo root only; under no repo root the basename alone decides.
 # Args: $1=file path
 is_test_fixture_path() {
-  local base
+  local base below
   base="$(printf '%s' "${1##*/}" | tr '[:upper:]' '[:lower:]')"
   case "${base}" in
     *.env | *.env[._-]* | *.envrc | *secret* | *credential*) return 1 ;;
     *.test.* | *.spec.* | *_test.* | *_spec.* | test_*.py | *.bats) return 0 ;;
     *) ;;
   esac
-  case "/${1}" in
+  # a dir named test/ or spec/ above the project, or one a `..` leaves, makes no file a fixture
+  [[ "/${1}/" == */../* ]] && return 1
+  # shellcheck disable=SC2310  # its status is the verdict: no repo root → not a fixture
+  below="$(get_project_relative_path "${1}")" || return 1
+  case "/${below}" in
     */test/* | */tests/* | */__tests__/* | */spec/* | */fixtures/* | */__fixtures__/* | */testdata/*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# The path below its nearest ancestor holding .git (a repo or worktree root); a relative path as written.
+# Exit 1 = an absolute path under no repo root. Args: $1=file path
+get_project_relative_path() {
+  local dir="${1%/*}"
+  if [[ "${1}" != /* ]]; then
+    printf '%s' "${1}"
+    return 0
+  fi
+  while [[ -n "${dir}" ]]; do
+    if [[ -e "${dir}/.git" ]]; then
+      printf '%s' "${1#"${dir}"/}"
+      return 0
+    fi
+    dir="${dir%/*}"
+  done
+  return 1
 }
 
 # Scan a blob against every PATTERNS entry; exit 2 on the first match. SEC-013 alone skips a test-fixture
