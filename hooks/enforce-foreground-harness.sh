@@ -27,6 +27,11 @@
 #   Continuity) — staging it would defeat it. MEMORY.md and every other memory file stay protected.
 #   A `..` in the written path, or `.claude` text after the root, voids every exemption.
 #
+# Negated-mention exclusion: a token naming only a root (no entry inside it), every occurrence of which
+#   follows a negation cue in its clause (never, not, no, don't, cannot, must not …), is a constraint, not
+#   a write target. A clause ends at . ; : ! ? , or a line end. A file or dir inside the root still blocks;
+#   residual: a root-only directive behind an unrelated negation in one clause ("don't wait, edit ~/.claude").
+#
 # Resolution: the verdict follows what the filesystem says a path reaches, not how it is spelled.
 #   - Candidates: every token whose text, glob metacharacters and quotes removed, holds `.claude` in any
 #     case. A token starts at whitespace, a separator (`` ` ``()<>,;:|&), or after `=`, `@` or `-x`.
@@ -109,7 +114,8 @@ if [[ ! -r "${config_dirs_lib}" ]] || ! source "${config_dirs_lib}"; then
 fi
 
 # Candidate extraction in ONE awk fork (linear, where bash 3.2 pattern substitution is not). Output
-# lines `x<flags>\t<candidate>`: flag c = operand context (bare-root rule), b = brace bash would expand.
+# lines `x<flags>\t<candidate>`: flag c = operand context (bare-root rule), b = brace bash would expand,
+# a = an occurrence outside a negated clause (negated-mention rule).
 # A `<placeholder>` stays one segment, a comma inside a brace stays in its token.
 # shellcheck disable=SC2016  # awk program text, never shell expansions
 extract_awk='
@@ -132,6 +138,7 @@ function has_root_text(s,    pre, post, n, i, alt) {
 function emit(c, f) {
   probes = 0
   if (!has_root_text(c)) return
+  if (!in_negation) f = f "a"
   if (index(c, "\003") || c ~ /\{[^{}]*\.\.[^{}]*\}/) f = f "b"
   gsub(/\003/, ",", c)
   gsub(/\001/, "<", c)
@@ -174,6 +181,7 @@ BEGIN {
   verbs = " cd pushd popd ls cat cp mv rm rmdir mkdir touch ln tee chmod chown install find tar rsync sed awk vi vim nano code open source stat du head tail less grep git edit write update modify change delete remove create rewrite overwrite replace append patch move copy rename save "
 }
 {
+  negated = 0
   n = split($0, words, /[[:space:]]+/)
   for (i = 1; i <= n; i++) {
     w = words[i]
@@ -182,6 +190,12 @@ BEGIN {
     prev = tolower(w)
     sub(/:$/, "", prev)
     probes = 0
+    # A negation cue holds to the end of its clause; quotes are already dropped, so the cue reads dont.
+    in_negation = negated
+    cue = prev
+    gsub(/[^a-z]/, "", cue)
+    if (cue ~ /^(never|not|no|nor|dont|cannot|cant|mustnt|shouldnt|wont)$/) negated = 1
+    if (w ~ /[.;:!?,]$/) negated = 0
     if (!index(w, ".") || !has_root_text(w)) continue
     # A lone `-` word is a markdown list marker, not an option; `--` still ends options.
     split_word(w, index(verbs, " " p " ") || (p ~ /^-/ && p != "-") || p ~ /[<>]$/)
@@ -199,7 +213,7 @@ fallback_candidates() {
     [[ "${word}" == *.[Cc][Ll][Aa][Uu][Dd][Ee]* ]] || continue
     for piece in ${word//[,;|&:()<>\`]/ }; do
       if [[ "${piece}" == *.[Cc][Ll][Aa][Uu][Dd][Ee]* ]]; then
-        printf 'xc\t%s\n' "${piece}"
+        printf 'xca\t%s\n' "${piece}"
       fi
     done
   done
@@ -378,6 +392,8 @@ needs_staged_lane() {
   if [[ -z "${remainder}" ]]; then
     while [[ "${bare}" == */ ]]; do bare="${bare%/}"; done
     [[ "${relative}" == true && "${bare}" != */* && "${flags}" != *c* ]] && return 1
+    # Named only in negated clauses ("never write under ~/.claude/") → a constraint, not a target.
+    [[ "${flags}" != *a* ]] && return 1
     return 0
   fi
   # The `.claude`-text void reads written text: a glob match's remainder is a real name on disk.
