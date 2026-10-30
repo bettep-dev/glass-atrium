@@ -72,16 +72,37 @@ NAMES_EN=(
   "Service-account JSON marker"
 )
 
-# Scan a blob against every PATTERNS entry; exit 2 on the first match.
+# Status 0 → a test or fixture file, where a generic credential assignment is test data (a spec's login
+# password), not a credential; a dotenv or secrets file there stays a secrets file. Args: $1=file path
+is_test_fixture_path() {
+  local base="${1##*/}"
+  case "${base}" in
+    .env* | secret* | credential*) return 1 ;;
+    *.test.* | *.spec.* | *_test.* | *_spec.* | test_*.py | *.bats) return 0 ;;
+    *) ;;
+  esac
+  case "/${1}" in
+    */test/* | */tests/* | */__tests__/* | */spec/* | */fixtures/* | */__fixtures__/* | */testdata/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Scan a blob against every PATTERNS entry; exit 2 on the first match. SEC-013 alone skips a test-fixture
+# file: every structured token, key and connection string blocks there too.
 # Args: $1=blob to scan
 scan_content() {
-  local blob="${1}" i
+  local blob="${1}" i file_path
   [[ -z "${blob}" ]] && return 0
   for i in "${!PATTERNS[@]}"; do
     # `-i` for case-insensitive credential keys · `--` so a dash-leading PEM
     # pattern is not parsed as a grep option flag.
     # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
     if printf '%s\n' "${blob}" | drain_after grep -qiE -- "${PATTERNS[${i}]}"; then
+      if [[ "${CODES[${i}]}" == "SEC-013" ]]; then
+        file_path="$(hook_get_tool_input "${INPUT}" "file_path")"
+        # shellcheck disable=SC2310  # the predicate's status is the verdict
+        is_test_fixture_path "${file_path}" && continue
+      fi
       emit_error "${CODES[${i}]}" "block" \
         "Secret pattern detected: ${NAMES_EN[${i}]}" \
         "Replace the hardcoded secret with an environment-variable reference (core-security.md -> Secret Management)" \

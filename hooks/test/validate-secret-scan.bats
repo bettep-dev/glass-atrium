@@ -68,6 +68,35 @@ run_hook() {
   [[ "${status}" -eq 0 ]] || return 1
 }
 
+@test "Write channel: a generic credential assignment passes only in a test-fixture file and blocks with SEC-013 elsewhere" {
+  local fixture_assign row name path want
+  fixture_assign="password"
+  fixture_assign="${fixture_assign}: 'correct-horse-battery'"
+  for row in \
+    'jest spec|/p/src/users/users.service.spec.ts|0' \
+    'vitest test file|/p/src/login.test.tsx|0' \
+    'pytest module in a tests dir|/p/tests/test_login.py|0' \
+    'file in a __tests__ dir|/p/src/__tests__/login.js|0' \
+    'fixture data file|/p/test/fixtures/users.json|0' \
+    'go test file|/p/auth/login_test.go|0' \
+    'production source|/p/src/users/users.service.ts|2' \
+    'test word inside a longer name|/p/src/latest.ts|2' \
+    'test word inside a dir name|/p/contest/app.ts|2' \
+    'dotenv file in a test dir|/p/test/.env|2' \
+    'secrets file in a test dir|/p/test/secrets.json|2'; do
+    name="${row%%|*}" path="${row#*|}" want="${row##*|}" path="${path%|*}"
+    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { email: 'ada@example.com', ${fixture_assign} }\"}}"
+    [[ "${status}" -eq "${want}" ]] || { echo "${name}: status ${status}, want ${want}: ${output}"; return 1; }
+    [[ "${want}" -eq 0 || "${output}" == *"SEC-013"* ]] || { echo "${name}: ${output}"; return 1; }
+  done
+}
+
+@test "Write channel: a structured token in a test-fixture file still blocks with its own code" {
+  run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/p/src/users/users.service.spec.ts\",\"content\":\"const k = ${AWS_FIXTURE}\"}}"
+  [[ "${status}" -eq 2 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"SEC-001"* ]] || { echo "${output}"; return 1; }
+}
+
 @test "Write benign: ordinary source content → pass (exit 0, silent)" {
   run_hook '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x.ts","content":"export const answer = 42"}}'
   [[ "${status}" -eq 0 ]] || return 1
