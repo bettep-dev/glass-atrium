@@ -377,9 +377,8 @@ function ScreenImprovement({ onNav }) {
         .i-tile-hover { transition:box-shadow 120ms; }
         .i-tile-hover:hover { box-shadow:0 0 0 1px rgb(var(--faint)), var(--shadow-raised-2); }
         @media (prefers-reduced-motion: reduce) { .i-tile-hover { transition:none; } }
-        /* clipped board text → whole text on hover or keyboard focus (a title tooltip never shows on focus) */
-        .i-row-card:is(:hover, :focus-visible) .i-clip { white-space:normal; overflow:visible; display:block;
-          -webkit-line-clamp:unset; overflow-wrap:anywhere; }
+        /* board row — one line on the 32 control tier in every state; clipped text keeps its ellipsis, the full text rides in title and the drawer */
+        .i-board-row { min-height:var(--ctl-min-h); }
         /* 카드 메타 배지 — 전부 canonical window.UI.Badge(.pill family)로 이관 (screen-local 배지 CSS 폐지).
            tone 은 status Badge 의 내부 Icon(text-{tone})이 운반 · shell 은 항상 neutral(loud fill 금지 · dual-encode 보존). */
         /* 시그니처 셀 — 2줄 클램프 + 셀 최소폭(crush 방지) + 행 최소높이(1↔2줄 점프 차단). */
@@ -872,8 +871,8 @@ function getCycleCountTextI(count) {
 	return `${formatIntI(count)} ${count === 1 ? "cycle" : "cycles"}`;
 }
 
-// 뷰 전환 — nav 항목이 아니라 화면 안의 전환이다. 선택 상태는 aria-pressed 와 ✓ 글리프가
-// 함께 운반한다(색 단독 금지).
+// 뷰 전환 — nav 항목이 아니라 화면 안의 전환. 선택 상태 = aria-pressed + selected fill 의 휘도 반전(색상 비의존 cue),
+// 상태 전용 글리프 없음 → 눌림과 무관하게 옵션 박스 하나(DESIGN.md §7.16).
 function ViewToggleI({ view, onChange }) {
 	const options = [
 		["operator", "Operator"],
@@ -885,11 +884,9 @@ function ViewToggleI({ view, onChange }) {
 				<button
 					key={key}
 					type="button"
-					className="inline-flex items-center gap-1"
 					aria-pressed={view === key}
 					onClick={() => onChange(key)}
 				>
-					{view === key ? <SymI s="✓" size={11} /> : null}
 					{label}
 				</button>
 			))}
@@ -1371,12 +1368,12 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="i-row-card i-tile-hover bg-elev rounded-md w-full min-w-0 text-left px-2 py-1.5 flex items-center gap-2 fs-meta"
+			className="i-row-card i-board-row i-tile-hover bg-elev rounded-md w-full min-w-0 text-left px-2 flex items-center gap-2 fs-meta"
 			title={title}
 			aria-label={ariaLabel}
 		>
 			{lead}
-			<span className="i-clip text-ink fs-body truncate flex-1 min-w-0">{text}</span>
+			<span className="text-ink fs-body truncate flex-1 min-w-0">{text}</span>
 			{trail}
 		</button>
 	);
@@ -1678,7 +1675,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 				{/* rationale = 1차 콘텐츠로 승격(USER) — fs-body · text-ink · medium weight · 2~3줄 clamp. 카드면에서 가장 강한 텍스트. 부재 시 graceful 미렌더. */}
 				{row.rationale && (
 					<div
-						className="i-clip fs-body text-ink font-medium mt-1.5 line-clamp-3"
+						className="fs-body text-ink font-medium mt-1.5 line-clamp-3"
 						title={String(row.rationale)}
 					>
 						{row.rationale}
@@ -1686,7 +1683,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 				)}
 				{/* pattern_label = 반복성 높은 2차 카테고리 라벨 → rationale 아래 tiny/faint 태그로 후퇴(USER: de-emphasized, 경쟁 금지). */}
 				<div
-					className="i-clip fs-meta text-faint mt-1 line-clamp-1"
+					className="fs-meta text-faint mt-1 line-clamp-1"
 					title={String(title)}
 				>
 					{title}
@@ -1888,7 +1885,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 			/>
 			{getLoopSlotsI({
 				metric: cards.map(([sym, tone, label, value]) => (
-					<span key={label} className="inline-flex items-baseline gap-1.5">
+					<span key={label} className="inline-flex items-baseline gap-1">
 						<SymI s={sym} className={tone} size={13} />
 						<span className="fs-stat font-semibold text-ink font-mono">{formatIntI(value)}</span>
 						<span className="fs-meta text-dim">{label}</span>
@@ -2027,8 +2024,9 @@ function HeldCauseStripI({ buckets }) {
 function HeldCauseGroupI({ bucket, rows }) {
 	return (
 		<details className="mt-1.5">
-			<summary className="fs-meta text-dim cursor-pointer select-none">
-				{bucket.label} rows
+			<summary className="group disclosure fs-meta select-none">
+				<window.UI.DisclosureChevron />
+				<span>{bucket.label} rows</span>
 			</summary>
 			<LedgerPlainRowsI rows={rows} />
 		</details>

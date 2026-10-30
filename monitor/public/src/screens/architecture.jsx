@@ -749,15 +749,8 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .arch-node-live-warn > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-warn > rect.arch-ring-state { display: inline; stroke: rgb(var(--warn)) !important; } ` +
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
-					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
-					".arch-zoom-btn { min-width: 32px; height: 32px; display: inline-flex; gap: 4px; align-items: center; justify-content: center; " +
-					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--dim)); " +
-					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; ' +
-					// hover colours only — a transition on `all` also animated the shared focus outline in
-					"transition: color .12s, border-color .12s, background-color .12s; } " +
-					// a button label never wraps — the button grows to it
-					".arch-zoom-btn-labelled { padding: 0 var(--space-2); font-family: inherit; font-size: var(--fs-meta); white-space: nowrap; } " +
-					".arch-zoom-btn:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); background: rgb(var(--surface-raised-2, var(--elev))); } " +
+					// controls on the .btn atom · flex-end → the 32 squares and the wider Reset share the canvas-side edge
+					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; z-index: 2; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					// 상태 링과 같은 사각형 채널·같은 반경 가족이되 그 바깥 한 겹에 섬 — 상태 링의 색·두께·자리는 포커스와 무관함.
 					// 키보드가 헬스 상세로 가는 유일한 길이라(ADR-20) 포커스 자리는 아홉 노드에서 똑같이 보여야 함.
@@ -775,10 +768,8 @@ function ScreenArchitecture(
 					".arch-part-detail { padding-left: var(--space-3); display: flex; flex-direction: column; gap: 8px; } " +
 					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬. 진짜 button 이라
 					// 키보드 활성과 포커스 순서를 브라우저에서 그대로 받음.
-					".arch-part-drill { align-self: flex-start; min-height: 32px; margin: 0 0 0 var(--space-3); padding: 0 var(--space-2); " +
-					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; " +
-					"color: rgb(var(--dim)); font: inherit; font-size: var(--fs-meta); cursor: pointer; text-align: left; } " +
-					".arch-part-drill:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); } " +
+					// placement only — the .disclosure atom draws it; flex-start → the column never stretches its box
+					".arch-part-drill { align-self: flex-start; margin: 0 0 0 var(--space-3); } " +
 					".arch-map-copy-note { display: flex; align-items: center; gap: var(--space-1_5); padding: var(--space-2) var(--space-2) 0; } " +
 					".arch-caption { display: flex; flex-direction: column; gap: var(--space-1_5); margin: 0 0 var(--space-3); } " +
 					".arch-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; } " +
@@ -798,9 +789,9 @@ function ScreenArchitecture(
 					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음. Absolute, so margin 0 takes no layout space (no negative margin).
 					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: 0; " +
 					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
-					// 모션 게이트 — 노드/줌 컨트롤 transition 정지 (§8.4 계약).
+					// 모션 게이트 — 노드 transition 정지 (§8.4 계약). 줌 컨트롤은 .btn 이라 base.css 의 reduce 블록이 맡음.
 					"@media (prefers-reduced-motion: reduce) { " +
-					".arch-mermaid-canvas .node, .arch-mermaid-canvas .node > *, .arch-zoom-btn { animation: none !important; transition: none !important; } }"}
+					".arch-mermaid-canvas .node, .arch-mermaid-canvas .node > * { animation: none !important; transition: none !important; } }"}
 			</style>
 
 			<div className="flex-shrink-0">
@@ -1403,30 +1394,30 @@ function MermaidCanvas({
 				>
 					<button
 						type="button"
-						className="arch-zoom-btn"
+						className="btn icon"
 						onClick={() => zoomBy(1.25)}
 						aria-label="Zoom in"
 						title="Zoom in (+)"
 					>
-						+
+						<ArchIconAR name="plus" />
 					</button>
 					<button
 						type="button"
-						className="arch-zoom-btn"
+						className="btn icon"
 						onClick={() => zoomBy(0.8)}
 						aria-label="Zoom out"
 						title="Zoom out (−)"
 					>
-						−
+						<ArchIconAR name="minus" />
 					</button>
 					<button
 						type="button"
-						className="arch-zoom-btn arch-zoom-btn-labelled"
+						className="btn sm"
 						onClick={resetView}
 						aria-label="Reset diagram view"
 						title="Reset view (0)"
 					>
-						<ArchIconTargetAR />
+						<ArchIconAR name="target" />
 						Reset
 					</button>
 				</div>
@@ -1445,10 +1436,10 @@ function MermaidCanvas({
 	);
 }
 
-// Reset 아이콘 — Icon SoT 의 'target' 마크업 재사용 (currentColor 상속).
-function ArchIconTargetAR() {
+// 줌 컨트롤 glyph — Icon SoT 마크업 재사용 (currentColor 상속), C32 icon tier 의 14 glyph (§7.15).
+function ArchIconAR({ name }) {
 	const { Icon } = window.UI;
-	return <Icon name="target" size={14} />;
+	return <Icon name={name} size={14} />;
 }
 
 // 끊긴 health 응답의 표시 이름 — 사실 행과 로드 실패 경보가 같은 이름을 부르게 묶어 둠.
@@ -1544,9 +1535,12 @@ function HookChainDetail({ state }) {
 						) : (
 							// hook paths run to ~30 lines — each event folds so the drawer reads as an event list first
 							<details>
-								<summary className="cursor-pointer">
-									<span className="fs-meta font-mono text-ink">{row.event}</span>{" "}
-									<span className="fs-meta text-faint">{row.hookCount} hooks</span>
+								<summary className="group disclosure">
+									<window.UI.DisclosureChevron />
+									<span>
+										<span className="fs-meta font-mono text-ink">{row.event}</span>{" "}
+										<span className="fs-meta text-faint">{row.hookCount} hooks</span>
+									</span>
 								</summary>
 								<ul className="arch-hook-groups">
 									{/* position in the key — settings.json may repeat a matcher (or leave it empty) within one event; order is fixed settings order */}
@@ -1758,14 +1752,14 @@ function NodePartHealth({
 							{/* 펼칠 것이 없는 kind(pg · browser)는 아무것도 그리지 않음 — 빈 영역을 여는
 							    자리는 읽을 것이 있다고 거짓말함. 있는 kind 는 드릴된 데몬이면 바로 폄(트리거로 접힘). */}
 							{renderDetail && row.daemonName && (
-								<button
-									type="button"
-									className="arch-part-drill"
-									aria-expanded={isRunsOpen}
-									aria-controls={isRunsOpen ? runsId : undefined}
-									onClick={() => toggleRuns(row, isRunsOpen)}>
-									{isRunsOpen ? "Hide" : "Show"} recent runs for {row.daemonName}
-								</button>
+								// one label in both states → the open state rides aria-expanded and the chevron (§7.16)
+								<window.UI.DisclosureButton
+									isOpen={isRunsOpen}
+									onToggle={() => toggleRuns(row, isRunsOpen)}
+									controls={isRunsOpen ? runsId : undefined}
+									className="arch-part-drill fs-meta"
+									label={`Recent runs for ${row.daemonName}`}
+								/>
 							)}
 							{renderDetail && (!row.daemonName || isRunsOpen) && (
 								<div

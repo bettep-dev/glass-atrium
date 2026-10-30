@@ -10,7 +10,7 @@ import vm from "node:vm";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
-import { createReactStub, collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { compositeOver, contrastRatio, parseColor, type Rgba } from "./lib/wcag-contrast.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -243,26 +243,8 @@ describe("row-state contrast floors on every fill", () => {
   }
 });
 
-// host-element tree → HTML, so the browser lays out the shipped DocAgeCellCD markup, not a hand copy of it
-function toHtml(node: RenderedNode | string): string {
-  if (typeof node === "string") return node.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  if (!/^[a-z]/.test(node.type)) return node.children.map(toHtml).join("");
-  const attrs = Object.entries(node.props)
-    .filter(([key, value]) => key !== "children" && value != null && value !== false && typeof value !== "function")
-    .map(([key, value]) => {
-      const name = key === "className" ? "class" : key.startsWith("stroke") ? key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`) : key;
-      const text =
-        key === "style"
-          ? Object.entries(value as Record<string, unknown>).map(([prop, v]) => `${prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}: ${String(v)}`).join("; ")
-          : String(value);
-      return ` ${name}="${text.replace(/"/g, "&quot;")}"`;
-    })
-    .join("");
-  return `<${node.type}${attrs}>${node.children.map(toHtml).join("")}</${node.type}>`;
-}
-
 const ageCellHtml = (label: string) =>
-  toHtml(renderScreen((docsScreen.DocAgeCellCD as (props: unknown) => unknown)({ createdAt: "2026-10-04T00:00:00Z", age: { label }, isStale: true })) as RenderedNode);
+  getHtml(renderScreen((docsScreen.DocAgeCellCD as (props: unknown) => unknown)({ createdAt: "2026-10-04T00:00:00Z", age: { label }, isStale: true })) as RenderedNode);
 
 // a Created column at its floor holding stale rows → the age and its glyph share one line box inside the floor; --fs-meta raised on one cell stands in for a wider face.
 // The app loads Tailwind preflight and .sr-only from its CDN; the rules below are the ones this geometry depends on (as in ui.row-geometry) — the block svg among them.
@@ -351,10 +333,12 @@ describe("the Created cell keeps its age and stale glyph on one line", () => {
 });
 
 describe("the select column and the stage section heads sit on the ledger's grid", () => {
-  // DocCheckboxCD's 16px box, centred by auto inline margins as its mx-auto class does
-  const checkbox = `<span style="display: flex; width: 16px; height: 16px; margin-inline: auto;"><input type="checkbox" class="doc-checkbox" /></span>`;
+  // the shipped DocCheckboxCD; its wrapper lays out on Tailwind utilities, which the app loads from its CDN → their rules ride the page
+  const checkbox = getHtml(renderScreen((docsScreen.DocCheckboxCD as (props: unknown) => unknown)({ checked: false, onChange: () => {}, ariaLabel: "Select Plan" })) as RenderedNode);
+  const UTILITIES = ".relative { position: relative; } .absolute { position: absolute; } .flex { display: flex; } .items-center { align-items: center; }" +
+    " .justify-center { justify-content: center; } .mx-auto { margin-left: auto; margin-right: auto; } .pointer-events-none { pointer-events: none; }";
   // the app's preflight sizes boxes border-box → the select floor is the cell's whole width, as it renders
-  const gridPage = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; }</style></head><body style="margin: 0;">
+  const gridPage = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } ${UTILITIES}</style></head><body style="margin: 0;">
     <div style="padding: 48px;"><div class="card"><table class="tbl" style="width: 600px;">
       <thead><tr><th scope="col" class="doc-checkbox-cell" id="head-select">${checkbox}</th><th scope="col">Title</th></tr></thead>
       <tbody>
@@ -387,6 +371,33 @@ describe("the select column and the stage section heads sit on the ledger's grid
       assert.ok(Math.abs(offset) <= 0.5, `checkbox centre ${offset}px off the cell centre`);
     });
   }
+
+  // a click 3px past the 16 box on each side still toggles it; the cell keeps the select floor and the row its 40
+  test("the checkbox keeps its 16 box inside the select floor and takes a 24 hit area that toggles it", async () => {
+    const floor = vm.runInContext("LEDGER_CD.FLOOR.select", docsScreen) as number;
+    const { cell, box, rowH } = await page.$eval("#row-select", (el) => ({
+      cell: el.getBoundingClientRect().toJSON() as DOMRect,
+      box: el.querySelector("input")!.getBoundingClientRect().toJSON() as DOMRect,
+      rowH: el.parentElement!.getBoundingClientRect().height,
+    }));
+    assert.equal(box.width, 16);
+    assert.equal(box.height, 16);
+    assert.ok(Math.abs(cell.width - floor) < 0.5, `select cell ${cell.width}px vs the ${floor}px floor`);
+    assert.ok(Math.abs(rowH - 40) < 0.5, `row ${rowH}px`);
+    const centre = { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 };
+    const edges = [
+      { name: "left", x: box.left - 3, y: centre.y },
+      { name: "right", x: box.right + 3, y: centre.y },
+      { name: "top", x: centre.x, y: box.top - 3 },
+      { name: "bottom", x: centre.x, y: box.bottom + 3 },
+    ];
+    for (const edge of edges) {
+      const before = await page.$eval("#row-select input", (el) => (el as HTMLInputElement).checked);
+      await page.mouse.click(edge.x, edge.y);
+      const after = await page.$eval("#row-select input", (el) => (el as HTMLInputElement).checked);
+      assert.notEqual(after, before, `a click 3px past the ${edge.name} edge toggles the checkbox`);
+    }
+  });
 
   test("a stage section head is a 40 row like the ledger rows", async () => {
     const [section, doc] = await Promise.all(["section", "doc"].map((id) => page.$eval(`#${id}`, (tr) => tr.getBoundingClientRect().height)));
