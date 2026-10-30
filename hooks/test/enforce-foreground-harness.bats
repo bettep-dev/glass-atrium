@@ -173,6 +173,14 @@ list_bashes() {
   done
 }
 
+# A glob is expanded level by level, so its cost stops growing with depth once a level passes the match cap.
+@test "a deep glob from the filesystem root is judged protected within a bounded time" {
+  local start="${SECONDS}"
+  run_agent 'Edit /*/*/*/*/*/*/*/*/.claude/x.md now.' omit
+  [[ "${status}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
+  ((SECONDS - start < 5)) || { echo "took $((SECONDS - start)) s"; return 1; }
+}
+
 @test "a .. segment voids every exemption" {
   local row name prompt
   for row in \

@@ -40,9 +40,10 @@
 #   - Segments are walked with stat tests only (`-d`, `-e`, `-ef`): a step whose inode is a protected
 #     root's, or a root-grammar name under the home, enters the root — so case, Unicode folding, `..`
 #     and symlinks resolve as the host filesystem resolves them. A file symlink is read with readlink.
-#   - A glob is expanded by bash pathname expansion (no execution), each match walked, and its
-#     metacharacter-stripped spelling walked too. A brace that bash would expand (`{a,b}`, `{a..b}`)
-#     cannot be expanded without eval → protected, fail-safe. A brace with neither is literal text.
+#   - A glob is expanded by bash pathname expansion (no execution), one segment at a time, each match
+#     walked, and its metacharacter-stripped spelling walked too; a level past 1024 paths is protected.
+#     A brace that bash would expand (`{a,b}`, `{a..b}`) cannot be expanded without eval → protected,
+#     fail-safe. A brace with neither is literal text.
 #   - A bare root word (relative, no `/` but a trailing one) is prose unless an action word, an option
 #     (a lone `-` is a list marker), a redirect or a joined `=`/`@`/`-x`/list position makes it an operand.
 #   - A block names the candidate that triggered it.
@@ -450,10 +451,11 @@ set_start() {
   esac
 }
 
-# A glob is expanded by bash pathname expansion, never run; >1024 matches is judged protected (walk cost).
-# Exit 0 = a match reaches a protected path.
+# A glob is expanded by bash pathname expansion, never run. Exit 0 = a match reaches a protected path,
+# or a level of the expansion passed 1024 paths (judged protected: walk cost).
 glob_reaches_harness() {
-  local match matches=() head tail="" IFS=$'\n'
+  local match head tail="" IFS=$'\n'
+  local -a matches=()
   set_start "${written}"
   [[ "${walk_p}" == *[][*?]* ]] && return 1
   # Expand only through the last wildcard segment: a file the prompt would create does not exist yet.
@@ -461,11 +463,7 @@ glob_reaches_harness() {
   while [[ "${head}" == */* && "${head##*/}" != *[][*?]* ]]; do
     tail="${head##*/}${tail:+/${tail}}" head="${head%/*}"
   done
-  shopt -s nullglob
-  # shellcheck disable=SC2206  # pathname expansion is the point; word splitting is on newline only
-  matches=(${walk_p%/}/${head})
-  shopt -u nullglob
-  ((${#matches[@]} <= 1024)) || return 0
+  expand_glob_head "${head}" || return 0
   glob_match=true
   for match in ${matches[@]+"${matches[@]}"}; do
     walk_p=/ walk_lex=/ walk_rest="${match#/}${tail:+/${tail}}"
@@ -473,6 +471,27 @@ glob_reaches_harness() {
   done
   glob_match=false
   return 1
+}
+
+# Expand $1 below walk_p into matches one segment at a time: each level reads at most the 1024 dirs the
+# level before it kept, so the cost stays bounded at any depth. Exit 1 = a level passed 1024 paths.
+expand_glob_head() {
+  local rest="${1}" seg prefix
+  local -a next
+  matches=("${walk_p%/}")
+  shopt -s nullglob
+  while [[ -n "${rest}" ]]; do
+    seg="${rest%%/*}"
+    if [[ "${rest}" == */* ]]; then rest="${rest#*/}"; else rest=""; fi
+    next=()
+    # a matched name is quoted: its own [ * ? stay literal; a literal segment is checked by the next level
+    # shellcheck disable=SC2206  # pathname expansion is the point; word splitting is on newline only
+    for prefix in ${matches[@]+"${matches[@]}"}; do next+=("${prefix}"/${seg}); done
+    matches=(${next[@]+"${next[@]}"})
+    ((${#matches[@]} <= 1024)) || break
+  done
+  shopt -u nullglob
+  ((${#matches[@]} <= 1024))
 }
 
 # Glob metacharacters dropped from each segment; a segment of wildcards alone stays as one name, so
