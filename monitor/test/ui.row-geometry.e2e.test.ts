@@ -73,8 +73,7 @@ const INLINE_TARGET_ROWS = [
   { name: "a ledger expander", target: `<button type="button" class="inline-target">+ 3 more</button>` },
   { name: "a checkbox hit area", target: `<label class="inline-target"><input type="checkbox" class="ctl-checkbox" aria-label="Select row" /></label>` },
 ] as const;
-// each kind again under a same-element type-scale class, as the screens set .fs-meta on a 24 target — plus a kind no screen
-// uses yet, so the line-box hold never rests on the element list
+// each kind + an unused one under a same-element .fs-meta → the line-box hold never rests on the element list
 const TYPE_SCALED_ROWS = [
   ...INLINE_TARGET_ROWS,
   { name: "an undocumented element kind (a span)", target: `<span class="inline-target">Recent costs</span>` },
