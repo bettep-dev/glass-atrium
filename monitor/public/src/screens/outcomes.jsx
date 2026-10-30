@@ -2919,18 +2919,18 @@ function SortableHeader({ label, sortKey, currentSort, onSortChange, width, desc
     onSortChange(`${sortKey}:${nextDir}`);
   };
 
-  // the label and its sort glyph are one inline-flex line (gap 4), so the arrow never drops under the label
+  // aria-sort stays on the cell; the native button inside it is the Tab stop and takes Enter and Space.
+  // The 32 control in a th puts the header row on the control-cell step → it stays 40
   return (
     <TableHead
       isSticky
-      className={`${LEDGER_HEAD_CLASS} cursor-pointer select-none`}
+      className={LEDGER_HEAD_CLASS}
       style={{ minWidth: width }}
-      onClick={handleClick}
       aria-sort={getAriaSort(isActive, dir)}>
-      <span className="inline-flex items-center gap-1">
+      <button type="button" className="btn ghost sm" onClick={handleClick}>
         {label}
         {arrowIcon && <GlyphO name={arrowIcon} className="text-accent"/>}
-      </span>
+      </button>
     </TableHead>
   );
 }

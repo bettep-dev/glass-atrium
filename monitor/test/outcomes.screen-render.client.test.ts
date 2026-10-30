@@ -332,13 +332,37 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
     }
   });
 
-  test("the sort arrow sits on the Time label's line", () => {
+  test("the Time header sorts through one native button holding its label and arrow, the cell keeping aria-sort", () => {
     const [time] = columnHeads;
     assert.equal(time.props["aria-sort"], "descending");
-    const [line] = findNodes(time, (n) => n.type === "span" && tokensOf(n).includes("inline-flex"));
-    assert.ok(line, "label and glyph share one inline-flex line");
-    assert.match(collectText(line), /Time/);
-    assert.equal(findNodes(line, (n) => n.type === "svg").length, 1, "the arrow is inside that line");
+    assert.equal(time.props.onClick, undefined, "the cell is not the click target");
+    const buttons = findNodes(time, (n) => n.type === "button");
+    assert.equal(buttons.length, 1);
+    const [button] = buttons;
+    assert.equal(button.props.type, "button", "a native button → Enter and Space activate it");
+    assert.ok(["btn", "ghost", "sm"].every((t) => tokensOf(button).includes(t)), `the shared small ghost control: ${tokensOf(button)}`);
+    assert.match(collectText(button), /Time/);
+    assert.equal(findNodes(button, (n) => n.type === "svg").length, 1, "the arrow is inside the button");
+  });
+
+  test("activating the Time button requests the other direction, and the first press on an inactive column asks for newest first", () => {
+    const rows = [
+      { name: "active descending → ascending", sort: "record_ts:desc", next: "record_ts:asc" },
+      { name: "active ascending → descending", sort: "record_ts:asc", next: "record_ts:desc" },
+      { name: "another column active → descending", sort: "agent:asc", next: "record_ts:desc" },
+    ];
+    for (const row of rows) {
+      const requested: string[] = [];
+      const sorted = renderScreen(create(mod.ResultTable as Component, {
+        rows: [], sort: row.sort, onSortChange: (next: string) => requested.push(next), onRowClick: () => undefined, closure,
+        needsYouCap: null, onToggleNeedsYou: () => undefined,
+      })) as RenderedNode;
+      const [time] = findNodes(sorted, (n) => n.type === "th" && n.props.scope === "col");
+      const [button] = findNodes(time, (n) => n.type === "button");
+      assert.ok(button, row.name);
+      (button.props.onClick as () => void)();
+      assert.deepEqual(requested, [row.next], row.name);
+    }
   });
 
   test("no cell, and no control in a cell, carries its own padding, margin or rule", () => {
