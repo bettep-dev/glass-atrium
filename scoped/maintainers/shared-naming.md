@@ -61,7 +61,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 - **Identifier-kind binary**'s group-member sub-bullet and `references/VARIABLES-BOOLEANS.md` → `### Noun-only form (data identifiers)` and **Maps** must give one verdict on a group member (`request.pending`, `user.byId`). Change either and re-read the other in the same pass.
   - A member taken out of its group needs one verdict too, stated at each site below. Change one and re-read the others in the same pass:
     - the group-member sub-bullet's extraction sub-bullet, which also carries the rename syntax (`:` in a destructuring read, `as` in an import) · the rule file's `Member taken out of its group` and `Qualified read` rows
-    - `SKILL.md` → "A group member reads with its group" · `references/VARIABLES-BOOLEANS.md` → **Group members read with their group**
+    - `SKILL.md` → "A group member reads with its group"
     - the rule file's `## Edge-case verdicts — scopes and bindings` row on an existing `user` beside an added `userById`, whose input cell excludes a `userById` read out of `user`
 - The delta-core carries each rule, one Bad → Good pair and the exclusions a DEV agent needs to write a compliant name.
 - Every other verdict that shapes a name lives once in the edge-case sections, outside the delta-core, which DEV agents and the reviewer both receive.
