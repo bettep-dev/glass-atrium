@@ -14,7 +14,7 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 ## Held cap exception — `### Architecture Patterns [ORCHESTRATOR]`
 
 - This H3 stays over the 3 KB H3 cap.
-- Each block below is held in place by its pin (suites under hooks/test/).
+- Each block below is held in place by the pin its row names.
 - Move a block only once its pin is retired or repointed in the same pass.
 
 | Block (under this H3) | Pin that holds it in place |
@@ -37,6 +37,8 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
   - the skill's **Print-block-then-emit** bullet (via the kept heading).
   - `hooks/enforce-workflow-verify-stage.sh` → `PROMOTION CONDITION` — both sentences name the reference beside the skill; verbatim pin: `enforce-workflow-verify-stage.bats` → `schema-cap(promotion)`.
 
+## `## Core Process` — held cap and relocations
+
 ### Held cap exception — `## Core Process`
 
 - This H2 stays over the 8 KB H2 cap because it contains the held `### Architecture Patterns [ORCHESTRATOR]`, itself over 8 KB.
@@ -47,16 +49,16 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 - Each heading stays in the skill as a pointer stating its duty; bodies live in `skills/glass-atrium-ops-delegation-contracts/references/`:
   - `agent-selection.md` ← `#### Selection procedure` · the `#### Ordering caveat` heading · `#### Compound Task Examples` · `#### Routing-Decision Record (observability convention)` · `#### Routing Verification (LLM-as-Judge)`.
   - `delegation-prompt.md` ← `#### Resource Budget` · `#### Prompt-content aids` · `#### Read-Extent Discipline [ORCHESTRATOR]` · `#### Delegation Information-Hiding [ORCHESTRATOR]`.
-- External citer repointed: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Routing output: team schema, size, and correlation ID` → **Example**.
+- External citer: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Routing output: team schema, size, and correlation ID` → **Example**.
 - No test, hook message or `agents/` file reads the moved text.
 
 ## `## Orchestrator On-Demand Mechanisms` — linkage and held cap
 
-- The group is split across three H2s so each H2 not holding a held H3 stays within the 8 KB cap:
+- The group is split across these H2s so each H2 without a held H3 stays within the 8 KB cap:
   - `## Orchestrator On-Demand Mechanisms` — the ceremony and `### Reply Form Contract (main-session user-facing replies)`.
   - `## Workflow-Tool Execution (On-Demand)` — `### Ultracode / Workflow-tool Mode` alone.
   - `## Approval Protocols (On-Demand)` — `### Scope-Expansion Approval Protocol` and `### Self-Improvement User-Approval Trigger`.
-  - Every citer names an H3, never one of these H2s, so the split repointed nothing; the first H2's lead sentence names all three and the two `## Managed Document …` sections.
+  - Every citer names an H3, never one of these H2s; the first H2's lead names each of them and the two `## Managed Document …` sections.
 - Reached from `skills/glass-atrium-ops-orchestrator-role.md` through `> Detail:` pointers, except `### Self-Improvement User-Approval Trigger`, which Tier-1 `core-learning-log.md` → Instruction Improvement Approval Tier points at.
   - `autoagent/daemon_cycle.py` also cites that heading by name (frozen; keep it byte-identical).
 - `### Reply Form Contract (main-session user-facing replies)` is the canonical; `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition holds its one pointer.
@@ -65,7 +67,7 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 ### Held cap exception — `### Ultracode / Workflow-tool Mode`
 
 - This H3 stays over the 3 KB H3 cap, and so its own H2, `## Workflow-Tool Execution (On-Demand)`, stays over the 8 KB H2 cap.
-- Every other H3 of the group is held to 3,000 B, and the group's other two H2s to 8 KB; re-measure with `wc -c` after any edit there.
+- Every other H3 of the group is held to 3,000 B; re-measure with `wc -c` after any edit there.
 - Each block is held in place by a citer that cannot be repointed without a frozen or hook edit:
 
 | Block (under this H3) | Pin that holds it in place |
@@ -78,30 +80,31 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 
 ### Completion-channel measurement — editor duties
 
-- The sub-section is the measurement SoT for the non-emission share: change its shape there first, then propagate; never fork the wording.
-- `hooks/enforce-workflow-verify-stage.sh` quotes the shape at three sites, each naming the sub-section as SoT; a new quoting site joins this list:
+- `#### Completion-channel non-emission …` (in the skill) is the measurement SoT for the non-emission share: change its shape there first, then propagate; never fork the wording.
+- `hooks/enforce-workflow-verify-stage.sh` quotes the shape at the sites below, each naming the sub-section as SoT; a new quoting site joins this list:
   - the header's fifth-advisory-pass block;
   - `print_completion_channel_advisory` (property-absent);
   - `print_completion_schema_absent_advisory` (schema-absent).
-- Machine-checked: `hooks/test/workflow-gate-completion-channel.bats` asserts the shape phrase in that hook's stderr — change it in the skill, then in the hook, or that suite goes red.
+- Machine-checked: `hooks/test/workflow-gate-completion-channel.bats` asserts the shape phrase in that hook's stderr, so a shape change edits that suite in the same pass.
 - Why the SoT sits in the skill: a hook message is a fixed nudge, whereas the re-derivation recipe needs a home that is re-read and re-run.
-- The schema-absent silencer (c), the wrapper case, is inherited from the shared roster predicate; the schema-absent acceptance criterion decides direct-spawn firing only and does not cover it.
+- The schema-absent silencer (c), the wrapper case, comes from the shared roster predicate; the schema-absent acceptance criterion covers direct-spawn firing only, not (c).
 - The cross-module-schema false positive is not a fail-open — the two read oppositely, so never relabel it.
 
 ### Other editor facts from that H2
 
+- Both facts sit under the skill's `## Approval Protocols (On-Demand)`.
 - `### Scope-Expansion Approval Protocol`: promotion of the token check to an exit-2 block is structurally blocked, not deferred — a prompt scan cannot tell an expansion intent from a mention of one.
   - Re-opening it needs a new pre-tool intent signal, not more coverage data.
 - `#### Automation Boundary`: `scripts/llm-preflight.sh` is not dead code — `autoagent/autoagents-eval.sh` sources it for its `llm_preflight 10.00` call, a manually invoked eval path CI does not run.
 
 ### Relocated — ceremony steps and completion-signal detail
 
-- `skills/glass-atrium-ops-delegation-contracts/references/agent-lifecycle-ceremony.md` ← the ceremony's CLI refusal list and three H4s, now `##` headings there:
+- `skills/glass-atrium-ops-delegation-contracts/references/agent-lifecycle-ceremony.md` ← the ceremony's CLI refusal list and these H4s, now `##` headings there:
   - `#### The 6 steps, each building on the previous` · `#### EXTEND path (step 3-alt — the DEFAULT branch)` · `#### Failure recovery (exit code → action)`.
   - The ceremony H3 keeps the trigger and standing conditions.
 - `skills/glass-atrium-ops-delegation-contracts/references/completion-signals.md` ← the evidence detail of `#### Completion signals`, which stays as the pointer site (cited by `scoped/orchestrator-core.md`, the role file and `references/automatic-parallelization.md`).
 - `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` → `## Backstop detail` ← the manual-gate race and nested-origin detail from `#### Hook layer split under the engine`.
-- No test, hook message or `agents/` file read the moved text; the three moved headings had no citer outside the skill.
+- No test, hook message or `agents/` file reads the moved text, and the moved ceremony headings have no citer but this note.
 
 ## `## Managed Document Completion (Direct Handling)` and `## Red Flags` — relocations
 
