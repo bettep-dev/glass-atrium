@@ -2927,7 +2927,7 @@ function SortableHeader({ label, sortKey, currentSort, onSortChange, width, desc
       className={LEDGER_HEAD_CLASS}
       style={{ minWidth: width }}
       aria-sort={getAriaSort(isActive, dir)}>
-      <button type="button" className="btn ghost sm" onClick={handleClick}>
+      <button type="button" className="btn ghost sm tbl-sort" onClick={handleClick}>
         {label}
         {arrowIcon && <GlyphO name={arrowIcon} className="text-accent"/>}
       </button>

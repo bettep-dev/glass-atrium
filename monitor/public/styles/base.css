@@ -509,6 +509,12 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	padding-block-start: var(--tbl-ctl-pad-block);
 	padding-block-end: var(--tbl-ctl-pad-block);
 }
+/* column-header sort control (a small ghost button as the header's label) — pulled back by its .sm inline padding + 1px edge →
+   its label stays on the column's text axis (the body cells, and the card head at an edge column) while the 32 box overhangs into
+   the cell padding (12 interior, 16 at the edge) */
+.tbl th > .btn.sm.tbl-sort {
+	margin-inline: calc(-1 * (var(--space-2) + 1px));
+}
 /* top-aligned row: a text cell's first line (the --lh-row box) centers on the control beside it */
 /* zero-specificity row match → the control-cell rule above keeps its own start padding */
 .tbl :where(tr.is-top-aligned) > td {

@@ -345,23 +345,25 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
     assert.equal(findNodes(button, (n) => n.type === "svg").length, 1, "the arrow is inside the button");
   });
 
-  test("activating the Time button requests the other direction, and the first press on an inactive column asks for newest first", () => {
+  describe("activating the Time button requests the other direction, and the first press on an inactive column asks for newest first", () => {
     const rows = [
       { name: "active descending → ascending", sort: "record_ts:desc", next: "record_ts:asc" },
       { name: "active ascending → descending", sort: "record_ts:asc", next: "record_ts:desc" },
       { name: "another column active → descending", sort: "agent:asc", next: "record_ts:desc" },
     ];
     for (const row of rows) {
-      const requested: string[] = [];
-      const sorted = renderScreen(create(mod.ResultTable as Component, {
-        rows: [], sort: row.sort, onSortChange: (next: string) => requested.push(next), onRowClick: () => undefined, closure,
-        needsYouCap: null, onToggleNeedsYou: () => undefined,
-      })) as RenderedNode;
-      const [time] = findNodes(sorted, (n) => n.type === "th" && n.props.scope === "col");
-      const [button] = findNodes(time, (n) => n.type === "button");
-      assert.ok(button, row.name);
-      (button.props.onClick as () => void)();
-      assert.deepEqual(requested, [row.next], row.name);
+      test(row.name, () => {
+        const requested: string[] = [];
+        const sorted = renderScreen(create(mod.ResultTable as Component, {
+          rows: [], sort: row.sort, onSortChange: (next: string) => requested.push(next), onRowClick: () => undefined, closure,
+          needsYouCap: null, onToggleNeedsYou: () => undefined,
+        })) as RenderedNode;
+        const [time] = findNodes(sorted, (n) => n.type === "th" && n.props.scope === "col");
+        const [button] = findNodes(time, (n) => n.type === "button");
+        assert.ok(button, "the Time header holds a button");
+        (button.props.onClick as () => void)();
+        assert.deepEqual(requested, [row.next]);
+      });
     }
   });
 

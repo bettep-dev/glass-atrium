@@ -308,7 +308,7 @@
   - finder 1b (full-opacity tone border · stroke · box-shadow): `grep -rnE "(border(-[a-z]+)?|stroke|outline|box-shadow) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info)\)\)|(border[A-Za-z]*|stroke|boxShadow) *: *[\"'][^\"']*rgb\(var\(--(crit|warn|ok|info)\)\)|stroke=\"rgb\(var\(--(crit|warn|ok|info)\)\)\"" public/src public/styles`.
     - 허용 hit: 위 허용 예외 (폼 오류 · System map 링 · 범례) · destructive action (`.btn.danger` · `DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`) · 차트 (`agents.jsx` quality-health crit `Line` 과 그 tooltip key swatch).
   - finder 2 (tone 을 칠한 라벨 · 수치): `grep -rnE "text-(crit|warn|ok|info)\b" public/src` + 보간 class `grep -rnE 'text-\$\{' public/src`.
-    - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`improvement.jsx` → `TONE_TEXT_CLASS` · `clauded-docs.jsx` → `TONE_TEXT_CLASS_CD` · `architecture.jsx` → `TONE_GLYPH_CLASS`) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
+    - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`clauded-docs.jsx` → `TONE_TEXT_CLASS_CD` · `architecture.jsx` → `TONE_GLYPH_CLASS`) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
     - 단어를 감싸는 허용 hit 은 폼 오류 메시지뿐 (`model-config.jsx` field 메시지 · save-banner 요약 · `agents.jsx` 이름 불일치 메시지).
   - finder 3 (full-opacity tone **fill** — `background` · SVG `fill` · `bg-<tone>`): `grep -rnE "(background(-color)?|fill) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info|alert-tone)\)\)|(background|backgroundColor|fill) *[:=] *[\"'{][^\"'}]*rgb\(var\(--(crit|warn|ok|info)\)\)|bg-(crit|warn|ok|info)\b[^/]" public/src public/styles`.
     - 허용 hit — full-opacity tone fill 의 전체 목록:
@@ -535,6 +535,7 @@
   - accent ladder 상한 = light warn glyph ≥ 3:1 (런타임 기본 accent 59 130 246 → α ≤ 0.12). binding: light both warn 3.03 · dark both pip 3.22 · light both pip 3.26 · light both faint 4.70. 사용자가 고른 다른 accent 는 측정 밖.
 - 그룹 행 (`.is-grouped`, `model-config.jsx`): 하단 border 없음.
 - caption: 기본 sr-only, `isCaptionShown` 이면 section-label 스타일.
+- sortable column header (Task results Time): `btn ghost sm tbl-sort` inside the `th` (`aria-sort` on the `th`) · pulled back by the `.sm` inline padding + 1px edge → the label stays on the column's text axis (body cells · card head at an edge column), the 32 box overhangs into the cell padding.
 - ledger pagination (card foot, Task results): "Previous / Next" at `btn ghost sm`, the DetailSurface record nav's variant (§7.8) — one variant per pagination role.
 
 ### 7.6 Segmented — `.seg`

@@ -192,6 +192,20 @@ describe("each pagination button keeps one 32 box in every state", () => {
 
 // the Time column's sort control: a button inside the header cell, which keeps aria-sort
 const SORT_BUTTON = "#ledger-rows th[aria-sort] > button";
+const TIME_CELL = "#ledger-rows tbody tr.outcome-row > td:first-child";
+const LEDGER_TITLE = "#ledger-rows .card-head .card-title";
+
+// where an element's first rendered glyph starts → a label's x, whatever box or padding wraps it
+const readTextLeft = (selector: string): Promise<number> =>
+  page.$eval(selector, (el) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let text = walker.nextNode();
+    while (text && !text.textContent?.trim()) text = walker.nextNode();
+    if (!text) throw new Error(`no text in ${el.outerHTML.slice(0, 80)}`);
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    return range.getBoundingClientRect().left;
+  });
 
 // the header row it sits in stays 40: ui.row-geometry pins a sortable header row holding a 32px control
 describe("the ledger's Time header sorts through the drawer's small ghost button", () => {
@@ -199,6 +213,14 @@ describe("the ledger's Time header sorts through the drawer's small ghost button
     assert.deepEqual(await readVariantIn(SORT_BUTTON, []), await readVariantIn(DRAWER_BUTTON("Next"), []));
     assert.equal((await readBox(SORT_BUTTON)).height, 32);
     await assertBoxHeldAcrossStates(SORT_BUTTON);
+  });
+
+  test("its label starts on the column's text axis: the Time cells' text and the card head's title", async () => {
+    const label = await readTextLeft(SORT_BUTTON);
+    for (const [name, selector] of [["the Time cells' text", TIME_CELL], ["the card head's title", LEDGER_TITLE]]) {
+      const axis = await readTextLeft(selector);
+      assert.ok(Math.abs(label - axis) < 0.01, `label x ${label} ↔ ${name} x ${axis}`);
+    }
   });
 
   test("Enter and Space on the focused button each activate it", async () => {
