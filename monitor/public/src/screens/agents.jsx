@@ -939,7 +939,7 @@ function SummarySortAg({ sortBy, onSortChange, note }) {
   return (
     <div className="flex items-center fs-meta text-faint">
       <span role="status" className={`font-mono whitespace-nowrap${note ? ' mr-2' : ''}`}>{note}</span>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1">
         <span>Sort:</span>
         <select
           className="field field-select"
@@ -2299,9 +2299,9 @@ function SuccessRateMatrixCard({ failures, state, days, onRetry }) {
         right={
           <>
             {isTruncated && (
-              <span title="Server row limit hit — matrix incomplete. Shorten the time range for complete data.">
-                <Pill tone="warn">Row limit hit — some rows missing</Pill>
-              </span>
+              <Pill tone="warn" className="pill--ctl-h" title="Server row limit hit — matrix incomplete. Shorten the time range for complete data.">
+                Row limit hit — some rows missing
+              </Pill>
             )}
           </>
         }
@@ -2634,7 +2634,9 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
     return (
       <tr key={`${p.agent}|${p.task_type}`}>
         <td className="text-ink truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
-          <a className="underline decoration-dotted" href={getPairOutcomesHref(p, days)}><window.UI.AgentName name={p.agent}/></a>
+          <a className="inline-target max-w-full underline decoration-dotted" href={getPairOutcomesHref(p, days)}>
+            <window.UI.AgentName name={p.agent} className="truncate"/>
+          </a>
         </td>
         <td className="text-dim">
           {p.task_type}
@@ -2944,7 +2946,7 @@ function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
         info={NOTE.UNFINISHED}
         infoLabel="How Unfinished is counted"
         right={state.status === 'ready' && totalOrphans > 0
-          ? <Pill tone="warn">{formatIntAg(totalOrphans)} unfinished</Pill>
+          ? <Pill tone="warn" className="pill--ctl-h">{formatIntAg(totalOrphans)} unfinished</Pill>
           : null}
         foot={state.status === 'ready' && (
           <PairedCardFootAg note={NOTE_SHORT.UNFINISHED} total={lifecycleRows.length}

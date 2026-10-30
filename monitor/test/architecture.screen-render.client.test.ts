@@ -201,18 +201,16 @@ test("the Part health list and the drawer's part list each own one rule, so thei
   assert.equal(getRuleBodies(css, "arch-drawer-part-list").length, 1, "the drawer's part list is defined once");
 });
 
-test("a Part health row keeps the name, the status and the Reset label on one line each", async () => {
+test("a Part health row keeps the name and the status on one line each", async () => {
   const mod = await loadArch();
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
   const [name] = getRuleBodies(css, "arch-part-name");
   const [status] = getRuleBodies(css, "arch-part-status");
-  const [reset] = getRuleBodies(css, "arch-zoom-btn-labelled");
   assert.match(name ?? "", /white-space:\s*nowrap/, "the part name stays on one line");
   assert.match(name ?? "", /text-overflow:\s*ellipsis/, "a long part name ends in an ellipsis");
   assert.match(status ?? "", /display:\s*inline-flex/, "the glyph and the verdict word are one inline atom");
   assert.match(status ?? "", /white-space:\s*nowrap/, "the verdict word never wraps under its glyph");
-  assert.match(reset ?? "", /white-space:\s*nowrap/, "the Reset label never wraps beside its icon");
 
   const nodeIndex = new Map([["canonical.cron", { id: "canonical.cron", label: "Scheduled background jobs" }]]);
   const row = { id: "cron", name: "cron-scheduler", tone: "ok", statusLabel: "Healthy", nodeIds: ["cron"], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };

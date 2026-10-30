@@ -94,10 +94,8 @@ function ScreenWiki() {
         /* per-run 보고 표 — 읽기 전용 RECORD(상세 드로어 없음) → .tbl 기본 pointer 커서/hover 무력화 (가짜 인터랙션 암시 방지). */
         .w-report-tbl tbody tr { cursor: default; }
         .w-report-tbl tbody tr:hover { background: transparent; }
-        /* summary is a flex row, which drops the native marker → the screen draws its own chevron. */
-        .w-disclosure > summary { list-style: none; }
-        .w-disclosure > summary::-webkit-details-marker { display: none; }
-        .w-disclosure[open] > summary .w-chevron { transform: rotate(90deg); }
+        /* fold summary = one full-width disclosure row (label left, count at the far end) → block flex over the atom's inline-flex */
+        .w-disclosure > summary { display: flex; }
         /* base.css tints only status tones → a parked (neutral) glyph recedes locally. */
         .alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
         /* Name, bar and count stay within reading distance on a wide panel. */
@@ -1189,10 +1187,8 @@ function WikiDisclosureW({
 			onFocus={id ? openOnOwnFocusW : undefined}
 			className="w-disclosure rounded-md border border-line bg-sunken"
 		>
-			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
-				<span className="w-chevron inline-block fs-meta text-faint" aria-hidden="true">
-					▶
-				</span>
+			<summary className="group disclosure select-none px-3 flex-wrap">
+				<window.UI.DisclosureChevron />
 				<h2 id={id ? `${id}-title` : undefined} className="m-0 fs-body text-ink font-medium">{label}</h2>
 				<span className="ml-auto fs-meta text-dim">{count}</span>
 			</summary>

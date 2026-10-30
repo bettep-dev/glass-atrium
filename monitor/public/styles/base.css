@@ -7,8 +7,63 @@
 	outline-offset: var(--focus-ring-offset);
 }
 /* a disclosure chevron marks the open state — instant, so nothing to reduce under prefers-reduced-motion */
-details[open] > summary .chevron {
-	transform: rotate(180deg);
+details[open] > summary.disclosure > .disclosure-chevron {
+	transform: rotate(90deg);
+}
+/* disclosure trigger — DisclosureButton or a <summary>: chevron + label on one centre line at the 32 control height, no border.
+   A non-list-item display drops the UA marker (WebKit keeps its own pseudo) → the chevron is the one open-state cue */
+.disclosure {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	min-height: var(--ctl-min-h);
+	list-style: none;
+	color: rgb(var(--dim));
+	cursor: pointer;
+}
+.disclosure::-webkit-details-marker {
+	display: none;
+}
+.disclosure:hover {
+	color: rgb(var(--ink));
+}
+/* opt-in 24 hit target (WCAG 2.5.8) for a text link, a ledger expander or a checkbox hit area — never a global link rule, since
+   prose links sit under the criterion's inline exception. Middle-aligned → the box keeps a 40 .tbl row and its text on the line.
+   An inline-flex box takes no ellipsis of its own → a clipped label truncates on an inner span, so the target stays in its cell */
+.inline-target {
+	display: inline-flex;
+	align-items: center;
+	vertical-align: middle;
+	min-height: 24px;
+}
+/* engine-floored half-leading → a fractional ratio box (.fs-meta 13 × 1.4) sets an odd-height face 0.59 off the centre line
+   doubled class → outranks a same-element type-scale class on any element kind, which keeps only its font size */
+.inline-target.inline-target {
+	line-height: var(--lh-row);
+}
+/* the one checkbox visual (C24 inline target, §7.15) — a 16 token-drawn box, never the UA widget (light-scheme on a dark surface);
+   neutral at rest, the one selected state when checked or mixed. Its label takes .inline-target for the 24 hit area.
+   An input carries no pseudo-element in every engine → the check / minus glyph is a .ctl-checkbox-mark overlay. A toggle is discrete → no transition */
+.ctl-checkbox {
+	appearance: none;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	border: 1.5px solid rgb(var(--faint));
+	border-radius: var(--radius-inline);
+	background: rgb(var(--elev));
+	cursor: pointer;
+}
+.ctl-checkbox:hover {
+	border-color: rgb(var(--dim));
+}
+.ctl-checkbox:checked,
+.ctl-checkbox:indeterminate {
+	background: rgb(var(--selected-fill));
+	border-color: rgb(var(--selected-fill));
+}
+.ctl-checkbox-mark {
+	color: rgb(var(--selected-ink));
 }
 
 /* page header — top-aligned row; the h1 line box is one control height, so the controls and the
@@ -61,16 +116,24 @@ details[open] > summary .chevron {
 [data-theme="dark"] .card {
 	box-shadow: var(--shadow-raised), inset 0 1px 0 rgb(var(--glass-border) / 0.06);
 }
-/* one 48px line: title + meta left, actions right · wraps only when the controls do not fit */
-.card-head {
+/* one 48px line: title + meta left, actions right · wraps only when the controls do not fit.
+   .control-row = the same geometry for a toolbar that is not the card's head — its direct children are groups, 12 apart */
+.card-head,
+.control-row {
 	flex: none;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
-	gap: 8px 12px;
+	gap: var(--space-2) var(--space-3);
 	min-height: var(--card-head-h);
-	padding: 4px var(--card-pad);
+	padding: var(--space-1) var(--card-pad);
+}
+.card-head {
 	border-bottom: 1px solid rgb(var(--line));
+}
+/* 8 = a 32 line's own inset in 48 → a wrapped toolbar keeps that inset above its first line and below its last */
+.control-row {
+	padding-block: var(--space-2);
 }
 .card-head-text {
 	flex: 1 1 auto;
@@ -166,6 +229,10 @@ details[open] > summary .chevron {
 		border-color 0.12s;
 	cursor: pointer;
 }
+/* a toggle rests on the control edge; declared before :hover (equal specificity) so hover still lifts it to --faint */
+.btn[aria-pressed] {
+	border-color: rgb(var(--control-edge));
+}
 .btn:hover {
 	background: rgb(var(--sunken));
 	border-color: rgb(var(--faint));
@@ -258,6 +325,10 @@ details[open] > summary .chevron {
 	appearance: none;
 	margin: 0;
 	cursor: pointer;
+}
+/* a toggle chip rests on the control edge → its box reads at rest, not only once selected; non-toggle pills keep --line */
+.pill--interactive[aria-pressed] {
+	border-color: rgb(var(--control-edge));
 }
 
 /* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────
@@ -432,7 +503,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 /* control cell — a cell holding a --ctl-min-h control takes the --space-1 step (less half the rule), so the row stays --row-h beside its text cells.
    Block longhands, so the inline edge rule above still applies. A new 32px control class joins this list in the change that creates it.
    The row step is the cell's own height too → a header row, which has no rule above it to share, still rises to 40, not 39.5 */
-.tbl :is(th, td):has(.btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h) {
+.tbl :is(th, td):has(.btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h, .disclosure) {
 	height: var(--row-h);
 	padding-block-start: var(--tbl-ctl-pad-block);
 	padding-block-end: var(--tbl-ctl-pad-block);
@@ -473,10 +544,11 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	border-bottom: none;
 }
 
-/* the outline is a shadow ring, not a border → the group is exactly its 32px buttons tall, so it fits the 40 control cell like every other control */
+/* the outline is a shadow ring, not a border → the group is exactly its 32px buttons tall, so it fits the 40 control cell like every other control.
+   The ring takes the control edge and the dividers stay --line → the group reads as one box, not as separate buttons */
 .seg {
 	display: inline-flex;
-	box-shadow: 0 0 0 1px rgb(var(--line));
+	box-shadow: 0 0 0 1px rgb(var(--control-edge));
 	border-radius: var(--radius-control);
 	overflow: hidden;
 	background: rgb(var(--elev));
@@ -486,6 +558,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	min-height: var(--ctl-min-h);
 	font-size: var(--fs-meta);
 	line-height: var(--lh-ctl);
+	font-weight: 500; /* the weight of every state, as .btn and .pill--interactive → selecting an option never widens it */
 	background: none;
 	border: none;
 	color: rgb(var(--dim));
@@ -503,7 +576,6 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	background: rgb(var(--selected-fill));
 	color: rgb(var(--selected-ink));
 	border-color: rgb(var(--selected-fill));
-	font-weight: 500;
 }
 /* inset ring — .seg clips its children (overflow: hidden) */
 .seg button:focus-visible {
@@ -545,8 +617,8 @@ button.kpi:hover {
 	line-height: var(--lh-row); /* an h2 label row takes preflight's inherited size and zero margin */
 }
 .kpi--info .kpi-head {
-	/* room for the ⓘ: its 32px box ends at the edge offset below */
-	padding-right: calc(var(--ctl-min-h) - var(--space-2));
+	/* room for the ⓘ (its 32px box ends at the edge offset below) + the 4px meta gap before it */
+	padding-right: calc(var(--ctl-min-h) - var(--space-2) + var(--space-1));
 }
 .kpi-label-text {
 	flex: 0 1 auto;
@@ -562,11 +634,11 @@ button.kpi:hover {
 	line-height: var(--lh-row);
 }
 /* the ⓘ is placed on the label row's centre line, so a tile with one keeps its value on the band's baseline */
+/* offset, never a transform: a transform would trap the fixed drawer this slot renders into a 32px box */
 .kpi-info {
 	position: absolute;
-	top: calc(var(--card-pad) + var(--lh-row) / 2);
+	top: calc(var(--card-pad) + (var(--lh-row) - var(--ctl-min-h)) / 2);
 	right: calc(var(--card-pad) - var(--space-2));
-	transform: translateY(-50%);
 	display: flex;
 }
 /* 2 value row — figure, unit and badge on one baseline; a badge that does not fit wraps below, whole */
@@ -1043,17 +1115,25 @@ button.kpi:hover {
 	animation: detailPop 180ms ease-out;
 }
 
-/* head as card-head: min 48, inline 24 · a one-line title beside the 32px close button is 8 + 32 + 8 = 48 */
+/* head as card-head: min 48, inline 24 */
 .detail-head {
+	--detail-title-lh: calc(var(--fs-title) * 1.5);
 	min-height: var(--card-head-h);
-	padding: var(--space-2) var(--space-6);
+	padding: calc((var(--card-head-h) - var(--ctl-min-h) - 1px) / 2) var(--space-6); /* 7.5 + 32 + 7.5 + the 1px rule = 48 */
 	border-bottom: 1px solid rgb(var(--line));
 	display: flex;
-	align-items: flex-start;
+	align-items: flex-start; /* top, not centre → a sub-line or a wrapped title never moves the first line off the close button */
 	gap: 8px;
 	flex-shrink: 0;
 }
-.detail-title { font-weight: 600; font-size: var(--fs-title); color: rgb(var(--ink)); }
+/* a normal-leading line box, offset onto the close button's centre line */
+.detail-title {
+	margin-top: calc((var(--ctl-min-h) - var(--detail-title-lh)) / 2);
+	font-weight: 600;
+	font-size: var(--fs-title);
+	line-height: var(--detail-title-lh);
+	color: rgb(var(--ink));
+}
 .detail-sub { margin-top: var(--space-0_5); font-size: var(--fs-meta); color: rgb(var(--faint)); }
 .detail-body { padding: var(--space-4) var(--space-6); overflow-y: auto; flex: 1 1 auto; }
 /* bare — children 이 자체 header/close 소유 시 padding 만 제거 (overflow/flex 스크롤 거동 유지) */
@@ -1114,9 +1194,9 @@ button.kpi:hover {
 }
 
 /* ── Shared form controls (R1 subtle polish) ─────────────────────────────────
-   Chrome 정합: .btn(radius 6px·1px line border·elev fill·0.12s transition·
-   disabled opacity 0.5) + .seg/.kpi(elev resting fill) + .doc-filter-input:focus
-   (accent border + 2px accent/0.2 ring) 미러. 신규 토큰 없음 — 전부 tokens.css 재참조.
+   Chrome 정합: .btn(radius 6px·elev fill·0.12s transition·disabled opacity 0.5) + .seg/.kpi(elev resting fill) 미러 ·
+   테두리 = 1px --control-edge(토글 resting edge — plain .btn 의 --line 아님) · focus = accent border + 전역 :focus-visible ring.
+   신규 토큰 없음 — 전부 tokens.css 재참조.
    높이 = padding 6px+6px + --lh-ctl line box + 1px×2 border = --ctl-min-h(32px) 정확히. */
 
 /* 폼컨트롤 박스 치수 SoT — .field(<select>)와 .pill--ctl-h(height-match 배지)가 공유.
@@ -1140,7 +1220,7 @@ button.kpi:hover {
 	line-height: var(--ctl-line);
 	color: rgb(var(--ink));
 	background: rgb(var(--elev));       /* .btn/.seg/.kpi resting fill 정합 */
-	border: 1px solid rgb(var(--line));
+	border: 1px solid rgb(var(--control-edge)); /* the control edge → the box reads at rest on every surface, one step under the --faint hover */
 	border-radius: var(--ctl-radius);  /* .btn radius 정합 */
 	transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
 	-webkit-appearance: none;
@@ -1154,8 +1234,8 @@ button.kpi:hover {
 	font-feature-settings: "tnum" 1;
 }
 
-/* hover — line→faint 한 단계 (.kpi:hover 와 동일 강조 단계) */
-.field:hover:not(:disabled):not(:focus-visible) {
+/* hover — control-edge→faint 한 단계 · 오류 필드는 --crit 유지 (error 가 hover 보다 우선) */
+.field:hover:not(:disabled):not(:focus-visible):not(.is-error) {
 	border-color: rgb(var(--faint));
 }
 
@@ -1213,13 +1293,13 @@ button.kpi:hover {
 	align-items: center;
 	box-sizing: border-box;
 	background: rgb(var(--elev));
-	border: 1px solid rgb(var(--line));
+	border: 1px solid rgb(var(--control-edge)); /* the wrapper is the field's box → it rests on the control edge */
 	border-radius: var(--radius-control);
 	transition: border-color 0.12s, box-shadow 0.12s;
 	min-height: var(--ctl-h);          /* the wrapper owns the border → it, not the inner field, holds the 32px control height */
 	padding-left: var(--ctl-pad-x);    /* affix 좌측 gutter = a field's own inline padding — input 자체 좌패딩은 제거 */
 }
-.field-affix:hover:not(:focus-within) { border-color: rgb(var(--faint)); }
+.field-affix:hover:not(:focus-within):not(.is-error) { border-color: rgb(var(--faint)); }
 .field-affix:focus-within {
 	border-color: rgb(var(--accent));
 }

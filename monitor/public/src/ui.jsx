@@ -99,7 +99,7 @@ function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=
   //   (shell 이 --dim 이라 상속으론 tone 이 안 옴). aria-hidden 장식, 의미는 인접 label.
   const leadIcon = showLead && icon ? <Icon name={TONE_ICON[tone]} size={12} className={toneTextClass} /> : null;
   const leadGlyph = showLead && !icon ? <span className={toneTextClass}>{TONE_GLYPH[tone]} </span> : null;
-  // className passthrough — 호출부가 일회성 .pill 변형을 이 인스턴스에만 덧붙이게 (현재 상시 소비자 없음).
+  // className passthrough — 호출부가 .pill 변형(.pill--ctl-h 등)을 이 인스턴스에만 덧붙이게.
   const cls = ['pill', sizeClass, absent ? 'pill--absent' : '', interactive ? 'pill--interactive' : '', className].filter(Boolean).join(' ');
   const a11y = title ? { title } : {};
   const content = <>{leadIcon}{leadGlyph}{children}</>;
@@ -110,10 +110,10 @@ function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=
 
 // 기존 Pill 호출부 호환 — Badge styling layer 로 routing (두 번째 status idiom 방지).
 // neutral 톤은 metadata role, 그 외(ok/warn/crit/info)는 status role 로 자동 매핑 (color=status 규칙 정합).
-function Pill({ children, tone='neutral' }) {
+function Pill({ children, tone='neutral', title, className }) {
   return tone === 'neutral'
-    ? <Badge role="metadata" glyph={false}>{children}</Badge>
-    : <Badge role="status" tone={tone}>{children}</Badge>;
+    ? <Badge role="metadata" glyph={false} title={title} className={className}>{children}</Badge>
+    : <Badge role="status" tone={tone} title={title} className={className}>{children}</Badge>;
 }
 
 // 공용 빈-상태 atom (canonical) — 화면별 EmptyState* 복제 + 보드 dashed-col idiom 의 단일 SoT.
@@ -751,7 +751,7 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   const dialogProps = titleId ? { 'aria-labelledby': titleId } : { 'aria-label': title };
   const bareTitle = bare && isElementTitle && !labelledBy ? <div id={titleId} hidden>{title}</div> : null;
 
-  const closeBtn = <button className="btn ghost sm" onClick={onClose} aria-label="Close details"><Icon name="x" size={14}/></button>;
+  const closeBtn = <button className="btn ghost sm icon" onClick={onClose} aria-label="Close details"><Icon name="x" size={14}/></button>;
   const head = <div className="detail-head">
     <div className="flex-1 min-w-0">
       <div id={titleId} className="detail-title">{title}</div>
@@ -763,7 +763,7 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   // nav 제공 시 footer 에 Prev/Next 승격 — 명시 footer 와 병존.
   const navFoot = nav ? <div className="detail-nav">
     <button className="btn ghost sm" onClick={nav.onPrev} disabled={!nav.hasPrev} aria-label="Previous record">
-      <Icon name="arrowU" size={14}/> Prev
+      <Icon name="arrowU" size={14}/> Previous
     </button>
     <button className="btn ghost sm" onClick={nav.onNext} disabled={!nav.hasNext} aria-label="Next record">
       Next <Icon name="arrowD" size={14}/>
@@ -1023,16 +1023,16 @@ function Table({ caption, isCaptionShown = false, isHeadSticky = false, columns,
 
 const DISCLOSURE_CHEVRON_PX = 14;
 
-// Brightens with its `group` ancestor's hover; a 90° turn marks the open state.
+// Brightens with its `group` ancestor's hover; a 90° turn marks the open state — through isOpen, or through details[open] in a summary.
 function DisclosureChevron({ isOpen }) {
   return <Icon name="chevR" size={DISCLOSURE_CHEVRON_PX}
-    className={`text-dim group-hover:text-ink ${isOpen ? 'rotate-90' : ''}`.trim()} />;
+    className={`disclosure-chevron text-dim group-hover:text-ink ${isOpen ? 'rotate-90' : ''}`.trim()} />;
 }
 
-// Expand/collapse control: state rides aria-expanded, the visible label names it.
+// Expand/collapse control on the .disclosure atom: state rides aria-expanded, the visible label names it.
 function DisclosureButton({ isOpen, onToggle, label, controls, className = '' }) {
   return <button type="button" onClick={onToggle} aria-expanded={isOpen} aria-controls={controls}
-    className={`group inline-flex items-center gap-1 min-h-[32px] text-dim hover:text-ink ${className}`.trim()}>
+    className={`group disclosure ${className}`.trim()}>
     <DisclosureChevron isOpen={isOpen} />
     <span>{label}</span>
   </button>;
@@ -1678,8 +1678,9 @@ function RefreshButton({ isBusy = false, hasRead = false, onRefresh, label = 'Re
     getHarnessRead();
   };
 
+  // fixed width → the busy label moves nothing; end-aligned → the visible label, not the invisible ghost box, meets the column's right edge
   return (
-    <button type="button" className="btn ghost sm w-28 justify-center" onClick={handleClick}
+    <button type="button" className="btn ghost sm w-28 justify-end" onClick={handleClick}
       aria-disabled={isBusy ? 'true' : undefined} aria-busy={isBusy ? 'true' : undefined} aria-label={label}>
       <Icon name="refresh" size={14} className={iconClass}/>
       {isBusy ? busyText : 'Refresh'}
@@ -1775,7 +1776,7 @@ function ErrorDetails({ detail }) {
   if (!detail) return null;
   return (
     <details className="fs-meta text-faint">
-      <summary className="cursor-pointer">Details</summary>
+      <summary className="group disclosure"><DisclosureChevron /><span>Details</span></summary>
       <code className="block mt-1 font-mono break-all">{detail}</code>
     </details>
   );

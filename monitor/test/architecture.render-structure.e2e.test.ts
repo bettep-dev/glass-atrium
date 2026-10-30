@@ -454,9 +454,9 @@ describe("healthy live fixture", () => {
 	});
 
 	test("AC-18 exactly one rendered diagram SVG", async () => {
-		// 계수 단위 = 캔버스 하위 svg 중 컨트롤 아이콘을 뺀 것 — 캔버스는 줌 버튼의
-		// 15x15 아이콘 svg 도 품으므로 [measured: button.arch-zoom-btn > svg] 하위 svg
-		// 전수는 정상 트리에서 2 임. 두 번째 맵은 버튼 밖에 그려지므로 이 제외가
+		// 계수 단위 = 캔버스 하위 svg 중 컨트롤 아이콘을 뺀 것 — 캔버스는 줌 버튼 셋의
+		// 아이콘 svg 도 품으므로 [measured: .arch-zoom-controls button > svg] 하위 svg
+		// 전수는 정상 트리에서 4 임. 두 번째 맵은 버튼 밖에 그려지므로 이 제외가
 		// "맵은 한 장" 이라는 사실을 약화시키지 않음.
 		const svgCount = await ctx.page.evaluate((sel) => {
 			const canvas = document.querySelector(sel.canvas);
