@@ -19,7 +19,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, parse, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import pg from "pg";
@@ -281,21 +281,21 @@ for (const [label, a, b, expected] of SERVER_IDENTITY_ROWS) {
   });
 }
 
-// The DB client itself refuses a node:test process that select-test-db.ts did not prepare:
-// a test file's `import "dotenv/config"` otherwise hands it the live DATABASE_URL. Each row
-// runs a child against a throwaway socket that only counts connections, so no row can reach
-// a real database, and the child's env carries no inherited database URL.
-
-const MONITOR_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const TSX_BIN = join(MONITOR_ROOT, "node_modules", ".bin", "tsx");
-const SELECT_TEST_DB = join(MONITOR_ROOT, "test", "lib", "select-test-db.ts");
+// guard rows: child per run form · counting socket, no real DB · no inherited DB URL
+const ROOT = {
+  MONITOR: fileURLToPath(new URL("..", import.meta.url)),
+  GUARD: mkdtempSync(join(tmpdir(), "db-guard-")),
+};
+const TSX_BIN = join(ROOT.MONITOR, "node_modules", ".bin", "tsx");
+const SELECT_TEST_DB = join(ROOT.MONITOR, "test", "lib", "select-test-db.ts");
 const SANCTIONED_IMPORT = "--import ./test/lib/select-test-db.ts";
 
-const PROBE_SOURCE = `
+const PROBE = {
+  source: `
 import { writeFile } from "node:fs/promises";
 const { getPrisma, disconnectPrisma } = await import(${JSON.stringify(
-  pathToFileURL(join(MONITOR_ROOT, "src", "server", "db.ts")).href,
-)});
+    pathToFileURL(join(ROOT.MONITOR, "src", "server", "db.ts")).href,
+  )});
 let outcome = "connected";
 try {
   await getPrisma().$queryRawUnsafe("SELECT 1");
@@ -304,19 +304,48 @@ try {
 }
 await disconnectPrisma().catch(() => undefined);
 await writeFile(process.env.PROBE_OUT ?? "", outcome);
-`;
+`,
+  testFile: join(ROOT.GUARD, "probe.test.mts"),
+  entry: join(ROOT.GUARD, "probe-entry.mts"),
+};
+writeFileSync(PROBE.testFile, PROBE.source);
+writeFileSync(PROBE.entry, PROBE.source);
 
-const GUARD_ROOT = mkdtempSync(join(tmpdir(), "db-guard-"));
-const PROBE = { testFile: join(GUARD_ROOT, "probe.test.mts"), entry: join(GUARD_ROOT, "probe-entry.mts") };
-writeFileSync(PROBE.testFile, PROBE_SOURCE);
-writeFileSync(PROBE.entry, PROBE_SOURCE);
+/** Recursive-delete gate: true only for an absolute path strictly inside tmpdir(). */
+function isScratchPath(path: string): boolean {
+  if (!isAbsolute(path)) {
+    return false;
+  }
+  const fromTmp = relative(tmpdir(), path);
+  return fromTmp !== "" && fromTmp.split(sep)[0] !== ".." && !isAbsolute(fromTmp);
+}
 
 after(() => {
-  rmSync(GUARD_ROOT, { recursive: true, force: true });
+  if (!isScratchPath(ROOT.GUARD)) {
+    throw new Error(`refused recursive delete of ${ROOT.GUARD}: not a path inside ${tmpdir()}, remove it by hand`);
+  }
+  rmSync(ROOT.GUARD, { recursive: true, force: true });
 });
 
-// Inherited selection state (this suite's own swapped URL, the live handle, the marker, the
-// runner context) would decide the child's outcome for it, so all of it is dropped.
+const SCRATCH_PATH_ROWS: ReadonlyArray<{ name: string; path: string; isScratch: boolean }> = [
+  { name: "an empty path is refused", path: "", isScratch: false },
+  { name: "a relative path is refused", path: "db-guard-relative", isScratch: false },
+  { name: "the filesystem root is refused", path: parse(tmpdir()).root, isScratch: false },
+  { name: "tmpdir() itself is refused", path: tmpdir(), isScratch: false },
+  { name: "a path climbing out of tmpdir() is refused", path: `${tmpdir()}${sep}..${sep}db-guard-x`, isScratch: false },
+  { name: "a sibling sharing tmpdir()'s name as a prefix is refused", path: `${tmpdir()}-x${sep}db-guard-x`, isScratch: false },
+  { name: "this suite's own scratch directory is allowed", path: ROOT.GUARD, isScratch: true },
+];
+
+describe("the scratch-delete guard allows only a path inside tmpdir()", () => {
+  for (const row of SCRATCH_PATH_ROWS) {
+    test(row.name, () => {
+      assert.equal(isScratchPath(row.path), row.isScratch, `path: ${JSON.stringify(row.path)}`);
+    });
+  }
+});
+
+// parent's DB URLs, select marker, runner context → dropped so the child decides alone
 const INHERITED_SELECTION = /DATABASE_URL$|^MONITOR_|^NODE_TEST_CONTEXT$|^NODE_OPTIONS$/;
 
 function getChildEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
@@ -331,8 +360,8 @@ interface ProbeRun {
 }
 
 /** Runs the probe through tsx with `args`, its DATABASE_URL a socket that accepts and drops. */
-async function runProbe(args: readonly string[], selectsTestDb: boolean): Promise<ProbeRun> {
-  const dir = mkdtempSync(join(GUARD_ROOT, "s"));
+async function runProbe(args: readonly string[], isTestUrlSelected: boolean): Promise<ProbeRun> {
+  const dir = mkdtempSync(join(ROOT.GUARD, "s"));
   const port = 55431;
   const url = `postgresql://probe@localhost/throwaway?host=${dir}&port=${port}`;
   let connections = 0;
@@ -344,9 +373,9 @@ async function runProbe(args: readonly string[], selectsTestDb: boolean): Promis
   await once(server, "listening");
 
   const out = join(dir, "outcome.txt");
-  const urlEnv = { [selectsTestDb ? "MONITOR_TEST_DATABASE_URL" : "DATABASE_URL"]: url };
+  const urlEnv = { [isTestUrlSelected ? "MONITOR_TEST_DATABASE_URL" : "DATABASE_URL"]: url };
   const child = spawn(TSX_BIN, args, {
-    cwd: GUARD_ROOT,
+    cwd: ROOT.GUARD,
     env: getChildEnv({ ...urlEnv, PROBE_OUT: out }),
     stdio: ["ignore", "ignore", "pipe"],
   });
@@ -362,35 +391,35 @@ async function runProbe(args: readonly string[], selectsTestDb: boolean): Promis
 const RUN_FORM_ROWS: ReadonlyArray<{
   name: string;
   args: readonly string[];
-  selectsTestDb: boolean;
+  isTestUrlSelected: boolean;
   isRefused: boolean;
 }> = [
   {
     name: "a standalone --test run is refused",
     args: ["--test", PROBE.testFile],
-    selectsTestDb: false,
+    isTestUrlSelected: false,
     isRefused: true,
   },
   {
     name: "a --test run with process isolation off is refused",
     args: ["--test", "--test-isolation=none", PROBE.testFile],
-    selectsTestDb: false,
+    isTestUrlSelected: false,
     isRefused: true,
   },
-  { name: "a test file run directly is refused", args: [PROBE.testFile], selectsTestDb: false, isRefused: true },
+  { name: "a test file run directly is refused", args: [PROBE.testFile], isTestUrlSelected: false, isRefused: true },
   {
     name: "the sanctioned --import select-test-db run connects",
     args: ["--import", SELECT_TEST_DB, "--test", PROBE.testFile],
-    selectsTestDb: true,
+    isTestUrlSelected: true,
     isRefused: false,
   },
-  { name: "a non-test entry (the server path) connects", args: [PROBE.entry], selectsTestDb: false, isRefused: false },
+  { name: "a non-test entry (the server path) connects", args: [PROBE.entry], isTestUrlSelected: false, isRefused: false },
 ];
 
 describe("the DB client under node:test connects only after select-test-db.ts", () => {
   for (const row of RUN_FORM_ROWS) {
     test(row.name, { timeout: 60_000 }, async () => {
-      const run = await runProbe(row.args, row.selectsTestDb);
+      const run = await runProbe(row.args, row.isTestUrlSelected);
       const detail = `\n  outcome: ${run.outcome}\n  stderr: ${run.stderr}`;
       assert.equal(run.connections > 0, !row.isRefused, `connections: ${run.connections}${detail}`);
       assert.equal(run.outcome.includes(SANCTIONED_IMPORT), row.isRefused, `refusal names the run form${detail}`);
