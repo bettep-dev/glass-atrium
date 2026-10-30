@@ -1,6 +1,6 @@
 # Maintainer note — `rules/glass-atrium/core-compliance-matrix.md`
 
-Corpus-maintenance companion to the path-scoped compliance matrix. The matrix reaches an agent only on a Read its `paths:` globs match; this note reaches none. Read it before editing the matrix; do not inject it.
+Maintainer-facing material for the compliance matrix. Nothing here binds an agent; read it before editing the matrix, and do not inject it.
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
@@ -24,32 +24,26 @@ Live consumers parse the matrix. Reword around what they read, never through it.
 | Claude Code host rules loader | the `paths:` frontmatter globs at the file head (matrix → **Path-scoped delivery**) | the block is dropped or reduced to `**`, so the file loads at every session start · a glob loses its `**/` lead |
 
 - **Inline-code path set**: the membership regex admits one path segment after the prefix, so a nested path such as one under `scoped/maintainers/` is not read.
-  - Moving text that carries a top-level inline-code path out of the matrix shrinks the declared set; check that each path still appears once.
+  - Moving text that carries a top-level inline-code path out of the matrix shrinks the declared set; check that each path still appears at least once.
 - **Tier-3 subset tokens**: `scope_infer.py` → `_SUBSET_MARKERS` treats `subset`, `-authoring`, `-reviewing` and the four footnote markers in a Tier-3 cell as a subset qualifier, so the orphan scan never asserts that file as `rules.shared` membership.
   - The `shared-destructive-path-suite-safety.md` row relies on its `subset` tokens for exactly this.
 - **Rows, not cells**: the reconcile reads the Tier-2 and Tier-3 declaration rows, never the Compliance Matrix table cell, which is a coarser summary of them.
   - A cell reader reports a permanent false divergence for glass-atrium-qa-debugger on every reviewer-only QA cell (matrix → `### Tier 3 — Cross-cutting (conditional inheritance)` → **QA**).
-  - The scan runs off the delivery path, where a fail-open matrix parser is the right instrument.
+  - The scan runs off the delivery path, so a fail-open matrix parser is the right instrument there.
 
 ## Reserved headings, literals and shapes
 
-- **Headings**:
-  - `## Loading Tiers`, `## Scope Legend` and `## Compliance Matrix` carry anchors the scope files and `agents/GLASS_ATRIUM_GLOBAL_RULES.md` link to; the validator matches `## Scope Legend` and `## Compliance Matrix` exactly.
+- **Headings** — grep the corpus for a heading before renaming or moving it; the citing set changes as files are edited.
+  - `## Scope Legend` and `## Compliance Matrix` are matched exactly by the validator; with `## Loading Tiers` they carry the anchors the scope files and `agents/GLASS_ATRIUM_GLOBAL_RULES.md` link to.
   - `### Tier 1`, `### Tier 2` and `### Tier 3` are parse prefixes.
-  - `### Membership vs. Delivery (per tier)` is cited in full by maintainer notes under `scoped/maintainers/`, by `agents/GLASS_ATRIUM_GLOBAL_RULES.md` and by `rules/glass-atrium/shared-self-improve-hygiene.md`.
-    - `hooks/inject-scope-rules.sh` and `hooks/inject-session-context.sh` cite it by its `Membership vs. Delivery` prefix.
-    - The citing set changes as those files are edited: grep the corpus for the heading before renaming it.
-  - `#### Per-scope inheritance detail` sits below the Tier 3 table, so no parser's section bound moves; never insert a heading above a Tier table.
-  - `### Membership declaration and SubagentStart channels`: maintainer notes, for the part-slot channel table.
-  - `### Injected Blocks (SubagentStart allowlist)`: `skills/glass-atrium-ops-delegation-contracts/references/agent-lifecycle-ceremony.md` and `scoped/maintainers/shared-turn-budget.md`, for roster curation.
-  - `## Precedence Resolution`: a stub the `agents/GLASS_ATRIUM_GLOBAL_RULES.md` maintainer note names.
-  - `## Archived Agents`: named by the Scope Legend's `~~DATA~~` row.
-- **Cited leads** — grep the corpus for the lead before rewording one:
-  - **Path-scoped delivery**: `rules/glass-atrium/shared-self-improve-hygiene.md`, the maintainer notes for `agents/GLASS_ATRIUM_GLOBAL_RULES.md` and `glass-atrium-dev-python`, the matrix's § footnote, and this note's `Claude Code host rules loader` row.
-  - Tier-3 **QA**: this note's **Rows, not cells** bullet.
-  - Scope Legend **New-agent doc-sync note**: `scoped/maintainers/scope-dev.md` → its `### Doc-sync note (CLI auto-writes vs. manual matrix update)` row.
+  - Cited by name: `### Membership vs. Delivery (per tier)` · `### Membership declaration and SubagentStart channels` · `### Injected Blocks (SubagentStart allowlist)` · the `## Precedence Resolution` stub · `## Archived Agents`.
+    - Hook comments cite `### Membership vs. Delivery (per tier)` in shortened forms — one drops the `(per tier)` suffix, another the `###` — so grep the bare `Membership vs. Delivery` prefix.
+  - `#### Per-scope inheritance detail` sits below the Tier 3 table, so no parser's section bound moves.
+- **Cited leads** — grep the corpus for the lead before rewording one: **Path-scoped delivery** · Tier-3 **QA** (cited by **Rows, not cells** above) · Scope Legend **New-agent doc-sync note**.
+  - `scoped/maintainers/scope-dev.md` cites **New-agent doc-sync note** as "Scope Legend doc-sync note", which a grep of the lead misses.
 - **Quoted text** — a code comment quotes these matrix sentences; reword one only together with its quote:
-  - `### Injected Blocks (SubagentStart allowlist)` → the `scoped/shared-turn-budget.md` is an injection-text source only bullet, its policy-SoT clause through `carries no tier membership and no matrix row`: `hooks/validate-compliance-matrix.sh` → the comment above `EXEMPT_FILES`, as the reason that file is exempt from the row scan.
+  - `### Injected Blocks (SubagentStart allowlist)` → the `scoped/shared-turn-budget.md` is an injection-text source only bullet, its policy-SoT clause through `carries no tier membership and no matrix row`.
+    - Quoted at `hooks/validate-compliance-matrix.sh` → the comment above `EXEMPT_FILES`, as the reason that file is exempt from the row scan.
   - The quote wraps across comment lines, so a single-line `git grep` misses it: grep a short fragment such as `tier membership`.
 - **Literals**: the matrix header cell `Rule File`, the `✓` glyph, the footnote markers †‡§¶, and the Scope Legend's `~~DATA~~` strikethrough row.
 - **Row shape**: a table row anywhere in the matrix whose first cell is a bare `name.md` is read as a declared rule file by the drift scan — only Compliance Matrix rows may take that shape.
@@ -59,12 +53,12 @@ Live consumers parse the matrix. Reword around what they read, never through it.
 - **Live-file pins** — `hooks/test/injector-roster-docs-closed-set.bats` (per the table above) and `monitor/test/architecture.governance-membership.unit.test.ts`.
   - The latter's last case reads the real matrix and asserts it still declares `scoped/scope-dev.md` and `rules/glass-atrium/core-security.md` as inline-code paths.
 - **Fixture-driven, so they catch nothing here** — `hooks/test/validate-compliance-matrix.bats`, `scripts/test/test_inject_sync.py` and `scripts/test/test_rules_membership.py` drive temp-dir or in-memory fixtures.
-  - A live edit that breaks a parser passes all three: run the validator and the orphan scan against the edited file itself.
+  - A live edit that breaks a parser passes every one of them: run the validator and the orphan scan against the edited file itself.
 - `autoagent/daemon_cycle.py` → `_read_sections` excerpts the whole matrix, cut at heading blocks, into the daemon's rule-improvement verify prompt; it pins no literal.
 
 ## Cell-marker decisions
 
-- **A bare `✓` with no marker**: a new marker needs its own `>` definition, a reserved-literal entry above and the validator's marker set, so a cell stays bare for one of two reasons.
+- **A bare `✓` with no marker**: a new marker needs its own `>` definition, a reserved-literal entry above and the validator's marker set, so a cell stays bare for one of the reasons below.
   - The Tier-3 row already names the agent or subset:
     - `shared-naming.md`, `shared-code-structure.md` and `shared-testing.md` QA cells: the row names glass-atrium-qa-code-reviewer outright, which no marker could state more precisely.
     - `shared-destructive-path-suite-safety.md` DEV cell: conditional, and the row names the suite-running subset.
