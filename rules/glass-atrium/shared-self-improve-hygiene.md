@@ -27,6 +27,7 @@ Applies to two audiences, both loaded on a Read whose path matches the `paths:` 
 - **Backup retention**: the retention prune (default 14 days, `AUTOAGENT_BACKUP_TTL_DAYS`) never removes the newest cycle subdir.
 - **On a multi-file cascade** → one commit per meaning unit, so no dirty state accumulates under the loop.
   - Who authors it: `core-git-workflow.md` → `### Worktree occupancy` → **Who commits**; in an interactive session, prefer a manual user commit.
+  - In an autonomous run (user absent), keep a per-file diff record of the cascade.
 
 ## Precondition Loud-Fail Principle [DEV+ORCHESTRATOR]
 

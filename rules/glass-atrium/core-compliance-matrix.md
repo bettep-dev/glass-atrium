@@ -132,7 +132,7 @@ Roster curation — why each is the shape it is:
 
 These injection sources are not rule files of this matrix, and none gains membership by being injected:
 
-- `scoped/shared-turn-budget.md` is an injection-text source only — its policy SoT stays the Tier-1 `agents/GLASS_ATRIUM_GLOBAL_RULES.md` Turn Budget & Graceful Exit section, so it has no matrix row.
+- `scoped/shared-turn-budget.md` is an injection-text source only — its policy SoT stays the Tier-1 `agents/GLASS_ATRIUM_GLOBAL_RULES.md` Turn Budget & Graceful Exit section, so it carries no tier membership and no matrix row.
 - `AGENT-INJECT:WIKI-UNTRUSTED` carries the Tier-1 `core-wiki-reference.md` raw-store data-not-instruction clause [LLM01] as a clause body and changes no tier.
 - The canary block's file carries trial text, not a rule: the daemon writes it while that agent's trial or A/A is open.
   - Its file contract: `hooks/inject-scope-rules.sh` → `set_canary_block`.
