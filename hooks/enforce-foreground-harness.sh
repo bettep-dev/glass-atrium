@@ -546,8 +546,9 @@ candidate_blocks() {
 # Any other entry, created from $HOME, is a file no session reads → no misconfiguration, no block.
 config_entries=' settings.json settings.local.json keybindings.json agents agent-memory commands skills hooks rules plugins output-styles projects '
 tilde_re='^~[a-z0-9._-]*(/|$)'
-progress_re='^projects/[^/]+/memory/progress-[^/]*\.md$'
-job_scratch_re='^jobs/[^/]+/tmp(/|$)'
+# a `.` segment names no project or job: jobs/./tmp/x is jobs/tmp/x
+progress_re='^projects/[^/.][^/]*/memory/progress-[^/]*\.md$'
+job_scratch_re='^jobs/[^/.][^/]*/tmp(/|$)'
 
 # nocasematch stays on: the lexical root and exemption tests fold case as the host filesystem does.
 glob_match=false

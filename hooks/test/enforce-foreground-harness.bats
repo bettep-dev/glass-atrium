@@ -176,11 +176,30 @@ list_bashes() {
 }
 
 # A glob is expanded level by level, so its cost stops growing with depth once a level passes the match cap.
-@test "a deep glob from the filesystem root is judged protected within a bounded time" {
-  local start="${SECONDS}"
-  run_agent 'Edit /*/*/*/*/*/*/*/*/.claude/x.md now.' omit
-  [[ "${status}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
-  ((SECONDS - start < 5)) || { echo "took $((SECONDS - start)) s"; return 1; }
+@test "a glob level matching more than 1024 paths is judged protected, and one at the cap is walked" {
+  local wide="${BATS_TEST_TMPDIR}/wide"
+  mkdir -p "${wide}"
+  seq -f "${wide}/d%04g" 1 1024 | xargs mkdir
+  run_agent "Edit ${wide}/*/.claude/x.md now." omit
+  [[ "${status}" -eq 0 ]] || { echo "1024 matches: status ${status}: ${output}"; return 1; }
+  mkdir "${wide}/d1025"
+  run_agent "Edit ${wide}/*/.claude/x.md now." omit
+  [[ "${status}" -eq 2 ]] || { echo "1025 matches: status ${status}: ${output}"; return 1; }
+}
+
+@test "the job tmp/ and progress-file exemptions hold only below a real id segment" {
+  local row name prompt
+  for row in \
+    'dot segment in place of the job id|Read ~/.claude/jobs/./tmp/out.txt.' \
+    'dot segment in place of the project|Write ~/.claude/projects/./memory/progress-x.md now.' \
+    'job state file beside its tmp/|Write ~/.claude/jobs/25a65a54/state.json now.'; do
+    IFS='|' read -r name prompt <<<"${row}"
+    run_agent "${prompt}" omit
+    [[ "${status}" -eq 2 ]] || {
+      echo "row: ${name} · status ${status}: ${output}"
+      return 1
+    }
+  done
 }
 
 @test "a .. segment voids every exemption" {
