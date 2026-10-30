@@ -276,6 +276,8 @@ run_hook_command() {
     'echo beside a Trash delete@@echo "rm -rf ~"; rm -rf ~/.Trash/x' # GA-RM[not-executed]: hook payload, never run
     'parameter-expansion braces in an echo argument@@echo "rm -rf ${HOME} is blocked"' # GA-RM[not-executed]: hook payload, never run
     'compound keyword as a word of echo text@@echo "rm -rf ~/x, then retry"' # GA-RM[not-executed]: hook payload, never run
+    'echo after an inert command, both streams copied@@cd /tmp && echo "never rm -rf ~" 2>&1' # GA-RM[not-executed]: hook payload, never run
+    $'list continued across a newline@@echo "never rm -rf ~" &&\nls' # GA-RM[not-executed]: hook payload on stdin, never run
   )
   local row
   for row in "${rows[@]}"; do
@@ -308,6 +310,14 @@ run_hook_command() {
     'exec sending stdout to a script file@@exec >run.sh; echo "rm -rf ~"; sh run.sh' # GA-RM[not-executed]: hook payload, never run
     'exec sending both streams to a script file@@exec &>run.sh; echo "rm -rf ~"; sh run.sh' # GA-RM[not-executed]: hook payload, never run
     'exec sending stderr to a script file@@exec 2>run.sh; echo "rm -rf ~" >&2; sh run.sh' # GA-RM[not-executed]: hook payload, never run
+    $'echo line in a heredoc body cut down for a shell@@cut -c7-14 <<\'EOF\' | sh\necho "rm -rf ~"\nEOF' # GA-RM[not-executed]: hook payload, never run
+    $'echo line in a multi-line quote cut down for a shell@@printf \'%s\\n\' \'x\necho "rm -rf ~"\n\' | sed -n 2p | cut -c7-14 | sh' # GA-RM[not-executed]: hook payload, never run
+    $'echo line in a here-string cut down for a shell@@sed \'s/.*;echo //\' <<<\'x;echo "rm -rf ~";\' | sh' # GA-RM[not-executed]: hook payload, never run
+    'last argument read back through indirection@@x=_; echo "rm -rf ~"; eval "${!x}"' # GA-RM[not-executed]: hook payload, never run
+    'DEBUG trap running a slice of the echo command@@trap '\''eval "${BASH_COMMAND:6:8}"'\'' DEBUG; echo "rm -rf ~"' # GA-RM[not-executed]: hook payload, never run
+    $'echo aliased to an inline shell@@shopt -s expand_aliases; alias echo=\'sh -c\'\necho "rm -rf ~"' # GA-RM[not-executed]: hook payload, never run
+    'shell argv read back by a program@@echo "rm -rf ~"; ps -ax -o args= | grep -o '\''rm -r[f] ~'\'' | head -1 | sh' # GA-RM[not-executed]: hook payload, never run
+    $'pipe continued across a newline@@echo "rm -rf ~" |\nsh' # GA-RM[not-executed]: hook payload on stdin, never run
   )
   local row
   for row in "${rows[@]}"; do
