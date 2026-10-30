@@ -1,6 +1,8 @@
 # Maintainer note — `rules/glass-atrium/core-outcome-record.md`
 
-Recorder and grader reference for that Tier-1 rule file: what `hooks/track-outcome.sh` records for each emit shape, and what the grader and the daemon compute for the columns a writer never fills. Nothing here binds an emitting agent — the rule file carries the writer's duties and reaches every agent on the host channel; this note reaches none. Read it before editing the recorder, the grader or the rule file; do not inject it.
+- Recorder and grader reference for that Tier-1 rule file: what `hooks/track-outcome.sh` records for each emit shape, and what the grader and the daemon compute for the columns a writer never fills.
+- Nothing here binds an emitting agent: the rule file carries the writer's duties and reaches every agent on the host channel; this note reaches none.
+- Read it before editing the recorder, the grader or the rule file; do not inject it.
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
@@ -8,7 +10,7 @@ Recorder and grader reference for that Tier-1 rule file: what `hooks/track-outco
 - A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
 - NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
-- Applied here: the rule file carries no stub heading for this note, yet cites it at two prose sites (`## Linkage`). That departs from "Every other citation goes"; the open call is under `## Outstanding`.
+- Applied here: the rule file carries no stub heading for this note, yet cites it at two prose sites (`## Linkage`) — an open departure from "Every other citation goes" (`## Outstanding`).
 
 ## Recorder behaviour
 
@@ -16,18 +18,20 @@ Recorder and grader reference for that Tier-1 rule file: what `hooks/track-outco
 
 - **Writer**: `hooks/_pg_outcome_dualwrite.py` writes `core.outcomes`; its `body_md` column carries the full markdown body, which the renderer CLI re-synthesizes to frontmatter.
 - **Record-side names**: the record stores the template's `files` as `files_modified`, and `cid` both as `cid` and as `correlation_id`; `metric_type` shares the 9-type task_type value set.
-- **`concerns`**: `track-outcome.sh` copies the value into the record's `## Concerns` section, reads that section back when a `done_with_concerns` row has no `concerns:` line, and clamps the stored value to 800 chars.
+- **`concerns`**: `track-outcome.sh` copies the value into the record body's `## Concerns` section and clamps the stored value to 800 chars.
+  - A `done_with_concerns` row with no `concerns:` line takes the value from a `## Concerns` section of the emitting agent's last message.
   - An absent `concerns` is stored as an empty array.
 - **`revision_count`**: a missing or non-integer value falls back to 0.
   - The hook's prior+1 cross-outcome accumulation is stubbed to 0 until a project-keyed PG restoration lands.
   - Why: DB-only tracking has no cwd/project key, so a same-task_type prior lookup would miscount another project's correction.
-- **task_type agreement**: the rule file's `### Role → Allowed task_types` table is the single authority that `guess_task_type`, the grader's unknown-case branch and the dual-write `_norm_task_type` helper MUST agree on — divergence is a defect.
-- **`## Summary` section**: `track-outcome.sh` copies the `summary` field into the record body's required `## Summary` section; the renderer and the daemon consume that label. The hook's comment above the estimate-vs-actual pairing cites this requirement by the bare `core-outcome-record.md` name.
+- **task_type agreement**: the rule file's `### Role → Allowed task_types` table is the single authority that `guess_task_type`, the grader's unknown-case branch and the dual-write `_norm_task_type` helper MUST agree on.
+- **`## Summary` section**: `track-outcome.sh` copies the `summary` field into the record body's required `## Summary` section; the renderer and the daemon consume that label.
 - **`lesson`**: recorded as outcome data and shown in the monitor; no prompt, spawn injection or self-improvement step reads it.
 - **Lesson-free read backing**: honor-system — no hook stops a call to the `/api/outcomes/<id>` detail route.
 - **`result` side effects in `track-outcome.sh`**:
-  - Circuit breaker (`circuit_breaker_record`): `fail` is the only value that accrues the per-agent counter; `CIRCUIT_BREAKER_THRESHOLD` (default 3) in a row writes a suspension signal. Any other value, `blocked` included, resets it.
-  - Survival packet (`hooks/pre-compact.sh`): a `blocked` row's CID is carried into the pre-compact survival packet as active; a `fail` row's is not.
+  - Circuit breaker (`circuit_breaker_record`): `fail` is the only value that accrues the per-agent counter; `CIRCUIT_BREAKER_THRESHOLD` (default 3) in a row writes a suspension signal.
+    - Any other value, `blocked` included, resets it.
+  - Survival packet (`hooks/pre-compact.sh`): a `done_with_concerns`, `blocked` or `needs_context` row's CID is carried into the pre-compact survival packet as active; a `fail` row's is not.
 
 ### Recorder parse outcomes
 
@@ -38,15 +42,15 @@ What `track-outcome.sh` records for each emit shape.
 | multi-line block closed by `[/COMPLETION]` | writer-parsed row |
 | block opened, closing sentinel missing | `parse_tier=2`, `truncated_completion` — writer-parsed, fields kept; attribution degrades to a truncation signal |
 | inline single-line with ≥1 core field | `parse_tier=1` via the inline tolerance tier — fields preserved |
-| no core field, or no block after ≥1 tool_use | synthesized: `done_with_concerns` / `confidence=low` / `metric_pass=false`, guessed `task_type` |
+| no core field, or no block after ≥1 tool_use | synthesized: `done_with_concerns` / `confidence=low` / `metric_pass=false`, keyword-guessed `task_type` |
 | schema-mode run, `completion_block` present and parseable in the terminal StructuredOutput input | writer-emitted, attribution `structuredoutput-completion` — a healthy row |
-| schema-mode run whose terminal StructuredOutput was consumed, `completion_block` unusable | `structuredoutput-derived` synthesis: `result=done`, NOT `done_with_concerns` |
+| schema-mode run whose terminal StructuredOutput was consumed, `completion_block` unusable | `structuredoutput-derived` synthesis: `result=done`, not `done_with_concerns` |
 
 - `structuredoutput-derived`: still `confidence=low` / `metric_pass=false` / lesson-absent, writer-unverified.
 - **Inline single-line emit (not sanctioned) — what the recorder does with one**: the one-line form (`[COMPLETION] result: done | task_type: … | metric_pass: …` — pipe/middot-delimited, no newline after the tag, no closing sentinel) misses the multi-line tiers.
   - Those tiers anchor on the `[COMPLETION]\n` boundary.
-  - A tolerance tier tried only after they miss recovers it: a line-anchored regex plus a guard requiring ≥1 of {result, task_type, metric_pass, confidence, summary}, with complete-block semantics.
-- **Unparseable emit → synthesized**: e.g. prose merely mentioning `[COMPLETION]` with a stray delimiter. `task_type` is keyword-guessed (reduced accuracy); the attribution is `completion-synthesized` or `budget-truncation`.
+  - A tolerance tier tried only after they miss recovers it: a line-anchored regex guarded by ≥1 of {result, task_type, metric_pass, confidence, summary}, with complete-block semantics.
+- **Unparseable emit → synthesized**: e.g. prose merely mentioning `[COMPLETION]` with a stray delimiter; attribution `completion-synthesized` or `budget-truncation`.
 - **Exempt turns**: the recorder skips them itself (`attribution_source="conversation-only"`), which is why the rule file's `### Emit Boundary` → Exempt asks for nothing on those turns.
 
 ## Grader- and daemon-populated fields
@@ -57,43 +61,44 @@ The columns the rule file's template marks "writer does not fill": `grader_verdi
 
 - **Grader tier**: the Code-Based deterministic grader covers author-side outcomes only; infra attribution failures are out of scope.
   - Model-Based (LLM-as-Judge) and Human-Based (`done_with_concerns` escalation) layers stack on top via `track-outcome.sh`.
-- **`grader_verdict`**: a deterministic 3-state signal computed by `track-outcome.sh`, in a SEPARATE column from `metric_pass`.
-- **Input-surface invariant**: the grader reads ONLY the `[COMPLETION]` block text, its `files:` paths and the emitting session's OWN Write/Edit history.
+- **`grader_verdict`**: a deterministic 3-state signal computed by `track-outcome.sh`, in a column separate from `metric_pass`.
+- **Input-surface invariant**: the grader reads only the `[COMPLETION]` block text, its `files:` paths and the emitting session's own Write/Edit history.
   - `hooks/lib/code-based-grader.sh` mirrors this surface; the two MUST NOT drift.
-  - That history corroborates AUTHORSHIP of paths the block already declares; it is never deliverable evidence by itself.
+  - That history corroborates authorship of paths the block already declares; it is never deliverable evidence by itself.
   - The off-surface deliverable is invisible to it — a plan or research doc lives in `monitor.ClaudedDoc`, a diff or test file in the repo.
-  - So a verdict keys ONLY on block-resident structured signal, and ABSENCE of an off-surface artifact is NOT failure evidence.
-- **Structured fields only**: gate every check on a structured field; magic-phrase prose is FORBIDDEN as a pass/fail signal.
+  - So a verdict keys only on block-resident structured signal, and absence of an off-surface artifact is not failure evidence.
+- **Structured fields only**: gate every check on a structured field; magic-phrase prose (`existing tests pass`, `no behavioral change`) is never a pass/fail signal.
+  - Why: Gaming-the-Judge avoidance.
 
 | task_type | Grader behavior |
 |-----------|-----------------|
-| `bug-fix` | an EXISTING test/spec file path in `files:` → `verified_pass`; absent → `unverified`, NOT fail |
-| `feature` | a test/spec file path in `files:` → `verified_pass`; absent or empty `files:` → `unverified`, NOT fail |
+| `bug-fix` | an existing test/spec file path in `files:` → `verified_pass`; absent → `unverified`, not fail |
+| `feature` | a test/spec file path in `files:` → `verified_pass`; absent or empty `files:` → `unverified`, not fail |
 | `refactor` | `unverified` by default — no block-resident structured signal exists for "behavior preserved" |
 | `plan` / `research` | `unverified` by task_type alone — markers (`## Open Questions`, `Sources:`, cited URLs) live in the doc |
 | `review` / `diagnosis` / `doc` / `cleanup` | explicit skip → `unverified` — no test artifact expected |
 
-- `refactor`: free text such as `existing tests pass` / `no behavioral change` is NOT a valid signal (Gaming-the-Judge avoidance).
-- **`verified_fail` has two emitters**, each marked at its site in `hooks/lib/code-based-grader.sh`: `VERIFIED_FAIL_EMITTER: LLM09 zero-evidence guard` · `VERIFIED_FAIL_EMITTER: total transcript-authorship contradiction`.
-  - Machine-checked: `hooks/test/emit-discipline-doc-consistency.bats` (its two `EMITTER` tests) matches this file's marker count and both names to the grader source — never reword, drop or add a mention without the same edit there.
-- **LLM09 misinformation guard**: `result=done` + `metric_pass=true` + ZERO deliverable evidence of any kind (no `files:`, no sources, no block body) → `grader_verdict=verified_fail` + `review_flag=true`, still advisory.
+- **`verified_fail` emitters**, each marked at its site in `hooks/lib/code-based-grader.sh`: `VERIFIED_FAIL_EMITTER: LLM09 zero-evidence guard` · `VERIFIED_FAIL_EMITTER: total transcript-authorship contradiction`.
+  - Machine-checked: `hooks/test/emit-discipline-doc-consistency.bats` (its two `EMITTER` tests) counts every occurrence of the marker literal in this whole file and matches both names to the grader source.
+  - So quote the literal nowhere else in this file, and never reword, drop or add a mention without the same edit there.
+- **LLM09 misinformation guard**: `result=done` + `metric_pass=true` + zero deliverable evidence of any kind (no `files:`, no sources, no block body) → `grader_verdict=verified_fail` + `review_flag=true`, still advisory.
   - The mere absence of a document heading is not zero evidence.
 
 ### Transcript write cross-check
 
-- **Transcript write cross-check (code types only)**: the `files:` paths of a promotable `bug-fix`/`feature` row are compared against the session's own Write/Edit history.
+- Code types only: the `files:` paths of a promotable `bug-fix`/`feature` row are compared against the session's own Write/Edit history.
 
 | Cross-check outcome | Verdict |
 |---------------------|---------|
-| TOTAL mismatch — every path-shaped entry absent from a NON-EMPTY history, zero matched | `verified_fail` — the fabrication signal |
-| PARTIAL mismatch — ≥1 unmatched WITH ≥1 matched | promotion withheld → `unverified` |
+| TOTAL mismatch — every path-shaped entry absent from a non-empty history, zero matched | `verified_fail` — the fabrication signal |
+| PARTIAL mismatch — ≥1 unmatched with ≥1 matched | promotion withheld → `unverified` |
 | EMPTY write history | withheld → `unverified` |
-| unverifiable OR unwired scan | withheld → `unverified` |
+| unverifiable or unwired scan | withheld → `unverified` |
 | ARTIFACT-ONLY — every path-shaped entry is a recognized tool-generated artifact | withheld → `unverified`, never a promotion |
 
 - PARTIAL: a tool-generated sibling (manifest / migration / snapshot) is a collector blind spot, not demonstrated absence.
-- EMPTY: an empty history cannot DEMONSTRATE absence — Write/Edit is blind to Bash-authored writes.
-- **Neither matched nor unmatched**: non-path-shaped prose entries, and recognized tool-generated artifacts — a CLOSED set: basename exactly `manifest.json`, or a path under the live install root `$HOME/.glass-atrium/`.
+- EMPTY: an empty history cannot demonstrate absence — Write/Edit is blind to Bash-authored writes.
+- **Neither matched nor unmatched**: non-path-shaped prose entries, and recognized tool-generated artifacts — a closed set: basename exactly `manifest.json`, or a path under the live install root `$HOME/.glass-atrium/`.
   - Those artifacts are written through a regeneration script or the sanctioned updater seam, invisible to the Write/Edit collector — so such an entry rescues no contradiction and blocks no otherwise-verified row.
 
 ### Grader and daemon provenance
@@ -107,7 +112,7 @@ The columns the rule file's template marks "writer does not fill": `grader_verdi
 | `synthesized` | assembled by the SubagentStop transcript-synthesis backstop — no writer-emitted block |
 
 - **`confidence_observed`**: a Beta-Binomial posterior mean (float `0.0`-`1.0`) the daemon computes from the empirical tuple `revision_count` + `result` + `evaluative_signal`.
-  - It corrects the systematically inflated writer `confidence` enum and is NOT the same field.
+  - It corrects the systematically inflated writer `confidence` enum and is not the same field.
   - Backing: its storage column is the `core.autoagent_proposals` per-pattern aggregate; the parser only recognizes the field passively and does not persist it yet, so an absent value is silently ignored.
 
 ## `style_ref` review flag
@@ -117,13 +122,14 @@ The columns the rule file's template marks "writer does not fill": `grader_verdi
   - `true` = corroborated in that history.
   - `null` = verification N/A: greenfield, absent, or unverifiable — an empty `Read` history, an unreadable transcript, or a missing `hooks/lib/style_ref_match.py`.
   - `false` = a real path not corroborated by a non-empty `Read` history — a coverage fact, never an honesty verdict: a Bash/Grep/Glob read carries no `file_path`.
-- **Mandatory graduation** is a separate future cycle requiring user approval, gated by `styleRefGradeBadgeI` in `monitor/public/src/screens/improvement.jsx`: emission ≥ 50% and the uncorroborated share of the adjudicated subset < 10% across the DEV agents.
+- **Mandatory graduation** is a separate future cycle requiring user approval, gated by `monitor/public/src/screens/improvement-instrumentation.jsx` → `styleRefGradeBadgeI`.
+  - Gate: emission ≥ 50% and the uncorroborated share of the adjudicated subset < 10% across the DEV agents.
   - Adjudicated = corroborated + uncorroborated, never eligible — an eligible denominator could be passed by widening the blind spot.
   - Publish corroborated / uncorroborated / unverifiable as three counts, not one derived rate that reads as an honesty verdict.
 
 ## Linkage
 
-- Each fact lives once. The rule file keeps the writer-facing half: each field's template line and `### Field Input Guide` row, the `metric_pass` no-overwrite comment on the template line, and the `## Automatic Verification Criteria` rows. This note keeps the rest.
+- Each fact lives once: the rule file keeps the writer-facing half — each field's template line and `### Field Input Guide` row, the `metric_pass` no-overwrite comment on the template line, and the `## Automatic Verification Criteria` rows; this note keeps the rest.
 
 | Reader or citer | Reads | Keep in step with |
 |---|---|---|
@@ -132,13 +138,13 @@ The columns the rule file's template marks "writer does not fill": `grader_verdi
 | `hooks/test/emit-discipline-doc-consistency.bats` → its two `EMITTER` tests | this file's emitter-marker count and both names, against the grader source | the emitter bullet under `### Grader verdict` |
 | `hooks/lib/code-based-grader.sh` → header comments | pointers to `### Grader verdict` (Outputs stanza, Input-surface invariant) | the Input-surface invariant bullet |
 | `hooks/test/code-based-grader.bats` → header comment | pointer to `### Grader verdict` | that heading |
+| `hooks/track-outcome.sh` → comment above the estimate-vs-actual pairing | the `## Summary` requirement, by the bare `core-outcome-record.md` name | the `## Summary` section bullet under `### Record storage` |
 | `hooks/inject-scope-rules.sh` → `build_emit_format_block` | a shell literal restating the inline-salvage and unparseable rows | `### Recorder parse outcomes` and rule file → **Spawn-injected copy** — manual |
 | `hooks/test/track-outcome-completion-block-select.bats` → its `KNOWN_FIELDS` test | the first fence after rule file `## Completion Report Output Obligation`, up to the next `## ` | the template fence, kept first in that H2 |
 | `agents/` bodies, `hooks/inject-session-context.sh`, `skills/glass-atrium-ops-orchestrator-role.md`, the ops skills | rule-file headings and leads by name | the names listed below |
 
-- The emitter-marker literal appears in this file inside the emitter bullet under `### Grader verdict` and nowhere else. The suite counts every occurrence in the file, so quoting the literal anywhere else here breaks the count.
 - Renaming `### Recorder parse outcomes` or `### Grader verdict` dangles a pointer in a Tier-1 file.
-- **The emit-format copy**: no test or hook compares it with the rule file; `hooks/test/inject-scope-rules-nodrop.bats` pins only the needle `REQUIRED by the outcome recorder`.
+- **The emit-format copy**: no test or hook compares it with the rule file; the `hooks/test/inject-scope-*.bats` suites pin only the needle `REQUIRED by the outcome recorder`.
   - The hook's header comment above `build_emit_format_block` says the rule file "carries the reciprocal pointer" — that is **Spawn-injected copy**; dropping that bullet falsifies the comment.
 - **Rule-file names cited from outside** — never rename one: `## Core` → **Lesson-free read** · `### Role → Allowed task_types` · `## Completion Report Output Obligation` · `### Emit Boundary` → Channel asymmetry · **Correction-emission rule** · `### Field Input Guide` → `metric_pass`.
   - `#### Self-assessment fields` stays under `### Field Input Guide`: frozen `agents/` bodies and the ops skill cite the path Field Input Guide → `metric_pass`.
@@ -146,7 +152,9 @@ The columns the rule file's template marks "writer does not fill": `grader_verdi
 
 ## Outstanding
 
-- The two rule-file prose pointers depart from "Every other citation goes". Dropping them leaves the schema-mode fallback and the grader-disagreement row with no route to their detail; keeping them sends Tier-1 readers into a maintainer note. Open — the rule file's owner decides.
+- The two rule-file prose pointers depart from "Every other citation goes" — open; the rule file's owner decides.
+  - Dropping them leaves the schema-mode fallback and the grader-disagreement row with no route to their detail.
+  - Keeping them sends Tier-1 readers into a maintainer note.
 - Monitor comments not retargeted — each still resolves to a `### Field Input Guide` row in the rule file, while the semantics it cites live here:
   - `monitor/prisma/schema.prisma` → the doc comments above `enum GraderVerdict` and `enum DowngradeOrigin`;
   - `monitor/src/server/routes/outcomes.ts` → the comment above `BY_DESIGN_UNVERIFIED_TASK_TYPES`.
