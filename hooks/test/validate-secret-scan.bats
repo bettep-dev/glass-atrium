@@ -83,7 +83,12 @@ run_hook() {
     'test word inside a longer name|/p/src/latest.ts|2' \
     'test word inside a dir name|/p/contest/app.ts|2' \
     'dotenv file in a test dir|/p/test/.env|2' \
-    'secrets file in a test dir|/p/test/secrets.json|2'; do
+    'secrets file in a test dir|/p/test/secrets.json|2' \
+    'dotenv-suffixed file in a fixtures dir|/p/test/fixtures/prod.env|2' \
+    'dotenv variant in a fixtures dir|/p/test/fixtures/.env-staging|2' \
+    'secrets stem inside a longer name|/p/tests/app.secrets.json|2' \
+    'capitalised secrets file|/p/test/Secrets.json|2' \
+    'credentials stem inside a longer name|/p/spec/aws-credentials.yml|2'; do
     name="${row%%|*}" path="${row#*|}" want="${row##*|}" path="${path%|*}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { email: 'ada@example.com', ${fixture_assign} }\"}}"
     [[ "${status}" -eq "${want}" ]] || { echo "${name}: status ${status}, want ${want}: ${output}"; return 1; }

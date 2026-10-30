@@ -73,11 +73,13 @@ NAMES_EN=(
 )
 
 # Status 0 → a test or fixture file, where a generic credential assignment is test data (a spec's login
-# password), not a credential; a dotenv or secrets file there stays a secrets file. Args: $1=file path
+# password), not a credential; a basename of a SECRETS_FILE shape, in any case, stays a secrets file there.
+# Args: $1=file path
 is_test_fixture_path() {
-  local base="${1##*/}"
+  local base
+  base="$(printf '%s' "${1##*/}" | tr '[:upper:]' '[:lower:]')"
   case "${base}" in
-    .env* | secret* | credential*) return 1 ;;
+    *.env | *.env[._-]* | *.envrc | *secret* | *credential*) return 1 ;;
     *.test.* | *.spec.* | *_test.* | *_spec.* | test_*.py | *.bats) return 0 ;;
     *) ;;
   esac
