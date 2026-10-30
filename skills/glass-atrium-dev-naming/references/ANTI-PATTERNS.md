@@ -18,15 +18,11 @@ Companion reference for `glass-atrium-dev-naming/SKILL.md`. Load when auditing n
 | `doValidation()` | `validate()` | `do` is empty scaffolding around the real verb |
 | `executePayment()` | `pay()`/`charge()` | `execute` is a generic wrapper — domain verb is shorter + precise |
 | `handleRequest()` | `route()`/`dispatch()` | `handle` says nothing specific about what happens |
-| `DataProcessor` (class) | `Parser`/`Validator` | Verbified-noun class hides design intent (data identifier = noun) |
-| `processedData` (var) | `normalized`/`output` | Past-participle verb form as data name → noun describing what it IS |
 | `hasDeletion` | `isDeleted` | has + nominalization → is + past participle |
 | `hasFileExistence` | `isFilePresent` | Unnecessary possessive expression; the boolean keeps a stative prefix |
 | `isNotEnabled` | `isEnabled` | Negated name forces a double negation at use (`!isNotEnabled`) |
-| `userList` | `users` | Redundant type suffix |
-| `userMap` | `userById` | Ambiguous map suffix |
-| `UrlManager` | → redefine the role | Noise suffix |
-| `Color.COLOR_RED` | `Color.RED` | Enum type name repetition |
+
+- Data-identifier verb form, collection, map and enum rows (`processedData`, `userList`, `userMap`, `Color.COLOR_RED`) → `references/VARIABLES-BOOLEANS.md`.
 
 ### Circular naming (class root = method root)
 
@@ -36,15 +32,10 @@ When a class name and a method name share the same root, the concept is doubled.
 - `DataValidator.validateData()` → `Validator.validate()` (or distribute `validate` onto the data's own type)
 - `*Manager`/`*Handler`/`*Processor` suffix (a verbified-noun disguise) → name the specific noun entity (`Session`, `Invoice`, `Queue`) and put verb methods directly on it (`session.open()`/`session.close()`).
 
-### Synonym mixing forbidden
-
-- Never mix get/find/fetch/retrieve etc. for one purpose in the same layer — `scoped/shared-naming.md` → **One verb per purpose per layer**.
-
 ### Inverse get/find school — application FORBIDDEN
 
-- **The inverse school**: Joda/Colebourne (https://blog.joda.org/2015/09/naming-optional-query-methods.html) documents the INVERSE contract — `get` = throws on miss · `find` = returns null. Same vocabulary, OPPOSITE semantics.
-- **This codebase**: the User Dictionary's `get` contract applies (`scoped/shared-naming.md` → `## Agent Injection Core`) — `get` = simple acquisition with null/undefined possible (JS `Map.get` lineage).
-  - The non-null guarantee is carried ONLY by `*OrFail`/`*OrThrow` suffixes (Prisma/Kotlin style).
+- **The inverse school**: Joda/Colebourne (https://blog.joda.org/2015/09/naming-optional-query-methods.html) documents the inverse contract — `get` = throws on miss · `find` = returns null. Same vocabulary, opposite semantics.
+- **This codebase**: the `get` contract in `scoped/shared-naming.md` → `## Agent Injection Core` applies — `get` may return null/undefined, and only an `*OrFail`/`*OrThrow` suffix guarantees non-null.
 - **Violation**: writing a `get*` that throws on miss without the suffix — or "fixing" a nullable `get*` to throw because "get means guaranteed" — is a contract violation here.
 
 ### Forbidden mixing pairs
@@ -63,7 +54,6 @@ Each pair names two distinct semantic contracts — never use one verb where the
 
 Worked rows for `scoped/shared-naming.md` → **No-stutter**: name only the part the parent scope (package, class, module, namespace, receiver, directory) does not already express.
 
-- `User.userName` X → `User.name` O
 - `UserService.getUser()` X → `UserService.get()` O
 - `auth/AuthValidator` X → `auth/Validator` O
 - `http.HTTPServer` X → `http.Server` O (package qualifier already supplies HTTP)
@@ -74,9 +64,9 @@ Worked rows for `scoped/shared-naming.md` → **No-stutter**: name only the part
 
 ## Reduction Floor — over-reduction is also a violation
 
-Conciseness has a floor: a name must still form a precise mental image, distinguish from siblings, and be uniquely greppable. The two moves are gated.
+Conciseness has a floor: a name must still form a precise mental image, distinguish from siblings, and be uniquely greppable.
 
-- **Order**: evaluate domain-strip first (does the enclosing scope supply it?), verb-strip second (is the noun alone sufficient?). Apply BOTH in one step only when each passes independently.
+- **Order**: evaluate domain-strip first (does the enclosing scope supply it?), verb-strip second (is the noun alone sufficient?). Apply both in one step only when each passes independently.
 - **Generic-terminal ban**: never reduce to `data`·`value`·`status`·`result`·`thing`·`object`·`info`·`count` (unqualified) — these are the forbidden floor.
 - **Sibling collision groups first**: two identifiers that would collapse to one name after domain-strip group under `scoped/shared-naming.md` → **Qualifier-sibling grouping** (`fileBlock`/`diskBlock` in one scope → `block: { file, disk }`).
   - The qualifier stays only where that rule's fallback applies (`userCount`/`projectCount`: `count` cannot name a group).
@@ -88,9 +78,9 @@ Conciseness has a floor: a name must still form a precise mental image, distingu
 
 | Over-reduction X | Keep O | Why |
 |---|---|--------|
-| `processOrder()` → `process()` | `process()` only inside an `Order` type | bare `process` loses the object + is unsearchable |
+| `cancelOrder()` → `cancel()` | `cancel()` only inside an `Order` type | bare `cancel` loses the object + is unsearchable |
 | `validatePaymentStatus()` → `status` | `validate` + scope-supplied domain | collapses to a generic-terminal anti-pattern |
-| `handleAuthenticationError()` → `err` | scope-proportional descriptive name | single-letter beyond a tiny block conveys nothing |
+| `authenticationError` → `e` | `e` in one expression · `err` in a short closure · `authError` wider (scope-proportional length) | a single letter beyond one expression conveys nothing |
 | `fileBlock` → `block` (two block kinds coexist) | `block: { file, disk }` in one scope · `fileBlock`/`diskBlock` across modules | a collision groups first; different scopes are no sibling set |
 
 ## Forbidden Class/Type Suffixes
@@ -129,23 +119,16 @@ Conciseness has a floor: a name must still form a precise mental image, distingu
 
 ## Red Flags
 
+Signals the sections above do not already state; each section's own rule is its red flag.
+
 - Same verb (e.g., `get`) used for both O(1) access and O(n) search in the same module
-- A `get*` function that throws on miss without an `*OrFail`/`*OrThrow` suffix (Joda-school contract leaking in)
-- Boolean variable without `is`/`has`/`can`/`should` prefix
-- Function name lacks a verb outside a vendor-adapter surface (noun-only like `user()` instead of `getUser()`/`findUser()`)
-- Data identifier carries a verb form (`processedData`, `calculatedTotal` as a variable) instead of a noun
-- Over-reduced to a generic terminal (`data`·`value`·`status`·`result`·unqualified `count`) or to a non-greppable single concept
-- Class or type suffix outside the allowlist (`*Manager`, `*Helper`, `*Util`, `*Handler`), or a module named `*Manager`, `*Helper` or `*Util`
 - Plural/singular mismatch: single item named `users`, collection named `user`
-- Dynamic identifier construction via string concatenation (`${prefix}Service`)
-- `encode` used where `encrypt` is meant (or vice versa)
-- Same concept named differently across layers (`create`/`add`/`insert` for the same operation)
 
 ## Verification
 
 - [ ] **Grep test**: All public identifiers return results via `Grep` (no dynamic construction)
 - [ ] **Verb consistency**: `Grep` each verb category (get/find/fetch) per layer — no mixing within the same layer
-- [ ] **Boolean audit**: `Grep` for `boolean` / `: boolean` declarations — all use approved prefixes
+- [ ] **Boolean audit**: `Grep` for `boolean` / `: boolean` declarations — all use an `is`/`has`/`can`/`should` prefix
 - [ ] **Forbidden suffix scan**: `Grep` for `Manager|Helper|Util|Processor|Wrapper|Handler` in class/type declarations — zero matches, and every remaining suffix is on the allowlist
 - [ ] **Conciseness check**: No identifier repeats information already in its parent scope (class name, module name)
 - [ ] **Reduction floor**: No reduced name is a generic terminal (`data`/`value`/`status`/`result`/unqualified `count`); each reduced form is uniquely greppable; a colliding sibling groups first (**Qualifier-sibling grouping**) and keeps its qualifier only where a fallback applies
