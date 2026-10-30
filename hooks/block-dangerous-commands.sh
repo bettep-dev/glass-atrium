@@ -12,7 +12,8 @@
 # home Trash passes; the judge (lib/trash_rm.py) reads the text alone, and any parse doubt keeps the block.
 #
 # Echo exception (rm-wipe row only): rm text in a quoted argument of a print-only echo/printf is blanked before
-# the re-check; one that feeds a pipe, a file or a substitution keeps its text and the block.
+# the re-check; one that feeds a pipe, a file, an opened fd or a substitution keeps its text and the block, and
+# so does a printf carrying -v, which assigns the text to a variable instead of printing it.
 #
 # Confinement belongs to the tool-grant layer, not here. See plan clauded-docs/290 UD-1 (the blanket shell grant makes the config path-allowlists decorative).
 #
@@ -94,8 +95,9 @@ is_trash_only_rm() {
 }
 
 # The command with every quoted argument of a print-only echo/printf blanked: one at a command start,
-# ending at a list operator or the end, its only redirects an fd copy or /dev/null. Any substitution
-# keeps the text whole; a mask failure or empty result is the command itself. Args: $1=command text
+# ending at a list operator or the end, its only redirects a stdout/stderr copy or /dev/null, and no
+# printf argument starting -v. Any substitution keeps the text whole; a mask failure or empty result
+# is the command itself. Args: $1=command text
 get_echo_masked() {
   local py_src masked
   # read, not a $( ) heredoc: bash 3.2 mis-parses the backtick inside one
@@ -103,12 +105,19 @@ get_echo_masked() {
 import re, sys
 command = sys.stdin.read()
 QUOTED = r"""'[^']*'|"(?:[^"\\]|\\.)*\""""
-ARG = r"(?:" + QUOTED + r"""|[^\s'"\\;&|<>()]+|[0-9]*>&[0-9]|[0-9]*>[ \t]*/dev/null)"""
+ARG = r"(?:" + QUOTED + r"""|[^\s'"\\;&|<>()]+|[12]?>&[12]|[0-9]*>[ \t]*/dev/null)"""
 INVOCATION = re.compile(
     r"(?:^|(?<=[;&|\n]))([ \t]*(?:echo|printf))((?:[ \t]+" + ARG + r")*)(?=[ \t]*(?:\Z|[;\n]|&&|\|\||&(?![&>])))"
 )
+def mask(m):
+    # quotes removed first: printf '-v' c … still assigns
+    if m.group(1).strip() == "printf" and any(
+        re.sub(r"['\"]", "", arg).startswith("-v") for arg in re.findall(ARG, m.group(2))
+    ):
+        return m.group(0)
+    return m.group(1) + re.sub(QUOTED, "''", m.group(2))
 if not re.search(r"`|\$\(|[<>]\(", command):
-    command = INVOCATION.sub(lambda m: m.group(1) + re.sub(QUOTED, "''", m.group(2)), command)
+    command = INVOCATION.sub(mask, command)
 sys.stdout.write(command)
 PY
   masked="$(python3 -I -c "${py_src}" <<<"${1}")" || masked=""

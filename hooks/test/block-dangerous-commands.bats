@@ -291,6 +291,9 @@ run_hook_command() {
     'eval of a quoted string@@eval "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
     'inline shell string@@bash -c "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
     'echo word that is not an echo command@@echoes "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
+    'printf -v assigning text an eval runs@@printf -v c "rm -rf ~"; eval "$c"' # GA-RM[not-executed]: hook payload, never run
+    'printf with an attached -v name@@printf -vc "rm -rf ~"; eval "$c"' # GA-RM[not-executed]: hook payload, never run
+    'echo into an fd opened on a script file@@exec 3>run.sh; echo "rm -rf ~" >&3' # GA-RM[not-executed]: hook payload, never run
   )
   local row
   for row in "${rows[@]}"; do
