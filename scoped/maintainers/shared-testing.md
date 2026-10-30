@@ -18,15 +18,15 @@ Corpus-maintenance companion to `scoped/shared-testing.md`: its readers, backing
 ## Retention ledger — who reads each section
 
 - A section stays in the rule file only while a named reader outside it resolves to it; a section nothing in this table points at should be deleted rather than kept for completeness, and a new section needs a reader here.
-- Each name in the table is cited verbatim from outside the file: before renaming or deleting one, grep the corpus for it and fix every hit in the same pass.
+- Each name in the table is cited verbatim from outside the file, unless its row says it is cited by path or by domain word: before renaming or deleting one, grep the corpus for it and fix every hit in the same pass.
 
 | Cited name in the rule file | Reader | Pointer site |
 |---|---|---|
 | `## Test Quality` · `### Meaningless-Test Prohibitions` | adjudicator of a hand-run auditor finding — a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) |
 | `### Detection signature per row, keyed by the Prohibited literal above` | the same adjudicator — the conditional-logic carve-out | `scripts/test/audit-test-smells.bats` header, by its `Detection signature per row` prefix |
 | `### Meaningless-Test Prohibitions` · **Deletion duty** · **Coupled-test check** | glass-atrium-qa-code-reviewer — the High risk trigger's named-removal exemption | `scoped/scope-qa.md` → `## Regression Risk Estimation [QA]` |
-| `## Test Quality` · `## Mocking Rules` · `## Test Structure` · **Authoring scope** | glass-atrium-qa-code-reviewer grading a change's tests | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
-| `## Rationalization Rejection (Testing)` | every agent — the charter's excuse→rebuttal home-file list | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection |
+| **Authoring scope** | glass-atrium-qa-code-reviewer grading a change's tests | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
+| `## Rationalization Rejection (Testing)` | every agent — the charter's excuse→rebuttal home-file list, cited by the domain word `testing` only | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection |
 | **Qualifier on the last row (the deliberate-break exception)** | every agent — the `feature` bar's exception | `core-outcome-record.md` → the `feature` note |
 | `## 3-Tier Test Hierarchy` | every agent — the commit rule's which-tests-when half, cited by path only | `core-git-workflow.md` → Commits |
 | `## 3-Tier Test Hierarchy` | glass-atrium-dev-shell — its affected-paths-per-commit override | `agents/glass-atrium-dev-shell.md` → `### Bats + test-run discipline` |
@@ -40,7 +40,7 @@ Corpus-maintenance companion to `scoped/shared-testing.md`: its readers, backing
 | `### Names, comments and test data` | every agent bound by the naming rules — the test-name exclusion | `scoped/shared-naming.md` scope lines |
 
 - Also stable — cited by reviewer findings as the governing rule, or by in-file pointers; grep before renaming:
-  - headings: `### What makes a test a test` · `#### The prohibited shapes` · `### Table form per stack` · `## Test Depth and Upkeep`;
+  - headings: `## Test Quality` · `## Mocking Rules` · `## Test Structure` · `### What makes a test a test` · `#### The prohibited shapes` · `### Table form per stack` · `## Test Depth and Upkeep`;
   - bolded leads: **Grouping** · **Fold-back** · **ID ban** · **DAMP carve-out**.
 
 ## Backing honesty — Test Quality
