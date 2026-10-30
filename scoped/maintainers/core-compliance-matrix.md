@@ -48,6 +48,9 @@ Live consumers parse the matrix. Reword around what they read, never through it.
   - **Path-scoped delivery**: `rules/glass-atrium/shared-self-improve-hygiene.md`, the maintainer notes for `agents/GLASS_ATRIUM_GLOBAL_RULES.md` and `glass-atrium-dev-python`, the matrix's § footnote, and this note's `Claude Code host rules loader` row.
   - Tier-3 **QA**: this note's **Rows, not cells** bullet.
   - Scope Legend **New-agent doc-sync note**: `scoped/maintainers/scope-dev.md` → its `### Doc-sync note (CLI auto-writes vs. manual matrix update)` row.
+- **Quoted text** — a code comment quotes these matrix sentences; reword one only together with its quote:
+  - `### Injected Blocks (SubagentStart allowlist)` → the `scoped/shared-turn-budget.md` is an injection-text source only bullet, its policy-SoT clause through `carries no tier membership and no matrix row`: `hooks/validate-compliance-matrix.sh` → the comment above `EXEMPT_FILES`, as the reason that file is exempt from the row scan.
+  - The quote wraps across comment lines, so a single-line `git grep` misses it: grep a short fragment such as `tier membership`.
 - **Literals**: the matrix header cell `Rule File`, the `✓` glyph, the footnote markers †‡§¶, and the Scope Legend's `~~DATA~~` strikethrough row.
 - **Row shape**: a table row anywhere in the matrix whose first cell is a bare `name.md` is read as a declared rule file by the drift scan — only Compliance Matrix rows may take that shape.
 
