@@ -30,7 +30,7 @@
 # Negated-mention exclusion: a token naming only a root (no entry inside it), every occurrence of which
 #   follows a negation cue in its clause (never, not, no, don't, cannot, must not …), is a constraint, not
 #   a write target. A clause ends at . ; : ! ? , or a line end. A file or dir inside the root still blocks;
-#   residual: a root-only directive behind an unrelated negation in one clause ("don't wait, edit ~/.claude").
+#   residual: a root-only directive behind an unrelated negation in one clause ("don't wait and edit ~/.claude/").
 #
 # Resolution: the verdict follows what the filesystem says a path reaches, not how it is spelled.
 #   - Candidates: every token whose text, glob metacharacters and quotes removed, holds `.claude` in any
