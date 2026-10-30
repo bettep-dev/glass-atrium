@@ -44,7 +44,7 @@ export const DIAGRAMS = [
     end
 
     subgraph agents["Specialist agents"]
-        agent_layer["23 agents"]
+        agent_layer["24 agents"]
     end
 
     subgraph hooks["Safety checks & tracking"]
@@ -536,7 +536,7 @@ export const CANONICAL_MAP: CanonicalMap = {
     end
 
     subgraph agents["Agents"]
-        agent_layer["23 agents"]
+        agent_layer["24 agents"]
     end
 
     subgraph hooks["Safety"]
