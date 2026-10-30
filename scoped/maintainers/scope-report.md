@@ -68,7 +68,9 @@ Each entry is keyed by the rule text; its copies change with it.
   - `agents/glass-atrium-intel-planner.md` → `## Pre-Emission Verification Gate [PLANNING]`;
   - `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]`.
 - **Server schema gates** (the `html_body` 400 codes; payload 400s are the route's — **Emission contract / POST tuple**): the authority is `monitor/src/server/clauded-docs/html-validator.ts` → `validateHtmlStructure`, whose pipeline comment lists each stage.
-  - The prose copy is `agents/glass-atrium-intel-reporter.md` → `### Schema Gates (Server-Enforced)`; a gate change corrects it in the same pass.
+  - Full prose copies: `agents/glass-atrium-intel-reporter.md` → `### Schema Gates (Server-Enforced)` · `monitor/README.md` → `## Managed-Document (clauded-docs) Emit Pipeline`.
+  - Partial restatements sit in reporter, planner and dev-front body bullets (e.g. the planner's **Placeholder residue (MUST)**) — find each by a corpus grep of the gate code.
+  - A gate change corrects every hit in the same pass.
 - **Diagram Standard runtime-load contract**: `agents/glass-atrium-intel-reporter.md` → `### Sandbox-Safe Interactivity (MUST)` · `agents/glass-atrium-intel-planner.md` → `### Pre-Emission HTML Gates (user-requested HTML primary only)`.
 - **Pre-drawing Doctrine numbers**: `agents/glass-atrium-intel-planner.md` → `### Pre-drawing decision core (delivered copy — apply to EVERY Mermaid block, not only the first)`.
 - **Mermaid adopted-set copies**: `monitor/src/server/clauded-docs/diagram-types.json` governs; every prose member list is a hand-synced copy, corrected against the JSON.
