@@ -267,12 +267,15 @@ run_hook_command() {
 }
 
 @test "echo exception: rm-shaped text in a quoted echo or printf argument that only prints → pass" {
+  # shellcheck disable=SC2016  # literal ${HOME} text the hook must judge, never expanded here
   local rows=(
     'double-quoted echo argument@@echo "never run rm -rf ~ here"' # GA-RM[not-executed]: hook payload on stdin, never run
     "single-quoted echo argument beside another command@@echo 'rm -rf /' && ls" # GA-RM[not-executed]: hook payload, never run
     'printf format and argument@@printf "%s\n" "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
     'echo to stderr@@echo "rm -rf ~ is blocked" >&2' # GA-RM[not-executed]: hook payload on stdin, never run
     'echo beside a Trash delete@@echo "rm -rf ~"; rm -rf ~/.Trash/x' # GA-RM[not-executed]: hook payload, never run
+    'parameter-expansion braces in an echo argument@@echo "rm -rf ${HOME} is blocked"' # GA-RM[not-executed]: hook payload, never run
+    'compound keyword as a word of echo text@@echo "rm -rf ~/x, then retry"' # GA-RM[not-executed]: hook payload, never run
   )
   local row
   for row in "${rows[@]}"; do
@@ -294,6 +297,17 @@ run_hook_command() {
     'printf -v assigning text an eval runs@@printf -v c "rm -rf ~"; eval "$c"' # GA-RM[not-executed]: hook payload, never run
     'printf with an attached -v name@@printf -vc "rm -rf ~"; eval "$c"' # GA-RM[not-executed]: hook payload, never run
     'echo into an fd opened on a script file@@exec 3>run.sh; echo "rm -rf ~" >&3' # GA-RM[not-executed]: hook payload, never run
+    'brace group piped to a shell@@{ true; echo "rm -rf ~"; } | sh' # GA-RM[not-executed]: hook payload on stdin, never run
+    'subshell piped to a shell@@(true; echo "rm -rf ~"; ) | sh' # GA-RM[not-executed]: hook payload on stdin, never run
+    'loop body piped to a shell@@for i in 1; do true; echo "rm -rf ~"; done | sh' # GA-RM[not-executed]: hook payload, never run
+    $'multi-line loop written to a script file@@for i in 1; do\necho "rm -rf ~"\ndone > run.sh; bash run.sh' # GA-RM[not-executed]: hook payload, never run
+    $'multi-line if body piped to a shell@@if true; then\necho "rm -rf ~"\nfi | sh' # GA-RM[not-executed]: hook payload, never run
+    'non-forking substitution eval runs@@eval "${ true; echo "rm -rf ~"; }"' # GA-RM[not-executed]: hook payload, never run
+    'last argument read back by eval@@echo "rm -rf ~"; eval "$_"' # GA-RM[not-executed]: hook payload on stdin, never run
+    'braced last argument read back by eval@@echo "rm -rf ~"; eval "${_}"' # GA-RM[not-executed]: hook payload, never run
+    'exec sending stdout to a script file@@exec >run.sh; echo "rm -rf ~"; sh run.sh' # GA-RM[not-executed]: hook payload, never run
+    'exec sending both streams to a script file@@exec &>run.sh; echo "rm -rf ~"; sh run.sh' # GA-RM[not-executed]: hook payload, never run
+    'exec sending stderr to a script file@@exec 2>run.sh; echo "rm -rf ~" >&2; sh run.sh' # GA-RM[not-executed]: hook payload, never run
   )
   local row
   for row in "${rows[@]}"; do

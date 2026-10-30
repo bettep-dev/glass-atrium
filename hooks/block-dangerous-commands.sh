@@ -13,7 +13,9 @@
 #
 # Echo exception (rm-wipe row only): rm text in a quoted argument of a print-only echo/printf is blanked before
 # the re-check; one that feeds a pipe, a file, an opened fd or a substitution keeps its text and the block, and
-# so does a printf carrying -v, which assigns the text to a variable instead of printing it.
+# so does a printf carrying -v, which assigns the text to a variable instead of printing it. A command holding a
+# group or compound body, a $_ read or an exec redirect keeps every echo text: the echo's own words cannot show
+# where that output goes or what reads its last argument back.
 #
 # Confinement belongs to the tool-grant layer, not here. See plan clauded-docs/290 UD-1 (the blanket shell grant makes the config path-allowlists decorative).
 #
@@ -96,8 +98,8 @@ is_trash_only_rm() {
 
 # The command with every quoted argument of a print-only echo/printf blanked: one at a command start,
 # ending at a list operator or the end, its only redirects a stdout/stderr copy or /dev/null, and no
-# printf argument starting -v. Any substitution keeps the text whole; a mask failure or empty result
-# is the command itself. Args: $1=command text
+# printf argument starting -v. A substitution, group, compound body, $_ read or exec redirect anywhere
+# keeps the text whole; a mask failure or empty result is the command itself. Args: $1=command text
 get_echo_masked() {
   local py_src masked
   # read, not a $( ) heredoc: bash 3.2 mis-parses the backtick inside one
@@ -116,7 +118,16 @@ def mask(m):
     ):
         return m.group(0)
     return m.group(1) + re.sub(QUOTED, "''", m.group(2))
-if not re.search(r"`|\$\(|[<>]\(", command):
+# matched on the raw text, quotes included: a quote misread cannot hide one
+OUTPUT_UNSEEN = re.compile(
+    r"`|[()]"
+    r"|(?:^|[;&|\n{}\]])[ \t]*(?:do|done|then|else|elif|fi|esac)(?=[\s;&|<>)]|\Z)"
+    r"|\$\{?_(?!\w)"
+    r"|(?<![\w.-])exec(?![\w.-])[^;|\n]*[<>]|[<>][^;|\n]*(?<![\w.-])exec(?![\w.-])"
+)
+# ${name…} expansion braces are no group; ${ cmd; } and ${| cmd; } substitutions keep their brace
+PARAMETER = re.compile(r"\$\{[\w#!@*?$-][^{}]*\}")
+if not OUTPUT_UNSEEN.search(command) and not re.search(r"[{}]", PARAMETER.sub("", command)):
     command = INVOCATION.sub(mask, command)
 sys.stdout.write(command)
 PY
