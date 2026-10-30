@@ -11,7 +11,14 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 - Applied here: the skill file carries no stub heading and no prose pointer to this note.
   - The one editor-addressed HTML comment, atop `### Architecture Patterns [ORCHESTRATOR]`, is the carve-out above: suites extract that H3's fences and grep its rule phrases, and the comment names this note.
 
-## Held cap exception — `### Architecture Patterns [ORCHESTRATOR]`
+## `## Core Process` — held cap and relocations
+
+### Held cap exception — `## Core Process`
+
+- This H2 stays over the 8 KB H2 cap because it contains the held `### Architecture Patterns [ORCHESTRATOR]`, itself over 8 KB.
+- Every other H3 under it is held to the 3 KB H3 cap, read as 3,000 B (UTF-8, heading to the next H3); re-measure the H2 once that H3's pins retire.
+
+### Held cap exception — `### Architecture Patterns [ORCHESTRATOR]`
 
 - This H3 stays over the 3 KB H3 cap.
 - Each block below is held in place by the pin its row names.
@@ -26,7 +33,7 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 | `###### Copyable skeletons — 2-phase (verify → implement) and its 3-phase variant` | `###### Machine-checked skeletons` suites · the gate hook header's promotion condition |
 | `##### Entry-class token placement (ultracode — DEV workflow)` | its declaration fence, read by the same suites |
 
-### Relocated — `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]`
+#### Relocated — `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]`
 
 - The heading stays in the skill as a three-bullet pointer; its body and `AnalysisSchema` fence live in `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → `## Analysis-Track Right-Sizing (input-side)`.
 - Pins that read the moved fence from the reference, so a further move repoints them in the same pass:
@@ -36,13 +43,6 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
   - `references/delegation-prompt.md` → `## Resource Budget` (the floor bullet) · `## Read-Extent Discipline` → **Scope of this duty**.
   - the skill's **Print-block-then-emit** bullet (via the kept heading).
   - `hooks/enforce-workflow-verify-stage.sh` → `PROMOTION CONDITION` — both sentences name the reference beside the skill; verbatim pin: `enforce-workflow-verify-stage.bats` → `schema-cap(promotion)`.
-
-## `## Core Process` — held cap and relocations
-
-### Held cap exception — `## Core Process`
-
-- This H2 stays over the 8 KB H2 cap because it contains the held `### Architecture Patterns [ORCHESTRATOR]`, itself over 8 KB.
-- Every other H3 under it is held to the 3 KB H3 cap, read as 3,000 B (UTF-8, heading to the next H3); re-measure the H2 once that H3's pins retire.
 
 ### Relocated — Agent selection and delegation-prompt detail
 
