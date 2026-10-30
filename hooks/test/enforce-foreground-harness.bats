@@ -393,8 +393,13 @@ assert_rows() {
     'never-write constraint on the root glob|Never write under ~/.claude*.' \
     'never-write constraint on a bullet|- Never write under ~/.claude/ or any profile root.' \
     'do-not constraint on a branch root|Do not edit anything in ~/.claude-work.' \
-    'must-not later in the clause|The agent must not touch ~/.claude/ at all.'
+    'must-not later in the clause|The agent must not touch ~/.claude/ at all.' \
+    'not-to before the action|Be careful not to edit ~/.claude/ here.'
   assert_rows 2 \
+    'reminder that negates forgetting|Don'\''t forget to copy the new hook into ~/.claude/ when done.' \
+    'negation of needing to ask|No need to ask — cp build/settings.json ~/.claude/' \
+    'negation of minding something else|Never mind the tests and install the plugin into ~/.claude/' \
+    'negation of an unrelated verb in the same clause|Don'\''t wait and edit ~/.claude/ now.' \
     'negated clause naming a config file|Never write under ~/.claude/settings.json.' \
     'negation in an earlier clause|Never ask; rewrite the hooks in ~/.claude/ now.' \
     'negation in an earlier comma clause|Never wait, edit ~/.claude now.' \

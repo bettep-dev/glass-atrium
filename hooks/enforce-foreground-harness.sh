@@ -29,9 +29,11 @@
 #   A `..` in the written path, or `.claude` text after the root, voids every exemption.
 #
 # Negated-mention exclusion: a token naming only a root (no entry inside it), every occurrence of which
-#   follows a negation cue in its clause (never, not, no, don't, cannot, must not …), is a constraint, not
-#   a write target. A clause ends at . ; : ! ? , or a line end. A file or dir inside the root still blocks;
-#   residual: a root-only directive behind an unrelated negation in one clause ("don't wait and edit ~/.claude/").
+#   follows a bound negation cue in its clause, is a constraint, not a write target. A cue (never, not, no,
+#   don't, cannot, must not …) binds only when the next word, past any `to`, is an action verb ("never write",
+#   "not to edit"); "don't forget to copy" or "no need to ask" negates another verb, so it binds nothing.
+#   A clause ends at . ; : ! ? , or a line end. A file or dir inside the root still blocks; a word between
+#   the cue and its verb ("never ever write") leaves the cue unbound, so that mention blocks (fail-safe).
 #
 # Resolution: the verdict follows what the filesystem says a path reaches, not how it is spelled.
 #   - Candidates: every token whose text, glob metacharacters and quotes removed, holds `.claude` in any
@@ -183,7 +185,7 @@ BEGIN {
   verbs = " cd pushd popd ls cat cp mv rm rmdir mkdir touch ln tee chmod chown install find tar rsync sed awk vi vim nano code open source stat du head tail less grep git edit write update modify change delete remove create rewrite overwrite replace append patch move copy rename save "
 }
 {
-  negated = 0
+  negated = cue_pending = 0
   n = split($0, words, /[[:space:]]+/)
   for (i = 1; i <= n; i++) {
     w = words[i]
@@ -192,12 +194,17 @@ BEGIN {
     prev = tolower(w)
     sub(/:$/, "", prev)
     probes = 0
-    # A negation cue holds to the end of its clause; quotes are already dropped, so the cue reads dont.
+    # A cue binds only when the next word (past any `to`) is an action verb, then holds to the clause end:
+    # "dont forget to copy", "no need to ask" negate another verb. Quotes are dropped, so the cue reads dont.
     in_negation = negated
     cue = prev
     gsub(/[^a-z]/, "", cue)
-    if (cue ~ /^(never|not|no|nor|dont|cannot|cant|mustnt|shouldnt|wont)$/) negated = 1
-    if (w ~ /[.;:!?,]$/) negated = 0
+    if (cue_pending && cue != "to") {
+      if (index(verbs, " " cue " ")) negated = 1
+      cue_pending = 0
+    }
+    if (cue ~ /^(never|not|no|nor|dont|cannot|cant|mustnt|shouldnt|wont)$/) cue_pending = 1
+    if (w ~ /[.;:!?,]$/) negated = cue_pending = 0
     if (!index(w, ".") || !has_root_text(w)) continue
     # A lone `-` word is a markdown list marker, not an option; `--` still ends options.
     split_word(w, index(verbs, " " p " ") || (p ~ /^-/ && p != "-") || p ~ /[<>]$/)
