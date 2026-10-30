@@ -61,7 +61,11 @@ Each entry is keyed by the rule text; its copies change with it.
   - `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` (canonical literals);
   - `agents/glass-atrium-intel-planner.md` → `### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`;
   - the orchestrator's copy: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)` plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## Exposure Determination — signals and routing`.
-- **Visual-Maximization Floor**: `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor` (authoring canonical) · `agents/glass-atrium-intel-planner.md` → `### Visual-Maximization Floor — Baseline (always)` and `### Visual-Maximization Floor — Content-driven escalation`.
+- **Visual-Maximization Floor**:
+  - `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor` + `### Content-driven escalation` (authoring canonical);
+  - `agents/glass-atrium-intel-planner.md` → `### Visual-Maximization Floor — Baseline (always)` and `### Visual-Maximization Floor — Content-driven escalation`.
+- **Current-state detectors**: canonical `agents/glass-atrium-intel-planner.md` → `### Current-State Only (living documents)` · mirror `agents/glass-atrium-intel-reporter.md` → `### Current-state only (two matcher layers FORBIDDEN in an authored body)`.
+  - The detector literals stay byte-identical across the two; a planner literal change lands in the reporter mirror in the same pass.
 - **Dark base default**: `agents/glass-atrium-intel-reporter.md` → `### Dark Theme & Typography (MUST)` (canonical) · `agents/glass-atrium-intel-planner.md` → `### Dark base, typography and status vocabulary`.
 - **Emission contract / POST tuple**:
   - `agents/glass-atrium-intel-reporter.md` → `### POST tuple + copy-paste curl`, the curl block and optional-field values · `agents/glass-atrium-intel-planner.md` → `### Emission contract (POST tuple)`.
@@ -75,7 +79,7 @@ Each entry is keyed by the rule text; its copies change with it.
   - `agents/glass-atrium-intel-reporter.md` → the bolded lead `**Document lifecycle duties — you are the completing agent and you own these:**`, the reporter-only deltas;
   - `agents/glass-atrium-intel-planner.md` → `### Document lifecycle duties (delivered copy — the completing agent owns these)` + its sibling `### Document stages and closing`.
 - **D8 requirement list**:
-  - `agents/glass-atrium-intel-reporter.md` → `### Pre-Emission HTML Validation (D8 + Schema)`, the maintained source;
+  - `agents/glass-atrium-intel-reporter.md` → `### Pre-Emission HTML Validation (D8 + Schema)`, the maintained source; its two colour items point at the same body's `### d8 validator-safe color contract`, which holds their detail;
   - `agents/glass-atrium-intel-planner.md` → `## Pre-Emission Verification Gate [PLANNING]`;
   - `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]`.
 - **Diagram Standard runtime-load contract**: `agents/glass-atrium-intel-reporter.md` → `### Sandbox-Safe Interactivity (MUST)` · `agents/glass-atrium-intel-planner.md` → `### Pre-Emission HTML Gates (user-requested HTML primary only)`.
@@ -84,6 +88,9 @@ Each entry is keyed by the rule text; its copies change with it.
   - `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` (declaration form) · `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` (table copy);
   - `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role` · `skills/glass-atrium-design-html-co-emission/SKILL.md`;
   - `skills/glass-atrium-ops-orchestrator-role.md` → Visual-Weight Probe, and its Monitoring-phase markup-exception judgment (`#### Monitoring-phase notes`).
+- **dev-front markup exception**:
+  - `agents/glass-atrium-intel-reporter.md` → `### glass-atrium-dev-front markup exception (narrow — NOT a default co-author, NOT probe-composed)` · `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract`, its markup-exception lead · `agents/glass-atrium-dev-front.md`;
+  - the orchestrator's judging half: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Monitoring-phase notes` · `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## glass-atrium-dev-front markup exception — detail`.
 - **D8 numeric thresholds**: `monitor/src/server/clauded-docs/d8-thresholds.json` is the authority, and every prose number is a mirror of it.
   - A threshold change lands in the JSON first; every prose mirror is corrected to it in the same pass — the reporter's `### Pre-Emission HTML Validation (D8 + Schema)` · the planner's `## Pre-Emission Verification Gate [PLANNING]` · the scope-qa D8 sub-pass.
   - A prose-only number edit is forbidden.
@@ -101,6 +108,38 @@ Linkage records beside the rosters:
   - `### Three emission modes` · `### HTML request test` · `### Visual-Maximization Floor` · `### Dark base default` · `### Emission contract` · `### Document Lifecycle — completion + exposure routing`
   - `## Diagram Standard [REPORT]` · `## Pre-drawing Doctrine [REPORT]` · `## Designer Co-Emission Trigger [REPORT]` · `## Report Structure [REPORT]` · `## Self-Evaluation Obligation [REPORT]`
   - Not cited from outside: `#### Who closes` and `#### Supersede vs new`, the sub-headings under `### Document Lifecycle — completion + exposure routing`.
+
+## Reporter body — machine readers and citers
+
+`agents/glass-atrium-intel-reporter.md` has no maintainer note of its own; its editor-facing facts live here. Reword the body around what these readers read, never through it.
+
+| Reader | Reads | Breaks when |
+|---|---|---|
+| `scripts/test/agent-frontmatter-identity.bats` | frontmatter `name`, `tools` (folded to a sorted set) and the absence of a `scope` key, against the cycle base | a name changes · a grant is added or removed · a `scope` key is added |
+| `autoagent/lib/editable_merge.py` · `autoagent/daemon_cycle.py` | the two `EDITABLE:BEGIN`/`EDITABLE:END` pairs — count and order key the merge; patches land only inside one | a region is added, dropped or reordered · a marker is reworded · a third pair is pasted as an illustration |
+| `monitor/src/server/routes/model-config.ts` → `PAIR_AGENT_FILES` (`frontmatter-docs`) | the frontmatter `model:` line, read and rewritten by the model-config route | the file is renamed, or the frontmatter block is malformed |
+
+- **Live-file pin**: `agent-frontmatter-identity.bats` is the only suite that reads this file; it skips outside a git work tree and on a shallow clone, and CI runs it at full depth.
+- **Indifferent suites** — they name the agent in a roster or fixture and never read the body:
+  - `scripts/test/doctrine-budget-parity.bats` reads scope-report only — keep the body a pointer, so no unjudged copy can drift.
+  - `hooks/test/block-doc-routing-leak.bats` and the other hook rosters · `scripts/test/test_inject_sync.py`.
+  - the `monitor/test/model-config.*` and `monitor/test/clauded-docs.*` suites, driven by their own fixtures — a body claim contradicting the server goes unnoticed until a 400.
+- **Body headings and leads cited from outside** — a rename edits every citer in the same pass:
+  - `## Output Format Routing` · `### Turn-0 Format Guard` · `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` · `## Designer Handoff Contract`
+  - `### Visual-Maximization Floor` · `### Content-driven escalation` · `### d8 validator-safe color contract` · `### Dark Theme & Typography (MUST)` · `### Status Badges (MUST dual-encoded)`
+  - `### Sandbox-Safe Interactivity (MUST)` · `### Pre-Emission HTML Validation (D8 + Schema)` · `### POST tuple + copy-paste curl`
+  - `## Visual Design Spec (consolidated, applies to user-requested HTML primary)`, `## Visual Components (user-requested HTML primary)` and `### Canonical HTML Skeleton (single canonical source)` (planner canonical-source line, by bare name)
+  - the lead `**Document lifecycle duties — you are the completing agent and you own these:**`
+  - Citers:
+    - `scoped/scope-report.md` · `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` and its canonical-source line
+    - `skills/glass-atrium-design-html-co-emission/SKILL.md` · `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md`
+    - `scoped/maintainers/orchestrator-role.md` · this note.
+- **Cap exception**: `### Canonical HTML Skeleton (single canonical source)` exceeds the 3 KB H3 cap because its body is one indivisible code fence; it is a declared exception, not a split candidate.
+- **Removed from the body — do not re-add**:
+  - the co-edit sets and drift notes — held by `## Co-edit rosters (what moves together when a rule changes)`, the drift section below, and for anti-slop `scoped/maintainers/glass-atrium-design-designer.md`;
+  - the planner-mirror declarations;
+  - the `[CONTINUITY]`, task_type and FINAL-STEP mode-table restatements of Tier-1 rules;
+  - `### Print Stylesheet (MUST for PDF)` — the Baseline print bullet and the d8 color contract carry its content.
 
 ## Standing drift reports (reported, not reconciled — the rule owner's call)
 
