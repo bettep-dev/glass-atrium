@@ -636,7 +636,7 @@ function KPI({
       ? <div className="kpi-delta-row"><Delta value={delta} inverse={deltaInverse}/></div>
       : delta != null && delta !== false && <div className="kpi-delta-row">{delta}</div>,
     hint: hint != null && hint !== false && (
-      <div className={`kpi-hint ${hintClassName} ${hintFace}${isClamped ? ' kpi-hint--clamp' : ''}`.trim()}
+      <div className={`kpi-hint ${hintClassName} ${hintFace}${isClamped ? ' clamp-2' : ''}`.trim()}
         title={hintTitle ?? (isPlainHint ? String(hint) : undefined)}>{hint}</div>
     ),
   };
@@ -1789,6 +1789,11 @@ function getRegionView(region) {
   return 'loading';
 }
 
+// a card whose table renders sits flush (its edge cells carry the card padding); loading, failure and empty keep the padded body
+function hasRegionRows(region, rows) {
+  return getRegionView(region) === 'ready' && rows.length > 0;
+}
+
 /**
  * Ref for a control that hands focus to a card when it unmounts while focused (Retry leaving on recovery).
  * Layout cleanup → runs before the node leaves the DOM, while it can still be the active element.
@@ -2368,7 +2373,7 @@ window.UI = {
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
-  FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,
+  FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
   setShellBridge, getHarnessRead, getShellPageState, useShellPageState,
   getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,

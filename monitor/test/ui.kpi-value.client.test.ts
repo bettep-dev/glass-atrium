@@ -173,11 +173,11 @@ test("a node hint clamps at two lines only when its caller asks, with the whole 
     findNodes(render("KPI", { label: "A", value: "1", ...props }), (n) => hasClass(n, "kpi-hint"))[0];
   const node = React.createElement("span", null, "of 6 cycles · last ", React.createElement("span", null, "10/28, 04:30 AM"));
   const clamped = hintOf({ hint: node, isHintClamped: true, hintTitle: "of 6 cycles · last 10/28, 04:30 AM" });
-  assert.ok(hasClass(clamped, "kpi-hint--clamp"), classOf(clamped));
+  assert.ok(hasClass(clamped, "clamp-2"), classOf(clamped));
   assert.equal(clamped.props.title, "of 6 cycles · last 10/28, 04:30 AM");
   const free = hintOf({ hint: node });
-  assert.ok(!hasClass(free, "kpi-hint--clamp"), "a block-built node hint keeps its own layout");
-  assert.ok(hasClass(hintOf({ hint: "plain" }), "kpi-hint--clamp"), "a plain hint still clamps by default");
+  assert.ok(!hasClass(free, "clamp-2"), "a block-built node hint keeps its own layout");
+  assert.ok(hasClass(hintOf({ hint: "plain" }), "clamp-2"), "a plain hint still clamps by default");
 });
 
 // the spark's width has one home: KPI hands the drawn width to the tile, and the hint's reserve derives from it

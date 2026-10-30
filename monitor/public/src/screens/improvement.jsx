@@ -91,14 +91,6 @@ const ACTIONABLE_STATUSES_FE = new Set(["pending", "snoozed"]);
 const APPROVE_URL = (id) => `/api/improvement/${id}/approve`;
 const REJECT_URL = (id) => `/api/improvement/${id}/reject`;
 
-// tone → text class · 기호 매핑 (dual-encoding).
-const TONE_TEXT_CLASS = {
-	ok: "text-ok",
-	warn: "text-warn",
-	crit: "text-crit",
-	info: "text-info",
-};
-
 // 'text-ok' → 'ok' — 배지 헬퍼(confidenceBadgeMetaI/preVerifyBadgeI)의 tone 문자열을 canonical
 // Badge 의 tone prop(prefix 없는 키)로 변환. 매핑 미스 → 'neutral'(shell neutral 유지).
 const toneKeyI = (t) => String(t || "").replace(/^text-/, "") || "neutral";

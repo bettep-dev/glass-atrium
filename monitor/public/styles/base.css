@@ -673,7 +673,8 @@ button.kpi:hover {
 .kpi-delta-row .kpi-delta {
 	margin-top: 0;
 }
-.kpi-hint--clamp {
+/* two-line clamp — a KPI tile's plain hint and the Dashboard tile detail and hint */
+.clamp-2 {
 	display: -webkit-box;
 	-webkit-box-orient: vertical;
 	-webkit-line-clamp: 2;
