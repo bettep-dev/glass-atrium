@@ -2,8 +2,6 @@
 
 Canonical rule text for the PLANNING scope (glass-atrium-intel-planner). The report-side emission, visual and diagram rules enter at `scoped/scope-report.md`, but not every one is canonical there. Each rule's canonical, and where the planner applies it: `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register`.
 
-Maintainer material — co-edit rosters, delivery status and the machine-read pointer contract — is in `scoped/maintainers/scope-planning.md`.
-
 ## Absolute Rules [PLANNING]
 
 Final authority on an ambiguous PLANNING rule is this file, whole; this section concentrates that authority rather than narrowing it to itself. Corpus-wide precedence order: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution`.
@@ -15,7 +13,7 @@ Final authority on an ambiguous PLANNING rule is this file, whole; this section 
 
 ## Output Format Routing [PLANNING]
 
-The request-driven emission model — three emission modes · HTML request test · POST tuple · document lifecycle · visual floor · D8 thresholds — enters at `scoped/scope-report.md` → `## Output Format Routing [REPORT]`. Its rules are canonical at more than one site; `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` names the canonical of each.
+The request-driven emission model — three emission modes · HTML request test · POST tuple · document lifecycle · visual floor · D8 thresholds — enters at `scoped/scope-report.md` → `## Output Format Routing [REPORT]`; the Register named above gives each rule's canonical.
 
 The copy the planner applies sits in `agents/glass-atrium-intel-planner.md`:
 
@@ -26,7 +24,9 @@ The copy the planner applies sits in `agents/glass-atrium-intel-planner.md`:
 
 Pointer only. `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` is the SoT: the adopted and excluded type lists, the budget caps and the size presets live there once, and this section restates no number so nothing here can drift from them.
 
-The decision order it defines, applied before drawing any Mermaid block in a user-requested HTML plan: Type → Direction → Budget → Preset → semantic-role `classDef` → Layout. The copy the planner applies is `agents/glass-atrium-intel-planner.md` → `## Visual Design Spec (applies to user-requested HTML primary)`.
+The decision order it defines, applied before drawing any Mermaid block in a user-requested HTML plan: Type → Direction → Budget → Preset → semantic-role `classDef` → Layout.
+
+The copy the planner applies is `agents/glass-atrium-intel-planner.md` → `### Pre-drawing decision core (delivered copy — apply to EVERY Mermaid block, not only the first)`.
 
 ## Designer Co-Emission Trigger [PLANNING]
 

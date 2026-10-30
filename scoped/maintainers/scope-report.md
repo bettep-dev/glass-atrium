@@ -51,6 +51,7 @@ Source: `monitor/src/server/clauded-docs/html-validator.ts`.
 - **Gate 2 — D8 column cap** → comparison tables ≤5 columns enforced server-side, not only by reviewer judgment; a multi-config table over the cap is split per config. Violation → code `d8_p2_violation`.
 - **Diagram scan — report-only, never a 400**: an excluded type adds a `diagram_type_excluded` notice to an OK result.
   - The scan is the validator's terminal return, reached only on an otherwise-clean document.
+  - The notice rides the write response and the server log only, never the stored document (`monitor/src/server/routes/clauded-docs.ts` → `logDiagramNotices`, `buildWriteResponse`).
 
 ## Co-edit rosters (what moves together when a rule changes)
 
@@ -98,6 +99,7 @@ Linkage records beside the rosters:
   - `skills/glass-atrium-design-html-co-emission/SKILL.md` → `### Mermaid type mapping`.
   - Unpinned: no suite compares a copy's member list with the JSON; `monitor/test/clauded-docs.diagram-types.test.ts` checks only the JSON's own invariants and mermaid's behaviour.
 - **Heading renames**: `agents/glass-atrium-intel-reporter.md` points at these rule-file headings by name, and `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` names most of them — a rename edits both bodies in the same pass:
+  - The planner's maintainer note `scoped/maintainers/glass-atrium-intel-planner.md` → `## Register copies` names them too, and is edited in that pass.
   - `### Three emission modes` · `### HTML request test` · `### Visual-Maximization Floor` · `### Dark base default` · `### Emission contract` · `### Document Lifecycle — completion + exposure routing`
   - `## Diagram Standard [REPORT]` · `## Pre-drawing Doctrine [REPORT]` · `## Designer Co-Emission Trigger [REPORT]` · `## Report Structure [REPORT]` · `## Self-Evaluation Obligation [REPORT]`
   - Not cited from outside: `#### Who closes` and `#### Supersede vs new`, the sub-headings under `### Document Lifecycle — completion + exposure routing`.
@@ -141,5 +143,4 @@ The rule file keeps the two rules no body carries, the sections a live suite or 
   - the "Who counts" sentence naming the planner, designer and orchestrator counters — the **Designer Co-Emission Trigger** co-edit entry above holds that roster.
   - the `diagram-types.json` path on the Diagram Standard **Permitted types** bullet — the Type step it points to names the same SoT.
   - the `#### Monitoring-phase notes` pointer on the **Markup exception (narrow)** bullet — it locates the orchestrator's judgment, which the reporter never performs; the **Designer Co-Emission Trigger** co-edit entry above holds the linkage.
-- **Corrected**: the Diagram Standard excluded-type bullet said the scan "attaches an exclusion notice to a document"; the notice rides the write response only (`monitor/src/server/routes/clauded-docs.ts` → `logDiagramNotices`, `buildWriteResponse`).
 - **Rewritten for the reader**: `### Threshold SoT` said "editing a prose number without editing the JSON is forbidden", an editor duty the reporter never performs; it now tells the reader to apply the JSON where the two differ. The editor half is the **D8 numeric thresholds** co-edit entry above.

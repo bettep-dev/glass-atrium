@@ -41,8 +41,10 @@ The rule file reaches glass-atrium-intel-planner whole at spawn through the part
 | Ambiguity Gate axes | axis canonical `scoped/scope-dev.md` → Ambiguity Gate — a weight changed there is hand-carried into the rule file; the planner body points at the rule file and restates no weight |
 | Claim-marking tag literals | reviewer-side consumer `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]`, which quotes `[SELF-CHECKED:]` · `agents/glass-atrium-intel-planner.md` → `## Open Questions Section (plan body slot)` points at the rule file and carries `[UNCHECKED: …]` only inside its entry shape |
 | `[DOC-ROUTE]` stamp | delivered `agents/glass-atrium-intel-planner.md` → `### Turn-0 routing hard gate`, the stamp table and the `The stamp attests` bullet · delegation-side canonical `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria` · the static gate `hooks/enforce-workflow-verify-stage.sh`, which scans workflow scripts and never this file |
-| Pre-drawing doctrine, designer trigger | canonical `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` and `## Designer Co-Emission Trigger [REPORT]`; the planner's own copies are `## Visual Design Spec (applies to user-requested HTML primary)` and `## Designer Handoff Contract` |
+| Pre-drawing doctrine, designer trigger | canonical `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` + `## Designer Co-Emission Trigger [REPORT]` |
 | Emission routing | canonical per row of `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` (split across scope-report and the reporter body); the planner's own copy is `## Output Format Routing` |
+
+- `Pre-drawing doctrine, designer trigger` row — the planner's own copies: `### Pre-drawing decision core (delivered copy — apply to EVERY Mermaid block, not only the first)` and `## Designer Handoff Contract`.
 
 ## Restructure + diet pass — dispositions
 
@@ -52,7 +54,7 @@ The rule file reaches glass-atrium-intel-planner whole at spawn through the part
 - **Dropped as duplicated in the planner body** — each verbatim-equivalent or stronger in `agents/glass-atrium-intel-planner.md`:
   - the score–evidence consistency rule · the EARS acceptance-criteria format with its worked Good/Bad pair · the confidence-tiered bands with the `[DRAFT: clarify before DEV]` literal
   - the Open-Questions entry shape · the empty-section rule · the self-settle tool list · the honest-backing bullet
-- **Dropped with no planner-body copy — the forbidden-self-spawn bullet** [measured: Grep `spawn` over the planner body → 0]. The prohibition is structural: the planner's frontmatter `tools:` grants no `Agent` tool.
+- **Dropped with no planner-body copy — the forbidden-self-spawn bullet**: the planner body states no self-spawn prohibition. The prohibition is structural: the planner's frontmatter `tools:` grants no `Agent` tool.
 - **Dropped as a six-label skeleton**: the Pre-drawing decision steps, which carried the labels without the literals. The step names survive as one line; the literals live at `scope-report.md` → `## Pre-drawing Doctrine [REPORT]` and in the planner body.
 - **Moved here**: the delivery-status section, the coupled-reader list, the pointer apparatus of `## Output Format Routing [PLANNING]` and `## Designer Co-Emission Trigger [PLANNING]`, the co-edit rosters, and the machine-checked-pointer notices.
 - **Dropped as duplicated in the delivered body — the `[DOC-ROUTE]` exception**: `agents/glass-atrium-intel-planner.md` → `## Output Format Routing` → `### Turn-0 routing hard gate` carries the same pair.
@@ -72,28 +74,20 @@ Two edits would make it live, and neither is in this pass's scope:
 
 ## Pointers into the removed mirrors — repaired
 
-This file stopped mirroring the report-side canonicals, and the sites still calling it a mirror have now been repaired. The repair REPOINTS rather than deletes: the sections named below are pointer prose in this file that names the report headings, so the co-edit edge is live — rename a heading in `scope-report.md` and this file's pointer text goes stale with nothing to catch it. Deleting the entries would hide that edge.
+The sites below cite the rule file's pointer sections, and that pointer prose names the report headings, so the co-edit edge is live — rename a heading in `scope-report.md` and the pointer text goes stale with nothing to catch it. Keep the entries: deleting them hides that edge.
 
-- `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register`: the rows for three emission modes / emission contract, HTML request test, document lifecycle duties, D8 thresholds and visual-maximization floor / dark base default now name `## Output Format Routing [PLANNING]` as a pointer; the designer-handoff row names `## Designer Co-Emission Trigger [PLANNING]`, which always resolved — only the word mirror was wrong.
-- The visual-floor row additionally states that this file carries no dark-base copy in any form, so the entry cannot be read as a second copy.
-- `skills/glass-atrium-ops-orchestrator.md`: the lifecycle-SoT bullet and the completing-agent bullet name the same pointer section. The `[DOC-ROUTE]` paragraph's mirror clause was DROPPED instead — its claimed counterpart, the delegation-phrasing sentence, has no match in this file at HEAD, so there was no pointer left to name.
-- `rules/glass-atrium/core-git-workflow.md` → `## Pull Requests`: the whole `.html`-deliverable bullet is gone, so that file carries no pointer into this one and no co-edit edge remains.
-- `skills/glass-atrium-design-contrast-check/SKILL.md`: the `scope-planning.md` half of its `### Dark base default` cross-reference was dropped on the same ground.
+- `scoped/maintainers/glass-atrium-intel-planner.md` → `## Register copies`:
+  - the emission-family entries — three emission modes, emission contract, HTML request test, document lifecycle duties, D8 thresholds, visual-maximization floor / dark base default — name `## Output Format Routing [PLANNING]` as a pointer;
+  - the designer-handoff entry names `## Designer Co-Emission Trigger [PLANNING]`.
+- The visual-floor entry additionally states that this file carries no dark-base copy in any form, so the entry cannot be read as a second copy.
+- `skills/glass-atrium-ops-orchestrator.md`: the lifecycle-SoT bullet and the completing-agent bullet name the same pointer section.
 - The two rows naming this file as CANONICAL — Open Questions / claim marking, and Ambiguity Gate — are correct; for both, the planner body holds a pointer plus the planner-only delta.
-- The row for the dev-front markup exception names `## Designer Co-Emission Trigger [PLANNING]`, which resolves, and was left as it stands.
+- The row for the dev-front markup exception names `## Designer Co-Emission Trigger [PLANNING]`, which resolves.
 - The same class in `agents/glass-atrium-intel-reporter.md` and `agents/glass-atrium-design-designer.md` is recorded by `scoped/maintainers/scope-report.md` rather than here.
-
-## The eleven headings the cut removed — the answer is citer repair, not restore
-
-`32a0685` removed eleven headings from the rule file, and they are recoverable from the commit rather than from any surviving audit: Output Policy [PLANNING] · Three emission modes · HTML request test · HTML primary requirements · Visual-Maximization Floor · Dark base default · HTML Visual Decision Requirements (D8) · Threshold SoT · Emission contract · Document Lifecycle · Diagram Standard [PLANNING].
-
-- Every one of them was a MIDDLE copy — between the canonical at `scoped/scope-report.md` and the copy the planner applies in its own body. Restoring any of them re-creates a drift pair and restates, to the planner, the body copy it already applies.
-- The defect they left is the dangling pointers, not lost text, so repairing the citing sites discharges it in full. Read the eleven as REPOINTED, never as an unexplained shortfall in a restore count.
-- The repaired sites are the ones listed in the section above.
 
 ## Leave-deleted verdicts here are dated, not closed
 
-The leave-deleted verdicts in this companion were decided when a `scoped/` body reached no agent at spawn (measured 2026-09-10). That premise is false now — `## Delivery status` records the rule file reaching the planner through the part slots — so each verdict is open to re-check.
+The leave-deleted verdicts in this companion were decided when a `scoped/` body reached no agent at spawn. `## Delivery status` records the rule file reaching the planner through the part slots, so each verdict is open to re-check.
 
 - **Stays deleted**: a passage whose surviving copy reaches the planner, in its body or in the rule file — restoring it restates that copy to the same reader.
 - **Re-opens**: a passage whose only surviving copy sits in a file outside the planner's row (`scoped/scope-report.md` included) — restore it in the rule file, or confirm a planner-body copy.
