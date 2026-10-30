@@ -18,9 +18,10 @@
 #
 # Runtime-DATA exclusion: Rule 2 protects harness CONFIG writes (agents/, hooks/, skills/,
 #   settings*.json, the memory dir). Runtime-DATA subdirs (data/, projects/, logs/, todos/,
-#   shell-snapshots/, statsig/) hold transcripts/logs/caches that CANNOT misconfigure a future session,
-#   so a bare reference (a text scan cannot tell READ from WRITE) is not blocked. The memory dir nests
-#   under projects/ and stays protected via a /memory/ segment guard, never leaking into memory writes.
+#   shell-snapshots/, statsig/, and a job's own jobs/<id>/tmp/ scratch) hold transcripts/logs/caches that
+#   CANNOT misconfigure a future session, so a bare reference (a text scan cannot tell READ from WRITE) is
+#   not blocked. The memory dir nests under projects/ and stays protected via a /memory/ segment guard,
+#   never leaking into memory writes; the rest of jobs/ (pins.json, a job's state.json) stays protected.
 #
 # Progress-file exclusion: a progress-*.md directly in a projects/<p>/memory/ dir is session-internal
 #   state every agent must checkpoint before its turn cap (GLASS_ATRIUM_GLOBAL_RULES.md → Cross-Session
@@ -412,6 +413,8 @@ needs_staged_lane() {
 exempt_entry() {
   case "${1}" in
     claude.md | memory.md | glass_atrium_global_rules.md) return 0 ;;
+    # A job's tmp/ is its own scratch; jobs/ files and a job's other files are harness state, kept.
+    jobs) [[ "${remainder}" =~ ${job_scratch_re} ]] ;;
     data | projects | logs | todos | shell-snapshots | statsig)
       # The memory dir nests under projects/ → a /memory/ segment keeps it protected; `/…/` frames globs.
       case "/${remainder}/" in
@@ -537,6 +540,7 @@ candidate_blocks() {
 config_entries=' settings.json settings.local.json keybindings.json agents agent-memory commands skills hooks rules plugins output-styles projects '
 tilde_re='^~[a-z0-9._-]*(/|$)'
 progress_re='^projects/[^/]+/memory/progress-[^/]*\.md$'
+job_scratch_re='^jobs/[^/]+/tmp(/|$)'
 
 # nocasematch stays on: the lexical root and exemption tests fold case as the host filesystem does.
 glob_match=false
