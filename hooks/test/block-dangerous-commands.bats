@@ -298,6 +298,10 @@ run_hook_command() {
     'echo word that is not an echo command@@echoes "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
     'printf -v assigning text an eval runs@@printf -v c "rm -rf ~"; eval "$c"' # GA-RM[not-executed]: hook payload, never run
     'printf with an attached -v name@@printf -vc "rm -rf ~"; eval "$c"' # GA-RM[not-executed]: hook payload, never run
+    'printf -v behind a leading backslash, read by an inert test@@printf \-v y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
+    'printf -v with a backslash inside it, read by an inert test@@printf -\v y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
+    $'escaped single quotes around a real wipe@@echo \\\'; rm -rf / ;\\\'' # GA-RM[not-executed]: hook payload on stdin, never run
+    'escaped double quote around a real wipe@@echo \"; rm -rf / ; echo "\""' # GA-RM[not-executed]: hook payload on stdin, never run
     'echo into an fd opened on a script file@@exec 3>run.sh; echo "rm -rf ~" >&3' # GA-RM[not-executed]: hook payload, never run
     'brace group piped to a shell@@{ true; echo "rm -rf ~"; } | sh' # GA-RM[not-executed]: hook payload on stdin, never run
     'subshell piped to a shell@@(true; echo "rm -rf ~"; ) | sh' # GA-RM[not-executed]: hook payload on stdin, never run

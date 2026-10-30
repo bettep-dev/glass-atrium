@@ -24,7 +24,7 @@ PATTERN = SimpleNamespace(
         r"(?P<blank>[ \t]+)|(?P<newline>\n)"
         r"|(?P<redirect>&>>?|\d*(?:>>|>&|>\||<&|<>|>|<))"
         r"|(?P<separator>&&|\|\||\|&|[|;&])"
-        r"""|(?P<word>(?:'[^']*'|"(?:[^"\\]|\\.)*"|\$\{\w+\}|[^\s'"\;&|<>(){}`])+)""",
+        r"""|(?P<word>(?:'[^']*'|"(?:[^"\\]|\\.)*"|\$\{\w+\}|[^\s'"\\;&|<>(){}`])+)""",
         re.S,
     ),
     QUOTED=re.compile(r"""'[^']*'|"(?:[^"\\]|\\.)*\""""),
@@ -103,7 +103,7 @@ def is_print_only(simple):
     """A whole pipeline of its own, only stdout/stderr copies or /dev/null as redirects, no printf -v (assigns)."""
     if simple.is_piped or not all(is_print_redirect(*redirect) for redirect in simple.redirects):
         return False
-    # quotes removed first: printf '-v' c … still assigns
+    # quotes removed first: printf '-v' c … still assigns; an unquoted backslash never lexes, so \-v cannot reach here
     return simple.words[0][0] == "echo" or not any(
         re.sub(r"['\"]", "", word).startswith("-v") for word, _ in simple.words[1:]
     )
