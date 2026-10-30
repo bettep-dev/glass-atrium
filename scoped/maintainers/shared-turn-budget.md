@@ -18,7 +18,7 @@ Maintainer-facing material for that source file. It is an injection-TEXT source,
 
 ## Rosters
 
-- Roster curation — which agents take each block and why each excludes the carriers it does — is stated in `rules/glass-atrium/core-compliance-matrix.md` under the injected-blocks table, and the arrays themselves live in `hooks/inject-scope-rules.sh`. The former roster section in the source file was a third copy and is dropped rather than moved.
+- Roster curation — which agents take each block and why each excludes the carriers it does — is stated in `rules/glass-atrium/core-compliance-matrix.md` → `### Injected Blocks (SubagentStart allowlist)`, and the arrays themselves live in `hooks/inject-scope-rules.sh`. The former roster section in the source file was a third copy and is dropped rather than moved.
 - The analysis roster contains no DEV agent, which is why delivering this file wholesale to a DEV agent would ship it another roster's block.
 
 ## The meter block, and why it stays a shell literal

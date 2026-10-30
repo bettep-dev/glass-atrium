@@ -60,7 +60,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - Must stay byte-exact, each at the site named — the rule file unless another file is given:
   - the opening blockquote as first content line, in the stub and the rule file alike;
   - the attestation tokens and `block-*` verdict names, listed under `## Reserved names`;
-  - the `block-*` verdict table: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`;
+  - the `block-*` verdict names in the verdict table's Verdict column: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`;
   - the closed lexicon, premise-register and `[PLAN-SUBSET]` grammars;
   - both `[SIZE-EST]` grammars: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md`;
   - the `[SIZE-EST]` key names on the `#### Delegation-size discipline` pointer;
@@ -69,7 +69,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - `Rule 2` and the three BASENAME names;
   - `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh`;
   - the Document-Driven Workflow step numbers.
-- The skill-side statement of this duty, for `references/ultracode-declaration-contract.md` and `references/delegation-size-discipline.md`: `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Edit Rules → **Machine-read literals**.
+- The statement of this duty for that skill's editors, covering `references/ultracode-declaration-contract.md` and `references/delegation-size-discipline.md`: `scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Machine-read literals**.
 
 ## Reserved names
 
@@ -114,8 +114,11 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 ### `#### Deliverable exposure and designer composition (Decision phase)`
 
-- The explicit format/share signal list behind **Exposure Determination** restates `scoped/scope-report.md` → `### HTML request test`. It sits in `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## Exposure Determination — signals and routing`.
-- The signal literals live in the author bodies: `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`.
+- The explicit format/share signal list behind **Exposure Determination** restates the signal literals.
+  - Canonical literals: `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`.
+  - Mirror: `agents/glass-atrium-intel-planner.md` → `### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`, under `## Output Format Routing`.
+  - Routing rule: `scoped/scope-report.md` → `### HTML request test`.
+  - It sits in `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## Exposure Determination — signals and routing`.
 - The orchestrator's copy is the pointer plus that reference, together. The pointer's one-bit rule reaches the orchestrator without a read; the signal literals sit one read away in the reference.
   - One read away is enough because the authoring agent re-decides the format at turn-0, so the orchestrator's bit is a hint.
   - The relocation is not a redundancy-collapse: edit the pointer and the reference with the set, and never delete either as redundant.
@@ -161,8 +164,8 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The split between the pointer and that reference: that skill's `SKILL.md` → Reference Index.
   - The hooks quote only the gate heading (`hooks/enforce-verification-gate.sh` reviewer-miss reason, `hooks/enforce-workflow-verify-stage.sh` DEV hard-gate block), which stays.
   - `#### Backstop asymmetry (manual vs. ultracode)` stays as a pointer: `references/ultracode-declaration-contract.md` cites it.
-- The reference's cited `##` headings, text and level fixed: `SKILL.md` → Edit Rules → **Cited headings**.
-  - Citers naming the `##` level: `scoped/maintainers/scope-qa.md` (two Team-composition citations), `references/scan-provenance.md` → `## Premise register — detail` and `SKILL.md` → Edit Rules → **Cited headings**.
+- The reference's cited `##` headings, text and level fixed: `scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Cited headings**.
+  - Citers naming the `##` level: `scoped/maintainers/scope-qa.md` (two Team-composition citations), `references/scan-provenance.md` → `## Premise register — detail` and that note's **Cited headings**.
 - Location-only citer that stays: `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` → the Stage 2 bullet names the gate heading for team composition, DEV hard gate, activation scope and direction-not-completeness. The pointer keeps all four.
   - Its **Stage-2 revision/escalation** bullet names the same heading for the escalation path; the pointer's **Revision + escalation** carries that path and its path-only limit.
 - No dev-* or reviewer body mirrors `scoped/scope-qa.md` or `scoped/scope-dev.md`.
@@ -204,7 +207,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - Guardrail (a)'s agent-binding rules, the index-mutation class and the mechanisms they answer live in Tier-1 `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** · **Worktree occupancy**, which reaches every agent on the host channel.
   - Never copy them back into the rule file: its opening line tells subagents to ignore it, so a rule placed there loses its agent audience.
 - The split between the rule-file heading and `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`: that skill's `SKILL.md` → Reference Index.
-- `skills/glass-atrium-ops-orchestrator.md` cites the Tier-1 home and the reference file's leads directly. Before renaming such a lead, grep for its citers (`SKILL.md` → Edit Rules → **Cited leads**).
+- `skills/glass-atrium-ops-orchestrator.md` cites the Tier-1 home and the reference file's leads directly. Before renaming such a lead, grep for its citers (`scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Cited leads**).
 
 ## Linkage — handoff and recovery
 
@@ -228,7 +231,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - **Backing honesty (which stages are enforced)** is a pointer to `skills/glass-atrium-ops-delegation-contracts/references/failure-recovery.md`; the split between them: that skill's `SKILL.md` → Reference Index.
   - The evidence-gate citer above resolves through that pointer: it keeps the lead and names the **Debugger evidence gate** as honor-system.
 - The rule file carries no pointer to `skills/glass-atrium-ops-orchestrator.md` → `### Self-Improvement User-Approval Trigger`.
-  - The orchestrator reaches that section through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier and `rules/glass-atrium/shared-self-improve-hygiene.md` → Cross-References.
+  - The orchestrator reaches that section through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier.
 - A comment in `autoagent/daemon_cycle.py` cites `orchestrator-role.md` for that name; the fix belongs at the comment (point it at the skill), not a pointer back here.
 
 ## Linkage — lifecycle and harness

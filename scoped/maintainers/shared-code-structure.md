@@ -34,7 +34,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 ## Delivery — how the rule reaches its agents
 
-- Every DEV agent and `glass-atrium-qa-code-reviewer` receive the file whole at spawn: each of those `agent-registry.json` rows lists it in `rules.shared`, which the part-slot channel delivers (`rules/glass-atrium/core-compliance-matrix.md` → `### Injected Blocks (SubagentStart allowlist)`).
+- Every DEV agent and `glass-atrium-qa-code-reviewer` receive the file whole at spawn: each of those `agent-registry.json` rows lists it in `rules.shared`, which the part-slot channel delivers (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership declaration and SubagentStart channels`).
 - No agent preloads `glass-atrium-dev-patterns` in frontmatter `skills:`, so the rule file is the only delivered copy of the core.
 
 ## Readers and coupled tests

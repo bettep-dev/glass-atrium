@@ -117,13 +117,12 @@ The rule file is the `rules.scope` member of both QA registry rows, so `hooks/li
 | the verdict-vocabulary scoping ↔ the reviewer body's `### Stage-2 plan-verification spawn` | redundant, resolved | the body line survives; both reach the reviewer on every spawn |
 | `### Non-waiver (binding on YOU, not on the delegation)` ↔ scope-dev's non-waiver bullet | false pair | both stay: different actor, own verdict tokens |
 | the premise-audit lead ↔ the same lead in scope-dev | canonical + mirror | both stay byte-identical, capitals included — `PREMISE_AUDIT_Q` quotes one home per actor |
-| **Direction, never completeness** ↔ the reference's **Direction, not completeness — detail** | canonical + mirror | both stay: the reference holds the detail, this file the reviewer's delivered copy |
+| **Direction, never completeness** ↔ the reference's **Direction, not completeness** | canonical + mirror | both stay: the reference holds the detail, this file the reviewer's delivered copy |
 
 - Paths: the reviewer body is `agents/glass-atrium-qa-code-reviewer.md`; scope-dev is `scoped/scope-dev.md`; `PREMISE_AUDIT_Q` sits in `skills/glass-atrium-ops-orchestrator.md`.
   - The reference is `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md`.
 - The non-waiver false pair is also recorded in `scoped/maintainers/scope-dev.md` → `## Pair classifications`.
-- Drift in the Direction pair: this file's example list adds "a premise tag", which the reference's list lacks.
-  - The addition carries the untagged-claim closure (`## How the three conflicts landed`); the reference's own diet item decides whether its list follows.
+- The Direction pair's example lists match, "a premise tag" included: it carries the untagged-claim closure (`## How the three conflicts landed`), so an edit to either list edits both.
 
 ## What reads the rule file mechanically
 
