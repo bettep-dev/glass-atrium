@@ -10,12 +10,17 @@
 // row below lands there and the live query finds it. Verified by deliberately pointing
 // MONITOR_TEST_DATABASE_URL at the live database — the run goes red here.
 
-import test, { after, before } from "node:test";
+import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { once } from "node:events";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import pg from "pg";
 
@@ -275,3 +280,120 @@ for (const [label, a, b, expected] of SERVER_IDENTITY_ROWS) {
     assert.equal(isSameServer(a, b), expected, `\n  a: ${a}\n  b: ${b}`);
   });
 }
+
+// The DB client itself refuses a node:test process that select-test-db.ts did not prepare:
+// a test file's `import "dotenv/config"` otherwise hands it the live DATABASE_URL. Each row
+// runs a child against a throwaway socket that only counts connections, so no row can reach
+// a real database, and the child's env carries no inherited database URL.
+
+const MONITOR_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const TSX_BIN = join(MONITOR_ROOT, "node_modules", ".bin", "tsx");
+const SELECT_TEST_DB = join(MONITOR_ROOT, "test", "lib", "select-test-db.ts");
+const SANCTIONED_IMPORT = "--import ./test/lib/select-test-db.ts";
+
+const PROBE_SOURCE = `
+import { writeFile } from "node:fs/promises";
+const { getPrisma, disconnectPrisma } = await import(${JSON.stringify(
+  pathToFileURL(join(MONITOR_ROOT, "src", "server", "db.ts")).href,
+)});
+let outcome = "connected";
+try {
+  await getPrisma().$queryRawUnsafe("SELECT 1");
+} catch (error) {
+  outcome = error instanceof Error ? error.message : String(error);
+}
+await disconnectPrisma().catch(() => undefined);
+await writeFile(process.env.PROBE_OUT ?? "", outcome);
+`;
+
+const GUARD_ROOT = mkdtempSync(join(tmpdir(), "db-guard-"));
+const PROBE = { testFile: join(GUARD_ROOT, "probe.test.mts"), entry: join(GUARD_ROOT, "probe-entry.mts") };
+writeFileSync(PROBE.testFile, PROBE_SOURCE);
+writeFileSync(PROBE.entry, PROBE_SOURCE);
+
+after(() => {
+  rmSync(GUARD_ROOT, { recursive: true, force: true });
+});
+
+// Inherited selection state (this suite's own swapped URL, the live handle, the marker, the
+// runner context) would decide the child's outcome for it, so all of it is dropped.
+const INHERITED_SELECTION = /DATABASE_URL$|^MONITOR_|^NODE_TEST_CONTEXT$|^NODE_OPTIONS$/;
+
+function getChildEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !INHERITED_SELECTION.test(key)));
+  return { ...env, ...extra };
+}
+
+interface ProbeRun {
+  connections: number;
+  outcome: string;
+  stderr: string;
+}
+
+/** Runs the probe through tsx with `args`, its DATABASE_URL a socket that accepts and drops. */
+async function runProbe(args: readonly string[], selectsTestDb: boolean): Promise<ProbeRun> {
+  const dir = mkdtempSync(join(GUARD_ROOT, "s"));
+  const port = 55431;
+  const url = `postgresql://probe@localhost/throwaway?host=${dir}&port=${port}`;
+  let connections = 0;
+  const server = createServer((socket) => {
+    connections += 1;
+    socket.destroy();
+  });
+  server.listen(join(dir, `.s.PGSQL.${port}`));
+  await once(server, "listening");
+
+  const out = join(dir, "outcome.txt");
+  const urlEnv = { [selectsTestDb ? "MONITOR_TEST_DATABASE_URL" : "DATABASE_URL"]: url };
+  const child = spawn(TSX_BIN, args, {
+    cwd: GUARD_ROOT,
+    env: getChildEnv({ ...urlEnv, PROBE_OUT: out }),
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  await once(child, "exit");
+  server.close();
+  return { connections, outcome: await readFile(out, "utf8").catch(() => ""), stderr };
+}
+
+const RUN_FORM_ROWS: ReadonlyArray<{
+  name: string;
+  args: readonly string[];
+  selectsTestDb: boolean;
+  isRefused: boolean;
+}> = [
+  {
+    name: "a standalone --test run is refused",
+    args: ["--test", PROBE.testFile],
+    selectsTestDb: false,
+    isRefused: true,
+  },
+  {
+    name: "a --test run with process isolation off is refused",
+    args: ["--test", "--test-isolation=none", PROBE.testFile],
+    selectsTestDb: false,
+    isRefused: true,
+  },
+  { name: "a test file run directly is refused", args: [PROBE.testFile], selectsTestDb: false, isRefused: true },
+  {
+    name: "the sanctioned --import select-test-db run connects",
+    args: ["--import", SELECT_TEST_DB, "--test", PROBE.testFile],
+    selectsTestDb: true,
+    isRefused: false,
+  },
+  { name: "a non-test entry (the server path) connects", args: [PROBE.entry], selectsTestDb: false, isRefused: false },
+];
+
+describe("the DB client under node:test connects only after select-test-db.ts", () => {
+  for (const row of RUN_FORM_ROWS) {
+    test(row.name, { timeout: 60_000 }, async () => {
+      const run = await runProbe(row.args, row.selectsTestDb);
+      const detail = `\n  outcome: ${run.outcome}\n  stderr: ${run.stderr}`;
+      assert.equal(run.connections > 0, !row.isRefused, `connections: ${run.connections}${detail}`);
+      assert.equal(run.outcome.includes(SANCTIONED_IMPORT), row.isRefused, `refusal names the run form${detail}`);
+    });
+  }
+});

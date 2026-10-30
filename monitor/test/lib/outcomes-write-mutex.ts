@@ -15,12 +15,15 @@ import "dotenv/config";
 
 import { Client } from "pg";
 
+import { assertTestDatabaseSelected } from "../../src/server/test-db-guard.js";
+
 // Fixed key shared by every participating suite; the value itself is arbitrary.
 const LOCK_KEY = 771113401;
 
 let holder: Client | null = null;
 
 export async function acquireOutcomesWriteLock(): Promise<void> {
+  assertTestDatabaseSelected();
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error("DATABASE_URL is not set; the outcomes write mutex needs its own connection");

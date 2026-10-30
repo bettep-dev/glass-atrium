@@ -21,7 +21,7 @@
 // is the sole guard on the T10 registry gate and a self-skipping guard guards
 // nothing.
 //
-// Runner: npx tsx --test test/improvement.learning-loop-gate.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.learning-loop-gate.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";

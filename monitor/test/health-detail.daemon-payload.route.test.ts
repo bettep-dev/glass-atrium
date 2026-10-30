@@ -1,7 +1,7 @@
 // Integration + derivation tests for /api/health/daemon-payload run summaries: the
 // per-run verdict and distinct failure reasons a collapsed row states without the
 // client re-reading the raw payload.
-// Runner: npx tsx --test test/health-detail.daemon-payload.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/health-detail.daemon-payload.route.test.ts
 // DB: real Postgres (read-only) — route assertions cross-check against DB ground truth;
 // derivation fixtures are verbatim shapes of stored autoagent/wiki rows.
 

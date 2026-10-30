@@ -1,5 +1,5 @@
 // Regression tests for the /channel-liveness recording-channel watchdog.
-// Runner: npx tsx --test test/outcomes.channel-liveness.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/outcomes.channel-liveness.route.test.ts
 //
 // The incident: a channel carrying hundreds of rows a day fell to zero and stayed
 // there past a full day with nothing watching. SILENT_CHANNEL below reproduces

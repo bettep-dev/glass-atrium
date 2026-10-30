@@ -1,6 +1,6 @@
 // Integration tests for /api/improvement (unified endpoint).
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/improvement.route.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.route.test.ts
 //
 // Coverage:
 //   - GET /api/improvement happy path · 200 + shape

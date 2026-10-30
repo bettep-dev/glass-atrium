@@ -1,5 +1,5 @@
 // /api/clauded-docs/* 라우트 핸들러 통합 테스트.
-// Runner: npx tsx --test test/clauded-docs.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/clauded-docs.route.test.ts
 // SUITE_MARKER 태그 title 로 격리 → per-test try/finally + after() DB-scrub/FS-removal safety net.
 
 import test, { after, before } from "node:test";

@@ -1,5 +1,5 @@
 // html-root-audit 부팅 감사 테스트 (M7 회귀 고정).
-// Runner: npx tsx --test test/html-root-audit.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/html-root-audit.test.ts
 //
 // Pinned invariant: root 밖을 가리키는 html_path 행은 mismatched 로 집계 +
 // 최신순 sample 에 노출 · trailing-separator 가드로 sibling-prefix(/a/b vs /a/bc)

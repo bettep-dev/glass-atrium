@@ -1,5 +1,5 @@
 // Integration tests for /api/telemetry/* route handlers.
-// Runner: npx tsx --test test/telemetry.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/telemetry.route.test.ts
 // DB: real Postgres — cid 컬럼 SUITE_MARKER 표식 → after() 가 LIKE 매칭 cleanup.
 
 import test, { after, before } from "node:test";

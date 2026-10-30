@@ -1,7 +1,7 @@
 // Integration tests for GET /api/clauded-docs/:id/html-export — server-side
 // self-contained offline HTML export via Playwright headless Chromium.
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/clauded-docs.html-export.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/clauded-docs.html-export.test.ts
 //
 // Coverage (single endpoint):
 //   - PRE-ONLY mermaid happy path (the DOMINANT real shape): <pre class=mermaid>

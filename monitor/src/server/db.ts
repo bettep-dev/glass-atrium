@@ -3,6 +3,7 @@
 
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client.js";
+import { assertTestDatabaseSelected } from "./test-db-guard.js";
 
 let prismaSingleton: PrismaClient | null = null;
 
@@ -28,6 +29,7 @@ export function getPrisma(): PrismaClient {
   if (prismaSingleton !== null) {
     return prismaSingleton;
   }
+  assertTestDatabaseSelected();
   const connectionString = process.env.DATABASE_URL;
   if (typeof connectionString !== "string" || connectionString.length === 0) {
     throw new Error(

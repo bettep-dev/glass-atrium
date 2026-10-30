@@ -1,7 +1,7 @@
 // Regression tests for GET /api/outcomes/attribution-daily (Outcome 분석 ·
 // AttributionHealthCard backing endpoint).
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/outcomes.attribution-daily.route.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/outcomes.attribution-daily.route.test.ts
 //
 // Why this suite exists: the route was committed (BE ae5c8d0) but the running
 // monitor served a stale dist → the literal /attribution-daily fell through to

@@ -1,5 +1,5 @@
 // Regression test for FIX-RB1 — the confidence=null filter on /cross-analysis.
-// Runner: npx tsx --test test/outcomes.confidence-null-filter.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/outcomes.confidence-null-filter.route.test.ts
 //
 // Root fix: buildWhereClause previously carried the "confidence IS NULL" filter
 // state in a side-channel WeakSet that DELETED its entry on first read. On
