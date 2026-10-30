@@ -266,6 +266,39 @@ run_hook_command() {
   done
 }
 
+@test "echo exception: rm-shaped text in a quoted echo or printf argument that only prints → pass" {
+  local rows=(
+    'double-quoted echo argument@@echo "never run rm -rf ~ here"' # GA-RM[not-executed]: hook payload on stdin, never run
+    "single-quoted echo argument beside another command@@echo 'rm -rf /' && ls" # GA-RM[not-executed]: hook payload, never run
+    'printf format and argument@@printf "%s\n" "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
+    'echo to stderr@@echo "rm -rf ~ is blocked" >&2' # GA-RM[not-executed]: hook payload on stdin, never run
+    'echo beside a Trash delete@@echo "rm -rf ~"; rm -rf ~/.Trash/x' # GA-RM[not-executed]: hook payload, never run
+  )
+  local row
+  for row in "${rows[@]}"; do
+    run_hook_command "${row#*@@}"
+    [[ "${status}" -eq 0 && -z "${output}" ]] || { echo "row: ${row%%@@*} → status ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "echo exception: an echo whose text can reach a shell, or a real rm beside an echo → SEC-010 block" {
+  # shellcheck disable=SC2016  # literal $( ) text the hook must judge, never expanded here
+  local rows=(
+    'echo piped to a shell@@echo "rm -rf ~" | sh' # GA-RM[not-executed]: hook payload on stdin, never run
+    'echo inside a substitution eval runs@@eval "$(echo "rm -rf ~")"' # GA-RM[not-executed]: hook payload, never run
+    'echo appended to a script file@@echo "rm -rf ~" >> run.sh' # GA-RM[not-executed]: hook payload on stdin, never run
+    'a real wipe after an echo@@echo "cleaning"; rm -rf ~' # GA-RM[not-executed]: hook payload on stdin, never run
+    'eval of a quoted string@@eval "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
+    'inline shell string@@bash -c "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
+    'echo word that is not an echo command@@echoes "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
+  )
+  local row
+  for row in "${rows[@]}"; do
+    run_hook_command "${row#*@@}"
+    [[ "${status}" -eq 2 && "$(get_block_row "${output}")" == "rm-wipe" ]] || { echo "row: ${row%%@@*} → status ${status}: ${output}"; return 1; }
+  done
+}
+
 @test "trash exception: a HOME value that would split or glob grants no exception" {
   export HOME="${BATS_TEST_TMPDIR}/home dir" GA_DATA_ROOT="${BATS_TEST_TMPDIR}"
   # shellcheck disable=SC2016  # literal $HOME text the hook must judge, never expanded here

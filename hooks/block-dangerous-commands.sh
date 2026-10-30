@@ -11,6 +11,9 @@
 # Trash exception (rm-wipe row only): a command whose every rm deletes only single named entries directly in the
 # home Trash passes; the judge (lib/trash_rm.py) reads the text alone, and any parse doubt keeps the block.
 #
+# Echo exception (rm-wipe row only): rm text in a quoted argument of a print-only echo/printf is blanked before
+# the re-check; one that feeds a pipe, a file or a substitution keeps its text and the block.
+#
 # Confinement belongs to the tool-grant layer, not here. See plan clauded-docs/290 UD-1 (the blanket shell grant makes the config path-allowlists decorative).
 #
 # Constraints:
@@ -90,15 +93,40 @@ is_trash_only_rm() {
   fi
 }
 
-# First matching row name, empty when only a Trash-entry rm matched. Args: $1=command text
+# The command with every quoted argument of a print-only echo/printf blanked: one at a command start,
+# ending at a list operator or the end, its only redirects an fd copy or /dev/null. Any substitution
+# keeps the text whole; a mask failure or empty result is the command itself. Args: $1=command text
+get_echo_masked() {
+  local py_src masked
+  # read, not a $( ) heredoc: bash 3.2 mis-parses the backtick inside one
+  IFS= read -r -d '' py_src <<'PY' || true
+import re, sys
+command = sys.stdin.read()
+QUOTED = r"""'[^']*'|"(?:[^"\\]|\\.)*\""""
+ARG = r"(?:" + QUOTED + r"""|[^\s'"\\;&|<>()]+|[0-9]*>&[0-9]|[0-9]*>[ \t]*/dev/null)"""
+INVOCATION = re.compile(
+    r"(?:^|(?<=[;&|\n]))([ \t]*(?:echo|printf))((?:[ \t]+" + ARG + r")*)(?=[ \t]*(?:\Z|[;\n]|&&|\|\||&(?![&>])))"
+)
+if not re.search(r"`|\$\(|[<>]\(", command):
+    command = INVOCATION.sub(lambda m: m.group(1) + re.sub(QUOTED, "''", m.group(2)), command)
+sys.stdout.write(command)
+PY
+  masked="$(python3 -I -c "${py_src}" <<<"${1}")" || masked=""
+  printf '%s' "${masked:-${1}}"
+}
+
+# First matching row name, empty when only a Trash-entry rm or print-only echo text matched. Args: $1=command text
 get_matched_row() {
-  local row
+  local row masked
   for row in "${DANGEROUS_PATTERNS[@]}"; do
     # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
     if printf '%s' "${1}" | drain_after grep -qE "${row#*=}"; then
-      # shellcheck disable=SC2310  # the judge's status is the verdict
-      if [[ "${row%%=*}" == "rm-wipe" ]] && is_trash_only_rm "${1}"; then
-        continue
+      if [[ "${row%%=*}" == "rm-wipe" ]]; then
+        masked="$(get_echo_masked "${1}")"
+        # shellcheck disable=SC2310  # the reader's and the judge's status are the verdict
+        if ! printf '%s' "${masked}" | drain_after grep -qE "${RM_WIPE_PATTERN}" || is_trash_only_rm "${masked}"; then
+          continue
+        fi
       fi
       printf '%s' "${row%%=*}"
       return 0
