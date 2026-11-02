@@ -386,6 +386,49 @@ assert_rows() {
     'plain path in a job scratch dir|Read ~/.claude/jobs/a/tmp/out.txt now.'
 }
 
+@test "text a walk cannot read voids an exemption, and a plainly written path keeps it" {
+  local home="${BATS_TEST_TMPDIR}/home/u" interp
+  mkdir -p "${home}/.claude/jobs/a/tmp/b" "${home}/.claude/logs/c" "${home}/.claude/projects/p/memory" "${home}/proj"
+  : >"${home}/.claude/settings.json"
+  ln -s "${home}/.claude/logs/../settings.json" "${home}/proj/.claude-l"
+  while IFS= read -r interp; do
+    HOOK_BASH="${interp}" HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
+      'an unset variable spelling a traversal in job scratch|cp /tmp/x ~/.claude/jobs/a/tmp/.$x./.$x./.$x./settings.json' \
+      'an unset variable spelling a traversal in runtime data|cp /tmp/x ~/.claude/logs/.$x./settings.json' \
+      'a braced variable hiding the memory dir|Edit ~/.claude/projects/-Users-x/mem${y}ory/MEMORY.md now.' \
+      'a quoted variable between dots|cp /tmp/x ~/.claude/logs/."$x"./settings.json' \
+      'a star glob opening with a dot|cp /tmp/x ~/.claude/jobs/a/tmp/.*/.*/.*/settings.json' \
+      'a one-character glob opening with a dot|cp /tmp/x ~/.claude/logs/.?/settings.json' \
+      'a bracket glob opening with a dot|cp /tmp/x ~/.claude/logs/.[.]/settings.json' \
+      'a dot glob on a path with no match|cp /tmp/x ~/.claude/logs/nope/.*/settings.json' \
+      'a backtick substitution between dots|cp /tmp/x ~/.claude/logs/.`:`./settings.json' \
+      'a file link whose target climbs out of an exempt dir|Edit ~/proj/.claude-l now.'
+    HOOK_BASH="${interp}" HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
+      'a home variable ahead of an exempt path|Read $HOME/.claude/data/x.md now.' \
+      'a braced home variable ahead of an exempt path|Read ${HOME}/.claude/logs/x.log now.' \
+      'a root glob ahead of an exempt path|Read ~/.claude*/data/x.md now.' \
+      'a wildcard project segment|Persist ~/.claude/projects/*/memory/progress-a.md now.' \
+      'a dot name that is no glob|Read ~/.claude/logs/.state now.' \
+      'a code span around an exempt path|Read `~/.claude/data/x.md` now.' \
+      'bold around a code span|Read **`~/.claude/data/x.md`** now.' \
+      'a list of code spans|Read `~/.claude/data/x.md`,`~/.claude/logs/y.log` now.' \
+      'a relative repo path with a wildcard|Look in .claude/worktrees/*/hooks now.'
+  done < <(list_bashes)
+}
+
+@test "a cd into an exempt dir voids its exemption only when the prompt can climb back out" {
+  assert_rows 2 \
+    'cd into job scratch, then a relative climb|cd ~/.claude/jobs/a/tmp && cp /tmp/x ../../../settings.json' \
+    'cd into runtime data, then a relative climb|cd ~/.claude/logs && cp /tmp/x ../settings.json' \
+    'pushd, then a relative climb|pushd ~/.claude/logs && cp /tmp/x ../settings.json' \
+    'cd in a subshell, then a relative climb|(cd ~/.claude/logs; cp /tmp/x ../settings.json)' \
+    'cd, then a bare climb|cd ~/.claude/logs && cd .. && edit settings.json'
+  assert_rows 0 \
+    'cd with no climb|cd ~/.claude/logs && tail daemon.log' \
+    'a climb with no cd into the exempt dir|Read ~/.claude/logs/daemon.log and ../repo/x.md now.' \
+    'a cd elsewhere beside an exempt path|cd /tmp/repo && cat ../x && tail ~/.claude/logs/daemon.log'
+}
+
 @test "a case or Unicode variant of the home blocks exactly when the filesystem resolves it to the home" {
   local base="${BATS_TEST_TMPDIR}/home" lower upper want=0
   lower="$(printf 'caf\303\251')"
@@ -444,7 +487,18 @@ assert_rows() {
     'not-to before the action|Be careful not to edit ~/.claude/ here.' \
     'constraint ending in a final dot on the slash|Never write under ~/.claude/.' \
     'emphasis around the cue and verb|- **Never write** under ~/.claude/ at all.' \
-    'curly apostrophe in the cue|Don’t edit ~/.claude/ here.'
+    'curly apostrophe in the cue|Don’t edit ~/.claude/ here.' \
+    'a numbered item|1) Do not edit ~/.claude/ now.' \
+    'a clause after a sentence end|The merge is on hold. Never write under ~/.claude/.' \
+    'a clause after a label|Bounds: never write under ~/.claude/.' \
+    'a clause after a bold label|**Bounds:** never write under ~/.claude/.' \
+    'a named subject before must not|You must not write to ~/.claude/.' \
+    'a named subject before should never|Agents should never edit ~/.claude/ ever.' \
+    'should not on its own|Should not touch ~/.claude/ now' \
+    'a contracted shape|Shouldn'\''t edit ~/.claude/ here' \
+    'a second root in the same clause|Never write to ~/.claude/ or ~/.claude-work/ here.' \
+    'a code span around the root|Never write under `~/.claude/`.' \
+    'words ahead of a comma|Never write under ~/.claude/, ever.'
   assert_rows 2 \
     'reminder that negates forgetting|Don'\''t forget to copy the new hook into ~/.claude/ when done.' \
     'negation of needing to ask|No need to ask — cp build/settings.json ~/.claude/' \
@@ -475,7 +529,37 @@ assert_rows() {
     'a noun reading of no with a later install|No update needed so install the plugin in ~/.claude/' \
     'a noun reading of no directly on the root|No update to ~/.claude/ now.' \
     'a path segment spelled like a cue|cp /never write ~/.claude/' \
-    'a non-negated root ending in a final dot|Rewrite the hooks in ~/.claude/.'
+    'a non-negated root ending in a final dot|Rewrite the hooks in ~/.claude/.' \
+    'an inability handing the write to a subagent|I cannot write to ~/.claude/ so you do it' \
+    'a past-tense reading|You did not write to ~/.claude/ so do it now' \
+    'a later instruction voiding the cue|Do not install to ~/.claude/ but do it anyway' \
+    'a question with would|Would you not copy to ~/.claude/ the hook' \
+    'a why-would question|Why would you not write to ~/.claude/ directly?' \
+    'an open choice with whether|Decide whether or not to write to ~/.claude/' \
+    'an open choice with if|If not write to ~/.claude/' \
+    'a conditional with words before the cue|The test fails if you do not write to ~/.claude/' \
+    'why with words before the cue|Why do we not write to ~/.claude/' \
+    'do opening a question|Do you not write to ~/.claude/' \
+    'should opening a question|Should you not copy into ~/.claude/' \
+    'a bare not without to|Not write to ~/.claude/' \
+    'never then not|Never not write to ~/.claude/' \
+    'a word after the root|Never write to ~/.claude/ and copy the hook' \
+    'a word past a comma after the root|Never write under ~/.claude/, just do it.' \
+    'a clause opened by a comma|Yes, never write under ~/.claude/.' \
+    'a dash inside a clause is no list marker|The hook - never write ~/.claude/' \
+    'a cue word as a cp operand|cp not write ~/.claude/' \
+    'a cue word as an mv operand|mv never edit ~/.claude/' \
+    'a cue word as a tee operand|tee not write ~/.claude/' \
+    'a cue word behind a cp option|cp -r not write ~/.claude/' \
+    'a quoted cue before the root operand|cp ./settings.json "never write" ~/.claude/' \
+    'a quoted cue opening the line|"never write" ~/.claude/' \
+    'a quoted word between cue and root|Never write "x" ~/.claude/' \
+    'a sentence end inside a quote|cp "a b. never write" ~/.claude/' \
+    'a root inside the quote with a word after it|"x. never write to ~/.claude/ y"' \
+    'a quoted root in a negated clause|Never write under "~/.claude/".' \
+    'a quoted word after the root|Never write to ~/.claude/ "now"'
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
+  assert_rows 2 'a quoted cue before the root of a recursive delete|rm -rf "never rm" ~/.claude/'
 }
 
 # CWD-relative arm: a relative token names the harness only when, read from $HOME, it reaches an entry

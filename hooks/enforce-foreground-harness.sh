@@ -29,14 +29,20 @@
 #   A `..` in the written path, or `.claude` text after the root, voids every exemption.
 #
 # Negated-mention exclusion: a token naming only a root (no entry inside it), every occurrence of which
-#   a bound negation cue leads directly to, is a constraint, not a write target. A cue (never, not, don't,
-#   cannot, must not …) binds only when the next word, past any `to`, is an action verb ("never write", "not to
-#   edit"); "don't forget to copy" negates another verb, so it binds nothing. From the verb, only under, in, into,
-#   to, anything, any or the may stand before the token: any other word voids it ("never edit the repo and cp x
-#   ~/.claude/", "never write outside ~/.claude/"), since a later action in the clause would read as negated.
-#   Refused as cues: no (a determiner, "no change to"), why not (a suggestion), a cue right after a cue. A word
-#   between cue and verb ("never ever write") binds nothing, and . ; : ! ? , or a line end ends a binding, so the
-#   mention blocks (fail-safe). A file or dir inside the root still blocks.
+#   a prohibition leads directly to, is a constraint, not a write target. The whole clause must read as one:
+#   - It opens its clause: line start, a list marker or a sentence end (. ; : ! ?), past only a closed set of
+#     leads (you, the agent, please, be careful ...). So if, why, would, whether, a command name or a comma
+#     before the cue bind nothing ("if you do not write", "cp not write ~/.claude/").
+#   - The shape: never, do not, dont, must not, mustnt, should not, shouldnt, not to, must never, should never.
+#     Inability and past tense (cannot, did not) and a bare not are no shape.
+#   - The next word, past any `to`, is an action verb: "don't forget to copy" negates another verb.
+#   - From the verb, only under, in, into, to, anything, any or the may stand before the token.
+#   - After the token, only at, all, here, ever, now, or, any, profile, root or another root may stand to the
+#     sentence end: "so", "but" or "the hook" void it, past a comma too.
+#   - A word opening or closing a quote ends the binding, so a quoted cue never reaches a token outside it.
+#   Anything else blocks, fail-safe. A file or dir inside the root still blocks.
+#   Residual: a cue past a word ending in a dot still opens a sentence ("cp a. never write ~/.claude/" names files
+#   spelled like the cue).
 #
 # Resolution: the verdict follows what the filesystem says a path reaches, not how it is spelled.
 #   - Candidates: every token whose text, glob metacharacters and quotes removed, holds `.claude` in any
@@ -53,6 +59,10 @@
 #   - A bare root word (relative, no `/` but a trailing one) is prose unless an action word, an option
 #     (a lone `-` is a list marker), a redirect or a joined `=`/`@`/`-x`/list position makes it an operand.
 #   - An exempt remainder is stat-walked too: a symlink below its runtime-DATA entry voids the exemption.
+#   - Text a walk cannot read voids every exemption: a `..` in the written text or the remainder, or what can spell
+#     one or any other name once expanded: a `$`, a backtick pair glued to text, a dot-leading glob segment.
+#   - A `cd` or `pushd` into an exempt dir voids its exemption when the prompt also holds a `..` segment: the relative
+#     climb names no `.claude`, so it is no candidate. Residual: a cwd set any other way (`git -C`, a script).
 #     Residual: a link the prompt itself plants (`ln -s ../../../hooks ~/.claude/jobs/a/tmp/l`, then an edit through
 #     it) is not on disk when this runs, and its target text holds no `.claude`, so that prompt passes.
 #   - A block names the candidate that triggered it.
@@ -125,7 +135,7 @@ fi
 
 # Candidate extraction in ONE awk fork (linear, where bash 3.2 pattern substitution is not). Output
 # lines `x<flags>\t<candidate>`: flag c = operand context (bare-root rule), b = brace bash would expand,
-# a = an occurrence outside a negated clause (negated-mention rule).
+# a = an occurrence outside a negated clause (negated-mention rule), d = operand of a cd, e = text no walk can read.
 # A `<placeholder>` stays one segment, a comma inside a brace stays in its token.
 # shellcheck disable=SC2016  # awk program text, never shell expansions
 extract_awk='
@@ -170,7 +180,14 @@ function starts(t, f,    c) {
     emit(c, f "c")
   }
 }
+# A backtick pair glued to text can spell any name (.`:`. is ..); a code span opens at a word start or separator.
+function has_glued_tick(w,    n, t, j) {
+  n = split(w, t, /`/)
+  for (j = 1; j < n; j += 2) if (t[j] != "" && t[j] !~ /[,;|&:(<>=*_[]$/) return 1
+  return 0
+}
 function split_word(w, f,    b, m, j, k, s, part, piece, joined) {
+  if (has_glued_tick(w)) f = f "e"
   while (match(w, /<[^<>]*>/))
     w = substr(w, 1, RSTART - 1) "\001" substr(w, RSTART + 1, RLENGTH - 2) "\002" substr(w, RSTART + RLENGTH)
   while (match(w, /\{[^{}]*,[^{}]*\}/)) {
@@ -183,47 +200,98 @@ function split_word(w, f,    b, m, j, k, s, part, piece, joined) {
   for (j = 1; j <= m; j++) {
     joined = (j > 1 && part[j - 1] != "")
     k = split(part[j], piece, "\005")
-    for (s = 1; s <= k; s++) starts(piece[s], (f || joined || s > 1) ? "c" : "")
+    for (s = 1; s <= k; s++) starts(piece[s], f ((joined || s > 1) ? "c" : ""))
+  }
+}
+# The cue grammar from a clause opening, one word at a time: leads, then a prohibition shape, then an action verb.
+function step_cue(word) {
+  if (cue_state == "open") {
+    if (word == "" || index(leads, " " word " ") || prev ~ /^(-|[*+>]|#+|\(?[0-9a-z]+\))$/) return
+    if (word ~ /^(never|dont|mustnt|shouldnt)$/) cue_state = "verb"
+    else if (word ~ /^(do|must|should)$/) cue_state = "aux"
+    else cue_state = (word == "not") ? "not" : ""
+  } else if (cue_state == "aux") cue_state = (word ~ /^(not|never)$/) ? "verb" : ""
+  else if (cue_state == "not") cue_state = (word == "to") ? "verb" : ""
+  else if (cue_state == "verb" && word != "to") {
+    if (index(verbs, " " word " ")) negated = 1
+    cue_state = ""
+  }
+}
+# The tokens a binding reached are judged once the words after them are read. Args: clean = they stayed a mention.
+function release(clean,    j, count) {
+  count = held
+  held = 0
+  in_negation = clean
+  for (j = 1; j <= count; j++) split_word(held_word[j], held_flags[j])
+}
+function take_token(w, p, quoted,    f) {
+  # A lone `-` word is a markdown list marker, not an option; `--` still ends options.
+  f = (index(verbs, " " p " ") || (p ~ /^-/ && p != "-") || p ~ /[<>]$/) ? "c" : ""
+  if (p ~ /^[`(]*(cd|pushd)$/) f = f "cd"
+  if ((negated || held) && !quoted) {
+    held_word[++held] = w
+    held_flags[held] = f
+  } else {
+    in_negation = 0
+    split_word(w, f)
+  }
+  negated = 0
+  cue_state = ""
+}
+function drop_binding() {
+  negated = 0
+  cue_state = ""
+}
+# Whole words alone count, past emphasis or brackets: quotes and non-ASCII are dropped (the cue reads dont).
+function set_cue(w) {
+  prev = tolower(w)
+  sub(/:$/, "", prev)
+  cue = prev
+  gsub(/[^ -~]/, "", cue)
+  gsub(/^[*_([]+|[]*_).,;:!?]+$/, "", cue)
+}
+function read_word(w,    quoted, p, rooted) {
+  quoted = (w ~ quote_edge)
+  gsub(quote_class, "", w)
+  p = prev
+  set_cue(w)
+  probes = 0
+  if (w ~ /(^|[\/;&|(`])\.\.([\/;&|)`]|$)/) climbs = 1
+  rooted = index(w, ".") && has_root_text(w)
+  if (held && (quoted || !(rooted || index(after_token, " " cue " ")))) release(0)
+  if (rooted) take_token(w, p, quoted)
+  else if (quoted) drop_binding()
+  else {
+    if (!index(before_token, " " cue " ")) negated = 0
+    step_cue(cue)
+  }
+  if (!held && w ~ /,[]`*_)]*$/) drop_binding()
+  if (!quoted && w ~ /[.;:!?][]`*_)]*$/) {
+    release(1)
+    negated = 0
+    cue_state = "open"
   }
 }
 BEGIN {
   quote_class = "[\"" sprintf("%c", 39) "\\\\]"
+  quote_mark = "[\"" sprintf("%c", 39) "]"
+  quote_edge = "^[*_([\\\\]*" quote_mark "|" quote_mark "[]*_).,;:!?]*$"
   verbs = " cd pushd popd ls cat cp mv rm rmdir mkdir touch ln tee chmod chown install find tar rsync sed awk vi vim nano code open source stat du head tail less grep git edit write update modify change delete remove create rewrite overwrite replace append patch move copy rename save "
-  cues = "^(never|not|nor|dont|cannot|cant|mustnt|shouldnt|wont)$"
+  leads = " please also you agent agents subagent subagents the this be careful "
+  before_token = " under in into to anything any the "
+  after_token = " at all here ever now or any profile root "
 }
 {
-  negated = cue_pending = 0
-  cue = ""
+  negated = 0
+  cue_state = "open"
   n = split($0, words, /[[:space:]]+/)
   for (i = 1; i <= n; i++) {
-    w = words[i]
-    gsub(quote_class, "", w)
-    p = prev
-    prev = tolower(w)
-    sub(/:$/, "", prev)
-    probes = 0
-    # The negation holds across a closed word list only, so a later action in the clause never reads as negated.
-    # Whole words alone count, past emphasis or brackets: quotes and non-ASCII are dropped (the cue reads dont),
-    # a path segment spelled like a cue stays a path.
-    in_negation = negated
-    before = cue
-    cue = prev
-    gsub(/[^ -~]/, "", cue)
-    gsub(/^[*_([]+|[]*_).,;:!?]+$/, "", cue)
-    if (cue !~ /^(under|in|into|to|anything|any|the)$/) negated = 0
-    # A cue binds only when the next word (past any `to`) is an action verb: "dont forget to copy" negates another.
-    if (cue_pending && cue != "to") {
-      if (index(verbs, " " cue " ")) negated = 1
-      cue_pending = 0
-    }
-    if (cue ~ cues && before != "why" && before !~ cues) cue_pending = 1
-    if (w ~ /[.;:!?,]$/) negated = cue_pending = 0
-    if (!index(w, ".") || !has_root_text(w)) continue
-    # A lone `-` word is a markdown list marker, not an option; `--` still ends options.
-    split_word(w, index(verbs, " " p " ") || (p ~ /^-/ && p != "-") || p ~ /[<>]$/)
+    if (words[i] == "") prev = ""
+    else read_word(words[i])
   }
+  release(1)
 }
-END { for (c in seen) print "x" seen[c] "\t" c }'
+END { for (c in seen) print "x" seen[c] ((climbs && seen[c] ~ /d/) ? "e" : "") "\t" c }'
 
 # Degraded extractor (awk failed): whitespace words with quotes dropped, split on the list separators,
 # every candidate in operand context. Builtins only; slower, so it runs only after an awk failure.
@@ -414,8 +482,8 @@ needs_staged_lane() {
     is_root_target
     return
   fi
+  has_unreadable_text && return 0
   # The `.claude`-text void reads written text: a glob match's remainder is a real name on disk.
-  [[ "/${written}/" == */../* ]] && return 0
   [[ "${glob_match}" != true && "${remainder}" == *.claude* ]] && return 0
   first="${remainder%%/*}"
   if [[ "${relative}" == true && ! -e "${root_dir}/${first}" && ! -L "${root_dir}/${first}" && "${config_entries}" != *" ${first} "* ]]; then
@@ -423,6 +491,18 @@ needs_staged_lane() {
   fi
   exempt_entry "${first}" && ! has_link_below "${root_dir}/${first}" && return 1
   return 0
+}
+
+# Text no walk reads voids an exemption: a `..`, or what can spell one or any name once expanded. Exit 0 = such text.
+has_unreadable_text() {
+  local seg walk_rest="${spelled}"
+  [[ "/${written}/" == */../* || "/${remainder}/" == */../* || "${remainder}" == *'$'* || "${flags}" == *e* ]] && return 0
+  # A dot-leading glob can match `..` (bash before 5.2 does); one spelling the root itself stays the root.
+  while [[ -n "${walk_rest}" ]]; do
+    take_segment
+    [[ "${seg}" == .*[][*?]* && ! "${seg//[][*?]/}" =~ ${root_name_re} ]] && return 0
+  done
+  return 1
 }
 
 # The root itself: a bare relative root word in prose is a name, not an operand, and a trailing slash names no file
@@ -556,6 +636,7 @@ strip_globs() {
 # Exit 0 = the candidate names a path that needs the staged lane.
 candidate_blocks() {
   [[ "${flags}" == *b* ]] && return 0
+  spelled="${written}"
   # Trailing prose punctuation or markdown emphasis is not part of the path; a dot run is kept.
   while :; do
     case "${written}" in
