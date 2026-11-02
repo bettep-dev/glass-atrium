@@ -166,82 +166,18 @@ list_bashes() {
   done
 }
 
-@test "a profile jobs/ path outside a job's tmp/ scratch → BLOCKED" {
-  local home="${BATS_TEST_TMPDIR}/home/u" row name prompt
-  mkdir -p "${home}/.claude-work-dev/jobs/25a65a54/tmp"
-  ln -s ../../../hooks "${home}/.claude-work-dev/jobs/25a65a54/tmp/link"
-  ln -s ../hooks "${home}/.claude-work-dev/jobs/lnk"
-  for row in \
-    'link at the job id segment|Write ~/.claude-work-dev/jobs/lnk/tmp/x now.' \
-    'file directly in jobs/|Queue the run via ~/.claude-work-dev/jobs/pending.json.' \
-    'job pins file|Edit ~/.claude-work-dev/jobs/pins.json now.' \
-    'job state file|Write ~/.claude-work-dev/jobs/25a65a54/state.json now.' \
-    'traversal out of a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/../../../hooks/x.sh now.' \
-    'dot as the job id|Write ~/.claude-work-dev/jobs/./tmp/x.sh now.' \
-    'dot-leading job id|Write ~/.claude-work-dev/jobs/.hidden/tmp/x.sh now.' \
-    'wildcard dot segment below a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/.*/hooks/x.sh now.' \
-    'link out of a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/link/x.sh now.' \
-    'wildcard reaching a link out of a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/li*/x.sh now.' \
-    'final star reaching a link out of a job tmp/|Copy evil.sh to ~/.claude-work-dev/jobs/25a65a54/tmp/li* now.' \
-    'final single-character wildcard reaching a link|Copy evil.sh to ~/.claude-work-dev/jobs/25a65a54/tmp/lin? now.' \
-    'final bracket then star reaching a link|Copy evil.sh to ~/.claude-work-dev/jobs/25a65a54/tmp/l[i]n* now.' \
-    'final star alone over a job tmp/ holding a link|Copy evil.sh to ~/.claude-work-dev/jobs/25a65a54/tmp/* now.' \
-    'final star before a sentence end|Copy evil.sh to ~/.claude-work-dev/jobs/25a65a54/tmp/li*.' \
-    'lookalike of the tmp segment|Write ~/.claude-work-dev/jobs/25a65a54/tmpx/out.txt now.' \
-    'tmp segment below a job subdir|Write ~/.claude-work-dev/jobs/25a65a54/x/tmp/a now.'; do
-    IFS='|' read -r name prompt <<<"${row}"
-    HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" true
-    [[ "${status}" -eq 2 ]] || {
-      echo "row: ${name} · status ${status}: ${output}"
-      return 1
-    }
-  done
-}
-
-@test "a final _ . or ! that is part of a link's own name is judged before it reads as punctuation" {
-  local home="${BATS_TEST_TMPDIR}/home/u" tmp row name prompt
-  tmp="${home}/.claude-work-dev/jobs/j1/tmp"
-  mkdir -p "${tmp}"
-  ln -s ../../../hooks "${tmp}/link_"
-  ln -s ../../../hooks "${tmp}/lank."
-  ln -s ../../../hooks "${tmp}/lonk!"
-  for row in \
-    'single-character wildcard, underscore|l?nk_' \
-    'star, underscore|*k_' \
-    'bracket, underscore|l[i]nk_' \
-    'single-character wildcard, dot|l?nk.' \
-    'bracket, dot|l[a]nk.' \
-    'single-character wildcard, bang|l?nk!' \
-    'wildcard, underscore, sentence end|l?nk_.' \
-    'literal name, underscore|link_' \
-    'literal name, dot|lank.' \
-    'literal name, bang|lonk!' \
-    'literal name, underscore, sentence end|link_.'; do
-    IFS='|' read -r name prompt <<<"${row}"
-    HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "Copy evil.sh to ~/.claude-work-dev/jobs/j1/tmp/${prompt}" true
-    [[ "${status}" -eq 2 ]] || {
-      echo "row: ${name} · status ${status}: ${output}"
-      return 1
-    }
-  done
-}
-
-@test "a job's tmp/ scratch on disk passes, by name or through a wildcard job id" {
+@test "a profile jobs/ path → BLOCKED (no runtime-DATA member, job tmp/ scratch included)" {
   local home="${BATS_TEST_TMPDIR}/home/u" row name prompt
   mkdir -p "${home}/.claude-work-dev/jobs/25a65a54/tmp"
   : >"${home}/.claude-work-dev/jobs/25a65a54/tmp/out.txt"
   for row in \
-    'named job|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.txt.' \
+    'file directly in jobs/|Queue the run via ~/.claude-work-dev/jobs/pending.json.' \
+    'named job scratch file|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.txt.' \
     'wildcard job id|Read ~/.claude-work-dev/jobs/*/tmp/out.txt.' \
-    'the tmp dir itself|Read ~/.claude-work-dev/jobs/25a65a54/tmp now.' \
-    'final star over plain scratch files|Read ~/.claude-work-dev/jobs/25a65a54/tmp/* now.' \
-    'final single-character wildcard on a plain scratch file|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.tx? now.' \
-    'question mark ending a sentence|Did it read ~/.claude-work-dev/jobs/25a65a54/tmp/out.txt?' \
-    'wildcard before a sentence end|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.tx?.' \
-    'emphasis closing a plain scratch file|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.txt_'; do
+    'final star over job scratch|Read ~/.claude-work-dev/jobs/25a65a54/tmp/* now.'; do
     IFS='|' read -r name prompt <<<"${row}"
     HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" true
-    [[ "${status}" -eq 0 ]] || {
+    [[ "${status}" -eq 2 ]] || {
       echo "row: ${name} · status ${status}: ${output}"
       return 1
     }

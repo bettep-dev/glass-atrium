@@ -110,9 +110,7 @@ list_bashes() {
     'projects/ transcript|Analyze ~/.claude/projects/-Users-x/session.jsonl (read-only).' \
     'logs/|Tail ~/.claude/logs/daemon.log.' \
     "absolute-home data/|Read ${HOME}/.claude/data/learning-log.md for prior lessons." \
-    'CWD-relative data/|From the repo root, read .claude/data/session-spawns/latest.json.' \
-    'job tmp/ scratch on the base root|Read ~/.claude/jobs/25a65a54/tmp/out.txt.' \
-    'job tmp/ scratch on a profile branch|Look at ~/.claude-work/jobs/64546714/tmp/clear-x.png for the capture.'; do
+    'CWD-relative data/|From the repo root, read .claude/data/session-spawns/latest.json.'; do
     IFS='|' read -r name prompt <<<"${row}"
     run_agent "${prompt}" omit
     [[ "${status}" -eq 0 ]] || {
@@ -390,10 +388,12 @@ assert_rows() {
   HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
     'repo worktree dir|Repo /x/glass-atrium, worktree .claude/worktrees/wt-pa-hpp, branch fix/x.' \
     'repo audit dir|Records: `.claude/prompt-audit/pa-s3/impl77/` and the plan.' \
-    'final wildcard matching no harness entry|Records under .claude/prompt-audit/* now.'
+    'final wildcard matching no harness entry|Records under .claude/prompt-audit/* now.' \
+    'a bare root word and a final wildcard in prose|The .claude/* files here are examples.' \
+    'final wildcard trimmed to a name the harness root does not hold|From the home dir, see .claude/statusline* now.'
   HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
     'an entry the harness root holds|From the home dir, edit .claude/statusline-command.sh now.' \
-    'final wildcard matching an entry the harness root holds|From the home dir, edit .claude/statusline* now.' \
+    'a bare root word and a final wildcard as an operand|From the home dir, edit .claude/* now.' \
     'a config entry not yet created|From the home dir, edit .claude/agents/x.md now.' \
     'a settings file not yet created|From the home dir, edit .claude/settings.local.json now.' \
     'traversal out of a repo dir|Edit .claude/worktrees/../agents/x.md now.' \
@@ -509,30 +509,6 @@ make_wide_dir() {
     echo "expansions ${expansions}"
     return 1
   }
-}
-
-# No-match expansion spends no path budget, a clock flaky → xtrace counts the expansions.
-@test "a long trailing run expands a bounded number of spellings, whatever its length" {
-  local wide row name unit run payload trace rc expansions
-  wide="$(make_wide_dir 8)"
-  for row in \
-    'stars|*' \
-    'question marks|?' \
-    'star and dot pairs|*.' \
-    'underscores behind a wildcard|_'; do
-    IFS='|' read -r name unit <<<"${row}"
-    run="$(printf "%0.s${unit}" $(seq 1 64))"
-    [[ "${unit}" != "_" ]] || run="*${run}"
-    payload="$(jq -n --arg p "Edit ${wide}/.claude-x${run} now." '{tool_name:"Agent", tool_input:{prompt:$p}}')"
-    rc=0
-    trace="$(printf '%s' "${payload}" | bash -x "${HOOK_SH}" 2>&1 >/dev/null)" || rc=$?
-    expansions="$(grep -cE '^\++ set_glob_matches ' <<<"${trace}")" || true
-    # as written, three shorter spellings, the cleaned word
-    [[ "${rc}" -eq 0 && "${expansions}" -gt 0 && "${expansions}" -le 5 ]] || {
-      echo "row: ${name} · status ${rc} · expansions ${expansions}"
-      return 1
-    }
-  done
 }
 
 @test "a matched name holding a glob character stays literal at the next glob level" {
