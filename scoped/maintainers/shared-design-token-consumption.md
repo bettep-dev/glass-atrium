@@ -15,7 +15,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent.
   - The rule file states no roster; its opening line states the task condition (a turn that emits UI markup, styling or animation).
 - `scripts/agent_lifecycle/registry_ops.py` adds this file to `RULE_FILES` by hand, with the comment explaining why: the subset is a per-agent fact no scope-level default derives.
 - **Canonical split with dev-front**: the rule file's `## Mandatory Pre-Execution Gate` and `## Drift Prevention` are canonical for every UI-emitting DEV agent.
-  - The dev-front body keeps only its agent-specific delta (map `DESIGN.md` tokens → its 3-tier system) and a pointer.
+  - The dev-front body keeps only its agent-specific delta (map `DESIGN.md` tokens → its 3-tier system); the rule reaches it through its registry row.
 
 ## Motion-token conflict — how it was resolved
 
@@ -39,7 +39,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent.
 
 - `agents/templates/DESIGN.md` — the DESIGN.md schema (DTCG 2025.10), authored by glass-atrium-design-designer.
 - `agents/glass-atrium-design-designer.md` — design philosophy, Motion Philosophy, AI Slop Tropes.
-- `agents/glass-atrium-dev-front.md` — token SSoT consumption patterns and state-layer values; a reference to this file's reduced-motion bullet.
+- `agents/glass-atrium-dev-front.md` — token SSoT consumption patterns and state-layer values.
 - `scoped/scope-design.md` — Platform Design Token Policy and LLM output validation.
 
 ## Headings other files cite
@@ -54,15 +54,13 @@ Maintainer-facing material for that rule file. Nothing here binds an agent.
   - The `agents/references/design-motion-tokens.md` title is a name clash, not a citer.
 - `## Token Lookup Order` — cited by `scoped/maintainers/glass-atrium-design-designer.md` → `## Copies kept in step with this body` (the Token Architecture copies).
 - `## Mandatory Pre-Execution Gate` — cited by:
-  - `agents/glass-atrium-dev-front.md` → `## Guardrails`
   - `agents/glass-atrium-dev-gsap.md` and `agents/glass-atrium-dev-animator.md` → `## Pre-Execution Verification` **Motion philosophy**
   - `agents/glass-atrium-dev-android.md` → `## Pre-Execution Verification` **Motion**
   - `scoped/maintainers/glass-atrium-dev-android.md`
-- `## Drift Prevention` — cited by `agents/glass-atrium-dev-front.md` → `## Guardrails`.
 - Current citer set for any heading above: `git grep -F '<heading text>'` — re-run it before renaming, since the lists above drift.
 
 ## Readers, coupled tests, and one stale citation
 
 - No code reads this file's text. Its path is pinned in `registry_ops.py` `RULE_FILES` (exact-equality pinned by `scripts/test/test_agent_lifecycle_overhaul.py`, which also exercises it as the per-agent shared-rule add case) and in the manifest.
-- `scoped/maintainers/scope-dev.md` → `### glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation` cites the file by name to say it does NOT gate a self-contained Tailwind-CDN exposed document; that citation still resolves.
+- `scoped/maintainers/scope-dev.md` → `### glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation` cites the file by name to say it does NOT gate a self-contained Tailwind-CDN exposed document.
 - Growth check: this file is delivered whole to every UI DEV row, so re-run `python3 hooks/lib/inject_chunk.py --audit` after growing it and expect `events=none`.
