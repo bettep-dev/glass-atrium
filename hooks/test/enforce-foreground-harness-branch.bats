@@ -178,7 +178,14 @@ list_bashes() {
     'dot-leading job id|Write ~/.claude-work-dev/jobs/.hidden/tmp/x.sh now.' \
     'wildcard dot segment below a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/.*/hooks/x.sh now.' \
     'link out of a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/link/x.sh now.' \
-    'wildcard reaching a link out of a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/li*/x.sh now.'; do
+    'wildcard reaching a link out of a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/li*/x.sh now.' \
+    'final star reaching a link out of a job tmp/|Copy evil.sh to ~/.claude-work-dev/jobs/25a65a54/tmp/li* now.' \
+    'final single-character wildcard reaching a link|Copy evil.sh to ~/.claude-work-dev/jobs/25a65a54/tmp/lin? now.' \
+    'final bracket then star reaching a link|Copy evil.sh to ~/.claude-work-dev/jobs/25a65a54/tmp/l[i]n* now.' \
+    'final star alone over a job tmp/ holding a link|Copy evil.sh to ~/.claude-work-dev/jobs/25a65a54/tmp/* now.' \
+    'final star before a sentence end|Copy evil.sh to ~/.claude-work-dev/jobs/25a65a54/tmp/li*.' \
+    'lookalike of the tmp segment|Write ~/.claude-work-dev/jobs/25a65a54/tmpx/out.txt now.' \
+    'tmp segment below a job subdir|Write ~/.claude-work-dev/jobs/25a65a54/x/tmp/a now.'; do
     IFS='|' read -r name prompt <<<"${row}"
     HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" true
     [[ "${status}" -eq 2 ]] || {
@@ -194,7 +201,11 @@ list_bashes() {
   : >"${home}/.claude-work-dev/jobs/25a65a54/tmp/out.txt"
   for row in \
     'named job|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.txt.' \
-    'wildcard job id|Read ~/.claude-work-dev/jobs/*/tmp/out.txt.'; do
+    'wildcard job id|Read ~/.claude-work-dev/jobs/*/tmp/out.txt.' \
+    'the tmp dir itself|Read ~/.claude-work-dev/jobs/25a65a54/tmp now.' \
+    'final star over plain scratch files|Read ~/.claude-work-dev/jobs/25a65a54/tmp/* now.' \
+    'final single-character wildcard on a plain scratch file|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.tx? now.' \
+    'question mark ending a sentence|Did it read ~/.claude-work-dev/jobs/25a65a54/tmp/out.txt?'; do
     IFS='|' read -r name prompt <<<"${row}"
     HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" true
     [[ "${status}" -eq 0 ]] || {

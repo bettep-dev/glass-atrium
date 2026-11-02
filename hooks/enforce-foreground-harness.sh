@@ -37,10 +37,10 @@
 #     root's, or a root-grammar name under the home, enters the root — so case, Unicode folding, `..`
 #     and symlinks resolve as the host filesystem resolves them. A file symlink is read with readlink.
 #   - A glob is expanded by bash pathname expansion (no execution), one segment at a time, each match
-#     walked, and its metacharacter-stripped spelling walked too. A level past 1024 paths, or a prompt
-#     whose levels yield past 16384 paths in all, is protected, fail-safe. A brace that bash would expand
-#     (`{a,b}`, `{a..b}`) cannot be expanded without eval → protected, fail-safe. A brace with neither is
-#     literal text.
+#     walked, and its metacharacter-stripped spelling walked too. A final wildcard is judged as written
+#     before it can be read as punctuation. A level past 1024 paths, or a prompt whose levels yield past
+#     16384 paths in all, is protected, fail-safe. A brace that bash would expand (`{a,b}`, `{a..b}`)
+#     cannot be expanded without eval → protected, fail-safe. A brace with neither is literal text.
 #   - A bare root word (relative, no `/` but a trailing one) is prose unless an action word, an option
 #     (a lone `-` is a list marker), a redirect or a joined `=`/`@`/`-x`/list position makes it an operand.
 #   - A block names the candidate that triggered it.
@@ -471,9 +471,9 @@ glob_reaches_harness() {
   return 1
 }
 
-# Expand $1 below walk_p into matches one segment at a time, so a level reads only the dirs the level before it
-# kept. Every path a level yields spends one budget for the whole prompt: a literal segment keeps a wide level
-# alive at full cost, and each match costs a walk. Exit 1 = a level passed its cap, or the budget ran out.
+# $1 expanded below walk_p into matches, one segment at a time → a level reads only the dirs the level before it kept.
+# Budget: one per path a level yields, prompt-wide — a literal segment keeps a wide level alive, a match costs a walk.
+# Exit 1 = a level past its cap, or the budget spent.
 set_glob_matches() {
   local rest="${1}" seg prefix rc=0
   local -a next
@@ -483,9 +483,13 @@ set_glob_matches() {
     seg="${rest%%/*}"
     if [[ "${rest}" == */* ]]; then rest="${rest#*/}"; else rest=""; fi
     next=()
-    # A matched name is quoted, so its own [ * ? stay literal; a literal segment is checked by the next level.
+    # matched name quoted → its own [ * ? literal; literal segment → checked by the next level
     # shellcheck disable=SC2206  # pathname expansion is the point; word splitting is on newline only
-    for prefix in ${matches[@]+"${matches[@]}"}; do next+=("${prefix}"/${seg}); done
+    for prefix in ${matches[@]+"${matches[@]}"}; do
+      next+=("${prefix}"/${seg})
+      # verdict settled past the cap → the remaining dirs stay unread
+      ((${#next[@]} <= glob_level_cap)) || break
+    done
     matches=(${next[@]+"${next[@]}"})
     glob_paths_spent=$((glob_paths_spent + ${#matches[@]}))
     ((${#matches[@]} <= glob_level_cap && glob_paths_spent <= glob_path_budget)) || { rc=1 && break; }
@@ -516,7 +520,12 @@ candidate_blocks() {
   while :; do
     case "${written}" in
       */. | */.. | *..) break ;;
-      *[]?*_!.]) written="${written%?}" ;;
+      # punctuation or a real wildcard: a shell expands `cp x tmp/li*` → judged as written first
+      *[]?*])
+        glob_reaches_harness && return 0
+        written="${written%?}"
+        ;;
+      *[_!.]) written="${written%?}" ;;
       *) break ;;
     esac
   done

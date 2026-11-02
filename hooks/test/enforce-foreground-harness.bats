@@ -389,9 +389,11 @@ assert_rows() {
   : >"${home}/.claude/statusline-command.sh"
   HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
     'repo worktree dir|Repo /x/glass-atrium, worktree .claude/worktrees/wt-pa-hpp, branch fix/x.' \
-    'repo audit dir|Records: `.claude/prompt-audit/pa-s3/impl77/` and the plan.'
+    'repo audit dir|Records: `.claude/prompt-audit/pa-s3/impl77/` and the plan.' \
+    'final wildcard matching no harness entry|Records under .claude/prompt-audit/* now.'
   HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
     'an entry the harness root holds|From the home dir, edit .claude/statusline-command.sh now.' \
+    'final wildcard matching an entry the harness root holds|From the home dir, edit .claude/statusline* now.' \
     'a config entry not yet created|From the home dir, edit .claude/agents/x.md now.' \
     'a settings file not yet created|From the home dir, edit .claude/settings.local.json now.' \
     'traversal out of a repo dir|Edit .claude/worktrees/../agents/x.md now.' \
@@ -426,6 +428,12 @@ cap_prompt() {
   done
 }
 
+# Segments of the absolute path $1: each literal one spends a path of the glob budget. Stdout: the count.
+segment_count() {
+  local slashes="${1//[^\/]/}"
+  printf '%s' "${#slashes}"
+}
+
 # A dir of $1 subdirs in BATS_TEST_TMPDIR, built once per size. Stdout: its path.
 make_wide_dir() {
   local wide="${BATS_TEST_TMPDIR}/wide${1}"
@@ -438,14 +446,19 @@ make_wide_dir() {
 
 # One expansion of a whole pattern yields only its final level, so it would read every level before any cap could see it.
 @test "a glob is judged protected once a level passes the path cap or the prompt passes the path budget" {
-  local row name dirs pattern want wide
+  local row name dirs pattern want wide fill
+  wide="$(make_wide_dir 1024)"
+  # spend: the wide level 15 times (`*` + 14 `.`), one per literal path segment, then the last level's fill
+  fill=$((16384 - 15 * 1024 - $(segment_count "${wide}")))
+  seq -f "${wide}/d0001/at%04g" 1 "${fill}" | xargs touch
+  seq -f "${wide}/d0001/past%04g" 1 "$((fill + 1))" | xargs touch
   for row in \
     'final level at the cap|1024|*/.claude/x.md|0' \
     'final level past the cap|1025|*/.claude/x.md|2' \
     'inner level at the cap, nothing below it|1024|*/nomatch*/.claude/x.md|0' \
     'inner level past the cap, nothing below it|1025|*/nomatch*/.claude/x.md|2' \
-    'wide level kept alive within the budget|1024|*/./././*/.claude/x.md|0' \
-    'wide level kept alive past the budget|1024|*/./././././././././././././././././././*/.claude/x.md|2'; do
+    'wide level kept alive exactly to the budget|1024|*/././././././././././././././at*/.claude/x.md|0' \
+    'one path past the budget|1024|*/././././././././././././././past*/.claude/x.md|2'; do
     IFS='|' read -r name dirs pattern want <<<"${row}"
     wide="$(make_wide_dir "${dirs}")"
     run_agent "Edit ${wide}/${pattern} now." omit
@@ -454,6 +467,48 @@ make_wide_dir() {
       return 1
     }
   done
+}
+
+@test "the glob path budget spans every candidate of a prompt" {
+  local wide row name files want prompt file
+  local pattern='*/./././././*/.claude'
+  wide="$(make_wide_dir 1024)"
+  for row in \
+    'two candidates, together within it|a.md b.md|0' \
+    'three candidates, each within it, together past it|a.md b.md c.md|2'; do
+    IFS='|' read -r name files want <<<"${row}"
+    prompt="Edit"
+    for file in ${files}; do
+      prompt="${prompt} ${wide}/${pattern}/${file}"
+    done
+    run_agent "${prompt} now." omit
+    [[ "${status}" -eq "${want}" ]] || {
+      echo "row: ${name} · want ${want} · status ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
+# Work past a cap: invisible to a caller, a clock flaky → xtrace counts the expansions.
+@test "a level past the path cap stops reading its remaining dirs" {
+  local wide dir payload trace rc=0 expansions
+  local dirs=32 entries=64 cap=1024
+  wide="$(make_wide_dir "${dirs}")"
+  for dir in "${wide}"/*; do
+    seq -f "${dir}/e%02g" 1 "${entries}" | xargs touch
+  done
+  payload="$(jq -n --arg p "Edit ${wide}/*/*/.claude/x.md now." '{tool_name:"Agent", tool_input:{prompt:$p}}')"
+  trace="$(printf '%s' "${payload}" | bash -x "${HOOK_SH}" 2>&1 >/dev/null)" || rc=$?
+  [[ "${rc}" -eq 2 ]] || {
+    echo "status ${rc}"
+    return 1
+  }
+  expansions="$(grep -c 'next+=' <<<"${trace}")" || true
+  # one per literal path segment, one at the first wildcard level, then only the prefixes it takes to pass the cap
+  [[ "${expansions}" -gt 0 && "${expansions}" -le $(($(segment_count "${wide}") + 1 + cap / entries + 1)) ]] || {
+    echo "expansions ${expansions}"
+    return 1
+  }
 }
 
 @test "a matched name holding a glob character stays literal at the next glob level" {
