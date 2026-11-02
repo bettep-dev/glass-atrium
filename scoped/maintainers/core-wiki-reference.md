@@ -1,6 +1,10 @@
 # Maintainer note — `rules/glass-atrium/core-wiki-reference.md`
 
-Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches every agent on the host channel; this note reaches none. Read it before editing the rule file; do not inject it.
+Corpus-maintenance companion to that Tier-1 rule file.
+
+- The rule file reaches every agent on the host channel; this note reaches none.
+- Read this note before editing the rule file.
+- Do not inject this note.
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
@@ -18,7 +22,7 @@ Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches eve
   - `hooks/test/h2-untrusted-ingest.bats` requires the bolded lead `Wiki raw-store untrusted-data clause`, `UNMARKED / pre-existing legacy raw files` and `untrusted by the SAME rule`.
   - `hooks/test/inject-scope-rules-nodrop.bats` requires the bolded lead and caps the whole slot-1 context at 9984 bytes, so the clause's size counts against that ceiling.
   - `hooks/test/inject-scope-single-delivery.bats` requires the bolded lead exactly once per roster member, so a second copy inside the markers reds it.
-  - `hooks/test/inject-scope-rules-canary.bats` pins no clause text.
+- `hooks/test/inject-scope-rules-canary.bats` runs one control/treatment test on the rule file, its other spawns on `/nonexistent` or a synthetic clause, and pins no clause text.
 - No test pins the wording outside the markers; `scripts/test/startup-budget.bats` counts only the file's length.
 
 ## Cited text — grep the corpus before rewording
