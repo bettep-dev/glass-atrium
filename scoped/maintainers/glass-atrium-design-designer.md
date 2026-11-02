@@ -35,7 +35,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | `### Dark Theme Rules` → **Hierarchy (rgba white)** alpha values | `agents/references/design-color-algorithms.md` (alpha SoT) · dev-front body (dark text lower-bound defaults) |
 | `### Motion Philosophy (first-class stage — Owner: glass-atrium-design-designer · WHAT/why)` | dev-front body · `scoped/maintainers/shared-design-token-consumption.md` |
 | `### Figma Make + MCP Integration Guardrails` (LLM Output Validation line · Vendor-Routing line) | `scoped/maintainers/scope-design.md` |
-| `## Pre-Execution Verification` contrast cell, verbatim | `scoped/maintainers/scope-design.md` |
+| `## Pre-Execution Verification` contrast row | `scoped/maintainers/scope-design.md` |
 
 - **AI Slop Tropes citers**: `git grep 'AI Slop Tropes'`; the `hooks/test/` hits are the frontmatter copy's `skills:` comment and `rationale` literal (`## Machine constraints on the body`), plus the `AC-B7 containment` fixture in `enforce-harness-critical-frontmatter.bats`, quoting the rationale.
 - **HTML Primary Co-Emission Role citers** (trigger · output fields · markup prohibition · veto line, its sole copy): `git grep 'HTML Primary Co-Emission Role'`.
