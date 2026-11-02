@@ -5,8 +5,8 @@ Corpus-maintenance companion to that scope file; no agent receives this note at 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
 - Companions ship as manifest members, so a pointer to one resolves on a live install.
-- A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
-- NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
+- A rule file carries at most one pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
+- Not a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
 
 ## Status in the corpus
@@ -34,8 +34,10 @@ Corpus-maintenance companion to that scope file; no agent receives this note at 
   - Why: each made the model compute a score or narrate every round; **Judge the hits** ranks by judgment on the same four criteria.
   - The rubric's `Recency` row anchored on `git status touched` and 30-day / 1-year mtime windows; the frontmatter `tools:` grant holds neither.
   - Re-anchoring recency: use the one signal the grant holds — `Glob` returns matching paths sorted by modification time — never `git status` or an mtime window.
-- **The Stop-RAG cap rationale** (arxiv 2510.14337) — the three-round cap (**Loop**) has no measured threshold behind it.
-  - The paper states that each iteration costs latency and tokens, but reports no per-iteration gain, and its own pipeline allows 10 iterations.
+- **The Stop-RAG cap rationale** (arxiv 2510.14337v1) — the three-round cap (**Loop**) has no verified measurement behind it.
+  - A word grep of the v1 HTML found no 3-iteration threshold statement.
+  - The fixed-iteration baseline results in v1 were not read.
+  - v1 states that each iteration costs latency and tokens, and that its own pipeline allows a maximum of 10 iterations.
   - Changing the cap needs its own measurement.
 
 ## Readers and coupled tests
