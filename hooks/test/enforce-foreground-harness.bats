@@ -436,22 +436,22 @@ segment_count() {
 
 # A dir of $1 subdirs in BATS_TEST_TMPDIR, built once per size. Stdout: its path.
 make_wide_dir() {
-  local wide="${BATS_TEST_TMPDIR}/wide${1}"
-  if [[ ! -d "${wide}" ]]; then
-    mkdir -p "${wide}"
-    seq -f "${wide}/d%04g" 1 "${1}" | xargs mkdir
+  local wide_dir="${BATS_TEST_TMPDIR}/wide${1}"
+  if [[ ! -d "${wide_dir}" ]]; then
+    mkdir -p "${wide_dir}"
+    seq -f "${wide_dir}/d%04g" 1 "${1}" | xargs mkdir
   fi
-  printf '%s' "${wide}"
+  printf '%s' "${wide_dir}"
 }
 
 # Whole-pattern expansion → only its final level visible, every level read before a cap sees it.
 @test "a glob is judged protected once a level passes the path cap or the prompt passes the path budget" {
-  local row name dirs pattern want wide fill
-  wide="$(make_wide_dir 1024)"
+  local row name dirs pattern want wide_dir fill
+  wide_dir="$(make_wide_dir 1024)"
   # spend: the wide level 15 times (`*` + 14 `.`), one per literal path segment, then the last level's fill
-  fill=$((16384 - 15 * 1024 - $(segment_count "${wide}")))
-  seq -f "${wide}/d0001/at%04g" 1 "${fill}" | xargs touch
-  seq -f "${wide}/d0001/past%04g" 1 "$((fill + 1))" | xargs touch
+  fill=$((16384 - 15 * 1024 - $(segment_count "${wide_dir}")))
+  seq -f "${wide_dir}/d0001/at%04g" 1 "${fill}" | xargs touch
+  seq -f "${wide_dir}/d0001/past%04g" 1 "$((fill + 1))" | xargs touch
   for row in \
     'final level at the cap|1024|*/.claude/x.md|0' \
     'final level past the cap|1025|*/.claude/x.md|2' \
@@ -460,8 +460,8 @@ make_wide_dir() {
     'wide level kept alive exactly to the budget|1024|*/././././././././././././././at*/.claude/x.md|0' \
     'one path past the budget|1024|*/././././././././././././././past*/.claude/x.md|2'; do
     IFS='|' read -r name dirs pattern want <<<"${row}"
-    wide="$(make_wide_dir "${dirs}")"
-    run_agent "Edit ${wide}/${pattern} now." omit
+    wide_dir="$(make_wide_dir "${dirs}")"
+    run_agent "Edit ${wide_dir}/${pattern} now." omit
     [[ "${status}" -eq "${want}" ]] || {
       echo "row: ${name} · want ${want} · status ${status}: ${output}"
       return 1
@@ -470,16 +470,16 @@ make_wide_dir() {
 }
 
 @test "the glob path budget spans every candidate of a prompt" {
-  local wide row name files want prompt file
+  local wide_dir row name files want prompt file
   local pattern='*/./././././*/.claude'
-  wide="$(make_wide_dir 1024)"
+  wide_dir="$(make_wide_dir 1024)"
   for row in \
     'two candidates, together within it|a.md b.md|0' \
     'three candidates, each within it, together past it|a.md b.md c.md|2'; do
     IFS='|' read -r name files want <<<"${row}"
     prompt="Edit"
     for file in ${files}; do
-      prompt="${prompt} ${wide}/${pattern}/${file}"
+      prompt="${prompt} ${wide_dir}/${pattern}/${file}"
     done
     run_agent "${prompt} now." omit
     [[ "${status}" -eq "${want}" ]] || {
@@ -489,24 +489,24 @@ make_wide_dir() {
   done
 }
 
-# Work past a cap: invisible to a caller, a clock flaky → xtrace counts the expansions.
+# Work past a cap: invisible to a caller, a clock flaky → xtrace shows the per-dir cap check, whatever its names.
 @test "a level past the path cap stops reading its remaining dirs" {
-  local wide dir payload trace rc=0 expansions
+  local wide_dir dir payload trace rc=0 dir_reads
   local dirs=32 entries=64 cap=1024
-  wide="$(make_wide_dir "${dirs}")"
-  for dir in "${wide}"/*; do
+  wide_dir="$(make_wide_dir "${dirs}")"
+  for dir in "${wide_dir}"/*; do
     seq -f "${dir}/e%02g" 1 "${entries}" | xargs touch
   done
-  payload="$(jq -n --arg p "Edit ${wide}/*/*/.claude/x.md now." '{tool_name:"Agent", tool_input:{prompt:$p}}')"
+  payload="$(jq -n --arg p "Edit ${wide_dir}/*/*/.claude/x.md now." '{tool_name:"Agent", tool_input:{prompt:$p}}')"
   trace="$(printf '%s' "${payload}" | bash -x "${HOOK_SH}" 2>&1 >/dev/null)" || rc=$?
   [[ "${rc}" -eq 2 ]] || {
-    echo "status ${rc}"
+    echo "status ${rc}: ${trace}"
     return 1
   }
-  expansions="$(grep -c 'next+=' <<<"${trace}")" || true
+  dir_reads="$(grep -cE '^\++ \(\( [0-9]+ <= [a-z_]+ \)\)$' <<<"${trace}")" || true
   # one per literal path segment, one at the first wildcard level, then only the prefixes it takes to pass the cap
-  [[ "${expansions}" -gt 0 && "${expansions}" -le $(($(segment_count "${wide}") + 1 + cap / entries + 1)) ]] || {
-    echo "expansions ${expansions}"
+  [[ "${dir_reads}" -gt 0 && "${dir_reads}" -le $(($(segment_count "${wide_dir}") + 1 + cap / entries + 1)) ]] || {
+    echo "dir reads ${dir_reads}: ${trace}"
     return 1
   }
 }
@@ -520,6 +520,31 @@ make_wide_dir() {
     echo "status ${status}: ${output}"
     return 1
   }
+}
+
+@test "a last glob segment bash reads as no pattern counts only if it exists, and a word with no pattern is read as written" {
+  local home="${BATS_TEST_TMPDIR}/home/u" row name want prompt
+  mkdir -p "${home}/.claude-x"
+  touch "${home}/.claude-x/there]y" "${home}/.claude-x/there[1"
+  ln -s /nonexistent/target "${home}/.claude-x/gone]y"
+  for row in \
+    'missing, an unclosed bracket|0|Edit ~/.claude-*/notes[1 now.' \
+    'missing, a closing bracket alone|0|Edit ~/.claude-*/x]y now.' \
+    'missing, with a literal tail|0|Edit ~/.claude-*/x]y/z.md now.' \
+    'missing, below a config dir|0|Edit ~/.claude-*/hooks/a]b now.' \
+    'missing, a basename with a suffix|0|Edit ~/.claude-*/CLAUDE.md]x now.' \
+    'missing, an assigned home spelling|0|x=$HOME/.claude-*/[x/tmp/memory/MEMORY.md' \
+    'present, an unclosed bracket|2|Edit ~/.claude-*/there[1 now.' \
+    'present, a closing bracket alone|2|Edit ~/.claude-*/there]y now.' \
+    'a dangling link|2|Edit ~/.claude-*/gone]y now.' \
+    'no pattern anywhere, unstripped name not exempt|2|Edit ~/.claude/dat]a/x.md now.'; do
+    IFS='|' read -r name want prompt <<<"${row}"
+    HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" omit
+    [[ "${status}" -eq "${want}" ]] || {
+      echo "row: ${name} · want ${want} · status ${status}: ${output}"
+      return 1
+    }
+  done
 }
 
 @test "a failed normalization still scans the raw prompt and says so only when it allows" {

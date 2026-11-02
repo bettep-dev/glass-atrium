@@ -448,6 +448,7 @@ glob_reaches_harness() {
     tail="${head##*/}${tail:+/${tail}}" head="${head%/*}"
   done
   set_glob_matches "${head}" || return 0
+  set_existing_matches "${head}"
   glob_match=true
   for match in ${matches[@]+"${matches[@]}"}; do
     walk_p=/ walk_lex=/ walk_rest="${match#/}${tail:+/${tail}}"
@@ -462,26 +463,43 @@ glob_reaches_harness() {
 # Exit 1 = a level past its cap, or the budget spent.
 set_glob_matches() {
   local rest="${1}" seg prefix rc=0
-  local -a next
+  local -a next_level
   matches=("${walk_p%/}")
   shopt -s nullglob
   while [[ -n "${rest}" ]]; do
     seg="${rest%%/*}"
     if [[ "${rest}" == */* ]]; then rest="${rest#*/}"; else rest=""; fi
-    next=()
-    # matched name quoted → its own [ * ? literal; literal segment → checked by the next level
+    next_level=()
+    # matched name quoted → its own [ * ? literal; literal segment → read by the next level, stat past the last
     # shellcheck disable=SC2206  # pathname expansion is the point; word splitting is on newline only
     for prefix in ${matches[@]+"${matches[@]}"}; do
-      next+=("${prefix}"/${seg})
+      next_level+=("${prefix}"/${seg})
       # verdict settled past the cap → the remaining dirs stay unread
-      ((${#next[@]} <= glob_level_cap)) || break
+      ((${#next_level[@]} <= glob_level_cap)) || break
     done
-    matches=(${next[@]+"${next[@]}"})
+    matches=(${next_level[@]+"${next_level[@]}"})
     glob_paths_spent=$((glob_paths_spent + ${#matches[@]}))
     ((${#matches[@]} <= glob_level_cap && glob_paths_spent <= glob_path_budget)) || { rc=1 && break; }
   done
   shopt -u nullglob
   return "${rc}"
+}
+
+# nullglob covers real patterns only → a last segment bash reads as none (`[x`, `x]y`) survives unchecked: stat it.
+# A word with no pattern anywhere stays, as bash leaves it. Args: $1=the expanded word
+set_existing_matches() {
+  local match
+  local -a pattern_probe existing_matches=()
+  shopt -s nullglob
+  # /dev/null holds no entry → a word bash reads as a pattern expands to nothing, reading no real dir
+  # shellcheck disable=SC2206  # bash's own pattern test is the point; word splitting is on newline only
+  pattern_probe=(/dev/null/${1})
+  shopt -u nullglob
+  ((${#pattern_probe[@]} == 0)) || return 0
+  for match in ${matches[@]+"${matches[@]}"}; do
+    if [[ -e "${match}" || -L "${match}" ]]; then existing_matches+=("${match}"); fi
+  done
+  matches=(${existing_matches[@]+"${existing_matches[@]}"})
 }
 
 # Glob metacharacters dropped from each segment; a segment of wildcards alone stays as one name, so
