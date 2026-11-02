@@ -70,7 +70,7 @@ run_hook() {
 }
 
 @test "Write channel: a generic credential assignment passes only in a test-fixture file and blocks with SEC-013 elsewhere" {
-  local fixture_assign row name path want
+  local fixture_assignment row name path expected_status
   # repo roots: p/ · test/shop/ (a dir named test above its root) · secrets-app/ (a secrets shape above its root)
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git" "${BATS_TEST_TMPDIR}/test/shop/.git" "${BATS_TEST_TMPDIR}/secrets-app/.git"
   # links a fixture spelling can leave the tests dir through
@@ -81,8 +81,8 @@ run_hook() {
   mkdir -p "${BATS_TEST_TMPDIR}/norepo"
   ln -s ../p/src/config.ts "${BATS_TEST_TMPDIR}/norepo/login.spec.ts"
   ln -s ../p/.env "${BATS_TEST_TMPDIR}/norepo/l.test.js"
-  fixture_assign="password"
-  fixture_assign="${fixture_assign}: 'correct-horse-battery'"
+  fixture_assignment="password"
+  fixture_assignment="${fixture_assignment}: 'correct-horse-battery'"
   for row in \
     'jest spec|p/src/users/users.service.spec.ts|0' \
     'vitest test file|p/src/login.test.tsx|0' \
@@ -143,19 +143,19 @@ run_hook() {
     'pytest module outside a test dir|p/src/test_login.py|0' \
     'config format in a fixtures dir of a deploy tree, accepted|p/deploy/fixtures/prod.yaml|0' \
     'config format in a testdata dir of a k8s tree, accepted|p/k8s/testdata/prod.yaml|0'; do
-    name="${row%%|*}" path="${row#*|}" want="${row##*|}" path="${path%|*}"
+    name="${row%%|*}" path="${row#*|}" expected_status="${row##*|}" path="${path%|*}"
     [[ "${path}" == /* ]] || path="${BATS_TEST_TMPDIR}/${path}"
-    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { email: 'ada@example.com', ${fixture_assign} }\"}}"
-    [[ "${status}" -eq "${want}" ]] || { echo "${name}: status ${status}, want ${want}: ${output}"; return 1; }
-    [[ "${want}" -eq 0 || "${output}" == *"SEC-013"* ]] || { echo "${name}: ${output}"; return 1; }
+    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { email: 'ada@example.com', ${fixture_assignment} }\"}}"
+    [[ "${status}" -eq "${expected_status}" ]] || { echo "${name}: status ${status}, want ${expected_status}: ${output}"; return 1; }
+    [[ "${expected_status}" -eq 0 || "${output}" == *"SEC-013"* ]] || { echo "${name}: ${output}"; return 1; }
   done
 }
 
 @test "Write channel: a relative path has no repo root, so only its file name can exempt it" {
-  local fixture_assign cwd row name path want
+  local fixture_assignment cwd row name path expected_status
   mkdir -p "${BATS_TEST_TMPDIR}/repo/.git" "${BATS_TEST_TMPDIR}/norepo"
-  fixture_assign="password"
-  fixture_assign="${fixture_assign}: 'correct-horse-battery'"
+  fixture_assignment="password"
+  fixture_assignment="${fixture_assignment}: 'correct-horse-battery'"
   for cwd in repo norepo; do
     cd "${BATS_TEST_TMPDIR}/${cwd}"
     for row in \
@@ -163,19 +163,19 @@ run_hook() {
       'bare fixtures dir|fixtures/prod.yml|2' \
       'script in a tests dir|tests/deploy.sh|2' \
       'test-named source file|src/a.test.ts|0'; do
-      IFS='|' read -r name path want <<<"${row}"
-      run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { ${fixture_assign} }\"}}"
-      [[ "${status}" -eq "${want}" ]] || { echo "${name} from ${cwd}: status ${status}, want ${want}: ${output}"; return 1; }
+      IFS='|' read -r name path expected_status <<<"${row}"
+      run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { ${fixture_assignment} }\"}}"
+      [[ "${status}" -eq "${expected_status}" ]] || { echo "${name} from ${cwd}: status ${status}, want ${expected_status}: ${output}"; return 1; }
     done
   done
 }
 
 # Key and value apart in each row → joined, a row trips the gate on this file's own write.
 @test "Write channel: a test-fixture file keeps SEC-013 for a value of a known credential format" {
-  local fixture_assign row name key value path="${BATS_TEST_TMPDIR}/p/tests/run.sh"
+  local fixture_assignment row name key value path="${BATS_TEST_TMPDIR}/p/tests/run.sh"
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
-  fixture_assign="password"
-  fixture_assign="${fixture_assign}: 'correct-horse-battery'"
+  fixture_assignment="password"
+  fixture_assignment="${fixture_assignment}: 'correct-horse-battery'"
   for row in \
     'Anthropic key|ANTHROPIC_API_KEY|sk-ant-api03-' \
     'OpenAI project key|api_key|sk-proj-' \
@@ -214,7 +214,7 @@ run_hook() {
     'Replicate token|token|r8_' \
     'connection string of a scheme without its own pattern|password|mysql://root:hunter2@'; do
     IFS='|' read -r name key value <<<"${row}"
-    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"${fixture_assign}\\n${key}=${value}a1b2c3d4e5f6g7h8\"}}"
+    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"${fixture_assignment}\\n${key}=${value}a1b2c3d4e5f6g7h8\"}}"
     [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || { echo "${name}: status ${status}: ${output}"; return 1; }
   done
 }
@@ -247,7 +247,7 @@ run_hook() {
 
 # Name and value apart in each row → joined, a row trips the gate on this file's own write.
 @test "Write channel: a cloud key assignment after another assignment keeps SEC-013, on its line or a later one" {
-  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" file row name first lead key separator
+  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" file row name first_key lead key separator
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
   for file in tests/run.sh test/fixtures/values.yaml; do
     for row in \
@@ -259,8 +259,8 @@ run_hook() {
       'unquoted object literal|{password|:foo12345,|accessKey|:' \
       'session token in a query string|password|=foo12345&|AWS_SESSION_TOKEN|=' \
       'later line|password|: correct-horse-battery\n|aws_secret_access_key|='; do
-      IFS='|' read -r name first lead key separator <<<"${row}"
-      run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/${file}\",\"content\":\"${first}${lead}${key}${separator}${value}\"}}"
+      IFS='|' read -r name first_key lead key separator <<<"${row}"
+      run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/${file}\",\"content\":\"${first_key}${lead}${key}${separator}${value}\"}}"
       [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || {
         echo "${name} in ${file}: status ${status}: ${output}"
         return 1
@@ -270,7 +270,7 @@ run_hook() {
 }
 
 @test "Write channel: a cloud key name counts only as the name of an assignment" {
-  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" login assign="=" row name content
+  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" login separator="=" row name content
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
   login="password"
   for row in \
@@ -279,11 +279,11 @@ run_hook() {
     "name inside a test password value|${login}=access_key_12345" \
     "provider name inside a test password value|${login}=aws_secret_12345" \
     "provider setting that holds no secret|AWS_REGION=eu-central-1\\n${login}: correct-horse-battery" \
-    "session token under no cloud name|session_token${assign}${value}" \
-    "client secret under no cloud name|client_secret${assign}${value}" \
-    "api key under no cloud name|api_key${assign}${value}" \
-    "bare token|token${assign}${value}" \
-    "bare secret|secret${assign}${value}"; do
+    "session token under no cloud name|session_token${separator}${value}" \
+    "client secret under no cloud name|client_secret${separator}${value}" \
+    "api key under no cloud name|api_key${separator}${value}" \
+    "bare token|token${separator}${value}" \
+    "bare secret|secret${separator}${value}"; do
     IFS='|' read -r name content <<<"${row}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/tests/run.sh\",\"content\":\"${content}\"}}"
     [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status}: ${output}"; return 1; }

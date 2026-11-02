@@ -141,9 +141,9 @@ is_source_test_file() {
 # dotfile. The dotfile list is closed on purpose: one outside it takes the fixture rules, and a known credential value
 # keeps SEC-013 there. Args: $1=path
 has_secret_shape() {
-  local lowered
-  lowered="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"
-  case "${lowered}" in
+  local lowercase_path
+  lowercase_path="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"
+  case "${lowercase_path}" in
     *.env* | *secret* | *credential* | *.npmrc* | *.netrc* | *.pgpass* | *.pypirc* | *.my.cnf* | *.yarnrc*) return 0 ;;
     *) return 1 ;;
   esac

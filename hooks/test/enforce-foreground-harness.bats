@@ -429,13 +429,13 @@ cap_prompt() {
 }
 
 # Segments of the absolute path $1: each literal one spends a path of the glob budget. Stdout: the count.
-segment_count() {
+get_segment_count() {
   local slashes="${1//[^\/]/}"
   printf '%s' "${#slashes}"
 }
 
 # A dir of $1 subdirs in BATS_TEST_TMPDIR, built once per size. Stdout: its path.
-make_wide_dir() {
+create_wide_dir() {
   local wide_dir="${BATS_TEST_TMPDIR}/wide${1}"
   if [[ ! -d "${wide_dir}" ]]; then
     mkdir -p "${wide_dir}"
@@ -446,10 +446,10 @@ make_wide_dir() {
 
 # Whole-pattern expansion → only its final level visible, every level read before a cap sees it.
 @test "a glob is judged protected once a level passes the path cap or the prompt passes the path budget" {
-  local row name dirs pattern want wide_dir fill
-  wide_dir="$(make_wide_dir 1024)"
+  local row name dirs pattern expected_status wide_dir fill
+  wide_dir="$(create_wide_dir 1024)"
   # spend: the wide level 15 times (`*` + 14 `.`), one per literal path segment, then the last level's fill
-  fill=$((16384 - 15 * 1024 - $(segment_count "${wide_dir}")))
+  fill=$((16384 - 15 * 1024 - $(get_segment_count "${wide_dir}")))
   seq -f "${wide_dir}/d0001/at%04g" 1 "${fill}" | xargs touch
   seq -f "${wide_dir}/d0001/past%04g" 1 "$((fill + 1))" | xargs touch
   for row in \
@@ -459,31 +459,31 @@ make_wide_dir() {
     'inner level past the cap, nothing below it|1025|*/nomatch*/.claude/x.md|2' \
     'wide level kept alive exactly to the budget|1024|*/././././././././././././././at*/.claude/x.md|0' \
     'one path past the budget|1024|*/././././././././././././././past*/.claude/x.md|2'; do
-    IFS='|' read -r name dirs pattern want <<<"${row}"
-    wide_dir="$(make_wide_dir "${dirs}")"
+    IFS='|' read -r name dirs pattern expected_status <<<"${row}"
+    wide_dir="$(create_wide_dir "${dirs}")"
     run_agent "Edit ${wide_dir}/${pattern} now." omit
-    [[ "${status}" -eq "${want}" ]] || {
-      echo "row: ${name} · want ${want} · status ${status}: ${output}"
+    [[ "${status}" -eq "${expected_status}" ]] || {
+      echo "row: ${name} · want ${expected_status} · status ${status}: ${output}"
       return 1
     }
   done
 }
 
 @test "the glob path budget spans every candidate of a prompt" {
-  local wide_dir row name files want prompt file
+  local wide_dir row name files expected_status prompt file
   local pattern='*/./././././*/.claude'
-  wide_dir="$(make_wide_dir 1024)"
+  wide_dir="$(create_wide_dir 1024)"
   for row in \
     'two candidates, together within it|a.md b.md|0' \
     'three candidates, each within it, together past it|a.md b.md c.md|2'; do
-    IFS='|' read -r name files want <<<"${row}"
+    IFS='|' read -r name files expected_status <<<"${row}"
     prompt="Edit"
     for file in ${files}; do
       prompt="${prompt} ${wide_dir}/${pattern}/${file}"
     done
     run_agent "${prompt} now." omit
-    [[ "${status}" -eq "${want}" ]] || {
-      echo "row: ${name} · want ${want} · status ${status}: ${output}"
+    [[ "${status}" -eq "${expected_status}" ]] || {
+      echo "row: ${name} · want ${expected_status} · status ${status}: ${output}"
       return 1
     }
   done
@@ -493,7 +493,7 @@ make_wide_dir() {
 @test "a level past the path cap stops reading its remaining dirs" {
   local wide_dir dir payload trace rc=0 dir_reads
   local dirs=32 entries=64 cap=1024
-  wide_dir="$(make_wide_dir "${dirs}")"
+  wide_dir="$(create_wide_dir "${dirs}")"
   for dir in "${wide_dir}"/*; do
     seq -f "${dir}/e%02g" 1 "${entries}" | xargs touch
   done
@@ -505,7 +505,7 @@ make_wide_dir() {
   }
   dir_reads="$(grep -cE '^\++ \(\( [0-9]+ <= [a-z_]+ \)\)$' <<<"${trace}")" || true
   # one per literal path segment, one at the first wildcard level, then only the prefixes it takes to pass the cap
-  [[ "${dir_reads}" -gt 0 && "${dir_reads}" -le $(($(segment_count "${wide_dir}") + 1 + cap / entries + 1)) ]] || {
+  [[ "${dir_reads}" -gt 0 && "${dir_reads}" -le $(($(get_segment_count "${wide_dir}") + 1 + cap / entries + 1)) ]] || {
     echo "dir reads ${dir_reads}: ${trace}"
     return 1
   }
@@ -523,7 +523,7 @@ make_wide_dir() {
 }
 
 @test "a last glob segment bash reads as no pattern counts only if it exists, and a word with no pattern is read as written" {
-  local home="${BATS_TEST_TMPDIR}/home/u" row name want prompt
+  local home="${BATS_TEST_TMPDIR}/home/u" row name expected_status prompt
   mkdir -p "${home}/.claude-x"
   touch "${home}/.claude-x/there]y" "${home}/.claude-x/there[1"
   ln -s /nonexistent/target "${home}/.claude-x/gone]y"
@@ -538,10 +538,10 @@ make_wide_dir() {
     'present, a closing bracket alone|2|Edit ~/.claude-*/there]y now.' \
     'a dangling link|2|Edit ~/.claude-*/gone]y now.' \
     'no pattern anywhere, unstripped name not exempt|2|Edit ~/.claude/dat]a/x.md now.'; do
-    IFS='|' read -r name want prompt <<<"${row}"
+    IFS='|' read -r name expected_status prompt <<<"${row}"
     HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" omit
-    [[ "${status}" -eq "${want}" ]] || {
-      echo "row: ${name} · want ${want} · status ${status}: ${output}"
+    [[ "${status}" -eq "${expected_status}" ]] || {
+      echo "row: ${name} · want ${expected_status} · status ${status}: ${output}"
       return 1
     }
   done
