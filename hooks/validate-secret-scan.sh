@@ -5,8 +5,7 @@
 #     redirected/heredoc'd into a dotenv/secrets file (a secret can otherwise be
 #     written via `echo KEY=... > .env`, fully bypassing the Write|Edit channel).
 # One coherent secret-scan surface — branches on tool_name. Both invocations
-# block with exit 2 on match, except SEC-013 on test data in a fixture file
-# (is_fixture_test_data). Bind this hook to BOTH Write|Edit and Bash.
+# block with exit 2 on match. Bind this hook to BOTH Write|Edit and Bash.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -73,118 +72,8 @@ NAMES_EN=(
   "Service-account JSON marker"
 )
 
-# Formats whose value no PATTERNS entry names: one anywhere beside an assignment blocks even in a test-fixture file.
-# Whole file, not the assignment → a recorded request holds its token in a header.
-# Accepted: `npm_config` or `ssh://git@` beside a test password blocks.
-# Word boundary → `task-runner` holds no `sk-`. Length bound on word-like `dapi`, `secret_` → a readable dummy passes.
-# Closed list → a format off it falls to the value shape below.
-# Residual: a format here in a file with no generic assignment is never read.
-KNOWN_CREDENTIAL_VALUE='(^|[^[:alnum:]])(sk-|[sr]k_(live|test)_|gh[pousr]_|github_pat_|glpat-|xox[a-z]-|xapp-|ASIA|eyJ|npm_|pypi-|hf_|SG\.|dop_v1_|ya29\.|whsec_|gsk_|shp(at|ca|pa|ss)_|glsa_|dckr_pat_|GOCSPX-|hvs\.|xai-|pplx-|ATATT|lin_api_|figd_|dapi[[:alnum:]]{16,}|AGE-SECRET-KEY-|secret_[[:alnum:]]{32,}|ntn_|r8_|[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]*@)'
-
-# Names that rule out a login password → an assignment to one blocks in a fixture whatever the value.
-# Separator required → `AWS_ACCESS_KEY_ID`, or the name inside a value, stays test data.
-# No left boundary → a glued qualifier (`minioAccessKey`) counts, at the cost of a longer word ending in `aws`.
-CLOUD_KEY_NAME='((aws|azure|gcp|alibaba|alicloud|aliyun|tencent)[[:alnum:]_.-]*(secret|token|key)|access[_-]?key([_-]?secret)?)["'"'"' ]*[:=]'
-
-# An assigned value's run of token characters: base64 `+/` and base64url `-_` stay inside one run.
-# Residual: a prefix-less secret under 16 characters, or under this shape, reads as a dummy and passes.
-RANDOM_VALUE_RUN='[[:alnum:]+/_-]{16,}'
-
-# Digits among letters twice, or a short case flip → random text holds one, readable words rarely.
-# Measured on random base64: 0.9% missed at 24 characters, none at 40.
-# Accepted: a camel-case dummy holding an acronym (`getOAuthTokenValue`) blocks.
-RANDOM_VALUE_SHAPE='[[:alpha:]][0-9]+[[:alpha:]]+[0-9]|[[:upper:]][[:lower:]][[:upper:]]|[[:lower:]][[:upper:]]{2,}[[:lower:]]'
-
-# Status 0 → a test or fixture file, where a generic credential assignment is test data (a spec's login
-# password), not a credential. Read below the file's repo root; a relative path or no repo root → no fixture dir.
-# Any fixture or testdata dir counts, a deploy tree's too — a Go package or Django app holds one anywhere.
-# A config or data format qualifies only through a fixture dir: database.test.yml or k8s/test/values.yaml deploys.
-# Args: $1=file path
-is_test_fixture_path() {
-  local relative_path
-  # a `..` can leave any dir the spelling names
-  [[ "/${1}/" == */../* ]] && return 1
-  # shellcheck disable=SC2310  # no repo root is an answer: the whole path is read, and no dir is a fixture
-  relative_path="$(get_project_relative_path "${1}")" || relative_path=""
-  # shellcheck disable=SC2310  # the predicate's status is the verdict
-  has_secret_shape "${relative_path:-${1}}" && return 1
-  # shellcheck disable=SC2310  # the predicate's status is the verdict
-  has_link_below_root "${1}" "${relative_path}" && return 1
-  case "/${relative_path}" in
-    */fixtures/* | */__fixtures__/* | */testdata/*) return 0 ;;
-    *) is_source_test_file "${1##*/}" "${relative_path}" ;;
-  esac
-}
-
-# Status 0 → a link in a segment below the repo root: like a `..`, it can leave any dir the spelling names.
-# No repo root → the name alone exempts, so the file itself is read; not its dirs — /tmp and /var are links on macOS.
-# Args: $1=file path $2=path relative to the repo root, empty under no repo root
-has_link_below_root() {
-  local dir="${1%"${2}"}" rest="${2}"
-  [[ -z "${rest}" && -L "${1}" ]] && return 0
-  while [[ -n "${rest}" ]]; do
-    dir+="${rest%%/*}"
-    [[ -L "${dir}" ]] && return 0
-    dir+=/
-    if [[ "${rest}" == */* ]]; then rest="${rest#*/}"; else rest=""; fi
-  done
-  return 1
-}
-
-# Status 0 → source code or a test script, named as a test or below a test dir.
-# Any test or spec dir counts, a deploy or API tree's too — no list can tell which parents hold real tests.
-# Args: $1=basename $2=path relative to the repo root
-is_source_test_file() {
-  local base
-  base="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"
-  # shellcheck disable=SC2310  # the predicate's status is the verdict
-  has_source_extension "${base}" || return 1
-  case "${base}" in
-    *.test.* | *.spec.* | *_test.* | *_spec.* | test_*.py | *.bats) return 0 ;;
-    *) ;;
-  esac
-  case "/${2}" in
-    */test/* | */tests/* | */__tests__/* | */spec/*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# Status 0 → a segment, in any case, of a SECRETS_FILE shape (as wide as that end-unanchored fragment) or a credential
-# dotfile. The dotfile list is closed on purpose: one outside it takes the fixture rules, and a known credential value
-# keeps SEC-013 there. Args: $1=path
-has_secret_shape() {
-  local lowercase_path
-  lowercase_path="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"
-  case "${lowercase_path}" in
-    *.env* | *secret* | *credential* | *.npmrc* | *.netrc* | *.pgpass* | *.pypirc* | *.my.cnf* | *.yarnrc*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# Status 0 → the name ends in a source-code or test-script extension. Args: $1=lowercased basename
-has_source_extension() {
-  local extensions=' ts tsx mts cts js jsx mjs cjs py rb go rs java kt kts swift scala groovy php cs c h cc cpp m mm '
-  extensions+='sh bash zsh bats dart lua ex exs vue svelte '
-  [[ "${1}" == *.* && "${extensions}" == *" ${1##*.} "* ]]
-}
-
-# The path below its nearest ancestor holding .git (a repo or worktree root).
-# Exit 1 = a relative path, or an absolute path under no repo root. Args: $1=file path
-get_project_relative_path() {
-  local dir="${1%/*}"
-  [[ "${1}" == /* ]] || return 1
-  while [[ -n "${dir}" ]]; do
-    if [[ -e "${dir}/.git" ]]; then
-      printf '%s' "${1#"${dir}"/}"
-      return 0
-    fi
-    dir="${dir%/*}"
-  done
-  return 1
-}
-
 # Scan a blob against every PATTERNS entry; exit 2 on the first match.
-# Only SEC-013 can skip, on test data (is_fixture_test_data). Args: $1=blob to scan
+# Args: $1=blob to scan
 scan_content() {
   local blob="${1}" i
   [[ -z "${blob}" ]] && return 0
@@ -193,10 +82,6 @@ scan_content() {
     # pattern is not parsed as a grep option flag.
     # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
     if printf '%s\n' "${blob}" | drain_after grep -qiE -- "${PATTERNS[${i}]}"; then
-      # shellcheck disable=SC2310  # the predicate's status is the verdict
-      if [[ "${CODES[${i}]}" == "SEC-013" ]] && is_fixture_test_data "${blob}" "${PATTERNS[${i}]}"; then
-        continue
-      fi
       emit_error "${CODES[${i}]}" "block" \
         "Secret pattern detected: ${NAMES_EN[${i}]}" \
         "Replace the hardcoded secret with an environment-variable reference (core-security.md -> Secret Management)" \
@@ -204,36 +89,6 @@ scan_content() {
       exit 2
     fi
   done
-}
-
-# Status 0 → a test-fixture file, with no known credential format, cloud key name or random-looking assigned value.
-# Args: $1=blob $2=generic-assignment pattern
-is_fixture_test_data() {
-  local file_path
-  file_path="$(hook_get_tool_input "${INPUT}" "file_path")"
-  # shellcheck disable=SC2310  # the predicate's status is the verdict
-  is_test_fixture_path "${file_path}" \
-    && ! has_known_credential_value "${1}" \
-    && ! has_cloud_key_assignment "${1}" "${2}" \
-    && ! has_random_looking_value "${1}" "${2}"
-}
-
-# Status 0 → the blob holds a KNOWN_CREDENTIAL_VALUE format. Case-sensitive → `asia-pacific-1` stays test data.
-# Args: $1=blob
-has_known_credential_value() {
-  printf '%s\n' "${1}" | drain_after grep -qE -- "${KNOWN_CREDENTIAL_VALUE}"
-}
-
-# Status 0 → an assignment to a CLOUD_KEY_NAME, in any case. Extract widened left → the full name, not the matched word;
-# read whole → the value class swallows a next assignment on its line. Args: $1=blob $2=generic-assignment pattern
-has_cloud_key_assignment() {
-  printf '%s\n' "${1}" | grep -oiE -- "[[:alnum:]_.-]*${2}" | drain_after grep -qiE -- "${CLOUD_KEY_NAME}"
-}
-
-# Status 0 → an assignment's value holds a RANDOM_VALUE_RUN of RANDOM_VALUE_SHAPE: a real secret under a dummy name.
-# Assignments only → a checksum beside a test password stays test data. Args: $1=blob $2=generic-assignment pattern
-has_random_looking_value() {
-  printf '%s\n' "${1}" | grep -oiE -- "${2}" | grep -oE -- "${RANDOM_VALUE_RUN}" | drain_after grep -qE -- "${RANDOM_VALUE_SHAPE}"
 }
 
 # Bash channel (HIGH SIGNAL ONLY).
