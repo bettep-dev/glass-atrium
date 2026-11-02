@@ -18,7 +18,8 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 
 ## on_fail vocabulary source
 
-- **Taxonomy provenance**: the action names are borrowed from guardrails-ai's `OnFailAction` enum (`guardrails/types/on_fail.py`); Atrium names only the ones its hooks exercise.
+- **Taxonomy provenance**: the action names are borrowed from guardrails-ai's `OnFailAction` enum (`guardrails/types/on_fail.py`).
+  - Atrium names only the ones its hooks exercise.
 - **Unmapped members (gap register)**:
   - `REFRAIN` — suppresses the whole output, where `FILTER` strips one element; Atrium's `filter` covers both because no hook needs the split.
   - `FIX_REASK` — auto-fix, reverify, reask if still failing; no Atrium hook chains all three, so it is a candidate hardening.
@@ -34,9 +35,11 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 
 - **Corpus-maintenance duty (`UserPromptSubmit`)**: the wrapper-shape list in `hooks/inject-reply-language.sh` → `get_prompt_kind` and its fixtures in `hooks/test/inject-reply-language.bats` move together — one prefix, one fixture per shape.
 - **Known gap (agent-context prompts)**: `get_prompt_kind` silences only frame-shaped agent prompts; a frameless machine prompt (a task notification, a "Background agent" notice) in an agent context still gets the pointer.
-  - The envelope carries no `agent_id`, so no static signal exists; a live probe of a background-task notification inside a teammate or background-agent context is what settles it.
+  - The envelope carries no `agent_id`, so no static signal exists.
+  - A live probe of a background-task notification inside a teammate or background-agent context is what settles it.
 - **`source` recheck**: CLI 2.1.283 documents `source` on `UserPromptSubmit` and leaves it out of the payload.
-  - Recheck on every CLI upgrade; once a CLI fills it, the wrapper list is only the fallback for a payload without it.
+  - Recheck on every CLI upgrade.
+  - Once a CLI fills it, the wrapper list is only the fallback for a payload without it.
 - Whoever adds another hook on a prompt event records its verified capabilities in the capability table.
 
 ## Rule-file boundaries
@@ -46,9 +49,10 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 
 ## Readers and coupled tests
 
-- No code reads the rule file's text. The path is pinned in `registry_ops.py` (`_HOOK_AUTHORING_CONDITION` / `_HOOK_REVIEW_CONDITION`, and through them `RULE_FILES`), exact-equality pinned by `scripts/test/test_agent_lifecycle_overhaul.py`, plus the manifest.
+- No code reads the rule file's text.
+- The path is pinned in `registry_ops.py` (`_HOOK_AUTHORING_CONDITION` / `_HOOK_REVIEW_CONDITION`, and through them `RULE_FILES`), exact-equality pinned by `scripts/test/test_agent_lifecycle_overhaul.py`, plus the manifest.
 - Keep the rule file's headings unrenamed: a rename dangles the citations to them — nothing breaks mechanically, and nothing catches it.
-  - Grep the rule file's name and the bare heading text first.
-- Hook headers that depend on rule-file text:
+- Every hook header citing the rule file restates or relies on its text: grep the rule file's name and the bare heading text before changing a heading or the text a header cites.
+- Headers with a specific keep-duty:
   - `hooks/enforce-config-protection.sh` cites "Block Channels" for the non-substitutability rule, so that rule must stay reachable from that heading;
   - `hooks/advisory-preedit-facts.sh` cites the "Per-Event table" and the Stop-lifecycle row — keep that row's `observe-only`, "advisory" and "accounting" wording.

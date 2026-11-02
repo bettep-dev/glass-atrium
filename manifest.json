@@ -1628,7 +1628,7 @@
     "scoped/maintainers/shared-comment-logging.md": "84a52b5c4619f47023a71810431f40e24dc3e64248cc869bdf12b0d0fbdb85da",
     "scoped/maintainers/shared-design-token-consumption.md": "b146aa4f8fd1d8c9adc8a0a4a8374d53ac16a2cdc7e5755ed027263fd120ea6e",
     "scoped/maintainers/shared-destructive-path-suite-safety.md": "8a9327c4097f80c5fa4cf8f3797af65540648d9dbe20fed4d6cfc7e18c07c7fb",
-    "scoped/maintainers/shared-hook-capability-contract.md": "6672783ce57efa09d9fcb1982243a115167a3eacdb0e3917474d6d6856165635",
+    "scoped/maintainers/shared-hook-capability-contract.md": "5b8ca1b3a60495ba57af51833eb7cc49c7bdbded35d0a87ff0dbbc74dd7ea963",
     "scoped/maintainers/shared-investigation-discipline.md": "48cd89f783f58d8c27fd931d1fbffbf7da85be9db37c6c9d20b28e76b01c663a",
     "scoped/maintainers/shared-naming.md": "318995bf8f3ebc8b3dd069a1a4ad6024f9dc2aa2b2cf9ec8444ea41f93c60c98",
     "scoped/maintainers/shared-performance.md": "9a7f820ab1578a39d87c39f23f2f446770310def0a3b7ddd09c7c945e521e889",
