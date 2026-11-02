@@ -13,8 +13,7 @@
 - **Identification works on the manual path, never on the ultracode path**:
   - manual sidecar — directly under `subagents/`, carrying `agentType` and `description`.
     - `agentType` is often the task name, with the real type in `customAgentType`, so read both.
-  - workflow sidecar — under `subagents/workflows/wf_<id>/`, carrying as little as `agentType` and `spawnDepth`.
-    - A `description`, when present, is a label that can repeat within one run.
+  - workflow sidecar — under `subagents/workflows/wf_<id>/`, carrying `agentType`, `spawnDepth` and a `description` label that can repeat within one run.
 - **Read the tail, not the file**: a full read is itself a budget event.
 - **Terminality is structural**: there is no sentinel record.
 
