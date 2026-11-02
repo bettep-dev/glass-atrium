@@ -745,9 +745,9 @@ Orchestrator mechanisms read on demand, not at turn-0, each single-sited in this
 
 - **Trigger**: Decision-phase routing finds no matching DEV agent at `confidence < 0.7` (the **3-Layer Safety** auto-halt, `scope-orchestrator.md`).
 - **EXTEND is the default branch; CREATE is the gated exception** — decision tree and gate authority: `scoped/maintainers/scope-dev.md` → `## DEV Agent Fleet Governance`.
-- **Invocation is a direct Bash CLI call** (`python -m agent_lifecycle …`), never an HTTP route; its exit code is the primary interface.
+- **Invocation is a direct Bash CLI call** (`python3 -m agent_lifecycle …`), never an HTTP route; its exit code is the primary interface.
 - **The orchestrator never self-authors a body** — glass-atrium-meta-prompt-engineer is the body author.
-- **Two human pauses are MANDATORY** — ⏸ create-vs-extend approval after the gate dry-run (either branch) and ⏸ foreground-commit approval (CREATE only).
+- **Two human pauses are MANDATORY** — create-vs-extend approval after the gate dry-run (either branch) and foreground-commit approval (CREATE only).
 - **Reconcile is a MANDATORY post-commit gate** whenever the roster changed: run skill `glass-atrium-ops-reconcile-inject`.
   - Until it runs, the new agent receives no BUDGET-DEV sizing block and escapes the `style_ref` omission flag.
 - Steps and commands, the EXTEND path, CLI refusals and exit-code recovery: `skills/glass-atrium-ops-delegation-contracts/references/agent-lifecycle-ceremony.md`.
