@@ -424,6 +424,47 @@ cap_prompt() {
   done
 }
 
+# A dir of $1 subdirs in BATS_TEST_TMPDIR, built once per size. Stdout: its path.
+make_wide_dir() {
+  local wide="${BATS_TEST_TMPDIR}/wide${1}"
+  if [[ ! -d "${wide}" ]]; then
+    mkdir -p "${wide}"
+    seq -f "${wide}/d%04g" 1 "${1}" | xargs mkdir
+  fi
+  printf '%s' "${wide}"
+}
+
+# One expansion of a whole pattern yields only its final level, so it would read every level before any cap could see it.
+@test "a glob is judged protected once a level passes the path cap or the prompt passes the path budget" {
+  local row name dirs pattern want wide
+  for row in \
+    'final level at the cap|1024|*/.claude/x.md|0' \
+    'final level past the cap|1025|*/.claude/x.md|2' \
+    'inner level at the cap, nothing below it|1024|*/nomatch*/.claude/x.md|0' \
+    'inner level past the cap, nothing below it|1025|*/nomatch*/.claude/x.md|2' \
+    'wide level kept alive within the budget|1024|*/./././*/.claude/x.md|0' \
+    'wide level kept alive past the budget|1024|*/./././././././././././././././././././*/.claude/x.md|2'; do
+    IFS='|' read -r name dirs pattern want <<<"${row}"
+    wide="$(make_wide_dir "${dirs}")"
+    run_agent "Edit ${wide}/${pattern} now." omit
+    [[ "${status}" -eq "${want}" ]] || {
+      echo "row: ${name} · want ${want} · status ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "a matched name holding a glob character stays literal at the next glob level" {
+  local home="${BATS_TEST_TMPDIR}/home/u" tree="${BATS_TEST_TMPDIR}/tree"
+  mkdir -p "${home}/.claude" "${tree}/[x]"
+  ln -s "${home}/.claude" "${tree}/[x]/link"
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "Edit ${tree}/*/li*/hooks/x.claude.md now." omit
+  [[ "${status}" -eq 2 ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
+}
+
 @test "a failed normalization still scans the raw prompt and says so only when it allows" {
   mkdir -p "${BATS_TEST_TMPDIR}/noawk"
   printf '#!/bin/sh\nexit 1\n' >"${BATS_TEST_TMPDIR}/noawk/awk"

@@ -35,9 +35,11 @@
 #   - Segments are walked with stat tests only (`-d`, `-e`, `-ef`): a step whose inode is a protected
 #     root's, or a root-grammar name under the home, enters the root — so case, Unicode folding, `..`
 #     and symlinks resolve as the host filesystem resolves them. A file symlink is read with readlink.
-#   - A glob is expanded by bash pathname expansion (no execution), each match walked, and its
-#     metacharacter-stripped spelling walked too. A brace that bash would expand (`{a,b}`, `{a..b}`)
-#     cannot be expanded without eval → protected, fail-safe. A brace with neither is literal text.
+#   - A glob is expanded by bash pathname expansion (no execution), one segment at a time, each match
+#     walked, and its metacharacter-stripped spelling walked too. A level past 1024 paths, or a prompt
+#     whose levels yield past 16384 paths in all, is protected, fail-safe. A brace that bash would expand
+#     (`{a,b}`, `{a..b}`) cannot be expanded without eval → protected, fail-safe. A brace with neither is
+#     literal text.
 #   - A bare root word (relative, no `/` but a trailing one) is prose unless an action word, an option
 #     (a lone `-` is a list marker), a redirect or a joined `=`/`@`/`-x`/list position makes it an operand.
 #   - A block names the candidate that triggered it.
@@ -434,8 +436,8 @@ set_start() {
   esac
 }
 
-# A glob is expanded by bash pathname expansion, never run; >1024 matches is judged protected (walk cost).
-# Exit 0 = a match reaches a protected path.
+# A glob is expanded by bash pathname expansion, never run. Exit 0 = a match reaches a protected path,
+# or the expansion passed a cap (judged protected: walk cost).
 glob_reaches_harness() {
   local match matches=() head tail="" IFS=$'\n'
   set_start "${written}"
@@ -445,11 +447,7 @@ glob_reaches_harness() {
   while [[ "${head}" == */* && "${head##*/}" != *[][*?]* ]]; do
     tail="${head##*/}${tail:+/${tail}}" head="${head%/*}"
   done
-  shopt -s nullglob
-  # shellcheck disable=SC2206  # pathname expansion is the point; word splitting is on newline only
-  matches=(${walk_p%/}/${head})
-  shopt -u nullglob
-  ((${#matches[@]} <= 1024)) || return 0
+  set_glob_matches "${head}" || return 0
   glob_match=true
   for match in ${matches[@]+"${matches[@]}"}; do
     walk_p=/ walk_lex=/ walk_rest="${match#/}${tail:+/${tail}}"
@@ -457,6 +455,29 @@ glob_reaches_harness() {
   done
   glob_match=false
   return 1
+}
+
+# Expand $1 below walk_p into matches one segment at a time, so a level reads only the dirs the level before it
+# kept. Every path a level yields spends one budget for the whole prompt: a literal segment keeps a wide level
+# alive at full cost, and each match costs a walk. Exit 1 = a level passed its cap, or the budget ran out.
+set_glob_matches() {
+  local rest="${1}" seg prefix rc=0
+  local -a next
+  matches=("${walk_p%/}")
+  shopt -s nullglob
+  while [[ -n "${rest}" ]]; do
+    seg="${rest%%/*}"
+    if [[ "${rest}" == */* ]]; then rest="${rest#*/}"; else rest=""; fi
+    next=()
+    # A matched name is quoted, so its own [ * ? stay literal; a literal segment is checked by the next level.
+    # shellcheck disable=SC2206  # pathname expansion is the point; word splitting is on newline only
+    for prefix in ${matches[@]+"${matches[@]}"}; do next+=("${prefix}"/${seg}); done
+    matches=(${next[@]+"${next[@]}"})
+    glob_paths_spent=$((glob_paths_spent + ${#matches[@]}))
+    ((${#matches[@]} <= glob_level_cap && glob_paths_spent <= glob_path_budget)) || { rc=1 && break; }
+  done
+  shopt -u nullglob
+  return "${rc}"
 }
 
 # Glob metacharacters dropped from each segment; a segment of wildcards alone stays as one name, so
@@ -502,6 +523,8 @@ candidate_blocks() {
 config_entries=' settings.json settings.local.json keybindings.json agents agent-memory commands skills hooks rules plugins output-styles projects '
 tilde_re='^~[a-z0-9._-]*(/|$)'
 progress_re='^projects/[^/]+/memory/progress-[^/]*\.md$'
+readonly glob_level_cap=1024 glob_path_budget=16384
+glob_paths_spent=0
 
 # nocasematch stays on: the lexical root and exemption tests fold case as the host filesystem does.
 glob_match=false
