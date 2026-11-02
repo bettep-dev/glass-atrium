@@ -5,8 +5,8 @@ Maintainer-facing material for the compliance matrix. Nothing here binds an agen
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
 - Companions ship as manifest members, so a pointer to one resolves on a live install.
-- A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
-- NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
+- A rule file carries at most one pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
+- Not a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
 - Applied here: the matrix's one stub heading, `## Precedence Resolution`, points to the charter, not here; its one link to this note is the editor HTML comment after its frontmatter.
 
@@ -16,8 +16,8 @@ Live consumers parse the matrix. Reword around what they read, never through it.
 
 | Consumer | Reads | Breaks when |
 |---|---|---|
-| `hooks/validate-compliance-matrix.sh` — SessionStart, exit 2 on a confirmed mismatch | Tier-1 bullets ↔ ALL column · cell markers ↔ `>` definitions, 1:1 · columns ↔ legend scopes · legend agents ↔ registry | a Tier-1 bullet is dropped · a footnote definition is orphaned · a legend row is removed |
-| `monitor/src/server/architecture/governance-membership.ts` | every `scoped/…`, `rules/glass-atrium/…` or `agents/…` `.md` path in inline code, reported absent if no such file exists | an illustrative or placeholder path is written in that form |
+| `hooks/validate-compliance-matrix.sh` — SessionStart, exit 2 on a confirmed mismatch | Tier-1 bullets ↔ ALL column; cell markers ↔ `>` definitions 1:1; columns ↔ legend scopes; its agents ↔ registry | a Tier-1 bullet is dropped · a footnote definition is orphaned · a legend row is removed |
+| `monitor/src/server/architecture/governance-membership.ts` | every `scoped/`, `rules/glass-atrium/` or `agents/` `.md` path in inline code, reported absent if no such file exists | an illustrative or placeholder path is written in that form |
 | `hooks/test/injector-roster-docs-closed-set.bats` | roster variables of `hooks/inject-scope-rules.sh` and `hooks/lib/styleref-roster.sh`, each asserted named in the matrix | a roster name, or the inject-block name it owns, is named nowhere in the matrix |
 | `scripts/agent_lifecycle/scope_infer.py`, via `readers.py` | the `## Scope Legend` table, as an agent-name → scope map | the legend's two-column shape changes, or an agent cell gains a lowercase hyphenated non-agent token |
 | `scripts/agent_lifecycle/orphan_scan.py --mode rules-membership-mismatch`, via `scope_infer.py` | the Tier 2 and Tier 3 declaration tables, each read from its heading to the next heading of any level | a heading is inserted between a Tier heading and its table, or a declaration row's two-column shape changes |
@@ -33,11 +33,11 @@ Live consumers parse the matrix. Reword around what they read, never through it.
 
 ## Reserved headings, literals and shapes
 
-- **Headings** — grep the corpus for a heading before renaming or moving it; the citing set changes as files are edited.
+- **Headings** — grep the corpus for a heading's bare text, without its `#` run, before renaming or moving it: some citers drop the run, and the citing set changes as files are edited.
   - `## Scope Legend` and `## Compliance Matrix` are matched exactly by the validator; with `## Loading Tiers` they carry the anchors the scope files and `agents/GLASS_ATRIUM_GLOBAL_RULES.md` link to.
   - `### Tier 1`, `### Tier 2` and `### Tier 3` are parse prefixes.
   - Cited by name: `### Membership vs. Delivery (per tier)` · `### Membership declaration and SubagentStart channels` · `### Injected Blocks (SubagentStart allowlist)` · the `## Precedence Resolution` stub · `## Archived Agents`.
-    - Hook comments cite `### Membership vs. Delivery (per tier)` in shortened forms — one drops the `(per tier)` suffix, another the `###` — so grep the bare `Membership vs. Delivery` prefix.
+    - A hook comment cites `### Membership vs. Delivery (per tier)` without the `(per tier)` suffix, so grep the bare `Membership vs. Delivery` prefix.
   - `#### Per-scope inheritance detail` sits below the Tier 3 table, so no parser's section bound moves.
 - **Cited leads** — grep the corpus for the lead before rewording one: **Path-scoped delivery** · Tier-3 **QA** (cited by **Rows, not cells** above) · Scope Legend **New-agent doc-sync note**.
   - `scoped/maintainers/scope-dev.md` cites **New-agent doc-sync note** as "Scope Legend doc-sync note", which a grep of the lead misses.
