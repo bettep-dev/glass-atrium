@@ -75,8 +75,7 @@ NAMES_EN=(
 
 # Formats whose value no PATTERNS entry names: an assignment holding one blocks even in a test-fixture file.
 # Word boundary → `task-runner` holds no `sk-`. Length bound on word-like `dapi`, `secret_` → a readable dummy passes.
-# Accepted boundary, closed list → a format off it, or a prefix-less value under a name a spec also gives its dummy
-# (`api_key`, `token`, `secret`, `client_secret`), is test data there: blocking by name costs false positives.
+# Closed list → a format off it, or a prefix-less value under a spec's dummy name (`api_key`, `token`), is test data.
 KNOWN_CREDENTIAL_VALUE='[^[:alnum:]](sk-|[sr]k_(live|test)_|gh[pousr]_|github_pat_|glpat-|xox[a-z]-|xapp-|ASIA|eyJ|npm_|pypi-|hf_|SG\.|dop_v1_|ya29\.|whsec_|gsk_|shp(at|ca|pa|ss)_|glsa_|dckr_pat_|GOCSPX-|hvs\.|xai-|pplx-|ATATT|lin_api_|figd_|dapi[[:alnum:]]{16,}|AGE-SECRET-KEY-|secret_[[:alnum:]]{32,}|ntn_|r8_|[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]*@)'
 
 # Names that rule out a login password → an assignment to one blocks in a fixture whatever the value.
@@ -90,24 +89,24 @@ CLOUD_KEY_NAME='((aws|azure|gcp|alibaba|alicloud|aliyun|tencent)[[:alnum:]_.-]*(
 # A config or data format qualifies only through a fixture dir: database.test.yml or k8s/test/values.yaml deploys.
 # Args: $1=file path
 is_test_fixture_path() {
-  local below
+  local relative_path
   # a `..` can leave any dir the spelling names
   [[ "/${1}/" == */../* ]] && return 1
   # shellcheck disable=SC2310  # no repo root is an answer: the whole path is read, and no dir is a fixture
-  below="$(get_project_relative_path "${1}")" || below=""
+  relative_path="$(get_project_relative_path "${1}")" || relative_path=""
   # shellcheck disable=SC2310  # the predicate's status is the verdict
-  has_secret_shape "${below:-${1}}" && return 1
+  has_secret_shape "${relative_path:-${1}}" && return 1
   # shellcheck disable=SC2310  # the predicate's status is the verdict
-  has_link_below_root "${1}" "${below}" && return 1
-  case "/${below}" in
+  has_link_below_root "${1}" "${relative_path}" && return 1
+  case "/${relative_path}" in
     */fixtures/* | */__fixtures__/* | */testdata/*) return 0 ;;
-    *) is_source_test_file "${1##*/}" "${below}" ;;
+    *) is_source_test_file "${1##*/}" "${relative_path}" ;;
   esac
 }
 
 # Status 0 → a link in a segment below the repo root: like a `..`, it can leave any dir the spelling names.
 # No repo root → the name alone exempts, so the file itself is read; not its dirs — /tmp and /var are links on macOS.
-# Args: $1=file path $2=path below the root, empty under no repo root
+# Args: $1=file path $2=path relative to the repo root, empty under no repo root
 has_link_below_root() {
   local dir="${1%"${2}"}" rest="${2}"
   [[ -z "${rest}" && -L "${1}" ]] && return 0
@@ -122,7 +121,7 @@ has_link_below_root() {
 
 # Status 0 → source code or a test script, named as a test or below a test dir.
 # Any test or spec dir counts, a deploy or API tree's too — no list can tell which parents hold real tests.
-# Args: $1=basename $2=path below the root
+# Args: $1=basename $2=path relative to the repo root
 is_source_test_file() {
   local base
   base="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"

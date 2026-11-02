@@ -71,8 +71,7 @@ run_hook() {
 
 @test "Write channel: a generic credential assignment passes only in a test-fixture file and blocks with SEC-013 elsewhere" {
   local fixture_assign row name path want
-  # p/ and test/shop/ are repo roots; test/shop/ sits inside a dir named test above its own root, secrets-app/ holds a
-  # secrets shape above its own root
+  # repo roots: p/ · test/shop/ (a dir named test above its root) · secrets-app/ (a secrets shape above its root)
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git" "${BATS_TEST_TMPDIR}/test/shop/.git" "${BATS_TEST_TMPDIR}/secrets-app/.git"
   # links a fixture spelling can leave the tests dir through
   mkdir -p "${BATS_TEST_TMPDIR}/p/src" "${BATS_TEST_TMPDIR}/p/tests"
