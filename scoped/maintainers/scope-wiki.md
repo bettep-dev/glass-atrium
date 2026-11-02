@@ -13,7 +13,10 @@ Maintainer-facing material for that source file, plus the record of what the cut
 ## Status in the corpus
 
 - Tier 2 (Scope), membership `agent_scope ∈ {glass-atrium-wiki-curator}`, inheriting Tier 1. Declared on the curator's registry row (`agent-registry.json` → `rules.scope`) and at `rules/glass-atrium/core-compliance-matrix.md` → the Tier 2 table and the Compliance Matrix `scope-wiki.md` row.
-- Both surviving headings are cited from `agents/glass-atrium-wiki-curator.md` and must keep their names: the health-check `Stale` bullet cites `scoped/scope-wiki.md (Staleness surface)`, and the raw-ingestion frontmatter precondition cites `per scope-wiki Operational Constraints`. `skills/glass-atrium-ops-orchestrator.md` and `scoped/scope-report.md` cite the file by name only.
+- Both surviving headings are cited from `agents/glass-atrium-wiki-curator.md` and must keep their names:
+  - the health-check `Stale` bullet cites `scoped/scope-wiki.md (Staleness surface)`;
+  - the raw-ingestion frontmatter precondition cites `per scope-wiki Operational Constraints`.
+- `skills/glass-atrium-ops-orchestrator.md` and `scoped/scope-report.md` cite the file by name only.
 - Those citations are prose references, not an instruction to Read: as the curator's `rules.scope` member, the file reaches a spawned curator whole through the part slots (`hooks/lib/inject_chunk.py`).
 - The daily-compile batch reader does not receive it: `scripts/wiki-daily-compile.sh` passes only the curator body as `--system-prompt` to a `claude -p` call, where no SubagentStart fires. A rule both readers need is stated in the body.
 
@@ -23,7 +26,7 @@ Maintainer-facing material for that source file, plus the record of what the cut
 - **The `> **Wiki store (canonical)**` blockquote** — Tier-1 `rules/glass-atrium/core-wiki-reference.md` opens with the same blockquote near-verbatim, and that file does arrive. The curator body states the same store description again in its own opening.
 - **`Sole writer of \`wiki/\``** — Tier-1 `core-wiki-reference.md` → `## Wiki Write Operations` states the rule and the identical researcher carve-out, and the curator body restates the ownership half under `## OWNS / DOES NOT OWN`.
   - It also binds OTHER agents, so for the receiving curator it was informational rather than a duty it could discharge.
-- **The immutability half of `raw/ is immutable`** — curator body `## Guardrails (Absolute)`: `**raw/ immutable**: Write/Edit/rm/mv forbidden under wiki/raw/**. Read only.`
+- **The immutability half of `raw/ is immutable`** — curator body `## Guardrails (Absolute)` → **raw/ immutable**.
   - The clauded-docs half survived: it is stated nowhere else, and it is not derivable from the tool scope, since the body's Bash allowlist does permit `mv ~/.Trash/`.
 - **The healthcheck-carrying clause of `Staleness surface`** — the curator body's own health-check bullet states that duty and points here for the threshold and the surface, which is what the bullet now holds and nothing more.
 
@@ -50,17 +53,32 @@ The bullet read: any structural change under `wiki/` regenerates the master inde
   - All compiled notes register before session end; unregistered notes grade `result: done_with_concerns`.
   - Batch-compile invocations (`-p` / `wiki-daily-compile.sh`) may complete without agent-side index edits, because `wiki-sync.sh` regenerates the master index downstream.
 - So a legitimate batch run ends with a partial index, which this line called FORBIDDEN while the body graded it a completed-with-concerns outcome. The exception stays in the body alone — the copy both the spawned curator and the batch reader hold — and the line was dropped as superseded.
-- The registration duty itself survives in the body (turn-0 sequence step 3, the Index post-check, the `### Master Index = Single Source of Truth` section, the Completeness Contract, and `Termination without master-index registration` in its prohibitions), so nothing was lost with it.
-  - The Master Index section, the Completeness Contract and that prohibition each point at Guardrails → Index post-check for the batch-run exception, so the body grades a batch run one way.
+- The registration duty itself survives in the body (turn-0 sequence step 3, the Index post-check and the `### Master Index = Single Source of Truth` section), so nothing was lost with it.
+  - The Master Index section points at Guardrails → Index post-check for the batch-run exception, so the body grades a batch run one way.
 
 ## `raw/` frontmatter validation — kept, with its live scope named
 
 - The curator body states the same rule — missing or extra fields return the file to glass-atrium-intel-researcher and do not count as a valid write — because the batch reader holds the body and not this file.
 - The body cites this section by name, so the bullet stays as the anchor that citation resolves into.
-- What this file adds and the body does not: the note that `hooks/validate-pre-write-raw.sh` V6 blocks a non-conforming raw write at creation time, which makes the failure state unreachable for new files and confines the duty to legacy / pre-contract ones.
+- What this file adds and the body does not: the note that `hooks/validate-pre-write-raw.sh` V1 blocks a non-conforming raw write at creation time, which makes the failure state unreachable for new files and confines the duty to legacy / pre-contract ones.
 
 ## Readers and coupled tests
 
-- No test reads this file's TEXT. The path is carried in `agent-registry.json` and `scripts/agent_lifecycle/registry_ops.py`, and `rules/glass-atrium/core-compliance-matrix.md` writes it in inline code, which `monitor/src/server/architecture/governance-membership.ts` treats as a declared document and reports absent if the file stops existing.
+- No test reads this file's TEXT.
+- The path is carried in `agent-registry.json` and `scripts/agent_lifecycle/registry_ops.py`.
+- `rules/glass-atrium/core-compliance-matrix.md` writes the path in inline code, which `monitor/src/server/architecture/governance-membership.ts` treats as a declared document and reports absent if the file stops existing.
 - `hooks/lib/inject_chunk.py` packs the whole body into the curator's part slots at spawn; after an edit, `python3 hooks/lib/inject_chunk.py --audit` should still report `events=none` for the curator.
 - `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP` excerpts the file by basename for the daemon verify prompt; its C3 axis fails the verdict on an empty scope file.
+
+## Curator body — machine readers and placement
+
+- The batch call runs with the tools `Read,Glob,Grep`; a `scripts/wiki-daily-compile.sh` comment names `## Untrusted Raw Content [LLM01]`, so that heading keeps its name.
+- That section mirrors `rules/glass-atrium/core-wiki-reference.md` → Wiki Raw-Store Untrusted-Data Contract, the canonical wording: the batch reader holds no rule file, so the mirror stays.
+- It sits outside every EDITABLE region and adds no marker pair:
+  - `autoagent/lib/editable_merge.py` routes a region-count mismatch to the manual structural-change ceremony.
+  - Text outside the regions takes the release copy; a region the release leaves untouched keeps the local content.
+- No test reads the body's text: the test roots hold the agent name and a sandbox fixture only.
+- Not re-added, because the reader cannot reach them or the harness already enforces them:
+  - A `[CONTINUITY]` guardrail: `hooks/inject-session-context.sh` emits that header at SessionStart, which a spawned subagent and the batch call do not receive.
+  - A compiler-skill-loaded check: a spawn preloads it through frontmatter `skills:`; the batch call passes the file as plain text, so a halt-on-missing check would stop it.
+  - A WebFetch/WebSearch ban: frontmatter `tools:` and the batch `--tools` both omit them.
