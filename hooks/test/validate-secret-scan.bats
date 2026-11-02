@@ -146,8 +146,14 @@ run_hook() {
     name="${row%%|*}" path="${row#*|}" expected_status="${row##*|}" path="${path%|*}"
     [[ "${path}" == /* ]] || path="${BATS_TEST_TMPDIR}/${path}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { email: 'ada@example.com', ${fixture_assignment} }\"}}"
-    [[ "${status}" -eq "${expected_status}" ]] || { echo "${name}: status ${status}, want ${expected_status}: ${output}"; return 1; }
-    [[ "${expected_status}" -eq 0 || "${output}" == *"SEC-013"* ]] || { echo "${name}: ${output}"; return 1; }
+    [[ "${status}" -eq "${expected_status}" ]] || {
+      echo "${name}: status ${status}, want ${expected_status}: ${output}"
+      return 1
+    }
+    [[ "${expected_status}" -eq 0 || "${output}" == *"SEC-013"* ]] || {
+      echo "${name}: ${output}"
+      return 1
+    }
   done
 }
 
@@ -165,12 +171,16 @@ run_hook() {
       'test-named source file|src/a.test.ts|0'; do
       IFS='|' read -r name path expected_status <<<"${row}"
       run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { ${fixture_assignment} }\"}}"
-      [[ "${status}" -eq "${expected_status}" ]] || { echo "${name} from ${cwd}: status ${status}, want ${expected_status}: ${output}"; return 1; }
+      [[ "${status}" -eq "${expected_status}" ]] || {
+        echo "${name} from ${cwd}: status ${status}, want ${expected_status}: ${output}"
+        return 1
+      }
     done
   done
 }
 
 # Key and value apart in each row → joined, a row trips the gate on this file's own write.
+# Digit-free tail → the prefix alone keeps the block, never the value's shape.
 @test "Write channel: a test-fixture file keeps SEC-013 for a value of a known credential format" {
   local fixture_assignment row name key value path="${BATS_TEST_TMPDIR}/p/tests/run.sh"
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
@@ -209,19 +219,22 @@ run_hook() {
     'Figma token|token|figd_' \
     'Databricks token|token|dapi' \
     'age secret key|api_key|AGE-SECRET-KEY-' \
-    'Notion legacy token|secret|secret_a1b2c3d4e5f6g7h8i9j0' \
+    'Notion legacy token|secret|secret_' \
     'Notion token|token|ntn_' \
     'Replicate token|token|r8_' \
     'connection string of a scheme without its own pattern|password|mysql://root:hunter2@'; do
     IFS='|' read -r name key value <<<"${row}"
-    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"${fixture_assignment}\\n${key}=${value}a1b2c3d4e5f6g7h8\"}}"
-    [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || { echo "${name}: status ${status}: ${output}"; return 1; }
+    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"${fixture_assignment}\\n${key}=${value}abcdefghijklmnopqrstuvwxyzabcdef\"}}"
+    [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || {
+      echo "${name}: status ${status}: ${output}"
+      return 1
+    }
   done
 }
 
-# A secret access key has no prefix → only its name tells it from a spec's login password.
+# Readable value → the name alone keeps the block, never the value's shape.
 @test "Write channel: a test-fixture file keeps SEC-013 for an assignment to a cloud key name, whatever its value" {
-  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" file row name key separator
+  local value="correct-horse-battery" file row name key separator
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
   for file in tests/run.sh test/fixtures/values.yaml; do
     for row in \
@@ -240,14 +253,18 @@ run_hook() {
       'bare access key secret|access_key_secret|='; do
       IFS='|' read -r name key separator <<<"${row}"
       run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/${file}\",\"content\":\"${key}${separator}${value}\"}}"
-      [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || { echo "${name} in ${file}: status ${status}: ${output}"; return 1; }
+      [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || {
+        echo "${name} in ${file}: status ${status}: ${output}"
+        return 1
+      }
     done
   done
 }
 
 # Name and value apart in each row → joined, a row trips the gate on this file's own write.
+# Readable value → the name alone keeps the block, never the value's shape.
 @test "Write channel: a cloud key assignment after another assignment keeps SEC-013, on its line or a later one" {
-  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" file row name first_key lead key separator
+  local value="correct-horse-battery" file row name first_key lead key separator
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
   for file in tests/run.sh test/fixtures/values.yaml; do
     for row in \
@@ -270,7 +287,7 @@ run_hook() {
 }
 
 @test "Write channel: a cloud key name counts only as the name of an assignment" {
-  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" login separator="=" row name content
+  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" readable_value="correct-horse-battery" login separator="=" row name content
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
   login="password"
   for row in \
@@ -279,14 +296,88 @@ run_hook() {
     "name inside a test password value|${login}=access_key_12345" \
     "provider name inside a test password value|${login}=aws_secret_12345" \
     "provider setting that holds no secret|AWS_REGION=eu-central-1\\n${login}: correct-horse-battery" \
-    "session token under no cloud name|session_token${separator}${value}" \
-    "client secret under no cloud name|client_secret${separator}${value}" \
-    "api key under no cloud name|api_key${separator}${value}" \
-    "bare token|token${separator}${value}" \
-    "bare secret|secret${separator}${value}"; do
+    "session token under no cloud name|session_token${separator}${readable_value}" \
+    "client secret under no cloud name|client_secret${separator}${readable_value}" \
+    "api key under no cloud name|api_key${separator}${readable_value}" \
+    "bare token|token${separator}${readable_value}" \
+    "bare secret|secret${separator}${readable_value}"; do
     IFS='|' read -r name content <<<"${row}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/tests/run.sh\",\"content\":\"${content}\"}}"
-    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status}: ${output}"; return 1; }
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: status ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
+# Key and value apart → joined, a row trips the gate on this file's own write.
+@test "Write channel: a test-fixture file keeps SEC-013 for a random-looking value under any name" {
+  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" secret_name="secret" client_name="clientSecret" login="password"
+  local separator="=" row name content
+  mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
+  for row in \
+    "nested under its vendor key|aws: { region: 'x', ${secret_name}: '${value}' }" \
+    "client secret nested under its vendor key|azure: { ${client_name}: '${value}' }" \
+    "yaml nested under its vendor key|aws:\\n  ${secret_name}: ${value}" \
+    "api key name|api_key${separator}${value}" \
+    "bare token name|token${separator}${value}" \
+    "after another assignment on its line|${login}${separator}foo12345&${secret_name}${separator}${value}" \
+    "after another assignment on a later line|${login}: correct-horse-battery\\ntoken${separator}${value}" \
+    "hex digest|token${separator}9f86d081884c7d659a2feaa0c55ad015" \
+    "lower case and digits|token${separator}k3j9x2m7q4p8w1z6r5t0" \
+    "digits among letters only, at the shortest run|token${separator}abcd1efgh2ijklmn" \
+    "a lone lower case letter among upper case, no digit|token${separator}QWERTzKASDFGHJKLZXCV" \
+    "a short upper case run among lower case, no digit|token${separator}qwertyABcdefghijklmnop" \
+    "base64 alphabet inside one run|token${separator}a1b2+c3d4/e5f6+g7h8" \
+    "base64url alphabet inside one run|token${separator}a1b2-c3d4_e5f6-g7h8"; do
+    IFS='|' read -r name content <<<"${row}"
+    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/tests/run.sh\",\"content\":\"${content}\"}}"
+    [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || {
+      echo "${name}: status ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "Write channel: a readable value under any name stays test data in a test-fixture file" {
+  local login="password" separator="=" row name content
+  mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
+  for row in \
+    "words and hyphens|token${separator}fake-api-key-for-unit-tests-only" \
+    "words and underscores|token${separator}my_test_token_value_for_login" \
+    "camel case words|token${separator}dummyAccessTokenForIntegrationTests" \
+    "camel case words and one digit run|token${separator}testPassword123ForUnitTests" \
+    "numbers apart from their words|token${separator}test_user_1_password_2_value" \
+    "one repeated letter|token${separator}AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
+    "all-zero uuid|token${separator}00000000-0000-0000-0000-000000000000" \
+    "random-looking, one under the shortest run|token${separator}aB3dE6gH9jK2mN5" \
+    "random-looking checksum outside any assignment|checksum: 9f86d081884c7d659a2feaa0c55ad015\\n${login}: correct-horse-battery"; do
+    IFS='|' read -r name content <<<"${row}"
+    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/tests/run.sh\",\"content\":\"${content}\"}}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: status ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
+# Digit-free tails → the prefix alone keeps the block, never the value's shape.
+@test "Write channel: a known credential format outside any assignment keeps SEC-013 beside a test password" {
+  local login="password" github_token="github_pat_abcdefghijklmnop" row name content
+  mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
+  for row in \
+    "recorded request on one line|{\\\"${login}\\\":\\\"testpass1\\\",\\\"authorization\\\":\\\"Bearer ${github_token}\\\"}" \
+    "recorded request across lines|{\\n  \\\"${login}\\\": \\\"testpass1\\\",\\n  \\\"authorization\\\": \\\"Bearer ${github_token}\\\"\\n}" \
+    "token at the start of the first line|${github_token}\\n${login}: testpass1" \
+    "token at the start of a later line|${login}: testpass1\\n${github_token}" \
+    "GitLab token|${login}: testpass1\\nPRIVATE-TOKEN glpat-abcdefghijklmnop" \
+    "connection string|${login}: testpass1\\nDSN postgresql://app:hunter2@db.internal/app"; do
+    IFS='|' read -r name content <<<"${row}"
+    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/test/fixtures/login.json\",\"content\":\"${content}\"}}"
+    [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || {
+      echo "${name}: status ${status}: ${output}"
+      return 1
+    }
   done
 }
 
@@ -298,17 +389,29 @@ run_hook() {
     'Notion prefix on a readable dummy value|token|secret_token_value_for_tests' \
     'Databricks prefix on a short word|token|dapiclient1' \
     'prefix spelled in another case|token|asia-pacific-1' \
-    'URL with no userinfo|password|https://example.com/login'; do
+    'URL with no userinfo|password|https://example.com/login' \
+    'prefix inside a longer word past the assignment|token|testvalue1 runs task-runner-01' \
+    'prefix spelled in another case past the assignment|token|testvalue1 in asia-pacific-1' \
+    'URL with no userinfo past the assignment|token|testvalue1 at https://example.com/login'; do
     IFS='|' read -r name key value <<<"${row}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"${key}=${value}\"}}"
-    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status}: ${output}"; return 1; }
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: status ${status}: ${output}"
+      return 1
+    }
   done
 }
 
 @test "Write channel: a structured token in a test-fixture file still blocks with its own code" {
   run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/p/src/users/users.service.spec.ts\",\"content\":\"const k = ${AWS_FIXTURE}\"}}"
-  [[ "${status}" -eq 2 ]] || { echo "${output}"; return 1; }
-  [[ "${output}" == *"SEC-001"* ]] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 2 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"SEC-001"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "Write benign: ordinary source content → pass (exit 0, silent)" {
@@ -327,14 +430,26 @@ pipe_overflow_padding() {
   local padding
   padding="$(pipe_overflow_padding)"
   run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/tmp/x.ts\",\"content\":\"const k = ${AWS_FIXTURE}\\n${padding}\"}}"
-  [[ "${status}" -eq 2 ]] || { echo "${output}"; return 1; }
-  [[ "${output}" == *"SEC-001"* ]] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 2 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"SEC-001"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "Bash channel: a .env credential write on line 1 of a command larger than the pipe buffer still blocks, exit 2" {
   local padding
   padding="$(pipe_overflow_padding)"
   run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo ${CRED_FIXTURE} > .env\\n${padding}\"}}"
-  [[ "${status}" -eq 2 ]] || { echo "${output}"; return 1; }
-  [[ "${output}" == *"SEC-016"* ]] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 2 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"SEC-016"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }

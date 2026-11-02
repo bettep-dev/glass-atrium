@@ -73,15 +73,27 @@ NAMES_EN=(
   "Service-account JSON marker"
 )
 
-# Formats whose value no PATTERNS entry names: an assignment holding one blocks even in a test-fixture file.
+# Formats whose value no PATTERNS entry names: one anywhere beside an assignment blocks even in a test-fixture file.
+# Whole file, not the assignment → a recorded request holds its token in a header.
+# Accepted: `npm_config` or `ssh://git@` beside a test password blocks.
 # Word boundary → `task-runner` holds no `sk-`. Length bound on word-like `dapi`, `secret_` → a readable dummy passes.
-# Closed list → a format off it, or a prefix-less value under a spec's dummy name (`api_key`, `token`), is test data.
-KNOWN_CREDENTIAL_VALUE='[^[:alnum:]](sk-|[sr]k_(live|test)_|gh[pousr]_|github_pat_|glpat-|xox[a-z]-|xapp-|ASIA|eyJ|npm_|pypi-|hf_|SG\.|dop_v1_|ya29\.|whsec_|gsk_|shp(at|ca|pa|ss)_|glsa_|dckr_pat_|GOCSPX-|hvs\.|xai-|pplx-|ATATT|lin_api_|figd_|dapi[[:alnum:]]{16,}|AGE-SECRET-KEY-|secret_[[:alnum:]]{32,}|ntn_|r8_|[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]*@)'
+# Closed list → a format off it falls to the value shape below.
+# Residual: a format here in a file with no generic assignment is never read.
+KNOWN_CREDENTIAL_VALUE='(^|[^[:alnum:]])(sk-|[sr]k_(live|test)_|gh[pousr]_|github_pat_|glpat-|xox[a-z]-|xapp-|ASIA|eyJ|npm_|pypi-|hf_|SG\.|dop_v1_|ya29\.|whsec_|gsk_|shp(at|ca|pa|ss)_|glsa_|dckr_pat_|GOCSPX-|hvs\.|xai-|pplx-|ATATT|lin_api_|figd_|dapi[[:alnum:]]{16,}|AGE-SECRET-KEY-|secret_[[:alnum:]]{32,}|ntn_|r8_|[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]*@)'
 
 # Names that rule out a login password → an assignment to one blocks in a fixture whatever the value.
 # Separator required → `AWS_ACCESS_KEY_ID`, or the name inside a value, stays test data.
 # No left boundary → a glued qualifier (`minioAccessKey`) counts, at the cost of a longer word ending in `aws`.
 CLOUD_KEY_NAME='((aws|azure|gcp|alibaba|alicloud|aliyun|tencent)[[:alnum:]_.-]*(secret|token|key)|access[_-]?key([_-]?secret)?)["'"'"' ]*[:=]'
+
+# An assigned value's run of token characters: base64 `+/` and base64url `-_` stay inside one run.
+# Residual: a prefix-less secret under 16 characters, or under this shape, reads as a dummy and passes.
+RANDOM_VALUE_RUN='[[:alnum:]+/_-]{16,}'
+
+# Digits among letters twice, or a short case flip → random text holds one, readable words rarely.
+# Measured on random base64: 0.9% missed at 24 characters, none at 40.
+# Accepted: a camel-case dummy holding an acronym (`getOAuthTokenValue`) blocks.
+RANDOM_VALUE_SHAPE='[[:alpha:]][0-9]+[[:alpha:]]+[0-9]|[[:upper:]][[:lower:]][[:upper:]]|[[:lower:]][[:upper:]]{2,}[[:lower:]]'
 
 # Status 0 → a test or fixture file, where a generic credential assignment is test data (a spec's login
 # password), not a credential. Read below the file's repo root; a relative path or no repo root → no fixture dir.
@@ -194,25 +206,34 @@ scan_content() {
   done
 }
 
-# Status 0 → a test-fixture file, with no known credential format or cloud key name in any assignment.
+# Status 0 → a test-fixture file, with no known credential format, cloud key name or random-looking assigned value.
 # Args: $1=blob $2=generic-assignment pattern
 is_fixture_test_data() {
   local file_path
   file_path="$(hook_get_tool_input "${INPUT}" "file_path")"
   # shellcheck disable=SC2310  # the predicate's status is the verdict
-  is_test_fixture_path "${file_path}" && ! has_known_credential_value "${1}" "${2}" && ! has_cloud_key_assignment "${1}" "${2}"
+  is_test_fixture_path "${file_path}" \
+    && ! has_known_credential_value "${1}" \
+    && ! has_cloud_key_assignment "${1}" "${2}" \
+    && ! has_random_looking_value "${1}" "${2}"
 }
 
-# Status 0 → an assignment's value holds a KNOWN_CREDENTIAL_VALUE format. Every assignment read, not the first;
-# case-sensitive → `asia-pacific-1` stays test data. Args: $1=blob $2=generic-assignment pattern
+# Status 0 → the blob holds a KNOWN_CREDENTIAL_VALUE format. Case-sensitive → `asia-pacific-1` stays test data.
+# Args: $1=blob
 has_known_credential_value() {
-  printf '%s\n' "${1}" | grep -oiE -- "${2}" | drain_after grep -qE -- "${KNOWN_CREDENTIAL_VALUE}"
+  printf '%s\n' "${1}" | drain_after grep -qE -- "${KNOWN_CREDENTIAL_VALUE}"
 }
 
 # Status 0 → an assignment to a CLOUD_KEY_NAME, in any case. Extract widened left → the full name, not the matched word;
 # read whole → the value class swallows a next assignment on its line. Args: $1=blob $2=generic-assignment pattern
 has_cloud_key_assignment() {
   printf '%s\n' "${1}" | grep -oiE -- "[[:alnum:]_.-]*${2}" | drain_after grep -qiE -- "${CLOUD_KEY_NAME}"
+}
+
+# Status 0 → an assignment's value holds a RANDOM_VALUE_RUN of RANDOM_VALUE_SHAPE: a real secret under a dummy name.
+# Assignments only → a checksum beside a test password stays test data. Args: $1=blob $2=generic-assignment pattern
+has_random_looking_value() {
+  printf '%s\n' "${1}" | grep -oiE -- "${2}" | grep -oE -- "${RANDOM_VALUE_RUN}" | drain_after grep -qE -- "${RANDOM_VALUE_SHAPE}"
 }
 
 # Bash channel (HIGH SIGNAL ONLY).
