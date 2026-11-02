@@ -53,7 +53,7 @@ Read only the file the task needs.
 | Scan boundary and provenance | `references/scan-provenance.md` | `#### Scan boundary and provenance` | routing vs findings, label grammar, by-definition classes, register and lexicon literals | worked pair, register and lexicon reasons, positional backing leg |
 | dev-front markup exception | `references/deliverable-exposure.md` | `#### Monitoring-phase notes` → **glass-atrium-dev-front markup-exception Monitoring judgment** | trigger, capability judgment, skeleton-first one-POST handoff, no user surfacing | trigger detail, capability criterion, handoff steps, stitching ban, surfacing exception, EXTEND citation |
 | Effort-scaling table | `references/delegation-size-discipline.md` | `#### Analysis fan-out and team cardinality` → **Effort-scaling by task shape** | duty to pick count from shape, when it fires | table, its examples and notes |
-| Failure Recovery backing | `references/failure-recovery.md` | `### Failure Recovery Loop` → **Backing honesty (which stages are enforced)** | honor-system checks, the one code-backed stage | why they are honor-system, counter, `.suspended` marker, reset, SubagentStart signal |
+| Failure Recovery backing | `references/failure-recovery.md` | `### Failure Recovery Loop` → **Backing honesty (which stages are enforced)** | honor-system checks, the one code-backed stage | why they are honor-system, counter, `.suspended` marker, reset, marker reader |
 
 | Topic | File | Pointer site in `skills/glass-atrium-ops-orchestrator.md` | SoT at the pointer site | SoT in the reference file |
 |---|---|---|---|---|
