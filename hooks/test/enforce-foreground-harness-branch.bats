@@ -168,6 +168,7 @@ list_bashes() {
 @test "a profile jobs/ path outside a job's tmp/ scratch → BLOCKED" {
   local home="${BATS_TEST_TMPDIR}/home/u" row name prompt
   mkdir -p "${home}/.claude-work-dev/jobs/25a65a54/tmp"
+  ln -s ../../../hooks "${home}/.claude-work-dev/jobs/25a65a54/tmp/link"
   for row in \
     'file directly in jobs/|Queue the run via ~/.claude-work-dev/jobs/pending.json.' \
     'job pins file|Edit ~/.claude-work-dev/jobs/pins.json now.' \
@@ -175,10 +176,28 @@ list_bashes() {
     'traversal out of a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/../../../hooks/x.sh now.' \
     'dot as the job id|Write ~/.claude-work-dev/jobs/./tmp/x.sh now.' \
     'dot-leading job id|Write ~/.claude-work-dev/jobs/.hidden/tmp/x.sh now.' \
-    'wildcard dot segment below a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/.*/hooks/x.sh now.'; do
+    'wildcard dot segment below a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/.*/hooks/x.sh now.' \
+    'link out of a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/link/x.sh now.' \
+    'wildcard reaching a link out of a job tmp/|Write ~/.claude-work-dev/jobs/25a65a54/tmp/li*/x.sh now.'; do
     IFS='|' read -r name prompt <<<"${row}"
     HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" true
     [[ "${status}" -eq 2 ]] || {
+      echo "row: ${name} · status ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "a job's tmp/ scratch on disk passes, by name or through a wildcard job id" {
+  local home="${BATS_TEST_TMPDIR}/home/u" row name prompt
+  mkdir -p "${home}/.claude-work-dev/jobs/25a65a54/tmp"
+  : >"${home}/.claude-work-dev/jobs/25a65a54/tmp/out.txt"
+  for row in \
+    'named job|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.txt.' \
+    'wildcard job id|Read ~/.claude-work-dev/jobs/*/tmp/out.txt.'; do
+    IFS='|' read -r name prompt <<<"${row}"
+    HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" true
+    [[ "${status}" -eq 0 ]] || {
       echo "row: ${name} · status ${status}: ${output}"
       return 1
     }

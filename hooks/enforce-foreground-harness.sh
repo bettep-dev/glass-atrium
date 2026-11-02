@@ -398,8 +398,8 @@ needs_staged_lane() {
 exempt_entry() {
   case "${1}" in
     claude.md | memory.md | glass_atrium_global_rules.md) return 0 ;;
-    # A job's tmp/ is its own scratch; the rest of jobs/ is harness state, and a dot segment can leave the dir.
-    jobs) [[ "${remainder}" =~ ${job_scratch_re} && "/${remainder}" != */.* ]] ;;
+    # A job's tmp/ is its own scratch; the rest of jobs/ is harness state, and a dot segment or a link can leave it.
+    jobs) [[ "${remainder}" =~ ${job_scratch_re} && "/${remainder}" != */.* ]] && ! has_link_in_remainder ;;
     data | projects | logs | todos | shell-snapshots | statsig)
       # The memory dir nests under projects/ → a /memory/ segment keeps it protected; `/…/` frames globs.
       case "/${remainder}/" in
@@ -409,6 +409,17 @@ exempt_entry() {
       ;;
     *) return 1 ;;
   esac
+}
+
+# Exit 0 when a segment of the remainder below root_dir is a symlink on disk.
+has_link_in_remainder() {
+  local path="${root_dir%/}" rest="${remainder}"
+  while [[ -n "${rest}" ]]; do
+    path="${path}/${rest%%/*}"
+    [[ -L "${path}" ]] && return 0
+    if [[ "${rest}" == */* ]]; then rest="${rest#*/}"; else rest=""; fi
+  done
+  return 1
 }
 
 # Walk one spelling from walk_p / walk_lex / walk_rest. Exit 0 = it reaches a protected path.
