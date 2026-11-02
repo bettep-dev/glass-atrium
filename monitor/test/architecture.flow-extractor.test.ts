@@ -358,7 +358,7 @@ const CLASSIFICATION_ORACLE: Record<
     roles: { execution: 1, orchestration: 3 },
   },
   "v2-team-docs": {
-    edges: { control_flow: 13, data_flow: 3, reads_from: 3 },
+    edges: { control_flow: 13, data_flow: 3, reads_from: 2 },
     nodes: { agent: 12, store: 2 },
     roles: { data: 1, execution: 3, orchestration: 1 },
   },

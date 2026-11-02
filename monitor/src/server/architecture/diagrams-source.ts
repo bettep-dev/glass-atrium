@@ -364,7 +364,6 @@ export const DIAGRAMS = [
     end
 
     from_orch --> glass-atrium-intel-researcher
-    from_orch -. "reads progress files at session start" .-> glass-atrium-intel-researcher
     from_orch -. "reads progress files at session start" .-> planner_d
     from_orch -. "reads progress files at session start" .-> glass-atrium-intel-reporter
 
