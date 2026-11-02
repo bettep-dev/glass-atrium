@@ -31,7 +31,7 @@ Corpus-maintenance companion to that source file. Nothing here is delivered to a
 - Marker readers:
   - `hooks/inject-scope-rules.sh` → `BUDGET_SRC_FILE` (overridable by env for tests) → `extract_block`.
   - `autoagent/daemon_cycle.py` → `_read_marker_block`, its deliberate mirror.
-- A broken or renamed marker empties the block silently at the hook (fail-open).
+- A broken or renamed marker empties the block at the hook: the spawn proceeds (fail-open) with one stderr line.
 - These suites read the live file and catch that:
   - `hooks/test/inject-scope-rules-nodrop.bats`: a first-line needle per block, plus a hard byte bound on the DEV block.
   - `hooks/test/inject-scope-single-delivery.bats`: the same needles, counted per agent.
