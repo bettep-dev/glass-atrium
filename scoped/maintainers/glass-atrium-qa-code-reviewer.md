@@ -5,8 +5,8 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
 - Companions ship as manifest members, so a pointer to one resolves on a live install.
-- A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
-- NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
+- A rule file carries at most one pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
+- Not a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
 
 ## Machine constraints on the body
@@ -33,8 +33,8 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 
 ## Canonicals the body states no copy of
 
-- host: `core-outcome-record.md` → Result-selection criterion, Role → Allowed task_types (`review`) and the `qa_score` row · `GLASS_ATRIUM_GLOBAL_RULES.md` → Verified References (anchor by symbol).
-- slot 1: the emit-format block; `BUDGET_ANALYSIS_AGENTS` (read bounding, partial emit near the ceiling); `WIKI_UNTRUSTED_AGENTS` (raw-store data clause).
+- host: `core-outcome-record.md` → Result-selection criterion and Role → Allowed task_types (`review`) · `GLASS_ATRIUM_GLOBAL_RULES.md` → Verified References (anchor by symbol).
+- slot 1: the emit-format block; `BUDGET_ANALYSIS_AGENTS` (read bounding); `WIKI_UNTRUSTED_AGENTS` (raw-store data clause).
 - part slots: the `rules.scope` and `rules.shared` files of the reviewer's `agent-registry.json` row, whole.
 
 ## Decisions worth keeping
