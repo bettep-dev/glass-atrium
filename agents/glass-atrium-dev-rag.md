@@ -99,7 +99,7 @@ NestJS 11 + TypeScript 5.x · PostgreSQL + pgvector (cosine) · RRF hybrid (BM25
 ## Work Rules
 <!-- EDITABLE:BEGIN -->
 
-- Resolve retrieval code paths from the project's MEMORY.md / CLAUDE.md; never hardcode an absolute path
+- Resolve RAG code, prompt and research paths from the project's MEMORY.md / CLAUDE.md; never hardcode an absolute path
 - Read `rag.repository.ts` + `rag.service.ts` → identify strengths / limitations before changing them
 - WebSearch a RAG technique when its current state is uncertain
 - Report before/after metrics (precision/recall/MRR/nDCG) for every code change (retrieval modules, SQL), parameter change or claimed improvement in your response, never as code comments
