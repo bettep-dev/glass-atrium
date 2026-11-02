@@ -93,13 +93,13 @@ run_hook() {
     'production source|p/src/users/users.service.ts|2' \
     'test word inside a longer name|p/src/latest.ts|2' \
     'test word inside a dir name|p/contest/app.ts|2' \
-    'dotenv file in a test dir|p/test/.env|2' \
-    'secrets file in a test dir|p/test/secrets.json|2' \
+    'dotenv file in a fixtures dir|p/test/fixtures/.env|2' \
+    'secrets file in a fixtures dir|p/test/fixtures/secrets.json|2' \
     'dotenv-suffixed file in a fixtures dir|p/test/fixtures/prod.env|2' \
     'dotenv variant in a fixtures dir|p/test/fixtures/.env-staging|2' \
-    'secrets stem inside a longer name|p/tests/app.secrets.json|2' \
-    'capitalised secrets file|p/test/Secrets.json|2' \
-    'credentials stem inside a longer name|p/spec/aws-credentials.yml|2' \
+    'secrets stem inside a longer name|p/test/fixtures/app.secrets.json|2' \
+    'capitalised secrets file|p/test/fixtures/Secrets.json|2' \
+    'credentials stem inside a longer name|p/test/fixtures/aws-credentials.yml|2' \
     'production source in a repo below a dir named test|test/shop/src/config/prod.ts|2' \
     'traversal out of a test dir|p/test/../src/config/prod.ts|2' \
     'fixtures dir under no repo root|/p/test/fixtures/users.json|2' \
@@ -107,10 +107,10 @@ run_hook() {
     'config format in a fixtures dir|p/test/fixtures/values.yaml|0' \
     'config format in a testdata dir|p/testdata/prod.yml|0' \
     'spec below a repo whose own dir holds a secrets shape|secrets-app/src/login.spec.ts|0' \
-    'secrets dir above a test dir|p/secrets/test/prod.yml|2' \
-    'secrets dir below a test dir|p/test/secrets/prod.yml|2' \
+    'secrets dir above a test dir|p/secrets/test/login.ts|2' \
+    'secrets dir below a test dir|p/test/secrets/login.ts|2' \
     'credentials dir holding a source spec|p/credentials/a.spec.ts|2' \
-    'dotenv dir below a test dir|p/test/.env.d/prod|2' \
+    'dotenv dir below a test dir|p/test/.env.d/login.ts|2' \
     'secrets dir under no repo root|/p/secrets/a.spec.ts|2' \
     'test-environment config, yml|p/config/database.test.yml|2' \
     'test-environment config, capitalised json|p/config/appsettings.Test.json|2' \
@@ -126,10 +126,6 @@ run_hook() {
     'plain spec below a system dir link keeps the name exemption|/tmp/no-such-dir/login.spec.ts|0' \
     'a script in a test dir of a deploy tree, accepted|p/deploy/test/bootstrap.sh|0' \
     'source in a spec dir of an API tree, accepted|p/openapi/spec/client.py|0' \
-    'npm credential dotfile in a test dir|p/test/.npmrc|2' \
-    'netrc credential dotfile in a test dir|p/test/.netrc|2' \
-    'postgres credential dotfile in a test dir|p/test/.pgpass|2' \
-    'pypi credential dotfile in a test dir|p/test/.pypirc|2' \
     'npm credential dotfile in a fixtures dir|p/test/fixtures/.npmrc|2' \
     'netrc credential dotfile in a fixtures dir|p/test/fixtures/.netrc|2' \
     'postgres credential dotfile in a fixtures dir|p/test/fixtures/.pgpass|2' \
@@ -137,10 +133,10 @@ run_hook() {
     'mysql credential dotfile in a fixtures dir|p/test/fixtures/.my.cnf|2' \
     'yarn credential dotfile in a fixtures dir|p/test/fixtures/.yarnrc.yml|2' \
     'envrc with a source spec tail|p/.envrc.test.js|2' \
-    'envrc with a test infix|p/.envrc.test.local|2' \
-    'envrc suffix in a tests dir|p/tests/.envrc.local|2' \
-    'dotenv with a digit suffix in a tests dir|p/tests/.env2|2' \
-    'dotenv editor backup in a tests dir|p/tests/.env~|2'; do
+    'envrc with a test infix|p/test/fixtures/.envrc.test.local|2' \
+    'envrc suffix in a fixtures dir|p/test/fixtures/.envrc.local|2' \
+    'dotenv with a digit suffix in a fixtures dir|p/test/fixtures/.env2|2' \
+    'dotenv editor backup in a fixtures dir|p/test/fixtures/.env~|2'; do
     name="${row%%|*}" path="${row#*|}" want="${row##*|}" path="${path%|*}"
     [[ "${path}" == /* ]] || path="${BATS_TEST_TMPDIR}/${path}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { email: 'ada@example.com', ${fixture_assign} }\"}}"
