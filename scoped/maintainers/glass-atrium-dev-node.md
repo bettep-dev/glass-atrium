@@ -19,19 +19,20 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 ## `## Prohibitions` is not a required heading
 
 - `autoagent/autoagents-eval.sh` requires no body heading: its eval prompt states that body section headings are a ceiling, not a floor.
-- Its five checks are global-rules consistency, role boundaries, frontmatter name + description, `skills:` list shape, and English body.
-- `## Prohibitions` stays in this body only because it carries an item Guardrails does not.
-  - Once it carries none, delete the section rather than justify it.
+- Its checks are global-rules consistency, role boundaries, frontmatter name + description, `skills:` list shape, and English body.
+- The body has no `## Prohibitions`: every prohibition sits in `## Guardrails`, so do not re-add the section.
 
 ## What moved out of the body, and why
 
 - **Effort/thinking blockquote** — restated `GLASS_ATRIUM_GLOBAL_RULES.md` → Thinking Budget Policy, a Tier-1 rule that reaches every subagent; its `effort=high default` clause contradicts that section's parent-tier default.
-- **Self line budget** — a constraint on whoever edits the body, not a duty on a Node task. The body's length is carried almost entirely by the Guardrails list, so an addition should replace or merge rather than append.
+- **Self line budget** — a constraint on whoever edits the body, not a duty on a Node task. An addition should replace or merge rather than append.
 - **"Measurable pass conditions only (binding guardrail rules live in the Guardrails section)"** — framing for the editor, not a duty.
 - **The `acceptance_criteria.md` Guardrails bullet** — deleted together with the `scoped/scope-dev.md` → `## Sprint Contract Gate [DEV+QA]` branch it mirrored.
   - Ground: no `acceptance_criteria*` file exists in the tree, and a plan carries an acceptance-criteria section only on request (`scoped/scope-planning.md`; `rules/glass-atrium/core-outcome-record.md` → `metric_pass`, the `plan` bar).
   - In its place: the gate's table routes the DEV to the delegation's criteria or to its own turn-0 `Assumptions:` line, and the body keeps its feature-side duty ("MUST verify implementation against acceptance criteria (not just unit-test passage)").
-- **Guardrails items re-listed under Red Flags and Prohibitions** — both sections name Guardrails as the owner and list only what has no Guardrails entry, the shape `agents/glass-atrium-dev-shell.md` uses.
+- **Guardrails items re-listed under Red Flags and Prohibitions** — Red Flags lists only what has no Guardrails entry; the "unverified pattern" prohibition merged into the library-verification Guardrail.
+- **Success Criteria restating Guardrails or Work Rules** (`node:` prefix, sync fs, `Buffer()`, Zod, splice order) — one site each; the section keeps only the test bar and the schema fallback.
+- **Generic Error Recovery rows** (build, test, runtime; symptom-string and permission-denial restatements) — the rows obliged nothing beyond Guardrails and `scoped/shared-investigation-discipline.md`; domain rows stay.
 - **Restatements of rules the agent already receives** — do not re-add them:
 
   | Removed from the body | Canonical that reaches the agent |
@@ -40,7 +41,10 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
   | Guardrails Project Convention Probe bullet | `scoped/scope-dev.md` → Pre-Execution Verification → Project Convention Probe (`rules.scope`) |
   | Prohibitions "npm package added without an `npm audit` / provenance check" | `rules/glass-atrium/core-security.md` → Dependency Auditing (host) |
   | Comments & Logs clauses (why-only, TODO format, `console.*` ban, empty catch, log+rethrow) and the matching Red Flags | `scoped/shared-comment-logging.md` (`rules.shared`) |
-  | FINAL STEP emit-mode table, except the no-`completion_block` fallback, which stays in the body under the pointer line | `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation (host) plus the slot-1 emit-format block |
+  | FINAL STEP line and emit-mode table; only the no-`completion_block` fallback stays in Success Criteria | `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation (host) + the slot-1 emit-format block |
+  | Architecture SRP, dependency injection and "Avoid over-engineering" | `scoped/shared-code-structure.md` · `scoped/scope-dev.md` → `## Complexity Proportionality` |
+  | Dependencies "Check existing before adding" | `scoped/shared-search-first.md` → `## Principles` (`rules.shared`) |
+  | Pre-Execution **Paths** | `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Verified References` (host) |
 
 ## Decisions worth keeping
 
@@ -55,6 +59,6 @@ Five daemon-evolved EDITABLE lines were judged against this body plus the rules 
 |---|---|---|
 | "MUST default to `effort=medium` for routine implementations" | contradicts | a body line cannot set its spawn's tier; the `effort:` key or `agent()` option does (Thinking Budget Policy) |
 | "MUST consolidate tool exploration (Grep/Read results) into one exploratory pass" | unsupported | no outcome evidence it caused or cured anything |
-| "confirm all Grep/Read is complete and documented before first Write/Edit" | contradicts | injected BUDGET-DEV staging (1-2 files at a time, verify each) and the retry after a first failure both need reads mid-implementation |
+| "confirm all Grep/Read is complete and documented before first Write/Edit" | contradicts | injected BUDGET-DEV staging (1-2 files at a time, verify each) and the first-failure retry both need mid-work reads |
 | "MUST NOT perform secondary Grep/Read exploration on previously-examined targets" | contradicts | "1st failure → reformulate hypothesis + retry" needs re-tracing; post-edit re-reads verify work |
 | "On effort=medium qualification: straightforward literal edits/moves with known targets only" | contradicts | same effort conflict as the first row |
