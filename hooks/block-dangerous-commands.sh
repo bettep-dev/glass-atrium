@@ -11,14 +11,6 @@
 # Trash exception (rm-wipe row only): a command whose every rm deletes only single named entries directly in the
 # home Trash passes; the judge (lib/trash_rm.py) reads the text alone, and any parse doubt keeps the block.
 #
-# Echo exception (rm-wipe row only): rm text in a quoted argument of a print-only echo/printf is blanked before
-# the re-check. The judge (lib/echo_mask.py) blanks only what it proves prints: a call that is a whole pipeline
-# of its own, redirected at most to a stdout/stderr copy or /dev/null, a printf first argument provably no option (so
-# no printf -v, spelled or expanded), in a command whose every other simple command is one of a few inert names reading
-# no $name. Anything else it cannot classify keeps every text and the block: a heredoc, here-string, multi-line quote,
-# unquoted backslash, group or compound body, substitution, comment, any $ but $name / ${name}, or any other program,
-# since one could run the text or read it back from the shell.
-#
 # Confinement belongs to the tool-grant layer, not here. See plan clauded-docs/290 UD-1 (the blanket shell grant makes the config path-allowlists decorative).
 #
 # Constraints:
@@ -98,26 +90,15 @@ is_trash_only_rm() {
   fi
 }
 
-# The command with every quoted argument of a print-only echo/printf blanked, per the judge (lib/echo_mask.py);
-# a judge doubt or failure of any kind is the command itself. Args: $1=command text
-get_echo_masked() {
-  local masked
-  masked="$(python3 -I "${BASH_SOURCE%/*}/lib/echo_mask.py" <<<"${1}")" || masked=""
-  printf '%s' "${masked:-${1}}"
-}
-
-# First matching row name, empty when only a Trash-entry rm or print-only echo text matched. Args: $1=command text
+# First matching row name, empty when only a Trash-entry rm matched. Args: $1=command text
 get_matched_row() {
-  local row masked
+  local row
   for row in "${DANGEROUS_PATTERNS[@]}"; do
     # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
     if printf '%s' "${1}" | drain_after grep -qE "${row#*=}"; then
-      if [[ "${row%%=*}" == "rm-wipe" ]]; then
-        masked="$(get_echo_masked "${1}")"
-        # shellcheck disable=SC2310  # the reader's and the judge's status are the verdict
-        if ! printf '%s' "${masked}" | drain_after grep -qE "${RM_WIPE_PATTERN}" || is_trash_only_rm "${masked}"; then
-          continue
-        fi
+      # shellcheck disable=SC2310  # the judge's status is the verdict
+      if [[ "${row%%=*}" == "rm-wipe" ]] && is_trash_only_rm "${1}"; then
+        continue
       fi
       printf '%s' "${row%%=*}"
       return 0
