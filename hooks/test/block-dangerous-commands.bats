@@ -278,6 +278,7 @@ run_hook_command() {
     'printf with a later word shaped like -v@@printf "%s %s\n" -v "rm -rf ~"' # GA-RM[not-executed]: hook payload, never run
     'variable in a print-only echo@@echo "rm -rf ~" $USER' # GA-RM[not-executed]: hook payload, never run
     'echo to stderr@@echo "rm -rf ~ is blocked" >&2' # GA-RM[not-executed]: hook payload on stdin, never run
+    'echo discarded to the null device@@echo "rm -rf ~" > /dev/null' # GA-RM[not-executed]: hook payload, never run
     'echo beside a Trash delete@@echo "rm -rf ~"; rm -rf ~/.Trash/x' # GA-RM[not-executed]: hook payload, never run
     'parameter-expansion braces in an echo argument@@echo "rm -rf ${HOME} is blocked"' # GA-RM[not-executed]: hook payload, never run
     'compound keyword as a word of echo text@@echo "rm -rf ~/x, then retry"' # GA-RM[not-executed]: hook payload, never run
@@ -297,6 +298,7 @@ run_hook_command() {
     'echo piped to a shell@@echo "rm -rf ~" | sh' # GA-RM[not-executed]: hook payload on stdin, never run
     'echo inside a substitution eval runs@@eval "$(echo "rm -rf ~")"' # GA-RM[not-executed]: hook payload, never run
     'echo appended to a script file@@echo "rm -rf ~" >> run.sh' # GA-RM[not-executed]: hook payload on stdin, never run
+    'echo overwriting a script file@@echo "rm -rf ~" > run.sh' # GA-RM[not-executed]: hook payload on stdin, never run
     'a real wipe after an echo@@echo "cleaning"; rm -rf ~' # GA-RM[not-executed]: hook payload on stdin, never run
     'eval of a quoted string@@eval "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
     'inline shell string@@bash -c "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
@@ -312,6 +314,10 @@ run_hook_command() {
     'printf option from an unquoted variable@@printf $x y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
     'printf option behind a dash and a braced variable@@printf -${x} y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
     'printf option from a quoted variable@@printf "$x" y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
+    'first printf argument a glob, with no later reader@@printf ?v y "rm -rf ~"' # GA-RM[not-executed]: hook payload, never run
+    'first printf argument an unquoted variable, with no later reader@@printf $x y "rm -rf ~"' # GA-RM[not-executed]: hook payload, never run
+    'first printf argument a quoted variable, with no later reader@@printf "$x" y "rm -rf ~"' # GA-RM[not-executed]: hook payload, never run
+    'first printf argument a glob, read by a test with no expansion@@printf ?v y '\''\x24(rm -rf /)'\''; test -v '\''a[y]'\''' # GA-RM[not-executed]: hook payload, never run
     'inert rm taking echo text back from a shell read-back variable@@echo " rm -rf ~ "; rm -rf $BASH_EXECUTION_STRING' # GA-RM[not-executed]: hook payload, never run
     'inert command reading a variable the scan cannot know@@echo "rm -rf ~"; touch $history' # GA-RM[not-executed]: hook payload, never run
     $'escaped single quotes around a real wipe@@echo \\\'; rm -rf / ;\\\'' # GA-RM[not-executed]: hook payload on stdin, never run

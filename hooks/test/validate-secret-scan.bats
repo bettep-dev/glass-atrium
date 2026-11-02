@@ -114,6 +114,10 @@ run_hook() {
     'netrc credential dotfile in a test dir|p/test/.netrc|2' \
     'postgres credential dotfile in a test dir|p/test/.pgpass|2' \
     'pypi credential dotfile in a test dir|p/test/.pypirc|2' \
+    'npm credential dotfile in a fixtures dir|p/test/fixtures/.npmrc|2' \
+    'netrc credential dotfile in a fixtures dir|p/test/fixtures/.netrc|2' \
+    'postgres credential dotfile in a fixtures dir|p/test/fixtures/.pgpass|2' \
+    'pypi credential dotfile in a fixtures dir|p/test/fixtures/.pypirc|2' \
     'envrc with a source spec tail|p/.envrc.test.js|2' \
     'envrc with a test infix|p/.envrc.test.local|2' \
     'envrc suffix in a tests dir|p/tests/.envrc.local|2' \
