@@ -187,6 +187,18 @@ list_bashes() {
   [[ "${status}" -eq 2 ]] || { echo "1025 matches: status ${status}: ${output}"; return 1; }
 }
 
+# A level past the cap decides by itself: expanding the whole pattern at once would see only the empty final level.
+@test "a non-final glob level past the cap is judged protected though the final level is empty" {
+  local wide="${BATS_TEST_TMPDIR}/wide"
+  mkdir -p "${wide}"
+  seq -f "${wide}/d%04g" 1 1024 | xargs mkdir
+  run_agent "Edit ${wide}/*/nomatch*/.claude/y.md now." omit
+  [[ "${status}" -eq 0 ]] || { echo "1024 at the wide level: status ${status}: ${output}"; return 1; }
+  mkdir "${wide}/d1025"
+  run_agent "Edit ${wide}/*/nomatch*/.claude/y.md now." omit
+  [[ "${status}" -eq 2 ]] || { echo "1025 at the wide level: status ${status}: ${output}"; return 1; }
+}
+
 @test "the job tmp/ and progress-file exemptions hold only below a real id segment" {
   local row name prompt
   for row in \
@@ -358,6 +370,22 @@ assert_rows() {
     'a glob match whose real name holds .claude text|Persist ~/.claude/projects/*/memory/progress-a.md now.'
 }
 
+@test "a symlink below an exempt runtime-DATA entry voids the exemption, and a plain path keeps it" {
+  local home="${BATS_TEST_TMPDIR}/home"
+  mkdir -p "${home}/.claude/hooks" "${home}/.claude/projects/p" "${home}/.claude/jobs/a/tmp" "${home}/.claude/data"
+  ln -s "${home}/.claude/hooks" "${home}/.claude/projects/p/l"
+  ln -s ../../../hooks "${home}/.claude/jobs/a/tmp/l"
+  ln -s "${home}/.claude/hooks" "${home}/.claude/data/l"
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
+    'link in a project dir|Edit ~/.claude/projects/p/l/x.sh now.' \
+    'link in a job scratch dir|Edit ~/.claude/jobs/a/tmp/l/x.sh now.' \
+    'link directly in a data dir|Edit ~/.claude/data/l/x.sh now.' \
+    'the link itself|Rewrite ~/.claude/data/l now.'
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
+    'plain path in a project dir|Read ~/.claude/projects/p/x.jsonl now.' \
+    'plain path in a job scratch dir|Read ~/.claude/jobs/a/tmp/out.txt now.'
+}
+
 @test "a case or Unicode variant of the home blocks exactly when the filesystem resolves it to the home" {
   local base="${BATS_TEST_TMPDIR}/home" lower upper want=0
   lower="$(printf 'caf\303\251')"
@@ -413,7 +441,10 @@ assert_rows() {
     'never-write constraint on a bullet|- Never write under ~/.claude/ or any profile root.' \
     'do-not constraint on a branch root|Do not edit anything in ~/.claude-work.' \
     'must-not later in the clause|The agent must not touch ~/.claude/ at all.' \
-    'not-to before the action|Be careful not to edit ~/.claude/ here.'
+    'not-to before the action|Be careful not to edit ~/.claude/ here.' \
+    'constraint ending in a final dot on the slash|Never write under ~/.claude/.' \
+    'emphasis around the cue and verb|- **Never write** under ~/.claude/ at all.' \
+    'curly apostrophe in the cue|Don’t edit ~/.claude/ here.'
   assert_rows 2 \
     'reminder that negates forgetting|Don'\''t forget to copy the new hook into ~/.claude/ when done.' \
     'negation of needing to ask|No need to ask — cp build/settings.json ~/.claude/' \
@@ -425,7 +456,26 @@ assert_rows() {
     'negation after the root|Rewrite the hooks in ~/.claude/, not the repo.' \
     'same root also named outside the negation|Never write under ~/.claude/ now; edit ~/.claude/ instead.' \
     'negation in the sentence before|Never ask. Rewrite the hooks in ~/.claude/ now.' \
-    'brace of roots in a negated clause|Never write ~/{.claude,.claude-work}/ now.'
+    'brace of roots in a negated clause|Never write ~/{.claude,.claude-work}/ now.' \
+    'a second action joined by and|Do not edit the repo and cp build/settings.json ~/.claude/' \
+    'a second action joined by but|Do not edit the repo but rewrite the hooks in ~/.claude/ now' \
+    'a conditional cue with a then clause|If you cannot edit the repo then edit ~/.claude/ directly' \
+    'a second action behind an em dash|Never edit the repo — edit ~/.claude/ instead' \
+    'a second action behind a hyphen|Never edit the repo - edit ~/.claude/ instead' \
+    'a second action behind an arrow|Do not edit the repo -> write ~/.claude/' \
+    'a second action in parentheses|Never edit the repo (write ~/.claude/ instead)' \
+    'a second action joined without a space|Never write x;cp y ~/.claude/' \
+    'a cd into the root after a negated action|Do not edit the repo and cd ~/.claude/ && write settings.json there' \
+    'a copy into a branch root after a negated action|Do not edit the repo and copy settings.json into ~/.claude-work-dev/' \
+    'an inverting word before the root|Never write outside ~/.claude/' \
+    'a suggestion spelled why not|Why not copy the hook into ~/.claude/ now' \
+    'why not directly on the root|Why not write to ~/.claude/ now' \
+    'a double negative|You cannot not write to ~/.claude/ today.' \
+    'a noun reading of no with a later action|No change to the repo and copy the hook into ~/.claude/' \
+    'a noun reading of no with a later install|No update needed so install the plugin in ~/.claude/' \
+    'a noun reading of no directly on the root|No update to ~/.claude/ now.' \
+    'a path segment spelled like a cue|cp /never write ~/.claude/' \
+    'a non-negated root ending in a final dot|Rewrite the hooks in ~/.claude/.'
 }
 
 # CWD-relative arm: a relative token names the harness only when, read from $HOME, it reaches an entry

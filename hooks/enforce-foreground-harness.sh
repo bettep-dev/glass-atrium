@@ -29,11 +29,14 @@
 #   A `..` in the written path, or `.claude` text after the root, voids every exemption.
 #
 # Negated-mention exclusion: a token naming only a root (no entry inside it), every occurrence of which
-#   follows a bound negation cue in its clause, is a constraint, not a write target. A cue (never, not, no,
-#   don't, cannot, must not …) binds only when the next word, past any `to`, is an action verb ("never write",
-#   "not to edit"); "don't forget to copy" or "no need to ask" negates another verb, so it binds nothing.
-#   A clause ends at . ; : ! ? , or a line end. A file or dir inside the root still blocks; a word between
-#   the cue and its verb ("never ever write") leaves the cue unbound, so that mention blocks (fail-safe).
+#   a bound negation cue leads directly to, is a constraint, not a write target. A cue (never, not, don't,
+#   cannot, must not …) binds only when the next word, past any `to`, is an action verb ("never write", "not to
+#   edit"); "don't forget to copy" negates another verb, so it binds nothing. From the verb, only under, in, into,
+#   to, anything, any or the may stand before the token: any other word voids it ("never edit the repo and cp x
+#   ~/.claude/", "never write outside ~/.claude/"), since a later action in the clause would read as negated.
+#   Refused as cues: no (a determiner, "no change to"), why not (a suggestion), a cue right after a cue. A word
+#   between cue and verb ("never ever write") binds nothing, and . ; : ! ? , or a line end ends a binding, so the
+#   mention blocks (fail-safe). A file or dir inside the root still blocks.
 #
 # Resolution: the verdict follows what the filesystem says a path reaches, not how it is spelled.
 #   - Candidates: every token whose text, glob metacharacters and quotes removed, holds `.claude` in any
@@ -49,6 +52,9 @@
 #     fail-safe. A brace with neither is literal text.
 #   - A bare root word (relative, no `/` but a trailing one) is prose unless an action word, an option
 #     (a lone `-` is a list marker), a redirect or a joined `=`/`@`/`-x`/list position makes it an operand.
+#   - An exempt remainder is stat-walked too: a symlink below its runtime-DATA entry voids the exemption.
+#     Residual: a link the prompt itself plants (`ln -s ../../../hooks ~/.claude/jobs/a/tmp/l`, then an edit through
+#     it) is not on disk when this runs, and its target text holds no `.claude`, so that prompt passes.
 #   - A block names the candidate that triggered it.
 #   - Past 128 unique candidates the prompt is protected, fail-safe, with none of them walked.
 #   Not read as home: any other expansion — `${HOME:-}/`, `${HOME%/}/`, `$(echo ~)/`.
@@ -183,9 +189,11 @@ function split_word(w, f,    b, m, j, k, s, part, piece, joined) {
 BEGIN {
   quote_class = "[\"" sprintf("%c", 39) "\\\\]"
   verbs = " cd pushd popd ls cat cp mv rm rmdir mkdir touch ln tee chmod chown install find tar rsync sed awk vi vim nano code open source stat du head tail less grep git edit write update modify change delete remove create rewrite overwrite replace append patch move copy rename save "
+  cues = "^(never|not|nor|dont|cannot|cant|mustnt|shouldnt|wont)$"
 }
 {
   negated = cue_pending = 0
+  cue = ""
   n = split($0, words, /[[:space:]]+/)
   for (i = 1; i <= n; i++) {
     w = words[i]
@@ -194,16 +202,21 @@ BEGIN {
     prev = tolower(w)
     sub(/:$/, "", prev)
     probes = 0
-    # A cue binds only when the next word (past any `to`) is an action verb, then holds to the clause end:
-    # "dont forget to copy", "no need to ask" negate another verb. Quotes are dropped, so the cue reads dont.
+    # The negation holds across a closed word list only, so a later action in the clause never reads as negated.
+    # Whole words alone count, past emphasis or brackets: quotes and non-ASCII are dropped (the cue reads dont),
+    # a path segment spelled like a cue stays a path.
     in_negation = negated
+    before = cue
     cue = prev
-    gsub(/[^a-z]/, "", cue)
+    gsub(/[^ -~]/, "", cue)
+    gsub(/^[*_([]+|[]*_).,;:!?]+$/, "", cue)
+    if (cue !~ /^(under|in|into|to|anything|any|the)$/) negated = 0
+    # A cue binds only when the next word (past any `to`) is an action verb: "dont forget to copy" negates another.
     if (cue_pending && cue != "to") {
       if (index(verbs, " " cue " ")) negated = 1
       cue_pending = 0
     }
-    if (cue ~ /^(never|not|no|nor|dont|cannot|cant|mustnt|shouldnt|wont)$/) cue_pending = 1
+    if (cue ~ cues && before != "why" && before !~ cues) cue_pending = 1
     if (w ~ /[.;:!?,]$/) negated = cue_pending = 0
     if (!index(w, ".") || !has_root_text(w)) continue
     # A lone `-` word is a markdown list marker, not an option; `--` still ends options.
@@ -391,19 +404,15 @@ walk_up() {
 
 # The entered root's remainder against the exemptions. Exit 0 = needs the staged lane.
 needs_staged_lane() {
-  local first bare="${written}"
+  local first
   [[ "${opaque}" == true ]] && return 0
   while [[ "${remainder}" == /* || "${remainder}" == ./* ]]; do
     remainder="${remainder#/}" remainder="${remainder#./}"
   done
-  # The root itself: a bare relative root word in prose is a name, not an operand. A trailing slash
-  # names no file inside the root, so `.claude/` is the same bare word.
+  [[ "${remainder}" == . ]] && remainder=""
   if [[ -z "${remainder}" ]]; then
-    while [[ "${bare}" == */ ]]; do bare="${bare%/}"; done
-    [[ "${relative}" == true && "${bare}" != */* && "${flags}" != *c* ]] && return 1
-    # Named only in negated clauses ("never write under ~/.claude/") → a constraint, not a target.
-    [[ "${flags}" != *a* ]] && return 1
-    return 0
+    is_root_target
+    return
   fi
   # The `.claude`-text void reads written text: a glob match's remainder is a real name on disk.
   [[ "/${written}/" == */../* ]] && return 0
@@ -412,8 +421,33 @@ needs_staged_lane() {
   if [[ "${relative}" == true && ! -e "${root_dir}/${first}" && ! -L "${root_dir}/${first}" && "${config_entries}" != *" ${first} "* ]]; then
     return 1
   fi
-  exempt_entry "${first}" && return 1
+  exempt_entry "${first}" && ! has_link_below "${root_dir}/${first}" && return 1
   return 0
+}
+
+# The root itself: a bare relative root word in prose is a name, not an operand, and a trailing slash names no file
+# inside the root, so `.claude/` is the same bare word. Exit 0 = named as a target.
+is_root_target() {
+  local bare="${written}"
+  while [[ "${bare}" == */ ]]; do bare="${bare%/}"; done
+  [[ "${relative}" == true && "${bare}" != */* && "${flags}" != *c* ]] && return 1
+  # Named only in negated clauses ("never write under ~/.claude/") → a constraint, not a target.
+  [[ "${flags}" != *a* ]] && return 1
+  return 0
+}
+
+# Is a segment of the remainder, below its first one, a symlink? A link can leave the runtime-DATA dir, while the
+# entry itself may be a profile's own link onto a shared dir. Args: $1 = the entry's path. Exit 0 = a link.
+has_link_below() {
+  local seg walk_rest walk_p="${1}"
+  [[ "${remainder}" == */* ]] || return 1
+  walk_rest="${remainder#*/}"
+  while [[ -n "${walk_rest}" ]]; do
+    take_segment
+    walk_p="${walk_p%/}/${seg}"
+    [[ -L "${walk_p}" ]] && return 0
+  done
+  return 1
 }
 
 # BASENAME file, runtime-DATA subdir, or a progress checkpoint directly in a memory dir. Exit 0 = exempt.
@@ -473,7 +507,7 @@ glob_reaches_harness() {
   while [[ "${head}" == */* && "${head##*/}" != *[][*?]* ]]; do
     tail="${head##*/}${tail:+/${tail}}" head="${head%/*}"
   done
-  expand_glob_head "${head}" || return 0
+  set_glob_matches "${head}" || return 0
   glob_match=true
   for match in ${matches[@]+"${matches[@]}"}; do
     walk_p=/ walk_lex=/ walk_rest="${match#/}${tail:+/${tail}}"
@@ -485,7 +519,7 @@ glob_reaches_harness() {
 
 # Expand $1 below walk_p into matches one segment at a time: each level reads at most the 1024 dirs the
 # level before it kept, so the cost stays bounded at any depth. Exit 1 = a level passed 1024 paths.
-expand_glob_head() {
+set_glob_matches() {
   local rest="${1}" seg prefix
   local -a next
   matches=("${walk_p%/}")
