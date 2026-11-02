@@ -22,6 +22,9 @@
 #   CANNOT misconfigure a future session, so a bare reference (a text scan cannot tell READ from WRITE) is
 #   not blocked. The memory dir nests under projects/ and stays protected via a /memory/ segment guard,
 #   never leaking into memory writes; the rest of jobs/ (pins.json, a job's state.json) stays protected.
+#   A wildcard in the memory dir's place (`projects/<p>/memo*`, `projects/*/*`) counts as that dir, matched or not.
+#   Residual: a memory dir's parent (`projects`, `projects/<p>`, `projects/*`) stays exempt, since transcript reads name
+#   it and a text scan cannot tell them apart, so a recursive write or delete through that parent passes.
 #
 # Progress-file exclusion: a progress-*.md directly in a projects/<p>/memory/ dir is session-internal
 #   state every agent must checkpoint before its turn cap (GLASS_ATRIUM_GLOBAL_RULES.md → Cross-Session
@@ -41,8 +44,10 @@
 #     sentence end: "so", "but" or "the hook" void it, past a comma too.
 #   - A word opening or closing a quote ends the binding, so a quoted cue never reaches a token outside it.
 #   Anything else blocks, fail-safe. A file or dir inside the root still blocks.
-#   Residual: a cue past a word ending in a dot still opens a sentence ("cp a. never write ~/.claude/" names files
-#   spelled like the cue).
+#   A word or line ending in a backslash opens no clause and ends no sentence: the command runs on past it.
+#   Residual: a clause opener is read as prose, so these name files spelled like the cue and pass, though cp reports the
+#   missing sources and still copies the rest: a word ending in a dot or colon ("cp a. never write ~/.claude/",
+#   "cp a: never write ~/.claude/"), and a quote opening and closing inside words ('cp x"a. never wr"ite ~/.claude/').
 #
 # Resolution: the verdict follows what the filesystem says a path reaches, not how it is spelled.
 #   - Candidates: every token whose text, glob metacharacters and quotes removed, holds `.claude` in any
@@ -53,7 +58,8 @@
 #     root's, or a root-grammar name under the home, enters the root — so case, Unicode folding, `..`
 #     and symlinks resolve as the host filesystem resolves them. A file symlink is read with readlink.
 #   - A glob is expanded by bash pathname expansion (no execution), one segment at a time, each match
-#     walked, and its metacharacter-stripped spelling walked too; a level past 1024 paths is protected.
+#     walked, and its metacharacter-stripped spelling walked too; a level past 1024 paths is protected, and so is a
+#     prompt whose levels yield more than 16384 paths in all.
 #     A brace that bash would expand (`{a,b}`, `{a..b}`) cannot be expanded without eval → protected,
 #     fail-safe. A brace with neither is literal text.
 #   - A bare root word (relative, no `/` but a trailing one) is prose unless an action word, an option
@@ -61,8 +67,11 @@
 #   - An exempt remainder is stat-walked too: a symlink below its runtime-DATA entry voids the exemption.
 #   - Text a walk cannot read voids every exemption: a `..` in the written text or the remainder, or what can spell
 #     one or any other name once expanded: a `$`, a backtick pair glued to text, a dot-leading glob segment.
-#   - A `cd` or `pushd` into an exempt dir voids its exemption when the prompt also holds a `..` segment: the relative
-#     climb names no `.claude`, so it is no candidate. Residual: a cwd set any other way (`git -C`, a script).
+#     A `..` or such a segment voids the whole whitespace word, past any separator splitting it (`logs,/../x`).
+#   - A `cd` or `pushd` into an exempt dir voids its exemption when the prompt also holds a climb: a `..` segment past
+#     any shell or option boundary (`>..`, `=..`, `:..`, `-t..`), or a dot-leading segment that can spell one. It names no
+#     `.claude`, so it is no candidate. A cd reads past its options and any separator glued to it (`true;cd -P`).
+#     Residual: a cwd set any other way (`git -C`, a script).
 #     Residual: a link the prompt itself plants (`ln -s ../../../hooks ~/.claude/jobs/a/tmp/l`, then an edit through
 #     it) is not on disk when this runs, and its target text holds no `.claude`, so that prompt passes.
 #   - A block names the candidate that triggered it.
@@ -187,7 +196,7 @@ function has_glued_tick(w,    n, t, j) {
   return 0
 }
 function split_word(w, f,    b, m, j, k, s, part, piece, joined) {
-  if (has_glued_tick(w)) f = f "e"
+  if (has_glued_tick(w) || w ~ climb_re) f = f "e"
   while (match(w, /<[^<>]*>/))
     w = substr(w, 1, RSTART - 1) "\001" substr(w, RSTART + 1, RLENGTH - 2) "\002" substr(w, RSTART + RLENGTH)
   while (match(w, /\{[^{}]*,[^{}]*\}/)) {
@@ -227,7 +236,7 @@ function release(clean,    j, count) {
 function take_token(w, p, quoted,    f) {
   # A lone `-` word is a markdown list marker, not an option; `--` still ends options.
   f = (index(verbs, " " p " ") || (p ~ /^-/ && p != "-") || p ~ /[<>]$/) ? "c" : ""
-  if (p ~ /^[`(]*(cd|pushd)$/) f = f "cd"
+  if (after_cd) f = f "cd"
   if ((negated || held) && !quoted) {
     held_word[++held] = w
     held_flags[held] = f
@@ -250,13 +259,16 @@ function set_cue(w) {
   gsub(/[^ -~]/, "", cue)
   gsub(/^[*_([]+|[]*_).,;:!?]+$/, "", cue)
 }
-function read_word(w,    quoted, p, rooted) {
+function read_word(w,    quoted, escaped, p, rooted) {
+  # a lone backslash continues the command: no word for any state
+  if (w ~ /^\\+$/) return
   quoted = (w ~ quote_edge)
+  escaped = (w ~ /\\$/)
   gsub(quote_class, "", w)
   p = prev
   set_cue(w)
   probes = 0
-  if (w ~ /(^|[\/;&|(`])\.\.([\/;&|)`]|$)/) climbs = 1
+  if (w ~ climb_re) climbs = 1
   rooted = index(w, ".") && has_root_text(w)
   if (held && (quoted || !(rooted || index(after_token, " " cue " ")))) release(0)
   if (rooted) take_token(w, p, quoted)
@@ -266,11 +278,13 @@ function read_word(w,    quoted, p, rooted) {
     step_cue(cue)
   }
   if (!held && w ~ /,[]`*_)]*$/) drop_binding()
-  if (!quoted && w ~ /[.;:!?][]`*_)]*$/) {
-    release(1)
-    negated = 0
-    cue_state = "open"
-  }
+  if (!quoted && !escaped && w ~ /[.;:!?][]`*_)]*$/) open_clause()
+  after_cd = (tolower(w) ~ cd_word) || (after_cd && w ~ /^-/)
+}
+function open_clause() {
+  release(1)
+  negated = 0
+  cue_state = "open"
 }
 BEGIN {
   quote_class = "[\"" sprintf("%c", 39) "\\\\]"
@@ -280,18 +294,30 @@ BEGIN {
   leads = " please also you agent agents subagent subagents the this be careful "
   before_token = " under in into to anything any the "
   after_token = " at all here ever now or any profile root "
+  name_char = "A-Za-z0-9._~-"
+  # past a non-name char or an -x option: a `..` segment, or a dot then what can spell the second dot once expanded
+  # (a bracket opening on c spells the root itself)
+  climb_re = "(^-[A-Za-z0-9]|(^|[^" name_char "]))\\.(\\.([^" name_char "]|$)|[$`*?]|\\[[^cC])"
+  cd_word = "(^|[^" name_char "/])(cd|pushd)$"
 }
 {
-  negated = 0
-  cue_state = "open"
+  if (!continued) {
+    negated = 0
+    cue_state = "open"
+    after_cd = 0
+  }
   n = split($0, words, /[[:space:]]+/)
   for (i = 1; i <= n; i++) {
-    if (words[i] == "") prev = ""
-    else read_word(words[i])
+    if (words[i] != "") read_word(words[i])
+    else if (!continued) prev = ""
   }
-  release(1)
+  continued = ($0 ~ /\\$/)
+  if (!continued) release(1)
 }
-END { for (c in seen) print "x" seen[c] ((climbs && seen[c] ~ /d/) ? "e" : "") "\t" c }'
+END {
+  release(1)
+  for (c in seen) print "x" seen[c] ((climbs && seen[c] ~ /d/) ? "e" : "") "\t" c
+}'
 
 # Degraded extractor (awk failed): whitespace words with quotes dropped, split on the list separators,
 # every candidate in operand context. Builtins only; slower, so it runs only after an awk failure.
@@ -540,11 +566,23 @@ exempt_entry() {
       # The memory dir nests under projects/ → a /memory/ segment keeps it protected; `/…/` frames globs.
       case "/${remainder}/" in
         */memory/*) [[ "${remainder}" =~ ${progress_re} ]] ;;
-        *) return 0 ;;
+        *) ! has_memory_glob "${1}" ;;
       esac
       ;;
     *) return 1 ;;
   esac
+}
+
+# Is the segment in a memory dir's place, projects/<p>/<here>, a wildcard the name memory fits? Args: $1 = the entry.
+has_memory_glob() {
+  local seg walk_rest="${remainder#*/}" place=0
+  [[ "${1}" == projects ]] || return 1
+  while ((place < 2)) && [[ -n "${walk_rest}" ]]; do
+    take_segment
+    [[ -z "${seg}" || "${seg}" == . ]] || ((place += 1))
+  done
+  # shellcheck disable=SC2053  # the segment is the pattern
+  ((place == 2)) && [[ "${seg}" == *[][*?]* && memory == ${seg} ]]
 }
 
 # Walk one spelling from walk_p / walk_lex / walk_rest. Exit 0 = it reaches a protected path.
@@ -597,8 +635,9 @@ glob_reaches_harness() {
   return 1
 }
 
-# Expand $1 below walk_p into matches one segment at a time: each level reads at most the 1024 dirs the
-# level before it kept, so the cost stays bounded at any depth. Exit 1 = a level passed 1024 paths.
+# Expand $1 below walk_p into matches one segment at a time: each level reads at most the 1024 dirs the level before
+# it kept, and every path a level yields spends one budget for the whole prompt, since a literal segment keeps a wide
+# level alive at full cost. Exit 1 = a level passed 1024 paths, or the budget ran out.
 set_glob_matches() {
   local rest="${1}" seg prefix
   local -a next
@@ -612,20 +651,22 @@ set_glob_matches() {
     # shellcheck disable=SC2206  # pathname expansion is the point; word splitting is on newline only
     for prefix in ${matches[@]+"${matches[@]}"}; do next+=("${prefix}"/${seg}); done
     matches=(${next[@]+"${next[@]}"})
-    ((${#matches[@]} <= 1024)) || break
+    glob_spent=$((glob_spent + ${#matches[@]}))
+    ((${#matches[@]} <= 1024 && glob_spent <= glob_budget)) || break
   done
   shopt -u nullglob
-  ((${#matches[@]} <= 1024))
+  ((${#matches[@]} <= 1024 && glob_spent <= glob_budget))
 }
 
 # Glob metacharacters dropped from each segment; a segment of wildcards alone stays as one name, so
-# `projects/*/memory/progress-x.md` keeps its shape for the exemptions.
+# `projects/*/memory/progress-x.md` keeps its shape for the exemptions, and one the name memory fits stays as written.
 strip_globs() {
   local rest="${written}" seg bare out="" sep=""
   while :; do
     seg="${rest%%/*}"
     bare="${seg//[][*?]/}"
-    [[ -z "${bare}" ]] || seg="${bare}"
+    # shellcheck disable=SC2053  # the segment is the pattern
+    [[ -z "${bare}" || memory == ${seg} ]] || seg="${bare}"
     out="${out}${sep}${seg}" sep=/
     [[ "${rest}" == */* ]] || break
     rest="${rest#*/}"
@@ -637,11 +678,12 @@ strip_globs() {
 candidate_blocks() {
   [[ "${flags}" == *b* ]] && return 0
   spelled="${written}"
-  # Trailing prose punctuation or markdown emphasis is not part of the path; a dot run is kept.
+  # Trailing prose punctuation or emphasis is not part of the path; a dot run is kept. A final `*`, `?` or `]` stays:
+  # a wildcard until proven otherwise, and strip_globs drops it from emphasis that matches nothing.
   while :; do
     case "${written}" in
       */. | */.. | *..) break ;;
-      *[]?*_!.]) written="${written%?}" ;;
+      *[_!.]) written="${written%?}" ;;
       *) break ;;
     esac
   done
@@ -667,6 +709,8 @@ job_scratch_re='^jobs/[^/.][^/]*/tmp(/|$)'
 
 # nocasematch stays on: the lexical root and exemption tests fold case as the host filesystem does.
 glob_match=false
+readonly glob_budget=16384
+glob_spent=0
 for line in "${candidate_list[@]}"; do
   flags="${line%%$'\t'*}" written="${line#*$'\t'}"
   [[ -n "${written}" ]] || continue

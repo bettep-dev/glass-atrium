@@ -175,28 +175,85 @@ list_bashes() {
   done
 }
 
-# A glob is expanded level by level, so its cost stops growing with depth once a level passes the match cap.
-@test "a glob level matching more than 1024 paths is judged protected, and one at the cap is walked" {
+# A dir of $1 subdirs named d0001.. in BATS_TEST_TMPDIR/wide, for the glob cap rows.
+make_wide_dir() {
   local wide="${BATS_TEST_TMPDIR}/wide"
   mkdir -p "${wide}"
-  seq -f "${wide}/d%04g" 1 1024 | xargs mkdir
+  seq -f "${wide}/d%04g" 1 "$1" | xargs mkdir
+  printf '%s' "${wide}"
+}
+
+# The glob caps: each level holds at most 1024 paths, and every path a level yields spends one prompt-wide budget.
+@test "a glob level matching exactly 1024 paths is walked" {
+  local wide
+  wide="$(make_wide_dir 1024)"
   run_agent "Edit ${wide}/*/.claude/x.md now." omit
-  [[ "${status}" -eq 0 ]] || { echo "1024 matches: status ${status}: ${output}"; return 1; }
-  mkdir "${wide}/d1025"
+  [[ "${status}" -eq 0 ]] || { echo "status ${status}: ${output}"; return 1; }
+}
+
+@test "a glob level matching more than 1024 paths is judged protected" {
+  local wide
+  wide="$(make_wide_dir 1025)"
   run_agent "Edit ${wide}/*/.claude/x.md now." omit
-  [[ "${status}" -eq 2 ]] || { echo "1025 matches: status ${status}: ${output}"; return 1; }
+  [[ "${status}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
+}
+
+@test "a non-final glob level at the cap is walked though the final level is empty" {
+  local wide
+  wide="$(make_wide_dir 1024)"
+  run_agent "Edit ${wide}/*/nomatch*/.claude/y.md now." omit
+  [[ "${status}" -eq 0 ]] || { echo "status ${status}: ${output}"; return 1; }
 }
 
 # A level past the cap decides by itself: expanding the whole pattern at once would see only the empty final level.
 @test "a non-final glob level past the cap is judged protected though the final level is empty" {
-  local wide="${BATS_TEST_TMPDIR}/wide"
-  mkdir -p "${wide}"
-  seq -f "${wide}/d%04g" 1 1024 | xargs mkdir
+  local wide
+  wide="$(make_wide_dir 1025)"
   run_agent "Edit ${wide}/*/nomatch*/.claude/y.md now." omit
-  [[ "${status}" -eq 0 ]] || { echo "1024 at the wide level: status ${status}: ${output}"; return 1; }
-  mkdir "${wide}/d1025"
-  run_agent "Edit ${wide}/*/nomatch*/.claude/y.md now." omit
-  [[ "${status}" -eq 2 ]] || { echo "1025 at the wide level: status ${status}: ${output}"; return 1; }
+  [[ "${status}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
+}
+
+@test "a glob whose levels stay within the prompt-wide path budget is walked" {
+  local wide dots
+  wide="$(make_wide_dir 1024)"
+  dots="$(printf './%.0s' 1 2 3 4 5 6 7 8)"
+  run_agent "Edit ${wide}/*/${dots}*/.claude/x.md now." omit
+  [[ "${status}" -eq 0 ]] || { echo "status ${status}: ${output}"; return 1; }
+}
+
+# Literal segments keep every path of a level alive, so depth alone would multiply the cost of a wide level.
+@test "a glob whose levels spend past the prompt-wide path budget is judged protected" {
+  local wide dots
+  wide="$(make_wide_dir 1024)"
+  dots="$(printf './%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24)"
+  run_agent "Edit ${wide}/*/${dots}*/.claude/x.md now." omit
+  [[ "${status}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
+}
+
+# The memory dir's place below projects/: a wildcard able to match that name counts as the memory dir.
+@test "a wildcard in the memory dir's place blocks whether or not it matches on disk" {
+  local home="${BATS_TEST_TMPDIR}/home"
+  mkdir -p "${home}/.claude/projects/p/memory" "${home}/.claude/projects/q"
+  : >"${home}/.claude/projects/q/sess.jsonl"
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
+    'final star that matches the memory dir|Delete ~/.claude/projects/p/memo* now' \
+    'final star at the very end of the prompt|Delete ~/.claude/projects/p/memo*' \
+    'final star with no match on disk|Delete ~/.claude/projects/q/memo*' \
+    'final wildcard pair across projects|Delete ~/.claude/projects/*/*' \
+    'bracket then star under an absent project|Delete ~/.claude/projects/x/memo[r]*' \
+    'final one-character wildcard|Delete ~/.claude/projects/x/memor?' \
+    'final star ahead of a sentence dot|Delete ~/.claude/projects/x/memo*.' \
+    'a wildcard above a memory file|Edit ~/.claude/projects/x/mem*/MEMORY.md now' \
+    'a wildcard above a progress name|Edit ~/.claude/projects/x/mem*/progress-a.md now' \
+    'an upper-case wildcard|Delete ~/.claude/projects/x/MEMO*' \
+    'a doubled slash ahead of the project|Delete ~/.claude/projects//x/memo*' \
+    'a dot segment ahead of the project|Delete ~/.claude/projects/./x/memo*'
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
+    'a transcript glob that cannot match the memory dir|Read ~/.claude/projects/q/*.jsonl now.' \
+    'a final star on a name that cannot match the memory dir|Read ~/.claude/projects/q/sess*' \
+    'a final star in a runtime dir with no memory dir|Read ~/.claude/logs/daemon*' \
+    'a question ending on a transcript|Is it ~/.claude/projects/q/sess.jsonl?' \
+    'a closing bracket after a log path|See [the log ~/.claude/logs/daemon.log] now.'
 }
 
 @test "the job tmp/ and progress-file exemptions hold only below a real id segment" {
@@ -219,7 +276,13 @@ list_bashes() {
   for row in \
     'projects traversal|Write ~/.claude/projects/../agents/x.md now.' \
     'data traversal|Write ~/.claude/data/../settings.json now.' \
-    'BASENAME traversal|Write ~/.claude/CLAUDE.md/../hooks/x.sh now.'; do
+    'BASENAME traversal|Write ~/.claude/CLAUDE.md/../hooks/x.sh now.' \
+    'traversal behind a comma|Write ~/.claude/logs,/../settings.json now.' \
+    'traversal behind a colon|Write ~/.claude/logs:/../settings.json now.' \
+    'traversal behind a redirect|Write ~/.claude/logs>/../settings.json now.' \
+    'traversal behind a comma after a progress file|Write ~/.claude/projects/x/memory/progress-a.md,/../MEMORY.md now.' \
+    'dot-leading glob behind a comma|Write ~/.claude/logs,/.*/settings.json now.' \
+    'unset variable between dots behind a comma|Write ~/.claude/logs,/.$x./settings.json now.'; do
     IFS='|' read -r name prompt <<<"${row}"
     run_agent "${prompt}" omit
     [[ "${status}" -eq 2 ]] || {
@@ -422,9 +485,29 @@ assert_rows() {
     'cd into runtime data, then a relative climb|cd ~/.claude/logs && cp /tmp/x ../settings.json' \
     'pushd, then a relative climb|pushd ~/.claude/logs && cp /tmp/x ../settings.json' \
     'cd in a subshell, then a relative climb|(cd ~/.claude/logs; cp /tmp/x ../settings.json)' \
-    'cd, then a bare climb|cd ~/.claude/logs && cd .. && edit settings.json'
+    'cd, then a bare climb|cd ~/.claude/logs && cd .. && edit settings.json' \
+    'a climb glued to a redirect|cd ~/.claude/logs && echo x >../settings.json' \
+    'a climb glued to an option value|cd ~/.claude/logs && cp --target-directory=.. /tmp/x' \
+    'a climb glued to a short option|cd ~/.claude/logs && cp -t.. /tmp/x' \
+    'a climb in an output operand|cd ~/.claude/logs && dd of=../settings.json' \
+    'a climb behind a colon|cd ~/.claude/logs && rsync /tmp/x host:../settings.json' \
+    'a climb behind a comma|cd ~/.claude/logs && tool --files=a,../settings.json' \
+    'a climb behind an at sign|cd ~/.claude/logs && curl -o x @../settings.json' \
+    'a climb spelled by an unset variable|cd ~/.claude/logs && cp /tmp/x .$y./settings.json' \
+    'a climb spelled by a dot-leading glob|cd ~/.claude/logs && cp /tmp/x .*/settings.json' \
+    'cd past a physical option|cd -P ~/.claude/logs && cp /tmp/x ../settings.json' \
+    'cd past a logical option|cd -L ~/.claude/logs && cp /tmp/x ../settings.json' \
+    'cd past the end of options|cd -- ~/.claude/logs && cp /tmp/x ../settings.json' \
+    'cd past two options|cd -P -- ~/.claude/logs && cp /tmp/x ../settings.json' \
+    'pushd past its option|pushd -n ~/.claude/logs && cp /tmp/x ../settings.json' \
+    'cd glued to a semicolon|true;cd ~/.claude/logs; cp /tmp/x ../settings.json' \
+    'cd glued to ampersands|true&&cd ~/.claude/logs && cp /tmp/x ../settings.json' \
+    'cd glued to ampersands behind a space|true &&cd ~/.claude/logs && cp /tmp/x ../settings.json' \
+    'cd in a command substitution|$(cd ~/.claude/logs && cp /tmp/x ../settings.json)'
   assert_rows 0 \
     'cd with no climb|cd ~/.claude/logs && tail daemon.log' \
+    'cd past an option with no climb|cd -P ~/.claude/logs && tail daemon.log' \
+    'dotted words that are no climb|cd ~/.claude/logs && tail ..hidden x..y ... daemon.log' \
     'a climb with no cd into the exempt dir|Read ~/.claude/logs/daemon.log and ../repo/x.md now.' \
     'a cd elsewhere beside an exempt path|cd /tmp/repo && cat ../x && tail ~/.claude/logs/daemon.log'
 }
@@ -557,9 +640,43 @@ assert_rows() {
     'a sentence end inside a quote|cp "a b. never write" ~/.claude/' \
     'a root inside the quote with a word after it|"x. never write to ~/.claude/ y"' \
     'a quoted root in a negated clause|Never write under "~/.claude/".' \
-    'a quoted word after the root|Never write to ~/.claude/ "now"'
+    'a quoted word after the root|Never write to ~/.claude/ "now"' \
+    'a cue on forgetting directly before the root|Don'\''t forget ~/.claude/' \
+    'a cue on skipping directly before the root|Never skip ~/.claude/' \
+    'a cue on ignoring directly before the root|Do not ignore ~/.claude/' \
+    'a cue on minding, with only after-token words|Never mind ~/.claude/ at all' \
+    'an auxiliary with no negation|You must always write to ~/.claude/' \
+    'should with no negation|Should just copy into ~/.claude/' \
+    'do with no negation|Please do also write to ~/.claude/' \
+    'a sentence end between the verb and the root|Never write. ~/.claude/' \
+    'a label end between the verb and the root|Do not edit: ~/.claude/' \
+    'a quoted word holding a sentence end opens no clause|"x." never write ~/.claude/' \
+    'a quoted cp operand holding a sentence end opens no clause|cp s.json "x." never write ~/.claude/' \
+    'a comma between the cue and the verb|Never, write ~/.claude/' \
+    'a comma between the verb and the root|Never write, under ~/.claude/'
   # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   assert_rows 2 'a quoted cue before the root of a recursive delete|rm -rf "never rm" ~/.claude/'
+}
+
+@test "a backslash ending a word or line opens no clause and ends no sentence" {
+  local row name want prompt
+  for row in \
+    $'a continued line|2|cp settings.json \\\nnever write ~/.claude/' \
+    'escaped spaces after a dotted word|2|cp s.json a.\ never\ write ~/.claude/' \
+    $'a negated clause continued onto its root|0|Never write \\\nunder ~/.claude/.'; do
+    name="${row%%|*}" row="${row#*|}"
+    want="${row%%|*}" prompt="${row#*|}"
+    run_agent "${prompt}" omit
+    [[ "${status}" -eq "${want}" ]] || {
+      echo "row: ${name} · want ${want} · status ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "a cd continued onto its operand line still counts as a cd" {
+  run_agent $'cd \\\n  ~/.claude/logs && cp /tmp/x ../settings.json' omit
+  [[ "${status}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
 }
 
 # CWD-relative arm: a relative token names the harness only when, read from $HOME, it reaches an entry
