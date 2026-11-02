@@ -110,7 +110,9 @@ list_bashes() {
     'projects/ transcript|Analyze ~/.claude/projects/-Users-x/session.jsonl (read-only).' \
     'logs/|Tail ~/.claude/logs/daemon.log.' \
     "absolute-home data/|Read ${HOME}/.claude/data/learning-log.md for prior lessons." \
-    'CWD-relative data/|From the repo root, read .claude/data/session-spawns/latest.json.'; do
+    'CWD-relative data/|From the repo root, read .claude/data/session-spawns/latest.json.' \
+    'job tmp/ scratch on the base root|Read ~/.claude/jobs/25a65a54/tmp/out.txt.' \
+    'job tmp/ scratch on a profile branch|Look at ~/.claude-work/jobs/64546714/tmp/clear-x.png for the capture.'; do
     IFS='|' read -r name prompt <<<"${row}"
     run_agent "${prompt}" omit
     [[ "${status}" -eq 0 ]] || {
