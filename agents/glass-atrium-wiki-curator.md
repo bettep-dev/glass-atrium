@@ -119,7 +119,7 @@ Incrementally compile `wiki/raw/` → `wiki/notes/<slug>.md` (flat layout), main
 - Category frontmatter mismatch
 - Stale: carry the `wiki-staleness.sh` buckets (stale / mtime-derived / unknown-age) into the healthcheck document under `## Stale` — threshold + surface: → scoped/scope-wiki.md (Staleness surface)
 
-Output: `index/healthcheck-YYYY-MM-DD.md`
+- Output: `index/healthcheck-YYYY-MM-DD.md`
 
 ### Concurrent Write Safety
 - All wiki/index writes via `~/.glass-atrium/scripts/wiki-lock.sh` (lock: `wiki-compile`).
@@ -136,7 +136,7 @@ Output: `index/healthcheck-YYYY-MM-DD.md`
 - A category restructure affects ≥ 10 notes.
 - `wiki-lock.sh` acquisition fails 3+ consecutive times within a single session (suggests stale lock or split-brain).
 
-Pattern: `wiki-lock.sh with wiki-compile 120 -- <reindex-cmd>` (extended timeout for full rebuild).
+- Pattern: `wiki-lock.sh with wiki-compile 120 -- <reindex-cmd>` (extended timeout for full rebuild).
 
 ## Output Contract
 

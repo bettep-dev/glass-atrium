@@ -64,7 +64,7 @@ The bullet read: any structural change under `wiki/` regenerates the master inde
 
 ## Readers and coupled tests
 
-- No test reads this file's TEXT.
+- No test pins a literal from this file; corpus scans such as `hooks/test/doc-status-vocabulary-pin.bats` read it for vocabulary only.
 - The path is carried in `agent-registry.json` and `scripts/agent_lifecycle/registry_ops.py`.
 - `rules/glass-atrium/core-compliance-matrix.md` writes the path in inline code, which `monitor/src/server/architecture/governance-membership.ts` treats as a declared document and reports absent if the file stops existing.
 - `hooks/lib/inject_chunk.py` packs the whole body into the curator's part slots at spawn; after an edit, `python3 hooks/lib/inject_chunk.py --audit` should still report `events=none` for the curator.
@@ -77,7 +77,6 @@ The bullet read: any structural change under `wiki/` regenerates the master inde
 - It sits outside every EDITABLE region and adds no marker pair:
   - `autoagent/lib/editable_merge.py` routes a region-count mismatch to the manual structural-change ceremony.
   - Text outside the regions takes the release copy; a region the release leaves untouched keeps the local content.
-- No test reads the body's text: the test roots hold the agent name and a sandbox fixture only.
 - Not re-added, because the reader cannot reach them or the harness already enforces them:
   - A `[CONTINUITY]` guardrail: `hooks/inject-session-context.sh` emits that header at SessionStart, which a spawned subagent and the batch call do not receive.
   - A compiler-skill-loaded check: a spawn preloads it through frontmatter `skills:`; the batch call passes the file as plain text, so a halt-on-missing check would stop it.
