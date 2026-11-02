@@ -41,7 +41,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 | `manifest.json` | the path and its hash |
 | `monitor/src/server/architecture/governance-membership.ts` → `getMembershipAt` | the matrix's inline-code paths, on the install tree — on a break, the matrix path reports absent |
 
-- **No test or hook pins the rule file's text**: a bare grep of its path, headings and bolded leads outside `scoped/`, `agents/`, `rules/` and `skills/` hits only `scripts/agent_lifecycle/registry_ops.py`, `agent-registry.json` and `manifest.json`.
+- **No test or hook pins the rule file's text**: a bare grep of its path, headings and bolded leads (the generic `Scope` excluded) outside `scoped/`, `agents/`, `rules/` and `skills/` hits only `scripts/agent_lifecycle/registry_ops.py`, `agent-registry.json` and `manifest.json`.
 - A rename also edits every corpus site naming the path (bare grep `shared-authoring-hygiene`).
 - **The registry states the same membership as the matrix, and the two are edited together**: `SCOPE_SHARED_RULE_FILES` (`META`, `PLANNING`, `REPORT`) and each member agent's `rules.shared` cite the path.
   - A matrix row whose registry counterpart is missing declares a membership no row cites.
