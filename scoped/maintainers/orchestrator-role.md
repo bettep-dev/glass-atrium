@@ -143,6 +143,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 - Each keeps its binding lines in the rule file; the detail sits in `skills/glass-atrium-ops-delegation-contracts/references/decision-phase-probes.md` and `references/scan-provenance.md`. The split: that skill's `SKILL.md` → Reference Index.
 - The closed lexicon's recall is unknown: its quantifier group was pruned against a single incident, so a hook reading the list stays advisory until a false-positive record justifies promotion.
+  - Such a hook takes its literals from the rule file's list, cross-read at review, never from a second maintained copy.
 
 ### `#### Entry classification (DEV delegations)`
 
@@ -165,7 +166,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - The hooks quote only the gate heading (`hooks/enforce-verification-gate.sh` reviewer-miss reason, `hooks/enforce-workflow-verify-stage.sh` DEV hard-gate block), which stays.
   - `#### Backstop asymmetry (manual vs. ultracode)` stays as a pointer: `references/ultracode-declaration-contract.md` cites it.
 - The reference's cited `##` headings, text and level fixed: `scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Cited headings**.
-  - Citers naming the `##` level: `scoped/maintainers/scope-qa.md` (two Team-composition citations) and `references/scan-provenance.md` → `## Premise register — detail`.
+  - Citer naming the `##` level: `scoped/maintainers/scope-qa.md` (two Team-composition citations).
 - Location-only citer that stays: `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` → the Stage 2 bullet names the gate heading for team composition, DEV hard gate, activation scope and direction-not-completeness. The pointer keeps all four.
   - Its **Stage-2 revision/escalation** bullet names the same heading for the escalation path; the pointer's **Revision + escalation** carries that path and its path-only limit.
 - No dev-* or reviewer body mirrors `scoped/scope-qa.md` or `scoped/scope-dev.md`.
