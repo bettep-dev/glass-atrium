@@ -9,7 +9,7 @@
     - `bundles` = how many PRIMARY categories this delegation packs.
     - `tool_uses~=N` = the orchestrator's rough pre-spawn tool_use estimate.
   - Placement: `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size` → Attestation-token placement.
-  - **Honesty framing** — why the pointer site rounds a borderline count up: an under-estimate is the dangerous error, masking an oversized delegation past the split triggers; an over-estimate is the safe error.
+  - **Honesty framing** — why the file-head **Pointer site** rounds a borderline count up: an under-estimate is the dangerous error, masking an oversized delegation past the split triggers; an over-estimate is the safe error.
     - It covers `bundles`/`tool_uses` here and `reads~`/`fields` at an analysis-mode spawn (`## Analysis-mode token`).
   - Enforcement — both paths block a DEV spawn missing the token:
     - manual: `enforce-verification-gate.sh` reads it from `.tool_input.prompt`, guarded by `hook_is_subagent` so it fires on orchestrator-origin spawns only;
@@ -43,9 +43,12 @@
 
 - **One-agent-budget sizing**: an over-packed delegation truncates — the sub-agent runs out of budget mid-work and emits no `[COMPLETION]`.
   - The cause is per-delegation size, not the number of workflow stages.
-- **DEV-mode split shape**: order each kept implementation+tests unit tests-first; peel off run-full-suite / report-consolidation.
+- **DEV-mode split shape**: order each kept implementation+tests unit tests-first.
+  - Peel off run-full-suite / report-consolidation.
   - Worked (≈ figures illustrative): 4-category request → A = implement + its new tests (≈25 tool_uses) → orchestrator cheap-verify → B = full-suite + report (≈15).
-  - Each is ≤2 bundles and under the HARD SECONDARY ceiling; never split B finer (the pointer site's **COUNTER-CAVEAT (over-fragmentation)**).
+  - Each is ≤2 bundles and under the HARD SECONDARY ceiling.
+  - Never split B finer: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Delegation-size discipline` → **COUNTER-CAVEAT (over-fragmentation)**.
+    - Why: each extra spawn re-tokenizes the system prompt, tool schemas and handoff, inflating session cost.
 - **HARD SECONDARY**: it closes the single-giant-implement-bundle hole that the bundle count alone leaves open.
 - **Subagent-side runtime complement**: this orchestrator-side split is the primary guard, and it is honor-system; the subagent's own turn meter and tool-use advisory only make its threshold visible.
 
