@@ -70,7 +70,7 @@ Code-implementation essentials:
 - **Layout**: MUST NOT use identical rounded-lg card grids · predictable 3-column equal distribution · center-everything with identical padding (Vibe-Coding)
 - **Shadows**: MUST NOT apply the same shadow to all elements → differentiate by z-depth
   - MUST NOT stack blur+gradient+shadow on a single element (glassmorphism overuse)
-- **Spacing**: all padding/margin = multiples of 8 (8px rhythm)
+- **Spacing**: all padding/margin MUST be multiples of 8 (8px rhythm)
 
 ### Design Token 3-Tier System
 
