@@ -17,7 +17,7 @@ Maintainer-facing material for that rule file. Nothing here binds a pipeline aut
 
 ## Readers and coupled tests
 
-- No code reads the rule file's text.
+- No code reads the rule file's body specifically; `scripts/test/startup-budget.bats` → `has_paths_key` reads its `paths:` key, so removing the key pulls the file into the startup budget.
 - Its path is pinned in `registry_ops.py` → `_HYGIENE_CONDITION`, exact-equality pinned by `scripts/test/test_agent_lifecycle_overhaul.py`, and used as a fixture path by `hooks/test/inject-scope-chunker.bats`.
 - Cited by name in code comments and other files — grep the corpus before renaming or rewording one:
   - `## Precondition Loud-Fail Principle` — comments across the repository, `agents/glass-atrium-dev-python.md` and `scoped/shared-hook-capability-contract.md`.
