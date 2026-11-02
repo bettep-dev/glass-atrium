@@ -73,25 +73,55 @@ NAMES_EN=(
 )
 
 # Status 0 → a test or fixture file, where a generic credential assignment is test data (a spec's login
-# password), not a credential; a basename of a SECRETS_FILE shape, in any case, stays a secrets file there.
-# A fixture dir is read below the file's repo root only; under no repo root the basename alone decides.
+# password), not a credential. Read below the file's repo root; under no repo root no dir counts as a fixture.
+# A config or data format qualifies only through a fixture dir: database.test.yml or k8s/test/values.yaml deploys.
 # Args: $1=file path
 is_test_fixture_path() {
-  local base below
-  base="$(printf '%s' "${1##*/}" | tr '[:upper:]' '[:lower:]')"
+  local below
+  # a `..` can leave any dir the spelling names
+  [[ "/${1}/" == */../* ]] && return 1
+  # shellcheck disable=SC2310  # no repo root is an answer: the whole path is read, and no dir is a fixture
+  below="$(get_project_relative_path "${1}")" || below=""
+  # shellcheck disable=SC2310  # the predicate's status is the verdict
+  has_secret_shape "${below:-${1}}" && return 1
+  case "/${below}" in
+    */fixtures/* | */__fixtures__/* | */testdata/*) return 0 ;;
+    *) is_source_test_file "${1##*/}" "${below}" ;;
+  esac
+}
+
+# Status 0 → source code or a test script, named as a test or below a test dir. Args: $1=basename $2=path below the root
+is_source_test_file() {
+  local base
+  base="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"
+  # shellcheck disable=SC2310  # the predicate's status is the verdict
+  has_source_extension "${base}" || return 1
   case "${base}" in
-    *.env | *.env[._-]* | *.envrc | *secret* | *credential*) return 1 ;;
     *.test.* | *.spec.* | *_test.* | *_spec.* | test_*.py | *.bats) return 0 ;;
     *) ;;
   esac
-  # a dir named test/ or spec/ above the project, or one a `..` leaves, makes no file a fixture
-  [[ "/${1}/" == */../* ]] && return 1
-  # shellcheck disable=SC2310  # its status is the verdict: no repo root → not a fixture
-  below="$(get_project_relative_path "${1}")" || return 1
-  case "/${below}" in
-    */test/* | */tests/* | */__tests__/* | */spec/* | */fixtures/* | */__fixtures__/* | */testdata/*) return 0 ;;
+  case "/${2}" in
+    */test/* | */tests/* | */__tests__/* | */spec/*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# Status 0 → a segment, in any case, of a SECRETS_FILE shape (as wide as that end-unanchored fragment) or a credential
+# dotfile. Args: $1=path
+has_secret_shape() {
+  local lowered
+  lowered="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"
+  case "${lowered}" in
+    *.env* | *secret* | *credential* | *.npmrc* | *.netrc* | *.pgpass* | *.pypirc*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Status 0 → the name ends in a source-code or test-script extension. Args: $1=lowercased basename
+has_source_extension() {
+  local extensions=' ts tsx mts cts js jsx mjs cjs py rb go rs java kt kts swift scala groovy php cs c h cc cpp m mm '
+  extensions+='sh bash zsh bats dart lua ex exs vue svelte '
+  [[ "${1}" == *.* && "${extensions}" == *" ${1##*.} "* ]]
 }
 
 # The path below its nearest ancestor holding .git (a repo or worktree root); a relative path as written.

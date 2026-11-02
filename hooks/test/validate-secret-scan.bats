@@ -70,8 +70,9 @@ run_hook() {
 
 @test "Write channel: a generic credential assignment passes only in a test-fixture file and blocks with SEC-013 elsewhere" {
   local fixture_assign row name path want
-  # p/ and test/shop/ are repo roots; test/shop/ sits inside a dir named test above its own root
-  mkdir -p "${BATS_TEST_TMPDIR}/p/.git" "${BATS_TEST_TMPDIR}/test/shop/.git"
+  # p/ and test/shop/ are repo roots; test/shop/ sits inside a dir named test above its own root, secrets-app/ holds a
+  # secrets shape above its own root
+  mkdir -p "${BATS_TEST_TMPDIR}/p/.git" "${BATS_TEST_TMPDIR}/test/shop/.git" "${BATS_TEST_TMPDIR}/secrets-app/.git"
   fixture_assign="password"
   fixture_assign="${fixture_assign}: 'correct-horse-battery'"
   for row in \
@@ -93,7 +94,31 @@ run_hook() {
     'credentials stem inside a longer name|p/spec/aws-credentials.yml|2' \
     'production source in a repo below a dir named test|test/shop/src/config/prod.ts|2' \
     'traversal out of a test dir|p/test/../src/config/prod.ts|2' \
-    'fixtures dir under no repo root|/p/test/fixtures/users.json|2'; do
+    'fixtures dir under no repo root|/p/test/fixtures/users.json|2' \
+    'shell test script in a tests dir|p/tests/login.sh|0' \
+    'config format in a fixtures dir|p/test/fixtures/values.yaml|0' \
+    'config format in a testdata dir|p/testdata/prod.yml|0' \
+    'spec below a repo whose own dir holds a secrets shape|secrets-app/src/login.spec.ts|0' \
+    'secrets dir above a test dir|p/secrets/test/prod.yml|2' \
+    'secrets dir below a test dir|p/test/secrets/prod.yml|2' \
+    'credentials dir holding a source spec|p/credentials/a.spec.ts|2' \
+    'dotenv dir below a test dir|p/test/.env.d/prod|2' \
+    'secrets dir under no repo root|/p/secrets/a.spec.ts|2' \
+    'test-environment config, yml|p/config/database.test.yml|2' \
+    'test-environment config, capitalised json|p/config/appsettings.Test.json|2' \
+    'spec-named deploy config|p/deploy/service.spec.yaml|2' \
+    'test-named conf under no repo root|/p/prod.test.conf|2' \
+    'config format in a deploy spec dir|p/deploy/spec/prod.yaml|2' \
+    'config format in a k8s test dir|p/k8s/test/values.yaml|2' \
+    'npm credential dotfile in a test dir|p/test/.npmrc|2' \
+    'netrc credential dotfile in a test dir|p/test/.netrc|2' \
+    'postgres credential dotfile in a test dir|p/test/.pgpass|2' \
+    'pypi credential dotfile in a test dir|p/test/.pypirc|2' \
+    'envrc with a source spec tail|p/.envrc.test.js|2' \
+    'envrc with a test infix|p/.envrc.test.local|2' \
+    'envrc suffix in a tests dir|p/tests/.envrc.local|2' \
+    'dotenv with a digit suffix in a tests dir|p/tests/.env2|2' \
+    'dotenv editor backup in a tests dir|p/tests/.env~|2'; do
     name="${row%%|*}" path="${row#*|}" want="${row##*|}" path="${path%|*}"
     [[ "${path}" == /* ]] || path="${BATS_TEST_TMPDIR}/${path}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { email: 'ada@example.com', ${fixture_assign} }\"}}"
