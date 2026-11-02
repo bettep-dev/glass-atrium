@@ -136,12 +136,79 @@ run_hook() {
     'envrc with a test infix|p/test/fixtures/.envrc.test.local|2' \
     'envrc suffix in a fixtures dir|p/test/fixtures/.envrc.local|2' \
     'dotenv with a digit suffix in a fixtures dir|p/test/fixtures/.env2|2' \
-    'dotenv editor backup in a fixtures dir|p/test/fixtures/.env~|2'; do
+    'dotenv editor backup in a fixtures dir|p/test/fixtures/.env~|2' \
+    'config format in a jest fixtures dir|p/src/__fixtures__/users.yaml|0' \
+    'rspec file outside a test dir|p/lib/login_spec.rb|0' \
+    'bats file outside a test dir|p/hooks/login.bats|0' \
+    'pytest module outside a test dir|p/src/test_login.py|0' \
+    'config format in a fixtures dir of a deploy tree, accepted|p/deploy/fixtures/prod.yaml|0' \
+    'config format in a testdata dir of a k8s tree, accepted|p/k8s/testdata/prod.yaml|0'; do
     name="${row%%|*}" path="${row#*|}" want="${row##*|}" path="${path%|*}"
     [[ "${path}" == /* ]] || path="${BATS_TEST_TMPDIR}/${path}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { email: 'ada@example.com', ${fixture_assign} }\"}}"
     [[ "${status}" -eq "${want}" ]] || { echo "${name}: status ${status}, want ${want}: ${output}"; return 1; }
     [[ "${want}" -eq 0 || "${output}" == *"SEC-013"* ]] || { echo "${name}: ${output}"; return 1; }
+  done
+}
+
+@test "Write channel: a relative path has no repo root, so only its file name can exempt it" {
+  local fixture_assign cwd row name path want
+  mkdir -p "${BATS_TEST_TMPDIR}/repo/.git" "${BATS_TEST_TMPDIR}/norepo"
+  fixture_assign="password"
+  fixture_assign="${fixture_assign}: 'correct-horse-battery'"
+  for cwd in repo norepo; do
+    cd "${BATS_TEST_TMPDIR}/${cwd}"
+    for row in \
+      'config format in a fixtures dir|test/fixtures/values.yaml|2' \
+      'bare fixtures dir|fixtures/prod.yml|2' \
+      'script in a tests dir|tests/deploy.sh|2' \
+      'test-named source file|src/a.test.ts|0'; do
+      IFS='|' read -r name path want <<<"${row}"
+      run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"const user = { ${fixture_assign} }\"}}"
+      [[ "${status}" -eq "${want}" ]] || { echo "${name} from ${cwd}: status ${status}, want ${want}: ${output}"; return 1; }
+    done
+  done
+}
+
+# Key and value apart in each row → joined, a row trips the gate on this file's own write.
+@test "Write channel: a test-fixture file keeps SEC-013 for a value of a known credential format" {
+  local fixture_assign row name key value path="${BATS_TEST_TMPDIR}/p/tests/run.sh"
+  mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
+  fixture_assign="password"
+  fixture_assign="${fixture_assign}: 'correct-horse-battery'"
+  for row in \
+    'Anthropic key|ANTHROPIC_API_KEY|sk-ant-api03-' \
+    'OpenAI project key|api_key|sk-proj-' \
+    'Stripe live key|api_key|sk_live_' \
+    'Stripe restricted test key|api_key|rk_test_' \
+    'GitHub fine-grained token|token|github_pat_' \
+    'GitHub server token|token|ghs_' \
+    'GitLab token|token|glpat-' \
+    'Slack refresh token|token|xoxe-' \
+    'AWS temporary key id|access_key|ASIA' \
+    'single JWT segment|token|eyJ' \
+    'npm token|token|npm_' \
+    'PyPI token|password|pypi-' \
+    'Hugging Face token|token|hf_' \
+    'SendGrid key|api_key|SG.' \
+    'DigitalOcean token|token|dop_v1_' \
+    'connection string of a scheme without its own pattern|password|mysql://root:hunter2@'; do
+    IFS='|' read -r name key value <<<"${row}"
+    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"${fixture_assign}\\n${key}=${value}a1b2c3d4e5f6g7h8\"}}"
+    [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || { echo "${name}: status ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "Write channel: a known credential prefix counts only at the start of a word and in its own case" {
+  local row name key value path="${BATS_TEST_TMPDIR}/p/tests/run.sh"
+  mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
+  for row in \
+    'prefix inside a longer word|token|task-runner-01' \
+    'prefix spelled in another case|token|asia-pacific-1' \
+    'URL with no userinfo|password|https://example.com/login'; do
+    IFS='|' read -r name key value <<<"${row}"
+    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"${key}=${value}\"}}"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status}: ${output}"; return 1; }
   done
 }
 

@@ -72,8 +72,14 @@ NAMES_EN=(
   "Service-account JSON marker"
 )
 
+# Formats whose value no PATTERNS entry names: an assignment holding one blocks even in a test-fixture file. A value
+# with no such prefix is indistinguishable from a spec's login password → test data there.
+# Word boundary → `task-runner` holds no `sk-`.
+KNOWN_CREDENTIAL_VALUE='[^[:alnum:]](sk-|[sr]k_(live|test)_|gh[pousr]_|github_pat_|glpat-|xox[a-z]-|ASIA|eyJ|npm_|pypi-|hf_|SG\.|dop_v1_|[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]*@)'
+
 # Status 0 → a test or fixture file, where a generic credential assignment is test data (a spec's login
-# password), not a credential. Read below the file's repo root; under no repo root no dir counts as a fixture.
+# password), not a credential. Read below the file's repo root; a relative path or no repo root → no fixture dir.
+# Any fixture or testdata dir counts, a deploy tree's too — a Go package or Django app holds one anywhere.
 # A config or data format qualifies only through a fixture dir: database.test.yml or k8s/test/values.yaml deploys.
 # Args: $1=file path
 is_test_fixture_path() {
@@ -92,8 +98,8 @@ is_test_fixture_path() {
   esac
 }
 
-# Status 0 → a segment below the repo root is a link: like a `..`, it can leave any dir the spelling names. Under no
-# repo root the name alone exempts, so the file itself is read; not its dirs, since /tmp and /var are links on macOS.
+# Status 0 → a link in a segment below the repo root: like a `..`, it can leave any dir the spelling names.
+# No repo root → the name alone exempts, so the file itself is read; not its dirs — /tmp and /var are links on macOS.
 # Args: $1=file path $2=path below the root, empty under no repo root
 has_link_below_root() {
   local dir="${1%"${2}"}" rest="${2}"
@@ -107,8 +113,8 @@ has_link_below_root() {
   return 1
 }
 
-# Status 0 → source code or a test script, named as a test or below a test dir. Any test or spec dir counts, a deploy or
-# API tree's too: no list can tell which parents hold real tests, and only a generic assignment skips SEC-013 here.
+# Status 0 → source code or a test script, named as a test or below a test dir.
+# Any test or spec dir counts, a deploy or API tree's too — no list can tell which parents hold real tests.
 # Args: $1=basename $2=path below the root
 is_source_test_file() {
   local base
@@ -126,8 +132,8 @@ is_source_test_file() {
 }
 
 # Status 0 → a segment, in any case, of a SECRETS_FILE shape (as wide as that end-unanchored fragment) or a credential
-# dotfile. The dotfile list is closed on purpose: one outside it takes the fixture rules, and only a generic assignment
-# skips SEC-013 there. Args: $1=path
+# dotfile. The dotfile list is closed on purpose: one outside it takes the fixture rules, and a known credential value
+# keeps SEC-013 there. Args: $1=path
 has_secret_shape() {
   local lowered
   lowered="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"
@@ -144,14 +150,11 @@ has_source_extension() {
   [[ "${1}" == *.* && "${extensions}" == *" ${1##*.} "* ]]
 }
 
-# The path below its nearest ancestor holding .git (a repo or worktree root); a relative path as written.
-# Exit 1 = an absolute path under no repo root. Args: $1=file path
+# The path below its nearest ancestor holding .git (a repo or worktree root).
+# Exit 1 = a relative path, or an absolute path under no repo root. Args: $1=file path
 get_project_relative_path() {
   local dir="${1%/*}"
-  if [[ "${1}" != /* ]]; then
-    printf '%s' "${1}"
-    return 0
-  fi
+  [[ "${1}" == /* ]] || return 1
   while [[ -n "${dir}" ]]; do
     if [[ -e "${dir}/.git" ]]; then
       printf '%s' "${1#"${dir}"/}"
@@ -162,21 +165,19 @@ get_project_relative_path() {
   return 1
 }
 
-# Scan a blob against every PATTERNS entry; exit 2 on the first match. SEC-013 alone skips a test-fixture
-# file: every structured token, key and connection string blocks there too.
-# Args: $1=blob to scan
+# Scan a blob against every PATTERNS entry; exit 2 on the first match.
+# Only SEC-013 can skip, on test data (is_fixture_test_data). Args: $1=blob to scan
 scan_content() {
-  local blob="${1}" i file_path
+  local blob="${1}" i
   [[ -z "${blob}" ]] && return 0
   for i in "${!PATTERNS[@]}"; do
     # `-i` for case-insensitive credential keys · `--` so a dash-leading PEM
     # pattern is not parsed as a grep option flag.
     # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
     if printf '%s\n' "${blob}" | drain_after grep -qiE -- "${PATTERNS[${i}]}"; then
-      if [[ "${CODES[${i}]}" == "SEC-013" ]]; then
-        file_path="$(hook_get_tool_input "${INPUT}" "file_path")"
-        # shellcheck disable=SC2310  # the predicate's status is the verdict
-        is_test_fixture_path "${file_path}" && continue
+      # shellcheck disable=SC2310  # the predicate's status is the verdict
+      if [[ "${CODES[${i}]}" == "SEC-013" ]] && is_fixture_test_data "${blob}" "${PATTERNS[${i}]}"; then
+        continue
       fi
       emit_error "${CODES[${i}]}" "block" \
         "Secret pattern detected: ${NAMES_EN[${i}]}" \
@@ -185,6 +186,21 @@ scan_content() {
       exit 2
     fi
   done
+}
+
+# Status 0 → a test-fixture file, and no assigned value of a known credential format.
+# Args: $1=blob $2=generic-assignment pattern
+is_fixture_test_data() {
+  local file_path
+  file_path="$(hook_get_tool_input "${INPUT}" "file_path")"
+  # shellcheck disable=SC2310  # the predicate's status is the verdict
+  is_test_fixture_path "${file_path}" && ! has_known_credential_value "${1}" "${2}"
+}
+
+# Status 0 → an assignment's value holds a KNOWN_CREDENTIAL_VALUE format. Every assignment read, not the first;
+# case-sensitive → `asia-pacific-1` stays test data. Args: $1=blob $2=generic-assignment pattern
+has_known_credential_value() {
+  printf '%s\n' "${1}" | grep -oiE -- "${2}" | drain_after grep -qE -- "${KNOWN_CREDENTIAL_VALUE}"
 }
 
 # Bash channel (HIGH SIGNAL ONLY).
