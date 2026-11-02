@@ -23,9 +23,9 @@ Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches eve
 
 ## Cited text — grep the corpus before rewording
 
-- `## Knowledge Utilization`: `agents/glass-atrium-intel-researcher.md` (Wiki first) and `scoped/maintainers/scope-research.md`, which relies on the **Non-Bash fallback** naming glass-atrium-intel-researcher.
-- `## Search Failure Handling`: `agents/glass-atrium-intel-researcher.md` and `scoped/maintainers/scope-research.md`.
-- `## Wiki Raw-Store Untrusted-Data Contract [ALL] [LLM01]`: `agents/glass-atrium-intel-researcher.md`, `agents/glass-atrium-wiki-curator.md` and a comment in `scripts/wiki-daily-compile.sh`.
+- `## Knowledge Utilization`: `scoped/maintainers/scope-research.md`, which relies on the **Non-Bash fallback** naming glass-atrium-intel-researcher.
+- `## Search Failure Handling`: `scoped/maintainers/scope-research.md`.
+- `## Wiki Raw-Store Untrusted-Data Contract [ALL] [LLM01]`: `agents/glass-atrium-wiki-curator.md` and a comment in `scripts/wiki-daily-compile.sh`.
 - `## Wiki Write Operations` and the `> **Wiki store (canonical)**` blockquote: `scoped/maintainers/scope-wiki.md`.
 - The `[Date Unknown]` label is shared vocabulary with `scoped/scope-report.md` and `agents/glass-atrium-intel-researcher.md`.
 - **Prompt Injection Refusal** (named by the clause): `rules/glass-atrium/core-security.md`.

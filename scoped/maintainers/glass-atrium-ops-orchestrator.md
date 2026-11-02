@@ -71,7 +71,6 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 | Block (under this H3) | Pin that holds it in place |
 |---|---|
 | the H3 itself · `#### Engine-vs-orchestrator layering` | `agents/GLASS_ATRIUM_GLOBAL_RULES.md` ("Layering detail") |
-| **Persist-intent research stage (explicit side-effect exception)** | `agents/glass-atrium-intel-researcher.md` |
 | `#### Workflow pre-flight (run before EVERY Workflow call)` item numbers | `core-outcome-record.md` (item 8) · `scoped/maintainers/scope-dev.md` and the role file (item 1) |
 | pre-flight item 8 text (343 B, over the 300 B bullet cap) | kept byte-identical by delegation as a hook-quoted literal |
 | `#### Completion-channel non-emission …` heading, population and recipe | `hooks/enforce-workflow-verify-stage.sh` messages name the section and say it carries both |
