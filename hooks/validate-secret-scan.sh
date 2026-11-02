@@ -92,10 +92,12 @@ is_test_fixture_path() {
   esac
 }
 
-# Status 0 → a segment below the repo root is a link: like a `..`, it can leave any dir the spelling names.
-# Args: $1=file path $2=path below the root
+# Status 0 → a segment below the repo root is a link: like a `..`, it can leave any dir the spelling names. Under no
+# repo root the name alone exempts, so the file itself is read; not its dirs, since /tmp and /var are links on macOS.
+# Args: $1=file path $2=path below the root, empty under no repo root
 has_link_below_root() {
   local dir="${1%"${2}"}" rest="${2}"
+  [[ -z "${rest}" && -L "${1}" ]] && return 0
   while [[ -n "${rest}" ]]; do
     dir+="${rest%%/*}"
     [[ -L "${dir}" ]] && return 0
@@ -124,12 +126,13 @@ is_source_test_file() {
 }
 
 # Status 0 → a segment, in any case, of a SECRETS_FILE shape (as wide as that end-unanchored fragment) or a credential
-# dotfile. Args: $1=path
+# dotfile. The dotfile list is closed on purpose: one outside it takes the fixture rules, and only a generic assignment
+# skips SEC-013 there. Args: $1=path
 has_secret_shape() {
   local lowered
   lowered="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"
   case "${lowered}" in
-    *.env* | *secret* | *credential* | *.npmrc* | *.netrc* | *.pgpass* | *.pypirc*) return 0 ;;
+    *.env* | *secret* | *credential* | *.npmrc* | *.netrc* | *.pgpass* | *.pypirc* | *.my.cnf* | *.yarnrc*) return 0 ;;
     *) return 1 ;;
   esac
 }

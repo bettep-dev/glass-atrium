@@ -77,6 +77,10 @@ run_hook() {
   mkdir -p "${BATS_TEST_TMPDIR}/p/src" "${BATS_TEST_TMPDIR}/p/tests"
   ln -s ../src "${BATS_TEST_TMPDIR}/p/tests/src"
   ln -s ../src/config.ts "${BATS_TEST_TMPDIR}/p/tests/login.spec.ts"
+  # links under no repo root, whose name alone would exempt them
+  mkdir -p "${BATS_TEST_TMPDIR}/norepo"
+  ln -s ../p/src/config.ts "${BATS_TEST_TMPDIR}/norepo/login.spec.ts"
+  ln -s ../p/.env "${BATS_TEST_TMPDIR}/norepo/l.test.js"
   fixture_assign="password"
   fixture_assign="${fixture_assign}: 'correct-horse-battery'"
   for row in \
@@ -116,6 +120,10 @@ run_hook() {
     'config format in a k8s test dir|p/k8s/test/values.yaml|2' \
     'source below a dir link out of a tests dir|p/tests/src/config.ts|2' \
     'spec-named file that is itself a link|p/tests/login.spec.ts|2' \
+    'spec-named link onto repo source under no repo root|norepo/login.spec.ts|2' \
+    'test-named link onto a dotenv file under no repo root|norepo/l.test.js|2' \
+    'plain spec under no repo root keeps the name exemption|/p/login.spec.ts|0' \
+    'plain spec below a system dir link keeps the name exemption|/tmp/no-such-dir/login.spec.ts|0' \
     'a script in a test dir of a deploy tree, accepted|p/deploy/test/bootstrap.sh|0' \
     'source in a spec dir of an API tree, accepted|p/openapi/spec/client.py|0' \
     'npm credential dotfile in a test dir|p/test/.npmrc|2' \
@@ -126,6 +134,8 @@ run_hook() {
     'netrc credential dotfile in a fixtures dir|p/test/fixtures/.netrc|2' \
     'postgres credential dotfile in a fixtures dir|p/test/fixtures/.pgpass|2' \
     'pypi credential dotfile in a fixtures dir|p/test/fixtures/.pypirc|2' \
+    'mysql credential dotfile in a fixtures dir|p/test/fixtures/.my.cnf|2' \
+    'yarn credential dotfile in a fixtures dir|p/test/fixtures/.yarnrc.yml|2' \
     'envrc with a source spec tail|p/.envrc.test.js|2' \
     'envrc with a test infix|p/.envrc.test.local|2' \
     'envrc suffix in a tests dir|p/tests/.envrc.local|2' \
