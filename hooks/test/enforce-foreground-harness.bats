@@ -444,7 +444,7 @@ make_wide_dir() {
   printf '%s' "${wide}"
 }
 
-# One expansion of a whole pattern yields only its final level, so it would read every level before any cap could see it.
+# Whole-pattern expansion → only its final level visible, every level read before a cap sees it.
 @test "a glob is judged protected once a level passes the path cap or the prompt passes the path budget" {
   local row name dirs pattern want wide fill
   wide="$(make_wide_dir 1024)"
@@ -509,6 +509,30 @@ make_wide_dir() {
     echo "expansions ${expansions}"
     return 1
   }
+}
+
+# No-match expansion spends no path budget, a clock flaky → xtrace counts the expansions.
+@test "a long trailing run expands a bounded number of spellings, whatever its length" {
+  local wide row name unit run payload trace rc expansions
+  wide="$(make_wide_dir 8)"
+  for row in \
+    'stars|*' \
+    'question marks|?' \
+    'star and dot pairs|*.' \
+    'underscores behind a wildcard|_'; do
+    IFS='|' read -r name unit <<<"${row}"
+    run="$(printf "%0.s${unit}" $(seq 1 64))"
+    [[ "${unit}" != "_" ]] || run="*${run}"
+    payload="$(jq -n --arg p "Edit ${wide}/.claude-x${run} now." '{tool_name:"Agent", tool_input:{prompt:$p}}')"
+    rc=0
+    trace="$(printf '%s' "${payload}" | bash -x "${HOOK_SH}" 2>&1 >/dev/null)" || rc=$?
+    expansions="$(grep -cE '^\++ set_glob_matches ' <<<"${trace}")" || true
+    # as written, three shorter spellings, the cleaned word
+    [[ "${rc}" -eq 0 && "${expansions}" -gt 0 && "${expansions}" -le 5 ]] || {
+      echo "row: ${name} · status ${rc} · expansions ${expansions}"
+      return 1
+    }
+  done
 }
 
 @test "a matched name holding a glob character stays literal at the next glob level" {

@@ -18,10 +18,12 @@
 #
 # Runtime-DATA exclusion: Rule 2 protects harness CONFIG writes (agents/, hooks/, skills/,
 #   settings*.json, the memory dir). Runtime-DATA subdirs (data/, projects/, logs/, todos/,
-#   shell-snapshots/, statsig/, and a job's own jobs/<id>/tmp/ scratch) hold transcripts/logs/caches that
+#   shell-snapshots/, statsig/, and any job's jobs/<id>/tmp/ scratch) hold transcripts/logs/caches that
 #   CANNOT misconfigure a future session, so a bare reference (a text scan cannot tell READ from WRITE) is
 #   not blocked. The memory dir nests under projects/ and stays protected via a /memory/ segment guard,
 #   never leaking into memory writes; the rest of jobs/ (pins.json, a job's state.json) stays protected.
+#   Accepted boundary: tool_input carries no job identity → the id cannot be bound to the caller, so a
+#   concurrent job's scratch passes too.
 #
 # Progress-file exclusion: a progress-*.md directly in a projects/<p>/memory/ dir is session-internal
 #   state every agent must checkpoint before its turn cap (GLASS_ATRIUM_GLOBAL_RULES.md → Cross-Session
@@ -37,10 +39,11 @@
 #     root's, or a root-grammar name under the home, enters the root — so case, Unicode folding, `..`
 #     and symlinks resolve as the host filesystem resolves them. A file symlink is read with readlink.
 #   - A glob is expanded by bash pathname expansion (no execution), one segment at a time, each match
-#     walked, and its metacharacter-stripped spelling walked too. A final wildcard is judged as written
-#     before it can be read as punctuation. A level past 1024 paths, or a prompt whose levels yield past
-#     16384 paths in all, is protected, fail-safe. A brace that bash would expand (`{a,b}`, `{a..b}`)
-#     cannot be expanded without eval → protected, fail-safe. A brace with neither is literal text.
+#     walked, and its metacharacter-stripped spelling walked too. A word is judged as written, then at most
+#     three spellings shorter by trailing punctuation or wildcards, then with all of them dropped. A level
+#     past 1024 paths, or a prompt whose levels yield past 16384 paths in all, is protected, fail-safe.
+#     A brace that bash would expand (`{a,b}`, `{a..b}`) cannot be expanded without eval → protected,
+#     fail-safe. A brace with neither is literal text.
 #   - A bare root word (relative, no `/` but a trailing one) is prose unless an action word, an option
 #     (a lone `-` is a list marker), a redirect or a joined `=`/`@`/`-x`/list position makes it an operand.
 #   - A block names the candidate that triggered it.
@@ -398,7 +401,7 @@ needs_staged_lane() {
 exempt_entry() {
   case "${1}" in
     claude.md | memory.md | glass_atrium_global_rules.md) return 0 ;;
-    # A job's tmp/ is its own scratch; the rest of jobs/ is harness state, and a dot segment or a link can leave it.
+    # A job's tmp/ is scratch; the rest of jobs/ is harness state, and a dot segment or a link can leave it.
     jobs) [[ "${remainder}" =~ ${job_scratch_re} && "/${remainder}" != */.* ]] && ! has_link_in_remainder ;;
     data | projects | logs | todos | shell-snapshots | statsig)
       # The memory dir nests under projects/ → a /memory/ segment keeps it protected; `/…/` frames globs.
@@ -513,26 +516,38 @@ strip_globs() {
   written="${out}"
 }
 
+# Exit 0 = the current spelling of written needs the staged lane; one judgement per distinct spelling.
+judge_spelling() {
+  [[ "${written}" != "${spelling_judged}" ]] || return 1
+  spelling_judged="${written}"
+  if [[ "${written}" == *[][*?]* ]]; then
+    glob_reaches_harness
+    return
+  fi
+  # A literal word on disk: its final character is its own name, not prose.
+  [[ "${written}" == *[_!.] ]] || return 1
+  set_start "${written}"
+  [[ -e "${walk_p%/}/${walk_rest}" || -L "${walk_p%/}/${walk_rest}" ]] && reaches_harness
+}
+
 # Exit 0 = the candidate names a path that needs the staged lane.
 candidate_blocks() {
+  local spelling_judged="" stripped=0
   [[ "${flags}" == *b* ]] && return 0
+  # As written first: a shell expands `cp x tmp/li*`, and a final `_` `.` `!` can be a link's own name.
+  judge_spelling && return 0
   # Trailing prose punctuation or markdown emphasis is not part of the path; a dot run is kept.
   while :; do
     case "${written}" in
       */. | */.. | *..) break ;;
-      # punctuation or a real wildcard: a shell expands `cp x tmp/li*` → judged as written first
-      *[]?*])
-        glob_reaches_harness && return 0
-        written="${written%?}"
-        ;;
-      *[_!.]) written="${written%?}" ;;
+      *[]?*_!.]) written="${written%?}" ;;
       *) break ;;
     esac
+    # Prose readings only, the shell's own judged above → a count: a no-match expansion spends no path budget.
+    ((++stripped < shorter_spelling_cap)) && judge_spelling && return 0
   done
-  if [[ "${written}" == *[][*?]* ]]; then
-    glob_reaches_harness && return 0
-    strip_globs
-  fi
+  judge_spelling && return 0
+  [[ "${written}" == *[][*?]* ]] && strip_globs
   set_start "${written}"
   reaches_harness
 }
@@ -547,7 +562,7 @@ config_entries=' settings.json settings.local.json keybindings.json agents agent
 tilde_re='^~[a-z0-9._-]*(/|$)'
 progress_re='^projects/[^/]+/memory/progress-[^/]*\.md$'
 job_scratch_re='^jobs/[^/]+/tmp(/|$)'
-readonly glob_level_cap=1024 glob_path_budget=16384
+readonly glob_level_cap=1024 glob_path_budget=16384 shorter_spelling_cap=4
 glob_paths_spent=0
 
 # nocasematch stays on: the lexical root and exemption tests fold case as the host filesystem does.

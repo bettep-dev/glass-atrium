@@ -105,6 +105,7 @@ list_bashes() {
   local row name prompt
   for row in \
     'CLAUDE.md, tilde|Append the project note to ~/.claude-work-dev/CLAUDE.md then stop.' \
+    'CLAUDE.md before a sentence end|Append the project note to ~/.claude-work-dev/CLAUDE.md.' \
     "MEMORY.md, absolute home|Add the index line to ${HOME}/.claude-personal/MEMORY.md then exit." \
     'GLASS_ATRIUM_GLOBAL_RULES.md, bare|From the home dir, update .claude-work-dev/GLASS_ATRIUM_GLOBAL_RULES.md now.' \
     "CLAUDE.md on the backup dir|Read ~/${BACKUP_DIR}/CLAUDE.md for the old wording." \
@@ -169,7 +170,9 @@ list_bashes() {
   local home="${BATS_TEST_TMPDIR}/home/u" row name prompt
   mkdir -p "${home}/.claude-work-dev/jobs/25a65a54/tmp"
   ln -s ../../../hooks "${home}/.claude-work-dev/jobs/25a65a54/tmp/link"
+  ln -s ../hooks "${home}/.claude-work-dev/jobs/lnk"
   for row in \
+    'link at the job id segment|Write ~/.claude-work-dev/jobs/lnk/tmp/x now.' \
     'file directly in jobs/|Queue the run via ~/.claude-work-dev/jobs/pending.json.' \
     'job pins file|Edit ~/.claude-work-dev/jobs/pins.json now.' \
     'job state file|Write ~/.claude-work-dev/jobs/25a65a54/state.json now.' \
@@ -195,6 +198,34 @@ list_bashes() {
   done
 }
 
+@test "a final _ . or ! that is part of a link's own name is judged before it reads as punctuation" {
+  local home="${BATS_TEST_TMPDIR}/home/u" tmp row name prompt
+  tmp="${home}/.claude-work-dev/jobs/j1/tmp"
+  mkdir -p "${tmp}"
+  ln -s ../../../hooks "${tmp}/link_"
+  ln -s ../../../hooks "${tmp}/lank."
+  ln -s ../../../hooks "${tmp}/lonk!"
+  for row in \
+    'single-character wildcard, underscore|l?nk_' \
+    'star, underscore|*k_' \
+    'bracket, underscore|l[i]nk_' \
+    'single-character wildcard, dot|l?nk.' \
+    'bracket, dot|l[a]nk.' \
+    'single-character wildcard, bang|l?nk!' \
+    'wildcard, underscore, sentence end|l?nk_.' \
+    'literal name, underscore|link_' \
+    'literal name, dot|lank.' \
+    'literal name, bang|lonk!' \
+    'literal name, underscore, sentence end|link_.'; do
+    IFS='|' read -r name prompt <<<"${row}"
+    HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "Copy evil.sh to ~/.claude-work-dev/jobs/j1/tmp/${prompt}" true
+    [[ "${status}" -eq 2 ]] || {
+      echo "row: ${name} · status ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
 @test "a job's tmp/ scratch on disk passes, by name or through a wildcard job id" {
   local home="${BATS_TEST_TMPDIR}/home/u" row name prompt
   mkdir -p "${home}/.claude-work-dev/jobs/25a65a54/tmp"
@@ -205,7 +236,9 @@ list_bashes() {
     'the tmp dir itself|Read ~/.claude-work-dev/jobs/25a65a54/tmp now.' \
     'final star over plain scratch files|Read ~/.claude-work-dev/jobs/25a65a54/tmp/* now.' \
     'final single-character wildcard on a plain scratch file|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.tx? now.' \
-    'question mark ending a sentence|Did it read ~/.claude-work-dev/jobs/25a65a54/tmp/out.txt?'; do
+    'question mark ending a sentence|Did it read ~/.claude-work-dev/jobs/25a65a54/tmp/out.txt?' \
+    'wildcard before a sentence end|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.tx?.' \
+    'emphasis closing a plain scratch file|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.txt_'; do
     IFS='|' read -r name prompt <<<"${row}"
     HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" true
     [[ "${status}" -eq 0 ]] || {
