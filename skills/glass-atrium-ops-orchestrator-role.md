@@ -532,11 +532,8 @@ A write in this scope is a harness/memory configuration change, and the user MUS
 - **Rule 2 — Staged lane mandatory (enforcement, hook-backed)**: a harness write never travels through a subagent prompt — an Agent-tool prompt or a Workflow-tool `agent()` prompt; it takes its route in `### Write routes`.
   - `enforce-foreground-harness.sh` (PreToolUse) blocks every Agent spawn whose prompt names a non-exempt harness path, whatever `run_in_background` holds or omits.
     - Why: the model sends or omits that field on its own, so neither its value nor its absence is evidence of how the agent launches.
-  - Exempt: the BASENAME exception, the runtime-data subdirs the hook header lists, `### Progress-file exclusion`, and a negated mention: a bare harness root named only inside a prohibition clause, whose grammar the hook header states.
-    - Text no walk can read voids every exemption: a `..` segment anywhere in the word, `.claude` text after the harness root, a `$`, a backtick pair glued to text, or a dot-leading glob segment.
-    - A symlink below a runtime-data entry voids that entry's exemption.
-    - A `cd` or `pushd` into an exempt dir voids its exemption when the prompt also holds a relative climb.
-    - A wildcard in a memory dir's place counts as that dir, matched on disk or not.
+  - Exempt: the BASENAME exception, the runtime-data subdirs the hook header lists, and `### Progress-file exclusion`.
+    - A `..` segment, or any `.claude` text after the harness root, in the path as written voids every exemption.
   - Honest backing: the hook reaches only what `### Reach of the gate` states.
 
 ### Write routes
@@ -590,8 +587,7 @@ Each step builds on the previous.
 
 The hook takes candidate paths from the Agent prompt's text and resolves each against the filesystem, so it reaches only the harness paths that text names. Outside its reach, Rule 2 still binds on the honor system alone:
 
-- a write the prompt does not name, or a path it hides — variable indirection, encoding, a cwd set other than by `cd` or `pushd`, or text the hook does not read as naming a harness root;
-- a recursive write or delete through a memory dir's exempt parent, which a text scan cannot tell from a transcript read;
+- a write the prompt does not name, or a path it hides — variable indirection, encoding, a deeper `cd`, or text the hook does not read as naming a harness root;
 - a Workflow-tool `agent()` spawn — measured: it does not pass PreToolUse(Agent), so the gate cannot see Workflow spawns (record: `scoped/shared-hook-capability-contract.md` → `PreToolUse(Agent) measured record`);
 - a prompt naming the resolved install target of a harness symlink, which `### Write routes` forbids — the hook scans only `.claude` paths.
 

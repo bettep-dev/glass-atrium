@@ -110,9 +110,7 @@ list_bashes() {
     'projects/ transcript|Analyze ~/.claude/projects/-Users-x/session.jsonl (read-only).' \
     'logs/|Tail ~/.claude/logs/daemon.log.' \
     "absolute-home data/|Read ${HOME}/.claude/data/learning-log.md for prior lessons." \
-    'CWD-relative data/|From the repo root, read .claude/data/session-spawns/latest.json.' \
-    'job tmp/ scratch on the base root|Read ~/.claude/jobs/25a65a54/tmp/out.txt.' \
-    'job tmp/ scratch on a profile branch|Look at ~/.claude-work/jobs/64546714/tmp/clear-x.png for the capture.'; do
+    'CWD-relative data/|From the repo root, read .claude/data/session-spawns/latest.json.'; do
     IFS='|' read -r name prompt <<<"${row}"
     run_agent "${prompt}" omit
     [[ "${status}" -eq 0 ]] || {
@@ -175,114 +173,12 @@ list_bashes() {
   done
 }
 
-# A dir of $1 subdirs named d0001.. in BATS_TEST_TMPDIR/wide, for the glob cap rows.
-make_wide_dir() {
-  local wide="${BATS_TEST_TMPDIR}/wide"
-  mkdir -p "${wide}"
-  seq -f "${wide}/d%04g" 1 "$1" | xargs mkdir
-  printf '%s' "${wide}"
-}
-
-# The glob caps: each level holds at most 1024 paths, and every path a level yields spends one prompt-wide budget.
-@test "a glob level matching exactly 1024 paths is walked" {
-  local wide
-  wide="$(make_wide_dir 1024)"
-  run_agent "Edit ${wide}/*/.claude/x.md now." omit
-  [[ "${status}" -eq 0 ]] || { echo "status ${status}: ${output}"; return 1; }
-}
-
-@test "a glob level matching more than 1024 paths is judged protected" {
-  local wide
-  wide="$(make_wide_dir 1025)"
-  run_agent "Edit ${wide}/*/.claude/x.md now." omit
-  [[ "${status}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
-}
-
-@test "a non-final glob level at the cap is walked though the final level is empty" {
-  local wide
-  wide="$(make_wide_dir 1024)"
-  run_agent "Edit ${wide}/*/nomatch*/.claude/y.md now." omit
-  [[ "${status}" -eq 0 ]] || { echo "status ${status}: ${output}"; return 1; }
-}
-
-# A level past the cap decides by itself: expanding the whole pattern at once would see only the empty final level.
-@test "a non-final glob level past the cap is judged protected though the final level is empty" {
-  local wide
-  wide="$(make_wide_dir 1025)"
-  run_agent "Edit ${wide}/*/nomatch*/.claude/y.md now." omit
-  [[ "${status}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
-}
-
-@test "a glob whose levels stay within the prompt-wide path budget is walked" {
-  local wide dots
-  wide="$(make_wide_dir 1024)"
-  dots="$(printf './%.0s' 1 2 3 4 5 6 7 8)"
-  run_agent "Edit ${wide}/*/${dots}*/.claude/x.md now." omit
-  [[ "${status}" -eq 0 ]] || { echo "status ${status}: ${output}"; return 1; }
-}
-
-# Literal segments keep every path of a level alive, so depth alone would multiply the cost of a wide level.
-@test "a glob whose levels spend past the prompt-wide path budget is judged protected" {
-  local wide dots
-  wide="$(make_wide_dir 1024)"
-  dots="$(printf './%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24)"
-  run_agent "Edit ${wide}/*/${dots}*/.claude/x.md now." omit
-  [[ "${status}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
-}
-
-# The memory dir's place below projects/: a wildcard able to match that name counts as the memory dir.
-@test "a wildcard in the memory dir's place blocks whether or not it matches on disk" {
-  local home="${BATS_TEST_TMPDIR}/home"
-  mkdir -p "${home}/.claude/projects/p/memory" "${home}/.claude/projects/q"
-  : >"${home}/.claude/projects/q/sess.jsonl"
-  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
-    'final star that matches the memory dir|Delete ~/.claude/projects/p/memo* now' \
-    'final star at the very end of the prompt|Delete ~/.claude/projects/p/memo*' \
-    'final star with no match on disk|Delete ~/.claude/projects/q/memo*' \
-    'final wildcard pair across projects|Delete ~/.claude/projects/*/*' \
-    'bracket then star under an absent project|Delete ~/.claude/projects/x/memo[r]*' \
-    'final one-character wildcard|Delete ~/.claude/projects/x/memor?' \
-    'final star ahead of a sentence dot|Delete ~/.claude/projects/x/memo*.' \
-    'a wildcard above a memory file|Edit ~/.claude/projects/x/mem*/MEMORY.md now' \
-    'a wildcard above a progress name|Edit ~/.claude/projects/x/mem*/progress-a.md now' \
-    'an upper-case wildcard|Delete ~/.claude/projects/x/MEMO*' \
-    'a doubled slash ahead of the project|Delete ~/.claude/projects//x/memo*' \
-    'a dot segment ahead of the project|Delete ~/.claude/projects/./x/memo*'
-  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
-    'a transcript glob that cannot match the memory dir|Read ~/.claude/projects/q/*.jsonl now.' \
-    'a final star on a name that cannot match the memory dir|Read ~/.claude/projects/q/sess*' \
-    'a final star in a runtime dir with no memory dir|Read ~/.claude/logs/daemon*' \
-    'a question ending on a transcript|Is it ~/.claude/projects/q/sess.jsonl?' \
-    'a closing bracket after a log path|See [the log ~/.claude/logs/daemon.log] now.'
-}
-
-@test "the job tmp/ and progress-file exemptions hold only below a real id segment" {
-  local row name prompt
-  for row in \
-    'dot segment in place of the job id|Read ~/.claude/jobs/./tmp/out.txt.' \
-    'dot segment in place of the project|Write ~/.claude/projects/./memory/progress-x.md now.' \
-    'job state file beside its tmp/|Write ~/.claude/jobs/25a65a54/state.json now.'; do
-    IFS='|' read -r name prompt <<<"${row}"
-    run_agent "${prompt}" omit
-    [[ "${status}" -eq 2 ]] || {
-      echo "row: ${name} · status ${status}: ${output}"
-      return 1
-    }
-  done
-}
-
 @test "a .. segment voids every exemption" {
   local row name prompt
   for row in \
     'projects traversal|Write ~/.claude/projects/../agents/x.md now.' \
     'data traversal|Write ~/.claude/data/../settings.json now.' \
-    'BASENAME traversal|Write ~/.claude/CLAUDE.md/../hooks/x.sh now.' \
-    'traversal behind a comma|Write ~/.claude/logs,/../settings.json now.' \
-    'traversal behind a colon|Write ~/.claude/logs:/../settings.json now.' \
-    'traversal behind a redirect|Write ~/.claude/logs>/../settings.json now.' \
-    'traversal behind a comma after a progress file|Write ~/.claude/projects/x/memory/progress-a.md,/../MEMORY.md now.' \
-    'dot-leading glob behind a comma|Write ~/.claude/logs,/.*/settings.json now.' \
-    'unset variable between dots behind a comma|Write ~/.claude/logs,/.$x./settings.json now.'; do
+    'BASENAME traversal|Write ~/.claude/CLAUDE.md/../hooks/x.sh now.'; do
     IFS='|' read -r name prompt <<<"${row}"
     run_agent "${prompt}" omit
     [[ "${status}" -eq 2 ]] || {
@@ -433,85 +329,6 @@ assert_rows() {
     'a glob match whose real name holds .claude text|Persist ~/.claude/projects/*/memory/progress-a.md now.'
 }
 
-@test "a symlink below an exempt runtime-DATA entry voids the exemption, and a plain path keeps it" {
-  local home="${BATS_TEST_TMPDIR}/home"
-  mkdir -p "${home}/.claude/hooks" "${home}/.claude/projects/p" "${home}/.claude/jobs/a/tmp" "${home}/.claude/data"
-  ln -s "${home}/.claude/hooks" "${home}/.claude/projects/p/l"
-  ln -s ../../../hooks "${home}/.claude/jobs/a/tmp/l"
-  ln -s "${home}/.claude/hooks" "${home}/.claude/data/l"
-  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
-    'link in a project dir|Edit ~/.claude/projects/p/l/x.sh now.' \
-    'link in a job scratch dir|Edit ~/.claude/jobs/a/tmp/l/x.sh now.' \
-    'link directly in a data dir|Edit ~/.claude/data/l/x.sh now.' \
-    'the link itself|Rewrite ~/.claude/data/l now.'
-  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
-    'plain path in a project dir|Read ~/.claude/projects/p/x.jsonl now.' \
-    'plain path in a job scratch dir|Read ~/.claude/jobs/a/tmp/out.txt now.'
-}
-
-@test "text a walk cannot read voids an exemption, and a plainly written path keeps it" {
-  local home="${BATS_TEST_TMPDIR}/home/u" interp
-  mkdir -p "${home}/.claude/jobs/a/tmp/b" "${home}/.claude/logs/c" "${home}/.claude/projects/p/memory" "${home}/proj"
-  : >"${home}/.claude/settings.json"
-  ln -s "${home}/.claude/logs/../settings.json" "${home}/proj/.claude-l"
-  while IFS= read -r interp; do
-    HOOK_BASH="${interp}" HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
-      'an unset variable spelling a traversal in job scratch|cp /tmp/x ~/.claude/jobs/a/tmp/.$x./.$x./.$x./settings.json' \
-      'an unset variable spelling a traversal in runtime data|cp /tmp/x ~/.claude/logs/.$x./settings.json' \
-      'a braced variable hiding the memory dir|Edit ~/.claude/projects/-Users-x/mem${y}ory/MEMORY.md now.' \
-      'a quoted variable between dots|cp /tmp/x ~/.claude/logs/."$x"./settings.json' \
-      'a star glob opening with a dot|cp /tmp/x ~/.claude/jobs/a/tmp/.*/.*/.*/settings.json' \
-      'a one-character glob opening with a dot|cp /tmp/x ~/.claude/logs/.?/settings.json' \
-      'a bracket glob opening with a dot|cp /tmp/x ~/.claude/logs/.[.]/settings.json' \
-      'a dot glob on a path with no match|cp /tmp/x ~/.claude/logs/nope/.*/settings.json' \
-      'a backtick substitution between dots|cp /tmp/x ~/.claude/logs/.`:`./settings.json' \
-      'a file link whose target climbs out of an exempt dir|Edit ~/proj/.claude-l now.'
-    HOOK_BASH="${interp}" HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
-      'a home variable ahead of an exempt path|Read $HOME/.claude/data/x.md now.' \
-      'a braced home variable ahead of an exempt path|Read ${HOME}/.claude/logs/x.log now.' \
-      'a root glob ahead of an exempt path|Read ~/.claude*/data/x.md now.' \
-      'a wildcard project segment|Persist ~/.claude/projects/*/memory/progress-a.md now.' \
-      'a dot name that is no glob|Read ~/.claude/logs/.state now.' \
-      'a code span around an exempt path|Read `~/.claude/data/x.md` now.' \
-      'bold around a code span|Read **`~/.claude/data/x.md`** now.' \
-      'a list of code spans|Read `~/.claude/data/x.md`,`~/.claude/logs/y.log` now.' \
-      'a relative repo path with a wildcard|Look in .claude/worktrees/*/hooks now.'
-  done < <(list_bashes)
-}
-
-@test "a cd into an exempt dir voids its exemption only when the prompt can climb back out" {
-  assert_rows 2 \
-    'cd into job scratch, then a relative climb|cd ~/.claude/jobs/a/tmp && cp /tmp/x ../../../settings.json' \
-    'cd into runtime data, then a relative climb|cd ~/.claude/logs && cp /tmp/x ../settings.json' \
-    'pushd, then a relative climb|pushd ~/.claude/logs && cp /tmp/x ../settings.json' \
-    'cd in a subshell, then a relative climb|(cd ~/.claude/logs; cp /tmp/x ../settings.json)' \
-    'cd, then a bare climb|cd ~/.claude/logs && cd .. && edit settings.json' \
-    'a climb glued to a redirect|cd ~/.claude/logs && echo x >../settings.json' \
-    'a climb glued to an option value|cd ~/.claude/logs && cp --target-directory=.. /tmp/x' \
-    'a climb glued to a short option|cd ~/.claude/logs && cp -t.. /tmp/x' \
-    'a climb in an output operand|cd ~/.claude/logs && dd of=../settings.json' \
-    'a climb behind a colon|cd ~/.claude/logs && rsync /tmp/x host:../settings.json' \
-    'a climb behind a comma|cd ~/.claude/logs && tool --files=a,../settings.json' \
-    'a climb behind an at sign|cd ~/.claude/logs && curl -o x @../settings.json' \
-    'a climb spelled by an unset variable|cd ~/.claude/logs && cp /tmp/x .$y./settings.json' \
-    'a climb spelled by a dot-leading glob|cd ~/.claude/logs && cp /tmp/x .*/settings.json' \
-    'cd past a physical option|cd -P ~/.claude/logs && cp /tmp/x ../settings.json' \
-    'cd past a logical option|cd -L ~/.claude/logs && cp /tmp/x ../settings.json' \
-    'cd past the end of options|cd -- ~/.claude/logs && cp /tmp/x ../settings.json' \
-    'cd past two options|cd -P -- ~/.claude/logs && cp /tmp/x ../settings.json' \
-    'pushd past its option|pushd -n ~/.claude/logs && cp /tmp/x ../settings.json' \
-    'cd glued to a semicolon|true;cd ~/.claude/logs; cp /tmp/x ../settings.json' \
-    'cd glued to ampersands|true&&cd ~/.claude/logs && cp /tmp/x ../settings.json' \
-    'cd glued to ampersands behind a space|true &&cd ~/.claude/logs && cp /tmp/x ../settings.json' \
-    'cd in a command substitution|$(cd ~/.claude/logs && cp /tmp/x ../settings.json)'
-  assert_rows 0 \
-    'cd with no climb|cd ~/.claude/logs && tail daemon.log' \
-    'cd past an option with no climb|cd -P ~/.claude/logs && tail daemon.log' \
-    'dotted words that are no climb|cd ~/.claude/logs && tail ..hidden x..y ... daemon.log' \
-    'a climb with no cd into the exempt dir|Read ~/.claude/logs/daemon.log and ../repo/x.md now.' \
-    'a cd elsewhere beside an exempt path|cd /tmp/repo && cat ../x && tail ~/.claude/logs/daemon.log'
-}
-
 @test "a case or Unicode variant of the home blocks exactly when the filesystem resolves it to the home" {
   local base="${BATS_TEST_TMPDIR}/home" lower upper want=0
   lower="$(printf 'caf\303\251')"
@@ -559,124 +376,6 @@ assert_rows() {
     'operand after an option with a trailing slash|Run ls -la .claude-work/ now.' \
     'a dot-slash root name|Look in ./.claude/ for now.' \
     'tilde root with a trailing slash|Rewrite the hooks in ~/.claude-work/ now.'
-}
-
-@test "a harness root named only inside a negated clause is a mention, and any other naming of it still blocks" {
-  assert_rows 0 \
-    'never-write constraint on the root glob|Never write under ~/.claude*.' \
-    'never-write constraint on a bullet|- Never write under ~/.claude/ or any profile root.' \
-    'do-not constraint on a branch root|Do not edit anything in ~/.claude-work.' \
-    'must-not later in the clause|The agent must not touch ~/.claude/ at all.' \
-    'not-to before the action|Be careful not to edit ~/.claude/ here.' \
-    'constraint ending in a final dot on the slash|Never write under ~/.claude/.' \
-    'emphasis around the cue and verb|- **Never write** under ~/.claude/ at all.' \
-    'curly apostrophe in the cue|Don’t edit ~/.claude/ here.' \
-    'a numbered item|1) Do not edit ~/.claude/ now.' \
-    'a clause after a sentence end|The merge is on hold. Never write under ~/.claude/.' \
-    'a clause after a label|Bounds: never write under ~/.claude/.' \
-    'a clause after a bold label|**Bounds:** never write under ~/.claude/.' \
-    'a named subject before must not|You must not write to ~/.claude/.' \
-    'a named subject before should never|Agents should never edit ~/.claude/ ever.' \
-    'should not on its own|Should not touch ~/.claude/ now' \
-    'a contracted shape|Shouldn'\''t edit ~/.claude/ here' \
-    'a second root in the same clause|Never write to ~/.claude/ or ~/.claude-work/ here.' \
-    'a code span around the root|Never write under `~/.claude/`.' \
-    'words ahead of a comma|Never write under ~/.claude/, ever.'
-  assert_rows 2 \
-    'reminder that negates forgetting|Don'\''t forget to copy the new hook into ~/.claude/ when done.' \
-    'negation of needing to ask|No need to ask — cp build/settings.json ~/.claude/' \
-    'negation of minding something else|Never mind the tests and install the plugin into ~/.claude/' \
-    'negation of an unrelated verb in the same clause|Don'\''t wait and edit ~/.claude/ now.' \
-    'negated clause naming a config file|Never write under ~/.claude/settings.json.' \
-    'negation in an earlier clause|Never ask; rewrite the hooks in ~/.claude/ now.' \
-    'negation in an earlier comma clause|Never wait, edit ~/.claude now.' \
-    'negation after the root|Rewrite the hooks in ~/.claude/, not the repo.' \
-    'same root also named outside the negation|Never write under ~/.claude/ now; edit ~/.claude/ instead.' \
-    'negation in the sentence before|Never ask. Rewrite the hooks in ~/.claude/ now.' \
-    'brace of roots in a negated clause|Never write ~/{.claude,.claude-work}/ now.' \
-    'a second action joined by and|Do not edit the repo and cp build/settings.json ~/.claude/' \
-    'a second action joined by but|Do not edit the repo but rewrite the hooks in ~/.claude/ now' \
-    'a conditional cue with a then clause|If you cannot edit the repo then edit ~/.claude/ directly' \
-    'a second action behind an em dash|Never edit the repo — edit ~/.claude/ instead' \
-    'a second action behind a hyphen|Never edit the repo - edit ~/.claude/ instead' \
-    'a second action behind an arrow|Do not edit the repo -> write ~/.claude/' \
-    'a second action in parentheses|Never edit the repo (write ~/.claude/ instead)' \
-    'a second action joined without a space|Never write x;cp y ~/.claude/' \
-    'a cd into the root after a negated action|Do not edit the repo and cd ~/.claude/ && write settings.json there' \
-    'a copy into a branch root after a negated action|Do not edit the repo and copy settings.json into ~/.claude-work-dev/' \
-    'an inverting word before the root|Never write outside ~/.claude/' \
-    'a suggestion spelled why not|Why not copy the hook into ~/.claude/ now' \
-    'why not directly on the root|Why not write to ~/.claude/ now' \
-    'a double negative|You cannot not write to ~/.claude/ today.' \
-    'a noun reading of no with a later action|No change to the repo and copy the hook into ~/.claude/' \
-    'a noun reading of no with a later install|No update needed so install the plugin in ~/.claude/' \
-    'a noun reading of no directly on the root|No update to ~/.claude/ now.' \
-    'a path segment spelled like a cue|cp /never write ~/.claude/' \
-    'a non-negated root ending in a final dot|Rewrite the hooks in ~/.claude/.' \
-    'an inability handing the write to a subagent|I cannot write to ~/.claude/ so you do it' \
-    'a past-tense reading|You did not write to ~/.claude/ so do it now' \
-    'a later instruction voiding the cue|Do not install to ~/.claude/ but do it anyway' \
-    'a question with would|Would you not copy to ~/.claude/ the hook' \
-    'a why-would question|Why would you not write to ~/.claude/ directly?' \
-    'an open choice with whether|Decide whether or not to write to ~/.claude/' \
-    'an open choice with if|If not write to ~/.claude/' \
-    'a conditional with words before the cue|The test fails if you do not write to ~/.claude/' \
-    'why with words before the cue|Why do we not write to ~/.claude/' \
-    'do opening a question|Do you not write to ~/.claude/' \
-    'should opening a question|Should you not copy into ~/.claude/' \
-    'a bare not without to|Not write to ~/.claude/' \
-    'never then not|Never not write to ~/.claude/' \
-    'a word after the root|Never write to ~/.claude/ and copy the hook' \
-    'a word past a comma after the root|Never write under ~/.claude/, just do it.' \
-    'a clause opened by a comma|Yes, never write under ~/.claude/.' \
-    'a dash inside a clause is no list marker|The hook - never write ~/.claude/' \
-    'a cue word as a cp operand|cp not write ~/.claude/' \
-    'a cue word as an mv operand|mv never edit ~/.claude/' \
-    'a cue word as a tee operand|tee not write ~/.claude/' \
-    'a cue word behind a cp option|cp -r not write ~/.claude/' \
-    'a quoted cue before the root operand|cp ./settings.json "never write" ~/.claude/' \
-    'a quoted cue opening the line|"never write" ~/.claude/' \
-    'a quoted word between cue and root|Never write "x" ~/.claude/' \
-    'a sentence end inside a quote|cp "a b. never write" ~/.claude/' \
-    'a root inside the quote with a word after it|"x. never write to ~/.claude/ y"' \
-    'a quoted root in a negated clause|Never write under "~/.claude/".' \
-    'a quoted word after the root|Never write to ~/.claude/ "now"' \
-    'a cue on forgetting directly before the root|Don'\''t forget ~/.claude/' \
-    'a cue on skipping directly before the root|Never skip ~/.claude/' \
-    'a cue on ignoring directly before the root|Do not ignore ~/.claude/' \
-    'a cue on minding, with only after-token words|Never mind ~/.claude/ at all' \
-    'an auxiliary with no negation|You must always write to ~/.claude/' \
-    'should with no negation|Should just copy into ~/.claude/' \
-    'do with no negation|Please do also write to ~/.claude/' \
-    'a sentence end between the verb and the root|Never write. ~/.claude/' \
-    'a label end between the verb and the root|Do not edit: ~/.claude/' \
-    'a quoted word holding a sentence end opens no clause|"x." never write ~/.claude/' \
-    'a quoted cp operand holding a sentence end opens no clause|cp s.json "x." never write ~/.claude/' \
-    'a comma between the cue and the verb|Never, write ~/.claude/' \
-    'a comma between the verb and the root|Never write, under ~/.claude/'
-  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
-  assert_rows 2 'a quoted cue before the root of a recursive delete|rm -rf "never rm" ~/.claude/'
-}
-
-@test "a backslash ending a word or line opens no clause and ends no sentence" {
-  local row name want prompt
-  for row in \
-    $'a continued line|2|cp settings.json \\\nnever write ~/.claude/' \
-    'escaped spaces after a dotted word|2|cp s.json a.\ never\ write ~/.claude/' \
-    $'a negated clause continued onto its root|0|Never write \\\nunder ~/.claude/.'; do
-    name="${row%%|*}" row="${row#*|}"
-    want="${row%%|*}" prompt="${row#*|}"
-    run_agent "${prompt}" omit
-    [[ "${status}" -eq "${want}" ]] || {
-      echo "row: ${name} · want ${want} · status ${status}: ${output}"
-      return 1
-    }
-  done
-}
-
-@test "a cd continued onto its operand line still counts as a cd" {
-  run_agent $'cd \\\n  ~/.claude/logs && cp /tmp/x ../settings.json' omit
-  [[ "${status}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
 }
 
 # CWD-relative arm: a relative token names the harness only when, read from $HOME, it reaches an entry
