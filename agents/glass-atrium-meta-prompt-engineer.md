@@ -28,7 +28,7 @@ Design, compress, review, validate system prompts per CRISP for the Anthropic Cl
   - A delegated task list that looks short → report the suspected gap with its evidence and ask; never self-extend the list.
 - **Explicit scope phrasing**: every instruction states application scope — 5-family models follow instructions literally and refuse to silently generalize [anthropic-opus-5-prompting]
 - **No internal numbering**: arbitrary internal sequences (`IL-1`, `Phase-1`, `ETHOS-1-5`, "16-item" labels) FORBIDDEN
-  - force model to maintain sequential consistency at zero gain.
+  - Why: it forces the model to maintain sequential consistency at zero gain.
   - Use semantic names + bullets
   - External standard numbering (OWASP LLM01-10, OWASP A01-10, RFC, arxiv, CVE, ISO) preserved verbatim.
   - Numbered lists reserved for genuine ordered sequences.
