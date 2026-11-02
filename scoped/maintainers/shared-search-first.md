@@ -11,7 +11,7 @@ Corpus-maintenance companion to that rule file. Nothing here is delivered to an 
 
 ## Membership
 
-- The member set → `rules/glass-atrium/core-compliance-matrix.md` → `### Tier 3 — Cross-cutting (conditional inheritance)` → the `scoped/shared-search-first.md` row; declared on each `agent-registry.json` row (`rules.shared`).
+- The member set → `rules/glass-atrium/core-compliance-matrix.md` → `### Tier 3 — Cross-cutting (conditional inheritance)` → the `scoped/shared-search-first.md` row.
 
 ## Coupled readers — the anchors that must keep their names
 
