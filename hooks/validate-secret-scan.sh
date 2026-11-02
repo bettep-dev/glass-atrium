@@ -75,7 +75,11 @@ NAMES_EN=(
 # Formats whose value no PATTERNS entry names: an assignment holding one blocks even in a test-fixture file. A value
 # with no such prefix is indistinguishable from a spec's login password → test data there.
 # Word boundary → `task-runner` holds no `sk-`.
-KNOWN_CREDENTIAL_VALUE='[^[:alnum:]](sk-|[sr]k_(live|test)_|gh[pousr]_|github_pat_|glpat-|xox[a-z]-|ASIA|eyJ|npm_|pypi-|hf_|SG\.|dop_v1_|[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]*@)'
+KNOWN_CREDENTIAL_VALUE='[^[:alnum:]](sk-|[sr]k_(live|test)_|gh[pousr]_|github_pat_|glpat-|xox[a-z]-|xapp-|ASIA|eyJ|npm_|pypi-|hf_|SG\.|dop_v1_|ya29\.|whsec_|gsk_|shp(at|ca|pa|ss)_|glsa_|dckr_pat_|[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]*@)'
+
+# A secret access key has no prefix, but this name rules out a login password → blocks in a fixture whatever the value.
+# Start of an extracted assignment → `AWS_ACCESS_KEY_ID`, or the name inside a value, stays test data.
+CLOUD_KEY_NAME='^(aws_secret_)?access[_-]?key'
 
 # Status 0 → a test or fixture file, where a generic credential assignment is test data (a spec's login
 # password), not a credential. Read below the file's repo root; a relative path or no repo root → no fixture dir.
@@ -188,19 +192,24 @@ scan_content() {
   done
 }
 
-# Status 0 → a test-fixture file, and no assigned value of a known credential format.
+# Status 0 → a test-fixture file, with no known credential format or cloud key name in any assignment.
 # Args: $1=blob $2=generic-assignment pattern
 is_fixture_test_data() {
   local file_path
   file_path="$(hook_get_tool_input "${INPUT}" "file_path")"
   # shellcheck disable=SC2310  # the predicate's status is the verdict
-  is_test_fixture_path "${file_path}" && ! has_known_credential_value "${1}" "${2}"
+  is_test_fixture_path "${file_path}" && ! has_known_credential_value "${1}" "${2}" && ! has_cloud_key_assignment "${1}" "${2}"
 }
 
 # Status 0 → an assignment's value holds a KNOWN_CREDENTIAL_VALUE format. Every assignment read, not the first;
 # case-sensitive → `asia-pacific-1` stays test data. Args: $1=blob $2=generic-assignment pattern
 has_known_credential_value() {
   printf '%s\n' "${1}" | grep -oiE -- "${2}" | drain_after grep -qE -- "${KNOWN_CREDENTIAL_VALUE}"
+}
+
+# Status 0 → an assignment to a CLOUD_KEY_NAME, in any case. Args: $1=blob $2=generic-assignment pattern
+has_cloud_key_assignment() {
+  printf '%s\n' "${1}" | grep -oiE -- "${2}" | drain_after grep -qiE -- "${CLOUD_KEY_NAME}"
 }
 
 # Bash channel (HIGH SIGNAL ONLY).

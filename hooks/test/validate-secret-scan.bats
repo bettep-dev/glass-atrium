@@ -185,17 +185,58 @@ run_hook() {
     'GitHub server token|token|ghs_' \
     'GitLab token|token|glpat-' \
     'Slack refresh token|token|xoxe-' \
-    'AWS temporary key id|access_key|ASIA' \
+    'AWS temporary key id|secret|ASIA' \
     'single JWT segment|token|eyJ' \
     'npm token|token|npm_' \
     'PyPI token|password|pypi-' \
     'Hugging Face token|token|hf_' \
     'SendGrid key|api_key|SG.' \
     'DigitalOcean token|token|dop_v1_' \
+    'Google OAuth token|token|ya29.' \
+    'Stripe webhook secret|secret|whsec_' \
+    'Groq key|api_key|gsk_' \
+    'Shopify admin token|token|shpat_' \
+    'Shopify shared secret|secret|shpss_' \
+    'Grafana service account token|token|glsa_' \
+    'Slack app token|token|xapp-' \
+    'Docker Hub token|token|dckr_pat_' \
     'connection string of a scheme without its own pattern|password|mysql://root:hunter2@'; do
     IFS='|' read -r name key value <<<"${row}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"${fixture_assign}\\n${key}=${value}a1b2c3d4e5f6g7h8\"}}"
     [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || { echo "${name}: status ${status}: ${output}"; return 1; }
+  done
+}
+
+# A secret access key has no prefix → only its name tells it from a spec's login password.
+@test "Write channel: a test-fixture file keeps SEC-013 for an assignment to a cloud key name, whatever its value" {
+  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" file row name key separator
+  mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
+  for file in tests/run.sh test/fixtures/values.yaml; do
+    for row in \
+      'AWS secret key, snake case|aws_secret_access_key|=' \
+      'AWS secret key, upper case|AWS_SECRET_ACCESS_KEY|=' \
+      'AWS secret key, yaml form|aws_secret_access_key|: ' \
+      'secret key, camel case|secretAccessKey|: ' \
+      'bare access key|access_key|=' \
+      'hyphenated access key|access-key|: '; do
+      IFS='|' read -r name key separator <<<"${row}"
+      run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/${file}\",\"content\":\"${key}${separator}${value}\"}}"
+      [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || { echo "${name} in ${file}: status ${status}: ${output}"; return 1; }
+    done
+  done
+}
+
+@test "Write channel: a cloud key name counts only as the name of an assignment" {
+  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" login row name content
+  mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
+  login="password"
+  for row in \
+    "name alone in prose beside a test password|see the aws_secret_access_key docs\\n${login}: correct-horse-battery" \
+    "key id beside a test password|AWS_ACCESS_KEY_ID=${value}\\n${login}: correct-horse-battery" \
+    "name inside a test password value|${login}=access_key_12345"; do
+    IFS='|' read -r name content <<<"${row}"
+    run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/tests/run.sh\",\"content\":\"${content}\"}}"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status}: ${output}"; return 1; }
   done
 }
 
