@@ -84,13 +84,30 @@ is_test_fixture_path() {
   below="$(get_project_relative_path "${1}")" || below=""
   # shellcheck disable=SC2310  # the predicate's status is the verdict
   has_secret_shape "${below:-${1}}" && return 1
+  # shellcheck disable=SC2310  # the predicate's status is the verdict
+  has_link_below_root "${1}" "${below}" && return 1
   case "/${below}" in
     */fixtures/* | */__fixtures__/* | */testdata/*) return 0 ;;
     *) is_source_test_file "${1##*/}" "${below}" ;;
   esac
 }
 
-# Status 0 → source code or a test script, named as a test or below a test dir. Args: $1=basename $2=path below the root
+# Status 0 → a segment below the repo root is a link: like a `..`, it can leave any dir the spelling names.
+# Args: $1=file path $2=path below the root
+has_link_below_root() {
+  local dir="${1%"${2}"}" rest="${2}"
+  while [[ -n "${rest}" ]]; do
+    dir+="${rest%%/*}"
+    [[ -L "${dir}" ]] && return 0
+    dir+=/
+    if [[ "${rest}" == */* ]]; then rest="${rest#*/}"; else rest=""; fi
+  done
+  return 1
+}
+
+# Status 0 → source code or a test script, named as a test or below a test dir. Any test or spec dir counts, a deploy or
+# API tree's too: no list can tell which parents hold real tests, and only a generic assignment skips SEC-013 here.
+# Args: $1=basename $2=path below the root
 is_source_test_file() {
   local base
   base="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"

@@ -73,6 +73,10 @@ run_hook() {
   # p/ and test/shop/ are repo roots; test/shop/ sits inside a dir named test above its own root, secrets-app/ holds a
   # secrets shape above its own root
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git" "${BATS_TEST_TMPDIR}/test/shop/.git" "${BATS_TEST_TMPDIR}/secrets-app/.git"
+  # links a fixture spelling can leave the tests dir through
+  mkdir -p "${BATS_TEST_TMPDIR}/p/src" "${BATS_TEST_TMPDIR}/p/tests"
+  ln -s ../src "${BATS_TEST_TMPDIR}/p/tests/src"
+  ln -s ../src/config.ts "${BATS_TEST_TMPDIR}/p/tests/login.spec.ts"
   fixture_assign="password"
   fixture_assign="${fixture_assign}: 'correct-horse-battery'"
   for row in \
@@ -110,6 +114,10 @@ run_hook() {
     'test-named conf under no repo root|/p/prod.test.conf|2' \
     'config format in a deploy spec dir|p/deploy/spec/prod.yaml|2' \
     'config format in a k8s test dir|p/k8s/test/values.yaml|2' \
+    'source below a dir link out of a tests dir|p/tests/src/config.ts|2' \
+    'spec-named file that is itself a link|p/tests/login.spec.ts|2' \
+    'a script in a test dir of a deploy tree, accepted|p/deploy/test/bootstrap.sh|0' \
+    'source in a spec dir of an API tree, accepted|p/openapi/spec/client.py|0' \
     'npm credential dotfile in a test dir|p/test/.npmrc|2' \
     'netrc credential dotfile in a test dir|p/test/.netrc|2' \
     'postgres credential dotfile in a test dir|p/test/.pgpass|2' \
