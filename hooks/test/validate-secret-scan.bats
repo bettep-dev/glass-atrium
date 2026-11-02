@@ -12,8 +12,9 @@
 # Requires: bats (brew install bats-core), bash 3.2+, python3 (fail-closed
 # precondition — the hook itself exits 2 without python3).
 #
-# Hermetic strategy: the hook reads ONLY stdin — no file is written; content/
-# command strings are pattern-scanned in place. Credential fixtures are
+# Hermetic strategy: the hook reads stdin and stats the file path (`.git`, links),
+# never a file's content; content/command strings are pattern-scanned in place,
+# path rows build their trees under BATS_TEST_TMPDIR. Credential fixtures are
 # SYNTHETIC and RUNTIME-ASSEMBLED from split fragments so no secret-shaped
 # literal ever sits in this file (it would trip the very gate under test on
 # the test file's own write). The generic-assignment fixture is assembled in
@@ -200,6 +201,18 @@ run_hook() {
     'Grafana service account token|token|glsa_' \
     'Slack app token|token|xapp-' \
     'Docker Hub token|token|dckr_pat_' \
+    'Google client secret|client_secret|GOCSPX-' \
+    'Vault token|vault_token|hvs.' \
+    'xAI key|api_key|xai-' \
+    'Perplexity key|api_key|pplx-' \
+    'Atlassian token|secret|ATATT3x' \
+    'Linear key|token|lin_api_' \
+    'Figma token|token|figd_' \
+    'Databricks token|token|dapi' \
+    'age secret key|api_key|AGE-SECRET-KEY-' \
+    'Notion legacy token|secret|secret_a1b2c3d4e5f6g7h8i9j0' \
+    'Notion token|token|ntn_' \
+    'Replicate token|token|r8_' \
     'connection string of a scheme without its own pattern|password|mysql://root:hunter2@'; do
     IFS='|' read -r name key value <<<"${row}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${path}\",\"content\":\"${fixture_assign}\\n${key}=${value}a1b2c3d4e5f6g7h8\"}}"
@@ -218,7 +231,14 @@ run_hook() {
       'AWS secret key, yaml form|aws_secret_access_key|: ' \
       'secret key, camel case|secretAccessKey|: ' \
       'bare access key|access_key|=' \
-      'hyphenated access key|access-key|: '; do
+      'hyphenated access key|access-key|: ' \
+      'access key with a glued qualifier|minioAccessKey|: ' \
+      'AWS session token|AWS_SESSION_TOKEN|=' \
+      'short AWS secret name|aws_secret|: ' \
+      'dotted AWS property|cloud.aws.credentials.secret|=' \
+      'Azure client secret|AZURE_CLIENT_SECRET|=' \
+      'Alibaba access key secret|ALIBABA_CLOUD_ACCESS_KEY_SECRET|=' \
+      'bare access key secret|access_key_secret|='; do
       IFS='|' read -r name key separator <<<"${row}"
       run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/${file}\",\"content\":\"${key}${separator}${value}\"}}"
       [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || { echo "${name} in ${file}: status ${status}: ${output}"; return 1; }
@@ -226,14 +246,45 @@ run_hook() {
   done
 }
 
+# Name and value apart in each row → joined, a row trips the gate on this file's own write.
+@test "Write channel: a cloud key assignment after another assignment keeps SEC-013, on its line or a later one" {
+  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" file row name first lead key separator
+  mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
+  for file in tests/run.sh test/fixtures/values.yaml; do
+    for row in \
+      'query string|password|=foo12345&|aws_secret_access_key|=' \
+      'comma list|password|=foo12345,|aws_secret_access_key|=' \
+      'semicolon list|password|=foo12345;|access_key|=' \
+      'connection string|Server=x;Password|=hunter2222;|AccessKey|=' \
+      'second query parameter of a URL|https://x.test/?token|=abc12345&|access_key|=' \
+      'unquoted object literal|{password|:foo12345,|accessKey|:' \
+      'session token in a query string|password|=foo12345&|AWS_SESSION_TOKEN|=' \
+      'later line|password|: correct-horse-battery\n|aws_secret_access_key|='; do
+      IFS='|' read -r name first lead key separator <<<"${row}"
+      run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/${file}\",\"content\":\"${first}${lead}${key}${separator}${value}\"}}"
+      [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || {
+        echo "${name} in ${file}: status ${status}: ${output}"
+        return 1
+      }
+    done
+  done
+}
+
 @test "Write channel: a cloud key name counts only as the name of an assignment" {
-  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" login row name content
+  local value="a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" login assign="=" row name content
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
   login="password"
   for row in \
     "name alone in prose beside a test password|see the aws_secret_access_key docs\\n${login}: correct-horse-battery" \
     "key id beside a test password|AWS_ACCESS_KEY_ID=${value}\\n${login}: correct-horse-battery" \
-    "name inside a test password value|${login}=access_key_12345"; do
+    "name inside a test password value|${login}=access_key_12345" \
+    "provider name inside a test password value|${login}=aws_secret_12345" \
+    "provider setting that holds no secret|AWS_REGION=eu-central-1\\n${login}: correct-horse-battery" \
+    "session token under no cloud name|session_token${assign}${value}" \
+    "client secret under no cloud name|client_secret${assign}${value}" \
+    "api key under no cloud name|api_key${assign}${value}" \
+    "bare token|token${assign}${value}" \
+    "bare secret|secret${assign}${value}"; do
     IFS='|' read -r name content <<<"${row}"
     run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${BATS_TEST_TMPDIR}/p/tests/run.sh\",\"content\":\"${content}\"}}"
     [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status}: ${output}"; return 1; }
@@ -245,6 +296,8 @@ run_hook() {
   mkdir -p "${BATS_TEST_TMPDIR}/p/.git"
   for row in \
     'prefix inside a longer word|token|task-runner-01' \
+    'Notion prefix on a readable dummy value|token|secret_token_value_for_tests' \
+    'Databricks prefix on a short word|token|dapiclient1' \
     'prefix spelled in another case|token|asia-pacific-1' \
     'URL with no userinfo|password|https://example.com/login'; do
     IFS='|' read -r name key value <<<"${row}"

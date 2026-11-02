@@ -5,7 +5,8 @@
 #     redirected/heredoc'd into a dotenv/secrets file (a secret can otherwise be
 #     written via `echo KEY=... > .env`, fully bypassing the Write|Edit channel).
 # One coherent secret-scan surface — branches on tool_name. Both invocations
-# block with exit 2 on match. Bind this hook to BOTH Write|Edit and Bash.
+# block with exit 2 on match, except SEC-013 on test data in a fixture file
+# (is_fixture_test_data). Bind this hook to BOTH Write|Edit and Bash.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -72,14 +73,16 @@ NAMES_EN=(
   "Service-account JSON marker"
 )
 
-# Formats whose value no PATTERNS entry names: an assignment holding one blocks even in a test-fixture file. A value
-# with no such prefix is indistinguishable from a spec's login password → test data there.
-# Word boundary → `task-runner` holds no `sk-`.
-KNOWN_CREDENTIAL_VALUE='[^[:alnum:]](sk-|[sr]k_(live|test)_|gh[pousr]_|github_pat_|glpat-|xox[a-z]-|xapp-|ASIA|eyJ|npm_|pypi-|hf_|SG\.|dop_v1_|ya29\.|whsec_|gsk_|shp(at|ca|pa|ss)_|glsa_|dckr_pat_|[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]*@)'
+# Formats whose value no PATTERNS entry names: an assignment holding one blocks even in a test-fixture file.
+# Word boundary → `task-runner` holds no `sk-`. Length bound on word-like `dapi`, `secret_` → a readable dummy passes.
+# Accepted boundary, closed list → a format off it, or a prefix-less value under a name a spec also gives its dummy
+# (`api_key`, `token`, `secret`, `client_secret`), is test data there: blocking by name costs false positives.
+KNOWN_CREDENTIAL_VALUE='[^[:alnum:]](sk-|[sr]k_(live|test)_|gh[pousr]_|github_pat_|glpat-|xox[a-z]-|xapp-|ASIA|eyJ|npm_|pypi-|hf_|SG\.|dop_v1_|ya29\.|whsec_|gsk_|shp(at|ca|pa|ss)_|glsa_|dckr_pat_|GOCSPX-|hvs\.|xai-|pplx-|ATATT|lin_api_|figd_|dapi[[:alnum:]]{16,}|AGE-SECRET-KEY-|secret_[[:alnum:]]{32,}|ntn_|r8_|[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]*@)'
 
-# A secret access key has no prefix, but this name rules out a login password → blocks in a fixture whatever the value.
-# Start of an extracted assignment → `AWS_ACCESS_KEY_ID`, or the name inside a value, stays test data.
-CLOUD_KEY_NAME='^(aws_secret_)?access[_-]?key'
+# Names that rule out a login password → an assignment to one blocks in a fixture whatever the value.
+# Separator required → `AWS_ACCESS_KEY_ID`, or the name inside a value, stays test data.
+# No left boundary → a glued qualifier (`minioAccessKey`) counts, at the cost of a longer word ending in `aws`.
+CLOUD_KEY_NAME='((aws|azure|gcp|alibaba|alicloud|aliyun|tencent)[[:alnum:]_.-]*(secret|token|key)|access[_-]?key([_-]?secret)?)["'"'"' ]*[:=]'
 
 # Status 0 → a test or fixture file, where a generic credential assignment is test data (a spec's login
 # password), not a credential. Read below the file's repo root; a relative path or no repo root → no fixture dir.
@@ -207,9 +210,10 @@ has_known_credential_value() {
   printf '%s\n' "${1}" | grep -oiE -- "${2}" | drain_after grep -qE -- "${KNOWN_CREDENTIAL_VALUE}"
 }
 
-# Status 0 → an assignment to a CLOUD_KEY_NAME, in any case. Args: $1=blob $2=generic-assignment pattern
+# Status 0 → an assignment to a CLOUD_KEY_NAME, in any case. Extract widened left → the full name, not the matched word;
+# read whole → the value class swallows a next assignment on its line. Args: $1=blob $2=generic-assignment pattern
 has_cloud_key_assignment() {
-  printf '%s\n' "${1}" | grep -oiE -- "${2}" | drain_after grep -qiE -- "${CLOUD_KEY_NAME}"
+  printf '%s\n' "${1}" | grep -oiE -- "[[:alnum:]_.-]*${2}" | drain_after grep -qiE -- "${CLOUD_KEY_NAME}"
 }
 
 # Bash channel (HIGH SIGNAL ONLY).
