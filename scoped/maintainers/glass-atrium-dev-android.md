@@ -20,9 +20,9 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | `autoagent/daemon_cycle.py` → `match_sensitive_diff` | added lines of any patch to this body | a dynamic-exec call form written with its paren routes the patch to safety |
 
 - No suite reads this body's prose.
-  - `hooks/test/inject-scope-rules-nodrop.bats` reads the real `maxTurns` for its meter size.
+  - `hooks/test/inject-scope-rules-nodrop.bats` and `hooks/test/inject-scope-single-delivery.bats` read the real `maxTurns` for the meter.
   - `hooks/test/corpus/agents-blocklist/glass-atrium-dev-android.md` is a standalone fixture, not a copy of the body's frontmatter; a body edit does not reach it.
-  - Other suites use the agent name as roster or fixture data.
+  - Other suites that name the agent use the name as roster or fixture data.
 
 ## Body text other files cite
 
