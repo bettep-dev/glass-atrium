@@ -118,8 +118,7 @@
   - almost no border-radius (0–2px)
   - no shadows
   - no gradients
-  - underline links
-  - no hover decoration
+  - underline links, no hover decoration
 
 ## Selection guide
 
