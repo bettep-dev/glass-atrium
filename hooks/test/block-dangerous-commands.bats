@@ -272,6 +272,11 @@ run_hook_command() {
     'double-quoted echo argument@@echo "never run rm -rf ~ here"' # GA-RM[not-executed]: hook payload on stdin, never run
     "single-quoted echo argument beside another command@@echo 'rm -rf /' && ls" # GA-RM[not-executed]: hook payload, never run
     'printf format and argument@@printf "%s\n" "rm -rf ~"' # GA-RM[not-executed]: hook payload on stdin, never run
+    'printf behind an end-of-options marker@@printf -- -v "rm -rf ~"' # GA-RM[not-executed]: hook payload, never run
+    'printf with a plain unquoted format@@printf hello "rm -rf ~"' # GA-RM[not-executed]: hook payload, never run
+    'printf with a dollar inside a single-quoted format@@printf '\''$x'\'' "rm -rf ~"' # GA-RM[not-executed]: hook payload, never run
+    'printf with a later word shaped like -v@@printf "%s %s\n" -v "rm -rf ~"' # GA-RM[not-executed]: hook payload, never run
+    'variable in a print-only echo@@echo "rm -rf ~" $USER' # GA-RM[not-executed]: hook payload, never run
     'echo to stderr@@echo "rm -rf ~ is blocked" >&2' # GA-RM[not-executed]: hook payload on stdin, never run
     'echo beside a Trash delete@@echo "rm -rf ~"; rm -rf ~/.Trash/x' # GA-RM[not-executed]: hook payload, never run
     'parameter-expansion braces in an echo argument@@echo "rm -rf ${HOME} is blocked"' # GA-RM[not-executed]: hook payload, never run
@@ -300,6 +305,15 @@ run_hook_command() {
     'printf with an attached -v name@@printf -vc "rm -rf ~"; eval "$c"' # GA-RM[not-executed]: hook payload, never run
     'printf -v behind a leading backslash, read by an inert test@@printf \-v y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
     'printf -v with a backslash inside it, read by an inert test@@printf -\v y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
+    'printf option spelled by a one-character glob@@touch -- -v; printf -? y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
+    'printf option spelled by a bracket glob@@touch -- -v; printf -[v] y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
+    'printf option spelled by a star glob@@touch -- -v; printf -* y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
+    'printf option from a glob with no leading dash@@touch -- -v; printf ?v y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
+    'printf option from an unquoted variable@@printf $x y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
+    'printf option behind a dash and a braced variable@@printf -${x} y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
+    'printf option from a quoted variable@@printf "$x" y '\''\x24(rm -rf /)'\''; test -v "a[$y]"' # GA-RM[not-executed]: hook payload, never run
+    'inert rm taking echo text back from a shell read-back variable@@echo " rm -rf ~ "; rm -rf $BASH_EXECUTION_STRING' # GA-RM[not-executed]: hook payload, never run
+    'inert command reading a variable the scan cannot know@@echo "rm -rf ~"; touch $history' # GA-RM[not-executed]: hook payload, never run
     $'escaped single quotes around a real wipe@@echo \\\'; rm -rf / ;\\\'' # GA-RM[not-executed]: hook payload on stdin, never run
     'escaped double quote around a real wipe@@echo \"; rm -rf / ; echo "\""' # GA-RM[not-executed]: hook payload on stdin, never run
     'echo into an fd opened on a script file@@exec 3>run.sh; echo "rm -rf ~" >&3' # GA-RM[not-executed]: hook payload, never run

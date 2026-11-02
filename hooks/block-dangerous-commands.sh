@@ -13,10 +13,11 @@
 #
 # Echo exception (rm-wipe row only): rm text in a quoted argument of a print-only echo/printf is blanked before
 # the re-check. The judge (lib/echo_mask.py) blanks only what it proves prints: a call that is a whole pipeline
-# of its own, redirected at most to a stdout/stderr copy or /dev/null, no printf -v, in a command whose every other
-# simple command is one of a few inert names. Anything else it cannot classify keeps every text and the block: a
-# heredoc, here-string, multi-line quote, unquoted backslash, group or compound body, substitution, comment, any $ but
-# $name / ${name}, or any other program, since one could run the text or read it back from the shell.
+# of its own, redirected at most to a stdout/stderr copy or /dev/null, a printf first argument provably no option (so
+# no printf -v, spelled or expanded), in a command whose every other simple command is one of a few inert names reading
+# no $name. Anything else it cannot classify keeps every text and the block: a heredoc, here-string, multi-line quote,
+# unquoted backslash, group or compound body, substitution, comment, any $ but $name / ${name}, or any other program,
+# since one could run the text or read it back from the shell.
 #
 # Confinement belongs to the tool-grant layer, not here. See plan clauded-docs/290 UD-1 (the blanket shell grant makes the config path-allowlists decorative).
 #

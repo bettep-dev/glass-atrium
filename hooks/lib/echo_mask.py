@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-"""echo_mask.py — the echo exception judge of block-dangerous-commands.sh: which echo/printf text only prints?
-
-Reads the command on stdin. Exit 0 → every simple command is a print-only echo/printf or one named in
-INERT_COMMANDS, and stdout is the command with each quoted argument of those echo/printf calls blanked, which the
-hook re-checks against its rm-wipe row. Exit 1 → any construct the scan cannot classify, so the hook keeps its block.
-Any other program could run the echoed text or read it back (shell state, the job table, the shell's own argv),
-so a command naming one is never masked: the scan proves where the text goes instead of listing where it must not.
+"""echo_mask.py — the echo exception judge of block-dangerous-commands.sh, command on stdin.
+Exit 0 → stdout = the command with print-only echo/printf text blanked; exit 1 → unclassified, the hook keeps its block.
+An allowlist: any program outside COMMANDS could run the echoed text or read it back (shell state, jobs, argv).
 """
 
 import re
 import sys
 from types import SimpleNamespace
 
-# run no text and read none of the shell's back; an rm stays judged by the hook's rm-wipe row and Trash judge
-INERT_COMMANDS = frozenset({":", "true", "false", "test", "[", "cd", "pwd", "ls", "rm", "mkdir", "touch", "sleep"})
-PRINT_COMMANDS = frozenset({"echo", "printf"})
+COMMANDS = SimpleNamespace(
+    # run no text and read none of the shell's back; an rm stays judged by the hook's rm-wipe row and Trash judge
+    INERT=frozenset({":", "true", "false", "test", "[", "cd", "pwd", "ls", "rm", "mkdir", "touch", "sleep"}),
+    PRINT=frozenset({"echo", "printf"}),
+)
 SEPARATORS = SimpleNamespace(PIPE=frozenset({"|", "|&"}), CONTINUING=frozenset({"|", "|&", "&&", "||"}))
 PATTERN = SimpleNamespace(
     # read on the raw text, quotes included: a heredoc or here-string, a backtick, any $ but a plain $name / ${name}
@@ -34,11 +32,11 @@ PATTERN = SimpleNamespace(
 def get_masked(command):
     """The command with each quoted argument of a print-only echo/printf blanked; any doubt raises ValueError."""
     spans = []
-    for simple in get_commands(get_lexemes(command)):
-        name = simple.words[0][0]
-        if name in PRINT_COMMANDS and is_print_only(simple):
-            spans += get_quoted_spans(simple.words[1:])
-        elif name not in INERT_COMMANDS:
+    for statement in get_commands(get_lexemes(command)):
+        name = statement.words[0][0]
+        if name in COMMANDS.PRINT and is_print_only(statement):
+            spans += get_quoted_spans(statement.words[1:])
+        elif name not in COMMANDS.INERT or has_expansion(statement):
             raise ValueError("unclassified command")
     for start, end in reversed(spans):
         command = command[:start] + "''" + command[end:]
@@ -99,14 +97,28 @@ def get_command(lexemes, is_piped):
     return SimpleNamespace(words=words, redirects=redirects, is_piped=is_piped)
 
 
-def is_print_only(simple):
+def is_print_only(command):
     """A whole pipeline of its own, only stdout/stderr copies or /dev/null as redirects, no printf -v (assigns)."""
-    if simple.is_piped or not all(is_print_redirect(*redirect) for redirect in simple.redirects):
+    if command.is_piped or not all(is_print_redirect(*redirect) for redirect in command.redirects):
         return False
-    # quotes removed first: printf '-v' c … still assigns; an unquoted backslash never lexes, so \-v cannot reach here
-    return simple.words[0][0] == "echo" or not any(
-        re.sub(r"['\"]", "", word).startswith("-v") for word, _ in simple.words[1:]
-    )
+    words = command.words
+    return words[0][0] == "echo" or len(words) == 1 or not can_be_option(words[1][0])
+
+
+def can_be_option(word):
+    """Could this first printf argument reach printf as an option? A glob or a $ can become one at run time."""
+    quoted = [match.group() for match in PATTERN.QUOTED.finditer(word)]
+    if re.search(r"[$*?\[]", PATTERN.QUOTED.sub("", word)) or any(q[0] == '"' and "$" in q for q in quoted):
+        return True
+    # quotes removed first: printf '-v' c … still assigns; `--` ends the options
+    bare = re.sub(r"['\"]", "", word)
+    return bare.startswith("-") and bare != "--"
+
+
+def has_expansion(command):
+    """Any $name: on an inert command one can take the blanked text back, as BASH_EXECUTION_STRING does."""
+    texts = [word for word, _ in command.words] + [target for _, target in command.redirects]
+    return any("$" in text for text in texts)
 
 
 def is_print_redirect(operator, target):
