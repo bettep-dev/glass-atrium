@@ -436,8 +436,8 @@ set_start() {
   esac
 }
 
-# A glob is expanded by bash pathname expansion, never run. Exit 0 = a match reaches a protected path,
-# or the expansion passed a cap (judged protected: walk cost).
+# A glob is expanded by bash pathname expansion, never run. Exit 0 = a match reaches a protected path;
+# an expansion past a cap never returns here (block_glob_cap).
 glob_reaches_harness() {
   local match matches=() head tail="" IFS=$'\n'
   set_start "${written}"
@@ -447,7 +447,7 @@ glob_reaches_harness() {
   while [[ "${head}" == */* && "${head##*/}" != *[][*?]* ]]; do
     tail="${head##*/}${tail:+/${tail}}" head="${head%/*}"
   done
-  set_glob_matches "${head}" || return 0
+  set_glob_matches "${head}"
   set_existing_matches "${head}"
   glob_match=true
   for match in ${matches[@]+"${matches[@]}"}; do
@@ -460,9 +460,9 @@ glob_reaches_harness() {
 
 # $1 expanded below walk_p into matches, one segment at a time → a level reads only the dirs the level before it kept.
 # Budget: one per path a level yields, prompt-wide — a literal segment keeps a wide level alive, a match costs a walk.
-# Exit 1 = a level past its cap, or the budget spent.
+# A level past its cap, or the budget spent → blocks, remaining dirs unread: the verdict is settled.
 set_glob_matches() {
-  local rest="${1}" seg prefix rc=0
+  local rest="${1}" seg prefix
   local -a next_level
   matches=("${walk_p%/}")
   shopt -s nullglob
@@ -474,15 +474,19 @@ set_glob_matches() {
     # shellcheck disable=SC2206  # pathname expansion is the point; word splitting is on newline only
     for prefix in ${matches[@]+"${matches[@]}"}; do
       next_level+=("${prefix}"/${seg})
-      # verdict settled past the cap → the remaining dirs stay unread
-      ((${#next_level[@]} <= glob_level_cap)) || break
+      ((${#next_level[@]} <= glob_level_cap)) || block_glob_cap "a glob whose expansion passed the cap of ${glob_level_cap} paths at one level" 'Narrow the glob to the paths the delegation needs.'
     done
     matches=(${next_level[@]+"${next_level[@]}"})
     glob_paths_spent=$((glob_paths_spent + ${#matches[@]}))
-    ((${#matches[@]} <= glob_level_cap && glob_paths_spent <= glob_path_budget)) || { rc=1 && break; }
+    ((glob_paths_spent <= glob_path_budget)) || block_glob_cap "a glob that took this prompt past the budget of ${glob_path_budget} paths in all" 'Split the delegation across prompts or narrow its globs.'
   done
   shopt -u nullglob
-  return "${rc}"
+}
+
+# Past a cap nothing was resolved → the reason names the cap and its remedy, never a path the walk reached.
+# Args: $1=the cap passed, as a noun phrase · $2=the remedy
+block_glob_cap() {
+  block "[enforce-foreground-harness] Blocking candidate: ${shown//[[:cntrl:]]/?} (${1}). Its walk cost stops it here, so it is judged protected without being resolved (fail-safe). ${2}"
 }
 
 # nullglob covers real patterns only → a last segment bash reads as none (`[x`, `x]y`) survives unchecked: stat it.
