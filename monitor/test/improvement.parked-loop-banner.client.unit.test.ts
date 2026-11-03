@@ -325,7 +325,7 @@ function collect(node: unknown, pick: (el: RecordedElement) => boolean, stopAt: 
   return out;
 }
 
-test("report surfaces keep neutral chrome — no tinted border, no hued diff chip", async () => {
+test("the learning-memory tiles carry no tone border", () => {
   const row = sandbox.BucketRowI({
     state: { status: "ready" },
     buckets: { ctm: 4, epm: 2, outcome: {}, joinMeta: { linked_agent_count: 3 } },
@@ -335,9 +335,37 @@ test("report surfaces keep neutral chrome — no tinted border, no hued diff chi
     return Boolean(style && ("borderLeft" in style || "borderColor" in style));
   });
   assert.deepEqual(tinted, [], "the learning-memory tiles carry no tone border");
-  const { readFile } = await import("node:fs/promises");
-  const src = await readFile(IMPROVEMENT_SRC, "utf8");
-  assert.doesNotMatch(src, /diff-line--(add|del)/, "the added/removed chips must not hue their text");
+});
+
+const NEUTRAL_TEXT_CLASS = /\btext-(ink|dim|faint)\b/;
+const HUE_STYLE_KEYS = ["color", "background", "backgroundColor", "borderColor", "borderLeft"];
+
+function getLineCountChips(): RecordedElement[] {
+  Object.assign(sandbox.window.UI, { formatPctWithDenominator: (count: number, total: number) => `${count}/${total}` });
+  const card = sandbox.ChangeSummaryCardI({
+    state: { status: "ready" },
+    aggregate: { added: 4, removed: 2, eventCount: 6, failBefore: { count: 5, total: 10 }, failAfter: { count: 1, total: 10 } },
+  });
+  return collect(card, (el) => el.type === screenFns.LineCountI, [screenFns.LineCountI]);
+}
+
+test("the change summary's line counts keep their hue on the sign glyph, with neutral text and no inline hue", () => {
+  const chips = getLineCountChips();
+  assert.deepEqual(chips.map((chip) => chip.props.word), ["added", "removed"]);
+  for (const chip of chips) {
+    const nodes = collectElements(screenFns.LineCountI(chip.props), []);
+    const [glyph] = nodes.filter((el) => el.props.s !== undefined);
+    assert.match(String(glyph?.props.className), TONE_TEXT_CLASS, `${chip.props.word}: the sign glyph holds the tone`);
+    const plain = nodes.filter((el) => el.props.s === undefined);
+    const inlineHues = plain.flatMap((el) => HUE_STYLE_KEYS.filter((key) => key in Object(el.props.style)));
+    assert.deepEqual(inlineHues, [], `${chip.props.word}: an inline style hues the chip`);
+    const textClasses = plain.filter((el) => !isElement(el.props.children) && !Array.isArray(el.props.children)).map((el) => String(el.props.className));
+    assert.equal(textClasses.length, 2, `${chip.props.word}: numeral and word`);
+    for (const textClass of textClasses) {
+      assert.match(textClass, NEUTRAL_TEXT_CLASS, `${chip.props.word}: the text keeps a neutral ink`);
+      assert.doesNotMatch(textClass, TONE_TEXT_CLASS, `${chip.props.word}: a tone class hues the text`);
+    }
+  }
 });
 
 test("a failed stats payload raises one banner at the loop output group", () => {

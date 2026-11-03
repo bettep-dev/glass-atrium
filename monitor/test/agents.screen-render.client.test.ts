@@ -464,15 +464,13 @@ test("the page header renders every title as the page h1 with the sub-line under
 
   const echoed = renderScreen(React.createElement(PageHeader, { title: "Models & budgets", sub: "Models & budgets" }));
   assert.equal(collectText(echoed), "Models & budgets", "a sub-line repeating the title is not rendered twice");
-
-  const src = await import("node:fs").then((fs) => fs.readFileSync(AGENTS_SRC, "utf8"));
-  assert.doesNotMatch(src, /shouldRenderTitle/, "the retired opt-in is gone from the Agents screen");
 });
 
 const HIGH_FAIL_WORD = "high failure share";
 
 test("the summary row marks the shared crit step from its own failed share, and only on an adequate sample", async () => {
-  const mod = await loadAgentsScreen();
+  const toneVarColor = REAL_UI.toneVarColor as (tone: string) => string;
+  const mod = await loadAgentsScreen({ toneVarColor });
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   // failed share = 1 − passed/denominator, denominator = runs − needs_context.
   const cases = [
@@ -484,12 +482,14 @@ test("the summary row marks the shared crit step from its own failed share, and 
     const tree = renderScreen(
       React.createElement(mod.AgentSummaryRow as Component, {
         agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", ...c },
-        days: 30, isSelected: false, onSelect: () => {}, trend: null, failure: null, overage: null,
+        days: 30, isSelected: false, onSelect: () => {}, trend: [3, 5, 2], trendStatus: "ready", failure: null, overage: null,
       }),
     );
     assert.equal(collectText(tree).includes(HIGH_FAIL_WORD), c.crit, c.why);
     const toned = findNodes(tree, (n) => /\btext-(ok|warn)\b/.test(String(n.props?.className ?? "")));
     assert.equal(toned.length, 0, `${c.why}: the success numeral carries no second scale`);
+    const [trendBars] = findAtoms(tree, "MiniBars");
+    assert.equal(trendBars?.props.color, toneVarColor(c.crit ? "crit" : "neutral"), `${c.why}: the trend bars carry no band of their own`);
   }
 });
 
@@ -510,15 +510,6 @@ test("a matrix cell takes the crit step from failures over its rate denominator,
     const style = (cellNode?.props.style as Record<string, unknown> | undefined) ?? {};
     assert.deepEqual([style.background, style.outline], [undefined, undefined], `${c.why}: the tone rides the glyph, never a cell fill or outline`);
   }
-});
-
-test("Agents keeps one rate scale — the retired thresholds and the hardcoded trend band are gone", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const source = await readFile(AGENTS_SRC, "utf8");
-  for (const name of ["SUMMARY_SUCCESS_OK_PCT", "SUMMARY_SUCCESS_WARN_PCT", "SUCCESS_RATE_OK_THRESHOLD", "SUCCESS_RATE_WARN_THRESHOLD", "successRateTone"]) {
-    assert.equal(source.includes(name), false, `${name} is retired`);
-  }
-  assert.doesNotMatch(source, /successPct\s*<\s*90/, "trendBarColor no longer carries its own 90% band");
 });
 
 test("the Agents ledger shows no initial avatar, which reads G for every glass-atrium agent", async () => {
