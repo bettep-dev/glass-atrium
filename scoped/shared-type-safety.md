@@ -1,6 +1,7 @@
 # Type Safety Rules (Cross-Cutting Concern)
 
-Each rule binds only on the construct it names: where a language lacks it, the rule is inert, never generalized to a near-equivalent.
+- Each rule binds only on the construct it names.
+  - Where a language lacks it, the rule is inert, never generalized to a near-equivalent.
 
 ## Core Principles
 

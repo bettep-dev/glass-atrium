@@ -1659,7 +1659,7 @@
     "scoped/shared-search-first.md": "48a7cbdb1e1254aa3f8d4538e994c77e1245baf8001a1723f7db51353123ffd6",
     "scoped/shared-testing.md": "58ced96893a13916d064252bb07fa5b24a217d625a739d07a5579362f0b7d0d5",
     "scoped/shared-turn-budget.md": "0e50ee42ac9584be73d5f5620b5384bb13a0eddba116989b33d297a06edefeb9",
-    "scoped/shared-type-safety.md": "19e37130cdbb5567fcae816b3e0db4c31fbb349cca84ce4330666ae312325de5",
+    "scoped/shared-type-safety.md": "79d269a22e9df263b1769601e042d6b23256c91a9d4813b5a1231f940af6c4d2",
     "scripts/_pg_archive_rotate.py": "040de7e5d4d429a96bd586080f74c215959dd281d83de6f48c7ddf09923a84e7",
     "scripts/_pg_dual_write_daemon.py": "58d1df75e3e619974c260b3b4db6342f854b7413478727ca22b9d9becae02e06",
     "scripts/_pg_push_autoagent_cycle.py": "77050cf0840f2627e876cc1ca1703c75e49632d1854afb8ab90eda8c6a478913",
