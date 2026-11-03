@@ -18,7 +18,7 @@
 | **Semantic** | purpose tokens | aliases **base only** | `--bgColor-default → {base.neutral.0}` |
 | **Component** | variant tokens | aliases **semantic only** | `--btn-bgColor-rest → {control.bgColor.rest}` |
 
-Full chain example: `button.bgColor.rest` → `{control.bgColor.rest}` → `{base.neutral.X}`.
+- Full chain example: `button.bgColor.rest` → `{control.bgColor.rest}` → `{base.neutral.X}`.
 
 ### Hard rules
 
@@ -31,13 +31,11 @@ Full chain example: `button.bgColor.rest` → `{control.bgColor.rest}` → `{bas
 
 ### Composite tokens
 
-Bundle correlated sub-properties into one composite token so they cannot desync:
-
-- **Typography** → `--text-{role}-{size}` bundling font-size + line-height + weight + tracking.
-- **Shadow** → `--shadow-{level}` bundling offset + blur + color.
-- **Border** → one composite bundling color + width + style.
-
-Where a composite exists, consumers use it, never its loose sub-properties.
+- Bundle correlated sub-properties into one composite token so they cannot desync:
+  - **Typography** → `--text-{role}-{size}` bundling font-size + line-height + weight + tracking.
+  - **Shadow** → `--shadow-{level}` bundling offset + blur + color.
+  - **Border** → one composite bundling color + width + style.
+- Where a composite exists, consumers use it, never its loose sub-properties.
 
 ## Multi-Mode Override Matrix
 
@@ -102,8 +100,8 @@ Where a composite exists, consumers use it, never its loose sub-properties.
 
 ### Hallucination Guard
 
-Any token name not present in this spec MUST be flagged inline (e.g. suffix the unknown name with `/* check-token */`) so it cannot silently ship.
+- Any token name not present in this spec MUST be flagged inline (e.g. suffix the unknown name with `/* check-token */`) so it cannot silently ship.
 
 ### Golden reference component
 
-One reference component rendered in each state — default / hover / active / focus / disabled — each state naming its tokens.
+- One reference component rendered in each state — default / hover / active / focus / disabled — each state naming its tokens.
