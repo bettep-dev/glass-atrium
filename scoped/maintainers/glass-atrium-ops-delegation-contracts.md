@@ -16,9 +16,7 @@ Maintainer-facing material for that skill's `SKILL.md` and its `references/` fil
   - The maintained list of those literals and their sites: `scoped/maintainers/orchestrator-role.md` → `## Byte contract every edit must honour` · `## Reserved names`.
 - **Pointer sync**: edit an obligation or trigger only at its pointer site, the SoT; a reference file names it and never restates it.
 - **Cited leads**: a bolded lead in a reference file can be a pointer target in another file — grep the corpus for it before renaming one.
-  - These leads in `references/ultracode-declaration-contract.md` are cited by a shorter name, so grep that name too:
-    - **HONESTY (the accepted floor, stated once)** — as `HONESTY`.
-    - **A legitimate pre-verify Discovery/Design phase stays compliant** — as `pre-verify Discovery/Design bullet`.
+  - `references/ultracode-declaration-contract.md` → **A legitimate pre-verify Discovery/Design phase stays compliant** is cited as `pre-verify Discovery/Design bullet`, so grep that name too.
 - **Cited headings**: a heading in a reference file cited by name elsewhere keeps its text and level — grep the corpus for it before renaming one.
 - **Coupled tests on `references/delegation-size-discipline.md`** — paraphrase none of these pins away:
   - `hooks/test/orchestrator-skill-schema-example.bats` requires `const AnalysisSchema = {`, `findings: 'string'` and `completion_block: 'string'`, the last as a declared member inside that fence.
