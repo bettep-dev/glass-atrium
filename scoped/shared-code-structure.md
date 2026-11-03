@@ -15,11 +15,17 @@ Binds the authoring of new classes, functions, modules and types, any refactor u
 - Function cap: **20 lines OR cyclomatic complexity 10** → Extract Method
 - **SLAP**: one abstraction level per function ("And-Then test")
 - **CQS**: Commands → void · Queries → T · no mixing
-- Type safety: nested generics ≤ 2 levels · extract a type when reused 2+ times or carrying 3+ properties. The escape-hatch ban on `any`/`dynamic`/`Object` is owned by `scoped/shared-type-safety.md` and is not restated here.
+- Type safety: nested generics ≤ 2 levels · extract a type when reused 2+ times or carrying 3+ properties · escape-hatch ban on `any`/`dynamic`/`Object` → `scoped/shared-type-safety.md`
 - Import direction: Controller → Service → Repository · reverse forbidden
 - Barrels: library entry points only · app-internal forbidden
 - DI: depend on interfaces · 7+ constructor deps = God Class · circular DI forbidden (forwardRef = design flaw)
 
 ## On-demand detail
 
-`skills/glass-atrium-dev-patterns/SKILL.md` and its `references/` keep the lookup half: the 8-category member-ordering table with accessibility, guard-clause and async prose, discriminated-union and branded-type recipes, the LCOM4 method, the barrel decision table, and the rationalization, red-flag and verification lists. No agent frontmatter preloads that skill: when a topic above applies, open the file by path with Read.
+- `skills/glass-atrium-dev-patterns/SKILL.md` and its `references/` keep the lookup half:
+  - the 8-category member-ordering table with accessibility
+  - guard-clause and async prose
+  - discriminated-union and branded-type recipes
+  - the LCOM4 method and the barrel decision table
+  - the rationalization and verification lists
+- No agent frontmatter preloads that skill: when a topic above applies, open the file by path with Read.

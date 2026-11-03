@@ -1,14 +1,10 @@
 # Module Structure & Cohesion/Coupling — Detailed Rules
 
-Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when designing module boundaries, evaluating coupling, or auditing DI graphs.
-
-The principles — Controller → Service → Repository import direction, high cohesion + low coupling, and the DI rules (depend on interfaces, the God Class constructor threshold, no circular DI) — are in `scoped/shared-code-structure.md` → `## Core Principles`. This file keeps the lookup detail.
-
 ## Barrel File (index.ts) Criteria
 
 | Scenario | Decision |
 |----------|----------|
-| Library package entry point | **Allowed** (required) |
+| Library package entry point | **Required** |
 | App internal directory | **Forbidden** |
 | `sideEffects: false` + tree-shaking | **Allowed** (beware of cycles) |
 
@@ -18,24 +14,18 @@ The principles — Controller → Service → Repository import direction, high 
 - Self `index.ts` import forbidden
 - Cycle detected → extract common module or separate interfaces
 
-## Module Organization Patterns
-
-| Pattern | Description | Application |
-|---------|-------------|-------------|
-| **Feature Module** | Domain-scoped module | NestJS default structure |
-| **Layer Structure** | Controller/Service/Repository | Internal module structure |
-
 ## LCOM4 Metric
 
 - LCOM4 >= 2 → class split signal
-- Practical threshold: normalized LCOM > 0.8 with more than 10 fields and 10 methods — measure it with the project's metrics tool where one exists; without a tool, judge by `## Class Split Signals` rather than computing LCOM by hand
+- Practical threshold: normalized LCOM > 0.8 with more than 10 fields and 10 methods
+  - Measure it with the project's metrics tool where one exists.
+  - Without a tool, judge by `## Class Split Signals` rather than computing LCOM by hand.
 
 ## Class Split Signals
 
 | Signal | Description |
 |--------|-------------|
 | **Field access separation** | Method groups access disjoint sets of fields |
-| **7+ constructor dependencies** | God Class warning |
 | **Repeated mode branching** | `if mode === 'admin'` repeated across methods |
 | **Heavy test Arrange** | Unit test setup is excessively complex |
 | **500+ line class** | SRP violation signal |
@@ -55,21 +45,10 @@ The principles — Controller → Service → Repository import direction, high 
 | "The class is long but everything belongs together" | 500+ lines with disjoint field access groups = LCOM4 violation — split by cohesion |
 | "`any` is temporary, I'll fix the types later" | `any` propagates virally — use `unknown` + narrowing from the start |
 
-## Red Flags
-
-- Function exceeding 20 lines without clear single responsibility
-- Switch/if-else chain without exhaustive `never` check on discriminated unions
-- Import direction violation: Repository importing from Controller or Service
-- Class with 7+ constructor dependencies (God Class)
-- `throw new Error('Not implemented')` in an interface implementation (ISP violation)
-- Nested generics beyond 2 levels (e.g., `Map<string, Array<Promise<T>>>`)
-- `any` type appearing in non-test code
-- Barrel `index.ts` file inside an application directory (not a library)
-
 ## Verification
 
 - [ ] **Member ordering**: Spot-check 2-3 classes — members follow the member-ordering table in `references/CODE-STRUCTURE.md`
-- [ ] **Function size**: `Grep` for functions exceeding 20 lines — each has a justification or extraction plan
-- [ ] **Import direction**: No reverse imports (Repository → Controller) found via `Grep`
-- [ ] **Type safety**: `Grep` for `any` in `*.ts` files (excluding test files) — zero matches
+- [ ] **Function size**: Each function over 20 lines has a justification or extraction plan
+- [ ] **Import direction**: No reverse imports (Repository → Service or Controller) found via `Grep`
+- [ ] **Type safety**: `Grep` for `any` used as a type in `*.ts` files (excluding test files) — zero matches
 - [ ] **Circular dependency**: ESLint `import/no-cycle` enabled and passing

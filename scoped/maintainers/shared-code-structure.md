@@ -12,7 +12,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 ## Provenance of the move
 
-- The core came from `skills/glass-atrium-dev-patterns/SKILL.md` → `## Core Principles` through the `**Quick rules**` list. That span was the whole body between `## When to Use` and `## References`, so the split line is where the skill's own author already drew it: every one of the four `references/*.md` opens "Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when …".
+- The core came from `skills/glass-atrium-dev-patterns/SKILL.md` → `## Core Principles` through the `**Quick rules**` list.
 - No marker pair was needed and none was created. The patterns skill carried no `AGENT-INJECT` block, so nothing extracts from it and the move is a plain relocation; the rule file carries no marker either.
 - The moved text is byte-identical to the skill's, with ONE deliberate exception recorded in the next section. The skill keeps a single `>` pointer line where the span was.
 
@@ -49,7 +49,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 ## Open
 
-- The rule file's closing paragraph says the skill's `references/` keep the lookup half.
+- The rule file's `## On-demand detail` says the skill's `references/` keep the lookup half.
   - **Read route**: settled — the rule file's path pointer reaches every holder.
   - **Invocation route**: unsettled — only `glass-atrium-meta-prompt-engineer`, not a holder of this rule, is granted `Skill`, and its preload and grant probe variants loaded the bundled `claude-api` skill's reference guide only via a Read; neither the rule file nor this note asserts it either way.
 - Filename: `shared-code-structure.md` was chosen over `shared-patterns.md`. "Patterns" reads as a catch-all and collides with design patterns, and the matrix's Layer A check puts these basenames in front of a reader as bare filenames.
