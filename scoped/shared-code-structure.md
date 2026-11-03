@@ -23,7 +23,7 @@ Binds the authoring of new classes, functions, modules and types, any refactor u
 ## On-demand detail
 
 - `skills/glass-atrium-dev-patterns/SKILL.md` and its `references/` keep the lookup half:
-  - the 8-category member-ordering table with accessibility
+  - the ordering principles and file/directory conventions
   - guard-clause and async prose
   - discriminated-union and branded-type recipes
   - the LCOM4 method and the barrel decision table

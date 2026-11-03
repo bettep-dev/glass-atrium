@@ -47,7 +47,7 @@
 
 ## Verification
 
-- [ ] **Member ordering**: Spot-check 2-3 classes — members follow the member-ordering table in `references/CODE-STRUCTURE.md`
+- [ ] **Member ordering**: Spot-check 2-3 classes — members follow `scoped/shared-code-structure.md` → **Quick rules** → `Member ordering`
 - [ ] **Function size**: Each function over 20 lines has a justification or extraction plan
 - [ ] **Import direction**: No reverse imports (Repository → Service or Controller) found via `Grep`
 - [ ] **Type safety**: `Grep` for `any` used as a type in `*.ts` files (excluding test files) — zero matches
