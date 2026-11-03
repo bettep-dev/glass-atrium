@@ -5,8 +5,8 @@ Maintainer-facing material for that rule file. Nothing here binds glass-atrium-d
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
 - Companions ship as manifest members, so a pointer to one resolves on a live install.
-- A rule file carries at most one pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
-- Not a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
+- A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
+- NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
 - Applied here: the rule file carries no stub heading and no pointer to this note.
 
