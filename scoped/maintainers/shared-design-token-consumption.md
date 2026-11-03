@@ -55,7 +55,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent.
 - `## Token Lookup Order` — cited by `scoped/maintainers/glass-atrium-design-designer.md` → `## Copies kept in step with this body` (the Token Architecture copies).
 - `## Mandatory Pre-Execution Gate` — cited by:
   - `agents/glass-atrium-dev-front.md` → `## Guardrails`
-  - `agents/glass-atrium-dev-gsap.md` and `agents/glass-atrium-dev-animator.md` → `## Pre-Execution Verification` **Motion philosophy**
+  - `agents/glass-atrium-dev-animator.md` → `## Pre-Execution Verification` **Motion philosophy**
   - `agents/glass-atrium-dev-android.md` → `## Pre-Execution Verification` **Motion**
   - `scoped/maintainers/glass-atrium-dev-android.md`
 - `## Drift Prevention` — cited by `agents/glass-atrium-dev-front.md` → `## Guardrails`.
