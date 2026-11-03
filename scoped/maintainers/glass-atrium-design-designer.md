@@ -67,6 +67,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
   - `agents/templates/DESIGN.md`
   - the HTML-document variant in the intel-reporter and intel-planner bodies
 - **DESIGN.md section order**: the md-lint section-order rule reads `agents/templates/DESIGN.md`, not the body list, and reports drift at warning severity (exit 0).
+  - The heading-alias tokens (`ui copy`, `copy rules`, `don'ts`) stay multi-word or apostrophe-bearing, so no generic prefix (`do`, `copy`) substring-matches an unrelated heading.
 
 ## Canonicals the body states no copy of
 

@@ -37,7 +37,6 @@ Each counterpart is present in `agents/glass-atrium-design-designer.md`:
 The item's section, `## LLM Output Validation`, is cited by name, once specifically for contrast:
 
 - `skills/glass-atrium-design-contrast-check/SKILL.md` describes it as the contrast verification gate before downstream DEV handoff.
-- `skills/glass-atrium-design-md-lint/SKILL.md` describes it as the pre-emit gate family that lint joins.
 - `agents/glass-atrium-design-designer.md` → `### Figma Make + MCP Integration Guardrails` says LLM Output Validation applies to auto-generated layouts.
 
 Deleting the item would leave the contrast-check skill describing a section that no longer contains what it names. The numbers are gone; the anchor stays.
@@ -48,7 +47,7 @@ Deleting the item would leave the contrast-check skill describing a section that
 |---|---|
 | `Absolute Rules` | nothing cites it by name — kept because the heading names the content beneath it |
 | `Platform Design Token Policy` | `scoped/maintainers/shared-design-token-consumption.md` → Cross-references |
-| `LLM Output Validation` | the two design skills and the designer body named in the section above · `scoped/maintainers/shared-design-token-consumption.md` |
+| `LLM Output Validation` | the contrast-check skill and the designer body named in the section above · `scoped/maintainers/shared-design-token-consumption.md` |
 | `Vendor-Routing Awareness` | nothing cites this file's copy; `scoped/scope-dev.md` has its own same-named section |
 | `CQRS Exception` | nothing; this file is a citER of `scoped/scope-meta.md` → `## CQRS Exception`, not a citee |
 
