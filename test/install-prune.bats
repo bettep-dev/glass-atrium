@@ -13,9 +13,9 @@
 # Hermetic strategy: GA_TARGET_HOME points the target at a throwaway dir and
 # GA_MANIFEST points at a tree-matched sandbox manifest (mirrors the GA_TARGET_HOME
 # override in doctor-hook-bindings.bats). BUT the prune `find -lname` matches the
-# REAL GA_ROOT (= the dir of the glass-atrium entry being run), so each test plants its
-# symlink targets under that REAL root — links into a foreign tree would not be
-# enumerated. mktemp -d + teardown rm -rf, NEVER the live ~/.claude.
+# REAL GA_ROOT (= the physical dir the glass-atrium entry being run resolves to), so each
+# test plants its symlink targets under that physical dir — links into a foreign tree would
+# not be enumerated. mktemp -d + teardown rm -rf, NEVER the live ~/.claude.
 #
 # Run via: bats test/install-prune.bats
 # Requires: bats >= 1.5.0, jq, bash 3.2+
