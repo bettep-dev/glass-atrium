@@ -11,24 +11,30 @@ Corpus-maintenance companion to that rule file. Nothing here is delivered to an 
 
 ## Membership
 
-DEV agents, plus glass-atrium-meta-prompt-engineer under the "prompts = code" Tier-3 inheritance; glass-atrium-meta-agent does not inherit it. The authoritative membership lives on the registry row (`agent-registry.json` → `rules.shared`) and in the compliance matrix.
+- DEV agents, plus glass-atrium-meta-prompt-engineer under the "prompts = code" Tier-3 inheritance; glass-atrium-meta-agent does not inherit it.
+- The authoritative membership lives on the registry row (`agent-registry.json` → `rules.shared`) and in the compliance matrix.
 
 ## Coupled readers — the anchors that must keep their names
 
-No code reads this file's body, but prose citations resolve INTO it by name, one of them from a Tier-1 rule that reaches every agent:
+No code reads the rule file's body, but prose citations resolve into it by name, one of them from a Tier-1 rule that reaches every agent:
 
 - `rules/glass-atrium/core-outcome-record.md` → `### Role-scoped fields` → `style_ref` cites "Pattern recognition → Step 2 Read / Step 3 Mirror".
 - `agents/glass-atrium-dev-rag.md` → Work Rules → **Codebase exploration** cites "Pattern recognition → **Inconclusive probe**".
+- `scoped/scope-dev.md` → **Sibling probe (PRIMARY)** cites **Step 3 — Mirror**.
 
-So the bolded leads **Pattern recognition** and **Inconclusive probe** and the three **Step 1 — Search** / **Step 2 — Read** / **Step 3 — Mirror** names are the file's reserved anchors. Compress around them; do not rename one without editing every site above that cites it.
+- Reserved anchors: the bolded leads **Pattern recognition** and **Inconclusive probe**, and the names **Step 1 — Search** / **Step 2 — Read** / **Step 3 — Mirror**.
+- Compress around them; do not rename one without editing every site above that cites it.
+
+## Pair classifications
+
+- **Step 1 — Search** / **Step 2 — Read** ↔ `scoped/scope-dev.md` → **Sibling probe (PRIMARY)**: canonical + mirror; glass-atrium-meta-prompt-engineer holds only the rule file and DEV holds both, so both stay.
 
 ## Decisions worth keeping
 
-- **Mirror conflict closed.** Step 3 splits the mirrored axis: the sibling settles case and separator convention, while identifier FORM — canonical verb set, boolean / stative prefixes — follows the naming canon, and a divergent sibling is explicitly not a precedent.
-  - Why: with `naming` inside the mirrored axis list and no precedence clause, the step read as authorizing a sibling's identifier forms against the naming canon the same agent receives.
-- **Escalation section folded to one line.** `## Escalation to Iterative Codebase Retrieval` pointed a DEV agent at a Tier-2 RESEARCH scope file for the loop's definition — a file that reader never receives, so the duty named a trigger whose action was unreachable.
-  - Nothing in the corpus pointed into that section. The trigger and a self-contained action (narrow, at most three rounds, declare the adopted convention as an assumption) sit inline as **Inconclusive probe** under Pattern recognition; the retrieve/evaluate/refine rubric was not reproduced.
-- Dropped the Project-Convention-Probe pointer into `scope-dev.md` and the duplicated probe detail: the DEV reader holds the probe itself in `scoped/scope-dev.md`, its `rules.scope`.
-- Dropped the applies-to membership line (recorded above).
-- The project-search bullet was KEPT in compressed form rather than cut as a duplicate of the ETHOS line: that Tier-1 line points AT this file, so cutting it here would leave the pointer resolving to a file that discusses only packages and official docs.
-- `## Rationalization Rejection (Search)` is unchanged — the Tier-1 charter homes the search excuse→rebuttal pairs here, so this table is their only copy.
+- **Mirror conflict closed.** Step 3's axis list says `naming case`, never bare `naming`.
+  - Why: a bare `naming` axis with no precedence clause authorizes a sibling's identifier forms against the naming canon the same agent receives.
+- **Inconclusive probe stays self-contained.** Its trigger and action stay inline under Pattern recognition.
+  - Why: the loop's definition is in `scoped/scope-research.md` → `## Iterative Codebase Retrieval [RESEARCH]`, a file this rule's readers never receive, so a pointer there leaves the action unreachable.
+- No Project-Convention-Probe pointer in the rule file, and no probe detail beyond Step 1–3: the DEV reader holds the rest (`style_ref`, greenfield, probe failure) in `scoped/scope-dev.md`, its `rules.scope`.
+- Keep the project-search bullet although the ETHOS line overlaps it: that Tier-1 line points at the rule file, and without the bullet the pointer resolves to a file that discusses only packages and official docs.
+- `## Rationalization Rejection (Search)` stays — the Tier-1 charter homes the search excuse→rebuttal pairs here, so this table is their only copy.
