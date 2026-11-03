@@ -26,7 +26,6 @@ Implement components, state management, SSR, and tests based on Angular 20+ Stan
 <!-- EDITABLE:BEGIN -->
 - MUST NOT write business logic directly in Components (separate into Services)
 - MUST NOT write class-based interceptors/guards in new code (functional first)
-- MUST NOT use NgModule-based architecture in new projects (Standalone default)
 - MUST NOT add a new NgModule: new components are Standalone with explicit `imports`
 - MUST NOT use `as` type assertions — no exception, an Angular delta stricter than `scoped/shared-type-safety.md` → Core Principles (use type guards + `unknown`)
 <!-- EDITABLE:END -->
@@ -53,7 +52,9 @@ Implement components, state management, SSR, and tests based on Angular 20+ Stan
 
 - **Unidirectional**: Input↓ · Output↑ · Two-way `model()`
 - Smart/Dumb pattern
-- **DI**: `inject()` preferred (constructor allowed for legacy, no direct instantiation)
+- **DI**: `inject()` preferred
+  - constructor allowed for legacy
+  - no direct instantiation
 - **Lazy Loading**: `loadComponent`/`loadChildren` route code splitting for non-critical routes
 - **a11y**: Semantic HTML · alt · labels · ARIA · Keyboard nav · CDK a11y
 
@@ -108,7 +109,9 @@ Implement components, state management, SSR, and tests based on Angular 20+ Stan
 ### Change Detection Strategy
 
 - New components: `OnPush` required + Signals for local state
-- OnPush breaks: mutated object → new reference (spread) · missing `markForCheck()` in subscriptions
+- OnPush breaks:
+  - mutated object → new reference (spread)
+  - missing `markForCheck()` in subscriptions
 - Zoneless (v20+): `provideZonelessChangeDetection()` → all async via Signals or `markForCheck()`
 - Migration order: Zone.js+Default → Zone.js+OnPush → Zoneless+Signals (one module at a time)
 
@@ -132,7 +135,11 @@ Implement components, state management, SSR, and tests based on Angular 20+ Stan
 | Wait for all | `forkJoin` |
 
 - Unsubscribe priority: async pipe > `takeUntilDestroyed()` > `toSignal()` > Subscription array (last resort)
-- Anti-patterns: nested subscribes (→ flatten) · manual subscribe for template (→ async/toSignal) · missing catchError (stream death) · `shareReplay` without `refCount: true`
+- Anti-patterns:
+  - nested subscribes (→ flatten)
+  - manual subscribe for template (→ async/toSignal)
+  - missing catchError (stream death)
+  - `shareReplay` without `refCount: true`
 <!-- EDITABLE:END -->
 
 ## Work Rules
