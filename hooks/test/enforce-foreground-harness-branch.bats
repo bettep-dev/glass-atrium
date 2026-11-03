@@ -105,6 +105,7 @@ list_bashes() {
   local row name prompt
   for row in \
     'CLAUDE.md, tilde|Append the project note to ~/.claude-work-dev/CLAUDE.md then stop.' \
+    'CLAUDE.md before a sentence end|Append the project note to ~/.claude-work-dev/CLAUDE.md.' \
     "MEMORY.md, absolute home|Add the index line to ${HOME}/.claude-personal/MEMORY.md then exit." \
     'GLASS_ATRIUM_GLOBAL_RULES.md, bare|From the home dir, update .claude-work-dev/GLASS_ATRIUM_GLOBAL_RULES.md now.' \
     "CLAUDE.md on the backup dir|Read ~/${BACKUP_DIR}/CLAUDE.md for the old wording." \
@@ -165,9 +166,22 @@ list_bashes() {
   done
 }
 
-@test "~/.claude-work-dev/jobs/ → BLOCKED (current runtime-DATA membership pinned, no jobs member)" {
-  run_agent 'Queue the run via ~/.claude-work-dev/jobs/pending.json.' true
-  [[ "${status}" -eq 2 ]]
+@test "a profile jobs/ path → BLOCKED (no runtime-DATA member, job tmp/ scratch included)" {
+  local home="${BATS_TEST_TMPDIR}/home/u" row name prompt
+  mkdir -p "${home}/.claude-work-dev/jobs/25a65a54/tmp"
+  : >"${home}/.claude-work-dev/jobs/25a65a54/tmp/out.txt"
+  for row in \
+    'file directly in jobs/|Queue the run via ~/.claude-work-dev/jobs/pending.json.' \
+    'named job scratch file|Read ~/.claude-work-dev/jobs/25a65a54/tmp/out.txt.' \
+    'wildcard job id|Read ~/.claude-work-dev/jobs/*/tmp/out.txt.' \
+    'final star over job scratch|Read ~/.claude-work-dev/jobs/25a65a54/tmp/* now.'; do
+    IFS='|' read -r name prompt <<<"${row}"
+    HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" true
+    [[ "${status}" -eq 2 ]] || {
+      echo "row: ${name} · status ${status}: ${output}"
+      return 1
+    }
+  done
 }
 
 # Root-grammar negatives: a lookalike name is not a config root
