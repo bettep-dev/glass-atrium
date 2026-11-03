@@ -512,6 +512,29 @@ test("a matrix cell takes the crit step from failures over its rate denominator,
   }
 });
 
+describe("the drawer hero's success figure carries no tone at any rate, which rides its fail-share glyph alone", () => {
+  // rates straddle 90 and 95, where a second rate scale would key on them
+  const rows = [
+    { name: "98%, 1 of 50 failed: under the crit step, no glyph", success_pct: 98, crit: false },
+    { name: "92%, 4 of 50 failed: over the crit step, glyph", success_pct: 92, crit: true },
+    { name: "80%, 10 of 50 failed: over the crit step, glyph", success_pct: 80, crit: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const agent = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", runs: 50, needs_context_count: 0, success_pct: row.success_pct };
+      const emptyRows = { status: "ready", data: { rows: [] }, error: null };
+      const tree = await renderComponent("AgentOverviewSection", {
+        agent, drawerAgent: agent.agent_id, summaryState: { status: "ready", data: { agents: [agent] }, error: null },
+        revisionState: emptyRows, reviewByAgentState: emptyRows, onRetry: () => undefined,
+      });
+      const figures = findNodes(tree, (n) => /\bhero-stat\b/.test(String(n.props?.className ?? "")));
+      assert.equal(figures.length, 1, "one hero figure");
+      assert.doesNotMatch(String(figures[0].props.className), /\btext-(ok|warn|crit|info)\b/);
+      assert.equal(collectText(figures[0]).includes(HIGH_FAIL_WORD), row.crit);
+    });
+  }
+});
+
 test("the Agents ledger shows no initial avatar, which reads G for every glass-atrium agent", async () => {
   const mod = await loadAgentsScreen();
   const tree = renderSummaryRow(mod, null);
@@ -986,6 +1009,12 @@ test("the matrix legend states which outcomes its n leaves out", async () => {
   assert.match(collectText(tree), /reconstructed/);
 });
 
+test("the matrix legend carries only the crit step and its below-the-step swatch", async () => {
+  const tree = await renderComponent("SuccessRateLegend", {});
+  const swatches = findNodes(tree, (n) => n.type === "LegendSwatch").map((n) => n.props.colorVar);
+  assert.deepEqual(swatches, ["--crit", "--faint"]);
+});
+
 test("a compatibility requirement rides a short row tag with the full text on hover, never a truncated sentence", async () => {
   const mod = await loadAgentsScreen();
   const requirement = "Requires monitor running at http://127.0.0.1:16145 with a live daemon";
@@ -1291,6 +1320,26 @@ function getPerformanceProps(trend: number[] | null, trendDates: string[]): Reco
     trendByAgent: trend ? new Map([[PERFORMANCE_AGENT.agent_id, trend]]) : null, trendDates, onRetry: () => undefined,
   };
 }
+
+describe("the drawer trend chart takes its tone from the status and the failed share, with no rate band of its own", () => {
+  const rows = [
+    { name: "50% at n=4 stays neutral: a low sample carries no tone, whatever its rate", agent: { runs: 4, success_pct: 50 }, tone: "neutral" },
+    { name: "98% at n=50 stays neutral: under the crit step", agent: { runs: 50, success_pct: 98 }, tone: "neutral" },
+    { name: "92% at n=50 is crit: over the crit step", agent: { runs: 50, success_pct: 92 }, tone: "crit" },
+    { name: "an errored agent is crit whatever its rate", agent: { status: "error", runs: 50, success_pct: 98 }, tone: "crit" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const tree = await renderComponent("AgentPerformanceSection", {
+        ...getPerformanceProps([3, 5, 2], ["2026-09-22", "2026-09-23", "2026-09-24"]),
+        agent: { ...PERFORMANCE_AGENT, ...row.agent },
+      });
+      const charts = findAtoms(tree, "TrendChart");
+      assert.equal(charts.length, 1, "one trend chart");
+      assert.equal(charts[0].props.tone, row.tone);
+    });
+  }
+});
 
 test("the drawer trend is a readable chart with one dated point per day", async () => {
   const dates = ["2026-09-22", "2026-09-23", "2026-09-24"];
