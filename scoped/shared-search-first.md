@@ -15,9 +15,9 @@ Searching for an existing solution is REQUIRED before implementing new functiona
     - Identifier form is not mirrored: the canonical verb set and the boolean / stative forms come from the naming canon (`scoped/shared-naming.md`).
     - For identifiers, the sibling settles case and separator convention only.
     - A sibling whose identifiers diverge from the naming canon is no precedent.
-    - Comment language, comment density and header length are not mirrored: `shared-comment-logging.md` governs them.
-    - A sibling that breaks `shared-comment-logging.md` is no precedent.
-    - Tooling / pragma directives are reproduced: `shared-comment-logging.md` → **Mirror = code form only**.
+    - Comment language, comment density and header length are not mirrored: `scoped/shared-comment-logging.md` governs them.
+    - A sibling that breaks `scoped/shared-comment-logging.md` is no precedent.
+    - Tooling / pragma directives are reproduced: `scoped/shared-comment-logging.md` → **Mirror = code form only**.
   - **Inconclusive probe** — more than ~50 sibling hits, 3+ divergent conventions, or axes you cannot extract with confidence:
     - Narrow the search, at most 3 rounds, rather than guess a convention.
     - Adopt what the narrowed set supports and declare that choice on the turn-0 `Assumptions:` line.

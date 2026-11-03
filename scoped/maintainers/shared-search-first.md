@@ -35,6 +35,6 @@ No code reads the rule file's body, but prose citations resolve into it by name,
   - Why: a bare `naming` axis with no precedence clause authorizes a sibling's identifier forms against the naming canon the same agent receives.
 - **Inconclusive probe stays self-contained.** Its trigger and action stay inline under Pattern recognition.
   - Why: the loop's definition is in `scoped/scope-research.md` → `## Iterative Codebase Retrieval [RESEARCH]`, a file this rule's readers never receive, so a pointer there leaves the action unreachable.
-- No Project-Convention-Probe pointer in the rule file, and no probe detail beyond Step 1–3: the DEV reader holds the rest (`style_ref`, greenfield, probe failure) in `scoped/scope-dev.md`, its `rules.scope`.
+- No Project-Convention-Probe pointer in the rule file, and no probe detail beyond Step 1–3 and **Inconclusive probe**: the DEV reader holds the rest (`style_ref`, greenfield, probe failure) in `scoped/scope-dev.md`, its `rules.scope`.
 - Keep the project-search bullet although the ETHOS line overlaps it: that Tier-1 line points at the rule file, and without the bullet the pointer resolves to a file that discusses only packages and official docs.
 - `## Rationalization Rejection (Search)` stays — the Tier-1 charter homes the search excuse→rebuttal pairs here, so this table is their only copy.
