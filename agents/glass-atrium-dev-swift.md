@@ -60,7 +60,13 @@ maxTurns: 80
 
 ### Observation & State (SwiftUI)
 
-- Role mapping: `@State` = view-owned model instance · plain `let` = injected dependency · `@Bindable` = two-way binding to an `@Observable` · `.environment(_:)` + `@Environment(Type.self)` = cross-hierarchy DI
+| Binding | Role |
+|---|---|
+| `@State` | view-owned model instance |
+| plain `let` | injected dependency |
+| `@Bindable` | two-way binding to an `@Observable` |
+| `.environment(_:)` + `@Environment(Type.self)` | cross-hierarchy DI |
+
 - **Typed navigation**: `NavigationStack(path:)` + `.navigationDestination(for:)` — deprecated `NavigationView` / `NavigationLink(destination:)` FORBIDDEN in new code
 - **Multi-column layout**: `NavigationSplitView` (sidebar + content + detail) for macOS / iPad; reserve `NavigationStack` for push-style flows
 
@@ -69,7 +75,8 @@ maxTurns: 80
 - Respect isolation domains (`@MainActor` / named `actor` / `nonisolated`)
 - Values crossing an isolation boundary MUST be `Sendable`
 - Never silence a strict-concurrency diagnostic with `@unchecked Sendable`
-- Swift 6.2 "approachable concurrency": executable / `@main` targets run on the main actor by default — do NOT over-annotate `@MainActor`; opt into parallel execution with `@concurrent`
+- Swift 6.2 "approachable concurrency": executable / `@main` targets run on the main actor by default — do NOT over-annotate `@MainActor`
+  - opt into parallel execution with `@concurrent`
 - `@MainActor` is redundant in a module whose default isolation is already `MainActor` (Swift 6.2 `defaultIsolation` / Xcode 26 `SWIFT_DEFAULT_ACTOR_ISOLATION`, an opt-in the new-project template enables) — check the target's setting before adding or omitting it
 - Prefer structured concurrency (`async let`, `TaskGroup`) over detached tasks
 - Honor cancellation (`Task.checkCancellation()`, rethrow `CancellationError`)
@@ -84,8 +91,6 @@ maxTurns: 80
 - State the chosen store + rationale before writing any model code
 
 ### AppKit / UIKit Interop
-
-- macOS scenes: `WindowGroup` / `Window` / `Settings` / `MenuBarExtra` + `.commands {}` + toolbars
 
 | Framework | Bridge types | Drop down for |
 |---|---|---|
@@ -105,7 +110,8 @@ maxTurns: 80
 
 ## Apple-Platform UX (SwiftUI Implementation)
 
-- **Accessibility on every interactive element**: `.accessibilityLabel` / `.accessibilityHint` / `.accessibilityValue` — icon-only buttons MUST carry a label
+- **Accessibility on every interactive element**: `.accessibilityLabel` / `.accessibilityHint` / `.accessibilityValue`
+  - icon-only buttons MUST carry a label
 - `@AccessibilityFocusState` for focus management
 - VoiceOver traversal follows declaration order
 - **Semantic colors**: `Color.primary` / `.secondary` and system roles — respect dark mode + Increase Contrast; never hardcode raw RGB for a semantic role
@@ -116,6 +122,7 @@ maxTurns: 80
   - persist/restore window frame
   - support multiple windows via `WindowGroup`
   - expose preferences through a `Settings` scene rather than a custom modal
+  - use `Window` / `MenuBarExtra` for other macOS scenes
 - Follow HIG placement conventions for toolbar actions and standard menu commands (`.commands {}`)
 - Respect Reduce Motion for animations and transitions
 
@@ -151,7 +158,8 @@ maxTurns: 80
 ## Self-Review Checklist
 
 - **Rules hold on the diff**: `## Guardrails` · `## Design Principles` · `## Apple-Platform UX (SwiftUI Implementation)` · `## Work Rules`
-- **Distribution (macOS)**: `## Security` holds; notarization path verified when distribution is in scope
+- **Distribution (macOS)**: `## Security` holds
+  - notarization path verified when distribution is in scope
 - **Swift**:
   - no unused imports
   - access control (`private`/`internal`/`public`) intentional
