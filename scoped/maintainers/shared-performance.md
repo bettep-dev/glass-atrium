@@ -11,13 +11,13 @@ Corpus-maintenance companion to that rule file. Nothing here is delivered to an 
 
 ## Membership
 
-The rule file states membership nowhere: it lives on the registry row (`agent-registry.json` → `rules.shared`) and in the compliance matrix.
+- The rule file states membership nowhere: it lives on the registry row (`agent-registry.json` → `rules.shared`) and in the compliance matrix.
 
 ## Coupled readers
 
 - No code parses this file's content: `hooks/lib/inject_chunk.py` → `split_sections` only splits it at headings for spawn delivery, so editing its text is a single-site edit.
 - `python3 hooks/lib/inject_chunk.py --audit` covers the section sizes.
-- The file PATH is pinned, so renaming it is a multi-site edit:
+- The file path is pinned, so renaming it is a multi-site edit:
   - `manifest.json`
   - `scripts/agent_lifecycle/registry_ops.py` → `SCOPE_SHARED_RULE_FILES` and `scripts/test/test_agent_lifecycle_overhaul.py`
   - `agent-registry.json` → `rules.shared`
