@@ -1,5 +1,5 @@
 // Regression tests for PATCH /api/outcomes/:id/close and the closed_at read exposure.
-// Runner: npx tsx --test test/outcomes.close-route.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/outcomes.close-route.route.test.ts
 //
 // Pinned invariants:
 //   (AC1) /search rows carry closed_at; a never-closed row (legacy 포함) reads NULL,

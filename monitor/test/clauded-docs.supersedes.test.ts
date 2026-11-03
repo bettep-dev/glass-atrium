@@ -1,7 +1,7 @@
 // Integration tests for supersedes_id + archived/superseded default-exclusion
 // semantics on /api/clauded-docs/*.
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/clauded-docs.supersedes.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/clauded-docs.supersedes.test.ts
 //
 // Coverage:
 //   - POST with supersedes_id → predecessor doc_status auto-transitions to 'done'

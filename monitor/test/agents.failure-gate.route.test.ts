@@ -10,7 +10,7 @@
 // Seeds are tagged by suite-unique cid, scrubbed via cid LIKE. Skips gracefully
 // when the DB is unreachable.
 //
-// Runner: npx tsx --test test/agents.failure-gate.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/agents.failure-gate.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";

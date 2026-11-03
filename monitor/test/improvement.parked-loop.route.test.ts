@@ -15,7 +15,7 @@
 //
 // DB: real Postgres. Skips gracefully when unreachable.
 //
-// Runner: npx tsx --test test/improvement.parked-loop.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.parked-loop.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";

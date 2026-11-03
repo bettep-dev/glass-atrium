@@ -1,5 +1,5 @@
 // Regression tests for the /cross-analysis reconstructed-row KPI split.
-// Runner: npx tsx --test test/outcomes.reconstructed-split.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/outcomes.reconstructed-split.route.test.ts
 //
 // Pinned invariants:
 //   (a) by_result rows carry reconstructed_count — a row counts as reconstructed

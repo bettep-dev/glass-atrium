@@ -1,5 +1,5 @@
 // Regression tests for the outcomes API grader-metrics root-fix.
-// Runner: npx tsx --test test/outcomes.grader-metrics.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/outcomes.grader-metrics.route.test.ts
 //
 // Two pinned invariants:
 //   (a) 9-type allowlist — the 4 new non-code types (review/diagnosis/doc/cleanup) survive the /search defensive flatMap guard, not silently dropped.

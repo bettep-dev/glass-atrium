@@ -1,5 +1,5 @@
 // Integration tests for /api/cost (비용·토큰 detail screen).
-// Runner: npx tsx --test test/cost.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/cost.route.test.ts
 // DB: real Postgres (read-only) — existing cost_events fixture drives assertions.
 
 import test, { after, before } from "node:test";
