@@ -49,7 +49,6 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 |---|---|
 | `Absolute Rules` | nothing cites it by name — kept because the heading names the content beneath it |
 | `CQRS Exception` | `scoped/scope-planning.md` and `scoped/scope-design.md`, both by pointer into its grant and checklist |
-| `Outcome-Driven Rewrite Policy` | `skills/glass-atrium-ops-delegation-contracts/references/decision-phase-probes.md` → Capability Probe — detail |
 | `DEV Rule Inheritance` | `rules/glass-atrium/core-compliance-matrix.md` → Tier-3 META-inheritance bullet |
 | `Prompt Authoring Hygiene` | nothing cites it by name — a pointer section to the Tier-3 home |
 | `Prompt Deliverable Team Rule` | the citer list under this table |
