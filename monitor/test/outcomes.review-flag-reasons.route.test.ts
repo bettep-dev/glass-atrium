@@ -9,7 +9,7 @@
 // DB: real Postgres — seed summary carries SUITE_MARKER → ?q 한정 조회, cleanup 은 cid LIKE.
 // Skips gracefully when the DB is unreachable.
 //
-// Runner: npx tsx --test test/outcomes.review-flag-reasons.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/outcomes.review-flag-reasons.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";

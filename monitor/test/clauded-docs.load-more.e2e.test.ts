@@ -1,5 +1,5 @@
 // E2E Playwright test — Load More pagination + stage chip + folder grouping + cascade + column width floor on screens/clauded-docs.jsx.
-// Runner: npx tsx --test test/clauded-docs.load-more.e2e.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/clauded-docs.load-more.e2e.test.ts
 //
 // DB: real Postgres — every seeded row tagged `load-more-test-${uuid}` 마커, after() 가 LIKE 일괄 cleanup.
 // App: stripped Fastify (fastify-static + clauded-docs routes) on ephemeral port (production 16145 미간섭) · Browser: Playwright chromium headless, NO mocking.

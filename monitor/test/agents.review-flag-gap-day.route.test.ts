@@ -2,7 +2,7 @@
 // LEFT JOIN gap-fill phantom(all-NULL o) 행에서 metric_pass IS NULL 이 TRUE 라
 // empty_metric_count 가 1 로 부풀던 결함. o.id IS NOT NULL 가드로 gap 일자는 0.
 // DB: real Postgres — seed 는 suite 고유 agent/cid, cleanup 은 cid LIKE.
-// Runner: npx tsx --test test/agents.review-flag-gap-day.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/agents.review-flag-gap-day.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";

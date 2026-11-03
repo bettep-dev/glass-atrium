@@ -21,7 +21,7 @@
 // migration except 20261003000000 ('unadjudicated') and 20261005000000 (metric_key,
 // 'dormant').
 //
-// Runner: npx tsx --test test/improvement.reject-buckets.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.reject-buckets.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
