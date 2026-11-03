@@ -11,16 +11,25 @@ Corpus-maintenance companion to that rule file. Nothing here is delivered to an 
 
 ## Membership
 
-DEV agents, plus glass-atrium-meta-prompt-engineer under the "prompts = code" Tier-3 inheritance; glass-atrium-meta-agent does not inherit it. The authoritative membership lives on the registry row (`agent-registry.json` → `rules.shared`) and in the compliance matrix; the rule file states it nowhere.
+The rule file states membership nowhere: it lives on the registry row (`agent-registry.json` → `rules.shared`) and in the compliance matrix.
 
 ## Coupled readers
 
-No code reads the body of this file. The file PATH is pinned in three places — the manifest hash set, the closed rule-file set the agent-lifecycle registry writer validates against, and the compliance-matrix row keyed on the basename — so renaming the file is a multi-site edit, while editing its text is not. One prose citation names it by filename only (`agents/glass-atrium-qa-code-reviewer.md`, the review-checklist Performance row) and survives any heading change.
+- No code parses this file's content: `hooks/lib/inject_chunk.py` → `split_sections` only splits it at headings for spawn delivery, so editing its text is a single-site edit.
+- `python3 hooks/lib/inject_chunk.py --audit` covers the section sizes.
+- The file PATH is pinned, so renaming it is a multi-site edit:
+  - `manifest.json`
+  - `scripts/agent_lifecycle/registry_ops.py` → `SCOPE_SHARED_RULE_FILES` and `scripts/test/test_agent_lifecycle_overhaul.py`
+  - `agent-registry.json` → `rules.shared`
+  - the compliance-matrix rows naming the file: `### Tier 3` table (full path) and `## Compliance Matrix` (basename)
+- Prose citers name it by file only, and survive any heading change:
+  - `agents/glass-atrium-qa-code-reviewer.md` → `### 7-Perspective Checklist`: the Performance row and the Read list
+  - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Rationalization Rejection [ALL]`, naming `performance` as a home
+  - `scoped/maintainers/glass-atrium-qa-code-reviewer.md`: the `### 7-Perspective Checklist` Performance row bullet and the `The Read instructions for` bullet
 
 ## Restructure + diet pass — dispositions
 
-- `## General` moved above the three platform sections: it is the only unconditionally applicable section, and each platform heading states its own condition.
-- The **Measure first** bullet was dropped as redundant. Tier-1 `GLASS_ATRIUM_GLOBAL_RULES.md` → Philosophy (ETHOS) states "Measurement > Guessing — No optimization without profiler/benchmark" and measurably reaches every agent, and the first rationalization row rebuts the same excuse with "profile first".
-- The applies-to membership line was dropped (recorded above).
-- The N+1 clause of the Backend DB bullet is restated in one DEV body. It was KEPT: the other twelve agents receive it from nowhere else, and the EXPLAIN-ANALYZE and index-strategy halves of the same line are unduplicated.
-- `## Rationalization Rejection (Performance)` is unchanged. The Tier-1 charter's Rationalization Rejection section names this file as the home of the performance excuse→rebuttal pairs, so this table is their only copy.
+- `## General` stays above the platform sections: it is the only unconditionally applicable section, and each platform heading states its own condition.
+- No **Measure first** bullet: Tier-1 `GLASS_ATRIUM_GLOBAL_RULES.md` → Philosophy (ETHOS) → **Measurement > Guessing** reaches every agent, and the first rationalization row rebuts the same excuse.
+- The N+1 clause of the Backend DB bullet ↔ `agents/glass-atrium-dev-db.md`: canonical + mirror; both stay, because the other member agents receive it from nowhere else.
+- `## Rationalization Rejection (Performance)` stays — the Tier-1 charter homes the performance excuse→rebuttal pairs here, so this table is their only copy.
