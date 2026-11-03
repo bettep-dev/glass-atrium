@@ -22,7 +22,7 @@ Maintainer-facing material for that skill's `SKILL.md` and its `references/` fil
   - `references/automatic-parallelization.md` → **Three sanctioned isolation paths** · **Deciding "at a time"**.
 - **Cited headings**: a heading in a reference file cited by name elsewhere keeps its text and level — grep the corpus before renaming one:
   - `references/scope-parser.md` → `## Worked completeness case`.
-  - `references/plan-direction-verification.md` → `## Team composition and verdicts` · `## Standing jobs inside the gate` · `## Gate outcome and activation scope` · `## Backstop detail`.
+  - `references/plan-direction-verification.md` → `## Team composition and verdicts` · `## Standing jobs inside the gate` · `## Backstop detail`.
   - `references/deliverable-exposure.md` → `## Exposure Determination — signals and routing` · `## glass-atrium-dev-front markup exception — detail`.
   - `references/architecture-patterns.md` → `## Explicit Pipeline Combinations` · `## Agent Teams Hybrid`.
   - `references/workflow-js-parse-hazards.md` → `## The two forms and their remedies`.
@@ -31,6 +31,7 @@ Maintainer-facing material for that skill's `SKILL.md` and its `references/` fil
   - `references/delegation-prompt.md` → `## Resource Budget` · `## Prompt-content aids` · `## Read-Extent Discipline` · `## Delegation Information-Hiding`.
   - `references/managed-document-completion.md` → `## Supersede vs new document`.
   - `references/workflow-pre-submit-check.md` → `## Check table`.
+  - `references/automatic-parallelization.md` → `## Guardrail (a) — orchestrator-side rules`.
 - **Coupled tests on `references/delegation-size-discipline.md`** — paraphrase none of these pins away:
   - `hooks/test/orchestrator-skill-schema-example.bats` requires `const AnalysisSchema = {`, `findings: 'string'` and `completion_block: 'string'`, the last as a declared member inside that fence.
     - It also requires the capped-property notation and the withdrawn per-row cap-sizing floor literal absent.

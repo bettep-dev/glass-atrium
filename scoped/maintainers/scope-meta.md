@@ -5,34 +5,32 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
 - Companions ship as manifest members, so a pointer to one resolves on a live install.
-- A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
-- NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
+- A rule file carries at most one pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
+- Not a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
-- Applied here: one pointer survives, under `## glass-atrium-meta-prompt-engineer: DEV Rule Inheritance` (cited from the Compliance Matrix), because that section's explanatory bulk moved here.
+- Applied here: the rule file's one pointer to this note sits under `## glass-atrium-meta-prompt-engineer: DEV Rule Inheritance`, the heading the Compliance Matrix cites.
 
 ## Delivery — what actually reads this file
 
-- Both META agents receive the file whole at spawn.
-  - Each row's `rules.scope` in `agent-registry.json` names `scoped/scope-meta.md`, which the part-slot channel delivers (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership declaration and SubagentStart channels`).
+- Both META agents receive the file whole at spawn: each row's `rules.scope` in `agent-registry.json` names it, and the part slots deliver it (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership declaration and SubagentStart channels`).
   - `python3 hooks/lib/inject_chunk.py --audit` reports the parts per agent.
-- A second reader, not a delivery channel: `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP` excerpts whole `##` heading blocks into the daemon's rule-improvement verify prompt (axis C3) for a META-agent patch.
 - **Consequence for authors**: a duty stated in the rule file binds both META agents; no conditional-load line in a body is needed.
 - **Consequence for editors**: a passage in either META body that mirrors the rule file is a duplicate of delivered text. The rule file is the site that survives; the body keeps only its agent-specific delta.
+- What breaks each reader, the delivery channel included: `## Readers, coupled tests, and operational constraints`.
 
 ## Authoring hygiene — where the rules live
 
-- The rules bind META, PLANNING and REPORT alike, so they live once at `scoped/shared-authoring-hygiene.md` → `## Authoring Hygiene`.
-  - `## Prompt Authoring Hygiene [META]` in the rule file is the pointer that keeps that heading resolving.
-  - Maintainer material for the rules is in `scoped/maintainers/shared-authoring-hygiene.md`.
-- Both META rows carry the file in `rules.shared`. Delivery and the no-body-copy rule: `scoped/maintainers/shared-authoring-hygiene.md` → `## Delivery — how the rules reach their agents`.
+- Both META rows carry `scoped/shared-authoring-hygiene.md` in `rules.shared`.
+- Their maintainer material is `scoped/maintainers/shared-authoring-hygiene.md`:
+  - delivery and the no-body-copy rule → `## Delivery — how the rules reach their agents`;
+  - the provenance carve-out under `No history-type content` and the reasoning that accepted it → `## Decisions taken, with their reasoning`.
 - No hook checks authored text against these rules; adherence is honor-system.
 
 ## Decisions taken on review, with their reasoning
 
-- **The hygiene decisions moved with the rules.** The provenance carve-out under `No history-type content`, and the reasoning that accepted it, are recorded in `scoped/maintainers/shared-authoring-hygiene.md` → `## Decisions taken, with their reasoning`.
-- **`## Absolute Rules [META]` — the precedence line was realigned to its citee, not softened.**
+- **`## Absolute Rules [META]` — the preamble defers to its citee.**
   - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution` makes the assigned scope file the final authority, the whole file and never a named section inside it.
-  - The section preamble therefore states that this file governs and that the section concentrates that authority, and sends the precedence order to the charter anchor — the shape `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]` already carries.
+  - So the preamble states that this file governs and the section concentrates that authority, and sends the precedence order to the charter anchor — the shape `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]` carries.
 - **Tag**: `Absolute Rules` carries `[META]` only — no DEV rule file holds that heading or a matching pointer, so a DEV half would name no counterpart.
 - **Add-review routing resolves every target class to an existing agent** — no owner review, no exempt class.
   - The ORCHESTRATOR pair and `rules/glass-atrium/core-compliance-matrix.md` take the Tier-1 reviewer: the pair's only member is the main session, and the matrix is neither a Tier-1 rule nor a scope file, so neither has a member agent.
@@ -50,16 +48,18 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 | Heading | Cited from |
 |---|---|
 | `Absolute Rules` | nothing cites it by name — kept because the heading names the content beneath it |
-| `CQRS Exception` | `scoped/scope-planning.md` and `scoped/scope-design.md`, both by pointer |
+| `CQRS Exception` | `scoped/scope-planning.md` and `scoped/scope-design.md`, both by pointer into its grant and checklist |
 | `Outcome-Driven Rewrite Policy` | `skills/glass-atrium-ops-delegation-contracts/references/decision-phase-probes.md` → Capability Probe — detail |
-| `Prompt Deliverable Team Rule` | the citer list under this table |
 | `DEV Rule Inheritance` | `rules/glass-atrium/core-compliance-matrix.md` → Tier-3 META-inheritance bullet |
+| `Prompt Authoring Hygiene` | nothing cites it by name — a pointer section to the Tier-3 home |
+| `Prompt Deliverable Team Rule` | the citer list under this table |
 
 - `Prompt Deliverable Team Rule` is cited from:
   - `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria` and step 6 of `## Document-Driven Workflow`;
   - `skills/glass-atrium-ops-delegation-contracts/references/agent-selection.md` → `## Compound Task Examples` (the prompt/rule row);
   - `skills/glass-atrium-ops-orchestrator.md` → `##### Stage gates`;
   - `scoped/shared-authoring-hygiene.md` → `## Prompt-Audit Overrides`.
+- Its bolded lead **Prompt-audit pass** keeps its exact form: `scoped/shared-authoring-hygiene.md` → **Decided diet keeps** cites it with its Input bullet, and `scoped/maintainers/orchestrator-role.md` cites it by name.
 
 ## Stale material removed
 
@@ -73,30 +73,28 @@ Do not restore any item below.
 ## Duplicates dropped, with the delivered copy that made them redundant
 
 - Self-review procedure beyond the four-item checklist: `agents/glass-atrium-meta-prompt-engineer.md` → `## Structure Self-Check (MANDATORY · pre-emit)` is the delivered, stronger gate.
-  - The four-item checklist itself stays, because `scope-planning.md` and `scope-design.md` resolve their pointers into it.
-- The `## glass-atrium-meta-agent: Outcome-Driven Rewrite Policy` redirect paragraph — one line naming the body sections replaces it; the body remains the operative site.
-- The `## DEV Rule Inheritance` explanation of the Compliance Matrix footnote and of where `agent-registry.json` declares the inheritance — the rule file states the rationale and the two declaration sites.
-- The meta-prompt-engineer body's top-of-body inheritance blockquote and its `**Prompts = Code**` Absolute Rules bullet — both restated this rule file, which reaches that agent whole.
+  - The checklist itself stays: `scope-planning.md` and `scope-design.md` resolve their pointers into it.
+- The Outcome-Driven Rewrite Policy redirect paragraph — the rule file's one line names the body sections, and the body stays the operative site.
+- The DEV Rule Inheritance explanation of the matrix footnote and of the `agent-registry.json` declaration — the rule file states the rationale and both declaration sites.
+- In the meta-prompt-engineer body, the top-of-body inheritance blockquote and the `**Prompts = Code**` Absolute Rules bullet — both restated this rule file, which reaches that agent whole.
 
 ## Prompt Deliverable Team Rule — the delivery gap that was NOT moved
 
-- The composer-facing line stays in the rule file rather than moving here, because it changes what the delegation author does.
-  - Why: `agents/glass-atrium-intel-reporter.md` states the verdict-only constraint nowhere, so the delegation prompt is the only channel that carries it to the reviewer.
-  - If that constraint ever lands in the reporter body, the line becomes a duplicate and should be cut then.
-- The add-review composer line under **Add review** follows the same reasoning for the add reviewers; cut it only once every reviewer the add-review table names carries the constraint in its own body.
-
-## Open questions
-
-None open.
+- The rule file's structure-verdict composer line stays there: it changes what the delegation author does, and its reason sits beside it.
+  - Cut it once `agents/glass-atrium-intel-reporter.md` states the verdict-only constraint itself.
+- The add-review composer line under **Add review** stays for the same reason; cut it once every reviewer the add-review table names carries the constraint in its own body.
 
 ## Readers, coupled tests, and operational constraints
 
-- **No test pins this file's text.** Searching `test/`, `hooks/test/`, `scripts/test/` and `autoagent/test/` returns no hit for `scope-meta`.
-  - That is the correct state: the file carries no machine-read literal of its own, and what consumers depend on is its `##` heading structure plus the heading names sibling files cite.
-- **Path-only consumers** break on a rename or a move out of `scoped/`, never on a content edit:
-  - `agent-registry.json` (`rules.scope`, which `hooks/lib/inject_chunk.py` resolves at spawn);
-  - `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP`;
-  - `scripts/agent_lifecycle/registry_ops.py`;
-  - `scripts/test/test_agent_lifecycle_overhaul.py` (asserts exact path strings);
-  - `manifest.json`.
-- **Never diet the file to zero bytes**: `autoagent/daemon_cycle.py` → `_read_sections` emits SCOPE-FILE-EMPTY and directs a `C3: FAIL` verdict on an empty scope file.
+| Reader | Reads | Breaks on |
+|---|---|---|
+| both META agents, at spawn | the whole file — `rules.scope`, resolved by `hooks/lib/inject_chunk.py` | a rename or a move out of `scoped/` |
+| `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP` | the path, as each META agent's axis-C3 scope file | a rename or a move out of `scoped/` |
+| `autoagent/daemon_cycle.py` → `_read_sections` | whole heading blocks, the C3 excerpt in a META-agent patch's verify prompt | an empty file: `SCOPE-FILE-EMPTY`, and C3 is directed to `FAIL` |
+| `scripts/agent_lifecycle/registry_ops.py` | the path, as the META scope file | a rename or a move |
+| `manifest.json` | the path and its hash | a rename or a move |
+| heading pointers in `scoped/`, `skills/` and `rules/` | a heading by name | a rename — `## Heading-citation register` |
+
+- **Never diet the file to zero bytes** — the `_read_sections` row.
+- **No test pins this file's text**: a bare `scope-meta` grep over `test/`, `hooks/test/`, `scripts/test/` and `autoagent/test/` returns no hit.
+- A rename also edits every corpus site naming the path (bare grep `scope-meta.md`).
