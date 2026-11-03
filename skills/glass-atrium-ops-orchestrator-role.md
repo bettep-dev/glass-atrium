@@ -508,7 +508,7 @@ The standard plan/report-then-build flow as one lifecycle.
      - A prompt-file cycle modifies a prompt, agent body, rule or skill file, or changes code lines that sit in text a model receives — for example injection blocks, hook block and advisory messages, daemon prompt strings.
      - The pass contract and the add-review routing: `scoped/scope-meta.md` → `## Prompt Deliverable Team Rule`.
    - SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md`.
-     - Held there: the per-cycle order, combined-tree deploy, live-install (not repo-tree) verification, green-before-PR, post-merge sha parity and narrow cases, the delegated-deploy boundary (manual live-install writes FORBIDDEN), the bundle-member list, honest framing.
+     - Held there: the per-cycle order, combined-tree deploy, live-install (not repo-tree) verification, green-before-PR, post-merge sha parity and narrow cases, the delegated-deploy boundary (manual live-install writes FORBIDDEN), the bundle members, honest framing.
 
 > Detail: skills/glass-atrium-ops-orchestrator.md → Pipeline Acceptance Criteria (per-stage acceptance detail for the steps above · the in-script verify-stage skeleton for ultracode)
 
