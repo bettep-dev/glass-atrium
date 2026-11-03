@@ -30,7 +30,7 @@ Each copy is in `agents/glass-atrium-design-designer.md`:
 
 ## Why the contrast item was kept despite being a duplicate
 
-- `skills/glass-atrium-design-contrast-check/SKILL.md` cites `## LLM Output Validation` as the contrast verification gate before DEV handoff; deleting the item would leave that citation describing absent content.
+- `agents/glass-atrium-design-designer.md` → `### Figma Make + MCP Integration Guardrails` says `## LLM Output Validation` applies to auto-generated layouts; deleting the item would drop contrast from what that citation applies to those layouts.
 - So the rule file keeps a one-line item with no numbers.
 
 ## Headings and their citers
@@ -39,14 +39,9 @@ Each copy is in `agents/glass-atrium-design-designer.md`:
 |---|---|
 | `Absolute Rules` | nothing |
 | `Platform Design Token Policy` | `scoped/maintainers/shared-design-token-consumption.md` → Cross-references |
-| `LLM Output Validation` | the citer list under this table |
+| `LLM Output Validation` | `agents/glass-atrium-design-designer.md` → `### Figma Make + MCP Integration Guardrails` · `scoped/maintainers/shared-design-token-consumption.md` → Cross-references |
 | `Vendor-Routing Awareness` | nothing; `scoped/scope-dev.md` has its own same-named section |
 | `CQRS Exception` | nothing; its self-checklist bullet mirrors `scoped/scope-meta.md` → `## CQRS Exception`, the canonical site |
-
-- `LLM Output Validation` is cited from:
-  - `skills/glass-atrium-design-contrast-check/SKILL.md`, and `skills/glass-atrium-design-md-lint/SKILL.md` as the pre-emit gate family that lint joins;
-  - `agents/glass-atrium-design-designer.md` → `### Figma Make + MCP Integration Guardrails`;
-  - `scoped/maintainers/shared-design-token-consumption.md` → Cross-references.
 
 ## Stale material removed
 

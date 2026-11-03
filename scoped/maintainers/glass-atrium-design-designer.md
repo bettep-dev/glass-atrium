@@ -27,7 +27,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | Body text | Cited from |
 |---|---|
 | `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` | **AI Slop Tropes citers** |
-| `## Red Flags` (WCAG AA not verified · **Color & contrast** derive-then-verify) | contrast-check skill · `scoped/maintainers/scope-design.md` · AI Slop Tropes citers' heading paths |
+| `## Red Flags` (WCAG AA not verified · **Color & contrast** derive-then-verify) | `scoped/maintainers/scope-design.md` · AI Slop Tropes citers' heading paths |
 | `## Pre-Emit 5-Axis Self-Critique` (axes · band rubric · emit gate) | 5-axis-critique skill, whose `**Gate**: PASS (all ≥7)` line reads the band rubric · `scoped/scope-design.md` |
 | `## Design Evaluation 4-Axis (1-5 each, 20 total)` | 5-axis-critique skill · `scoped/scope-qa.md` |
 | `## HTML Primary Co-Emission Role` | **HTML Primary Co-Emission Role citers** |
@@ -64,6 +64,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 - **DESIGN.md sections**: the body states no section order.
   - The md-lint section-order rule checks `lint.sh` → `CANONICAL_SECTIONS`, a hardcoded copy of the template's section 1-9 order, and reports drift at warning severity (exit 0).
   - Edit `agents/templates/DESIGN.md`, `CANONICAL_SECTIONS` and the order list in the skill's `SKILL.md` → **section-order** together.
+  - The heading-alias tokens (`ui copy`, `copy rules`, `don'ts`) stay multi-word or apostrophe-bearing, so no generic prefix (`do`, `copy`) substring-matches an unrelated heading.
 
 ## Canonicals the body states no copy of
 
