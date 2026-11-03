@@ -1,6 +1,6 @@
 # Maintainer note — `scoped/scope-meta.md`
 
-Maintainer-facing material for that rule file. Nothing here binds either META agent; the rule file carries the duties.
+Maintainer-facing material for that rule file and for `agents/glass-atrium-meta-agent.md`. Nothing here binds either META agent; the rule file carries the duties.
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
@@ -85,10 +85,6 @@ Do not restore any item below.
   - If that constraint ever lands in the reporter body, the line becomes a duplicate and should be cut then.
 - The add-review composer line under **Add review** follows the same reasoning for the add reviewers; cut it only once every reviewer the add-review table names carries the constraint in its own body.
 
-## Open questions
-
-None open.
-
 ## Readers, coupled tests, and operational constraints
 
 - **No test pins this file's text.** Searching `test/`, `hooks/test/`, `scripts/test/` and `autoagent/test/` returns no hit for `scope-meta`.
@@ -100,3 +96,10 @@ None open.
   - `scripts/test/test_agent_lifecycle_overhaul.py` (asserts exact path strings);
   - `manifest.json`.
 - **Never diet the file to zero bytes**: `autoagent/daemon_cycle.py` → `_read_sections` emits SCOPE-FILE-EMPTY and directs a `C3: FAIL` verdict on an empty scope file.
+
+## Agent body — `agents/glass-atrium-meta-agent.md`
+
+- **Frontmatter pin**: `test/harness-290-t21-capability-confinement.bats` → `META_AGENT_GRANTS` asserts Bash stays absent from the tool grant while Read and Write stay present.
+  - A Bash grant added there reddens that row deliberately: the LLM06 confinement surface.
+- **That row is the only coupling**: no suite under `hooks/test/`, `scripts/test/` or `autoagent/test/` pins prose in the body, so the prose may be reworded.
+- **Headings cited by name**: `## Signal Thresholds`, `## Modification Principles` and `## Hard Constraints`, from `scoped/scope-meta.md` → `## glass-atrium-meta-agent: Outcome-Driven Rewrite Policy`.

@@ -47,7 +47,6 @@ The charter's head comment names the class of shape; what binds is below.
 - **Inclusion test**: a rule belongs in the charter only if it applies to every agent regardless of scope, model, or task type.
 - **`### Output Language`**: `hooks/inject-session-context.sh` restates it in three heredoc lines and cites "the response-language rule" by name — re-verify the hook text on any edit here.
 - **Two keep-original leads**: `Literal data` covers one class and `Names and identifiers keep their original form` the other, so a citer naming only Literal data lands on the narrower half.
-  - `agents/glass-atrium-meta-agent.md` → "the canonical's Literal data clause" is such a citer: repair it when that body is next touched — cite `### Output Language`, or name both leads.
 - **`## Context Engineering Principle [ALL]` and its "80K+" drift line**: kept for `hooks/advisory-context-budget.sh` (table below).
 - **Headings kept because a file outside the charter cites them**:
   - `### Handoff Context` — `skills/glass-atrium-ops-orchestrator-role.md`.
