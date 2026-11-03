@@ -125,10 +125,7 @@ A successful `add` writes some of the sites a new name must appear in, and not o
   - Their absence from the auto-written set is design, never an omission to repair.
 - **Not written at all**: the `core-compliance-matrix.md` **Scope Legend** DEV row and the **Compliance Matrix** rows — a separate post-creation doc update.
   - `hooks/validate-compliance-matrix.sh` Layer C detects a registered name missing from the Scope Legend.
-- **Mirror pointer**: the same tracked-array list is stated at two more sites.
-  - `skills/glass-atrium-ops-delegation-contracts/references/agent-lifecycle-ceremony.md` → the step **Reconcile (MANDATORY post-commit gate)**
-  - `skills/glass-atrium-ops-reconcile-inject/SKILL.md` → **Names reconciled**
-  - Edit those sites together with this one.
+- **Mirror pointer**: the same tracked-array list is stated at `skills/glass-atrium-ops-reconcile-inject/SKILL.md` → **Names reconciled**; edit that site together with this one.
 
 ### glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation
 

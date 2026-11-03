@@ -198,7 +198,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 - The `[SCOPE]` and `[PLAN-CLOSE]` grammar SoTs sit in the rule file; every other file carries a pointer only.
 - The `[SCOPE]` author rules keep two binding lines in the rule file, the separators and first-wins with relaying.
-  - `references/scope-parser.md` → `## Author rules — detail` holds only what the rule file does not say: never-merged, the bare-form relay case, the space-in-path limit and skip-not-block.
+  - `references/scope-parser.md` → `## Author rules — detail` holds only what the rule file does not say: never-merged, the bare-form relay case and the space-in-path limit.
 - The simple-task waiver lives once at `#### Entry classification (DEV delegations)` → **Simple-task waiver**; the H3 does not repeat it; its `[SCOPE]` and `[PLAN-CLOSE]` grammar leads state only where each token is required.
 - The `[PLAN-CLOSE]` advisory is advisory, not a block, because a multi-script track legitimately closes in a later script, which a block would false-positive on.
 - The delegation-prompt language rule is the Tier-1 `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Output Language`.
