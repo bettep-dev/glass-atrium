@@ -63,7 +63,8 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
   - the HTML-document variant in the intel-reporter and intel-planner bodies
 - **DESIGN.md sections**: the body states no section order.
   - The md-lint section-order rule checks `lint.sh` → `CANONICAL_SECTIONS`, a hardcoded copy of the template's section 1-9 order, and reports drift at warning severity (exit 0).
-  - Edit `agents/templates/DESIGN.md`, `CANONICAL_SECTIONS` and the order list in the skill's `SKILL.md` → **section-order** together.
+  - Edit `agents/templates/DESIGN.md` and `lint.sh` → `CANONICAL_SECTIONS` together.
+    - A renumbering also reaches `skills/glass-atrium-design-md-lint/SKILL.md` → **section-order**: its `§1-§9` range and its `§8` / `§9` alias slots.
   - The heading-alias tokens (`ui copy`, `copy rules`, `don'ts`) stay multi-word or apostrophe-bearing, so no generic prefix (`do`, `copy`) substring-matches an unrelated heading.
 
 ## Canonicals the body states no copy of

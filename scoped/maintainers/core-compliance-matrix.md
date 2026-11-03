@@ -38,7 +38,7 @@ Live consumers parse the matrix. Reword around what they read, never through it.
   - `### Tier 1`, `### Tier 2` and `### Tier 3` are parse prefixes.
   - Cited by name: `### Membership vs. Delivery (per tier)` · `### Membership declaration and SubagentStart channels` · `### Injected Blocks (SubagentStart allowlist)` · the `## Precedence Resolution` stub · `## Archived Agents`.
     - A hook comment cites `### Membership vs. Delivery (per tier)` without the `(per tier)` suffix, so grep the bare `Membership vs. Delivery` prefix.
-  - `#### Per-scope inheritance detail` sits below the Tier 3 table, so no parser's section bound moves.
+  - `#### Per-scope inheritance detail` sits below the Tier 3 table, so no parser's section bound moves; never insert a heading above a Tier table.
 - **Cited leads** — grep the corpus for the lead before rewording one: **Path-scoped delivery** · Tier-3 **QA** (cited by **Rows, not cells** above) · Scope Legend **New-agent doc-sync note**.
   - `scoped/maintainers/scope-dev.md` cites **New-agent doc-sync note** as "Scope Legend doc-sync note", which a grep of the lead misses.
 - **Quoted text** — a code comment quotes these matrix sentences; reword one only together with its quote:

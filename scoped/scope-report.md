@@ -9,7 +9,7 @@ Canonical rule text for the REPORT scope (glass-atrium-intel-reporter). A sectio
 ## Output Format Routing [REPORT]
 
 - Format follows two request signals — did the user request a document, and did the user explicitly ask for a shareable HTML artifact.
-- The wiki store is an exception (`scoped/scope-wiki.md`).
+- The wiki store is an exception (`rules/glass-atrium/core-wiki-reference.md`).
 
 ### Three emission modes
 

@@ -15,7 +15,7 @@ Maintainer-facing material for that source file, and the record of text cut from
 - `agents/glass-atrium-wiki-curator.md` cites these names in the source file — keep each verbatim:
   - `## Operational Constraints [WIKI]` — the raw-ingestion frontmatter precondition cites `per scope-wiki Operational Constraints`.
   - the **Staleness surface** lead — the health-check `Stale` bullet cites `scoped/scope-wiki.md (Staleness surface)`.
-- `skills/glass-atrium-ops-orchestrator.md` and `scoped/scope-report.md` cite the file by name only.
+- `skills/glass-atrium-ops-orchestrator.md` cites the file by name only.
 - The citations are prose references, not an instruction to Read: as the curator's `rules.scope` member, the file reaches a spawned curator whole through the part slots (`hooks/lib/inject_chunk.py`).
 - The daily-compile batch reader does not receive it: `scripts/wiki-daily-compile.sh` passes only the curator body as `--system-prompt` to a `claude -p` call, where no SubagentStart fires.
   - A rule both readers need is stated in the body.
