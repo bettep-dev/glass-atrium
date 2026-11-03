@@ -326,18 +326,6 @@ function collect(node: unknown, pick: (el: RecordedElement) => boolean, stopAt: 
   return out;
 }
 
-test("the learning-memory tiles carry no tone border", () => {
-  const row = sandbox.BucketRowI({
-    state: { status: "ready" },
-    buckets: { ctm: 4, epm: 2, outcome: {}, joinMeta: { linked_agent_count: 3 } },
-  });
-  const tinted = collect(row, (el) => {
-    const style = el.props.style as Record<string, unknown> | undefined;
-    return Boolean(style && ("borderLeft" in style || "borderColor" in style));
-  });
-  assert.deepEqual(tinted, [], "the learning-memory tiles carry no tone border");
-});
-
 const HUE = {
   // any utility naming a theme tone or a Tailwind palette step: text-crit, bg-crit/70, hover:border-ok, bg-red-500 — a palette name runs 3+ letters, so min-w-16 and gap-x-100 stay layout
   CLASS: /\b[a-z]+-(crit|warn|ok|info|accent|[a-z]{3,}-(?:50|[1-9]00|950))\b/,
@@ -372,6 +360,17 @@ test("the change summary's line counts keep their hue on the sign glyph, ok for 
       assert.match(textClass, TEXT_CLASS.NEUTRAL, `${chip.props.word}: the text keeps a neutral ink`);
     }
   }
+});
+
+test("the learning-memory tiles name no tone token in any inline style", () => {
+  const row = sandbox.BucketRowI({
+    state: { status: "ready" },
+    buckets: { ctm: 4, epm: 2, outcome: {}, joinMeta: { linked_agent_count: 3 } },
+  });
+  const tree = collect(row, () => true);
+  assert.ok(tree.some((el) => /\bsub-card\b/.test(String(el.props.className))), "the walk reaches the tiles");
+  const toneStyles = tree.flatMap((el) => Object.values(Object(el.props.style)).map(String).filter((value) => HUE.STYLE_TOKEN.test(value)));
+  assert.deepEqual(toneStyles, [], "an inline style on a tile names a tone token");
 });
 
 test("a failed stats payload raises one banner at the loop output group", () => {
