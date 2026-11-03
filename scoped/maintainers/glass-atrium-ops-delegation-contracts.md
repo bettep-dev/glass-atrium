@@ -31,6 +31,7 @@ Maintainer-facing material for that skill's `SKILL.md` and its `references/` fil
   - `references/delegation-prompt.md` → `## Resource Budget` · `## Prompt-content aids` · `## Read-Extent Discipline` · `## Delegation Information-Hiding`.
   - `references/managed-document-completion.md` → `## Supersede vs new document`.
   - `references/workflow-pre-submit-check.md` → `## Check table`.
+  - `references/automatic-parallelization.md` → `## Guardrail (a) — orchestrator-side rules`.
 - **Coupled tests on `references/delegation-size-discipline.md`** — paraphrase none of these pins away:
   - `hooks/test/orchestrator-skill-schema-example.bats` requires `const AnalysisSchema = {`, `findings: 'string'` and `completion_block: 'string'`, the last as a declared member inside that fence.
     - It also requires the capped-property notation and the withdrawn per-row cap-sizing floor literal absent.

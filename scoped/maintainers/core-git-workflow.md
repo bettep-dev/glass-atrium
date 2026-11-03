@@ -25,12 +25,10 @@ Corpus-maintenance companion to that Tier-1 rule file. The rule file reaches eve
   - `## Commits` → `### Concurrent worktree` and its leads **Shared index**, **Whole-tree regeneration**, **Index-owner rule**, **Regeneration barrier** — cited by:
     - `skills/glass-atrium-ops-orchestrator-role.md` guardrail (a)
     - `skills/glass-atrium-ops-orchestrator.md`
-    - `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`
     - `scoped/maintainers/glass-atrium-dev-shell.md`
     - `scoped/maintainers/orchestrator-role.md`
-  - `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` cites `### Concurrent worktree` for the delegation-side contract, which carries the INDEX OWNER permission and the no-contract default, so both stay under that heading.
+  - `skills/glass-atrium-ops-orchestrator-role.md` guardrail (a) cites `### Concurrent worktree` for the agent-binding rules; the delegation-side contract among them carries the INDEX OWNER permission and the no-contract default, so both stay under that heading.
   - `### Worktree occupancy` and its leads **Entry precondition**, **Who commits**, **Read-only** — cited by:
-    - `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → **Agent-binding half of guardrail (a)**
     - `scoped/maintainers/glass-atrium-dev-shell.md` (**Who commits**)
     - `rules/glass-atrium/shared-self-improve-hygiene.md` → `## Working Tree Hygiene Contract` (**Who commits**)
     - The agent-binding pointers name both H3s (`Commits → **Concurrent worktree** · **Worktree occupancy**`):
