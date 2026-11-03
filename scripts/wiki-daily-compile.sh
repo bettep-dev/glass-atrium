@@ -1,5 +1,5 @@
 #!/bin/bash
-# Daily cron: batch-compile unprocessed raw/ files via glass-atrium-wiki-compiler skill.
+# Daily cron: batch-compile unprocessed raw/ files via the curator system prompt and this script's PROMPT.
 # Fired by launchd com.glass-atrium.wiki-compile (schedule: config.toml [daemon.wiki-compile].time).
 # Pipeline: 1 claude -p call (Step 1 Convert) -> shell-side note writes -> wiki-sync.sh (Step 2 Sync).
 # Persists compiled_count/compiled_total to core.daemon_runs for monitor card.
