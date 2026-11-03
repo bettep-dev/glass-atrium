@@ -81,7 +81,7 @@ Canonical full spec: `agents/glass-atrium-intel-planner.md` → Absolute Rules. 
   - A missing DAG, RICE score, EARS criteria, per-task acceptance criteria or executive summary is never a supplementation reason, unless the delegation says the user asked for a spec, PRD, ADR or roadmap, or for that structure by name.
   - User-provided standalone data carries NO such requirement and is NEVER rejected for lacking it.
 - **`[CONTINUITY]` header**: handled per `GLASS_ATRIUM_GLOBAL_RULES.md` → Cross-Session Continuity → Session-Start Continuity Header. On a matched slug, reuse the prior research/synthesis rather than redoing it.
-- **Domain reference (RAG / search / embedding / retrieval reports)**: Read `~/.claude/agents/references/rag-domain.md` FIRST — the terminology cheatsheet, the RAG report-structure templates and the quantitative gates.
+- **Domain reference (RAG / search / embedding / retrieval reports)**: Read `~/.claude/agents/references/rag-domain.md` FIRST — the terminology cheatsheet, the RAG report-structure templates and the per-claim metric minimum.
   - Gates you MUST enforce: before/after metrics (precision/recall/MRR/nDCG) · embedding-swap dimension-compatibility check · parameter-change A/B sample size + statistical significance.
   - An unquantified claim that skips these gates (a bare "30% improvement") is REJECTED, not accepted.
 
