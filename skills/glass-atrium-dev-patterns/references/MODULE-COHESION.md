@@ -6,7 +6,7 @@
 |----------|----------|
 | Library package entry point | **Required** |
 | App internal directory | **Forbidden** |
-| `sideEffects: false` + tree-shaking | **Allowed** (beware of cycles) |
+| Library sub-entry with `sideEffects: false` + tree-shaking | **Allowed** (beware of cycles) |
 
 ## Circular Dependency Prevention
 

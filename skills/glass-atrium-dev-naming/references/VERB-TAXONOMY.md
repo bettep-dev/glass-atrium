@@ -103,12 +103,12 @@
 ### 11. Initialization/Shutdown
 
 - **Init hierarchy**: `init` (single component) → `setup` (test/module) → `configure` (apply options) → `bootstrap` (entire system)
-- **Cleanup**: `reset` (restore initial state) · `clear` (selective) · `flush` (force all) · `purge` (permanent delete)
+- **Cleanup**: `reset` (restore initial state) · `clear` (empty entire collection) · `flush` (force all) · `purge` (permanent delete)
 - **Shutdown**: `close` (reopenable) → `disconnect` (network) → `dispose` (permanent release) → `destroy` (full destruction) · `teardown` (test)
 
 ### 12. Flow Control
 
-- **Execution**: `execute` (command/SQL) · `run` (process) · `invoke` (dynamic call) · `call` (simple call) · `apply` (context + array) · `perform` (domain action)
+- **Execution**: `run` (process) · `invoke` (dynamic call) · `call` (simple call) · `apply` (context + array)
 - **Start**: `start` (single service) · `begin` (transaction) · `launch` (process/thread) · `boot` (system)
 - **Termination hierarchy**: `stop` (resumable) → `terminate` (with cleanup) → `abort` (abnormal, core dump) → `kill` (SIGKILL)
 - **Pause/Resume**: `pause`↔`resume` · `suspend` (coroutine) · `retry` (after failure) · `repeat` (after success)

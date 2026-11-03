@@ -5,7 +5,7 @@
 | Principle | Description |
 |-----------|-------------|
 | **Guard Clause** | Error handling at the top → happy path last. Prefer early return |
-| **Parameters** | 3 or fewer (exceeds → use object) |
+| **Parameters** | 3 or fewer (else object); DI constructors follow `scoped/shared-code-structure.md` → `7+ constructor deps = God Class` |
 | **Side effects** | State them explicitly |
 
 ## CQS (Command-Query Separation)
