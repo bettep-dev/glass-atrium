@@ -10,7 +10,8 @@
 set -uo pipefail
 
 # Repo root = parent of this script's test/ dir (portable: no hardcoded $HOME path).
-GA="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# Physical form: the launcher resolves GA_ROOT with pwd -P, and the -lname counts below match that form.
+GA="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 # Single entry point — install/uninstall both dispatch through `glass-atrium
 # <subcommand>` (the in-process engine passthrough), so the same binary drives
 # every exec site below; the `install` / `uninstall` subcommand token selects
