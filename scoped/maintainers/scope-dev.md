@@ -204,11 +204,16 @@ Headings and bold leads other files resolve to — renaming or deleting one dang
 - `## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]` (stub) ← `skills/glass-atrium-ops-orchestrator-role.md` · `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md`
 - `## Sprint Contract Gate [DEV+QA]` ← `scoped/maintainers/glass-atrium-dev-node.md` · operator-facing messages in `hooks/enforce-workflow-verify-stage.sh`
 - `## Plan Direction Verification Gate [DEV+QA]`
-  - rules and skills ← `skills/glass-atrium-ops-orchestrator-role.md` · `scoped/scope-qa.md` · `scoped/scope-planning.md` · `scoped/maintainers/orchestrator-role.md` · `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md`
-  - code ← `skills/glass-atrium-ops-orchestrator.md` (script comment) · `hooks/enforce-workflow-verify-stage.sh` (comment and message)
+  - rules ← `scoped/scope-qa.md` · `scoped/scope-planning.md` · `scoped/maintainers/orchestrator-role.md`
+  - skills ← `skills/glass-atrium-ops-orchestrator-role.md` · `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` · `skills/glass-atrium-ops-delegation-contracts/references/scan-provenance.md`
+  - agents ← `agents/glass-atrium-intel-planner.md` (the gate's name, Stage-2 bullet)
+  - code ← `skills/glass-atrium-ops-orchestrator.md` (script comment) · `hooks/enforce-workflow-verify-stage.sh` (comment and message) · `hooks/test/inject-scope-single-delivery.bats` (comment) · `scripts/gate-audit.sh` (header)
 - `## Ambiguity Gate (Ambiguity Score) [DEV+PLANNING]` and its Assumptions Disclosure ← `agents/GLASS_ATRIUM_GLOBAL_RULES.md` · `agents/glass-atrium-dev-animator.md` · `scoped/scope-planning.md`
-- `## Pre-Execution Verification` → `### Project Convention Probe` ← `rules/glass-atrium/core-outcome-record.md` (`style_ref` row) · `agents/glass-atrium-dev-android.md` · `agents/glass-atrium-dev-swift.md` · `scoped/maintainers/glass-atrium-dev-shell.md`
-- `### Pre-Edit Facts Disclosure` ← `hooks/advisory-preedit-facts.sh` (header and the operator-visible `missing`-verdict message)
+- `## Pre-Execution Verification` → `### Project Convention Probe`
+  - rules and agents ← `rules/glass-atrium/core-outcome-record.md` (`style_ref` row) · `agents/glass-atrium-dev-android.md` · `agents/glass-atrium-dev-swift.md`
+  - notes in `scoped/maintainers/` ← `glass-atrium-dev-android.md` · `glass-atrium-dev-nestjs.md` · `glass-atrium-dev-node.md` · `glass-atrium-dev-python.md` · `glass-atrium-dev-react.md` · `glass-atrium-dev-shell.md` · `glass-atrium-dev-swift.md` · `shared-search-first.md`
+  - code comments ← `hooks/lib/style-ref-consts.sh` · `hooks/lib/styleref-roster.sh` · `hooks/test/style-ref-flag-predicate.bats`
+- `### Pre-Edit Facts Disclosure` ← `hooks/advisory-preedit-facts.sh` (header and the operator-visible `missing`-verdict message) · `scoped/maintainers/glass-atrium-dev-nestjs.md` · `scoped/maintainers/glass-atrium-dev-react.md`
 - `## Agent-Level Tool Exceptions` ← `agents/glass-atrium-dev-rag.md` (frontmatter NOTE, itself a fixture in `hooks/test/enforce-harness-critical-frontmatter.bats`)
 - `## Modification Scope Constraint (Surface Area Constraint) [DEV]` ← `scoped/shared-testing.md` · `agents/glass-atrium-intel-planner.md`
 - **Minimalism reflex** and **Rule of Three before abstraction** ← `scoped/shared-comment-logging.md`
@@ -219,7 +224,7 @@ Headings and bold leads other files resolve to — renaming or deleting one dang
 
 - `## DEV Agent Fleet Governance` ← `scoped/scope-dev.md` (stub) · `skills/glass-atrium-ops-orchestrator.md`
 - `### New-Agent Creation Gate` ← `skills/glass-atrium-ops-orchestrator.md`
-- `### Doc-sync note (CLI auto-writes vs. manual matrix update)` ← `rules/glass-atrium/core-compliance-matrix.md` → Scope Legend doc-sync note · `scoped/maintainers/core-compliance-matrix.md`
+- `### Doc-sync note (CLI auto-writes vs. manual matrix update)` ← `rules/glass-atrium/core-compliance-matrix.md` → Scope Legend doc-sync note
 - `## Sprint Contract Gate (orchestrator side)` ← `scoped/scope-dev.md` (stub) · `skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` · `scoped/maintainers/scope-qa.md`
 - `### Sizable-task definition (single SoT — the positive entry floor)` ← `hooks/enforce-verification-gate.sh` (`entry_fix=` block text, VGATE-ENTRY-001) · `scoped/maintainers/orchestrator-role.md`
 - `### glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation` ← `scoped/maintainers/shared-design-token-consumption.md` → `## Readers, coupled tests, and one stale citation`
