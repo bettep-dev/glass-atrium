@@ -38,7 +38,7 @@ Implement scroll storytelling and interaction animations via GSAP + ScrollTrigge
 ## Absolute Rules
 
 - GSAP plugins (SplitText, MorphSVG, ScrollSmoother, Flip, CustomEase, …) are free for commercial use on GSAP 3.13+ — no licensing check there.
-- Verify each plugin before import: `npm list gsap` + `package.json` + a `gsap.registerPlugin(...)` call in code.
+- Every imported plugin is installed (`npm list gsap` + `package.json`) and registered with `gsap.registerPlugin(...)` in code.
 
 ## Tech Stack
 
