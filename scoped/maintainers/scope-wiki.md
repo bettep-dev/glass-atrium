@@ -16,7 +16,8 @@ Maintainer-facing material for that source file, plus the record of what the cut
 - `agents/glass-atrium-wiki-curator.md` cites two names that must stay: the health-check `Stale` bullet cites `scoped/scope-wiki.md (Staleness surface)`, and the raw-ingestion frontmatter precondition cites `per scope-wiki Operational Constraints`.
 - `skills/glass-atrium-ops-orchestrator.md` and `scoped/scope-report.md` cite the file by name only.
 - Those citations are prose references, not an instruction to Read: as the curator's `rules.scope` member, the file reaches a spawned curator whole through the part slots (`hooks/lib/inject_chunk.py`).
-- The daily-compile batch reader does not receive it: `scripts/wiki-daily-compile.sh` passes only the curator body as `--system-prompt` to a `claude -p` call, where no SubagentStart fires. A rule both readers need is stated in the body.
+- The daily-compile batch reader does not receive it: `scripts/wiki-daily-compile.sh` passes only the curator body as `--system-prompt` to a `claude -p` call, where no SubagentStart fires.
+- A rule both readers need is stated in the body.
 
 ## What the cut removed, and why
 
@@ -26,7 +27,7 @@ Maintainer-facing material for that source file, plus the record of what the cut
   - It also binds other agents, so for the receiving curator it was informational rather than a duty it could discharge.
 - **The immutability half of `raw/ is immutable`** — curator body `## Guardrails (Absolute)`: `**raw/ immutable**: Write/Edit/rm/mv forbidden under wiki/raw/**. Read only.`
 - **`## Absolute Rules [WIKI]`, the clauded-docs half** — the curator body's **raw/ immutable** already forbids that move; the managed-doc handler holds the rule at `skills/glass-atrium-ops-orchestrator.md` → `## Managed Document Deletion (Direct Handling)`.
-- **The healthcheck-carrying and read-only clauses of `Staleness surface`** — the curator body's health-check bullet states the duty and points here for the threshold and the surface; the script's header states it is read-only.
+- **The healthcheck-carrying and read-only clauses of `Staleness surface`** — the curator body's health-check bullet states the duty and points at `scoped/scope-wiki.md` for the threshold and the surface; the script's header states it is read-only.
 
 ## Concurrent-write guard — DROPPED, not repaired
 
@@ -34,20 +35,21 @@ The bullet ordered the curator to check `~/.claude/data/wiki-lock` for existence
 
 - **Nothing creates the path**, so the guard silently always passes.
 - **The real mechanism is `scripts/wiki-lock.sh`** → its header `Interface`; the dropped bullet's `do NOT wait/spin` and `remove the lock atomically` clauses contradict it.
-- **The lock duty lives in `agents/glass-atrium-wiki-curator.md`**: the mandatory turn-0 acquire, the Guardrails lock pre-check, the all-writes-via-wiki-lock rule, and the extended-timeout reindex pattern. Restating it here would add another copy.
+- **The lock duty lives in `agents/glass-atrium-wiki-curator.md`**: the mandatory turn-0 acquire, the Guardrails lock pre-check, the all-writes-via-wiki-lock rule, and the extended-timeout reindex pattern. Restating it in `scoped/scope-wiki.md` would add another copy.
 - **Open lock-protocol defects** — owned by whoever next changes the body's lock protocol:
   - The turn-0 acquire is written `wiki-lock.sh wiki-compile 30`, which names no subcommand; the helper answers any unknown subcommand with its usage text and exit 64 [measured: read of `scripts/wiki-lock.sh` → `usage` and the subcommand `case`].
-  - The Guardrails pre-check names the `with` form before the first Write/Edit, but `with` wraps a shell command (`-- <command...>`), which a Write or Edit tool call is not [measured: same read, header Interface].
+  - The Guardrails pre-check names the `with` form before the first Write/Edit, but `with` wraps a shell command (`-- <command...>`), which a Write or Edit tool call is not [measured: read of `scripts/wiki-lock.sh` → header `Interface`].
   - A bare `acquire` records the caller shell (`$PPID`) as holder; whether an agent's Bash tool call keeps that shell alive past the call is [hypothesis], unmeasured.
 
 ## Index regeneration obligation — DROPPED as superseded
 
-The bullet read: any structural change under `wiki/` regenerates the master index in the SAME session, atomically, and `Partial-index session termination is FORBIDDEN`.
+The bullet read: any structural change under `wiki/` regenerates the master index in the same session, atomically, and `Partial-index session termination is FORBIDDEN`.
 
 - The curator body sanctions exactly that termination, with a named exception and a graded outcome, at `## Guardrails (Absolute)` → Index post-check.
   - All compiled notes register before session end; unregistered notes grade `result: done_with_concerns`.
   - Batch-compile invocations (`-p` / `wiki-daily-compile.sh`) may complete without agent-side index edits, because `wiki-sync.sh` regenerates the master index downstream.
-- So a legitimate batch run ends with a partial index, which this line called FORBIDDEN. The exception stays in the body alone — the copy both the spawned curator and the batch reader hold.
+- So a legitimate batch run ends with a partial index, which the dropped bullet called FORBIDDEN.
+- The exception stays in the body alone — the copy both the spawned curator and the batch reader hold.
 - The registration duty itself survives in the body (turn-0 sequence step 3, the Index post-check, the `### Master Index = Single Source of Truth` section, the Completeness Contract, and `Termination without master-index registration` in its prohibitions).
 
 ## `raw/` frontmatter validation — kept, with its live scope named
@@ -61,5 +63,5 @@ The bullet read: any structural change under `wiki/` regenerates the master inde
 - No test pins a literal from `scoped/scope-wiki.md`; corpus scans such as `hooks/test/doc-status-vocabulary-pin.bats` read it for vocabulary only.
 - The `scoped/scope-wiki.md` path is carried in `agent-registry.json` and `scripts/agent_lifecycle/registry_ops.py`.
 - `rules/glass-atrium/core-compliance-matrix.md` writes that path in inline code, which `monitor/src/server/architecture/governance-membership.ts` treats as a declared document and reports absent if the file stops existing.
-- `hooks/lib/inject_chunk.py` packs the whole body into the curator's part slots at spawn; after an edit, `python3 hooks/lib/inject_chunk.py --audit` should still report `events=none` for the curator.
+- After an edit, `python3 hooks/lib/inject_chunk.py --audit` should still report `events=none` for the curator.
 - `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP` excerpts the file by basename for the daemon verify prompt; its C3 axis fails the verdict on an empty scope file.
