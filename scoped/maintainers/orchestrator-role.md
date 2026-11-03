@@ -82,13 +82,14 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - `#### Decision-phase probes` · `#### Deliverable exposure and designer composition` · `#### Monitoring-phase notes` · `#### Scan boundary and provenance`.
   - `### Plan Direction Verification (Stage-2 gate)` · `### Spawn Budget` (with Delegation-size discipline) · `#### Automatic Parallelization` (with guardrail `(a)`) · `### Context Handoff Size` · the Cost-Tier Selection heading · `### Failure Recovery Loop`.
   - Pointer sites, the `block-*` verdict table's file included: `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Reference Index.
-  - Cited by that skill's reference files: `#### Backstop asymmetry (manual vs. ultracode)` · `#### Depth and concurrency ceilings`.
+  - Cited by that skill's reference files: `#### Backstop asymmetry (manual vs. ultracode)`.
+  - Cited from `scoped/orchestrator-core.md` and `skills/glass-atrium-ops-orchestrator.md`: `#### Depth and concurrency ceilings`.
 - **Bolded leads** cited by name:
   - under the three phase-note H4s:
     - `#### Decision-phase probes`: Foreground Probe · Capability Probe · Compatibility Probe;
     - `#### Deliverable exposure and designer composition (Decision phase)`: Exposure Determination · Visual-Weight Probe;
     - `#### Monitoring-phase notes`: Verbatim forward-relay · glass-atrium-dev-front markup-exception Monitoring judgment;
-  - under `### Spawn Budget`: Split triggers · HARD SECONDARY · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`);
+  - under `### Spawn Budget`: Split triggers · HARD SECONDARY · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`) · COUNTER-CAVEAT (over-fragmentation);
   - under `#### Analysis fan-out and team cardinality`: Effort-scaling by task shape;
   - under `### Context Handoff Size`: Attestation-token placement;
   - under `### Failure Recovery Loop`: Backing honesty (which stages are enforced) · Retry effort escalation;
