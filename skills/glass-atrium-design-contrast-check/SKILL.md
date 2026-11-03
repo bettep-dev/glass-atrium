@@ -38,10 +38,10 @@ First matching row wins.
 
 | Condition | Tool |
 |---|---|
-| A contrast package is already in the project's lock file | that package |
-| Node runtime present | `npx accessible-color-contrast "<fg_hex>" "<bg_hex>"` |
 | No Node runtime; `python3` or WebFetch available | `## Luminance Formula` as a `python3` one-off via Bash, or the WebAIM contrast checker's API via WebFetch |
 | No Node runtime; neither `python3` nor WebFetch available | none: report the pair as unverified |
+| A contrast package is already in the project's lock file | that package |
+| Node runtime present | `npx accessible-color-contrast "<fg_hex>" "<bg_hex>"` |
 
 A ratio worked out by hand is not a verification.
 
