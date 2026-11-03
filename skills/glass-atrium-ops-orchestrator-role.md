@@ -294,7 +294,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - either `revise`/`infeasible` → one glass-atrium-intel-planner revision, a supersede-POST.
   - a 2nd mismatch → orchestrator judgment via `### Failure Recovery Loop` — **path only**: its Retry max-2 count is a separate mechanism, not the revision count.
 - **Activation scope**: complex plans only. A plan whose work classifies simple/exempt under `#### Entry classification (DEV delegations)` skips Stage 2 and passes the format gate only.
-- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` — selection examples, verdict axes, the direction rule's detail, scope-fidelity, standing jobs, count basis, backstop detail.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` — selection examples, verdict axes, the direction rule's detail, scope-fidelity, standing jobs, backstop detail.
 
 ### Stage-2 Backstops
 
