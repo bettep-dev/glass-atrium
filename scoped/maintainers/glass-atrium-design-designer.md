@@ -27,7 +27,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | Body text | Cited from |
 |---|---|
 | `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` | **AI Slop Tropes citers**, below the table |
-| `## Red Flags` (WCAG AA not verified · **Color & contrast** derive-then-verify) | contrast-check skill · `scoped/maintainers/scope-design.md` |
+| `## Red Flags` (WCAG AA not verified · **Color & contrast** derive-then-verify) | `scoped/maintainers/scope-design.md` |
 | `## Pre-Emit 5-Axis Self-Critique` (axes · band rubric · emit gate) | 5-axis-critique skill, whose `**Gate**: PASS (all ≥7)` output line reads the band rubric |
 | `## Design Evaluation 4-Axis (1-5 each, 20 total)` | 5-axis-critique skill · `scoped/scope-qa.md` |
 | `## HTML Primary Co-Emission Role` | **HTML Primary Co-Emission Role citers**, below the table |
