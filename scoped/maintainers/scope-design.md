@@ -41,7 +41,7 @@ Each copy is in `agents/glass-atrium-design-designer.md`:
 | `Platform Design Token Policy` | `scoped/maintainers/shared-design-token-consumption.md` → Cross-references |
 | `LLM Output Validation` | the citer list under this table |
 | `Vendor-Routing Awareness` | nothing; `scoped/scope-dev.md` has its own same-named section |
-| `CQRS Exception` | nothing; the rule file cites `scoped/scope-meta.md` → `## CQRS Exception` |
+| `CQRS Exception` | nothing; its self-checklist bullet mirrors `scoped/scope-meta.md` → `## CQRS Exception`, the canonical site |
 
 - `LLM Output Validation` is cited from:
   - `skills/glass-atrium-design-contrast-check/SKILL.md`, and `skills/glass-atrium-design-md-lint/SKILL.md` as the pre-emit gate family that lint joins;

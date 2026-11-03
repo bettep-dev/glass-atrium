@@ -48,7 +48,7 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 | Heading | Cited from |
 |---|---|
 | `Absolute Rules` | nothing cites it by name — kept because the heading names the content beneath it |
-| `CQRS Exception` | `scoped/scope-planning.md` and `scoped/scope-design.md`, both by pointer into its grant and checklist |
+| `CQRS Exception` | `scoped/scope-planning.md`, by pointer into its grant and checklist; `scoped/scope-design.md` holds a mirror of the self-checklist bullet |
 | `DEV Rule Inheritance` | `rules/glass-atrium/core-compliance-matrix.md` → Tier-3 META-inheritance bullet |
 | `Prompt Authoring Hygiene` | nothing cites it by name — a pointer section to the Tier-3 home |
 | `Prompt Deliverable Team Rule` | the citer list under this table |
@@ -72,7 +72,7 @@ Do not restore any item below.
 ## Duplicates dropped, with the delivered copy that made them redundant
 
 - Self-review procedure beyond the four-item checklist: `agents/glass-atrium-meta-prompt-engineer.md` → `## Structure Self-Check (MANDATORY · pre-emit)` is the delivered, stronger gate.
-  - The checklist itself stays: `scope-planning.md` and `scope-design.md` resolve their pointers into it.
+  - The checklist itself stays: `scope-planning.md` resolves its pointer into it and `scope-design.md` mirrors it, so a checklist edit changes both.
 - The Outcome-Driven Rewrite Policy redirect paragraph — the rule file's one line names the body sections, and the body stays the operative site.
 - The DEV Rule Inheritance explanation of the matrix footnote and of the `agent-registry.json` declaration — the rule file states the rationale and both declaration sites.
 - In the meta-prompt-engineer body, the top-of-body inheritance blockquote and the `**Prompts = Code**` Absolute Rules bullet — both restated this rule file, which reaches that agent whole.
