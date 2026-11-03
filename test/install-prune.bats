@@ -22,7 +22,8 @@
 
 bats_require_minimum_version 1.5.0
 
-GA_ROOT_DIR="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# physical form: the launcher resolves GA_ROOT with pwd -P, so planted targets match only in that form
+GA_ROOT_DIR="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd -P)"
 REAL_GA="${GA_ROOT_DIR}/glass-atrium"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
 source "${GA_ROOT_DIR}/scripts/lib/path-guard.sh"
@@ -93,6 +94,22 @@ fail_with_state() {
   [[ "${output}" == *"1 pruned"* ]] || fail_with_state
   # filesystem: the symlink is gone.
   [[ ! -L "${TARGET}/agents/orphan.md" ]] || fail_with_state "${TARGET}/agents/orphan.md"
+}
+
+@test "a root entered through a symlink prunes the orphan link its own farm wrote" {
+  local entry="${SANDBOX}/entry" rel="${GA_SCRATCH##*/}/farmed.md" link_target
+  ln -s "${GA_ROOT_DIR}" "${entry}"
+  printf 'src\n' >"${GA_ROOT_DIR}/${rel}"
+  write_manifest "${rel}"
+  GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" "${entry}/glass-atrium" agents-only
+  link_target="$(readlink -- "${TARGET}/${rel}")"
+  [[ "${link_target}" == "${GA_ROOT_DIR}/${rel}" ]] || fail_with_state "${TARGET}/${rel}"
+  rm -- "${GA_ROOT_DIR}/${rel}"
+  write_manifest "agents/kept.md"
+  GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" run "${entry}/glass-atrium" prune
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"1 pruned"* ]] || fail_with_state
+  [[ ! -L "${TARGET}/${rel}" ]] || fail_with_state "${TARGET}/${rel}"
 }
 
 # === resolving symlink preserved =============================================

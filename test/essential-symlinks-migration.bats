@@ -33,7 +33,8 @@
 
 bats_require_minimum_version 1.5.0
 
-GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# physical form: the launcher resolves GA_ROOT with pwd -P, so seeded targets match only in that form
+GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd -P)"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
 
@@ -336,6 +337,16 @@ seed_repo_legacy_link() {
   [[ "${output}" == *"== migrate:"* ]] || fail_with_state
   [[ "${output}" == *"1 legacy GA symlink(s) dropped"* ]] || fail_with_state
   [[ ! -e "${TARGET}/hooks/legacy-hook.sh" ]] || fail_with_state "${TARGET}/hooks/legacy-hook.sh"
+}
+
+@test "dispatch: a root entered through a symlink drops a legacy link in the form the farm writes" {
+  seed_repo_legacy_link
+  ln -s "${GA}" "${SANDBOX}/entry"
+
+  run env GA_TARGET_HOME="${TARGET}" bash "${SANDBOX}/entry/glass-atrium" migrate
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"1 legacy GA symlink(s) dropped"* ]] || fail_with_state
+  [[ ! -L "${TARGET}/hooks/legacy-hook.sh" ]] || fail_with_state "${TARGET}/hooks/legacy-hook.sh"
 }
 
 @test "dispatch: 'glass-atrium --dry-run migrate' reports without mutating" {
