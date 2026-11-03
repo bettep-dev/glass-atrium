@@ -13,9 +13,13 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 
 The key reads `skills: []` — no skill is preloaded. The naming canon reaches this body through `scoped/shared-naming.md` membership, not a preload.
 
-Two placement facts, both deliberate:
+Placement facts, each deliberate:
 
-- **The insertion anchors on the `maxTurns:` line, never on `tools:`.** `hooks/enforce-harness-critical.sh` blocks any live-install write that touches an `agents/*.md` frontmatter identity key — name, tools, scope — for every caller, agent-id-independent (LLM06; `core-security.md` → Agent Tool Authorization → Enforcement boundary). An edit whose anchor string overlaps the `tools:` line risks tripping it. `skills:` is not a frozen identity key. The same hook also reacts to a change in the frontmatter fence-line count, which stays at two.
+- **The insertion anchors on the `maxTurns:` line, never on `tools:`.**
+  - `hooks/enforce-harness-critical.sh` blocks any live-install write that touches an `agents/*.md` frontmatter identity key — name, tools, scope — for every caller, agent-id-independent (LLM06; `core-security.md` → Agent Tool Authorization → Enforcement boundary).
+  - An edit whose anchor string overlaps the `tools:` line risks tripping it.
+  - `skills:` is not a frozen identity key.
+  - The same hook also reacts to a change in the frontmatter fence-line count, which stays at two.
 - **`skills:` is not local-only.** `autoagent/lib/editable_merge.py` keeps `model` as the local-only frontmatter key and treats `effort` as base-aware; `skills:` is in neither set, so a repo-added key propagates to live installs through the ordinary update path.
 
 ## Machine constraints on the body
@@ -28,20 +32,18 @@ Two placement facts, both deliberate:
 
 ## What moved out of the body, and why
 
-- **Tech Stack prose run** — became a table; no fact dropped, the reader no longer parses one long middot chain.
-- **Secrets and signing credentials** — the no-hardcoding rule is `core-security.md` → Secret Management (host-delivered). The Guardrails bullet keeps only the Keychain / env delta and names that canonical; `## Security` carries no copy.
-- **Comment / TODO restatements in Self-Review** — the comment rules, the TODO form included, are delivered to every DEV subagent through `scoped/shared-comment-logging.md` membership (part slots).
-  - The Swift residue stayed: the `os.Logger` privacy-redaction form, no shipped `print`, no sensitive data logged.
-- **Red Flags and Prohibitions items already stated as Guardrails MUST NOTs** — both sections name Guardrails as the owner and list only the residue, the same shape as the dev-shell body.
-- **Emit instructions under Success Criteria** — the emit-mode table and its notes restated `core-outcome-record.md` → Completion Report Output Obligation, which is host-delivered and also compressed into the slot-1 emit-format block. One pointer line remains; no suite reads a DEV body's emit text.
-  - Kept in the body under that pointer: the fallback for a schema declaring no `completion_block`, which neither canonical states.
-- **In-file repeats in the editable regions** — the Work Rules Concurrency and SPM bullets, the `@Published` / main-actor / `[weak self]` repeats under Design Principles, and "keep `body` small" each restated a Guardrails bullet or a Design Principles line that stays; the SPM bullet's package-provenance clause is `core-security.md` → Dependency Auditing (host).
-- **SPM confirmation under Pre-Execution Verification** — the Guardrails bullet owns it; the line keeps the `Package.swift` + `Package.resolved` check.
+- **Secrets and signing credentials** — the no-hardcoding rule is `core-security.md` → Secret Management (host-delivered); the Guardrails bullet keeps only the Keychain / env delta.
+- **Comment and logging rules** — `scoped/shared-comment-logging.md` (part slots); Self-Review keeps the Swift residue: the `os.Logger` privacy-redaction form, no shipped `print`.
+  - Sensitive-data logging duty, cut from Self-Review: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Absolute Rules [ALL]` (`When logging, sensitive info in logs MUST be masked`) and `core-security.md` → Secret Management; `scoped/shared-comment-logging.md` carries no such rule.
+- **`## Red Flags` and `## Prohibitions`** — removed: each item restated a rule this body keeps. The unconfirmed-API-claim item is the charter's `### Verified References`.
+- **Self-Review rule restatements and the Success Criteria triple** — Self-Review names the rule sections and lists only what they do not state; Success Criteria points at Self-Review.
+- **Completion format** — `core-outcome-record.md` → Completion Report Output Obligation (host-delivered) and the slot-1 emit-format block; no suite reads a DEV body's emit text.
+  - Kept in the body: the fallback for a schema declaring no `completion_block`, which neither canonical states.
+- **Package provenance** — `core-security.md` → Dependency Auditing (host).
 
 ## Decisions worth keeping
 
-- **Naming subordination**: the Project Convention Probe line under Pre-Execution Verification points at `scoped/scope-dev.md` → Project Convention Probe.
+- **Naming subordination**: the Project Convention Probe bullet under Pre-Execution Verification names the probe, which is delivered through `scoped/scope-dev.md`.
   - The probe points at `scoped/shared-search-first.md` → **Step 3 — Mirror** for the mirrored code-form axes; identifier form follows `scoped/shared-naming.md`.
   - The line adds only the Swift isolation-style axis.
   - It sits outside every editable region.
-- **`@unchecked Sendable` added to Red Flags** — the Error Recovery region already forbade silencing a strict-concurrency diagnostic with it, but nothing listed it as a scan target.
