@@ -387,9 +387,13 @@ assert_rows() {
   : >"${home}/.claude/statusline-command.sh"
   HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 0 \
     'repo worktree dir|Repo /x/glass-atrium, worktree .claude/worktrees/wt-pa-hpp, branch fix/x.' \
-    'repo audit dir|Records: `.claude/prompt-audit/pa-s3/impl77/` and the plan.'
+    'repo audit dir|Records: `.claude/prompt-audit/pa-s3/impl77/` and the plan.' \
+    'final wildcard matching no harness entry|Records under .claude/prompt-audit/* now.' \
+    'a bare root word and a final wildcard in prose|The .claude/* files here are examples.' \
+    'final wildcard trimmed to a name the harness root does not hold|From the home dir, see .claude/statusline* now.'
   HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" assert_rows 2 \
     'an entry the harness root holds|From the home dir, edit .claude/statusline-command.sh now.' \
+    'a bare root word and a final wildcard as an operand|From the home dir, edit .claude/* now.' \
     'a config entry not yet created|From the home dir, edit .claude/agents/x.md now.' \
     'a settings file not yet created|From the home dir, edit .claude/settings.local.json now.' \
     'traversal out of a repo dir|Edit .claude/worktrees/../agents/x.md now.' \
@@ -419,6 +423,155 @@ cap_prompt() {
     }
     [[ "${want}" -eq 0 || "${output}" == *"${count} unique"*"cap of ${cap}"* ]] || {
       echo "row: ${name} · cap reason missing: ${output}"
+      return 1
+    }
+  done
+}
+
+# Segments of the absolute path $1: each literal one spends a path of the glob budget. Stdout: the count.
+get_segment_count() {
+  local slashes="${1//[^\/]/}"
+  printf '%s' "${#slashes}"
+}
+
+# A dir of $1 subdirs in BATS_TEST_TMPDIR, built once per size. Stdout: its path.
+create_wide_dir() {
+  local wide_dir="${BATS_TEST_TMPDIR}/wide${1}"
+  if [[ ! -d "${wide_dir}" ]]; then
+    mkdir -p "${wide_dir}"
+    seq -f "${wide_dir}/d%04g" 1 "${1}" | xargs mkdir
+  fi
+  printf '%s' "${wide_dir}"
+}
+
+# Reason past a glob cap, for arm $1 (level|budget): that cap, the walk cost, unresolved, its remedy, no claim of a resolved path.
+assert_glob_cap_reason() {
+  local cause='passed the cap of 1024 paths at one level' remedy='Narrow the glob'
+  if [[ "$1" == budget ]]; then
+    cause='past the budget of 16384 paths'
+    remedy='Split the delegation'
+  fi
+  [[ "${output}" == *"${cause}"*'walk cost'*'judged protected without being resolved'*"${remedy}"* && "${output}" != *'resolves to a protected harness path'* ]]
+}
+
+# Whole-pattern expansion → only its final level visible, every level read before a cap sees it.
+@test "a glob is judged protected once a level passes the path cap or the prompt passes the path budget" {
+  local row name dirs pattern expected_status arm wide_dir fill
+  wide_dir="$(create_wide_dir 1024)"
+  # spend: the wide level 15 times (`*` + 14 `.`), one per literal path segment, then the last level's fill
+  fill=$((16384 - 15 * 1024 - $(get_segment_count "${wide_dir}")))
+  seq -f "${wide_dir}/d0001/at%04g" 1 "${fill}" | xargs touch
+  seq -f "${wide_dir}/d0001/past%04g" 1 "$((fill + 1))" | xargs touch
+  for row in \
+    'final level at the cap|1024|*/.claude/x.md|0|' \
+    'final level past the cap|1025|*/.claude/x.md|2|level' \
+    'inner level at the cap, nothing below it|1024|*/nomatch*/.claude/x.md|0|' \
+    'inner level past the cap, nothing below it|1025|*/nomatch*/.claude/x.md|2|level' \
+    'wide level kept alive exactly to the budget|1024|*/././././././././././././././at*/.claude/x.md|0|' \
+    'one path past the budget|1024|*/././././././././././././././past*/.claude/x.md|2|budget'; do
+    IFS='|' read -r name dirs pattern expected_status arm <<<"${row}"
+    wide_dir="$(create_wide_dir "${dirs}")"
+    run_agent "Edit ${wide_dir}/${pattern} now." omit
+    [[ "${status}" -eq "${expected_status}" ]] || {
+      echo "row: ${name} · want ${expected_status} · status ${status}: ${output}"
+      return 1
+    }
+    [[ -z "${arm}" ]] || { [[ "${output}" == *"candidate: ${wide_dir}/${pattern} "* ]] && assert_glob_cap_reason "${arm}"; } || {
+      echo "row: ${name} · ${arm} reason missing: ${output}"
+      return 1
+    }
+  done
+}
+
+# Other side of the cap reason: a walk that did finish keeps the claim that the token resolved.
+@test "a glob within the caps that reaches a harness root says it resolved" {
+  local home="${BATS_TEST_TMPDIR}/home/u"
+  mkdir -p "${home}/.claude"
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent 'Edit ~/.cl*aude/agents/a.md now.' omit
+  [[ "${status}" -eq 2 && "${output}" == *'resolves to a protected harness path'* && "${output}" != *'judged protected'* ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
+}
+
+@test "the glob path budget spans every candidate of a prompt" {
+  local wide_dir row name files expected_status arm prompt file
+  local pattern='*/./././././*/.claude'
+  wide_dir="$(create_wide_dir 1024)"
+  for row in \
+    'two candidates, together within it|a.md b.md|0|' \
+    'three candidates, each within it, together past it|a.md b.md c.md|2|budget'; do
+    IFS='|' read -r name files expected_status arm <<<"${row}"
+    prompt="Edit"
+    for file in ${files}; do
+      prompt="${prompt} ${wide_dir}/${pattern}/${file}"
+    done
+    run_agent "${prompt} now." omit
+    [[ "${status}" -eq "${expected_status}" ]] || {
+      echo "row: ${name} · want ${expected_status} · status ${status}: ${output}"
+      return 1
+    }
+    [[ -z "${arm}" ]] || assert_glob_cap_reason "${arm}" || {
+      echo "row: ${name} · ${arm} reason missing: ${output}"
+      return 1
+    }
+  done
+}
+
+# Work past a cap: invisible to a caller, a clock flaky → xtrace prints each loop iteration, whatever the cap check's names or comparator.
+@test "a level past the path cap stops reading its remaining dirs" {
+  local wide_dir dir payload trace rc=0 iterations home="${BATS_TEST_TMPDIR}/home/u"
+  local dirs=32 entries=64 cap=1024
+  mkdir -p "${home}"
+  wide_dir="$(create_wide_dir "${dirs}")"
+  for dir in "${wide_dir}"/*; do
+    seq -f "${dir}/e%02g" 1 "${entries}" | xargs touch
+  done
+  payload="$(jq -n --arg p "Edit ${wide_dir}/*/*/.claude/x.md now." '{tool_name:"Agent", tool_input:{prompt:$p}}')"
+  trace="$(printf '%s' "${payload}" | HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" bash -x "${HOOK_SH}" 2>&1 >/dev/null)" || rc=$?
+  [[ "${rc}" -eq 2 ]] || {
+    echo "status ${rc}: ${trace}"
+    return 1
+  }
+  iterations="$(grep -cE '^\++ for [A-Za-z_]+ in ' <<<"${trace}")" || true
+  # one per literal path segment, one at the first wildcard level, the prefixes it takes to pass the cap, one each for the root scan and the candidate loop
+  [[ "${iterations}" -gt 0 && "${iterations}" -le $(($(get_segment_count "${wide_dir}") + 1 + cap / entries + 1 + 2)) ]] || {
+    echo "loop iterations ${iterations}: ${trace}"
+    return 1
+  }
+}
+
+@test "a matched name holding a glob character stays literal at the next glob level" {
+  local home="${BATS_TEST_TMPDIR}/home/u" tree="${BATS_TEST_TMPDIR}/tree"
+  mkdir -p "${home}/.claude" "${tree}/[x]"
+  ln -s "${home}/.claude" "${tree}/[x]/link"
+  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "Edit ${tree}/*/li*/hooks/x.claude.md now." omit
+  [[ "${status}" -eq 2 ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
+}
+
+@test "a last glob segment bash reads as no pattern counts only if it exists, and a word with no pattern is read as written" {
+  local home="${BATS_TEST_TMPDIR}/home/u" row name expected_status prompt
+  mkdir -p "${home}/.claude-x"
+  touch "${home}/.claude-x/there]y" "${home}/.claude-x/there[1"
+  ln -s /nonexistent/target "${home}/.claude-x/gone]y"
+  for row in \
+    'missing, an unclosed bracket|0|Edit ~/.claude-*/notes[1 now.' \
+    'missing, a closing bracket alone|0|Edit ~/.claude-*/x]y now.' \
+    'missing, with a literal tail|0|Edit ~/.claude-*/x]y/z.md now.' \
+    'missing, below a config dir|0|Edit ~/.claude-*/hooks/a]b now.' \
+    'missing, a basename with a suffix|0|Edit ~/.claude-*/CLAUDE.md]x now.' \
+    'missing, an assigned home spelling|0|x=$HOME/.claude-*/[x/tmp/memory/MEMORY.md' \
+    'present, an unclosed bracket|2|Edit ~/.claude-*/there[1 now.' \
+    'present, a closing bracket alone|2|Edit ~/.claude-*/there]y now.' \
+    'a dangling link|2|Edit ~/.claude-*/gone]y now.' \
+    'no pattern anywhere, unstripped name not exempt|2|Edit ~/.claude/dat]a/x.md now.'; do
+    IFS='|' read -r name expected_status prompt <<<"${row}"
+    HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent "${prompt}" omit
+    [[ "${status}" -eq "${expected_status}" ]] || {
+      echo "row: ${name} · want ${expected_status} · status ${status}: ${output}"
       return 1
     }
   done
@@ -499,7 +652,8 @@ source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
 
 # Degraded row: a hook copy with no lib/ beside it → the fail-closed branch.
 @test "every block path exits 2 with its reason once on stderr and nothing on stdout, even when the write is interrupted" {
-  local row name hook envelope needle rule2='Harness Path Protection Rule 2: staged lane MANDATORY' cap_text
+  local row name hook envelope needle rule2='Harness Path Protection Rule 2: staged lane MANDATORY' cap_text wide_dir
+  local budget_pattern='*/./././././*/.claude'
   cap_text="$(cap_prompt 129)"
   mkdir -p "${BATS_TEST_TMPDIR}/nolib"
   cp -- "${HOOK_SH}" "${BATS_TEST_TMPDIR}/nolib/enforce-foreground-harness.sh"
@@ -507,9 +661,17 @@ source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
     >"${BATS_TEST_TMPDIR}/envelope"
   jq -n --arg p "${cap_text}" '{tool_name:"Agent",tool_input:{prompt:$p}}' \
     >"${BATS_TEST_TMPDIR}/envelope-cap"
+  wide_dir="$(create_wide_dir 1025)"
+  jq -n --arg p "Edit ${wide_dir}/*/.claude/x.md now." '{tool_name:"Agent",tool_input:{prompt:$p}}' \
+    >"${BATS_TEST_TMPDIR}/envelope-glob-level"
+  wide_dir="$(create_wide_dir 1024)"
+  jq -n --arg p "Edit ${wide_dir}/${budget_pattern}/a.md ${wide_dir}/${budget_pattern}/b.md ${wide_dir}/${budget_pattern}/c.md now." \
+    '{tool_name:"Agent",tool_input:{prompt:$p}}' >"${BATS_TEST_TMPDIR}/envelope-glob-budget"
   for row in \
     "config path|${HOOK_SH}|envelope|${rule2}" \
     "past the candidate cap|${HOOK_SH}|envelope-cap|${rule2}" \
+    "past the glob level cap|${HOOK_SH}|envelope-glob-level|passed the cap of 1024 paths at one level" \
+    "past the glob path budget|${HOOK_SH}|envelope-glob-budget|past the budget of 16384 paths" \
     "degraded lib|${BATS_TEST_TMPDIR}/nolib/enforce-foreground-harness.sh|envelope|repair the hook install"; do
     IFS='|' read -r name hook envelope needle <<<"${row}"
     run_forced_hook "${hook}" "${BATS_TEST_TMPDIR}/${envelope}"
