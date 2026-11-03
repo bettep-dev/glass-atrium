@@ -133,6 +133,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 ### `#### Decision-phase probes` and `#### Scan boundary and provenance`
 
 - The closed lexicon's recall is unknown: its quantifier group was pruned against a single incident, so a hook reading the list stays advisory until a false-positive record justifies promotion.
+  - Such a hook takes its literals from the rule file's list, cross-read at review, never from a second maintained copy.
 
 ### `#### Entry classification (DEV delegations)`
 
@@ -152,7 +153,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The participant-duty canonicals are the two scope-file headings the pointer's **Ownership** line names.
 - The hooks quote only the gate heading (`hooks/enforce-verification-gate.sh` reviewer-miss reason, `hooks/enforce-workflow-verify-stage.sh` DEV hard-gate block), which stays.
 - The reference's cited `##` headings, text and level fixed: `scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Cited headings**.
-  - Citers naming the `##` level: `scoped/maintainers/scope-qa.md` (two Team-composition citations), `references/scan-provenance.md` → `## Premise register — detail` and that note's **Cited headings**.
+  - Citer naming the `##` level: `scoped/maintainers/scope-qa.md` (two Team-composition citations).
 - Location-only citer that stays: `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` → the Stage 2 bullet names the gate heading for team composition, DEV hard gate, activation scope and direction-not-completeness. The pointer keeps all four.
   - Its **Stage-2 revision/escalation** bullet names the same heading for the escalation path; the pointer's **Revision + escalation** carries that path and its path-only limit.
 - The pointer, its reference and the two scope-file duty canonicals are not a redundancy to collapse; no dev-* or reviewer body mirrors the scope files.
