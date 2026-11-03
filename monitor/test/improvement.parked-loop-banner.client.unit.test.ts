@@ -339,10 +339,12 @@ test("the learning-memory tiles carry no tone border", () => {
 });
 
 const HUE = {
-  // any utility naming a theme tone or a Tailwind palette step: text-crit, bg-crit/70, hover:border-ok, bg-red-500
-  CLASS: /\b[a-z]+-(crit|warn|ok|info|accent|[a-z]+-\d{2,3})\b/,
-  STYLE_KEYS: ["color", "background", "backgroundColor", "borderColor", "borderLeft"],
+  // any utility naming a theme tone or a Tailwind palette step: text-crit, bg-crit/70, hover:border-ok, bg-red-500 — a palette name runs 3+ letters, so min-w-16 and gap-x-100 stay layout
+  CLASS: /\b[a-z]+-(crit|warn|ok|info|accent|[a-z]{3,}-(?:50|[1-9]00|950))\b/,
+  // judged on the value, so any style key counts → raw hex and rgb belong to the design-token test; hsl() and named colours are read by neither
+  STYLE_TOKEN: /var\(--(?:crit|warn|ok|info|accent|cat)\b/,
 };
+const GLYPH_TONE: Record<string, RegExp> = { added: /\btext-ok\b/, removed: /\btext-crit\b/ };
 
 function getLineCountChips(): RecordedElement[] {
   Object.assign(sandbox.window.UI, { formatPctWithDenominator: (count: number, total: number) => `${count}/${total}` });
@@ -353,16 +355,16 @@ function getLineCountChips(): RecordedElement[] {
   return collect(card, (el) => el.type === screenFns.LineCountI, [screenFns.LineCountI]);
 }
 
-test("the change summary's line counts keep their hue on the sign glyph, with neutral text and no hue class or inline hue on the chip or its text", () => {
+test("the change summary's line counts keep their hue on the sign glyph, ok for added and crit for removed, with neutral text and no hue class or inline tone token on the chip or its text", () => {
   const chips = getLineCountChips();
   assert.deepEqual(chips.map((chip) => chip.props.word), ["added", "removed"]);
   for (const chip of chips) {
     const nodes = collectElements(screenFns.LineCountI(chip.props), []);
     const [glyph] = nodes.filter((el) => el.props.s !== undefined);
-    assert.match(String(glyph?.props.className), TEXT_CLASS.TONE, `${chip.props.word}: the sign glyph holds the tone`);
+    assert.match(String(glyph?.props.className), GLYPH_TONE[String(chip.props.word)], `${chip.props.word}: the sign glyph holds its own tone`);
     const plain = nodes.filter((el) => el.props.s === undefined);
-    const inlineHues = plain.flatMap((el) => HUE.STYLE_KEYS.filter((key) => key in Object(el.props.style)));
-    assert.deepEqual(inlineHues, [], `${chip.props.word}: an inline style hues the chip`);
+    const inlineHues = plain.flatMap((el) => Object.entries(Object(el.props.style)).filter(([, value]) => HUE.STYLE_TOKEN.test(String(value))).map(([key]) => key));
+    assert.deepEqual(inlineHues, [], `${chip.props.word}: an inline style names a tone token on the chip`);
     assert.deepEqual(plain.map((el) => String(el.props.className)).filter((className) => HUE.CLASS.test(className)), [], `${chip.props.word}: a hue class on the chip root or its text`);
     const textClasses = plain.filter((el) => !isElement(el.props.children) && !Array.isArray(el.props.children)).map((el) => String(el.props.className));
     assert.equal(textClasses.length, 2, `${chip.props.word}: numeral and word`);
