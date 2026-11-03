@@ -7,24 +7,28 @@
 
 ## Platform Design Token Policy [DESIGN]
 
-Read only the bullet for the deliverable's target platform; the others do not apply to it.
+Apply only the row for the deliverable's target platform.
 
-- **Android** — Material 3 Expressive via Jetpack Compose, used without an `experimental` opt-in annotation.
-- **Web** — Material Web is in maintenance mode: do NOT assume M3 Web component support. Use an alternative token system (Lit, custom shadow-DOM tokens) and verify availability before recommending one.
-- **iOS** — Human Interface Guidelines system color tokens; a custom token MUST reference a semantic role (`accentPrimary`), never a raw hex value.
+| Target platform | Token system | Constraint |
+|---|---|---|
+| Android | Material 3 Expressive via Jetpack Compose | No `experimental` opt-in annotation |
+| Web | Alternative system (Lit, custom shadow-DOM tokens); verify availability before recommending one | Material Web is in maintenance mode, so do not assume M3 Web component support |
+| iOS | Human Interface Guidelines system color tokens | A custom token MUST reference a semantic role (`accentPrimary`), never a raw hex value |
 
 ## Vendor-Routing Awareness [DESIGN]
 
-- When a task admits more than one design tool for the same capability and you select a non-default one, name the workload trigger that justifies it — familiarity is not a trigger.
+- When you select a non-default design tool for a capability several tools cover, name the workload trigger that justifies it — familiarity is not a trigger.
 
 ## LLM Output Validation [DESIGN]
 
 Before handing a generated design artifact (component spec, layout JSON, token values) to a DEV agent:
 
-- Verify the platform token actually exists on the target platform.
+- Verify the platform token exists on the target platform.
 - Verify color contrast meets the WCAG AA minimum.
-- When the handoff changes a token, name the rollback path in the handoff itself — the DEV agent is the one who lands the change, and it needs to know what reverts it.
+- When the handoff changes a token, name the rollback path in the handoff itself — the DEV agent landing the change needs to know what reverts it.
 
 ## CQRS Exception [META+PLANNING+DESIGN]
 
-You may both read and write your own deliverables — no reader/writer split applies, so self-review after writing is mandatory. Canonical grant and checklist: `scoped/scope-meta.md` → `## CQRS Exception [META+PLANNING+DESIGN]`. Your `## Pre-Emit 5-Axis Self-Critique` gates the emit on different axes and does not stand in for that checklist.
+- You may read and write your own deliverables, so self-review after writing is mandatory.
+- Self-checklist: structure compliance · meaning preservation · token budget · consistency with existing patterns.
+- Your `## Pre-Emit 5-Axis Self-Critique` gates the emit on different axes and does not stand in for that checklist.

@@ -12,32 +12,18 @@ triggers:
 
 ## Overview
 
-- Deterministic structural lint of a DESIGN.md token graph: parses the Base/Semantic/Component alias tiers (raw values live only at Base), `var(--token)` CSS custom properties and `{tier.token.path}` DTCG brace aliases, then runs the rules below.
-- No creative judgment — reference resolution and section order only.
-- Adapted from Google design.md's linter, rebased onto the token model in `~/.claude/agents/references/design-token-architecture.md`.
-
-## When to Use
-
-- DESIGN.md design-system emit — every alias MUST resolve before submission
-- Code review when token aliases or DESIGN.md section structure change
-- Verifying a `design_tokens.json` export against its DESIGN.md
+- Token model it enforces (SoT): `~/.claude/agents/references/design-token-architecture.md` — the 3-tier alias model and multi-mode matrix.
 
 ## Rules
 
-| Rule | Severity | Exit impact |
-|------|----------|-------------|
-| **broken-ref** | error (BLOCKING) | exit 1 |
-| **orphaned-token** | warning | exit 0 |
-| **section-order** | warning | exit 0 |
-
-- **broken-ref** — every Semantic/Component alias (a `var(--x)` reference or a `{tier.token.path}` brace alias) MUST resolve to a defined token.
-  - A raw color literal (`#rgb`, `rgba(...)`) at the Component tier, where an alias belongs, is also a broken-ref — raw values are allowed ONLY at the Base tier.
-- **orphaned-token** — a Base token referenced by no alias.
-  - Multi-mode tokens (`*-dark`, `*-high-contrast`, colorblind variants) are NOT orphans: they re-point a semantic name consumed by mode switching (MD3 multi-mode aware), so they are excluded.
-- **section-order** — the canonical DESIGN.md section order is preserved: Visual Theme → Color → Typography → Spacing → Layout → Components → Motion → Voice → Anti-Patterns.
+- **broken-ref** (error, blocking) — every Semantic/Component alias (a `var(--x)` reference or a `{tier.token.path}` brace alias) MUST resolve to a defined token before submission.
+  - A raw color literal (`#rgb`, `rgba(...)`) at the Component tier, where an alias belongs, is also a broken-ref — raw values are allowed only at the Base tier.
+- **orphaned-token** (warning) — a Base token referenced by no alias.
+  - Multi-mode tokens (`*-dark`, `*-high-contrast`, colorblind variants) are excluded: they re-point a semantic name consumed by mode switching.
+  - A full MD3 palette leaves many tokens unreferenced by a small component set: review these findings, do not block.
+- **section-order** (warning) — sections keep the canonical order (§1-§9) of `~/.claude/agents/templates/DESIGN.md`.
   - Unrecognized sections are kept, never flagged — consumers MUST preserve them (`agents/glass-atrium-design-designer.md` → **Section minimalism**).
   - Heading aliases bind agent-body section names to their canonical slot: `UI Copy Rules` / `Copy Rules` → §8 Voice, `Do's/Don'ts` → §9 Anti-Patterns.
-  - The alias tokens are multi-word or apostrophe-bearing on purpose, so no generic prefix (`do`, `copy`) substring-matches an unrelated heading.
 
 ## Usage
 
@@ -45,40 +31,14 @@ triggers:
 ~/.claude/skills/glass-atrium-design-md-lint/lint.sh <DESIGN.md> [design_tokens.json] [--json]
 ```
 
-- The `design_tokens.json` argument is optional — when present, its DTCG token tree is merged into the defined-token set and its component-alias values count as references.
-- `--json` emits a machine-readable findings array (severity + path + message) for downstream tooling; default output is human-readable.
+- `design_tokens.json` is optional; pass it to verify an export against its DESIGN.md — its DTCG token tree joins the defined-token set and its component-alias values count as references.
+- Without it, tokens come from the DESIGN.md's `:root { --x: ... }` blocks and YAML frontmatter.
+- `--json` emits `{ design, tokens, summary: {errors, warnings, defined_tokens, references}, findings: [{severity, path, message}] }` for downstream tooling; default output is human-readable.
 
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | no BLOCKING (error) findings — warnings may be present |
-| 1 | at least one BLOCKING finding (broken-ref) |
+| 0 | no blocking (error) findings — warnings may be present |
+| 1 | at least one blocking finding (broken-ref) |
 | 2 | measurement failure (missing dependency, unreadable file, malformed JSON) |
-
-## Output Format
-
-Human-readable (default):
-
-```
-design-md-lint -> path/to/DESIGN.md
-  defined tokens: N  references: M
-  [ERROR] body:--token-x — broken-ref: alias '--token-x' resolves to no defined token
-  [warn ] colors.unused — orphaned-token: base token 'colors.unused' referenced by no alias
-Verdict: 1 error(s), 1 warning(s)
-```
-
-`--json`: `{ design, tokens, summary: {errors, warnings, defined_tokens, references}, findings: [{severity, path, message}] }`.
-
-## Edge Cases
-
-- **No `design_tokens.json`** — the DESIGN.md is linted standalone; tokens are sourced from its `:root { --x: ... }` blocks and YAML frontmatter.
-- **High orphan count** — a full MD3 palette defines the complete role set; many tokens go unreferenced by a small component set. Orphan findings are warnings (non-blocking) by design — review, do not block.
-- **Both Atrium `→`/`var()` and example `{path}` syntaxes** — the parser recognizes all three reference forms, so it handles both Atrium DESIGN.md authoring and DTCG-export-style token files.
-
-## Cross-References
-
-- `~/.claude/agents/references/design-token-architecture.md` — the 3-tier alias model + multi-mode matrix this lint enforces (SoT)
-- `~/.claude/agents/templates/DESIGN.md` — canonical section order (§1-§9) the section-order rule checks
-- `glass-atrium-design-contrast-check` — paired pre-emit gate (this lints structure, contrast-check verifies color ratios)
-- `scoped/scope-design.md` → `## LLM Output Validation [DESIGN]` — pre-emit gate family this lint joins
