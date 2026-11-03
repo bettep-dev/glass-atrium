@@ -2,8 +2,10 @@
 
 ## Retrieval Guidance [RESEARCH]
 
-- **Source recency label**: cite each source as `URL + collected_at(YYYY-MM-DD)`.
+- **Source recency label**: cite each external source as `URL + collected_at(YYYY-MM-DD)`.
   - A source dated 3 or more years back also carries `[Dated: YYYY]`.
+  - A paper with no URL cites its DOI, or its title and year, in the URL's place.
+    - It carries `[Date Unknown]` only when its year is unknown.
 
 ## Iterative Codebase Retrieval [RESEARCH]
 

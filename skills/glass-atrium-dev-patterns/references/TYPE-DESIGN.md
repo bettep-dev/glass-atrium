@@ -24,7 +24,7 @@
 | Aspect | DTO | Entity |
 |--------|-----|--------|
 | Location | HTTP boundary | Business logic |
-| Validation | class-validator | Invariants |
+| Validation | Per stack (`rules/glass-atrium/core-security.md` → **All external input MUST be validated**); class-validator on NestJS | Invariants |
 | Exposure | External allowed | Direct HTTP exposure forbidden |
 
 ## Readonly Comparison

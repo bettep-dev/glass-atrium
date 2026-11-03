@@ -6,9 +6,10 @@
 ## Core Principles
 
 - **Newspaper Metaphor** — top = high-level public API, bottom = low-level private implementation
-- **Stepdown Rule**: callee directly below caller
+- **Stepdown Rule**: callee directly below caller, among module-level functions and within one member-ordering group at one accessibility level
 - Member ordering: type sigs → static → decorated → instance → constructors → accessors → static methods → instance methods
   - Within each: public → protected → private
+    - Exception: a class using sections follows `skills/glass-atrium-dev-patterns/references/CODE-STRUCTURE.md` → **Feature Sections**
   - `readonly` first
 - **SRP** — if described with "and", split it
 - Function cap: **20 lines OR cyclomatic complexity 10** → Extract Method

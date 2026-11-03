@@ -32,6 +32,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 - Citers to fix in the same pass as a rename:
   - The `Function cap` label and its figures: `scoped/shared-comment-logging.md` → **One-line sufficiency gate**.
   - The `## Core Principles` heading and the `Member ordering` label: `skills/glass-atrium-dev-patterns/references/MODULE-COHESION.md` → `## Verification` → **Member ordering**.
+  - The `7+ constructor deps = God Class` bullet: `skills/glass-atrium-dev-patterns/references/FUNCTION-DESIGN.md` → **Parameters**.
 - Outbound citations from the rule file:
   - `scoped/shared-type-safety.md`, named for the escape-hatch ban instead of restating it: a second copy in a peer Tier-3 file would drift.
   - `skills/glass-atrium-dev-patterns/SKILL.md` and its `references/`, the lookup half.

@@ -29,7 +29,8 @@ Corpus-maintenance companion to that scope file; no agent receives this note at 
 - **The `[Date Unknown]` half of the recency-label bullet** — body `### Single Source Verification Checklist` carries the date check, and the Tier-1 wiki rule carries the label.
   - **Source recency label** keeps the residue neither carries:
     - the `URL + collected_at(YYYY-MM-DD)` citation form;
-    - the 3-year trigger for `[Dated: YYYY]` (the body's `Recency` reliability row scores `3+yr +0` but sets no labelling trigger).
+    - the 3-year trigger for `[Dated: YYYY]` (the body's `Recency` reliability row scores `3+yr +0` but sets no labelling trigger);
+    - the citation form for a paper with no URL, which the body's **Sources mandatory** allows, and which reads the label's unknown date as an unknown year.
 - **The scored loop** — the `### EVALUATE rubric` table, the per-hit mean and cycle median, the 0.7 threshold and the per-round `[ECC cycle N]` status line.
   - Why: each made the model compute a score or narrate every round; **Judge the hits** ranks by judgment on the same four criteria.
   - The rubric's `Recency` row anchored on `git status touched` and 30-day / 1-year mtime windows; the frontmatter `tools:` grant holds neither.

@@ -48,8 +48,11 @@
 | `4` EXIT_HALT, body-safety refusal | refused — zero writes | fix the body per `## CLI safety the gate owns`, re-author |
 | `4` EXIT_HALT, lock held | a concurrent mutation holds the lock — zero writes | wait for the holder, then re-run |
 | `4` EXIT_HALT, any other pre-flight fail | refused — zero writes | read the stderr `HALT:` line, clear its cause, re-run |
-| `5` EXIT_TX_FAILED | a forward step failed, rolled back cleanly (no residue) | read the stderr `FAILED` line, re-run from step 5 |
-| `6` EXIT_ROLLBACK_FAILED | rollback itself failed — recovery marker written | `EXIT_ROLLBACK_FAILED` recovery below |
+| `5` EXIT_TX_FAILED | a forward step failed, rolled back cleanly (no residue) | read the stderr `FAILED` line, clear its cause, re-run the same command |
+| `6` EXIT_ROLLBACK_FAILED | rollback itself failed | `EXIT_ROLLBACK_FAILED` recovery below |
 
-- `EXIT_ROLLBACK_FAILED` recovery: run `orphan-scan --mode reconcile` to list the recovery marker, then complete the described reconciliation manually.
-  - The marker is not auto-cleared — never assume a clean tree.
+- `EXIT_ROLLBACK_FAILED` recovery depends on the command that failed:
+  - `add`, `extend`, `delete` wrote a recovery marker: run `orphan-scan --mode reconcile` to list it, then complete the described reconciliation manually.
+    - The marker is not auto-cleared — never assume a clean tree.
+    - Reconcile lists no marker: the marker write is best-effort, so use the `written`, `cleaned` and `not_cleaned` lines on stderr.
+  - `sync-inject`, `sync-gate-roster` wrote no marker: compare each `.bak` named on stderr with its live file (`skills/glass-atrium-ops-reconcile-inject/SKILL.md` → `### Step 3 — Report the outcome + exit code`).
