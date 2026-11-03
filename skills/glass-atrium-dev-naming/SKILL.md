@@ -51,6 +51,6 @@ Any identifier — variable, function, class, type, enum, constant — including
 - **[references/VARIABLES-BOOLEANS.md](references/VARIABLES-BOOLEANS.md)** — scope-proportional length table, allowed abbreviations, collections/maps, boolean prefix semantics, classes/types/enums/greppability
 - **[references/VERB-TAXONOMY.md](references/VERB-TAXONOMY.md)** — User Dictionary precedence preamble (lineage citations) + verb taxonomy as FALLBACK + layer-specific verbs
 - **[references/ANTI-PATTERNS.md](references/ANTI-PATTERNS.md)** — naming anti-patterns, by section:
-  - padding verbs and the violation table · circular naming · synonym mixing · forbidden mixing pairs · the inverse get/find school
+  - padding verbs and the violation table · circular naming · forbidden mixing pairs · the inverse get/find school
   - no-stutter · the reduction floor · forbidden class/type suffixes · dynamic identifiers · cross-layer rename
   - Common Rationalizations · Red Flags · Verification checklist
