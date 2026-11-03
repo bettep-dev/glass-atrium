@@ -16,6 +16,7 @@
 ## Coupled readers
 
 - No test or script names the rule file's headings or text; `hooks/lib/inject_chunk.py` only delivers it, so a text edit is a single-site edit.
+- `python3 hooks/lib/inject_chunk.py --audit` covers the section sizes.
 - Renaming the file is a multi-site edit: grep `shared-performance.md` across the repo and read every hit.
   - `agents/glass-atrium-qa-code-reviewer.md` → `### 7-Perspective Checklist`: the Performance row by filename, the Read list below it by path; neither names a heading.
 
