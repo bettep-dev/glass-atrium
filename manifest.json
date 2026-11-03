@@ -1521,7 +1521,7 @@
     "monitor/src/server/agents/circuit-breaker.ts": "cfce9e36a263d3d20f180f1fb0cbcda93ec1b5457217ea29b4ef379867908761",
     "monitor/src/server/agents/registry.ts": "43064a7baee3fe803252e99c98ad3b1aedcfac2afe17076cb1299f9f3172df50",
     "monitor/src/server/architecture/content-budget.ts": "8fb9e06df8b5220345996104d82cdd21829ab8b2580f8ab11932e48ee7df7577",
-    "monitor/src/server/architecture/diagrams-source.ts": "c4ea3061f6e4cd5dc64112eba4f8ad661df72564fdb5274ad00d762025f86a7a",
+    "monitor/src/server/architecture/diagrams-source.ts": "69b88785b9391df8d25bc1597e3d1554e25832fbc977b2cd1536f3abf45dc208",
     "monitor/src/server/architecture/flow-extractor.ts": "17d3a0670f1bd429856d67a8aea31bde9d3e5f1a61196c885b4e1f8ba7d395a7",
     "monitor/src/server/architecture/governance-membership.ts": "442e65d9ea96677e66d5e75f3c0aeebddbb4e2741023ab6c0481a001babb1208",
     "monitor/src/server/architecture/live-overlay.ts": "1a9aff8809d2ecc1def7895c2af08247d3d305e8170e5f37879d3f54df7c460a",
