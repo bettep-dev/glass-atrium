@@ -18,7 +18,10 @@ paths:
      a table, adding or dropping a footnote marker or an inline-code path, or editing the paths: block. -->
 # Rule-to-Agent Compliance Matrix
 
-This file is the **single source of truth** for agent-to-rule loading policy. Scope files MUST NOT re-declare tier membership in prose — use the stanza header `> **Loading**: Tier 2 ...` and link here.
+This file is the **single source of truth** for agent-to-rule loading policy.
+
+- Scope files MUST NOT re-declare tier membership in prose.
+- A scope file that states its loading uses the stanza header `> **Loading**: Tier 2 ...` and links here.
 
 ## Loading Tiers
 

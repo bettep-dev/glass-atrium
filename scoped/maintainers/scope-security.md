@@ -25,7 +25,7 @@ Maintainer-facing material for that source file, and the record of text cut from
 - What the body holds of each threshold:
   - The LLM01 BLOCK-vs-WARN split — only the detection criterion.
   - The LLM06 BLOCK-vs-WARN split — only the symptom.
-  - The tool-authorization gate — nothing; it is stated nowhere else, and is the only BLOCK condition anywhere on reviewing an agent definition.
+  - The tool-authorization gate — nothing; it is stated nowhere else, and is the only BLOCK condition that keys on the definition's tool declaration alone.
 - The body's pointer: `agents/glass-atrium-sec-guard.md` → `## Assessment Criteria (OWASP LLM Top 10 Based)` closes with an exact pointer to the source's `## LLM-Specific Verdict Criteria [SECURITY]`, naming each threshold.
   - It carries no Read instruction: `maxTurns: 3` at `effort: low` leaves no turn to locate or re-read a file already delivered.
 
@@ -45,4 +45,6 @@ Each duty already lives at the site named, except the up-to-3 cap flagged below.
 
 ## Shape note
 
-- The tool-authorization gate stays a bullet beside the WARN/BLOCK table: it has no WARN limb, and a `—` cell would make a non-uniform rule look uniform.
+- The tool-authorization gate stays a bullet beside the WARN/BLOCK table: its own condition is BLOCK-only, and a `—` cell would make a non-uniform rule look uniform.
+  - A wider declaration takes its verdict from the LLM06 row, never from the gate: WARN, or BLOCK when that row's BLOCK condition also holds.
+  - An uncertain reading reaches WARN through the `agents/glass-atrium-sec-guard.md` guardrail, never through the gate.
