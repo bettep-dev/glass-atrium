@@ -150,7 +150,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-tile-hint-fixed { flex-shrink: 0; white-space: pre; }
         .dash-tile-hint-data { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         /* detail and plain hint: at most two lines, the whole text in the title; an empty detail renders no node, so it reserves no line */
-        .dash-tile-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+        :is(.dash-tile-detail, .dash-tile-hint).clamp-2 { overflow-wrap: anywhere; }
         /* a band row is one height → the split fills its tile and parts value | detail + hint, so every hint (a fixed two-line box)
            sits on the foot and siblings' hints share one line, whatever their value, delta or detail rows hold */
         .dash-tile > .kpi-split { flex-grow: 1; align-content: space-between; }
@@ -356,7 +356,7 @@ function TileDetail({ tile, isCovered }) {
   return (
     <>
       {hasDetail && (
-        <div className="fs-body text-dim dash-tile-detail dash-tile-clamp" title={getClampTitle(detail)}>
+        <div className="fs-body text-dim dash-tile-detail clamp-2" title={getClampTitle(detail)}>
           <DayTokens>{detail}</DayTokens>
         </div>
       )}
@@ -369,7 +369,7 @@ function TileDetail({ tile, isCovered }) {
           </span>
         </div>
       ) : (
-        <div className="fs-meta text-dim dash-tile-hint dash-tile-clamp" title={getClampTitle(hint)}>
+        <div className="fs-meta text-dim dash-tile-hint clamp-2" title={getClampTitle(hint)}>
           <DayTokens>{hint}</DayTokens>
         </div>
       )}
