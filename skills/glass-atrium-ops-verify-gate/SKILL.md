@@ -5,7 +5,10 @@ description: Pre-commit 6-stage sequential verification covering build, types, l
 
 ## Overview
 
-Sequentially verifies code quality in 6 stages before committing, enforcing evidence-based completion claims. No stage may be skipped, and failure at any stage halts the pipeline. This prevents "it should work" declarations and ensures every commit is backed by mechanical proof.
+Sequentially verifies code quality in 6 stages before committing, enforcing evidence-based completion claims.
+
+- No stage is skipped without a documented reason.
+- Failure at any stage halts the pipeline.
 
 ## When to Use
 
@@ -18,19 +21,19 @@ Sequentially verifies code quality in 6 stages before committing, enforcing evid
 
 ### Stage 0: Pre-Define Success Criteria (Karpathy Goal-Driven)
 
-Before entering code changes, agents MUST emit a measurable `Success Criteria:` block (≥1 item · noun-phrase form · measurement method explicit — shared-testing.md mechanical success metrics 정합):
+Before entering code changes, agents MUST emit a measurable `Success Criteria:` block (≥1 item · noun-phrase form):
 
 ```
 Success Criteria:
-- <noun-phrase outcome> — 측정: <command | metric | observation>
+- <noun-phrase outcome> — measured by: <command | metric | observation>
 ```
 
-- Each criterion MUST specify HOW it will be verified (command output / test name / metric threshold / artifact diff) — `core-outcome-record.md` Field Input Guide `metric_pass` 와 정렬
-- Stage 0 emission is REQUIRED before any Write/Edit operation in scope; missing emission → halt + redesign
-- **Loop termination cap**: bounded — same-stage 2 consecutive fail → immediate escalate to glass-atrium-qa-debugger · Outcome Record emit: `result: fail` (glass-atrium-qa-debugger escalation target per `core-outcome-record.md` result values)
+- Each criterion MUST specify how it will be verified (command output / test name / metric threshold / artifact diff)
+- Missing emission before any Write/Edit operation in scope → halt + redesign
+- **Loop termination cap**: same-stage 2 consecutive fail → immediate escalate to glass-atrium-qa-debugger · Outcome Record emit: `result: fail`
   - Escalation per `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop`; bound per `rules/glass-atrium/core-security.md` → Unbounded consumption.
 - Rationale: pre-stated success criteria are the mechanical anchor Stages 1-6 verify against
-- **Exclusions inheritance**: Stage 0 inherits the `## When to Use` Exclusion list (doc-only / config-only / memory/-only edits) — Karpathy Goal-Driven intent is code-change correctness, not documentation precision
+- **Exclusions inheritance**: Stage 0 inherits the `## When to Use` Exclusions — it targets code-change correctness, not documentation precision
 
 ### Verification Order (halt on failure)
 
@@ -56,14 +59,12 @@ Build/Types/Lint/Tests/Console/Git: [OK/FAIL/WARN/SKIP]
 
 ### Red Flag Language Detection
 
-**MUST NOT declare completion without evidence**: "Should work now", "probably", "seems to", "I think this fixes", "I'm confident", "Great!", "Perfect!", "Done!"
+- **MUST NOT declare completion without evidence**: "Should work now", "probably", "seems to", "I think this fixes", "I'm confident", "Great!", "Perfect!", "Done!"
+  - On detection → **MUST present** verification evidence (test results, build logs, exit codes)
+  - Rationalization rejection: "Just this once", "Agent said success" (independent verification required)
+- **Gate Function**: IDENTIFY (determine proof command) → RUN (execute) → READ (check result) → VERIFY (confirm expected match) → THEN (declare completion)
 
-- On detection → **MUST present** verification evidence (test results, build logs, exit codes)
-- Rationalization rejection: "Just this once", "Linter passed" (linting != compilation), "Agent said success" (independent verification required)
-
-**Gate Function**: IDENTIFY (determine proof command) → RUN (execute) → READ (check result) → VERIFY (confirm expected match) → THEN (declare completion)
-
-See [red-flag.md](references/red-flag.md) for the full pattern list and rebuttal table.
+See [red-flag.md](references/red-flag.md) for the evidence each claim requires and the gate function's step detail.
 
 ## Common Rationalizations
 
@@ -77,12 +78,9 @@ See [red-flag.md](references/red-flag.md) for the full pattern list and rebuttal
 
 ## Red Flags
 
-- Completion declared with words like "should", "probably", "I think" without accompanying tool output
-- Verification stages executed out of order (e.g., tests run before build)
 - A stage marked SKIP without a documented reason
 - Build output not read after execution (command run but result ignored)
 - Exit code not checked — only partial output scanned for "success" keywords
-- Agent declares "Done!" immediately after a code change with no verification commands in between
 - Console.log warnings dismissed without removal
 - Git diff shows uncommitted changes not addressed in the verification report
 

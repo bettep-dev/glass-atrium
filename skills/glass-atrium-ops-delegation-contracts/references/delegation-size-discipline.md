@@ -1,16 +1,15 @@
 # Delegation-size discipline (per-delegation, distinct from runtime concurrency)
 
 - **Pointer site**: `skills/glass-atrium-ops-orchestrator-role.md` → `### Spawn Budget` → `#### Delegation-size discipline`, which states the duties and when they fire.
-  - The runtime concurrency ceilings beside it (`#### Depth and concurrency ceilings`) are a separate limit.
 
 ## DEV-mode token
 
-- **`[SIZE-EST]` self-attestation token**: the DEV-mode form, a sibling of `[ENTRY-CLASS]`.
+- **`[SIZE-EST]` self-attestation token**: the DEV-mode form.
   - Format `[SIZE-EST] bundles=N tool_uses~=N — <1-line reason>`.
     - `bundles` = how many PRIMARY categories this delegation packs.
     - `tool_uses~=N` = the orchestrator's rough pre-spawn tool_use estimate.
   - Placement: `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size` → Attestation-token placement.
-  - **Honesty framing** — why the pointer site rounds a borderline count up: an under-estimate is the dangerous error, masking an oversized delegation past the split triggers; an over-estimate is the safe error.
+  - **Honesty framing** — why the file-head **Pointer site** rounds a borderline count up: an under-estimate is the dangerous error, masking an oversized delegation past the split triggers; an over-estimate is the safe error.
     - It covers `bundles`/`tool_uses` here and `reads~`/`fields` at an analysis-mode spawn (`## Analysis-mode token`).
   - Enforcement — both paths block a DEV spawn missing the token:
     - manual: `enforce-verification-gate.sh` reads it from `.tool_input.prompt`, guarded by `hook_is_subagent` so it fires on orchestrator-origin spawns only;
@@ -44,17 +43,18 @@
 
 - **One-agent-budget sizing**: an over-packed delegation truncates — the sub-agent runs out of budget mid-work and emits no `[COMPLETION]`.
   - The cause is per-delegation size, not the number of workflow stages.
-- **DEV-mode split shape**: order each kept implementation+tests unit tests-first; peel off run-full-suite / report-consolidation.
+- **DEV-mode split shape**: order each kept implementation+tests unit tests-first.
+  - Peel off run-full-suite / report-consolidation.
   - Worked (≈ figures illustrative): 4-category request → A = implement + its new tests (≈25 tool_uses) → orchestrator cheap-verify → B = full-suite + report (≈15).
-  - Each is ≤2 bundles and under the HARD SECONDARY ceiling; never split B finer (COUNTER-CAVEAT).
+  - Each is ≤2 bundles and under the HARD SECONDARY ceiling.
+  - Never split B finer: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Delegation-size discipline` → **COUNTER-CAVEAT (over-fragmentation)**.
+    - Why: each extra spawn re-tokenizes the system prompt, tool schemas and handoff, inflating session cost.
 - **HARD SECONDARY**: it closes the single-giant-implement-bundle hole that the bundle count alone leaves open.
-- **COUNTER-CAVEAT**: a split into 1-line tasks re-tokenizes system prompt + tool schemas + handoff on every spawn, so over-fragmentation inflates total session cost.
 - **Subagent-side runtime complement**: this orchestrator-side split is the primary guard, and it is honor-system; the subagent's own turn meter and tool-use advisory only make its threshold visible.
 
 ## Effort-scaling table
 
 - **Pointer site**: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Analysis fan-out and team cardinality` → **Effort-scaling by task shape**.
-- `[SIZE-EST]` sizes each agent; this table maps task shape to team cardinality.
 
 | Task shape | Team cardinality | Example |
 |------------|------------------|---------|
@@ -67,7 +67,7 @@
 ## Analysis-Track Right-Sizing (input-side)
 
 - **Pointer site**: `skills/glass-atrium-ops-orchestrator.md` → `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]`, which states the duty and when it fires.
-- The skeleton calls `robustAgent`, the output-side layer at `skills/glass-atrium-ops-orchestrator.md` → `##### Copyable helper (robustAgent)`: a non-emit is retried once on a permissive schema and, if it persists, drops only that track instead of crashing the run.
+- The skeleton calls `robustAgent`, the output-side layer: `skills/glass-atrium-ops-orchestrator.md` → `##### Copyable helper (robustAgent)`.
 - Rule SoT, per bound:
   - read allowlist (`scope`), **Effort matched to depth** and field cap — `## Analysis-mode token` above → **`[SIZE-EST]` analysis mode**;
   - the analysis-mode split trigger — `skills/glass-atrium-ops-orchestrator-role.md` → `#### Delegation-size discipline` → **Split triggers**;
@@ -94,7 +94,7 @@ const READ_TRACKS = [
       { path: 'monitor/src/server/routes/', extent: '<extent — e.g. handler signatures; a body only where a signature flags>' },
     ], goal: 'trackB: audit the monitor route surface' },
 ];
-// Render guard — a legacy bare-string allowlist entry would render `undefined — undefined` silently.
+// Render guard — a bare-string allowlist entry would render `undefined — undefined` silently.
 const renderEntry = (a) => {
   if (!a || !a.path || !a.extent) throw new Error('READ_TRACKS entry must be { path, extent }: ' + JSON.stringify(a));
   return a.path + ' — ' + a.extent;

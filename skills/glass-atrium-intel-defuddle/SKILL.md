@@ -5,68 +5,31 @@ description: Extract clean markdown content from web pages using Defuddle CLI, r
 
 # Defuddle
 
-## Overview
-
-Extracts clean, readable markdown from web pages using the Defuddle CLI. Removes navigation, ads, sidebars, and boilerplate to produce minimal-token content — typically 60-80% smaller than raw HTML fetch results. Preferred over WebFetch for any standard web page.
-
 ## When to Use
 
-- Reading or analyzing any standard web page URL provided by the user
-- Fetching online documentation, articles, blog posts, or tutorials
-- **Exclusions**: API endpoints returning JSON/XML, authenticated pages requiring login, POST requests, non-HTML resources (PDFs, images), pages requiring JavaScript rendering
+- **Exclusions**: the description's list, plus pages requiring JavaScript rendering
 
 ## Core Process
 
 If not installed: `npm install -g defuddle`
 
-Always use `--md` for markdown output:
+| Need | Command |
+|------|---------|
+| Page text (default choice) | `defuddle parse <url> --md` |
+| Page text you will read again: save it once, never re-fetch the URL | `defuddle parse <url> --md -o <file>` |
+| One metadata property, e.g. `title`, `description`, `domain` | `defuddle parse <url> -p <name>` |
+| JSON with metadata, plus content as both HTML and markdown | `defuddle parse <url> --json` |
 
-```bash
-defuddle parse <url> --md
-```
-
-Save to file:
-
-```bash
-defuddle parse <url> --md -o content.md
-```
-
-Extract specific metadata:
-
-```bash
-defuddle parse <url> -p title
-defuddle parse <url> -p description
-defuddle parse <url> -p domain
-```
-
-## Output formats
-
-| Flag | Format |
-|------|--------|
-| `--md` | Markdown (default choice) |
-| `--json` | JSON with both HTML and markdown |
-| (none) | HTML |
-| `-p <name>` | Specific metadata property |
+Page text always takes `--md`: with no format flag the output is HTML, which wastes tokens.
 
 ## Common Rationalizations
 
 | Excuse | Rebuttal |
 |--------|----------|
-| "WebFetch works fine for this URL" | WebFetch returns a small model's answer to your prompt about the page, not the page itself — use Defuddle when you need the article text (quoting, close reading). |
-| "I'll just read the raw HTML and extract what I need" | Manual extraction wastes tool calls and tokens. Defuddle handles boilerplate removal in a single CLI invocation. |
-| "The page might need JavaScript rendering" | Most documentation and article pages serve content in initial HTML. Try Defuddle first; fall back to WebFetch only on empty results. |
-
-## Red Flags
-
-- Using WebFetch for a standard article or documentation URL when Defuddle is available
-- Defuddle output is empty or contains only navigation text (page may require JS — fall back to WebFetch)
-- Fetching the same URL multiple times without saving to a file first
-- Missing `--md` flag (getting HTML instead of markdown, wasting tokens)
-- Using Defuddle for API endpoints or authenticated resources
+| "WebFetch works fine for this URL" | WebFetch returns a small model's answer, not the page — need the article text (quoting, close reading) → Defuddle. |
+| "The page might need JavaScript rendering" | Most documentation and article pages serve content in initial HTML. Try Defuddle first. |
 
 ## Verification
 
 - [ ] Output contains the article's main content (title, body paragraphs, code blocks if any)
-- [ ] Output does NOT contain navigation menus, sidebars, cookie banners, or ad text
-- [ ] Markdown formatting is preserved (headings, lists, code blocks, links)
-- [ ] Token count of Defuddle output is significantly less than equivalent WebFetch result
+- Output empty or only navigation text → the page may require JS: fall back to WebFetch

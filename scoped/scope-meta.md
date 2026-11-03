@@ -10,7 +10,8 @@ Final authority on an ambiguous META rule is this file, whole; this section conc
 
 glass-atrium-meta-prompt-engineer, glass-atrium-intel-planner and glass-atrium-design-designer may both read and write their own deliverables — no reader/writer split applies to them.
 
-- Self-review after writing is therefore mandatory: no second party sits between authoring and delivery by default.
+- Self-review after writing is therefore mandatory: it is the author's first check.
+  - It never replaces an independent review that applies: the structure verdict for META prompt deliverables, the Plan Direction Verification gate for complex plans.
 - Self-checklist: structure compliance · meaning preservation · token budget · consistency with existing patterns.
 
 ## glass-atrium-meta-agent: Outcome-Driven Rewrite Policy [META]

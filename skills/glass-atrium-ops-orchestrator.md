@@ -745,9 +745,9 @@ Orchestrator mechanisms read on demand, not at turn-0, each single-sited in this
 
 - **Trigger**: Decision-phase routing finds no matching DEV agent at `confidence < 0.7` (the **3-Layer Safety** auto-halt, `scope-orchestrator.md`).
 - **EXTEND is the default branch; CREATE is the gated exception** — decision tree and gate authority: `scoped/maintainers/scope-dev.md` → `## DEV Agent Fleet Governance`.
-- **Invocation is a direct Bash CLI call** (`python -m agent_lifecycle …`), never an HTTP route; its exit code is the primary interface.
+- **Invocation is a direct Bash CLI call** (`python3 -m agent_lifecycle …`), never an HTTP route; its exit code is the primary interface.
 - **The orchestrator never self-authors a body** — glass-atrium-meta-prompt-engineer is the body author.
-- **Two human pauses are MANDATORY** — ⏸ create-vs-extend approval after the gate dry-run (either branch) and ⏸ foreground-commit approval (CREATE only).
+- **Two human pauses are MANDATORY** — create-vs-extend approval after the gate dry-run (either branch) and foreground-commit approval (CREATE only).
 - **Reconcile is a MANDATORY post-commit gate** whenever the roster changed: run skill `glass-atrium-ops-reconcile-inject`.
   - Until it runs, the new agent receives no BUDGET-DEV sizing block and escapes the `style_ref` omission flag.
 - Steps and commands, the EXTEND path, CLI refusals and exit-code recovery: `skills/glass-atrium-ops-delegation-contracts/references/agent-lifecycle-ceremony.md`.
@@ -845,7 +845,9 @@ Items 1-4 are the co-equal requirements ①-④ of `##### DEV-spawn 4-requiremen
    - The probes run before authoring, and the engine never substitutes for one.
 6. **typed agentType on every spawn**.
 7. **author within the engine's runtime self-cap** — the script sets no concurrency number of its own.
-8. **schema-mode resilience + the completion channel** — wrap schema-mode agents in `robustAgent` retry-on-null + `.filter(Boolean)`, and have every schema-mode `agent({schema})` reserve an optional `completion_block` string property, with the delegation prompt instructing the agent to fill it with the full multi-line `[COMPLETION]` block.
+8. **schema-mode resilience + the completion channel** — both bind every schema-mode `agent({schema})`:
+   - Wrap it in `robustAgent` retry-on-null + `.filter(Boolean)`.
+   - Have it reserve an optional `completion_block` string property, with the delegation prompt instructing the agent to fill it with the full multi-line `[COMPLETION]` block.
    - Contract: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` · authoring detail: this file → `#### Resilient Workflow Authoring` · justification and re-derivation recipe: `#### Completion-channel non-emission` below.
 9. **`[DOC-ROUTE]` stamp** — only when the user explicitly requested a local destination, stamp the `[DOC-ROUTE] user-requested-local:` token in the script.
    - Snippet: this file → "[DOC-ROUTE] token placement" · self-check: `### Reflexive [DOC-ROUTE] stamping guard`.
@@ -1106,7 +1108,8 @@ A DEV-spawning workflow without a `{glass-atrium-qa-code-reviewer, DEV}` verify-
 
 - `#### Pre-submit self-check` is honor-system primary; the declaration-contract gate backstops it (scope: `##### In-script verify-stage (ultracode)` → **What backstops it**).
 - Skeletons: `#### Pipeline Acceptance Criteria` → "In-script verify-stage".
-- **Simple-plan exemption**: a simple plan skips the Stage-2 gate only; the plan-referencing DEV-spawning script still carries all four requirements of `##### DEV-spawn 4-requirement pre-flight checklist`; a simple-task entry with no plan-ref exits it (**Simple-task entry**).
+- **Simple-plan exemption**: a simple plan skips the Stage-2 gate by entering as `[ENTRY-CLASS] simple-task` with no plan-ref (**Simple-task entry**).
+  - One that keeps its plan-ref keeps the reviewer-before-DEV check and all four requirements of `##### DEV-spawn 4-requirement pre-flight checklist`.
 
 #### Pre-submit self-check — run before submitting ANY DEV-spawning Workflow script
 
