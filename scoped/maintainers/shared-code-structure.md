@@ -30,12 +30,10 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
   - `hooks/validate-compliance-matrix.sh` Layer A reports filename drift between matrix rows and `scoped/`.
   - Other readers: `scoped/maintainers/core-compliance-matrix.md` → `## Machine readers`.
 - Citers to fix in the same pass as a rename:
-  - `## Core Principles`: `skills/glass-atrium-dev-patterns/references/` → `CODE-STRUCTURE.md` · `FUNCTION-DESIGN.md` · `MODULE-COHESION.md`.
   - The `Function cap` label and its figures: `scoped/shared-comment-logging.md` → **One-line sufficiency gate**.
 - Outbound citations from the rule file:
   - `scoped/shared-type-safety.md`, named for the escape-hatch ban instead of restating it: a second copy in a peer Tier-3 file would drift.
   - `skills/glass-atrium-dev-patterns/SKILL.md` and its `references/`, the lookup half.
-- The `Type safety` limits also stand in `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` → `## Type Design [DEV]`. Change either and re-read the other in the same pass.
 
 ## Open
 

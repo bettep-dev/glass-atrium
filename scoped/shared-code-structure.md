@@ -24,9 +24,14 @@
 - Type safety:
   - nested generics ≤ 2 levels
   - extract a type when reused 2+ times or carrying 3+ properties
-  - the escape-hatch ban on `any`/`dynamic`/`Object` is owned by `scoped/shared-type-safety.md`
+  - escape-hatch ban on `any`/`dynamic`/`Object` → `scoped/shared-type-safety.md`
 
 ## On-demand detail
 
-- `skills/glass-atrium-dev-patterns/SKILL.md` and its `references/` keep the lookup half: member ordering with accessibility · guard clauses and async · discriminated-union and branded-type recipes · the LCOM4 method · the barrel decision table · the rationalization, red-flag and verification lists.
+- `skills/glass-atrium-dev-patterns/SKILL.md` and its `references/` keep the lookup half:
+  - the ordering principles and file/directory conventions
+  - guard-clause and async prose
+  - discriminated-union and branded-type recipes
+  - the LCOM4 method and the barrel decision table
+  - the rationalization and verification lists
 - No agent frontmatter preloads that skill: when a topic in this file applies, open its `SKILL.md` by path with Read.

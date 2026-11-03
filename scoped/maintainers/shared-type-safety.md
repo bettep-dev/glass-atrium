@@ -22,5 +22,5 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 ## Readers and coupled tests
 
 - No test or hook pins the rule file's text; the part slots deliver it whole to each `rules.shared` member (`hooks/lib/inject_chunk.py`).
-- `## Core Principles` keeps its name: `agents/glass-atrium-dev-angular.md` and `scoped/maintainers/shared-code-structure.md` cite it by heading.
+- `## Core Principles` keeps its name: `agents/glass-atrium-dev-angular.md` cites it by heading.
 - A rename edits every site naming the path (bare grep `shared-type-safety`); `hooks/validate-compliance-matrix.sh` Layer A reconciles only the `## Compliance Matrix` row of `rules/glass-atrium/core-compliance-matrix.md`, not the `### Tier 3` row.

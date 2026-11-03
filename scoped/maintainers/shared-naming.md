@@ -61,7 +61,6 @@ Each set below must give one verdict; change any site and re-read the others in 
 - Group member (`request.pending`, `user.byId`): **Identifier-kind binary**'s group-member sub-bullet · `references/VARIABLES-BOOLEANS.md` → `### Noun-only form (data identifiers)` and **Maps**.
 - Member taken out of its group:
   - the group-member sub-bullet's extraction sub-bullet, which also carries the rename syntax (`:` in a destructuring read, `as` in an import) · the rule file's `Member taken out of its group` and `Qualified read` rows
-  - `SKILL.md` → "A group member reads with its group"
   - the `## Edge-case verdicts — scopes and bindings` row on an existing `user` beside an added `userById`, whose input cell excludes a `userById` read out of `user`
 - Qualifier fallback: the closed fallback list under **Qualifier-sibling grouping** · the `## Edge-case verdicts — sibling sets` qualifier-stays rows.
 - Group first, qualifier as the fallback: `references/ANTI-PATTERNS.md` → **Sibling collision groups first**, its `fileBlock` over-reduction row and its **Reduction floor** checklist line · **Reduction-floor guardrail**.
