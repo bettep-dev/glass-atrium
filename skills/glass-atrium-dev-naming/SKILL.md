@@ -11,7 +11,7 @@ Any identifier — variable, function, class, type, enum, constant — including
 
 ## User Dictionary (Canonical)
 
-- **Precedence**: the dictionary OVERRIDES the verb taxonomy, which is the fallback only. Lineage and citations: `references/VERB-TAXONOMY.md` → `## User Dictionary Precedence (read first)`.
+- **Precedence**: the dictionary OVERRIDES the verb taxonomy, which is the fallback only. Upstream conventions it departs from: `references/VERB-TAXONOMY.md` → `## User Dictionary Precedence (read first)`.
 - **Where its rules live**: the canonical verb set with its worked mappings, the `get` contract, `put` vs `update` and the layer-verb map are the rule file's delta-core. The rows below are the worked detail it does not carry.
 
 - **Noun-form methods allowed on vendor-adapter surfaces** ("give me the X" resource feel): `recognition` · `transcript` · `timestamp` · `speaker` · `parse`
@@ -49,7 +49,7 @@ Any identifier — variable, function, class, type, enum, constant — including
 ## References (Progressive Disclosure)
 
 - **[references/VARIABLES-BOOLEANS.md](references/VARIABLES-BOOLEANS.md)** — scope-proportional length table, allowed abbreviations, collections/maps, boolean prefix semantics, classes/types/enums/greppability
-- **[references/VERB-TAXONOMY.md](references/VERB-TAXONOMY.md)** — User Dictionary precedence preamble (lineage citations) + verb taxonomy as FALLBACK + layer-specific verbs
+- **[references/VERB-TAXONOMY.md](references/VERB-TAXONOMY.md)** — User Dictionary precedence and the upstream conventions it departs from + verb taxonomy as fallback
 - **[references/ANTI-PATTERNS.md](references/ANTI-PATTERNS.md)** — naming anti-patterns, by section:
   - padding verbs and the violation table · circular naming · synonym mixing · forbidden mixing pairs · the inverse get/find school
   - no-stutter · the reduction floor · forbidden class/type suffixes · dynamic identifiers · cross-layer rename

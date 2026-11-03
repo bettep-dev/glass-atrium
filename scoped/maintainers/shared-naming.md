@@ -43,12 +43,12 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 - `hooks/lib/inject_chunk.py` reads the file by registry membership and packs it at heading boundaries.
 - `hooks/test/inject-scope-rules.bats` → the retired naming case plants a synthetic `AGENT-INJECT:NAMING` pair at the old default path and asserts slot 1 never extracts it; it never reads this file.
-- `skills/glass-atrium-dev-naming/SKILL.md` keeps the on-demand detail. It, `references/VARIABLES-BOOLEANS.md`, `references/ANTI-PATTERNS.md` and the reviewer (`agents/glass-atrium-qa-code-reviewer.md` → `### Naming Checks`) cite the rule file by heading and bold lead.
+- `skills/glass-atrium-dev-naming/SKILL.md` keeps the on-demand detail. It, `references/VARIABLES-BOOLEANS.md`, `references/ANTI-PATTERNS.md`, `references/VERB-TAXONOMY.md` and the reviewer (`agents/glass-atrium-qa-code-reviewer.md` → `### Naming Checks`) cite the rule file by heading and bold lead.
   - Each literal below is load-bearing — rename one and fix its citers in the same pass:
     - `## Agent Injection Core` — `SKILL.md` · `references/ANTI-PATTERNS.md`
     - `## Core rules outside the delta-core` — `SKILL.md` · `references/VARIABLES-BOOLEANS.md` · `references/ANTI-PATTERNS.md`
     - the `## Edge-case verdicts —` prefix shared by `identifier kinds` · `scopes and bindings` · `family shapes` · `sibling sets` · `reads and joins` — the reviewer's **Naming edge cases** bullet
-    - **Canonical verb set (PRIMARY)** — `SKILL.md` · `references/ANTI-PATTERNS.md`
+    - **Canonical verb set (PRIMARY)** — `SKILL.md` · `references/ANTI-PATTERNS.md` · `references/VERB-TAXONOMY.md`
     - **One verb per purpose per layer** — `SKILL.md` · `references/ANTI-PATTERNS.md`
     - **Identifier-kind binary** — `SKILL.md` · `references/VARIABLES-BOOLEANS.md`
     - **No-stutter** — `references/ANTI-PATTERNS.md`
