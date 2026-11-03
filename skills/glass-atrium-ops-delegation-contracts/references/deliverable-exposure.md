@@ -17,7 +17,7 @@
 ## Visual-Weight Probe — detail
 
 - **Author re-count**: the author counts T1-T5 again at its own turn-0 self-assessment and declares the result.
-- **Composition mode**: the 2+ parallel designer composition runs per `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` → **Pre-draft consultation order**.
+- **Composition mode**: the designer composition at 2+ T1-T5 indicators runs per `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` → **Pre-draft consultation order**.
 - The Probe routes the glass-atrium-design-designer consultation only, never the visual floor: every exposed HTML primary, solo compositions included, is bound at any T1-T5 count by the tiered Visual-Maximization Floor (`scoped/scope-report.md` → `### Visual-Maximization Floor`).
 - glass-atrium-dev-front is never probe-composed: it enters only through the author-surfaced markup exception (`## glass-atrium-dev-front markup exception — detail`).
 - T1-T5 canonical: `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`.

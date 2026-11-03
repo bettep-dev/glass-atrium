@@ -7,7 +7,7 @@ description: Pre-commit 6-stage sequential verification covering build, types, l
 
 Sequentially verifies code quality in 6 stages before committing, enforcing evidence-based completion claims.
 
-- No stage may be skipped.
+- No stage is skipped without a documented reason.
 - Failure at any stage halts the pipeline.
 
 ## When to Use

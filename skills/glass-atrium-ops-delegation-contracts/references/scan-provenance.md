@@ -11,7 +11,7 @@
 ## Premise register — detail
 
 - Why handles are never numerals: a numeral register renumbers on every reorder.
-- A claim left out of the register is not thereby a `revise` reason: the reviewer judges the plan's own tags, not this register.
+- A claim left out of the register is not thereby a `revise` reason: the register is one input to the premise check, not its boundary.
 
 ## Honest backing — detail
 

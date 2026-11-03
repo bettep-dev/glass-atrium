@@ -29,7 +29,7 @@ Pick one of these flows:
 Sanctioned idiom (bash 3.2-safe):
 
 ```bash
-# DST = the staging tree the sanctioned flow deploys from (e.g. ATRIUM_UPDATE_SRC_DIR), never the live ~/.glass-atrium / ~/.claude surface.
+# DST = the staging tree the sanctioned flow deploys from (e.g. ATRIUM_UPDATE_SRC_DIR), or the live surface only under the Launch-env grant.
 while IFS= read -r rel; do
   [[ -z "${rel}" ]] && continue
   cp -- "${SRC}/${rel}" "${DST}/${rel}"
