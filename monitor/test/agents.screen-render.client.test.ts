@@ -37,7 +37,7 @@ const UI_SCALARS: Record<string, unknown> = {
 
 // Region-state members come from the shipped ui.jsx so the page is exercised against the real contract.
 const REAL_UI = (await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"))).UI as Record<string, unknown>;
-const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionView", "getRegionSummary", "getSharedFailure", "getSourceFailures", "putRegionRequest", "putRegionData", "putRegionFailure", "getRowFocusProps", "ROW_CONTROL_PROPS"];
+const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionView", "hasRegionRows", "getRegionSummary", "getSharedFailure", "getSourceFailures", "putRegionRequest", "putRegionData", "putRegionFailure", "getRowFocusProps", "ROW_CONTROL_PROPS"];
 for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
 // Count text rides the shipped formatter, so a KPI sub reads as it does on the page.
 UI_SCALARS.formatInt = REAL_UI.formatInt;

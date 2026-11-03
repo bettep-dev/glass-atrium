@@ -318,12 +318,12 @@ test("a tile's detail and plain hint clamp at two lines, each keeping its whole 
   const [detail] = findNodes(tree, (n) => hasClass(n, "dash-tile-detail"));
   const [hint] = findNodes(tree, (n) => hasClass(n, "dash-tile-hint"));
   for (const [node, text] of [[detail, tile.detail], [hint, tile.hint]] as const) {
-    assert.ok(hasClass(node, "dash-tile-clamp"), classOf(node));
+    assert.ok(hasClass(node, "clamp-2"), classOf(node));
     assert.equal(node.props.title, text);
   }
   const hintData = { lead: "Most runs: ", data: "dev-react", tail: ", 12" };
   const [dataHint] = findNodes(render("StatusTile", { tile: { ...tile, hintData }, onNav: () => {}, onRetry: () => {} }), (n) => hasClass(n, "dash-tile-hint"));
-  assert.ok(!hasClass(dataHint, "dash-tile-clamp"), "a data hint clamps its data part alone");
+  assert.ok(!hasClass(dataHint, "clamp-2"), "a data hint clamps its data part alone");
 });
 
 test("a clamped slot sets a title only for a non-empty string — an element slot carries none, and an empty slot renders no node", () => {

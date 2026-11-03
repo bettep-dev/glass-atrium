@@ -67,6 +67,10 @@ const HEADS = {
   filtered: getResultsHead({ days: 30, agent: "glass-atrium-dev-front" }, ""),
 };
 const RECORDS = [41, 42, 43].map((id) => ({ id, agent: "glass-atrium-dev-front", task_type: "refactor", result: "done", record_ts: "2026-10-29T10:00:00Z" }));
+// the column headers render only for a loaded ledger with rows
+const LEDGER_WITH_ROWS = getMarkup("ResultTableCard", {
+  ...LEDGER_PROPS, state: { ...READY, data: { rows: RECORDS } }, rows: RECORDS, sort: "record_ts:desc", page: 0, filter: {},
+});
 const DRAWER = getMarkup("DetailModal", {
   detailRow: RECORDS[1], detailState: { status: "loading", data: null, error: null }, rows: RECORDS, onClose: noop, onNav: noop,
 });
@@ -101,6 +105,7 @@ const CHIPS = getMarkup("ActiveFilterChips", { filter: { days: 7, agent: "glass-
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="first-page" style="width: 1170px; padding: 24px;">${getLedger(0)}</div>
   <div id="mid-page" style="width: 1170px; padding: 24px;">${getLedger(1)}</div>
+  <div id="ledger-rows" style="width: 1170px; padding: 24px;">${LEDGER_WITH_ROWS}</div>
   <div id="drawer">${DRAWER}</div>
   <div id="filters" style="width: 280px; padding: 12px;">${FILTERS}</div>
   <div id="crosstab" style="width: 560px; padding: 24px;">${CROSSTAB}</div>
@@ -182,6 +187,50 @@ describe("each pagination button keeps one 32 box in every state", () => {
     const enabled = await readBox(LEDGER_BUTTON("mid-page", "Previous"));
     const box = await readBox(disabled);
     assert.ok(isSameBox(box, enabled), `disabled ${box.width}x${box.height} vs enabled ${enabled.width}x${enabled.height}`);
+  });
+});
+
+// the Time column's sort control: a button inside the header cell, which keeps aria-sort
+const SORT_BUTTON = "#ledger-rows th[aria-sort] > button";
+const TIME_CELL = "#ledger-rows tbody tr.outcome-row > td:first-child";
+const LEDGER_TITLE = "#ledger-rows .card-head .card-title";
+
+// where an element's first rendered glyph starts → a label's x, whatever box or padding wraps it
+const readTextLeft = (selector: string): Promise<number> =>
+  page.$eval(selector, (el) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let text = walker.nextNode();
+    while (text && !text.textContent?.trim()) text = walker.nextNode();
+    if (!text) throw new Error(`no text in ${el.outerHTML.slice(0, 80)}`);
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    return range.getBoundingClientRect().left;
+  });
+
+// the header row it sits in stays 40: ui.row-geometry pins a sortable header row holding a 32px control
+describe("the ledger's Time header sorts through the drawer's small ghost button", () => {
+  test("it draws the drawer's Next variant and keeps one 32 box in every state", async () => {
+    assert.deepEqual(await readVariantIn(SORT_BUTTON, []), await readVariantIn(DRAWER_BUTTON("Next"), []));
+    assert.equal((await readBox(SORT_BUTTON)).height, 32);
+    await assertBoxHeldAcrossStates(SORT_BUTTON);
+  });
+
+  test("its label starts on the column's text axis: the Time cells' text and the card head's title", async () => {
+    const label = await readTextLeft(SORT_BUTTON);
+    for (const [name, selector] of [["the Time cells' text", TIME_CELL], ["the card head's title", LEDGER_TITLE]]) {
+      const axis = await readTextLeft(selector);
+      assert.ok(Math.abs(label - axis) < 0.01, `label x ${label} ↔ ${name} x ${axis}`);
+    }
+  });
+
+  test("Enter and Space on the focused button each activate it", async () => {
+    await page.$eval(SORT_BUTTON, (el) => {
+      el.addEventListener("click", () => { (el as HTMLElement).dataset.clicks = String(Number((el as HTMLElement).dataset.clicks ?? 0) + 1); });
+    });
+    await page.focus(SORT_BUTTON);
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Space");
+    assert.equal(await page.$eval(SORT_BUTTON, (el) => (el as HTMLElement).dataset.clicks), "2");
   });
 });
 

@@ -2530,7 +2530,7 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
         size={PAIRED_CARD_SIZE}
         title="Most-failing pairs"
         sub={getFailingPairsSub(state.status, failingTotal, measuredPairs, days)}
-        isFlush={hasPairedTableAg(state, failingPairs)}
+        isFlush={window.UI.hasRegionRows(state, failingPairs)}
         foot={state.status === 'ready' && (
           <PairedCardFootAg note={`Below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · solid samples first`} total={failingPairs.length}
             hiddenCount={hiddenCount} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
@@ -2546,11 +2546,6 @@ function getFailingPairsSub(status, failingTotal, measuredCount, days) {
   if (status === 'loading') return `last ${days} days`;
   if (status !== 'ready') return 'Unavailable — not loaded';
   return `${failingTotal} of ${measuredCount} below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · ${days}d`;
-}
-
-// A paired card's table sits flush in its body (its edge cells carry the card padding); the loading, failure and empty states keep the padded body.
-function hasPairedTableAg(state, rows) {
-  return window.UI.getRegionView(state) === 'ready' && rows.length > 0;
 }
 
 /**
@@ -2709,12 +2704,6 @@ const QH_REVISION_TARGET = 0.5;
 // 건강 verdict 밴드 절대 cut point — post-R2 분포(30일 측정) 재앵커: 하위 "Needs attention" 밴드를 actionable 소수로.
 const QH_HEALTH_CRIT_MAX = 0.5;
 const QH_HEALTH_WARN_MAX = 0.7;
-// Health-index BulletBar zone 밴드 — verdict cut point 와 동일 SoT · re-render 마다 신규 배열 회피(hoist).
-const QH_HEALTH_BULLET_ZONES = [
-  { upTo: QH_HEALTH_CRIT_MAX, tone: 'crit' },
-  { upTo: QH_HEALTH_WARN_MAX, tone: 'warn' },
-  { upTo: 1, tone: 'ok' },
-];
 // review_flag timeline 좌축/우축 라벨 — re-render 마다 신규 객체 생성 회피 (Recharts 패턴).
 // 좌축 막대는 flag "사유"(empty_metric + polar_mismatch) 스택이지 총 flag 수가 아님 →
 // 'Flagged per day' 는 과대표시 (총 flagged 는 우측 rate 라인·툴팁이 담당). 라벨을 사유 기준으로 정정.
@@ -2942,7 +2931,7 @@ function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
         size={PAIRED_CARD_SIZE}
         title="No completion record"
         sub={`Last ${days} days`}
-        isFlush={hasPairedTableAg(state, lifecycleRows)}
+        isFlush={window.UI.hasRegionRows(state, lifecycleRows)}
         info={NOTE.UNFINISHED}
         infoLabel="How Unfinished is counted"
         right={state.status === 'ready' && totalOrphans > 0
