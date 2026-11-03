@@ -11,16 +11,26 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 ## Membership
 
-- Membership is declared on each agent's `agent-registry.json` row (`rules.shared`) and summarized in `rules/glass-atrium/core-compliance-matrix.md`. The rule file's former opening sentence restated it a third time and was dropped rather than moved into a fourth site.
-- The rule file's own opening line now states the CONSTRUCT condition instead: each rule binds where the language has the construct it names. That is the agent-facing form of the "TypeScript-only" scoping observation — written as a per-rule condition so a Swift force-unwrap or a Kotlin cast is covered without enumerating languages.
+- Membership is declared on each agent's `agent-registry.json` row (`rules.shared`) and summarized in `rules/glass-atrium/core-compliance-matrix.md`.
+- The rule file's opening line states the construct condition: each rule binds where the language has the construct it names, so a Swift force-unwrap or a Kotlin cast is covered without enumerating languages.
 
 ## Why the `any` prohibition is not restated in full
 
-- `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` → `## Type Design [DEV]` states **any/dynamic/Object forbidden** and carries both limits as its own bullets — `Used 2+ times or has 3+ properties → extract into a separate type` and `Nested generics **2 levels max**`. That reference is the surviving full statement of the ban.
+- `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` → `## Type Design [DEV]` states **any/dynamic/Object forbidden**, the full statement of the ban.
 - What the rule file keeps is the part the skill does not carry: the `unknown` + type-guard replacement. The skill is named in that line so a reader does not read the remedy as the whole rule.
 
 ## Readers and coupled tests
 
-- No code reads this file's TEXT. The path is pinned in two places: the `RULE_FILES` closed frozenset in `scripts/agent_lifecycle/registry_ops.py`, pinned by exact equality in `scripts/test/test_agent_lifecycle_overhaul.py`, and the manifest hash. Renaming the file is therefore a three-site edit.
-- The one prose citation of the file by name in an agent body lives in `agents/glass-atrium-dev-angular.md`, through the `## Core Principles` heading, and it still resolves.
-- The `## Core Principles` heading is unchanged.
+- No code reads this file's text.
+- Renaming the file edits every site that pins its path:
+  - `scripts/agent_lifecycle/registry_ops.py` → `SCOPE_SHARED_RULE_FILES` (and therefore the `RULE_FILES` closed frozenset)
+  - `scripts/test/test_agent_lifecycle_overhaul.py`, by exact equality
+  - `agent-registry.json` → the `rules.shared` entry on each member row
+  - `rules/glass-atrium/core-compliance-matrix.md` → its rows for the file
+  - `manifest.json`, which lists and hashes the path
+- Prose citers to repoint on a rename:
+  - `agents/glass-atrium-dev-angular.md` — the one agent body citing the file by name, through the `## Core Principles` heading
+  - `scoped/shared-code-structure.md` → the `Type safety` bullet
+  - `scoped/maintainers/shared-code-structure.md`
+  - `scoped/maintainers/glass-atrium-dev-python.md`
+  - `scoped/maintainers/glass-atrium-dev-react.md`

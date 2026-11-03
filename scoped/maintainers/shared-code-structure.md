@@ -22,7 +22,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 - Why: `scoped/shared-type-safety.md` → `## Core Principles` already carries the `any` prohibition as its first rule. Carrying it a second time in a peer Tier-3 file is the two-copies-drift shape, and both copies would bind the same agents.
 - Deliberately not done: the thresholds were not absorbed INTO `scoped/shared-type-safety.md` — that is a content change to that file, not a relocation.
 - `scoped/shared-type-safety.md` needs no repoint: its line cites "the `glass-atrium-dev-patterns` skill" for the ban, and `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` still states `any/dynamic/Object forbidden`.
-- The companion of `scoped/shared-type-safety.md` needs none either: its "Why the `any` prohibition is not restated in full" section cites `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` → `## Type Design [DEV]`, which states the ban and carries both thresholds as its own bullets.
+- The companion of `scoped/shared-type-safety.md` needs none either: its "Why the `any` prohibition is not restated in full" section cites `skills/glass-atrium-dev-patterns/references/TYPE-DESIGN.md` → `## Type Design [DEV]`, which states the ban.
 
 ## Membership
 
