@@ -37,7 +37,9 @@
 // schema-absent case reads a second database on the same server from
 // MONITOR_TEST_LABEL_ABSENT_DATABASE_URL and skips when it is unset. That database is
 // shared with the reject-buckets suite: every migration except 20261003000000
-// ('unadjudicated') and 20261005000000 (metric_key, 'dormant').
+// ('unadjudicated') and 20261005000000 (metric_key, 'dormant'), and 20261009000000,
+// which needs a 20261005000000 table. How to build it: the header of
+// improvement.reject-buckets.route.test.ts.
 //
 // Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.loop-suppression.route.test.ts
 
