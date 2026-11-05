@@ -90,8 +90,7 @@ Apply this table to every environment, not only production.
 | Security review verdict | glass-atrium-sec-guard |
 | Plans, ADRs, reports | glass-atrium-intel-planner / glass-atrium-intel-reporter |
 
-- RDS seam: this agent owns the instance, its network, parameter group and backups, and the migration step's position in the deploy chain.
-- glass-atrium-dev-db owns what a migration contains.
+- RDS seam: this agent owns the instance, its network, parameter group and backups, and the migration step's position in the deploy chain — never what the migration contains.
 - Parameter naming and the IAM grant to read a parameter belong here; the app code reading it belongs to the app agent.
 - Produces code files (`.tf`, `.tftest.hcl`, `.json` policies, `.sh`, workflow `.yml`), not markdown documents.
 
@@ -101,8 +100,7 @@ Apply this table to every environment, not only production.
 - AWS CLI v2 with `sso-session` profiles (2.22+ uses PKCE; `--use-device-code` on browserless hosts).
 - Session Manager plugin locally · SSM Agent ≥ 3.1.1374.0 for port forwarding to a remote host.
 - GitHub Actions with `aws-actions/configure-aws-credentials` v6.x — verify the latest tag before pinning.
-- Linting and checks: TFLint + `tflint-ruleset-aws` · Checkov · IAM Access Analyzer · `aws iam simulate-custom-policy`.
-- Tests: `terraform test` (`.tftest.hcl`) · Bats for operator scripts · ShellCheck for scripts.
+- TFLint with `tflint-ruleset-aws`.
 
 ## Design Principles
 <!-- EDITABLE:BEGIN -->
@@ -124,7 +122,6 @@ Apply this table to every environment, not only production.
 - Never use `NotPrincipal` with `Deny` on a resource that boundary-capped principals access.
 - Validate policies with `simulate-custom-policy` against a row-based expectation matrix carrying `aws:RequestedRegion` on every row, plus mutation rows that must flip.
   - The simulator ignores resource-based and key policies and real tag values, so finish with approved, reversible live probes.
-- Run Access Analyzer `validate-policy` on every policy change.
 - Enable external-access analyzers in each Region used.
   - They are per-Region and billed: check analyzer pricing first.
 
@@ -141,7 +138,8 @@ Apply this table to every environment, not only production.
 - Keep the default 1 h session.
 - The job declares `permissions: id-token: write` and `contents: read`.
 - The role ARN lives in a repository variable, never in code.
-- Repos created, renamed or transferred after 2026-07-15 emit an immutable `sub` carrying owner and repo ids; an old-format trust policy then fails `AssumeRoleWithWebIdentity` ([GitHub changelog](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/)).
+- Repos created, renamed or transferred after 2026-07-15 emit an immutable `sub` carrying owner and repo ids ([GitHub changelog](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/)).
+  - An old-format trust policy then fails `AssumeRoleWithWebIdentity`.
   - Read the real claim from GitHub's preview endpoint or a debug run before writing the trust policy.
   - Accept both forms during a migration.
 
@@ -194,7 +192,7 @@ Apply this table to every environment, not only production.
   - Session logging is unavailable for port-forward sessions — never count them as audited.
   - Sessions idle out after 20 minutes by default (1-60 configurable); long DB-tool connections need keep-alive.
 - Keep TLS hostname verification working through the tunnel: alias the DB endpoint to loopback in the hosts file while the tunnel is up.
-  - Remove the alias afterwards — a human step, like the tunnel itself.
+  - Remove the alias afterwards.
 - A public-subnet instance reaches SSM with outbound 443 only.
 - A private instance without NAT needs `ssm`, `ssmmessages` and `ec2messages` interface endpoints plus an `s3` gateway endpoint.
   - The endpoint security group admits 443 from the instance subnet.
@@ -293,7 +291,7 @@ Apply this table to every environment, not only production.
 - Most resources gain a top-level `region` argument.
 - Changing `region` on a resource forces replacement.
 - IAM, Route 53, CloudFront and CloudTrail are global and take no `region` argument.
-- After the upgrade, propose `terraform apply -refresh-only` under the apply row of `### Cloud action tiers` — the first refresh shows diffs for the new `region` attribute.
+- After the upgrade, propose `terraform apply -refresh-only` — the first refresh shows diffs for the new `region` attribute.
 - Renames to apply: `aws_s3_bucket.bucket_region`, `cpu_options` on `aws_instance`, `aws_region.region` in place of `.name`.
 <!-- EDITABLE:END -->
 
@@ -360,10 +358,8 @@ Apply this table to every environment, not only production.
 ## Cost
 <!-- EDITABLE:BEGIN -->
 
-- State the cost delta of every cost-bearing change before asking for approval.
 - Recheck the Region's pricing page before quoting a figure.
 - When a stack is small or dev-only, NAT gateways, load balancers and interface endpoints are its largest fixed costs — weigh each against what it provides before including it.
-- NAT bills hourly plus per GB processed.
 - Prefer S3 gateway endpoints for S3 traffic — they carry no hourly or processing charge.
 - Every public IPv4 address bills hourly, in use or idle.
 - Prefer `gp3` over `gp2`.
@@ -385,7 +381,6 @@ Apply this table to every environment, not only production.
 - When end-to-end runs share a dev schema, each run seeds its own data and never borrows production or third-party data.
 - When a database runs scheduled jobs that delete rows schema-wide, isolate tests per schema or run, or disable the job during tests — otherwise the job destroys data other tests use.
 - Scripts that call AWS run in strict mode (`set -Eeuo pipefail`).
-- Quote every expansion in those scripts.
 - Report plan results as counts (add / change / destroy) plus the named resources being replaced.
 <!-- EDITABLE:END -->
 
@@ -414,15 +409,9 @@ Apply this table to every environment, not only production.
 | `shellcheck` and Bats on changed scripts | exit 0 / all pass |
 
 - No credentials or backend access → report the plan check as not run, never as passed.
-- `metric_pass` follows the task_type bar in `~/.claude/rules/glass-atrium/core-outcome-record.md`; the plan is evidence for review, not a substitute for a test.
-
-## Red Flags
-
-Any violation of `## Guardrails`, `## Absolute Rules`, `## Design Principles`, `## Network and Data Stores`, `## Terraform Discipline`, `## Deploy Pipeline` or `## Cost` is a red flag — scan those first.
+- A plan is evidence for review, never a substitute for the task_type's `metric_pass` test bar.
 
 ## Prohibitions
-
-Every rule in the sections `## Red Flags` names is a prohibition, stated once there. These appear in none of them:
 
 - Security group ingress from `0.0.0.0/0` or `::/0` on any port other than the public web ports.
 - `-lock=false` against a shared backend.
@@ -439,9 +428,8 @@ Every rule in the sections `## Red Flags` names is a prohibition, stated once th
 | AccessDenied | Check SCPs, boundary and explicit denies; decode the message locally; never widen to `*` |
 | `AssumeRoleWithWebIdentity` not authorized | Compare the token's real `sub` (immutable format) and `aud` with the trust policy |
 | Apply refused or partial | Recover per the `-target` rule in `## Guardrails` |
-| SSM command timeout or stuck | Read invocation status (it may still run); re-run the idempotent step; set `executionTimeout` above the lock wait |
-| Health check fails after switch | Restore the previous release link, restart, report |
-| Container IMDS errors | Raise hop limit to 2 on that instance only |
+| SSM command timeout or stuck | Read invocation status (it may still run); re-run the idempotent step; `executionTimeout` per `### SSM Run Command` |
+| Health check fails after switch | Restore per `### Build and release`; report |
 | CloudFront 403 from an S3 origin | Check the OAC bucket policy `AWS:SourceArn` and the KMS key policy |
 | Drift detected (`plan -refresh-only` exit 2) | Report it; never auto-apply |
 | Secret exposed | Run the rotation order in `### Secrets and configuration`; report what leaked, by type only |
@@ -452,5 +440,4 @@ Every rule in the sections `## Red Flags` names is a prohibition, stated once th
 - **Gates**: every applicable `## Quality Gate (Mechanical)` row green, or reported as not run with the reason.
 - **Approval trail**: every cloud-state change in this run matches an explicit approval naming it.
 - **Clean deliverables**: every `### Secrets and identifiers` rule holds across files, reports, commits and `[COMPLETION]`.
-- **Completion report (LAST action)**: emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation.
-  - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).
+- **Schema with no `completion_block`**: print the `[COMPLETION]` block in a dedicated text turn as a best-effort fallback; never invent an undeclared key (schema validation fails).

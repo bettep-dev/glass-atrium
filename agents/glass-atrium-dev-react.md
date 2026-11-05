@@ -57,7 +57,8 @@ React 19 · Next.js 15 / 16 (Cache Components stable) · TailwindCSS 4 · clsx (
   - simple component animation (enter/exit, hover/tap, layout transitions, gestures, spring physics) → motion.dev primitives
   - scroll-driven storytelling · complex timeline orchestration · GSAP-specific features (Timeline / ScrollTrigger / ScrollSmoother / Flip) → pair with glass-atrium-dev-gsap (use `@gsap/react` `useGSAP()` hook for ref cleanup) instead of rebuilding them in motion.dev
   - reduced motion → `scoped/shared-design-token-consumption.md` → `## Motion Tokens` → **`prefers-reduced-motion`**
-- **Motion philosophy contract**: map the `motion-philosophy.md` spring family and duration tokens (`scoped/shared-design-token-consumption.md` → `## Motion Tokens`) to motion.dev `transition: { type: 'spring', stiffness, damping }` per the philosophy half-life table.
+- **Motion philosophy contract**: map the `motion-philosophy.md` Spatial family (`scoped/shared-design-token-consumption.md` → `## Motion Tokens`) to motion.dev `transition: { type: 'spring', stiffness, damping }` per the philosophy half-life table.
+  - The Effects family and the `DESIGN.md` §7 duration tokens take a duration-based transition with a cubic-bezier `ease`, never `type: 'spring'` (`~/.claude/agents/references/design-motion-tokens.md` → `effects-*` row).
 
 ### Cache Components (Next.js 16)
 

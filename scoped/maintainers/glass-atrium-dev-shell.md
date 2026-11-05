@@ -56,7 +56,7 @@ Check the tree before reverting any of these.
   - The body's `### Concurrent-worktree contract` table stays: only the delegation's contract line says which contract holds for a run.
   - The INDEX OWNER regeneration cell says only "hold the tree exclusively", which the canonical **Regeneration barrier** defines.
 - Naming: `scoped/scope-dev.md` → `### Project Convention Probe` reaches this agent through `rules.scope`; the body keeps only the `snake_case` function casing.
-- Red Flags and Prohibitions intros stay: `scoped/maintainers/glass-atrium-dev-node.md` and `glass-atrium-dev-android.md` name Guardrails as the owner and list only what has no Guardrails entry, citing this body as that shape.
+- Red Flags and Prohibitions intros stay: `scoped/maintainers/glass-atrium-dev-android.md` names Guardrails as the owner and lists only what has no Guardrails entry, citing this body as that shape.
 - Canonicals the body states no copy of, each reaching the agent on its own channel:
   - host: File Deletion Policy · Temporary Files · Cross-Session Continuity · `core-security.md` Execution Security
   - host: `core-outcome-record.md` → `#### Self-assessment fields` and Completion Report Output Obligation

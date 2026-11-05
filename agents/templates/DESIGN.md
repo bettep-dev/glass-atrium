@@ -1,6 +1,7 @@
 <!-- 9-section structure adapted from nexu-io/open-design docs/design-systems.md (Apache 2.0) · DTCG 2025.10 schema integration -->
 <!-- This template is consumed by glass-atrium-design-designer (authoring) + DEV-scope agents (consumption per scoped/shared-design-token-consumption.md) + Figma Make / MCP-fed coding agents (per AI Model Guidelines in §8) -->
 <!-- Authoring contract: fill the standard-minimum sections (§1 Visual Theme, §2 Color, §3 Typography, §6 Components, §9 Anti-Patterns) and §8's AI Model Guidelines; open §4, §5, §7 and the rest of §8 only when the system needs them (glass-atrium-design-designer.md → Section minimalism). §9 cross-links to glass-atrium-design-designer.md AI Slop Tropes instead of copying it, so the catalogue keeps one home. -->
+<!-- Token shape: a DESIGN.md is a full design-system deliverable, so its tokens and §8's AI Model Guidelines take the shape in agents/references/design-token-architecture.md (Base / Semantic / Component tables, raw values only in Base; the structured AI Model Guidelines form). This template fixes the sections and their order; its flat token blocks and §8 lists are placeholder content to recast in that shape. -->
 
 # [Design System Name]
 
@@ -178,6 +179,21 @@
 }
 ```
 
+**Generated CSS variables** (consumption layer — §6 and §8 reference these names):
+
+```css
+:root {
+  --spacing-0: 0px;
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+  --spacing-12: 48px;
+}
+```
+
 **Touch target minimum**: 44×44px (WCAG 2.5.5) — applies to all interactive elements regardless of token name.
 
 ---
@@ -229,9 +245,9 @@
 
 ## 7. Motion & Interaction
 
-> DTCG 2025.10 `$type: "transition"` composite tokens compose `duration` + `delay` + `timingFunction`. Spring-family naming (M3 Expressive Spatial/Effects) is declared in companion `motion-philosophy.md` (designer-owned); this section names the consumable tokens.
+> DTCG 2025.10 `$type: "transition"` composite tokens compose `duration` + `delay` + `timingFunction`. Motion-family naming (M3 Expressive Spatial/Effects) is declared in companion `motion-philosophy.md` (designer-owned); this section names the consumable tokens.
 
-**Motion philosophy reference**: see `motion-philosophy.md` (companion file) for spring family selection + WHAT-why rationale.
+**Motion philosophy reference**: see `motion-philosophy.md` (companion file) for motion family selection + WHAT-why rationale.
 
 **Motion tokens** (DTCG 2025.10 composite format):
 
@@ -273,7 +289,7 @@
 
 **`prefers-reduced-motion` contract**: every animated component MUST honor `@media (prefers-reduced-motion: reduce)` — typically substitute `transition: opacity` only (no spatial motion). Browser auto-honors when CSS uses `@media` query; JS-driven animations require explicit check.
 
-**Spring family declaration** (consumption side — glass-atrium-dev-front maps spring families to CSS / Tailwind half-life): families named in `motion-philosophy.md` — `spatial-default` · `spatial-fast` · `spatial-slow` · `effects-default` · `effects-fast` · `effects-slow`.
+**Motion family declaration** (consumption side — glass-atrium-dev-front maps Spatial to spring / half-life tokens and Effects to cubic-bezier tokens): families named in `motion-philosophy.md` — `spatial-default` · `spatial-fast` · `spatial-slow` · `effects-default` · `effects-fast` · `effects-slow`.
 
 ---
 
@@ -299,7 +315,7 @@
 
 ### AI Model Guidelines (Figma Make / MCP-fed agents — NON-NEGOTIABLE)
 
-> This subsection is read by AI codegen tools. State which tokens are non-negotiable vs flexible. Provide 2-3 "Bad" anchors to constrain the model.
+> This subsection is read by AI codegen tools. State which tokens are non-negotiable vs flexible, in the structured form of `design-token-architecture.md` → `## AI Model Guidelines (structured form)` — not a prose list of Bad examples; the anchors below seed its NEVER rows.
 
 **Non-negotiable**:
 - All colors MUST resolve to `--color-*` CSS variables defined in §2. Inventing hex values FORBIDDEN.

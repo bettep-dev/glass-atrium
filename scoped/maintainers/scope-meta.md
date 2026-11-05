@@ -1,6 +1,6 @@
 # Maintainer note — `scoped/scope-meta.md`
 
-Maintainer-facing material for that rule file. Nothing here binds either META agent; the rule file carries the duties.
+Maintainer-facing material for that rule file and for `agents/glass-atrium-meta-agent.md`. Nothing here binds either META agent; the rule file carries the duties.
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
@@ -97,3 +97,10 @@ Do not restore any item below.
 - **Never diet the file to zero bytes** — the `_read_sections` row.
 - **No test pins this file's text**: a bare `scope-meta` grep over `test/`, `hooks/test/`, `scripts/test/` and `autoagent/test/` returns no hit.
 - A rename also edits every corpus site naming the path (bare grep `scope-meta.md`).
+
+## Agent body — `agents/glass-atrium-meta-agent.md`
+
+- **Frontmatter pin**: `test/harness-290-t21-capability-confinement.bats` → `META_AGENT_GRANTS` asserts Bash stays absent from the tool grant while Read and Write stay present.
+  - A Bash grant added there reddens that row deliberately: the LLM06 confinement surface.
+- **That row is the only coupling**: no suite under `hooks/test/`, `scripts/test/` or `autoagent/test/` pins prose in the body, so the prose may be reworded.
+- **Headings cited by name**: `## Signal Thresholds`, `## Modification Principles` and `## Hard Constraints`, from `scoped/scope-meta.md` → `## glass-atrium-meta-agent: Outcome-Driven Rewrite Policy`.
