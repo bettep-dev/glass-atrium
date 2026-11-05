@@ -128,7 +128,7 @@
 
 ## Big tasks carefully, small tasks fast
 
-- The system **decides for itself which steps to take, sized to the task's size and complexity.**
+- The system **decides for itself which steps to take, matched to the task's size and complexity.**
   - You never have to tell it, step by step, to "proceed carefully."
 - **Big, complex tasks** — it walks through a careful flow on its own: plan → check that the plan holds up → build it → test that it works → confirm it is done and wrap up.
 - **Small tasks** — it skips that procedure and handles them fast.
