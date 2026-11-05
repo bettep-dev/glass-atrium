@@ -10,7 +10,9 @@
 #   (1) tool is Write,
 #   (2) recovered agent_type ∈ {intel-reporter, intel-planner},
 #   (3) file extension ∈ {.md,.yaml,.yml,.json,.txt},
-#   (4) the normalized target path is OUTSIDE the deterministic allowlist.
+#   (4) the normalized target path is OUTSIDE the deterministic allowlist and is no
+#       repository-owned document (a tracked file, or a README/AGENTS/CHANGELOG at a
+#       work-tree root) — those belong to the repo, not the monitor.
 # PreToolUse PRE-blocks the write (file never created) → stderr only routes to the
 # monitor API, no leaked-file cleanup. Asymmetric-cost: a false-block on the high-
 # frequency Write tool costs more than a rare leak past this backstop, so FAIL-OPEN.
@@ -130,6 +132,43 @@ allow() {
   exit 0
 }
 
+# Repository-owned document → its allow label on stdout; empty for anything else, the
+# unanswerable cases included (no git/perl, a timeout, a missing dir), so they keep the block.
+# A symlink target is refused: the link could carry the write out of the repository.
+# Args: $1 = normalized absolute file path.
+get_repo_doc_verdict() {
+  local path="${1}" dir base prefix
+  [[ "${path}" == /?* && ! -L "${path}" ]] || return 0
+  dir="${path%/*}"
+  base="${path##*/}"
+  [[ -n "${dir}" && -d "${dir}" ]] || return 0
+  # "true" alone = work-tree root · "true" + newline + prefix = below it · "false" = inside .git
+  # shellcheck disable=SC2310  # a git failure is an answer (no repository) → no allow label
+  prefix="$(run_git_bounded -C "${dir}" rev-parse --is-inside-work-tree --show-prefix)" || return 0
+  [[ "${prefix}" == true* ]] || return 0
+  if [[ "${prefix}" == "true" ]]; then
+    case "${base}" in
+      README.* | AGENTS.* | CHANGELOG.*) printf 'allow-repo-root-doc\n' && return 0 ;;
+      *) : ;; # not a root doc name → the tracked-file check decides
+    esac
+  fi
+  # literal pathspec → a "*.md" file name cannot match other tracked files
+  # shellcheck disable=SC2310  # the ls-files status IS the tracked/untracked answer
+  if run_git_bounded --literal-pathspecs -C "${dir}" ls-files --error-unmatch -- "${base}" >/dev/null; then
+    printf 'allow-repo-tracked\n'
+  fi
+  return 0
+}
+
+# git under a 3s wall-clock bound (stock macOS ships no timeout binary; perl alarm survives exec).
+# Ambient GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE dropped → -C alone selects the repository.
+run_git_bounded() {
+  command -v git >/dev/null 2>&1 && command -v perl >/dev/null 2>&1 || return 1
+  # shellcheck disable=SC2016  # perl source, expanded by perl
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE GIT_OPTIONAL_LOCKS=0 \
+    perl -e 'alarm shift; exec { $ARGV[0] } @ARGV or exit 127' 3 git "$@" 2>/dev/null
+}
+
 INPUT="$(hook_read_input)"
 TOOL_NAME="$(hook_get_field "${INPUT}" "tool_name")"
 
@@ -228,15 +267,21 @@ if [[ -n "${MONITOR_ROOT}" ]]; then
   MONITOR_ROOT="${MONITOR_ROOT%/}"
   case "${NORM_PATH}" in
     "${MONITOR_ROOT}"/* | "${MONITOR_ROOT}") allow "allow-monitor-root-env" ;;
-    *) : ;; # not under the env-supplied monitor root → fall through to BLOCK
+    *) : ;; # not under the env-supplied monitor root → fall through to the repository check
   esac
 else
   case "${NORM_PATH}" in
     */.glass-atrium/monitor/data/documents/* | */.claude/monitor/data/documents/*)
       allow "allow-monitor-root-suffix"
       ;;
-    *) : ;; # not under either monitor-root suffix → fall through to BLOCK
+    *) : ;; # not under either monitor-root suffix → fall through to the repository check
   esac
+fi
+
+# (d) repository-owned document — a tracked file, or a root README/AGENTS/CHANGELOG.
+REPO_VERDICT="$(get_repo_doc_verdict "${NORM_PATH}")"
+if [[ -n "${REPO_VERDICT}" ]]; then
+  allow "${REPO_VERDICT}"
 fi
 
 # All 4 conditions hold → BLOCK via channel-a (stderr emit_error + exit 2).

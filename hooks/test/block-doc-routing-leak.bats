@@ -30,6 +30,7 @@ setup() {
 
 teardown() {
   if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
+  if ga_guard_path "${REPO_BASE:-}"; then rm -rf -- "${REPO_BASE:?}"; fi
 }
 
 # Write a transcript-co-located sidecar. Args: $1=agent_key $2=agentType.
@@ -135,6 +136,90 @@ run_hook() {
     HOME="${SANDBOX}/home" GA_DATA_ROOT="${SANDBOX}/home/.glass-atrium"
   [[ "${status}" -eq 2 ]] || return 1
   grep -q 'verdict=block' "${FIRED_LOG}" || return 1
+}
+
+# ── Repository-owned documents: tracked files + root README/AGENTS/CHANGELOG ─────────────
+#
+# Fixture repos sit outside the /tmp + TMPDIR staging arms, which allow first: Linux mktemp
+# honours TMPDIR=/var/tmp, macOS ignores it for /var/folders, and run_hook pins TMPDIR away.
+
+# Build a committed repo with a linked worktree. Sets REPO_BASE, REPO, WORKTREE.
+seed_repo_fixture() {
+  command -v git >/dev/null 2>&1 || skip "git required"
+  [[ -d /var/tmp && -w /var/tmp ]] || skip "/var/tmp not writable"
+  REPO_BASE="$(TMPDIR=/var/tmp mktemp -d)"
+  REPO="${REPO_BASE}/repo"
+  WORKTREE="${REPO_BASE}/wt"
+  mkdir -p "${REPO}/docs" "${REPO_BASE}/scratch"
+  printf '# repo\n' >"${REPO}/README.md"
+  printf 'guide\n' >"${REPO}/docs/guide.md"
+  ln -s "${REPO_BASE}/scratch/outside.md" "${REPO}/docs/link.md"
+  fixture_git -C "${REPO}" init -q
+  fixture_git -C "${REPO}" add README.md docs/guide.md docs/link.md
+  fixture_git -C "${REPO}" commit -q -m init
+  fixture_git -C "${REPO}" worktree add -q "${WORKTREE}"
+}
+
+# git isolated from the operator's config (signing, hooks, identity).
+fixture_git() {
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git \
+    -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false "$@"
+}
+
+# Run the hook as a doc-agent Write of $1, with a fresh firing-trace log.
+run_repo_row() {
+  : >"${FIRED_LOG}"
+  run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"$1\"}}" \
+    TMPDIR="/fixture-tmp"
+}
+
+@test "a doc agent may write a tracked file or a root README/AGENTS/CHANGELOG of a git worktree" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_repo_fixture
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  local row label path verdict
+  for row in \
+    "tracked file below the root|${REPO}/docs/guide.md|allow-repo-tracked" \
+    "README.md at a linked worktree root|${WORKTREE}/README.md|allow-repo-root-doc" \
+    "new untracked AGENTS.md at a repo root|${REPO}/AGENTS.md|allow-repo-root-doc"; do
+    IFS='|' read -r label path verdict <<<"${row}"
+    run_repo_row "${path}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${label}: status ${status}: ${output}"
+      return 1
+    }
+    grep -q "verdict=${verdict}\$" "${FIRED_LOG}" || {
+      echo "${label}: wanted ${verdict}"
+      cat "${FIRED_LOG}"
+      return 1
+    }
+  done
+}
+
+@test "a doc agent writing an untracked document outside a repo root still blocks" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_repo_fixture
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  local row label path
+  for row in \
+    "new report in a non-repo dir|${REPO_BASE}/scratch/report.md" \
+    "new report in a repo subdir|${REPO}/docs/report.md" \
+    "README below the repo root|${REPO}/docs/README.md" \
+    "README inside the git dir|${REPO}/.git/README.md" \
+    "glob-named file matching tracked docs|${REPO}/docs/*.md" \
+    "tracked symlink leading out of the repo|${REPO}/docs/link.md"; do
+    IFS='|' read -r label path <<<"${row}"
+    run_repo_row "${path}"
+    [[ "${status}" -eq 2 ]] || {
+      echo "${label}: status ${status}: ${output}"
+      return 1
+    }
+    grep -q 'verdict=block$' "${FIRED_LOG}" || {
+      echo "${label}"
+      cat "${FIRED_LOG}"
+      return 1
+    }
+  done
 }
 
 # ── P0-2: hook_normalize_path leading-~ expansion — deliberate permissive pin ────────────
