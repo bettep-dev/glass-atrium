@@ -65,7 +65,8 @@ farm_has_ga_links() {
     # branches on the result (not a swallowed precondition). `head -n 1` bounds
     # the scan at the first hit (portable — no reliance on find -quit); the
     # `|| true` absorbs head's benign early-close SIGPIPE under pipefail.
-    hit="$(find "${home}" \
+    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
+    hit="$(find -H "${home}" \
       \( -path "${home}/projects" -o -path "${home}/todos" \
       -o -path "${home}/shell-snapshots" -o -path "${home}/ide" \
       -o -path "${home}/data" -o -path "${home}/wiki" \
