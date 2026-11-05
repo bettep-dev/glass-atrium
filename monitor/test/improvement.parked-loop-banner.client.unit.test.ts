@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
+import { createReactStub, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
@@ -165,43 +166,49 @@ test("the alarm lane stacks alert cards and paints nothing of its own", () => {
   }
 });
 
-// Source-order pin, deliberately NOT a render assertion: the operator view is the
-// whole screen, and rendering it would mock more than it proves. Its limit is that
-// it pins the order the five surfaces are WRITTEN in, which is the order they
-// render in only because they are siblings in one block.
+// document order of the screen's own components → the order the operator reads them in
+function listComponentOrder(node: RenderedNode | string | null, out: string[] = []): string[] {
+  if (node === null || typeof node === "string") return out;
+  out.push(node.type);
+  for (const child of node.children) listComponentOrder(child, out);
+  return out;
+}
+
 test("the operator view keeps the five-surface spine order", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const src = await readFile(IMPROVEMENT_SRC, "utf8");
-  const spine = [
-    "<AlarmLaneI",
-    "<StatusBandI",
-    "<KanbanCardI",
-    "<PatternLedgerCardI",
-    "<LoopOutputGroupI",
-  ];
-  const positions = spine.map((tag) => {
-    const at = src.indexOf(tag);
-    assert.notEqual(at, -1, `${tag} is missing from the operator view`);
-    return at;
+  const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
+  const screen = await loadScreenModule(IMPROVEMENT_SRC, {
+    UI: ui.UI,
+    React: createReactStub(),
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
   });
-  for (let i = 1; i < positions.length; i += 1) {
-    assert.ok(
-      positions[i - 1] < positions[i],
-      `${spine[i - 1]} must precede ${spine[i]} — alarms above the band, the board above the ledger`,
-    );
-  }
+  const spine = ["AlarmLaneI", "StatusBandI", "KanbanCardI", "PatternLedgerCardI", "LoopOutputGroupI"];
+  const rendered = listComponentOrder(renderScreen((screen.ScreenImprovement as (props: unknown) => unknown)({})));
+  const order = rendered.filter((name, at) => spine.includes(name) && rendered.indexOf(name) === at);
+  assert.deepEqual(order, spine, "alarms above the band, the board above the ledger, the loop output last");
 });
+
+const COLOUR = {
+  FN: /\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\([^)]*\)/g,
+  // a colour prop or attribute set to a bare word: `color: 'red'`, `fill="white"`
+  PROPERTY_WORD: /\b(?:color|background(?:Color)?|border(?:Top|Right|Bottom|Left)?Color|fill|stroke|outlineColor|accentColor|caretColor)\s*[:=]\s*\{?\s*["'`]([A-Za-z]+)["'`]/g,
+  NON_COLOUR_WORDS: new Set(["none", "transparent", "currentColor", "currentcolor", "inherit", "initial", "unset"]),
+};
 
 // Colour reaches this screen through tokens only — `var(--name)` directly, or an
 // interpolated token name. Shadows included: depth comes from the --shadow-* tokens.
-test("colour is consumed through design tokens, never a raw literal", async () => {
+// Limit: a named colour inside a composite string (`border: '1px solid red'`) is not seen.
+test("colour reaches the screen through design tokens: no hex, no colour function over raw values, no named colour on a colour property", async () => {
   const { readFile } = await import("node:fs/promises");
   for (const path of [IMPROVEMENT_SRC, INSTRUMENTATION_SRC]) {
     const src = await readFile(path, "utf8");
     const hex = src.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
     assert.deepEqual(hex, [], `hex colour literals bypass the token layer in ${path}`);
-    const rawFns = (src.match(/rgba?\([^)]*\)/g) ?? []).filter((decl) => !decl.includes("var("));
+    const rawFns = (src.match(COLOUR.FN) ?? []).filter((decl) => !decl.includes("var("));
     assert.deepEqual(rawFns, [], `a colour function names a raw value instead of a token in ${path}`);
+    const namedColours = Array.from(src.matchAll(COLOUR.PROPERTY_WORD))
+      .filter(([, word]) => !COLOUR.NON_COLOUR_WORDS.has(word))
+      .map(([decl]) => decl);
+    assert.deepEqual(namedColours, [], `a colour property names a colour keyword instead of a token in ${path}`);
   }
 });
 
