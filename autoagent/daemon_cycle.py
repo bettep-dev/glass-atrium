@@ -16280,7 +16280,7 @@ def _get_canary_refusal(diff: str, canary_text: str, target: Path) -> str | None
     - over the hook's cap: refused, never truncated — truncated text was never pre-registered,
       so a win would describe text that never graduates
     - outside the landing zone: the apply's own guard refuses it on the current target, so a
-      win would never land — checked last, the one check that spawns a process
+      win would never land — checked last, through the apply's own guard module
     """
     if _count_removed_lines(diff):
         return "the diff removes a line"
