@@ -380,7 +380,6 @@ run_prune() {
   # STEP3+4+5 — enumerate candidates (doctor §5 idiom: find guarantees a+c),
   # then per-candidate apply criteria b + d + never-touch and remove/flag.
   local pruned=0 flagged=0 nevertouch=0 candidates=0 unlink_failed=0 link rel
-  # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
   # find ends with `|| true` → masked exit is benign; process substitution keeps
   # the loop in the current shell (counter-var-safe).
   # shellcheck disable=SC2312
@@ -427,6 +426,7 @@ run_prune() {
       log "  prune: removed orphan GA symlink: ${link}"
     fi
     pruned=$((pruned + 1))
+    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
   done < <(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
 
   # STEP6 — summary. Empty candidate set is a no-op (rc 0) with a no-orphan line.

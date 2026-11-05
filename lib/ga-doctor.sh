@@ -2585,13 +2585,13 @@ verify_clean() {
   # 1. zero GA-pointing symlinks under the target
   local ga_links=0 link
   if [[ -d "${TARGET_HOME}" ]]; then
-    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
     # find ends with `|| true` → masked exit benign; loop stays in current shell.
     # shellcheck disable=SC2312
     while IFS= read -r link; do
       [[ -n "${link}" ]] || continue
       log "  FAIL : residual GA symlink: ${link}"
       ga_links=$((ga_links + 1))
+      # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
       # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
     done < <(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
   fi

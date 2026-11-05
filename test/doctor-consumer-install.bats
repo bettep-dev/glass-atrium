@@ -242,7 +242,7 @@ run_doctor_sandbox() {
   # Protects a dotfile-managed ~/.claude: a home reached through a symlink must still count its links,
   # so partial drift stays a hard FAIL instead of reading as a fresh target, and a dangler is reported.
   seed_full_fixture
-  local row name kind real rel
+  local row name kind real rel below
   local -a rows=(
     "target home a real directory|dir"
     "target home a symlink to a real directory|symlink"
@@ -260,6 +260,11 @@ run_doctor_sandbox() {
       [[ "${rel}" == "agents/dev-a.md" ]] || deploy_link "${rel}"
     done
     ln -s "${GA_SANDBOX}/agents/gone.md" "${TARGET}/agents/gone.md"
+    # a symlinked subdirectory is never descended → its dangler is not this home's
+    below="${SANDBOX}/${kind}-below"
+    mkdir -p "${below}"
+    ln -s "${GA_SANDBOX}/agents/below-gone.md" "${below}/below-gone.md"
+    ln -s "${below}" "${TARGET}/linked-dir"
     run_doctor_sandbox
     [[ "${status}" -eq 1 ]] || {
       echo "${name}: status ${status}: ${output}"
@@ -271,6 +276,10 @@ run_doctor_sandbox() {
     }
     [[ "${output}" == *"dangling GA symlink: ${TARGET}/agents/gone.md"* ]] || {
       echo "${name}: dangler not reported: ${output}"
+      return 1
+    }
+    [[ "${output}" != *"below-gone.md"* ]] || {
+      echo "${name}: a dangler below a symlinked directory was reported: ${output}"
       return 1
     }
   done
