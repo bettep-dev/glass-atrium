@@ -464,15 +464,13 @@ test("the page header renders every title as the page h1 with the sub-line under
 
   const echoed = renderScreen(React.createElement(PageHeader, { title: "Models & budgets", sub: "Models & budgets" }));
   assert.equal(collectText(echoed), "Models & budgets", "a sub-line repeating the title is not rendered twice");
-
-  const src = await import("node:fs").then((fs) => fs.readFileSync(AGENTS_SRC, "utf8"));
-  assert.doesNotMatch(src, /shouldRenderTitle/, "the retired opt-in is gone from the Agents screen");
 });
 
 const HIGH_FAIL_WORD = "high failure share";
 
 test("the summary row marks the shared crit step from its own failed share, and only on an adequate sample", async () => {
-  const mod = await loadAgentsScreen();
+  const toneVarColor = REAL_UI.toneVarColor as (tone: string) => string;
+  const mod = await loadAgentsScreen({ toneVarColor });
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   // failed share = 1 − passed/denominator, denominator = runs − needs_context.
   const cases = [
@@ -484,12 +482,14 @@ test("the summary row marks the shared crit step from its own failed share, and 
     const tree = renderScreen(
       React.createElement(mod.AgentSummaryRow as Component, {
         agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", ...c },
-        days: 30, isSelected: false, onSelect: () => {}, trend: null, failure: null, overage: null,
+        days: 30, isSelected: false, onSelect: () => {}, trend: [3, 5, 2], trendStatus: "ready", failure: null, overage: null,
       }),
     );
     assert.equal(collectText(tree).includes(HIGH_FAIL_WORD), c.crit, c.why);
     const toned = findNodes(tree, (n) => /\btext-(ok|warn)\b/.test(String(n.props?.className ?? "")));
     assert.equal(toned.length, 0, `${c.why}: the success numeral carries no second scale`);
+    const [trendBars] = findAtoms(tree, "MiniBars");
+    assert.equal(trendBars?.props.color, toneVarColor(c.crit ? "crit" : "neutral"), `${c.why}: the trend bars carry no band of their own`);
   }
 });
 
@@ -512,13 +512,27 @@ test("a matrix cell takes the crit step from failures over its rate denominator,
   }
 });
 
-test("Agents keeps one rate scale — the retired thresholds and the hardcoded trend band are gone", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const source = await readFile(AGENTS_SRC, "utf8");
-  for (const name of ["SUMMARY_SUCCESS_OK_PCT", "SUMMARY_SUCCESS_WARN_PCT", "SUCCESS_RATE_OK_THRESHOLD", "SUCCESS_RATE_WARN_THRESHOLD", "successRateTone"]) {
-    assert.equal(source.includes(name), false, `${name} is retired`);
+describe("the drawer hero's success figure carries no tone at any rate, which rides its fail-share glyph alone", () => {
+  // rates straddle 90 and 95, where a second rate scale would key on them
+  const rows = [
+    { name: "98%, 1 of 50 failed: under the crit step, no glyph", success_pct: 98, crit: false },
+    { name: "92%, 4 of 50 failed: over the crit step, glyph", success_pct: 92, crit: true },
+    { name: "80%, 10 of 50 failed: over the crit step, glyph", success_pct: 80, crit: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const agent = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", runs: 50, needs_context_count: 0, success_pct: row.success_pct };
+      const emptyRows = { status: "ready", data: { rows: [] }, error: null };
+      const tree = await renderComponent("AgentOverviewSection", {
+        agent, drawerAgent: agent.agent_id, summaryState: { status: "ready", data: { agents: [agent] }, error: null },
+        revisionState: emptyRows, reviewByAgentState: emptyRows, onRetry: () => undefined,
+      });
+      const figures = findNodes(tree, (n) => /\bhero-stat\b/.test(String(n.props?.className ?? "")));
+      assert.equal(figures.length, 1, "one hero figure");
+      assert.doesNotMatch(String(figures[0].props.className), /\btext-(ok|warn|crit|info)\b/);
+      assert.equal(collectText(figures[0]).includes(HIGH_FAIL_WORD), row.crit);
+    });
   }
-  assert.doesNotMatch(source, /successPct\s*<\s*90/, "trendBarColor no longer carries its own 90% band");
 });
 
 test("the Agents ledger shows no initial avatar, which reads G for every glass-atrium agent", async () => {
@@ -995,6 +1009,12 @@ test("the matrix legend states which outcomes its n leaves out", async () => {
   assert.match(collectText(tree), /reconstructed/);
 });
 
+test("the matrix legend carries only the crit step and its below-the-step swatch", async () => {
+  const tree = await renderComponent("SuccessRateLegend", {});
+  const swatches = findNodes(tree, (n) => n.type === "LegendSwatch").map((n) => n.props.colorVar);
+  assert.deepEqual(swatches, ["--crit", "--faint"]);
+});
+
 test("a compatibility requirement rides a short row tag with the full text on hover, never a truncated sentence", async () => {
   const mod = await loadAgentsScreen();
   const requirement = "Requires monitor running at http://127.0.0.1:16145 with a live daemon";
@@ -1300,6 +1320,26 @@ function getPerformanceProps(trend: number[] | null, trendDates: string[]): Reco
     trendByAgent: trend ? new Map([[PERFORMANCE_AGENT.agent_id, trend]]) : null, trendDates, onRetry: () => undefined,
   };
 }
+
+describe("the drawer trend chart takes its tone from the status and the failed share, with no rate band of its own", () => {
+  const rows = [
+    { name: "50% at n=4 stays neutral: a low sample carries no tone, whatever its rate", agent: { runs: 4, success_pct: 50 }, tone: "neutral" },
+    { name: "98% at n=50 stays neutral: under the crit step", agent: { runs: 50, success_pct: 98 }, tone: "neutral" },
+    { name: "92% at n=50 is crit: over the crit step", agent: { runs: 50, success_pct: 92 }, tone: "crit" },
+    { name: "an errored agent is crit whatever its rate", agent: { status: "error", runs: 50, success_pct: 98 }, tone: "crit" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const tree = await renderComponent("AgentPerformanceSection", {
+        ...getPerformanceProps([3, 5, 2], ["2026-09-22", "2026-09-23", "2026-09-24"]),
+        agent: { ...PERFORMANCE_AGENT, ...row.agent },
+      });
+      const charts = findAtoms(tree, "TrendChart");
+      assert.equal(charts.length, 1, "one trend chart");
+      assert.equal(charts[0].props.tone, row.tone);
+    });
+  }
+});
 
 test("the drawer trend is a readable chart with one dated point per day", async () => {
   const dates = ["2026-09-22", "2026-09-23", "2026-09-24"];

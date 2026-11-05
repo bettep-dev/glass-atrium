@@ -176,18 +176,22 @@ interface HealthFixture {
 	failedStores: HealthStore[];
 }
 
-// HEALTH_CARD_DEFS 의 daemon 카드 이름 — 명부의 데몬 둘 전원.
-const HEALTH_OK_DAEMONS = ["autoagent", "wiki"];
+const HEALTH = {
+	// HEALTH_CARD_DEFS 의 daemon 카드 이름 — 명부의 데몬 둘 전원.
+	OK_DAEMONS: ["autoagent", "wiki"],
+	// 부품 명부의 크기 — HEALTH_CARD_DEFS 5종(PG · Chromium · daemon×2 · hook chain).
+	// 표의 행 수가 이 명부를 따르는지 재는 자리라 화면이 아니라 명부의 사실임.
+	EXPECTED_TOTAL: 5,
+	// 페이로드 항목 수 — 맵은 도착 건수만 한 줄로 냄(날짜·사유 펼침은 드릴다운 몫).
+	PAYLOAD_ENTRIES: 3,
+	// 화면의 HEALTH_POLL_MS(60s) 한 틱 + 왕복 여유. 상수를 내보내지 않으므로 하네스가 상한만 가짐.
+	POLL_WAIT_MS: 100_000,
+	// part whose verdict rides the same health response as DAEMON_PART_ID, with no live daemon bound to it
+	WITNESS_PART_ID: "glass-atrium-wiki-curator",
+} as const;
 
 // 응답이 내는 마지막 실행 시각 — 명부에 있는 데몬만 이 값을 받고, 나머지 부품은 낼 실행이 없음.
 const DAEMON_RUN_TS = "2026-08-20T09:10:11.000Z";
-
-// 부품 명부의 크기 — HEALTH_CARD_DEFS 5종(PG · Chromium · daemon×2 · hook chain).
-// 표의 행 수가 이 명부를 따르는지 재는 자리라 화면이 아니라 명부의 사실임.
-const HEALTH_EXPECTED_TOTAL = 5;
-
-// 페이로드 항목 수 — 맵은 도착 건수만 한 줄로 냄(날짜·사유 펼침은 T9c 몫).
-const HEALTH_PAYLOAD_ENTRIES = 3;
 
 // 실패가 하나도 없는 hook-failures 응답 — 기본 픽스처와 T12c 의 창 픽스처가 같은 바닥에서 출발함.
 // 함수인 이유: 배열 두 개를 케이스마다 새로 냄(공유 참조면 한 케이스의 변형이 다음 케이스로 샘).
@@ -203,7 +207,7 @@ function getEmptyHookFailures(): HealthFixture["hookFailures"] {
 
 function getHealthFixture(overrides: Partial<HealthFixture> = {}): HealthFixture {
 	return {
-		daemons: HEALTH_OK_DAEMONS.map((daemon_name) => ({
+		daemons: HEALTH.OK_DAEMONS.map((daemon_name) => ({
 			daemon_name,
 			effective_status: "ok",
 			last_run_at: DAEMON_RUN_TS,
@@ -215,7 +219,7 @@ function getHealthFixture(overrides: Partial<HealthFixture> = {}): HealthFixture
 			source_mtime: "2026-08-20T04:05:06.000Z",
 		},
 		payload: {
-			entries: Array.from({ length: HEALTH_PAYLOAD_ENTRIES }, (_v, i) => ({
+			entries: Array.from({ length: HEALTH.PAYLOAD_ENTRIES }, (_v, i) => ({
 				run_date: `2026-08-${String(20 + i).padStart(2, "0")}`,
 				daemon_name: "autoagent",
 				payload: {},
@@ -711,9 +715,6 @@ const OK_DAEMON = "wiki";
 // 데몬 원천과 부품 원천이 같은 노드에서 만나는 자리 — HEALTH_CARD_DEFS 의 autoagent 카드 id.
 const DAEMON_PART_ID = "daemon-cycle";
 
-// part whose verdict rides the same health response as DAEMON_PART_ID, with no live daemon bound to it
-const HEALTH = { WITNESS_PART_ID: "glass-atrium-wiki-curator" } as const;
-
 // 데몬 둘 밖의 부품 셋(PG · Chromium export · hook chain) → 그 판정을 대신 내는 존.
 // 화면은 이 짝을 리터럴로 갖지 않음 — 그려지는 소스의 subgraph 멤버십과 part_bindings 를 곱해
 // "헬스 노드를 하나만 담은 존" 을 파생함. 여기 리터럴은 그 파생이 오늘 무엇을 내는지 못 박는 자리이고,
@@ -731,9 +732,6 @@ const ZONE_RING_CRIT_CLASS = "arch-zone-live-crit";
 // 폴링 재도착을 재는 경로 — PG·Chromium 판정이 같은 응답에서 옴.
 const PG_HEALTH_PATH = "/api/health";
 
-// 화면의 HEALTH_POLL_MS(60s) 한 틱 + 왕복 여유. 상수를 내보내지 않으므로 하네스가 상한만 가짐.
-const HEALTH_POLL_WAIT_MS = 100_000;
-
 // 캔버스 SVG 의 element id — mermaid 가 렌더마다 새로 짓는 값이라 재렌더 여부의 지표가 됨.
 async function getCanvasSvgId(): Promise<string> {
 	return await page.evaluate((canvas) => {
@@ -744,7 +742,7 @@ async function getCanvasSvgId(): Promise<string> {
 
 // 해당 경로의 누적 요청 수가 목표에 닿을 때까지 대기 — 폴링 한 틱이 실제로 나갔는지의 근거.
 async function waitForHealthPoll(path: string, target: number): Promise<boolean> {
-	const deadline = Date.now() + HEALTH_POLL_WAIT_MS;
+	const deadline = Date.now() + HEALTH.POLL_WAIT_MS;
 	while (Date.now() < deadline) {
 		if ((getHealthCounts()[path] || 0) >= target) return true;
 		await new Promise((resolve) => setTimeout(resolve, 250));
@@ -3030,8 +3028,8 @@ test("AC-B2-4a every roster part is reachable by opening its node", async () => 
 	const roster = await getRosterPartIds();
 	assert.equal(
 		roster.length,
-		HEALTH_EXPECTED_TOTAL,
-		`fixture precondition: the shared roster must carry ${HEALTH_EXPECTED_TOTAL} parts`,
+		HEALTH.EXPECTED_TOTAL,
+		`fixture precondition: the shared roster must carry ${HEALTH.EXPECTED_TOTAL} parts`,
 	);
 
 	const reached = await sweepPartIdsAcrossNodes();
@@ -3234,8 +3232,8 @@ test("B2-4 guard the residual bindings come from the served part_bindings, not a
 	const roster = await getRosterPartIds();
 	assert.equal(
 		roster.length,
-		HEALTH_EXPECTED_TOTAL,
-		`fixture precondition: the shared roster must carry ${HEALTH_EXPECTED_TOTAL} parts`,
+		HEALTH.EXPECTED_TOTAL,
+		`fixture precondition: the shared roster must carry ${HEALTH.EXPECTED_TOTAL} parts`,
 	);
 	const expected = Object.fromEntries(
 		roster.map((id): [string, string] => [id, (PART_NODE_BINDINGS[id] ?? []).slice(1).join(", ")]),
@@ -3284,7 +3282,7 @@ const DAEMON_RUN_ALT_TS = "2019-03-04T05:06:07.000Z";
 // autoagent 만 그 순간을 보고하는 health 픽스처 — 절마다 그 순간만 갈아끼움.
 function getRanDaemonFixture(runTs: string): HealthFixture {
 	return getHealthFixture({
-		daemons: HEALTH_OK_DAEMONS.map((daemon_name) => ({
+		daemons: HEALTH.OK_DAEMONS.map((daemon_name) => ({
 			daemon_name,
 			effective_status: "ok" as const,
 			last_run_at: daemon_name === "autoagent" ? runTs : null,
@@ -3317,8 +3315,8 @@ test("B2-5 guard the last-run reading tracks the served instant and empties only
 	const roster = await getRosterPartIds();
 	assert.equal(
 		roster.length,
-		HEALTH_EXPECTED_TOTAL,
-		`fixture precondition: the shared roster must carry ${HEALTH_EXPECTED_TOTAL} parts`,
+		HEALTH.EXPECTED_TOTAL,
+		`fixture precondition: the shared roster must carry ${HEALTH.EXPECTED_TOTAL} parts`,
 	);
 
 	for (const id of RAN_PART_IDS) {
