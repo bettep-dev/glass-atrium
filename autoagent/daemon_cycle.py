@@ -6586,8 +6586,10 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
     """Whole days between the most recent APPLIED proposal and the current cycle.
 
     Corroborating crit for the systemic-regression check: a large gap since
-    anything actually landed. Queries MAX(cycle_date) over status='applied' rows
-    in core.autoagent_proposals. No applied row ever (fresh DB) → 0 (fail-open:
+    anything actually landed. A row lands on its apply day — the UTC date of
+    reviewed_at, which the apply flip stamps — not its cycle_date, which a trialled
+    row keeps from its pre-registration weeks earlier; a row with no stamp falls
+    back to cycle_date. No applied row ever (fresh DB) → 0 (fail-open:
     absence of history must never fabricate a regression alert). PG unavailable
     / read error / no current date → 0 (same fail-open contract as
     _prior_all_reject_cycle_count).
@@ -6595,10 +6597,11 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
     if not HAS_PG_LOOP_WRITE or not current_cycle_date:
         return 0
 
+    landed_on = "coalesce((reviewed_at AT TIME ZONE 'UTC')::date, cycle_date)"
     select_sql = (
-        "SELECT max(cycle_date) "
+        f"SELECT max({landed_on}) "
         "FROM core.autoagent_proposals "
-        "WHERE status::text = 'applied' AND cycle_date <= %s::date"
+        f"WHERE status::text = 'applied' AND {landed_on} <= %s::date"
     )
     try:
         with _pg_connect() as conn:
