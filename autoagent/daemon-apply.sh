@@ -628,185 +628,11 @@ except Exception:
     print("")
 '
 
-# -- Landing-zone guard Python source (hoisted module constant) ------------
-# Evaluated once at script load (not per-patch); referenced by
-# assert_diff_in_editable_region below. The quoted-delimiter `<<'PY'` heredoc —
-# not the function scope — is what makes capturing apostrophe-bearing source
-# safe (SC2259-safe). Rationale + verdict contract: that function's header.
-# Separated assignment then readonly (NOT `readonly X=$(...)`) so `cat`'s exit
-# code is not masked (SC2155).
-_PY_GUARD="$(cat <<'PY'
-import sys
-
-
-def _editable_regions(text):
-    """Body substrings between each EDITABLE BEGIN/END marker pair (doc order)."""
-    begin = "<!-- EDITABLE:BEGIN -->"
-    end = "<!-- EDITABLE:END -->"
-    regions = []
-    pos = 0
-    while True:
-        b = text.find(begin, pos)
-        if b == -1:
-            break
-        e = text.find(end, b + len(begin))
-        if e == -1:
-            break  # unbalanced trailing BEGIN with no END → ignore (no region)
-        regions.append(text[b + len(begin):e])
-        pos = e + len(end)
-    return regions
-
-
-def _row_is_pipe(body):
-    """A GFM table row/separator (incl. the '|---|' header rule): the stripped
-    line begins with '|'."""
-    return body.strip().startswith("|")
-
-
-def _breaks_table(hunks):
-    """True when a hunk inserts a contiguous run of ADDED non-pipe lines directly
-    between two GFM table rows (a pipe-row immediately before AND after the run).
-    Reasons on the POST-APPLY (new-side) view of each hunk — context + added
-    lines in document order, removed lines dropped — so it catches a diff that
-    lands inside an editable region yet splits a table block. Mirrors RC1: two
-    non-pipe lines relocated into an Error Recovery table interior. A pure
-    table-row addition (the added line is itself '|...|') and any insert NOT
-    bounded by pipe rows on both sides are admitted (no false positive on append-
-    after-table, prepend-before-table, or text between two separate tables)."""
-    for hunk in hunks:
-        new_side = []  # (is_added, body) in post-apply document order
-        for raw in hunk:
-            if not raw:
-                new_side.append((False, ""))  # blank context line
-                continue
-            marker, body = raw[0], raw[1:]
-            if marker == "-":
-                continue  # removed → absent post-apply
-            if marker == "+":
-                new_side.append((True, body))
-            elif marker == " ":
-                new_side.append((False, body))
-            # other markers ('\' no-newline-at-EOF) carry no table signal
-        n = len(new_side)
-        i = 0
-        while i < n:
-            is_added, body = new_side[i]
-            if is_added and not _row_is_pipe(body):
-                # extend over a run of consecutive added non-pipe lines (RC1
-                # inserted TWO) so the bounding pipe-rows are tested once.
-                run_end = i
-                while run_end < n and new_side[run_end][0] and not _row_is_pipe(new_side[run_end][1]):
-                    run_end += 1
-                before_pipe = i - 1 >= 0 and _row_is_pipe(new_side[i - 1][1])
-                after_pipe = run_end < n and _row_is_pipe(new_side[run_end][1])
-                if before_pipe and after_pipe:
-                    return True
-                i = run_end
-            else:
-                i += 1
-    return False
-
-
-def main():
-    target_path = sys.argv[1]
-    diff_text = sys.stdin.read()
-    # git apply breaks a diff and a body at "\n" alone; str.splitlines and a
-    # translating open also break at FF, U+0085, U+2028 and a lone CR.
-    lines = [ln[:-1] if ln.endswith("\r") else ln for ln in diff_text.split("\n")]
-
-    # Header-less Strategy-B fragment → EOF append, outside any region. Reject.
-    has_minus_header = any(ln.startswith("--- ") for ln in lines)
-    has_plus_header = any(ln.startswith("+++ ") for ln in lines)
-    if not (has_minus_header and has_plus_header):
-        sys.stdout.write("header_less")
-        return
-
-    try:
-        with open(target_path, "r", encoding="utf-8", newline="") as fh:
-            current = fh.read()
-    except OSError:
-        sys.stdout.write("read_error")  # loud-fail: NEVER pass-through
-        return
-
-    regions = _editable_regions(current)
-    if not regions:
-        sys.stdout.write("no_marker")
-        return
-
-    def in_some_region(needle):
-        s = needle.strip()
-        if not s:
-            return True  # blank line carries no landing-zone signal
-        return any(s in region for region in regions)
-
-    # Hunk-aware scan. A unified diff lands each hunk by matching its ANCHOR
-    # lines (context + removed) against the current file at one position; the
-    # added lines are placed among those anchors. The landing zone of a hunk is
-    # decided by where its anchors sit:
-    #   1. Every removed/context line the file CONTAINS must sit inside an
-    #      editable region — an anchor in a protected zone = reject.
-    #   2. Each hunk MUST carry at least one anchor resolving inside a region.
-    #      A pure-add hunk with no in-region anchor cannot be confirmed to land
-    #      editable → reject (fail-closed).
-    hunks = []
-    current_hunk = None
-    for raw in lines:
-        if raw.startswith("@@"):
-            current_hunk = []
-            hunks.append(current_hunk)
-            continue
-        if current_hunk is None:
-            continue  # pre-hunk header lines
-        current_hunk.append(raw)
-
-    if not hunks:
-        sys.stdout.write("out_of_region")  # headers but no hunk body = malformed
-        return
-
-    for hunk in hunks:
-        anchor_in_region = False
-        for raw in hunk:
-            if not raw:
-                continue
-            marker, body = raw[0], raw[1:]
-            # Compute the landing-zone hit ONCE per line; both branches reuse it.
-            region_hit = in_some_region(body)
-            if marker == "-":
-                # Removed text must currently exist inside an editable region.
-                if body.strip() and not region_hit:
-                    sys.stdout.write("out_of_region")
-                    return
-                if body.strip() and region_hit:
-                    anchor_in_region = True
-            elif marker == " ":
-                # Context anchor. If the file holds it OUTSIDE every region the
-                # hunk sits in a protected zone → reject; inside → positive anchor.
-                if body.strip():
-                    if body in current and not region_hit:
-                        sys.stdout.write("out_of_region")
-                        return
-                    if region_hit:
-                        anchor_in_region = True
-            # Added lines carry no landing anchor of their own.
-        if not anchor_in_region:
-            sys.stdout.write("out_of_region")  # no in-region anchor → fail-closed
-            return
-
-    # Post-region structural integrity (RC1). Every hunk anchors in-region, but
-    # an in-region insert can STILL split a GFM table by dropping a non-pipe line
-    # between two table rows — invisible to the containment scan above. Reject on
-    # the post-apply table-break view (fail-closed, same as out_of_region).
-    if _breaks_table(hunks):
-        sys.stdout.write("table_break")
-        return
-
-    sys.stdout.write("ok")
-
-
-main()
-PY
-)"
-readonly _PY_GUARD
+# -- Landing-zone guard (lib/landing_zone_guard.py) -------------------------
+# Run by assert_diff_in_editable_region below; daemon_cycle imports the same file
+# for its trial gate → one copy, so the trial and the apply never diverge.
+LANDING_ZONE_GUARD_PY="${SCRIPT_DIR}/lib/landing_zone_guard.py"
+readonly LANDING_ZONE_GUARD_PY
 
 # -- Resolve report path ---------------------------------------------------
 # NOTE: report-existence is NOT checked here. The PG backlog is the PRIMARY
@@ -1611,10 +1437,8 @@ verify_target_in_agents() {
 # Returns 0 ONLY on the 'ok' verdict; every other verdict → return 1 (fail-closed)
 # AFTER a loud named emit_log. The guard's OWN read must loud-fail — NO 2>/dev/null
 # absorption on the python call (a swallowed guard failure would silently pass-
-# through, the exact Precondition Loud-Fail anti-pattern). The python source is the
-# _PY_GUARD module constant (captured once at load via a quoted heredoc — SC2259-
-# safe; the source contains apostrophes a single-quoted bash assignment would
-# break) and the diff is fed on stdin.
+# through, the exact Precondition Loud-Fail anti-pattern). The guard is
+# lib/landing_zone_guard.py (LANDING_ZONE_GUARD_PY); the diff is fed on stdin.
 #
 # Args: target (the real, git-facing agent file) · diff (proposed_diff) ·
 #       label · diff_target (for the reject log attribution).
@@ -1626,10 +1450,10 @@ assert_diff_in_editable_region() {
 
     # Loud read: no 2>/dev/null absorption on the guard call, so a non-zero exit
     # or empty/non-ok verdict from python3 is treated as a fail-closed reject by
-    # the verdict check below. Source = _PY_GUARD module constant (captured once
-    # at load via a quoted heredoc); the diff is fed on stdin.
+    # the verdict check below. A missing guard file is such an exit; the diff is
+    # fed on stdin.
     local verdict
-    verdict="$(printf '%s' "${diff}" | python3 -c "${_PY_GUARD}" "${target}")"
+    verdict="$(printf '%s' "${diff}" | python3 "${LANDING_ZONE_GUARD_PY}" "${target}")"
 
     if [[ "${verdict}" == "ok" ]]; then
         return 0

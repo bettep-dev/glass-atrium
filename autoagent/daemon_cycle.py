@@ -1497,6 +1497,13 @@ try:
 except Exception as _trial_design_import_exc:  # noqa: BLE001 — lib missing → unchecked, loudly
     _TRIAL_DESIGN_IMPORT_EXC = _trial_design_import_exc
 
+# Captured, not written: the trial gate refuses every candidate on it, naming the fault.
+_LANDING_ZONE_GUARD_IMPORT_EXC: Exception | None = None
+try:
+    import landing_zone_guard
+except Exception as _landing_zone_guard_import_exc:  # noqa: BLE001 — lib missing → trials refused, loudly
+    _LANDING_ZONE_GUARD_IMPORT_EXC = _landing_zone_guard_import_exc
+
 # Cooperative update pause-flag honor (T10) — the python twin of
 # scripts/lib/update-pause-flag.sh. While a Glass Atrium update swaps files it
 # holds a flag; the daemon cooperatively SUSPENDS its decision-to-run so a cycle
@@ -16284,39 +16291,22 @@ def _get_canary_refusal(diff: str, canary_text: str, target: Path) -> str | None
         return f"rendered canary block {size} B exceeds the {CANARY.MAX_BYTES} B cap"
     try:
         verdict = _get_landing_zone_verdict(diff, target)
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+    except (ImportError, ValueError) as exc:
         return f"the apply's landing-zone verdict is unavailable ({_describe_fault(exc)})"
     if verdict != "ok":
         return f"the apply's landing-zone guard reads {verdict} on {target.name}"
     return None
 
 
-_APPLY_SCRIPT = Path(__file__).resolve().parent / "daemon-apply.sh"
-# the guard's heredoc bounds in daemon-apply.sh — its one copy, so the cycle and the apply never diverge
-_APPLY_GUARD_BOUNDS = ("_PY_GUARD=\"$(cat <<'PY'", "PY")
-
-
 def _get_landing_zone_verdict(diff: str, target: Path) -> str:
-    """The apply's landing-zone verdict on the current target, from the guard source it runs.
+    """The apply's landing-zone verdict on the current target, from the guard module it runs.
 
-    Raises OSError (script unreadable), ValueError (guard bounds absent, no verdict) or
-    SubprocessError (non-zero exit, timeout).
+    Raises ImportError (the guard module did not import) or ValueError (a target that is
+    not UTF-8 text, on which the apply's guard process fails too).
     """
-    lines = _APPLY_SCRIPT.read_text(encoding="utf-8").split("\n")
-    begin, end = _APPLY_GUARD_BOUNDS
-    try:
-        start = lines.index(begin) + 1
-        source = "\n".join(lines[start : lines.index(end, start)])
-    except ValueError as exc:
-        raise ValueError(f"no _PY_GUARD heredoc in {_APPLY_SCRIPT}") from exc
-    # SECURITY: the source is this install's own daemon-apply.sh text, never input — the apply's own `python3 -c` call
-    run = subprocess.run(
-        [sys.executable, "-c", source, str(target)],
-        input=diff, capture_output=True, text=True, encoding="utf-8", timeout=30, check=True,
-    )
-    if not run.stdout.strip():
-        raise ValueError("the guard printed no verdict")
-    return run.stdout.strip()
+    if _LANDING_ZONE_GUARD_IMPORT_EXC is not None:
+        raise ImportError(_describe_fault(_LANDING_ZONE_GUARD_IMPORT_EXC))
+    return landing_zone_guard.get_verdict(diff, str(target))
 
 
 def _get_haiku_status(

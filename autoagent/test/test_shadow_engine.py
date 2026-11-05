@@ -973,7 +973,7 @@ class BoundPayloadTest(_ShadowFixture):
         self,
     ) -> None:
         # injection can only add; an empty block is the A/A's own text; a win must be able to land
-        missing_apply = self.agents_dir / "missing" / "daemon-apply.sh"
+        missing_guard = ModuleNotFoundError("No module named 'landing_zone_guard'")
         rows = [
             (
                 "a removed line beside an added one",
@@ -994,16 +994,19 @@ class BoundPayloadTest(_ShadowFixture):
                 None,
             ),
             (
-                "the apply's guard cannot be read",
+                "the apply's guard module did not import",
                 _PROBE_DIFF,
-                "the apply's landing-zone verdict is unavailable",
-                missing_apply,
+                "the apply's landing-zone verdict is unavailable"
+                " (ImportError: ModuleNotFoundError: No module named 'landing_zone_guard')",
+                missing_guard,
             ),
         ]
-        for name, diff, reason, apply_script in rows:
+        for name, diff, reason, import_fault in rows:
             with self.subTest(name), contextlib.ExitStack() as stack:
-                if apply_script is not None:
-                    stack.enter_context(mock.patch.object(dc, "_APPLY_SCRIPT", apply_script))
+                if import_fault is not None:
+                    stack.enter_context(
+                        mock.patch.object(dc, "_LANDING_ZONE_GUARD_IMPORT_EXC", import_fault)
+                    )
                 self.ledger.rows.clear()
                 self.diff = diff
                 result = self._build(self._check_power())
