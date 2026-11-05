@@ -1035,7 +1035,7 @@
     "autoagent/test/live-pg-ephemeral.bats": "3c830088b8d8d4242ddc00a13361ab95a7d2644e02a82e33e405948fd2b064a8",
     "autoagent/test/setup_suite.bash": "1b60bce1b36e8e413b63bf07a427ba6a6e1270e70d0164ee19cbb50b60762366",
     "autoagent/test/suite-hermeticity.bats": "a073bfb63cee00274ffa9aaddca3ee5aeba903caedef1cadc1a0fa9ef706e2b6",
-    "autoagent/test/test_aa_harness.py": "7673634fcf9aac2d5497b623cbc5950ebdd5d57b312347c06c6aa31cea7c8168",
+    "autoagent/test/test_aa_harness.py": "08ac54c7ce497ff7960cd3929a20bf7650c6caa91ac75eab626854fc3d7a4fbd",
     "autoagent/test/test_all_reject_alert.py": "61c1731af5690239f07428a598e53afe378f5ee9311cfc60f68656fbe17548f7",
     "autoagent/test/test_apply_parked_guard.py": "0f6ac1ccfe0fa769bb2b2ad3f586e17dd6db49cda75405830d838f4aaa1f29db",
     "autoagent/test/test_c3_scope_resolution.py": "8b8c68ed4103872a9aacc9da363e8021a0cc3983b845767450bd3272628feb21",

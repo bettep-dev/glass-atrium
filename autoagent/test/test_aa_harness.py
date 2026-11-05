@@ -960,16 +960,7 @@ class AaUnsealedRunTest(unittest.TestCase):
         self.sockdir.mkdir()
         self.code_root = Path(tmp.name).resolve() / "code"
         self.probe = _put_code_tree(self.code_root)
-        self.env = {k: v for k, v in os.environ.items() if k not in self._INHERITED}
-        self.env.update(
-            HOME=str(self.home),
-            PGHOST=str(self.sockdir),
-            PGPORT="5432",
-            PYTHONDONTWRITEBYTECODE="1",
-            # the decoy HOME hides the user site-packages: keep this interpreter's own
-            PYTHONUSERBASE=site.getuserbase(),
-            AA_PROBE_CODE_ROOT=str(self.code_root),
-        )
+        self.env = self._get_env()
 
     def test_an_unsealed_run_from_a_non_install_tree_reaches_no_socket_under_any_runner(
         self,
@@ -984,6 +975,16 @@ class AaUnsealedRunTest(unittest.TestCase):
                 self.assertEqual(run.stderr.count(_REFUSAL), 4, run.stderr)  # one per entry
                 self.assertNotIn(str(self.sockdir), run.stderr)
                 self.assertEqual(self._get_data_listing(), before)
+
+    def test_the_child_env_drops_the_pg_sandbox_recorder_variables(self) -> None:
+        # a recorder variable reaching the child records the decoy reach as a sandbox refusal
+        recorder = {
+            "GA_BATS_PG_SANDBOX": str(self.sockdir),
+            "GA_BATS_PG_RECORD": str(self.home / "rec.log"),
+        }
+        with mock.patch.dict(os.environ, recorder):
+            env = self._get_env()
+        self.assertEqual([key for key in env if key.startswith("GA_BATS_PG_")], [])
 
     def test_the_decoy_names_a_reach_from_each_entry_once_the_code_tree_is_the_install(
         self,
@@ -1002,6 +1003,19 @@ class AaUnsealedRunTest(unittest.TestCase):
                 run = self._run_probe((str(self.probe), f"AaUnsealedProbe.{method}"))
                 self.assertIn(str(self.sockdir), run.stderr)
                 self.assertNotIn(_REFUSAL, run.stderr)
+
+    def _get_env(self) -> dict[str, str]:
+        env = {k: v for k, v in os.environ.items() if k not in self._INHERITED}
+        env.update(
+            HOME=str(self.home),
+            PGHOST=str(self.sockdir),
+            PGPORT="5432",
+            PYTHONDONTWRITEBYTECODE="1",
+            # the decoy HOME hides the user site-packages: keep this interpreter's own
+            PYTHONUSERBASE=site.getuserbase(),
+            AA_PROBE_CODE_ROOT=str(self.code_root),
+        )
+        return env
 
     def _get_runners(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
         return (
