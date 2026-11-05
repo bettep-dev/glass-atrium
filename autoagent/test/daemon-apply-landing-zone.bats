@@ -196,7 +196,7 @@ b64() {
 }
 
 # write_proposal_row — the stored pending proposal the single lookup returns for
-# the given target + label + diff, in the lookup's eight fields. The diff gains a
+# the given target + label + diff, in the lookup's nine fields. The diff gains a
 # trailing newline to mirror the PG-sourced proposed_diff convention.
 write_proposal_row() {
   local target="$1" label="$2" diff="$3" label_b64 agent_b64 target_b64 diff_b64
@@ -204,7 +204,7 @@ write_proposal_row() {
   agent_b64="$(b64 probe)"
   target_b64="$(b64 "${target}")"
   diff_b64="$(b64 "${diff}"$'\n')"
-  printf '%s|2026-06-26|%s|%s|%s|%s|pending|ok\n' "${PROPOSAL_ID}" "${label_b64}" \
+  printf '%s|2026-06-26|%s|%s|%s|%s|pending|auto|ok\n' "${PROPOSAL_ID}" "${label_b64}" \
     "${agent_b64}" "${target_b64}" "${diff_b64}" >"${WORK}/proposal.row"
 }
 

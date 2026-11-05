@@ -80,14 +80,15 @@
 #   backlog. Two callers: a user button-click in the monitor #improvement UI
 #   (POST /api/improvement/:id/approve shells out to this as monitor-user), and
 #   the cycle's graduation of a won live trial (the machine actor).
-#   The click IS the human-in-the-loop decision, so this path BYPASSES
-#   the auto-tier gate AND the pre_verify_passed gate — a user MAY apply a
-#   safety/user-tier proposal here (the auto-batch path still excludes safety;
-#   only this explicit path bypasses). A proposal a live trial pre-registered is
-#   not the click's to apply: its trial's decision state picks the actor (exit 27).
+#   The click IS the human-in-the-loop decision, so for monitor-user alone this
+#   path BYPASSES the auto-tier gate; it bypasses the pre_verify_passed gate for
+#   every actor. Any other actor (the machine default, graduation) applies an
+#   `auto` row only; a non-auto row is refused (exit 28), so a safety/user-tier
+#   proposal lands only through the click. A proposal a live trial pre-registered
+#   is not the click's to apply: its trial's decision state picks the actor (exit 27).
 #   Selection: id=N only; the shell then branches on the row's status, the record
-#   table, its live trial's decision state and its generation outcome
-#   (exits 21/19/23/8/25/27/20 below).
+#   table, its live trial's decision state, its approval tier and its generation
+#   outcome (exits 21/19/23/8/25/27/28/20 below).
 #   Reuses the SAME apply_diff + update_db_status path.
 #
 # Review actor — the reviewed_at/reviewed_by contract and the closed token set are
@@ -203,7 +204,7 @@
 #
 # Patch-source read exit codes. Single path: select_single_proposal, then
 # assert_generation_outcome after the parked guard, checked in the order
-# 21 → 19 → 23 → 8 → 25 → 27 → 17/18 → 20 so the most specific answer wins. Batch path: the
+# 21 → 19 → 23 → 8 → 25 → 27 → 28 → 17/18 → 20 so the most specific answer wins. Batch path: the
 # source read itself (21 backlog · 23 backlog row · 22 report), before any row is
 # judged — a source that could not be read never lands the zero-eligible heartbeat:
 #     19 — --proposal-id: no proposal with that id. No-op.
@@ -259,6 +260,16 @@
 #          every actor; won refuses every actor but the machine one, the cycle's graduation. A state
 #          read that fails or answers anything but one state line exits 27 too, never read as "no
 #          trial". Nothing applied, row left as it was. Does NOT collide with 0/2-26.
+#
+# Approval-tier exit code (assert_approval_tier — every --proposal-id selection, a dry run and the
+# --auto-regen re-select included):
+#     28 — --proposal-id: REFUSED on the row's approval tier. A non-auto tier applies for monitor-user
+#          alone (the click is the safety gate's human decision); every other actor, the machine
+#          default and graduation included, is refused. An empty tier field (an unreadable lookup)
+#          refuses every actor. Checked after the live-trial read (a non-auto row is never
+#          pre-registered, so 27 and 28 never compete on a real row) and ahead of the parked guard,
+#          so a refused leg makes no psycopg connect. Nothing applied, row left as it was.
+#          Does NOT collide with 0/2-27.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -1388,15 +1399,15 @@ PSQL
 
 # extract_single_proposal — single-proposal lookup. Print the psql row for id=PROPOSAL_ID on stdout
 # (nothing when the id is absent); return 1 when the query fails. Row grammar: the backlog's 6 fields,
-# then status and haiku_status (NULL → ''), which select_single_proposal branches on.
+# then status, approval_tier and haiku_status (NULL → ''), which select_single_proposal branches on.
 #
 # Selection contract (DELIBERATELY different from the batch backlog):
-#   id = :'pid' ONLY          → no status / haiku_status predicate: a not-found, a terminal row and a
-#                               non-ok generation outcome each keep their own exit instead of all
-#                               reading as zero rows.
-#   NO approval_tier filter   → BYPASS the auto gate. This path is reached ONLY via an explicit user
-#                               button-click (the human-in-the-loop substitute for the safety gate),
-#                               so a user MAY apply a safety/user-tier proposal here.
+#   id = :'pid' ONLY          → no status / approval_tier / haiku_status predicate: a not-found, a
+#                               terminal row, a non-auto tier and a non-ok generation outcome each keep
+#                               their own exit instead of all reading as zero rows.
+#   approval_tier selected    → assert_approval_tier refuses a non-auto row to every actor but
+#                               monitor-user (exit 28): only the user's click substitutes for the safety
+#                               gate; graduation and the machine default reach this path too.
 #   NO pre_verify_passed filter → user judgment takes priority over the 4-axis pre-verify gate.
 # The generation outcome is NOT bypassed — assert_generation_outcome enforces it. Every field before
 # haiku_status is a psql scalar, base64 or an enum, so none can hold a '|'; haiku_status is last, so a
@@ -1418,6 +1429,7 @@ SELECT id,
        translate(encode(convert_to(target_file, 'UTF8'), 'base64'), E'\n', ''),
        translate(encode(convert_to(coalesce(proposed_diff, ''), 'UTF8'), 'base64'), E'\n', ''),
        status,
+       approval_tier,
        coalesce(haiku_status, '')
 FROM core.autoagent_proposals
 WHERE id::text = :'pid';
@@ -1441,14 +1453,14 @@ PSQL
 # select_single_proposal — set PATCH_ROWS to proposal PROPOSAL_ID and SINGLE_HAIKU_STATUS to its
 # generation outcome, or exit: 21 lookup failed · 19 not found · 23 row unreadable · 8 already
 # terminal · 25 record table unconfirmed (not on a dry run) · 27 refused on its live trial's decision
-# state — ahead of the parked guard and the outcome refusal, whose remedy (Reject) is wrong for a row
-# a trial holds.
+# state · 28 refused on its approval tier — both ahead of the parked guard and the outcome refusal,
+# whose remedy (Reject) is wrong for a row a trial or the tier gate holds.
 # The outcome refusal (20) waits for the parked guard, whose exit 18 is the better remedy
 # for a row tripping both. The lookup is captured, not read through `< <(…)`, which would drop its
 # return code. The row is reassembled before its status is trusted: a row that does not decode, or
 # answers for another id, has no status worth branching on.
 select_single_proposal() {
-    local lookup_out patch_row row_id cycle_date label agent target diff_b64 status haiku_status
+    local lookup_out patch_row row_id cycle_date label agent target diff_b64 status approval_tier haiku_status
     if ! lookup_out="$(extract_single_proposal)"; then
         printf '[daemon-apply] FATAL: proposal id=%s lookup failed — nothing applied (DB query error, not a no-op)\n' \
             "${PROPOSAL_ID}" >&2
@@ -1458,7 +1470,7 @@ select_single_proposal() {
         printf '[daemon-apply] proposal id=%s not found — no-op\n' "${PROPOSAL_ID}" >&2
         exit 19
     fi
-    IFS='|' read -r row_id cycle_date label agent target diff_b64 status haiku_status <<<"${lookup_out}"
+    IFS='|' read -r row_id cycle_date label agent target diff_b64 status approval_tier haiku_status <<<"${lookup_out}"
     if [[ "${row_id}" != "${PROPOSAL_ID}" ]] \
         || ! patch_row="$(reassemble_proposal_rows "${row_id}|${cycle_date}|${label}|${agent}|${target}|${diff_b64}")"; then
         printf '[daemon-apply] FATAL: proposal id=%s row is unreadable — nothing applied (stored row data, not a DB outage)\n' \
@@ -1478,6 +1490,7 @@ select_single_proposal() {
         assert_apply_record_table
     fi
     assert_trial_decision_state
+    assert_approval_tier "${approval_tier}"
     PATCH_ROWS=("${patch_row}")
     SINGLE_HAIKU_STATUS="${haiku_status}"
 }
@@ -1528,6 +1541,26 @@ LEFT JOIN core.autoagent_trial_ledger d ON d.dedupe_key = p.trial_key || ':decis
 WHERE p.event = 'live-preregistration'
   AND p.payload->>'proposal_id' = :'pid';
 PSQL
+}
+
+# assert_approval_tier TIER — exit 28 unless TIER is auto, or REVIEW_ACTOR is monitor-user and TIER was read.
+# Refusal line from a subshell: prune_backup_retention's `< <(find …)` → an un-waited child by the
+# --auto-regen re-select → an EINTR'd in-shell printf would decide the exit under errexit.
+assert_approval_tier() {
+    local leg
+    case "$1" in
+        auto) return 0 ;;
+        '') leg='approval tier could not be read — no actor applies it' ;;
+        *)
+            if [[ "${REVIEW_ACTOR}" == monitor-user ]]; then
+                return 0
+            fi
+            leg="approval tier is $1, not auto; only monitor-user applies it"
+            ;;
+    esac
+    (printf '[daemon-apply] REFUSED proposal id=%s actor=%s — its %s; nothing applied, row left as it was\n' \
+        "${PROPOSAL_ID}" "${REVIEW_ACTOR}" "${leg}") >&2 || true
+    exit 28
 }
 
 # verify_target_in_agents — sanity check: target_file MUST live under agents_dir.
@@ -2626,7 +2659,7 @@ while IFS= read -r _row; do
 done <<<"${BATCH_PATCH_LINES}"
 
 # Empty here means a real empty backlog or report: a failed batch read exited 21/22/23 above, and the single
-# source exits 21/19/23/8/25/27 in select_single_proposal instead.
+# source exits 21/19/23/8/25/27/28 in select_single_proposal instead.
 if [[ ${#PATCH_ROWS[@]} -eq 0 ]]; then
     if [[ "${PATCH_SOURCE}" == "backlog" ]]; then
         printf '[daemon-apply] 0 pending backlog patches (source=PG)\n' >&2

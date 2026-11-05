@@ -24,7 +24,7 @@
 # Hermetic strategy: a per-test standalone git repo fixture under a realpath-
 # resolved temp root, plus a stub PATH whose `psql` is a PG stand-in. The stub
 # dispatches on the SQL it receives, logs every invocation for assertions, and
-# answers the id-only single lookup with the STUB_* row (its status and
+# answers the id-only single lookup with the STUB_* row (its status, tier and
 # haiku_status included), no row (STUB_NO_ROW=1), a verbatim row (STUB_RAW_ROW)
 # or a query failure (STUB_SINGLE_RC). It applies no predicate: the branch lives in the shell, and
 # the id-only SQL shape is pinned by its own test below.
@@ -135,7 +135,8 @@ b64() {
 case "${sql}" in
   *"translate(encode(convert_to"*)
     # single lookup — the backlog's 6 fields (free text base64-encoded, as the SELECT does), then
-    # status and haiku_status (unset → ok, empty = NULL). STUB_RAW_ROW replaces the row verbatim.
+    # status, approval_tier (auto) and haiku_status (unset → ok, empty = NULL). STUB_RAW_ROW replaces
+    # the row verbatim.
     if [[ "${STUB_SINGLE_RC:-0}" -ne 0 ]]; then
       printf 'psql: error: connection to server failed (stub)\n' >&2
       exit "${STUB_SINGLE_RC}"
@@ -143,7 +144,7 @@ case "${sql}" in
     if [[ -n "${STUB_RAW_ROW:-}" ]]; then
       printf '%s\n' "${STUB_RAW_ROW}"
     elif [[ "${STUB_NO_ROW:-0}" != "1" ]]; then
-      printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
+      printf '%s|%s|%s|%s|%s|%s|%s|auto|%s\n' \
         "${STUB_ROW_ID:?}" "${STUB_CYCLE:?}" "$(b64 "${STUB_LABEL:?}")" \
         "$(b64 "${STUB_AGENT:?}")" "$(b64 "${STUB_TARGET:?}")" "${STUB_DIFF_B64:?}" \
         "${STUB_STATUS:-pending}" "${STUB_HAIKU-ok}"
@@ -509,8 +510,8 @@ dryrun_log_path() {
   local target_b64 raw applied_log
   target_b64="$(printf '%s' "${AGENTS}/probe.md" | base64 | tr -d '\n')"
   for raw in \
-    "1022|2026-06-26|probe|stale|probe|${AGENTS}/probe.md|$(oor_diff_b64)|rejected|ok" \
-    "1023|2026-06-26|cHJvYmU=|cHJvYmU=|${target_b64}|$(oor_diff_b64)|rejected|ok"; do
+    "1022|2026-06-26|probe|stale|probe|${AGENTS}/probe.md|$(oor_diff_b64)|rejected|auto|ok" \
+    "1023|2026-06-26|cHJvYmU=|cHJvYmU=|${target_b64}|$(oor_diff_b64)|rejected|auto|ok"; do
     applied_log="$(applied_log_path)"
     if ga_guard_path "${applied_log}"; then rm -f -- "${applied_log:?}"; fi
     STUB_RAW_ROW="${raw}" run_single "ok"

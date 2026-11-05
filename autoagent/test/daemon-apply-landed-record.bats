@@ -2,8 +2,8 @@
 # daemon-apply-landed-record.bats — the landed record every byte-landing apply writes: the unified diff
 # from the transaction's own before-image to the verified target, plus both whole-file sha256 digests.
 # Two copies: the applied JSONL row (durable) and core.autoagent_apply_records (queryable, written
-# after the status flip). Pins the table preflight (exit 25), the record-failure exit (26) and the
-# live-trial refusal (27).
+# after the status flip). Pins the table preflight (exit 25), the record-failure exit (26), the
+# live-trial refusal (27) and the approval-tier refusal (28).
 #
 # HERMETIC: temp agents tree, temp HOME, a stateful psql stand-in prepended to PATH, and the
 # daemon_cycle.py seam pointed at a stand-in. No live PG, no live install, no live agents dir.
@@ -63,6 +63,7 @@ teardown() {
 # STUB_PROBE answers the table probe (t | f | error); STUB_INSERT=error refuses the INSERT.
 # STUB_TRIAL answers the live-trial decision-state read: none (default) = no pre-registration names
 # the row · error = the read fails · any other value = the answer line itself.
+# STUB_TIER is the looked-up row's approval tier (default auto; set but empty = an unreadable field).
 install_psql_stub() {
   cat >"$1/psql" <<'STUB'
 #!/usr/bin/env bash
@@ -118,7 +119,7 @@ case "${sql}" in
     printf '%s\n' "${STUB_ROW_ID}"
     ;;
   *"id::text = :'pid'"*)
-    emit_row "|${row_status}|ok"
+    emit_row "|${row_status}|${STUB_TIER-auto}|ok"
     ;;
   *stale_attempt_count*)
     printf 'incremented\n'
@@ -507,6 +508,47 @@ has_abort_row() {
     }
     [[ "$(cat "${PG}/row-status")" == "${row_status}" && "$(insert_count)" -eq "${records}" ]] || {
       echo "${name}: row $(cat "${PG}/row-status"), records $(insert_count): ${output}"
+      return 1
+    }
+  done
+}
+
+@test "a proposal whose tier is not auto applies only for the operator, and an unreadable tier for nobody" {
+  # name | approval tier | actor | exit | row status after | records written | the refusal stderr names
+  local rows=(
+    "user tier, the machine actor|user|daemon-apply-flip|28|pending|0|its approval tier is user, not auto; only monitor-user applies it"
+    "user tier, the operator|user|monitor-user|0|applied|1|"
+    "llm tier, the machine actor|llm|daemon-apply-flip|28|pending|0|its approval tier is llm, not auto; only monitor-user applies it"
+    "llm tier, the operator|llm|monitor-user|0|applied|1|"
+    "unreadable tier, the machine actor||daemon-apply-flip|28|pending|0|its approval tier could not be read"
+    "unreadable tier, the operator||monitor-user|28|pending|0|its approval tier could not be read"
+  )
+  local row name tier actor code row_status records leg changed stored_status stored_records
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name tier actor code row_status records leg <<<"${row}"
+    cp -p -- "${BEFORE}" "${PROBE}"
+    printf 'pending' >"${PG}/row-status"
+    : >"${PG}/inserts"
+    : >"$(applied_log_path)"
+    STUB_TIER="${tier}" run_apply offset_diff --proposal-id "${ROW_ID}" --actor "${actor}"
+    [[ "${status}" -eq "${code}" && "${output}" == *"${leg}"* ]] || {
+      echo "${name}: exit ${status}: ${output}"
+      return 1
+    }
+    [[ "${code}" -eq 0 || "${output}" == *"REFUSED proposal id=${ROW_ID} actor=${actor} — "*"; nothing applied, row left as it was"* ]] || {
+      echo "${name}: refusal line: ${output}"
+      return 1
+    }
+    changed=1
+    if cmp -s "${PROBE}" "${BEFORE}"; then changed=0; fi
+    [[ "${changed}" -eq "${records}" ]] || {
+      echo "${name}: target changed=${changed}: ${output}"
+      return 1
+    }
+    stored_status="$(cat "${PG}/row-status")"
+    stored_records="$(insert_count)"
+    [[ "${stored_status}" == "${row_status}" && "${stored_records}" -eq "${records}" ]] || {
+      echo "${name}: row ${stored_status}, records ${stored_records}: ${output}"
       return 1
     }
   done

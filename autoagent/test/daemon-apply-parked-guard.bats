@@ -177,9 +177,9 @@ proposal_row() {
 }
 
 # single_row ID NAME DIFF [STATUS] [HAIKU] — the single lookup's grammar: the 6 fields, then status
-# (default pending) and haiku_status (default ok; pass '' for NULL).
+# (default pending), approval_tier (auto) and haiku_status (default ok; pass '' for NULL).
 single_row() {
-  printf '%s|%s|%s\n' "$(proposal_row "$1" "$2" "$3")" "${4:-pending}" "${5-ok}"
+  printf '%s|%s|auto|%s\n' "$(proposal_row "$1" "$2" "$3")" "${4:-pending}" "${5-ok}"
 }
 
 # answer_guard N RC OUT — the stub's reply to its Nth guard call.
