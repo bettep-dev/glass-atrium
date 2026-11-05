@@ -166,11 +166,13 @@ fixture_git() {
     -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false "$@"
 }
 
-# Run the hook as a doc-agent Write of $1, with a fresh firing-trace log.
+# Run the hook as a doc-agent Write of $1, with a fresh firing-trace log. Extra VAR=val pairs may follow.
 run_repo_row() {
+  local path="$1"
+  shift
   : >"${FIRED_LOG}"
-  run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"$1\"}}" \
-    TMPDIR="/fixture-tmp"
+  run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"${path}\"}}" \
+    TMPDIR="/fixture-tmp" "$@"
 }
 
 @test "a doc agent may write a tracked file or a root README/AGENTS/CHANGELOG of a git worktree" {
@@ -181,7 +183,8 @@ run_repo_row() {
   for row in \
     "tracked file below the root|${REPO}/docs/guide.md|allow-repo-tracked" \
     "README.md at a linked worktree root|${WORKTREE}/README.md|allow-repo-root-doc" \
-    "new untracked AGENTS.md at a repo root|${REPO}/AGENTS.md|allow-repo-root-doc"; do
+    "new untracked AGENTS.md at a repo root|${REPO}/AGENTS.md|allow-repo-root-doc" \
+    "translated README at a repo root|${REPO}/README.zh-CN.md|allow-repo-root-doc"; do
     IFS='|' read -r label path verdict <<<"${row}"
     run_repo_row "${path}"
     [[ "${status}" -eq 0 ]] || {
@@ -207,7 +210,9 @@ run_repo_row() {
     "README below the repo root|${REPO}/docs/README.md" \
     "README inside the git dir|${REPO}/.git/README.md" \
     "glob-named file matching tracked docs|${REPO}/docs/*.md" \
-    "tracked symlink leading out of the repo|${REPO}/docs/link.md"; do
+    "tracked symlink leading out of the repo|${REPO}/docs/link.md" \
+    "report named like a README at a repo root|${REPO}/README.analysis.md" \
+    "dated report named like a CHANGELOG at a repo root|${REPO}/CHANGELOG.research-2026-11-05.md"; do
     IFS='|' read -r label path <<<"${row}"
     run_repo_row "${path}"
     [[ "${status}" -eq 2 ]] || {
@@ -220,6 +225,48 @@ run_repo_row() {
       return 1
     }
   done
+}
+
+@test "a doc agent writing a repository document under the live harness root still blocks" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_repo_fixture
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  local row label path
+  for row in \
+    "tracked rule body in a harness work tree|${REPO}/docs/guide.md" \
+    "README at a harness work-tree root|${REPO}/README.md"; do
+    IFS='|' read -r label path <<<"${row}"
+    run_repo_row "${path}" GA_ROOT="${REPO_BASE}"
+    [[ "${status}" -eq 2 ]] || {
+      echo "${label}: status ${status}: ${output}"
+      return 1
+    }
+    grep -q 'verdict=block$' "${FIRED_LOG}" || {
+      echo "${label}"
+      cat "${FIRED_LOG}"
+      return 1
+    }
+  done
+}
+
+@test "a repository-local core.fsmonitor command never runs while the hook asks git" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_repo_fixture
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  local marker="${REPO_BASE}/fsmonitor-ran"
+  printf '#!/bin/sh\ntouch "%s"\n' "${marker}" >"${REPO_BASE}/fsmonitor-probe"
+  chmod +x "${REPO_BASE}/fsmonitor-probe"
+  fixture_git -C "${REPO}" config core.fsmonitor "${REPO_BASE}/fsmonitor-probe"
+  run_repo_row "${REPO}/docs/guide.md"
+  [[ "${status}" -eq 0 ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
+  grep -q 'verdict=allow-repo-tracked$' "${FIRED_LOG}" || {
+    cat "${FIRED_LOG}"
+    return 1
+  }
+  [[ ! -e "${marker}" ]]
 }
 
 # ── P0-2: hook_normalize_path leading-~ expansion — deliberate permissive pin ────────────

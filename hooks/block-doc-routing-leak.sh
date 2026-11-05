@@ -5,14 +5,17 @@
 #
 # DESIGN INVARIANT (T11) — ADDITIONAL PreToolUse(Write) backstop, NOT the primary
 # control. Default FAIL-OPEN (exit 0) on any uncertainty (absent agent_id, unrecoverable
-# agent_type, absent jq, unresolved monitor root, ERR trap). A BLOCK (channel-a: stderr
+# agent_type, absent jq, unresolved monitor root, ERR trap). One exception: an unanswerable
+# repository check in condition (4) (no git/perl, a timeout, an ERR-trap exit inside its
+# subshell) yields no allowance, so the block stands. A BLOCK (channel-a: stderr
 # emit_error + exit 2) fires ONLY when all FOUR conditions hold:
 #   (1) tool is Write,
 #   (2) recovered agent_type ∈ {intel-reporter, intel-planner},
 #   (3) file extension ∈ {.md,.yaml,.yml,.json,.txt},
 #   (4) the normalized target path is OUTSIDE the deterministic allowlist and is no
 #       repository-owned document (a tracked file, or a README/AGENTS/CHANGELOG at a
-#       work-tree root) — those belong to the repo, not the monitor.
+#       work-tree root, optionally language-tagged) outside the live harness root —
+#       those belong to the repo, not the monitor.
 # PreToolUse PRE-blocks the write (file never created) → stderr only routes to the
 # monitor API, no leaked-file cleanup. Asymmetric-cost: a false-block on the high-
 # frequency Write tool costs more than a rare leak past this backstop, so FAIL-OPEN.
@@ -132,6 +135,10 @@ allow() {
   exit 0
 }
 
+# Root doc name: bare or language-tagged (README.md, README.ko.md, README.zh-CN.md) → a
+# README.analysis.md-style report stays out.
+readonly ROOT_DOC_RE='^(README|AGENTS|CHANGELOG)(\.[a-z]{2,3}([-_][A-Za-z]{2,4})?)?\.(md|txt)$'
+
 # Repository-owned document → its allow label on stdout; empty for anything else, the
 # unanswerable cases included (no git/perl, a timeout, a missing dir), so they keep the block.
 # A symlink target is refused: the link could carry the write out of the repository.
@@ -142,15 +149,16 @@ get_repo_doc_verdict() {
   dir="${path%/*}"
   base="${path##*/}"
   [[ -n "${dir}" && -d "${dir}" ]] || return 0
+  # shellcheck disable=SC2310  # the status IS the harness-root answer
+  if is_under_harness_root "${dir}"; then return 0; fi
   # "true" alone = work-tree root · "true" + newline + prefix = below it · "false" = inside .git
   # shellcheck disable=SC2310  # a git failure is an answer (no repository) → no allow label
   prefix="$(run_git_bounded -C "${dir}" rev-parse --is-inside-work-tree --show-prefix)" || return 0
   [[ "${prefix}" == true* ]] || return 0
   if [[ "${prefix}" == "true" ]]; then
-    case "${base}" in
-      README.* | AGENTS.* | CHANGELOG.*) printf 'allow-repo-root-doc\n' && return 0 ;;
-      *) : ;; # not a root doc name → the tracked-file check decides
-    esac
+    if [[ "${base}" =~ ${ROOT_DOC_RE} ]]; then
+      printf 'allow-repo-root-doc\n' && return 0
+    fi
   fi
   # literal pathspec → a "*.md" file name cannot match other tracked files
   # shellcheck disable=SC2310  # the ls-files status IS the tracked/untracked answer
@@ -160,13 +168,29 @@ get_repo_doc_verdict() {
   return 0
 }
 
+# Live harness root (its rules/ and agents/ are git work trees) → no repository allowance:
+# a doc agent has no task reason to rewrite live rule or agent bodies. Literal AND physical
+# match → neither a symlinked root spelling nor a symlinked subdir slips past.
+# Unresolvable target dir → treated as inside. Args: $1 = existing directory.
+is_under_harness_root() {
+  local root="${GA_ROOT:-${HOME}/.glass-atrium}" root_real dir_real
+  root="${root%/}"
+  [[ "${1}/" == "${root}/"* ]] && return 0
+  root_real="$(cd -P -- "${root}" 2>/dev/null && pwd -P)" || return 1
+  dir_real="$(cd -P -- "${1}" 2>/dev/null && pwd -P)" || return 0
+  [[ "${dir_real}/" == "${root_real}/"* ]]
+}
+
 # git under a 3s wall-clock bound (stock macOS ships no timeout binary; perl alarm survives exec).
 # Ambient GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE dropped → -C alone selects the repository.
+# SECURITY (A05): the target dir is agent-chosen → its .git/config must run nothing; ls-files
+# would otherwise spawn a repository-local core.fsmonitor command. hooksPath=/dev/null → no hook.
 run_git_bounded() {
   command -v git >/dev/null 2>&1 && command -v perl >/dev/null 2>&1 || return 1
   # shellcheck disable=SC2016  # perl source, expanded by perl
   env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE GIT_OPTIONAL_LOCKS=0 \
-    perl -e 'alarm shift; exec { $ARGV[0] } @ARGV or exit 127' 3 git "$@" 2>/dev/null
+    perl -e 'alarm shift; exec { $ARGV[0] } @ARGV or exit 127' 3 \
+    git -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@" 2>/dev/null
 }
 
 INPUT="$(hook_read_input)"
