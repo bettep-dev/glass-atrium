@@ -184,7 +184,8 @@ run_repo_row() {
     "tracked file below the root|${REPO}/docs/guide.md|allow-repo-tracked" \
     "README.md at a linked worktree root|${WORKTREE}/README.md|allow-repo-root-doc" \
     "new untracked AGENTS.md at a repo root|${REPO}/AGENTS.md|allow-repo-root-doc" \
-    "translated README at a repo root|${REPO}/README.zh-CN.md|allow-repo-root-doc"; do
+    "translated README at a repo root|${REPO}/README.zh-CN.md|allow-repo-root-doc" \
+    "script-tagged README at a repo root|${REPO}/README.zh-Hans.md|allow-repo-root-doc"; do
     IFS='|' read -r label path verdict <<<"${row}"
     run_repo_row "${path}"
     [[ "${status}" -eq 0 ]] || {
@@ -213,6 +214,7 @@ run_repo_row() {
     "tracked symlink leading out of the repo|${REPO}/docs/link.md" \
     "report named like a README at a repo root|${REPO}/README.analysis.md" \
     "three-letter word tag on a README at a repo root|${REPO}/README.old.md" \
+    "word subtag after a language tag on a README at a repo root|${REPO}/README.en-old.md" \
     "dated report named like a CHANGELOG at a repo root|${REPO}/CHANGELOG.research-2026-11-05.md"; do
     IFS='|' read -r label path <<<"${row}"
     run_repo_row "${path}"
@@ -232,13 +234,11 @@ run_repo_row() {
   command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
   seed_repo_fixture
   seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
-  local row label path root upper_base
-  upper_base="$(printf '%s' "${REPO_BASE}" | tr '[:lower:]' '[:upper:]')"
+  local row label path root
   ln -s "${REPO_BASE}" "${SANDBOX}/root-link"
   for row in \
     "tracked rule body in a harness work tree|${REPO}/docs/guide.md|${REPO_BASE}" \
     "README at a harness work-tree root|${REPO}/README.md|${REPO_BASE}" \
-    "case-variant spelling of a tracked file under the root|${upper_base}/repo/docs/guide.md|${REPO_BASE}" \
     "harness root given through a symlinked spelling|${REPO}/docs/guide.md|${SANDBOX}/root-link"; do
     IFS='|' read -r label path root <<<"${row}"
     run_repo_row "${path}" GA_ROOT="${root}"
@@ -252,6 +252,27 @@ run_repo_row() {
       return 1
     }
   done
+}
+
+# A case-sensitive volume (Linux CI) has no upper-cased directory → the row would block
+# without reaching the case fold, so it skips there instead of passing vacuously.
+@test "a doc agent writing a case-variant spelling of a tracked file under the harness root still blocks" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_repo_fixture
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  local upper_base
+  upper_base="$(printf '%s' "${REPO_BASE}" | tr '[:lower:]' '[:upper:]')"
+  [[ -d "${upper_base}/repo/docs" ]] \
+    || skip "case-sensitive volume: ${upper_base}/repo/docs is missing, so the case fold is untestable here"
+  run_repo_row "${upper_base}/repo/docs/guide.md" GA_ROOT="${REPO_BASE}"
+  [[ "${status}" -eq 2 ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
+  grep -q 'verdict=block$' "${FIRED_LOG}" || {
+    cat "${FIRED_LOG}"
+    return 1
+  }
 }
 
 @test "a repository-local core.fsmonitor command never runs while the hook asks git" {

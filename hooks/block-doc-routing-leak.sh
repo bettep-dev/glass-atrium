@@ -135,9 +135,10 @@ allow() {
   exit 0
 }
 
-# Root doc name: bare or ISO 639-1 tagged (README.md, README.ko.md, README.zh-CN.md) → a
-# README.analysis.md report or a README.old.md-style three-letter word tag stays out.
-readonly ROOT_DOC_RE='^(README|AGENTS|CHANGELOG)(\.[a-z]{2}([-_][A-Za-z]{2,4})?)?\.(md|txt)$'
+# Root doc name: bare or ISO 639-1 tagged, subtag only an ISO 3166 region or ISO 15924 script
+# (README.md, README.ko.md, README.zh-CN.md, README.zh-Hans.md) → a README.analysis.md report,
+# a README.old.md word tag or a README.en-old.md word subtag stays out. Case-sensitive on purpose.
+readonly ROOT_DOC_RE='^(README|AGENTS|CHANGELOG)(\.[a-z]{2}([-_]([A-Z]{2}|[A-Z][a-z]{3}))?)?\.(md|txt)$'
 
 # Repository-owned document → its allow label on stdout; empty for anything else, the
 # unanswerable cases included (no git/perl, a timeout, a missing dir), so they keep the block.
