@@ -293,7 +293,10 @@ def _cycle_report(failure_classes: tuple[str, ...], cycle_status: str) -> dc.Cyc
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")
 class MainAuthOutageExitTest(unittest.TestCase):
-    """A credential outage exits its own code, over a co-occurring regression, with a CRIT line and one loop event."""
+    """A credential outage exits its own code, over a co-occurring regression, with a CRIT line and one loop event.
+
+    A quota or budget cap stays exit 0 with one stderr WARN naming its class, outage or not.
+    """
 
     def setUp(self) -> None:
         patcher = mock.patch.object(dc, "HAS_PAUSE_LIB", False)
@@ -334,20 +337,31 @@ class MainAuthOutageExitTest(unittest.TestCase):
 
     def test_an_auth_failure_alone_decides_the_outage_code_whatever_else_holds(self) -> None:
         auth, quality, quota = dc.FAILURE_CLASS_AUTH, dc.FAILURE_CLASS_QUALITY, dc.FAILURE_CLASS_QUOTA
+        budget = dc.FAILURE_CLASS_BUDGET
+        # (row, failure classes, cycle status, exit code, spend-cap class the WARN names | None)
         rows = (
-            ("auth failure alone", (auth,), "ok", dc.ExitCode.AUTH_OUTAGE),
-            ("auth failure beside a regression", (quality, auth), "regression", dc.ExitCode.AUTH_OUTAGE),
-            ("auth failure beside a quota cap", (quota, auth), "ok", dc.ExitCode.AUTH_OUTAGE),
-            ("regression without an auth failure", (quality,), "regression", dc.ExitCode.CYCLE_REGRESSION),
-            ("quota cap without an auth failure", (quota,), "ok", 0),
+            ("auth failure alone", (auth,), "ok", dc.ExitCode.AUTH_OUTAGE, None),
+            ("auth failure beside a regression", (quality, auth), "regression", dc.ExitCode.AUTH_OUTAGE, None),
+            # the outage code wins, yet the cap stays loud: the CRIT line never names it
+            ("auth failure beside a quota cap", (quota, auth), "ok", dc.ExitCode.AUTH_OUTAGE, quota),
+            ("regression without an auth failure", (quality,), "regression", dc.ExitCode.CYCLE_REGRESSION, None),
+            ("quota cap without an auth failure", (quota,), "ok", 0, quota),
+            ("budget cap without an auth failure", (budget,), "ok", 0, budget),
         )
-        for name, failure_classes, cycle_status, expected_rc in rows:
+        for name, failure_classes, cycle_status, expected_rc, cap_class in rows:
             with self.subTest(name):
                 report = _cycle_report(failure_classes, cycle_status)
                 rc, stderr = self._run_main([], report)
                 is_outage = expected_rc == dc.ExitCode.AUTH_OUTAGE
                 self.assertEqual(rc, expected_rc, stderr)
                 self.assertEqual("CRIT: auth outage" in stderr, is_outage, stderr)
+                cap_lines = [line for line in stderr.splitlines() if "WARN: spend cap" in line]
+                self.assertEqual(
+                    cap_lines,
+                    [] if cap_class is None else [f"[daemon-cycle] WARN: spend cap — {cap_class} on 1 patch; "
+                                                  "those patterns generated nothing this cycle"],
+                    stderr,
+                )
                 self.assertEqual(
                     self._get_outage_events(),
                     [

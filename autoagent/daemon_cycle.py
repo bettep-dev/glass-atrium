@@ -6752,6 +6752,21 @@ def alert_auth_outage(report: CycleReport, *, skip_loop_emit: bool) -> None:
         )
 
 
+def alert_spend_cap(report: CycleReport) -> None:
+    """Spend-cap WARN — one stderr line per cap class (cost guard 'warn') among the patches.
+
+    Exit stays 0: a cap is a real spend signal, not a defect; printed beside an auth-outage CRIT too.
+    """
+    for failure_class in (FAILURE_CLASS_QUOTA, FAILURE_CLASS_BUDGET):
+        count = sum(1 for p in report.patches if p.failure_class == failure_class)
+        if count:
+            noun = "patch" if count == 1 else "patches"
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: spend cap — {failure_class} on {count} {noun}; "
+                "those patterns generated nothing this cycle\n"
+            )
+
+
 # -- post-apply regression watch (C1, detection-only) ------------------------
 
 
@@ -16561,6 +16576,7 @@ def _main(argv: list[str]) -> int:
     else:
         sys.stdout.write(payload + "\n")
 
+    alert_spend_cap(report)
     # Outage code wins: an auth outage rejects every patch → a co-occurring regression is its consequence
     if derive_cost_guard_state(report) == "infra_fault":
         alert_auth_outage(report, skip_loop_emit=skip_loop_emit)
