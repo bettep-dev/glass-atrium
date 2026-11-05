@@ -89,8 +89,8 @@ run_doctor() {
   if [[ -d "${TARGET_HOME}" ]]; then
     local dangling=0 link links
     # Waited capture (see §4); an empty capture yields one empty line, skipped by the guard.
-    # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
     # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
+    # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
     links="$(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r link; do
       [[ -n "${link}" ]] || continue
@@ -210,8 +210,8 @@ run_doctor() {
     #       some missing) on an established install.
     local ga_links=0 lk lks
     # Waited capture (see §4).
-    # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
     # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
+    # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
     lks="$(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r lk; do
       [[ -n "${lk}" ]] || continue
