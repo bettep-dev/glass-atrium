@@ -135,9 +135,9 @@ allow() {
   exit 0
 }
 
-# Root doc name: bare or language-tagged (README.md, README.ko.md, README.zh-CN.md) → a
-# README.analysis.md-style report stays out.
-readonly ROOT_DOC_RE='^(README|AGENTS|CHANGELOG)(\.[a-z]{2,3}([-_][A-Za-z]{2,4})?)?\.(md|txt)$'
+# Root doc name: bare or ISO 639-1 tagged (README.md, README.ko.md, README.zh-CN.md) → a
+# README.analysis.md report or a README.old.md-style three-letter word tag stays out.
+readonly ROOT_DOC_RE='^(README|AGENTS|CHANGELOG)(\.[a-z]{2}([-_][A-Za-z]{2,4})?)?\.(md|txt)$'
 
 # Repository-owned document → its allow label on stdout; empty for anything else, the
 # unanswerable cases included (no git/perl, a timeout, a missing dir), so they keep the block.
@@ -170,15 +170,25 @@ get_repo_doc_verdict() {
 
 # Live harness root (its rules/ and agents/ are git work trees) → no repository allowance:
 # a doc agent has no task reason to rewrite live rule or agent bodies. Literal AND physical
-# match → neither a symlinked root spelling nor a symlinked subdir slips past.
+# match → neither a symlinked root spelling nor a symlinked subdir slips past. Both legs
+# fold case (default APFS ignores it → a case-variant spelling names the same file).
 # Unresolvable target dir → treated as inside. Args: $1 = existing directory.
 is_under_harness_root() {
   local root="${GA_ROOT:-${HOME}/.glass-atrium}" root_real dir_real
   root="${root%/}"
-  [[ "${1}/" == "${root}/"* ]] && return 0
+  # shellcheck disable=SC2310  # the status IS the literal-leg answer
+  is_path_within "${1}" "${root}" && return 0
   root_real="$(cd -P -- "${root}" 2>/dev/null && pwd -P)" || return 1
   dir_real="$(cd -P -- "${1}" 2>/dev/null && pwd -P)" || return 0
-  [[ "${dir_real}/" == "${root_real}/"* ]]
+  is_path_within "${dir_real}" "${root_real}"
+}
+
+# Case-folded prefix test (bash 3.2 has no ${var,,}). Args: $1 = path · $2 = ancestor.
+is_path_within() {
+  local path_lc ancestor_lc
+  path_lc="$(printf '%s/' "${1}" | tr '[:upper:]' '[:lower:]')"
+  ancestor_lc="$(printf '%s/' "${2}" | tr '[:upper:]' '[:lower:]')"
+  [[ "${path_lc}" == "${ancestor_lc}"* ]]
 }
 
 # git under a 3s wall-clock bound (stock macOS ships no timeout binary; perl alarm survives exec).

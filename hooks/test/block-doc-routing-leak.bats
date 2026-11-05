@@ -212,6 +212,7 @@ run_repo_row() {
     "glob-named file matching tracked docs|${REPO}/docs/*.md" \
     "tracked symlink leading out of the repo|${REPO}/docs/link.md" \
     "report named like a README at a repo root|${REPO}/README.analysis.md" \
+    "three-letter word tag on a README at a repo root|${REPO}/README.old.md" \
     "dated report named like a CHANGELOG at a repo root|${REPO}/CHANGELOG.research-2026-11-05.md"; do
     IFS='|' read -r label path <<<"${row}"
     run_repo_row "${path}"
@@ -231,12 +232,16 @@ run_repo_row() {
   command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
   seed_repo_fixture
   seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
-  local row label path
+  local row label path root upper_base
+  upper_base="$(printf '%s' "${REPO_BASE}" | tr '[:lower:]' '[:upper:]')"
+  ln -s "${REPO_BASE}" "${SANDBOX}/root-link"
   for row in \
-    "tracked rule body in a harness work tree|${REPO}/docs/guide.md" \
-    "README at a harness work-tree root|${REPO}/README.md"; do
-    IFS='|' read -r label path <<<"${row}"
-    run_repo_row "${path}" GA_ROOT="${REPO_BASE}"
+    "tracked rule body in a harness work tree|${REPO}/docs/guide.md|${REPO_BASE}" \
+    "README at a harness work-tree root|${REPO}/README.md|${REPO_BASE}" \
+    "case-variant spelling of a tracked file under the root|${upper_base}/repo/docs/guide.md|${REPO_BASE}" \
+    "harness root given through a symlinked spelling|${REPO}/docs/guide.md|${SANDBOX}/root-link"; do
+    IFS='|' read -r label path root <<<"${row}"
+    run_repo_row "${path}" GA_ROOT="${root}"
     [[ "${status}" -eq 2 ]] || {
       echo "${label}: status ${status}: ${output}"
       return 1
