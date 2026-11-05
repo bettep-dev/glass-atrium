@@ -87,7 +87,7 @@
   - 사용자의 의도를 하위 작업으로 *분해*하고, 전문 에이전트에게 *위임*하고, 결과를 *종합*합니다.
   - 전체 맥락을 혼자 쥔 채, 모든 위임 경계에서 제어권을 유지합니다.
 - 직접 하는 일은 넘기는 비용이 일보다 큰 아주 작은 수정뿐이며, 먼저 사용자에게 한 줄로 이유를 알립니다.
-  - 훅이 막아 계속 위임되는 대상: 하네스 경로 · `.env`·자격 증명·키 같은 민감 파일 · 새 문서 파일 · 진행 중(`implementing`) 계획의 대상 파일
+  - 훅이 막아 계속 위임되는 대상: 하니스 경로 · `.env`·자격 증명·키 같은 민감 파일 · 새 문서 파일 · 진행 중(`implementing`) 계획의 대상 파일
   - 계획 목록을 읽지 못하면 수정을 막습니다(fail closed).
 - 반대편 모델인 **Handoff Pattern(에이전트끼리 제어권을 직접 주고받는 방식)** 은 **의도적으로 지원하지 않습니다** — 바로 그 점이 핵심입니다.
 - **위임과 복구**
@@ -96,11 +96,11 @@
   - 실패한 서브에이전트는 실패 복구 루프(재시도 → 폴백 → 디버거 에스컬레이션)로 처리됩니다.
   - 서로 겹치지 않는 독립적인 하위 작업은 사용자가 요청하지 않아도 기본으로 병렬 실행됩니다.
 - **한도**
-  - 에이전트별 턴 예산: 하네스가 스폰 시점에 하드 캡으로 적용합니다.
+  - 에이전트별 턴 예산: 하니스가 스폰 시점에 하드 캡으로 적용합니다.
   - 동시성 상한: 워크플로 엔진 런타임이 겁니다.
   - 스폰 깊이: 정책 숫자가 아니라 구조로 묶여 있습니다 — 어떤 에이전트 프론트매터도 재스폰 도구(Agent/Task/Workflow)를 받지 않고, 그 도구 목록은 스폰 시점에 동결됩니다.
 - **기계적 층과 규율 층** — 저장소의 규칙 파일들도 스스로 이렇게 나눠 적어 둡니다.
-  - 기계적 층(실제 코드): PreToolUse 훅 파이프라인 · `enforce-harness-critical.sh`의 하네스 임계 경로 차단 · 스폰 시점 도구 동결
+  - 기계적 층(실제 코드): PreToolUse 훅 파이프라인 · `enforce-harness-critical.sh`의 하니스 임계 경로 차단 · 스폰 시점 도구 동결
   - 규율(honor-system) 층: 위임 재시도·폴백·에스컬레이션 · `MAX_DEPTH=2`라는 정책 숫자와 깊이 카운팅
 - **통제되지 않는 핸드오프 시스템과의 차이**
   - 라이프사이클 훅이 모든 도구 호출을 가로챕니다 — 훅으로 뒷받침되는 강제.
@@ -278,7 +278,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 - 아래 화면은 합성 데이터만 넣은 별도 모니터에서 캡처했습니다(실제 설치 데이터 없음).
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-dashboard.webp" alt="대시보드" width="100%"></p>
-<p align="center"><em>대시보드 — 멈춘 하네스 부품과 7일 평균을 앞지르는 지출을 맨 위 배너로 알리고, 하네스 상태·7일 작업 결과·에이전트 현황·오늘 지출 타일 아래에 이번 주 작업 결과 막대와 시간대별 실행 히트맵을 보여 줍니다.</em></p>
+<p align="center"><em>대시보드 — 멈춘 하니스 부품과 7일 평균을 앞지르는 지출을 맨 위 배너로 알리고, 하니스 상태·7일 작업 결과·에이전트 현황·오늘 지출 타일 아래에 이번 주 작업 결과 막대와 시간대별 실행 히트맵을 보여 줍니다.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="비용·사용량" width="100%"></p>
 <p align="center"><em>비용·사용량 — "평소보다 높음" 상태 줄과 지출 속도 경고를 먼저 띄우고, 평소 대비 오늘·30일 비용·완료 작업당 비용·캐시 비중 KPI, 일별 비용 추이 차트, 토큰 유형·모델별 비용, 비용이 큰 세션 표를 7·30·90일 기간 전환과 함께 보여 줍니다.</em></p>
@@ -287,7 +287,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 <p align="center"><em>에이전트 — 조치가 필요한 에이전트를 한 줄로 짚고, 라우팅하면 안 되는 에이전트·실패·도구 사용 한도 초과·정보 부족 KPI 아래에 가장 자주 실패하는 에이전트·작업 쌍, 완료 기록이 없는 실행과 P95, 에이전트별 성능 표를 보여 줍니다.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-learning.webp" alt="학습" width="100%"></p>
-<p align="center"><em>학습 — 자가개선 루프의 상태 한 줄과 승인 대기·최근 7일 적용·제안 가능한 백로그·사람 판단이 필요한 보류 패턴 타일, 계측 상태 줄을 보여 줍니다. 자동 패치 생성·적용이 닫힌 지금의 설치처럼 최근 7일 적용은 0건이고, 제안 보드에는 닫히기 전의 적용 이력과 원인별 거부, 판정 없이 닫힌(generation closed until live trials) 제안이 남은 뒤 패턴 원장으로 이어집니다.</em></p>
+<p align="center"><em>학습 — 자기개선 루프의 상태 한 줄과 승인 대기·최근 7일 적용·제안 가능한 백로그·사람 판단이 필요한 보류 패턴 타일, 계측 상태 줄을 보여 줍니다. 자동 패치 생성·적용이 닫힌 지금의 설치처럼 최근 7일 적용은 0건이고, 제안 보드에는 닫히기 전의 적용 이력과 원인별 거부, 판정 없이 닫힌(generation closed until live trials) 제안이 남은 뒤 패턴 원장으로 이어집니다.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="System map" width="100%"></p>
 <p align="center"><em>System map — 주의가 필요한 부품과 상태 링 범례를 맨 위에 두고, 입력·데몬·오케스트레이터·에이전트·안전 훅·PostgreSQL 저장소·Chromium 문서 내보내기로 이어지는 구성도에 부품별 상태 링을 겹친 뒤, 아래 부품 상태 목록으로 이어집니다.</em></p>
