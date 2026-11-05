@@ -2104,12 +2104,15 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
             patcher = mock.patch.object(dc, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        # Armed loop flag → shadow stage reads TRIAL_LEDGER, unbound when psycopg is absent.
-        ledger = mock.patch.object(
-            dc, "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
-        )
-        ledger.start()
-        self.addCleanup(ledger.stop)
+        # Armed loop flag → shadow stage reads TRIAL_LEDGER, the trial decision step the status
+        # fragment; both unbound when psycopg is absent.
+        for name, value in (
+            ("TRIAL_LEDGER", stub.get_trial_ledger()),
+            ("_PG_PROPOSAL_STATUS_SQL", stub.get_proposal_status_sql()),
+        ):
+            patcher = mock.patch.object(dc, name, value, create=not hasattr(dc, name))
+            patcher.start()
+            self.addCleanup(patcher.stop)
         return calls
 
     def test_a_no_write_cycle_neither_renames_nor_ingests(self) -> None:

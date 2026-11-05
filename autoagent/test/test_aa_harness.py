@@ -342,6 +342,12 @@ class _AaFixture(unittest.TestCase):
         self._patch(
             "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
         )
+        # armed loop flag → the trial decision step reads the fragment, unbound without psycopg
+        self._patch(
+            "_PG_PROPOSAL_STATUS_SQL",
+            stub.get_proposal_status_sql(),
+            create=not hasattr(dc, "_PG_PROPOSAL_STATUS_SQL"),
+        )
 
     def _patch(self, name: str, value: object, *, create: bool = False) -> None:
         patcher = mock.patch.object(dc, name, value, create=create)

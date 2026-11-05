@@ -677,6 +677,12 @@ class _ShadowFixture(unittest.TestCase):
         self._patch(
             "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
         )
+        # armed loop flag → the trial decision step reads the fragment, unbound without psycopg
+        self._patch(
+            "_PG_PROPOSAL_STATUS_SQL",
+            stub.get_proposal_status_sql(),
+            create=not hasattr(dc, "_PG_PROPOSAL_STATUS_SQL"),
+        )
         # the stored key's shape here, as _LIVE_KEY has it
         self._patch(
             "get_live_trial_key",

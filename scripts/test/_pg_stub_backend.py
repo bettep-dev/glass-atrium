@@ -484,3 +484,13 @@ def get_trial_ledger() -> SimpleNamespace:
         load_helper(Path(scratch) / "stub.sqlite") as helper,
     ):
         return helper.TRIAL_LEDGER
+
+
+@functools.cache
+def get_proposal_status_sql() -> str:
+    """The helper's proposal-status fragment, so a psycopg-free leg has it.
+
+    Loaded for its text, never connected.
+    """
+    with load_helper(Path(os.devnull)) as helper:
+        return helper.PROPOSAL_STATUS_SQL
