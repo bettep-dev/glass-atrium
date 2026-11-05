@@ -375,7 +375,8 @@ sweep_orphans() {
     trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
     set -e
     [[ "${rc}" -eq 0 ]] && removed=$((removed + 1))
-  done < <(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
+  done < <(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
   "${SCAN_ONLY}" || log "orphan sweep: ${removed} extra GA symlink(s) removed"
 }
 

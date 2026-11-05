@@ -426,7 +426,8 @@ run_prune() {
       log "  prune: removed orphan GA symlink: ${link}"
     fi
     pruned=$((pruned + 1))
-  done < <(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
+  done < <(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
 
   # STEP6 — summary. Empty candidate set is a no-op (rc 0) with a no-orphan line.
   if [[ "${candidates}" -eq 0 ]]; then
