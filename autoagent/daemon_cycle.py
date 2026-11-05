@@ -8297,9 +8297,9 @@ def update_decided_trial_proposals() -> list[int]:
     One idempotent statement, whatever cycle wrote the decision: a harm or retire key stores
     'rejected' (the trial judged the change), a void key 'unadjudicated' through the shared
     status fragment ('rejected' on a schema without that label, its rationale head keeping it
-    out of the reject streak). reviewed_at is stamped → the push UPSERT's freeze keeps the row
-    and its diff against a same-key push. A won trial's row and a row no longer pending are
-    never touched.
+    out of the reject streak), the generator's rationale kept after that head. reviewed_at is
+    stamped → the push UPSERT's freeze keeps the row and its diff against a same-key push. A
+    won trial's row and a row no longer pending are never touched.
 
     Runs apart from the decision writer: a fault here is a named WARN and an empty list, the
     landed decision stays reported as recorded, and the next writing cycle moves the row.
@@ -8317,7 +8317,8 @@ def update_decided_trial_proposals() -> list[int]:
         f"SET status = CASE WHEN d.outcome = 'void' THEN {_PG_PROPOSAL_STATUS_SQL} "
         "ELSE 'rejected' END, "
         "rationale = CASE WHEN d.outcome = 'void' THEN %s::text ELSE %s::text END "
-        "|| ': ' || d.outcome || ' (' || COALESCE(d.reason, 'no reason') || ')', "
+        "|| ': ' || d.outcome || ' (' || COALESCE(d.reason, 'no reason') || ')' "
+        "|| COALESCE(': ' || NULLIF(w.rationale, ''), ''), "
         "reviewed_at = now(), reviewed_by = %s "
         "FROM (SELECT (p.payload->>'proposal_id')::bigint AS proposal_id, k.outcome, "
         "decision.payload -> k.outcome ->> 'reason' AS reason "

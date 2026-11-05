@@ -2966,6 +2966,8 @@ _VERDICT_RATIONALES = {
     ("retire", "maximum-sample"): "live trial decided without a win: retire (maximum-sample)",
     ("retire", "horizon"): "live trial decided without a win: retire (horizon)",
 }
+# the generator's rationale on a bound row before its trial is decided
+_GENERATOR_RATIONALE = "the overage pattern recurs on 5 of 7 spawns; tighten the budget rule"
 
 
 class TrialDecisionRationaleTest(unittest.TestCase):
@@ -3046,23 +3048,38 @@ class TrialDecisionTerminalizationLivePgTest(_LivePgFixture):
                 "unadjudicated",
             ),
             ("harm stored by an earlier cycle", self._HARM, _NOW - timedelta(days=3), "rejected"),
+            ("harm on a row with no stored rationale", self._HARM, None, "rejected"),
         )
         ids = [self._decide(decision, recorded_at=at) for _name, decision, at, _status in rows]
+        generator_rationales = [
+            None if name == "harm on a row with no stored rationale" else _GENERATOR_RATIONALE
+            for name, *_ in rows
+        ]
+        with self._connect() as conn:
+            for proposal_id, generator_rationale in zip(ids, generator_rationales, strict=True):
+                conn.execute(
+                    "UPDATE core.autoagent_proposals SET rationale = %s WHERE id = %s",
+                    (generator_rationale, proposal_id),
+                )
         moved, stderr_text = self._terminalize()
         self.assertEqual(sorted(moved), sorted(ids))
-        for (name, decision, _at, status), proposal_id in zip(rows, ids, strict=True):
+        for (name, decision, _at, status), proposal_id, generator_rationale in zip(
+            rows, ids, generator_rationales, strict=True
+        ):
             with self.subTest(name):
                 ((key, detail),) = decision.items()
                 stored, rationale, reviewed_at, reviewed_by, _diff = self._get_row(proposal_id)
                 self.assertEqual((stored, reviewed_by), (status, self._ACTOR))
                 self.assertIsNotNone(reviewed_at)
-                self.assertIn(f"{key} ({detail['reason']})", rationale)
+                # the decision head leads, the generator's rationale stays readable after it
+                tail = "" if generator_rationale is None else f": {generator_rationale}"
+                self.assertTrue(rationale.endswith(f"{key} ({detail['reason']}){tail}"), rationale)
                 if key == "void":
                     self.assertEqual(
                         dc.classify_failure_rationale(rationale), dc.FAILURE_CLASS_SKIPPED
                     )
                 else:
-                    self.assertEqual(rationale, _VERDICT_RATIONALES[(key, detail["reason"])])
+                    self.assertEqual(rationale, _VERDICT_RATIONALES[(key, detail["reason"])] + tail)
                 self.assertIn(f"proposal id={proposal_id} → {status}", stderr_text)
         self.assertEqual(self.pg_reach, [])
 
