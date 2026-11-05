@@ -1948,7 +1948,7 @@ describe("the paired failing-pairs and no-record tables take the .tbl cell geome
     });
   }
 
-  test("the screen-local row-height override is retired with the routing", async () => {
+  test("neither paired table takes a screen-local row-height class, and the screen CSS defines none", async () => {
     const screenCss = findNodes(await renderScreenAgents(), (n) => n.type === "style").map((n) => collectText(n)).join("\n");
     assert.ok(screenCss.trim().length > 0, "the screen renders its own style block");
     assert.doesNotMatch(screenCss, /ag-paired-tbl/, "the screen's style block defines no paired-table override");
