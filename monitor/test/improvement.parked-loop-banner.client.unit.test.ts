@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
-import { createReactStub, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
@@ -176,11 +176,7 @@ function listComponentOrder(node: RenderedNode | string | null, out: string[] = 
 
 test("the operator view keeps the five-surface spine order", async () => {
   const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
-  const screen = await loadScreenModule(IMPROVEMENT_SRC, {
-    UI: ui.UI,
-    React: createReactStub(),
-    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
-  });
+  const screen = await loadScreenModule(IMPROVEMENT_SRC, { UI: ui.UI });
   const spine = ["AlarmLaneI", "StatusBandI", "KanbanCardI", "PatternLedgerCardI", "LoopOutputGroupI"];
   const rendered = listComponentOrder(renderScreen((screen.ScreenImprovement as (props: unknown) => unknown)({})));
   const order = rendered.filter((name, at) => spine.includes(name) && rendered.indexOf(name) === at);
@@ -336,7 +332,7 @@ function collect(node: unknown, pick: (el: RecordedElement) => boolean, stopAt: 
 const HUE = {
   // any utility naming a theme tone or a Tailwind palette step: text-crit, bg-crit/70, hover:border-ok, bg-red-500 — a palette name runs 3+ letters, so min-w-16 and gap-x-100 stay layout
   CLASS: /\b[a-z]+-(crit|warn|ok|info|accent|[a-z]{3,}-(?:50|[1-9]00|950))\b/,
-  // judged on the value, so any style key counts → raw hex and rgb belong to the design-token test; hsl() and named colours are read by neither
+  // judged on the value, so any style key counts → raw hex, colour functions and named colours on a colour property belong to the design-token test; a named colour inside a composite string is read by neither
   STYLE_TOKEN: /var\(--(?:crit|warn|ok|info|accent|cat)\b/,
 };
 const GLYPH_TONE: Record<string, RegExp> = { added: /\btext-ok\b/, removed: /\btext-crit\b/ };
