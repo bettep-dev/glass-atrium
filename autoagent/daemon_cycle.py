@@ -8278,18 +8278,17 @@ _GENERATION_CLOSED_REASON = "generation closed until live trials"
 _GENERATION_CLOSED_ACTOR = "daemon-cycle-generation-closed"
 
 
-# Live-trial decision: a decided-without-win trial's pending bound row
-
-
-# Head of every void rationale; classify_failure_rationale prefix-tests against it → a
-# stored 'rejected' void (label-absent schema) never advances the reject streak.
-_TRIAL_VOID_REASON = "voided live trial, never judged"
-# Head of a harm / retire rationale — no classifier branch: a verdict against the change advances
-_TRIAL_DECISION_REASON = "live trial decided without a win"
-
-# Actor token from the closed set declared at monitor/prisma/schema.prisma →
-# AutoagentProposal.reviewedBy — the live trial's decision, its verdict or void.
-_TRIAL_DECISION_ACTOR = "daemon-cycle-trial-decision"
+# Live-trial decision: a decided-without-win trial's pending bound row → terminal
+_TRIAL_DECISION = SimpleNamespace(
+    # Head of every void rationale; classify_failure_rationale prefix-tests against it → a
+    # stored 'rejected' void (label-absent schema) never advances the reject streak.
+    VOID_REASON="voided live trial, never judged",
+    # Head of a harm / retire rationale — no classifier branch → advances the reject streak
+    REASON="live trial decided without a win",
+    # Actor token from the closed set declared at monitor/prisma/schema.prisma →
+    # AutoagentProposal.reviewedBy — the live trial's decision, its verdict or void.
+    ACTOR="daemon-cycle-trial-decision",
+)
 
 
 def update_decided_trial_proposals() -> list[int]:
@@ -8334,9 +8333,9 @@ def update_decided_trial_proposals() -> list[int]:
     )
     update_params = (
         "unadjudicated",
-        _TRIAL_VOID_REASON,
-        _TRIAL_DECISION_REASON,
-        _TRIAL_DECISION_ACTOR,
+        _TRIAL_DECISION.VOID_REASON,
+        _TRIAL_DECISION.REASON,
+        _TRIAL_DECISION.ACTOR,
         TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
     )
     try:
@@ -12950,7 +12949,7 @@ def classify_failure_rationale(rationale: str) -> str:
     if text.startswith(_GENERATION_CLOSED_REASON):
         # Closed before any review side saw it — no verdict.
         return FAILURE_CLASS_SKIPPED
-    if text.startswith(_TRIAL_VOID_REASON):
+    if text.startswith(_TRIAL_DECISION.VOID_REASON):
         # A void trial never judged the change — no verdict.
         return FAILURE_CLASS_SKIPPED
     # Back-off marker ran no Haiku call → no verdict, as a timeout.

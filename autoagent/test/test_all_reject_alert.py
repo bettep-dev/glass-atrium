@@ -79,7 +79,7 @@ def _non_adjudicating_rationales() -> dict[str, str]:
         "auth-failure": "haiku auth failure — 401 from the CLI",
         "chronic-timeout": _backoff_rationale(),
         "below-floor → skipped": dc._BELOW_FLOOR_REJECT_PREFIX + " (0.21)",
-        "live-trial void → skipped": dc._TRIAL_VOID_REASON + ": void (arm-imbalance)",
+        "live-trial void → skipped": dc._TRIAL_DECISION.VOID_REASON + ": void (arm-imbalance)",
         "empty → skipped": "",
     }
 

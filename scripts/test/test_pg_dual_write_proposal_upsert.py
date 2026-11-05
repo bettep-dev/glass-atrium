@@ -99,7 +99,7 @@ _ACTOR_DECLARATIONS = {
     ),
     "daemon-cycle-trial-decision": (
         _DAEMON_CYCLE,
-        '_TRIAL_DECISION_ACTOR = "daemon-cycle-trial-decision"',
+        'ACTOR="daemon-cycle-trial-decision",',
     ),
     "daemon-cycle-push": (
         _REPO_ROOT / "scripts" / "_pg_push_autoagent_cycle.py",
