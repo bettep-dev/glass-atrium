@@ -79,7 +79,7 @@ GSAP 3.15+ + ScrollTrigger · ScrollSmoother · Flip plugin · `@gsap/react` (us
   - Mix direction/speed/scale variation (no monotonous fade-up)
   - `pin + timeline` for immersive sequential reveal
   - Natural physics-based easing
-- **Dark/Light sandwich**:
+- **Dark/Light sandwich** — a default that yields to the project `DESIGN.md` surfaces (`scoped/shared-design-token-consumption.md` → `## Token Lookup Order`):
   - Title + conclusion → dark bg
   - Content → light bg
   - Background transition on section change
@@ -116,7 +116,7 @@ GSAP 3.15+ + ScrollTrigger · ScrollSmoother · Flip plugin · `@gsap/react` (us
   - Set touch-action
   - Prevent swipe ↔ scroll conflicts
 - Target that may not exist on mount → `useRef`/null guard
-- Easing/duration choice → why-comment
+- Non-obvious easing/duration choice → why-comment (an obvious named easing takes none — `scoped/shared-comment-logging.md` → **Density gate**)
 - Inline `duration`/`ease` magic number → named constant or an explaining comment
 - App Router SSR: GSAP / ScrollTrigger / ScrollSmoother all require `'use client'` directive in consuming components — RSC cannot run animation libraries.
 <!-- EDITABLE:END -->

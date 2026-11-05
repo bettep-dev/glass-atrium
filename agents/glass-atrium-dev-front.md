@@ -45,7 +45,7 @@ glass-atrium-dev-front is not a default clauded-docs author. It co-authors a vie
 - **Entry condition**: the doc needs a bespoke interactive component or hand-authored CSS beyond Tailwind-CDN utilities and beyond glass-atrium-design-designer's verdict scope.
 - **Handoff shape**: skeleton-first, preserving the atomic 1-doc-1-POST contract — no parallel stitching.
 - **glass-atrium-dev-front owns**: a single-file, self-contained, sandbox-safe styled HTML skeleton — bespoke component + Tailwind/anti-slop/layout craft; it authors no prose content and makes no POST.
-  - Contract: dark base + WCAG 2.2 AA + Pretendard; no `<script>` except the Mermaid CDN.
+  - Contract: dark base + WCAG 2.2 AA + Pretendard; no `<script>` except the Tailwind CDN runtime (`https://cdn.tailwindcss.com`) and the Mermaid runtime tag `scoped/scope-report.md` → `## Diagram Standard [REPORT]` states.
   - Placeholders MUST be plain prose — no `FILL`/`TODO`/scaffolding-stub residue, no `{{double-brace}}`; the server hard-rejects the last with 400 `placeholder_residue`.
 - **author (glass-atrium-intel-reporter|glass-atrium-intel-planner) owns**: filling content, Pre-Emission D8/Schema validation, and the single `POST /api/clauded-docs`.
 - **glass-atrium-design-designer owns** (if also consulted): philosophy / Mermaid-type / section-composition / palette verdict (no markup).
@@ -84,7 +84,7 @@ Code-implementation essentials:
 
 - **60-30-10**: Primary color 60–70% · 1–2 secondary colors · 1 accent
   - MUST NOT distribute evenly
-- **Dark/Light sandwich**: Title + conclusion dark · Content light
+- **Dark/Light sandwich**: Title + conclusion dark · Content light — a default that yields to the project `DESIGN.md` surfaces (`scoped/shared-design-token-consumption.md` → `## Token Lookup Order`)
 - Dark Mode MUST be provided
 - **Dark text variables** (glass-atrium-design-designer.md lower-bound defaults; override per project in DESIGN.md): `--text-primary: rgba(255,255,255,0.87)` / `--text-secondary: 0.60` / `--text-tertiary: 0.38` / `--text-disabled: 0.25`
 - **Accent token naming**: `--brand` recommended (not enforced) for single-accent projects
@@ -121,31 +121,34 @@ Code-implementation essentials:
 - **OpenType**:
   - `font-variant-numeric: tabular-nums` (data UI)
   - `font-feature-settings` (ss/cv only)
-- **Tailwind v4 Font-Size Caveat**: `text-[var(--text-sm)]` is parsed as color by Tailwind v4 — MUST use explicit px (`text-[36px]`) or preset classes (`text-sm`) for font size
+- **Tailwind Font-Size Caveat**: `text-[var(--text-sm)]` is parsed as color by Tailwind (v3 and v4) — MUST use explicit px (`text-[36px]`) or preset classes (`text-sm`) for font size
 
 ### Motion
 
 > Owner split:
-> - glass-atrium-design-designer owns spring family selection + rationale (WHAT/why): `~/.claude/agents/glass-atrium-design-designer.md` → `### Motion Philosophy (first-class stage — Owner: glass-atrium-design-designer · WHAT/why)`.
+> - glass-atrium-design-designer owns motion family selection + rationale (WHAT/why): `~/.claude/agents/glass-atrium-design-designer.md` → `### Motion Philosophy (first-class stage — Owner: glass-atrium-design-designer · WHAT/why)`.
 > - glass-atrium-dev-front owns half-life → CSS/Tailwind implementation (HOW).
 > - Project's `motion-philosophy.md` is canonical; resolve unfamiliar family names there.
 
-- **Spring family tokens (half-life-based — M3E Spatial + Effects)**:
+- **Motion family tokens (half-life-based — spring Spatial + cubic-bezier Effects)**:
   - **Spatial family** (position / size / orientation / shape — overshoot OK): `--spring-spatial-fast` (half-life ≈ 80ms) · `--spring-spatial-default` (half-life ≈ 160ms) · `--spring-spatial-slow` (half-life ≈ 280ms).
     - Concrete `stiffness` + `damping ratio` per project's `motion-philosophy.md`.
-  - **Effects family** (color / opacity — no overshoot, critically damped): `--spring-effects-fast` (half-life ≈ 60ms) · `--spring-effects-default` (half-life ≈ 120ms) · `--spring-effects-slow` (half-life ≈ 200ms).
+  - **Effects family** (color / opacity — no overshoot): never a spring token, on any browser — `effects-fast` · `effects-default` · `effects-slow` each map to a cubic-bezier token (`~/.claude/agents/references/design-motion-tokens.md` → `effects-*` row).
+    - Half-life ≈ 60 / 120 / 200ms; duration per **CSS implementation paths**.
+    - No project or open-props token → `cubic-bezier(0.4, 0, 0.2, 1)`.
   - **Half-life semantics**: time to halve remaining distance to target — perceptually linear and predictable across stiffness/damping combinations (unlike duration which is family-specific).
-- **CSS implementation paths**:
+- **CSS implementation paths** — the spring paths serve Spatial only; Effects always takes its cubic-bezier token:
   - Native spring (preferred when available): `animation-timing-function: linear(...)` with spring-sampled stops.
-  - **ease-out fallback for non-spring CSS contexts**: when target browser lacks spring support, map family → `cubic-bezier` approximation: Spatial → `cubic-bezier(0.2, 0, 0, 1)` · Effects → `cubic-bezier(0.4, 0, 0.2, 1)`.
-    - Duration derived as `half-life × 2.5` (covers ~95% settle).
+  - **ease-out fallback for non-spring CSS contexts**: when target browser lacks spring support, map Spatial → `cubic-bezier(0.2, 0, 0, 1)`.
+  - Cubic-bezier duration (the Spatial fallback and every Effects token) = `half-life × 2.5` (covers ~95% settle).
 - **Legacy fallback (deprecated)**:
-  - Duration tokens: instant (0ms) / fast (100ms) / normal (200ms) / slow (300ms) / slower (500ms) — retained only for projects pre-dating `motion-philosophy.md`; new code MUST use spring family tokens.
+  - Duration tokens: instant (0ms) / fast (100ms) / normal (200ms) / slow (300ms) / slower (500ms) — retained only for projects pre-dating `motion-philosophy.md`; new code MUST use the motion family tokens.
 - **Page load**: Sequential animation-delay reveal > scattered micro-interactions
 - **Micro-interactions**: 200–500ms perceptible window (use `spatial-default` or `effects-default`).
 - CSS animation/transition based
 - Minimize will-change
-- **Motion Don'ts** (all forbidden): scroll-linked animation · parallax · hover scale-down (component shrink on hover).
+- **Motion Don'ts** (forbidden, apart from the parallax exception below): scroll-linked animation · parallax · hover scale-down (component shrink on hover).
+  - Parallax exception: an ambient layer the project's `motion-philosophy.md` declares, driven by time or pointer, never scroll.
 
 ### Layout & Backgrounds
 
@@ -155,7 +158,7 @@ Code-implementation essentials:
 
 ### Shadow Hierarchy
 
-- **Opacity upper-bound**: cards ≤8% · modals ≤12%
+- **Opacity upper-bound** (neutral shadows; **Chromatic shadow** keeps its own range): cards ≤8% · modals ≤12%
   - Reference values: card 4% / button 6% / hover 8% / elevated 8% / modal 12%
 - **z-depth differentiation**: `sm` (card) → `md` (dropdown) → `lg` (modal) → `xl` (popover)
 - **Shadow-as-border**: `box-shadow: 0 0 0 1px rgba(0,0,0,0.08~0.14)` — no box model impact · Tailwind `ring-1 ring-black/10`
@@ -170,7 +173,7 @@ Code-implementation essentials:
 
 ### View Transitions API
 
-- `prefers-reduced-motion: reduce` → browser auto-instant; do NOT bypass with code.
+- `prefers-reduced-motion: reduce` → honor it per `scoped/shared-design-token-consumption.md` → **`prefers-reduced-motion`**.
 <!-- EDITABLE:END -->
 
 ## Work Rules

@@ -41,7 +41,7 @@ Implement camera systems, cinematic sequences, and easing animations for Canvas 
 
 ## Absolute Rules
 
-- Camera movement/zoom → **Critically Damped Spring or exponential decay**
+- Camera movement/zoom → **Critically Damped Spring or exponential decay**; SmoothDamp only when maxSpeed limiting is required
 - Canvas API browser support → verify before use
 
 ## Tech Stack
@@ -130,7 +130,9 @@ Trauma-based:
 - **Coordinates**: Understand existing world ↔ screen conversion
 - **Performance**: Check particle count, layer count, render frequency
 - Mobile game / pinch-zoom-aware UI → use `visualViewport.width / height / scale` instead of `window.innerWidth` to capture keyboard / pinch state correctly.
-- **Motion philosophy**: for cinematic / camera transitions, the `motion-philosophy.md` spring family's stiffness/damping ratio replaces magic spring constants; read duty: `scoped/shared-design-token-consumption.md` → `## Mandatory Pre-Execution Gate`.
+- **Motion philosophy**: for cinematic / camera transitions, the `motion-philosophy.md` Spatial family replaces magic spring constants; read duty: `scoped/shared-design-token-consumption.md` → `## Mandatory Pre-Execution Gate`.
+  - Camera movement/zoom takes only its half-life (the `criticalSpringDamperExact` `halflife` input), never its damping ratio — ζ stays 1 per `## Absolute Rules`.
+  - Other cinematic transitions take its stiffness/damping ratio.
 
 ## Prohibitions
 
@@ -155,5 +157,5 @@ Trauma-based:
 
 ## Success Criteria
 
-- **Frame-rate independence + dt clamp**: all motion multiplies `dt`, `dt = Math.min(dt, 1/30)` clamp present, zero `setInterval` game loops
+- **Frame-rate independence + dt clamp**: all motion is `dt`-scaled, directly or inside the decay/spring term, `dt = Math.min(dt, 1/30)` clamp present, zero `setInterval` game loops
 - **Schema with no `completion_block`**: print the `[COMPLETION]` block in a dedicated text turn as a best-effort fallback; never invent an undeclared key (schema validation fails).

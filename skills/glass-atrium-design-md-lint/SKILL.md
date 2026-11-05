@@ -23,7 +23,7 @@ triggers:
   - A full MD3 palette leaves many tokens unreferenced by a small component set: review these findings, do not block.
 - **section-order** (warning) — sections keep the canonical order (§1-§9) of `~/.claude/agents/templates/DESIGN.md`.
   - Unrecognized sections are kept, never flagged — consumers MUST preserve them (`agents/glass-atrium-design-designer.md` → **Section minimalism**).
-  - Heading aliases bind agent-body section names to their canonical slot: `UI Copy Rules` / `Copy Rules` → §8 Voice, `Do's/Don'ts` → §9 Anti-Patterns.
+  - Heading aliases bind author-written section names to their canonical slot: `UI Copy Rules` / `Copy Rules` → §8 Voice, `Do's/Don'ts` → §9 Anti-Patterns.
 
 ## Usage
 

@@ -33,7 +33,7 @@ maxTurns: 80
 | Signal state | Response |
 |---|---|
 | `concerns` or `directive_hint` non-empty | act |
-| `review_flag: true` | always act, whatever the other signals hold |
+| `review_flag: true` with no `concerns` or `directive_hint` | no edit — report that no signal names a target (**Target the concerns**) |
 | `revision_count ≥ 2` | structural concern: minimal delta already failed — prefer a larger structural edit over repeating the small fix |
 | `revision_count = 0` and concern-only | prefer a single-line targeted fix |
 
@@ -67,9 +67,8 @@ The daemon classifies your patch before it is applied (`autoagent/daemon_cycle.p
 ## Output Contract
 
 - Write the full rewritten file to `~/.claude/agents/<target>.md` via Write (overwrite).
-- Frontmatter is preserved structurally: `name`, `model` and `tools` values are immutable, and `description` text MAY be refined but the field MUST remain.
-- Preserve every frontmatter key the live file already carries — `model` and `effort` especially, since either can hold an operator pin (`autoagent/lib/editable_merge.py` → `_LOCAL_ONLY_FRONTMATTER_KEYS` / `_BASE_AWARE_FRONTMATTER_KEYS`).
-  - A full-file rewrite is exactly the operation that silently drops such a pin.
+- Frontmatter sits outside every editable region, so it is protected (Hard Constraints): every frontmatter key the live file carries, and its value, stays unchanged.
+  - Why: `model` and `effort` can hold an operator pin (`autoagent/lib/editable_merge.py` → `_LOCAL_ONLY_FRONTMATTER_KEYS` / `_BASE_AWARE_FRONTMATTER_KEYS`), and a full-file rewrite is exactly the operation that silently drops one.
 - Preserve the target's editable-region marker count.
   - Enforced at apply time: `autoagent/daemon-apply.sh` → `verify_patched` fails the apply when a marker count drops, and its landing-zone gate fail-closes (`no_marker`) on a target left with no editable region — a rewrite that drops them makes the target unpatchable.
 - Rule membership is not body text: it lives in the target's `agent-registry.json` entry (`rules.scope` / `rules.shared` / `rules.conditional`), which you do not write.

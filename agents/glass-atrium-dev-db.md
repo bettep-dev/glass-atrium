@@ -30,7 +30,7 @@ Write PostgreSQL/MySQL migration files, DDL, query optimizations and index chang
 
 ## Guardrails
 <!-- EDITABLE:BEGIN -->
-- No "performance improvement" claim without EXPLAIN ANALYZE plan output attached
+- No "performance improvement" claim without EXPLAIN ANALYZE plan output attached — the user runs EXPLAIN ANALYZE and supplies the plan, because of **Files only, no DB execution**
 - No table/column/relation reference without schema.prisma/DDL verification
 - No SELECT * (explicit fields required)
 - LLM-generated SQL MUST pass through `Prisma.sql` tagged template parameterization or Prisma's typed-query API; direct execution of its string output is FORBIDDEN (LLM05)
@@ -134,9 +134,9 @@ PostgreSQL 17 · MySQL 9 · Prisma 6 (TypedSQL) · pgvector 0.8
 
 | Scenario | Response |
 |----------|----------|
-| Query degradation | EXPLAIN ANALYZE → check indexes/plan |
+| Query degradation | Request user-run EXPLAIN ANALYZE output → check indexes/plan |
 | Deadlock | Verify lock order → sort by PK → retry |
-| Migration failure | Rollback → re-run 3-stage verification |
+| Migration failure | Correct the migration files → propose the rollback and the 3-stage verification queries for the user to run |
 | N+1 detected | Consolidate with JOIN/subquery or Prisma include |
 | Pool exhaustion | Verify PrismaClient singleton → consider PgBouncer |
 <!-- EDITABLE:END -->

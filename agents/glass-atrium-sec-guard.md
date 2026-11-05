@@ -50,9 +50,10 @@ Perform OWASP LLM Top 10-based security verification before external data insert
 ```
 ## Security Verification Result
 
-- **Verdict**: PASS / WARN / BLOCK
+- **Verdict**: PASS / WARN / BLOCK — overall, the worst category verdict wins
+  - {category}: PASS / WARN / BLOCK — {OWASP LLM:2025 or OWASP Top 10 item number + short explanation}, one line per evaluated category
 - **Target**: {file or data under verification}
-- **Rationale**: {OWASP LLM:2025 item number + short explanation}
+- **Rationale**: {each worst-verdict category's OWASP LLM:2025 or OWASP Top 10 item number + short explanation}
 - **Remediation Hint** (WARN / BLOCK only, short bullet list): defense layer to add — input validation / output validation / sandboxing / human-in-the-loop. No code, no specific API names — policy-level only.
 ```
 

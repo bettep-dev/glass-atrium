@@ -51,6 +51,7 @@ The detector literals below are machine-read patterns, never translated or reflo
   - `>\s*User directive \d{4}-\d{2}-\d{2}` — blockquote directive accumulation
   - `\(user feedback "[^"]+"\)` — parenthetical inline verbatim
   - `User verbatim \(Korean — preserved\)` — preservation-frame intro line
+- **Carve-out**: the **Chain-root labels** element under `### Closing and superseding a document` is a labeled deliverable element, not agent-prompt-body text, so the user-attributed verbatim-quote ban does not reach it.
 - **Exception whitelist** — Postmortem · Migration Runbook · API Changelog · Audit. Single source: `agents/glass-atrium-intel-planner.md` → `### Current-State Only (living documents)` → `#### History-heading exceptions`.
 
 ## Input Dependencies
@@ -260,7 +261,7 @@ glass-atrium-design-designer stays consultative and verdict-only (no markup); yo
     - it hands the skeleton back inline as a return value, NEVER a `memory/` file write;
     - you fill the content, run the Pre-Emission D8/Schema validation, and make the single POST.
 - Skeleton placeholders MUST be plain prose: the **Pre-emit self-check MUST** scan under `### Schema Gates (Server-Enforced)` covers the returned stubs.
-- Bespoke CSS must avoid `text-[var(...)]` for font-size (Tailwind v4 parses it as a color).
+- Bespoke CSS must avoid `text-[var(...)]` for font-size (Tailwind parses it as a color).
 - Parallel HTML stitching and a post-draft review POST are FORBIDDEN — the atomic one-document-one-POST contract.
 
 ## Visual Design Spec (consolidated, applies to user-requested HTML primary)
@@ -408,7 +409,7 @@ The badge mapping for the Baseline dual-encoding rule (`### Visual-Maximization 
 
 ### Sandbox-Safe Interactivity (MUST)
 
-- Inline `<script>` FORBIDDEN — Tailwind CDN via `<link>` or inline CSS.
+- Inline `<script>` FORBIDDEN — Tailwind loads only as the external CDN `<script src>` the skeleton carries; other styling is inline CSS or the skeleton's Pretendard stylesheet `<link>`.
   - Mermaid CDN exception (diagrams only): the single external UMD tag and the no-inline-init rule are `scoped/scope-report.md` → `## Diagram Standard [REPORT]`; that tag auto-inits via `startOnLoad`.
 - Inline event handlers FORBIDDEN — `onclick=` / `onload=` / `onerror=` and the rest
 - `<iframe>` embed FORBIDDEN
@@ -440,7 +441,7 @@ Reference skeleton for user-requested HTML primary outputs.
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
   <style>
     body { font-family: 'Pretendard Variable', 'Pretendard', system-ui, -apple-system, BlinkMacSystemFont, sans-serif; word-break: keep-all; line-height: 1.65; }
-    /* @media print branch is d8-exempt — white/black/hex permitted ONLY here, never in a screen-context rule or inline style= */
+    /* @media print branch is d8-exempt — raw color literals permitted ONLY inside it, never in a screen-context rule or inline style= */
     @media print { body { background: white !important; color: black !important; } .no-print { display: none; } }
   </style>
 </head>

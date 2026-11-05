@@ -9,7 +9,7 @@ Run this before any UI decision — component implementation, page layout, anima
 | Condition | Duty |
 |---|---|
 | project has a `DESIGN.md` (root / `docs/` / `design-system/`) | read it before emitting markup or styles |
-| project has a `motion-philosophy.md` | read it before any animation / transition / spring-family decision |
+| project has a `motion-philosophy.md` | read it before any animation / transition / motion-family decision |
 | neither exists | proceed on framework defaults, and flag the absence in `[COMPLETION]` `concerns` |
 
 - Why the flag: it lets an operator ask glass-atrium-design-designer to author the missing document.
@@ -38,7 +38,7 @@ Writing a hex / rgb / oklch / px / dp literal without first checking whether a t
 
 - **Declaration**: where the applied token's choice is not evident from its name in context, a code comment names the token and the reason for that choice.
   - Example: `// motion: effects-fast — the drawer is fixed-height, so a spatial family would overshoot its edge`
-- **Source**: the spring families named in `motion-philosophy.md` (`spatial-default` · `spatial-fast` · `spatial-slow` · `effects-default` · `effects-fast` · `effects-slow`).
+- **Source**: the motion families named in `motion-philosophy.md` (`spatial-default` · `spatial-fast` · `spatial-slow` · `effects-default` · `effects-fast` · `effects-slow`).
 - **`prefers-reduced-motion`**: every animated component MUST honor `@media (prefers-reduced-motion: reduce)` — in CSS through the media query, in a JS animation through an explicit check.
   - Fallback: swap the element's Spatial family for the matching Effects family (overshoot removed), or go opacity-only.
   - A hard cut — an instant jump, or the animation stripped entirely — is FORBIDDEN: keep a non-spatial cue.
@@ -59,4 +59,4 @@ Writing a hex / rgb / oklch / px / dp literal without first checking whether a t
 | "It's just a small style tweak, no need to read DESIGN.md" | Small tweaks compound into drift, and the lookup costs seconds. |
 | "I'll match the existing color visually" | A pixel-perfect hex match still creates a second declaration site. Read the token name. |
 | "DESIGN.md doesn't cover this exact case" | Re-read: the token may exist. Genuinely missing → ask glass-atrium-design-designer to extend it; never invent a value. |
-| "Motion is too trivial to declare a token" | Choosing a spring family is a decision; where the name does not show why, that comment is its only record. |
+| "Motion is too trivial to declare a token" | Choosing a motion family is a decision; where the name does not show why, that comment is its only record. |

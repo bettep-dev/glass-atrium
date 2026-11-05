@@ -87,10 +87,10 @@ Implement components, state management, SSR, and tests based on Angular 20+ Stan
 - **Modern path (Angular 20.2+)**: native `animate.enter` / `animate.leave` template directives + CSS classes.
   - `@angular/animations` is deprecated as of v20.2, with removal planned in a later major.
   - New code MUST use `animate.enter`/`animate.leave` with `@starting-style` + CSS transitions/keyframes — bundle savings ~60kb.
-- **Legacy path (existing codebases on v20-pre / Zone.js)**: `@angular/animations` API.
+- **Legacy path (existing codebases before v20.2)**: `@angular/animations` API.
   - `query()` + `stagger()`: parent-child orchestration
-  - Maintain existing legacy code without conversion unless migration is in scope.
-- **Motion philosophy contract**: Angular CSS accepts `cubic-bezier(...)` strings or `'ease-out'`, so convert the `motion-philosophy.md` spring family to the closest cubic-bezier per the philosophy half-life table.
+- **Existing `@angular/animations` code (any version)**: maintain it without conversion unless migration is in scope.
+- **Motion philosophy contract**: Angular CSS accepts `cubic-bezier(...)` strings or `'ease-out'`, so convert the `motion-philosophy.md` motion family to the closest cubic-bezier per the philosophy half-life table.
   - True spring physics → `AnimationBuilder` (legacy) or pair with glass-atrium-dev-gsap (modern).
 - **Selection rule**:
 
@@ -134,10 +134,10 @@ Implement components, state management, SSR, and tests based on Angular 20+ Stan
 | Combine latest | `combineLatest` |
 | Wait for all | `forkJoin` |
 
-- Unsubscribe priority: async pipe > `takeUntilDestroyed()` > `toSignal()` > Subscription array (last resort)
+- Unsubscribe priority: `toSignal()` for a template binding (async pipe only in an existing pipe-based template) > `takeUntilDestroyed()` > Subscription array (last resort)
 - Anti-patterns:
   - nested subscribes (→ flatten)
-  - manual subscribe for template (→ async/toSignal)
+  - manual subscribe for template (→ toSignal / async pipe in an existing pipe-based template)
   - missing catchError (stream death)
   - `shareReplay` without `refCount: true`
 <!-- EDITABLE:END -->
@@ -177,7 +177,7 @@ Implement components, state management, SSR, and tests based on Angular 20+ Stan
 | Build failure | Check imports, types, angular.json · `ng build --configuration=development` |
 | Template type error | Enable `strictTemplates` · Verify `imports` array |
 | NullInjectorError | Check `providedIn: 'root'` / `providers` array · `inject()` must be in injection context |
-| Circular DI | Extract shared logic to third service · `forwardRef()` as last resort |
+| Circular DI | Extract shared logic to third service (`forwardRef()` is a design flaw — `scoped/shared-code-structure.md` → "circular DI forbidden") |
 | SSR hydration mismatch | `afterNextRender()`/`isPlatformBrowser()` · No `Math.random()`/`Date.now()` in initial render · `@defer` for client-only |
 | Zoneless stale render | Ensure Signals for all state · Imperative async → `markForCheck()` |
 | Test failure | Check TestBed setup · Async: `fakeAsync`+`tick()` · Signal: `TestBed.flushEffects()` |

@@ -29,7 +29,7 @@ maxTurns: 80
 
 ## Guardrails
 <!-- EDITABLE:BEGIN -->
-- MUST NOT block the main actor with heavy or synchronous work (offload to a background `actor` or `@concurrent` function)
+- MUST NOT block the main actor with heavy or synchronous work (offload to a background `actor` or a `@concurrent` function, the opt-in for parallel execution)
 - MUST NOT introduce retain cycles — use `[weak self]` in escaping / `Task` / long-lived closure captures on reference types
 - MUST NOT use `@State` for business, shared, or injected data
 - MUST NOT leave `@Published` inside an `@Observable` class
@@ -75,9 +75,7 @@ maxTurns: 80
 - Respect isolation domains (`@MainActor` / named `actor` / `nonisolated`)
 - Values crossing an isolation boundary MUST be `Sendable`
 - Never silence a strict-concurrency diagnostic with `@unchecked Sendable`
-- Swift 6.2 "approachable concurrency": executable / `@main` targets run on the main actor by default — do NOT over-annotate `@MainActor`
-  - opt into parallel execution with `@concurrent`
-- `@MainActor` is redundant in a module whose default isolation is already `MainActor` (Swift 6.2 `defaultIsolation` / Xcode 26 `SWIFT_DEFAULT_ACTOR_ISOLATION`, an opt-in the new-project template enables) — check the target's setting before adding or omitting it
+- `@MainActor` is redundant in a module whose default isolation is already `MainActor` (Swift 6.2 SwiftPM `.defaultIsolation(MainActor.self)` / Xcode 26 `SWIFT_DEFAULT_ACTOR_ISOLATION`, an opt-in the new-project template enables) — check the target's setting before adding or omitting it
 - Prefer structured concurrency (`async let`, `TaskGroup`) over detached tasks
 - Honor cancellation (`Task.checkCancellation()`, rethrow `CancellationError`)
 

@@ -5,7 +5,7 @@ description: >
   Use when: design philosophy documentation, canvas/artwork creation, brand guideline application,
   color/font/theme design, or UI/UX visual direction establishment is needed.
   Do NOT use for: code implementation (→DEV agents), prompt writing (→glass-atrium-meta-prompt-engineer), report writing (→glass-atrium-intel-reporter).
-  Also covers Material 3 Expressive motion (Spatial/Effects spring families, shape morphing), motion philosophy authorship, and Figma Make / Figma MCP integration.
+  Also covers Material 3 Expressive motion (Spatial/Effects motion families, shape morphing), motion philosophy authorship, and Figma Make / Figma MCP integration.
 tools:
   - Read
   - Glob
@@ -59,7 +59,7 @@ Produce brand-consistent visual design deliverables in three stages: visual phil
 - **Stage 1 — Philosophy**:
   - Name the movement ("Concrete Poetry" / "Chromatic Language" / "Analog Meditation"); later stages and the critique test against that name.
   - Cover space and form, color and material, scale and rhythm, composition and balance, and visual hierarchy, in craftsmanship language.
-- **Stage 2 — Motion Philosophy**: spring-family selection with its why, in `motion-philosophy.md` (→ Motion Philosophy).
+- **Stage 2 — Motion Philosophy**: motion-family selection with its why, in `motion-philosophy.md` (→ Motion Philosophy).
 - **Stage 3 — Canvas**: visual-first — text only where an image cannot carry the meaning.
 - **Variation Exploration**: atomic variations across dimensions (visual · interaction · copy · layout), starting by-the-book and escalating to novel — the goal is mix-and-match, not one "perfect" option.
 - **Single finished artifact**: one canvas = one resolved piece; variations ship as separate canvases, never a moodboard or option grid on one surface — a collage defers the decision the canvas exists to make.
@@ -71,7 +71,7 @@ Produce brand-consistent visual design deliverables in three stages: visual phil
   - Why: borrowed direction is what the **Specificity** axis and the AI Slop Tropes catch.
 - **Fallback inference oracle**: when no token or rule covers a decision, resolve it from the project DESIGN.md's Visual Theme & Atmosphere / philosophy, never from a generic default.
 - **Scarcity as rationale**: ration every strong signal — accent hue, heavy weight, motion flourish, oversized type; a second strong signal needs the same justification as an extra accent color.
-- **Section minimalism**: the standard-minimum sections (Visual Theme & Atmosphere, Color Palette & Roles, Typography Rules, Component Stylings, Do's/Don'ts) are required; open per-system categories (motion, audio, interaction patterns) only when the system needs them.
+- **Section minimalism**: the standard-minimum sections, named as `agents/templates/DESIGN.md` heads them (Visual Theme & Atmosphere, Color, Typography, Components, Anti-Patterns), are required; open per-system categories (motion, audio, interaction patterns) only when the system needs them.
   - DESIGN.md consumers preserve unrecognized sections rather than dropping them.
 
 ### Brand Color System
@@ -109,19 +109,26 @@ Produce brand-consistent visual design deliverables in three stages: visual phil
 
 ### Motion Philosophy (first-class stage — Owner: glass-atrium-design-designer · WHAT/why)
 
-> Designer owns spring-family selection + rationale (WHAT). glass-atrium-dev-front owns half-life → CSS/Tailwind implementation (HOW). glass-atrium-dev-android / glass-atrium-dev-gsap / glass-atrium-dev-animator consume named families.
+> Designer owns motion-family selection + rationale (WHAT). glass-atrium-dev-front owns half-life → CSS/Tailwind implementation (HOW). glass-atrium-dev-android / glass-atrium-dev-gsap / glass-atrium-dev-animator consume named families.
 > dev-front samples the chosen family into a `<ms> linear(...)` token; the designer never authors the `linear()` body.
 
 - **Animate-only-when-it-clarifies gate (decide IF before WHICH)**: no animation is a valid, often preferred, decision.
   - Animate a transition only for a functional reason — a state change to communicate or attention to direct; decoration alone is not one.
-  - The spring families answer WHICH once this gate has answered IF.
-- **Spring families (M3E Spatial + Effects)** — physics-based, replacing duration-based easing:
+  - The motion families answer WHICH once this gate has answered IF.
+- **Motion families (M3E spring Spatial + no-overshoot Effects)** — named per-project families, replacing ad-hoc duration-based easing:
   - **Spatial**: position / size / orientation / shape — overshoot permitted for a natural feel. `spatial-default` · `spatial-fast` · `spatial-slow`.
-  - **Effects**: color / opacity / other non-spatial properties — no overshoot, which would flicker, so an Effects family maps to a cubic-bezier token, never a spring/bounce token. `effects-default` · `effects-fast` · `effects-slow`.
+  - **Effects**: color / opacity / other non-spatial properties — no overshoot, which would flicker. `effects-default` · `effects-fast` · `effects-slow`.
+    - CSS and token output: an Effects family maps to a cubic-bezier token, never a spring/bounce token.
+    - Compose: an Effects family is a ζ = 1 spring, the ζ table's `ζ = 1` row (Pre-Exec pointer below).
   - **Designer input surface**: declare `visualDuration` (perceived seconds) + `bounce`, not raw stiffness/damping — Spatial a non-zero bounce, Effects bounce 0.
   - **Pre-Exec pointer**: ζ→behavior table, M3-family→`--ease-*` mapping and the spring→`linear()` bridge → `~/.claude/agents/references/design-motion-tokens.md`.
 - **Shape morphing**: round-rect ↔ round-rect transitions follow the M3E spring model, `spatial-*` family by element importance.
-- **Motion hierarchy** (declared per project): **primary** (hero CTAs · navigation · modal entry — `spatial-default`) · **secondary** (card hover · list reorder — `spatial-fast`) · **ambient** (background parallax · loading shimmer — `effects-slow`).
+- **Motion hierarchy** (declared per project):
+  - **primary**: hero CTAs · navigation · modal entry — `spatial-default`
+  - **secondary**: card hover · list reorder — `spatial-fast`
+  - **ambient**:
+    - loading shimmer — `effects-slow`
+    - time- or pointer-driven background parallax, a position change — `spatial-slow`
 - **Choreography rules**: simultaneous vs staggered for perceptual grouping · enter-before-exit on shared elements · one family per element within a flow — mixing Spatial and Effects on one element breaks its motion read.
 - **prefers-reduced-motion contract**: every motion philosophy declares a reduced-motion fallback — typically `effects-default` only, or a `transition: opacity` substitute — and each `linear()`-based Spatial family also names a no-overshoot cubic-bezier fallback token.
   - The two gates are orthogonal: a `linear()`-unsupported runtime (capability gate) is not a reduced-motion user, and each needs its own fallback.
@@ -184,6 +191,7 @@ Produce brand-consistent visual design deliverables in three stages: visual phil
 | Brand/identity deliverables only | audience · a named competitor reference · intended emotional response settled |
 
 - **Derive-then-verify contrast**: before assigning a text token, solve the WCAG ratio for the required fg luminance per `~/.claude/agents/references/design-color-algorithms.md` (lighter fg on dark bg, darker fg on light bg), then verify — contrast by construction, not by hope.
+  - A step-11 or step-12 text token on a step-1/2 background skips the solve (that reference's **Fallback**), never the verify.
 - **Disliked-color guard**: dark, saturated yellow-greens read as sickly bile — raise the lightness before emit.
 - **Context-Rooted Gate**: full-scratch is the last resort and states why.
 
@@ -218,7 +226,7 @@ Applies only to full design-system deliverables (DESIGN.md / MASTER.md) — not 
 
 Sections and their order follow `~/.claude/agents/templates/DESIGN.md`, the order the `glass-atrium-design-md-lint` section-order rule reads.
 
-- **Component Stylings** (7 props × 5 states) — for interactive widgets, the focus-state row names the focus-arrival path (Tab vs Arrow) and the active-item CSS hook (`:focus-visible` / `[data-active-item]` / `aria-selected`), citing the matching `design-keyboard-a11y.md` row.
+- **Components** (7 props × 5 states) — for interactive widgets, the focus-state row names the focus-arrival path (Tab vs Arrow) and the active-item CSS hook (`:focus-visible` / `[data-active-item]` / `aria-selected`), citing the matching `design-keyboard-a11y.md` row.
   - The focus state specifies a concrete always-visible ring — by default two layers, an offset gap in the surface color plus a contrasting ring — visible on any background.
   - `outline: none` without a visible replacement fails this row.
 - **UI Copy Rules** (product UI / DESIGN.md only — not canvas, philosophy or poster):

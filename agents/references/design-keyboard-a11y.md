@@ -25,12 +25,12 @@ Each widget's key contract is fixed.
 | Dialog | trap (see lifecycle) | — | — | closes topmost only | — | — | Enter / trigger |
 | Toolbar / Radio | roving | move within group | activates | — | first / last | — | — |
 
-- **Orientation gate (universal)**: a vertical list ignores Left/Right; a horizontal list (menubar / tabs) ignores Up/Down.
+- **Orientation gate (universal)**: for moving between items, a vertical list ignores Left/Right and a horizontal list (menubar / tabs) ignores Up/Down; a row's own open/close keys (Menu submenu Right/Left) stand.
 - PageUp/PageDown jump by a viewport.
 
 ## Typeahead Contract
 
-Any list of > ~7 items SHOULD support type-to-focus:
+Any option or item list (listbox, select, menu, tree) of > ~7 items SHOULD support type-to-focus; a tablist is not one:
 
 - Collect printable keystrokes into a buffer; reset after ~500ms idle.
 - Move focus to the first item whose visible text starts with the buffer.

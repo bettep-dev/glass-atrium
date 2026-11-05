@@ -45,5 +45,5 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 - **Motion bullet keeps the Compose mapping under its condition**: "only when the project carries `motion-philosophy.md`".
   - Without the condition the rule reads as binding every Android project; `scoped/shared-design-token-consumption.md` → Mandatory Pre-Execution Gate obliges the read only where the file exists.
   - Not a redundant mirror: `shared-design-token-consumption.md` reaches this agent through `rules.shared` but states no Compose `spring(...)` mapping.
-  - Spring families read off that file's `## Motion Tokens`, never off another agent's selection.
+  - Motion families read off that file's `## Motion Tokens`, never off another agent's selection.
 - **Red Flags and Prohibitions intros**: name Guardrails as the owner and list only what has no Guardrails entry — the `agents/glass-atrium-dev-shell.md` shape, recorded in `scoped/maintainers/glass-atrium-dev-shell.md`.

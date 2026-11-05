@@ -509,7 +509,7 @@ Scope: **user-requested HTML primary only**. An agent-only record and a user-req
   - This signals the orchestrator, which judges whether the work is truly beyond Tailwind-CDN and beyond designer scope.
   - If warranted, it composes the non-parallel skeleton-first handoff: glass-atrium-dev-front returns a styled skeleton inline, you fill the content, run Pre-Emission validation, and do the single POST.
 - **Both alternative shapes stay FORBIDDEN**: parallel co-emission stitching, and a second POST or PATCH to edit an emitted document. The atomic one-document-one-POST contract holds.
-- **Bespoke CSS reminder**: avoid `text-[var(...)]` for font-size — Tailwind v4 parses it as a color.
+- **Bespoke CSS reminder**: avoid `text-[var(...)]` for font-size — Tailwind parses it as a color.
 
 ## Canonical & Mirror Register
 
@@ -549,12 +549,12 @@ Scope: the Decision Matrix under this heading applies only to a requested full A
 
 - semantic landmarks + `aria-labelledby` per `<section>` + a single `<h1>` + no level skipping
 - a no-print `<nav>` ToC
-- the dark/typography contract under `### Dark base, typography and status vocabulary`
+- the dark/typography contract under `### Dark base, typography and status vocabulary`, the dark base set from the `<body>` utility classes
+  - Why: `https://cdn.tailwindcss.com` serves the v3 Play CDN runtime, which has no v4 `@variant` directive, and its `darkMode` config needs the inline `<script>` that **Sandbox-safe interactivity only** forbids
 - WCAG 2.2 AA including the two newer AA criteria — SC 2.4.11 focus appearance via a `:focus-visible` ring at ≥3:1 change-of-contrast, and SC 2.5.8 target size ≥24×24px
 - all status dual-encoded (color + symbol/text, never color-only)
 - validator-safe dark palette: dark colors as `oklch()` (or `hsl()`/`lab()`/`lch()`/`var(--token)`) `:root` custom properties, per the color-literal rule in `## Absolute Rules` → Pre-Emission HTML Gates
   - the screen palette is a perceptual near-black/near-white for halation avoidance, not `#000`/`#fff`
-- Tailwind v4 CDN dark mode the correct way — `<style type="text/tailwindcss">` + `@variant dark`; the v3 script-config `darkMode` pattern silently fails on v4 CDN
 - an `@media print` reset layer is REQUIRED — a forced light theme (`body { background: white; color: black }`), `.no-print` hiding nav/aside, and `break-inside: avoid`
   - this block is the one place the color-literal rule exempts
 - no `backdrop-filter` glassmorphism over text (contrast + performance a11y exclusion)
@@ -596,7 +596,7 @@ Apply the matching visual only.
   - Column cap per `## Absolute Rules` → Pre-Emission HTML Gates.
 - **Disclosure pattern**: `<details>` for the Skim/Scan/Read 3-layer
 - **Sandbox-safe interactivity only**:
-  - `<script>` is FORBIDDEN except the external UMD Mermaid CDN runtime required by the Pre-Emission HTML Gates
+  - `<script>` is FORBIDDEN except the external Tailwind CDN runtime from `https://cdn.tailwindcss.com` (the only Tailwind origin the viewer sanitizer keeps), and the external UMD Mermaid CDN runtime the Pre-Emission HTML Gates require
   - inline event handlers FORBIDDEN · `<iframe>` FORBIDDEN
 - **Landmark elements** (the Baseline's semantic landmarks): `<header>` · `<main>` · `<article>` · `<section>` · `<aside>` · `<footer>` · `<figure>` + `<figcaption>`
 - **Typography**: 3 levels at most — H1 `text-2xl` / H2 `text-lg` / Body `text-base`

@@ -69,9 +69,9 @@ Design, compress, review, validate system prompts per CRISP for the Anthropic Cl
 ## 4-Stage Workflow (each step builds on previous)
 
 - **Design** — CRISP → section draft
-- **Compress** — `## Tier Matrix` technique → no domain-term loss, before/after documented
+- **Compress** — `## Tier Matrix` technique → no domain-term loss, before/after documented as original→compressed + tier
 - **Review** — Agent Verification Checklist → pass/fail list; fail → return to Design or Compress
-- **Validate** — empirical test (eval / meta-prompting self-refinement) → meaning preserved + Output Contract satisfied
+- **Validate** — empirical test (eval / meta-prompting self-refinement) → meaning preserved + Output Contract satisfied, documented as input→expected→actual + meta-prompting note
 
 ### Self-correction chaining (a design technique applied across the four stages, not a fifth stage)
 
@@ -138,7 +138,7 @@ Distinct from single-pass CoV: for high-stakes designed prompts, chain separate 
 
 Designed prompts MUST specify every item below:
 
-- **Deliverable format per stage**: Design = sections · Compression = original→compressed + tier · Review = pass/fail list · Validation = input→expected→actual + meta-prompting note
+- **Deliverable format per stage**: each stage of the designed prompt's own workflow names the shape of its deliverable
 - **Filler Ban**: downstream output opens with the answer or outcome — state that opening positively in the designed prompt rather than listing phrases to avoid
 - **Parseability for handoff**: table / YAML / JSON / checklist
 - **Multi-item progress tracking**: N/M

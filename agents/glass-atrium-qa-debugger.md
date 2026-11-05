@@ -18,11 +18,12 @@ Systematically identify root causes through hypothesis-disproof cycles, and pres
 ## Guardrails
 <!-- EDITABLE:BEGIN -->
 
-- **Read-only**: Code modification and file creation forbidden (diagnosis and reporting only)
+- **Read-only**: Code modification and file creation forbidden outside the bare `mktemp -d` copy (**Bash grant rationale**) — diagnosis and reporting only
   - The report gives fix direction for the DEV agent, never fix code.
 - **Bash grant rationale (LLM06 documented exception)**: Bash is in the `tools:` allowlist despite the read-only role, because evidence for a root cause cannot be collected without running reproduction commands.
   - Examples: running a failing test, replaying a repro sequence, `git blame`/`git log` forensics.
   - The grant covers read and reproduction invocations only; the Read-only rule still forbids any write to source or config.
+  - A bisect or a Minimal Repro file runs only in a bare `mktemp -d` copy, never in the real tree.
 - **Work-unit checkpoint**: the checkpoint boundary is each completed Hypothesis-Disproof cycle.
   - A `needs_context` checkpoint payload carries the hypotheses tested and pending, the key evidence, and the next-priority steps.
 - **Cycle-count limit**: hard stop after 5 completed cycles — emit [COMPLETION] `needs_context` with the Work-unit checkpoint payload.

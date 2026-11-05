@@ -76,14 +76,15 @@ Save key web materials to `wiki/raw/` as immutable originals (systematic researc
 | Constraint | Rule | Backing |
 |---|---|---|
 | `source_url` | one single URL, no second URL on the line | hook SCOPE-002 |
-| Size | 50KB upper bound | hook SCOPE-005 |
+| Size | 50KB upper bound; a source over it is skipped and reported, never split or trimmed | hook SCOPE-005 |
 | One source per file | 1 URL = 1 file, no merged sources in the body | policy — the hook checks the frontmatter only |
 | Body fidelity | extraction output as-is, original language preserved — no opinions, summaries, translations or restructuring | policy |
-| Write overwrite | not blocked; immutable after save | policy |
-| Correction path | delete the file, then Write the full corrected content; there is no in-place fix | policy |
+| Write overwrite | not blocked; immutable after save except the correction path | policy |
+| Correction path | a full-content Write over the file, the one sanctioned overwrite | policy |
+| Curator return | a legacy file the curator returns for failing the 3-field frontmatter check takes the correction path | policy — the return: `scoped/scope-wiki.md` → **`raw/` frontmatter validation** |
 | Synthesis | in-session synthesis, a synthesized StructuredOutput included, goes to the response, never to the raw store | policy |
 
-- **Blocked-write triage**: `hooks/validate-pre-write-raw.sh` names the failed check in a `SCOPE-00N` code — fix the file and re-Write, never route around it.
+- **Blocked-write triage**: `hooks/validate-pre-write-raw.sh` names the failed check in a `SCOPE-00N` code — fix the file and re-Write, never route around it; a source that draws SCOPE-005 is skipped and reported per the Size row.
 
 #### Schema/Workflow-mode persistence (delegation-triggered)
 

@@ -10,14 +10,14 @@
 | `modern-minimal` | Modern minimal — Linear / Vercel | Quiet · precise · software-native · system fonts · small visible product palette |
 | `human-approachable` | Human / approachable — Airbnb / Duolingo | Friendly tactile · clean neutral bg · product-led color · generous radii |
 | `tech-utility` | Tech / utility — Datadog / GitHub | Data-dense · monospace-friendly · grid · info-per-sq-inch |
-| `brutalist-experimental` | Brutalist / experimental — Are.na / Yale | Loud type · visible grid · system sans + oversized serif · deliberate ugliness |
+| `brutalist-experimental` | Brutalist / experimental — Are.na / Yale | Loud type · visible grid · oversized serif + monospace body · deliberate ugliness |
 
 ## Font stacks
 
 | id | displayFont | bodyFont | monoFont |
 |---|---|---|---|
-| `editorial-monocle` | `'Iowan Old Style', 'Charter', Georgia, serif` | `-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif` | — |
-| `modern-minimal` | `-apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif` | `-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif` | — |
+| `editorial-monocle` | `'Iowan Old Style', 'Charter', Georgia, serif` | `-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif` | `ui-monospace, 'SF Mono', Menlo, monospace` |
+| `modern-minimal` | `-apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif` | `-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif` | `ui-monospace, 'SF Mono', Menlo, monospace` |
 | `human-approachable` | `'Söhne', 'Avenir Next', system-ui, sans-serif` | `-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif` | — |
 | `tech-utility` | `-apple-system, 'Inter', system-ui, sans-serif` | `-apple-system, 'Inter', system-ui, sans-serif` | `'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace` |
 | `brutalist-experimental` | `'Times New Roman', 'Iowan Old Style', Georgia, serif` | `ui-monospace, 'IBM Plex Mono', 'JetBrains Mono', Menlo, monospace` | — |

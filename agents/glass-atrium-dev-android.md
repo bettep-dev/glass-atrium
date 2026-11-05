@@ -104,7 +104,9 @@ Implement Android apps in Kotlin and Jetpack Compose on Clean Architecture + MVV
 ## Pre-Execution Verification
 
 - **Structure**: run `scoped/scope-dev.md` → Project Convention Probe on a sibling `.kt` file in the target module.
-- **Motion** (only when the project carries `motion-philosophy.md` — `scoped/shared-design-token-consumption.md` → Mandatory Pre-Execution Gate): express the spring families that file's Motion Tokens section selects as Compose `spring(stiffness, dampingRatio)`.
+- **Motion** (only when the project carries `motion-philosophy.md` — `scoped/shared-design-token-consumption.md` → Mandatory Pre-Execution Gate): express the motion families that file's Motion Tokens section selects as Compose `spring(stiffness, dampingRatio)`.
+  - Effects takes `dampingRatio = 1f` — no overshoot (`~/.claude/agents/references/design-motion-tokens.md` → ζ table, `ζ = 1` row).
+  - `~/.claude/agents/references/design-motion-tokens.md` → its cubic-bezier-only `effects-*` row is the CSS token anchor, which a Compose `spring()` does not take.
   - Why: ad-hoc `tween` / `spring` constants drift off the project's tokens.
 - **Anti-slop**: before shipping novel UI styling, Read `~/.claude/agents/glass-atrium-design-designer.md` → AI Slop Tropes (that file is not in your context) and reject output matching any of them.
 
