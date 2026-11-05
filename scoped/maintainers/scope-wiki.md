@@ -51,7 +51,7 @@ Each duty already lives at the site named.
   - Curator `## Guardrails (Absolute)` → **Index post-check** grades unregistered notes `result: done_with_concerns`.
   - It exempts batch-compile runs (`-p` / `wiki-daily-compile.sh`), whose index `wiki-sync.sh` regenerates downstream — so a legitimate batch run ends with a partial index.
   - That exception stays in the body alone, the copy both the spawned curator and the batch reader hold.
-- Registration itself survives in the body: turn-0 sequence step 3, **Index post-check**, `### Master Index = Single Source of Truth`, `## Completeness Contract`, and the `Termination without master-index registration` prohibition.
+- Registration itself survives in the body: turn-0 sequence step 3, **Index post-check** and `### Master Index = Single Source of Truth`.
 
 ## `raw/` frontmatter validation — kept, with its live scope named
 
@@ -69,3 +69,15 @@ Each duty already lives at the site named.
 - `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP` maps the curator to the source file by basename for the daemon verify prompt's C3 axis.
   - A missing source file emits `SCOPE_UNRESOLVED_SIGNAL` (`_scope_file_for_agent`); an empty one emits `SCOPE_EMPTY_SIGNAL` (`_empty_excerpt_directive`).
   - Each warns on stderr and tells the verifier to answer C3: FAIL.
+
+## Curator body — machine readers and placement
+
+- The batch call runs with the tools `Read,Glob,Grep`; a `scripts/wiki-daily-compile.sh` comment names `## Untrusted Raw Content [LLM01]`, so that heading keeps its name.
+- That section mirrors `rules/glass-atrium/core-wiki-reference.md` → Wiki Raw-Store Untrusted-Data Contract, the canonical wording: the batch reader holds no rule file, so the mirror stays.
+- It sits outside every EDITABLE region and adds no marker pair:
+  - `autoagent/lib/editable_merge.py` routes a region-count mismatch to the manual structural-change ceremony.
+  - Text outside the regions takes the release copy; a region the release leaves untouched keeps the local content.
+- Not re-added, because the reader cannot reach them or the harness already enforces them:
+  - A `[CONTINUITY]` guardrail: `hooks/inject-session-context.sh` emits that header at SessionStart, which a spawned subagent and the batch call do not receive.
+  - A compiler-skill-loaded check: a spawn preloads it through frontmatter `skills:`; the batch call passes the file as plain text, so a halt-on-missing check would stop it.
+  - A WebFetch/WebSearch ban: frontmatter `tools:` and the batch `--tools` both omit them.

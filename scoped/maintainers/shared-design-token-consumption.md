@@ -15,7 +15,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent.
   - The rule file states no roster, only the task condition in its opening line.
 - `scripts/agent_lifecycle/registry_ops.py` → `RULE_FILES` adds the file by hand; the comment there says why.
 - **Canonical split with dev-front**: the rule file's `## Mandatory Pre-Execution Gate` and `## Drift Prevention` are canonical for every UI-emitting DEV agent.
-  - The dev-front body keeps only its agent-specific delta (map `DESIGN.md` tokens → its 3-tier system) and a pointer.
+  - The dev-front body keeps only its agent-specific delta (map `DESIGN.md` tokens → its 3-tier system); the rule reaches it through its registry row.
 
 ## Motion-token conflict — how it was resolved
 
@@ -47,8 +47,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent.
 |---|---|
 | `## Motion Tokens` | UI DEV bodies (reduced motion, spring families) · reporter, planner bodies · html-co-emission skill · maintainer notes |
 | `## Token Lookup Order` | `scoped/maintainers/glass-atrium-design-designer.md` → `## Copies kept in step with this body` |
-| `## Mandatory Pre-Execution Gate` | dev-front `## Guardrails` · dev-animator **Motion philosophy** · dev-android **Motion** · dev-android note |
-| `## Drift Prevention` | dev-front `## Guardrails` |
+| `## Mandatory Pre-Execution Gate` | dev-animator **Motion philosophy** · dev-android **Motion** · dev-android note |
 
 - `## Motion Tokens`: keep it literal; add a sub-heading under it rather than renaming.
 - The `agents/references/design-motion-tokens.md` title is a name clash, not a citer.

@@ -529,8 +529,8 @@ Scope: **user-requested HTML primary only**. An agent-only record and a user-req
 | Ambiguity Gate | `scoped/scope-planning.md` → `## Ambiguity Gate [PLANNING]` (axes and weights) |
 | Designer Handoff Contract · indicator thresholds | `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` |
 | dev-front markup exception | `scoped/scope-report.md` / `scoped/scope-planning.md` → Designer Co-Emission Trigger |
-| Visual-Maximization Floor | `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor` |
-| Dark base default | `agents/glass-atrium-intel-reporter.md` → `### Dark Theme & Typography (MUST)` |
+| Visual-Maximization Floor | `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor` + `### Content-driven escalation` + `### d8 validator-safe color contract` |
+| Dark base default | `agents/glass-atrium-intel-reporter.md` → `### Dark Theme & Typography (MUST)` + `### Status Badges (MUST dual-encoded)` |
 | Pre-drawing decision core · Diagram Standard | `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` + `## Diagram Standard [REPORT]` |
 | Mermaid adopted/excluded type split | `monitor/src/server/clauded-docs/diagram-types.json` |
 | D8 thresholds | `monitor/src/server/clauded-docs/d8-thresholds.json` (the numeric SoT the validator loads) |
@@ -542,7 +542,7 @@ Scope: **user-requested HTML primary only**. An agent-only record and a user-req
 Scope: the Decision Matrix under this heading applies only to a requested full Alternatives analysis (`### Default Plan Shape` → On-request structures), never to the one-line justification a brief plan carries.
 <!-- EDITABLE:BEGIN -->
 
-- **Canonical source**: `glass-atrium-intel-reporter.md` → Visual Design Spec + Canonical HTML Skeleton; this section is the planner's copy.
+- **Canonical source**: `glass-atrium-intel-reporter.md` → Visual Design Spec + Visual Components + Canonical HTML Skeleton; this section is the planner's copy.
 - For deep visual patterns and CSS snippets, cite `[[visual-expression-exposed-html-docs]]` rather than inlining them.
 
 ### Visual-Maximization Floor — Baseline (always)

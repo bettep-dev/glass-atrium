@@ -26,7 +26,7 @@ Canonical rule text for the REPORT scope (glass-atrium-intel-reporter). A sectio
 
 ### Visual-Maximization Floor
 
-The baseline requirement list, the d8 validator-safe color rule and the content-driven escalation are canonical at `agents/glass-atrium-intel-reporter.md` → `### Visual-Maximization Floor`.
+Canonical in `agents/glass-atrium-intel-reporter.md`: the baseline requirement list at `### Visual-Maximization Floor`, the content-driven escalation at `### Content-driven escalation`, the d8 validator-safe color rule at `### d8 validator-safe color contract`.
 
 - **Residual anti-slop patterns (a supplement to the SoT, not a mirror of it)**:
   - purple/indigo/lavender AI-brand gradients
@@ -40,7 +40,7 @@ The baseline requirement list, the d8 validator-safe color rule and the content-
 
 ### Dark base default
 
-The dark canvas, light text, the dual-encoded semantic badge palette and the print-branch carve-out are canonical at `agents/glass-atrium-intel-reporter.md` → `### Dark Theme & Typography (MUST)`.
+Canonical in `agents/glass-atrium-intel-reporter.md`: the dark canvas and light text at `### Dark Theme & Typography (MUST)`, the dual-encoded semantic badge palette at `### Status Badges (MUST dual-encoded)`, the print-branch carve-out at `### d8 validator-safe color contract`.
 
 ### Threshold SoT
 

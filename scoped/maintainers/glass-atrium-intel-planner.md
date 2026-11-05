@@ -30,7 +30,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 ## Body text other files cite
 
 - Headings and leads cited by name, so a rename edits every citer in the same pass:
-  - `agents/glass-atrium-intel-reporter.md` (co-edit sets; `### Current-state only` cites `## Absolute Rules` as the canonical detector set and exception whitelist)
+  - `agents/glass-atrium-intel-reporter.md` (`### Current-state only` cites `### Current-State Only (living documents)` → `#### History-heading exceptions` as the exception whitelist)
   - `scoped/scope-planning.md` and `scoped/maintainers/{scope-planning,scope-report,scope-dev,scope-qa,orchestrator-role,shared-authoring-hygiene}.md`
   - `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` (`## Designer Handoff Contract`)
 - The Current-State Only detector literals are machine-read patterns: never translate or reflow them.
