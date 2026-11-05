@@ -783,7 +783,7 @@ function bigintToNumber(value: bigint): number {
 
 // Mirrors dashboard.ts narrowDaemonStatus — local copy per nodejs-dev "Module
 // independence". Future enum drift surfaces as null (forces explicit type extension).
-const KNOWN_DAEMON_STATUSES: ReadonlySet<DaemonStatusValue> = new Set([
+export const KNOWN_DAEMON_STATUSES: ReadonlySet<DaemonStatusValue> = new Set([
   "ok",
   "partial",
   "error",

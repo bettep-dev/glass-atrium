@@ -114,6 +114,7 @@
 :root, [data-theme] {
   --surface-raised-2: var(--elev);            /* light: 순백 유지, 떠오름은 shadow */
   --surface-overlay:  var(--overlay-surface);
+  --control-edge:     var(--pip-empty);       /* resting toggle and field edge — ≥3:1 on every opaque surface, under the --faint hover edge (§4.1) */
 }
 :root {
   /* shadow (kind B box-shadow list) */
@@ -151,19 +152,23 @@
   --radius-badge: 6px;
   /* hit height · card anatomy */
   --ctl-min-h: 32px;
-  --card-head-h: 48px;  --card-pad: 16px;  --row-h: 40px;
+  --card-head-h: 48px;  --card-pad: var(--space-4);  --row-h: 40px;  --row-h-2: 56px;  --row-h-compact: 32px;
+  /* spacing ladder — every padding · margin · gap is a step, a token or a token-derived calc() */
+  --space-0_5: 2px;  --space-1: 4px;  --space-1_5: 6px;  --space-2: 8px;  --space-3: 12px;  --space-4: 16px;  --space-6: 24px;  --space-8: 32px;
+  /* line boxes — a bordered control lands on --ctl-min-h, a table row on --row-h */
+  --lh-ctl: calc(var(--ctl-min-h) - 2 * var(--space-1_5) - 2px);  --lh-row: 20px;
   /* focus */
   --focus-ring-width: 2px;  --focus-ring-offset: 2px;
   /* z stack */
   --z-overlay: 100;  --z-confirm: 150;  --z-toast: 200;
   /* form-control box (base.css) */
-  --ctl-pad-y: 5px;  --ctl-pad-x: 9px;  --ctl-font: var(--fs-control);  --ctl-line: 1.4;
+  --ctl-pad-y: var(--space-1_5);  --ctl-pad-x: var(--space-2);  --ctl-font: var(--fs-control);  --ctl-line: var(--lh-ctl);
   --ctl-radius: var(--radius-control);  --ctl-h: var(--ctl-min-h);
 }
 ```
 
 - 새 **색/표면** 토큰은 kind A 로만 추가. kind B 는 length · scalar · shadow · z 에 한정.
-- line-height 는 토큰이 없다 — class 별 리터럴(§5.2).
+- line-height: control and table rows take `--lh-ctl` · `--lh-row`; text classes keep literals (§5.2).
 
 ### 3.3 Tier 3 — COMPONENT (`window.UI` atom + `base.css` class)
 
@@ -175,7 +180,7 @@
 | 카드 | `Card` · `CardHead` · `CardInfo` · `SubCard` | `.card*` · `.sub-card` |
 | 레이아웃 | `SplitRow` · `SplitColumn` · `TileSplit` | `.split-row*` · `.split-col*` · `.tile-split` |
 | overlay | `DetailSurface` · `Modal`(= confirm 위임) · `Popover` | `.detail-*` · `.popover-*` |
-| 공개 | `Disclosure` · `DisclosureButton` | `.card.is-collapsed` |
+| 공개 | `Disclosure` · `DisclosureButton` | `.disclosure` (also on a `summary`) · `.card.is-collapsed` |
 | 배지·상태 | `Badge` · `Pill`(→ Badge) · `StatusDot` | `.pill*` |
 | agent 이름 | `AgentName` | caller `className` (텍스트만) |
 | 수치 | `KPI` · `KpiValue` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.kpi*` |
@@ -185,13 +190,14 @@
 | 로딩 | `LoadingPlaceholder` · `SkeletonRows` | `role="status"` `.fs-meta` `--dim` · inline bar |
 | 오류 · region | `RegionFailure`(→ `RegionUnavailable` / `RegionCovered`) · `PageErrorBanner`(→ `AlertCard`) · `AlertCard` · `RetryButton` | `.sub-card.bg-sunken` · `.alert-card*` · `.btn.sm` |
 | 기타 | `Icon` · `ChipGroup` · `DetailField` | `.seg` |
+| control row · inline target | — (class only) | `.control-row` · `.inline-target` (§7.15 · §7.16) |
 
 - **KPI 내부 전용**: `Delta` (`.kpi-delta`) 는 `KPI` 의 `delta` prop 으로만 렌더 — `window.UI` export 아님.
 - **`AgentName`**: `glass-atrium-` prefix 를 뗀 짧은 이름 + 전체 이름은 sr-only 텍스트 · `title`. agent 식별은 이 텍스트로만 (아바타 없음 — §4.3).
 - **`MiniBars`**: `Sparkline` 과 같은 60×22 SVG 막대 · `label` 있으면 `role="img"`, 없으면 aria-hidden.
 - **신선도**:
   - `FreshnessStamp` = "as of HH:MM" · `--fs-meta` mono `--faint` · nowrap. 선행 glyph 만 색 — Fresh ✓ `--ok` · Stale / Partial ⚠ `--warn` · Not read ✕ `--crit` · Loading / Refreshing `…` `--faint`. 단어 sr-only, 전체 시각 `title`. 새로고침 중엔 직전 stamp 유지 + `aria-busy`.
-  - `RefreshButton` = `btn ghost sm` 고정 폭 `w-28` · refresh icon `motion-safe:animate-spin` · 라벨 "Refreshing…"(직전 read 있음) / "Loading…"(첫 read).
+  - `RefreshButton` = `btn ghost sm` 고정 폭 `w-28` · 라벨 끝 정렬(`justify-end`) → 보이는 라벨 끝이 콘텐츠 열 오른쪽 가장자리에 맞음 · refresh icon `motion-safe:animate-spin` · 라벨 "Refreshing…"(직전 read 있음) / "Loading…"(첫 read).
 - **로딩**:
   - `LoadingPlaceholder` = `role="status"` · `--fs-meta` `--dim` · refresh icon `motion-safe:animate-spin` + "Loading <label>…" · `minHeight` 로 settled 높이 예약 → layout shift 0.
   - `SkeletonRows` = 실제 `tbody` 안 · 실제 header 아래 · 실제 row 높이의 aria-hidden 행. 셀마다 정적 bar (높이 10 · 폭 70% · `--radius-inline` · `--faint` 0.3), pulse 없음.
@@ -242,6 +248,7 @@
 | `--focus-ring` | focus outline — theme-owned, accent 와 분리 |
 | `--selected-fill` / `--selected-ink` | 유일한 filled selected 상태 (§7.6) |
 | `--pip-empty` | 빈 stage pip — 불투명 면(surface · elev · sunken · elev-2)에서 ≥ 3:1 |
+| `--control-edge` | alias of `--pip-empty` — the resting edge of a toggle with a filled selected state (`.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · the `.seg` ring) and of the field family (`.field`, so `.field-select` and the search inputs · the `.field-affix` wrapper), ≥ 3:1 on every opaque surface (WCAG 1.4.11) and one step under the `--faint` hover edge |
 
 - **계산된 명암비** (WCAG 2.2 상대휘도):
 
@@ -252,6 +259,7 @@
 | `--faint` | 5.33 / 5.11 / 4.89 | 6.29 / 7.11 / 6.59 / 5.81 |
 | `--focus-ring` (≥3:1 UI) | 5.17 / 4.95 / 4.74 | 6.88 / 7.77 / 7.20 / 6.35 |
 | `--pip-empty` (≥3:1 UI) | 3.69 / 3.54 / 3.38 | 3.65 / 4.12 / 3.82 / 3.37 |
+| `--control-edge` → `--pip-empty` (≥3:1 UI, resting toggle and field edge) | 3.69 / 3.54 / 3.38 | 3.65 / 4.12 / 3.82 / 3.37 |
 | `--selected-ink` on `--selected-fill` | 16.74 | 13.26 |
 | `--crit` (텍스트 ≥4.5 — 단어를 싣는 유일한 tone) | 5.05 / 4.83 / 4.63 | 6.32 / 7.14 / 6.62 / 5.84 |
 | `--warn` (glyph ≥3:1) | 3.44 / 3.29 / 3.15 | 10.48 / 11.83 / 10.97 / 9.67 |
@@ -259,7 +267,7 @@
 | `--info` (glyph ≥3:1) | 3.68 / 3.53 / 3.38 | 9.68 / 10.93 / 10.13 / 8.94 |
 
 - 모든 텍스트 쌍 ≥ 4.5 (AA), 모든 UI 쌍 ≥ 3.0 — 불투명 토큰 면 기준.
-- 회귀 테스트: `test/tokens.contrast.unit.test.ts` — light · dark 블록 둘 다 파싱, light `--crit` ≥ 4.5 와 모든 light tone ≥ 3.0 (elev · surface · sunken) 고정.
+- 회귀 테스트: `test/tokens.contrast.unit.test.ts` — light · dark 블록 둘 다 파싱, light `--crit` ≥ 4.5 와 모든 light tone ≥ 3.0 (elev · surface · sunken) 고정. `--control-edge` 는 alias 를 target 으로 풀어 light elev · surface · sunken 과 dark 에 elev-2 를 더해 ≥ 3.0, `--faint` hover edge 가 그보다 한 step 위임을 고정. 렌더된 값은 `test/ui.control-state.e2e.test.ts` 가 고정 — toggle 은 card 위, field family 는 elev · surface · sunken 위, 두 테마 모두 ≥ 3.0.
 
 ### 4.2 Severity (crit / warn / info / ok) — 색만 쓰지 말 것
 
@@ -277,7 +285,7 @@
   - `StatusDot`: glyph + sr-only 단어(`STATUS_DOT_WORD` OK/Warning/Critical/Info) · 미지 status 는 `–` + "Unknown" (`--faint`).
   - `KpiValue tone`: glyph 장식(aria-hidden), 수치는 neutral ink. `PageVerdict`: glyph 만 tone, 단어 · 문장은 ink.
 - **허용 예외** — tone border/stroke 가 glyph 또는 단어와 짝을 이룰 때만:
-  - **폼 오류** (`.field.is-error` · `.field-affix.is-error`, §7.13): full-opacity `--crit` border (focus 중에도 유지) + 메시지 `fs-meta text-crit` `role="alert"` = 단어.
+  - **폼 오류** (`.field.is-error` · `.field-affix.is-error`, §7.13): full-opacity `--crit` border (hover · focus 중에도 유지) + 메시지 `fs-meta text-crit` `role="alert"` = 단어.
     - 메시지 crit 은 모든 불투명 면에서 ≥ 4.5: light 최저 4.63 (`--sunken` — hover 된 `.tbl` 행 포함; `--elev` 5.05 · `--surface` 4.83) · dark 최저 5.84 (`--elev-2`).
   - **System map 상태 링** (`architecture.jsx` → `LIVE_RING_CLASS` / `ZONE_RING_CLASS`, §7.14): warn · crit 노드와 zone.
     - 링 = 노드 도형 밖의 별도 `rect.arch-ring-state`, 2.5px full-opacity tone stroke. 노드 자체 border 는 범주 border(map border key) → shell 에 tone 없음.
@@ -300,7 +308,7 @@
   - finder 1b (full-opacity tone border · stroke · box-shadow): `grep -rnE "(border(-[a-z]+)?|stroke|outline|box-shadow) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info)\)\)|(border[A-Za-z]*|stroke|boxShadow) *: *[\"'][^\"']*rgb\(var\(--(crit|warn|ok|info)\)\)|stroke=\"rgb\(var\(--(crit|warn|ok|info)\)\)\"" public/src public/styles`.
     - 허용 hit: 위 허용 예외 (폼 오류 · System map 링 · 범례) · destructive action (`.btn.danger` · `DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`) · 차트 (`agents.jsx` quality-health crit `Line` 과 그 tooltip key swatch).
   - finder 2 (tone 을 칠한 라벨 · 수치): `grep -rnE "text-(crit|warn|ok|info)\b" public/src` + 보간 class `grep -rnE 'text-\$\{' public/src`.
-    - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`improvement.jsx` → `TONE_TEXT_CLASS` · `clauded-docs.jsx` → `TONE_TEXT_CLASS_CD` · `architecture.jsx` → `TONE_GLYPH_CLASS`) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
+    - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`clauded-docs.jsx` → `TONE_TEXT_CLASS_CD` · `architecture.jsx` → `TONE_GLYPH_CLASS`) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
     - 단어를 감싸는 허용 hit 은 폼 오류 메시지뿐 (`model-config.jsx` field 메시지 · save-banner 요약 · `agents.jsx` 이름 불일치 메시지).
   - finder 3 (full-opacity tone **fill** — `background` · SVG `fill` · `bg-<tone>`): `grep -rnE "(background(-color)?|fill) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info|alert-tone)\)\)|(background|backgroundColor|fill) *[:=] *[\"'{][^\"'}]*rgb\(var\(--(crit|warn|ok|info)\)\)|bg-(crit|warn|ok|info)\b[^/]" public/src public/styles`.
     - 허용 hit — full-opacity tone fill 의 전체 목록:
@@ -353,10 +361,10 @@
 
 - **floor**: 렌더되는 모든 text node ≥ 13px — default view 의 System map label · tweaks 패널 포함. `--fs-micro` 는 `--fs-meta` alias. px 리터럴 font-size 금지.
 - **named exception**: `.hero-stat` 30px (`TypeScaleStyle`) — 패널당 하나의 지배 수치 (drawer hero), 스케일 밖 step, 소비처 `agents.jsx` 1곳.
-- **line-height** (토큰 없음, class 리터럴): `.fs-title` 1.4 · `.fs-body` 1.45 · `.fs-meta` 1.4 · `.card-sub` 1.5 · `.kpi-value` 1.15 · `--ctl-line` 1.4.
+- **line-height** (텍스트 class 는 리터럴, control · table 행은 `--lh-ctl` · `--lh-row` 토큰 — §3.2): `.fs-title` 1.4 · `.fs-body` 1.45 · `.fs-meta` 1.4 · `.card-sub` 1.5 · `.kpi-value` 1.15 · control `--lh-ctl` 18 · table cell, KPI label row and `.inline-target` `--lh-row` 20.
 - **weight (≤ 3 · signature 1)**: 400 regular · 500 medium (label · nav active · button · badge) · 600 semibold (card title · KPI value · page title). signature = 600 + mono 수치. glass 표면 위 라벨은 한 step 무겁게 (600).
 - **수치**: 큰 KPI value 는 `letter-spacing: -0.025em`. **값:단위 = 2:1** — `.kpi-value` 32 ↔ `.unit` 16 (`--fs-title`, "half of --fs-kpi"), 다른 수치 UI 도 자기 스케일 안에서 2:1.
-- **page header** (`PageHeader`): h1 = `--fs-display` 600 leading-tight · sub = `--fs-meta` mono `--faint` uppercase (제목과 같으면 생략) · subtitle 문장 ≤ 60자.
+- **page header** (`PageHeader`): h1 = `--fs-display` 600 · line-height `--ctl-min-h` 32 (one line box with the header controls) · sub = `--fs-meta` mono `--faint` uppercase (제목과 같으면 생략) · subtitle 문장 ≤ 60자.
 - **chart tick**: `CHART_AXIS_TICK_STYLE` = `--fs-meta` · JetBrains Mono · `--faint`. 겹침 판정 문자 폭 `CHART_TICK_CHAR_PX` 8 · tick 간 최소 간격 `CHART_TICK_MIN_GAP_PX` 8.
 
 ### 5.3 카피 규칙 (Copy Rules)
@@ -389,7 +397,7 @@
 | **sunken** | `--sunken` | 홈 · `th` · 배지 shell · 미니바 트랙 | 245 fill | 24 fill |
 | **base** | `--surface` | 페이지 바탕 | 250 | 12 (가장 어두움) |
 | **raised** | `--elev` | 카드 · KPI · 사이드바 | 255 fill + 1px `--line`, **shadow 없음** | 28 fill + 1px `--line`. `.card` 만 + `--shadow-raised` + inset 하이라이트 |
-| raised-2 (상태) | `--surface-raised-2` | 인터랙티브 타일 · 컨트롤 hover (`.i-tile-hover` · `.arch-zoom-btn`) | raised + `--shadow-raised-2` + border `--faint` | 36 fill + `--shadow-raised-2` |
+| raised-2 (상태) | `--surface-raised-2` | 인터랙티브 타일 hover (`.i-tile-hover`) | raised + `--shadow-raised-2` + border `--faint` | 36 fill + `--shadow-raised-2` |
 | **overlay** | `--surface-overlay` | drawer · dialog · popover | 255 fill + `--shadow-overlay` | 28 fill + `--shadow-overlay` |
 
 - 5단계 이상 금지. overlay 는 그림자 필수, raised 는 테마별로 다르다.
@@ -483,8 +491,9 @@
 
 ### 7.2 KPI — `KPI` · `KpiValue` (`.kpi*`)
 
-- `.kpi`: `<button>` · `--elev` · 1px `--line` · `--radius-card` · padding 14px 16px · min-height 110 · hover border `--faint` 120ms · 양 테마 shadow · inset 없음 (§6.1).
-- `.kpi-label`: `--fs-meta` `--dim` 500 · hint: `--fs-meta` mono `--faint`.
+- `.kpi`: `<button>` with `onClick`, otherwise `role="group"` · `--elev` · 1px `--line` · `--radius-card` · padding `--card-pad` 16 · min-height 110 · pointer + hover border `--faint` 120ms on `button.kpi` only · 양 테마 shadow · inset 없음 (§6.1).
+- anatomy (`KPI`), one row order in every state: label row `.kpi-head` (`--lh-row` · `.kpi-label-text` `--fs-meta` `--dim` 500, one line + ellipsis + title · `.kpi-aside` · ⓘ `.kpi-info` placed on the row) → value row `.kpi-main` (baseline, margin-top 8) → delta → `.kpi-hint` (margin-top 4 · default `--fs-meta` mono `--faint`, `hintFace` keeps the caller's face) → `.kpi-foot` pinned to the bottom.
+- ⓘ `.kpi-info`: the 32 `CardInfo` button, absolutely placed by offset only — top `--card-pad` + (`--lh-row` − `--ctl-min-h`) / 2 = 10 (its centre on the label row's), right `--card-pad` − 8. No transform: the drawer it opens renders inside this slot, and a transform would make the slot the fixed overlay's containing block. `.kpi--info .kpi-head` reserves `--ctl-min-h` − 8 + 4, so the aside keeps the 4 meta gap before the ⓘ.
 - `.kpi-value`: `--fs-kpi` 32 mono 600 · -0.025em · line-height 1.15 · `.unit`: `--fs-title` 16 `--dim` 500 Pretendard (2:1).
 - `.kpi-delta`: `--fs-meta` mono · 수치 `--dim`. tone 은 화살표 `Icon` 에만 — up `--crit` · down `--ok` · flat `--faint` (`Delta inverse` 로 반전). `delta` 를 넘기는 화면은 없다.
 - `.kpi-spark`: 68×26 sparkline · 우하단 · opacity 0.85.
@@ -492,10 +501,10 @@
 
 ### 7.3 Badge — `Badge` · `Pill` (`.pill*`)
 
-- **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · 1px `--line` · min-height 22 · padding 3px 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
-- tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status).
+- **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · 1px `--line` · min-height 24 · padding 0 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
+- tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status) · `title` · `className` 은 그대로 전달.
   - glyph 명암 (`--sunken` shell 위): light warn 3.15 · info 3.38 · ok 3.45 · crit 4.63 · dark ≥ 6.62.
-- 변형: `.pill--absent` (투명 · `--faint` · dashed `--line`) · `.pill--meta` (소문자) · `.pill--count` (mono tabular) · `.pill--ctl-h` (같은 행 `.field` 와 높이, `--ctl-h`) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · pressed = selected fill).
+- 변형: `.pill--absent` (투명 · `--faint` · dashed `--line`) · `.pill--meta` (소문자) · `.pill--count` (mono tabular) · `.pill--ctl-h` (control row 의 static pill — 같은 행 `.field` · card-head 버튼과 높이, `--ctl-h`) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · pressed = selected fill · a toggle (`[aria-pressed]`) rests on a `--control-edge` border, non-toggle pills keep `--line`).
 - glass 위에 올리지 않는다 (AP-6).
 
 ### 7.4 Button — `.btn`
@@ -507,12 +516,15 @@
   - `agents.jsx` → `DELETE_OUTLINE_STYLE` "Delete" · `improvement.jsx` → `REJECT_OUTLINE_STYLE` "Reject": `.btn` 의 `--elev` 위 light 5.05 · dark 6.32 · hover `--sunken` light 4.63 · dark 6.62.
   - `model-config.jsx` → `DiscardConfirmMC` "Discard changes": `background: transparent` → `.detail-foot` `--sunken` 위, rest · hover light 4.63 · dark 6.62.
 - 긍정 action (improvement Approve) = `.btn sm` + ✓ glyph `text-ok`, 라벨 `--ink`.
-- `.sm`: padding 4px 9px · `--fs-meta`. `.icon`: 32×32 정사각, padding 0.
+- `.sm`: padding 6px 8px (`--space-1_5` × `--space-2`) · `--fs-meta`. `.icon`: 32×32 정사각, padding 0.
 - disabled: opacity 0.5 · `not-allowed`. pressed (`aria-pressed="true"`) = `--selected-fill` / `--selected-ink`.
+- toggle (`[aria-pressed]`) rests on a `--control-edge` border; the rule sits before `.btn:hover` (equal specificity) so hover still lifts the edge to `--faint`.
 
 ### 7.5 Table — `Table` · `TableHead` (`.tbl`)
 
-- `.tbl`: `--fs-control` · cell padding 9px 14px · 하단 1px `--line` · `td` height `--row-h` 40 · `.num` mono 우측 정렬 nowrap.
+- `.tbl`: `--fs-control` · line-height `--lh-row` 20 · `td` height `--row-h` 40 · 하단 1px `--line` · `.num` mono 우측 정렬 nowrap.
+  - cell padding: block `--tbl-pad-block` (8 less half the rule) · inline 12 interior, 16 at the edge columns · a cell holding a 32px control takes `--tbl-ctl-pad-block` (4 less half the rule).
+  - `.tbl--own-face`: geometry-only routing — padding, row height and alignment from `.tbl`, body size · header face · row states from the table's own classes.
 - `th`: `--fs-meta` · uppercase · 0.04em · 500 · `--dim` on `--sunken` · `TableHead` 가 `scope="col"`.
 - sticky head (`isHeadSticky` → `STICKY_TH_STYLE`): 불투명 `--elev`, z 1 — 스크롤 시 본문을 가리지 않게.
 - row: cursor pointer · hover `--sunken` · 마지막 행 border 없음. **row blur 금지.**
@@ -523,12 +535,14 @@
   - accent ladder 상한 = light warn glyph ≥ 3:1 (런타임 기본 accent 59 130 246 → α ≤ 0.12). binding: light both warn 3.03 · dark both pip 3.22 · light both pip 3.26 · light both faint 4.70. 사용자가 고른 다른 accent 는 측정 밖.
 - 그룹 행 (`.is-grouped`, `model-config.jsx`): 하단 border 없음.
 - caption: 기본 sr-only, `isCaptionShown` 이면 section-label 스타일.
+- sortable column header (Task results Time): `btn ghost sm tbl-sort` inside the `th` (`aria-sort` on the `th`) · pulled back by the `.sm` inline padding + 1px edge → the label stays on the column's text axis (body cells · card head at an edge column), the 32 box overhangs into the cell padding.
+- ledger pagination (card foot, Task results): "Previous / Next" at `btn ghost sm`, the DetailSurface record nav's variant (§7.8) — one variant per pagination role.
 
 ### 7.6 Segmented — `.seg`
 
-- `.seg`: `--elev` · 1px `--line` · `--radius-control` · clip. 버튼 padding 5px 10px · min-height 32 · `--fs-meta` · `--dim` · 사이 1px `--line`.
-- **filled selected 상태는 하나**: `.seg button.active` · `[aria-pressed]` · `.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · stage menu `[aria-checked]` 모두 `--selected-fill` / `--selected-ink` · 500.
-  - stage menu 의 checked 항목은 fill 에 더해 check mark — 색이 유일한 신호가 되지 않게.
+- `.seg`: `--elev` · 1px `--control-edge` ring (box-shadow) · `--radius-control` · clip. 버튼 padding 6px 8px · line-height `--lh-ctl` · min-height 32 · `--fs-meta` · 500 in every state · `--dim` · 사이 1px `--line` — dividers stay on `--line`, so the 3:1 ring reads as one box and the group never splits into separate buttons.
+- **filled selected 상태는 하나**: `.seg button.active` · `[aria-pressed]` · `.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · stage menu `[aria-checked]` 모두 `--selected-fill` / `--selected-ink`. The selected rule sets no weight — each atom keeps its one resting weight (500), so selecting never widens the box (`test/ui.control-state.e2e.test.ts`).
+  - stage menu 의 checked 항목은 fill 에 더해 check mark — 색이 유일한 신호가 되지 않게. A block-width menu row keeps its box with or without the mark, so it is the one exemption from the no-state-glyph rule (§7.16).
 - `.seg` focus ring 은 inset (`outline-offset` = −ring width) — `.seg` 가 자식을 clip 하므로.
 
 ### 7.7 Sidebar — `.shell-sidebar` · `.nav-item`
@@ -554,8 +568,11 @@
 | `confirm` | 중앙 소형 | min(560px, 92vw) · max-h 86vh · `--radius-card` | opacity + scale 0.97→1, 180ms ease-out |
 
 - 면: `.detail-panel` = `--overlay-surface` 불투명 + `--shadow-overlay` + 1px `--line` (텍스트 대비 보장).
-- head 14px 20px (`.detail-title` `--fs-title` 600 · `.detail-sub` `--fs-meta` `--faint`) · body 18px 20px · foot 12px 20px `--sunken`.
-- **상호작용 계약**: 닫기 X · Esc · backdrop · focus trap (진입 포커스 + Tab 순환 + 닫힐 때 트리거 복귀) · 배경 `inert` + body scroll-lock · 가장 나중에 열린 surface 가 키보드 소유 (drawer 위 confirm) · `nav` 제공 시 foot 에 Prev/Next + Arrow 키.
+- head = card-head: min-height `--card-head-h` 48 including its 1px rule · padding-block (48 − `--ctl-min-h` − 1) / 2 = 7.5 · inline 24 · top-aligned, so a one-line head is exactly 48.
+  - `.detail-title` `--fs-title` 600 on a 24 line box (1.5 × `--fs-title`) offset 4 = (32 − 24) / 2 → its first line centres on the 32 close button whether a `.detail-sub` (`--fs-meta` `--faint`) follows or the title wraps; a wrapped title keeps normal leading.
+  - close = `btn ghost sm icon` 32×32, the one icon-only close class (`CardInfo` and the Documents viewer use the same).
+- body 16px 24px · foot 12px 24px `--sunken`.
+- **상호작용 계약**: 닫기 X · Esc · backdrop · focus trap (진입 포커스 + Tab 순환 + 닫힐 때 트리거 복귀) · 배경 `inert` + body scroll-lock · 가장 나중에 열린 surface 가 키보드 소유 (drawer 위 confirm) · `nav` 제공 시 foot 에 "Previous / Next" (`btn ghost sm`) + Arrow 키.
 - **scrim**: 솔리드 `rgba(0,0,0,0.42)` 기본, smoke 는 조건부 (§6.3 · §9.3). z: §6.5.
 - `.modal` / `.modal-backdrop` class 는 `clauded-docs.jsx` 다이얼로그 1곳에만 남아 있다. 새 다이얼로그는 `DetailSurface`.
 
@@ -579,7 +596,7 @@
 
 ### 7.10 Empty state — `EmptyState` (`.placeholder`)
 
-- `.placeholder`: dashed `--faint` 0.5 · `--radius-tile` · padding 28 · `--faint` mono `--fs-meta` · 가운데 정렬.
+- `.placeholder`: dashed `--faint` 0.5 · `--radius-tile` · padding 24 · `--dim` sans `--fs-meta` · 좌측 정렬.
 - `EmptyState`: message 1줄 (원인) + 선택 hint (다음 단계) + 선택 action (재시도 버튼).
 - 가짜 SVG 일러스트 · 더미 데이터 금지. 실 자산은 사용자에게 요청.
 
@@ -610,15 +627,20 @@
 
 ### 7.12 Disclosure · Popover
 
-- **`Disclosure({ kind, title, sub, tone })`**: `.card` 위 fold. header = `DisclosureButton` (chevron 14 · `aria-expanded` · min-height 32) — 제목 500 `--ink` + sub `--fs-meta` `--faint`. 열림 규칙: §1 의 4).
+- **`.disclosure`** (C32 disclosure, §7.15): inline-flex · chevron 14 + label, gap 4, on one centre line · min-height `--ctl-min-h` 32 · `--dim` → hover `--ink` · no border · global focus outline.
+  - `DisclosureButton` renders on it (`aria-expanded` · `aria-controls`). A `summary` takes the same class: the UA marker drops, so the chevron is the one open-state cue.
+  - In a `summary`, `DisclosureChevron` turns through `details[open]` instead of `isOpen`; the shared `ErrorDetails` fold (every RegionFailure and AlertCard) is one.
+  - A fold whose summary is its full-width head row (label left, count at the far end — the Wiki folds) sets that `summary` to block flex screen-locally; the 32 height, the gap and the states stay the atom's.
+  - A `.tbl` cell holding one takes the control-cell step, so the row stays 40.
+- **`Disclosure({ kind, title, sub, tone })`**: `.card` 위 fold. header = `DisclosureButton` — 제목 500 `--ink` + sub `--fs-meta` `--faint`. 열림 규칙: §1 의 4).
 - **`Popover({ label, title })`**: 트리거 = `btn ghost sm` (`aria-haspopup="dialog"` · `aria-expanded`) · 패널 `role="dialog"`.
   - non-modal: inert · scroll-lock · trap 없음. Esc 또는 바깥 press 로 닫히고 포커스는 트리거로. 치수 §6.5.
 
 ### 7.13 폼 · 기타 atom
 
-- **`.field`** (input · select): min-height `--ctl-h` 32 · padding `--ctl-pad-y` × `--ctl-pad-x` · `--ctl-font` · `--elev` · 1px `--line` · `--ctl-radius` · disabled opacity 0.5.
-  - hover border `--faint` · focus = `--accent` border + 전역 focus outline · error `.is-error` = `--crit` border + `--fs-meta` crit 메시지 — §4.2 허용 예외 (메시지는 crit ≥ 4.5 인 면 위에서만).
-  - `.field--mono`: mono tnum · `.field-select`: 테마별 `--faint` chevron · `.field-affix` (`$` 등): wrapper 가 border · focus 소유, `:has(:focus-visible)` 로 outline.
+- **`.field`** (input · select): min-height `--ctl-h` 32 · padding `--ctl-pad-y` × `--ctl-pad-x` · `--ctl-font` · `--elev` · 1px `--control-edge` (resting edge, §7.16) · `--ctl-radius` · disabled opacity 0.5.
+  - hover border `--faint` · focus = `--accent` border + 전역 focus outline · error `.is-error` = `--crit` border (error 가 hover 보다 우선 — hover 중에도 `--crit`) + `--fs-meta` crit 메시지 — §4.2 허용 예외 (메시지는 crit ≥ 4.5 인 면 위에서만).
+  - `.field--mono`: mono tnum · `.field-select`: 테마별 `--faint` chevron · `.field-affix` (`$` 등): wrapper 가 border (`--control-edge`) · focus 소유, `:has(:focus-visible)` 로 outline.
 - **`.stage-pip`**: 8px 원 · 빈 pip `--pip-empty` · 채움 `--ink`.
 - **`.low-sample`** (`LowSampleMark`): 작은 표본 비율 옆 italic `--faint` `(n=N)`.
 - **`.page-verdict`** (`PageVerdict`): glyph 가 tone, 단어 · 문장은 ink. chip 은 resting button chrome (`--elev` · `--line` · `--ink`), 맨 텍스트 금지.
@@ -648,6 +670,47 @@
 - **Tab 순서**: sources 컬럼 위→아래, 그다음 spine 위→아래 (`data-arch-rank`).
 - **상태 링**: warn · crit 노드/zone = tone 링 + 모서리 `!` / `!!` badge + accessible name health word, caption 범례가 key — §4.2 허용 예외.
 
+### 7.15 Control size tiers
+
+| Tier · members | Height | Padding (block / inline) | Font (size / line / weight) | Outline mechanism |
+|---|---|---|---|---|
+| C32 button · `.btn` | 32 | 6 / 12 | 14 / 18 / 500 | 1px border, width constant, color swaps only; `[aria-pressed]` rests on the control edge; ghost = transparent border |
+| C32 small · `.btn.sm`, pagination, drawer nav, load-more, Refresh | 32 | 6 / 8 | 13 / 18 / 500 | as C32 button |
+| C32 icon-only · `.btn.icon` (close, zoom +/−) | 32 x 32 | 0 | glyph 14 | as C32 button |
+| C32 segment · `.seg` option (range, view toggle) | 32 | 6 / 8 | 13 / 18 / 500 in every state | group ring as box-shadow on the control edge; 1px `--line` dividers; focus outline inset −2 |
+| C32 field · `.field`, `.field-select`, `.field-affix`, search | 32 | 6 / 8; select inline-end = chevron gutter; search inline-start = icon gutter | 14 / 18 / 400 | 1px border resting on the control edge; focus = border color plus global outline |
+| C32 interactive pill · `.pill--interactive` (filter chip, stage picker, lineage, file-count disclosure) | 32 | 0 / 8 | 13 / 1 / 500 | 1px border; `[aria-pressed]` toggles rest on the control edge; selected = fill plus border color |
+| C32 disclosure · `.disclosure` (`DisclosureButton`, every `summary`) | 32 | 0 (inline 8 when bordered) | inherits body or meta | no border; global focus outline |
+| C32 tab | 32 | 6 / 8 | 13 / 18 / 500 | constant border or indicator thickness; selected swaps color only |
+| C24 static pill · `.pill`, `--meta`, `--count` (never on a button) | 24; 32 via `.pill--ctl-h` in a control row | 0 / 8 | 13 / 1 / 500 | 1px border |
+| C24 inline target · `.inline-target` on links, ledger expanders, checkbox hit areas | min 24 (checkbox visual 16: `.ctl-checkbox` — `--elev` box, 1.5px `--faint` edge, `--radius-inline`; checked or mixed = `--selected-fill` with a `--selected-ink` `.ctl-checkbox-mark`) | 0 | inherits size and weight / `--lh-row` 20 | no border; global focus outline |
+
+- Row mapping: a 40 `.tbl` row holds a 24 target (7.5 + 24 + 7.5 + 1) or a 32 control through the control-cell rule. Card-head, `.control-row` and the overlay head are min 48. A card-foot is 40. A 32 compact row holds no control and no target.
+- A new 32 class joins the `.tbl` control-cell `:has` list, the 32 floor in `test/styles.shared-atoms.unit.test.ts` and the controls selectors in `test/model-config.card-ends.e2e.test.ts` in the change that creates it.
+- `.inline-target` is opt-in, never a global link rule: prose links sit under WCAG 2.5.8's inline exception. It is middle-aligned, so a 24 box keeps a 40 row and its text on the line.
+- A control that centres its text by flex takes a `--lh-*` token, never a type-scale ratio, including one on the same element: the engine floors the half-leading to a whole pixel, so a fractional line box (`.fs-meta` 13 × 1.4) puts an odd-height face 0.59 off the centre line.
+- A checkbox label in a block group (the Task results Record scope) is `.inline-target` inside a flex row: a flex item has no line box, so the 24 target keeps the group's 4 label step.
+- Regression tests: `test/ui.row-geometry.e2e.test.ts` (40 rows per control and target) · `test/ui.control-state.e2e.test.ts` (state boxes, resting edge, the control row).
+
+### 7.16 State invariance · control rows
+
+- No state changes a control's border-box or a sibling's position (hover, focus-visible, pressed/selected/active, disabled, loading, open):
+  - border width is constant across states
+  - focus is an outline (offset 2, or −2 inset where the parent clips)
+  - one weight per atom in every state
+  - no state-conditional content inside an inline-sized box; block-width menu rows are exempt
+  - hover and focus never unclamp truncated text (§5.3 clamp stands)
+- The resting edge (`--control-edge`, 3:1 or more against every surface it sits on in both themes) applies to toggles and the field family, and to nothing else:
+  - a toggle with a filled selected state rests on it; the selected fill's luminance inversion is the non-color cue
+  - `.field`, `.field-select`, `.field-affix` and the search inputs rest on it; hover lifts it to `--faint`, and focus paints it `--accent` plus the global outline
+- A control row has one tier height, every item centered on one line, and ladder gaps: 8 between controls, 12 between groups, 4 from a label to its group, 4 between chips in one group.
+  - `.control-row` ships the card-head geometry at an 8 block inset (padding 8 / 16 · min-height 48 · gap 8 row / 12 column, no rule below): one line of 32 controls is the card-head's 48, and a wrapped row keeps 8 above its first line and below its last. Where the row is the card's head, `.card-head` is the class. Its direct children are groups.
+  - A label and its group wrap as one unit; a static pill takes `.pill--ctl-h`; a text target is 24 or taller (`.inline-target`).
+  - Trailing meta whose text follows a filter (the Documents count) takes its own right-aligned line in every state, so its length never picks its line or frees room for a growing control; it wraps inside as one right-aligned unit.
+  - Content a mode swaps inside a group (the Documents stage chips and the "All stages while searching" note) shares one cell, both always laid out and the idle one hidden, so the mode never resizes the group or reflows the row; the chips keep their last counts through a search response that carries none.
+  - A trigger whose label gains a count (the Task results Filters trigger) lays its label over a hidden twin at the highest count in one cell, end-aligned, so a count appearing never moves the head; the count covers only the filters set inside its popover.
+- An overlay head is 48; its title's first line centers on its 32 close button within 1px (§7.8).
+
 ---
 
 ## 8. 모션 (Motion — 절제된 라이브 마이크로 인터랙션)
@@ -665,9 +728,9 @@
   - drawer: `detailDrawerSlide` translateX 100%→0, 240ms `cubic-bezier(0.16, 1, 0.3, 1)`.
   - fullscreen: `detailFade` opacity, 180ms ease-out · confirm: `detailPop` opacity + scale 0.97→1, 180ms ease-out.
   - alert-card: `detailFade` 150ms `cubic-bezier(0.2, 0, 0, 1)` (effects-fast).
-- **secondary — hover 깊이 · 상태**: `border-color` + `box-shadow` (+ `background`) 120ms — `.btn` · `.kpi` · `.field` · 화면 행 `.doc-row` · `.outcome-row` (background) · improvement 타일 `.i-tile-hover` (box-shadow, transform lift 없음) · `.arch-zoom-btn`. Tailwind 유틸은 `motion-safe:` + `duration-[120ms]`.
+- **secondary — hover 깊이 · 상태**: `border-color` + `box-shadow` (+ `background`) 120ms — `.btn` · `.kpi` · `.field` · 화면 행 `.doc-row` · `.outcome-row` (background) · improvement 타일 `.i-tile-hover` (box-shadow, transform lift 없음). Tailwind 유틸은 `motion-safe:` + `duration-[120ms]`.
 - **ambient**: `.live-dot` 만.
-- **즉시** (transition 없음): disclosure chevron 회전 · checkbox toggle (`.doc-checkbox`) · Recharts `Tooltip` 추종 (`isAnimationActive={false}`, series 와 동일).
+- **즉시** (transition 없음): disclosure chevron 회전 · checkbox toggle (`.ctl-checkbox`) · Recharts `Tooltip` 추종 (`isAnimationActive={false}`, series 와 동일).
 
 ### 8.2 데이터 변경 신호
 
@@ -684,7 +747,7 @@
 
 - 모든 모션은 `@media (prefers-reduced-motion: reduce)` 게이트를 갖는다. reduce 범위:
   - `base.css` (파일 순서): `DetailSurface` 3 variant 진입 (`.detail-drawer` · `.detail-fullscreen` · `.detail-confirm` 의 `.detail-panel`) `animation-duration: 0.01ms !important` · `.live-dot` `animation: none` + opacity 0.8 · `.alert-card` 애니메이션 정지 · `.btn` · `.kpi` transition 제거 · `.field` · `.field-affix` transition 제거.
-  - 화면별 `<style>`: `.ga-spin` · `.skel-pulse-c` · `.skel-pulse-o` · `.outcome-row` · `.doc-action-spinner` · `.doc-row` · `.tbl.doc-ledger-busy` · `.i-act-spin` (`animation-duration: 0.01ms`) · `.i-tile-hover` · architecture 노드 · `.arch-zoom-btn` · dev-only `.twk-seg-thumb` · `.twk-toggle` (`__TWEAKS_STYLE`).
+  - 화면별 `<style>`: `.ga-spin` · `.skel-pulse-c` · `.skel-pulse-o` · `.outcome-row` · `.doc-action-spinner` · `.doc-row` · `.tbl.doc-ledger-busy` · `.i-act-spin` (`animation-duration: 0.01ms`) · `.i-tile-hover` · architecture 노드 · dev-only `.twk-seg-thumb` · `.twk-toggle` (`__TWEAKS_STYLE`).
   - Tailwind 유틸: `motion-safe:` prefix 가 게이트 (`animate-spin` · `transition-colors` · `transition-opacity`).
 - **finder** (merged tree 에서 허용 hit 만):
   - CSS: `grep -rnE "@keyframes|animation *:|transition *:|translateY" public/src public/styles` — hit 마다 같은 selector 의 reduce 블록이 있어야 한다. 허용 hit: 위 reduce 범위의 rule 과 그 keyframe · 정적 `translateY(-50%)` ×2 · 주석.

@@ -10,13 +10,16 @@
 //   - it preserves the live connection string under a second name so the isolation
 //     probe has something to check the live store WITH.
 //
-// It changes no connection code: `src/server/db.ts` still reads `DATABASE_URL` and
-// nothing else, and dotenv does not overwrite an already-set key, so a value installed
-// here survives every test file's `import "dotenv/config"`.
+// `src/server/db.ts` still reads `DATABASE_URL` and nothing else, and dotenv does not
+// overwrite an already-set key, so a value installed here survives every test file's
+// `import "dotenv/config"`. The marker set last is what the DB client checks before it
+// connects from a node:test process (`src/server/test-db-guard.ts`).
 
 import { realpathSync } from "node:fs";
 
 import "dotenv/config";
+
+import { TEST_DB_SELECTED_ENV } from "../../src/server/test-db-guard.js";
 
 /** Set by this script from the pre-swap value — the isolation probe's live handle. */
 export const LIVE_URL_ENV = "MONITOR_LIVE_DATABASE_URL";
@@ -188,3 +191,4 @@ if (liveUrl !== undefined && liveUrl.length > 0) {
 }
 
 process.env.DATABASE_URL = testUrl;
+process.env[TEST_DB_SELECTED_ENV] = "1";

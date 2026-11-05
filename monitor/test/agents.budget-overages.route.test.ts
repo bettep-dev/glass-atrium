@@ -8,7 +8,7 @@
 // seed fails and the DB-gated tests skip gracefully (the route's own 503 → "no
 // badge" degradation contract). The 400 validation tests need no DB.
 //
-// Runner: npx tsx --test test/agents.budget-overages.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/agents.budget-overages.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";

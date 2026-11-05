@@ -108,3 +108,29 @@ for (const width of [1280, 1440]) {
     });
   });
 }
+
+// a sub-card head: the narrow 1440 card wraps "Mistake patterns (EPM)" onto two lines, the 820 one keeps one
+const SUB_CARD_HEADS = "#improvement-learning-memory .sub-card > div:first-child";
+const SUB_CARD_ICON_PX = 13;
+
+for (const width of [1440, 820]) {
+  test(`each Learning memory sub-card icon keeps its size and centres on its label's first line at ${width}px`, async () => {
+    await withLearningPage(width, [], async (page) => {
+      await page.waitForSelector(`${SUB_CARD_HEADS} svg`, { timeout: 30_000 });
+      await page.evaluate(() => document.fonts.ready);
+      const heads = await page.$$eval(SUB_CARD_HEADS, (els) => els.map((head) => {
+        const icon = head.querySelector("svg")!.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(head.querySelector("span")!);
+        const line = range.getClientRects()[0]!;
+        return { label: head.textContent ?? "", width: icon.width, iconCentre: (icon.top + icon.bottom) / 2, lineCentre: (line.top + line.bottom) / 2 };
+      }));
+
+      assert.equal(heads.length, 2, "both sub-cards head an icon + label");
+      for (const head of heads) {
+        assert.ok(Math.abs(head.width - SUB_CARD_ICON_PX) < 0.5, `${width}px "${head.label}": icon ${head.width}px wide`);
+        assert.ok(Math.abs(head.iconCentre - head.lineCentre) < 1, `${width}px "${head.label}": icon centre ${head.iconCentre} vs first line ${head.lineCentre}`);
+      }
+    });
+  });
+}

@@ -4,11 +4,12 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import vm from "node:vm";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
+import { loadScreenModule } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ARCH_SRC = resolve(__dirname, "../public/src/screens/architecture.jsx");
@@ -25,10 +26,13 @@ interface OwningSandbox {
 
 const sandbox = await buildScreenSandbox<OwningSandbox>(ARCH_SRC);
 
-// app.jsx NAV → id ↔ label, the routing table the hash link must land in.
-const NAV_LABEL_BY_ID = new Map(
-  [...readFileSync(APP_SRC, "utf8").matchAll(/\{\s*id:\s*"([^"]+)",\s*label:\s*"([^"]+)"/g)].map((m) => [m[1], m[2]]),
-);
+const app = await loadScreenModule(APP_SRC, {
+  ReactDOM: { createRoot: () => ({ render: () => {} }) },
+  document: { getElementById: () => null },
+});
+// shipped app.jsx NAV → id ↔ label, the routing table the hash link must land in
+// vm read is untyped; the size precondition below fails on a missing or empty NAV
+const NAV_LABEL_BY_ID = new Map((vm.runInContext("NAV", app) as OwningScreen[]).map(({ id, label }) => [id, label]));
 
 const OWNED: Array<[string, string]> = [
   ["agent_layer", "agents"],

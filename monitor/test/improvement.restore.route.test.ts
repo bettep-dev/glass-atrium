@@ -7,7 +7,7 @@
 // no real updater, no real file restore. DB: real Postgres, seeds tagged with a
 // per-suite marker and scrubbed in after(); skips gracefully when the DB is down.
 //
-// Runner: npx tsx --test test/improvement.restore.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.restore.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";

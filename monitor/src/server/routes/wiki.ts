@@ -24,7 +24,7 @@ const ALLOWED_WIKI_DAYS: ReadonlySet<number> = new Set([7, 14, 30, 90]);
 const DEFAULT_WIKI_DAYS = 30;
 
 // Local copy of the core.DaemonStatus enum (nodejs-dev "Module independence") · enum drift surfaces as null (forces explicit extension).
-const KNOWN_DAEMON_STATUSES: ReadonlySet<WikiDaemonStatusValue> = new Set([
+export const KNOWN_DAEMON_STATUSES: ReadonlySet<WikiDaemonStatusValue> = new Set([
   "ok",
   "partial",
   "error",

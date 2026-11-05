@@ -579,9 +579,11 @@ class CostTierRuleTextTest(unittest.TestCase):
     """T13 AC1 — the Cost-Tier rule text is labeled a judgment heuristic and cites
     the daemon's configuration-read mechanism."""
 
-    _RULE_PATH = _HOOKS_ROOT.parent / "rules" / "glass-atrium" / "orchestrator-role.md"
+    _RULE_PATH = _HOOKS_ROOT.parent / "skills" / "glass-atrium-ops-orchestrator-role.md"
 
-    @unittest.skipUnless(_RULE_PATH.exists(), "orchestrator-role.md not present in this tree")
+    @unittest.skipUnless(
+        _RULE_PATH.exists(), "glass-atrium-ops-orchestrator-role.md not present in this tree"
+    )
     def test_cost_tier_section_labeled_heuristic_and_cites_mechanism(self) -> None:
         rule = self._RULE_PATH.read_text(encoding="utf-8")
         self.assertIn("### Cost-Tier Selection", rule)

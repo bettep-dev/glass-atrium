@@ -12,7 +12,7 @@
 // from the response or read back) and by a per-suite start instant; the two rows the
 // suite inserts by hand carry a per-suite marker.
 //
-// Runner: npx tsx --test test/dashboard.update.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/dashboard.update.route.test.ts
 
 import test, { after, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";

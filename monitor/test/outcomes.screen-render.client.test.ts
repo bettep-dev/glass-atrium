@@ -296,6 +296,96 @@ test("a closed caveat row shows its result and its closure as two separate group
   assert.equal(findNodes(resultGroup, (n) => n === closureGroup).length, 0, "the closure group is not nested inside the result group");
 });
 
+describe("the task ledger takes the .tbl cell geometry under its own header and body face", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  // 12 needs-you rows shown uncapped → the Show-first control row; the open caveat among them → the Mark-closed icon button; a routine row
+  const rows = [
+    ...Array.from({ length: 11 }, (_, i) => ({ id: i + 1, agent: "glass-atrium-dev-react", task_type: "feature", result: "fail", record_ts: "2026-09-01T10:00:00.000Z", summary: "Broke" })),
+    { id: 20, agent: "glass-atrium-dev-react", task_type: "feature", result: "done_with_concerns", closed_at: null, record_ts: "2026-09-01T10:00:00.000Z", summary: "Caveat" },
+    { id: 21, agent: "glass-atrium-dev-react", task_type: "review", result: "done", record_ts: "2026-09-01T10:00:00.000Z", summary: "Routine" },
+  ];
+  const closure = { pendingIds: new Set(), closedOverrides: new Map(), onMarkClosed: () => undefined };
+  const tree = renderScreen(create(mod.ResultTable as Component, {
+    rows, sort: "record_ts:desc", onSortChange: () => undefined, onRowClick: () => undefined, closure,
+    needsYouCap: null, onToggleNeedsYou: () => undefined,
+  })) as RenderedNode;
+  const tokensOf = (node: RenderedNode): string[] => String(node.props.className ?? "").split(/\s+/).filter(Boolean);
+  const columnHeads = findNodes(tree, (n) => n.type === "th" && n.props.scope === "col");
+
+  test("the ledger is a .tbl table marked own-face, not the shared Table component", () => {
+    const tables = findNodes(tree, (n) => n.type === "table");
+    assert.equal(tables.length, 1);
+    assert.ok(tokensOf(tables[0]).includes("tbl"), "the .tbl cell geometry applies");
+    assert.ok(tokensOf(tables[0]).includes("tbl--own-face"), "the house header face and row states stay off");
+    assert.equal(findNodes(tree, (n) => n.type === "Table").length, 0);
+  });
+
+  test("every column header is the shared TableHead in the ledger's own sentence-case face, one line each", () => {
+    assert.deepEqual(findNodes(tree, (n) => n.type === "TableHead").length, 5);
+    assert.deepEqual(columnHeads.map((th) => collectText(th).trim()), ["Time", "Agent", "Task type", "Result", "Summary"]);
+    for (const th of columnHeads) {
+      const tokens = tokensOf(th);
+      assert.ok(["text-dim", "font-medium", "whitespace-nowrap"].every((t) => tokens.includes(t)), `'${collectText(th)}' keeps its face: ${tokens}`);
+      assert.ok(!tokens.includes("uppercase"), `'${collectText(th)}' is not upper-cased`);
+      assert.equal((th.props.style as Record<string, unknown>).position, "sticky");
+    }
+  });
+
+  test("the Time header sorts through one native button holding its label and arrow, the cell keeping aria-sort", () => {
+    const [time] = columnHeads;
+    assert.equal(time.props["aria-sort"], "descending");
+    assert.equal(time.props.onClick, undefined, "the cell is not the click target");
+    const buttons = findNodes(time, (n) => n.type === "button");
+    assert.equal(buttons.length, 1);
+    const [button] = buttons;
+    assert.equal(button.props.type, "button", "a native button → Enter and Space activate it");
+    assert.ok(["btn", "ghost", "sm"].every((t) => tokensOf(button).includes(t)), `the shared small ghost control: ${tokensOf(button)}`);
+    assert.match(collectText(button), /Time/);
+    assert.equal(findNodes(button, (n) => n.type === "svg").length, 1, "the arrow is inside the button");
+  });
+
+  describe("activating the Time button requests the other direction, and the first press on an inactive column asks for newest first", () => {
+    const rows = [
+      { name: "active descending → ascending", sort: "record_ts:desc", next: "record_ts:asc" },
+      { name: "active ascending → descending", sort: "record_ts:asc", next: "record_ts:desc" },
+      { name: "another column active → descending", sort: "agent:asc", next: "record_ts:desc" },
+    ];
+    for (const row of rows) {
+      test(row.name, () => {
+        const requested: string[] = [];
+        const sorted = renderScreen(create(mod.ResultTable as Component, {
+          rows: [], sort: row.sort, onSortChange: (next: string) => requested.push(next), onRowClick: () => undefined, closure,
+          needsYouCap: null, onToggleNeedsYou: () => undefined,
+        })) as RenderedNode;
+        const [time] = findNodes(sorted, (n) => n.type === "th" && n.props.scope === "col");
+        const [button] = findNodes(time, (n) => n.type === "button");
+        assert.ok(button, "the Time header holds a button");
+        (button.props.onClick as () => void)();
+        assert.deepEqual(requested, [row.next]);
+      });
+    }
+  });
+
+  test("no cell, and no control in a cell, carries its own padding, margin or rule", () => {
+    const cells = findNodes(tree, (n) => n.type === "th" || n.type === "td");
+    const controls = findNodes(tree, (n) => n.type === "button");
+    assert.ok(cells.some((n) => n.type === "td") && controls.length >= 2, "rows, the Mark-closed button and the Show-all control render");
+    for (const node of [...cells, ...controls]) {
+      const adHoc = tokensOf(node).filter((t) => /^-?(p|m)[xytblrse]?-/.test(t) || /^border-b$/.test(t));
+      assert.deepEqual(adHoc, [], `${node.type} '${collectText(node).trim().slice(0, 24)}'`);
+    }
+  });
+
+  test("a section heading keeps its own mono upper-case face", () => {
+    const headings = findNodes(tree, (n) => n.type === "th" && n.props.scope === "colgroup");
+    assert.ok(headings.length >= 2, "Needs you and Routine");
+    for (const heading of headings) {
+      assert.ok(["font-mono", "uppercase", "tracking-wider", "text-faint"].every((t) => tokensOf(heading).includes(t)));
+    }
+  });
+});
+
 test("a channel row keeps to two single lines, the detail line carrying its full text as a tooltip", async () => {
   const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
   const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;

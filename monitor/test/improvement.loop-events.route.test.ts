@@ -19,7 +19,7 @@
 // database — a seed failure or a non-200 route answer reds this suite, because it
 // is the sole guard on the S4a tie-break and a self-skipping guard guards nothing.
 //
-// Runner: npx tsx --test test/improvement.loop-events.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.loop-events.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";

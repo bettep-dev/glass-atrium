@@ -26,7 +26,8 @@
 #                                   is reported and skipped instead (rc 0), the
 #                                   run continues, and the charter is not claimed
 #   9. deployment detection       → farm_has_ga_links flips no -> yes once a
-#                                   mirror exists
+#                                   mirror exists, through either form of a
+#                                   root path with a symlinked component
 #
 # Run via: bats scripts/test/mirror-farm.bats
 # Requires: bats >= 1.5.0, jq
@@ -310,4 +311,36 @@ run_refresh() {
   # Bash 3.2-safe last-line index (negative subscripts need 4.3+; bats runs
   # under env bash = stock macOS 3.2).
   [[ "${lines[${#lines[@]} - 1]}" == "yes" ]]
+}
+
+@test "farm_has_ga_links finds a deployment whichever form of the root it is given" {
+  # Protects the consent gate: a "no" here makes install.sh skip the refresh with rc 0, so new release
+  # files ship with no mirror. The farm writes physical targets; install.sh passes its logical GA_DIR.
+  local via="${WORK}/via" alias_root="${WORK}/garoot-alias" row name root target expected facade index=0
+  ln -s "${WORK}" "${via}"
+  ln -s "${GAROOT}" "${alias_root}"
+  local -a rows=(
+    "symlinked component above the root, link in the farm's form|${via}/garoot|${GAROOT}/x.md|yes"
+    "root path itself a symlink, link in the farm's form|${alias_root}|${GAROOT}/x.md|yes"
+    "tree moved behind a symlink, link keeps the old logical form|${via}/garoot|${via}/garoot/x.md|yes"
+    "root that does not resolve, link in its literal form|${WORK}/absent|${WORK}/absent/x.md|yes"
+    "symlinked root, link into a different tree|${via}/garoot|${WORK}/other/x.md|no"
+    "symlinked root, link into a sibling sharing its name as a prefix|${via}/garoot|${GAROOT}-sibling/x.md|no"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name root target expected <<<"${row}"
+    index=$((index + 1))
+    facade="${WORK}/row-facade-${index}"
+    mkdir -p "${facade}"
+    ln -s "${target}" "${facade}/x.md"
+    run bash -c 'set -Eeuo pipefail; source "$1"; farm_has_ga_links "$2" "$3"' _ "${LIB}" "${facade}" "${root}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${output}"
+      return 1
+    }
+    [[ "${output}" == "${expected}" ]] || {
+      echo "${name}: expected ${expected}, got ${output}"
+      return 1
+    }
+  done
 }

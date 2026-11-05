@@ -35,10 +35,10 @@ spawn_dir="${SESSION_SPAWNS_DIR:-${DEFAULT_SPAWN_DIR}}"
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# TUNE: concurrency is bounded by the Workflow engine runtime self-cap (orchestrator-role.md Spawn
+# TUNE: concurrency is bounded by the Workflow engine runtime self-cap (skills/glass-atrium-ops-orchestrator-role.md Spawn
 # Budget), NOT a fixed number; this is a SEPARATE lifetime-CUMULATIVE runaway backstop with an
 # ABSOLUTE threshold. A healthy multi-wave session sits below it, and 30 stays below the 40-52
-# truncation range (orchestrator-role.md Delegation-size discipline).
+# truncation range (skills/glass-atrium-ops-orchestrator-role.md Delegation-size discipline).
 # Env-overridable (SPAWN_BUDGET_ADVISORY_THRESHOLD).
 readonly DEFAULT_THRESHOLD=30
 threshold="${SPAWN_BUDGET_ADVISORY_THRESHOLD:-${DEFAULT_THRESHOLD}}"
@@ -99,7 +99,7 @@ if ((spawn_count <= threshold)); then
 fi
 
 # 6. STDERR advisory fire (no stdout JSON · not a block · exit 0).
-reason="Spawn-budget advisory: this session has cumulative ${spawn_count} agent spawns, past the ${threshold} runaway-fan-out threshold (a lifetime-cumulative safety net; concurrency itself is bounded by the Workflow engine's runtime self-cap, not a fixed number — orchestrator-role.md Spawn Budget). Consider sequential waves over parallel overflow, and one-budget-sized delegations over many tiny spawns (each spawn re-tokenizes system prompt + tool schemas). Non-blocking — the spawn proceeds. NOTE: this is CUMULATIVE lifetime spawns, NOT concurrent children or chain depth (the PreToolUse envelope cannot provide those)."
+reason="Spawn-budget advisory: this session has cumulative ${spawn_count} agent spawns, past the ${threshold} runaway-fan-out threshold (a lifetime-cumulative safety net; concurrency itself is bounded by the Workflow engine's runtime self-cap, not a fixed number — skills/glass-atrium-ops-orchestrator-role.md Spawn Budget). Consider sequential waves over parallel overflow, and one-budget-sized delegations over many tiny spawns (each spawn re-tokenizes system prompt + tool schemas). Non-blocking — the spawn proceeds. NOTE: this is CUMULATIVE lifetime spawns, NOT concurrent children or chain depth (the PreToolUse envelope cannot provide those)."
 printf '[agent-spawn-budget-advisory] %s\n' "${reason}" >&2
 
 exit 0

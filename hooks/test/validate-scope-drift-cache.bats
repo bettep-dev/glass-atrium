@@ -272,6 +272,15 @@ run_hook() {
     || { echo "md plan without a heading bound something: ${output}" >&2; return 1; }
 }
 
+@test "an html Target Files section with a nested <section> reads as no list (advisory stays silent)" {
+  # The delegation gate fails closed on this parse anomaly; this advisory keeps reading it as no list.
+  set_list_rows '{"id":5,"doc_status":"implementing","format":"html","created_at":"2026-07-01T00:00:00Z"}'
+  write_doc 5 html '<section id="target-files"><section><h3>x</h3></section><ul><li>src/owned.sh</li></ul></section>'
+  SCOPE_DRIFT_CACHE_BYPASS=1 run_hook "/work/repo/src/other/out-of-scope.ts"
+  [[ "${status}" -eq 0 ]] && [[ "${output}" != *SCOPE-070* ]] \
+    || { echo "nested section bound a list: exit ${status}: ${output}" >&2; return 1; }
+}
+
 @test "no binding unless exactly one plan is implementing" {
   local -a rows=(
     'two implementing plans|{"id":7,"doc_status":"implementing","format":"md","created_at":"2026-07-01T00:00:00Z"}|{"id":8,"doc_status":"implementing","format":"md","created_at":"2026-07-02T00:00:00Z"}'

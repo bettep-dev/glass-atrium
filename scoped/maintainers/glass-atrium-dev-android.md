@@ -5,36 +5,45 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
 - Companions ship as manifest members, so a pointer to one resolves on a live install.
-- A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
-- NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
+- A rule file carries at most one pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
+- Not a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
 
 ## Machine constraints on the body
 
 | Reader | What it reads | Consequence |
 |---|---|---|
-| `hooks/inject-scope-rules.sh` → `read_max_turns` | `^maxTurns:` at column 0 of the frontmatter | the turn-budget meter is sized from it; it is machine-read, not a free knob |
-| `hooks/enforce-harness-critical.sh` | live-install `agents/*.md` frontmatter identity keys (name, tools, scope) and the fence-line count | a live edit changing an identity key or the fence count is blocked for every caller (LLM06); repo-tree edits are out of its path scope |
-| `autoagent/autoagents-eval.sh` | frontmatter `name` / `description` validity, a `skills:` key's list shape, English body | body headings are explicitly a ceiling, not a floor — no heading is required |
+| `hooks/inject-scope-rules.sh` → `read_max_turns` | `^maxTurns:` at column 0 | sizes the turn-budget meter; not a free knob |
+| `hooks/enforce-harness-critical.sh` | live frontmatter identity keys (name, tools, scope) and the fence-line count | edits to them blocked for every caller (LLM06); repo-tree edits are out of its path scope |
+| `autoagent/autoagents-eval.sh` | frontmatter `name` / `description` validity, `skills:` list shape, English body | no heading is required: body headings are a ceiling, not a floor |
+| `autoagent/lib/editable_merge.py` | EDITABLE region count, local vs release | a count change routes the merge to the manual structural-change ceremony |
+| `autoagent/daemon_cycle.py` → `match_sensitive_diff` | added lines of any patch to this body | a dynamic-exec call form written with its paren routes the patch to safety |
 
-## What moved out of the body, and why
+- No suite reads this body's prose.
+  - `hooks/test/inject-scope-rules-nodrop.bats` and `hooks/test/inject-scope-single-delivery.bats` read the real `maxTurns` for the meter.
+  - `hooks/test/corpus/agents-blocklist/glass-atrium-dev-android.md` is a standalone fixture, not a copy of the body's frontmatter; a body edit does not reach it.
+  - Other suites that name the agent use the name as roster or fixture data.
 
-- **Effort/thinking blockquote** — restated `GLASS_ATRIUM_GLOBAL_RULES.md` → Thinking Budget Policy, a Tier-1 rule that measurably reaches every subagent. Its `effort=high default` clause contradicts that section's parent-tier default, and its tail ("no re-declaration here") was maintainer prose.
-- **Mobile UX source-of-truth blockquote** — pointed at another agent's body for "conceptual rules". It named where rules live rather than obliging anything; the Compose mapping under that heading is self-sufficient.
-- **`## Architecture Validation`** — every clause restated Design Principles (layer roles, mixing prohibition, boundary conversion, no circular deps). The one non-duplicated fact, the per-layer membership list, was folded into Pre-Execution Layer Validation, which already names the same chain.
-- **Comment, TODO and logging restatements** in Self-Review and Red Flags — `scoped/shared-comment-logging.md` reaches this row through `rules.shared`.
-  - It owns why-only comments, the TODO form, log levels, the empty-catch and log+rethrow prohibitions, and Platform-Specific Rules → Android (Timber, Crashlytics, the R8 strip).
-  - Only the ProGuard/R8 keep-rules check for reflection classes stayed, under Self-Review → **Release build**.
-- **Guardrails restated in Design Principles and Work Rules** — the layer-mixing and GlobalScope/runBlocking `MUST NOT` lines were cut there, so the Prohibitions claim that Guardrails states each `MUST NOT` once holds.
-- **FINAL STEP emit block and its mode table** — restated `core-outcome-record.md` → Completion Report Output Obligation (host-delivered), plus the slot-1 emit-format block; reduced to a one-line pointer.
-  - Kept in the body under that pointer: the fallback for a schema declaring no `completion_block`, which neither canonical states.
-- **Security bullets on WebView JS interfaces, process spawning and secret logging** — `core-security.md` is Tier-1, arrives at spawn, and already states all three in mobile-app terms. The Android-only residue (Intent / deep-link validation, Keystore storage) stayed.
-- **Guardrails items re-listed under Red Flags and Prohibitions** — both sections now name Guardrails as the owner and list only what has no Guardrails entry, the shape `agents/glass-atrium-dev-shell.md` already uses.
+## Body text other files cite
+
+- `## Pre-Execution Verification` **Motion**: `scoped/maintainers/shared-design-token-consumption.md` → `## Headings other files cite`.
+- `## Pre-Execution Verification` **Structure**, for its Project Convention Probe pointer: `scoped/maintainers/scope-dev.md` → `## Inbound citations to the rule file`.
+
+## Canonicals the body states no copy of
+
+- host: `core-outcome-record.md` → Completion Report Output Obligation (plus the slot-1 emit-format block).
+- host: `GLASS_ATRIUM_GLOBAL_RULES.md` → Thinking Budget Policy and 3-Tier Boundary.
+  - One exception: Guardrails **New dependencies need user confirmation** restates the Confirm action for installing a dependency, naming the version catalog and build files.
+- host: `core-security.md` → Execution Security (WebView JS interfaces, mobile process spawning) · Secret Management (BuildConfig) · Dependency Auditing.
+- `rules.scope`: `scoped/scope-dev.md` → Ambiguity Gate and Project Convention Probe.
+- `rules.shared`: `scoped/shared-comment-logging.md` (Platform-Specific Rules → Android among them) · `scoped/shared-testing.md` · `scoped/shared-naming.md`.
+- slot 1: `AGENT-INJECT:BUDGET-DEV` carries the sizing rule, because this agent is on `BUDGET_DEV_AGENTS`, not a daemon carrier.
+- The Success Criteria no-`completion_block` fallback stays: neither the Obligation nor the emit-format block states it.
 
 ## Decisions worth keeping
 
-- **Naming subordination**: the body names no naming axis. Pre-Execution Verification → **Structure** keeps "Glob the target module" and points at `scoped/scope-dev.md` → Project Convention Probe, which takes code form from the sibling and identifier naming from the `scoped/shared-naming.md` canon.
-- **Anti-slop guardrail kept, made actionable**: the designer body is not in this agent's context, so the bullet instructs an on-demand Read of that path and says so, rather than citing a file the agent never receives.
-- **Motion bullet keeps the Compose mapping under its condition** — `spring(stiffness, dampingRatio)` and the ad-hoc-constant ban, led by "only when the project carries `motion-philosophy.md`".
-  - The condition stays in the lead: without it the ban reads as binding every Android project, while `scoped/shared-design-token-consumption.md` → Mandatory Pre-Execution Gate proceeds on framework defaults when no motion file exists.
-  - The spring families read off that file's Motion Tokens section, never off another agent's selection.
+- **Motion bullet keeps the Compose mapping under its condition**: "only when the project carries `motion-philosophy.md`".
+  - Without the condition the rule reads as binding every Android project; `scoped/shared-design-token-consumption.md` → Mandatory Pre-Execution Gate obliges the read only where the file exists.
+  - Not a redundant mirror: `shared-design-token-consumption.md` reaches this agent through `rules.shared` but states no Compose `spring(...)` mapping.
+  - Spring families read off that file's `## Motion Tokens`, never off another agent's selection.
+- **Red Flags and Prohibitions intros**: name Guardrails as the owner and list only what has no Guardrails entry — the `agents/glass-atrium-dev-shell.md` shape, recorded in `scoped/maintainers/glass-atrium-dev-shell.md`.

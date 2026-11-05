@@ -21,7 +21,6 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
@@ -210,7 +209,7 @@ test("budget input placeholder advertises the shipped default cap, not a stale l
 });
 
 // Inherit roster SoT — DOMAIN_META_MC[*].inherit in the shipped model-config.jsx.
-// The literal table is the independent oracle the scraped roster is compared against.
+// The literal table is the independent oracle the shipped roster is compared against.
 const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
   "model.dev": true,
   "model.research": true,
@@ -221,13 +220,13 @@ const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
   "model.daemon_cycle_worker": false,
 };
 
-function getInheritRosterOrFailMc(): Record<string, boolean> {
-  const src = readFileSync(MC_SRC, "utf8");
-  const block = /const DOMAIN_META_MC = \{([\s\S]*?)\n\};/.exec(src);
-  assert.ok(block, "DOMAIN_META_MC declaration located in model-config.jsx");
+function getShippedInheritRosterOrFailMc(): Record<string, boolean> {
+  // loadMc returns the contextified sandbox itself; a top-level const is reachable only by evaluation in it.
+  const domainMeta: unknown = vm.runInContext("DOMAIN_META_MC", mc as unknown as vm.Context);
+  assert.ok(domainMeta && typeof domainMeta === "object", "DOMAIN_META_MC is an object in the shipped model-config.jsx");
   const roster: Record<string, boolean> = {};
-  for (const [, domain, body] of block[1].matchAll(/"(model\.[a-z_]+)":\s*\{([^}]*)\}/g)) {
-    roster[domain] = /\binherit:\s*true\b/.test(body);
+  for (const [domain, meta] of Object.entries(domainMeta)) {
+    roster[domain] = meta?.inherit === true;
   }
   return roster;
 }
@@ -243,8 +242,8 @@ test("modelOptionsMC: unknown domain (fallback meta) lists exactly the injected 
 test("modelOptionsMC: the inherit roster decides the inherit option, domain by domain", () => {
   // Data-driven over the whole roster, not a hand-written case per domain.
   // A domain added to DOMAIN_META_MC is therefore covered the moment it ships.
-  // Self-reference guard — a scraped expectation would shrink with the roster and pass vacuously.
-  const roster = getInheritRosterOrFailMc();
+  // Self-reference guard — an expectation read from the shipped table would shrink with it and pass vacuously.
+  const roster = getShippedInheritRosterOrFailMc();
   assert.deepStrictEqual(roster, INHERIT_ROSTER_MC, "shipped DOMAIN_META_MC inherit flags");
   for (const [domain, inherits] of Object.entries(INHERIT_ROSTER_MC)) {
     const opts = sameRealm(mc.modelOptionsMC(domain, KNOWN_MODELS_FIXTURE));
@@ -401,7 +400,7 @@ test("every server model domain has a client slot, in the server's order, with a
   const sorted = sameRealm(mc.sortDomainsMC(shuffled)).map((d) => d.domain);
   assert.deepStrictEqual(sorted, serverKeys, "DOMAIN_ORDER_MC covers every server domain in order");
 
-  const roster = getInheritRosterOrFailMc();
+  const roster = getShippedInheritRosterOrFailMc();
   for (const def of MODEL_DOMAINS) {
     assert.strictEqual(roster[def.key], def.allowInherit, `${def.key}: client inherit flag = server allowInherit`);
   }
@@ -542,8 +541,10 @@ async function loadMcScreens(
   Object.assign(reactStub, overrides.react ?? {});
   // ui.jsx atoms — rendered as tagged wrappers so their children stay readable in the tree.
   const uiStub = {
-    PageHeader: (p: Record<string, unknown>) => hMc("header", { className: "page-header" }, p.sub, p.right),
+    PageHeader: (p: Record<string, unknown>) =>
+      hMc("header", { className: "page-header" }, p.sub, p.actions, p.freshness, p.range, p.refresh),
     Icon: (p: Record<string, unknown>) => hMc("i", { "data-icon": p.name, className: p.className }),
+    DisclosureChevron: () => hMc("i", { "data-icon": "chevR", className: "disclosure-chevron" }),
     TypeScaleStyle: () => null,
     Badge: (p: Record<string, unknown>) =>
       hMc("span", { className: `badge ${p.className ?? ""}`.trim(), "data-tone": p.tone ?? "neutral" }, p.children),
@@ -903,7 +904,7 @@ test("a mixed review or docs pair reads as a labelled row with both files and a 
     assert.ok(text.includes("2 files"), `${domain}: per-file disclosure counts the pair`);
     const options = tagsMc(tree, "option");
     assert.strictEqual(options[0]?.props.value, "inherit", `${domain}: inherit is the first option`);
-    assert.strictEqual(textMc([options[0]]), "session model (inherit)", `${domain}: inherit reads as the session model`);
+    assert.strictEqual(textMc([options[0]]), "Session model", `${domain}: inherit reads as the session model`);
   }
 });
 
@@ -1467,6 +1468,31 @@ test("both ledgers sit on one column grid, so their Live columns line up", () =>
   }
 });
 
+test("all three tier tables take the shared .tbl geometry in the house face, with no cell padding of their own", () => {
+  const PADDING_KEYS_MC = /^padding/i;
+  const PADDING_CLASS_MC = /(^|\s)-?(p|px|py|pt|pb|pl|pr|ps|pe)-/;
+  for (const [name, props] of [
+    ["DomainsSectionMC", domainsPropsMc()],
+    ["BudgetsSectionMC", budgetsPropsMc()],
+    ["TiersSectionMC", tiersPropsMc()],
+  ] as const) {
+    const tree = renderComponentMc(screens[name], props);
+    const [table] = tagsMc(tree, "table");
+    assert.strictEqual(table.props.className, "tbl", `${name}: a house .tbl table — no own-face modifier, so the face stays`);
+    const headers = tagsMc(tree, "th");
+    assert.strictEqual(headers.length, 3, `${name}: three headers`);
+    for (const th of headers) assert.strictEqual(th.props["data-atom"], "TableHead", `${name}: '${textMc(th.children)}' is a TableHead`);
+    const cells = [...headers, ...tagsMc(tree, "td")];
+    assert.ok(tagsMc(tree, "td").length >= 3, `${name}: a ready row renders its cells`);
+    for (const cell of cells) {
+      const style = (cell.props.style ?? {}) as Record<string, unknown>;
+      const own = Object.keys(style).filter((key) => PADDING_KEYS_MC.test(key));
+      assert.deepStrictEqual(own, [], `${name}: '${textMc(cell.children)}' carries no inline padding — .tbl sets it`);
+      assert.ok(!PADDING_CLASS_MC.test(String(cell.props.className ?? "")), `${name}: no padding utility on '${textMc(cell.children)}'`);
+    }
+  }
+});
+
 const THREE_TIERS_MC = ["model.dev", "model.research", "model.meta"].map((domain) => ({
   ...DOMAIN_ROW_FIXTURE_MC[0],
   domain,
@@ -1691,7 +1717,7 @@ test("a model id reads as its family and version; an id outside the naming patte
   }
 });
 
-test("the model mix counts every tier once under its family, and each select names its family in text", () => {
+test("the model mix counts every tier once under its family, and each select names its family in text with its id below", () => {
   const models = { "model.dev": "claude-opus-4-8", "model.research": "claude-sonnet-5", "model.meta": "claude-opus-4-8" };
   const tree = renderComponentMc(screens.DomainsSectionMC, {
     ...domainsPropsMc(THREE_TIERS_MC),
@@ -1699,12 +1725,52 @@ test("the model mix counts every tier once under its family, and each select nam
     baseline: { models: { ...models }, budgets: {} },
   });
   assert.ok(textMc(tree).includes("Opus 4.8 ×2 · Sonnet 5 ×1"), "the mix totals the tiers per family");
-  const tags = textsMc(findAllMc(tree, (n) => n.props["data-slot"] === "family"));
-  assert.strictEqual(tags.length, tagsMc(tree, "select").length, "one family tag per select");
-  assert.ok(tags.every((t) => t === "Opus 4.8" || t === "Sonnet 5"), "each tag names its select's family");
+  const selects = tagsMc(tree, "select");
+  const shown = selects.map((select) => {
+    const picked = tagsMc(select.children, "option").find((o) => o.props.value === select.props.value)!;
+    return textMc(picked.children);
+  });
+  assert.deepStrictEqual(shown, ["Opus 4.8", "Sonnet 5", "Opus 4.8"], "each select names its tier's family");
+  const ids = findAllMc(tree, (n) => n.props["data-slot"] === "model-id");
+  assert.deepStrictEqual(textsMc(ids), Object.values(models), "one id tag per select, naming its saved id");
+  for (const id of ids) {
+    assert.match(String(id.props.className), /\btruncate\b/, "the id is one nowrap token with an end ellipsis");
+    assert.strictEqual(id.props.title, textMc(id.children), "a clipped id keeps its full value in the title");
+  }
 });
 
-test("the file list toggle is a control-radius pill, not a heading or a card", () => {
+test("a tier set to inherit reads as the session model in its select and shows no id tag", () => {
+  const models = { "model.dev": "claude-opus-4-8", "model.research": "inherit", "model.meta": "claude-sonnet-5" };
+  const tree = renderComponentMc(screens.DomainsSectionMC, {
+    ...domainsPropsMc(THREE_TIERS_MC),
+    form: { models, budgets: {} },
+    baseline: { models: { ...models }, budgets: {} },
+  });
+  const research = tagsMc(tree, "select").find((s) => s.props.value === "inherit");
+  assert.ok(research, "the inherit tier is a listed select value, not custom mode");
+  const picked = tagsMc(research!.children, "option").find((o) => o.props.value === "inherit")!;
+  assert.strictEqual(textMc(picked.children), "Session model", "the select words inherit");
+  const ids = textsMc(findAllMc(tree, (n) => n.props["data-slot"] === "model-id"));
+  assert.deepStrictEqual(ids, ["claude-opus-4-8", "claude-sonnet-5"], "only the tiers with a real id carry an id tag");
+  assert.ok(!ids.includes("inherit"), "the raw inherit key never shows as an id");
+});
+
+test("a model option reads as its friendly name with the id leading its title; an id outside the pattern reads as itself", () => {
+  const roster = ["claude-opus-5-5", "claude-sonnet-5-5", "my-local-model"];
+  const tree = renderComponentMc(screens.DomainsSectionMC, {
+    ...domainsPropsMc(THREE_TIERS_MC.slice(0, 1)),
+    knownModels: roster,
+    form: { models: { "model.dev": "claude-sonnet-5-5" }, budgets: {} },
+    baseline: { models: { "model.dev": "claude-sonnet-5-5" }, budgets: {} },
+  });
+  const options = tagsMc(tree, "option").filter((o) => roster.includes(String(o.props.value)));
+  assert.deepStrictEqual(textsMc(options), ["Opus 5.5", "Sonnet 5.5", "my-local-model"], "friendly names, never a clipped id");
+  for (const option of options) {
+    assert.ok(String(option.props.title).startsWith(String(option.props.value)), `${option.props.value}: the id leads the title`);
+  }
+});
+
+test("the file list toggle is an interactive pill on the disclosure atom, not a heading or a card", () => {
   const tree = renderComponentMc(screens.LiveValueMC, {
     value: "claude-opus-4-8",
     drift: false,
@@ -1713,7 +1779,8 @@ test("the file list toggle is a control-radius pill, not a heading or a card", (
   const [summary] = tagsMc(tree, "summary");
   assert.ok(summary, "the toggle is a native summary");
   assert.ok(textMc(summary.children).includes("1 file"), "the toggle names the file count");
-  assert.strictEqual((summary.props.style as Record<string, string>)?.borderRadius, "var(--radius-control)");
+  const classes = String(summary.props.className ?? "").split(/\s+/);
+  for (const name of ["disclosure", "pill", "pill--interactive"]) assert.ok(classes.includes(name), `summary class ${name}: ${classes}`);
   assert.strictEqual(findAllMc(tree, (n) => /^h[1-6]$/.test(n.tag) || "data-kind" in n.props).length, 0, "no heading, no card fold");
 });
 
@@ -2033,11 +2100,11 @@ test("the file list toggle shows a chevron and its opened list is never clipped 
   const [summary] = tagsMc(tree, "summary");
   const [list] = findAllMc(tree, (n) => n.props.role === "region");
 
-  const chevron = tagsMc([summary], "i").find((n) => String(n.props["data-icon"]).startsWith("chevron"));
+  const chevron = tagsMc([summary], "i").find((n) => String(n.props["data-icon"]).startsWith("chev"));
 
   assert.ok(chevron, "the pill carries a chevron");
-  // the class ui.shared-states.e2e turns over while the disclosure is open
-  assert.ok(String(chevron.props.className ?? "").split(/\s+/).includes("chevron"), "the chevron takes the shared open-state turn");
+  // the class base.css turns while the summary's details is open
+  assert.ok(String(chevron.props.className ?? "").split(/\s+/).includes("disclosure-chevron"), "the chevron takes the shared open-state turn");
   assert.strictEqual((list.props.style as Record<string, unknown> | undefined)?.maxHeight, undefined, "no height cap");
   assert.ok(!String(list.props.className).includes("overflow-y-auto"), "no inner scroller");
   assert.strictEqual(tagsMc(list.children, "span").length, files.length, "every file is listed");

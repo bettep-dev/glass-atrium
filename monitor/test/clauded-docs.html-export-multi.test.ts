@@ -2,7 +2,7 @@
 // multi-document ZIP export. Each selected doc becomes a self-contained .html
 // entry inside the ZIP, plus a top-level _manifest.json.
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/clauded-docs.html-export-multi.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/clauded-docs.html-export-multi.test.ts
 //
 // Entry-name capture strategy (R2 append-spy — no unzip dep):
 //   Monkey-patch ZipArchive.prototype.append BEFORE each test that needs name

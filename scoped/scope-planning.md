@@ -34,7 +34,7 @@ Pointer only. The T1-T5 indicators and the 2-agent composition are canonical at 
 
 - Planner copy: `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract`.
 - Designer copy: `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role`.
-- Orchestrator count: `rules/glass-atrium/orchestrator-role.md` → Visual-Weight Probe.
+- Orchestrator count: `skills/glass-atrium-ops-orchestrator-role.md` → Visual-Weight Probe.
 
 ## Ambiguity Gate [PLANNING]
 

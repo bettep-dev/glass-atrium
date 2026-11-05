@@ -1,6 +1,6 @@
 // Integration tests for /api/improvement (unified endpoint).
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/improvement.route.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.route.test.ts
 //
 // Coverage:
 //   - GET /api/improvement happy path · 200 + shape
@@ -1069,8 +1069,7 @@ test("POST approve: hands the operator actor to daemon-apply instead of letting 
   );
 });
 
-// Source-contract assertion over the route's own SQL. Precedent for reading route
-// source rather than rendering it: test/daemon-status.enum-parity.test.ts.
+// Source-contract assertion over the route's own SQL.
 const ROUTE_SRC = readFileSync(
   fileURLToPath(new URL("../src/server/routes/improvement.ts", import.meta.url)),
   "utf8",

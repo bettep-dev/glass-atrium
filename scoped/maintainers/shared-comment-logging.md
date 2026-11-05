@@ -1,41 +1,48 @@
 # Maintainer note — `scoped/shared-comment-logging.md`
 
-Corpus-maintenance companion to that rule file. Nothing here is delivered to an agent; the rule file itself carries every duty.
+Maintainer-facing material for that rule file. Nothing here binds an agent; the rule file carries every duty.
 
 ## Companion-citation convention (corpus-wide, stated in every companion)
 
 - Companions ship as manifest members, so a pointer to one resolves on a live install.
-- A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
-- NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
+- A rule file carries at most one pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
+- Not a pointer under this rule: an HTML comment addressed to the editor of a machine-extracted block — maintainer-facing, never rendered to a reader and never injected.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
 
 ## Membership
 
-DEV + QA agents, plus glass-atrium-meta-prompt-engineer under the "prompts = code" Tier-3 inheritance. The authoritative membership lives on the registry row (`agent-registry.json` → each agent's `rules.shared`) and in the compliance matrix; the rule file states it nowhere.
+- The member set → `rules/glass-atrium/core-compliance-matrix.md` → `### Tier 3 — Cross-cutting (conditional inheritance)` → the `scoped/shared-comment-logging.md` row; declared on each `agent-registry.json` row (`rules.shared`).
 
 ## Compressed core — edit rules
 
-- **Delivery**: the whole rule file reaches every member through the part slots, selected by each agent's `agent-registry.json` → `rules.shared`. `hooks/inject-scope-rules.sh` extracts nothing from it, and the file carries no `AGENT-INJECT` marker.
-- **The core under `## Agent Injection Core` stays as ordinary content**: several rules are stated only there — `Mirror = code form only`, the TODO owner/ticket form, the history/narration prohibition, the stale-comment rule, the mid-sentence wrap rule. Deleting it as a duplicate loses them.
-- **Folding the core into its canonical sections is open work**: it needs a per-bullet audit, and it is the only way to remove the in-file restatement a member now reads twice within one part.
-- **Keep the heading `## Agent Injection Core`** until the fold above lands: retitling it belongs to that change, which decides what the section still holds.
-- **Keep the core's bold lead phrase** (the words before its parenthetical): `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts it ABSENT from slot 1, and the check proves nothing once the phrase no longer exists in the source.
-- **Precondition the retirement rests on**: `python3 hooks/lib/inject_chunk.py --audit` MUST report `events=none` for every member. An OVERFLOW displaces a member band, and no slot-1 copy remains behind it.
+- **Delivery**: the whole rule file reaches every member through the part slots; it carries no `AGENT-INJECT` marker (`rules/glass-atrium/core-compliance-matrix.md` → **Slot 1 MUST carry no scope-file text**).
+  - Precondition: `rules/glass-atrium/core-compliance-matrix.md` → **Overflow audit** passing for every member of the rule file.
+- **The core is folded**: `## Agent Injection Core` holds only the two rules that bind every comment, whatever its kind — the essence / no-history rule and `Mirror = code form only`.
+  - Every other rule lives once, in its own section.
+  - Do not re-add a summary of the other sections to the core: a member would read each rule twice.
+- **Keep the heading `## Agent Injection Core`**: it matches the `scoped/shared-naming.md` heading of the same role.
+- **Keep exactly one line carrying `**Comment-rule core`**:
+  - `hooks/test/inject-scope-single-delivery.bats` → `RETIRED_BLOCKS` names that anchor, and `get_needle` matches it as a substring (`grep -F`), never at line start.
+  - The whole matching line becomes the needle, asserted once per member and zero times otherwise.
+  - `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts the phrase `Comment-rule core` absent from slot 1; the check proves nothing once the phrase is gone from the source.
 
-## Restructure + diet pass (this wave)
+## Removed as redundant — do not re-add
 
-Dropped as already stated in the core under `## Agent Injection Core` ("the block" below):
+- A sensitive-data logging pointer under `## Prohibitions`: Tier 1 carries the rule to every member.
+  - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Absolute Rules [ALL]` → "sensitive info in logs MUST be masked".
+  - Code authoring: `rules/glass-atrium/core-security.md` → `## OWASP Top 10` → Logging Failures (A09).
+- An identifiers-keep-their-form sentence under `## Comment Language & Style`: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Output Language` → **Names and identifiers** reaches every member.
+- A `// SECURITY:` prefix bullet under `## Inline Comments`: `rules/glass-atrium/core-security.md` → `## OWASP Top 10` → "annotate with `// SECURITY:` comment" reaches every member as Tier 1.
+- A header author / date / bug-ID / change-history item: the core's history rule binds every comment, the header included.
+- Under `## Comments That MUST NOT Be Written`, an over-narration entry, a positive-form line or "comments restating code": the density gate and the core lead state them.
 
-- the why-over-what / stale-comment opener (the block carries the stale-comment rule; the restating-code prohibition survives in `## Comments That MUST NOT Be Written`)
-- the long-form docblock-escalation paragraph, including its demotion guards and its `/** */`-bearing-language enumeration — the block carries both, and the worked BAD/GOOD example stayed as the only calibration of the one-essence-line form
-- the standalone mid-sentence-line-wrap rule; its worked example stayed, reattached to the style rule it calibrates
-- the standalone density-gate bullet — dropped, then RESTORED in compressed form under `## Comment Principles` in the follow-up fix pass, because three prose sites invoke "the density gate" by name (the one-line sufficiency gate · the step-numbers / branch-labels bullet · the over-narration entry under `## Comments That MUST NOT Be Written`) and a non-roster reader of the prose has no other definition. One in-file definition closes all three; the block keeps its own copy
-- the convention-mirror precedence paragraph, whose mirror rule and two carve-outs the block carries compressed — the Justified-header test it referred to remains defined under `## File / Module Header Comments`
-- the history / changelog / attribution prohibition and the TODO owner+ticket format
-- the `console.*` production prohibition at all THREE sites it held: the `Logger` bullet under `## Log Message Composition`, the entry under `## Prohibitions`, and the NestJS bullet under `## Platform-Specific Rules`. No duty was lost — the block carries the ban with its test-file exemption — and the three surviving bullets keep their non-`console.*` content
+## Pair classifications
 
-Also dropped: the applies-to membership line (above) and the two maintainer blockquotes now held in this note.
+- `Mirror = code form only` ↔ `scoped/shared-search-first.md` → **Step 3 — Mirror** (comment sub-bullet): canonical (the rule file) + mirror.
+  - Search-first reaches DEV and META but not QA, so both stay.
+  - Both name the same code-form axes, layout included; report any later drift.
 
 ## Platform-Specific Rules — kept, with the reason
 
-Each branch names its own platform, so the condition travels with the duty; only two of the three were confirmed to be restated in the body of the agent they bind, which is not enough to call the section redundant.
+- Each branch names its own platform, so the condition travels with the duty.
+- Not redundant: no `agents/glass-atrium-dev-*.md` body carries `LoggingInterceptor`, `assumenosideeffects`, `DebugTree` or `no-console`.

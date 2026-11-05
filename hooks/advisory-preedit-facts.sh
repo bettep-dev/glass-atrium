@@ -7,7 +7,7 @@
 # Registered on Stop ONLY (matcher ""), firing alongside cost-tracker.sh. NOT on SubagentStop: the
 # parent transcript visible there predates the subagent's own edits, so it has nothing to advise on.
 # Advisory-only because Stop has NO block channel — a finished turn cannot be rewound
-# by exit 2 (rules/shared-hook-capability-contract.md Per-Event table: observe-only), so ALWAYS exit 0.
+# by exit 2 (scoped/shared-hook-capability-contract.md Per-Event table: observe-only), so ALWAYS exit 0.
 #
 # The transcript is read as a BOUNDED tail (last ~1 MiB), never a full stream: the current turn's edits +
 # declarations always fall in that tail, so a long session no longer re-reads the whole file each turn-end.

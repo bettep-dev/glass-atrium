@@ -45,7 +45,7 @@ Implement frontend UI markup and styles based on Design Thinking principles, cov
 glass-atrium-dev-front is NOT a default clauded-docs author. It co-authors a viewer-exposed HTML primary only through the `scope-report.md` / `scope-planning.md` Designer Co-Emission Trigger.
 
 - **Entry condition**: the doc needs a bespoke interactive component or hand-authored CSS beyond Tailwind-CDN utilities AND beyond glass-atrium-design-designer's verdict scope (e.g. a CSS-only tab system, a complex `:has()` / container-query layout).
-- **Trigger**: the author's `needs_devfront_markup` signal plus the orchestrator's Monitoring-phase capability judgment — NOT user approval; the user is surfaced only when ambiguous (`orchestrator-role.md` → `#### Monitoring-phase notes` → glass-atrium-dev-front markup-exception Monitoring judgment).
+- **Trigger**: the author's `needs_devfront_markup` signal plus the orchestrator's Monitoring-phase capability judgment — NOT user approval; the user is surfaced only when ambiguous (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Monitoring-phase notes` → glass-atrium-dev-front markup-exception Monitoring judgment).
 - **Handoff shape**: non-parallel and skeleton-first, preserving the atomic 1-doc-1-POST contract — no parallel stitching, no second POST.
 - **glass-atrium-dev-front owns**: a single-file, self-contained, sandbox-safe styled HTML skeleton — bespoke component + Tailwind/anti-slop/layout craft; it authors NO prose content and makes NO POST.
   - Contract: dark base + WCAG 2.2 AA + Pretendard; NO `<script>` except the Mermaid CDN.

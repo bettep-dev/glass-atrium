@@ -71,7 +71,7 @@ write_matrix() {
 |-------|--------|
 | ALL | All agents |
 | DEV | ${dev_agents} |
-| ~~DATA~~ | All DATA agents archived; scope inactive — see Archived Agents section |
+| ~~DATA~~ | No DATA agent exists; scope inactive — see Archived Agents section |
 | ORCHESTRATOR | Global agent / coordinator |
 
 ## Compliance Matrix

@@ -1235,7 +1235,7 @@ model SkillActivation {
   selected      Boolean
   /// 0.000 – 1.000 confidence · optional (소스가 score 미제공 시 NULL)
   matchScore    Decimal? @map("match_score") @db.Decimal(4, 3)
-  /// 위임 추적 ID (orchestrator-role.md CID 포맷 — YYYY-MM-DDTHHMM_slug_xxxx)
+  /// 위임 추적 ID (skills/glass-atrium-ops-orchestrator-role.md CID 포맷 — YYYY-MM-DDTHHMM_slug_xxxx)
   cid           String?  @db.VarChar(96)
   /// 자유 형식 (e.g., user intent summary, fallback reason)
   metadata      Json?    @db.JsonB

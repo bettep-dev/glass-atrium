@@ -1,12 +1,14 @@
 // Shared freshness-stamp atom: four states, glyph-borne tone, a word for AT.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
+const BASE_CSS = resolve(__dirname, "../public/styles/base.css");
 
 type Component = (props: Record<string, unknown>) => unknown;
 type RegionInput = { busy?: boolean; error?: string | null };
@@ -186,12 +188,26 @@ test("getRegionSummary tallies busy and failed regions over any region list", ()
   assert.deepEqual({ ...getRegionSummary([{ busy: true, error: null }, { busy: false, error: "x" }, null, { busy: false, error: null }]) }, { isBusy: true, failedCount: 1, regionCount: 3 });
 });
 
-test("the PageHeader right cluster wraps under the title instead of overflowing", () => {
-  const tree = renderScreen(React.createElement(ui.PageHeader as Component, { title: "Cost", right: "controls" })) as RenderedNode;
-  const [outer] = findNodes(tree, (n) => n.type === "div");
-  const right = findNodes(tree, (n) => n.type === "div" && collectText(n) === "controls")[0];
-  for (const node of [outer, right]) assert.match(String(node.props.className), /\bflex-wrap\b/);
-  assert.match(String(right.props.className), /\bmin-w-0\b/);
+test("the PageHeader cluster wraps under the title instead of overflowing, Refresh right-most after freshness and range", () => {
+  const tree = renderScreen(React.createElement(ui.PageHeader as Component, {
+    title: "Cost", actions: "export", freshness: "stamp", range: "range", refresh: "refresh",
+  })) as RenderedNode;
+  const byClass = (name: string) => findNodes(tree, (n) => n.type === "div" && new RegExp(`(^|\\s)${name}(\\s|$)`).test(String(n.props.className ?? "")));
+  const [outer] = byClass("page-head");
+  const [cluster] = byClass("page-head-cluster");
+  const groups = byClass("page-head-group");
+  assert.ok(outer && cluster, "the header row and its right-hand cluster render");
+  assert.deepEqual(groups.map((g) => collectText(g)), ["export", "stamp range refresh"], "actions stand apart, then freshness · range · refresh");
+  // the wrap and shrink rules live on the classes → read them from the shared stylesheet
+  const css = readFileSync(BASE_CSS, "utf8");
+  // a rule whose selector list starts with `selector` (not a later line of a grouped list)
+  const rule = (selector: string) => css.match(new RegExp(`(?:^|(?<!,)\\n)${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  assert.match(rule("\\.page-head"), /flex-wrap:\s*wrap/);
+  const shared = rule("\\.page-head-cluster,\\s*\\.page-head-group");
+  assert.match(shared, /flex-wrap:\s*wrap/);
+  assert.match(shared, /min-width:\s*0/);
+  assert.match(rule("\\.page-head-cluster"), /column-gap:\s*var\(--space-6\)/, "24 between the actions and the status group");
+  assert.match(rule("\\.page-head-group"), /column-gap:\s*var\(--space-3\)/, "12 inside a group");
 });
 
 // Recording React whose state setter and effects the test drives by hand, plus a settable clock.

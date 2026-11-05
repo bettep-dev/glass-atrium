@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # progress-tracker.sh — Cross-session progress file management.
 #
-# GLOBAL_RULES "Cross-Session Continuity" mandates long tasks (3+ turns) keep a
+# GLOBAL_RULES "Cross-Session Continuity" mandates that long tasks keep a
 # memory/progress-{slug}.md; this library centralises slug derivation, atomic
 # init, status update, completion, and open-file listing for hooks and scripts.
 #

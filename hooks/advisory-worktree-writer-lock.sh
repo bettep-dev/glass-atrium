@@ -12,7 +12,7 @@
 # fan-outs should NEVER contend, so an observed contention is a real race the prose rule was masking.
 #
 # WHY a lock rather than prose: one worktree has exactly ONE git index, so two concurrent writers
-# there is a race that file-set partitioning cannot prevent (orchestrator-role.md, Automatic
+# there is a race that file-set partitioning cannot prevent (skills/glass-atrium-ops-orchestrator-role.md, Automatic
 # Parallelization guardrail (a)). That rule is honor-system today; this makes a violation visible.
 #
 # IDENTITY IS FAIL-CLOSED: the holder is the OPAQUE agent_id from the envelope, compared by

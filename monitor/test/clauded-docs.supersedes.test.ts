@@ -1,7 +1,7 @@
 // Integration tests for supersedes_id + archived/superseded default-exclusion
 // semantics on /api/clauded-docs/*.
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/clauded-docs.supersedes.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/clauded-docs.supersedes.test.ts
 //
 // Coverage:
 //   - POST with supersedes_id → predecessor doc_status auto-transitions to 'done'
@@ -154,11 +154,11 @@ test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (
     // Seed successor pointing to predecessor — single-statement CTE transitions
     // predecessor in the same SQL execution.
     const succTitle = makeTitle("ac1-succ");
-    const succHtml = makeHtmlBody(`${succTitle}-progress-body`);
+    const succHtml = makeHtmlBody(`${succTitle}-body`);
     const succRes = await postCreate(app, {
       title: succTitle,
       prefix: "계획",
-      doc_status: "progress",
+      doc_status: "doc_review",
       author: "tester",
       html_body: succHtml,
       supersedes_id: pred.id,
@@ -241,7 +241,7 @@ test("GET /api/clauded-docs default response 의 X-Deprecation-Notice 헤더 inv
   const seedRes = await postCreate(app, {
     title: seedTitle,
     prefix: "계획",
-    doc_status: "progress",
+    doc_status: "doc_review",
     author: "tester",
     html_body: makeHtmlBody(`${seedTitle}-body`),
   });
@@ -414,7 +414,7 @@ test("GET /:id superseded_by_id + groups representative_supersedes_id/doc-totals
   const predRes = await postCreate(app, {
     title: predTitle,
     prefix: "계획",
-    doc_status: "progress",
+    doc_status: "doc_review",
     author: "tester",
     html_body: makeHtmlBody(`${predTitle}-body`),
   });
@@ -429,7 +429,7 @@ test("GET /:id superseded_by_id + groups representative_supersedes_id/doc-totals
     const succRes = await postCreate(app, {
       title: succTitle,
       prefix: "계획",
-      doc_status: "progress",
+      doc_status: "doc_review",
       author: "tester",
       html_body: makeHtmlBody(`${succTitle}-body`),
       supersedes_id: pred.id,
@@ -499,7 +499,7 @@ test("every search hit names its revision chain's root, so revisions of one docu
       const res = await postCreate(app, {
         title,
         prefix: "계획",
-        doc_status: "progress",
+        doc_status: "doc_review",
         author: "tester",
         html_body: makeHtmlBody(`${title}-body`),
         ...(supersedesId === undefined ? {} : { supersedes_id: supersedesId }),
@@ -512,7 +512,7 @@ test("every search hit names its revision chain's root, so revisions of one docu
     const lone = await postCreate(app, {
       title: loneTitle,
       prefix: "계획",
-      doc_status: "progress",
+      doc_status: "doc_review",
       author: "tester",
       html_body: makeHtmlBody(`${loneTitle}-body`),
     });

@@ -8,6 +8,7 @@ import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import vm from "node:vm";
 import {
   collectText,
   createReactStub,
@@ -36,7 +37,7 @@ const UI_SCALARS: Record<string, unknown> = {
 
 // Region-state members come from the shipped ui.jsx so the page is exercised against the real contract.
 const REAL_UI = (await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"))).UI as Record<string, unknown>;
-const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionView", "getRegionSummary", "getSharedFailure", "getSourceFailures", "putRegionRequest", "putRegionData", "putRegionFailure", "getRowFocusProps", "ROW_CONTROL_PROPS"];
+const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionView", "hasRegionRows", "getRegionSummary", "getSharedFailure", "getSourceFailures", "putRegionRequest", "putRegionData", "putRegionFailure", "getRowFocusProps", "ROW_CONTROL_PROPS"];
 for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
 // Count text rides the shipped formatter, so a KPI sub reads as it does on the page.
 UI_SCALARS.formatInt = REAL_UI.formatInt;
@@ -389,9 +390,12 @@ test("the drawer's breaker line keeps loading and error apart from an unavailabl
 test("every in-screen hash link resolves to a hash-router screen id", async () => {
   const { readFile } = await import("node:fs/promises");
   const screenSource = await readFile(AGENTS_SRC, "utf8");
-  const appSource = await readFile(resolve(__dirname, "../public/src/app.jsx"), "utf8");
-  const navBlock = appSource.slice(appSource.indexOf("const NAV = ["), appSource.indexOf("];", appSource.indexOf("const NAV = [")));
-  const navIds = new Set(Array.from(navBlock.matchAll(/\bid: "([^"]+)"/g), (m) => m[1]));
+  const app = await loadScreenModule(resolve(__dirname, "../public/src/app.jsx"), {
+    ReactDOM: { createRoot: () => ({ render: () => {} }) },
+    document: { getElementById: () => null },
+  });
+  // vm read is untyped; the "improvement" check below fails on a missing or reshaped NAV
+  const navIds = new Set((vm.runInContext("NAV", app) as Array<{ id: string }>).map(({ id }) => id));
   const hashTargets = Array.from(screenSource.matchAll(/href="#([^"]*)"/g), (m) => m[1]);
 
   assert.ok(navIds.has("improvement"), "the NAV block parsed");
@@ -460,15 +464,13 @@ test("the page header renders every title as the page h1 with the sub-line under
 
   const echoed = renderScreen(React.createElement(PageHeader, { title: "Models & budgets", sub: "Models & budgets" }));
   assert.equal(collectText(echoed), "Models & budgets", "a sub-line repeating the title is not rendered twice");
-
-  const src = await import("node:fs").then((fs) => fs.readFileSync(AGENTS_SRC, "utf8"));
-  assert.doesNotMatch(src, /shouldRenderTitle/, "the retired opt-in is gone from the Agents screen");
 });
 
 const HIGH_FAIL_WORD = "high failure share";
 
 test("the summary row marks the shared crit step from its own failed share, and only on an adequate sample", async () => {
-  const mod = await loadAgentsScreen();
+  const toneVarColor = REAL_UI.toneVarColor as (tone: string) => string;
+  const mod = await loadAgentsScreen({ toneVarColor });
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   // failed share = 1 − passed/denominator, denominator = runs − needs_context.
   const cases = [
@@ -480,12 +482,14 @@ test("the summary row marks the shared crit step from its own failed share, and 
     const tree = renderScreen(
       React.createElement(mod.AgentSummaryRow as Component, {
         agent: { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", ...c },
-        days: 30, isSelected: false, onSelect: () => {}, trend: null, failure: null, overage: null,
+        days: 30, isSelected: false, onSelect: () => {}, trend: [3, 5, 2], trendStatus: "ready", failure: null, overage: null,
       }),
     );
     assert.equal(collectText(tree).includes(HIGH_FAIL_WORD), c.crit, c.why);
     const toned = findNodes(tree, (n) => /\btext-(ok|warn)\b/.test(String(n.props?.className ?? "")));
     assert.equal(toned.length, 0, `${c.why}: the success numeral carries no second scale`);
+    const [trendBars] = findAtoms(tree, "MiniBars");
+    assert.equal(trendBars?.props.color, toneVarColor(c.crit ? "crit" : "neutral"), `${c.why}: the trend bars carry no band of their own`);
   }
 });
 
@@ -508,13 +512,27 @@ test("a matrix cell takes the crit step from failures over its rate denominator,
   }
 });
 
-test("Agents keeps one rate scale — the retired thresholds and the hardcoded trend band are gone", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const source = await readFile(AGENTS_SRC, "utf8");
-  for (const name of ["SUMMARY_SUCCESS_OK_PCT", "SUMMARY_SUCCESS_WARN_PCT", "SUCCESS_RATE_OK_THRESHOLD", "SUCCESS_RATE_WARN_THRESHOLD", "successRateTone"]) {
-    assert.equal(source.includes(name), false, `${name} is retired`);
+describe("the drawer hero's success figure carries no tone at any rate, which rides its fail-share glyph alone", () => {
+  // rates straddle 90 and 95, where a second rate scale would key on them
+  const rows = [
+    { name: "98%, 1 of 50 failed: under the crit step, no glyph", success_pct: 98, crit: false },
+    { name: "92%, 4 of 50 failed: over the crit step, glyph", success_pct: 92, crit: true },
+    { name: "80%, 10 of 50 failed: over the crit step, glyph", success_pct: 80, crit: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const agent = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", runs: 50, needs_context_count: 0, success_pct: row.success_pct };
+      const emptyRows = { status: "ready", data: { rows: [] }, error: null };
+      const tree = await renderComponent("AgentOverviewSection", {
+        agent, drawerAgent: agent.agent_id, summaryState: { status: "ready", data: { agents: [agent] }, error: null },
+        revisionState: emptyRows, reviewByAgentState: emptyRows, onRetry: () => undefined,
+      });
+      const figures = findNodes(tree, (n) => /\bhero-stat\b/.test(String(n.props?.className ?? "")));
+      assert.equal(figures.length, 1, "one hero figure");
+      assert.doesNotMatch(String(figures[0].props.className), /\btext-(ok|warn|crit|info)\b/);
+      assert.equal(collectText(figures[0]).includes(HIGH_FAIL_WORD), row.crit);
+    });
   }
-  assert.doesNotMatch(source, /successPct\s*<\s*90/, "trendBarColor no longer carries its own 90% band");
 });
 
 test("the Agents ledger shows no initial avatar, which reads G for every glass-atrium agent", async () => {
@@ -592,24 +610,62 @@ test("an unread breakage or trend payload shows 'not loaded', and only a loaded 
   }
 });
 
-function renderSortedBody(mod: Record<string, unknown>, failureStatus: string): string[] {
+function renderSortedCard(mod: Record<string, unknown>, failureStatus: string): RenderedNode | string | null {
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const agents = [
     { agent_id: "glass-atrium-dev-busy", agent_name: "busy", status: "active", runs: 90 },
     { agent_id: "glass-atrium-dev-risky", agent_name: "risky", status: "active", runs: 10 },
   ];
   const failureByAgent = new Map([["glass-atrium-dev-risky", { total_breakages: 7, fail_count: 7, blocked_count: 0, breakage_rate: 0.7 }]]);
-  const tree = renderScreen(
-    React.createElement(mod.AgentSummaryBody as Component, {
-      state: { status: "ready", data: { agents }, error: null },
+  return renderScreen(
+    React.createElement(mod.AgentSummaryCard as Component, {
+      state: { status: "ready", data: { agents, meta: { total_agents: 2 } }, error: null },
       days: 30, sortBy: "failures", onSortChange: () => {}, selectedAgent: null, onSelect: () => {}, onRetry: () => {},
       trendByAgent: new Map(), failureByAgent, overageByAgent: new Map(), failureStatus, trendStatus: "ready",
     }),
   );
+}
+
+// the card head's right cluster, rendered → the sort control and its note as the head draws them
+function renderHeadRight(tree: RenderedNode | string | null): RenderedNode | string | null {
+  const [head] = findNodes(tree, (n) => n.props?.atom === "CardHead");
+  assert.ok(head, "the card draws the shared card head");
+  return renderScreen(head.props.right);
+}
+
+// rows in rendered order, then the sort note the card head announces
+function renderSortedBody(mod: Record<string, unknown>, failureStatus: string): string[] {
+  const tree = renderSortedCard(mod, failureStatus);
   const order = findNodes(tree, (n) => n.type === "AgentSummaryRow").map((n) => String((n.props.agent as { agent_id: string }).agent_id));
-  const note = findNodes(tree, (n) => n.props?.role === "status").map((n) => collectText(n)).join(" ");
+  const note = findNodes(renderHeadRight(tree), (n) => n.props?.role === "status").map((n) => collectText(n)).join(" ");
   return [...order, `note:${note}`];
 }
+
+test("the sort control sits in the card head, so no band divides the head from the ledger", async () => {
+  const mod = await loadAgentsScreen();
+  const tree = renderSortedCard(mod, "ready");
+  const [select] = findNodes(renderHeadRight(tree), (n) => n.type === "select");
+  assert.ok(select, "the head carries the sort select");
+  assert.equal(select.props["aria-label"], "Agent sort order");
+  assert.equal(select.props.value, "failures");
+  assert.equal(findNodes(tree, (n) => n.type === "select").length, 0, "the card body draws no second sort control");
+  assert.equal(findNodes(tree, (n) => n.props?.role === "status").length, 0, "the note lives in the head, not in a band above the rows");
+});
+
+test("the card head offers no sort while there is no row to order", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  for (const state of [
+    { status: "loading", data: null, error: null },
+    { status: "ready", data: { agents: [], meta: { total_agents: 0 } }, error: null },
+  ]) {
+    const tree = renderScreen(React.createElement(mod.AgentSummaryCard as Component, {
+      state, days: 30, sortBy: "failures", onSortChange: () => {}, selectedAgent: null, onSelect: () => {}, onRetry: () => {},
+      trendByAgent: null, failureByAgent: null, overageByAgent: null, failureStatus: "ready", trendStatus: "ready",
+    }));
+    assert.equal(findNodes(renderHeadRight(tree), (n) => n.type === "select").length, 0, `${state.status}: no sort select`);
+  }
+});
 
 test("the breakage sort orders by breakages only once they are read, and says so while they are not", async () => {
   const mod = await loadAgentsScreen();
@@ -638,12 +694,11 @@ function findAtoms(tree: RenderedNode | string | null, atom: string): RenderedNo
 
 test("the header's Refresh and freshness stamp read every region, so a first load is never announced as fresh", async () => {
   const [header] = findAtoms(await renderScreenAgents(), "PageHeader");
-  // The stub header keeps its right-hand slot as a prop, so render that slot on its own.
-  const tree = renderScreen(header.props.right);
-  const [refresh] = findAtoms(tree, "RefreshButton");
+  // The stub header keeps its named slots as props, so render each slot on its own.
+  const [refresh] = findAtoms(renderScreen(header.props.refresh), "RefreshButton");
   assert.equal(refresh?.props.isBusy, true, "a region in flight keeps Refresh busy");
   assert.equal(refresh?.props.hasRead, false, "before the first read Refresh says it is loading, not refreshing");
-  const [stamp] = findAtoms(tree, "FreshnessStamp");
+  const [stamp] = findAtoms(renderScreen(header.props.freshness), "FreshnessStamp");
   assert.equal((stamp?.props.regions as unknown[]).length, 9, "the stamp sees all nine page regions");
 });
 
@@ -954,6 +1009,12 @@ test("the matrix legend states which outcomes its n leaves out", async () => {
   assert.match(collectText(tree), /reconstructed/);
 });
 
+test("the matrix legend carries only the crit step and its below-the-step swatch", async () => {
+  const tree = await renderComponent("SuccessRateLegend", {});
+  const swatches = findNodes(tree, (n) => n.type === "LegendSwatch").map((n) => n.props.colorVar);
+  assert.deepEqual(swatches, ["--crit", "--faint"]);
+});
+
 test("a compatibility requirement rides a short row tag with the full text on hover, never a truncated sentence", async () => {
   const mod = await loadAgentsScreen();
   const requirement = "Requires monitor running at http://127.0.0.1:16145 with a live daemon";
@@ -1244,8 +1305,9 @@ test("the review-flag total sits under a card title in every state, never as a h
   }
 });
 
+// whitespace-normalized: collectText pads node boundaries, and a caption may hold an inline NoWrap token ("7 days")
 function findCaption(tree: RenderedNode | string | null, text: string): RenderedNode | undefined {
-  return findNodes(tree, (n) => typeof n.type === "string" && collectText(n) === text).at(-1);
+  return findNodes(tree, (n) => typeof n.type === "string" && collectText(n).replace(/\s+/g, " ").trim() === text).at(-1);
 }
 
 const PERFORMANCE_AGENT = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", runs: 12, needs_context_count: 0 };
@@ -1258,6 +1320,26 @@ function getPerformanceProps(trend: number[] | null, trendDates: string[]): Reco
     trendByAgent: trend ? new Map([[PERFORMANCE_AGENT.agent_id, trend]]) : null, trendDates, onRetry: () => undefined,
   };
 }
+
+describe("the drawer trend chart takes its tone from the status and the failed share, with no rate band of its own", () => {
+  const rows = [
+    { name: "50% at n=4 stays neutral: a low sample carries no tone, whatever its rate", agent: { runs: 4, success_pct: 50 }, tone: "neutral" },
+    { name: "98% at n=50 stays neutral: under the crit step", agent: { runs: 50, success_pct: 98 }, tone: "neutral" },
+    { name: "92% at n=50 is crit: over the crit step", agent: { runs: 50, success_pct: 92 }, tone: "crit" },
+    { name: "an errored agent is crit whatever its rate", agent: { status: "error", runs: 50, success_pct: 98 }, tone: "crit" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const tree = await renderComponent("AgentPerformanceSection", {
+        ...getPerformanceProps([3, 5, 2], ["2026-09-22", "2026-09-23", "2026-09-24"]),
+        agent: { ...PERFORMANCE_AGENT, ...row.agent },
+      });
+      const charts = findAtoms(tree, "TrendChart");
+      assert.equal(charts.length, 1, "one trend chart");
+      assert.equal(charts[0].props.tone, row.tone);
+    });
+  }
+});
 
 test("the drawer trend is a readable chart with one dated point per day", async () => {
   const dates = ["2026-09-22", "2026-09-23", "2026-09-24"];
@@ -1817,6 +1899,61 @@ describe("the paired failing-pairs and no-record cards keep the S row budget and
       assert.equal(bodyRows.length, 5, "the body shows the S budget of five rows");
       const foot = collectText(renderScreen(card.props.foot));
       assert.match(foot, new RegExp(`Show all ${row.total}`), `foot: ${foot}`);
+    });
+  }
+});
+
+describe("the paired failing-pairs and no-record tables take the .tbl cell geometry in their own face", () => {
+  const tokensOf = (node: RenderedNode): string[] => String(node.props.className ?? "").split(/\s+/).filter(Boolean);
+  const isAdHocGeometry = (t: string) => /^-?(p|m)[xytblrse]?-/.test(t) || /^border-b$/.test(t) || t === "border-line";
+  const pair = (task_type: string, successCount: number, rateDenominator: number) =>
+    ({ agent: "glass-atrium-dev-node", task_type, successCount, rateDenominator, pooledRate: successCount / rateDenominator, totalCount: rateDenominator });
+  const tables = [
+    { name: "Most-failing pairs", component: "TopNFailingAgentsTable", props: { pairs: [pair("solid", 5, 10), pair("low", 1, 3)], failureByAgent: new Map(), days: 14 }, rightCols: 2 },
+    { name: "No completion record", component: "LifecycleStatsTable", props: { rows: getLifecycleRows(2), onSelect: () => undefined }, rightCols: 4 },
+  ];
+  for (const row of tables) {
+    test(`${row.name}: a .tbl own-face table whose cells carry no padding, margin or rule of their own`, async () => {
+      const tree = await renderComponent(row.component, row.props) as RenderedNode;
+      const [table] = findNodes(tree, (n) => n.type === "table");
+      assert.ok(["tbl", "tbl--own-face"].every((t) => tokensOf(table).includes(t)), `table: ${tokensOf(table)}`);
+      assert.ok(["fs-meta", "font-mono"].every((t) => tokensOf(table).includes(t)), "the body keeps its mono meta face");
+      const heads = findAtoms(tree, "TableHead");
+      assert.ok(heads.length >= 4, "every column header is the shared TableHead");
+      for (const head of heads) {
+        const tokens = tokensOf(head);
+        assert.ok(["font-sans", "uppercase", "tracking-wider", "fs-meta", "text-dim", "font-medium"].every((t) => tokens.includes(t)), `header face kept: ${tokens}`);
+        assert.deepEqual(tokens.filter(isAdHocGeometry), [], `header '${collectText(head).trim()}'`);
+      }
+      const cells = findNodes(tree, (n) => n.type === "td");
+      assert.ok(cells.length > 0);
+      for (const cell of cells) {
+        assert.deepEqual(tokensOf(cell).filter(isAdHocGeometry), [], `cell '${collectText(cell).trim().slice(0, 24)}'`);
+      }
+      const [firstRow] = findNodes(tree, (n) => n.type === "tr").slice(1);
+      const rightCells = findNodes(firstRow, (n) => n.type === "td").filter((td) => tokensOf(td).includes("text-right"));
+      assert.equal(rightCells.length, row.rightCols, "numeric columns keep their right alignment");
+    });
+  }
+
+  test("the screen-local row-height override is retired with the routing", async () => {
+    const src = await import("node:fs").then((fs) => fs.readFileSync(AGENTS_SRC, "utf8"));
+    assert.doesNotMatch(src, /ag-paired-tbl/);
+  });
+
+  const cards = [
+    { name: "Most-failing pairs", component: "TopNFailingAgentsCard", ready: { rows: getFailingRows(3) }, extra: { failureByAgent: new Map() } },
+    { name: "No completion record", component: "LifecycleStatsCard", ready: { rows: getLifecycleRows(3) }, extra: { onSelect: () => undefined } },
+  ];
+  for (const row of cards) {
+    test(`${row.name}: the body is flush while its table renders and padded for loading and empty`, async () => {
+      const flushOf = async (state: unknown) => {
+        const tree = await renderComponent(row.component, { state, days: 30, onRetry: () => undefined, ...row.extra }) as RenderedNode;
+        return findAtoms(tree, "Card")[0]?.props.isFlush;
+      };
+      assert.equal(await flushOf({ status: "ready", data: row.ready, error: null }), true, "table → flush");
+      assert.equal(await flushOf(LOADING_STATE), false, "loading → padded");
+      assert.equal(await flushOf({ status: "ready", data: { rows: [] }, error: null }), false, "empty → padded");
     });
   }
 });
