@@ -273,7 +273,8 @@ PY
 }
 
 @test "the shadow stage's pre-registration ledger read runs against the migrated cluster, none skipped" {
-  _assert_live_module test_shadow_engine PreRegistrationReadLivePgTest
+  _assert_live_module test_shadow_engine PreRegistrationReadLivePgTest \
+    TrialDecisionTerminalizationLivePgTest
 }
 
 @test "a won row still pending stays held through every reader of the held predicate, and the open reads return the open trial alone" {
@@ -406,6 +407,91 @@ for name, agent, status, held, ids in seeded:
             ).fetchone()[0]
             if (stored == status) != (held or status != "pending"):
                 fail(name, "the supersede", stored)
+PY
+  (( status == 0 )) || { echo "${output}"; echo "${stderr}"; return 1; }
+}
+
+@test "a decided trial's bound row, once the decision step ends it, keeps its status and diff through a same-key push of either status" {
+  local db="decided_row_freeze"
+  createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T trial_ledger_tpl "${db}" || return 1
+
+  run --separate-stderr env LF_DB="${db}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" \
+    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/.." python3 - <<'PY'
+import os
+import sys
+
+if os.environ.get("PGHOST") != os.environ["LF_EXPECT_PGHOST"]:
+    sys.exit("PGHOST is not the ephemeral cluster's socket dir — refusing to write")
+
+import psycopg
+
+import _pg_dual_write_daemon as helper
+import daemon_cycle as daemon
+
+
+def connect():
+    return psycopg.connect(dbname=os.environ["LF_DB"], connect_timeout=2)
+
+
+helper._connect = daemon._pg_connect = connect
+agent = "glass-atrium-dev-react"
+key_columns = {
+    "cycle_date": "2026-10-10",
+    "target_file": f"agents/{agent}.md",
+    "target_agent": agent,
+    "classification": "apply",
+    "haiku_status": "ok",
+    "approval_tier": "auto",
+    "cost_guard_state": "ok",
+    "source_file": "autoagent-2026-10-10.json",
+    "source_file_mtime": 0,
+}
+seeded_diff = "+- the pre-registered line\n"
+# name, the same-key push's status and diff, the decision, the status the step stores
+table = (
+    ("incoming rejected", "rejected", "", {"harm": {"reason": "primary"}}, "rejected"),
+    (
+        "incoming pending",
+        "pending",
+        "+- a regenerated line\n",
+        {"void": {"reason": "arm-imbalance"}},
+        "unadjudicated",
+    ),
+)
+
+
+def get_row(label):
+    with connect() as conn:
+        return conn.execute(
+            "SELECT id, status::text, proposed_diff FROM core.autoagent_proposals"
+            " WHERE pattern_label = %s",
+            (label,),
+        ).fetchone()
+
+
+for name, incoming, diff, decision, terminal in table:
+    label = f"decided row {name}"
+    helper.write_autoagent_proposal(
+        pattern_label=label, rationale="seeded", status="pending", proposed_diff=seeded_diff, **key_columns
+    )
+    proposal_id = get_row(label)[0]
+    trial_key = helper.get_live_trial_key(proposal_id)
+    daemon._pg_write_trial_ledger_row(
+        daemon.TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
+        daemon.TRIAL_LEDGER.ACTOR.LIVE,
+        {"proposal_id": proposal_id},
+        trial_key=trial_key,
+        agent=agent,
+        dedupe_key=trial_key,
+    )
+    daemon._write_live_decision(trial_key, agent, None, decision)
+    daemon.update_decided_trial_proposals()
+    helper.write_autoagent_proposal(
+        pattern_label=label, rationale="a later same-day push", status=incoming, proposed_diff=diff, **key_columns
+    )
+    stored = get_row(label)
+    if stored != (proposal_id, terminal, seeded_diff):
+        sys.exit(f"{name}: the bound row reads {stored!r}, not ({proposal_id}, {terminal!r}, the seeded diff)")
 PY
   (( status == 0 )) || { echo "${output}"; echo "${stderr}"; return 1; }
 }

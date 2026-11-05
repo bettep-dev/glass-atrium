@@ -2731,13 +2731,9 @@ class LedgerFaultTest(_ShadowFixture):
             self.assertIn("ConnectionError", stderr_text)
 
 
-class PreRegistrationReadLivePgTest(_ShadowFixture):
-    """The live pre-registration reads' real SQL on the ephemeral cluster; skips anywhere else.
-
-    Each test owns a database cloned from a template ``live-pg-ephemeral.bats`` builds — the
-    ledger is append-only, so rows cannot be cleaned up. The power check runs on the fake
-    ledger; only the stage's ledger connection then points at the clone.
-    """
+class _LivePgFixture(_ShadowFixture):
+    """Each test owns a database cloned from a template ``live-pg-ephemeral.bats`` builds — the
+    ledger is append-only, so rows cannot be cleaned up; skips anywhere else."""
 
     _TEMPLATE = SimpleNamespace(
         FULL="trial_ledger_tpl", ABSENT="trial_ledger_absent_tpl"
@@ -2765,12 +2761,6 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
     def _connect(self):
         return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
 
-    def _check_power(self) -> dc.PowerResult:
-        with contextlib.redirect_stderr(io.StringIO()):
-            power = dc.check_pattern_power(self.patterns, skip_loop_emit=True)
-        self.assertEqual(len(power.passes), 1)
-        return power
-
     def _insert_proposal(self, cycle_date: str, *, status: str = "applied", agent: str = _AGENT) -> int:
         """One proposal row whose added line names its own label → its id."""
         label = f"{agent} {status} {cycle_date} {uuid.uuid4().hex[:6]}"
@@ -2783,14 +2773,23 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
                 (cycle_date, label, f"agents/{agent}.md", agent, status, f"+- {label}\n"),
             ).fetchone()[0]
 
-    def _insert_trial_row(self, proposal_id: int, event: str, payload: dict, *, suffix: str = "") -> int:
-        """A live trial row keyed by the proposal id as the push keys it → its id."""
+    def _insert_trial_row(
+        self,
+        proposal_id: int,
+        event: str,
+        payload: dict,
+        *,
+        suffix: str = "",
+        recorded_at: datetime | None = None,
+    ) -> int:
+        """A live trial row keyed by the proposal id as the push keys it → its id; recorded now
+        unless an instant is given."""
         key = f"{proposal_id:064x}"
         with self._connect() as conn:
             return conn.execute(
                 "INSERT INTO core.autoagent_trial_ledger (trial_key, agent, learning_pattern_id,"
-                " event, actor, payload, dedupe_key) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)"
-                " RETURNING id",
+                " event, actor, payload, dedupe_key, recorded_at) VALUES (%s, %s, %s, %s, %s,"
+                " %s::jsonb, %s, COALESCE(%s::timestamptz, CURRENT_TIMESTAMP)) RETURNING id",
                 (
                     key,
                     _AGENT,
@@ -2799,6 +2798,7 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
                     stub.get_trial_ledger().ACTOR.LIVE,
                     json.dumps(payload),
                     key + suffix,
+                    recorded_at,
                 ),
             ).fetchone()[0]
 
@@ -2807,6 +2807,17 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
         return self._insert_trial_row(
             proposal_id, event, {"metric_key": _BUDGET_KEY, "proposal_id": proposal_id}
         )
+
+
+class PreRegistrationReadLivePgTest(_LivePgFixture):
+    """The live pre-registration reads' real SQL on the ephemeral cluster. The power check runs
+    on the fake ledger; only the stage's ledger connection then points at the clone."""
+
+    def _check_power(self) -> dc.PowerResult:
+        with contextlib.redirect_stderr(io.StringIO()):
+            power = dc.check_pattern_power(self.patterns, skip_loop_emit=True)
+        self.assertEqual(len(power.passes), 1)
+        return power
 
     def test_the_prior_attempts_read_joins_each_preregistration_to_its_proposal_latest_look_and_decision(
         self,
@@ -2925,6 +2936,170 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
         )
         self.assertEqual(self._get_looks(), [])
         self.assertEqual(self.pg_reach, [])
+
+
+# the rationale the decision step stores for a trial verdict against the change, by key and reason
+_VERDICT_RATIONALES = {
+    ("harm", "primary"): "live trial decided without a win: harm (primary)",
+    ("retire", "maximum-sample"): "live trial decided without a win: retire (maximum-sample)",
+    ("retire", "horizon"): "live trial decided without a win: retire (horizon)",
+}
+
+
+class TrialDecisionRationaleTest(unittest.TestCase):
+    def test_a_trial_verdict_against_the_change_advances_the_reject_streak(self) -> None:
+        for (key, reason), rationale in _VERDICT_RATIONALES.items():
+            with self.subTest(f"{key} {reason}"):
+                self.assertEqual(
+                    dc.classify_failure_rationale(rationale), dc.FAILURE_CLASS_QUALITY
+                )
+
+
+class TrialDecisionTerminalizationLivePgTest(_LivePgFixture):
+    """The decision step's real statement on the ephemeral cluster: a pending bound row of a
+    trial decided without a win → terminal, stamped and so frozen against a later push."""
+
+    _ACTOR = "daemon-cycle-trial-decision"
+    _HARM = {"harm": {"reason": "primary", "agent": _AGENT}}
+
+    def _decide(self, decision: dict, *, status: str = "pending", recorded_at=None) -> int:
+        """A bound row, its live pre-registration and its decision row → the row's id."""
+        proposal_id = self._insert_proposal("2026-10-01", status=status)
+        self._preregister(proposal_id)
+        self._insert_trial_row(
+            proposal_id,
+            stub.get_trial_ledger().EVENT.LIVE_DECISION,
+            decision,
+            suffix=":decision",
+            recorded_at=recorded_at,
+        )
+        return proposal_id
+
+    def _terminalize(self) -> tuple[list[int], str]:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            moved = dc.update_decided_trial_proposals()
+        return moved, stderr.getvalue()
+
+    def _get_row(self, proposal_id: int) -> tuple:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT status::text, rationale, reviewed_at, reviewed_by, proposed_diff"
+                " FROM core.autoagent_proposals WHERE id = %s",
+                (proposal_id,),
+            ).fetchone()
+
+    def _write_ledger_row(
+        self, event, actor, payload, *, trial_key, agent, learning_pattern_id=None, dedupe_key=None
+    ) -> int:
+        """The ledger writer's contract on the clone: rows landed, a taken key adding none."""
+        with self._connect() as conn:
+            return conn.execute(
+                "INSERT INTO core.autoagent_trial_ledger (trial_key, agent, learning_pattern_id,"
+                " event, actor, payload, dedupe_key) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)"
+                " ON CONFLICT (dedupe_key) DO NOTHING",
+                (trial_key, agent, learning_pattern_id, event, actor, json.dumps(payload), dedupe_key),
+            ).rowcount
+
+    def test_a_decision_without_a_win_moves_its_pending_bound_row_to_its_terminal_status(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        rows = (
+            ("harm", self._HARM, None, "rejected"),
+            ("retire at the maximum sample", {"retire": {"reason": "maximum-sample"}}, None, "rejected"),
+            ("retire at the horizon", {"retire": {"reason": "horizon"}}, None, "rejected"),
+            ("void on an arm imbalance", {"void": {"reason": "arm-imbalance"}}, None, "unadjudicated"),
+            ("void on low delivery", {"void": {"reason": "low-delivery"}}, None, "unadjudicated"),
+            (
+                "void, unstarted past its horizon",
+                {"void": {"reason": dc.LIVE_TRIAL.UNSTARTED_REASON}},
+                None,
+                "unadjudicated",
+            ),
+            (
+                "void on a foreign canary hash",
+                {"void": {"reason": dc.CANARY.VOID_REASON, "text_sha256": "0" * 64}},
+                None,
+                "unadjudicated",
+            ),
+            ("harm stored by an earlier cycle", self._HARM, _NOW - timedelta(days=3), "rejected"),
+        )
+        ids = [self._decide(decision, recorded_at=at) for _name, decision, at, _status in rows]
+        moved, stderr_text = self._terminalize()
+        self.assertEqual(sorted(moved), sorted(ids))
+        for (name, decision, _at, status), proposal_id in zip(rows, ids, strict=True):
+            with self.subTest(name):
+                ((key, detail),) = decision.items()
+                stored, rationale, reviewed_at, reviewed_by, _diff = self._get_row(proposal_id)
+                self.assertEqual((stored, reviewed_by), (status, self._ACTOR))
+                self.assertIsNotNone(reviewed_at)
+                self.assertIn(f"{key} ({detail['reason']})", rationale)
+                if key == "void":
+                    self.assertEqual(
+                        dc.classify_failure_rationale(rationale), dc.FAILURE_CLASS_SKIPPED
+                    )
+                else:
+                    self.assertEqual(rationale, _VERDICT_RATIONALES[(key, detail["reason"])])
+                self.assertIn(f"proposal id={proposal_id} → {status}", stderr_text)
+        self.assertEqual(self.pg_reach, [])
+
+    def test_a_won_trial_a_row_no_longer_pending_and_a_second_run_are_left_untouched(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        reviewed = self._decide(self._HARM, status="rejected")
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE core.autoagent_proposals SET reviewed_at = now(),"
+                " reviewed_by = 'monitor-user' WHERE id = %s",
+                (reviewed,),
+            )
+        untouched = {
+            "a won trial's pending row": self._decide({"win": {"look": 1}}),
+            "an applied row": self._decide(self._HARM, status="applied"),
+            "an operator-rejected row": reviewed,
+        }
+        before = {name: self._get_row(proposal_id) for name, proposal_id in untouched.items()}
+        decided = self._decide(self._HARM)
+        first, _ = self._terminalize()
+        before["a second run"] = self._get_row(decided)
+        untouched["a second run"] = decided
+        second, _ = self._terminalize()
+        self.assertEqual((first, second), ([decided], []))
+        for name, proposal_id in untouched.items():
+            with self.subTest(name):
+                self.assertEqual(self._get_row(proposal_id), before[name])
+
+    def test_a_status_write_fault_keeps_the_decision_recorded_and_the_next_run_ends_the_row(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        proposal_id = self._insert_proposal("2026-10-01", status="pending")
+        canary = dc.TrialCanary(
+            self._preregister(proposal_id),
+            _AGENT,
+            f"{proposal_id:064x}",
+            _PATTERN_ID,
+            {"proposal_id": proposal_id},
+            _NOW,
+            True,
+        )
+        self._patch("_pg_write_trial_ledger_row", self._write_ledger_row)
+
+        def _refuse() -> None:
+            raise ConnectionError("status write: PG unreachable")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            dc._write_look_time_decision(canary, self._HARM, "look 1")
+            with mock.patch.object(dc, "_pg_connect", _refuse):
+                faulted = dc.update_decided_trial_proposals()
+        self.assertEqual((faulted, self._get_row(proposal_id)[0]), ([], "pending"))
+        self.assertIn("WARN: trial decision step", stderr.getvalue())
+        self.assertNotIn("not recorded", stderr.getvalue())
+        healed, _ = self._terminalize()
+        self.assertEqual((healed, self._get_row(proposal_id)[0]), ([proposal_id], "rejected"))
 
 
 class SealTest(_ShadowFixture):
@@ -4061,14 +4236,15 @@ class CycleWiringTest(_ShadowFixture):
         (dc._INSTALL_ROOT / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         self._run_cycle(skip_loop_emit=False)
         # other writing stages' statements are refused, not under test
-        self.assertEqual(
-            [
-                statement
-                for statement in self.ledger.refused
-                if "autoagent_trial_ledger" in statement
-            ],
-            [],
-        )
+        refused = [
+            statement
+            for statement in self.ledger.refused
+            if "autoagent_trial_ledger" in statement
+        ]
+        # the decision step's proposals write, once per writing cycle; its SQL runs live in
+        # TrialDecisionTerminalizationLivePgTest
+        step = [s for s in refused if s.startswith("UPDATE core.autoagent_proposals")]
+        self.assertEqual((len(step), [s for s in refused if s not in step]), (1, []))
         trial_ledger = stub.get_trial_ledger()
         # the ledger holds no aa-start row → the cycle's A/A stage opens the install's first A/A
         self.assertEqual(

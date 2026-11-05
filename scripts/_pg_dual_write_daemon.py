@@ -650,7 +650,7 @@ def _get_proposal_upsert_sql(has_link_columns):
             confidence_observed = EXCLUDED.confidence_observed,
             project_key = EXCLUDED.project_key,
             promotion_tier = EXCLUDED.promotion_tier{link.set}
-        -- Reviewed terminal row (apply flip or reject route) → frozen, all columns.
+        -- Reviewed terminal row (apply flip, reject route or trial decision) → frozen, all columns.
         WHERE NOT (core.autoagent_proposals.status::text IN {_TERMINAL_STATUS_SQL}
                    AND core.autoagent_proposals.reviewed_at IS NOT NULL)
         RETURNING id

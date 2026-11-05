@@ -8253,6 +8253,87 @@ _GENERATION_CLOSED_REASON = "generation closed until live trials"
 _GENERATION_CLOSED_ACTOR = "daemon-cycle-generation-closed"
 
 
+# Live-trial decision: a decided-without-win trial's pending bound row
+
+
+# Head of every void rationale; classify_failure_rationale prefix-tests against it → a
+# stored 'rejected' void (label-absent schema) never advances the reject streak.
+_TRIAL_VOID_REASON = "voided live trial, never judged"
+# Head of a harm / retire rationale — no classifier branch: a verdict against the change advances
+_TRIAL_DECISION_REASON = "live trial decided without a win"
+
+# Actor token from the closed set declared at monitor/prisma/schema.prisma →
+# AutoagentProposal.reviewedBy — the live trial's decision, its verdict or void.
+_TRIAL_DECISION_ACTOR = "daemon-cycle-trial-decision"
+
+
+def update_decided_trial_proposals() -> list[int]:
+    """Terminalize every pending bound row of a live trial decided without a win → ids moved.
+
+    One idempotent statement, whatever cycle wrote the decision: a harm or retire key stores
+    'rejected' (the trial judged the change), a void key 'unadjudicated' through the shared
+    status fragment ('rejected' on a schema without that label, its rationale head keeping it
+    out of the reject streak). reviewed_at is stamped → the push UPSERT's freeze keeps the row
+    and its diff against a same-key push. A won trial's row and a row no longer pending are
+    never touched.
+
+    Runs apart from the decision writer: a fault here is a named WARN and an empty list, the
+    landed decision stays reported as recorded, and the next writing cycle moves the row.
+    PG unavailable → named stderr line, no connection.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        sys.stderr.write(
+            "[daemon-cycle] trial decision step: PG unavailable (psycopg/helper import failed) "
+            "— skipped\n"
+        )
+        return []
+    # one key per decision payload (_write_look_time_decision) → min() names it
+    update_sql = (
+        "UPDATE core.autoagent_proposals AS w "
+        f"SET status = CASE WHEN d.outcome = 'void' THEN {_PG_PROPOSAL_STATUS_SQL} "
+        "ELSE 'rejected' END, "
+        "rationale = CASE WHEN d.outcome = 'void' THEN %s::text ELSE %s::text END "
+        "|| ': ' || d.outcome || ' (' || COALESCE(d.reason, 'no reason') || ')', "
+        "reviewed_at = now(), reviewed_by = %s "
+        "FROM (SELECT (p.payload->>'proposal_id')::bigint AS proposal_id, k.outcome, "
+        "decision.payload -> k.outcome ->> 'reason' AS reason "
+        "FROM core.autoagent_trial_ledger p "
+        "JOIN core.autoagent_trial_ledger decision "
+        "ON decision.dedupe_key = p.trial_key || ':decision' "
+        "CROSS JOIN LATERAL (SELECT min(key) AS outcome "
+        "FROM jsonb_object_keys(decision.payload) AS key) AS k "
+        "WHERE p.event = %s AND jsonb_typeof(decision.payload) = 'object' "
+        "AND NOT decision.payload ? 'win') AS d "
+        "WHERE w.id = d.proposal_id AND w.status = 'pending' "
+        "RETURNING w.id, w.status::text, d.outcome, d.reason"
+    )
+    update_params = (
+        "unadjudicated",
+        _TRIAL_VOID_REASON,
+        _TRIAL_DECISION_REASON,
+        _TRIAL_DECISION_ACTOR,
+        TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
+    )
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(update_sql, update_params)
+                moved = cur.fetchall()
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
+        sys.stderr.write(
+            "[daemon-cycle] WARN: trial decision step — decided trials' pending bound rows not "
+            f"terminalized: {_describe_fault(exc)}; the next writing cycle moves them\n"
+        )
+        return []
+    for proposal_id, status, outcome, reason in moved:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: trial decision step — proposal id={proposal_id} → {status} "
+            f"({outcome} {reason or 'no reason'}): reviewed, frozen against a same-key push\n"
+        )
+    return [proposal_id for proposal_id, _status, _outcome, _reason in moved]
+
+
 def update_generation_closed_proposals() -> int:
     """Terminalize every stored pending auto proposal → 'unadjudicated'.
 
@@ -12844,6 +12925,9 @@ def classify_failure_rationale(rationale: str) -> str:
     if text.startswith(_GENERATION_CLOSED_REASON):
         # Closed before any review side saw it — no verdict.
         return FAILURE_CLASS_SKIPPED
+    if text.startswith(_TRIAL_VOID_REASON):
+        # A void trial never judged the change — no verdict.
+        return FAILURE_CLASS_SKIPPED
     # Back-off marker ran no Haiku call → no verdict, as a timeout.
     if text.startswith(
         (HAIKU_TIMEOUT_RATIONALE_PREFIX, TIMEOUT_BACKOFF_RATIONALE_PREFIX)
@@ -15459,6 +15543,8 @@ def run_cycle(
         # the trial stage ahead of the looks → a trial takes one only when that stage judged it
         judged_trials = run_trial_stage()
         run_shadow_stage(power, report.cycle_date, judged_trials)
+        # after every decision writer, before graduation, generation and the push
+        update_decided_trial_proposals()
         run_aa_stage(
             report.cycle_date, manifest_ingest=report.manifest_ingest, agents_dir=agents_dir
         )

@@ -614,7 +614,9 @@ model AutoagentProposal {
   // scripts/_pg_dual_write_daemon.py → write_autoagent_proposal.
   //
   // reviewedAt — the instant of the review VERDICT that settled the row: an
-  //   operator reject, or the apply flip that accepted it. Those two writers only.
+  //   operator reject, the apply flip that accepted it, or a live trial's decision
+  //   without a win, whose verdict or void freezes the bound row against a same-key
+  //   push. Those three writers only.
   //   A row that reached its status by any other path carries no timestamp, and
   //   that absence is the defined value, not a gap.
   // reviewedBy — the actor that produced the row's CURRENT status, whatever kind
@@ -631,6 +633,8 @@ model AutoagentProposal {
   //       termination gets its own token and never the operator's
   //     `daemon-cycle-generation-closed` — generation-closed terminalization, NOT a
   //       review: a stored pending auto row closed while generation is off
+  //     `daemon-cycle-trial-decision` — a live trial's decision without a win:
+  //       harm / retire → rejected, void → unadjudicated, verdict instant stamped
   //     `daemon-cycle-push` — cycle push
   //     `updater-resolved-gap` — updater resolved-gap accountability row
   //     `status-backfill` — status backfill

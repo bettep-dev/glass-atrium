@@ -74,6 +74,13 @@ STATUS_DISPOSITIONS = {
                 "update_parked_proposal_status",
                 SELECTED,
             ),
+            Site(
+                "trial-decision terminalization",
+                "python",
+                _CYCLE_PY,
+                "update_decided_trial_proposals",
+                SELECTED,
+            ),
             Site("stale-drain", "shell", _APPLY_SH, "mark_stale_attempt", SELECTED),
             _REJECT_ROUTE,
         ),
