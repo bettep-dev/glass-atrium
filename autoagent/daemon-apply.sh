@@ -2589,8 +2589,10 @@ emit_zero_eligible_row() {
 }
 
 # Select the patch source. Three modes:
-#   SINGLE   = --proposal-id N: exactly one proposal, tier/pre_verify gate
-#              bypassed (explicit user approval). Highest priority.
+#   SINGLE   = --proposal-id N: exactly one proposal; pre_verify gate bypassed,
+#              tier gate bypassed for monitor-user alone (its click is the
+#              user's approval), any other actor refused on a non-auto tier
+#              (exit 28). Highest priority.
 #   BACKLOG  = cross-cycle PG backlog (oldest-first) — the default cron path.
 #   REPORT   = today's JSON report (when psql absent or dry-run).
 # PATCH_SOURCE drives the loud-fail contract: backlog AND single sources enforce

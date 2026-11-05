@@ -989,7 +989,7 @@
     "autoagent/.gitignore": "35a6fdc1e0e35bcc2fefa9aacfe6bcc5d98347ed75e7ac0c0b64f9f2b2ee638c",
     "autoagent/autoagents-eval.sh": "88b933fa61f0e478bc279d0bdff8416677d9ed908a8636a68f1fde47c3425295",
     "autoagent/baseline/baseline-2026-07-22.md": "0245801bb318346197bb3a06619d47f9d73f9d818f1b605d39f39fb125d75b85",
-    "autoagent/daemon-apply.sh": "b3c938eb7bea93ddc327f6128a904bd8175fd3851116a646489d6b08a6d35026",
+    "autoagent/daemon-apply.sh": "460c11e7adf704b53f68705bd060a399d12dd9c8e73ebe45d911f3538f55d4d6",
     "autoagent/daemon-cycle.sh": "a6a623e536979168c24b7fd62e10523ff66b538ee2abd551fea8ab936f819579",
     "autoagent/daemon_cycle.py": "a6b7f62d301d593322a6ee3745a84555f033612f337083fbbf91157ba687b15a",
     "autoagent/lib/autoagent_pause.py": "95a2596480760334b163219b80384d48d1a58ccc86bcc9825562aba10800be75",
