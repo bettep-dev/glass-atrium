@@ -47,7 +47,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent.
 |---|---|
 | `## Motion Tokens` | UI DEV bodies (reduced motion, spring families) · reporter, planner bodies · html-co-emission skill · maintainer notes |
 | `## Token Lookup Order` | `scoped/maintainers/glass-atrium-design-designer.md` → `## Copies kept in step with this body` |
-| `## Mandatory Pre-Execution Gate` | dev-front `## Guardrails` · dev-gsap, dev-animator **Motion philosophy** · dev-android **Motion** · dev-android note |
+| `## Mandatory Pre-Execution Gate` | dev-front `## Guardrails` · dev-animator **Motion philosophy** · dev-android **Motion** · dev-android note |
 | `## Drift Prevention` | dev-front `## Guardrails` |
 
 - `## Motion Tokens`: keep it literal; add a sub-heading under it rather than renaming.
