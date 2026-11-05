@@ -1059,7 +1059,7 @@
     "autoagent/test/test_gap_arbiter.py": "7a2cbed2ba39485a236acccf09470cbca281132314d084546453c01f0ba48ae4",
     "autoagent/test/test_generator_inputs.py": "07c474eed6dbb6272460a533c73c165b4df25c592b3c10213b6f3a9d59a7764f",
     "autoagent/test/test_landed_history_memory.py": "a7c7ce3de9be6896495d681e1dac17a9b12bb493302264201882217574e2ab02",
-    "autoagent/test/test_manifest_ingest.py": "205f4a088eba74520403d56f50f4136b9a92ae5e6f7317de4dee95f0014c78e6",
+    "autoagent/test/test_manifest_ingest.py": "8094a92b7e7f33112dab730dc666306604fa0ca5bc04959bf9f8f2f200889a49",
     "autoagent/test/test_negative_signal_triggers.py": "a1bfeb05d9dd466eac9423f426c30c45b3f6d0f6a89dc15d4d4bbc15830e58fb",
     "autoagent/test/test_nonpromptable_intake_exclusion.py": "7a45dee970dc094722a6e64d9f01f939575737959990ea8032420ca1b57146ad",
     "autoagent/test/test_observation_count_decouple.py": "e76fcc5c93b0f08a8c7c3f1afaa29c04c15aaa52d38676794e9714f3771ef0a3",

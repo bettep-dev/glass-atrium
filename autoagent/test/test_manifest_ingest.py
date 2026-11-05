@@ -2104,8 +2104,7 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
             patcher = mock.patch.object(dc, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        # Armed loop flag → shadow stage reads TRIAL_LEDGER, the trial decision step the status
-        # fragment; both unbound when psycopg is absent.
+        # armed loop flag → TRIAL_LEDGER + status fragment read, both unbound without psycopg
         for name, value in (
             ("TRIAL_LEDGER", stub.get_trial_ledger()),
             ("_PG_PROPOSAL_STATUS_SQL", stub.get_proposal_status_sql()),
