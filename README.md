@@ -144,7 +144,7 @@
 - **Fleet of specialist agents** — routed by a capability registry (`agent-registry.json`) rather than by keyword (developers per stack, plus QA, planning · research · reporting, design, security, wiki, and meta).
 - **Layered rule system** — a global charter (`agents/GLASS_ATRIUM_GLOBAL_RULES.md`), core cross-cutting rules (`rules/`), and per-scope rules (`scoped/`), bound together by an explicit compliance matrix.
   - The rules loaded in every session hold only the sentences every session needs; the detail lives in reference files read on demand.
-    - Always-loaded set (the global charter + the `rules/glass-atrium/*.md` files without `paths:`, 8 files): 156,912 → 69,375 UTF-16 units
+    - Always-loaded set (the global charter + the `rules/glass-atrium/*.md` files without `paths:`, 8 files): 156,912 → 69,405 UTF-16 units
       - The largest share is the always-loaded rule `rules/glass-atrium/orchestrator-role.md` (66,061 → 775 units) — its body moved to the on-demand `skills/glass-atrium-ops-orchestrator-role.md`, leaving only a stub.
     - The main session additionally receives the orchestrator core (`scoped/orchestrator-core.md`, 7,492 units), added by the SessionStart hook.
     - The on-demand orchestrator skill (`skills/glass-atrium-ops-orchestrator.md`): 142,358 → 99,449 bytes
