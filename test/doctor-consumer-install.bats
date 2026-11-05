@@ -238,6 +238,44 @@ run_doctor_sandbox() {
   [[ "${output}" != *"manifest entry not installed: lib/ga-core.sh"* ]]
 }
 
+@test "§5 and §7 see the deployed links whether the target home is a directory or a symlink to one" {
+  # Protects a dotfile-managed ~/.claude: a home reached through a symlink must still count its links,
+  # so partial drift stays a hard FAIL instead of reading as a fresh target, and a dangler is reported.
+  seed_full_fixture
+  local row name kind real rel
+  local -a rows=(
+    "target home a real directory|dir"
+    "target home a symlink to a real directory|symlink"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind <<<"${row}"
+    real="${SANDBOX}/${kind}-real"
+    TARGET="${real}"
+    mkdir -p "${real}/agents"
+    if [[ "${kind}" == "symlink" ]]; then
+      TARGET="${SANDBOX}/${kind}-home"
+      ln -s "${real}" "${TARGET}"
+    fi
+    for rel in "${FARMED[@]}"; do
+      [[ "${rel}" == "agents/dev-a.md" ]] || deploy_link "${rel}"
+    done
+    ln -s "${GA_SANDBOX}/agents/gone.md" "${TARGET}/agents/gone.md"
+    run_doctor_sandbox
+    [[ "${status}" -eq 1 ]] || {
+      echo "${name}: status ${status}: ${output}"
+      return 1
+    }
+    [[ "${output}" == *"FAIL : manifest entry not installed: agents/dev-a.md"* ]] || {
+      echo "${name}: partial drift not a hard FAIL: ${output}"
+      return 1
+    }
+    [[ "${output}" == *"dangling GA symlink: ${TARGET}/agents/gone.md"* ]] || {
+      echo "${name}: dangler not reported: ${output}"
+      return 1
+    }
+  done
+}
+
 # === 3. §8 git-independent reconciliation catches REAL drift =================
 
 @test "§8 detects real content drift on a consumer install (hash mismatch)" {

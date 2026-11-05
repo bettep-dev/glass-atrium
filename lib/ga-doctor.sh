@@ -90,7 +90,8 @@ run_doctor() {
     local dangling=0 link links
     # Waited capture (see §4); an empty capture yields one empty line, skipped by the guard.
     # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
-    links="$(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
+    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
+    links="$(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r link; do
       [[ -n "${link}" ]] || continue
       [[ -e "${link}" ]] || {
@@ -210,7 +211,8 @@ run_doctor() {
     local ga_links=0 lk lks
     # Waited capture (see §4).
     # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
-    lks="$(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
+    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
+    lks="$(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r lk; do
       [[ -n "${lk}" ]] || continue
       ga_links=$((ga_links + 1))
@@ -2583,6 +2585,7 @@ verify_clean() {
   # 1. zero GA-pointing symlinks under the target
   local ga_links=0 link
   if [[ -d "${TARGET_HOME}" ]]; then
+    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
     # find ends with `|| true` → masked exit benign; loop stays in current shell.
     # shellcheck disable=SC2312
     while IFS= read -r link; do
@@ -2590,7 +2593,7 @@ verify_clean() {
       log "  FAIL : residual GA symlink: ${link}"
       ga_links=$((ga_links + 1))
       # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
-    done < <(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+    done < <(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
   fi
   if [[ "${ga_links}" -eq 0 ]]; then
     log "  ok   : zero GA symlinks under target"

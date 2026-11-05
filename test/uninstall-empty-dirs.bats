@@ -13,6 +13,8 @@
 #     * deepest-first, so a parent goes only after its children were emptied;
 #     * TARGET_HOME itself is never a candidate (boundary);
 #     * install-internal (lib/, ...) + top-level files contribute no dir.
+# PART C — the symlink passes (sweep_orphans, verify_clean) reach a target home
+#   that is itself a symlink, and never descend a symlinked directory below it.
 #
 # ESSENTIAL-SYMLINKS-ONLY drop-set (P2): hooks/ + scoped/ (prefixes) and
 #   agent-registry.json + glass-atrium (exacts) are is_symlink_excluded — bundled
@@ -267,4 +269,81 @@ assert_excluded_absent() {
   idx_parent="$(printf '%s\n' "${lines[@]}" | grep -nxF 'agents' | cut -d: -f1)"
   [[ -n "${idx_child}" && -n "${idx_parent}" ]]
   [[ "${idx_child}" -lt "${idx_parent}" ]]
+}
+
+# === PART C — the symlink passes reach a target home that is itself a symlink ===
+
+# Plant, under target home $1, one GA link outside the manifest, one foreign link,
+# and a symlinked directory holding a GA link that must never be descended.
+plant_uninstall_links() {
+  local home="$1" below="$2"
+  mkdir -p "${home}/agents" "${below}"
+  ln -s "${GA_SANDBOX}/agents/extra.md" "${home}/agents/extra.md"
+  ln -s "${SANDBOX}/foreign.md" "${home}/agents/foreign.md"
+  ln -s "${GA_SANDBOX}/agents/below.md" "${below}/below.md"
+  ln -s "${below}" "${home}/linked-dir"
+}
+
+@test "PART C: sweep_orphans removes a GA link outside the manifest whether the target home is a directory or a symlink to one" {
+  local row name kind real
+  local -a rows=(
+    "target home a real directory|dir"
+    "target home a symlink to a real directory|symlink"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind <<<"${row}"
+    real="${SANDBOX}/${kind}-real"
+    TARGET="${real}"
+    mkdir -p "${real}"
+    if [[ "${kind}" == "symlink" ]]; then
+      TARGET="${SANDBOX}/${kind}-home"
+      ln -s "${real}" "${TARGET}"
+    fi
+    plant_uninstall_links "${TARGET}" "${SANDBOX}/${kind}-below"
+    run_ga sweep_orphans
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${output}"
+      return 1
+    }
+    [[ ! -L "${real}/agents/extra.md" ]] || {
+      echo "${name}: GA link outside the manifest survived: ${output}"
+      return 1
+    }
+    [[ -L "${real}/agents/foreign.md" && -L "${SANDBOX}/${kind}-below/below.md" ]] || {
+      echo "${name}: a foreign link or a link below a symlinked directory was removed: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "PART C: verify_clean reports a residual GA link whether the target home is a directory or a symlink to one" {
+  local row name kind real
+  local -a rows=(
+    "target home a real directory|dir"
+    "target home a symlink to a real directory|symlink"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind <<<"${row}"
+    real="${SANDBOX}/${kind}-real"
+    TARGET="${real}"
+    mkdir -p "${real}"
+    if [[ "${kind}" == "symlink" ]]; then
+      TARGET="${SANDBOX}/${kind}-home"
+      ln -s "${real}" "${TARGET}"
+    fi
+    plant_uninstall_links "${TARGET}" "${SANDBOX}/${kind}-below"
+    run_ga verify_clean
+    [[ "${status}" -eq 1 ]] || {
+      echo "${name}: status ${status}: ${output}"
+      return 1
+    }
+    [[ "${output}" == *"FAIL : residual GA symlink: ${TARGET}/agents/extra.md"* ]] || {
+      echo "${name}: residual GA link not reported: ${output}"
+      return 1
+    }
+    [[ "${output}" != *"below.md"* ]] || {
+      echo "${name}: a link below a symlinked directory was counted: ${output}"
+      return 1
+    }
+  done
 }
