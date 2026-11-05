@@ -144,7 +144,7 @@
 - **专业智能体队伍** — 按能力注册表（`agent-registry.json`）而非关键字进行路由（涵盖按技术栈划分的开发者、QA、企划/研究/报告、设计、安全、wiki、元层）。
 - **分层规则系统** — 用一份明确的合规矩阵，把全局宪章（`agents/GLASS_ATRIUM_GLOBAL_RULES.md`）、核心横切规则（`rules/`）与按范围划分的规则（`scoped/`）绑在一起。
   - 每次会话都常驻加载的规则里只放每次会话都需要的语句，细节则放在按需读取的参考文件中。
-    - 常驻加载集（全局宪章 + 不带 `paths:` 的 `rules/glass-atrium/*.md`，共 8 个文件）：156,912 → 69,375 UTF-16 单位
+    - 常驻加载集（全局宪章 + 不带 `paths:` 的 `rules/glass-atrium/*.md`，共 8 个文件）：156,912 → 69,405 UTF-16 单位
       - 占比最大的是常驻加载规则 `rules/glass-atrium/orchestrator-role.md`（66,061 → 775 单位）——其正文已移至按需读取的 `skills/glass-atrium-ops-orchestrator-role.md`，只留下一个存根。
     - 主会话还会额外收到由 SessionStart 钩子注入的编排器核心（`scoped/orchestrator-core.md`，7,492 单位）。
     - 按需读取的编排器技能（`skills/glass-atrium-ops-orchestrator.md`）：142,358 → 99,449 字节

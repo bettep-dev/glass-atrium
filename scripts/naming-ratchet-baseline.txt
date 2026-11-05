@@ -736,7 +736,6 @@ ID_TITLE @test V7: Edit on a raw non-.md path → exit 0, silent
 ID_TITLE @test V7: Edit on literal .glass-atrium/wiki/raw path → blocked, exit 2
 ID_TITLE @test V7: Edit outside raw/ → exit 0, silent
 ID_TITLE @test V7: Edit removing the UNTRUSTED-SOURCE envelope from raw/*.md → blocked, exit 2 (SCOPE-007)
-ID_TITLE @test V7: SCOPE-007 suggestion names the delete + Write re-save correction path
 ID_TITLE @test V7: envelope-preserving Edit on raw/*.md → still blocked, exit 2 (unconditional immutability)
 ID_TITLE @test V8: Edit onto a symlinked raw destination → SCOPE-007 (V7 precedes the guard)
 ID_TITLE @test V8: SCOPE-008 block names the real-path correction and reports the parent in context

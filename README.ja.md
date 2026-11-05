@@ -144,7 +144,7 @@
 - **専門エージェントの部隊** — キーワードではなく能力レジストリ(`agent-registry.json`)でルーティングされます(スタック別の開発者に、QA、企画・リサーチ・レポート、デザイン、セキュリティ、ウィキ、メタまで)。
 - **階層化された規則システム** — グローバル憲章(`agents/GLASS_ATRIUM_GLOBAL_RULES.md`)、コアの横断規則(`rules/`)、範囲別の規則(`scoped/`)を、明示的なコンプライアンスマトリクスで束ねます。
   - 毎セッション常時ロードされる規則には毎セッション必要な文だけを置き、詳細は必要なときに読む参照ファイルに置きます。
-    - 常時ロードセット(グローバル憲章 + `paths:` のない `rules/glass-atrium/*.md`、8 ファイル): 156,912 → 69,375 UTF-16 単位
+    - 常時ロードセット(グローバル憲章 + `paths:` のない `rules/glass-atrium/*.md`、8 ファイル): 156,912 → 69,405 UTF-16 単位
       - 最も大きな割合を占めるのは常時ロード規則 `rules/glass-atrium/orchestrator-role.md`(66,061 → 775 単位)です — 本文を必要なときに読む `skills/glass-atrium-ops-orchestrator-role.md` へ移し、スタブだけを残しました。
     - メインセッションはこれに加えて、SessionStart フックが入れるオーケストレーターコア(`scoped/orchestrator-core.md`、7,492 単位)を受け取ります。
     - 必要なときに読むオーケストレータースキル(`skills/glass-atrium-ops-orchestrator.md`): 142,358 → 99,449 バイト

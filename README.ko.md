@@ -144,7 +144,7 @@
 - **전문 에이전트 부대** — 키워드가 아니라 역량 레지스트리(`agent-registry.json`)로 라우팅됩니다(스택별 개발자에 QA, 기획·리서치·리포트, 디자인, 보안, 위키, 메타까지).
 - **계층화된 규칙 시스템** — 전역 헌장(`agents/GLASS_ATRIUM_GLOBAL_RULES.md`), 핵심 횡단 규칙(`rules/`), 범위별 규칙(`scoped/`)을 명시적인 컴플라이언스 매트릭스로 묶습니다.
   - 매 세션 상시 로드되는 규칙에는 매 세션 필요한 문장만 두고, 세부는 필요할 때 읽는 참조 파일에 둡니다.
-    - 상시 로드 세트(전역 헌장 + `paths:` 없는 `rules/glass-atrium/*.md`, 8개 파일): 156,912 → 69,375 UTF-16 단위
+    - 상시 로드 세트(전역 헌장 + `paths:` 없는 `rules/glass-atrium/*.md`, 8개 파일): 156,912 → 69,405 UTF-16 단위
       - 가장 큰 몫은 상시 로드 규칙 `rules/glass-atrium/orchestrator-role.md`(66,061 → 775 단위)입니다 — 본문을 필요할 때 읽는 `skills/glass-atrium-ops-orchestrator-role.md` 로 옮기고 스텁만 남겼습니다.
     - 메인 세션은 여기에 SessionStart 훅이 넣는 오케스트레이터 코어(`scoped/orchestrator-core.md`, 7,492 단위)를 더 받습니다.
     - 필요할 때 읽는 오케스트레이터 스킬(`skills/glass-atrium-ops-orchestrator.md`): 142,358 → 99,449 바이트

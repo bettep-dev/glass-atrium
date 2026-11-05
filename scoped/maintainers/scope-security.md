@@ -26,8 +26,9 @@ Maintainer-facing material for that source file, and the record of text cut from
   - The LLM01 BLOCK-vs-WARN split — only the detection criterion.
   - The LLM06 BLOCK-vs-WARN split — only the symptom.
   - The tool-authorization gate — nothing; it is stated nowhere else, and is the only BLOCK condition that keys on the definition's tool declaration alone.
-- The body's pointer: `agents/glass-atrium-sec-guard.md` → `## Assessment Criteria (OWASP LLM Top 10 Based)` closes with an exact pointer to the source's `## LLM-Specific Verdict Criteria [SECURITY]`, naming each threshold.
-  - It carries no Read instruction: `maxTurns: 3` at `effort: low` leaves no turn to locate or re-read a file already delivered.
+- `agents/glass-atrium-sec-guard.md` carries no pointer to the source file:
+  - A pointer would add no duty: the delivered file opens `Verdict thresholds for glass-atrium-sec-guard.`
+  - No Read instruction either: `maxTurns: 3` at `effort: low` leaves no turn to locate or re-read a file already delivered.
 
 ## What the cut removed, and why
 
@@ -36,7 +37,7 @@ Each duty already lives at the site named, except the up-to-3 cap flagged below.
 - **The `> **Loading**` / `> **Inherits**` / `> **See**` stanza and `Rules specific to SECURITY agents: …`** — membership lives on the registry row's `rules.scope`.
 - **The `## Absolute Rules [SECURITY]` section** — all three bullets live in the delivered body:
   - Verdict-only role → `## Guardrails` · `## Deliverable Format`.
-  - Conservative judgment → `## Guardrails` · `## Absolute Rules`.
+  - Conservative judgment → `## Guardrails` · `## Deliverable Format`.
   - Verdict + remediation hint → `## Deliverable Format`, which holds the defence layers and the no-code / no-API-names prohibition; its `short bullet list` carries no number, so the cut bullet's up-to-3 cap has no live site.
   - No signpost heading stands in its place: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution` makes the assigned scope file the final authority, the whole file and never a named section.
     - A heading over the verdict table would state no rule and label the wrong content.
