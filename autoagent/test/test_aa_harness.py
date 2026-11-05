@@ -936,11 +936,12 @@ class AaUnsealedRunTest(unittest.TestCase):
     run_trial_stage and ingest_manifest_log, each refusing first, with or without the PG layer —
     unsealed, in a child running a code tree this test copies, so the tree's install identity is the test's, never that
     of the tree the suite runs from. The child's "live" is a decoy: a temp HOME holding the default data root with its canary files and
-    a live MANIFEST log, PGHOST and PGPORT on an empty temp socket dir, and neither GA_DATA_ROOT
-    nor EPH_SOCKDIR."""
+    a live MANIFEST log, PGHOST and PGPORT on an empty temp socket dir, and neither GA_DATA_ROOT,
+    EPH_SOCKDIR nor the PG-sandbox recorder's variables — the decoy reach is libpq's own, never recorded."""
 
     _INHERITED = (
-        "GA_DATA_ROOT", "EPH_SOCKDIR", "EPH_PORT", "PGHOSTADDR", "PGSERVICE", "PGDATABASE"
+        "GA_DATA_ROOT", "EPH_SOCKDIR", "EPH_PORT", "PGHOSTADDR", "PGSERVICE", "PGDATABASE",
+        "GA_BATS_PG_SANDBOX", "GA_BATS_PG_RECORD",
     )
 
     def setUp(self) -> None:
