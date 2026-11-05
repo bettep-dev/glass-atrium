@@ -5,12 +5,17 @@
 #
 # DESIGN INVARIANT (T11) — ADDITIONAL PreToolUse(Write) backstop, NOT the primary
 # control. Default FAIL-OPEN (exit 0) on any uncertainty (absent agent_id, unrecoverable
-# agent_type, absent jq, unresolved monitor root, ERR trap). A BLOCK (channel-a: stderr
+# agent_type, absent jq, unresolved monitor root, ERR trap). One exception: an unanswerable
+# repository check in condition (4) (no git/perl, a timeout, an ERR-trap exit inside its
+# subshell) yields no allowance, so the block stands. A BLOCK (channel-a: stderr
 # emit_error + exit 2) fires ONLY when all FOUR conditions hold:
 #   (1) tool is Write,
 #   (2) recovered agent_type ∈ {intel-reporter, intel-planner},
 #   (3) file extension ∈ {.md,.yaml,.yml,.json,.txt},
-#   (4) the normalized target path is OUTSIDE the deterministic allowlist.
+#   (4) the normalized target path is OUTSIDE the deterministic allowlist and is no
+#       repository-owned document (a tracked file, or a README/AGENTS/CHANGELOG at a
+#       work-tree root, optionally language-tagged) outside the live harness root —
+#       those belong to the repo, not the monitor.
 # PreToolUse PRE-blocks the write (file never created) → stderr only routes to the
 # monitor API, no leaked-file cleanup. Asymmetric-cost: a false-block on the high-
 # frequency Write tool costs more than a rare leak past this backstop, so FAIL-OPEN.
@@ -130,6 +135,75 @@ allow() {
   exit 0
 }
 
+# Root doc name: bare or ISO 639-1 tagged, subtag only an ISO 3166 region or ISO 15924 script
+# (README.md, README.ko.md, README.zh-CN.md, README.zh-Hans.md) → a README.analysis.md report,
+# a README.old.md word tag or a README.en-old.md word subtag stays out. Case-sensitive on purpose.
+readonly ROOT_DOC_RE='^(README|AGENTS|CHANGELOG)(\.[a-z]{2}([-_]([A-Z]{2}|[A-Z][a-z]{3}))?)?\.(md|txt)$'
+
+# Repository-owned document → its allow label on stdout; empty for anything else, the
+# unanswerable cases included (no git/perl, a timeout, a missing dir), so they keep the block.
+# A symlink target is refused: the link could carry the write out of the repository.
+# Args: $1 = normalized absolute file path.
+get_repo_doc_verdict() {
+  local path="${1}" dir base prefix
+  [[ "${path}" == /?* && ! -L "${path}" ]] || return 0
+  dir="${path%/*}"
+  base="${path##*/}"
+  [[ -n "${dir}" && -d "${dir}" ]] || return 0
+  # shellcheck disable=SC2310  # the status IS the harness-root answer
+  if is_under_harness_root "${dir}"; then return 0; fi
+  # "true" alone = work-tree root · "true" + newline + prefix = below it · "false" = inside .git
+  # shellcheck disable=SC2310  # a git failure is an answer (no repository) → no allow label
+  prefix="$(run_git_bounded -C "${dir}" rev-parse --is-inside-work-tree --show-prefix)" || return 0
+  [[ "${prefix}" == true* ]] || return 0
+  if [[ "${prefix}" == "true" ]]; then
+    if [[ "${base}" =~ ${ROOT_DOC_RE} ]]; then
+      printf 'allow-repo-root-doc\n' && return 0
+    fi
+  fi
+  # literal pathspec → a "*.md" file name cannot match other tracked files
+  # shellcheck disable=SC2310  # the ls-files status IS the tracked/untracked answer
+  if run_git_bounded --literal-pathspecs -C "${dir}" ls-files --error-unmatch -- "${base}" >/dev/null; then
+    printf 'allow-repo-tracked\n'
+  fi
+  return 0
+}
+
+# Live harness root (its rules/ and agents/ are git work trees) → no repository allowance:
+# a doc agent has no task reason to rewrite live rule or agent bodies. Literal AND physical
+# match → neither a symlinked root spelling nor a symlinked subdir slips past. Both legs
+# fold case (default APFS ignores it → a case-variant spelling names the same file).
+# Unresolvable target dir → treated as inside. Args: $1 = existing directory.
+is_under_harness_root() {
+  local root="${GA_ROOT:-${HOME}/.glass-atrium}" root_real dir_real
+  root="${root%/}"
+  # shellcheck disable=SC2310  # the status IS the literal-leg answer
+  is_path_within "${1}" "${root}" && return 0
+  root_real="$(cd -P -- "${root}" 2>/dev/null && pwd -P)" || return 1
+  dir_real="$(cd -P -- "${1}" 2>/dev/null && pwd -P)" || return 0
+  is_path_within "${dir_real}" "${root_real}"
+}
+
+# Case-folded prefix test (bash 3.2 has no ${var,,}). Args: $1 = path · $2 = ancestor.
+is_path_within() {
+  local path_lc ancestor_lc
+  path_lc="$(printf '%s/' "${1}" | tr '[:upper:]' '[:lower:]')"
+  ancestor_lc="$(printf '%s/' "${2}" | tr '[:upper:]' '[:lower:]')"
+  [[ "${path_lc}" == "${ancestor_lc}"* ]]
+}
+
+# git under a 3s wall-clock bound (stock macOS ships no timeout binary; perl alarm survives exec).
+# Ambient GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE dropped → -C alone selects the repository.
+# SECURITY (A05): the target dir is agent-chosen → its .git/config must run nothing; ls-files
+# would otherwise spawn a repository-local core.fsmonitor command. hooksPath=/dev/null → no hook.
+run_git_bounded() {
+  command -v git >/dev/null 2>&1 && command -v perl >/dev/null 2>&1 || return 1
+  # shellcheck disable=SC2016  # perl source, expanded by perl
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE GIT_OPTIONAL_LOCKS=0 \
+    perl -e 'alarm shift; exec { $ARGV[0] } @ARGV or exit 127' 3 \
+    git -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@" 2>/dev/null
+}
+
 INPUT="$(hook_read_input)"
 TOOL_NAME="$(hook_get_field "${INPUT}" "tool_name")"
 
@@ -228,15 +302,21 @@ if [[ -n "${MONITOR_ROOT}" ]]; then
   MONITOR_ROOT="${MONITOR_ROOT%/}"
   case "${NORM_PATH}" in
     "${MONITOR_ROOT}"/* | "${MONITOR_ROOT}") allow "allow-monitor-root-env" ;;
-    *) : ;; # not under the env-supplied monitor root → fall through to BLOCK
+    *) : ;; # not under the env-supplied monitor root → fall through to the repository check
   esac
 else
   case "${NORM_PATH}" in
     */.glass-atrium/monitor/data/documents/* | */.claude/monitor/data/documents/*)
       allow "allow-monitor-root-suffix"
       ;;
-    *) : ;; # not under either monitor-root suffix → fall through to BLOCK
+    *) : ;; # not under either monitor-root suffix → fall through to the repository check
   esac
+fi
+
+# (d) repository-owned document — a tracked file, or a root README/AGENTS/CHANGELOG.
+REPO_VERDICT="$(get_repo_doc_verdict "${NORM_PATH}")"
+if [[ -n "${REPO_VERDICT}" ]]; then
+  allow "${REPO_VERDICT}"
 fi
 
 # All 4 conditions hold → BLOCK via channel-a (stderr emit_error + exit 2).

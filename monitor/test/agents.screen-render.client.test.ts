@@ -573,9 +573,21 @@ test("every status-band tile names the window its count covers", async () => {
 });
 
 test("the ledger opens sorted by breakages, riskiest agents first", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const source = await readFile(AGENTS_SRC, "utf8");
-  assert.match(source, /\[sortBy, setSortBy\] = useStateAg\('failures'\)/);
+  // every region reads this one payload: the summary its agents in run order, the breakage map its rows
+  const data = {
+    agents: [
+      { agent_id: "glass-atrium-dev-busy", agent_name: "busy", status: "active", runs: 90 },
+      { agent_id: "glass-atrium-dev-risky", agent_name: "risky", status: "active", runs: 10 },
+    ],
+    meta: { total_agents: 2 },
+    rows: [{ agent: "glass-atrium-dev-risky", total_breakages: 7, fail_count: 7, blocked_count: 0 }],
+  };
+  const tree = await renderScreenAgents({ status: "ready", data, error: null, busy: false });
+  const order = findNodes(tree, (n) => n.type === "AgentSummaryRow").map((n) => (n.props.agent as { agent_id: string }).agent_id);
+  assert.deepEqual(order, ["glass-atrium-dev-risky", "glass-atrium-dev-busy"], "the agent with breakages leads the busier one");
+  const [head] = findNodes(tree, (n) => n.props?.atom === "CardHead" && n.props.title === "Performance by agent");
+  const [select] = findNodes(renderScreen(head?.props.right), (n) => n.type === "select");
+  assert.equal(select?.props.value, "failures", "the sort control opens on breakages");
 });
 
 const NOT_LOADED_WORD = "not loaded";
@@ -1936,9 +1948,14 @@ describe("the paired failing-pairs and no-record tables take the .tbl cell geome
     });
   }
 
-  test("the screen-local row-height override is retired with the routing", async () => {
-    const src = await import("node:fs").then((fs) => fs.readFileSync(AGENTS_SRC, "utf8"));
-    assert.doesNotMatch(src, /ag-paired-tbl/);
+  test("neither paired table takes a screen-local row-height class, and the screen CSS defines none", async () => {
+    const screenCss = findNodes(await renderScreenAgents(), (n) => n.type === "style").map((n) => collectText(n)).join("\n");
+    assert.ok(screenCss.trim().length > 0, "the screen renders its own style block");
+    assert.doesNotMatch(screenCss, /ag-paired-tbl/, "the screen's style block defines no paired-table override");
+    for (const row of tables) {
+      const [table] = findNodes(await renderComponent(row.component, row.props) as RenderedNode, (n) => n.type === "table");
+      assert.ok(!tokensOf(table).includes("ag-paired-tbl"), `${row.name}: the table takes no screen-local class`);
+    }
   });
 
   const cards = [
