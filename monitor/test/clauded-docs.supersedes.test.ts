@@ -134,12 +134,10 @@ after(async () => {
 test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (CTE atomic)", async () => {
   // Seed predecessor — POST 의 은퇴 별칭 'progress' 는 첫 stage 'doc_review' 로 정규화돼 저장된다.
   // doc_status='doc_review' → 'done' transition 이 CTE 단일 statement 로 적용됨을 검증.
-  // doc_type 필드는 silent ignore (컬럼 부재).
   const predTitle = makeTitle("ac1-pred");
   const predHtml = makeHtmlBody(`${predTitle}-progress-body`);
   const predRes = await postCreate(app, {
     title: predTitle,
-    prefix: "계획",
     doc_status: "progress",
     author: "tester",
     html_body: predHtml,
@@ -157,7 +155,6 @@ test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (
     const succHtml = makeHtmlBody(`${succTitle}-body`);
     const succRes = await postCreate(app, {
       title: succTitle,
-      prefix: "계획",
       doc_status: "doc_review",
       author: "tester",
       html_body: succHtml,
@@ -194,7 +191,6 @@ test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (
 test("POST supersedes_id → the predecessor's close is credited to the superseding caller's model", async () => {
   const predRes = await postCreate(app, {
     title: makeTitle("actor-pred"),
-    prefix: "계획",
     doc_status: "doc_review",
     author: "tester",
     html_body: makeHtmlBody(`actor-pred-${randomUUID()}`),
@@ -207,7 +203,6 @@ test("POST supersedes_id → the predecessor's close is credited to the supersed
   try {
     const succRes = await postCreate(app, {
       title: makeTitle("actor-succ"),
-      prefix: "계획",
       doc_status: "doc_review",
       author: "tester",
       html_body: makeHtmlBody(`actor-succ-${randomUUID()}`),
@@ -240,7 +235,6 @@ test("GET /api/clauded-docs default response 의 X-Deprecation-Notice 헤더 inv
 
   const seedRes = await postCreate(app, {
     title: seedTitle,
-    prefix: "계획",
     doc_status: "doc_review",
     author: "tester",
     html_body: makeHtmlBody(`${seedTitle}-body`),
@@ -302,8 +296,6 @@ test("PUT body containing supersedes_id → 400 (immutable after POST)", async (
   const predTitle = makeTitle("ac6-pred");
   const predRes = await postCreate(app, {
     title: predTitle,
-    prefix: "계획",
-    doc_type: "final",
     author: "tester",
     html_body: makeHtmlBody(`${predTitle}-body`),
   });
@@ -316,8 +308,6 @@ test("PUT body containing supersedes_id → 400 (immutable after POST)", async (
     const succHtml = makeHtmlBody(`${succTitle}-body`);
     const succRes = await postCreate(app, {
       title: succTitle,
-      prefix: "계획",
-      doc_type: "draft",
       author: "tester",
       html_body: succHtml,
       supersedes_id: pred.id,
@@ -362,8 +352,6 @@ test("POST supersedes_id=-1 → 400 'must be a positive integer'", async () => {
   // No cleanup needed — POST never reaches DB insert (rejected at parseCreateBody).
   const res = await postCreate(app, {
     title: makeTitle("ac7-neg"),
-    prefix: "계획",
-    doc_type: "draft",
     author: "tester",
     html_body: makeHtmlBody("ac7-neg-body"),
     supersedes_id: -1,
@@ -387,8 +375,6 @@ test("POST supersedes_id=99999999 (non-existent id) → 400 'does not reference 
   const nonExistentId = 99999999;
   const res = await postCreate(app, {
     title: makeTitle("ac7-fk"),
-    prefix: "계획",
-    doc_type: "draft",
     author: "tester",
     html_body: makeHtmlBody("ac7-fk-body"),
     supersedes_id: nonExistentId,
@@ -413,7 +399,6 @@ test("GET /:id superseded_by_id + groups representative_supersedes_id/doc-totals
   const predTitle = makeTitle("ac8-pred");
   const predRes = await postCreate(app, {
     title: predTitle,
-    prefix: "계획",
     doc_status: "doc_review",
     author: "tester",
     html_body: makeHtmlBody(`${predTitle}-body`),
@@ -428,7 +413,6 @@ test("GET /:id superseded_by_id + groups representative_supersedes_id/doc-totals
     const succTitle = makeTitle("ac8-succ");
     const succRes = await postCreate(app, {
       title: succTitle,
-      prefix: "계획",
       doc_status: "doc_review",
       author: "tester",
       html_body: makeHtmlBody(`${succTitle}-body`),
@@ -498,7 +482,6 @@ test("every search hit names its revision chain's root, so revisions of one docu
       const title = `${makeTitle(label)} ${word}`;
       const res = await postCreate(app, {
         title,
-        prefix: "계획",
         doc_status: "doc_review",
         author: "tester",
         html_body: makeHtmlBody(`${title}-body`),
@@ -511,7 +494,6 @@ test("every search hit names its revision chain's root, so revisions of one docu
     const loneTitle = `${makeTitle("lone")} ${word}`;
     const lone = await postCreate(app, {
       title: loneTitle,
-      prefix: "계획",
       doc_status: "doc_review",
       author: "tester",
       html_body: makeHtmlBody(`${loneTitle}-body`),

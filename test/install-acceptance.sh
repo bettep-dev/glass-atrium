@@ -49,6 +49,21 @@ untracked_listed_count() {
     <(ga_get_tracked_paths "${root}") | wc -l | tr -d ' '
 }
 
+# create_claude_stub — a `claude` stand-in at $1 that appends each call's argv as one line to $2 and answers OK
+create_claude_stub() {
+  cat >"$1" <<SH
+#!/bin/bash
+printf '%s\n' "\$*" >>'$2'
+echo OK
+SH
+  chmod +x "$1"
+}
+
+# is_stub_reached — 0 iff the stub argv log $1 records a `claude -p` call
+is_stub_reached() {
+  grep -q '^-p ' "$1" 2>/dev/null
+}
+
 # --- safety guard snapshot ----------------------------------------------------
 # leak detection (STEP 8) is content-hash + marker-anchored GA-artifact scoped:
 # a whole-dir mtime compare on ~/.claude false-fails whenever the live harness
@@ -89,12 +104,7 @@ export DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}/empty-reports"
 # metered-call seam — the stub logs each argv line so STEP 1 can prove the self-test ran it
 CLAUDE_STUB_CALLS="${SANDBOX}/claude-stub.calls"
 mkdir -p "${SANDBOX}/bin"
-cat >"${SANDBOX}/bin/claude" <<SH
-#!/bin/bash
-printf '%s\n' "\$*" >>'${CLAUDE_STUB_CALLS}'
-echo OK
-SH
-chmod +x "${SANDBOX}/bin/claude"
+create_claude_stub "${SANDBOX}/bin/claude" "${CLAUDE_STUB_CALLS}"
 export GA_AUTH_CLAUDE_BIN="${SANDBOX}/bin/claude"
 # shellcheck disable=SC2329 # run by the EXIT trap; 0.11 misses a trap reached through the final exit
 delete_sandbox() {
@@ -172,10 +182,10 @@ hdr "STEP 1 — doctor preflight (sandbox)"
 DOCTOR_RC=$?
 tail -3 "${SANDBOX}/doctor1.log"
 [[ "${DOCTOR_RC}" -eq 0 ]] && ok "doctor exits 0 (PASS or PASS-with-warnings)" || no "doctor rc=${DOCTOR_RC}"
-if grep -q '^-p ' "${CLAUDE_STUB_CALLS}" 2>/dev/null; then
+if is_stub_reached "${CLAUDE_STUB_CALLS}"; then
   ok "doctor's metered 'claude -p' self-test ran the sandbox stub, not the real CLI"
 else
-  no "doctor's 'claude -p' self-test never reached the sandbox stub (GA_AUTH_CLAUDE_BIN unrouted)"
+  no "doctor's 'claude -p' self-test never reached the sandbox stub (GA_AUTH_CLAUDE_BIN unrouted, or scripts/lib/claude-auth-env.sh absent so the self-test skipped)"
 fi
 
 # =============================================================================
