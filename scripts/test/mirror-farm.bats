@@ -27,7 +27,9 @@
 #                                   run continues, and the charter is not claimed
 #   9. deployment detection       → farm_has_ga_links flips no -> yes once a
 #                                   mirror exists, through either form of a
-#                                   root path with a symlinked component
+#                                   root path with a symlinked component,
+#                                   and through a facade home that is itself
+#                                   a symlink
 #
 # Run via: bats scripts/test/mirror-farm.bats
 # Requires: bats >= 1.5.0, jq
@@ -334,6 +336,45 @@ run_refresh() {
     mkdir -p "${facade}"
     ln -s "${target}" "${facade}/x.md"
     run bash -c 'set -Eeuo pipefail; source "$1"; farm_has_ga_links "$2" "$3"' _ "${LIB}" "${facade}" "${root}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${output}"
+      return 1
+    }
+    [[ "${output}" == "${expected}" ]] || {
+      echo "${name}: expected ${expected}, got ${output}"
+      return 1
+    }
+  done
+}
+
+@test "farm_has_ga_links finds a deployment whether the facade home is a directory or a symlink to one" {
+  # Protects a dotfile-managed ~/.claude: a "no" here ships the release with no mirror at rc 0.
+  # A symlinked directory below the home is never descended.
+  local row name kind placement expected real facade index=0
+  local -a rows=(
+    "facade a real directory, link at its top|dir|top|yes"
+    "facade a symlink to a real directory, link at its top|symlink|top|yes"
+    "facade a real directory, link only inside a symlinked subdirectory|dir|below|no"
+    "facade a symlink, link only inside a symlinked subdirectory|symlink|below|no"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind placement expected <<<"${row}"
+    index=$((index + 1))
+    real="${WORK}/home-real-${index}"
+    facade="${real}"
+    mkdir -p "${real}"
+    if [[ "${kind}" == "symlink" ]]; then
+      facade="${WORK}/home-${index}"
+      ln -s "${real}" "${facade}"
+    fi
+    if [[ "${placement}" == "top" ]]; then
+      ln -s "${GAROOT}/x.md" "${facade}/x.md"
+    else
+      mkdir -p "${WORK}/below-${index}"
+      ln -s "${GAROOT}/x.md" "${WORK}/below-${index}/x.md"
+      ln -s "${WORK}/below-${index}" "${facade}/linked-dir"
+    fi
+    run bash -c 'set -Eeuo pipefail; source "$1"; farm_has_ga_links "$2" "$3"' _ "${LIB}" "${facade}" "${GAROOT}"
     [[ "${status}" -eq 0 ]] || {
       echo "${name}: ${output}"
       return 1

@@ -112,6 +112,54 @@ fail_with_state() {
   [[ ! -L "${TARGET}/${rel}" ]] || fail_with_state "${TARGET}/${rel}"
 }
 
+@test "prune removes only the orphan whether the target home is a directory or a symlink to one" {
+  # Protects a dotfile-managed ~/.claude: a home reached through a symlink must keep every guard,
+  # and a symlinked directory below the home is never descended.
+  local row name kind real home kept
+  local -a rows=(
+    "target home a real directory|dir"
+    "target home a symlink to a real directory|symlink"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind <<<"${row}"
+    real="${SANDBOX}/${kind}-real"
+    home="${real}"
+    mkdir -p "${real}/agents" "${SANDBOX}/${kind}-below"
+    if [[ "${kind}" == "symlink" ]]; then
+      home="${SANDBOX}/${kind}-home"
+      ln -s "${real}" "${home}"
+    fi
+    write_manifest "agents/flagged.md"
+    ln -s "${GA_SCRATCH}/gone-${kind}.md" "${home}/agents/orphan.md"
+    ln -s "${GA_SCRATCH}/gone-flagged-${kind}.md" "${home}/agents/flagged.md"
+    printf 'src\n' >"${GA_SCRATCH}/live-${kind}.md"
+    ln -s "${GA_SCRATCH}/live-${kind}.md" "${home}/agents/live.md"
+    ln -s "${SANDBOX}/gone-foreign.md" "${home}/agents/foreign.md"
+    ln -s "${GA_SCRATCH}/gone-below-${kind}.md" "${SANDBOX}/${kind}-below/orphan.md"
+    ln -s "${SANDBOX}/${kind}-below" "${home}/linked-dir"
+    GA_TARGET_HOME="${home}" GA_MANIFEST="${MANIFEST}" run "${REAL_GA}" prune
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}"
+      fail_with_state
+    }
+    [[ "${output}" == *"1 pruned"* ]] || {
+      echo "${name}: orphan not pruned"
+      fail_with_state "${real}"
+    }
+    [[ ! -L "${real}/agents/orphan.md" ]] || {
+      echo "${name}: orphan still present"
+      fail_with_state "${real}"
+    }
+    for kept in "${real}/agents/flagged.md" "${real}/agents/live.md" "${real}/agents/foreign.md" \
+      "${SANDBOX}/${kind}-below/orphan.md"; do
+      [[ -L "${kept}" ]] || {
+        echo "${name}: guarded link removed: ${kept}"
+        fail_with_state "${real}"
+      }
+    done
+  done
+}
+
 # === resolving symlink preserved =============================================
 @test "resolving symlink (source exists) is preserved and not pruned" {
   write_manifest "agents/kept.md"

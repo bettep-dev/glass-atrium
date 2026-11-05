@@ -89,8 +89,9 @@ run_doctor() {
   if [[ -d "${TARGET_HOME}" ]]; then
     local dangling=0 link links
     # Waited capture (see §4); an empty capture yields one empty line, skipped by the guard.
+    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
     # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
-    links="$(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
+    links="$(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r link; do
       [[ -n "${link}" ]] || continue
       [[ -e "${link}" ]] || {
@@ -209,8 +210,9 @@ run_doctor() {
     #       some missing) on an established install.
     local ga_links=0 lk lks
     # Waited capture (see §4).
+    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
     # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
-    lks="$(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
+    lks="$(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)"
     while IFS= read -r lk; do
       [[ -n "${lk}" ]] || continue
       ga_links=$((ga_links + 1))
@@ -2589,8 +2591,9 @@ verify_clean() {
       [[ -n "${link}" ]] || continue
       log "  FAIL : residual GA symlink: ${link}"
       ga_links=$((ga_links + 1))
+      # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
       # GA-ABSORB[benign]: find exits 1 on any unreadable subdirectory while still listing every readable link
-    done < <(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+    done < <(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
   fi
   if [[ "${ga_links}" -eq 0 ]]; then
     log "  ok   : zero GA symlinks under target"
