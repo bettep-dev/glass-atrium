@@ -350,7 +350,8 @@ class ProposalStatusSent(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             agents_dir = Path(tmp)
             target = agents_dir / f"{_PROBE_AGENT}.md"
-            target.write_text("# probe\n", encoding="utf-8")
+            # the diff's context line inside the body's one editable region: a diff the apply could land
+            target.write_text("<!-- EDITABLE:BEGIN -->\n# probe\n<!-- EDITABLE:END -->\n", encoding="utf-8")
             proposal = dc.PatchProposal(
                 target_file=str(target),
                 rationale="probe rationale",

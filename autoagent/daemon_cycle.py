@@ -16064,7 +16064,10 @@ def build_patch_result(
     preregistration_payload = _get_bound_preregistration_payload(
         preregistration,
         TrialCandidate(
-            lead_pattern, (approval_tier, status_value), proposal.proposed_diff
+            lead_pattern,
+            (approval_tier, status_value),
+            proposal.proposed_diff,
+            Path(proposal.target_file),
         ),
         skip_loop_emit=skip_loop_emit,
     )
@@ -16210,6 +16213,7 @@ class TrialCandidate(NamedTuple):
     lead_pattern: Pattern
     route: tuple[str, str]  # (approval tier, status)
     diff: str
+    target: Path  # the agent body the apply lands the diff on
 
 
 def _get_bound_preregistration_payload(
@@ -16221,14 +16225,14 @@ def _get_bound_preregistration_payload(
     pattern among the cycle's power passes — sized on that pass at the cycle's detection start,
     its window row from the cycle's roster read; a failed read binds nothing.
     """
-    lead_pattern, route, diff = candidate
+    lead_pattern, route, diff, target = candidate
     if skip_loop_emit or route != ("auto", "pending") or source is None:
         return None
     windows = source.power.windows
     power_pass = _get_lead_pass(source.power, lead_pattern)
     if windows is None or power_pass is None:
         return None
-    canary_text = _get_trialable_canary_text(diff, power_pass.pattern)
+    canary_text = _get_trialable_canary_text(diff, power_pass.pattern, target)
     spawns = None if canary_text is None else source.roster.get_spawns()
     if spawns is None:
         return None
@@ -16247,10 +16251,10 @@ def _get_lead_pass(power: PowerResult, lead_pattern: Pattern) -> PowerPass | Non
     return None
 
 
-def _get_trialable_canary_text(diff: str, pattern: Pattern) -> str | None:
+def _get_trialable_canary_text(diff: str, pattern: Pattern, target: Path) -> str | None:
     """The diff's rendered canary block; None, with a named WARN, when the diff is untrialable."""
     canary_text = get_canary_text(diff)
-    refusal = _get_canary_refusal(diff, canary_text)
+    refusal = _get_canary_refusal(diff, canary_text, target)
     if refusal is None:
         return canary_text
     sys.stderr.write(
@@ -16261,13 +16265,15 @@ def _get_trialable_canary_text(diff: str, pattern: Pattern) -> str | None:
     return None
 
 
-def _get_canary_refusal(diff: str, canary_text: str) -> str | None:
+def _get_canary_refusal(diff: str, canary_text: str, target: Path) -> str | None:
     """Why the diff cannot be trialled; None when it can.
 
     - a removed line: injection can only add, so the canary never carries what graduation removes
     - no added line: the empty block is the A/A's own text, so its delivery reads as the A/A's
     - over the hook's cap: refused, never truncated — truncated text was never pre-registered,
       so a win would describe text that never graduates
+    - outside the landing zone: the apply's own guard refuses it on the current target, so a
+      win would never land — checked last, the one check that spawns a process
     """
     if _count_removed_lines(diff):
         return "the diff removes a line"
@@ -16276,7 +16282,41 @@ def _get_canary_refusal(diff: str, canary_text: str) -> str | None:
     size = len(canary_text.encode("utf-8"))
     if size > CANARY.MAX_BYTES:
         return f"rendered canary block {size} B exceeds the {CANARY.MAX_BYTES} B cap"
+    try:
+        verdict = _get_landing_zone_verdict(diff, target)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return f"the apply's landing-zone verdict is unavailable ({_describe_fault(exc)})"
+    if verdict != "ok":
+        return f"the apply's landing-zone guard reads {verdict} on {target.name}"
     return None
+
+
+_APPLY_SCRIPT = Path(__file__).resolve().parent / "daemon-apply.sh"
+# the guard's heredoc bounds in daemon-apply.sh — its one copy, so the cycle and the apply never diverge
+_APPLY_GUARD_BOUNDS = ("_PY_GUARD=\"$(cat <<'PY'", "PY")
+
+
+def _get_landing_zone_verdict(diff: str, target: Path) -> str:
+    """The apply's landing-zone verdict on the current target, from the guard source it runs.
+
+    Raises OSError (script unreadable), ValueError (guard bounds absent, no verdict) or
+    SubprocessError (non-zero exit, timeout).
+    """
+    lines = _APPLY_SCRIPT.read_text(encoding="utf-8").split("\n")
+    begin, end = _APPLY_GUARD_BOUNDS
+    try:
+        start = lines.index(begin) + 1
+        source = "\n".join(lines[start : lines.index(end, start)])
+    except ValueError as exc:
+        raise ValueError(f"no _PY_GUARD heredoc in {_APPLY_SCRIPT}") from exc
+    # SECURITY: the source is this install's own daemon-apply.sh text, never input — the apply's own `python3 -c` call
+    run = subprocess.run(
+        [sys.executable, "-c", source, str(target)],
+        input=diff, capture_output=True, text=True, encoding="utf-8", timeout=30, check=True,
+    )
+    if not run.stdout.strip():
+        raise ValueError("the guard printed no verdict")
+    return run.stdout.strip()
 
 
 def _get_haiku_status(

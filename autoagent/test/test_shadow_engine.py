@@ -175,6 +175,8 @@ _POOL_AGENT = "glass-atrium-dev-node"  # a roster type no keyed pattern names
 _ROSTER_WARN = "WARN: re-delegation window — roster spawns unreadable"
 # the generator's patch in the fixture; its added line is the canary text a bound trial delivers
 _PROBE_DIFF = "--- a\n+++ b\n@@ -1 +1,2 @@\n # probe agent\n+- probe rule\n"
+# the fixture agent body: every context line the fixture diffs carry sits inside its one editable region
+_PROBE_BODY = "<!-- EDITABLE:BEGIN -->\n# probe agent\nintro\ntail\n<!-- EDITABLE:END -->\n"
 # A/A design-effect rows beside the primary key's: the leg's own, and a pre-split union-event row
 _GUARDRAIL_ROWS = SimpleNamespace(
     NO_STOP={"metric_key": "no_subagent_stop", **_DESIGN_EFFECT._replace(value=1.4)._asdict()},
@@ -826,7 +828,7 @@ class BoundPayloadTest(_ShadowFixture):
         self.addCleanup(tmp.cleanup)
         self.agents_dir = Path(tmp.name)
         self.target = self.agents_dir / f"{_AGENT}.md"
-        self.target.write_text("# probe agent\n", encoding="utf-8")
+        self.target.write_text(_PROBE_BODY, encoding="utf-8")
         self.generated: list[str] = []
         self.diff = _PROBE_DIFF
         self.stderr = io.StringIO()
@@ -967,24 +969,41 @@ class BoundPayloadTest(_ShadowFixture):
                 self.assertNotEqual((result.approval_tier, result.status), ("auto", "pending"))
                 self.assertIn("1200 B cap", self.stderr.getvalue())
 
-    def test_a_candidate_whose_diff_removes_a_line_or_adds_none_is_refused_as_untrialable(
+    def test_a_candidate_the_apply_could_never_land_as_trialled_is_refused_as_untrialable(
         self,
     ) -> None:
-        # injection can only add; an empty block is the A/A's own text
+        # injection can only add; an empty block is the A/A's own text; a win must be able to land
+        missing_apply = self.agents_dir / "missing" / "daemon-apply.sh"
         rows = [
             (
                 "a removed line beside an added one",
                 "--- a\n+++ b\n@@ -1,2 +1,2 @@\n # probe agent\n-- old rule\n+- new rule\n",
                 "the diff removes a line",
+                None,
             ),
             (
                 "no added line",
                 "--- a\n+++ b\n@@ -1 +1 @@\n # probe agent\n",
                 "the diff adds no line",
+                None,
+            ),
+            (
+                "a pure add whose only context line is the region's BEGIN marker",
+                "--- a\n+++ b\n@@ -1 +1,2 @@\n <!-- EDITABLE:BEGIN -->\n+- probe rule\n",
+                "the apply's landing-zone guard reads out_of_region",
+                None,
+            ),
+            (
+                "the apply's guard cannot be read",
+                _PROBE_DIFF,
+                "the apply's landing-zone verdict is unavailable",
+                missing_apply,
             ),
         ]
-        for name, diff, reason in rows:
-            with self.subTest(name):
+        for name, diff, reason, apply_script in rows:
+            with self.subTest(name), contextlib.ExitStack() as stack:
+                if apply_script is not None:
+                    stack.enter_context(mock.patch.object(dc, "_APPLY_SCRIPT", apply_script))
                 self.ledger.rows.clear()
                 self.diff = diff
                 result = self._build(self._check_power())
@@ -1065,7 +1084,7 @@ class BoundPayloadTest(_ShadowFixture):
     def _get_window_row(self, spawns: dict[str, list[SpawnFacts]]) -> dict:
         """The bound payload's window row when the roster read answers `spawns`."""
         for stem in (_AGENT, _POOL_AGENT):
-            (self.agents_dir / f"{stem}.md").write_text("# probe agent\n", encoding="utf-8")
+            (self.agents_dir / f"{stem}.md").write_text(_PROBE_BODY, encoding="utf-8")
         self.roster.spawns = spawns
         return self._build(self._check_power()).preregistration_payload["redelegation"]
 
@@ -1401,7 +1420,7 @@ class BoundPayloadTest(_ShadowFixture):
         power = self._check_power()
         [lead_pass] = power.passes
         other = dataclasses.replace(lead_pass.pattern, agent=_POOL_AGENT)
-        (self.agents_dir / f"{_POOL_AGENT}.md").write_text("# probe agent\n", encoding="utf-8")
+        (self.agents_dir / f"{_POOL_AGENT}.md").write_text(_PROBE_BODY, encoding="utf-8")
         passes = [lead_pass, lead_pass._replace(pattern=other)]
         groups = [(_AGENT, list(self.patterns)), (_POOL_AGENT, [other])]
         rows = (
@@ -4175,7 +4194,7 @@ class CycleWiringTest(_ShadowFixture):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         (self.root / "agents").mkdir()
-        (self.root / "agents" / f"{_AGENT}.md").write_text("probe", encoding="utf-8")
+        (self.root / "agents" / f"{_AGENT}.md").write_text(_PROBE_BODY, encoding="utf-8")
         env = mock.patch.dict(
             os.environ,
             {
@@ -4336,7 +4355,7 @@ class CycleWiringTest(_ShadowFixture):
             dedupe_key=f"{key}:decision",
         )
         # a second agent group with no won row: the stage makes no call for it
-        (self.root / "agents" / f"{_POOL_AGENT}.md").write_text("probe", encoding="utf-8")
+        (self.root / "agents" / f"{_POOL_AGENT}.md").write_text(_PROBE_BODY, encoding="utf-8")
         self.ledger.design_effects[_POOL_AGENT] = _DESIGN_EFFECT_PAYLOAD
         self.intakes.append(
             self.intakes[0]
@@ -4421,7 +4440,7 @@ class CycleWiringTest(_ShadowFixture):
         self,
     ) -> None:
         # a second agent group whose candidate also reaches pre-registration
-        (self.root / "agents" / f"{_POOL_AGENT}.md").write_text("probe", encoding="utf-8")
+        (self.root / "agents" / f"{_POOL_AGENT}.md").write_text(_PROBE_BODY, encoding="utf-8")
         self.ledger.design_effects[_POOL_AGENT] = _DESIGN_EFFECT_PAYLOAD
         self.intakes.append(
             self.intakes[0]
