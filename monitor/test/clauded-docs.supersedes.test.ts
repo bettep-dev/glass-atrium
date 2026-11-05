@@ -134,7 +134,6 @@ after(async () => {
 test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (CTE atomic)", async () => {
   // Seed predecessor — POST 의 은퇴 별칭 'progress' 는 첫 stage 'doc_review' 로 정규화돼 저장된다.
   // doc_status='doc_review' → 'done' transition 이 CTE 단일 statement 로 적용됨을 검증.
-  // doc_type 필드는 silent ignore (컬럼 부재).
   const predTitle = makeTitle("ac1-pred");
   const predHtml = makeHtmlBody(`${predTitle}-progress-body`);
   const predRes = await postCreate(app, {
@@ -303,7 +302,6 @@ test("PUT body containing supersedes_id → 400 (immutable after POST)", async (
   const predRes = await postCreate(app, {
     title: predTitle,
     prefix: "계획",
-    doc_type: "final",
     author: "tester",
     html_body: makeHtmlBody(`${predTitle}-body`),
   });
@@ -317,7 +315,6 @@ test("PUT body containing supersedes_id → 400 (immutable after POST)", async (
     const succRes = await postCreate(app, {
       title: succTitle,
       prefix: "계획",
-      doc_type: "draft",
       author: "tester",
       html_body: succHtml,
       supersedes_id: pred.id,
@@ -363,7 +360,6 @@ test("POST supersedes_id=-1 → 400 'must be a positive integer'", async () => {
   const res = await postCreate(app, {
     title: makeTitle("ac7-neg"),
     prefix: "계획",
-    doc_type: "draft",
     author: "tester",
     html_body: makeHtmlBody("ac7-neg-body"),
     supersedes_id: -1,
@@ -388,7 +384,6 @@ test("POST supersedes_id=99999999 (non-existent id) → 400 'does not reference 
   const res = await postCreate(app, {
     title: makeTitle("ac7-fk"),
     prefix: "계획",
-    doc_type: "draft",
     author: "tester",
     html_body: makeHtmlBody("ac7-fk-body"),
     supersedes_id: nonExistentId,
