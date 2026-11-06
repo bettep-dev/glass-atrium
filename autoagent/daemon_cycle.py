@@ -8283,10 +8283,12 @@ _GENERATION_CLOSED_REASON = "generation closed until live trials"
 _GENERATION_CLOSED_ACTOR = "daemon-cycle-generation-closed"
 
 
-# Live-trial decision: a decided-without-win trial's pending bound row → terminal
+# Live-trial decision: a decided-without-win trial's pending bound row → terminal, as is a won
+# one sized on an A/A start invalidated since
 _TRIAL_DECISION = SimpleNamespace(
-    # Head of every void rationale; classify_failure_rationale prefix-tests against it → a
-    # stored 'rejected' void (label-absent schema) never advances the reject streak.
+    # Head of every void rationale, a won row's on an invalidated A/A start included;
+    # classify_failure_rationale prefix-tests against it → a stored 'rejected' row of either
+    # (label-absent schema) never advances the reject streak.
     VOID_REASON="voided live trial, never judged",
     # Head of a harm / retire rationale — no classifier branch → advances the reject streak
     REASON="live trial decided without a win",
@@ -8302,7 +8304,7 @@ def update_decided_trial_proposals() -> list[int]:
 
     One idempotent statement, whatever cycle wrote the decision: a harm or retire key stores
     'rejected' (the trial judged the change), a void key — and a win whose pre-registration's
-    aa_start_id holds an aa-invalidation row (D7: that start sized nothing), its reason
+    aa_start_id holds an aa-invalidation row (that start sized nothing), its reason
     LIVE_TRIAL.AA_INVALIDATED_REASON — 'unadjudicated' through the shared status fragment
     ('rejected' on a schema without that label, its rationale head keeping it out of the reject
     streak), the generator's rationale kept after that head. reviewed_at is stamped → the push
@@ -9400,7 +9402,7 @@ _OPEN_LIVE_TRIAL_FROM = (
     "FROM core.autoagent_trial_ledger p WHERE p.event = %s AND NOT EXISTS ("
     "SELECT 1 FROM core.autoagent_trial_ledger d WHERE d.dedupe_key = p.trial_key || ':decision')"
 )
-# pre-registration p sized on an A/A start holding an aa-invalidation row (D7: its rows size
+# pre-registration p sized on an A/A start holding an aa-invalidation row (its rows size
 # nothing); binds the invalidation event as one parameter · text compare → a malformed id never
 # faults the read
 _AA_INVALIDATED_TRIAL_SQL = (
@@ -10884,19 +10886,19 @@ class TrialCanary(NamedTuple):
 
 def run_trial_stage() -> frozenset[str]:
     """Judge each open live trial's stored rows, then write its canary from its committed
-    pre-registration; its decisions are the foreign-hash void and the unstarted void — no
-    look-time outcome.
+    pre-registration; its decisions are the aa-invalidated void, the foreign-hash void and the
+    unstarted void — no look-time outcome.
 
     - returns the trial keys it judged and left open — the only trials taking a look this cycle
-      (run_shadow_stage); never in it: an unjudged trial, and one whose foreign-hash or unstarted
-      void this stage wrote or was refused; empty when the stage is refused or its open trials
-      are unread
+      (run_shadow_stage); never in it: an unjudged trial, and one whose aa-invalidated,
+      foreign-hash or unstarted void this stage wrote or was refused; empty when the stage is
+      refused or its open trials or their A/A starts' invalidations are unread
     - no config.toml in the code tree declaring that tree as its [paths].root → refused before
       any ledger read: no row read or written, no canary file changed
     - open trial: a live pre-registration with no <live trial key>:decision row, read from the
       ledger → a pre-registration the push has not committed gets no canary
     - invalidated start: an open trial whose pre-registration's aa_start_id holds an
-      aa-invalidation row (D7: that start's rows size nothing) → its void decision naming the
+      aa-invalidation row (that start's rows size nothing) → its void decision naming the
       start, written ahead of every other judgment, its file removed whether or not the row
       lands, nothing more for it this stage — never judged, no look, no graduation
     - stored rows: each open trial's delivered rows in core.spawn_manifest judged by the ingest's
@@ -10963,12 +10965,18 @@ def _get_open_trial_canaries() -> OpenTrials | None:
         return None
     try:
         trials = _read_trial_canaries()
-        invalidated = _read_invalidated_trial_keys() if trials else frozenset()
     except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
         _warn_trial(
             f"open live trials unreadable: {_describe_fault(exc)}",
             "no trial canary written this cycle",
         )
+        return None
+    invalidated = (
+        _get_invalidated_trial_keys(STAGE_AREA.TRIAL, "no trial canary written this cycle")
+        if trials
+        else frozenset()
+    )
+    if invalidated is None:
         return None
     return OpenTrials(
         [trial for trial in trials if trial.key not in invalidated],
@@ -10981,6 +10989,16 @@ def _read_trial_canaries() -> list[TrialCanary]:
         cur.execute(LIVE_TRIAL.CANARY_SQL, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
         rows = cur.fetchall()
     return [TrialCanary(*row) for row in rows]
+
+
+def _get_invalidated_trial_keys(area: str, scope: str) -> frozenset[str] | None:
+    """_read_invalidated_trial_keys; None, with a WARN naming that read under `area`, when it
+    faults."""
+    try:
+        return _read_invalidated_trial_keys()
+    except Exception as exc:  # noqa: BLE001 — a read fault holds the stage, never the cycle
+        _warn_stage(area, f"invalidated A/A starts unreadable: {_describe_fault(exc)}", scope)
+        return None
 
 
 def _read_invalidated_trial_keys() -> frozenset[str]:
@@ -11010,11 +11028,20 @@ def _void_invalidated_trial(trial: TrialCanary) -> None:
             "no canary written; the next writing cycle retries",
         )
     else:
-        verdict = "voided" if landed else "already decided, no void written"
-        _warn_trial(f"{cause} → {verdict}", f"no look and no graduation ({trial.key}:decision)")
+        _log_invalidated_void(trial, cause, landed)
     path = _get_canary_path(trial.agent)
     if path in _get_canary_files(STAGE_AREA.TRIAL):
         _delete_canaries([path], f"trial {trial.key} voided", STAGE_AREA.TRIAL)
+
+
+def _log_invalidated_void(trial: TrialCanary, cause: str, landed: int) -> None:
+    if landed == 1:
+        _warn_trial(f"{cause} → voided", f"no look and no graduation ({trial.key}:decision)")
+        return
+    # 0 = the once-only key taken by another decider (or the ledger absent) → decided, no fault
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: trial stage — {cause}: already decided, no void written\n"
+    )
 
 
 class StageJudgment(NamedTuple):
@@ -11738,7 +11765,9 @@ def invalidate_aa(start_id: int, cause: str, *, is_confirmed: bool = False) -> i
     it needs is_confirmed — unconfirmed → ExitCode.AA_INVALIDATION_UNCONFIRMED; a closed start
     needs none. Readers honour the record only on installed code that carries them.
     Closing the open start removes every canary file but an open live trial's at once, as the
-    cycle's closed-A/A step does; a closed start's invalidation removes none.
+    cycle's closed-A/A step does; a closed start's invalidation removes none. Either way the next
+    writing cycle voids every held live trial sized on the start, open or won with its row
+    pending, and ends its bound row unadjudicated — irreversible too (once-only :decision key).
     """
     cause = cause.strip()
     if not cause:
@@ -16106,14 +16135,8 @@ def _get_graduating_agents(won_agents: dict[int, str] | None) -> dict[int, str] 
     None, with a named WARN, when that read faults."""
     if not won_agents:
         return won_agents
-    try:
-        invalidated = _read_invalidated_trial_keys()
-    except Exception as exc:  # noqa: BLE001 — a read fault holds the apply, never the cycle
-        _warn_stage(
-            STAGE_AREA.GRADUATION,
-            f"invalidated A/A starts unreadable: {_describe_fault(exc)}",
-            "no apply call this cycle",
-        )
+    invalidated = _get_invalidated_trial_keys(STAGE_AREA.GRADUATION, "no apply call this cycle")
+    if invalidated is None:
         return None
     for proposal_id in won_agents:
         if (key := get_live_trial_key(proposal_id)) in invalidated:
@@ -16798,7 +16821,9 @@ def _main(argv: list[str]) -> int:
         metavar="START_ID",
         help="Record the A/A of START_ID void-by-defect (one aa-invalidation ledger row naming "
         "--cause), then exit (no cycle): an open start reads as closed, its canary files but an "
-        "open live trial's are removed, and its result's design effects size nothing. Refused "
+        "open live trial's are removed, and its result's design effects size nothing; the next "
+        "writing cycle voids every live trial sized on it (open, or won with its row pending), "
+        "irreversibly, open start or closed. Refused "
         "with exit 16 and a named reason; the open start without --confirm-open-aa refused "
         "with exit 17; takes no --dry-run.",
     )

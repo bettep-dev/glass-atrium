@@ -4228,6 +4228,68 @@ class TrialCanaryTest(_ShadowFixture):
                 self.assertEqual(self._get_looks() == [], is_voided)
                 self.assertIsNone(self._get_canary())
 
+    def test_an_aa_invalidated_void_not_landing_still_removes_the_file_and_names_why(self) -> None:
+        key = self._open_live_trial()
+        write = self.ledger.write
+        decision_event = stub.get_trial_ledger().EVENT.LIVE_DECISION
+        cause = f"trial {key}: {_AGENT}'s A/A start {_AA_START_ID} is invalidated"
+        # name, the writer's answer to the decision row, the stderr line it leaves
+        rows = (
+            (
+                "a raised fault: a record fault, retried",
+                mock.Mock(side_effect=ConnectionError("PG unreachable")),
+                f"WARN: trial stage — {cause}, its void not recorded: ConnectionError",
+            ),
+            (
+                "a 0 return: the trial already decided",
+                lambda *args, **kwargs: 0,
+                f"INFO: trial stage — {cause}: already decided, no void written",
+            ),
+        )
+        for name, refuse, line in rows:
+            with self.subTest(name):
+                self.ledger.rows[:] = self._get_preregistrations()
+                self._patch("_pg_write_trial_ledger_row", write)
+                self._stage(_NOW)  # the first write and its start record
+                self._invalidate(_AA_START_ID)
+
+                def _write(event, *args, refuse=refuse, **kwargs):
+                    return (refuse if event == decision_event else write)(event, *args, **kwargs)
+
+                self._patch("_pg_write_trial_ledger_row", _write)
+
+                stderr_text = self._stage(_NEXT_NOW)
+
+                self.assertIsNone(self._get_canary())
+                self.assertEqual(self._get_decisions(), [])
+                self.assertIn(line, stderr_text)
+
+    def test_a_faulted_read_of_the_invalidated_starts_holds_the_stage_and_names_that_read(
+        self,
+    ) -> None:
+        self._open_live_trial()
+        self._stage(_NOW)  # the first write and its start record
+        canary = self._get_canary()
+        self.ledger.faulted.add(dc.LIVE_TRIAL.INVALIDATED_SQL)
+        self.clock.now = _NEXT_NOW
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            judged = dc.run_trial_stage()
+
+        self.assertEqual(judged, frozenset())  # no trial takes a look
+        self.assertEqual(self._get_canary(), canary)  # not rewritten, its lease not renewed
+        self.assertEqual((self._get_decisions(), len(self._get_starts())), ([], 1))
+        self.assertEqual(
+            stderr.getvalue().splitlines(),
+            [
+                (
+                    "[daemon-cycle] WARN: trial stage — invalidated A/A starts unreadable: "
+                    "ConnectionError: PG unreachable; no trial canary written this cycle"
+                )
+            ],
+        )
+
     def test_a_win_removes_its_trials_canary_file_in_the_cycle_that_decides_it(self) -> None:
         key = self._open_live_trial()
         self._stage(_NOW)  # the first write and its start record
@@ -4325,6 +4387,26 @@ class GraduationApplyTest(_ShadowFixture):
                     f"[daemon-cycle] WARN: graduation — trial {key}: proposal {_PROPOSAL_ID} won "
                     "on an A/A start invalidated since; no apply call; the trial decision step "
                     "ends its row unadjudicated"
+                )
+            ],
+        )
+
+    def test_a_faulted_read_of_the_invalidated_starts_warns_by_name_and_makes_no_apply_call(
+        self,
+    ) -> None:
+        self._win()
+        self.ledger.faulted.add(dc.LIVE_TRIAL.INVALIDATED_SQL)
+        calls = _fake_apply_script(self, ())
+
+        lines = self._graduate()
+
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            lines,
+            [
+                (
+                    "[daemon-cycle] WARN: graduation — invalidated A/A starts unreadable: "
+                    "ConnectionError: PG unreachable; no apply call this cycle"
                 )
             ],
         )
