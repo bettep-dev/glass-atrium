@@ -584,7 +584,7 @@ class TestCycleVerdictsLivePg(unittest.TestCase):
         with get_connection("eph_bootstrap", autocommit=True) as admin:
             admin.execute(statement)
 
-    def _connect(self):  # noqa: ANN202 — psycopg is imported lazily
+    def _connect(self):
         return get_connection(self.dbname)
 
     def _execute(self, statement: str, params: tuple[object, ...] = ()) -> list[tuple]:

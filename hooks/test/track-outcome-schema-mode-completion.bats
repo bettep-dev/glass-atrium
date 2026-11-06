@@ -40,7 +40,7 @@
 # is redirected into the temp dir (counter absent ⇒ fail-open, only T4 seeds it).
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
-# _pg_seal.get_connection: the bounded connect retry this file's row reads share
+# _pg_seal.get_connection: the bounded connect retry this file's row reads and writes share
 SEAL_DIR="${BATS_TEST_DIRNAME}/../../autoagent/test"
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
