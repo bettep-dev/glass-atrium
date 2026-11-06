@@ -13,6 +13,9 @@
 # never host/port/localhost. Emits an elapsed_ms stderr line per op for latency
 # aggregation.
 
+# daemon imports this on an install's python3 3.9 → no 3.10+ construct at import
+from __future__ import annotations
+
 import sys
 import time
 from collections import defaultdict
