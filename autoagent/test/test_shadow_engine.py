@@ -1020,6 +1020,13 @@ class BoundPayloadTest(_ShadowFixture):
                 None,
             ),
             (
+                "two file headers, each adding a line",
+                "--- a\n+++ b\n@@ -1 +1,2 @@\n # probe agent\n+- probe rule\n"
+                "--- a\n+++ b\n@@ -1 +1,2 @@\n # other\n+- other rule\n",
+                "the diff carries more than one file header",
+                None,
+            ),
+            (
                 "a pure add whose only context line is the region's BEGIN marker",
                 "--- a\n+++ b\n@@ -1 +1,2 @@\n <!-- EDITABLE:BEGIN -->\n+- probe rule\n",
                 "the apply's landing-zone guard reads out_of_region",

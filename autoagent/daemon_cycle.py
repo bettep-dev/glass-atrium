@@ -4654,6 +4654,19 @@ def _diff_header_target_basename(diff: str) -> str | None:
     return None
 
 
+def _get_foreign_header_basename(diff: str, name: str) -> str | None:
+    """A declared target other than ``name`` — the first ``+++`` line's, else a later header pair's."""
+    first = _diff_header_target_basename(diff)
+    if first is not None and first != name:
+        return first
+    for _idx, _old_text, new_text in _get_diff_header_pairs(diff):
+        path = _get_header_path(new_text, "b/")
+        basename = path.rsplit("/", 1)[-1] if path else None
+        if basename is not None and basename != name:
+            return basename
+    return None
+
+
 def _diff_deletes_file(diff: str) -> bool:
     """True iff any header pair's new path is ``/dev/null`` — a whole-file delete."""
     return any(
@@ -4706,14 +4719,14 @@ def _gate_validated_diff(
         )
         return ""
 
-    # Basename-match assertion — a '+++' header declares the file the diff
-    # targets. If its basename diverges from target_file, `git apply` (run under
+    # Basename-match assertion — every '+++' header declares a file the diff
+    # targets. If one basename diverges from target_file, `git apply` (run under
     # GIT_ROOT with --directory path resolution) could land the diff on ANOTHER
     # agent body; the apply-side before-image/verify (bound to target_file) would
     # neither catch nor restore that wrong-file mutation. Reject BEFORE any
     # repair/apply. A header-less fragment (None) asserts no target → passes.
-    declared = _diff_header_target_basename(diff)
-    if declared is not None and declared != target_file.name:
+    declared = _get_foreign_header_basename(diff, target_file.name)
+    if declared is not None:
         sys.stderr.write(
             f"[daemon-cycle] F2 GATE: diff '+++' header targets {declared!r} but "
             f"proposal target is {target_file.name!r} — wrong-file diff rejected "
@@ -4952,8 +4965,7 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
         is_removal_refused = (
             not diff.strip()
             and _diff_is_replace_shape(gate_input)
-            and _diff_header_target_basename(gate_input)
-            in (None, target_file.name)
+            and _get_foreign_header_basename(gate_input, target_file.name) is None
         )
 
     if is_removal_refused:
@@ -16634,6 +16646,8 @@ def _get_trialable_canary_text(diff: str, pattern: Pattern, target: Path) -> str
 def _get_canary_refusal(diff: str, canary_text: str, target: Path) -> str | None:
     """Why the diff cannot be trialled; None when it can.
 
+    - more than one file header: the canary renders one body's block — named ahead of the
+      removed-line reading, which takes a later header for body
     - a removed line: injection can only add, so the canary never carries what graduation removes
     - no added line: the empty block is the A/A's own text, so its delivery reads as the A/A's
     - over the hook's cap: refused, never truncated — truncated text was never pre-registered,
@@ -16641,6 +16655,8 @@ def _get_canary_refusal(diff: str, canary_text: str, target: Path) -> str | None
     - outside the landing zone: the apply's own guard refuses it on the current target, so a
       win would never land — checked last, through the apply's own guard module
     """
+    if len(_get_diff_header_pairs(diff)) > 1:
+        return "the diff carries more than one file header"
     if _count_removed_lines(diff):
         return "the diff removes a line"
     if not _count_added_lines(diff):
