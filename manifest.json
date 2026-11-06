@@ -1157,7 +1157,7 @@
     "autoagent/test/test_signal_store_retired.py": "5205c31db50c6797bc04acf29ecce417b68a866b28ad10439e827653abcf95d4",
     "autoagent/test/test_single_regen_reason_line.py": "f7ea6ec917105836f0f5a486b4592dbffa2d7cfd22daf4f80d6722fed5e83ab0",
     "autoagent/test/test_stored_diff_bound.py": "5d30394c90d329bef3a336bb28d734673271ef5a4940fc79b21a3098b78c4b5d",
-    "autoagent/test/test_supersede_predicate.py": "df518a8b0aef2e92a1d1fc209ebb9a1ba2748ee5ff4db199052521db8059b6a3",
+    "autoagent/test/test_supersede_predicate.py": "8fc772f4af00513906b7c2a4bb934433d298a4241134b3064aa176fe47d31420",
     "autoagent/test/test_tier1_rule_parity.py": "bca6b25f469dc99c24ae7b32c52a32d4cb1e8db5f643b2235df9189a6634c1d9",
     "autoagent/test/test_timeout_backoff_release.py": "07f38844996c9cd5addcacb155f370e363f8cd445adebde2750a5721c5266498",
     "autoagent/test/test_transient_backoff_polarity.py": "bbd38ece6d8849f29cdccda77a9399f6ef38b773361080f889f055b145611252",

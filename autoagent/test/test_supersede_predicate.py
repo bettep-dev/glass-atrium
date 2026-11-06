@@ -490,36 +490,24 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
     def test_each_candidate_passes_its_own_approval_tier_as_the_scope(self) -> None:
         verified = dc.PreVerifyResult(True, "ok", {}, "ok", 0)
         infra = dc.PreVerifyResult(False, "verifier down", {}, "error:timeout-90s", 0)
-        # The floor terminalizes every auto candidate until the live opening lands, so the
-        # bound row passes it through to reach the shape the opening stores.
+        # a bound row carries the cycle's pre-registration payload → the floor keeps it pending auto
         rows = (
             ("safety-routed", "safety", verified, False, "safety"),
             ("infra-pending", "non-safety", infra, False, ""),
             ("bound", "non-safety", verified, True, "auto"),
         )
-        for name, safety_tier, verdict, is_floor_passed, expected in rows:
+        for name, safety_tier, verdict, is_bound, expected in rows:
             with self.subTest(candidate=name):
                 self.calls.clear()
                 seams = {
                     "classify_safety_tier": lambda *a, _tier=safety_tier, **k: _tier,
                     "run_pre_verify": lambda *a, _verdict=verdict, **k: _verdict,
                 }
-                if is_floor_passed:
-                    seams["resolve_floor_terminalization"] = _pass_floor
+                if is_bound:
+                    seams["_get_bound_preregistration_payload"] = lambda *a, **k: {"probe": "bound"}
                 self._generate(**seams)
                 self.assertEqual(len(self.calls), 1, f"expected one supersede call: {self.calls}")
                 self.assertEqual(self.calls[0][1]["candidate_tier"], expected)
-
-def _pass_floor(**fields: str) -> "dc.FloorTerminalization":
-    """The floor's no-op shape for every input — the bound candidate stays pending auto."""
-    return dc.FloorTerminalization(
-        classification=fields["classification"],
-        approval_tier=fields["approval_tier"],
-        status_value=fields["status_value"],
-        rationale=fields["rationale"],
-        terminalized=False,
-        promotion_tier=fields["promotion_tier"],
-    )
 
 
 if __name__ == "__main__":
