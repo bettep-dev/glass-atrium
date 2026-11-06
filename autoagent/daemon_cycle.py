@@ -6643,7 +6643,7 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
     return max((current - last).days, 0)
 
 
-def _get_last_applied_date(current_cycle_date: str) -> object:
+def _get_last_applied_date(current_cycle_date: str) -> date | str | None:
     """The latest applied row's landing day on or before `current_cycle_date`; None when no
     row lands there or the read fails (fail-open, the failure on stderr)."""
     landed_on = "coalesce((reviewed_at AT TIME ZONE 'UTC')::date, cycle_date)"
