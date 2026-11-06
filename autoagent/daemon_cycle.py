@@ -11662,6 +11662,8 @@ def invalidate_aa(start_id: int, cause: str, *, is_confirmed: bool = False) -> i
     start carries the running A/A and its closure is irreversible (the ledger is append-only), so
     it needs is_confirmed — unconfirmed → ExitCode.AA_INVALIDATION_UNCONFIRMED; a closed start
     needs none. Readers honour the record only on installed code that carries them.
+    Closing the open start removes every canary file but an open live trial's at once, as the
+    cycle's closed-A/A step does; a closed start's invalidation removes none.
     """
     cause = cause.strip()
     if not cause:
@@ -11703,6 +11705,9 @@ def _write_aa_invalidation(start_id: int, cause: str, *, is_open: bool) -> int:
         return _refuse_aa_invalidation(AA.REFUSAL.LEDGER_UNWRITABLE, _describe_fault(exc))
     if landed != 1:
         return _report_aa_invalidation(start_id)
+    if is_open:
+        # the hook delivers a file by its lease, not by ledger state → removed now, not next cycle
+        _delete_aa_canaries("the A/A is invalidated")
     closure = "it was the open A/A, now closed irreversibly" if is_open else "it reads as closed"
     sys.stderr.write(
         f"[daemon-cycle] INFO: A/A {start_id} invalidated (cause: {cause!r}); {closure}, "
@@ -16687,8 +16692,8 @@ def _main(argv: list[str]) -> int:
         default=None,
         metavar="START_ID",
         help="Record the A/A of START_ID void-by-defect (one aa-invalidation ledger row naming "
-        "--cause), then exit (no cycle): an open start reads as closed, and its result's design "
-        "effects size nothing. Refused with exit 16 and a named reason; the open start without "
+        "--cause), then exit (no cycle): an open start reads as closed, its canary files but an "
+        "open live trial's are removed, and its result's design effects size nothing. Refused with exit 16 and a named reason; the open start without "
         "--confirm-open-aa refused with exit 17; takes no --dry-run.",
     )
     parser.add_argument(

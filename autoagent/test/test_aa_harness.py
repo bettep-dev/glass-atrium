@@ -2428,6 +2428,34 @@ class AaCanaryTest(_AaResultFixture):
 
         self.assertEqual(set(self._get_canaries()), set(_ROSTER))
 
+    def test_an_invalidation_removes_the_canaries_only_when_it_closes_the_open_aa(self) -> None:
+        # name, whether the invalidated start is the open one, the canaries left after it
+        rows = (
+            ("the open A/A", True, [_ROSTER[0]]),
+            ("an earlier start, with a later A/A open", False, list(_ROSTER)),
+        )
+        for name, is_open, kept in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self._open()
+                if not is_open:
+                    self._close()
+                    self.ledger.write(
+                        stub.get_trial_ledger().EVENT.AA_START,
+                        stub.get_trial_ledger().ACTOR.AA,
+                        {"fingerprint": dict(_SCOPED), "duration": _DURATION},
+                        dedupe_key="aa-start:after:1",
+                    )
+                self._open_trial(_ROSTER[0])
+                for stem in _ROSTER:
+                    self._put_canary(stem, "")
+
+                with contextlib.redirect_stderr(io.StringIO()):
+                    code = dc.invalidate_aa(1, "a canary fault", is_confirmed=True)
+
+                self.assertEqual(code, 0)
+                self.assertEqual(list(self._get_canaries()), kept)
+
     def test_unreadable_open_trials_leave_every_canary_in_place_with_a_named_warn(self) -> None:
         self._close()
         paths = [self._put_canary(stem, "") for stem in _ROSTER]
