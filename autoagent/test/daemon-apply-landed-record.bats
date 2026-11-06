@@ -202,6 +202,7 @@ run_apply() {
   shift
   run env PATH="${STUB}:${PATH}" \
     HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
+    GIT_CONFIG_GLOBAL="${FAKE_HOME}/.gitconfig" \
     AUTOAGENT_REMOVAL_LIVE=1 \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     AUTOAGENT_PREFLIGHT_ACTIVE=1 \
@@ -599,7 +600,7 @@ has_abort_row() {
   # name | body builder | diff
   local rows=(
     "CR-ended hunk on a body turned CRLF mid-trial: the added line keeps a CR its text never held|build_crlf_body|cr_hunk_diff"
-    "autocrlf write: the added line is the text, every line around it rewritten CRLF|build_autocrlf_write|offset_diff"
+    "autocrlf write: the stored diff's added line hashes to the text, but every line lands rewritten CRLF, the added one included|build_autocrlf_write|offset_diff"
   )
   local row name body_fn diff_fn pristine="${WORK}/probe.pristine"
   cp -p -- "${BEFORE}" "${pristine}"

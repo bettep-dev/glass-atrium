@@ -1078,7 +1078,7 @@
     "autoagent/test/daemon-apply-dryrun-log-seam.bats": "f6f85b012b6cc5188a2ecf174648cddfd38157926e50e2d759f0596e47965c8a",
     "autoagent/test/daemon-apply-facade-smoke.bats": "28b28ea38761fdccda5e5c1879b038fd81be159f633a8d2c643b82559514ea66",
     "autoagent/test/daemon-apply-json-fallback-haiku-guard.bats": "42734d96c54685f333853f321c96c59a61a3744e4f46ab0ea42b7248d7b01f3e",
-    "autoagent/test/daemon-apply-landed-record.bats": "3acf56ad3fc210d3a4419371b67782544822551227e063df5ead516210be1e04",
+    "autoagent/test/daemon-apply-landed-record.bats": "3957b67367ec39ea2255d588f8935618665d310529ddd6c35eda11674077a2a3",
     "autoagent/test/daemon-apply-landing-zone.bats": "1c4bf50da0c180a28252bbb5ea2472106694b6cb556e49589161b6c462a662b8",
     "autoagent/test/daemon-apply-marker-preservation.bats": "03b0c6b605ad9443de1094f3bd6774766267edd0139b1a34e2916a4a1084e182",
     "autoagent/test/daemon-apply-parked-guard.bats": "dd0d620f28ff47ff4fcfda6fac0cf895fdbe6234a6af22318f7595ba5b9c93ee",
