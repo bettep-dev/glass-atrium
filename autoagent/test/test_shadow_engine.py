@@ -4540,82 +4540,82 @@ _OFF_MAP_AGENT = "glass-atrium-user-added"
 _DESIGN_EFFECT_KEYS = ("design_effect_1", "design_effect_2")
 
 
-class _RecordedMeasurement(NamedTuple):
-    """One deciding agent's recorded inputs and its minimum detectable harms, both stages."""
+class _SyntheticMeasurement(NamedTuple):
+    """One synthetic agent's harm-sizing inputs and its minimum detectable harms, both stages."""
 
-    agent: str
+    name: str
     guardrail_count: int
     primary_rate: float
     per_arm: int
     readings: tuple  # GuardrailBaseline fields, tool_use as (mean, sd)
-    # check → design effect → (trial at α 0.05, watch at 0.05/k)
+    # check → design effect → (trial at α 0.05, watch at 0.05/k); independent computation, not trial_design
     harms: dict
 
 
-_RECORDED_MEASUREMENTS = (
-    _RecordedMeasurement(
-        "glass-atrium-qa-code-reviewer",
+_SYNTHETIC_MEASUREMENTS = (
+    _SyntheticMeasurement(
+        "agent A, k 3",
         3,
-        0.062,
-        2432,
-        (246 / 3994, 0.01, (23.78, 15.37)),
+        0.05,
+        2000,
+        (0.06, 0.01, (24.0, 15.0)),
         {
-            "no_subagent_stop": ((1.30, 1.36), (1.43, 1.52)),
-            "tool_use": ((1.10, 1.31), (1.55, 1.85)),
+            "no_subagent_stop": ((1.334, 1.405), (1.487, 1.592)),
+            "tool_use": ((1.179, 1.409), (1.668, 1.992)),
         },
     ),
-    _RecordedMeasurement(
-        "glass-atrium-dev-shell",
+    _SyntheticMeasurement(
+        "agent B, k 4",
         4,
-        0.166,
-        790,
-        (119 / 2121, 21 / 2050, (27.11, 21.02)),
+        0.15,
+        800,
+        (0.05, 0.01, (27.0, 21.0)),
         {
-            "no_subagent_stop": ((1.58, 1.74), (1.85, 2.10)),
-            "verified_fail": ((2.65, 3.19), (3.62, 4.55)),
-            "tool_use": ((2.63, 3.26), (3.72, 4.61)),
+            "no_subagent_stop": ((1.614, 1.784), (1.912, 2.177)),
+            "verified_fail": ((2.667, 3.211), (3.645, 4.586)),
+            "tool_use": ((2.611, 3.237), (3.692, 4.578)),
         },
     ),
-    _RecordedMeasurement(
-        "glass-atrium-dev-nestjs",
+    _SyntheticMeasurement(
+        "agent C, k 4",
         4,
-        0.097,
-        1485,
-        (29 / 1285, 36 / 1293, (25.12, 14.50)),
+        0.10,
+        1200,
+        (0.02, 0.03, (25.0, 14.0)),
         {
-            "no_subagent_stop": ((1.69, 1.89), (2.04, 2.35)),
-            "verified_fail": ((1.61, 1.78), (1.91, 2.18)),
-            "tool_use": ((1.32, 1.64), (1.87, 2.32)),
+            "no_subagent_stop": ((1.843, 2.088), (2.277, 2.672)),
+            "verified_fail": ((1.662, 1.848), (1.989, 2.282)),
+            "tool_use": ((1.421, 1.762), (2.010, 2.492)),
         },
     ),
-    _RecordedMeasurement(
-        "glass-atrium-dev-react",
+    _SyntheticMeasurement(
+        "agent D, k 4",
         4,
-        0.185,
-        690,
-        (87 / 1192, 10 / 1113, (16.25, 10.42)),
+        0.20,
+        600,
+        (0.07, 0.01, (16.0, 10.0)),
         {
-            "no_subagent_stop": ((1.53, 1.67), (1.78, 2.00)),
-            "verified_fail": ((2.97, 3.64), (4.17, 5.34)),
-            "tool_use": ((1.40, 1.73), (1.97, 2.45)),
+            "no_subagent_stop": ((1.588, 1.749), (1.870, 2.119)),
+            "verified_fail": ((3.011, 3.691), (4.236, 5.431)),
+            "tool_use": ((1.436, 1.780), (2.030, 2.517)),
         },
     ),
-    _RecordedMeasurement(
-        "glass-atrium-meta-prompt-engineer",
+    _SyntheticMeasurement(
+        "agent E, k 3",
         3,
-        0.150,
-        899,
-        (58 / 787, 0.01, (26.01, 17.81)),
+        0.12,
+        1000,
+        (0.08, 0.01, (26.0, 18.0)),
         {
-            "no_subagent_stop": ((1.46, 1.55), (1.67, 1.82)),
-            "tool_use": ((2.09, 2.49), (2.95, 3.53)),
+            "no_subagent_stop": ((1.410, 1.497), (1.599, 1.731)),
+            "tool_use": ((2.002, 2.391), (2.831, 3.381)),
         },
     ),
 )
 
 
 def _get_harm_checks(
-    row: _RecordedMeasurement, *, metric_key: str = _BUDGET_KEY
+    row: _SyntheticMeasurement, *, metric_key: str = _BUDGET_KEY
 ) -> dict:
     no_stop_rate, verified_fail_rate, tool_use = row.readings
     return dc.get_harm_checks(
@@ -4726,37 +4726,37 @@ class HarmCheckTest(unittest.TestCase):
                         msg=label,
                     )
 
-    def _assert_recorded_column(self, column: int) -> None:
-        for row in _RECORDED_MEASUREMENTS:
+    def _assert_harm_column(self, column: int) -> None:
+        for row in _SYNTHETIC_MEASUREMENTS:
             guardrails = _get_harm_checks(row)["guardrails"]
             for name, by_design_effect in row.harms.items():
                 for key, pair in zip(_DESIGN_EFFECT_KEYS, by_design_effect):
                     stage = ("trial", "watch")[column]
                     actual = guardrails[name][stage]["minimum_detectable"][key]
-                    # inputs as recorded, each rounded → ±0.01 on the recorded figure
+                    # expected figures rounded to 3 places → ±0.0005
                     self.assertAlmostEqual(
                         actual,
                         pair[column],
-                        delta=0.01,
-                        msg=f"{row.agent} {name} {stage} {key}",
+                        delta=5e-4,
+                        msg=f"{row.name} {name} {stage} {key}",
                     )
 
-    def test_trial_minimum_detectable_harms_reproduce_the_recorded_measurement_at_alpha_005(
+    def test_trial_minimum_detectable_harms_match_an_independent_computation_at_alpha_005(
         self,
     ) -> None:
-        self._assert_recorded_column(0)
+        self._assert_harm_column(0)
 
-    def test_watch_minimum_detectable_harms_reproduce_the_recorded_measurement_at_the_family_share(
+    def test_watch_minimum_detectable_harms_match_an_independent_computation_at_the_family_share(
         self,
     ) -> None:
-        self._assert_recorded_column(1)
+        self._assert_harm_column(1)
 
     def test_the_watch_widens_on_the_shipped_fixed_sample_drift_scale_by_1194_and_1240(
         self,
     ) -> None:
         for row, ratio in (
-            (_RECORDED_MEASUREMENTS[0], 1.194),
-            (_RECORDED_MEASUREMENTS[1], 1.240),
+            (_SYNTHETIC_MEASUREMENTS[0], 1.194),
+            (_SYNTHETIC_MEASUREMENTS[1], 1.240),
         ):
             guardrails = _get_harm_checks(row)["guardrails"]
             # re-delegation is a mean shift like the band: its model-based columns widen the same
@@ -4779,18 +4779,18 @@ class HarmCheckTest(unittest.TestCase):
                         places=3,
                         msg=f"{name} {key}",
                     )
-        # a rate guardrail widens more in its own unit at these low rates (leg ×1.271-1.299 at k 4)
-        leg = _get_harm_checks(_RECORDED_MEASUREMENTS[1])["guardrails"][
+        # a rate guardrail widens more in its own unit than on the drift scale at a low rate (k 4)
+        leg = _get_harm_checks(_SYNTHETIC_MEASUREMENTS[1])["guardrails"][
             "no_subagent_stop"
         ]["widening"]["own_unit"]
-        self.assertTrue(1.271 - 0.005 <= leg["design_effect_1"] <= 1.299 + 0.005, leg)
+        self.assertAlmostEqual(leg["design_effect_1"], 1.276, delta=5e-4)
 
     def test_the_watch_widens_by_1187_and_1231_with_each_alphas_four_look_inflation(
         self,
     ) -> None:
         for row, ratio in (
-            (_RECORDED_MEASUREMENTS[0], 1.187),
-            (_RECORDED_MEASUREMENTS[1], 1.231),
+            (_SYNTHETIC_MEASUREMENTS[0], 1.187),
+            (_SYNTHETIC_MEASUREMENTS[1], 1.231),
         ):
             guardrails = _get_harm_checks(row)["guardrails"]
             for name in (*row.harms, "redelegation"):
@@ -4804,8 +4804,8 @@ class HarmCheckTest(unittest.TestCase):
     def test_a_two_sided_band_widens_at_its_per_side_alpha_on_both_drift_forms(self) -> None:
         # a non-overage primary → the tool_use band is two-sided, each stage's α split per side
         rows = [
-            ("k 3", _RECORDED_MEASUREMENTS[0], 1.155, 1.150),
-            ("k 4", _RECORDED_MEASUREMENTS[1], 1.192, 1.186),
+            ("k 3", _SYNTHETIC_MEASUREMENTS[0], 1.155, 1.150),
+            ("k 4", _SYNTHETIC_MEASUREMENTS[1], 1.192, 1.186),
         ]
         for name, row, fixed_sample, four_look in rows:
             with self.subTest(name):
