@@ -9430,8 +9430,7 @@ _AA_INVALIDATED_TRIAL_SQL = (
 _OPEN_LIVE_TRIAL_SQL = (
     "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id " + _OPEN_LIVE_TRIAL_FROM
 )
-# held live trial: open, or won with its proposal row pending — the row leaving pending ends it
-# the event bound as one parameter
+# held live trial: open, or won with its row pending (leaving pending ends it) · binds the event
 _HELD_LIVE_TRIAL_SQL = (
     "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id "
     "FROM core.autoagent_trial_ledger p WHERE p.event = %s AND (NOT EXISTS ("
@@ -10832,7 +10831,7 @@ def _write_horizon_decision(trial: StartedTrial, counted: Sequence[ArmedSpawn]) 
         _write_look_time_decision(canary, void or retire, "its horizon")
 
 
-def _write_look_time_decision(canary: TrialCanary, payload: dict, at: str) -> bool:
+def _write_look_time_decision(canary: TrialCanary, payload: dict, occasion: str) -> bool:
     """The trial's decision row, its one top-level key the outcome → True unless the write
     faulted: named WARN, the trial left open. A win whose row landed removes the trial's canary
     file."""
@@ -10841,12 +10840,12 @@ def _write_look_time_decision(canary: TrialCanary, payload: dict, at: str) -> bo
         landed = _write_live_decision(canary.key, canary.agent, canary.pattern_id, payload)
     except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
         _warn_shadow(
-            f"trial {canary.key}: {outcome} decision at {at} not recorded: {_describe_fault(exc)}",
+            f"trial {canary.key}: {outcome} decision at {occasion} not recorded: {_describe_fault(exc)}",
             "the trial stays open",
         )
         return False
     sys.stderr.write(
-        f"[daemon-cycle] INFO: shadow stage — trial {canary.key}: {outcome} decision at {at} "
+        f"[daemon-cycle] INFO: shadow stage — trial {canary.key}: {outcome} decision at {occasion} "
         f"({landed} row landed)\n"
     )
     if outcome == "win" and landed:
