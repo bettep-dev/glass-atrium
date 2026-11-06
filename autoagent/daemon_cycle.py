@@ -1465,7 +1465,7 @@ def match_budget_family(pattern_label: str, target_file: str, diff: str) -> str 
 # Ladder mention → candidate → proposal → instruction-edit | skill-candidate on a
 # Beta-Binomial posterior (lib/confidence.py); rungs → classify_promotion_tier.
 # A proposal-row label only: run_cycle stamps the 'mention' floor → no rung gates
-# generation or apply; a body changes only on a live trial's win.
+# generation or apply; a pre-registered row lands only on its live trial's win.
 
 # Add lib/ to sys.path — the daemon runs from autoagent root, where lib/ may not
 # be on the path automatically.
