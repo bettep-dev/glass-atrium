@@ -1323,7 +1323,8 @@ select_single_proposal() {
 
 # assert_trial_decision_state — exit 27 unless the live trial that pre-registered PROPOSAL_ID lets
 # REVIEW_ACTOR apply it: no such trial → any actor · won → the machine actor alone, the cycle's
-# graduation · open or decided without a win → nobody. The row's status adds no leg: a won row
+# graduation, carrying the pre-registered hash its landing must match (TRIAL_TEXT_SHA256) · open
+# or decided without a win → nobody. The row's status adds no leg: a won row
 # drained to snoozed is still the machine actor's alone. A read that fails or answers anything but
 # one state line is refused too — a trial that cannot be read is never "no trial".
 assert_trial_decision_state() {
@@ -1729,8 +1730,9 @@ sys.stdout.write("\n".join(out))
 # absence (the rules files and the global-rules file never carried frontmatter).
 # Checks: non-empty · one heading · present-before frontmatter kept · editable-
 # region marker COUNTS not reduced · the multiset of lines absent after the apply
-# equal to the declared removal set (gate-armed patches only) · not shrunk below
-# half the before-image line count.
+# equal to the declared removal set (gate-armed patches only) · a won trial's
+# landed lines equal to its pre-registered text (is_trialled_text_landed) · not
+# shrunk below half the before-image line count.
 #
 # Why the marker check COUNTS rather than tests presence: a patch that deletes one
 # END marker of several leaves markers present while silently merging two regions
@@ -1838,9 +1840,10 @@ verify_patched() {
 # inserted, in order, as git apply wrote them, and those bytes hash to TRIAL_TEXT_SHA256.
 # Why the written bytes, not get_canary_text(PATCH_DIFF): the canary text drops a CR ending an added
 # line, which git apply keeps — a CR-ended hunk landing on a body turned CRLF mid-trial would write
-# bytes the trial never ran under a matching hash. Why an interleave, not a line diff of the two
-# images: a diff aligns an added line equal to its neighbour either way, so a legitimate landing
-# could read as other text.
+# bytes the trial never ran under a matching hash. Why the whole image, not the added lines alone:
+# git apply's write can convert the other lines too (core.autocrlf, an eol attribute). Why an
+# interleave, not a line diff of the two images: a diff aligns an added line equal to its neighbour
+# either way, so a legitimate landing could read as other text.
 _PY_TRIALLED_TEXT_LANDED='
 import hashlib, sys
 

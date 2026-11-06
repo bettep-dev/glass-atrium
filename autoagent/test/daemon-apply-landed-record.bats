@@ -596,21 +596,47 @@ has_abort_row() {
 }
 
 @test "a graduation whose landed lines are not its pre-registered text applies nothing and counts one stale attempt" {
-  # the body turned CRLF mid-trial: the CR-ended hunk now lands, writing a CR the trialled text never held
+  # name | body builder | diff
+  local rows=(
+    "CR-ended hunk on a body turned CRLF mid-trial: the added line keeps a CR its text never held|build_crlf_body|cr_hunk_diff"
+    "autocrlf write: the added line is the text, every line around it rewritten CRLF|build_autocrlf_write|offset_diff"
+  )
+  local row name body_fn diff_fn pristine="${WORK}/probe.pristine"
+  cp -p -- "${BEFORE}" "${pristine}"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name body_fn diff_fn <<<"${row}"
+    cp -p -- "${pristine}" "${BEFORE}"
+    printf 'pending' >"${PG}/row-status"
+    : >"${PG}/psql.log"
+    : >"${FAKE_HOME}/.gitconfig"
+    "${body_fn}"
+    STUB_TRIAL="won|${TRIAL_SHA}" run_apply "${diff_fn}" --proposal-id "${ROW_ID}" --actor daemon-apply-flip
+    [[ "${status}" -eq 9 && "${output}" == *"trialled_text_mismatch"* ]] || {
+      echo "${name}: exit ${status}: ${output}"
+      return 1
+    }
+    cmp -s "${PROBE}" "${BEFORE}" || {
+      echo "${name}: target changed: ${output}"
+      return 1
+    }
+    [[ "$(cat "${PG}/row-status")" == "pending" && "$(insert_count)" -eq 0 ]] \
+      && grep -q 'stale_attempt_count' "${PG}/psql.log" || {
+      echo "${name}: row $(cat "${PG}/row-status"), records $(insert_count), stale attempt counted: no: ${output}"
+      return 1
+    }
+  done
+}
+
+# The probe body turned CRLF: the CR-ended hunk now lands.
+build_crlf_body() {
   awk '{ printf "%s\r\n", $0 }' "${BEFORE}" >"${PROBE}"
   cp -p -- "${PROBE}" "${BEFORE}"
-  STUB_TRIAL="won|${TRIAL_SHA}" run_apply cr_hunk_diff --proposal-id "${ROW_ID}" --actor daemon-apply-flip
-  [[ "${status}" -eq 9 && "${output}" == *"trialled_text_mismatch"* ]] || {
-    echo "${output}"
-    return 1
-  }
-  cmp -s "${PROBE}" "${BEFORE}" || {
-    echo "target changed: ${output}"
-    return 1
-  }
-  [[ "$(cat "${PG}/row-status")" == "pending" && "$(insert_count)" -eq 0 ]] \
-    && grep -q 'stale_attempt_count' "${PG}/psql.log" || {
-    echo "row $(cat "${PG}/row-status"), records $(insert_count), stale attempt counted: no: ${output}"
-    return 1
-  }
+}
+
+# A frontmatter-less probe body (the rules-file class, where no first-line check sees a CR) applied
+# under the user's core.autocrlf: git apply's write converts every line, not only the added one.
+build_autocrlf_write() {
+  sed '1,3d' "${BEFORE}" >"${PROBE}"
+  cp -p -- "${PROBE}" "${BEFORE}"
+  printf '[core]\n\tautocrlf = true\n' >"${FAKE_HOME}/.gitconfig"
 }
