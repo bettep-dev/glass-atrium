@@ -1839,12 +1839,9 @@ verify_patched() {
 
 # is_trialled_text_landed BEFORE TARGET — 0 when TARGET is BEFORE with the stored diff's added lines
 # inserted, in order, as git apply wrote them, and those bytes hash to TRIAL_TEXT_SHA256.
-# Why the written bytes, not get_canary_text(PATCH_DIFF): the canary text drops a CR ending an added
-# line, which git apply keeps — a CR-ended hunk landing on a body turned CRLF mid-trial would write
-# bytes the trial never ran under a matching hash. Why the whole image, not the added lines alone:
-# git apply's write can convert the other lines too (core.autocrlf, an eol attribute). Why an
-# interleave, not a line diff of the two images: a diff aligns an added line equal to its neighbour
-# either way, so a legitimate landing could read as other text.
+# - written bytes, not get_canary_text → it drops an added line's CR git apply keeps → untrialled bytes, hash equal
+# - whole image, not the added lines alone → git apply's write can convert other lines (core.autocrlf, eol attribute)
+# - interleave, not a line diff → a diff aligns an added line equal to its neighbour either way (landing misread)
 _PY_TRIALLED_TEXT_LANDED='
 import hashlib, sys
 
