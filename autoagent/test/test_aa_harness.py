@@ -3780,9 +3780,7 @@ class AaSpawnUnitReadLivePgTest(_AaLivePgFixture):
         import _pg_learning_dualwrite as pgdw
 
         self._patch("_pg_read_spawn_facts", pgdw._read_spawn_facts)
-        connect = functools.partial(
-            self.psycopg.connect, dbname=self.dbname, connect_timeout=2, autocommit=True
-        )
+        connect = functools.partial(get_connection, self.dbname, autocommit=True)
         patcher = mock.patch.object(
             pgdw, "psycopg", SimpleNamespace(connect=lambda *a, **k: connect())
         )

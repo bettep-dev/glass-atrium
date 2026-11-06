@@ -33,7 +33,7 @@ for _path in (
 
 import _pg_stub_backend as backend  # noqa: E402 — anchors above
 import trial_design  # noqa: E402
-from _pg_seal import get_ephemeral_connection  # noqa: E402
+from _pg_seal import get_connection, get_ephemeral_connection  # noqa: E402
 
 _TRIAL_KEY = "a" * 64
 _AGENT = "glass-atrium-dev-python"
@@ -315,13 +315,11 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _run_admin(self, statement: str) -> None:
-        with self.psycopg.connect(
-            dbname="eph_bootstrap", connect_timeout=2, autocommit=True
-        ) as admin:
+        with get_connection("eph_bootstrap", autocommit=True) as admin:
             admin.execute(statement)
 
     def _connect(self):
-        return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
+        return get_connection(self.dbname)
 
     def _get_rows(self) -> list[tuple]:
         with self._connect() as conn, conn.cursor() as cur:

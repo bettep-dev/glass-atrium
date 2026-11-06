@@ -108,7 +108,8 @@ _seed_pattern() {
 # $1 database, $2 learning_log id → one proposal pushed through the real helper with its pattern
 # link and input version; refuses to run unless libpq is pointed at this suite's cluster.
 _push_linked_proposal() {
-  LF_DB="${1}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts" \
+  LF_DB="${1}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" \
+    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}" \
     python3 - "${2}" <<'PY'
 import os
 import sys
@@ -116,12 +117,12 @@ import sys
 if os.environ.get("PGHOST") != os.environ["LF_EXPECT_PGHOST"]:
     sys.exit("PGHOST is not the ephemeral cluster's socket dir — refusing to write")
 
-import psycopg
+from _pg_seal import get_connection
 
 import _pg_dual_write_daemon as helper
 
 # The helper names glass_atrium; this row's database is a sibling on the same cluster.
-helper._connect = lambda: psycopg.connect(dbname=os.environ["LF_DB"], connect_timeout=2)
+helper._connect = lambda: get_connection(os.environ["LF_DB"])
 helper.write_autoagent_proposal(
     cycle_date="2026-10-05",
     pattern_label="pattern-link",
@@ -220,20 +221,21 @@ PY
   # shellcheck disable=SC2154  # BATS_TEST_TMPDIR comes from bats
   run --separate-stderr env LF_DB="${db}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" \
     GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data" \
-    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/.." python3 - <<'PY'
+    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/..:${BATS_TEST_DIRNAME}" \
+    python3 - <<'PY'
 import os
 import sys
 
 if os.environ.get("PGHOST") != os.environ["LF_EXPECT_PGHOST"]:
     sys.exit("PGHOST is not the ephemeral cluster's socket dir — refusing to write")
 
-import psycopg
+from _pg_seal import get_connection
 
 import _pg_dual_write_daemon as helper
 import daemon_cycle as daemon
 
 # The helper names glass_atrium; this row's database is a sibling on the same cluster.
-helper._connect = lambda: psycopg.connect(dbname=os.environ["LF_DB"], connect_timeout=2)
+helper._connect = lambda: get_connection(os.environ["LF_DB"])
 unstarted, foreign = daemon.LIVE_TRIAL.UNSTARTED_REASON, daemon.CANARY.VOID_REASON
 rows = (
     (1, "glass-atrium-dev-shell", unstarted),
@@ -284,7 +286,8 @@ PY
   # shellcheck disable=SC2154  # BATS_TEST_TMPDIR comes from bats
   run --separate-stderr env LF_DB="${db}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" \
     GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data" \
-    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/.." python3 - <<'PY'
+    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/..:${BATS_TEST_DIRNAME}" \
+    python3 - <<'PY'
 import os
 import sys
 from pathlib import Path
@@ -292,14 +295,14 @@ from pathlib import Path
 if os.environ.get("PGHOST") != os.environ["LF_EXPECT_PGHOST"]:
     sys.exit("PGHOST is not the ephemeral cluster's socket dir — refusing to write")
 
-import psycopg
+from _pg_seal import get_connection
 
 import _pg_dual_write_daemon as helper
 import daemon_cycle as daemon
 
 
 def connect():
-    return psycopg.connect(dbname=os.environ["LF_DB"], connect_timeout=2)
+    return get_connection(os.environ["LF_DB"])
 
 
 # The helper and the daemon name glass_atrium; this table's database is a sibling on the same cluster.
@@ -416,21 +419,22 @@ PY
   createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T trial_ledger_tpl "${db}" || return 1
 
   run --separate-stderr env LF_DB="${db}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" \
-    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/.." python3 - <<'PY'
+    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/..:${BATS_TEST_DIRNAME}" \
+    python3 - <<'PY'
 import os
 import sys
 
 if os.environ.get("PGHOST") != os.environ["LF_EXPECT_PGHOST"]:
     sys.exit("PGHOST is not the ephemeral cluster's socket dir — refusing to write")
 
-import psycopg
+from _pg_seal import get_connection
 
 import _pg_dual_write_daemon as helper
 import daemon_cycle as daemon
 
 
 def connect():
-    return psycopg.connect(dbname=os.environ["LF_DB"], connect_timeout=2)
+    return get_connection(os.environ["LF_DB"])
 
 
 helper._connect = daemon._pg_connect = connect
@@ -503,21 +507,22 @@ PY
   # shellcheck disable=SC2154  # BATS_TEST_TMPDIR comes from bats
   run --separate-stderr env LF_DB="${db}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" \
     GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data" \
-    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/.." python3 - <<'PY'
+    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/..:${BATS_TEST_DIRNAME}" \
+    python3 - <<'PY'
 import os
 import sys
 
 if os.environ.get("PGHOST") != os.environ["LF_EXPECT_PGHOST"]:
     sys.exit("PGHOST is not the ephemeral cluster's socket dir — refusing to write")
 
-import psycopg
+from _pg_seal import get_connection
 
 import _pg_dual_write_daemon as helper
 import daemon_cycle as daemon
 
 
 def connect():
-    return psycopg.connect(dbname=os.environ["LF_DB"], connect_timeout=2)
+    return get_connection(os.environ["LF_DB"])
 
 
 # The helper and the daemon name glass_atrium; this table's database is a sibling on the same cluster.

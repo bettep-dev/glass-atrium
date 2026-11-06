@@ -53,7 +53,12 @@ import _pg_stub_backend as stub
 import daemon_cycle as dc
 import trial_design
 from _outcome_signal import SpawnFacts, WindowStarts, get_pair_windows, is_floor_half
-from _pg_seal import get_ephemeral_connection, seal_pg_reach, set_install_tree
+from _pg_seal import (
+    get_connection,
+    get_ephemeral_connection,
+    seal_pg_reach,
+    set_install_tree,
+)
 
 _NOW = datetime(2026, 10, 5, 6, 0, tzinfo=timezone.utc)
 _DAY = get_pair_windows(_NOW).end  # D
@@ -2774,9 +2779,6 @@ class _LivePgFixture(_ShadowFixture):
 
     def setUp(self) -> None:
         get_ephemeral_connection().close()
-        import psycopg
-
-        self.psycopg = psycopg
         super().setUp()
 
     def _use_database(self, template: str) -> None:
@@ -2786,13 +2788,11 @@ class _LivePgFixture(_ShadowFixture):
         self._patch("_pg_connect", self._connect)
 
     def _run_admin(self, statement: str) -> None:
-        with self.psycopg.connect(
-            dbname="eph_bootstrap", connect_timeout=2, autocommit=True
-        ) as admin:
+        with get_connection("eph_bootstrap", autocommit=True) as admin:
             admin.execute(statement)
 
     def _connect(self):
-        return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
+        return get_connection(self.dbname)
 
     def _insert_proposal(self, cycle_date: str, *, status: str = "applied", agent: str = _AGENT) -> int:
         """One proposal row whose added line names its own label → its id."""

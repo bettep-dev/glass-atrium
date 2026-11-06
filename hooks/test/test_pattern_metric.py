@@ -1811,10 +1811,10 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
                 self.assertEqual(unknown, known)
 
     def test_a_schema_without_the_exposure_columns_reads_its_spawns_unexposed(self) -> None:
-        import psycopg
+        from _pg_seal import get_connection
 
         # Built by live-pg-ephemeral.bats up to the migration adding the exposure columns.
-        absent = psycopg.connect(dbname="spawn_manifest_exposure_absent", connect_timeout=2)
+        absent = get_connection("spawn_manifest_exposure_absent")
         self.addCleanup(absent.close)
         self.addCleanup(absent.rollback)
         with absent.cursor() as cur:

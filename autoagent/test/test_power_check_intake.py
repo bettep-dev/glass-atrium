@@ -55,7 +55,7 @@ from _outcome_signal import (
     get_pair_windows,
     is_floor_half,
 )
-from _pg_seal import get_ephemeral_connection, seal_pg_reach
+from _pg_seal import get_connection, get_ephemeral_connection, seal_pg_reach
 
 _NOW = datetime(2026, 10, 5, 6, 0, tzinfo=timezone.utc)
 _WINDOWS = get_pair_windows(_NOW)
@@ -892,9 +892,6 @@ class DesignEffectReadLivePgTest(_StageFixture):
 
     def setUp(self) -> None:
         get_ephemeral_connection().close()
-        import psycopg
-
-        self.psycopg = psycopg
         super().setUp()
         self.histories = {_AGENT.PASSING: _get_floor_passing_history(_UNITS.AT_BOUND)}
 
@@ -907,13 +904,11 @@ class DesignEffectReadLivePgTest(_StageFixture):
         self.addCleanup(patcher.stop)
 
     def _run_admin(self, statement: str) -> None:
-        with self.psycopg.connect(
-            dbname="eph_bootstrap", connect_timeout=2, autocommit=True
-        ) as admin:
+        with get_connection("eph_bootstrap", autocommit=True) as admin:
             admin.execute(statement)
 
     def _connect(self):
-        return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
+        return get_connection(self.dbname)
 
     def _insert(
         self, recorded_at: datetime, event: str, payload: dict, dedupe_key: str | None = None

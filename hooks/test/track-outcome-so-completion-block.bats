@@ -29,6 +29,8 @@
 # scopes the row assertions + the teardown DELETE.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
+# _pg_seal.get_connection: the bounded connect retry this file's row reads share
+SEAL_DIR="${BATS_TEST_DIRNAME}/../../autoagent/test"
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
@@ -98,12 +100,13 @@ setup() {
 
 teardown() {
   if [[ -n "${UNIQUE_AGENT:-}" && -n "${PSYCOPG_PP:-}" ]]; then
-    CB_AGENT="${UNIQUE_AGENT}" CB_CTL="${UNIQUE_AGENT}-ctl" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY' >/dev/null 2>&1 || true
-import os, psycopg
+    CB_AGENT="${UNIQUE_AGENT}" CB_CTL="${UNIQUE_AGENT}-ctl" PYTHONPATH="${PSYCOPG_PP}:${SEAL_DIR}" python3 - <<'PY' >/dev/null 2>&1 || true
+import os
+from _pg_seal import get_connection
 agent = os.environ.get("CB_AGENT", "")
 ctl = os.environ.get("CB_CTL", "")
 if agent:
-    with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+    with get_connection("glass_atrium") as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM core.correction_signals WHERE outcome_id IN "
@@ -294,10 +297,11 @@ write_payload() {
 }
 
 count_rows() {
-  CB_AGENT="${UNIQUE_AGENT}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY'
-import os, psycopg
+  CB_AGENT="${UNIQUE_AGENT}" PYTHONPATH="${PSYCOPG_PP}:${SEAL_DIR}" python3 - <<'PY'
+import os
+from _pg_seal import get_connection
 agent = os.environ["CB_AGENT"]
-with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+with get_connection("glass_atrium") as conn:
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM core.outcomes WHERE agent=%s", (agent,))
         print(cur.fetchone()[0])
@@ -309,10 +313,11 @@ PY
 # shape-identical to the writer's INSERT so the scoped-DELETE hygiene is pinned without depending
 # on the CHECK-constraint state (which decides whether a real run generates one).
 hf_count() {
-  CB_REF="${1}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY'
-import os, psycopg
+  CB_REF="${1}" PYTHONPATH="${PSYCOPG_PP}:${SEAL_DIR}" python3 - <<'PY'
+import os
+from _pg_seal import get_connection
 ref = os.environ["CB_REF"]
-with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+with get_connection("glass_atrium") as conn:
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM core.hook_failures WHERE payload_ref=%s", (ref,))
         print(cur.fetchone()[0])
@@ -320,10 +325,11 @@ PY
 }
 
 hf_seed() {
-  CB_REF="${1}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY'
-import os, psycopg
+  CB_REF="${1}" PYTHONPATH="${PSYCOPG_PP}:${SEAL_DIR}" python3 - <<'PY'
+import os
+from _pg_seal import get_connection
 ref = os.environ["CB_REF"]
-with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+with get_connection("glass_atrium") as conn:
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO core.hook_failures "
@@ -335,10 +341,11 @@ PY
 }
 
 hf_delete() {
-  CB_REF="${1}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY'
-import os, psycopg
+  CB_REF="${1}" PYTHONPATH="${PSYCOPG_PP}:${SEAL_DIR}" python3 - <<'PY'
+import os
+from _pg_seal import get_connection
 ref = os.environ["CB_REF"]
-with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+with get_connection("glass_atrium") as conn:
     with conn.cursor() as cur:
         cur.execute("DELETE FROM core.hook_failures WHERE payload_ref=%s", (ref,))
     conn.commit()
@@ -346,13 +353,14 @@ PY
 }
 
 fetch_col() {
-  CB_AGENT="${UNIQUE_AGENT}" CB_COL="${1}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY'
-import os, psycopg
+  CB_AGENT="${UNIQUE_AGENT}" CB_COL="${1}" PYTHONPATH="${PSYCOPG_PP}:${SEAL_DIR}" python3 - <<'PY'
+import os
+from _pg_seal import get_connection
 agent, col = os.environ["CB_AGENT"], os.environ["CB_COL"]
 allowed = {"result", "task_type", "attribution_source", "metric_pass", "confidence",
            "summary", "lesson", "concerns", "downgrade_origin"}
 assert col in allowed, col
-with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+with get_connection("glass_atrium") as conn:
     with conn.cursor() as cur:
         cur.execute("SELECT %s FROM core.outcomes WHERE agent=%%s" % col, (agent,))
         row = cur.fetchone()

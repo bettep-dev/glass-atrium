@@ -23,6 +23,8 @@
 # scopes the count assertion + the teardown DELETE.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
+# _pg_seal.get_connection: the bounded connect retry this file's row reads share
+SEAL_DIR="${BATS_TEST_DIRNAME}/../../autoagent/test"
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
@@ -90,11 +92,12 @@ setup() {
 teardown() {
   # Delete the test row(s) + any FK signals for the unique agent, then drop the temp dir.
   if [[ -n "${UNIQUE_AGENT:-}" && -n "${PSYCOPG_PP:-}" ]]; then
-    TS_AGENT="${UNIQUE_AGENT}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY' >/dev/null 2>&1 || true
-import os, psycopg
+    TS_AGENT="${UNIQUE_AGENT}" PYTHONPATH="${PSYCOPG_PP}:${SEAL_DIR}" python3 - <<'PY' >/dev/null 2>&1 || true
+import os
+from _pg_seal import get_connection
 agent = os.environ.get("TS_AGENT", "")
 if agent:
-    with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+    with get_connection("glass_atrium") as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM core.correction_signals WHERE outcome_id IN "
@@ -166,10 +169,11 @@ write_payload() {
 
 # core.outcomes row count for the unique agent.
 count_rows() {
-  TS_AGENT="${UNIQUE_AGENT}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY'
-import os, psycopg
+  TS_AGENT="${UNIQUE_AGENT}" PYTHONPATH="${PSYCOPG_PP}:${SEAL_DIR}" python3 - <<'PY'
+import os
+from _pg_seal import get_connection
 agent = os.environ["TS_AGENT"]
-with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+with get_connection("glass_atrium") as conn:
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM core.outcomes WHERE agent=%s", (agent,))
         print(cur.fetchone()[0])
@@ -178,12 +182,13 @@ PY
 
 # Fetch a single scalar column for the (single) row of the unique agent.
 fetch_col() {
-  TS_AGENT="${UNIQUE_AGENT}" TS_COL="${1}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY'
-import os, psycopg
+  TS_AGENT="${UNIQUE_AGENT}" TS_COL="${1}" PYTHONPATH="${PSYCOPG_PP}:${SEAL_DIR}" python3 - <<'PY'
+import os
+from _pg_seal import get_connection
 agent, col = os.environ["TS_AGENT"], os.environ["TS_COL"]
 allowed = {"result", "task_type", "attribution_source", "metric_pass", "confidence"}
 assert col in allowed, col
-with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+with get_connection("glass_atrium") as conn:
     with conn.cursor() as cur:
         cur.execute("SELECT %s FROM core.outcomes WHERE agent=%%s" % col, (agent,))
         row = cur.fetchone()

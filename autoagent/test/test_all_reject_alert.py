@@ -45,7 +45,12 @@ if str(_STUB_DIR) not in sys.path:
     sys.path.insert(0, str(_STUB_DIR))
 
 import _pg_stub_backend as stub  # noqa: E402 — stdlib-only, anchored above
-from _pg_seal import get_ephemeral_connection, seal_pg_reach, set_install_tree  # noqa: E402 — test dir anchored above
+from _pg_seal import (  # noqa: E402 — test dir anchored above
+    get_connection,
+    get_ephemeral_connection,
+    seal_pg_reach,
+    set_install_tree,
+)
 
 try:
     import daemon_cycle as dc
@@ -559,9 +564,6 @@ class TestCycleVerdictsLivePg(unittest.TestCase):
 
     def setUp(self) -> None:
         get_ephemeral_connection().close()
-        import psycopg
-
-        self.psycopg = psycopg
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         self.reports_dir = Path(scratch.name) / "daemon-reports"
@@ -579,13 +581,11 @@ class TestCycleVerdictsLivePg(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def _run_admin(self, statement: str) -> None:
-        with self.psycopg.connect(
-            dbname="eph_bootstrap", connect_timeout=2, autocommit=True
-        ) as admin:
+        with get_connection("eph_bootstrap", autocommit=True) as admin:
             admin.execute(statement)
 
     def _connect(self):  # noqa: ANN202 — psycopg is imported lazily
-        return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
+        return get_connection(self.dbname)
 
     def _execute(self, statement: str, params: tuple[object, ...] = ()) -> list[tuple]:
         with self._connect() as conn, conn.cursor() as cur:

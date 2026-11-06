@@ -50,6 +50,7 @@ for _anchor in (
 
 import _pg_stub_backend as stub  # noqa: E402 — anchors above
 from _pg_seal import (  # noqa: E402 — anchors above
+    get_connection,
     get_ephemeral_connection,
     put_install_config,
     seal_pg_reach,
@@ -2165,21 +2166,17 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
 
     def _use_ledger(self) -> None:
         """A ledger clone this test owns, the daemon's reads pointed at it."""
-        import psycopg
-
         dbname = f"mi_{os.getpid()}_{uuid.uuid4().hex[:8]}"
         self._run_admin(f'CREATE DATABASE "{dbname}" TEMPLATE "{self._LEDGER_TEMPLATE}"')
         self.addCleanup(self._run_admin, f'DROP DATABASE "{dbname}" WITH (FORCE)')
-        self.ledger = lambda: psycopg.connect(dbname=dbname, connect_timeout=2)
+        self.ledger = lambda: get_connection(dbname)
         patcher = mock.patch.object(dc, "_pg_connect", self.ledger)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     @staticmethod
     def _run_admin(statement: str) -> None:
-        import psycopg
-
-        with psycopg.connect(dbname="eph_bootstrap", connect_timeout=2, autocommit=True) as admin:
+        with get_connection("eph_bootstrap", autocommit=True) as admin:
             admin.execute(statement)
 
     def _create_ledger_row(
@@ -2321,9 +2318,7 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
         self.assertEqual(stored, [_TREATED.FIELDS, _CONTROL.FIELDS, _PRE_FIELD])
 
     def test_a_schema_without_the_exposure_columns_still_writes_the_row(self) -> None:
-        import psycopg
-
-        absent = psycopg.connect(dbname=self._ABSENT_DB, connect_timeout=2)
+        absent = get_connection(self._ABSENT_DB)
         self.addCleanup(absent.close)
         with absent.cursor() as cur:
             cur.execute(
@@ -2336,9 +2331,7 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
         stderr = io.StringIO()
         with (
             mock.patch.object(
-                self.writer,
-                "_connect",
-                lambda: psycopg.connect(dbname=self._ABSENT_DB, connect_timeout=2),
+                self.writer, "_connect", lambda: get_connection(self._ABSENT_DB)
             ),
             contextlib.redirect_stderr(stderr),
         ):
@@ -2367,10 +2360,8 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
     def test_the_stored_rows_read_on_a_schema_without_the_exposure_columns_names_the_migration(
         self,
     ) -> None:
-        import psycopg
-
         absent = mock.patch.object(
-            dc, "_pg_connect", lambda: psycopg.connect(dbname=self._ABSENT_DB, connect_timeout=2)
+            dc, "_pg_connect", lambda: get_connection(self._ABSENT_DB)
         )
         absent.start()
         self.addCleanup(absent.stop)
