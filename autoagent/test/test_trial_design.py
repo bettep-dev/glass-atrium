@@ -465,6 +465,7 @@ class ArmDifferenceDesignEffect(unittest.TestCase):
     ) -> None:
         # control 30/100, treatment 10/100 → se √(0.3·0.7/100 + 0.1·0.9/100) = √0.003 → z = −0.2 / 0.0547723
         spawns = [(0, 1.0)] * 30 + [(0, 0.0)] * 70 + [(1, 1.0)] * 10 + [(1, 0.0)] * 90
+        # three groupings the clustered variance tells apart (asserted below) → the z reads none
         rows = (
             ("one spawn per session", [[spawn] for spawn in spawns]),
             ("a session per arm", [spawns[:100], spawns[100:]]),
@@ -592,8 +593,8 @@ def _get_statistic(clusters) -> float | None:
     return look.statistic
 
 
-# Synthetic fan-out shape: few look-1 sessions, one cluster near a third of each look's spawns,
-# sessions joining at every look. Spawns closed by looks 1-4, one row per session
+# Synthetic fan-out shape: few look-1 sessions, one cluster near a third of each look's spawns
+# sessions join at every look; spawns closed by looks 1-4, one row per session
 _CALIBRATION = SimpleNamespace(
     SESSIONS=(
         (3, 4, 4, 4),
@@ -639,9 +640,8 @@ def _get_fan_out_looks(generator: random.Random, salt: str) -> list[list[list[tu
 
 class FollowUpRandomizationTest(unittest.TestCase):
     def test_the_statistic_is_the_arm_difference_over_its_session_clustered_standard_error(self) -> None:
-        # control 30/100, treatment 10/100 → se √(0.3·0.7/100 + 0.1·0.9/100) = √0.003 → z = −0.2 / 0.0547723;
-        # a spawn repeated inside its session leaves the clustered term where it was, and would shrink
-        # an independent one by √3
+        # control 30/100, treatment 10/100 → se √(0.3·0.7/100 + 0.1·0.9/100) = √0.003 → z = −0.2 / 0.0547723
+        # a spawn repeated inside its session → the clustered term unchanged; an independent one shrinks by √3
         spawns = [(0, 1.0)] * 30 + [(0, 0.0)] * 70 + [(1, 1.0)] * 10 + [(1, 0.0)] * 90
         rows = (("one spawn per session", 1), ("each spawn repeated inside its session", 3))
         for name, copies in rows:
@@ -681,8 +681,8 @@ class FollowUpRandomizationTest(unittest.TestCase):
         self.assertIsNone(_get_statistic(clusters))
 
     def test_the_observed_draw_takes_a_place_in_the_reference(self) -> None:
-        # 179 re-draws + the observed draw = 180 members → one crossing admitted at look 2; the observed
-        # draw ranks first under the rise and takes it, so no re-draw crosses beside it
+        # 179 re-draws + the observed draw = 180 members → one crossing admitted at look 2
+        # the observed draw ranks first under the rise → it takes that crossing, no re-draw beside it
         look = td.get_randomization_look(
             _get_sessions(rise=50)[:6], get_arm=_get_hash_arm, salt_namespace="redraw", redraws=179, fraction=0.5
         )

@@ -196,10 +196,10 @@ _PROPOSAL_ID = 9001
 _LIVE_KEY = f"{_PROPOSAL_ID:064x}"
 
 
-def _get_agent_ids(*, is_floor: bool):
+def _get_agent_ids(*, is_floor: bool, start: int = 0):
     return (
         agent_id
-        for agent_id in (f"s{index:07x}" for index in itertools.count())
+        for agent_id in (f"s{index:07x}" for index in itertools.count(start))
         if is_floor_half(agent_id) is is_floor
     )
 
@@ -208,6 +208,13 @@ _IDS = SimpleNamespace(
     FLOOR=_get_agent_ids(is_floor=True),
     REFERENCE=_get_agent_ids(is_floor=False),
 )
+# past every id the cached passing history draws → a test's ids never depend on test order
+_TEST_ID_START = 0x1000000
+
+
+def _reset_agent_ids() -> None:
+    _IDS.FLOOR = _get_agent_ids(is_floor=True, start=_TEST_ID_START)
+    _IDS.REFERENCE = _get_agent_ids(is_floor=False, start=_TEST_ID_START)
 
 
 def _spawn(
@@ -665,6 +672,7 @@ class _ShadowFixture(unittest.TestCase):
         self.ledger = _Ledger(self.clock)
         self.ledger.design_effects[_AGENT] = _DESIGN_EFFECT_PAYLOAD
         self.history = list(_get_passing_history())
+        _reset_agent_ids()
         self.patterns = [_pattern()]
         # the roster read at its DB seam: spawns by MANIFEST type; None → the history, every name
         # answered from the asked start; to the asked end unless is_end_honoured is off
@@ -1562,6 +1570,12 @@ class LookTest(_ShadowFixture):
     """Looks of started live trials only: units from the start record, each spawn under its
     recomputed arm, one row per reached milestone."""
 
+    _UNREAD_START_ROWS = (
+        ("no start record", None),
+        ("the open-trials read faults", dc.LIVE_TRIAL.CANARY_SQL),
+        ("the start read faults", dc.LIVE_TRIAL.BINDING_SQL),
+    )
+
     def test_each_reached_look_is_recorded_as_a_live_look_with_its_accrual_and_boundary(
         self,
     ) -> None:
@@ -1610,9 +1624,8 @@ class LookTest(_ShadowFixture):
         for name in _KEYS.LOOK_HARM - {"redelegation"}:
             self.assertEqual(set(harm[name]), _KEYS.HARM_CHECK, name)
 
-    def test_the_look_counts_overage_per_spawn_under_each_spawns_recomputed_arm(self) -> None:
-        _, salt_id = self._open_started_trial()
-        # two spawns per parent session; two overage rows are one event, none is none
+    def _add_paired_session_spawns(self, salt_id: int) -> list[SpawnFacts]:
+        """Look 1's spawns, two per parent session; two overage rows are one event, none none."""
         spawns = [
             spawn._replace(
                 session_id=f"pair-{index // 2}",
@@ -1623,6 +1636,11 @@ class LookTest(_ShadowFixture):
             )
         ]
         self.history += spawns
+        return spawns
+
+    def test_the_look_counts_overage_per_spawn_under_each_spawns_recomputed_arm(self) -> None:
+        _, salt_id = self._open_started_trial()
+        spawns = self._add_paired_session_spawns(salt_id)
         self._cycle(_NEXT_NOW)
         [look] = self._get_looks()
         arms = [_get_arm(salt_id, spawn.agent_id) for spawn in spawns]
@@ -1638,6 +1656,16 @@ class LookTest(_ShadowFixture):
             },
         )
         self.assertEqual(look.payload["accrued_tasks"], len(spawns))
+
+    def test_the_looks_z_is_the_independent_spawn_reduction_whatever_the_spawns_sessions(
+        self,
+    ) -> None:
+        _, salt_id = self._open_started_trial()
+        spawns = self._add_paired_session_spawns(salt_id)
+        self._cycle(_NEXT_NOW)
+        [look] = self._get_looks()
+        arms = [_get_arm(salt_id, spawn.agent_id) for spawn in spawns]
+        events = [spawn.overage_rows > 0 for spawn in spawns]
         # a reduction counts positive: control rate above treatment
         self.assertAlmostEqual(
             look.payload["z"],
@@ -1661,52 +1689,71 @@ class LookTest(_ShadowFixture):
             sum(arm["events"] for arm in look.payload["arms"].values()), len(spawns) - 2
         )
 
-    def test_a_spawn_started_before_the_start_record_is_in_no_arm_and_no_looks_count(
-        self,
-    ) -> None:
-        key = self._open_live_trial()  # committed at _NOW
-        salt_id = self._get_preregistrations()[-1].id
-        start_second = _NOW + timedelta(hours=1)
-        self.clock.now = start_second + timedelta(microseconds=600_000)
-        self._start_trial(key)
+    def test_a_spawn_counts_toward_a_look_only_from_the_start_records_own_second(self) -> None:
         reached = math.ceil(_MILESTONES[0])
-        # after the commit, inside the minute before the start's second, the hook's arm recorded
-        self.history += [
-            _spawn(start_second - timedelta(seconds=1 + index % 60), is_event=True)._replace(
-                arm=1, salt_id=salt_id
-            )
-            for index in range(reached)
-        ]
-        self._cycle(_NEXT_NOW)
-        self.assertEqual(self._get_looks(), [])
-        # the first of these starts in the start record's own second
-        self.history += _get_spawns_after(start_second, reached)
-        self._cycle(_NEXT_NOW)
-        [look] = self._get_looks()
-        self.assertEqual(look.payload["accrued_tasks"], reached)
-        self.assertEqual(sum(arm["units"] for arm in look.payload["arms"].values()), reached)
-
-    def test_a_judged_trial_whose_start_is_not_read_takes_no_look_until_it_is(self) -> None:
+        start_second = _NOW + timedelta(hours=1)
         rows = (
-            ("no start record", None),
-            ("the open-trials read faults", dc.LIVE_TRIAL.CANARY_SQL),
-            ("the start read faults", dc.LIVE_TRIAL.BINDING_SQL),
+            # after the commit, inside the minute before the start's second, the hook's arm recorded
+            ("started in the minute before the start's second: no arm, no look",
+             lambda salt_id: [
+                 _spawn(start_second - timedelta(seconds=1 + index % 60), is_event=True)._replace(
+                     arm=1, salt_id=salt_id
+                 )
+                 for index in range(reached)
+             ], []),
+            ("the first started in the start's own second: every one counted",
+             lambda _salt_id: _get_spawns_after(start_second, reached), [(reached, reached)]),
         )
-        warn = "WARN: shadow stage — trial starts unreadable: ConnectionError"
-        for name, faulted in rows:
+        for name, get_spawns, expected in rows:
             with self.subTest(name):
-                self.ledger.rows.clear()
-                self.history = list(_get_passing_history())
-                self.clock.now = _NOW
-                key = self._open_live_trial()
-                if faulted is not None:
-                    self._start_trial(key)
-                    self.ledger.faulted.add(faulted)
-                self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
-                stderr = self._cycle(_NEXT_NOW)
+                self._reset_ledger()
+                key = self._open_live_trial()  # committed at _NOW
+                salt_id = self._get_preregistrations()[-1].id
+                self.clock.now = start_second + timedelta(microseconds=600_000)
+                self._start_trial(key)
+                self.history += get_spawns(salt_id)
+                self._cycle(_NEXT_NOW)
+                self.assertEqual(
+                    [
+                        (
+                            look.payload["accrued_tasks"],
+                            sum(arm["units"] for arm in look.payload["arms"].values()),
+                        )
+                        for look in self._get_looks()
+                    ],
+                    expected,
+                )
+
+    def _reset_ledger(self) -> None:
+        self.ledger.rows.clear()
+        self.ledger.faulted.clear()
+        self.history = list(_get_passing_history())
+        self.clock.now = _NOW
+
+    def _cycle_with_an_unread_start(self, faulted: str | None) -> tuple[str, str]:
+        """A judged trial's look-1 spawns cycled while its start is unread; (key, stderr)."""
+        self._reset_ledger()
+        key = self._open_live_trial()
+        if faulted is not None:
+            self._start_trial(key)
+            self.ledger.faulted.add(faulted)
+        self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
+        return key, self._cycle(_NEXT_NOW)
+
+    def test_a_judged_trial_whose_start_is_not_read_takes_no_look(self) -> None:
+        warn = "WARN: shadow stage — trial starts unreadable: ConnectionError"
+        for name, faulted in self._UNREAD_START_ROWS:
+            with self.subTest(name):
+                _, stderr = self._cycle_with_an_unread_start(faulted)
                 self.assertEqual(self._get_looks(), [])
                 self.assertEqual(warn in stderr, faulted is not None, stderr)
-                # the same spawns reach look 1 once the start is read
+
+    def test_the_cycle_that_reads_the_start_takes_the_look_of_the_spawns_already_accrued(
+        self,
+    ) -> None:
+        for name, faulted in self._UNREAD_START_ROWS:
+            with self.subTest(name):
+                key, _ = self._cycle_with_an_unread_start(faulted)
                 self.ledger.faulted.clear()
                 if faulted is None:
                     self.clock.now = _NOW
@@ -2106,8 +2153,9 @@ class LookDecisionTest(_ShadowFixture):
         self.assertAlmostEqual(look.payload["z"], -trial_design.get_independent_z(units), places=9)
 
     def test_a_validity_void_due_at_a_look_lands_ahead_of_its_win(self) -> None:
-        # name, control and treatment spawns, those of each arm carrying the other's delivery
-        # mark, the void's reason (None: the win stands)
+        # row: name, (control, treatment) spawns, marked spawns, the void's reason
+        # marked spawns: per arm, those carrying the other arm's delivery mark
+        # void reason None → the win stands
         rows = (
             (
                 "an imbalanced split at 200 counted spawns, its delivery below the floor too",
@@ -2318,8 +2366,8 @@ class HarmStopTest(_ShadowFixture):
     def test_the_tool_use_band_stops_upward_only_on_an_overage_primary_trial_and_either_way_otherwise(
         self,
     ) -> None:
-        # name, the stored band (None: the overage-primary trial's own), the control then the
-        # treatment spawns' lowest tool_use, the band's sides, whether the trial stops
+        # row: name, stored band, (control, treatment) lowest tool_use, band sides, trial stops
+        # stored band None → the overage-primary trial's own
         rows = (
             ("overage-primary, treatment above control", None, (1, 7), 1, True),
             ("overage-primary, treatment below control", None, (7, 1), 1, False),
@@ -2350,10 +2398,9 @@ class HarmStopTest(_ShadowFixture):
     def test_each_check_spends_alpha_005_over_the_four_looks_a_two_sided_band_0025_per_side(
         self,
     ) -> None:
-        # Lan-DeMets O'Brien-Fleming-type z at four equal looks, 3-decimal records: one-sided
-        # 0.05 (the lane's pre-step 3 record), and one-sided 0.025 (the published table)
-        one_sided = (3.750, 2.540, 2.016, 1.720)
-        per_side = (4.333, 2.963, 2.359, 2.014)
+        # Lan-DeMets O'Brien-Fleming-type z at four equal looks, 3-decimal records
+        one_sided = (3.750, 2.540, 2.016, 1.720)  # one-sided 0.05: the lane's pre-step 3 record
+        per_side = (4.333, 2.963, 2.359, 2.014)  # one-sided 0.025: the published table
         _, salt_id = self._open_started_trial()
         stored = self._get_preregistrations()[-1].payload
         stored["harm_checks"]["guardrails"]["tool_use"] = _get_either_way_band()
@@ -2375,8 +2422,8 @@ class HarmStopTest(_ShadowFixture):
         self,
     ) -> None:
         # two sessions of 50 spawns per arm; marked: 16 + 14 of the higher arm, 10 + 10 of the lower
-        # → difference 0.1 over √(0.3·0.7/100 + 0.2·0.8/100) = 1.644 on independent spawns; each
-        # session's term ±0.01 → over √(2·0.01²) = 7.07 on the session-clustered term
+        # independent spawns: difference 0.1 over √(0.3·0.7/100 + 0.2·0.8/100) = 1.644
+        # session-clustered: each session's term ±0.01 → 0.1 over √(2·0.01²) = 7.07
         def _is_marked(is_higher: bool, index: int) -> bool:
             return index % 50 < ((16 if index < 50 else 14) if is_higher else 10)
 
@@ -2680,18 +2727,22 @@ class FollowUpLookTest(_ShadowFixture):
             stderr,
         )
 
-    def test_a_faulted_read_of_the_recorded_looks_warns_by_name_and_the_next_cycle_takes_the_look(
-        self,
-    ) -> None:
+    def _cycle_with_the_recorded_looks_unread(self) -> str:
         self._open_trial(1)
         self._add_sessions([1, 2])
         self.ledger.faulted.add(dc.LIVE_TRIAL.LOOK_SQL)
-        stderr = self._cycle(_NEXT_NOW)
+        return self._cycle(_NEXT_NOW)
+
+    def test_a_faulted_read_of_the_recorded_looks_warns_by_name_and_takes_no_look(self) -> None:
+        stderr = self._cycle_with_the_recorded_looks_unread()
         self.assertIn(
             f"WARN: shadow stage — trial {_LIVE_KEY}: recorded looks unreadable: ConnectionError",
             stderr,
         )
         self.assertEqual(self._get_looks(), [])
+
+    def test_the_cycle_after_a_faulted_read_of_the_recorded_looks_takes_the_look(self) -> None:
+        self._cycle_with_the_recorded_looks_unread()
         self.ledger.faulted.clear()
         self._cycle(_NEXT_NOW)
         self.assertEqual([look.payload["look"] for look in self._get_looks()], [1])
@@ -4360,8 +4411,8 @@ class GraduationApplyTest(_ShadowFixture):
         key = self._win()
         self._open_trial_on(_POOL_AGENT, _PROPOSAL_ID + 1)  # another agent's trial, still open
         groups = [(_AGENT, self.patterns)]
-        # name, the proposal row's status, the status an apply call leaves it at, each call's
-        # exit, whether the agent stays held after both cycles
+        # row: name, row status, the status an apply call leaves, each call's exit, still held
+        # still held: the agent stays held after both cycles
         rows = (
             ("the call failed and the row is pending", "pending", "pending", (9, 0), True),
             ("the call landed the patch", "pending", "applied", (0,), False),

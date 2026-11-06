@@ -638,6 +638,8 @@ class CheckPatternPowerTest(_StageFixture):
                 counts, stderr_text = self._check([_pattern(_AGENT.PASSING, 1, _KEY.EMIT)])
                 self.assertEqual(counts[verdict], 1)
                 self.assertIn(f"agent={_AGENT.PASSING} key={_KEY.EMIT}: {verdict}", stderr_text)
+
+    def test_a_union_event_row_sizes_neither_split_key(self) -> None:
         union_row = _build_design_effect_payload(1.0, _KEY.EMIT)
         self.assertEqual(
             dc._get_design_effects([(_AGENT.PASSING, union_row, _AA_START_ID)]),

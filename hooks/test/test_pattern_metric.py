@@ -757,6 +757,14 @@ class TestOverranGaps(unittest.TestCase):
             ("a spawn is never its own next start", [_get_run("zero", 10, 10, overage_rows=1)], []),
             ("a start in another session is never the next start",
              [overran, _get_run("t", 12, None, session_id="t"), _get_run("n", 30, None)], [20.0]),
+            ("an overran spawn alone in its session adds no gap", [overran], []),
+        ]
+        for name, spawns, expected in rows:
+            with self.subTest(name):
+                self.assertEqual(self._get_gaps(spawns), expected)
+
+    def test_only_a_stopped_session_mapped_spawn_at_or_over_the_budget_is_overran(self) -> None:
+        rows = [
             ("a tool_use-only overrun reaching the budget is overran",
              [_get_run("tu", 0, 10, tool_use_actual=40), _get_run("n", 13, None)], [3.0]),
             ("tool_use one below the budget is not overran",

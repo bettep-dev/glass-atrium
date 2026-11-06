@@ -10727,7 +10727,7 @@ def _get_follow_up_clusters(
     recomputed arm and its follow-ups at the pre-registered W; an `unknown` id is in no arm."""
     canary = trial.canary
     counts = get_follow_up_counts(
-        _get_spawns_before({canary.agent: list(inputs.spawns)}, inputs.evaluated_at),
+        {canary.agent: inputs.spawns},
         canary.agent,
         Window(trial.started_at.replace(microsecond=0), inputs.evaluated_at),
         redelegation_window=timedelta(minutes=canary.payload["redelegation"]["minutes"]),

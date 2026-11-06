@@ -366,7 +366,8 @@ def get_independent_z(spawns: Sequence[tuple[int, float]]) -> float | None:
     """The treatment-minus-control mean over its independent-spawn standard error.
 
     Spawns hold (arm, outcome), arm 0 control / 1 treatment; their sessions are not read. None
-    when undefined: an empty arm, or no spread in either arm in exact arithmetic.
+    when undefined: an empty arm, or no spread in either arm in exact arithmetic. ValueError on
+    an arm outside 0/1.
     """
     if not {0, 1} <= {arm for arm, _ in spawns}:
         return None
