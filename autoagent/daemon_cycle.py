@@ -9349,8 +9349,8 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
     - decision: read at a look whose row landed in this cycle, looks in order on this
       cycle's accrual → a crossed harm check: harm stop; else z at or over the look's boundary:
       win; else the last registered look: retire, maximum-sample; the first decision ends the looks
-    - a win whose row landed: the trial's canary file removed in that cycle; any other decision
-      removes no file
+    - a decision whose row landed — win, harm stop, retire or void: the trial's canary file
+      removed in that cycle
     - horizon: a trial with no decision recorded this cycle, at its start + the horizon its
       pre-registration states → retire, horizon; no milestone needed
     - validity: where a harm stop, a win or a retire is due — never at a landed look with none
@@ -10599,8 +10599,8 @@ def _write_horizon_decision(trial: StartedTrial, counted: Sequence[ArmedSpawn]) 
 
 def _write_look_time_decision(canary: TrialCanary, payload: dict, occasion: str) -> bool:
     """The trial's decision row, its one top-level key the outcome → True unless the write
-    faulted: named WARN, the trial left open. A win whose row landed removes the trial's canary
-    file."""
+    faulted: named WARN, the trial left open. A decision whose row landed removes the trial's
+    canary file."""
     (outcome,) = payload
     try:
         landed = _write_live_decision(canary.key, canary.agent, canary.pattern_id, payload)
@@ -10615,9 +10615,11 @@ def _write_look_time_decision(canary: TrialCanary, payload: dict, occasion: str)
         f"[daemon-cycle] INFO: shadow stage — trial {canary.key}: {outcome} decision at {occasion} "
         f"{result}\n"
     )
-    if outcome == "win" and landed:
+    if landed:
         path = _get_canary_path(canary.agent)
-        _delete_canaries([path], f"trial {canary.key} won", STAGE_AREA.SHADOW)
+        _delete_canaries(
+            [path], f"trial {canary.key}: {outcome} decided", STAGE_AREA.SHADOW
+        )
     return True
 
 

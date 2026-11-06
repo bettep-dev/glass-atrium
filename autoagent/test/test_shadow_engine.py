@@ -679,7 +679,7 @@ class _ShadowFixture(unittest.TestCase):
         # names: the names the last read asked for
         self.roster = SimpleNamespace(spawns=None, is_faulted=False, is_end_honoured=True, names=[])
         self.stages: list[str] = []
-        # a win removes its trial's canary file → no stage run names an install's data root
+        # a landed decision removes its canary file → no stage run names an install's data root
         data_root = tempfile.TemporaryDirectory()
         self.addCleanup(data_root.cleanup)
         env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": data_root.name})
@@ -2267,6 +2267,37 @@ class LookDecisionTest(_ShadowFixture):
                 self.assertEqual(
                     reason and body, reason and {"reason": reason, "agent": _AGENT}, name
                 )
+
+    def test_every_landed_decision_removes_its_trials_canary_file_in_the_cycle_that_decides_it(
+        self,
+    ) -> None:
+        # name, the cycles that decide, the decision's top-level key
+        rows = (
+            ("win", self._win, "win"),
+            ("retire at the maximum sample", self._retire_at_the_last_look, "retire"),
+            ("retire at the horizon", self._retire_at_the_horizon, "retire"),
+            ("void", lambda: self._decide_at_look_one((150, 50)), "void"),
+            (
+                "harm stop",
+                lambda: self._decide_at_look_one((100, 100), tenths=(1, 9)),
+                "harm",
+            ),
+        )
+        path = dc._get_canary_path(_AGENT)
+        for name, decide, outcome in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.history = list(_get_passing_history())
+                self.patterns = [_pattern()]
+                self.clock.now = _NOW
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('{"trial_key": "an open trial"}', encoding="utf-8")
+
+                decide()
+
+                [decision] = self._get_decisions()
+                self.assertEqual(set(decision.payload), {outcome}, name)
+                self.assertFalse(path.exists(), name)
 
 
 def _leave_unstopped(arm: int, index: int, spawn: SpawnFacts) -> SpawnFacts:
