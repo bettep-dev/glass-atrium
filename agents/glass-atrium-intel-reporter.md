@@ -301,7 +301,8 @@ Apply the matching visual; never force an unmatched one.
   - Primitive, forbidden alternatives and runtime tag: `scoped/scope-report.md` → `## Diagram Standard [REPORT]`.
   - Add `accTitle` + `accDescr` inside every `<pre class="mermaid">` plus an adjacent visible text description (3-layer a11y).
 - any 2+ alternatives / options / before-after → a comparison table per `### Comparison Tables (MUST ≤5 columns)`
-- any real quantified claim from the source → a KPI/stat card in a Tailwind grid (large numeral ≈2:1 over unit, dual-encoded delta where a direction applies, optional `aria-hidden` inline-SVG sparkline whose value text carries the data)
+- any real quantified claim from the source → a KPI/stat card in a Tailwind grid (large numeral ≈2:1 over unit, each value with its unit, period and source, dual-encoded delta where a direction applies)
+  - An optional `aria-hidden` inline-SVG sparkline is drawn from a real series only; the value text carries the data.
 - data shapes suited to one → CSS-only bar charts (flex-height vertical, or horizontal table inlay) per the data-viz decision tree in `[[visual-expression-exposed-html-docs]]`
 - any described UI / screen / layout → a structural mockup with labeled placeholders (show the product)
 
@@ -379,9 +380,10 @@ The badge mapping for the Baseline dual-encoding rule (`### Visual-Maximization 
 - Rows = criteria · columns = alternatives
 - Over the column cap → split by category
 - Semantic `thead`/`tbody`/`th scope`
-- JetBrains Mono numerics
+- JetBrains Mono numerics, right-aligned in numeric columns
 - Option identifiers MUST be semantically neutral codes (`R1` / `R2` / `R3`) — A/B/C FORBIDDEN (Position Bias Mitigation per GLASS_ATRIUM_GLOBAL_RULES)
-- Cells = dual-encoded badge + score
+- Cells = dual-encoded symbol + word + score as colored text, never a badge chip in every cell
+  - Why: a pill repeated in every cell reads as AI slop — the same reason `agents/glass-atrium-design-designer.md` → `### AI Slop Tropes` → `#### Admin-console tropes (data screens)` → `##### Tables and pagination` gives for console tables, applied here by analogy.
 
 ### Disclosure Pattern (MUST sandbox-safe)
 
@@ -398,9 +400,9 @@ The badge mapping for the Baseline dual-encoding rule (`### Visual-Maximization 
 ### Decision Matrix (SHOULD when ≥2 alternatives)
 
 - Layout per `### Comparison Tables (MUST ≤5 columns)`, plus an adoption row
-- Inline SVG sparkline / gauge / progress bar permitted
+- Inline SVG sparkline / gauge / progress bar permitted, each drawn from real data
 - Status dashboard: badge grid + inline SVG sparkline + alert list
-- Pyramid visual: `<aside>` callout / blockquote / `border-l-4` strip
+- Pyramid visual: `<aside>` callout or blockquote, without a colored left-border accent strip (`agents/glass-atrium-design-designer.md` → `### AI Slop Tropes` → **Layout/container tropes**)
 
 ### Semantic HTML5 Landmarks (MUST)
 
@@ -475,9 +477,9 @@ B --> C[Output]</pre>
       </section>
       <section id="self-evaluation" class="mb-8">
         <h2 class="text-lg font-semibold text-zinc-200 mt-6 mb-3">Self-Evaluation</h2>
-        <table class="w-full text-sm text-zinc-400 border border-zinc-800">
-          <thead class="bg-zinc-900"><tr><th class="text-left p-2">Dimension</th><th class="text-left p-2">Score</th></tr></thead>
-          <tbody><tr><td class="p-2 border-t border-zinc-800">Coverage</td><td class="p-2 border-t border-zinc-800">5</td></tr></tbody>
+        <table class="w-full text-base text-zinc-400 border border-zinc-800">
+          <thead class="bg-zinc-900"><tr><th class="text-left p-2">Dimension</th><th class="text-right p-2">Score</th></tr></thead>
+          <tbody><tr><td class="p-2 border-t border-zinc-800">Coverage</td><td class="text-right p-2 border-t border-zinc-800">5</td></tr></tbody>
         </table>
       </section>
     </article>
