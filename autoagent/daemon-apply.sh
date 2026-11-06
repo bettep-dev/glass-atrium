@@ -1184,7 +1184,7 @@ WHERE approval_tier      = 'auto'::core."ApprovalTier"
   -- blanket brake) is what keeps it safe. Widening the allowlist (adding
   -- 'mention') requires explicit user approval.
   -- The floor token 'mention' (the label run_cycle stamps on every row + the
-  -- loop's fail-CLOSED floor state) is deliberately ABSENT, so
+  -- fail-CLOSED floor state of the loop) is deliberately ABSENT, so
   -- it is excluded. NULL (legacy/pre-feature rows) + '' (explicit BYPASS,
   -- floorless) + the four above-floor labels (candidate / proposal /
   -- instruction-edit / skill-candidate) all PASS. Behaviorally identical to a plain

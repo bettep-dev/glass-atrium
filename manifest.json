@@ -1052,7 +1052,7 @@
     "agents/templates/progress.md": "eb2384023d481529c3e63422ae8518b3fb6401cec2a5e6c648e0612a940a7619",
     "autoagent/.gitignore": "35a6fdc1e0e35bcc2fefa9aacfe6bcc5d98347ed75e7ac0c0b64f9f2b2ee638c",
     "autoagent/autoagents-eval.sh": "523d5412515653bb0932748b67d26043c8242ea103a9d94d1f55482600582d3a",
-    "autoagent/daemon-apply.sh": "994f7bbe401eabc7915150da2da144773dcdef8185088e66a01c976271c33235",
+    "autoagent/daemon-apply.sh": "dab3301e8e1496fa1273456ae108517dee595bdb69410c27d4a4d74eea4c8e75",
     "autoagent/daemon-cycle.sh": "8c4202c79df8218412bc471f3b1ec6365b85d62915545c7ae6c7939d09b59c39",
     "autoagent/daemon_cycle.py": "522402af43bdc5adeae7bda33994a473ca19108598147b2f613f33dd27d8b47c",
     "autoagent/lib/autoagent_pause.py": "95a2596480760334b163219b80384d48d1a58ccc86bcc9825562aba10800be75",
