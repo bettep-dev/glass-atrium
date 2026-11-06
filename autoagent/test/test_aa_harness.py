@@ -2456,6 +2456,60 @@ class AaCanaryTest(_AaResultFixture):
                 self.assertEqual(code, 0)
                 self.assertEqual(list(self._get_canaries()), kept)
 
+    def test_an_invalidation_that_cannot_remove_the_canaries_lands_and_names_no_running_cycle(
+        self,
+    ) -> None:
+        # an --aa-invalidate run is no cycle → its WARN never claims one
+        def _fault_trials() -> str:
+            self.ledger.is_open_trial_read_faulted = True
+            return (
+                "open live trials unreadable: ConnectionError: PG unreachable; no canary file "
+                "is removed; the next writing cycle retries"
+            )
+
+        def _plant_link() -> str:
+            outside = Path(tempfile.mkdtemp(dir=self.scratch))
+            self.canary_dir.rename(outside / "canary")
+            self.canary_dir.symlink_to(outside / "canary", target_is_directory=True)
+            return (
+                f"canary directory not a real directory: {self.canary_dir} is a symlink or not "
+                "a directory; no canary file is swept or removed"
+            )
+
+        def _lock_dir() -> str:
+            self.canary_dir.chmod(0)
+            self.addCleanup(self.canary_dir.chmod, 0o755)
+            return (
+                "canary directory not listed: PermissionError: [Errno 13] Permission denied: "
+                "'canary'; no canary file is swept or removed; the next writing cycle retries"
+            )
+
+        # name, the fault arranged → the WARN it names
+        rows = (
+            ("open live trials unreadable", _fault_trials),
+            ("canary directory a symlink", _plant_link),
+            ("canary directory not listable", _lock_dir),
+        )
+        for index, (name, arrange) in enumerate(rows):
+            data_root = self.scratch / f"data-root-{index}"
+            with self.subTest(name), mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(data_root)}):
+                self.canary_dir = data_root / "data" / "learning" / "canary"
+                self.ledger.rows.clear()
+                self.ledger.is_open_trial_read_faulted = False
+                self._open()
+                paths = [self._put_canary(stem, "") for stem in _ROSTER]
+                before = [path.read_bytes() for path in paths]
+                warn = arrange()
+                stderr = io.StringIO()
+
+                with contextlib.redirect_stderr(stderr):
+                    code = dc.invalidate_aa(1, "a canary fault", is_confirmed=True)
+
+                self.canary_dir.chmod(0o755)
+                self.assertEqual(code, 0)
+                self.assertEqual([path.read_bytes() for path in paths], before)
+                self.assertIn(f"[daemon-cycle] WARN: A/A harness — {warn}\n", stderr.getvalue())
+
     def test_unreadable_open_trials_leave_every_canary_in_place_with_a_named_warn(self) -> None:
         self._close()
         paths = [self._put_canary(stem, "") for stem in _ROSTER]
@@ -2467,7 +2521,7 @@ class AaCanaryTest(_AaResultFixture):
         self.assertEqual([path.read_bytes() for path in paths], before)
         self.assertIn(
             "WARN: A/A harness — open live trials unreadable: ConnectionError: PG unreachable; "
-            "no canary file is removed this cycle",
+            "no canary file is removed; the next writing cycle retries",
             stderr_text,
         )
 

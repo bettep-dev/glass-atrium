@@ -11834,7 +11834,7 @@ def _delete_aa_canaries(reason: str) -> None:
     except Exception as exc:  # noqa: BLE001 — an unread trial state removes no file
         _warn_aa(
             f"open live trials unreadable: {_describe_fault(exc)}",
-            "no canary file is removed this cycle",
+            "no canary file is removed; the next writing cycle retries",
         )
         return
     kept = {_get_canary_path(agent).name for agent in open_trials}
@@ -12003,13 +12003,13 @@ def _get_canary_files(area: str = STAGE_AREA.AA) -> list[Path]:
     except FileNotFoundError:
         return []
     except CanaryDirUnsafe as exc:
-        _warn_stage(area, str(exc), "no canary file is swept or removed this cycle")
+        _warn_stage(area, str(exc), "no canary file is swept or removed")
         return []
     except OSError as exc:
         _warn_stage(
             area,
             f"canary directory not listed: {_describe_fault(exc)}",
-            "no canary file is swept or removed this cycle",
+            "no canary file is swept or removed; the next writing cycle retries",
         )
         return []
     canary_dir = _get_canary_dir()
@@ -16693,8 +16693,9 @@ def _main(argv: list[str]) -> int:
         metavar="START_ID",
         help="Record the A/A of START_ID void-by-defect (one aa-invalidation ledger row naming "
         "--cause), then exit (no cycle): an open start reads as closed, its canary files but an "
-        "open live trial's are removed, and its result's design effects size nothing. Refused with exit 16 and a named reason; the open start without "
-        "--confirm-open-aa refused with exit 17; takes no --dry-run.",
+        "open live trial's are removed, and its result's design effects size nothing. Refused "
+        "with exit 16 and a named reason; the open start without --confirm-open-aa refused "
+        "with exit 17; takes no --dry-run.",
     )
     parser.add_argument(
         "--cause",
