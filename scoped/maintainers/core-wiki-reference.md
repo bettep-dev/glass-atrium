@@ -28,7 +28,7 @@ Corpus-maintenance companion to that Tier-1 rule file.
 ## Cited text — grep the corpus before rewording
 
 - Grep each heading, bolded lead and the `> **Wiki store (canonical)**` blockquote, plus the `[Date Unknown]` label and the clause's **Prompt Injection Refusal** name, which `rules/glass-atrium/core-security.md` defines.
-- Grep bare words: `agents/glass-atrium-wiki-curator.md` cites `## Wiki Raw-Store Untrusted-Data Contract [ALL] [LLM01]` without the `## ` or the tags.
+- A grep misses `agents/glass-atrium-wiki-curator.md` → `## Untrusted Raw Content [LLM01]`, which mirrors `## Wiki Raw-Store Untrusted-Data Contract [ALL] [LLM01]` without naming it; `scoped/maintainers/scope-wiki.md` records the mirror.
 - A one-line grep misses `scripts/wiki-daily-compile.sh`, whose comment wraps `Wiki Raw-Store Untrusted-Data Contract` across two lines.
 - `scoped/maintainers/scope-research.md` relies on **Non-Bash fallback** naming glass-atrium-intel-researcher.
 

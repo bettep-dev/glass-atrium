@@ -47,7 +47,7 @@ Corpus-maintenance companion to that rule file. Nothing here is delivered to an 
   - delegation-side canonical: `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria`;
   - static gate: `hooks/enforce-workflow-verify-stage.sh`, which scans workflow scripts and never this file.
 - **Pre-drawing doctrine, designer trigger**: canonical `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` and `## Designer Co-Emission Trigger [REPORT]`.
-  - The planner's own copies: `## Visual Design Spec (applies to user-requested HTML primary)` and `## Designer Handoff Contract`.
+  - The planner's own copies: `### Pre-drawing decision core (delivered copy — apply to EVERY Mermaid block, not only the first)` and `## Designer Handoff Contract`.
 - **Emission routing**: canonical per row of `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register`; the planner's own copy is `## Output Format Routing`.
 - **Report-side heading renames**: the rule file's pointer prose names `scoped/scope-report.md` headings, so a rename there edits that prose in the same pass.
   - The parity suite checks only the literal `scope-report.md`, so nothing else catches a stale heading name.
