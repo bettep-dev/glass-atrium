@@ -3,9 +3,9 @@
 --
 -- Defect: relabel_pattern1_soft.sql wrapped the FAIL->SOFT REPLACE in
 -- LEFT(...,128) to fit the (then) VARCHAR(128) pattern_label column. The +9-char
--- SOFT swap pushed the 3 rows that were already AT the 128 cap (ids 470/606/732,
--- intel-planner multi-signal joins) to 136 chars, so LEFT(...,128) silently
--- dropped the trailing pattern-5 anchor "(failure rate )". That flipped
+-- SOFT swap pushed the rows already at the 128 cap (multi-signal joins) to
+-- 136 chars, so LEFT(...,128) silently dropped the trailing pattern-5 anchor
+-- "(failure rate )". That flipped
 -- _covers_pattern_label(fail_rate_needle, row) True->False on those rows — a
 -- latent reject-streak / fail-rate re-emit risk.
 --
@@ -50,8 +50,8 @@ END $$;
 --     label is a strict prefix of the full non-truncated SOFT derivation
 --     (length(stored) < length(full) AND left(full, len(stored)) = stored) —
 --     i.e. exactly the rows the LEFT(...,128) cap truncated. Rows whose SOFT
---     label already fit in 128 (96 of 99) are byte-identical to the derivation
---     and are NOT touched.
+--     label already fit in 128 (every row not already at the cap) are
+--     byte-identical to the derivation and are NOT touched.
 WITH corrected AS (
     SELECT b.id,
            REPLACE(

@@ -4,15 +4,17 @@
 #
 # `assert_removal_evidence` refuses a live removal unless it can see an
 # editable-region marker check inside `verify_patched`, and it looks by
-# introspection: `declare -f verify_patched | grep -q 'EDITABLE:BEGIN'`. That
+# introspection: it captures `declare -f verify_patched` and matches
+# 'EDITABLE:BEGIN' against that body in-shell. That
 # coupling is invisible to every other suite — nothing calls the check, so a
 # rename of the verify function or a move of the marker loop into a helper
 # leaves the deletion power armed while the guard that detects a wrong deletion
-# is no longer reachable by the string the gate greps for.
+# is no longer reachable by the string the gate matches.
 #
 # What is pinned:
 #   * the live tree satisfies the precondition — the gate is reached, finds the
 #     marker string, and passes through to the dry-run report.
+#   * a verify_patched body larger than one pipe buffer still passes it.
 #   * a renamed verify function trips it.
 #   * a marker loop lifted into a helper, behaviour unchanged, trips it too.
 #
@@ -96,6 +98,25 @@ FATAL_LINE='FATAL removal_gate_precondition'
   }
   [[ "${output}" == *"verdict=dry_run"* ]] || {
     echo "the gate did not reach its dry-run report, so nothing proves the precondition passed: ${output}" >&2
+    return 1
+  }
+}
+
+@test "a verify_patched body past one pipe buffer still satisfies the gate's precondition" {
+  # ~1 MB of no-op lines past the marker loop → an early-exit `declare -f` reader misses the check
+  local padded="${WORK}/padded.sh" padded_bytes
+  awk '/^verify_patched\(\)[[:space:]]*\{/ { f = 1 }
+       f && /^\}/ { for (i = 1; i <= 20000; i++) printf "    : pad line %d after the marker loop, behaviour unchanged\n", i; f = 0 }
+       { print }' "${SNIPPET}" >"${padded}"
+  padded_bytes="$(wc -c <"${padded}")"
+  [[ "${padded_bytes}" -gt 1000000 ]] || {
+    echo "the padding did not land, so this row would not exceed one pipe buffer" >&2
+    return 1
+  }
+
+  drive "${padded}"
+  [[ "${output}" != *"${FATAL_LINE}"* && "${output}" == *"verdict=dry_run"* ]] || {
+    echo "a marker check present in a large verify_patched must pass the precondition: ${output}" >&2
     return 1
   }
 }

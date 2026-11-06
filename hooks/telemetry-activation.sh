@@ -89,7 +89,7 @@ case "${hook_event}" in
     if [[ -n "${prompt_b64}" ]]; then
       prompt_full="$(printf '%s' "${prompt_b64}" | base64 --decode 2>/dev/null)" || prompt_full=""
     fi
-    # cid — orchestrator-role.md Correlation ID format YYYY-MM-DDTHHMM_slug_xxxx (T-or-_ variant).
+    # cid — skills/glass-atrium-ops-orchestrator-role.md Correlation ID format YYYY-MM-DDTHHMM_slug_xxxx (T-or-_ variant).
     if [[ -n "${prompt_full}" ]]; then
       cid_value="$(printf '%s' "${prompt_full}" | grep -oE '20[0-9]{2}-[0-9]{2}-[0-9]{2}T?[0-9]{0,4}_[a-zA-Z0-9-]{1,20}_[a-zA-Z0-9]{4,8}' | head -1 || true)"
       trigger_phrase="${prompt_full:0:${TRIGGER_PHRASE_MAX}}"

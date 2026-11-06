@@ -15,6 +15,7 @@
 
 ABSORPTION="${BATS_TEST_DIRNAME}/../audit-absorption.sh"
 TEST_SMELLS="${BATS_TEST_DIRNAME}/../audit-test-smells.sh"
+INERT_ASSERT="${BATS_TEST_DIRNAME}/../audit-inert-assert.sh"
 # shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
@@ -55,7 +56,7 @@ seed_dual_finding() {
   printf '@test "dirty" {\n  run foo\n}\n' >>"${root}/scripts/test/clean.bats"
 }
 
-@test "the shared exit contract answers identically for both auditors" {
+@test "the shared exit contract answers identically for every auditor" {
   printf '#!/usr/bin/env bash\n:\n' >"${AC_TMP}/ok.sh"
   local -a table=(
     "--advisory --strict|2"
@@ -67,7 +68,7 @@ seed_dual_finding() {
   local row flags want script failures=""
   for row in "${table[@]}"; do
     IFS='|' read -r flags want <<<"${row}"
-    for script in "${ABSORPTION}" "${TEST_SMELLS}"; do
+    for script in "${ABSORPTION}" "${TEST_SMELLS}" "${INERT_ASSERT}"; do
       # shellcheck disable=SC2086  # the table column is a flag list, split on purpose
       run bash "${script}" --quiet ${flags}
       [ "${status}" -eq "${want}" ] || failures+="${script##*/} [${flags}] want ${want} got ${status}"$'\n'

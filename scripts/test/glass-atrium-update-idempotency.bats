@@ -4,13 +4,15 @@
 # The live defect: run 1 merged an EDITABLE region and the merged body was
 # committed, but the base-content store stayed at the OLD anchor, so run 2
 # re-diffed the already-merged region against a stale base and wrote literal git
-# conflict markers into the live agent file. Three pins:
+# conflict markers into the live agent file. The pins:
 #   * the end-to-end second run (no markers, no content change);
 #   * the capture ORDERING around the retirement sweep: the base advances before the
 #     sweep runs and the baseline is captured after it, so a sweep that cannot move a
 #     file leaves neither anchor stranded;
 #   * a declined body followed by a mergeable one: the decline reason is per-file
 #     state, and a leaked one declines a body that had no conflict at all;
+#   * two same-day runs of one version: each run's own cycle dir keeps the base
+#     snapshot its apply displaced, so a re-published release cannot overwrite it;
 #   * a conflicting region, twice: once with the retired gap-policy switch exported
 #     at its former OFF value and once with the environment clean. Both runs reach
 #     merge-pending-arbitration — the gap is contested, neither side is emitted, the
@@ -169,6 +171,34 @@ run_update() {
   # an always-created empty file would make "no declines" and "never recorded"
   # indistinguishable at exactly the moment an operator is asking which it was.
   [[ ! -e "${INSTALL}/update-declines/conflict-declines.log" ]] || return 1
+}
+
+@test "two same-day runs of one version each keep the base snapshot their own apply displaced" {
+  # A re-published release keeps its version, so a same-day second run applies again.
+  # A cycle dir shared by both runs would let run 2 overwrite run 1's .base.bak, and
+  # --restore-agents for run 1 could then no longer reverse the base store.
+  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
+  seed_base_store "dev-a.md" "${GOAL_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+  run_update
+  [ "$status" -eq 0 ] || { echo "${output}"; return 1; }
+
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE/NEW vendor rules/NEWER vendor rules}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+  run_update
+  [ "$status" -eq 0 ] || { echo "${output}"; return 1; }
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEWER vendor rules"* ]] || return 1
+
+  local snap count=0 run1_kept=0 run2_kept=0
+  for snap in "${INSTALL}/agents-bak/"*"_update-1.0.0"*/dev-a.md.base.bak; do
+    [[ -f "${snap}" ]] || continue
+    count=$((count + 1))
+    [[ "$(cat "${snap}")" != "${GOAL_BASE}" ]] || run1_kept=1
+    [[ "$(cat "${snap}")" != "${GOAL_RELEASE}" ]] || run2_kept=1
+  done
+  [[ "${count}" -eq 2 ]] || { ls -R "${INSTALL}/agents-bak"; return 1; }
+  [[ "${run1_kept}" -eq 1 && "${run2_kept}" -eq 1 ]] || return 1
 }
 
 @test "base-content capture survives a FAILED retired sweep (ordering pin)" {

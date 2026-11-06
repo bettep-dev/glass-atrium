@@ -1,9 +1,9 @@
 // Loop-suppression breakdown on GET /api/improvement/learning-log.
 //
-// The superseded payload reported ONE of five suppression mechanisms. Measured over
-// core.autoagent_loop_events per cycle day (2026-08-24..08-31): ~25 non-promptable
-// intake skips, ~10 staleness skips and 5 roster mismatches for every 1 repeat-apply
-// cap — and only the cap reached an operator, under a banner reading "Loop parked".
+// The superseded payload reported ONE of five suppression mechanisms. Each of the
+// other mechanisms (non-promptable intake skips, staleness skips, roster mismatches)
+// outnumbered the repeat-apply cap — and only the cap reached an operator, under a
+// banner reading "Loop parked".
 // Skipped rows stay at status='identified', so they also presented as pending backlog.
 //
 // What each test discriminates against:
@@ -36,10 +36,10 @@
 // sole guard on the route SQL and a self-skipping guard guards nothing. The
 // schema-absent case reads a second database on the same server from
 // MONITOR_TEST_LABEL_ABSENT_DATABASE_URL and skips when it is unset. That database is
-// shared with the reject-buckets suite: every migration except 20261003000000
-// ('unadjudicated') and 20261005000000 (metric_key, 'dormant').
+// shared with the reject-buckets suite; the migrations it omits and how to build it:
+// the header of improvement.reject-buckets.route.test.ts.
 //
-// Runner: npx tsx --test test/improvement.loop-suppression.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.loop-suppression.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";

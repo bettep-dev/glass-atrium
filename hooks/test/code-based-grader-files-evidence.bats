@@ -11,7 +11,7 @@
 #     files STRING with no stat, so a NON-EXISTENT test-shaped path promotes.
 #   * W2 — a path-shaped entry that does not resolve yields unverified and
 #     NEVER verified_fail (a legitimately deleted file is indistinguishable from
-#     fabrication at this tier; live data shows 0 verified_fail in 2081 rows).
+#     fabrication at this tier, so an unresolved path never yields verified_fail).
 #   * Step 1 — a glob metacharacter entry is non-gradeable → unverified; a
 #     leading ~ expands to $HOME before stat; a no-path-shaped field (observed
 #     live prose form) is indeterminate → unverified.

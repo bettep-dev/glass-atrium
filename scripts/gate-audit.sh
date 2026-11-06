@@ -11,7 +11,7 @@
 #   (avoids dirtying other sessions).
 #
 # CID: coalesce(cid, correlation_id) — prefers cid, falls back to correlation_id
-#   (schema carries both). With 97.5% single-agent chains most groups have one
+#   (schema carries both). Most chains are single-agent, so most groups have one
 #   record; only multi-agent CIDs are gate targets.
 #
 # PG access (socket-only invariant): psql "dbname=glass_atrium" — Unix socket only,

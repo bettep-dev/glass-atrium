@@ -6,12 +6,14 @@
 # false-positive risk.
 #
 # RETIRED (DF-28 decision) — do NOT wire. Superseded by track-outcome.sh's
-# _compute_style_ref_verified, which runs at the same SubagentStop event and PERSISTS the
-# identical verdict (via the SAME shared matcher lib/style_ref_match.py) to the DB column
-# style_ref_verified — the authoritative, monitor-aggregated surface. This standalone variant
-# adds ONLY a live stderr WARN, and Claude Code DISCARDS hook stderr (see track-outcome.sh
-# "Claude Code discards hook stderr"), so wiring it would produce no operator surface while
-# double-running the verification. It stayed indefinitely DEFERRED and is now resolved as retired.
+# _compute_style_ref_verified, which runs at the same SubagentStop event and PERSISTS its
+# verdict to the DB column style_ref_verified — the authoritative, monitor-aggregated surface.
+# Both use the SAME matcher lib/style_ref_match.py, but the verdicts diverge on an EMPTY Read
+# history: the persisted verdict withholds (null), while this hook WARNs no-match.
+# This standalone variant adds ONLY a live stderr WARN, and Claude Code DISCARDS hook stderr
+# (see track-outcome.sh "Claude Code discards hook stderr"), so wiring it would produce no
+# operator surface while double-running the verification. It stayed indefinitely DEFERRED and
+# is now resolved as retired.
 # Physical removal + downstream sync are a coordinated cross-track follow-up (out of this file's
 # ownership): manifest.json regen · schema.prisma L336-337 citation (db track) · comment-audit
 # canonical-baseline.tsv row. The code below is left intact so no test/manifest breaks pre-removal.
@@ -28,6 +30,23 @@ IFS=$'\n\t'
 
 # Fail-open ERR trap (stderr only) — never break the session on internal error.
 trap 'printf "[style-ref-verify] internal error at line %d: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
+
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
+
+# Payload and parser-output names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT PIPELINE_OUT
 
 # Drain stdin. Empty payload → nothing to verify, exit silently.
 INPUT=""
@@ -165,7 +184,7 @@ PIPELINE_OUT=""
 PIPELINE_OUT="$(printf '%s' "${INPUT}" | STYLE_REF_MATCH_LIB="${STYLE_REF_MATCH_LIB}" python3 -c "${PIPELINE_PY}" 2>/dev/null)" || PIPELINE_OUT=""
 
 extract_field() {
-  printf '%s\n' "${PIPELINE_OUT}" | sed -n "s/^@@${1}@@//p" | head -1
+  printf '%s\n' "${PIPELINE_OUT}" | sed -n "s/^@@${1}@@//p" | drain_after head -1
 }
 
 VERDICT="$(extract_field verdict)"

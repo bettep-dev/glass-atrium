@@ -46,6 +46,21 @@ run_hook() {
   [[ "${output}" != *"${AWS_FIXTURE}"* ]] || return 1
 }
 
+# ~160 KiB of JSON-escaped lines → a multi-write writer, which races a reader that stops at a line-1
+# match at any size; a writer left with a write dies of SIGPIPE, which pipefail reports as "no match".
+pipe_overflow_padding() {
+  seq -f 'padding line %05g of an ordinary build log' 1 4000 | awk '{ printf "%s\\n", $0 }'
+}
+
+@test "violating: a .env write on line 1 of a command larger than the pipe buffer still raises the credential-content alert" {
+  local padding
+  padding="$(pipe_overflow_padding)"
+  printf '%s\n' "${AWS_FIXTURE}" >"${SANDBOX}/leak.env"
+  run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo x > ${SANDBOX}/leak.env\\n${padding}\"}}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"SEC-017"* ]] || { echo "${output}"; return 1; }
+}
+
 @test "benign content: credential-free .env write → silent, exit 0" {
   printf 'FOO=bar\n' >"${SANDBOX}/clean.env"
   run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo x > ${SANDBOX}/clean.env\"}}"

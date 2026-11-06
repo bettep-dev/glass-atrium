@@ -30,7 +30,7 @@
 #     function tokens with a background+poll+kill hang guard (install-hang fix).
 #   * The passthrough path RETAINS the framed runner (preflight_run_or_bail_framed,
 #     function-local RENDER_MODE=install) + scrolling preflight_line/preflight_run_cmd.
-#   * preflight_panel_step derives STEP_LABEL_ACTIVE_CUR from its ACTIVE arg, else the resolved label; G7 pins the fakechat plugin-install panel framing + the marketplace slow-clone ACTIVE label (the marketplace-add framing itself is NOT pinned).
+#   * preflight_panel_step derives STEP_LABEL_ACTIVE_CUR from its ACTIVE arg, else the resolved label; G7 drives the boxed fakechat setup live: marketplace add (slow-clone ACTIVE label) + plugin install both run as panel steps, never through the scroll runner.
 #   * G3 python pip --user stays framed; on a PEP-668 failure the --break-system-packages retry
 #     AUTO-runs (no typed consent, no bracket) with a VISIBLE override log, non-fatal on retry-fail.
 #   * G8 sqlite is FTS5-CAPABILITY-gated (brew sqlite added only when system sqlite3 lacks
@@ -870,18 +870,23 @@ print_sentinel_owners() {
   [[ "$(grep -c 'wait "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]] || return 1
 }
 
-@test "G7(static): _preflight_fakechat_boxed frames the plugin install as a panel step, marketplace-add carrying the slow-clone label" {
-  # BOTH claims below were TERMINAL (live) assertions in the pre-diet G7 block and went out together
-  # with a sibling that bash 3.2.57 left inert mid-body (on CI's bash 5.3.9 it gates). The first is a
-  # WIRING claim — the fakechat plugin install is engaged through preflight_panel_step at all, not a
-  # copy snapshot; the second pins the present-progressive ACTIVE cue flagging the ~30s marketplace
-  # clone. They share ONE terminal && chain so neither can be re-inerted on bash 3.2.57 by a later
-  # mid-body append.
-  local body
-  body="$(awk '/^_preflight_fakechat_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
-  [[ -n "${body}" ]] || return 1
-  [[ "${body}" == *'preflight_panel_step "fakechat: install plugin"'* ]] \
-    && [[ "${body}" == *'adding marketplace (git clone, may take a minute)…'* ]]
+@test "the boxed fakechat setup routes the marketplace add and the plugin install through the panel, never the scroll runner" {
+  # A scroll-runner write inside the boxed render paints over the work box; the slow marketplace
+  # clone must also announce itself through the panel's ACTIVE label. One terminal && chain → decides on bash 3.2 too.
+  ga_detect_fakechat() { printf 'absent\n'; }
+  ga_marketplace_present() { printf 'no\n'; }
+  ga_cmd_marketplace_add() { printf 'MKT_CMD\n'; }
+  ga_cmd_fakechat_install() { printf 'PLUGIN_CMD\n'; }
+  STEPS="" RAN=""
+  preflight_panel_step() { STEPS="${STEPS}[$1|$2|$3]"; }
+  preflight_run_cmd() { RAN="${RAN}[$1|$2]"; }
+  extract_launcher_fn _preflight_fakechat_boxed
+  local clone_step='\[[^]|]*\|[^]|]*clone[^]|]*\|MKT_CMD\]'
+  _preflight_fakechat_boxed
+  [[ "${STEPS}" =~ ${clone_step} ]] \
+    && [[ "${STEPS}" == *"|PLUGIN_CMD]"* ]] \
+    && [[ -z "${RAN}" ]] \
+    || { echo "steps=${STEPS} ran=${RAN}"; return 1; }
 }
 
 # === R1 — PostgreSQL @18 fresh pin + initdb fallback (uninitialized data dir) ============

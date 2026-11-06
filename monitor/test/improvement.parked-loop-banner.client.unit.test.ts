@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
+import { loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
@@ -124,7 +125,12 @@ test("the warning is not hidden behind a hover-only tooltip", () => {
 // fails AA on the light theme. Every banner on the screen is the shared AlertCard,
 // whose glyph well alone carries the tone; the lane is a plain stack of them.
 
-const SEVERITY_TEXT_CLASS = /\btext-(warn|crit|ok)\b/;
+const TEXT_CLASS = {
+  SEVERITY: /\btext-(warn|crit|ok)\b/,
+  // Loop output cards name a status in a label → `info` counts as a tone too, the neutral ℹ glyph beside it already says it
+  TONE: /\btext-(warn|crit|ok|info)\b/,
+  NEUTRAL: /\btext-(ink|dim|faint)\b/,
+};
 
 function collectElements(node: unknown, out: RecordedElement[]): RecordedElement[] {
   if (!isElement(node)) return out;
@@ -140,7 +146,7 @@ test("the parked-loop banner is the shared alert card, its warn tone on the glyp
   assert.equal(banner.type, sandbox.window.UI.AlertCard, "a screen-local banner shell duplicates the alert card");
   assert.equal(banner.props.tone, "warn");
   const tintedText = collectElements(rendered, [])
-    .filter((el) => SEVERITY_TEXT_CLASS.test(String(el.props.className ?? "")))
+    .filter((el) => TEXT_CLASS.SEVERITY.test(String(el.props.className ?? "")))
     .filter((el) => el.props.s === undefined);
   assert.deepEqual(tintedText, [], "severity hue on a text node of the banner");
 });
@@ -160,43 +166,45 @@ test("the alarm lane stacks alert cards and paints nothing of its own", () => {
   }
 });
 
-// Source-order pin, deliberately NOT a render assertion: the operator view is the
-// whole screen, and rendering it would mock more than it proves. Its limit is that
-// it pins the order the five surfaces are WRITTEN in, which is the order they
-// render in only because they are siblings in one block.
+// document order of the screen's own components → the order the operator reads them in
+function listComponentOrder(node: RenderedNode | string | null, out: string[] = []): string[] {
+  if (node === null || typeof node === "string") return out;
+  out.push(node.type);
+  for (const child of node.children) listComponentOrder(child, out);
+  return out;
+}
+
 test("the operator view keeps the five-surface spine order", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const src = await readFile(IMPROVEMENT_SRC, "utf8");
-  const spine = [
-    "<AlarmLaneI",
-    "<StatusBandI",
-    "<KanbanCardI",
-    "<PatternLedgerCardI",
-    "<LoopOutputGroupI",
-  ];
-  const positions = spine.map((tag) => {
-    const at = src.indexOf(tag);
-    assert.notEqual(at, -1, `${tag} is missing from the operator view`);
-    return at;
-  });
-  for (let i = 1; i < positions.length; i += 1) {
-    assert.ok(
-      positions[i - 1] < positions[i],
-      `${spine[i - 1]} must precede ${spine[i]} — alarms above the band, the board above the ledger`,
-    );
-  }
+  const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
+  const screen = await loadScreenModule(IMPROVEMENT_SRC, { UI: ui.UI });
+  const spine = ["AlarmLaneI", "StatusBandI", "KanbanCardI", "PatternLedgerCardI", "LoopOutputGroupI"];
+  const rendered = listComponentOrder(renderScreen((screen.ScreenImprovement as (props: unknown) => unknown)({})));
+  const order = rendered.filter((name, at) => spine.includes(name) && rendered.indexOf(name) === at);
+  assert.deepEqual(order, spine, "alarms above the band, the board above the ledger, the loop output last");
 });
+
+const COLOUR = {
+  FN: /\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\([^)]*\)/g,
+  // a colour prop or attribute set to a bare word: `color: 'red'`, `fill="white"`
+  PROPERTY_WORD: /\b(?:color|background(?:Color)?|border(?:Top|Right|Bottom|Left)?Color|fill|stroke|outlineColor|accentColor|caretColor)\s*[:=]\s*\{?\s*["'`]([A-Za-z]+)["'`]/g,
+  NON_COLOUR_WORDS: new Set(["none", "transparent", "currentColor", "currentcolor", "inherit", "initial", "unset"]),
+};
 
 // Colour reaches this screen through tokens only — `var(--name)` directly, or an
 // interpolated token name. Shadows included: depth comes from the --shadow-* tokens.
-test("colour is consumed through design tokens, never a raw literal", async () => {
+// Limit: a named colour inside a composite string (`border: '1px solid red'`) is not seen.
+test("colour reaches the screen through design tokens: no hex, no colour function over raw values, no named colour on a colour property", async () => {
   const { readFile } = await import("node:fs/promises");
   for (const path of [IMPROVEMENT_SRC, INSTRUMENTATION_SRC]) {
     const src = await readFile(path, "utf8");
     const hex = src.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
     assert.deepEqual(hex, [], `hex colour literals bypass the token layer in ${path}`);
-    const rawFns = (src.match(/rgba?\([^)]*\)/g) ?? []).filter((decl) => !decl.includes("var("));
+    const rawFns = (src.match(COLOUR.FN) ?? []).filter((decl) => !decl.includes("var("));
     assert.deepEqual(rawFns, [], `a colour function names a raw value instead of a token in ${path}`);
+    const namedColours = Array.from(src.matchAll(COLOUR.PROPERTY_WORD))
+      .filter(([, word]) => !COLOUR.NON_COLOUR_WORDS.has(word))
+      .map(([decl]) => decl);
+    assert.deepEqual(namedColours, [], `a colour property names a colour keyword instead of a token in ${path}`);
   }
 });
 
@@ -209,7 +217,7 @@ test("colour is consumed through design tokens, never a raw literal", async () =
 
 function tintedTextNodes(tree: unknown): string[] {
   return collectElements(tree, [])
-    .filter((el) => SEVERITY_TEXT_CLASS.test(String(el.props.className ?? "")))
+    .filter((el) => TEXT_CLASS.SEVERITY.test(String(el.props.className ?? "")))
     .filter((el) => el.props.s === undefined)
     .map((el) => String(el.props.className));
 }
@@ -255,13 +263,9 @@ test("the cycle decomposition chips leave their tone on the glyph", () => {
   );
 });
 
-// The Loop output cards name a status in a label, so `info` counts as a tone here
-// too — the neutral ℹ glyph beside the label already says it.
-const TONE_TEXT_CLASS = /\btext-(warn|crit|ok|info)\b/;
-
 function toneTextNodes(tree: unknown): string[] {
   return collectElements(tree, [])
-    .filter((el) => TONE_TEXT_CLASS.test(String(el.props.className ?? "")))
+    .filter((el) => TEXT_CLASS.TONE.test(String(el.props.className ?? "")))
     .filter((el) => el.props.s === undefined)
     .map((el) => String(el.props.className));
 }
@@ -325,19 +329,51 @@ function collect(node: unknown, pick: (el: RecordedElement) => boolean, stopAt: 
   return out;
 }
 
-test("report surfaces keep neutral chrome — no tinted border, no hued diff chip", async () => {
+const HUE = {
+  // any utility naming a theme tone or a Tailwind palette step: text-crit, bg-crit/70, hover:border-ok, bg-red-500 — a palette name runs 3+ letters, so min-w-16 and gap-x-100 stay layout
+  CLASS: /\b[a-z]+-(crit|warn|ok|info|accent|[a-z]{3,}-(?:50|[1-9]00|950))\b/,
+  // judged on the value, so any style key counts → raw hex, colour functions and named colours on a colour property belong to the design-token test; a named colour inside a composite string is read by neither
+  STYLE_TOKEN: /var\(--(?:crit|warn|ok|info|accent|cat)\b/,
+};
+const GLYPH_TONE: Record<string, RegExp> = { added: /\btext-ok\b/, removed: /\btext-crit\b/ };
+
+function getLineCountChips(): RecordedElement[] {
+  Object.assign(sandbox.window.UI, { formatPctWithDenominator: (count: number, total: number) => `${count}/${total}` });
+  const card = sandbox.ChangeSummaryCardI({
+    state: { status: "ready" },
+    aggregate: { added: 4, removed: 2, eventCount: 6, failBefore: { count: 5, total: 10 }, failAfter: { count: 1, total: 10 } },
+  });
+  return collect(card, (el) => el.type === screenFns.LineCountI, [screenFns.LineCountI]);
+}
+
+test("the change summary's line counts keep their hue on the sign glyph, ok for added and crit for removed, with neutral text and no hue class or inline tone token on the chip or its text", () => {
+  const chips = getLineCountChips();
+  assert.deepEqual(chips.map((chip) => chip.props.word), ["added", "removed"]);
+  for (const chip of chips) {
+    const nodes = collectElements(screenFns.LineCountI(chip.props), []);
+    const [glyph] = nodes.filter((el) => el.props.s !== undefined);
+    assert.match(String(glyph?.props.className), GLYPH_TONE[String(chip.props.word)], `${chip.props.word}: the sign glyph holds its own tone`);
+    const plain = nodes.filter((el) => el.props.s === undefined);
+    const inlineHues = plain.flatMap((el) => Object.entries(Object(el.props.style)).filter(([, value]) => HUE.STYLE_TOKEN.test(String(value))).map(([key]) => key));
+    assert.deepEqual(inlineHues, [], `${chip.props.word}: an inline style names a tone token on the chip`);
+    assert.deepEqual(plain.map((el) => String(el.props.className)).filter((className) => HUE.CLASS.test(className)), [], `${chip.props.word}: a hue class on the chip root or its text`);
+    const textClasses = plain.filter((el) => !isElement(el.props.children) && !Array.isArray(el.props.children)).map((el) => String(el.props.className));
+    assert.equal(textClasses.length, 2, `${chip.props.word}: numeral and word`);
+    for (const textClass of textClasses) {
+      assert.match(textClass, TEXT_CLASS.NEUTRAL, `${chip.props.word}: the text keeps a neutral ink`);
+    }
+  }
+});
+
+test("the learning-memory tiles name no tone token in any inline style", () => {
   const row = sandbox.BucketRowI({
     state: { status: "ready" },
     buckets: { ctm: 4, epm: 2, outcome: {}, joinMeta: { linked_agent_count: 3 } },
   });
-  const tinted = collect(row, (el) => {
-    const style = el.props.style as Record<string, unknown> | undefined;
-    return Boolean(style && ("borderLeft" in style || "borderColor" in style));
-  });
-  assert.deepEqual(tinted, [], "the learning-memory tiles carry no tone border");
-  const { readFile } = await import("node:fs/promises");
-  const src = await readFile(IMPROVEMENT_SRC, "utf8");
-  assert.doesNotMatch(src, /diff-line--(add|del)/, "the added/removed chips must not hue their text");
+  const tree = collect(row, () => true);
+  assert.ok(tree.some((el) => /\bsub-card\b/.test(String(el.props.className))), "the walk reaches the tiles");
+  const toneStyles = tree.flatMap((el) => Object.values(Object(el.props.style)).map(String).filter((value) => HUE.STYLE_TOKEN.test(value)));
+  assert.deepEqual(toneStyles, [], "an inline style on a tile names a tone token");
 });
 
 test("a failed stats payload raises one banner at the loop output group", () => {
@@ -484,15 +520,22 @@ test("approve and reject are shared buttons: approve keeps a neutral label, reje
   assert.equal(style.background, undefined, "the destructive outline carries no fill");
 });
 
-describe("tiles rest on the shared sub-card, and only an interactive tile answers hover", () => {
+describe("tiles rest on a shared surface, and only an interactive tile answers hover", () => {
   const rows = [
     {
+      // the metric tile is the shared KPI in its loading state → rendered one level to its root element
       name: "a loading metric tile",
+      surface: /\bkpi\b/,
       isInteractive: false,
-      render: () => component("TilePlaceholderI")({ status: "loading", label: "Applied", owner: "x", onRetry: () => {} }),
+      render: () => {
+        const tile = component("TilePlaceholderI")({ status: "loading", label: "Applied", owner: "x", onRetry: () => {} }) as RecordedElement;
+        assert.equal(tile.type, sandbox.window.UI.KPI, "the metric tile is the shared KPI");
+        return (tile.type as ScreenComponent)(tile.props);
+      },
     },
     {
       name: "a live candidate row",
+      surface: /\bsub-card\b/,
       isInteractive: true,
       render: () =>
         component("CandidateRowI")({
@@ -507,7 +550,7 @@ describe("tiles rest on the shared sub-card, and only an interactive tile answer
     test(row.name, () => {
       const root = row.render() as RecordedElement;
       const className = String(root.props.className ?? "");
-      assert.match(className, /\bsub-card\b/, "a tile drawing its own ring or shadow");
+      assert.match(className, row.surface, "a tile drawing its own ring or shadow");
       assert.equal(/\bi-tile-hover\b/.test(className), row.isInteractive, "hover affordance on a tile that does nothing");
     });
   }

@@ -1536,7 +1536,10 @@ assert_removal_evidence() {
     # deletion power without the guard that detects a wrong deletion is privilege
     # escalation, not a feature. If this file is ever split from the marker check,
     # the live path refuses loudly instead of removing unwatched.
-    if ! declare -f verify_patched | grep -q 'EDITABLE:BEGIN'; then
+    # Captured, not piped: a multi-line declare -f into an early-exit grep can read as absent.
+    local verify_body
+    verify_body="$(declare -f verify_patched)" || verify_body=""
+    if [[ "${verify_body}" != *'EDITABLE:BEGIN'* ]]; then
         REMOVAL_VERDICT="marker_guard_absent"
         printf '[daemon-apply] FATAL removal_gate_precondition: verify_patched carries NO editable-region marker check — refusing live removal for target=%s pattern=%s (row kept pending)\n' \
             "${target}" "${label}" >&2
@@ -2785,7 +2788,7 @@ PY
 
         # Bounded-retry → terminal-drain via the shared emit_stale_drain helper (also
         # called from the apply_rc==3 path below). WITHOUT this call an out_of_region row
-        # (e.g. proposal 1022) re-selects every cycle FOREVER — stale_attempt_count stays
+        # re-selects every cycle FOREVER — stale_attempt_count stays
         # 0 because ONLY the apply_rc==3 path drained. The helper owns the gate, the
         # enforce=1 loud-fail, and the verdict handling. This site runs BEFORE any apply
         # (no bytes written, nothing to restore) so — unlike apply_rc==3 — the single

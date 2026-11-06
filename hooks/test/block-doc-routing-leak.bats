@@ -30,6 +30,7 @@ setup() {
 
 teardown() {
   if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
+  if ga_guard_path "${REPO_BASE:-}"; then rm -rf -- "${REPO_BASE:?}"; fi
 }
 
 # Write a transcript-co-located sidecar. Args: $1=agent_key $2=agentType.
@@ -135,6 +136,163 @@ run_hook() {
     HOME="${SANDBOX}/home" GA_DATA_ROOT="${SANDBOX}/home/.glass-atrium"
   [[ "${status}" -eq 2 ]] || return 1
   grep -q 'verdict=block' "${FIRED_LOG}" || return 1
+}
+
+# ── Repository-owned documents: tracked files + root README/AGENTS/CHANGELOG ─────────────
+#
+# Fixture repos sit outside the /tmp + TMPDIR staging arms, which allow first: Linux mktemp
+# honours TMPDIR=/var/tmp, macOS ignores it for /var/folders, and run_hook pins TMPDIR away.
+
+# Build a committed repo with a linked worktree. Sets REPO_BASE, REPO, WORKTREE.
+seed_repo_fixture() {
+  command -v git >/dev/null 2>&1 || skip "git required"
+  [[ -d /var/tmp && -w /var/tmp ]] || skip "/var/tmp not writable"
+  REPO_BASE="$(TMPDIR=/var/tmp mktemp -d)"
+  REPO="${REPO_BASE}/repo"
+  WORKTREE="${REPO_BASE}/wt"
+  mkdir -p "${REPO}/docs" "${REPO_BASE}/scratch"
+  printf '# repo\n' >"${REPO}/README.md"
+  printf 'guide\n' >"${REPO}/docs/guide.md"
+  ln -s "${REPO_BASE}/scratch/outside.md" "${REPO}/docs/link.md"
+  fixture_git -C "${REPO}" init -q
+  fixture_git -C "${REPO}" add README.md docs/guide.md docs/link.md
+  fixture_git -C "${REPO}" commit -q -m init
+  fixture_git -C "${REPO}" worktree add -q "${WORKTREE}"
+}
+
+# git isolated from the operator's config (signing, hooks, identity).
+fixture_git() {
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git \
+    -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false "$@"
+}
+
+# Run the hook as a doc-agent Write of $1, with a fresh firing-trace log. Extra VAR=val pairs may follow.
+run_repo_row() {
+  local path="$1"
+  shift
+  : >"${FIRED_LOG}"
+  run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"${path}\"}}" \
+    TMPDIR="/fixture-tmp" "$@"
+}
+
+@test "a doc agent may write a tracked file or a root README/AGENTS/CHANGELOG of a git worktree" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_repo_fixture
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  local row label path verdict
+  for row in \
+    "tracked file below the root|${REPO}/docs/guide.md|allow-repo-tracked" \
+    "README.md at a linked worktree root|${WORKTREE}/README.md|allow-repo-root-doc" \
+    "new untracked AGENTS.md at a repo root|${REPO}/AGENTS.md|allow-repo-root-doc" \
+    "translated README at a repo root|${REPO}/README.zh-CN.md|allow-repo-root-doc" \
+    "script-tagged README at a repo root|${REPO}/README.zh-Hans.md|allow-repo-root-doc"; do
+    IFS='|' read -r label path verdict <<<"${row}"
+    run_repo_row "${path}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${label}: status ${status}: ${output}"
+      return 1
+    }
+    grep -q "verdict=${verdict}\$" "${FIRED_LOG}" || {
+      echo "${label}: wanted ${verdict}"
+      cat "${FIRED_LOG}"
+      return 1
+    }
+  done
+}
+
+@test "a doc agent writing an untracked document outside a repo root still blocks" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_repo_fixture
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  local row label path
+  for row in \
+    "new report in a non-repo dir|${REPO_BASE}/scratch/report.md" \
+    "new report in a repo subdir|${REPO}/docs/report.md" \
+    "README below the repo root|${REPO}/docs/README.md" \
+    "README inside the git dir|${REPO}/.git/README.md" \
+    "glob-named file matching tracked docs|${REPO}/docs/*.md" \
+    "tracked symlink leading out of the repo|${REPO}/docs/link.md" \
+    "report named like a README at a repo root|${REPO}/README.analysis.md" \
+    "three-letter word tag on a README at a repo root|${REPO}/README.old.md" \
+    "word subtag after a language tag on a README at a repo root|${REPO}/README.en-old.md" \
+    "dated report named like a CHANGELOG at a repo root|${REPO}/CHANGELOG.research-2026-11-05.md"; do
+    IFS='|' read -r label path <<<"${row}"
+    run_repo_row "${path}"
+    [[ "${status}" -eq 2 ]] || {
+      echo "${label}: status ${status}: ${output}"
+      return 1
+    }
+    grep -q 'verdict=block$' "${FIRED_LOG}" || {
+      echo "${label}"
+      cat "${FIRED_LOG}"
+      return 1
+    }
+  done
+}
+
+@test "a doc agent writing a repository document under the live harness root still blocks" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_repo_fixture
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  local row label path root
+  ln -s "${REPO_BASE}" "${SANDBOX}/root-link"
+  for row in \
+    "tracked rule body in a harness work tree|${REPO}/docs/guide.md|${REPO_BASE}" \
+    "README at a harness work-tree root|${REPO}/README.md|${REPO_BASE}" \
+    "harness root given through a symlinked spelling|${REPO}/docs/guide.md|${SANDBOX}/root-link"; do
+    IFS='|' read -r label path root <<<"${row}"
+    run_repo_row "${path}" GA_ROOT="${root}"
+    [[ "${status}" -eq 2 ]] || {
+      echo "${label}: status ${status}: ${output}"
+      return 1
+    }
+    grep -q 'verdict=block$' "${FIRED_LOG}" || {
+      echo "${label}"
+      cat "${FIRED_LOG}"
+      return 1
+    }
+  done
+}
+
+# A case-sensitive volume (Linux CI) has no upper-cased directory → the row would block
+# without reaching the case fold, so it skips there instead of passing vacuously.
+@test "a doc agent writing a case-variant spelling of a tracked file under the harness root still blocks" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_repo_fixture
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  local upper_base
+  upper_base="$(printf '%s' "${REPO_BASE}" | tr '[:lower:]' '[:upper:]')"
+  [[ -d "${upper_base}/repo/docs" ]] \
+    || skip "case-sensitive volume: ${upper_base}/repo/docs is missing, so the case fold is untestable here"
+  run_repo_row "${upper_base}/repo/docs/guide.md" GA_ROOT="${REPO_BASE}"
+  [[ "${status}" -eq 2 ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
+  grep -q 'verdict=block$' "${FIRED_LOG}" || {
+    cat "${FIRED_LOG}"
+    return 1
+  }
+}
+
+@test "a repository-local core.fsmonitor command never runs while the hook asks git" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_repo_fixture
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  local marker="${REPO_BASE}/fsmonitor-ran"
+  printf '#!/bin/sh\ntouch "%s"\n' "${marker}" >"${REPO_BASE}/fsmonitor-probe"
+  chmod +x "${REPO_BASE}/fsmonitor-probe"
+  fixture_git -C "${REPO}" config core.fsmonitor "${REPO_BASE}/fsmonitor-probe"
+  run_repo_row "${REPO}/docs/guide.md"
+  [[ "${status}" -eq 0 ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
+  grep -q 'verdict=allow-repo-tracked$' "${FIRED_LOG}" || {
+    cat "${FIRED_LOG}"
+    return 1
+  }
+  [[ ! -e "${marker}" ]]
 }
 
 # ── P0-2: hook_normalize_path leading-~ expansion — deliberate permissive pin ────────────

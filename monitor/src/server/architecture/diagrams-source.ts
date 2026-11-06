@@ -44,7 +44,7 @@ export const DIAGRAMS = [
     end
 
     subgraph agents["Specialist agents"]
-        agent_layer["23 agents"]
+        agent_layer["24 agents"]
     end
 
     subgraph hooks["Safety checks & tracking"]
@@ -307,8 +307,8 @@ export const DIAGRAMS = [
     delegate --> to_doc
     delegate --> code_team
 
-    %% [CONTINUITY] turn-0 parse — document team reached via boundary node
-    continuity_hook -. "reads progress files at session start" .-> to_doc
+    %% progress-file resume — document team reached via boundary node
+    continuity_hook -. "reads a progress file when resuming" .-> to_doc
 
     %% anti-slop skill binding
     reviewer -. "self-checks against anti-slop skill" .-> reviewer
@@ -364,9 +364,7 @@ export const DIAGRAMS = [
     end
 
     from_orch --> glass-atrium-intel-researcher
-    from_orch -. "reads progress files at session start" .-> glass-atrium-intel-researcher
-    from_orch -. "reads progress files at session start" .-> planner_d
-    from_orch -. "reads progress files at session start" .-> glass-atrium-intel-reporter
+    from_orch -. "reads a progress file when resuming" .-> planner_d
 
     glass-atrium-intel-researcher -- "research results" --> planner_d
     planner_d -- "plan document" --> domain
@@ -536,7 +534,7 @@ export const CANONICAL_MAP: CanonicalMap = {
     end
 
     subgraph agents["Agents"]
-        agent_layer["23 agents"]
+        agent_layer["24 agents"]
     end
 
     subgraph hooks["Safety"]

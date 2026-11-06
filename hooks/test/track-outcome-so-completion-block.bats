@@ -17,11 +17,11 @@
 #            changes NOTHING when the field is absent).
 #
 # The stderr-channel cases (tagged [stderr]) run DB-free: PG is fail-opened via PGHOST and the
-# attribution decision is read off the diagnostic channel (computed BEFORE the PG INSERT), so the
-# regression holds even where the live CHECK is not yet widened to the 11th token. [spool] cases run
-# DB-free the same way and read the outcome the hook spools when its PG write fails. Only the DB-row
-# case (recovered VALUES reach core.outcomes) needs the ephemeral cluster AND a migrated CHECK carrying
-# the token → it self-skips otherwise, mirroring schema-mode-completion.bats.
+# attribution decision is read off the diagnostic channel (computed BEFORE the PG INSERT). [spool]
+# cases run DB-free the same way and read the outcome the hook spools when its PG write fails. The
+# DB-row cases (recovered VALUES reach core.outcomes) run against the file's ephemeral cluster, which
+# carries the db-hygiene migration verbatim → a migration CHECK lacking structuredoutput-completion
+# rejects the INSERT and those cases FAIL, as production would lose the outcome.
 #
 # Isolation mirrors track-outcome-schema-mode-completion.bats exactly: HOME is sandboxed so the
 # transcript resolution + diag log stay in the tmp dir; every connection reaches only a throwaway
@@ -37,6 +37,9 @@ source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 # shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
 source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
+# One throwaway cluster per file (lib/ephemeral-pg.bash), PGHOST/PGPORT exported at it → every
+# host-less connection here (row reads, teardown DELETE, the hook's own write)
+# lands in it, never in the invoking shell's database.
 setup_file() {
   command -v python3 >/dev/null 2>&1 || return 0
   PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
@@ -107,7 +110,7 @@ if agent:
                 "(SELECT id FROM core.outcomes WHERE agent=%s)", (agent,))
             cur.execute("DELETE FROM core.outcomes WHERE agent=%s", (agent,))
             # Secondary loud-fail artifact: when the primary core.outcomes INSERT fails (e.g. the
-            # structuredoutput-completion CHECK rejection on a live DB whose constraint is not yet
+            # structuredoutput-completion CHECK rejection on a DB whose constraint is not yet
             # widened), _pg_outcome_dualwrite.py stamps a core.hook_failures row tagged with the
             # outcome payload_ref (cid → agent fallback = UNIQUE_AGENT here, the transcripts carry no
             # cid). Untended those rows accumulate into the 24h Hook Chain WARN. Scope the DELETE to
@@ -304,7 +307,7 @@ PY
 # core.hook_failures helpers — the secondary loud-fail row carries the outcome payload_ref
 # (cid → agent fallback), so this suite's rows are tagged with UNIQUE_AGENT. hf_seed writes a row
 # shape-identical to the writer's INSERT so the scoped-DELETE hygiene is pinned without depending
-# on the live CHECK-constraint state (which decides whether a real run generates one).
+# on the CHECK-constraint state (which decides whether a real run generates one).
 hf_count() {
   CB_REF="${1}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY'
 import os, psycopg
@@ -392,28 +395,6 @@ run_hook_db() {
 oc() { [[ "${2}" == *"${1}"* ]] || { printf 'assert-contains FAILED: [%s] absent from output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
 no() { [[ "${2}" != *"${1}"* ]] || { printf 'assert-omits FAILED: [%s] present in output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
 
-# Constraint skip-probe — the VALID DB-row case INSERTs attribution_source =
-# 'structuredoutput-completion'; while the cluster's migrated CHECK lacks the 11-value set that INSERT
-# violates the constraint → skip. A missing constraint rejects nothing → run.
-skip_unless_live_check_allows_completion_token() {
-  local con_def
-  con_def="$(PYTHONPATH="${PSYCOPG_PP}" python3 - 2>/dev/null <<'PY'
-import psycopg
-with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-            "WHERE conname = 'outcomes_attribution_source_check'")
-        row = cur.fetchone()
-        print("NO_CONSTRAINT" if row is None else row[0])
-PY
-)" || con_def=""
-  case "${con_def}" in
-    *structuredoutput-completion* | NO_CONSTRAINT) ;;
-    *) skip "the migrated CHECK lacks structuredoutput-completion" ;;
-  esac
-}
-
 @test "[stderr] VALID completion_block → tier-1 promotion + structuredoutput-completion (not synthesized)" {
   write_transcript_cb valid
   write_payload
@@ -471,8 +452,7 @@ PY
 
 @test "VALID completion_block recovery lands writer VALUES in core.outcomes (structuredoutput-completion)" {
   # DB-backed — proves the recovered result/confidence/metric_pass/attribution reach the row (the
-  # stderr channel exposes only the decision, not the persisted values). Gated on the live CHECK
-  # carrying the 11th token (the INSERT writes it).
+  # stderr channel exposes only the decision, not the persisted values).
   write_transcript_cb valid
   write_payload
 
@@ -484,7 +464,6 @@ PY
   [ "${status}" -eq 0 ] || return 1
   oc "attribution=structuredoutput-completion" "${output}" || return 1
 
-  skip_unless_live_check_allows_completion_token
   run count_rows
   [ "${output}" = "1" ]
   # Writer-claimed fields recorded verbatim from the recovered block.
@@ -522,7 +501,6 @@ PY
   [ "${status}" -eq 0 ] || return 1
   oc "attribution=structuredoutput-completion" "${output}" || return 1
 
-  skip_unless_live_check_allows_completion_token
   run fetch_col lesson
   # Exact match ⇒ no sentinel bleed AND no trailing whitespace.
   [ "${output}" = "put the [COMPLETION] block in the SO completion_block field" ] || return 1
@@ -540,7 +518,6 @@ PY
   oc "attribution=structuredoutput-completion" "${output}" || return 1
   oc "completion_block recovered from terminal StructuredOutput input (tier-1 promotion)" "${output}" || return 1
 
-  skip_unless_live_check_allows_completion_token
   # concerns is a text[] column → fetch_col prints the psycopg list repr. An exact match pins the
   # single clean element (a bled ' [/COMPLETION]' would change the repr), and the case guard states
   # the sentinel-absence intent explicitly.
@@ -565,7 +542,6 @@ PY
   oc "attribution=structuredoutput-completion" "${output}" || return 1
   no "attribution=structuredoutput-derived" "${output}" || return 1
 
-  skip_unless_live_check_allows_completion_token
   run fetch_col lesson
   [ "${output}" = "writer truncated before the closing sentinel" ] || return 1
   case "${output}" in *"[/COMPLETION]"*) return 1 ;; esac
@@ -638,7 +614,7 @@ PY
   run_hook_db
   wait "${appender_pid}" 2>/dev/null || true
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional — computed BEFORE the PG INSERT): the fresh re-read
+  # DB-free rescue regression (computed BEFORE the PG INSERT): the fresh re-read
   # settled the terminal SO AND its completion_block, so the writer block is promoted, not synthesized.
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "completion_block recovered from terminal StructuredOutput input (tier-1 promotion)" "${output}" || return 1
@@ -646,8 +622,6 @@ PY
   no "attribution=structuredoutput-derived" "${output}" || return 1
   no "attribution=completion-synthesized" "${output}" || return 1
 
-  # Gate the DB-row value assertions on the live CHECK (the INSERT writes the 11th token).
-  skip_unless_live_check_allows_completion_token
   run count_rows
   [ "${output}" = "1" ] || return 1
   # Writer-claimed fields recovered through the race land verbatim.
@@ -666,10 +640,10 @@ PY
 @test "hook_failures secondary rows: scoped self-cleanup deletes ONLY the suite's payload tag" {
   # Root cause of the 24h Hook Chain WARN: the loud-fail dual-write writer stamps a core.hook_failures
   # row on a primary core.outcomes INSERT failure (the structuredoutput-completion CHECK rejection when
-  # the live constraint is not yet widened), tagged with the outcome payload_ref (cid → agent). Those
+  # the constraint is not yet widened), tagged with the outcome payload_ref (cid → agent). Those
   # rows share UNIQUE_AGENT and, untended by the pre-fix teardown (outcomes/correction_signals only),
   # accumulated into the WARN aggregate. Pin the scoped-DELETE hygiene deterministically (no dependence
-  # on the live CHECK state): a tagged row + a distinctly-tagged control row → the scoped cleanup zeroes
+  # on the CHECK state): a tagged row + a distinctly-tagged control row → the scoped cleanup zeroes
   # ONLY the suite's tag and leaves the control intact (never hook-name- or time-window-scoped).
   # The control tag is derived from UNIQUE_AGENT (a distinct exact tag, not a prefix of it) so
   # teardown() sweeps it on an interrupted run — the cleanup-under-test (exact WHERE payload_ref =

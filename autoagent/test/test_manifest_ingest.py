@@ -49,7 +49,12 @@ for _anchor in (
         sys.path.insert(0, str(_anchor))
 
 import _pg_stub_backend as stub  # noqa: E402 — anchors above
-from _pg_seal import get_ephemeral_connection, seal_pg_reach  # noqa: E402 — anchors above
+from _pg_seal import (  # noqa: E402 — anchors above
+    get_ephemeral_connection,
+    put_install_config,
+    seal_pg_reach,
+    set_install_tree,
+)
 
 try:
     import daemon_cycle as dc
@@ -65,7 +70,7 @@ _CYCLE_3 = datetime(2026, 10, 7, 3, 0, 0, tzinfo=timezone.utc)
 
 
 def _get_line(
-    agent_id: str = "a41f0c2e9b", session_id: str | None = "e0e449e3-7b17", exposure: str = ""
+    agent_id: str = "a41f0c2e9b", session_id: str | None = "7c1b5a9e-3d42", exposure: str = ""
 ) -> str:
     """One hook MANIFEST line; session_id None = a line written before the session field.
 
@@ -143,7 +148,7 @@ def _get_delivery_line(
 ) -> str:
     """A treatment spawn the hook delivered a canary to, as its MANIFEST line."""
     return (
-        f"{ts} [inject-scope-rules] MANIFEST agent_id=c5d8{agent[-4:]} session_id=e0e449e3-7b17"
+        f"{ts} [inject-scope-rules] MANIFEST agent_id=c5d8{agent[-4:]} session_id=7c1b5a9e-3d42"
         f" agent={agent} ctx_bytes=1166 digest=9f2c arm=1 salt_id={salt} delivered=1"
         f" delivered_hash={text_sha256} blocks=emit,meter,canary\n"
     )
@@ -215,11 +220,6 @@ def _get_other_hash_case() -> SimpleNamespace:
         text="".join(line for _, line, _ in lines),
         returned=[name for name, _, is_returned in lines if is_returned],
     )
-
-
-def _put_config(root: Path, declared: Path) -> None:
-    """The install's rendered config.toml, declaring `declared` as its [paths].root."""
-    (root / "config.toml").write_text(f'[paths]\nroot = "{declared}"\n', encoding="utf-8")
 
 
 class _SpawnManifestTable:
@@ -433,7 +433,7 @@ class _IngestCase(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self.canary_dir = self.base_root / "data" / "learning" / "canary"
-        _put_config(self.base_root, self.base_root)
+        put_install_config(self.base_root, self.base_root)
         self.pg_reach = seal_pg_reach(self)
         self.table = _SpawnManifestTable()
         self.ledger = _TrialLedger()
@@ -542,7 +542,7 @@ class TestManifestRotation(_IngestCase):
         self._ingest(_CYCLE_1)
 
         stored = [(row[1], row[3]) for _, row in sorted(self.table.rows.items())]
-        self.assertEqual(stored, [(None, None), (None, None), ("a41f0c2e9b", "e0e449e3-7b17")])
+        self.assertEqual(stored, [(None, None), (None, None), ("a41f0c2e9b", "7c1b5a9e-3d42")])
 
     def test_a_released_hook_line_with_lesson_fields_gives_one_row_with_its_fields(
         self,
@@ -550,9 +550,9 @@ class TestManifestRotation(_IngestCase):
         # Shape written by the v1.0.1 hook: lesson fields between digest= and blocks=.
         self._append(
             self.live_log,
-            "2026-10-02T00:27:59Z [inject-scope-rules] MANIFEST"
-            " agent_id=a28df590243a1e0a2 agent=glass-atrium-qa-code-reviewer"
-            " ctx_bytes=4392 digest=a7332d0c467addde"
+            "2026-01-14T09:41:23Z [inject-scope-rules] MANIFEST"
+            " agent_id=a5e0c1d2b3f4a6978 agent=glass-atrium-qa-code-reviewer"
+            " ctx_bytes=3081 digest=b1c2d3e4f5a60718"
             " lessons=ctm:review/when-a-change-adds-s@5,"
             "epm:review/when-a-baseline-snap@5 lesson_truncated=1"
             " blocks=emit:/Users/dev/.glass-atrium/hooks/inject-scope-rules.sh"
@@ -565,11 +565,11 @@ class TestManifestRotation(_IngestCase):
             [
                 (
                     0,
-                    "a28df590243a1e0a2",
+                    "a5e0c1d2b3f4a6978",
                     "glass-atrium-qa-code-reviewer",
                     None,
-                    datetime(2026, 10, 2, 0, 27, 59, tzinfo=timezone.utc),
-                    4392,
+                    datetime(2026, 1, 14, 9, 41, 23, tzinfo=timezone.utc),
+                    3081,
                     "emit:/Users/dev/.glass-atrium/hooks/inject-scope-rules.sh"
                     ";lesson:/Users/dev/.glass-atrium/data/lessons.json",
                     *_PRE_FIELD,
@@ -966,7 +966,7 @@ class TestManifestDeliveryBinding(_DeliveryCase):
         self._put_canaries()
         (self.base_root / "config.toml").unlink(missing_ok=True)
         if declared is not None:
-            _put_config(self.base_root, declared)
+            put_install_config(self.base_root, declared)
 
     def test_the_a_a_last_day_deliveries_never_read_as_no_trial_after_its_result(self) -> None:
         self._open_aa()
@@ -1971,7 +1971,7 @@ class TestManifestArmParity(unittest.TestCase):
                 "id--7",
             ),
             ("control arm", 3, "a1", "plain", "a1"),
-            ("salt past 32 bits", 2**40 + 3, "e0e449e3-7b17", "plain", "e0e449e3-7b17"),
+            ("salt past 32 bits", 2**40 + 3, "7c1b5a9e-3d42", "plain", "7c1b5a9e-3d42"),
         )
         delivered_texts = set()
         arms = set()
@@ -2051,10 +2051,7 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self.pg_reach = seal_pg_reach(self)
-        _put_config(self.root, self.root)
-        install_root = mock.patch.object(dc, "_INSTALL_ROOT", self.root)
-        install_root.start()
-        self.addCleanup(install_root.stop)
+        set_install_tree(self)
 
     def _run(self, *, skip_loop_emit: bool) -> tuple[object, str]:
         stderr = io.StringIO()

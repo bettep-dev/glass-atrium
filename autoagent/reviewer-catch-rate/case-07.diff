@@ -1,0 +1,23 @@
+diff --git a/monitor/src/server/file-age.ts b/monitor/src/server/file-age.ts
+new file mode 100644
+index 0000000..7340cd0
+--- /dev/null
++++ b/monitor/src/server/file-age.ts
+@@ -0,0 +1,17 @@
++import { readFile, stat } from "node:fs/promises";
++import { errnoCode } from "./errno.js";
++
++const MS_PER_MINUTE = 60_000;
++
++/** Whole minutes since the file at `path` was last modified, or undefined when it does not exist. */
++export async function getFileAgeMinutes(path: string, now: number = Date.now()): Promise<number | undefined> {
++  try {
++    const stats = await stat(path);
++    return Math.floor((now - stats.mtimeMs) / MS_PER_MINUTE);
++  } catch (error) {
++    if (errnoCode(error) === "ENOENT") {
++      return undefined;
++    }
++    throw error;
++  }
++}

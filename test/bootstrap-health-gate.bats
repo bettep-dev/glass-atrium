@@ -13,6 +13,8 @@
 # ever driven — the gate starts a real monitor + polls, out of scope for a unit test). Each assertion
 # must key on a SEMANTIC token of the gate decision, never on a source idiom the function could
 # express another way, and never on a token that also appears in the function's own comments.
+# Exception: the listener-check row runs the extracted gate against shell stubs (curl, lsof) and a
+# sleeping `node` stand-in, so no real monitor, port or DB is reached.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 CORE_SH="${GA}/lib/ga-db.sh"
@@ -63,4 +65,53 @@ gate_body() {
   # it surfaces the health-gate code on its fail paths via the exit_step force-quit-guard wrapper — `exit` on the
   # CLI passthrough (GA_TUI_STEP unset), `return` under the TUI run_step; the CLI exit-code is unchanged.
   [[ "$(grep -c 'exit_step "${BOOTSTRAP_EXIT_HEALTH}"' <<<"${body}")" -ge 3 ]]
+}
+
+# === listener check — the gate's own child heading a listener list past one pipe buffer =========
+@test "the gate passes when its own child heads a listener list past one pipe buffer" {
+  local stub_bin="${BATS_TEST_TMPDIR}/bin" pids="${BATS_TEST_TMPDIR}/pids"
+  mkdir -p "${stub_bin}" "${BATS_TEST_TMPDIR}/ga/monitor"
+  # the monitor child: a stand-in process the gate starts, polls and stops
+  printf '#!/bin/sh\nexec /bin/sleep 30\n' >"${stub_bin}/node"
+  chmod +x "${stub_bin}/node"
+  awk 'BEGIN { for (i = 0; i < 170000; i++) print 100000 + i }' >"${pids}"
+  gate_body >"${BATS_TEST_TMPDIR}/gate.sh"
+  # shellcheck source=/dev/null
+  source "${BATS_TEST_TMPDIR}/gate.sh"
+  local rc=0 out
+  # shellcheck disable=SC2034,SC2154,SC2329  # the gate's globals, its local mon_pid and the stubs it calls, which shellcheck cannot trace
+  (
+    set -o pipefail
+    export PATH="${stub_bin}:${PATH}" TMPDIR="${BATS_TEST_TMPDIR}"
+    GA_ROOT="${BATS_TEST_TMPDIR}/ga" BOOTSTRAP_HEALTH_WINDOW_SECS=3 BOOTSTRAP_EXIT_HEALTH=9
+    LOAD_LAUNCHD=false LAUNCHD_JOBS=()
+    log() { printf '%s\n' "$*"; }
+    die() {
+      printf 'DIE %s\n' "$*"
+      exit 97
+    }
+    exit_step() { return 1; }
+    atrium_monitor_port() { printf '16999\n'; }
+    sleep() { :; }
+    # the precondition probe finds no listener; the poll answers 200 with db:open
+    curl() {
+      case " $* " in *' -o /dev/null '*) return 7 ;; *) ;; esac
+      printf '{"db":"open"}\n200'
+    }
+    # the gate's child first, then ~1 MB of other pids: an early-exit lookup leaves its writer mid-write
+    lsof() {
+      printf '%s\n' "${mon_pid}"
+      cat "${pids}"
+    }
+    bootstrap_health_gate
+  ) >"${BATS_TEST_TMPDIR}/gate.out" 2>&1 || rc=$?
+  out="$(cat "${BATS_TEST_TMPDIR}/gate.out")"
+  [[ "${rc}" -eq 0 ]] || {
+    printf 'rc %s\n%s\n' "${rc}" "${out}"
+    return 1
+  }
+  [[ "${out}" == *"monitor health gate PASS"* ]] || {
+    printf '%s\n' "${out}"
+    return 1
+  }
 }

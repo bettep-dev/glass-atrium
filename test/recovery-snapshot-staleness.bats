@@ -365,3 +365,63 @@ run_doctor_sandbox() {
   [[ "${output}" == *"== doctor: PASS (with"* ]] || return 1
   [[ "${output}" != *"== doctor: FAIL =="* ]] || return 1
 }
+
+# === a failed git read is reported, never read as a clean tree =================
+
+# git stub ahead of PATH: fails (rc 128) the one read whose argv matches GA_GIT_FAIL, runs real
+# git for every other call.
+seed_failing_git() {
+  mkdir -p "${WORK}/bin"
+  cat >"${WORK}/bin/git" <<'STUB'
+#!/usr/bin/env bash
+# shellcheck disable=SC2053  # the pattern is a glob on purpose
+[[ "$*" != ${GA_GIT_FAIL} ]] || exit 128
+exec "${GA_REAL_GIT}" "$@"
+STUB
+  chmod +x "${WORK}/bin/git"
+  GA_REAL_GIT="$(command -v git)"
+  export GA_REAL_GIT PATH="${WORK}/bin:${PATH}"
+}
+
+@test "a failed git read is a note naming the read, never a clean or zero-anomaly verdict" {
+  local row name pattern want clean_expected
+  local rows=(
+    'tracked-change read fails|*diff --name-only*|note : rules — recovery snapshot state unreadable|no'
+    'untracked read fails|*ls-files --others --exclude-standard*|note : rules — recovery snapshot state unreadable|no'
+    'path-anomaly read fails|*ls-files --others --directory*|note : rules — path-anomaly scan unreadable|yes'
+  )
+  make_repo rules
+  seed_failing_git
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name pattern want clean_expected <<<"${row}"
+    export GA_GIT_FAIL="${pattern}"
+    run_scan
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: status ${status}"
+      echo "${output}"
+      return 1
+    }
+    [[ "${output}" == *"${want}"* ]] || {
+      echo "${name}: missing '${want}'"
+      echo "${output}"
+      return 1
+    }
+    if [[ "${clean_expected}" == "yes" ]]; then
+      [[ "${output}" == *"rules recovery snapshot current"* ]] || {
+        echo "${name}: rest of the scan skipped"
+        echo "${output}"
+        return 1
+      }
+    else
+      [[ "${output}" != *"rules recovery snapshot current"* ]] || {
+        echo "${name}: failed read reported clean"
+        echo "${output}"
+        return 1
+      }
+    fi
+    [[ "${scan_stale}" == "0" && "${scan_path_anomaly}" == "0" ]] || {
+      echo "${name}: verdict ${scan_verdict}"
+      return 1
+    }
+  done
+}

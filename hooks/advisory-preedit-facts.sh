@@ -7,7 +7,7 @@
 # Registered on Stop ONLY (matcher ""), firing alongside cost-tracker.sh. NOT on SubagentStop: the
 # parent transcript visible there predates the subagent's own edits, so it has nothing to advise on.
 # Advisory-only because Stop has NO block channel — a finished turn cannot be rewound
-# by exit 2 (rules/shared-hook-capability-contract.md Per-Event table: observe-only), so ALWAYS exit 0.
+# by exit 2 (scoped/shared-hook-capability-contract.md Per-Event table: observe-only), so ALWAYS exit 0.
 #
 # The transcript is read as a BOUNDED tail (last ~1 MiB), never a full stream: the current turn's edits +
 # declarations always fall in that tail, so a long session no longer re-reads the whole file each turn-end.
@@ -22,6 +22,23 @@ IFS=$'\n\t'
 
 # Diagnostic ERR trap — stderr only, fail-open so an internal error never breaks session-end.
 trap 'printf "[preedit-facts-advisory] internal error at line %d: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
+
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
+
+# Payload and parser-output names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT PIPELINE_OUT
 
 # Drain stdin. Empty payload → nothing to advise on, exit silently.
 INPUT=""
@@ -210,7 +227,7 @@ PIPELINE_OUT=""
 PIPELINE_OUT="$(printf '%s' "${INPUT}" | python3 -c "${PIPELINE_PY}" 2>/dev/null)" || PIPELINE_OUT=""
 
 extract_field() {
-  printf '%s\n' "${PIPELINE_OUT}" | sed -n "s/^@@${1}@@//p" | head -1
+  printf '%s\n' "${PIPELINE_OUT}" | sed -n "s/^@@${1}@@//p" | drain_after head -1
 }
 
 VERDICT="$(extract_field verdict)"

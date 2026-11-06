@@ -373,10 +373,12 @@ ga_init_env() {
 # [2] leaf logging
 # Prose-prefix coupling: the launcher's classify_step_log (glass-atrium) keys severity
 # classes (LOUD/DIM/SUPPRESS) on these `log` message prefixes — keep them in sync.
-log() { printf '%s\n' "$*" >&2; }
+# Write in a childless subshell → no SIGCHLD can interrupt it (bash 3.2 EINTR).
+# Write status ignored → the caller's code path, never the write, decides the exit.
+log() { (printf '%s\n' "$*") >&2 || true; }
 
 die() {
-  printf 'FATAL: %s\n' "$*" >&2
+  (printf 'FATAL: %s\n' "$*") >&2 || true
   exit 1
 }
 
@@ -402,7 +404,7 @@ exit_step() {
 die_step() {
   local code="${1:-1}"
   shift
-  printf 'FATAL: %s\n' "$*" >&2
+  (printf 'FATAL: %s\n' "$*") >&2 || true
   [[ -n "${GA_TUI_STEP:-}" ]] && return "${code}"
   exit "${code}"
 }

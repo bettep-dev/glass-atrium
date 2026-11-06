@@ -84,6 +84,20 @@ _write_stub_claude() {
   printf '%s' "${path}"
 }
 
+# _write_stub_claude_long — a `claude` stub printing $1, then ~1 MB of filler lines, and exiting $2:
+# more than a pipe holds, so a reader stopping at the match leaves the writer mid-write.
+_write_stub_claude_long() {
+  local path="${SANDBOX}/claude-long"
+  {
+    printf '%s\n' '#!/bin/sh'
+    printf "printf '%%s\\\\n' '%s'\n" "$1"
+    printf '%s\n' "awk 'BEGIN { for (i = 0; i < 60000; i++) print \"probe transcript line \" i }'"
+    printf 'exit %s\n' "$2"
+  } >"${path}"
+  chmod +x "${path}"
+  printf '%s' "${path}"
+}
+
 # _assert_no_cred_advisory — the doctor-facing credential strings must not appear on a quota path.
 _assert_no_cred_advisory() {
   local out="$1"
@@ -265,4 +279,30 @@ _assert_no_cred_advisory() {
     echo "teardown without a temp dir wrote: ${output}" >&2
     return 1
   }
+}
+
+# === an early-exit reader on the probe body: a body past one pipe buffer keeps its verdict =========
+
+@test "selftest: a probe body past one pipe buffer keeps its quota and credential verdicts under pipefail" {
+  extract_fn run_with_timeout || return 1
+  extract_fn headless_auth_selftest || return 1
+  GA_AUTH_ENV_LIB="$(_write_env_lib)"
+  GA_AUTH_SELFTEST_TIMEOUT_SECS=10
+  # name|first body line|probe rc|expected selftest rc
+  local rows=(
+    "quota body|Limit reached ∙ ${QUOTA_RESET}|1|3"
+    "rc-0 credential body|API Error: 401|0|1"
+  )
+  local row name body probe_rc want rc
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name body probe_rc want <<<"${row}"
+    GA_AUTH_CLAUDE_BIN="$(_write_stub_claude_long "${body}" "${probe_rc}")"
+    rc=0
+    # the launcher's pipefail, scoped to a subshell so the test body keeps bats' own
+    (set -o pipefail && headless_auth_selftest) >/dev/null 2>&1 || rc=$?
+    [[ "${rc}" -eq "${want}" ]] || {
+      echo "${name}: rc ${rc}, want ${want}"
+      return 1
+    }
+  done
 }

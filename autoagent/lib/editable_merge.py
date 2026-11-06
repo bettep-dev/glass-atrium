@@ -810,6 +810,64 @@ def dropped_local_frontmatter_keys(
     return [key for key in _frontmatter_keys(local_text) if key not in carried]
 
 
+def is_at_base_anchor(live_text: str, base_text: str) -> bool:
+    """Whether ``live_text`` equals ``base_text`` but for carry-pass-sanctioned lines.
+
+    Read-only twin of ``_keep_local_frontmatter``'s policy, from the same two tuples:
+    a local-only key line is ignored on either side; a base-aware key line is ignored
+    on both sides only when live carries it AND it differs from base (live lacking it
+    is a real divergence — the carry pass leaves the release value). Every other
+    byte compares exactly, and a key line outside the byte-0 frontmatter span is
+    never ignored. Either side lacking frontmatter -> plain whole-text comparison.
+    """
+    live_lines = _split_lines(live_text)
+    base_lines = _split_lines(base_text)
+    live_span = _frontmatter_span(live_lines)
+    base_span = _frontmatter_span(base_lines)
+    if live_span is None or base_span is None:
+        return live_text == base_text
+    live_skip, base_skip = _sanctioned_frontmatter_indexes(
+        live_lines, live_span, base_lines, base_span
+    )
+    live_kept = [line for i, line in enumerate(live_lines) if i not in live_skip]
+    base_kept = [line for i, line in enumerate(base_lines) if i not in base_skip]
+    return live_kept == base_kept
+
+
+def _sanctioned_frontmatter_indexes(
+    live_lines: list[str],
+    live_span: tuple[int, int],
+    base_lines: list[str],
+    base_span: tuple[int, int],
+) -> tuple[set[int], set[int]]:
+    """Line indexes (live, base) of the frontmatter lines the carry pass may differ on."""
+    live_skip: set[int] = set()
+    base_skip: set[int] = set()
+    for key in (*_LOCAL_ONLY_FRONTMATTER_KEYS, *_BASE_AWARE_FRONTMATTER_KEYS):
+        prefix = f"{key}:"
+        live_idx = _find_frontmatter_index(live_lines, live_span, prefix)
+        base_idx = _find_frontmatter_index(base_lines, base_span, prefix)
+        if key in _BASE_AWARE_FRONTMATTER_KEYS:
+            # live absent -> release value stays (diverged); live == base -> nothing to ignore.
+            if live_idx is None:
+                continue
+            if base_idx is not None and base_lines[base_idx] == live_lines[live_idx]:
+                continue
+        if live_idx is not None:
+            live_skip.add(live_idx)
+        if base_idx is not None:
+            base_skip.add(base_idx)
+    return live_skip, base_skip
+
+
+def _find_frontmatter_index(
+    lines: list[str], span: tuple[int, int], prefix: str
+) -> int | None:
+    """Index of the line ``_find_frontmatter_line`` selects, or None."""
+    line = _find_frontmatter_line(lines, span, prefix)
+    return None if line is None else lines.index(line, *span)
+
+
 def resolve_file(
     target_file: str,
     local_text: str,
@@ -1634,6 +1692,27 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_anchor(args: argparse.Namespace) -> int:
+    """Print ``at-anchor`` / ``diverged`` for live vs base; uncomparable -> stderr, no token.
+
+    A token rather than an rc 0/1 verdict: an uncaught traceback or an import-time
+    failure also exits 1, which the doctor must read as "not comparable", never as
+    "diverged". Reads only the two named paths — no state root, no arbiter, no write.
+    """
+    try:
+        live_text = _read(args.live)
+        base_text = _read(args.base)
+    except (OSError, UnicodeDecodeError) as exc:
+        sys.stderr.write(
+            f"editable_merge: anchor not comparable — live {args.live} / base "
+            f"{args.base}: {exc} (check both paths exist and are UTF-8)\n"
+        )
+        return EXIT_FAIL
+    verdict = "at-anchor" if is_at_base_anchor(live_text, base_text) else "diverged"
+    sys.stdout.write(f"{verdict}\n")
+    return EXIT_OK
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="editable_merge.py",
@@ -1651,9 +1730,16 @@ def main(argv: list[str]) -> int:
     )
     p_plan.add_argument("--agent", help="agent name (default: target stem)")
     p_plan.add_argument("--state-dir", help="update state dir override")
+    p_anchor = sub.add_parser(
+        "anchor", help="read-only: is a live body at its base-store entry?"
+    )
+    p_anchor.add_argument("--live", required=True, help="live agent body")
+    p_anchor.add_argument("--base", required=True, help="base-store entry")
     args = parser.parse_args(argv)
     if args.command == "plan":
         return _cmd_plan(args)
+    if args.command == "anchor":
+        return _cmd_anchor(args)
     parser.print_usage(sys.stderr)
     return EXIT_USAGE
 

@@ -41,8 +41,9 @@ teardown() {
 
 # tmux stub: a server "runs" iff the server flag file exists — otherwise it fails with tmux's own
 # no-server text, or the seeded tmux-error text; show-environment -g replays the
-# seeded global env. launchctl stub: getenv replays a per-name file, exit 0 either way (the real
-# launchctl exits 0 on an unset name too). Every call is logged for the no-server-start assertion.
+# seeded global env, or fails when the env-fail flag exists. launchctl stub: getenv replays a per-name
+# file, exit 0 either way (the real launchctl exits 0 on an unset name too), or fails when the
+# getenv-fail flag exists. Every call is logged for the no-server-start assertion.
 seed_stubs() {
   cat >"${STUB}/tmux" <<'STUB'
 #!/usr/bin/env bash
@@ -57,12 +58,16 @@ if [[ ! -f "${GA_STUB_STATE}/tmux-server" ]]; then
 fi
 case "$1" in
   list-sessions) printf 'daemon: 1 windows\n' ;;
-  show-environment) cat -- "${GA_STUB_STATE}/tmux-env" ;;
+  show-environment)
+    [[ ! -f "${GA_STUB_STATE}/tmux-env-fail" ]] || exit 1
+    cat -- "${GA_STUB_STATE}/tmux-env"
+    ;;
 esac
 exit 0
 STUB
   cat >"${STUB}/launchctl" <<'STUB'
 #!/usr/bin/env bash
+[[ ! -f "${GA_STUB_STATE}/launchd-fail" ]] || exit 1
 [[ "$1" == "getenv" && -f "${GA_STUB_STATE}/launchd-$2" ]] && cat -- "${GA_STUB_STATE}/launchd-$2"
 exit 0
 STUB
@@ -196,4 +201,36 @@ assert_leak_delta() {
   assert_output_lacks "ok   : no default tmux server running" || return 1
   assert_output_lacks "ok   : default tmux server global environment carries no" || return 1
   assert_output_lacks "${DUMMY_VALUE}"
+}
+
+@test "a failed environment read is a note naming the surface, never a clean pass" {
+  local row name flag want clean
+  local rows=(
+    "tmux show-environment fails|tmux-env-fail|note : default tmux server global environment unreadable|ok   : default tmux server global environment carries no"
+    "launchctl getenv fails|launchd-fail|note : launchd user domain unreadable|ok   : launchd user domain carries no"
+  )
+  seed_server_leak
+  seed_launchd_leak
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name flag want clean <<<"${row}"
+    : >"${STUB_STATE}/${flag}"
+    run_doctor_sandbox
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: status ${status}"
+      echo "${output}"
+      return 1
+    }
+    assert_output_has "${want}" || {
+      echo "${name}"
+      return 1
+    }
+    assert_output_lacks "${clean}" || {
+      echo "${name}"
+      return 1
+    }
+    assert_output_lacks "${DUMMY_VALUE}" || {
+      echo "${name}"
+      return 1
+    }
+  done
 }

@@ -41,14 +41,14 @@ import daemon_cycle as dc  # noqa: E402 — autoagent dir prepended above
 # -- Frozen fixtures --------------------------------------------------------
 #
 # Captured as stored in core.autoagent_proposals.proposed_diff, never tidied.
-# Sibling task S4 consumes PROPOSAL_318_DIFF / PROPOSAL_314_DIFF from here.
+# Sibling task S4 consumes TRUNCATED_REPLACE_DIFF / APPLIED_PURE_REMOVAL_DIFF from here.
 
-# Proposal 318 — THE KEYSTONE. Recorded applied, targets the dev-db body, one
+# Truncated replace — THE KEYSTONE. Recorded applied, targets the dev-db body, one
 # removed line and two added lines. The removed line is truncated mid-token
 # ("nee"), so it can never match any line in the target: applicability fails, a
 # rebuild runs, and the removal is dropped. The live dev-db body today carries two
 # budget-checkpointing bullets at two thresholds — neither the one this intended.
-PROPOSAL_318_DIFF = """--- a/glass-atrium-dev-db.md
+TRUNCATED_REPLACE_DIFF = """--- a/glass-atrium-dev-db.md
 +++ b/glass-atrium-dev-db.md
 @@ -90,5 +90,6 @@ - **Transactions**: PG Read Committed / MySQL Repeatable Read · Deadlock: consi
  ## Work Rules
@@ -60,9 +60,9 @@ PROPOSAL_318_DIFF = """--- a/glass-atrium-dev-db.md
 +- **Scope gate**: If request spans schema + index audit + optimization, partition at request-time — compound work must split before execution.
 """
 
-# Proposal 314 — an APPLIED pure-removal diff. Removals already reach production
+# Applied pure removal — an APPLIED pure-removal diff. Removals already reach production
 # without the repair path, which is why the refusal is scoped to the replace shape.
-PROPOSAL_314_DIFF = """--- a/glass-atrium-qa-debugger.md
+APPLIED_PURE_REMOVAL_DIFF = """--- a/glass-atrium-qa-debugger.md
 +++ b/glass-atrium-qa-debugger.md
 @@ -40,6 +40,4 @@
  - **Systemic-gap escalation**: a root cause recurring across recent investigations of the same upstream agent → surface in the conclusion as ONE systemic guardrail recommendation (e.g., "add X to dev-nestjs guardrails"), not N isolated diagnoses.
@@ -73,10 +73,10 @@ PROPOSAL_314_DIFF = """--- a/glass-atrium-qa-debugger.md
  - **Override: Absolute 45% Budget Checkpoint**: If `budget.remaining() / budget_baseline ≤ 0.45` after cycle ≥ 3, immediately emit [COMPLETION] `needs_context` with checkpoint payload — this overrides all cycle-count gates to prevent exhaustion.
 """
 
-# Proposal 360 — a two-hunk pure-removal diff sitting in a rejected status. Status
+# Two-hunk pure removal — a pure-removal diff sitting in a rejected status. Status
 # is not an assertion key here; the reject-arm criterion is keyed on the gate's
 # RETURN VALUE.
-PROPOSAL_360_DIFF = """--- a/glass-atrium-qa-debugger.md
+TWO_HUNK_PURE_REMOVAL_DIFF = """--- a/glass-atrium-qa-debugger.md
 +++ b/glass-atrium-qa-debugger.md
 @@ -38,3 +38,2 @@
  - **Systemic-gap escalation**: a root cause recurring across recent investigations of the same upstream agent → surface in the conclusion as ONE systemic guardrail recommendation (e.g., "add X to dev-nestjs guardrails"), not N isolated diagnoses.
@@ -89,7 +89,7 @@ PROPOSAL_360_DIFF = """--- a/glass-atrium-qa-debugger.md
 """
 
 # The Work Rules region of the LIVE dev-db body, captured verbatim. It is the
-# landed artifact of the 318 conversion: two budget-checkpointing bullets at 65%
+# landed artifact of the keystone conversion: two budget-checkpointing bullets at 65%
 # and 60%, and no trace of the 70% the proposal meant to leave.
 DEV_DB_WORK_RULES = """
 ## Work Rules
@@ -111,11 +111,11 @@ DEV_DB_WORK_RULES = """
 """
 
 # THE REGRESSION WITNESS. Observed output of `_rederive_diff_against_file` at
-# f5c4883 for PROPOSAL_318_DIFF against DEV_DB_WORK_RULES: a pure append at a
+# f5c4883 for TRUNCATED_REPLACE_DIFF against DEV_DB_WORK_RULES: a pure append at a
 # shifted hunk header, both added bullets landed at the end of the editable
 # region, the removal gone. Frozen so the fix is measured against a recorded
 # observation rather than against a description of one.
-HEAD_318_REDERIVE_APPEND = """--- a/glass-atrium-dev-db.md
+HEAD_REDERIVE_APPEND = """--- a/glass-atrium-dev-db.md
 +++ b/glass-atrium-dev-db.md
 @@ -16,4 +16,6 @@
  - **Budget checkpointing**: Estimate scope before starting (count migrations/DDL units). On ≥60% budget usage, emit `[COMPLETION]: needs_context` with checkpoint summary.
@@ -184,7 +184,7 @@ def _capture(fn, *args, **kwargs) -> tuple[object, str]:
 
 
 def qa_debugger_before() -> str:
-    """The qa-debugger BEFORE state, reconstructed from proposal 314's own hunk.
+    """The qa-debugger BEFORE state, reconstructed from the applied pure-removal diff's own hunk.
 
     The applied pure-removal diff is the fixture proving removals reach production
     without the repair path, so its target is rebuilt from the stored hunk
@@ -192,7 +192,7 @@ def qa_debugger_before() -> str:
     consumes the same reconstruction — one definition, as with the fixtures.
     """
     body = "<!-- EDITABLE:BEGIN -->\n"
-    for line in PROPOSAL_314_DIFF.splitlines()[3:]:
+    for line in APPLIED_PURE_REMOVAL_DIFF.splitlines()[3:]:
         body += line[1:] + "\n"
     return body + "<!-- EDITABLE:END -->\n"
 
@@ -223,18 +223,18 @@ class _WorkTreeCase(unittest.TestCase):
 
 
 class TestStaleRederivationRefusal(_WorkTreeCase):
-    """The keystone site: the ONLY one observed to convert proposal 318."""
+    """The keystone site: the ONLY one observed to convert the keystone diff."""
 
-    def test_when_keystone_318_rederived_then_empty_not_append(self) -> None:
+    def test_when_keystone_rederived_then_empty_not_append(self) -> None:
         result, err = _capture(
-            dc._rederive_diff_against_file, PROPOSAL_318_DIFF, self.target
+            dc._rederive_diff_against_file, TRUNCATED_REPLACE_DIFF, self.target
         )
         self.assertEqual(result, "")
         self.assertIn(_REFUSAL_MARKER, err)
 
     def test_when_head_witness_then_it_is_the_append_the_fix_prevents(self) -> None:
         # The witness is an append: two '+' lines, zero '-' lines, shifted header.
-        witness_lines = HEAD_318_REDERIVE_APPEND.splitlines()
+        witness_lines = HEAD_REDERIVE_APPEND.splitlines()
         removed = [
             ln for ln in witness_lines
             if ln.startswith("-") and not ln.startswith("---")
@@ -245,11 +245,11 @@ class TestStaleRederivationRefusal(_WorkTreeCase):
         ]
         self.assertEqual(removed, [])
         self.assertEqual(len(added), 2)
-        self.assertIn("@@ -16,4 +16,6 @@", HEAD_318_REDERIVE_APPEND)
+        self.assertIn("@@ -16,4 +16,6 @@", HEAD_REDERIVE_APPEND)
         current, _err = _capture(
-            dc._rederive_diff_against_file, PROPOSAL_318_DIFF, self.target
+            dc._rederive_diff_against_file, TRUNCATED_REPLACE_DIFF, self.target
         )
-        self.assertNotEqual(current, HEAD_318_REDERIVE_APPEND)
+        self.assertNotEqual(current, HEAD_REDERIVE_APPEND)
 
     def test_when_add_only_rederived_then_append_still_built(self) -> None:
         add_only = (
@@ -336,16 +336,16 @@ class TestPureRemovalPathUntouched(unittest.TestCase):
 
     def test_when_removal_only_gated_then_no_refusal_and_no_append(self) -> None:
         result, err = _capture(
-            dc._gate_validated_diff, PROPOSAL_360_DIFF, self.target, self.work_tree
+            dc._gate_validated_diff, TWO_HUNK_PURE_REMOVAL_DIFF, self.target, self.work_tree
         )
         self.assertNotIn(_REFUSAL_MARKER, err)
         # Either passed through untouched or rejected empty — never a rebuilt
         # append, which is the only outcome this task is closing.
-        self.assertIn(result, ("", PROPOSAL_360_DIFF))
+        self.assertIn(result, ("", TWO_HUNK_PURE_REMOVAL_DIFF))
 
     def test_when_applied_pure_removal_rederived_then_no_refusal(self) -> None:
         result, err = _capture(
-            dc._rederive_diff_against_file, PROPOSAL_314_DIFF, self.target
+            dc._rederive_diff_against_file, APPLIED_PURE_REMOVAL_DIFF, self.target
         )
         self.assertEqual(result, "")
         self.assertNotIn(_REFUSAL_MARKER, err)
@@ -355,10 +355,10 @@ class TestReplaceShapePredicate(unittest.TestCase):
     """The single SoT for which shape is refused."""
 
     def test_when_replace_then_true(self) -> None:
-        self.assertTrue(dc._diff_is_replace_shape(PROPOSAL_318_DIFF))
+        self.assertTrue(dc._diff_is_replace_shape(TRUNCATED_REPLACE_DIFF))
 
     def test_when_pure_removal_then_false(self) -> None:
-        self.assertFalse(dc._diff_is_replace_shape(PROPOSAL_314_DIFF))
+        self.assertFalse(dc._diff_is_replace_shape(APPLIED_PURE_REMOVAL_DIFF))
 
     def test_when_add_only_then_false(self) -> None:
         self.assertFalse(dc._diff_is_replace_shape(ADD_ONLY_FRAGMENT))
@@ -370,7 +370,7 @@ class TestRefusalLineNamesSiteAndTarget(_WorkTreeCase):
     def test_when_each_site_refuses_then_line_names_site_and_target(self) -> None:
         cases = {
             "stale re-derivation": (
-                dc._rederive_diff_against_file, (PROPOSAL_318_DIFF, self.target)
+                dc._rederive_diff_against_file, (TRUNCATED_REPLACE_DIFF, self.target)
             ),
             "normalization fallback": (
                 dc._normalize_to_unified_diff,

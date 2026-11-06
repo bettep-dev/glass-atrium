@@ -85,7 +85,7 @@ OUT_FORMAT = os.environ.get("DML_OUT_FORMAT", "human")
 # the prefix-numbered template form ("## 2. Color") AND the example unnumbered
 # form ("## Colors"); matching keys on a normalized token set so both pass.
 CANONICAL_SECTIONS = [
-    ("visual", "theme", "atmosphere", "brand", "style"),  # §1
+    ("visual", "theme", "atmosphere", "style"),           # §1
     ("color",),                                            # §2
     ("typography",),                                       # §3
     ("spacing",),                                          # §4
@@ -93,7 +93,7 @@ CANONICAL_SECTIONS = [
     ("component",),                                        # §6
     ("motion", "interaction"),                             # §7
     ("voice", "brand", "ui copy", "copy rules"),           # §8
-    ("anti-pattern", "anti", "forbidden", "don'ts"),           # §9
+    ("anti-", "anti pattern", "antipattern", "forbidden", "don'ts"),  # §9
 ]
 
 # A reference looks like `var(--token)` (CSS custom property), `{tier.token.path}`

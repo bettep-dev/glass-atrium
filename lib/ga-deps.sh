@@ -805,7 +805,11 @@ ga_marketplace_present() {
     printf 'no\n'
     return 0
   fi
-  if claude plugin marketplace list 2>/dev/null | grep -q 'claude-plugins-official'; then
+  # capture, then match in-shell — the CLI's chunked output races `grep -q`'s early exit
+  # a failing CLI still reads absent, as under the pipefail pipe
+  local listing
+  if listing="$(claude plugin marketplace list 2>/dev/null)" \
+    && [[ "${listing}" == *claude-plugins-official* ]]; then
     printf 'yes\n'
   else
     printf 'no\n'
@@ -819,7 +823,8 @@ ga_detect_fakechat() {
     printf 'present-but-down\n'
     return 0
   fi
-  if claude plugin list 2>/dev/null | grep -q 'fakechat'; then
+  local listing # capture-then-match: see ga_marketplace_present
+  if listing="$(claude plugin list 2>/dev/null)" && [[ "${listing}" == *fakechat* ]]; then
     printf 'present\n'
   else
     printf 'absent\n'

@@ -1,0 +1,13 @@
+# <defect id> TAB <one review finding naming that defect, worded as a review reports it>
+# Answer text for autoagent/test/reviewer-catch-rate.bats: every row must score its diff caught, each on its own run.
+# A defect may carry several rows: add one in a review's own wording, never one written to fit the ERE.
+eval-on-repo-config	[MUST FIX] scripts/run-project-check.sh:17 — eval runs the check string read from .atrium.json, a repository-controlled file: command injection (core-security.md → Execution Security).
+startswith-open-redirect	[MUST FIX] monitor/src/server/redirect-target.ts:5 — next.startsWith("/") accepts //evil.example, a protocol-relative URL: open redirect. Compare the parsed origin instead (core-security.md → Input Validation).
+task-id-in-test-name	[SHOULD FIX] scripts/test/cid-slug.bats:11 — the test name opens with the task ID P3-T7; shared-testing.md → ID ban puts that reference in the commit message.
+assertion-free-run	[MUST FIX] scripts/test/cid-slug.bats:14 — run get_cid_slug is never followed by a status or output check, so the test asserts nothing.
+backoff-prefix-family	[SHOULD FIX] monitor/src/server/retry-delay.ts:3 — backoffBaseMs, backoffCapMs and backoffExponent are a flat prefix family; group them as backoff: { baseMs, capMs, exponent } (shared-naming.md → Prefix-family grouping).
+empty-catch	[SHOULD FIX] monitor/src/server/json-file.ts:8 — the empty catch swallows EACCES and EISDIR along with ENOENT, so a permission failure reads as an absent override.
+empty-catch	- `[SHOULD FIX][Risk: M] monitor/src/server/json-file.ts → getJsonFile: empty catch block → Anti-Pattern Flags (Residue)`
+empty-catch	- `[SHOULD FIX][Risk: M] monitor/src/server/json-file.ts → getJsonFile: `catch {}` maps EACCES/EISDIR to undefined, masking permission failures`
+unused-readfile-import	[SHOULD FIX] monitor/src/server/file-age.ts:1 — readFile is imported but never used.
+unused-readfile-import	- `[SHOULD FIX][Risk: L] monitor/src/server/file-age.ts → readFile: readFile is imported but never referenced`

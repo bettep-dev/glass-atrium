@@ -257,7 +257,8 @@ def build_conditional_stanza(cfg, conditionals):
     lines = ["**Conditional rules (not delivered — Read them when the condition holds)**"]
     for path, when in conditionals:
         lines.append(
-            "- `%s` — applies when: %s. Read it in full BEFORE your first matching edit."
+            "- `%s` — applies when: %s. Read it in full BEFORE your first action under "
+            "that condition."
             % (os.path.join(cfg.root, path), when)
         )
     return "\n".join(lines)

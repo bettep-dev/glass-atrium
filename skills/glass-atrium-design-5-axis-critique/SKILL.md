@@ -15,12 +15,12 @@ triggers:
 ## Overview
 
 - Single-agent self-critique: glass-atrium-design-designer scores its own work before emit.
-- The axes, band rubric, emit-gate rule and iteration protocol live in `agents/glass-atrium-design-designer.md` → `## Pre-Emit 5-Axis Self-Critique`.
+- The axes, band rubric and emit-gate rule live in `agents/glass-atrium-design-designer.md` → `## Pre-Emit 5-Axis Self-Critique`.
 - This skill adds the per-axis evaluation prompts and the inline output shape.
 
 ## When to Use
 
-- Turn 3+ of glass-atrium-design-designer work — before emitting any canvas / motion-philosophy / DESIGN.md
+- glass-atrium-design-designer work, before emitting any canvas / motion-philosophy / DESIGN.md
 - Designer self-iteration loop
 
 ## Per-Axis Evaluation Prompts
@@ -47,12 +47,12 @@ Return inline in the response, in this shape:
 | Restraint | N | Exceptional | <evidence> |
 
 **Gate**: PASS (all ≥7) | ITERATE (axis < 7 listed)
-**Next action**: <revise dimension X per the iteration protocol>
+**Next action**: <revise dimension X, then re-score>
 ```
 
 ## Cross-References
 
-- `agents/glass-atrium-design-designer.md` → `## Pre-Emit 5-Axis Self-Critique` — SoT for the axes, band rubric, emit-gate rule and iteration protocol
+- `agents/glass-atrium-design-designer.md` → `## Pre-Emit 5-Axis Self-Critique` — SoT for the axes, band rubric and emit-gate rule
 - `agents/glass-atrium-design-designer.md` → `## Design Evaluation 4-Axis (1-5 each, 20 total)` — post-emit complement
 - `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` — external-judge visual rubric
 - `glass-atrium-design-anti-slop` skill — paired use for Specificity axis evidence

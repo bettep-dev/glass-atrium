@@ -226,6 +226,7 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
                 },
             ),
             (_UNBOUND_DELIVERY.EVENT, _UNBOUND_DELIVERY.PAYLOAD),
+            ("aa-invalidation", {"start_id": 2, "cause": "duplicate exposure"}),
         )
         with _load_helper() as helper:
             ledger = helper.TRIAL_LEDGER
@@ -464,6 +465,27 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
 
         self.assertEqual(counts, [1, 1, 1, 1])
         self.assertEqual([(row[3], row[6]) for row in self._get_rows()], rows)
+
+    def test_an_invalidation_row_lands_once_per_start_id_and_keeps_the_first_cause(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        ledger = self.writer.TRIAL_LEDGER
+        event = ledger.EVENT.AA_INVALIDATION
+        first = {"start_id": 2, "cause": "duplicate exposure in the shared spawn read"}
+
+        counts = [
+            self.writer.write_trial_ledger_row(
+                event, ledger.ACTOR.AA, payload, dedupe_key=f"{event}:2"
+            )
+            for payload in (first, {**first, "cause": "a later cause"})
+        ]
+
+        self.assertEqual(counts, [1, 0])
+        self.assertEqual(
+            [(row[3], row[5], row[6]) for row in self._get_rows()],
+            [(event, first, f"{event}:2")],
+        )
 
     def test_rows_without_a_dedupe_key_each_land(self) -> None:
         self._use_database(self._TEMPLATE.FULL)

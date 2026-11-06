@@ -13,6 +13,7 @@
 # real scripts at <sandbox>/scripts/ so their BASH_SOURCE-derived GA_ROOT resolves to
 # the sandbox, never the live ~/.glass-atrium tree. A gh stub satisfies the publish
 # preflight without touching the network (the gate fires before any gh invocation).
+# Repo checkout only: an install never ships publish-release.sh, so any copy there is skipped, not tested.
 
 bats_require_minimum_version 1.5.0
 
@@ -27,6 +28,11 @@ REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  local top=""
+  # GA's own toplevel, never BATS_TEST_DIRNAME's → an install's scripts/test/ is its own repo
+  top="$(git -C "${GA}" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ "${top}" -ef "${GA}" ]] \
+    || skip "not a repo checkout root: ${GA} — generate-manifest.sh EXCLUDE_RE keeps publish-release.sh out of every install"
   [[ -f "${REAL_PUBLISH}" ]] || skip "publish-release.sh not found: ${REAL_PUBLISH}"
   [[ -f "${REAL_GENMAN}" ]] || skip "generate-manifest.sh not found: ${REAL_GENMAN}"
   [[ -f "${REAL_CONFIG}" ]] || skip "atrium-config.sh not found: ${REAL_CONFIG}"
@@ -45,6 +51,7 @@ setup() {
   cp "${REAL_CONFIG}" "${WORK}/scripts/lib/atrium-config.sh"
   cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
   cp "${REAL_SPINE%/*}/path-guard.sh" "${WORK}/scripts/lib/path-guard.sh"
+  cp "${REAL_SPINE%/*}/tracked-paths.sh" "${WORK}/scripts/lib/tracked-paths.sh"
 
   # An in-scope tracked file (feeds the manifest) + an out-of-scope tracked file
   # (root, absent from generate-manifest SCOPE_PATHS) used to dirty the tree

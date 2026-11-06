@@ -219,8 +219,11 @@ def load_daemon_config(
 def _get_knob_error(kind: Literal["tier", "output cap"], value: object) -> str | None:
     """Reason a set knob value is rejected; None when it is unset or accepted.
 
-    The raw value is quoted as JSON — one line whatever it holds, and the form the
-    operator finds in the file.
+    The raw value is quoted as the monitor row's JSON.stringify quotes it: compact,
+    non-ASCII as-is, a lone surrogate escaped. The two still differ on numbers
+    (1.0 vs 1, NaN vs null) and on objects with integer-like keys (JS lists those
+    first). Control characters stay escaped; U+0085/U+2028/U+2029 do not, so the
+    reason can span lines — the daemon log flattens it.
     """
     if value is None or value == "":
         return None
@@ -232,7 +235,9 @@ def _get_knob_error(kind: Literal["tier", "output cap"], value: object) -> str |
         if isinstance(value, str) and _OUTPUT_CAP_PATTERN.fullmatch(value):
             return None
         allowed = "a positive integer string, 1-999999"
-    return f"{json.dumps(value)} is not a valid {kind} (allowed: {allowed})"
+    quoted = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    quoted = quoted.encode("utf-8", "backslashreplace").decode("utf-8")  # lone surrogate → \udXXX
+    return f"{quoted} is not a valid {kind} (allowed: {allowed})"
 
 
 # Pre-retirement config keys this process actually read, populated by the most

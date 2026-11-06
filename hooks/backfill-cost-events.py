@@ -5,9 +5,8 @@ CID 2026-06-05T1734_token-collect_b2c3 — Phase 4 (backfill).
 
 WHY this exists
 ---------------
-Legacy cost_events rows captured only ~2.64% of true session tokens (measured on
-sample session 5dada8e1: 16,036,166 stored vs 607,501,771 true). Three root
-causes (see migration 20260605173400 + cost-tracker.sh header):
+Legacy cost_events rows captured only a small fraction of true session tokens.
+Three root causes (see migration 20260605173400 + cost-tracker.sh header):
 
   RC1 — the hook treated EVERY type=="user" record as a turn boundary, but Claude
         Code stores tool_result records as type=="user" too (message.content is a
@@ -49,8 +48,8 @@ USAGE
   # default DRY-RUN (no writes) over ALL sessions — prints per-session before/after
   python3 backfill-cost-events.py
 
-  # dry-run a single session (validation): expect before=16.0M -> after=607.5M
-  python3 backfill-cost-events.py --dry-run --session 5dada8e1-12a7-4c81-b068-ee5be5f6ffae
+  # dry-run a single session (validation): expect after to be far larger than before
+  python3 backfill-cost-events.py --dry-run --session 3f9c2a71-8b4e-4d05-a6c3-1e7b9d2f4a80
 
   # APPLY (writes) — only after the migration is applied + dry-run reviewed
   python3 backfill-cost-events.py --apply

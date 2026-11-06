@@ -39,7 +39,7 @@ readonly SEP=$'\x1f'
 
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 NOTES_DIR="${WIKI_ROOT}/notes"
-# Threshold role (90-day `updated:` vs 1-year `collected:`): see core-wiki-reference.md.
+# Threshold role (90-day `updated:` re-review trigger): see scoped/maintainers/core-wiki-reference.md → `## Staleness thresholds`.
 THRESHOLD_DAYS="${WIKI_STALE_DAYS:-90}"
 TOP_N="${WIKI_STALE_TOP_N:-10}"
 

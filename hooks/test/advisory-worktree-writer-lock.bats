@@ -21,6 +21,8 @@ HOOK_SH="${BATS_TEST_DIRNAME}/../advisory-worktree-writer-lock.sh"
 TRACKER_SH="${BATS_TEST_DIRNAME}/../agent-tracker.sh"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "advisory-worktree-writer-lock.sh not found: ${HOOK_SH}"
@@ -34,6 +36,10 @@ setup() {
   mkdir -p "${WT}/src" "${WT2}/src"
   printf 'gitdir: /nonexistent/.git/worktrees/wt-one\n' >"${WT}/.git"
   printf 'gitdir: /nonexistent/.git/worktrees/wt-two\n' >"${WT2}/.git"
+}
+
+teardown() {
+  eph_pg_stop "${EPH_DATADIR:-}"
 }
 
 # Independent re-derivation of the lock path — deliberately NOT sourced from the lib, so a change to
@@ -51,9 +57,11 @@ holder_of() {
 # $1=file_path $2=agent_id (empty → main-session envelope) $3=ttl override (optional)
 fire_write() {
   local payload
-  payload="$(jq -n --arg p "${1}" --arg a "${2:-}" \
-    '{hook_event_name:"PreToolUse", tool_name:"Write", tool_input:{file_path:$p, content:"x"}}
-     + (if $a == "" then {} else {agent_id:$a} end)')"
+  payload="$(
+    jq -n --arg p "${1}" --arg a "${2:-}" \
+      '{hook_event_name:"PreToolUse", tool_name:"Write", tool_input:{file_path:$p, content:"x"}}
+       + (if $a == "" then {} else {agent_id:$a} end)'
+  )"
   run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" WORKTREE_LOCK_TTL_SECS="$4" bash "$3" 2>&1' \
     _ "${payload}" "${GA_DATA}" "${HOOK_SH}" "${3:-}"
 }
@@ -64,14 +72,16 @@ fire_raw() {
     _ "${1}" "${GA_DATA}" "${HOOK_SH}"
 }
 
-# $1=agent_id (empty → an envelope with NO agent_id at all) — SubagentStop through the real tracker
-# (its PG write is tolerated non-blocking).
+# $1=agent_id (empty → an envelope with NO agent_id at all) — SubagentStop through the real tracker,
+# its PG write pointed at a socket that cannot exist.
 fire_stop() {
   local payload
-  payload="$(jq -n --arg a "${1}" \
-    '{hook_event_name:"SubagentStop", agent_type:"glass-atrium-dev-shell"}
-     + (if $a == "" then {} else {agent_id:$a} end)')"
-  run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" bash "$3" 2>&1' \
+  payload="$(
+    jq -n --arg a "${1}" \
+      '{hook_event_name:"SubagentStop", agent_type:"glass-atrium-dev-shell"}
+       + (if $a == "" then {} else {agent_id:$a} end)'
+  )"
+  run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" PGHOST="/nonexistent-socket-xyzzy" bash "$3" 2>&1' \
     _ "${payload}" "${GA_DATA}" "${TRACKER_SH}"
 }
 
@@ -279,6 +289,20 @@ STUB
     echo "another agent's lock was released" >&2
     return 1
   }
+}
+
+@test "the release arm's tracker write reaches only the sandbox cluster, never the invoking shell's database" {
+  python3 -c 'import psycopg' 2>/dev/null || skip "psycopg not importable — the recorder sees psycopg connections only"
+  export EPH_DATADIR="${BATS_TEST_TMPDIR}/pgdata" EPH_SOCKDIR="${BATS_TEST_TMPDIR}/sock" \
+    EPH_PORT="55473" EPH_DB="glass_atrium"
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR}/pg-connect.log"
+  EPH_USER_SITE="$(python3 -m site --user-site)"
+  eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "${EPH_DB}" || return 1
+  local payload
+  payload="$(jq -n '{hook_event_name:"SubagentStop", agent_type:"glass-atrium-dev-shell", agent_id:"agent-A"}')"
+  printf '%s' "${payload}" | env GA_DATA_ROOT="${GA_DATA}" PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
+    PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" bash "${TRACKER_SH}" >/dev/null 2>&1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "a lock under a relative store root is never deleted at release and is LOUD (DATA-076)" {

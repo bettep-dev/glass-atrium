@@ -501,7 +501,8 @@ class TierKnobTest(unittest.TestCase):
                     self.assertEqual(out[key], raw if outcome == "accepted" else "")
                     if outcome == "rejected":
                         self.assertIn(key, dc.KNOB_ERRORS)
-                        self.assertIn(json.dumps(raw), dc.KNOB_ERRORS[key])
+                        quoted = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
+                        self.assertIn(quoted, dc.KNOB_ERRORS[key])
                     else:
                         self.assertNotIn(key, dc.KNOB_ERRORS)
 
@@ -536,6 +537,27 @@ class TierKnobTest(unittest.TestCase):
                     dc.load_daemon_config(path=later, warn=False)
                 self.assertEqual(dc.KNOB_ERRORS, {})
 
+    # (row name, knob key, raw value, JSON.stringify form of raw) — the monitor's
+    # getTierFileValue quotes a rejected value with JSON.stringify: compact, non-ASCII
+    # as-is, a lone surrogate escaped
+    _MONITOR_QUOTED_ROWS = (
+        ("ascii level", "worker_effort", "ultra", '"ultra"'),
+        ("non-ascii level", "worker_effort", "é", '"é"'),
+        ("lone surrogate level", "worker_effort", "\ud800", '"\\ud800"'),
+        ("json list tier", "pre_verify_effort", ["a", "b"], '["a","b"]'),
+        ("json object tier", "worker_effort", {"a": 1}, '{"a":1}'),
+        ("cap json list", "worker_max_output_tokens", ["16000", "1"], '["16000","1"]'),
+    )
+
+    def test_a_rejection_reason_reads_exactly_as_the_monitor_row_reason(self) -> None:
+        tier_tail = "tier (allowed: low, medium, high, xhigh, max)"
+        cap_tail = "output cap (allowed: a positive integer string, 1-999999)"
+        for name, key, raw, quoted in self._MONITOR_QUOTED_ROWS:
+            with self.subTest(name, key=key):
+                dc.load_daemon_config(path=_write_config({key: raw}), warn=False)
+                tail = cap_tail if key.endswith("_max_output_tokens") else tier_tail
+                self.assertEqual(dc.KNOB_ERRORS[key], f"{quoted} is not a valid {tail}")
+
     def test_the_monitor_accepts_exactly_the_levels_and_cap_shape_the_loader_accepts(
         self,
     ) -> None:
@@ -557,9 +579,11 @@ class CostTierRuleTextTest(unittest.TestCase):
     """T13 AC1 — the Cost-Tier rule text is labeled a judgment heuristic and cites
     the daemon's configuration-read mechanism."""
 
-    _RULE_PATH = _HOOKS_ROOT.parent / "rules" / "glass-atrium" / "orchestrator-role.md"
+    _RULE_PATH = _HOOKS_ROOT.parent / "skills" / "glass-atrium-ops-orchestrator-role.md"
 
-    @unittest.skipUnless(_RULE_PATH.exists(), "orchestrator-role.md not present in this tree")
+    @unittest.skipUnless(
+        _RULE_PATH.exists(), "glass-atrium-ops-orchestrator-role.md not present in this tree"
+    )
     def test_cost_tier_section_labeled_heuristic_and_cites_mechanism(self) -> None:
         rule = self._RULE_PATH.read_text(encoding="utf-8")
         self.assertIn("### Cost-Tier Selection", rule)
@@ -571,7 +595,9 @@ class CostTierRuleTextTest(unittest.TestCase):
             "daemon_config.py", section, "must cite the daemon config-read mechanism"
         )
         self.assertIn(
-            "session default", section, "must state the unpinned session-default fallback"
+            "falls back to a pinned worker-model id",
+            section,
+            "must state the pinned worker-model-id fallback",
         )
 
 

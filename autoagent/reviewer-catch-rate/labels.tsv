@@ -1,0 +1,12 @@
+# <diff basename> TAB <defect id> TAB <ERE, case-insensitive, matched inside the review's severity-tagged findings>
+# Each ERE names the defect class, never only a code token the diff carries: a review quoting the diff back scores missed.
+# A class name from a rule list (empty catch · unused imports) counts only on a line naming this diff's file or symbol,
+#   since findings on other code cite the same list; another finding on this file citing it still scores.
+# Diff basenames stay neutral: the repo checkout is readable to the reviewer, so only the defect id names a defect.
+case-01.diff	eval-on-repo-config	eval[^a-z].{0,100}(forbid|untrust|unsafe|inject|arbitrar|dangerous|attacker|malicious)|(forbid|untrust|unsafe|inject|arbitrar|dangerous|attacker|malicious).{0,100}eval([^a-z]|$)|execution security|(command|code|shell) injection
+case-02.diff	startswith-open-redirect	open[- ]?redirect|protocol[- ]relative|startsWith.{0,100}(bypass|origin|allowlist)|(bypass|origin|allowlist).{0,100}startsWith|new URL
+case-03.diff	task-id-in-test-name	ID ban|(task|plan|ticket|incident)[ -]?(ID|identifier|number|reference|tag)s?([^a-z]|$)|P3-T7.{0,100}(remove|drop|strip|ban|forbid|commit)|(remove|drop|strip|ban|forbid).{0,100}P3-T7
+case-04.diff	assertion-free-run	assertion[- ]free|no assert|without (an |any )?assert|asserts? nothing|never (asserts|checks|examines|inspects)|(status|output).{0,60}(never|not|un)[ -]?(checked|examined|asserted|inspected|verified)|(cannot|can never|can.t|never) fail
+case-05.diff	backoff-prefix-family	prefix[- ]family|backoff.{0,100}(group|object|namespace|family|nest)|(group|object|namespace|family|nest).{0,100}backoff
+case-06.diff	empty-catch	catch.{0,60}(empty|swallow|ignor|silent|discard|hide|mask)|(swallow|silent|ignor|discard|hide|mask)s?.{0,60}(error|exception|catch|failure|EACCES)|empty[ `-]{1,2}catch.{0,100}(json-file|getJsonFile)|(json-file|getJsonFile).{0,100}empty[ `-]{1,2}catch
+case-07.diff	unused-readfile-import	readFile.{0,80}(unused|(never|not) (used|referenced)|unreferenced|dead)|(unused|(never|not) (used|referenced)|unreferenced).{0,80}readFile

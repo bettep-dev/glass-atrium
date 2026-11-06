@@ -293,6 +293,70 @@ describe("agents screen at 1440px", () => {
     }
   });
 
+  test("the paired tables sit flush on the .tbl cell geometry and keep their own header and body face", async () => {
+    const cards = await ctx.page.evaluate((ids) => ids.map((id) => {
+      const card = document.getElementById(id)!.querySelector(".card")!;
+      const body = getComputedStyle(card.querySelector(".card-body")!);
+      const rows = Array.from(card.querySelectorAll("tbody tr"));
+      const [first] = rows;
+      const cells = Array.from(first!.querySelectorAll("td"));
+      const head = getComputedStyle(card.querySelector("thead th")!);
+      const numericHead = getComputedStyle(card.querySelector("thead th:last-child")!);
+      return {
+        id,
+        bodyPad: [body.paddingTop, body.paddingRight, body.paddingBottom, body.paddingLeft].join(" "),
+        edge: [getComputedStyle(cells[0]!).paddingLeft, getComputedStyle(cells.at(-1)!).paddingRight],
+        rowHeights: rows.map((r) => Math.round(r.getBoundingClientRect().height)),
+        lastAlign: [numericHead.textAlign, getComputedStyle(cells.at(-1)!).textAlign],
+        headFace: [head.textTransform, head.fontFamily, head.backgroundColor],
+        bodyFont: getComputedStyle(cells[0]!).fontFamily,
+      };
+    }), PAIRED_CARD_IDS);
+    for (const card of cards) {
+      const label = JSON.stringify(card);
+      assert.equal(card.bodyPad, "0px 0px 0px 0px", `flush body — ${label}`);
+      assert.deepEqual(card.edge, ["16px", "16px"], `edge cells carry the card padding — ${label}`);
+      assert.ok(card.rowHeights.length > 0 && card.rowHeights.every((h) => h >= ROW_PX), `no row below the 40 line — ${label}`);
+      assert.deepEqual(card.lastAlign, ["right", "right"], `the numeric column stays right-aligned — ${label}`);
+      assert.equal(card.headFace[0], "uppercase", `header case kept — ${label}`);
+      assert.doesNotMatch(card.headFace[1], /JetBrains Mono/, `header stays sans — ${label}`);
+      assert.match(card.bodyFont, /JetBrains Mono/, `body stays mono — ${label}`);
+    }
+    const lifecycle = cards.find((c) => c.id === "agents-lifecycle")!;
+    assert.ok(lifecycle.rowHeights.every((h) => h === ROW_PX), `one-line rows sit on the 40 line — ${JSON.stringify(lifecycle.rowHeights)}`);
+  });
+
+  test("the performance card's sort control rides its head: no band between the head and the ledger, centred on the title line", async () => {
+    try {
+      for (const width of [1440, 1024]) {
+        await ctx.page.setViewportSize({ width, height: 900 });
+        const geometry = await ctx.page.evaluate((id) => {
+          const card = document.getElementById(id)!;
+          const head = card.querySelector(".card-head")!;
+          const select = head.querySelector('select[aria-label="Agent sort order"]');
+          // midlines inline: tsx wraps a named const in a __name() helper the page lacks
+          const [selectBox, titleBox] = [select, head.querySelector(".card-title")!].map((el) => el?.getBoundingClientRect());
+          return {
+            selectsInCard: card.querySelectorAll("select").length,
+            hasHeadSelect: Boolean(select),
+            band: card.querySelector("thead")!.getBoundingClientRect().top - head.getBoundingClientRect().bottom,
+            centreGap: selectBox ? Math.abs(selectBox.top + selectBox.height / 2 - (titleBox!.top + titleBox!.height / 2)) : null,
+            headHeight: head.getBoundingClientRect().height,
+            headMin: parseFloat(getComputedStyle(head).minHeight),
+          };
+        }, "agents-summary");
+        const label = `${width}: ${JSON.stringify(geometry)}`;
+        assert.ok(geometry.hasHeadSelect, `the sort select is in the card head — ${label}`);
+        assert.equal(geometry.selectsInCard, 1, `no second sort control in the body — ${label}`);
+        assert.ok(Math.abs(geometry.band) < 1, `the ledger header starts at the head's bottom edge — ${label}`);
+        assert.ok(geometry.centreGap! <= 1, `the select centres on the title line — ${label}`);
+        assert.ok(Math.abs(geometry.headHeight - geometry.headMin) < 1, `the head stays one line at its floor — ${label}`);
+      }
+    } finally {
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+    }
+  });
+
   test("no chart label renders below the meta floor", async () => {
     const sizes = await ctx.page.evaluate(() =>
       Array.from(document.querySelectorAll(".recharts-wrapper text"))

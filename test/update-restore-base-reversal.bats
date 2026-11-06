@@ -47,7 +47,7 @@ setup() {
   BAKBASE="${SANDBOX}/agents-bak"        # AUTOAGENT_BACKUP_DIR (per-run cycle dirs live here)
   NEWDIR="${SANDBOX}/new"                # staged new-release tree
   STORE="${STATE}/base-agents"           # the base-content store dir (spine layout)
-  CYCLE="2026-07-13_update-1.0.1"        # a plain <cycle_date>_update-<version> token
+  CYCLE="2026-07-13_update-1.0.1_093000_4242" # a <cycle_date>_update-<version>_<HHMMSS>_<pid> token
   CYCLEDIR="${BAKBASE}/${CYCLE}"
   LEDGER="${SANDBOX}/agent-outcomes.ledger"
   mkdir -p "${ROOT}/agents" "${STORE}" "${CYCLEDIR}" "${NEWDIR}/agents"

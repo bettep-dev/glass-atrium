@@ -84,8 +84,9 @@ diagnose_failure() {
     [ "$delta_pct" -gt 20 ] && delta_class="major_rewrite"
     echo "DIAG: ${file} — +${added}/-${removed} (${delta_pct}% delta) → ${delta_class}"
   done
-  echo "$issues_text" | grep -qi "Korean" && echo "DIAG-FIX: language → Translate to English"
-  echo "$issues_text" | grep -qi "frontmatter\|YAML" && echo "DIAG-FIX: YAML → Fix structure"
+  # in-shell match, no pipe: an early-exit grep fed a multi-line value races its writer under pipefail
+  (shopt -s nocasematch && [[ "${issues_text}" == *korean* ]]) && echo "DIAG-FIX: language → Translate to English"
+  (shopt -s nocasematch && [[ "${issues_text}" == *frontmatter* || "${issues_text}" == *yaml* ]]) && echo "DIAG-FIX: YAML → Fix structure"
   [ "$delta_class" = "major_rewrite" ] && recommendation="ROLLBACK"
   echo "RECOMMENDATION: ${recommendation}"
 }
@@ -233,17 +234,18 @@ if [ "$POST_COMMIT_MODE" -eq 1 ]; then
     exit 1
   fi
   ISSUES_LINES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:\|^$' | head -10 || true) # GA-ABSORB[handled@empty-ISSUES_LINES-PASS-branch]: on PASS grep -v filters everything → exit 1; the -z test on the next line is the real signal
-  if echo "$EVAL_RESULT" | grep -qi "RESULT: PASS" || [ -z "$ISSUES_LINES" ]; then
+  if (shopt -s nocasematch && [[ "${EVAL_RESULT}" == *"RESULT: PASS"* ]]) || [ -z "$ISSUES_LINES" ]; then
     echo "RESULT: PASS"
     SUMMARY=$(echo "$EVAL_RESULT" | sed -n 's/^SUMMARY:[[:space:]]*//p' | head -1)
     [ -n "$SUMMARY" ] && echo "SUMMARY: $SUMMARY"
     log "post-commit PASS"
     exit 0
   else
-    ISSUES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:' | head -15)
+    # sed -n '1,Np', not head: it reads to EOF, so the writer never takes SIGPIPE and errexit never aborts the report
+    ISSUES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:' | sed -n '1,15p')
     DIAGNOSIS=$(diagnose_failure "$FILE_LIST" "$ISSUES")
     echo "RESULT: FAIL"
-    echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | head -20
+    echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | sed -n '1,20p'
     if [ -n "$DIAGNOSIS" ]; then
       echo ""
       echo "DIAGNOSIS:"
@@ -263,14 +265,14 @@ fi
 
 # PASS when "RESULT: PASS" or ISSUES is effectively empty
 ISSUES_LINES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:\|^$' | head -10 || true) # GA-ABSORB[handled@empty-ISSUES_LINES-PASS-branch]: on PASS grep -v filters everything → exit 1; the -z test on the next line is the real signal
-if echo "$EVAL_RESULT" | grep -qi "RESULT: PASS" || [ -z "$ISSUES_LINES" ]; then
+if (shopt -s nocasematch && [[ "${EVAL_RESULT}" == *"RESULT: PASS"* ]]) || [ -z "$ISSUES_LINES" ]; then
   # pass → no commit (user manual-commit policy)
   log "PASS — awaiting commit (manual policy)"
   exit 0
 
 else
   # fail → diagnose + log, await approval
-  ISSUES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:' | head -15)
+  ISSUES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:' | sed -n '1,15p')
   DIAGNOSIS=$(diagnose_failure "$FILE_LIST" "$ISSUES")
   log "FAIL — awaiting approval — $(echo "$DIAGNOSIS" | grep RECOMMENDATION || true)" # GA-ABSORB[benign]: a missing RECOMMENDATION line degrades the message only — exit 1 fires regardless
   exit 1

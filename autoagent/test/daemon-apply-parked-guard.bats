@@ -188,10 +188,10 @@ answer_guard() {
   printf '%s' "$3" >"${GUARD_DIR}/$1.out"
 }
 
-# guarded_verdict ID REJECTED — a verdict guarding proposal ID (covering row 3384 rejected);
+# guarded_verdict ID REJECTED — a verdict guarding proposal ID (covering row 5120 rejected);
 # REJECTED is the JSON list of ids the mode transitioned.
 guarded_verdict() {
-  printf '{"guarded": [{"proposal_id": %s, "rows": [{"id": 3384, "status": "rejected"}]}], "rejected": %s}\n' \
+  printf '{"guarded": [{"proposal_id": %s, "rows": [{"id": 5120, "status": "rejected"}]}], "rejected": %s}\n' \
     "$1" "$2"
 }
 
@@ -244,7 +244,7 @@ dump_state() {
     dump_state
     return 1
   }
-  [[ "${output}" == *"3384:rejected"* && "${output}" == *"Reject"* ]] || {
+  [[ "${output}" == *"5120:rejected"* && "${output}" == *"Reject"* ]] || {
     echo "the refusal names neither the parked rows nor the Reject action" >&2
     dump_state
     return 1

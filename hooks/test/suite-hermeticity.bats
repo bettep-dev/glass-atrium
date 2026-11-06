@@ -19,6 +19,26 @@ setup() {
   ga_bats_assert_hermetic
 }
 
+# A suite that forgets its own ephemeral cluster must reach no server: libpq's default socket is
+# the operator's live database on a developer machine.
+@test "the default database target is a socket path no server listens on" {
+  [[ "${PGHOST:-}" == /* ]] || {
+    echo "PGHOST is not pinned to an absolute socket dir: '${PGHOST:-}' — hooks/test/setup_suite.bash did not run; bats runs one setup_suite.bash per call, so give hooks/test its own call" >&2
+    return 1
+  }
+  local socket
+  for socket in "${PGHOST}"/.s.PGSQL.*; do
+    [[ ! -e "${socket}" ]] || {
+      echo "a server listens at ${socket}" >&2
+      return 1
+    }
+  done
+  [[ -z "${PGHOSTADDR:-}" && -z "${PGSERVICE:-}" ]] || {
+    echo "PGHOSTADDR/PGSERVICE override the pinned PGHOST: '${PGHOSTADDR:-}' '${PGSERVICE:-}'" >&2
+    return 1
+  }
+}
+
 # The python suites in this directory are driven by `unittest discover`, which offers no
 # directory-scoped setup hook: each module pins its own sandbox, and a module that forgets
 # reaches the operator's real runtime state, because ga_paths.get_base_root falls back to

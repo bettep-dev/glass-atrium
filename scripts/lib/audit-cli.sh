@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # audit-cli.sh — shared command-line spine for the repository's presence-only auditors:
-# scripts/audit-absorption.sh, scripts/audit-test-smells.sh and scripts/audit-rm.sh.
+# scripts/audit-absorption.sh, scripts/audit-test-smells.sh, scripts/audit-rm.sh and scripts/audit-pipe-drain.sh.
 # Sourced, not executable.
 #
-# The three auditors detect nothing in common:
+# The four auditors detect nothing in common:
 #   - absorption idioms on non-comment shell lines;
 #   - heredoc-aware `@test` body splitting;
-#   - recursive or forced delete targets.
+#   - recursive or forced delete targets;
+#   - undrained early-exit pipe readers.
 # They stay separate tools on independent promotion timelines.
 # What they share is a SURFACE: the same five flags, the same four exit codes, the same summary-then-exit tail.
 # That surface lives here so they cannot drift apart on it.

@@ -1,0 +1,16 @@
+diff --git a/monitor/src/server/json-file.ts b/monitor/src/server/json-file.ts
+new file mode 100644
+index 0000000..76f9b5f
+--- /dev/null
++++ b/monitor/src/server/json-file.ts
+@@ -0,0 +1,10 @@
++import { readFile } from "node:fs/promises";
++
++/** Parsed content of the JSON file at `path`, or undefined when it is absent or not valid JSON. */
++export async function getJsonFile(path: string): Promise<unknown> {
++  try {
++    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
++    return parsed;
++  } catch {}
++  return undefined;
++}

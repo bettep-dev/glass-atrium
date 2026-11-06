@@ -126,7 +126,7 @@ test("mono stays on numeric atoms and off word-carrying atoms", () => {
 });
 
 test("every interactive control atom is at least 32px tall", () => {
-  for (const selector of [".btn", ".btn.sm", ".btn.icon", ".seg button", ".pill--interactive", ".field"]) {
+  for (const selector of [".btn", ".btn.sm", ".btn.icon", ".seg button", ".pill--interactive", ".field", ".disclosure"]) {
     const heights = getRuleBodies(BASE_CSS, selector).flatMap((b) =>
       ["min-height", "height"].map((p) => getDecl(b, p)).filter((v): v is string => !!v && v !== "auto"),
     );
@@ -299,14 +299,14 @@ test("a transient shell stays neutral in every tone, and a toast's tone rides on
 });
 
 // A nested [data-theme="dark"] scope (viewer chrome) must resolve aliases against its own tokens and keep the user's accent tweak.
-test("a nested dark scope resolves the surface aliases against its own tokens and inherits the accent tweak", () => {
+test("a nested dark scope resolves the surface and edge aliases against its own tokens and inherits the accent tweak", () => {
   const rules = [...TOKENS_CSS.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
     selectors: m[1].split(",").map((s) => s.trim()),
     body: m[2],
   }));
   const isNestedThemed = (s: string) => /^\[data-theme(="dark")?\]$/.test(s);
 
-  for (const alias of ["--surface-raised-2", "--surface-overlay"]) {
+  for (const alias of ["--surface-raised-2", "--surface-overlay", "--control-edge"]) {
     const declaring = rules.filter((r) => getDecl(r.body, alias) !== undefined);
     assert.ok(declaring.length > 0, `${alias} is declared`);
     assert.ok(declaring.every((r) => r.selectors.some(isNestedThemed)), `${alias} is declared only where a nested themed scope re-resolves it`);
@@ -314,4 +314,12 @@ test("a nested dark scope resolves the surface aliases against its own tokens an
   const accent = rules.filter((r) => getDecl(r.body, "--accent") !== undefined);
   assert.deepEqual(accent.filter((r) => r.selectors.some(isNestedThemed)).map((r) => r.selectors.join(", ")), []);
   assert.ok(accent.some((r) => r.selectors.includes(':root[data-theme="dark"]')), "the dark accent default stays on the root");
+});
+
+// a label-only body row (a ledger group-label th spanning the row) would otherwise stop at its 36px line box
+test("a body row header takes the same row step as a body cell", () => {
+  const cell = getRuleBodies(BASE_CSS, ".tbl td").map((body) => getDecl(body, "height")).filter(Boolean);
+  const rowHeader = getRuleBodies(BASE_CSS, ".tbl tbody th").map((body) => getDecl(body, "height")).filter(Boolean);
+  assert.deepEqual(rowHeader, ["var(--row-h)"]);
+  assert.ok(cell.includes("var(--row-h)"), "the body cell keeps the row step");
 });

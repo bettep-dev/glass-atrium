@@ -2,6 +2,8 @@
 # Tests for lint-workflow-template-literal.sh — PreToolUse(Workflow) bash-in-template lint.
 # Exit-code contract: 0 = pass / fail-open · 2 = BLOCK (bash operator inside a template literal).
 
+bats_require_minimum_version 1.5.0
+
 setup() {
   HOOK="${BATS_TEST_DIRNAME}/../lint-workflow-template-literal.sh"
 }
@@ -207,4 +209,15 @@ run_raw() {
   run run_hook Workflow $'const a = 1;\r\nconst b = 2;\r\nconst s = `${arr[@]}`;'
   [ "$status" -eq 2 ]
   [[ "$output" == *"line 3:"* ]]
+}
+
+# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
+source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
+
+@test "an interrupted block write still exits 2 with the block text once on stderr" {
+  jq -n --arg s 'const x = `a ${name:-default} b`; log(x)' '{tool_name:"Workflow",tool_input:{script:$s}}' \
+    >"${BATS_TEST_TMPDIR}/envelope"
+  run_forced_hook "${HOOK}" "${BATS_TEST_TMPDIR}/envelope"
+  # heredoc line → absent from the ERR trap's BASH_COMMAND echo
+  assert_forced_block "WHY: This is NOT a TypeScript syntax error."
 }

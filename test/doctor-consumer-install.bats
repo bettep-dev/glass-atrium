@@ -238,6 +238,73 @@ run_doctor_sandbox() {
   [[ "${output}" != *"manifest entry not installed: lib/ga-core.sh"* ]]
 }
 
+# Plant one drift shape under TARGET: "dangler" = every farmed entry but agents/dev-a.md linked, an in-home
+# dangler, and a dangler below a symlinked subdirectory; "resolving" = no manifest entry linked, the home's one
+# GA link resolving to a source the manifest no longer lists.
+plant_drift_shape() {
+  local shape="$1" tag="$2" rel below
+  if [[ "${shape}" == "resolving" ]]; then
+    seed_src "agents/kept.md"
+    ln -s "${GA_SANDBOX}/agents/kept.md" "${TARGET}/agents/kept.md"
+    return 0
+  fi
+  for rel in "${FARMED[@]}"; do
+    [[ "${rel}" == "agents/dev-a.md" ]] || deploy_link "${rel}"
+  done
+  ln -s "${GA_SANDBOX}/agents/gone.md" "${TARGET}/agents/gone.md"
+  below="${SANDBOX}/${tag}-below"
+  mkdir -p "${below}"
+  ln -s "${GA_SANDBOX}/agents/below-gone.md" "${below}/below-gone.md"
+  ln -s "${below}" "${TARGET}/linked-dir"
+}
+
+@test "§5 and §7 see the deployed links whether the target home is a directory or a symlink to one" {
+  # Protects a dotfile-managed ~/.claude: a home reached through a symlink must still count its links,
+  # so drift stays a hard FAIL instead of reading as a fresh target, and a dangler is reported.
+  seed_full_fixture
+  local row name kind shape tag real reported want
+  local -a rows=(
+    "target home a real directory|dir|dangler"
+    "target home a symlink to a real directory|symlink|dangler"
+    "target home a symlink whose only GA link resolves, no manifest entry deployed|symlink|resolving"
+  )
+  local i=0
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind shape <<<"${row}"
+    i=$((i + 1))
+    tag="row${i}"
+    real="${SANDBOX}/${tag}-real"
+    TARGET="${real}"
+    mkdir -p "${real}/agents"
+    if [[ "${kind}" == "symlink" ]]; then
+      TARGET="${SANDBOX}/${tag}-home"
+      ln -s "${real}" "${TARGET}"
+    fi
+    plant_drift_shape "${shape}" "${tag}"
+    run_doctor_sandbox
+    [[ "${status}" -eq 1 ]] || {
+      echo "${name}: status ${status}: ${output}"
+      return 1
+    }
+    [[ "${output}" == *"FAIL : manifest entry not installed: agents/dev-a.md"* ]] || {
+      echo "${name}: drift not a hard FAIL: ${output}"
+      return 1
+    }
+    reported=no
+    want=no
+    [[ "${output}" != *"dangling GA symlink: ${TARGET}/agents/gone.md"* ]] || reported=yes
+    [[ "${shape}" != "dangler" ]] || want=yes
+    [[ "${reported}" == "${want}" ]] || {
+      echo "${name}: in-home dangler reported=${reported}, expected ${want}: ${output}"
+      return 1
+    }
+    [[ "${output}" != *"below-gone.md"* ]] || {
+      echo "${name}: a dangler below a symlinked directory was reported: ${output}"
+      return 1
+    }
+  done
+}
+
 # === 3. §8 git-independent reconciliation catches REAL drift =================
 
 @test "§8 detects real content drift on a consumer install (hash mismatch)" {

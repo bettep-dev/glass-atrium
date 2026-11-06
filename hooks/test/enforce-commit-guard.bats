@@ -25,15 +25,16 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
 }
 
-# Drive the hook as a Bash PreToolUse call. jq -n encodes the command safely.
+# Drive the hook as a Bash PreToolUse call. The command reaches jq and the hook on stdin → no
+# argument nears Linux's 128 KiB per-string exec limit.
 # stderr is captured to a file (GUARD_ERR) so the "no grep parse error" control can
 # distinguish the hook's own emit_error output from an invalid-regex grep leak.
 run_guard() {
   local cmd="$1" payload
-  payload="$(jq -n --arg c "${cmd}" '{tool_name:"Bash", tool_input:{command:$c}}')"
+  payload="$(printf '%s' "${cmd}" | jq -Rs '{tool_name:"Bash", tool_input:{command:.}}')"
   local err_file="${BATS_TEST_TMPDIR}/guard-stderr"
   : >"${err_file}"
-  run bash -c 'printf "%s" "$1" | bash "$2" 2>"$3"' _ "${payload}" "${HOOK_SH}" "${err_file}"
+  run bash -c 'bash "$1" 2>"$2"' _ "${HOOK_SH}" "${err_file}" <<<"${payload}"
   GUARD_ERR="$(cat "${err_file}")"
 }
 
@@ -138,8 +139,9 @@ run_guard() {
   # regex — the file contains backslashes) and confirm a harmless command is
   # BLOCKED with GIT-000 rather than silently passed through.
   local dir="${BATS_TEST_TMPDIR}/broken"
-  mkdir -p "${dir}"
+  mkdir -p "${dir}/lib"
   cp "${BATS_TEST_DIRNAME}/../hook-utils.sh" "${dir}/hook-utils.sh"
+  cp "${BATS_TEST_DIRNAME}/../lib/pipe-drain.sh" "${dir}/lib/pipe-drain.sh"
   python3 -c 'import sys
 src = open(sys.argv[1]).read()
 src = src.replace(r"git\s+reset\s+--hard", r"git\s+reset\s+(unbalanced")
@@ -157,4 +159,15 @@ open(sys.argv[2], "w").write(src)' "${HOOK_SH}" "${dir}/enforce-commit-guard.sh"
   run_guard 'echo hello world'
   [[ "${status}" -eq 0 ]] || return 1
   [[ -z "${GUARD_ERR}" ]] || return 1
+}
+
+# --- Multi-line input, a multi-write writer racing an early reader: a line-1 match must not read as "no match" ---
+
+@test "git reset --hard on line 1 of a command larger than the pipe buffer is still blocked as a hard reset" {
+  local padding
+  padding="$(seq -f 'padding line %05g of an ordinary build log' 1 4000)"
+  run_guard "git reset --hard
+${padding}"
+  [[ "${status}" -eq 2 ]] || { echo "${GUARD_ERR}"; return 1; }
+  [[ "${GUARD_ERR}" == *'"error_code":"GIT-002"'* ]] || { echo "${GUARD_ERR}"; return 1; }
 }

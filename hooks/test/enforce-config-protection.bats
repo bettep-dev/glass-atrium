@@ -14,6 +14,8 @@
 # never opened) — crafted envelopes drive every verdict. Envelope JSON is built
 # with jq so the nested-quote config content stays well-formed.
 
+bats_require_minimum_version 1.5.0
+
 HOOK_SH="${BATS_TEST_DIRNAME}/../enforce-config-protection.sh"
 
 setup() {
@@ -31,6 +33,9 @@ run_hook_envelope() {
   run bash "${HOOK_SH}" <<<"${envelope}"
 }
 
+# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
+source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
+
 @test "weakening: eslint rule set to off on .eslintrc.json → CFG-001 block (exit 2)" {
   run_hook_envelope "Write" "/tmp/proj/.eslintrc.json" "content" '{"rules":{"no-unused-vars":"off"}}'
   [[ "${status}" -eq 2 ]] || return 1
@@ -41,6 +46,14 @@ run_hook_envelope() {
   run_hook_envelope "Edit" "/tmp/proj/tsconfig.json" "new_string" '"strict": false'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"CFG-001"* ]] || return 1
+}
+
+@test "weakening: an interrupted block write still exits 2 with the weakening block once on stderr, not the ERR trap's allow" {
+  jq -cn --arg body '{"rules":{"no-unused-vars":"off"}}' \
+    '{tool_name: "Write", tool_input: {file_path: "/tmp/proj/.eslintrc.json", content: $body}}' \
+    >"${BATS_TEST_TMPDIR}/envelope"
+  run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope"
+  assert_forced_block "CFG-001"
 }
 
 @test "benign: strengthening rule level on .eslintrc.json → pass (exit 0)" {

@@ -114,3 +114,34 @@ drive() {
   # preflight must NOT run the auth advisory (doctor-only).
   [[ "${branch}" != *'doctor_headless_auth_advisory'* ]] || return 1
 }
+
+# === CHECK 26 — a failing tmux list-sessions under the launcher's armed ERR trap ==============
+
+@test "check 26: a tmux list-sessions failure (no server) emits NO ERR-trap line" {
+  local stub="${SANDBOX}/bin" doctor_drv="${SANDBOX}/doctor-driver.sh"
+  mkdir -p -- "${stub}" "${SANDBOX}/target"
+  printf '#!/usr/bin/env bash\nprintf "no server running on /private/tmp/tmux-501/default\\n" >&2\nexit 1\n' \
+    >"${stub}/tmux"
+  printf '{"version":"1.0.1","files":[],"hashes":{}}\n' >"${SANDBOX}/manifest.json"
+  cat >"${doctor_drv}" <<'DRV'
+#!/usr/bin/env bash
+# shellcheck disable=SC1090
+source "${GA_LAUNCHER}" >/dev/null 2>&1
+run_doctor
+DRV
+  chmod +x "${stub}/tmux" "${doctor_drv}"
+  run env PATH="${stub}:${PATH}" GA_LAUNCHER="${TUI}" GA_TARGET_HOME="${SANDBOX}/target" \
+    GA_MANIFEST="${SANDBOX}/manifest.json" GA_GENERATE_MANIFEST="${SANDBOX}/no-such-manifest-gen" \
+    ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/state" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT:-9}" \
+    GA_DB_NAME="ga_doctor_errtrap_sandbox" GA_SKIP_DB_SETUP=1 bash "${doctor_drv}"
+  # non-vacuity: the run reached check 26's no-server verdict through the stub
+  [[ "${output}" == *"ok   : no default tmux server running"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "$(printf '%s\n' "${output}" | grep -F 'ERROR: line' | grep -F 'tmux' || true)" == "" ]] \
+    || {
+      echo "${output}"
+      return 1
+    }
+}

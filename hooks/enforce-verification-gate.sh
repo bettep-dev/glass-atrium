@@ -10,17 +10,19 @@
 #      it blocks there; a NESTED sub-worker origin (agent_id present) keeps only the informational
 #      stderr advisory (exit 0) and is never false-blocked (see the nested-spawn scope note below).
 #   2) size-est-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — an ORCHESTRATOR-ORIGIN DEV
-#      spawn (agent_id absent) carrying NO [SIZE-EST] token. That contract applies to EVERY DEV spawn
-#      (orchestrator-role.md ### Spawn Budget), so it fires even for a plan-bearing spawn. GUARDED by
+#      spawn (agent_id absent) carrying NO [SIZE-EST] token. That contract applies to every DEV spawn except a simple-task
+#      entry (skills/glass-atrium-ops-orchestrator-role.md ### Spawn Budget), so it fires even for a plan-bearing spawn. GUARDED by
 #      hook_is_subagent: a nested sub-worker origin (agent_id present) does NOT load the token-defining
 #      rules → never blocked (directionally fail-safe: misread ⇒ skipped block, never a false-block).
 #      Runs BEFORE surfaces 1/3 so plan-bearing spawns are checked.
 #   3) entry-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — a DEV spawn with NEITHER a
 #      plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss); that token is the
-#      escape hatch for legitimate small DEV work. Non-DEV spawns exit 0; plan/token-bearing spawns
-#      clear THIS branch (but still face surface 2).
+#      escape hatch for legitimate small DEV work. Non-DEV spawns exit 0; plan-bearing spawns clear
+#      THIS branch (but still face surface 2).
+#   SIMPLE-TASK ENTRY — a spawn carrying [ENTRY-CLASS] simple-task and NO plan-reference exits 0
+#      silently before surfaces 2-5: it owes no other attestation token and no reviewer.
 #   4) scope-miss ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin DEV spawn whose
-#      prompt carries no line-opening [SCOPE] declaration. Advisory-first deliberately: a syntactic
+#      prompt carries no bare line-opening [SCOPE] declaration. Advisory-first deliberately: a syntactic
 #      scan cannot tell a relayed line-opening declaration from the real one, so promotion to exit 2
 #      waits on accumulated false-positive data plus an explicit user decision. Emitted on the PASS
 #      paths only, after every verdict above.
@@ -69,7 +71,7 @@
 #   is "never started".
 #
 # Manual-path only — ultracode/Workflow agent() spawn does not fire PreToolUse(Agent), so that
-#   path's equivalent entry-miss block lives in enforce-workflow-verify-stage.sh (orchestrator-role.md).
+#   path's equivalent entry-miss block lives in enforce-workflow-verify-stage.sh (skills/glass-atrium-ops-orchestrator-role.md).
 # Session state: agent_events has no session_id column + async PG write → no synchronous lookup, so
 #   an EXECUTED spawn appends its agent_type to a local marker (session-spawns/<key>), read here.
 # Dual-event (DF-5): registered on BOTH PreToolUse(Agent) AND PostToolUse(Agent).
@@ -118,6 +120,19 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 # track-outcome.sh, so surfaces 4 and 5 cannot disagree with them about which line declares what.
 # shellcheck source=lib/scope-match.sh
 source "${BASH_SOURCE%/*}/lib/scope-match.sh"
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
 
 # Per-session marker line cap. The marker appends one subagent_type line per spawn with no
 # rotation; a marathon session would grow it unboundedly (the SessionStart reaper
@@ -232,6 +247,8 @@ if [[ "${1:-}" == "--block-counts" ]]; then
 fi
 
 # stdin non-interactive → drain once, otherwise fail-open.
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n input gate_tsv hook_event session_id prompt_b64 prompt_full text scope_line files line scan
 input=""
 if [[ ! -t 0 ]]; then
   input="$(cat 2>/dev/null)" || input=""
@@ -311,7 +328,7 @@ references_plan() {
   local text="${1}"
   [[ -z "${text}" ]] && return 1
   printf '%s' "${text}" \
-    | grep -qE 'clauded-docs/[0-9]+|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html|documents/[A-Za-z0-9_./-]+\.html|(^|[^A-Za-z0-9_])plan-[0-9]+([^A-Za-z0-9]|$)|(^|[^A-Za-z0-9_])[0-9]+-plan([^A-Za-z0-9]|$)' 2>/dev/null
+    | drain_after grep -qE 'clauded-docs/[0-9]+|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html|documents/[A-Za-z0-9_./-]+\.html|(^|[^A-Za-z0-9_])plan-[0-9]+([^A-Za-z0-9]|$)|(^|[^A-Za-z0-9_])[0-9]+-plan([^A-Za-z0-9]|$)' 2>/dev/null
 }
 
 # Shared attestation-token predicate: fixed-string (grep -qF) presence of an anchored bracketed
@@ -319,7 +336,7 @@ references_plan() {
 has_token() {
   local text="${1}" literal="${2}"
   [[ -z "${text}" ]] && return 1
-  printf '%s' "${text}" | grep -qF "${literal}" 2>/dev/null
+  printf '%s' "${text}" | drain_after grep -qF "${literal}" 2>/dev/null
 }
 
 # Entry-classification token — the orchestrator's conscious "this DEV task is simple/exempt"
@@ -328,26 +345,16 @@ has_token() {
 has_simple_task_token() { has_token "${1}" '[ENTRY-CLASS] simple-task'; }
 
 # [SIZE-EST] self-attestation token — the orchestrator's per-delegation packing estimate emitted at
-# EVERY DEV spawn (format `[SIZE-EST] bundles=N tool_uses~=N — <reason>`, orchestrator-role.md
+# every DEV spawn not classified simple-task (format `[SIZE-EST] bundles=N tool_uses~=N — <reason>`, skills/glass-atrium-ops-orchestrator-role.md
 # ### Spawn Budget). Anchored bracketed literal (grep -qF, mirrors has_simple_task_token's
 # structured-match discipline) — checks PRESENCE only, never the estimate's correctness (same
 # existence-only boundary as the [ENTRY-CLASS] entry tokens).
 has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
 
 # [PLAN-SUBSET] attestation token — the orchestrator's record that a plan-derived delegation had its
-# predecessor edges classified before spawning (orchestrator-role.md ### Phase Notes, plan edge
+# predecessor edges classified before spawning (skills/glass-atrium-ops-orchestrator-role.md ### Phase Notes, plan edge
 # discovery). Anchored bracketed literal, PRESENCE only — never the classification's correctness.
 has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
-
-# [SCOPE] delegation-scope declaration — the orchestrator's record of the delegation's literal file
-# and deliverable scope. PRESENCE only: whether the declaration matches the user's instruction is
-# honor-system, the same ceiling as its sibling tokens. Present = a line the shared scope_decl_select
-# accepts, so a quoted `[SCOPE]` mention alone does not silence the nudge.
-has_scope_token() {
-  local decl
-  decl="$(printf '%s\n' "${1}" | scope_decl_select)"
-  [[ -n "${decl}" ]]
-}
 
 # Prints the first sensitive prefix matched by the declared paths (empty when none). Read into an
 # array rather than word-split in place: an unquoted expansion would also glob `settings*.json`
@@ -373,12 +380,11 @@ scope_files_sensitive_prefix() {
 }
 
 # Surface 5 emitter — the file-count / sensitive-path Deep-review advisory. Counts through the shared
-# scope_decl_files parser: an absent, unparseable or empty declaration is SILENCE (fail-open), never a
-# guess. Only the count and the matched prefix reach stderr — the prompt itself never does.
+# scope_decl_files parser: an unparseable or empty declaration is SILENCE (fail-open), never a guess.
+# Only the count and the matched prefix reach stderr — the prompt itself never does.
+# Args: $1=the selected declaration line.
 warn_deep_review() {
-  local scope_line files count prefix prefix_note=""
-  scope_line="$(printf '%s\n' "${prompt_full}" | scope_decl_select)"
-  [[ -n "${scope_line}" ]] || return 0
+  local scope_line="${1}" files count prefix prefix_note=""
   files="$(scope_decl_files "${scope_line}")"
   [[ -n "${files}" ]] || return 0
   count="$(printf '%s' "${files}" | grep -c '[^[:space:]]' || true)"
@@ -395,16 +401,29 @@ warn_deep_review() {
 
 # Surfaces 4+5 emitter. Called from the PASS paths only so a fault in these newest checks can never
 # turn one of the blocks above into a pass. A missing declaration is nudged; a present one is sized.
+# [SCOPE] = the orchestrator's record of the delegation's literal scope, checked for PRESENCE only —
+# a line the shared scope_decl_select accepts, so a quoted `[SCOPE]` mention does not silence the nudge.
+# Selector status 2 = the declaration was never read → reported as unread, neither nudged nor sized.
 warn_scope_advisories() {
   [[ "${orchestrator_origin}" == true ]] || return 0
-  # SC2310: has_scope_token is a pure predicate — set -e disable under `if` intended.
-  # shellcheck disable=SC2310
-  if ! has_scope_token "${prompt_full}"; then
-    printf '[enforce-verification-gate] DEV spawn of %s carries no [SCOPE] declaration — a mid-line or quoted [SCOPE] does not count, the declaration must open its own line. Record it in the canonical middot-separated grammar — [SCOPE] files=path/one, path/two · deliverable=<type> · out=none — so the delegation'"'"'s literal scope is fixed in text before the work starts (grammar SoT: orchestrator-role.md → Context Handoff Size). Advisory only — presence is checked here, fidelity to the user instruction is not.\n' \
+  local scope_line decl_status=0
+  # `trap - ERR` inside the $( ): the inherited fail-open trap would exit the subshell 0 and mask the 2.
+  # shellcheck disable=SC2310  # the selector's status IS the answer, captured by the || below
+  scope_line="$(
+    trap - ERR
+    printf '%s\n' "${prompt_full}" | drain_after scope_decl_select
+  )" || decl_status=$?
+  if ((decl_status != 0)); then
+    (printf '[enforce-verification-gate] DEV spawn of %s: a [SCOPE] declaration could not be read (selector status %d), so neither its presence nor its file count was checked — the prompt may still carry one, so this is not a missing-declaration report. Advisory only.\n' \
+      "${subagent_type}" "${decl_status}") >&2 || true
+    return 0
+  fi
+  if [[ -z "${scope_line}" ]]; then
+    printf '[enforce-verification-gate] DEV spawn of %s carries no [SCOPE] declaration — a mid-line or quoted [SCOPE] does not count, and neither does a [SCOPE] token wrapped in backticks or ** — the declaration must open its own line with the bare token. Record it in the canonical middot-separated grammar — [SCOPE] files=path/one, path/two · deliverable=<type> · out=none — so the delegation'"'"'s literal scope is fixed in text before the work starts (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md → Context Handoff Size). Advisory only — presence is checked here, fidelity to the user instruction is not.\n' \
       "${subagent_type}" >&2
     return 0
   fi
-  warn_deep_review
+  warn_deep_review "${scope_line}"
 }
 
 # get_monitor_docs_url — the clauded-docs collection URL, or rc 1 when none resolves. A full
@@ -560,8 +579,16 @@ if ! hook_is_subagent "${input}"; then
   orchestrator_origin=true
 fi
 
-# 3a. [SIZE-EST] presence gate — EVERY orchestrator DEV spawn MUST carry a [SIZE-EST] self-attestation
-# token (T1 contract, orchestrator-role.md ### Spawn Budget). Placed BEFORE the entry-decision branch
+# Simple-task entry — [ENTRY-CLASS] simple-task with no plan-reference. Such a spawn owes no other
+# attestation token, so the [SIZE-EST] gate and the [SCOPE] / [PLAN-SUBSET] advisories pass it
+# silently; a plan-reference keeps every token check, whatever classification travels beside it.
+# shellcheck disable=SC2310  # pure predicates — set -e disable under `if` intended
+if has_simple_task_token "${prompt_full}" && ! references_plan "${prompt_full}"; then
+  exit 0
+fi
+
+# 3a. [SIZE-EST] presence gate — EVERY non-simple-task orchestrator DEV spawn MUST carry a [SIZE-EST] self-attestation
+# token (T1 contract, skills/glass-atrium-ops-orchestrator-role.md ### Spawn Budget). Placed BEFORE the entry-decision branch
 # so a plan-bearing orchestrator spawn is STILL size-checked — revoking the header's former
 # plan-bearing zero-false-block guarantee for this dimension. GUARDED by orchestrator_origin (the cached
 # hook_is_subagent, reused VERBATIM from hook-utils.sh as enforce-delegation.sh / advisory-subagent-budget.sh
@@ -570,15 +597,15 @@ fi
 # SC2310: has_size_est_token is a pure predicate — set -e disable under `if` intended.
 # shellcheck disable=SC2310
 if [[ "${orchestrator_origin}" == true ]] && ! has_size_est_token "${prompt_full}"; then
-  size_reason="Spawning DEV agent '${subagent_type}' from the orchestrator with NO [SIZE-EST] self-attestation token — every DEV spawn MUST declare its delegation-size estimate (orchestrator-role.md ### Spawn Budget)."
-  size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. On a borderline count, round up: an under-estimate hides an oversized delegation from the split discipline."
+  size_reason="Spawning DEV agent '${subagent_type}' from the orchestrator with NO [SIZE-EST] self-attestation token — a DEV spawn that is not an [ENTRY-CLASS] simple-task entry MUST declare its delegation-size estimate (skills/glass-atrium-ops-orchestrator-role.md ### Spawn Budget)."
+  size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. On a borderline count, round up: an under-estimate hides an oversized delegation from the split discipline. A genuinely simple task with no plan-reference records [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> instead: that alone clears this gate and every other token check."
   block_and_exit "VGATE-SIZE-001" "${size_reason}" "${size_fix}" \
     "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"size-est-miss\"}" "block-sizeest"
 fi
 
 # Entry-decision branch — three mutually exclusive paths:
 #   plan-ref present       → task entered the flow → fall through to the reviewer check (advisory).
-#   [ENTRY-CLASS] token    → orchestrator consciously classified it simple → exit 0 silent.
+#   [ENTRY-CLASS] token    → orchestrator consciously classified it simple → exited 0 silent above.
 #   NEITHER                → silent entry-miss → channel-a BLOCK (emit_error + exit 2). The token is
 #                            the escape hatch; this is the only branch that blocks.
 # SC2310: references_plan/has_simple_task_token are pure predicates — set -e disable under `if`
@@ -595,8 +622,9 @@ if references_plan "${prompt_full}"; then
   # SC2310: has_plan_subset_token is a pure predicate — set -e disable under `if` intended.
   # shellcheck disable=SC2310
   if [[ "${orchestrator_origin}" == true ]] && ! has_plan_subset_token "${prompt_full}"; then
-    printf '[enforce-verification-gate] Plan-referencing spawn of %s carries no [PLAN-SUBSET] token. If this delegation is a strict subset of the plan, classify each included task'"'"'s declared predecessors first and record [PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=<edges|n/a>. Advisory only — absence is correct for a whole-plan delegation.\n' \
-      "${subagent_type}" >&2
+    # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → the reviewer-miss block keeps exit 2.
+    (printf '[enforce-verification-gate] Plan-referencing spawn of %s carries no [PLAN-SUBSET] token. If this delegation is a strict subset of the plan, classify each included task'"'"'s declared predecessors first and record [PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=<edges|n/a>. Advisory only — absence is correct for a whole-plan delegation.\n' \
+      "${subagent_type}") >&2 || true
   fi
   # Reviewer durably recorded BEFORE this spawn (sequential reviewer→DEV) → gate satisfied.
   if [[ "${reviewer_present}" == true ]]; then
@@ -613,7 +641,7 @@ if references_plan "${prompt_full}"; then
   # informational advisory and is never false-blocked (nested spawns remain ungated per the header
   # note). "no qa-code-reviewer recorded" is retained verbatim in both messages so a downstream log
   # scan keys on one phrase across both surfaces.
-  reviewer_reason="Verification-gate reviewer-miss: spawning DEV agent '${subagent_type}' on a plan-referencing task, but no qa-code-reviewer recorded in this session. Complex plans require a {qa-code-reviewer, DEV} Plan Direction Verification team before implementation entry (orchestrator-role.md Stage-2 gate)."
+  reviewer_reason="Verification-gate reviewer-miss: spawning DEV agent '${subagent_type}' on a plan-referencing task, but no qa-code-reviewer recorded in this session. Complex plans require a {qa-code-reviewer, DEV} Plan Direction Verification team before implementation entry (skills/glass-atrium-ops-orchestrator-role.md Stage-2 gate)."
   if [[ "${orchestrator_origin}" == true ]]; then
     reviewer_fix="Spawn glass-atrium-qa-code-reviewer FIRST (sequentially, before this DEV spawn) so its PostToolUse stamp records the Stage-2 verdict — the later DEV spawn then passes. If this task is genuinely simple/exempt, record [ENTRY-CLASS] simple-task in the prompt instead of a plan-reference."
     block_and_exit "VGATE-REVIEWER-001" "${reviewer_reason}" "${reviewer_fix}" \
@@ -621,12 +649,6 @@ if references_plan "${prompt_full}"; then
   fi
   # Nested sub-worker origin → informational advisory only (never a false-block).
   printf '[enforce-verification-gate] %s\n' "${reviewer_reason}" >&2
-  exit 0
-fi
-
-# shellcheck disable=SC2310
-if has_simple_task_token "${prompt_full}"; then
-  warn_scope_advisories
   exit 0
 fi
 
@@ -638,6 +660,6 @@ fi
 # PreToolUse block surface — mirrors block-doc-routing-leak.sh. The fail-open ERR trap above still
 # governs the hook's OWN errors → an internal failure never reaches this block.
 entry_reason="Spawning DEV agent '${subagent_type}' with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — sizable DEV work MUST enter the Document-Driven Workflow (author a plan first)."
-entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scoped/maintainers/scope-dev.md -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this gate. NOTE: this entry token is ONE of TWO required per DEV spawn — you must ALSO carry a [SIZE-EST] bundles=N tool_uses~=N — <1-line> delegation-size token (checked separately by VGATE-SIZE-001)."
+entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scoped/maintainers/scope-dev.md -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this gate. NOTE: a plan-referencing spawn must ALSO carry a [SIZE-EST] bundles=N tool_uses~=N — <1-line> delegation-size token (checked separately by VGATE-SIZE-001); a simple-task spawn needs no other token."
 block_and_exit "VGATE-ENTRY-001" "${entry_reason}" "${entry_fix}" \
   "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"entry-miss\"}" "block-entry"

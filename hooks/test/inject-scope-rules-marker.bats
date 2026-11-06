@@ -2,26 +2,24 @@
 # inject-scope-rules-marker.bats — T16 (in-context drop marker) + AM-T16 (per-block source path).
 #
 #   A dropped scope block is silent to the subagent — it learns nothing about what it is missing.
-#   T16 appends ONE terse, NON-DROPPABLE marker line (placed AFTER the shed loop) naming each shed
-#   block, under a CONDITIONALLY reserved ceiling that lowers exactly ONCE. AM-T16 gives each
-#   RULE-DOC-SOURCED named block its Read-resolvable source path (+ a "you MAY Read it" clause).
+#   T16: one terse marker line, appended after the shed loop, names each shed block.
+#   Marker budget: loop ceiling = full ceiling − join − rendered marker, re-derived after every shed.
+#   Assembly + marker still over the full ceiling → marker withdrawn + one MARKERLOST drop-log row.
+#   AM-T16: each rule-doc-sourced shed entry carries its Read-resolvable source path.
 #
 #   ACs pinned here (T16):
 #     M1  a forced shed → exactly one fixed-width marker line naming each shed block (also AM-T16's
 #         positive-coupling precondition: >=1 block named under a forced shed).
 #     M2  no shed → NO marker AND the FULL ceiling was used (fixture sized between the two ceilings).
-#     M3  the ceiling lowers at MOST once per invocation (multi-shed → one "ceiling lowered" diag).
-#     M4  a ceiling under the non-droppable block → emit + accept, NEVER loop, shed never silent.
+#     M3  the "ceiling lowered" diagnostic prints once per invocation, however many blocks shed.
+#     M4  a ceiling under the non-droppable block → the droppable block sheds, no loop, exit 0.
+#         marker fits → in context · marker cannot fit → absent from context + a MARKERLOST row.
 #     M5  every present droppable block shed → the non-droppable emit + marker survive, exit 0.
 #   ACs pinned here (AM-T16):
 #     A2  a rule-doc-sourced named block carries its resolvable source path.
 #     A3  an emitted rule-doc-sourced path EXISTS.
 #     A5  the widened marker stays within the ceiling (byte accounting converges, no extra shed).
-#
-#   FAIL-AT-HEAD: HEAD appends NO marker at all, so every marker-presence AC (M1, M3-M5, A2, A3, A5)
-#   fails against the pre-T16 hook and passes after. M2 is a preserved invariant (the pre-T16 hook
-#   also emits no marker on a no-shed spawn) but its full-ceiling assertion pins the conditional
-#   reserve the pre-T16 hook lacks.
+#     A6  a marker outgrowing a fixed 256B reserve → still budgeted inside the ceiling (extra shed).
 #
 # BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
 #   bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured,
@@ -239,7 +237,7 @@ ctx_units() {
   }
 }
 
-# ── M3 — the ceiling lowers at MOST once per invocation (multi-shed) ─────────────────────────────
+# ── M3 — the ceiling-lowered diagnostic prints once, however many blocks shed ────────────────────
 
 @test "M3: the ceiling-lowered diagnostic fires exactly once however many blocks shed" {
   WIKI="${BATS_TEST_TMPDIR}/wiki.md"

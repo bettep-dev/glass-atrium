@@ -34,8 +34,8 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
 
-# LARGE fixture size: cut's output must exceed the ~64KB pipe buffer,
-# else cut finishes before the reader breaks and no SIGPIPE occurs at all.
+# LARGE fixture size: cut's multiple writes race the reader's break at any size;
+# above the ~64KB pipe buffer cut still has a write left when the reader breaks, so the SIGPIPE is certain.
 # Linux CI /tmp (~73B/line) is ~half macOS (~128B/line):
 # 3000 files ≈ 219KB ≈ 3.3x the buffer on Linux.
 # Flake-freedom comes from _run_strict's drained stderr capture, not from this margin.

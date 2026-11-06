@@ -198,9 +198,8 @@ def calc_cost(it, ot, cr, cc, model_key):
     transcript), empty/None means a no-LLM turn or usage-less subagent file.
     They return a clean $0 without walking the resolution chain (whose remote
     step could cost a network round-trip — pointless for a known zero-cost
-    row). Verified 2026-06-10 against core.cost_events — every empty-model
-    (2,295) and "<synthetic>" (437) row carries 0 tokens with
-    parse_error=false, so the $0 is value-identical to the former
+    row). In core.cost_events every empty-model and "<synthetic>" row
+    carries 0 tokens with parse_error=false, so the $0 is value-identical to the former
     fallback-rate-times-zero math."""
     if not model_key or model_key == "<synthetic>":
         return 0.0

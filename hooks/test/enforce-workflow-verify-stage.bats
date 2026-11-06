@@ -22,6 +22,8 @@
 #   `[[ ... ]] || return 1` so it gates on both legs regardless of position (`return` runs in the
 #   test-body function scope → fails the test immediately). Never leave a bare intermediate `[[ ]]`.
 
+bats_require_minimum_version 1.5.0
+
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-workflow-verify-stage.sh"
 CORPUS_DIR="${BATS_TEST_DIRNAME}/corpus"
@@ -946,6 +948,33 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   [[ ! "${output}" =~ "entry-miss" ]] || return 1
 }
 
+# A simple-task script with no plan-reference owes none of the other attestation tokens — no
+# [AGENT-COMPOSITION], [SIZE-EST] or [SCOPE] check blocks or advises it; a plan-reference or a missing
+# entry signal keeps every check.
+@test "entry: only a simple-task script without a plan-reference waives the other attestation tokens" {
+  local dev="agent('glass-atrium-dev-shell',{goal:'fix'});"
+  local rows=(
+    "simple-task, no other token|log('[ENTRY-CLASS] simple-task: one file');\n${dev}|0|"
+    "simple-task, malformed declaration and oversize [SIZE-EST]|/* [AGENT-COMPOSITION]\nverify: nobody\n[/AGENT-COMPOSITION] */\nlog('[ENTRY-CLASS] simple-task: one file');\nlog('[SIZE-EST] bundles=1 tool_uses~=99 — one file');\n${dev}|0|"
+    "plan-reference, no other token|log('plan-ref: clauded-docs/4821');\n${dev}|2|BLOCKED"
+    "plan-reference beside simple-task, no other token|log('plan-ref: clauded-docs/4821 [ENTRY-CLASS] simple-task: noise');\n${dev}|2|BLOCKED"
+    "neither entry signal|log('fix the thing');\n${dev}|2|NEITHER a plan-reference"
+  )
+  local row name script want_status want_phrase
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name script want_status want_phrase <<<"${row}"
+    script="${script//'\n'/$'\n'}"
+    run_hook "${script}"
+    [[ "${status}" -eq "${want_status}" ]] || { echo "${name}: status ${status} -- ${output}"; return 1; }
+    if [[ -z "${want_phrase}" ]]; then
+      [[ "${output}" != *BLOCKED* && "${output}" != *"scope declaration"* && "${output}" != *"[SIZE-EST] plausibility"* ]] \
+        || { echo "${name}: expected no token block or advisory -- ${output}"; return 1; }
+    else
+      [[ "${output}" == *"${want_phrase}"* ]] || { echo "${name}: expected ${want_phrase} -- ${output}"; return 1; }
+    fi
+  done
+}
+
 # #28 word-boundary (PLAN_REF_RE mirror): an incidental 'workplan-2026' token is NOT a plan-ref, so a
 # would-be-PASS DEV workflow whose ONLY entry signal is 'workplan-2026' still lands on BLOCK_ENTRY.
 # Authored to FAIL before the anchor fix (unanchored plan-[0-9]+ matched inside 'workplan-2026' → PASS).
@@ -979,6 +1008,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"missing composition declaration"* ]] || return 1
   [[ "${output}" == *"entry classification / plan-reference also required"* ]] || return 1
+  [[ "${output}" == *"path (2) alone clears the block above"* ]] || { echo "${output}"; return 1; }
   assert_trace block-nodecl || return 1
 }
 
@@ -1483,7 +1513,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
   # The window is the leading contiguous comment block, derived rather than a line number: a fixed
   # bound makes any later header paragraph break this assertion for a reason unrelated to it.
   header="$(awk '/^#/ { print; next } { exit }' "${HOOK_SH}" | sed 's/^# \{0,3\}//' | tr '\n' ' ' | tr -s ' ')"
-  [[ "${header}" == *"Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false positives across a full rolling firing-log window, the copy-verbatim skeletons in skills/glass-atrium-ops-orchestrator.md passing the check unmodified, and a named one-edit remediation in the advisory text for each of the three scoped rules."* ]] || {
+  [[ "${header}" == *"Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false positives across a full rolling firing-log window, the copy-verbatim skeletons in skills/glass-atrium-ops-orchestrator.md and skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md passing the check unmodified, and a named one-edit remediation in the advisory text for each of the three scoped rules."* ]] || {
     echo "PROMOTION CONDITION not recorded verbatim in the hook header" >&2
     return 1
   }
@@ -1816,6 +1846,65 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
     run_hook_file "${outdir}/fence_${i}.js"
     [[ "${status}" -eq 0 ]] || {
       echo "SKILL SKELETON ${i} did NOT PASS (exit ${status})" >&2
+      return 1
+    }
+  done
+}
+
+# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
+source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
+
+@test "nodecl: an interrupted block write still exits 2, the reason once on stderr and not in the trace" {
+  local script trace
+  script="log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+log('[SCOPE] files=a.sh · deliverable=fix · out=none')
+log('[PLAN-CLOSE] in-script')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  jq -n --arg s "${script}" '{tool_name:"Workflow",tool_input:{script:$s}}' >"${BATS_TEST_TMPDIR}/envelope"
+  run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope" "WORKFLOW_GATE_FIRED_LOG=${TRACE_LOG}"
+  assert_forced_block "BLOCKED (missing composition declaration)" || return 1
+  # a held reason flushed by the trace append would land in the log ahead of the trace line
+  trace="$(cat -- "${TRACE_LOG}")"
+  [[ "${trace}" == *"verdict=block-nodecl"* && "${trace}" != *$'\n'* && "${trace}" != *"composition declaration"* ]] || {
+    echo "trace log: ${trace}"
+    return 1
+  }
+}
+
+@test "norev: an advisory write interrupted ahead of the block still exits 2, advisory and reason once each" {
+  # row = name|advisory label|line that trips only that advisory, prepended to a DEV script with no reviewer spawn
+  local rows=(
+    "resilience|ADVISORY (resilience|agent('glass-atrium-dev-nestjs',{goal:'draft with a schema output'})"
+    "schema-cap|ADVISORY (schema-cap|const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 1200 } } };"
+  )
+  local row name label lead script rest trace
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name label lead <<<"${row}"
+    script="${lead}
+/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+    jq -n --arg s "${script}" '{tool_name:"Workflow",tool_input:{script:$s}}' >"${BATS_TEST_TMPDIR}/envelope"
+    TRACE_LOG="${BATS_TEST_TMPDIR}/trace-${name}.log"
+    run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope" "WORKFLOW_GATE_FIRED_LOG=${TRACE_LOG}"
+    assert_forced_block "BLOCKED (no reviewer" || {
+      echo "row ${name}"
+      return 1
+    }
+    rest="${output#*"${label}"}"
+    [[ "${output}" == *"${label}"* && "${rest}" != *"${label}"* ]] || {
+      echo "row ${name}: advisory not exactly once: ${output}"
+      return 1
+    }
+    trace="$(cat -- "${TRACE_LOG}")"
+    [[ "${trace}" == *"verdict=block-norev"* && "${trace}" == *"advisory=${name}"* && "${trace}" != *$'\n'* && "${trace}" != *"ADVISORY"* ]] || {
+      echo "row ${name}: trace log: ${trace}"
       return 1
     }
   done

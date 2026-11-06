@@ -19,9 +19,16 @@
 // second database on the same server from MONITOR_TEST_LABEL_ABSENT_DATABASE_URL and
 // skips when it is unset. That database is shared with the loop-suppression suite: every
 // migration except 20261003000000 ('unadjudicated') and 20261005000000 (metric_key,
-// 'dormant').
+// 'dormant'), and except 20261009000000, which alters the spawn_manifest table
+// 20261005000000 creates. A later migration on a 20261005000000 table joins that list.
 //
-// Runner: npx tsx --test test/improvement.reject-buckets.route.test.ts
+// Building it, from monitor/ (raw SQL, so prisma never migrates it forward):
+//   createdb -h /tmp glass_atrium_test_label_absent
+//   for m in prisma/migrations/2*/; do case "$m" in *20261003000000_*|*20261005000000_*|*20261009000000_*) continue;; esac
+//     psql -h /tmp -d glass_atrium_test_label_absent -v ON_ERROR_STOP=1 -q -f "${m}migration.sql" || break; done
+//
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.reject-buckets.route.test.ts
+//   label-absent case: add MONITOR_TEST_LABEL_ABSENT_DATABASE_URL="postgresql://$(id -un)@localhost/glass_atrium_test_label_absent?host=/tmp"
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
@@ -57,7 +64,7 @@ const SUPERSEDE_RATIONALE =
 
 // update_parked_proposal_status's rationale (head + rows tail), verbatim for the same reason
 const PARKED_PATTERN_RATIONALE =
-  "covering pattern parked before apply (rows 3384:rejected, 6:applied)";
+  "covering pattern parked before apply (rows 5120:rejected, 7:applied)";
 
 const LABEL_ABSENT_URL_ENV = "MONITOR_TEST_LABEL_ABSENT_DATABASE_URL";
 const labelAbsentUrl = process.env[LABEL_ABSENT_URL_ENV];

@@ -1864,6 +1864,150 @@ class BaseAwareFrontmatterTest(unittest.TestCase):
 
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class BaseAnchorComparisonTest(unittest.TestCase):
+    """A live body is at its base anchor when only updater-sanctioned frontmatter differs."""
+
+    def test_only_the_carry_pass_sanctioned_frontmatter_lines_are_ignored(self) -> None:
+        front = "name: qa\ntools: Read, Grep\neffort: high\n"
+        base = _fm_doc(front, "kept")
+        rows = [
+            (
+                "a live model pin over an otherwise-equal base is at anchor",
+                _fm_doc("name: qa\nmodel: opus\ntools: Read, Grep\neffort: high\n", "kept"),
+                base,
+                True,
+            ),
+            (
+                "a live effort value differing from base is at anchor",
+                _fm_doc("name: qa\ntools: Read, Grep\neffort: xhigh\n", "kept"),
+                base,
+                True,
+            ),
+            (
+                "a live effort line the base lacks is at anchor",
+                _fm_doc("name: qa\ntools: Read, Grep\neffort: xhigh\n", "kept"),
+                _fm_doc("name: qa\ntools: Read, Grep\n", "kept"),
+                True,
+            ),
+            (
+                "a base model line the live body lacks is at anchor",
+                base,
+                _fm_doc("name: qa\nmodel: opus\ntools: Read, Grep\neffort: high\n", "kept"),
+                True,
+            ),
+            (
+                "a live model pin plus a differing region line is diverged",
+                _fm_doc("name: qa\nmodel: opus\ntools: Read, Grep\neffort: high\n", "learned"),
+                base,
+                False,
+            ),
+            (
+                "a differing name identity line is diverged",
+                _fm_doc("name: qa-x\ntools: Read, Grep\neffort: high\n", "kept"),
+                base,
+                False,
+            ),
+            (
+                "a differing tools identity line is diverged",
+                _fm_doc("name: qa\ntools: Read, Grep, Bash\neffort: high\n", "kept"),
+                base,
+                False,
+            ),
+            (
+                "a live body lacking the base effort line is diverged",
+                _fm_doc("name: qa\ntools: Read, Grep\n", "kept"),
+                base,
+                False,
+            ),
+            (
+                "a differing model line outside the frontmatter is diverged",
+                _fm_doc(front, "model: opus"),
+                _fm_doc(front, "model: sonnet"),
+                False,
+            ),
+            (
+                "identical bodies without frontmatter are at anchor",
+                "release body\n",
+                "release body\n",
+                True,
+            ),
+            (
+                "differing bodies without frontmatter are diverged",
+                "local body\n",
+                "release body\n",
+                False,
+            ),
+        ]
+        for name, live, base_text, expected in rows:
+            with self.subTest(name):
+                self.assertIs(em.is_at_base_anchor(live, base_text), expected)
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class CliAnchorTest(unittest.TestCase):
+    """The read-only `anchor` CLI the doctor shells out to: one verdict token or none."""
+
+    _PINNED = _fm_doc("name: qa\nmodel: opus\ntools: Read\n", "kept")
+    _BASE = _fm_doc("name: qa\ntools: Read\n", "kept")
+
+    def _write(self, d: Path, name: str, data: bytes) -> str:
+        p = d / name
+        p.write_bytes(data)
+        return str(p)
+
+    def _run(self, live: str, base: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = em.main(["anchor", "--live", live, "--base", base])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_anchor_prints_the_verdict_token_for_each_comparison(self) -> None:
+        rows = [
+            ("a pinned body over an equal base", self._PINNED, "at-anchor"),
+            ("a pinned body with a region difference", self._PINNED.replace("kept", "learned"), "diverged"),
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            d = Path(raw)
+            base_p = self._write(d, "base.md", self._BASE.encode())
+            for name, live, token in rows:
+                with self.subTest(name):
+                    live_p = self._write(d, "live.md", live.encode())
+                    rc, out, _ = self._run(live_p, base_p)
+                    self.assertEqual(rc, em.EXIT_OK)
+                    self.assertEqual(out, f"{token}\n")
+
+    def test_anchor_reports_an_uncomparable_input_on_stderr_without_a_token(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            d = Path(raw)
+            base_p = self._write(d, "base.md", self._BASE.encode())
+            rows = [
+                ("a missing live path", str(d / "absent.md")),
+                ("an undecodable live body", self._write(d, "bad.md", b"\xff\xfe---\n")),
+            ]
+            for name, live_p in rows:
+                with self.subTest(name):
+                    rc, out, err = self._run(live_p, base_p)
+                    self.assertNotEqual(rc, em.EXIT_OK)
+                    self.assertEqual(out, "")
+                    self.assertIn(live_p, err)
+
+    def test_anchor_writes_nothing_and_never_reaches_the_model(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            d = Path(raw)
+            missing_bin = str(d / "no-such-claude")
+            live_p = self._write(d, "live.md", self._PINNED.encode())
+            base_p = self._write(d, "base.md", self._BASE.encode())
+            before = sorted(p.relative_to(d) for p in d.rglob("*"))
+            with mock.patch.dict(os.environ, {"AUTOAGENT_CLAUDE_BIN": missing_bin}), \
+                    mock.patch.object(em.dc, "CLAUDE_BIN", missing_bin):
+                rc, out, _ = self._run(live_p, base_p)
+
+            self.assertEqual(rc, em.EXIT_OK)
+            self.assertEqual(out, "at-anchor\n")
+            self.assertEqual(sorted(p.relative_to(d) for p in d.rglob("*")), before)
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class ContestedRegionKeepsLivePinsTest(unittest.TestCase):
     """The union behavior NEITHER phase has alone: a live pin on a WRITABLE conflict.
 

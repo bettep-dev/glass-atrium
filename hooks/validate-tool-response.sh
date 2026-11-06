@@ -15,7 +15,22 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT TOOL_RESPONSE LOWER_RESPONSE input
 INPUT=$(hook_read_input)
 [[ "${INPUT}" == "{}" ]] && exit 0
 
@@ -118,7 +133,8 @@ LOWER_RESPONSE=$(printf '%s\n' "${TOOL_RESPONSE}" | tr '[:upper:]' '[:lower:]')
 
 # SEC-073 advisory: English indirect-injection marker in fetched content. -i is load-bearing —
 # the \[SYSTEM\]/\[INST\]/<<SYS>> patterns carry uppercase folded against the lowercased text.
-if printf '%s\n' "${LOWER_RESPONSE}" | grep -qiE "${EN_ALTERNATION}"; then
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+if printf '%s\n' "${LOWER_RESPONSE}" | drain_after grep -qiE "${EN_ALTERNATION}"; then
   emit_error "SEC-073" "advisory" \
     "Indirect injection pattern in fetched content (English)" \
     "외부 가져온 콘텐츠에서 간접 인젝션 패턴 감지 (영어)" \
@@ -127,7 +143,8 @@ if printf '%s\n' "${LOWER_RESPONSE}" | grep -qiE "${EN_ALTERNATION}"; then
 fi
 
 # SEC-073 advisory: Korean indirect-injection marker (match original text).
-if printf '%s\n' "${TOOL_RESPONSE}" | grep -qE "${KO_ALTERNATION}"; then
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+if printf '%s\n' "${TOOL_RESPONSE}" | drain_after grep -qE "${KO_ALTERNATION}"; then
   emit_error "SEC-073" "advisory" \
     "Indirect injection pattern in fetched content (Korean)" \
     "외부 가져온 콘텐츠에서 간접 인젝션 패턴 감지 (한국어)" \
@@ -136,7 +153,8 @@ if printf '%s\n' "${TOOL_RESPONSE}" | grep -qE "${KO_ALTERNATION}"; then
 fi
 
 # SEC-074 advisory: encoding-evasion marker (base64 — match original text) as fixed strings.
-if printf '%s\n' "${TOOL_RESPONSE}" | grep -qF "${b64_grep_args[@]}"; then
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+if printf '%s\n' "${TOOL_RESPONSE}" | drain_after grep -qF "${b64_grep_args[@]}"; then
   emit_error "SEC-074" "advisory" \
     "Encoded injection marker in fetched content" \
     "외부 가져온 콘텐츠에서 인코딩된 인젝션 마커 감지" \

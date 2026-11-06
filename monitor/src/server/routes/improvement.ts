@@ -364,9 +364,9 @@ interface ApplyCapDbRow {
 // -- Loop suppression surface ------------------------------------------------
 //
 // The repeat-apply cap is one of several mechanisms that stop a pattern from
-// reaching a proposal. Measured per cycle day over 2026-08-24..08-31, the loop
-// suppressed roughly 25 non-promptable selections, 10 staleness skips and 5 roster
-// mismatches for every 1 cap — and only the cap was visible anywhere.
+// reaching a proposal. Each of the other suppression mechanisms (non-promptable
+// selections, staleness skips, roster mismatches) outnumbered the repeat-apply cap,
+// and only the cap was visible anywhere.
 //
 // Reported over three populations that are never summed — contract and the reason
 // on ImprovementLoopSuppressionState (types/improvement.ts).
@@ -1511,7 +1511,7 @@ async function handleLearningLog(
       // are not: the daemon's intake skip keys on the metric key and never
       // consults agent-registry.json, so gating this count would report a narrower
       // population than the mechanism it measures. Gated, the figure that motivated
-      // this field read "6 of 20" against a measured 28 of 47 — a number that
+      // this field read far below the ungated one — a gated count that
       // silently means something narrower than it appears, which is the failure
       // this whole payload exists to fix. The registry gate stays on the parked
       // buckets and the lists, where it scopes a DISPLAY population rather than
@@ -3142,7 +3142,7 @@ function parsePreVerifyAxes(stderr: string): PreVerifyAxes | undefined {
 }
 
 /**
- * Exit-18 parked rows from daemon-apply.sh's `REFUSED proposal id=N … (rows 3384:rejected, 6:applied)` line.
+ * Exit-18 parked rows from daemon-apply.sh's `REFUSED proposal id=N … (rows 5120:rejected, 7:applied)` line.
  * Only id:status tokens pass — no other stderr text reaches the reason; undefined when none.
  */
 function parseParkedRows(stderr: string): string | undefined {

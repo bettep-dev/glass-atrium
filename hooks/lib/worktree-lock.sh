@@ -29,9 +29,8 @@
 # becomes a silent no-op. Layout: <root>/worktree-locks/<key-of-worktree-root>/.apply-lock.
 #
 # TTL IS DOMINANT, liveness is not a veto: an agent_id has no kill -0 analog, and the live-children
-# marker cannot substitute because a truncated agent fires no SubagentStop at all (measured on this
-# machine's corpus: ~5.6% of workflow agents and ~2.9% of manual agents never record a Stop). A
-# liveness veto would therefore wedge that worktree's lock permanently on exactly the tail the TTL
+# marker cannot substitute because a truncated agent fires no SubagentStop at all. A liveness veto
+# would therefore wedge that worktree's lock permanently on exactly that truncated tail, which the TTL
 # exists to cover. Our lock dir carries no `pid` file, so apply-lock's _apply_lock_holder_live always
 # reports not-live and its `not-live AND aged` gate degenerates to age alone — by construction.
 #
@@ -50,8 +49,8 @@ readonly _WORKTREE_LOCK_LOADED=1
 readonly WORKTREE_LOCK_ROOT="${WORKTREE_LOCK_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/worktree-locks}"
 
 # 360 min — the staleness convention already in force for the live-child markers
-# (enforce-commit-guard.sh LIVE_CHILD_TTL_MIN). Deliberately NOT apply-lock's 1800s default: measured
-# manual-agent hold times reach a p99 of ~6692s, so a 1800s TTL would reclaim locks out from under
+# (enforce-commit-guard.sh LIVE_CHILD_TTL_MIN). Deliberately NOT apply-lock's 1800s default:
+# manual-agent hold times can run well past 1800s, so a 1800s TTL would reclaim locks out from under
 # live holders. WORKTREE_LOCK_TTL_SECS overrides.
 readonly WORKTREE_LOCK_TTL_DEFAULT=21600
 

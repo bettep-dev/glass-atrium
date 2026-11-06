@@ -10,8 +10,8 @@
 # The declared set is derived at APPLY time from the stored diff about to be
 # applied — never transported from generation, never read from the database. That
 # is one source of truth that cannot desync from what lands, and it covers the
-# majority path: removals that never entered the repair path at all (proposal 314
-# is the applied instance of exactly that).
+# majority path: removals that never entered the repair path at all (the applied
+# pure-removal fixture is the instance of exactly that).
 #
 # FAIL-AT-HEAD (observed by running, not derived from code shape):
 #   * `daemon_cycle.verify_removal_evidence` and `daemon_cycle.get_removal_live`
@@ -62,10 +62,10 @@ import daemon_cycle as dc  # noqa: E402 — autoagent dir prepended above
 # capture of a stored proposal is the SoT for both tasks.
 from test_removal_discard_refusal import (  # noqa: E402
     ADD_ONLY_FRAGMENT,
+    APPLIED_PURE_REMOVAL_DIFF,
     DEV_DB_WORK_RULES,
     HEADERLESS_REPLACE_FRAGMENT,
-    PROPOSAL_314_DIFF,
-    PROPOSAL_318_DIFF,
+    TRUNCATED_REPLACE_DIFF,
     qa_debugger_before,
 )
 
@@ -223,34 +223,34 @@ class TestEvidenceRuleAdmits(unittest.TestCase):
         self.assertEqual(evidence.verdict, dc.REMOVAL_VERDICT_NO_REMOVAL)
 
 
-class TestKeystone318(unittest.TestCase):
+class TestKeystoneTruncatedReplace(unittest.TestCase):
     """The historical instance: a removed line truncated mid-token matches nothing."""
 
-    def test_when_318_evidenced_then_no_match_refusal(self) -> None:
-        evidence = dc.verify_removal_evidence(PROPOSAL_318_DIFF, DEV_DB_WORK_RULES)
+    def test_when_keystone_evidenced_then_no_match_refusal(self) -> None:
+        evidence = dc.verify_removal_evidence(TRUNCATED_REPLACE_DIFF, DEV_DB_WORK_RULES)
         self.assertFalse(evidence.ok)
         self.assertEqual(evidence.verdict, dc.REMOVAL_VERDICT_NO_MATCH)
         # The stored removal is truncated mid-token, so it can match nothing.
         self.assertTrue(evidence.declared[0].endswith("nee"))
 
-    def test_when_318_reaches_the_stale_site_then_refused_not_rebuilt(self) -> None:
-        # Exercised where 318 actually arrives — the stale re-derivation site.
-        work = Path(tempfile.mkdtemp(prefix="s4-318-"))
+    def test_when_keystone_reaches_the_stale_site_then_refused_not_rebuilt(self) -> None:
+        # Exercised where the keystone actually arrives — the stale re-derivation site.
+        work = Path(tempfile.mkdtemp(prefix="s4-keystone-"))
         self.addCleanup(shutil.rmtree, work, ignore_errors=True)
         target = work / "glass-atrium-dev-db.md"
         target.write_text(DEV_DB_WORK_RULES, encoding="utf-8")
         buf = io.StringIO()
         with redirect_stderr(buf):
-            result = dc._rederive_diff_against_file(PROPOSAL_318_DIFF, target)
+            result = dc._rederive_diff_against_file(TRUNCATED_REPLACE_DIFF, target)
         self.assertEqual(result, "")
         self.assertIn("REMOVAL REFUSAL", buf.getvalue())
 
 
-class TestAppliedPureRemoval314(unittest.TestCase):
-    """Coverage is total, not repair-path-only: 314 never entered the repair path."""
+class TestAppliedPureRemoval(unittest.TestCase):
+    """Coverage is total, not repair-path-only: this diff never entered the repair path."""
 
-    def test_when_314_verified_against_its_own_stored_diff_then_admitted(self) -> None:
-        evidence = dc.verify_removal_evidence(PROPOSAL_314_DIFF, qa_debugger_before())
+    def test_when_pure_removal_verified_against_its_own_stored_diff_then_admitted(self) -> None:
+        evidence = dc.verify_removal_evidence(APPLIED_PURE_REMOVAL_DIFF, qa_debugger_before())
         self.assertTrue(evidence.ok)
         self.assertEqual(len(evidence.declared), 2)
         for declared in evidence.declared:

@@ -15,8 +15,9 @@ a skip-only class reports as a pass — so the ``daemon_cycle`` import below is
 deliberately UNGUARDED and an import regression reds the leg instead of hiding
 the class-authority pin behind a skip. Its import surface is stdlib plus
 repo-local modules (psycopg absence is absorbed inside daemon_cycle itself), so
-no environment makes that import legitimately fail. Fixtures are the REAL stored
-strings frozen below, never invented.
+no environment makes that import legitimately fail. Fixtures are synthetic rows
+and labels in the stored shape: neutral agent names and ids, the stored label
+grammar and the forked signature core.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_discharge_wiring.py -v
@@ -119,15 +120,14 @@ def tearDownModule() -> None:
 
 
 # ---------------------------------------------------------------------------
-# FROZEN FIXTURES — real stored strings, transcribed verbatim
+# FIXTURES — synthetic rows and labels in the stored shape
 # ---------------------------------------------------------------------------
 #
-# core.learning_log rows (id, agent, pattern_signature) as stored on 2026-07-31.
+# core.learning_log rows (id, agent, pattern_signature) in the stored shape.
 # pattern_signature is "<label>|<agent>" per the aggregator UPSERT contract.
 # The two variants of the legacy signature core differ by ONE INTERNAL space
-# before the closing paren: 'failure rate )' (ids 5, 6, 41, 42) vs
-# 'failure rate)' (ids 90, 91, 235, 430, 457). The fork spans agents and each
-# agent sits wholly on one side.
+# before the closing paren: 'failure rate )' vs 'failure rate)'. The fork spans
+# agents and each agent sits wholly on one side.
 
 _ROW = "{label}|{agent}"
 
@@ -149,74 +149,74 @@ _BUDGET_CORE = "budget-overage concentration"
 _RATE_CORE_SPACED = "agent instruction-improvement candidate (failure rate )"
 _RATE_CORE_BARE = "agent instruction-improvement candidate (failure rate)"
 
-# Real stored rows. dev-react + dev-nestjs sit on the spaced fork, dev-shell on
-# the bare fork. bulldog-w2 is a real low-frequency row that roster validation
-# drops and the agent cap excludes — the untruncated-read criterion keys on it.
+# agent-a + agent-c sit on the spaced fork, agent-b on the bare fork. agent-f is
+# an off-roster low-frequency row that roster validation drops and the agent cap
+# excludes — the untruncated-read criterion keys on it.
 STORED_ROWS: tuple[dict, ...] = (
-    _row(7, "glass-atrium-dev-react", _BUDGET_CORE),
-    _row(1, "glass-atrium-dev-react", _FAIL_CORE),
-    _row(5, "glass-atrium-dev-react", _RATE_CORE_SPACED),
-    _row(10, "glass-atrium-dev-shell", _BUDGET_CORE),
-    _row(2, "glass-atrium-dev-shell", _FAIL_CORE),
-    _row(430, "glass-atrium-dev-shell", _RATE_CORE_BARE),
-    _row(8, "glass-atrium-dev-nestjs", _BUDGET_CORE),
-    _row(3, "glass-atrium-dev-nestjs", _FAIL_CORE),
-    _row(6, "glass-atrium-dev-nestjs", _RATE_CORE_SPACED),
-    _row(9, "glass-atrium-qa-debugger", _BUDGET_CORE),
-    _row(4, "glass-atrium-qa-debugger", _FAIL_CORE),
-    _row(351, "glass-atrium-qa-code-reviewer", _BUDGET_CORE),
-    _row(41, "glass-atrium-bulldog-w2", _RATE_CORE_SPACED),
+    _row(101, "glass-atrium-agent-a", _BUDGET_CORE),
+    _row(102, "glass-atrium-agent-a", _FAIL_CORE),
+    _row(103, "glass-atrium-agent-a", _RATE_CORE_SPACED),
+    _row(201, "glass-atrium-agent-b", _BUDGET_CORE),
+    _row(202, "glass-atrium-agent-b", _FAIL_CORE),
+    _row(203, "glass-atrium-agent-b", _RATE_CORE_BARE),
+    _row(301, "glass-atrium-agent-c", _BUDGET_CORE),
+    _row(302, "glass-atrium-agent-c", _FAIL_CORE),
+    _row(303, "glass-atrium-agent-c", _RATE_CORE_SPACED),
+    _row(401, "glass-atrium-agent-d", _BUDGET_CORE),
+    _row(402, "glass-atrium-agent-d", _FAIL_CORE),
+    _row(501, "glass-atrium-agent-e", _BUDGET_CORE),
+    _row(601, "glass-atrium-agent-f", _RATE_CORE_SPACED),
 )
 
-# Real stored core.autoagent_proposals.pattern_label strings, verbatim.
+# core.autoagent_proposals.pattern_label strings in the stored grammar.
 # The third constituent NESTS its own parentheses; the SOFT constituent
 # 'recurring negative-signal concentration' is the display remap of the stored
 # FAIL core 'repeated failure by same agent'.
-LABEL_REACT_3 = (
-    "glass-atrium-dev-react multi-signal consolidation (budget-overage "
+LABEL_A_3 = (
+    "glass-atrium-agent-a multi-signal consolidation (budget-overage "
     "concentration / recurring negative-signal concentration / agent "
     "instruction-improvement candidate (failure rate ))"
 )
-LABEL_NESTJS_3 = (
-    "glass-atrium-dev-nestjs multi-signal consolidation (budget-overage "
+LABEL_C_3 = (
+    "glass-atrium-agent-c multi-signal consolidation (budget-overage "
     "concentration / recurring negative-signal concentration / agent "
     "instruction-improvement candidate (failure rate ))"
 )
-LABEL_NESTJS_3_REVERSED = (
-    "glass-atrium-dev-nestjs multi-signal consolidation (recurring "
+LABEL_C_3_REVERSED = (
+    "glass-atrium-agent-c multi-signal consolidation (recurring "
     "negative-signal concentration / budget-overage concentration / agent "
     "instruction-improvement candidate (failure rate ))"
 )
-LABEL_SHELL_2_REVERSED = (
-    "glass-atrium-dev-shell multi-signal consolidation (recurring "
+LABEL_B_2_REVERSED = (
+    "glass-atrium-agent-b multi-signal consolidation (recurring "
     "negative-signal concentration / budget-overage concentration)"
 )
-LABEL_QA_DEBUGGER_2 = (
-    "glass-atrium-qa-debugger multi-signal consolidation (budget-overage "
+LABEL_D_2 = (
+    "glass-atrium-agent-d multi-signal consolidation (budget-overage "
     "concentration / recurring negative-signal concentration)"
 )
-LABEL_REVIEWER_2 = (
-    "glass-atrium-qa-code-reviewer multi-signal consolidation (budget-overage "
+LABEL_E_2 = (
+    "glass-atrium-agent-e multi-signal consolidation (budget-overage "
     "concentration / recurring negative-signal concentration)"
 )
 # Solo (single-pattern) proposal label — stored as the bare label, no join.
-LABEL_SOLO_REVIEWER = _BUDGET_CORE
+LABEL_SOLO_E = _BUDGET_CORE
 
-# The five real consolidation labels the coverage criterion enumerates, each
+# The five consolidation labels the coverage criterion enumerates, each
 # paired with the row ids of its own agent that it must resolve to.
-REAL_CONSOLIDATIONS: tuple[tuple[str, str, frozenset[int]], ...] = (
-    (LABEL_REACT_3, "glass-atrium-dev-react", frozenset({7, 1, 5})),
-    (LABEL_NESTJS_3, "glass-atrium-dev-nestjs", frozenset({8, 3, 6})),
-    (LABEL_NESTJS_3_REVERSED, "glass-atrium-dev-nestjs", frozenset({8, 3, 6})),
-    (LABEL_SHELL_2_REVERSED, "glass-atrium-dev-shell", frozenset({10, 2})),
-    (LABEL_QA_DEBUGGER_2, "glass-atrium-qa-debugger", frozenset({9, 4})),
+CONSOLIDATIONS: tuple[tuple[str, str, frozenset[int]], ...] = (
+    (LABEL_A_3, "glass-atrium-agent-a", frozenset({101, 102, 103})),
+    (LABEL_C_3, "glass-atrium-agent-c", frozenset({301, 302, 303})),
+    (LABEL_C_3_REVERSED, "glass-atrium-agent-c", frozenset({301, 302, 303})),
+    (LABEL_B_2_REVERSED, "glass-atrium-agent-b", frozenset({201, 202})),
+    (LABEL_D_2, "glass-atrium-agent-d", frozenset({401, 402})),
 )
 
 # PARKED: an agent whose rows are all parked — the intake predicate
-# (status='identified', intake tiers) drops every dev-nestjs row.
+# (status='identified', intake tiers) drops every agent-c row.
 _IDS = SimpleNamespace(
     STORED=frozenset(r["id"] for r in STORED_ROWS),
-    PARKED=frozenset({8, 3, 6}),
+    PARKED=frozenset({301, 302, 303}),
 )
 PARKED_INTAKE_ROWS: tuple[dict, ...] = tuple(
     r for r in STORED_ROWS if r["id"] not in _IDS.PARKED
@@ -249,34 +249,34 @@ class CoverageResolutionTest(unittest.TestCase):
 
     def test_when_solo_label_then_resolves_exactly_one_stored_row(self):
         covered = dc.find_covered_pattern_rows(
-            LABEL_SOLO_REVIEWER, "glass-atrium-qa-code-reviewer", _index()
+            LABEL_SOLO_E, "glass-atrium-agent-e", _index()
         )
-        self.assertEqual(covered, [351])
+        self.assertEqual(covered, [501])
 
-    def test_when_real_consolidation_labels_then_each_resolves_two_or_more_real_rows(self):
-        for label, agent, expected in REAL_CONSOLIDATIONS:
+    def test_when_consolidation_labels_then_each_resolves_two_or_more_stored_rows(self):
+        for label, agent, expected in CONSOLIDATIONS:
             with self.subTest(agent=agent, label=label[:60]):
                 covered = dc.find_covered_pattern_rows(label, agent, _index())
                 self.assertGreaterEqual(len(covered), 2)
                 self.assertEqual(frozenset(covered), expected)
-                # Every resolved id is a REAL stored row — the silent no-op the
+                # Every resolved id is a stored fixture row — the silent no-op the
                 # retired label-first approach produced is exactly a resolution
                 # to something that is not in the corpus.
                 self.assertTrue(frozenset(covered) <= _IDS.STORED)
 
     def test_when_third_constituent_nests_parentheses_then_resolves_three_rows(self):
         covered = dc.find_covered_pattern_rows(
-            LABEL_REACT_3, "glass-atrium-dev-react", _index()
+            LABEL_A_3, "glass-atrium-agent-a", _index()
         )
-        self.assertEqual(frozenset(covered), frozenset({7, 1, 5}))
+        self.assertEqual(frozenset(covered), frozenset({101, 102, 103}))
 
     def test_when_constituents_reversed_then_order_does_not_matter(self):
         idx = _index()
         forward = dc.find_covered_pattern_rows(
-            LABEL_NESTJS_3, "glass-atrium-dev-nestjs", idx
+            LABEL_C_3, "glass-atrium-agent-c", idx
         )
         reversed_ = dc.find_covered_pattern_rows(
-            LABEL_NESTJS_3_REVERSED, "glass-atrium-dev-nestjs", idx
+            LABEL_C_3_REVERSED, "glass-atrium-agent-c", idx
         )
         self.assertEqual(frozenset(forward), frozenset(reversed_))
 
@@ -284,11 +284,11 @@ class CoverageResolutionTest(unittest.TestCase):
         # 'recurring negative-signal concentration' is the SOFT display remap of
         # the stored FAIL core; the matcher's own canonicalization is relied on
         # rather than duplicated here.
-        self.assertNotIn(_FAIL_CORE, LABEL_QA_DEBUGGER_2)
+        self.assertNotIn(_FAIL_CORE, LABEL_D_2)
         covered = dc.find_covered_pattern_rows(
-            LABEL_QA_DEBUGGER_2, "glass-atrium-qa-debugger", _index()
+            LABEL_D_2, "glass-atrium-agent-d", _index()
         )
-        self.assertIn(4, covered)
+        self.assertIn(402, covered)
 
     def test_when_each_fork_agent_resolves_its_own_row_then_both_forks_discharge(self):
         # PER-AGENT criterion, never cross-fork: each agent's own label was
@@ -297,12 +297,12 @@ class CoverageResolutionTest(unittest.TestCase):
         # cannot serve both agents; the pattern-first direction serves both.
         idx = _index()
         spaced = dc.find_covered_pattern_rows(
-            LABEL_REACT_3, "glass-atrium-dev-react", idx
+            LABEL_A_3, "glass-atrium-agent-a", idx
         )
-        self.assertIn(5, spaced)
+        self.assertIn(103, spaced)
 
-        shell_rows = [r for r in STORED_ROWS if r["agent"] == "glass-atrium-dev-shell"]
-        shell_patterns = [
+        agent_b_rows = [r for r in STORED_ROWS if r["agent"] == "glass-atrium-agent-b"]
+        agent_b_patterns = [
             dc.Pattern(
                 date="2026-07-01",
                 label=r["pattern_signature"].rsplit("|", 1)[0],
@@ -313,32 +313,32 @@ class CoverageResolutionTest(unittest.TestCase):
                 raw_line="",
                 row_id=r["id"],
             )
-            for r in shell_rows
+            for r in agent_b_rows
         ]
-        # The shipped generator, fed dev-shell's own real rows — the mechanism
+        # The shipped generator, fed agent-b's own fixture rows — the mechanism
         # the verification note names, not an invented string.
         bare_label = dc._consolidated_pattern_label(
-            "glass-atrium-dev-shell", shell_patterns
+            "glass-atrium-agent-b", agent_b_patterns
         )
         self.assertIn(_RATE_CORE_BARE, bare_label)
-        bare = dc.find_covered_pattern_rows(bare_label, "glass-atrium-dev-shell", idx)
-        self.assertIn(430, bare)
+        bare = dc.find_covered_pattern_rows(bare_label, "glass-atrium-agent-b", idx)
+        self.assertIn(203, bare)
 
     def test_when_cross_fork_then_containment_stays_false_matcher_not_loosened(self):
         # NOT a coverage criterion — a regression pin that the SHARED matcher was
         # not loosened to bridge the fork. Loosening it would make the
         # reverted-proposal gate, the non-auto-fixable gate, and the reject-streak
         # counter terminalize MORE patterns, silently removing them from intake.
-        self.assertFalse(dc._covers_pattern_label(_RATE_CORE_BARE, LABEL_REACT_3))
+        self.assertFalse(dc._covers_pattern_label(_RATE_CORE_BARE, LABEL_A_3))
         self.assertFalse(
             dc._covers_pattern_label(
                 _RATE_CORE_SPACED,
-                "glass-atrium-dev-shell multi-signal consolidation (%s)" % _RATE_CORE_BARE,
+                "glass-atrium-agent-b multi-signal consolidation (%s)" % _RATE_CORE_BARE,
             )
         )
 
     def test_when_row_outside_agent_cap_and_roster_then_it_still_resolves(self):
-        # bulldog-w2 is not an agents/*.md stem (roster validation drops it) and
+        # agent-f is no agents/*.md stem (roster validation drops it) and
         # sits far below the agent cap. The untruncated read must still carry it,
         # or its frequency keeps growing and it re-fires.
         idx = _index()
@@ -356,11 +356,11 @@ class CoverageResolutionTest(unittest.TestCase):
             for r in STORED_ROWS
         ]
         capped = {a for a, _ in dc._group_patterns_by_agent(patterns, agent_cap=1)}
-        self.assertNotIn("glass-atrium-bulldog-w2", capped)
+        self.assertNotIn("glass-atrium-agent-f", capped)
         covered = dc.find_covered_pattern_rows(
-            _RATE_CORE_SPACED, "glass-atrium-bulldog-w2", idx
+            _RATE_CORE_SPACED, "glass-atrium-agent-f", idx
         )
-        self.assertEqual(covered, [41])
+        self.assertEqual(covered, [601])
 
     def test_when_agent_alias_is_bare_then_prefixed_proposal_still_resolves(self):
         # Accumulated rows carry the bare stem while a proposal carries the
@@ -379,7 +379,7 @@ class CoverageResolutionTest(unittest.TestCase):
 
     def test_when_unrecognized_shape_then_resolves_to_empty_set(self):
         covered = dc.find_covered_pattern_rows(
-            "some future proposal label form v2", "glass-atrium-dev-react", _index()
+            "some future proposal label form v2", "glass-atrium-agent-a", _index()
         )
         self.assertEqual(covered, [])
 
@@ -424,11 +424,11 @@ class DischargeStageTest(unittest.TestCase):
         return report, buf.getvalue()
 
     def test_when_live_then_only_the_linked_row_transitions(self):
-        # LABEL_REACT_3 covers rows 7, 1 and 5; the link names 5 alone, and only 5 moves.
-        report, _ = self._run([(11, 5)])
-        self.assertEqual([row_id for row_id, _ in self.calls], [5])
+        # LABEL_A_3 covers rows 101-103; the link names 103 alone, and only 103 moves.
+        report, _ = self._run([(11, 103)])
+        self.assertEqual([row_id for row_id, _ in self.calls], [103])
         self.assertIn("proposal id=11", self.calls[0][1])
-        self.assertEqual(report.discharged, [5])
+        self.assertEqual(report.discharged, [103])
 
     def test_when_a_proposal_carries_no_link_then_nothing_transitions(self):
         report, err = self._run([(12, None)])
@@ -440,26 +440,26 @@ class DischargeStageTest(unittest.TestCase):
     def test_when_the_linked_row_left_intake_then_nothing_transitions_and_only_terminal_is_quiet(
         self,
     ):
-        # Row 6 is parked, so the intake read drops it; a non-terminal row there is
+        # Row 303 is parked, so the intake read drops it; a non-terminal row there is
         # stranded once the window passes, so only a terminal one may stay quiet.
-        row_6 = next(row for row in STORED_ROWS if row["id"] == 6)
+        parked_row = next(row for row in STORED_ROWS if row["id"] == 303)
         intake_miss_event = (
             dc.DISCHARGE_EVENT_INTAKE_MISS,
             "proposal:13",
-            "glass-atrium-dev-nestjs",
+            "glass-atrium-agent-c",
         )
         for name, coverage_rows, live, warning, events in (
-            ("terminal row", (dict(row_6, status="applied"),), True, "", []),
+            ("terminal row", (dict(parked_row, status="applied"),), True, "", []),
             (
                 "non-terminal row, writing cycle",
-                (row_6,),
+                (parked_row,),
                 True,
                 "discharge-intake-miss",
                 [intake_miss_event],
             ),
             (
                 "non-terminal row, no-write cycle",
-                (row_6,),
+                (parked_row,),
                 False,
                 "discharge-intake-miss",
                 [],
@@ -471,7 +471,7 @@ class DischargeStageTest(unittest.TestCase):
                 _EMITTED.clear()
                 self.coverage_rows = coverage_rows
                 report, err = self._run(
-                    [(13, 6)], live=live, index=_index(PARKED_INTAKE_ROWS)
+                    [(13, 303)], live=live, index=_index(PARKED_INTAKE_ROWS)
                 )
                 warnings = "\n".join(line for line in err.splitlines() if "WARN" in line)
                 self.assertEqual(self.calls, [])
@@ -487,17 +487,17 @@ class DischargeStageTest(unittest.TestCase):
                 )
 
     def test_when_dry_run_then_no_transition_and_the_linked_row_on_the_log_line(self):
-        report, err = self._run([(11, 5), (12, None)], live=False)
+        report, err = self._run([(11, 103), (12, None)], live=False)
         self.assertEqual(self.calls, [])
-        self.assertEqual(report.would_discharge, [5])
+        self.assertEqual(report.would_discharge, [103])
         self.assertEqual(report.discharged, [])
         self.assertIn("dry-run", err)
-        self.assertIn("[5]", err)
+        self.assertIn("[103]", err)
 
     def test_when_a_read_is_unavailable_then_outage_is_distinct_from_an_empty_window(self):
         for name, rows, index in (
             ("applied-proposal read", None, _index()),
-            ("pattern read", [(11, 5)], None),
+            ("pattern read", [(11, 103)], None),
         ):
             with self.subTest(outage=name):
                 self.calls.clear()
@@ -512,17 +512,17 @@ class DischargeStageTest(unittest.TestCase):
         self.assertEqual(empty.would_discharge, [])
 
     def test_when_transition_call_fails_then_it_is_reported_as_failed(self):
-        self.outcomes = {5: dc.DISCHARGE_FAILED}
-        report, err = self._run([(11, 5), (14, 7)])
-        self.assertEqual(report.failed, [5])
-        self.assertEqual(report.discharged, [7])
+        self.outcomes = {103: dc.DISCHARGE_FAILED}
+        report, err = self._run([(11, 103), (14, 101)])
+        self.assertEqual(report.failed, [103])
+        self.assertEqual(report.discharged, [101])
         self.assertIn("discharge transition failed", err)
 
     def test_when_row_turns_terminal_between_read_and_update_then_not_matched_not_failed(self):
         # The SQL terminal guard's race answer — distinct from a row the intake
         # read already dropped, which never reaches the update.
-        self.outcomes = {5: dc.DISCHARGE_NOT_MATCHED}
-        report, _ = self._run([(11, 5)])
+        self.outcomes = {103: dc.DISCHARGE_NOT_MATCHED}
+        report, _ = self._run([(11, 103)])
         self.assertEqual(report.failed, [])
         self.assertEqual(report.discharged, [])
 
@@ -556,7 +556,7 @@ class DischargeCycleWiringTest(unittest.TestCase):
         # boundary, and the transition seam records instead of refusing.
         for name, value in (
             ("get_pattern_rows_by_agent", lambda: index),
-            ("_fetch_applied_for_discharge", lambda: [(11, 5), (12, None)]),
+            ("_fetch_applied_for_discharge", lambda: [(11, 103), (12, None)]),
             ("_pg_discharge_learning_pattern", self._record_discharge),
         ):
             patcher = mock.patch.object(dc, name, value)
@@ -586,7 +586,7 @@ class DischargeCycleWiringTest(unittest.TestCase):
                 skip_pre_verify=True,
                 skip_loop_emit=False,
             )
-        self.assertEqual(self.discharged, [5])
+        self.assertEqual(self.discharged, [103])
         self.assertEqual(self.pg_reach, [])
 
     def test_when_a_dry_run_cycle_runs_then_nothing_discharges(self):
@@ -599,7 +599,7 @@ class DischargeCycleWiringTest(unittest.TestCase):
             rc = dc._main(argv)
         self.assertEqual(rc, 0, err.getvalue())
         self.assertEqual(self.discharged, [])
-        self.assertIn("would-discharge 1 row(s) [5]", err.getvalue())
+        self.assertIn("would-discharge 1 row(s) [103]", err.getvalue())
         self.assertEqual(self.pg_reach, [])
 
 
@@ -648,13 +648,13 @@ class RegressionGateInvarianceTest(unittest.TestCase):
     those rows BLOCK proposal rows, so its key and its join stay where they were.
     """
 
-    _AGENT = "glass-atrium-dev-react"
+    _AGENT = "glass-atrium-agent-a"
     _APPLIED_TS = datetime(2026, 9, 20, 3, 0, tzinfo=timezone.utc)
 
     def _blocked(self, warned_at: datetime) -> frozenset:
         report = dc.find_regression_blocked_rows(
             [(warned_at, self._AGENT)],
-            [(11, self._AGENT, self._APPLIED_TS, LABEL_REACT_3, "applied")],
+            [(11, self._AGENT, self._APPLIED_TS, LABEL_A_3, "applied")],
             _index(),
             now=self._APPLIED_TS + timedelta(days=1),
         )
@@ -662,7 +662,7 @@ class RegressionGateInvarianceTest(unittest.TestCase):
         return report.blocked_rows
 
     def test_when_the_warning_shares_the_apply_instant_then_its_rows_stay_blocked(self):
-        self.assertEqual(self._blocked(self._APPLIED_TS), frozenset({7, 1, 5}))
+        self.assertEqual(self._blocked(self._APPLIED_TS), frozenset({101, 102, 103}))
 
     def test_when_the_warning_instant_differs_then_the_join_matches_nothing(self):
         self.assertEqual(

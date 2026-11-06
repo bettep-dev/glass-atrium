@@ -14,6 +14,8 @@
 #   (C) launchd-bootout-unchanged (AC-S2.5a) — a launchd-owned LISTENER yields NOTHING from
 #       the orphan detector (the kill path never fires on it), while stop_launchd bootouts +
 #       settles + proceeds (rc 0).
+#   (C2) the ownership check still holds when the launchd pid heads a listener list past one
+#       pipe buffer under pipefail.
 #   (D) never-frees SIGKILL escalation (AC-S2.5d) — an our-stray whose port never frees
 #       escalates SIGTERM->SIGKILL and then loud-fails bounded (rc != 0).
 #
@@ -262,6 +264,20 @@ if grep -Fq "bootout gui/${UID}/com.glass-atrium.monitor" "${KILLLOG}"; then
   pass "launchd: bootout issued for com.glass-atrium.monitor"
 else
   fail "launchd: expected a bootout (killlog: $(tr '\n' '|' <"${KILLLOG}"))"
+fi
+
+echo ""
+echo "============================================================================"
+echo "(C2) launchd-owned — its pid heads a listener list past one pipe buffer => still owned"
+echo "============================================================================"
+reset_stubs
+STUB_LAUNCHD_PID="5555"
+# the match first, then ~1.4 MB of other pids: an early-exit reader under pipefail leaves its writer mid-write
+STUB_LISTENER_PID="5555"$'\n'"$(awk 'BEGIN { for (i = 600000; i < 800000; i++) print i }')"
+if monitor_is_launchd_owned; then
+  pass "launchd(long list): monitor_is_launchd_owned TRUE when its pid heads a listener list past one pipe buffer"
+else
+  fail "launchd(long list): monitor_is_launchd_owned should be TRUE"
 fi
 
 echo ""

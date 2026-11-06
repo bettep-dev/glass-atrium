@@ -3,13 +3,12 @@
 ``daemon_cycle._build_pre_verify_prompt`` hands the compliance verifier a bounded
 excerpt of the proposed diff. A fixed character slice cuts mid-word inside a long
 ``+``/``-`` line and reaches the verifier as a mangled fragment with nothing
-saying so: in the measured incident (live updater run, EDITABLE-merge path on
-agents/glass-atrium-intel-planner.md — a 5331-char single-file diff carrying one
-1761-char removed line and one 2034-char added line) the cut landed mid-word and
-the verifier rejected the patch on axis C3 as "truncated mid-sentence ...
-incomplete and unreadable" — a verdict on the excerpt, not on the patch. Covered
-here:
-  (a) a diff sized from that incident reaches the prompt BYTE-IDENTICAL;
+saying so: in the incident shape (an EDITABLE-merge single-file diff under the
+excerpt bound, carrying one removed line and one added line each longer than
+about 1.5k chars) the cut landed mid-word and the verifier rejected the patch on
+axis C3 as "truncated mid-sentence ... incomplete and unreadable" — a verdict on
+the excerpt, not on the patch. Covered here:
+  (a) a diff of the incident shape reaches the prompt BYTE-IDENTICAL;
   (b) past the bound the excerpt is cut at a LINE boundary, never mid-line;
   (c) past the bound an explicit marker rides in the excerpt AND on stderr, so
       the cut is never silent (Precondition Loud-Fail);
@@ -18,8 +17,8 @@ here:
   (e) the prompt teaches the verifier the marker prefix the excerpt emits, so the
       instruction and the emitted signals cannot drift apart.
 
-The incident sizes are fixed historical measurements, never read from the
-implementation's current bound — a fixture sized from the bound under test can
+The incident sizes are fixed synthetic constants of that shape, never read from
+the implementation's current bound — a fixture sized from the bound under test can
 only measure that bound against itself. (b)-(d) are bound-RELATIVE properties, so
 they legitimately read ``DIFF_EXCERPT_CHAR_CAP``: what is under test there is the
 SHAPE of the cut, not the magnitude of the bound.
@@ -60,11 +59,11 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
 _AGENT = "glass-atrium-dev-python"
 _RELATIVE_TARGET = f"agents/{_AGENT}.md"
 
-# Fixed measurements from the incident — historical constants, never derived from
-# the implementation's current bound.
-_INCIDENT_DIFF_CHARS = 5331
-_INCIDENT_REMOVED_LINE_CHARS = 1761
-_INCIDENT_ADDED_LINE_CHARS = 2034
+# Synthetic incident shape — whole diff under the bound, both long lines past ~1.5k
+# chars; fixed constants, never derived from the implementation's current bound.
+_INCIDENT_DIFF_CHARS = 4800
+_INCIDENT_REMOVED_LINE_CHARS = 1620
+_INCIDENT_ADDED_LINE_CHARS = 1890
 
 _REMOVED_TOKEN = "REMOVED-SENTINEL-9c4a"
 _ADDED_TOKEN = "ADDED-SENTINEL-9c4a"
@@ -140,8 +139,8 @@ def _long_line(prefix: str, size: int, token: str) -> str:
 def _incident_diff() -> str:
     """A unified diff of exactly the incident's size, carrying its two long lines."""
     head = (
-        "--- a/agents/glass-atrium-intel-planner.md\n"
-        "+++ b/agents/glass-atrium-intel-planner.md\n"
+        f"--- a/{_RELATIVE_TARGET}\n"
+        f"+++ b/{_RELATIVE_TARGET}\n"
         "@@ -1,4 +1,4 @@\n"
         " context line\n"
     )
@@ -168,7 +167,7 @@ def _oversized_diff(cap: int) -> str:
 
 @unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
 class IncidentDiffTest(unittest.TestCase):
-    """(a) the measured incident diff reaches the verifier byte-identical."""
+    """(a) the incident-shaped diff reaches the verifier byte-identical."""
 
     def test_when_diff_sized_from_the_incident_then_it_reaches_the_prompt_whole(self):
         diff = _incident_diff()

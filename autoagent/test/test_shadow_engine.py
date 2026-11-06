@@ -64,6 +64,7 @@ _BUDGET_KEY = "budget_overage"
 # the pattern key's A/A arm-difference design effect, as its ledger row stores it
 _DESIGN_EFFECT = trial_design.ArmDesignEffect(1.5, 20, 200, 1.3, 1.8, 2000)
 _DESIGN_EFFECT_PAYLOAD = {"metric_key": _BUDGET_KEY, **_DESIGN_EFFECT._asdict()}
+_AA_START_ID = 4
 # floor-half baseline 20 events / 200 spawns → rate 0.1; the bound read from the reference module
 _BASELINE = SimpleNamespace(EVENTS=20, SPAWNS=200)
 _MAXIMUM = trial_design.get_trial_sample_size(_BASELINE.EVENTS / _BASELINE.SPAWNS)
@@ -79,6 +80,8 @@ _KEYS = SimpleNamespace(
         "baseline",
         "maximum_per_arm",
         "design_effect",
+        # the A/A start design_effect came from, so an invalidation of that start can be traced
+        "aa_start_id",
         "required_units",
         "boundaries",
         "looks",
@@ -400,7 +403,8 @@ def _get_split_spawns(
         if taken[arm] < units[arm]:
             is_flipped = taken[arm] < flipped[arm]
             taken[arm] += 1
-            spawns.append(spawn._replace(is_delivered=(arm == 1) != is_flipped))
+            is_delivered = (arm == 1) != is_flipped  # one activation: every one = any one
+            spawns.append(spawn._replace(is_delivered=is_delivered, is_any_delivered=is_delivered))
     return spawns
 
 
@@ -541,10 +545,10 @@ class _LedgerCursor:
         elif statement == dc.POWER.DESIGN_EFFECT_SQL:
             agents = params[-1]
             self.result = [
-                (agent, self.ledger.design_effects[agent])
+                (agent, self.ledger.design_effects[agent], _AA_START_ID)
                 for agent in agents
                 if agent in self.ledger.design_effects
-            ] + [row for row in self.ledger.guardrail_rows if row[0] in agents]
+            ] + [(*row, _AA_START_ID) for row in self.ledger.guardrail_rows if row[0] in agents]
         elif statement == dc.LIVE_TRIAL.CANARY_SQL:
             self.result = [
                 (
@@ -919,6 +923,7 @@ class BoundPayloadTest(_ShadowFixture):
         self.assertEqual(payload["boundaries"], list(trial_design.get_boundaries()))
         self.assertEqual(payload["maximum_per_arm"], _MAXIMUM)
         self.assertEqual(payload["design_effect"], _DESIGN_EFFECT.value)
+        self.assertEqual(payload["aa_start_id"], _AA_START_ID)
         self.assertEqual([look["milestone"] for look in payload["looks"]], _MILESTONES)
         self.assertEqual((result.approval_tier, result.status), ("auto", "pending"))
 

@@ -327,12 +327,12 @@ test("the harness and fleet tiles fill the line under their count with a seconda
     dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }), "harness");
   assert.equal(harness.trend, "All 5 parts polled on every harness read", "a fully polled harness says its coverage");
   const agentsState = ready({
-    agents: [{ agent_id: "glass-atrium-dev-react", agent_name: "glass-atrium-dev-react", runs: 1458 }],
+    agents: [{ agent_id: "glass-atrium-agent-a", agent_name: "glass-atrium-agent-a", runs: 2731 }],
     meta: { total_agents: 12, circuit_breaker: { source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0, alarms: [] } },
   });
   const fleet = tileOf(dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }), "fleet");
   assert.equal(fleet.trend, "12 of 20 registered agents had a run in the last 7 days");
-  assert.equal(fleet.hint, "Most runs: glass-atrium-dev-react, 1,458", "the busiest agent is the region's one ordered row");
+  assert.equal(fleet.hint, "Most runs: glass-atrium-agent-a, 2,731", "the busiest agent is the region's one ordered row");
   const noRows = fleetTile({ source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0, alarms: [] });
   assert.equal(noRows.hint, null, "no row → no busiest agent, never a made-up one");
 });

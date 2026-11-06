@@ -7,9 +7,9 @@
 #   * it voided the gate's own contract ("never store a diff that fails git apply
 #     --check") one statement after the gate enforced it;
 #   * it reproduced the measured excerpt incident one layer down. That incident:
-#     a 5331-char EDITABLE-merge diff was cut mid-word for the pre-verify prompt
-#     and the verifier FAILed axis C3 on "truncated mid-sentence" — a verdict on
-#     the fragment, not on the patch. The lesson is not "the diff is big", it is
+#     an EDITABLE-merge diff a little past the 4000-char cut was cut mid-word for
+#     the pre-verify prompt and the verifier FAILed axis C3 on "truncated
+#     mid-sentence" — a verdict on the fragment, not on the patch. The lesson is not "the diff is big", it is
 #     "a partial diff is indistinguishable from a real one". A truncating storage
 #     bound reproduces exactly that, so the disposition past the bound is refusal.
 #
@@ -188,13 +188,14 @@ class TestUnderBoundStoredIntact(_WorkTreeCase):
         )
 
     def test_when_diff_at_incident_size_then_stored_intact(self) -> None:
-        # 5331 chars — the historical EDITABLE-merge diff that overran the FORMER
-        # 4000 bound. A fixed measurement, never read from the bound under test: a
-        # fixture sized from that bound could only measure it against itself. It
+        # A synthetic size of the incident shape — an EDITABLE-merge diff a little
+        # past the FORMER 4000 bound. A fixed constant, never read from the bound
+        # under test: a fixture sized from that bound could only measure it
+        # against itself. It
         # must survive, or the refusal would reject exactly the legitimate release
         # content the excerpt incident was about.
-        stored = self.parse(self.diff_of_stored_size(5331))[0].proposed_diff
-        self.assertEqual(len(stored), 5331)
+        stored = self.parse(self.diff_of_stored_size(4800))[0].proposed_diff
+        self.assertEqual(len(stored), 4800)
 
 
 class TestPastBoundRefused(_WorkTreeCase):

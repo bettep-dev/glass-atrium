@@ -25,13 +25,14 @@
 #
 # Named exit codes: 2=usage · 3=git absent/not a work tree · 4=jq absent ·
 # 5=shallow clone (no history to walk) · 6=no manifest.json in history ·
-# 7=apply-spine.sh missing or failed to load.
+# 7=apply-spine.sh or tracked-paths.sh missing or failed to load.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
 GA_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd -P)"
 readonly GA_ROOT
 readonly SPINE_LIB="${GA_ROOT}/scripts/lib/apply-spine.sh"
+readonly TRACKED_LIB="${GA_ROOT}/scripts/lib/tracked-paths.sh"
 
 [[ $# -eq 0 ]] || {
   echo "usage: ${0##*/}" >&2
@@ -55,6 +56,16 @@ git -C "${GA_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
 # shellcheck source=/dev/null
 source "${SPINE_LIB}" || {
   echo "derive-retired-seed: ${SPINE_LIB} failed to load (retired-map family predicate)" >&2
+  exit 7
+}
+
+[[ -f "${TRACKED_LIB}" ]] || {
+  echo "derive-retired-seed: ${TRACKED_LIB} required (tracked-path oracle)" >&2
+  exit 7
+}
+# shellcheck source=/dev/null
+source "${TRACKED_LIB}" || {
+  echo "derive-retired-seed: ${TRACKED_LIB} failed to load (tracked-path oracle)" >&2
   exit 7
 }
 
@@ -88,17 +99,6 @@ history_hash_lines() {
     | jq -r '(.hashes // {}) | to_entries[] | "\(.key)\t\(.value)"'
 }
 
-# Every path git tracks anywhere in the repo, sorted — the same oracle as the
-# generator's raw_tracked_paths. -z because default ls-files C-quotes a path with a
-# byte >= 0x80, `"`, `\` or a control byte, naming no history key; a newline path is
-# skipped — never a manifest key, and split it could fake a match.
-raw_tracked_paths() {
-  local path
-  git -C "${GA_ROOT}" ls-files -z | while IFS= read -r -d '' path; do
-    if [[ "${path}" != *$'\n'* ]]; then printf '%s\n' "${path}"; fi
-  done | LC_ALL=C sort -u
-}
-
 # Emit the surviving `<path>\t<sha256>` lines — the pairs whose path the vendor no
 # longer ships and no barred family claims.
 #
@@ -118,7 +118,7 @@ seed_lines() {
     kept+="${path}"$'\n'
   done < <(LC_ALL=C comm -23 \
     <(printf '%s\n' "${pairs}" | cut -f1 | LC_ALL=C sort -u) \
-    <(raw_tracked_paths))
+    <(ga_get_tracked_paths "${GA_ROOT}"))
   [[ -n "${kept}" ]] || return 0
   LC_ALL=C join -t "$(printf '\t')" \
     <(printf '%s' "${kept}" | LC_ALL=C sort) \

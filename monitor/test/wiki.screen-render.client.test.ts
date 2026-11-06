@@ -57,24 +57,22 @@ function classOf(node: RenderedNode): string {
   return String(node.props.className ?? "");
 }
 
-test("every disclosure leads its summary with a chevron the screen's own style turns on open", async () => {
+test("every disclosure leads its summary with the shared chevron the disclosure atom turns on open", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
 
   const disclosures = findNodes(tree, (n) => n.type === "details");
   assert.ok(disclosures.length > 0, "the loading screen still renders its run-history disclosure");
   for (const details of disclosures) {
-    assert.ok(classOf(details).includes("w-disclosure"), "the details carries the class the screen style targets");
     const summary = details.children[0] as RenderedNode;
     assert.equal(summary.type, "summary");
+    assert.ok(classOf(summary).split(/\s+/).includes("disclosure"), "the summary sits on the shared disclosure atom");
     const chevron = summary.children[0] as RenderedNode;
-    assert.ok(classOf(chevron).includes("w-chevron"), "the chevron is the summary's first child");
-    assert.equal(chevron.props["aria-hidden"], "true", "the chevron is decoration — the details reports its own state");
+    assert.equal(chevron.type, "DisclosureChevron", "the shared decorative chevron is the summary's first child");
   }
 
   const style = collectText(findNodes(tree, (n) => n.type === "style")[0]);
-  assert.match(style, /\.w-disclosure > summary::-webkit-details-marker\s*\{\s*display:\s*none/);
-  assert.match(style, /\.w-disclosure\[open\] > summary \.w-chevron\s*\{\s*transform:\s*rotate\(90deg\)/);
+  assert.doesNotMatch(style, /details-marker|rotate\(/, "the marker and the open turn come from the atom, not the screen");
 });
 
 test("the notes-per-day chart fills its panel with one dated bar per day and keeps the peak caption", async () => {
@@ -126,7 +124,7 @@ test("the run-history chart title states the number of days its bars show", asyn
     const chart = findNodes(tree, (n) => n.props.atom === "TrendChart")[0];
     const shown = (chart.props.points as unknown[]).length;
     assert.match(String(chart.props.label), new RegExp(`\\b${shown} days\\b`), "the title's day count is the bar count");
-    assert.ok(collectText(tree).includes(`in ${shown} d`), "the headline total covers the same days");
+    assert.ok(collectText(tree).includes(`in ${shown}d`), "the headline total covers the same days");
   }
 });
 
@@ -167,7 +165,7 @@ test("detail sections fold behind an h2 in their summary; status sections render
     assert.ok(heading, `${row.name} names itself with an h2`);
     const summary = findNodes(tree, (n) => n.type === "summary").find((s) => findNodes(s, (n) => n === heading).length > 0);
     assert.ok(summary, `${row.name} keeps its h2 inside the toggling summary`);
-    assert.equal((summary?.children[0] as RenderedNode).props["aria-hidden"], "true", `${row.name} keeps the chevron first`);
+    assert.equal((summary?.children[0] as RenderedNode).type, "DisclosureChevron", `${row.name} keeps the chevron first`);
   }
 });
 
@@ -190,6 +188,15 @@ test("the Per-run fold's body prose fits the 90-char footnote cap, a longer qual
   assert.ok(lines.length > 0, "the fold body carries a note");
   for (const line of lines) assert.ok(line.length <= FOOTNOTE_CAP, `"${line.slice(0, 40)}…" is ${line.length} chars`);
   assert.equal(findNodes(fold, (n) => n.props.atom === "CardInfo").length, 1, "the change definition opens from one ⓘ");
+});
+
+// R-c: the trend note hands its sentence to the shared DayTokens atom, so "30-day" never breaks at its hyphen
+test("the Per-run fold's trend note rides DayTokens, so its N-day window stays whole", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
+  const notes = findNodes(tree, (n) => n.props.atom === "DayTokens").map((n) => String(n.props.children));
+  assert.equal(notes.length, 1, "one note rides DayTokens");
+  assert.match(notes[0], /^The window drives the table only — the trend keeps a fixed \d+-day window\.$/);
 });
 
 test("the Per-run fold's ⓘ is described by the fold's own heading", async () => {
@@ -252,15 +259,14 @@ test("the page header carries the shared Refresh control, busy on the mount wave
   const mod = await loadWikiScreen();
   const screen = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
   const header = findNodes(screen, (n) => n.props.atom === "PageHeader")[0];
-  const headerRight = renderScreen(header.props.right);
-
-  const refresh = findNodes(headerRight, (n) => n.props.atom === "RefreshButton");
+  // each control rides its own named slot
+  const refresh = findNodes(renderScreen(header.props.refresh), (n) => n.props.atom === "RefreshButton");
   assert.equal(refresh.length, 1, "the header carries one Refresh control");
   assert.equal(refresh[0].props.label, "Refresh wiki", "the accessible name stays stable");
   assert.equal(refresh[0].props.isBusy, true, "the mount wave is in flight");
   assert.equal(refresh[0].props.hasRead, false, "nothing has been read yet, so the first wave reads as loading");
 
-  const stamp = findNodes(headerRight, (n) => n.props.atom === "FreshnessStamp")[0];
+  const stamp = findNodes(renderScreen(header.props.freshness), (n) => n.props.atom === "FreshnessStamp")[0];
   assert.equal((stamp.props.regions as unknown[]).length, 5, "every fetched region feeds the stamp");
 });
 
@@ -605,7 +611,7 @@ test("the last-run age reads as words, so its space never widens into a mono gap
   assert.doesNotMatch(classOf(age[0]), /\bfont-mono\b/);
 });
 
-test("tile labels and captions wrap instead of cutting the figure's words", async () => {
+test("tile captions wrap instead of cutting the figure's words, and a one-line label keeps its full text in its title", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const band = renderScreen(
@@ -616,8 +622,12 @@ test("tile labels and captions wrap instead of cutting the figure's words", asyn
       onRetry: () => {},
     }),
   );
-  assert.ok(collectText(band).includes("22 in 29 d"), "the window total is on the page");
+  assert.ok(collectText(band).includes("22 in 29d"), "the window total is on the page");
   for (const node of findNodes(band, () => true)) assert.doesNotMatch(classOf(node), /\btruncate\b/);
+  // the KPI label row is one line (amendment (c)) → its ellipsis fallback is the full label in the title
+  const labels = findNodes(band, (n) => /\bkpi-label-text\b/.test(classOf(n)));
+  assert.equal(labels.length, 4);
+  for (const label of labels) assert.equal(label.props.title, collectText(label));
 });
 
 test("a tile whose detail moved off its caption opens it from an info trigger described by the tile label", async () => {
@@ -659,10 +669,20 @@ test("a loading open card or tile states loading once, through its placeholder, 
     renderScreen(mod.React.createElement(mod.WikiNotesByTypeSection as Component, { state: LOADING, onRetry: () => {} })),
     renderScreen(mod.React.createElement(mod.WikiTileBand as Component, { summaryState: LOADING, indexState: LOADING, backlogState: LOADING, cyclesState: LOADING, onRetry: () => {} })),
   ];
-  for (const tree of trees) assert.doesNotMatch(collectText(tree), /loading/i);
+  for (const tree of trees.slice(0, 2)) assert.doesNotMatch(collectText(tree), /loading/i);
   assert.equal(findNodes(trees[0], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
   assert.equal(findNodes(trees[1], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
-  assert.equal(findNodes(trees[2], (n) => n.props["aria-busy"] === "true").length, 4, "each tile still reports busy");
+  // a tile renders the shared KPI anatomy (real here) → its loading state is the KPI's own placeholder in the value row
+  const tiles = findNodes(trees[2], (n) => n.props.role === "group");
+  assert.equal(tiles.length, 4, "four tiles");
+  for (const tile of tiles) {
+    const placeholders = findNodes(tile, (n) => n.type === "LoadingPlaceholder");
+    assert.equal(placeholders.length, 1, "each tile states loading once, through its placeholder");
+    const outside = (n: RenderedNode | string): string =>
+      typeof n === "string" ? n : n.type === "LoadingPlaceholder" ? "" : n.children.map(outside).join(" ");
+    assert.doesNotMatch(outside(tile), /loading|…/i, "not through its count or caption");
+    assert.equal(tile.props["aria-busy"], "true", "each tile still reports busy");
+  }
 });
 
 test("the two status cards share the S slot inside their region hosts, the coverage line pinned to the foot", async () => {

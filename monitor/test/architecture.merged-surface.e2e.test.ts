@@ -176,18 +176,22 @@ interface HealthFixture {
 	failedStores: HealthStore[];
 }
 
-// HEALTH_CARD_DEFS 의 daemon 카드 이름 — 명부의 데몬 둘 전원.
-const HEALTH_OK_DAEMONS = ["autoagent", "wiki"];
+const HEALTH = {
+	// HEALTH_CARD_DEFS 의 daemon 카드 이름 — 명부의 데몬 둘 전원.
+	OK_DAEMONS: ["autoagent", "wiki"],
+	// 부품 명부의 크기 — HEALTH_CARD_DEFS 5종(PG · Chromium · daemon×2 · hook chain).
+	// 표의 행 수가 이 명부를 따르는지 재는 자리라 화면이 아니라 명부의 사실임.
+	EXPECTED_TOTAL: 5,
+	// 페이로드 항목 수 — 맵은 도착 건수만 한 줄로 냄(날짜·사유 펼침은 드릴다운 몫).
+	PAYLOAD_ENTRIES: 3,
+	// 화면의 HEALTH_POLL_MS(60s) 한 틱 + 왕복 여유. 상수를 내보내지 않으므로 하네스가 상한만 가짐.
+	POLL_WAIT_MS: 100_000,
+	// part whose verdict rides the same health response as DAEMON_PART_ID, with no live daemon bound to it
+	WITNESS_PART_ID: "glass-atrium-wiki-curator",
+} as const;
 
 // 응답이 내는 마지막 실행 시각 — 명부에 있는 데몬만 이 값을 받고, 나머지 부품은 낼 실행이 없음.
 const DAEMON_RUN_TS = "2026-08-20T09:10:11.000Z";
-
-// 부품 명부의 크기 — HEALTH_CARD_DEFS 5종(PG · Chromium · daemon×2 · hook chain).
-// 표의 행 수가 이 명부를 따르는지 재는 자리라 화면이 아니라 명부의 사실임.
-const HEALTH_EXPECTED_TOTAL = 5;
-
-// 페이로드 항목 수 — 맵은 도착 건수만 한 줄로 냄(날짜·사유 펼침은 T9c 몫).
-const HEALTH_PAYLOAD_ENTRIES = 3;
 
 // 실패가 하나도 없는 hook-failures 응답 — 기본 픽스처와 T12c 의 창 픽스처가 같은 바닥에서 출발함.
 // 함수인 이유: 배열 두 개를 케이스마다 새로 냄(공유 참조면 한 케이스의 변형이 다음 케이스로 샘).
@@ -203,7 +207,7 @@ function getEmptyHookFailures(): HealthFixture["hookFailures"] {
 
 function getHealthFixture(overrides: Partial<HealthFixture> = {}): HealthFixture {
 	return {
-		daemons: HEALTH_OK_DAEMONS.map((daemon_name) => ({
+		daemons: HEALTH.OK_DAEMONS.map((daemon_name) => ({
 			daemon_name,
 			effective_status: "ok",
 			last_run_at: DAEMON_RUN_TS,
@@ -215,7 +219,7 @@ function getHealthFixture(overrides: Partial<HealthFixture> = {}): HealthFixture
 			source_mtime: "2026-08-20T04:05:06.000Z",
 		},
 		payload: {
-			entries: Array.from({ length: HEALTH_PAYLOAD_ENTRIES }, (_v, i) => ({
+			entries: Array.from({ length: HEALTH.PAYLOAD_ENTRIES }, (_v, i) => ({
 				run_date: `2026-08-${String(20 + i).padStart(2, "0")}`,
 				daemon_name: "autoagent",
 				payload: {},
@@ -325,7 +329,10 @@ async function openMap(
 		"screen must expose window.ARCH_SELECTORS (canvas + tabControl + desc SoT)",
 	);
 
-	await page.waitForSelector(`${selectors.canvas} svg`, { timeout: 30_000 });
+	// svg insertion and node-id stamping are separate commits — a starved CPU lets a probe land between them
+	await page.waitForSelector(`${selectors.canvas} svg g.node[data-arch-node-id]`, {
+		timeout: 30_000,
+	});
 }
 
 // health 픽스처만 갈아끼우는 케이스용 — 큐를 기본값으로 다시 적는 자리 인자를 지움.
@@ -725,9 +732,6 @@ const ZONE_RING_CRIT_CLASS = "arch-zone-live-crit";
 // 폴링 재도착을 재는 경로 — PG·Chromium 판정이 같은 응답에서 옴.
 const PG_HEALTH_PATH = "/api/health";
 
-// 화면의 HEALTH_POLL_MS(60s) 한 틱 + 왕복 여유. 상수를 내보내지 않으므로 하네스가 상한만 가짐.
-const HEALTH_POLL_WAIT_MS = 100_000;
-
 // 캔버스 SVG 의 element id — mermaid 가 렌더마다 새로 짓는 값이라 재렌더 여부의 지표가 됨.
 async function getCanvasSvgId(): Promise<string> {
 	return await page.evaluate((canvas) => {
@@ -738,7 +742,7 @@ async function getCanvasSvgId(): Promise<string> {
 
 // 해당 경로의 누적 요청 수가 목표에 닿을 때까지 대기 — 폴링 한 틱이 실제로 나갔는지의 근거.
 async function waitForHealthPoll(path: string, target: number): Promise<boolean> {
-	const deadline = Date.now() + HEALTH_POLL_WAIT_MS;
+	const deadline = Date.now() + HEALTH.POLL_WAIT_MS;
 	while (Date.now() < deadline) {
 		if ((getHealthCounts()[path] || 0) >= target) return true;
 		await new Promise((resolve) => setTimeout(resolve, 250));
@@ -776,10 +780,12 @@ interface RingProbe {
 	// 노드 하나가 실제로 든 링 클래스 목록 — 총계만으로는 어느 노드가 어느 tone 인지 못 가름.
 	// 두 원천이 같은 노드를 짚는 자리(autoagent_d)의 최악-우선 결과를 재는 유일한 다리임.
 	classByNode: Record<string, string[]>;
+	hasCanvas: boolean;
 }
 
 async function getRingProbe(): Promise<RingProbe> {
 	return await page.evaluate((canvas) => {
+		const hasCanvas = Boolean(document.querySelector(`${canvas} svg`));
 		const rendered: string[] = [];
 		const ringed: string[] = [];
 		const ringClasses: string[] = [];
@@ -799,8 +805,13 @@ async function getRingProbe(): Promise<RingProbe> {
 			ringed.push(nodeId || "(unmatched node)");
 			ringClasses.push(...hits);
 		}
-		return { rendered, ringed, ringClasses, classByNode };
+		return { rendered, ringed, ringClasses, classByNode, hasCanvas };
 	}, selectors.canvas);
+}
+
+// precondition-message tail — tells a missing canvas apart from a probe taken before stamping
+function getProbeState(probe: RingProbe): string {
+	return `canvas svg ${probe.hasCanvas ? "present" : "absent"}, ${probe.rendered.length} stamped node(s)`;
 }
 
 // 부품 바인딩 중 이 캔버스가 실제로 그린 것들 — 데몬 쪽 getRenderedBound 의 부품 판임.
@@ -909,7 +920,7 @@ function assertNodeUnringed(probe: RingProbe, partId: string, zoneId: string): v
 	const nodes = getRenderedPart(probe.rendered, partId);
 	assert.ok(
 		nodes.length > 0,
-		`fixture precondition: none of part '${partId}' bound ids is drawn — the assertion below would be vacuous`,
+		`fixture precondition: none of part '${partId}' bound ids is drawn (${getProbeState(probe)}) — the assertion below would be vacuous`,
 	);
 	for (const nodeId of nodes) {
 		assert.deepEqual(
@@ -938,7 +949,7 @@ function assertPartRing(probe: RingProbe, partId: string, expected: string): voi
 	const nodes = getRenderedPart(probe.rendered, partId);
 	assert.ok(
 		nodes.length > 0,
-		`fixture precondition: none of part '${partId}' bound ids (${(PART_NODE_BINDINGS[partId] ?? []).join(", ")}) is drawn — the ring assertion below would be vacuous`,
+		`fixture precondition: none of part '${partId}' bound ids (${(PART_NODE_BINDINGS[partId] ?? []).join(", ")}) is drawn (${getProbeState(probe)}) — the ring assertion below would be vacuous`,
 	);
 	for (const nodeId of nodes) {
 		assert.deepEqual(
@@ -949,13 +960,27 @@ function assertPartRing(probe: RingProbe, partId: string, expected: string): voi
 	}
 }
 
+// part counterpart of waitForZoneRing — on timeout returns the last probe and leaves the verdict to the caller
+async function waitForPartRing(partId: string, expected: string): Promise<RingProbe> {
+	const deadline = Date.now() + 10_000;
+	let probe = await getRingProbe();
+	while (Date.now() < deadline) {
+		const nodes = getRenderedPart(probe.rendered, partId);
+		if (nodes.length > 0 && nodes.every((id) => (probe.classByNode[id] || []).includes(expected)))
+			return probe;
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		probe = await getRingProbe();
+	}
+	return probe;
+}
+
 test("AC-T5 a fault verdict lights that daemon's bound nodes and no others", async () => {
 	await openMap(
 		getLiveFixture({
 			daemons: [getDaemon(BOUND_DAEMON, "stale"), getDaemon(OK_DAEMON, "ok")],
 		}),
 	);
-	const probe = await getRingProbe();
+	const probe = await waitForPartRing(DAEMON_PART_ID, RING_CRIT_CLASS);
 	const faultNodes = getRenderedBound(probe.rendered, BOUND_DAEMON);
 
 	assert.ok(
@@ -994,14 +1019,20 @@ test("AC-B2-3b a fault daemon verdict outranks the healthy part verdict on the s
 	// 겹침 노드가 여기서 ok 로 켜져야 아래 crit 이 '경쟁에서 이겼다' 가 됨.
 	// 부품 판정이 아예 없으면 단언이 공허해짐.
 	await openMap(getLiveFixture({ daemons: [] }), getQueueFixture(), health);
-	assertPartRing(await getRingProbe(), DAEMON_PART_ID, RING_OK_CLASS);
+	assertPartRing(await waitForPartRing(DAEMON_PART_ID, RING_OK_CLASS), DAEMON_PART_ID, RING_OK_CLASS);
 
 	await openMap(
 		getLiveFixture({ daemons: [getDaemon(BOUND_DAEMON, "stale")] }),
 		getQueueFixture(),
 		health,
 	);
-	const probe = await getRingProbe();
+	// guard: crit and ok land in one render only while buildRingToneByNodeId gates daemon tones on daemonState
+	assertPartRing(
+		await waitForPartRing(HEALTH.WITNESS_PART_ID, RING_OK_CLASS),
+		HEALTH.WITNESS_PART_ID,
+		RING_OK_CLASS,
+	);
+	const probe = await waitForPartRing(DAEMON_PART_ID, RING_CRIT_CLASS);
 
 	const daemonNodes = new Set(getRenderedBound(probe.rendered, BOUND_DAEMON));
 	const contested = getRenderedPart(probe.rendered, DAEMON_PART_ID).filter((id) =>
@@ -1029,6 +1060,8 @@ test("AC-B2-3b a fault daemon verdict outranks the healthy part verdict on the s
  */
 test("AC-B2-3d healthy part verdicts light the zone that represents them", async () => {
 	await openMapWithHealth(getHealthFixture());
+	for (const zoneId of Object.values(ZONE_REPRESENTED_PART_ZONE))
+		await waitForZoneRing(zoneId, ZONE_RING_OK_CLASS);
 	const nodeProbe = await getRingProbe();
 	const zoneProbe = await getZoneRingProbe();
 
@@ -1042,7 +1075,8 @@ test("AC-B2-3d an unreachable PG and a failed export probe light their zones cri
 	await openMapWithHealth(
 		getHealthFixture({ pg: { status: "degraded", db: "closed", browser: "failed" } }),
 	);
-	const zoneProbe = await getZoneRingProbe();
+	await waitForZoneRing(ZONE_REPRESENTED_PART_ZONE.pg, ZONE_RING_CRIT_CLASS);
+	const zoneProbe = await waitForZoneRing(ZONE_REPRESENTED_PART_ZONE.browser, ZONE_RING_CRIT_CLASS);
 
 	await assertZoneRing(zoneProbe, ZONE_REPRESENTED_PART_ZONE.pg, ZONE_RING_CRIT_CLASS, "--crit");
 	await assertZoneRing(
@@ -1062,6 +1096,8 @@ test("AC-B2-3d an unreachable PG and a failed export probe light their zones cri
  */
 test("AC-B2-3f exactly the zones with a single health node carry the verdict", async () => {
 	await openMapWithHealth(getHealthFixture());
+	for (const zoneId of Object.values(ZONE_REPRESENTED_PART_ZONE))
+		await waitForZoneRing(zoneId, ZONE_RING_OK_CLASS);
 	const zoneProbe = await getZoneRingProbe();
 
 	const lit = Object.entries(zoneProbe.zoneClasses)
@@ -1092,7 +1128,7 @@ test("AC-B2-3f exactly the zones with a single health node carry the verdict", a
 test("AC-B2-3e a health poll with no canvas re-render repaints the zone ring", async () => {
 	const pgZone = ZONE_REPRESENTED_PART_ZONE.pg;
 	await openMapWithHealth(getHealthFixture());
-	await assertZoneUnringed(await getZoneRingProbe(), pgZone, ZONE_RING_OK_CLASS);
+	await assertZoneUnringed(await waitForZoneRing(pgZone, ZONE_RING_OK_CLASS), pgZone, ZONE_RING_OK_CLASS);
 
 	const svgIdBefore = await getCanvasSvgId();
 	const pollsBefore = getHealthCounts()[PG_HEALTH_PATH] || 0;
@@ -1126,9 +1162,13 @@ test("AC-T5 the ring displaces neither the governance banner nor the writer aler
 		}),
 	);
 
+	// the healthy part ring also lights nodes — only the crit ring proves the fault ring is on screen
+	const probe = await waitForPartRing(DAEMON_PART_ID, RING_CRIT_CLASS);
+	const faultNodes = getRenderedBound(probe.rendered, BOUND_DAEMON);
 	assert.ok(
-		(await getRingProbe()).ringed.length > 0,
-		"fault fixture must light a node — otherwise the two legs below prove nothing",
+		faultNodes.length > 0 &&
+			faultNodes.every((id) => (probe.classByNode[id] || []).includes(RING_CRIT_CLASS)),
+		`fault fixture must crit-ring every drawn ${BOUND_DAEMON} node (${getProbeState(probe)}) — otherwise the two legs below prove nothing`,
 	);
 	assert.equal(
 		await countAlertsNaming(absentDoc),
@@ -2988,8 +3028,8 @@ test("AC-B2-4a every roster part is reachable by opening its node", async () => 
 	const roster = await getRosterPartIds();
 	assert.equal(
 		roster.length,
-		HEALTH_EXPECTED_TOTAL,
-		`fixture precondition: the shared roster must carry ${HEALTH_EXPECTED_TOTAL} parts`,
+		HEALTH.EXPECTED_TOTAL,
+		`fixture precondition: the shared roster must carry ${HEALTH.EXPECTED_TOTAL} parts`,
 	);
 
 	const reached = await sweepPartIdsAcrossNodes();
@@ -3192,8 +3232,8 @@ test("B2-4 guard the residual bindings come from the served part_bindings, not a
 	const roster = await getRosterPartIds();
 	assert.equal(
 		roster.length,
-		HEALTH_EXPECTED_TOTAL,
-		`fixture precondition: the shared roster must carry ${HEALTH_EXPECTED_TOTAL} parts`,
+		HEALTH.EXPECTED_TOTAL,
+		`fixture precondition: the shared roster must carry ${HEALTH.EXPECTED_TOTAL} parts`,
 	);
 	const expected = Object.fromEntries(
 		roster.map((id): [string, string] => [id, (PART_NODE_BINDINGS[id] ?? []).slice(1).join(", ")]),
@@ -3242,7 +3282,7 @@ const DAEMON_RUN_ALT_TS = "2019-03-04T05:06:07.000Z";
 // autoagent 만 그 순간을 보고하는 health 픽스처 — 절마다 그 순간만 갈아끼움.
 function getRanDaemonFixture(runTs: string): HealthFixture {
 	return getHealthFixture({
-		daemons: HEALTH_OK_DAEMONS.map((daemon_name) => ({
+		daemons: HEALTH.OK_DAEMONS.map((daemon_name) => ({
 			daemon_name,
 			effective_status: "ok" as const,
 			last_run_at: daemon_name === "autoagent" ? runTs : null,
@@ -3275,8 +3315,8 @@ test("B2-5 guard the last-run reading tracks the served instant and empties only
 	const roster = await getRosterPartIds();
 	assert.equal(
 		roster.length,
-		HEALTH_EXPECTED_TOTAL,
-		`fixture precondition: the shared roster must carry ${HEALTH_EXPECTED_TOTAL} parts`,
+		HEALTH.EXPECTED_TOTAL,
+		`fixture precondition: the shared roster must carry ${HEALTH.EXPECTED_TOTAL} parts`,
 	);
 
 	for (const id of RAN_PART_IDS) {

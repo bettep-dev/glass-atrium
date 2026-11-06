@@ -61,10 +61,11 @@ make_gen_fixture() {
   FIX="${SANDBOX}/genfix"
   mkdir -p "${FIX}/scripts/lib" "${FIX}/hooks" "${FIX}/agents"
   cp -p -- "${GA}/scripts/generate-manifest.sh" "${FIX}/scripts/generate-manifest.sh"
-  # the generator sources the spine for the retired-map family bar and refuses
-  # (exit 7) without it, so the fixture root carries the library too.
+  # the generator sources the spine (retired-map family bar) and the tracked-path
+  # oracle and refuses (exit 7) without either, so the fixture root carries both.
   cp -p -- "${GA}/scripts/lib/apply-spine.sh" "${FIX}/scripts/lib/apply-spine.sh"
   cp -p -- "${GA}/scripts/lib/path-guard.sh" "${FIX}/scripts/lib/path-guard.sh"
+  cp -p -- "${GA}/scripts/lib/tracked-paths.sh" "${FIX}/scripts/lib/tracked-paths.sh"
   printf '#!/usr/bin/env bash\nprintf ok\n' >"${FIX}/hooks/probe.sh"
   chmod 755 "${FIX}/hooks/probe.sh"
   printf 'agent body\n' >"${FIX}/agents/a.md"

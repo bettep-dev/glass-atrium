@@ -1,0 +1,15 @@
+diff --git a/monitor/src/server/redirect-target.ts b/monitor/src/server/redirect-target.ts
+new file mode 100644
+index 0000000..3f84c93
+--- /dev/null
++++ b/monitor/src/server/redirect-target.ts
+@@ -0,0 +1,9 @@
++const FALLBACK_PATH = "/";
++
++/** Redirect path for the `next` query value; a value that is not a same-site path falls back to the dashboard root. */
++export function getRedirectTarget(next: string | undefined): string {
++  if (next === undefined || !next.startsWith("/")) {
++    return FALLBACK_PATH;
++  }
++  return next;
++}

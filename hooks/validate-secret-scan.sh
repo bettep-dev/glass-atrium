@@ -10,6 +10,19 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
 
 # WHY fail-closed: field extraction degrades to EMPTY without python3 (tool_name
 # mis-detects, content scans nothing), which would let a credential write through
@@ -18,6 +31,8 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 hook_require_python3 "SEC-017" \
   "Secret scan unavailable: python3 is required to parse hook input"
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT CMD CONTENT input blob cmd
 INPUT=$(hook_read_input)
 TOOL_NAME=$(hook_get_field "${INPUT}" "tool_name")
 
@@ -65,7 +80,8 @@ scan_content() {
   for i in "${!PATTERNS[@]}"; do
     # `-i` for case-insensitive credential keys · `--` so a dash-leading PEM
     # pattern is not parsed as a grep option flag.
-    if printf '%s\n' "${blob}" | grep -qiE -- "${PATTERNS[${i}]}"; then
+    # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+    if printf '%s\n' "${blob}" | drain_after grep -qiE -- "${PATTERNS[${i}]}"; then
       emit_error "${CODES[${i}]}" "block" \
         "Secret pattern detected: ${NAMES_EN[${i}]}" \
         "Replace the hardcoded secret with an environment-variable reference (core-security.md -> Secret Management)" \
@@ -137,8 +153,9 @@ CRED_VALUE='(AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|sk-[a-zA-Z0-9]{20,}|AIza[0-9A-
 scan_bash_command() {
   local cmd="${1}"
   [[ -z "${cmd}" ]] && return 0
-  if printf '%s\n' "${cmd}" | grep -qiE -- "${SECRET_TARGET}" \
-    && printf '%s\n' "${cmd}" | grep -qiE -- "${CRED_VALUE}"; then
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if printf '%s\n' "${cmd}" | drain_after grep -qiE -- "${SECRET_TARGET}" \
+    && printf '%s\n' "${cmd}" | drain_after grep -qiE -- "${CRED_VALUE}"; then
     emit_error "SEC-016" "block" \
       "Secret written to a dotenv/secrets file via Bash" \
       "Do not write credentials into .env/secrets files (redirect/heredoc/tee/dd/open/cp/mv/sed-i/install/ed); use env vars or a secret manager" \

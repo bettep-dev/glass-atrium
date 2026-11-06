@@ -1,0 +1,40 @@
+diff --git a/scripts/lib/cid-slug.sh b/scripts/lib/cid-slug.sh
+new file mode 100644
+index 0000000..c777e91
+--- /dev/null
++++ b/scripts/lib/cid-slug.sh
+@@ -0,0 +1,12 @@
++#!/usr/bin/env bash
++# cid-slug.sh — the slug part of a correlation ID. Sourced, not executable; the sourcing script owns strict mode.
++
++# Prints the slug for a task title: lowercase, each run of other characters one hyphen, at most 20 characters.
++get_cid_slug() {
++  local max_chars=20 slug
++  slug="$(tr '[:upper:]' '[:lower:]' <<<"${1}")"
++  slug="$(tr -cs 'a-z0-9' '-' <<<"${slug}")"
++  slug="${slug#-}"
++  slug="${slug:0:max_chars}"
++  printf '%s\n' "${slug%-}"
++}
+diff --git a/scripts/test/cid-slug.bats b/scripts/test/cid-slug.bats
+new file mode 100644
+index 0000000..253db94
+--- /dev/null
++++ b/scripts/test/cid-slug.bats
+@@ -0,0 +1,16 @@
++#!/usr/bin/env bats
++# get_cid_slug — the slug a correlation ID carries.
++
++# shellcheck disable=SC2154  # BATS_TEST_DIRNAME is bats-provided
++
++setup() {
++  # shellcheck source-path=SCRIPTDIR source=../lib/cid-slug.sh
++  source "${BATS_TEST_DIRNAME}/../lib/cid-slug.sh"
++}
++
++@test "a title becomes a lowercase hyphenated slug of at most twenty characters" {
++  local title
++  for title in 'Auth Fix' 'Monitor cost ledger fix' '  --Wiki index: rebuild!'; do
++    run get_cid_slug "${title}"
++  done
++}

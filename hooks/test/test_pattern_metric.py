@@ -998,7 +998,7 @@ class TestPatternFloorsSetRead(unittest.TestCase):
             ("glass-atrium-dev-python", s.agent_id, s.session_id, s.started_at, s.overage_rows,
              s.stopped_at, [o["attribution_source"] for o in s.outcomes],
              [o.get("grader_verdict") for o in s.outcomes], s.tool_use_actual,
-             *_PRE_FIELD)
+             *_PRE_FIELD, None, 1)  # + the unit's any-delivered and activation count
             for s in passing
         ]
         cursor = mock.MagicMock()
@@ -1250,6 +1250,32 @@ class TestAggregatorPairStatus(_AggregatorRun):
         self._run(window=_get_held_window(_PYTHON) + _get_held_window(_SHELL))
         for name, agent, _, expected in rows:
             self.assertEqual(self.log.get_status(f"{_PATTERN1_CORE}|{agent}"), expected, name)
+
+    def test_a_dormant_row_returns_on_a_passing_pair_only_while_its_agent_is_on_the_roster(
+        self,
+    ) -> None:
+        roster = self.registry.read_text(encoding="utf-8")
+        off_roster = "glass-atrium-not-a-roster-agent"
+        rows = [
+            ("off-roster dormant row with a new passing floor stays dormant",
+             off_roster, True, "dormant"),
+            ("roster dormant row with the same passing floor returns to identified",
+             _PYTHON, True, "identified"),
+            ("bare-form alias of a roster agent still returns to identified",
+             _PYTHON.removeprefix("glass-atrium-"), True, "identified"),
+            ("unreadable registry leaves an off-roster row free to return",
+             off_roster, False, "identified"),
+        ]
+        for name, agent, is_registry_readable, expected in rows:
+            self.log = _FakeLearningLog()
+            if is_registry_readable:
+                self.registry.write_text(roster, encoding="utf-8")
+            else:
+                self.registry.unlink()
+            signature = f"{_BUDGET_CORE}|{agent}"
+            self.log.put_row(signature, "dormant", _WINDOWS.start.detection - _DAY)
+            self._run(window=[], floors={(agent, sig.METRIC_BUDGET_OVERAGE): sig.VERDICT_PASS})
+            self.assertEqual(self.log.get_status(signature), expected, name)
 
     def test_an_empty_batch_run_sweeps_rows_it_does_not_emit(self) -> None:
         rows = [
@@ -1693,6 +1719,96 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
 
         [spawn] = spawns[self._AGENT]
         self.assertEqual(spawn.outcomes, ({"attribution_source": "hook-input", "grader_verdict": None},))
+
+    def test_the_spawn_read_gives_one_unit_per_agent_id_placed_by_its_earliest_row(self) -> None:
+        """SubagentStart fires on every activation, so each resume adds a MANIFEST row."""
+        w = self.windows
+        shell = "glass-atrium-dev-shell"
+        first_at = w.start.confirmation + _DAY
+        pre_window_at = w.start.baseline - _DAY
+        rows = [
+            ("two rows of one agent_id give one unit with the first row's session",
+             [("live-twice", self._AGENT, first_at, "s0"),
+              ("live-twice", self._AGENT, first_at + _DAY, "s1")],
+             [(self._AGENT, "live-twice", first_at, "s0", 2)]),
+            ("a resumed pre-window agent keeps its pre-window start",
+             [("live-pre", self._AGENT, pre_window_at, "s0"),
+              ("live-pre", self._AGENT, first_at, "s0")],
+             [(self._AGENT, "live-pre", pre_window_at, "s0", 2)]),
+            ("a two-type agent_id is one unit under its first type",
+             [("live-two-type", shell, first_at, "s0"),
+              ("live-two-type", self._AGENT, first_at + _DAY, "s0")],
+             [(shell, "live-two-type", first_at, "s0", 2)]),
+            ("unknown ids are never merged into one unit",
+             [(None, self._AGENT, first_at, "s0"), (None, self._AGENT, first_at + _DAY, "s1")],
+             [(self._AGENT, None, first_at, "s0", 1), (self._AGENT, None, first_at + _DAY, "s1", 1)]),
+        ]
+        for name, manifest_rows, expected in rows:
+            with self.subTest(name), self.conn.transaction(force_rollback=True):
+                for offset, (agent_id, agent_type, started_at, session_id) in enumerate(manifest_rows):
+                    self._put_spawn(offset, agent_id, started_at, agent_type=agent_type,
+                                    session_id=session_id, exposure=_CONTROL)
+                    if agent_id is not None:
+                        self._put_stop(agent_id, started_at + 5 * _MINUTE)
+
+                _, spawns = pgdw._read_spawn_facts([self._AGENT, shell], w)
+
+                self.assertEqual(
+                    [(agent_type, s.agent_id, s.started_at, s.session_id, s.activations)
+                     for agent_type in sorted(spawns) for s in spawns[agent_type]],
+                    expected,
+                )
+
+    def test_a_unit_is_delivered_only_when_every_activation_carried_one_hash(self) -> None:
+        """Treatment counts the every-activation value, control the any-activation value."""
+        other_hash = hashlib.sha256(b"other canary text\n").hexdigest()
+        undelivered = (1, _SALT_ID, False, None)
+        rows = [
+            ("every activation delivered with one hash", [_TREATED, _TREATED],
+             (True, True, _TREATED[3])),
+            ("an undelivered resume activation", [_TREATED, undelivered], (False, True, _TREATED[3])),
+            ("a resume activation delivered without a hash", [_TREATED, (1, _SALT_ID, True, None)],
+             (False, True, _TREATED[3])),
+            ("activations delivered with two hashes", [_TREATED, (*_TREATED[:3], other_hash)],
+             (False, True, None)),
+            ("no activation delivered", [_CONTROL, _CONTROL], (False, False, None)),
+            ("a single pre-field activation", [None], (None, None, None)),
+        ]
+        started = self.windows.start.confirmation + _DAY
+        for name, exposures, expected in rows:
+            with self.subTest(name), self.conn.transaction(force_rollback=True):
+                for offset, exposure in enumerate(exposures):
+                    self._put_spawn(offset, "live-unit", started + offset * _MINUTE, exposure=exposure)
+
+                _, spawns = pgdw._read_spawn_facts([self._AGENT], self.windows)
+
+                (spawn,) = spawns[self._AGENT]
+                self.assertEqual(
+                    (spawn.is_delivered, spawn.is_any_delivered, spawn.delivered_hash), expected
+                )
+
+    def test_an_unknown_id_activation_reads_delivered_as_a_one_activation_known_unit_does(
+        self,
+    ) -> None:
+        rows = [
+            ("delivered with its hash", _TREATED),
+            ("delivered without a hash", (1, _SALT_ID, True, None)),
+            ("not delivered", _CONTROL),
+            ("pre-field", None),
+        ]
+        started = self.windows.start.confirmation + _DAY
+        for name, exposure in rows:
+            with self.subTest(name), self.conn.transaction(force_rollback=True):
+                self._put_spawn(0, "live-single", started, exposure=exposure)
+                self._put_spawn(1, None, started + _MINUTE, exposure=exposure)
+
+                _, spawns = pgdw._read_spawn_facts([self._AGENT], self.windows)
+
+                known, unknown = (
+                    (s.is_delivered, s.is_any_delivered, s.delivered_hash)
+                    for s in spawns[self._AGENT]
+                )
+                self.assertEqual(unknown, known)
 
     def test_a_schema_without_the_exposure_columns_reads_its_spawns_unexposed(self) -> None:
         import psycopg

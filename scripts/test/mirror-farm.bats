@@ -26,7 +26,10 @@
 #                                   is reported and skipped instead (rc 0), the
 #                                   run continues, and the charter is not claimed
 #   9. deployment detection       → farm_has_ga_links flips no -> yes once a
-#                                   mirror exists
+#                                   mirror exists, through either form of a
+#                                   root path with a symlinked component,
+#                                   and through a facade home that is itself
+#                                   a symlink
 #
 # Run via: bats scripts/test/mirror-farm.bats
 # Requires: bats >= 1.5.0, jq
@@ -310,4 +313,75 @@ run_refresh() {
   # Bash 3.2-safe last-line index (negative subscripts need 4.3+; bats runs
   # under env bash = stock macOS 3.2).
   [[ "${lines[${#lines[@]} - 1]}" == "yes" ]]
+}
+
+@test "farm_has_ga_links finds a deployment whichever form of the root it is given" {
+  # Protects the consent gate: a "no" here makes install.sh skip the refresh with rc 0, so new release
+  # files ship with no mirror. The farm writes physical targets; install.sh passes its logical GA_DIR.
+  local via="${WORK}/via" alias_root="${WORK}/garoot-alias" row name root target expected facade index=0
+  ln -s "${WORK}" "${via}"
+  ln -s "${GAROOT}" "${alias_root}"
+  local -a rows=(
+    "symlinked component above the root, link in the farm's form|${via}/garoot|${GAROOT}/x.md|yes"
+    "root path itself a symlink, link in the farm's form|${alias_root}|${GAROOT}/x.md|yes"
+    "tree moved behind a symlink, link keeps the old logical form|${via}/garoot|${via}/garoot/x.md|yes"
+    "root that does not resolve, link in its literal form|${WORK}/absent|${WORK}/absent/x.md|yes"
+    "symlinked root, link into a different tree|${via}/garoot|${WORK}/other/x.md|no"
+    "symlinked root, link into a sibling sharing its name as a prefix|${via}/garoot|${GAROOT}-sibling/x.md|no"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name root target expected <<<"${row}"
+    index=$((index + 1))
+    facade="${WORK}/row-facade-${index}"
+    mkdir -p "${facade}"
+    ln -s "${target}" "${facade}/x.md"
+    run bash -c 'set -Eeuo pipefail; source "$1"; farm_has_ga_links "$2" "$3"' _ "${LIB}" "${facade}" "${root}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${output}"
+      return 1
+    }
+    [[ "${output}" == "${expected}" ]] || {
+      echo "${name}: expected ${expected}, got ${output}"
+      return 1
+    }
+  done
+}
+
+@test "farm_has_ga_links finds a deployment whether the facade home is a directory or a symlink to one" {
+  # Protects a dotfile-managed ~/.claude: a "no" here ships the release with no mirror at rc 0.
+  # A symlinked directory below the home is never descended.
+  local row name kind placement expected real facade index=0
+  local -a rows=(
+    "facade a real directory, link at its top|dir|top|yes"
+    "facade a symlink to a real directory, link at its top|symlink|top|yes"
+    "facade a real directory, link only inside a symlinked subdirectory|dir|below|no"
+    "facade a symlink, link only inside a symlinked subdirectory|symlink|below|no"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind placement expected <<<"${row}"
+    index=$((index + 1))
+    real="${WORK}/home-real-${index}"
+    facade="${real}"
+    mkdir -p "${real}"
+    if [[ "${kind}" == "symlink" ]]; then
+      facade="${WORK}/home-${index}"
+      ln -s "${real}" "${facade}"
+    fi
+    if [[ "${placement}" == "top" ]]; then
+      ln -s "${GAROOT}/x.md" "${facade}/x.md"
+    else
+      mkdir -p "${WORK}/below-${index}"
+      ln -s "${GAROOT}/x.md" "${WORK}/below-${index}/x.md"
+      ln -s "${WORK}/below-${index}" "${facade}/linked-dir"
+    fi
+    run bash -c 'set -Eeuo pipefail; source "$1"; farm_has_ga_links "$2" "$3"' _ "${LIB}" "${facade}" "${GAROOT}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${output}"
+      return 1
+    }
+    [[ "${output}" == "${expected}" ]] || {
+      echo "${name}: expected ${expected}, got ${output}"
+      return 1
+    }
+  done
 }

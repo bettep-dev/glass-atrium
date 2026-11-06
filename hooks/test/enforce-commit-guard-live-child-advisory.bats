@@ -24,14 +24,13 @@ setup() {
   mkdir -p "${MARKER_DIR}"
 }
 
-# $1=command $2=agent_id (empty → main-session origin)
+# $1=command $2=agent_id (empty → main-session origin); the command travels on stdin, never as an argument.
 run_guard() {
   local payload
-  payload="$(jq -n --arg c "${1}" --arg a "${2:-}" \
-    '{tool_name:"Bash", tool_input:{command:$c}}
+  payload="$(printf '%s' "${1}" | jq -Rs --arg a "${2:-}" \
+    '{tool_name:"Bash", tool_input:{command:.}}
      + (if $a == "" then {} else {agent_id:$a} end)')"
-  run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" bash "$3" 2>&1' \
-    _ "${payload}" "${GA_DATA}" "${HOOK_SH}"
+  run env GA_DATA_ROOT="${GA_DATA}" bash "${HOOK_SH}" <<<"${payload}"
 }
 
 @test "main-session git commit with a live child raises GIT-ADV-001 (advisory, exit 0)" {
@@ -63,6 +62,16 @@ run_guard() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != *'GIT-ADV-001'* ]] || { echo "stale marker raised: ${output}" >&2; return 1; }
   [[ ! -e "${stale}" ]] || { echo "stale marker not swept" >&2; return 1; }
+}
+
+@test "git commit on line 1 of a command larger than the pipe buffer still raises the live-child advisory" {
+  : >"${MARKER_DIR}/child-001"
+  local padding
+  padding="$(seq -f 'padding line %05g of an ordinary build log' 1 4000)"
+  run_guard "git commit -m wip
+${padding}"
+  [[ "${status}" -eq 0 ]] || { echo "advisory must never block (status ${status}): ${output:0:400}" >&2; return 1; }
+  [[ "${output}" == *'GIT-ADV-001'* ]] || { echo "no advisory in: ${output:0:400}" >&2; return 1; }
 }
 
 @test "a non-commit git command is silent even with a live child" {

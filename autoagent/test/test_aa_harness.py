@@ -59,19 +59,26 @@ import _pg_stub_backend as stub
 import daemon_cycle as dc
 import trial_design
 from _outcome_signal import SpawnFacts, is_floor_half
-from _pg_seal import get_connection, get_ephemeral_connection, seal_pg_reach
+from _pg_seal import (
+    get_connection,
+    get_ephemeral_connection,
+    put_install_config,
+    seal_pg_reach,
+)
 
 _NOW = datetime(2026, 10, 7, 4, 30, tzinfo=timezone.utc)
 _CYCLE_DATE = "2026-10-07"
 _MIGRATION = SimpleNamespace(
     LEDGER="monitor/prisma/migrations/20261008000000_add_trial_ledger_and_cycle_verdicts/migration.sql",
-    OTHER="monitor/prisma/migrations/20260611000000_init_squashed/migration.sql",
+    CRITERION="monitor/prisma/migrations/20260611000000_init_squashed/migration.sql",
+    OTHER="monitor/prisma/migrations/20260620000000_add_cost_events/migration.sql",
 )
 _SCOPED = {
     "hooks/inject-scope-rules.sh": "1" * 64,
     "autoagent/daemon_cycle.py": "2" * 64,
     "agents/glass-atrium-dev-python.md": "3" * 64,
     _MIGRATION.LEDGER: "4" * 64,
+    _MIGRATION.CRITERION: "8" * 64,
 }
 _UNSCOPED = {
     "hooks/enforce-commit-guard.sh": "5" * 64,
@@ -85,11 +92,6 @@ _DURATION = {
     "busiest_agents": 5,
     "minimum_spawns": 200,
 }
-
-
-def _put_config(root: Path, declared: Path) -> None:
-    """The install's rendered config.toml, declaring `declared` as its [paths].root."""
-    (root / "config.toml").write_text(f'[paths]\nroot = "{declared}"\n', encoding="utf-8")
 
 
 class _LedgerRow(NamedTuple):
@@ -220,6 +222,8 @@ class _LedgerCursor:
                 "the open-state read binds named parameters"
             )
             self.result = self._get_latest_start(params)
+        elif statement == dc.AA.SQL.INVALIDATION:
+            self.result = [self._get_invalidation(params)]
         elif statement == dc.AA.SQL.JOIN_COVERAGE:
             self.result = [self._get_join_counts(params)]
         elif statement == dc.AA.SQL.SPOOL_CLOSES:
@@ -253,8 +257,11 @@ class _LedgerCursor:
             return []
         start = starts[-1]
         is_closed = any(
-            row.event == params["result"]
-            and row.dedupe_key == f"{params['result_prefix']}{start.id}"
+            (row.event, row.dedupe_key)
+            in (
+                (params["result"], f"{params['result_prefix']}{start.id}"),
+                (params["invalidation"], f"{params['invalidation_prefix']}{start.id}"),
+            )
             for row in rows
         )
         newest = [
@@ -272,6 +279,18 @@ class _LedgerCursor:
                 newest.id,
             )
         ]
+
+    def _get_invalidation(self, params: dict) -> tuple[bool, str | None]:
+        rows = self.ledger.rows
+        causes = [
+            row.payload["cause"]
+            for row in rows
+            if row.event == params["event"] and row.dedupe_key == params["dedupe_key"]
+        ]
+        is_started = any(
+            row.event == params["start"] and row.id == params["start_id"] for row in rows
+        )
+        return is_started, causes[0] if causes else None
 
     def _get_join_counts(self, params: dict) -> tuple[int, int]:
         outcomes = [
@@ -305,6 +324,10 @@ class _LedgerCursor:
         return list(self.result)
 
 
+# synthetic owner break-evens, no recorded figure: dev-python ≤ DECIDABLE → excluded, named
+_REFERENCE_BREAK_EVENS = {"glass-atrium-dev-python": 0.5}
+
+
 class _AaFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.pg_reach = seal_pg_reach(self)
@@ -317,6 +340,7 @@ class _AaFixture(unittest.TestCase):
         # the canary files land under the sandboxed data root, for the fixture's roster
         self.data_root = self.scratch / "data-root"
         self.canary_dir = self.data_root / "data" / "learning" / "canary"
+        self.reference_path = self.data_root / "data" / "learning" / "instrument-reference.json"
         env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(self.data_root)})
         env.start()
         self.addCleanup(env.stop)
@@ -349,13 +373,19 @@ class _AaFixture(unittest.TestCase):
             create=not hasattr(dc, "_PG_PROPOSAL_STATUS_SQL"),
         )
 
+    def _put_reference(self, body: str | dict[str, float]) -> None:
+        """The owner's break-even file; a str body is written as is (a malformed file)."""
+        self.reference_path.parent.mkdir(parents=True, exist_ok=True)
+        text = body if isinstance(body, str) else json.dumps(body)
+        self.reference_path.write_text(text, encoding="utf-8")
+
     def _patch(self, name: str, value: object, *, create: bool = False) -> None:
         patcher = mock.patch.object(dc, name, value, create=create)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def _install(self) -> None:
-        """A fresh install root: manifest at the root, the two migrations, live scoped files."""
+        """A fresh install root: manifest at the root, the migrations, live scoped files."""
         if self.root.exists():
             self.root.rename(self.scratch / f"retired-{uuid.uuid4().hex[:8]}")
         self.ledger = _Ledger()
@@ -364,13 +394,14 @@ class _AaFixture(unittest.TestCase):
                 _MIGRATION.LEDGER,
                 'CREATE TABLE IF NOT EXISTS "core"."autoagent_trial_ledger" (',
             ),
-            (_MIGRATION.OTHER, 'CREATE TABLE "core"."outcomes" ('),
+            (_MIGRATION.CRITERION, 'CREATE TABLE "core"."outcomes" ('),
+            (_MIGRATION.OTHER, 'CREATE TABLE "core"."cost_events" ('),
             ("agents/glass-atrium-dev-python.md", "# body\n"),
             ("autoagent/daemon_cycle.py", "# module\n"),
         ):
             (self.root / path).parent.mkdir(parents=True, exist_ok=True)
             (self.root / path).write_text(text, encoding="utf-8")
-        _put_config(self.root, self.root)
+        put_install_config(self.root, self.root)
         self._write_manifest({**_SCOPED, **_UNSCOPED})
 
     def _install_fresh(self, roster: tuple[str, ...] | None = None) -> None:
@@ -561,6 +592,110 @@ class AaStartRefusalTest(_AaFixture):
         self.assertEqual(self.ledger.rows, [])
 
 
+class AaInvalidationTest(_AaFixture):
+    _CAUSE = "duplicate exposure in the shared spawn read"
+    _CONFIRM = "--confirm-open-aa"
+
+    def _invalidate(self, *args: str) -> tuple[int, str]:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = dc._main(["--aa-invalidate", *args])
+        self.assertEqual(self.pg_reach, [])
+        self.assertEqual(self.ledger.refused, [])
+        return code, stderr.getvalue()
+
+    def _get_invalidations(self) -> list[_LedgerRow]:
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.AA_INVALIDATION)
+
+    def test_an_invalidation_records_the_start_and_its_cause_once_per_start_id(self) -> None:
+        self._open()
+
+        code, _ = self._invalidate("1", "--cause", self._CAUSE, self._CONFIRM)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [(row.actor, row.payload, row.dedupe_key) for row in self._get_invalidations()],
+            [("daemon-cycle-aa", {"start_id": 1, "cause": self._CAUSE}, "aa-invalidation:1")],
+        )
+
+    def test_an_invalidated_open_start_reads_as_closed_restarts_nothing_and_admits_a_start(
+        self,
+    ) -> None:
+        self._open()
+        self._invalidate("1", "--cause", self._CAUSE, self._CONFIRM)
+        self._set_hash(next(iter(_SCOPED)), "f" * 64)
+
+        self._cycle()
+        code, _ = self._start()
+
+        self.assertEqual(self._get_restarts(), [])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [row.dedupe_key for row in self._get_starts()],
+            ["aa-start:after:0", "aa-start:after:1"],
+        )
+
+    def test_each_refusal_exits_with_the_refusal_code_and_its_named_reason_writing_nothing(
+        self,
+    ) -> None:
+        rows = (
+            ("an unknown start id", ("9", "--cause", self._CAUSE), None, "unknown-start"),
+            ("a missing cause", ("1",), None, "cause-missing"),
+            ("an empty cause", ("1", "--cause", "  "), None, "cause-missing"),
+            (
+                "the start read faults",
+                ("1", "--cause", self._CAUSE),
+                lambda: self.ledger.faulted.add(dc.AA.SQL.INVALIDATION),
+                "ledger-unreadable",
+            ),
+            (
+                "the open-state read faults",
+                ("1", "--cause", self._CAUSE, self._CONFIRM),
+                lambda: self.ledger.faulted.add(dc.AA.SQL.LATEST_START),
+                "ledger-unreadable",
+            ),
+            (
+                "the ledger write faults",
+                ("1", "--cause", self._CAUSE, self._CONFIRM),
+                lambda: setattr(self.ledger, "write_fault", ConnectionError("PG unreachable")),
+                "ledger-unwritable",
+            ),
+            (
+                "the write lands nothing and no record reads back",
+                ("1", "--cause", self._CAUSE, self._CONFIRM),
+                lambda: setattr(self.ledger, "is_key_taken", True),
+                "ledger-unwritable",
+            ),
+            (
+                "the PG helper did not import",
+                ("1", "--cause", self._CAUSE),
+                lambda: self._patch("HAS_PG_LOOP_WRITE", False),
+                "ledger-unwritable",
+            ),
+        )
+        for name, args, arrange, reason in rows:
+            with self.subTest(name):
+                self._install()
+                self._open()
+                if arrange is not None:
+                    arrange()
+
+                code, stderr_text = self._invalidate(*args)
+
+                self.assertEqual(code, dc.ExitCode.AA_INVALIDATION_REFUSED)
+                self.assertIn(f"--aa-invalidate refused: {reason} — ", stderr_text)
+                self.assertEqual(self._get_invalidations(), [])
+                self._patch("HAS_PG_LOOP_WRITE", True)
+
+    def test_aa_invalidate_takes_no_dry_run(self) -> None:
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit),
+        ):
+            dc._main(["--aa-invalidate", "1", "--cause", self._CAUSE, "--dry-run"])
+        self.assertEqual(self._get_invalidations(), [])
+
+
 class AaRestartTest(_AaFixture):
     def test_an_open_aa_restarts_only_when_a_scoped_manifest_hash_moved(self) -> None:
         rows = (
@@ -585,7 +720,8 @@ class AaRestartTest(_AaFixture):
                 )
             ),
             ("an unscoped hook hash changes", "hooks/enforce-commit-guard.sh", False),
-            ("a migration not naming the ledger changes", _MIGRATION.OTHER, False),
+            ("a migration on another criterion table changes", _MIGRATION.CRITERION, True),
+            ("a migration naming no criterion table changes", _MIGRATION.OTHER, False),
             ("a rule file hash changes", "rules/glass-atrium/core-security.md", False),
         )
         for name, path, is_restart in rows:
@@ -709,7 +845,8 @@ class AaCycleStartTest(_AaFixture):
     def test_a_first_writing_cycle_opens_the_aa_an_explicit_start_opens_on_any_roster(
         self,
     ) -> None:
-        reference = set(dc.INSTRUMENT.BREAK_EVEN.REFERENCE)
+        self._put_reference(_REFERENCE_BREAK_EVENS)
+        reference = set(dc._read_reference_break_evens() or {})
         rows = (
             ("the fixture roster", _ROSTER, True),
             (
@@ -898,7 +1035,7 @@ class AaSandboxDefaultTest(_AaFixture):
         if declared is None:
             (self.root / "config.toml").unlink()
         else:
-            _put_config(self.root, declared)
+            put_install_config(self.root, declared)
         self._open()
         self._set_hash("autoagent/daemon_cycle.py", "9" * 64)
         self.canary_dir.mkdir(parents=True, exist_ok=True)
@@ -998,7 +1135,7 @@ class AaUnsealedRunTest(unittest.TestCase):
         # instrument check for the test above: an entry that does reach the decoy names its socket
         if importlib.util.find_spec("psycopg") is None:
             self.skipTest("psycopg not installed: the entries make no connect to observe")
-        _put_config(self.code_root, self.code_root)
+        put_install_config(self.code_root, self.code_root)
         for method in (
             "test_run_aa_stage_unsealed",
             "test_run_trial_stage_unsealed",
@@ -1089,6 +1226,7 @@ def _exposed(spawn: SpawnFacts, salt_id: int = 1) -> SpawnFacts:
         arm=arm,
         salt_id=salt_id,
         is_delivered=arm == 1,
+        is_any_delivered=arm == 1,
         delivered_hash=hashlib.sha256(b"").hexdigest() if arm == 1 else None,
     )
 
@@ -1163,6 +1301,7 @@ class _AaResultFixture(_AaFixture):
         self.ledger.clock = _NOW
         self._add_outcomes(joined=19, unjoined=1)
         self._add_close(_START + timedelta(days=2), lines_read=10, lines_without_row=0)
+        self._put_reference(_REFERENCE_BREAK_EVENS)
 
     def _patch_balance(self, *, minimum_spawns: int) -> None:
         balance = SimpleNamespace(
@@ -1326,13 +1465,14 @@ class AaResultTest(_AaResultFixture):
             ],
         )
         self.assertEqual(
-            dc._get_design_effects([(row.agent, row.payload) for row in rows]),
+            dc._get_design_effects([(row.agent, row.payload, 1) for row in rows]),
             (
                 {
                     (agent, power_keys[key]): max(reading.value, 1.0)
                     for key, reading in expected.items()
                 },
                 frozenset(),
+                {(agent, power_keys[key]): 1 for key in expected},
             ),
         )
         (result,) = self._get_results()
@@ -1355,7 +1495,7 @@ class AaResultTest(_AaResultFixture):
             (row.agent, row.actor, row.dedupe_key),
             (None, "daemon-cycle-aa", "aa-instrument-verdict:1"),
         )
-        reference = dc.INSTRUMENT.BREAK_EVEN.REFERENCE[agent]
+        reference = _REFERENCE_BREAK_EVENS[agent]
         # the fixture history carries no provenance start → no recomputed break-even
         self.assertEqual(
             row.payload,
@@ -1439,21 +1579,21 @@ class AaResultTest(_AaResultFixture):
         # above 1 and inside the interval → both readings straddle
         straddled = {agent: (max(reading.lower, 1.0) + reading.upper) / 2}
         self._patch("_read_recomputed_break_evens", lambda agents, now: straddled)
-        with mock.patch.object(dc.INSTRUMENT.BREAK_EVEN, "REFERENCE", straddled):
-            self._evaluate("2026-10-07")
-            self._evaluate("2026-10-08")
-            self.assertEqual((self._get_results(), self._get_design_effect_rows()), ([], []))
-            (extension,) = self._get_instrument_verdicts()
-            self.assertEqual(
-                (
-                    extension.dedupe_key,
-                    extension.payload["verdict"],
-                    extension.payload["window_days"],
-                ),
-                ("aa-instrument-verdict:1:extend:1", "extend", 14),
-            )
-            self._patch("_get_utc_now", lambda: _START + timedelta(days=29))
-            self._evaluate("2026-10-21")
+        self._put_reference(straddled)
+        self._evaluate("2026-10-07")
+        self._evaluate("2026-10-08")
+        self.assertEqual((self._get_results(), self._get_design_effect_rows()), ([], []))
+        (extension,) = self._get_instrument_verdicts()
+        self.assertEqual(
+            (
+                extension.dedupe_key,
+                extension.payload["verdict"],
+                extension.payload["window_days"],
+            ),
+            ("aa-instrument-verdict:1:extend:1", "extend", 14),
+        )
+        self._patch("_get_utc_now", lambda: _START + timedelta(days=29))
+        self._evaluate("2026-10-21")
 
         (result,) = self._get_results()
         self.assertEqual(result.payload["window"]["days"], 28)
@@ -1485,13 +1625,13 @@ class AaResultTest(_AaResultFixture):
                     "_read_recomputed_break_evens",
                     lambda agents, now, values=break_evens: values,
                 )
-                patcher = mock.patch.object(dc.INSTRUMENT.BREAK_EVEN, "REFERENCE", break_evens)
-                patcher.start()
-                self.addCleanup(patcher.stop)
+                self._put_reference(break_evens)
 
-                self._land_verdict_then_evaluate(
-                    faulted, 15, functools.partial(break_evens.update, straddled)
-                )
+                def _straddle(values: dict[str, float] = break_evens) -> None:
+                    values.update(straddled)
+                    self._put_reference(values)
+
+                self._land_verdict_then_evaluate(faulted, 15, _straddle)
 
                 self.assertEqual(
                     self._get_verdict_windows(), [("aa-instrument-verdict:1", "r1-holds", 14)]
@@ -1588,8 +1728,8 @@ class AaRecomputedBreakEvenTest(_AaResultFixture):
 
     def _get_verdict_payload(self, reference: float) -> dict:
         agent = "glass-atrium-dev-python"
-        with mock.patch.object(dc.INSTRUMENT.BREAK_EVEN, "REFERENCE", {agent: reference}):
-            self._evaluate()
+        self._put_reference({agent: reference})
+        self._evaluate()
         (row,) = self._get_instrument_verdicts()
         return row.payload
 
@@ -1616,6 +1756,57 @@ class AaRecomputedBreakEvenTest(_AaResultFixture):
             (payload["readings"], payload["verdict"]),
             ({"recomputed": "r1-holds", "reference": "straddle"}, "relay"),
         )
+
+    def test_a_missing_reference_file_decides_the_verdict_on_the_recomputed_break_even_alone(
+        self,
+    ) -> None:
+        self.reference_path.unlink()
+
+        stderr_text = self._evaluate()
+
+        (row,) = self._get_instrument_verdicts()
+        payload = row.payload
+        self.assertEqual(
+            (payload["readings"], payload["excluded"]["reference"], payload["verdict"]),
+            ({"recomputed": "r1-holds", "reference": None}, None, "r1-holds"),
+        )
+        agent = payload["agents"]["glass-atrium-dev-python"]
+        self.assertIsNone(agent["break_even"]["reference"])
+        notes = [line for line in stderr_text.splitlines() if str(self.reference_path) in line]
+        self.assertEqual(len(notes), 1, stderr_text)
+        self.assertIn("INFO:", notes[0])
+
+    def test_a_malformed_reference_file_warns_once_and_decides_on_the_recomputed_break_even_alone(
+        self,
+    ) -> None:
+        rows = (
+            ("not JSON", "{"),
+            ("JSON but not an object", "[0.5]"),
+            ("a non-number value", '{"glass-atrium-dev-python": "0.5"}'),
+            (
+                "an integer past the float range",
+                '{"glass-atrium-dev-python": 1' + "0" * 400 + "}",
+            ),
+            ("a bool value", '{"glass-atrium-dev-python": true}'),
+            ("a non-finite value", '{"glass-atrium-dev-python": Infinity}'),
+        )
+        for name, body in rows:
+            with self.subTest(name):
+                self.setUp()
+                self._put_reference(body)
+
+                stderr_text = self._evaluate()
+
+                (row,) = self._get_instrument_verdicts()
+                self.assertEqual(
+                    (row.payload["readings"]["reference"], row.payload["verdict"]),
+                    (None, "r1-holds"),
+                )
+                notes = [
+                    line for line in stderr_text.splitlines() if str(self.reference_path) in line
+                ]
+                self.assertEqual(len(notes), 1, stderr_text)
+                self.assertIn("WARN:", notes[0])
 
 
 class AaResultFailTest(_AaResultFixture):
@@ -1648,7 +1839,9 @@ class AaResultFailTest(_AaResultFixture):
             index = next(
                 index for index, spawn in enumerate(spawns) if spawn.arm == arm
             )
-            spawns[index] = spawns[index]._replace(is_delivered=is_delivered)
+            spawns[index] = spawns[index]._replace(
+                is_delivered=is_delivered, is_any_delivered=is_delivered
+            )
             self.spawns["glass-atrium-dev-python"] = tuple(spawns)
 
         lost_now = dc.ManifestIngest(
@@ -2877,6 +3070,7 @@ class AaInstrumentVerdictTest(unittest.TestCase):
             ("a straddle after the extension relays", "straddle", "straddle", 28, "relay"),
             ("recomputed and reference disagree", "r1-holds", "switch-to-r2", 14, "relay"),
             ("nothing decidable", "undecided", "undecided", 14, "relay"),
+            ("no reference decides on the recomputed alone", "r1-holds", None, 14, "r1-holds"),
         )
         for name, recomputed, reference, days, expected in rows:
             with self.subTest(name):
@@ -2970,10 +3164,12 @@ class AaCriterionTest(unittest.TestCase):
 
 
 def _armed(spawns: list[tuple[int, bool | None]], agent: str = "a") -> list[object]:
-    """(daemon arm, hook-recorded delivery) per spawn → armed spawns of `agent`."""
+    """(daemon arm, hook-recorded delivery) per single-activation spawn → armed spawns of `agent`."""
     return [
         dc.ArmedSpawn(
-            _spawn(f"{agent}{index}", "s", 1)._replace(arm=arm, is_delivered=delivered),
+            _spawn(f"{agent}{index}", "s", 1)._replace(
+                arm=arm, is_delivered=delivered, is_any_delivered=delivered
+            ),
             arm,
         )
         for index, (arm, delivered) in enumerate(spawns)
@@ -3200,6 +3396,25 @@ class _AaLivePgFixture(_AaFixture):
     def _connect(self):
         return get_connection(self.dbname)
 
+    def _insert(
+        self, event: str, payload: dict, dedupe_key: str | None, agent: str | None = None
+    ) -> int:
+        with self._connect() as conn:
+            return conn.execute(
+                "INSERT INTO core.autoagent_trial_ledger"
+                " (event, actor, payload, dedupe_key, agent)"
+                " VALUES (%s, %s, %s::jsonb, %s, %s) RETURNING id",
+                (event, stub.get_trial_ledger().ACTOR.AA, json.dumps(payload), dedupe_key, agent),
+            ).fetchone()[0]
+
+    def _insert_start(self, fingerprint: dict, previous: int) -> int:
+        payload = {
+            "fingerprint": fingerprint,
+            "started_at": _NOW.isoformat(),
+            "duration": _DURATION,
+        }
+        return self._insert("aa-start", payload, f"aa-start:after:{previous}")
+
 
 class AaLivePgFixtureConnectTest(_AaLivePgFixture):
     """The fixture's own connect, via ``get_connection``: a stalled attempt opens on the retry."""
@@ -3231,22 +3446,6 @@ class AaLivePgFixtureConnectTest(_AaLivePgFixture):
 class AaOpenReadLivePgTest(_AaLivePgFixture):
     """The open-state read over the trial ledger."""
 
-    def _insert(self, event: str, payload: dict, dedupe_key: str | None) -> int:
-        with self._connect() as conn:
-            return conn.execute(
-                "INSERT INTO core.autoagent_trial_ledger (event, actor, payload, dedupe_key)"
-                " VALUES (%s, %s, %s::jsonb, %s) RETURNING id",
-                (event, stub.get_trial_ledger().ACTOR.AA, json.dumps(payload), dedupe_key),
-            ).fetchone()[0]
-
-    def _insert_start(self, fingerprint: dict, previous: int) -> int:
-        payload = {
-            "fingerprint": fingerprint,
-            "started_at": _NOW.isoformat(),
-            "duration": _DURATION,
-        }
-        return self._insert("aa-start", payload, f"aa-start:after:{previous}")
-
     def _insert_restart(self, start: int, fingerprint: dict | None, day: str) -> int:
         reason = "fingerprint-changed" if fingerprint else "fingerprint-unreadable"
         payload = {"start_id": start, "reason": reason, "fingerprint": fingerprint}
@@ -3275,6 +3474,15 @@ class AaOpenReadLivePgTest(_AaLivePgFixture):
         self.assertEqual(dc._read_latest_aa_start()[:3], (latest, False, {"a": "4"}))
         self._insert("aa-result", {"overall": "pass"}, f"aa-result:{latest}")
         self.assertEqual(dc._read_latest_aa_start()[:3], (latest, True, {"a": "4"}))
+
+    def test_an_invalidation_closes_its_open_start(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        start = self._insert_start({"a": "1"}, 0)
+        payload = {"start_id": start, "cause": "duplicate exposure"}
+        self._insert("aa-invalidation", payload, f"aa-invalidation:{start}")
+
+        self.assertEqual(dc._read_latest_aa_start()[:2], (start, True))
+        self.assertIsNone(dc._read_open_aa_start())
 
     def test_the_window_runs_from_the_newest_start_or_restart_under_the_frozen_duration(
         self,
@@ -3338,6 +3546,101 @@ class AaOpenReadLivePgTest(_AaLivePgFixture):
         )
 
 
+class AaInvalidationLivePgTest(_AaLivePgFixture):
+    """The invalidation command over the trial ledger's real once-only insert."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._use_database(self._TEMPLATE.FULL)
+        self._patch("_pg_write_trial_ledger_row", self._write)
+
+    def _write(self, event, actor, payload, *, dedupe_key=None, **_columns) -> int:
+        with self._connect() as conn:
+            return conn.execute(
+                "INSERT INTO core.autoagent_trial_ledger (event, actor, payload, dedupe_key)"
+                " VALUES (%s, %s, %s::jsonb, %s) ON CONFLICT (dedupe_key) DO NOTHING",
+                (event, actor, json.dumps(payload), dedupe_key),
+            ).rowcount
+
+    def _invalidate(
+        self, start_id: int, causes: tuple[str, ...], flags: tuple[str, ...] = ()
+    ) -> tuple[list[int], str]:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            codes = [
+                dc._main(["--aa-invalidate", str(start_id), "--cause", cause, *flags])
+                for cause in causes
+            ]
+        return codes, stderr.getvalue()
+
+    def _get_invalidations(self) -> list[tuple]:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT payload, dedupe_key FROM core.autoagent_trial_ledger"
+                " WHERE event = 'aa-invalidation'"
+            ).fetchall()
+
+    def test_a_start_is_invalidated_once_whatever_its_state(self) -> None:
+        # one closed row: closure reads the aa-result key, never its pass/fail value
+        rows = (
+            (
+                "the open start, confirmed",
+                False,
+                False,
+                ("--confirm-open-aa",),
+                "it was the open A/A, now closed irreversibly",
+            ),
+            ("a closed start, unconfirmed", True, False, (), "it reads as closed"),
+            (
+                "an older closed start beside a newer open one, unconfirmed",
+                True,
+                True,
+                (),
+                "it reads as closed",
+            ),
+        )
+        for name, is_closed, has_newer_start, flags, first_line in rows:
+            with self.subTest(name):
+                self._use_database(self._TEMPLATE.FULL)
+                start_id = self._insert_start({"a": "1"}, 0)
+                if is_closed:
+                    self._insert("aa-result", {"overall": "pass"}, f"aa-result:{start_id}")
+                open_id = self._insert_start({"a": "2"}, start_id) if has_newer_start else None
+
+                codes, stderr_text = self._invalidate(
+                    start_id, ("duplicate exposure", "a later cause"), flags
+                )
+
+                self.assertEqual(codes, [0, 0])
+                self.assertEqual(
+                    self._get_invalidations(),
+                    [
+                        (
+                            {"start_id": start_id, "cause": "duplicate exposure"},
+                            f"aa-invalidation:{start_id}",
+                        )
+                    ],
+                )
+                self.assertIn(first_line, stderr_text)
+                self.assertIn("already invalidated (cause: 'duplicate exposure')", stderr_text)
+                open_start = dc._read_open_aa_start()
+                self.assertEqual(None if open_start is None else open_start.id, open_id)
+
+    def test_the_open_start_unconfirmed_is_refused_and_stays_open(self) -> None:
+        start_id = self._insert_start({"a": "1"}, 0)
+
+        codes, stderr_text = self._invalidate(start_id, ("duplicate exposure",))
+
+        self.assertEqual(self._get_invalidations(), [])
+        self.assertEqual(dc._read_open_aa_start().id, start_id)
+        self.assertEqual(codes, [dc.ExitCode.AA_INVALIDATION_UNCONFIRMED])
+        self.assertIn(
+            f"--aa-invalidate refused: open-unconfirmed — A/A {start_id} is the running A/A",
+            stderr_text,
+        )
+        self.assertIn("irreversibl", stderr_text)
+
+
 class AaJoinCoverageReadLivePgTest(_AaLivePgFixture):
     """The join-coverage read over core.outcomes and core.spawn_manifest."""
 
@@ -3381,6 +3684,89 @@ class AaJoinCoverageReadLivePgTest(_AaLivePgFixture):
         )
 
         self.assertEqual(counts, (4, 2))
+
+
+class AaSpawnUnitReadLivePgTest(_AaLivePgFixture):
+    """The A/A consumers over the shared spawn read: one unit per agent_id, resumes folded in."""
+
+    _SALT_ID = 7
+    _HASH = hashlib.sha256(b"").hexdigest()
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._use_database(self._TEMPLATE.FULL)
+        import _pg_learning_dualwrite as pgdw
+
+        self._patch("_pg_read_spawn_facts", pgdw._read_spawn_facts)
+        connect = functools.partial(
+            self.psycopg.connect, dbname=self.dbname, connect_timeout=2, autocommit=True
+        )
+        patcher = mock.patch.object(
+            pgdw, "psycopg", SimpleNamespace(connect=lambda *a, **k: connect())
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.offset = 0
+
+    def _put_activations(self, agent_id: str, deliveries: list[bool]) -> None:
+        arm = _get_arm(self._SALT_ID, agent_id)
+        with self._connect() as conn:
+            for index, is_delivered in enumerate(deliveries):
+                self.offset += 1
+                conn.execute(
+                    "INSERT INTO core.spawn_manifest (spool, line_offset, agent_id, agent_type,"
+                    " session_id, started_at, ctx_bytes, blocks, arm, salt_id, delivered,"
+                    " delivered_hash) VALUES ('s.spool', %s, %s, 'glass-atrium-dev-python', 's1',"
+                    " %s, 1, '', %s, %s, %s, %s)",
+                    (
+                        self.offset, agent_id, _START + timedelta(days=1, hours=index), arm,
+                        self._SALT_ID, is_delivered, self._HASH if is_delivered else None,
+                    ),
+                )
+
+    def _get_armed(self) -> dict[str, list[dc.ArmedSpawn]]:
+        roster = frozenset(_ROSTER)
+        spawns = dc._read_aa_spawns(roster, dc._get_roster_names(roster), _START, _NOW)
+        return dc.get_aa_armed_spawns(spawns, self._SALT_ID)
+
+    def _get_agent_ids(self, arm: int, count: int) -> list[str]:
+        return [f"u{index}" for index in range(100) if _get_arm(self._SALT_ID, f"u{index}") == arm][:count]
+
+    def test_a_resumed_agent_counts_once_in_the_armed_spawns(self) -> None:
+        resumed, single = self._get_agent_ids(1, 2)
+        self._put_activations(resumed, [True, True, True])
+        self._put_activations(single, [True])
+
+        armed = self._get_armed()
+
+        self.assertEqual(
+            sorted(item.spawn.agent_id for item in armed["glass-atrium-dev-python"]),
+            sorted([resumed, single]),
+        )
+
+    def test_a_control_unit_with_any_delivered_activation_fails_the_delivery_criterion(
+        self,
+    ) -> None:
+        rows = (
+            ("no control activation delivered", [False, False], ("pass", 0)),
+            ("one delivered resume activation", [False, True], ("fail", 1)),
+        )
+        (treated,) = self._get_agent_ids(1, 1)
+        (control,) = self._get_agent_ids(0, 1)
+        for name, deliveries, expected in rows:
+            with self.subTest(name):
+                self.setUp()
+                self._put_activations(treated, [True, True])
+                self._put_activations(control, deliveries)
+
+                delivery = dc.get_aa_delivery_criterion(self._get_armed())
+
+                self.assertEqual(
+                    (delivery.verdict, delivery.detail["control_delivered"]), expected
+                )
+                self.assertEqual(
+                    (delivery.detail["treatment"], delivery.detail["delivered"]), (1, 1)
+                )
 
 
 class AaSpoolCloseLivePgTest(_AaLivePgFixture):

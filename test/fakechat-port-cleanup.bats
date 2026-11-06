@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # fakechat-port-cleanup.bats — fakechat_free_port (scripts/lib/fakechat-cleanup.sh): the port-scoped reap
 # of a fakechat port's listener owner tree + its port-keyed spawn helper, standalone (section A) and
-# through its teardown caller kill_daemon_tmux_sessions (section B).
+# through its teardown caller kill_daemon_tmux_sessions (section B); section C covers the fakechat
+# step's plugin-detection reads in lib/ga-deps.sh.
 #
 # Safety property: every fakechat session runs one identical argv (the port rides an env var), so a
 # `plugin:fakechat@` cmdline match is port-blind → freeing one port must never signal another port's tree.
@@ -307,4 +308,46 @@ _boot_ga() {
   grep -qF 'lsof -iTCP:8787' "${REC}" # freed the literal fallback, not the invalid 99999
   grep -qF 'lsof -iTCP:8788' "${REC}"
   refute_rec 'lsof -iTCP:99999'
+}
+
+# ======================================================================================
+# Section C — fakechat plugin detection (lib/ga-deps.sh), the fakechat step's precondition reads
+# ======================================================================================
+
+# _extract_deps_fn — source one named function from lib/ga-deps.sh into the test shell.
+_extract_deps_fn() {
+  local fn_file="${SANDBOX}/$1.sh"
+  awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${GA}/lib/ga-deps.sh" >"${fn_file}" || return 1
+  [[ -s "${fn_file}" ]] || return 1
+  # shellcheck source=/dev/null
+  source "${fn_file}"
+}
+
+@test "a claude listing past one pipe buffer still reads the plugin and marketplace present" {
+  # name|function|first listing line|expected
+  local rows=(
+    "fakechat plugin|ga_detect_fakechat|fakechat@claude-plugins-official|present"
+    "official marketplace|ga_marketplace_present|claude-plugins-official|yes"
+  )
+  local row name fn first want got
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name fn first want <<<"${row}"
+    _extract_deps_fn "${fn}" || {
+      echo "${name}: ${fn} not found"
+      return 1
+    }
+    # the match first, then ~1 MB: an early-exit reader leaves the CLI mid-write
+    cat >"${STUB_BIN}/claude" <<STUB
+#!/bin/sh
+printf '%s\n' '${first}'
+awk 'BEGIN { for (i = 0; i < 60000; i++) print "  other-plugin-" i "@some-marketplace" }'
+STUB
+    chmod +x "${STUB_BIN}/claude"
+    # the launcher's pipefail, scoped to a subshell so the test body keeps bats' own
+    got="$(set -o pipefail && "${fn}")"
+    [[ "${got}" == "${want}" ]] || {
+      echo "${name}: got '${got}', want '${want}'"
+      return 1
+    }
+  done
 }

@@ -157,7 +157,10 @@ eph_pg_start() {
   # locale-independent while -E UTF8 keeps the data encoding explicit.
   LC_ALL=C initdb -D "${datadir}" -A trust -U "${osuser}" --locale=C -E UTF8 \
     >>"${log}" 2>&1 \
-    || { eph_pg_fail "initdb" "${log}"; return 1; }
+    || {
+      eph_pg_fail "initdb" "${log}"
+      return 1
+    }
   # listen_addresses='' → no TCP bind (zero port-collision risk); the socket
   # lives at ${sockdir}/.s.PGSQL.${port}, addressed by PGHOST/PGPORT.
   # -w -t 120: generous readiness window — the gate context runs many suites
@@ -165,9 +168,15 @@ eph_pg_start() {
   LC_ALL=C pg_ctl -D "${datadir}" \
     -o "-p ${port} -k ${sockdir} -c listen_addresses=''" \
     -w -t 120 start >>"${log}" 2>&1 \
-    || { eph_pg_fail "pg_ctl start" "${log}"; return 1; }
+    || {
+      eph_pg_fail "pg_ctl start" "${log}"
+      return 1
+    }
   LC_ALL=C createdb -h "${sockdir}" -p "${port}" "${dbname}" >>"${log}" 2>&1 \
-    || { eph_pg_fail "createdb" "${log}"; return 1; }
+    || {
+      eph_pg_fail "createdb" "${log}"
+      return 1
+    }
   # Capture the DDL first (assignment preserves the generator's exit) so the
   # psql exit is the checked one — no pipe masking.
   schema="$(eph_pg_schema_sql)" || return 1

@@ -9,6 +9,8 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/tracked-paths.sh
+source "${GA}/scripts/lib/tracked-paths.sh"
 
 setup() {
   SANDBOX="$(mktemp -d -t ga-acceptance-untracked.XXXXXX)"

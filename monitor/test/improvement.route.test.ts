@@ -1,6 +1,6 @@
 // Integration tests for /api/improvement (unified endpoint).
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/improvement.route.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.route.test.ts
 //
 // Coverage:
 //   - GET /api/improvement happy path · 200 + shape
@@ -770,14 +770,14 @@ test("POST approve: exit 18 → 409 { status: 'parked_pattern' } naming the park
   process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
     "apply-parked-pattern.sh",
     18,
-    "[daemon-apply] parked-pattern guard REFUSED proposal id=4242 — every covering pattern row is terminal (rows 3384:rejected, 6:applied); nothing applied, proposal left as it was. Reject it from the monitor if it should not stay queued.",
+    "[daemon-apply] parked-pattern guard REFUSED proposal id=4242 — every covering pattern row is terminal (rows 5120:rejected, 7:applied); nothing applied, proposal left as it was. Reject it from the monitor if it should not stay queued.",
   );
   const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
   assert.strictEqual(res.statusCode, 409);
   const body = res.json() as { status: string; id: number; reason: string };
   assert.strictEqual(body.status, "parked_pattern");
   assert.strictEqual(body.id, 4242);
-  assert.ok(body.reason.includes("3384:rejected, 6:applied"), "reason names every parked row");
+  assert.ok(body.reason.includes("5120:rejected, 7:applied"), "reason names every parked row");
   assert.match(body.reason, /\bReject\b/, "reason points to the Reject action");
 });
 
@@ -1069,8 +1069,7 @@ test("POST approve: hands the operator actor to daemon-apply instead of letting 
   );
 });
 
-// Source-contract assertion over the route's own SQL. Precedent for reading route
-// source rather than rendering it: test/daemon-status.enum-parity.test.ts.
+// Source-contract assertion over the route's own SQL.
 const ROUTE_SRC = readFileSync(
   fileURLToPath(new URL("../src/server/routes/improvement.ts", import.meta.url)),
   "utf8",

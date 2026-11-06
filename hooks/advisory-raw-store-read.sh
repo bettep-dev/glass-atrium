@@ -22,6 +22,19 @@ trap 'printf "[raw-store-read-advisory] internal error at line %d: %s — fail-o
 
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
 
 # Durable record sink (env-overridable for hermetic tests). DATA-tier via the resolved HOOK_DATA_DIR
 # seam (hook-utils.sh) — GA_DATA_ROOT-anchored, decoupled from the legacy ~/.claude location.
@@ -48,6 +61,8 @@ emit_record() {
 }
 
 # 1. Read input + Bash tool gate.
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n input command_str
 input="$(hook_read_input)"
 tool_name="$(hook_get_field "${input}" "tool_name")"
 [[ "${tool_name}" != "Bash" ]] && exit 0
@@ -60,7 +75,8 @@ command_str="$(hook_get_tool_input "${input}" "command")"
 #    `wiki/raw/` store path (belt-and-suspenders). One grep -F with two -e patterns matches EITHER
 #    token (fixed-string, so path metacharacters stay literal). No match → silent exit 0 (an ordinary
 #    command carries no note).
-if ! printf '%s\n' "${command_str}" | grep -qF -e "${WIKI_RAW_DIR}" -e 'wiki/raw/'; then
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+if ! printf '%s\n' "${command_str}" | drain_after grep -qF -e "${WIKI_RAW_DIR}" -e 'wiki/raw/'; then
   exit 0
 fi
 

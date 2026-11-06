@@ -5,7 +5,8 @@
 ``get_connection`` serves their fixtures' own connects on the same cluster;
 ``set_install_tree`` gives a test a temp code tree that is its own install;
 ``create_trial_ledger_table`` / ``create_live_trial`` seed the trial ledger on the
-stdlib stand-in (``scripts/test/_pg_stub_backend.py``, anchored by the caller).
+stdlib stand-in (``scripts/test/_pg_stub_backend.py``, anchored by the caller);
+``put_install_config`` writes the rendered config that names a tree's install root.
 Not a test module (no ``test_`` prefix): consumers anchor this directory on
 ``sys.path``; ``seal_pg_reach`` callers import ``daemon_cycle`` first.
 """
@@ -100,7 +101,7 @@ def set_install_tree(testcase: unittest.TestCase) -> None:
     tree = tempfile.TemporaryDirectory()
     testcase.addCleanup(tree.cleanup)
     root = Path(tree.name)
-    (root / "config.toml").write_text(f'[paths]\nroot = "{root}"\n', encoding="utf-8")
+    put_install_config(root, root)
     _patch(testcase, sys.modules["daemon_cycle"], "_INSTALL_ROOT", root)
 
 
@@ -143,6 +144,11 @@ def create_live_trial(
             rows,
         )
         db.commit()
+
+
+def put_install_config(root: Path, declared: Path) -> None:
+    """The install's rendered config.toml in `root`, declaring `declared` as its [paths].root."""
+    (root / "config.toml").write_text(f'[paths]\nroot = "{declared}"\n', encoding="utf-8")
 
 
 def _patch(

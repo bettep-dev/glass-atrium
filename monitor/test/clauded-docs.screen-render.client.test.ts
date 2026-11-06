@@ -6,6 +6,7 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
   createReactStub,
@@ -155,9 +156,11 @@ test("the snippet line starts at the title's x: indented by the lead slot plus t
     assert.ok(match, `${property} is set in px`);
     return Number(match[1]);
   };
+  const value = (rule: string, property: string) => rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*([^;]+?)\\s*(?:;|$)`))?.[1];
   const leadWidth = px(cssRuleBody(source, ".doc-title-lead"), "width");
-  const rowGap = px(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
-  assert.equal(px(cssRuleBody(source, ".doc-snippet"), "margin-left"), leadWidth + rowGap);
+  // the indent is derived from the two parts (ladder derived-offset rule), never a summed literal
+  const rowGap = value(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
+  assert.equal(value(cssRuleBody(source, ".doc-snippet"), "margin-left"), `calc(${leadWidth}px + ${rowGap})`);
 });
 
 test("the Tags column states the page's majority format once and prints only exceptions per row", async () => {
@@ -716,9 +719,12 @@ test("while searching, the stage filter visibly steps aside for all stages, and 
   const filters = { ...(props.inlineFilterProps as Record<string, unknown>), keyword: "plan", docStatusFilter: "open" };
   const searching = renderListCard(screen, { isSearchMode: true, inlineFilterProps: filters });
 
-  const groups = findNodes(searching, (n) => n.props.atom === "ChipGroup");
-  assert.deepEqual(groups.map((g) => g.props.label), ["Audience filter"], "no stage chip reads as pressed while it is not applied");
-  assert.match(collectText(searching), /All stages while searching/);
+  const [slot] = findNodes(searching, (n) => String(n.props.className ?? "").includes("doc-show-slot--searching"));
+  assert.ok(slot, "the Show cell is marked as searching, which sets the stage chips aside");
+  const stageChips = findNodes(slot, (n) => n.props.atom === "ChipGroup").flatMap((g) => g.props.chips as Array<{ isPressed: boolean }>);
+  assert.ok(stageChips.length > 0, "the stage chips keep their cell");
+  assert.ok(stageChips.every((chip) => chip.isPressed === false), "no stage chip reads as pressed while it is not applied");
+  assert.match(collectText(slot), /All stages while searching/);
 
   const empty = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: true, inlineFilterProps: filters }));
   assert.doesNotMatch(collectText(empty), /status:/);
@@ -871,6 +877,11 @@ test("Created shows relative age with the date in a tooltip, and only an open ro
   assert.ok(staleCell, "age is the primary value");
   assert.match(String(staleCell.props.title), /^Created date\(/);
   assert.match(collectText(staleCell), /stale/i, "stale is said in words, not colour alone");
+  // the Created floor holds the glyph only → the word is screen-reader text, and the glyph's tooltip says it too
+  const flag = findNodes(staleCell, (n) => n.type === "span" && n.props.className === "doc-age-flag")[0];
+  assert.ok(flag, "the stale flag sits inline in the age line");
+  assert.match(String(flag.props.title), /stale/i);
+  assert.equal(collectText(findNodes(flag, (n) => n.props.className === "sr-only")[0]), "stale");
   assert.equal(findNodes(staleCell, (n) => n.props.atom === "Icon" && n.props.className === "text-warn").length, 1, "the warn tone rides a glyph");
   assert.equal(ageCells.filter((td) => /stale/i.test(collectText(td))).length, 1);
 });
@@ -887,6 +898,15 @@ test("the Status column keeps room for the stage name inside stage sections as i
   assert.equal(sectioned, flat);
 });
 
+// the page header's freshness and refresh slots, rendered side by side the way PageHeader groups them
+function renderHeaderSlots(screen: Record<string, unknown>, props: Record<string, unknown>) {
+  return renderScreen({
+    __element: true,
+    type: "div",
+    props: { children: [(screen.DocHeaderFreshnessCD as Component)(props), (screen.DocHeaderRefreshCD as Component)(props)] },
+  });
+}
+
 describe("the header speaks about loading only after a first read; before it the list placeholder is the one loading label", () => {
   const rows = [
     { name: "a first read in flight shows no stamp and no busy Refresh", asOf: null, busy: true, hasStamp: false, isBusy: false },
@@ -898,7 +918,7 @@ describe("the header speaks about loading only after a first read; before it the
     test(row.name, async () => {
       const screen = await loadDocsScreen();
       const listState = { status: row.asOf ? "ready" : "loading", data: null, error: null, busy: row.busy };
-      const tree = renderScreen((screen.DocHeaderActionsCD as Component)({ asOf: row.asOf, listState, onRefresh: () => undefined }));
+      const tree = renderHeaderSlots(screen, { asOf: row.asOf, listState, onRefresh: () => undefined });
 
       assert.equal(findNodes(tree, (n) => n.props.atom === "FreshnessStamp").length, row.hasStamp ? 1 : 0);
       const buttons = findNodes(tree, (n) => n.props.atom === "RefreshButton");
@@ -943,13 +963,14 @@ test("the last stage actor rides the Status cell's tooltip, never a line under t
 test("the Title header starts at the title text's x: indented by the lead slot plus the title row gap", async () => {
   const screen = await loadDocsScreen();
   const source = getScreenCss(screen);
-  const px = (rule: string, property: string) => Number(rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*(\\d+)px`))?.[1]);
-  const indent = px(cssRuleBody(source, ".doc-title-lead"), "width") + px(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
+  const value = (rule: string, property: string) => rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*([^;]+?)\\s*(?:;|$)`))?.[1];
+  // the indent is derived from the lead slot width plus the title row gap (ladder derived-offset rule)
+  const indent = `calc(${value(cssRuleBody(source, ".doc-title-lead"), "width")} + ${value(cssRuleBody(source, ".title-cell .doc-title-row"), "gap")})`;
 
   const titleHeader = findNodes(renderListCard(screen, {}), (n) => n.type === "th" && collectText(n) === "Title")[0];
   const label = findNodes(titleHeader, (n) => n.type === "span" && n.props.className === "doc-col-title-text");
   assert.equal(label.length, 1);
-  assert.equal(px(cssRuleBody(source, ".doc-col-title-text"), "margin-left"), indent);
+  assert.equal(value(cssRuleBody(source, ".doc-col-title-text"), "margin-left"), indent);
 });
 
 function renderPipelineCard(screen: Record<string, unknown>, state: Record<string, unknown>) {
@@ -998,7 +1019,7 @@ describe("the header hands its read state to the shell exactly once, with or wit
         UI: uiStub({ ...SHIPPED_ATOMS, useShellPageState: (input: unknown) => calls.push(input) }),
         React: createReactStub(),
       });
-      const tree = renderScreen((screen.DocHeaderActionsCD as Component)({ asOf: row.asOf, listState: row.state, onRefresh: () => undefined }));
+      const tree = renderHeaderSlots(screen, { asOf: row.asOf, listState: row.state, onRefresh: () => undefined });
 
       const stamps = findNodes(tree, (n) => n.props.atom === "FreshnessStamp").length;
       assert.equal(calls.length + stamps, 1, "one shell caller");
@@ -1217,23 +1238,23 @@ test("the checked stage-menu item draws the one filled selected state at rest an
   assert.match(cssRuleBody(css, '.doc-stage-menu-item[aria-checked="true"] .doc-stage-menu-rank'), /color\s*:\s*inherit/);
 });
 
-test("a ledger checkbox draws on theme tokens: neutral at rest, the one selected state when checked or mixed, and no transition", async () => {
+test("a ledger checkbox draws the shared checkbox on theme tokens: neutral at rest, the one selected state when checked or mixed, and no transition", async () => {
   const screen = await loadDocsScreen();
-  const css = getScreenCss(screen);
+  const css = readFileSync(resolve(__dirname, "../public/styles/base.css"), "utf8");
   for (const props of [{ checked: false }, { checked: true }, { checked: false, indeterminate: true }]) {
     const tree = renderScreen((screen.DocCheckboxCD as Component)({ ...props, onChange: noop, ariaLabel: "Select" }));
     const [input] = findNodes(tree, (n) => n.type === "input");
     const classes = String(input.props.className);
-    assert.ok(hasClass("doc-checkbox")(input), "token-drawn class");
+    assert.ok(hasClass("ctl-checkbox")(input), "token-drawn class");
     assert.doesNotMatch(classes, /zinc-|emerald-|transition|duration-/);
     const marks = findNodes(tree, (n) => n.props.atom === "Icon");
     assert.equal(marks.length, props.checked || props.indeterminate ? 1 : 0);
-    for (const mark of marks) assert.ok(String(mark.props.className).includes("doc-checkbox-mark"));
+    for (const mark of marks) assert.ok(String(mark.props.className).includes("ctl-checkbox-mark"));
   }
-  assert.match(cssRuleBody(css, ".doc-checkbox"), /background\s*:\s*rgb\(var\(--elev\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox"), /border\s*:\s*1\.5px solid rgb\(var\(--faint\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox:checked, .doc-checkbox:indeterminate"), /background\s*:\s*rgb\(var\(--selected-fill\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox-mark"), /color\s*:\s*rgb\(var\(--selected-ink\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox"), /background\s*:\s*rgb\(var\(--elev\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox"), /border\s*:\s*1\.5px solid rgb\(var\(--faint\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox:checked,\n.ctl-checkbox:indeterminate"), /background\s*:\s*rgb\(var\(--selected-fill\)\)/);
+  assert.match(cssRuleBody(css, ".ctl-checkbox-mark"), /color\s*:\s*rgb\(var\(--selected-ink\)\)/);
 });
 
 function getReduceBlocks(css: string): { inside: string; outside: string } {

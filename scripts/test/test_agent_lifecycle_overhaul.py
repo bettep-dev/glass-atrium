@@ -86,6 +86,7 @@ def test_when_build_entry_dev_then_rules_carry_scope_shared_conditional() -> Non
     assert [c["file"] for c in rules["conditional"]] == [
         "rules/glass-atrium/shared-self-improve-hygiene.md",
         "scoped/shared-hook-capability-contract.md",
+        "scoped/shared-destructive-path-suite-safety.md",
     ]
     assert all(c["when"] for c in rules["conditional"])
 

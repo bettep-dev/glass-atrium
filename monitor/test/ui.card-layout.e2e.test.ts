@@ -30,9 +30,14 @@ const variantRows = `
   <div class="split-row split-row--1-1 split-row--${layouts.equal}" data-variant="equal"><div style="height: 400px;">tall</div><div>short</div></div>
   <div class="split-row split-row--2-1 split-row--${layouts.content}" data-variant="rail"><div style="height: 2000px;">main</div>
     <div class="split-col split-col--rail" id="rail"><div style="height: 100px;">one</div><div style="height: 100px;">two</div></div></div>`;
+// a tile narrower than the lead plus the detail's 16rem basis — the 820 dashboard tile the detail used to squeeze in
+const NARROW_TILE_PX = 280;
+const NARROW_TILE_DETAIL = "3 on a failing streak since the last cycle";
 const LAYOUT_PAGE = `<!doctype html><html data-theme="light"><body style="margin: 0;">
   <div style="padding: 24px;">${splitRows}
     <div class="tile-split" id="tile"><div class="tile-split-lead">42</div><div class="tile-split-detail">detail text</div></div>
+    <div style="width: ${NARROW_TILE_PX}px;"><div class="tile-split" id="narrow-tile"><div class="tile-split-lead">1,284 runs</div>
+      <div class="tile-split-detail">${NARROW_TILE_DETAIL}</div></div></div>
     ${variantRows}
   </div>
 </body></html>`;
@@ -63,7 +68,7 @@ after(async () => {
 // side by side = second child starts level with the first and to its right
 async function readPairs(): Promise<PairReading[]> {
   return page.evaluate(() => {
-    const pairs = [...document.querySelectorAll<HTMLElement>(".split-row[data-ratio], .tile-split")];
+    const pairs = [...document.querySelectorAll<HTMLElement>(".split-row[data-ratio], #tile")];
     return pairs.map((pair) => {
       const [first, second] = [...pair.children].map((child) => child.getBoundingClientRect());
       return {
@@ -98,6 +103,18 @@ describe("split row and tile split at real viewports", () => {
       assert.ok(Math.abs(reading.widthRatio - left / right) < RATIO_TOLERANCE, `${reading.key} width ratio ${reading.widthRatio}`);
     }
   });
+});
+
+describe("a tile split too narrow for both", () => {
+  for (const width of [820, 1024]) {
+    test(`at ${width}px the detail wraps under the lead at the tile's full width`, async () => {
+      await page.setViewportSize({ width, height: 900 });
+      const [tile, lead, detail] = await page.$$eval("#narrow-tile, #narrow-tile > *", (els) =>
+        els.map((el) => el.getBoundingClientRect().toJSON() as DOMRect));
+      assert.ok(detail.top >= lead.bottom, `detail top ${detail.top} under lead bottom ${lead.bottom}`);
+      assert.ok(Math.abs(detail.width - tile.width) < 1, `detail ${detail.width}px of the tile's ${tile.width}px`);
+    });
+  }
 });
 
 interface VariantReading { variant: string; first: DOMRect; second: DOMRect }

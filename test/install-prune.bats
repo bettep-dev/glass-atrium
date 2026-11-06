@@ -13,16 +13,17 @@
 # Hermetic strategy: GA_TARGET_HOME points the target at a throwaway dir and
 # GA_MANIFEST points at a tree-matched sandbox manifest (mirrors the GA_TARGET_HOME
 # override in doctor-hook-bindings.bats). BUT the prune `find -lname` matches the
-# REAL GA_ROOT (= the dir of the glass-atrium entry being run), so each test plants its
-# symlink targets under that REAL root — links into a foreign tree would not be
-# enumerated. mktemp -d + teardown rm -rf, NEVER the live ~/.claude.
+# REAL GA_ROOT (= the physical dir the glass-atrium entry being run resolves to), so each
+# test plants its symlink targets under that physical dir — links into a foreign tree would
+# not be enumerated. mktemp -d + teardown rm -rf, NEVER the live ~/.claude.
 #
 # Run via: bats test/install-prune.bats
 # Requires: bats >= 1.5.0, jq, bash 3.2+
 
 bats_require_minimum_version 1.5.0
 
-GA_ROOT_DIR="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# physical form: the launcher resolves GA_ROOT with pwd -P, so planted targets match only in that form
+GA_ROOT_DIR="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd -P)"
 REAL_GA="${GA_ROOT_DIR}/glass-atrium"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
 source "${GA_ROOT_DIR}/scripts/lib/path-guard.sh"
@@ -93,6 +94,70 @@ fail_with_state() {
   [[ "${output}" == *"1 pruned"* ]] || fail_with_state
   # filesystem: the symlink is gone.
   [[ ! -L "${TARGET}/agents/orphan.md" ]] || fail_with_state "${TARGET}/agents/orphan.md"
+}
+
+@test "a root entered through a symlink prunes the orphan link its own farm wrote" {
+  local entry="${SANDBOX}/entry" rel="${GA_SCRATCH##*/}/farmed.md" link_target
+  ln -s "${GA_ROOT_DIR}" "${entry}"
+  printf 'src\n' >"${GA_ROOT_DIR}/${rel}"
+  write_manifest "${rel}"
+  GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" "${entry}/glass-atrium" agents-only
+  link_target="$(readlink -- "${TARGET}/${rel}")"
+  [[ "${link_target}" == "${GA_ROOT_DIR}/${rel}" ]] || fail_with_state "${TARGET}/${rel}"
+  rm -- "${GA_ROOT_DIR}/${rel}"
+  write_manifest "agents/kept.md"
+  GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" run "${entry}/glass-atrium" prune
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"1 pruned"* ]] || fail_with_state
+  [[ ! -L "${TARGET}/${rel}" ]] || fail_with_state "${TARGET}/${rel}"
+}
+
+@test "prune removes only the orphan whether the target home is a directory or a symlink to one" {
+  # Protects a dotfile-managed ~/.claude: a home reached through a symlink must keep every guard,
+  # and a symlinked directory below the home is never descended.
+  local row name kind real home kept
+  local -a rows=(
+    "target home a real directory|dir"
+    "target home a symlink to a real directory|symlink"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind <<<"${row}"
+    real="${SANDBOX}/${kind}-real"
+    home="${real}"
+    mkdir -p "${real}/agents" "${SANDBOX}/${kind}-below"
+    if [[ "${kind}" == "symlink" ]]; then
+      home="${SANDBOX}/${kind}-home"
+      ln -s "${real}" "${home}"
+    fi
+    write_manifest "agents/flagged.md"
+    ln -s "${GA_SCRATCH}/gone-${kind}.md" "${home}/agents/orphan.md"
+    ln -s "${GA_SCRATCH}/gone-flagged-${kind}.md" "${home}/agents/flagged.md"
+    printf 'src\n' >"${GA_SCRATCH}/live-${kind}.md"
+    ln -s "${GA_SCRATCH}/live-${kind}.md" "${home}/agents/live.md"
+    ln -s "${SANDBOX}/gone-foreign.md" "${home}/agents/foreign.md"
+    ln -s "${GA_SCRATCH}/gone-below-${kind}.md" "${SANDBOX}/${kind}-below/orphan.md"
+    ln -s "${SANDBOX}/${kind}-below" "${home}/linked-dir"
+    GA_TARGET_HOME="${home}" GA_MANIFEST="${MANIFEST}" run "${REAL_GA}" prune
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}"
+      fail_with_state
+    }
+    [[ "${output}" == *"1 pruned"* ]] || {
+      echo "${name}: orphan not pruned"
+      fail_with_state "${real}"
+    }
+    [[ ! -L "${real}/agents/orphan.md" ]] || {
+      echo "${name}: orphan still present"
+      fail_with_state "${real}"
+    }
+    for kept in "${real}/agents/flagged.md" "${real}/agents/live.md" "${real}/agents/foreign.md" \
+      "${SANDBOX}/${kind}-below/orphan.md"; do
+      [[ -L "${kept}" ]] || {
+        echo "${name}: guarded link removed: ${kept}"
+        fail_with_state "${real}"
+      }
+    done
+  done
 }
 
 # === resolving symlink preserved =============================================
@@ -228,4 +293,19 @@ fail_with_state() {
   [[ "${status}" -ne 0 && "${status}" -ne 4 ]] || return 1
   [[ "${output}" != *"candidates)"* ]] || return 1
   [[ -L "${TARGET}/agents/orphan.md" ]]
+}
+
+# === manifest lookup past one pipe buffer =====================================
+@test "a broken symlink heading a manifest past one pipe buffer is preserved and flagged" {
+  # the listed rel first, then ~1 MB of entries: an early-exit lookup leaves its writer mid-write
+  {
+    printf '%s\n' "agents/inmanifest.md"
+    awk 'BEGIN { for (i = 0; i < 60000; i++) printf "agents/filler-%06d.md\n", i }'
+  } | jq -R . | jq -s '{files: .}' >"${MANIFEST}"
+  plant_orphan_link "agents/inmanifest.md"
+  run_prune_sandbox prune
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"1 flagged in-manifest"* ]] || fail_with_state
+  [[ "${output}" == *"0 pruned"* ]] || fail_with_state
+  [[ -L "${TARGET}/agents/inmanifest.md" ]] || fail_with_state "${TARGET}/agents/inmanifest.md"
 }

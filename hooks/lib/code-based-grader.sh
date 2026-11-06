@@ -120,8 +120,8 @@ code_based_grader_check() {
     feature)
       # W1 files-evidence (Step 1-3): promotion requires ≥1 EXISTING test/spec-shaped path. A
       # non-existent / glob / no-path-shaped field resolves to unverified, NEVER verified_fail (W2 —
-      # a deleted file is indistinguishable from fabrication at this tier; live data shows 0
-      # verified_fail in 2081 rows). _cbg_gated_verdict then applies the shared Step 4-5 cross-check
+      # a deleted file is indistinguishable from fabrication at this tier, so an unresolved path
+      # never yields verified_fail). _cbg_gated_verdict then applies the shared Step 4-5 cross-check
       # routing (contradicted → verified_fail; withhold → unverified).
       local promote=0
       if _cbg_files_test_evidence "${files}"; then

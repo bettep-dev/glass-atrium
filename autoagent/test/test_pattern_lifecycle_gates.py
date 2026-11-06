@@ -71,10 +71,10 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
 
-# The live '62%' fossil shape: PG signature label is numeric-stripped, the
+# The '47%' fossil shape: PG signature label is numeric-stripped, the
 # pre-AP-2 proposal rows still carry the numeric label.
 _LEGACY_LABEL = "에이전트 지침 개선 후보 (실패율 )"
-_LEGACY_PROPOSAL_LABEL = "에이전트 지침 개선 후보 (실패율 62%)"
+_LEGACY_PROPOSAL_LABEL = "에이전트 지침 개선 후보 (실패율 47%)"
 _PROBE_AGENT = "ap4-snooze-probe-agent"
 
 

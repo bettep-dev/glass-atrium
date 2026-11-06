@@ -68,6 +68,20 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
+
 # Native rules live FOLDERED at ~/.claude/rules/glass-atrium/*.md — the
 # rules-recursion probe settled RECURSIVE (native autoload discovers nested
 # rule files), so foldering is safe. MATRIX_FILE + RULES_DIR default to that
@@ -269,7 +283,7 @@ matrix_table_block() {
 # table row, column 1 = "Rule File", columns 2..N = scope names).
 matrix_header_scopes() {
   local block="${1}"
-  printf '%s\n' "${block}" | head -1 | awk -F'|' '
+  printf '%s\n' "${block}" | drain_after head -1 | awk -F'|' '
     {
       for (i = 3; i <= NF; i++) {     # i=2 is "Rule File"; scopes start at i=3
         gsub(/^[ \t]+|[ \t]+$/, "", $i)
@@ -322,7 +336,8 @@ tier1_core_rules() {
 #   HAS     — row present, ALL cell carries ✓ (consistent)
 matrix_all_cell() {
   local block="${1}" rule="${2}"
-  printf '%s\n' "${block}" | awk -F'|' -v rule="${rule}" '
+  # shellcheck disable=SC2016  # the $ fields belong to the awk program, which drain_after hides from shellcheck
+  printf '%s\n' "${block}" | drain_after awk -F'|' -v rule="${rule}" '
     {
       name = $2
       gsub(/^[ \t]+|[ \t]+$/, "", name)
@@ -359,7 +374,7 @@ run_layer_b() {
   # Header row column 2 must literally read "Rule File"; otherwise the column
   # geometry assumption is broken → fail open rather than mis-judge cells.
   local header_c2
-  header_c2="$(printf '%s\n' "${block}" | head -1 | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')"
+  header_c2="$(printf '%s\n' "${block}" | drain_after head -1 | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')"
   if [[ "${header_c2}" != "Rule File" ]]; then
     printf '[compliance-matrix-consistency] fail-open: matrix header geometry unexpected (col2=%q) — advisory only\n' \
       "${header_c2}" >&2
@@ -392,13 +407,15 @@ run_layer_b() {
   while IFS= read -r marker; do
     [[ -z "${marker}" ]] && continue
     in_cells="no"
-    if printf '%s\n' "${block}" | grep -qF -- "${marker}"; then
+    # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+    if printf '%s\n' "${block}" | drain_after grep -qF -- "${marker}"; then
       in_cells="yes"
     fi
     has_footnote="no"
     # Footnote line form: `> <marker> <text>` (marker immediately after "> ").
+    # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
     if grep -qE "^> ." "${MATRIX_FILE}" \
-      && grep -E '^> .' "${MATRIX_FILE}" | grep -qF -- "> ${marker} "; then
+      && grep -E '^> .' "${MATRIX_FILE}" | drain_after grep -qF -- "> ${marker} "; then
       has_footnote="yes"
     fi
     if [[ "${in_cells}" == "yes" && "${has_footnote}" == "no" ]]; then
@@ -418,7 +435,8 @@ run_layer_b() {
   fi
   while IFS= read -r col; do
     [[ -z "${col}" ]] && continue
-    if ! printf '%s\n' "${legend}" | grep -qxF -- "${col}"; then
+    # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+    if ! printf '%s\n' "${legend}" | drain_after grep -qxF -- "${col}"; then
       violations+="B3: matrix column '${col}' is not a Scope Legend scope"$'\n'
     fi
   done <<<"${cols}"

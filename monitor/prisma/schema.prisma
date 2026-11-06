@@ -395,7 +395,7 @@ model Outcome {
   //   - agent-id-missing       : Python label-clarification 분기
   //   - subagent-stop-missing  : R1 인스트루멘테이션 라벨
   //   - completion-missing     : [COMPLETION] block 부재 감지 (관측 라벨)
-  //   - conversation-only      : Tier-3 fallback — turn 0 tool_use (95.1% 노이즈 식별)
+  //   - conversation-only      : Tier-3 fallback — turn 0 tool_use (노이즈 식별)
   //   - truncated_completion   : Tier-2 fallback — open tag + close tag 부재 (실 truncation)
   //   - completion-synthesized : block 부재 → outcome-record.sh 결정론 합성 record (복구 산출물 · 2026-05-29 추가)
   //   - budget-truncation      : subagent 예산 초과 truncation 라벨 (dual-write source · 9번째 값)
@@ -1217,8 +1217,8 @@ model ModelConfig {
 // Wave 2 — Telemetry baseline (계획: clauded-docs/370 v2 후보 F)
 //   F = SkillActivation — agent activation 분포 측정 (Wave m9z3 cleanup 이전 skill+agent
 //       통합이었으나, Claude Code framework 가 Skill activation event 미지원 확인 →
-//       skill_name 컬럼·인덱스 drop · agent activation 단일 sink 로 좁힘. 1703 row 중
-//       skill_name nonempty 단 1건 (smoke-test) — 회귀 영향 없음).
+//       skill_name 컬럼·인덱스 drop · agent activation 단일 sink 로 좁힘. skill_name
+//       nonempty 행은 smoke-test 잔여분뿐 — 회귀 영향 없음).
 //   적재 빈도 가정 ≈ 100+ rows/hour → BigInt id · 시간축 + 이름축 + 필터축 index 의무.
 // ============================================================================
 
@@ -1239,7 +1239,7 @@ model SkillActivation {
   selected      Boolean
   /// 0.000 – 1.000 confidence · optional (소스가 score 미제공 시 NULL)
   matchScore    Decimal? @map("match_score") @db.Decimal(4, 3)
-  /// 위임 추적 ID (orchestrator-role.md CID 포맷 — YYYY-MM-DDTHHMM_slug_xxxx)
+  /// 위임 추적 ID (skills/glass-atrium-ops-orchestrator-role.md CID 포맷 — YYYY-MM-DDTHHMM_slug_xxxx)
   cid           String?  @db.VarChar(96)
   /// 자유 형식 (e.g., user intent summary, fallback reason)
   metadata      Json?    @db.JsonB

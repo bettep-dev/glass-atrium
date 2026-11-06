@@ -42,6 +42,7 @@ setup() {
   cp "${REAL_SCRIPT}" "${SCRIPT}"
   cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
   cp "${REAL_SPINE%/*}/path-guard.sh" "${WORK}/scripts/lib/path-guard.sh"
+  cp "${REAL_SPINE%/*}/tracked-paths.sh" "${WORK}/scripts/lib/tracked-paths.sh"
 
   git -C "${WORK}" init -q
   git -C "${WORK}" config user.email bats@test.local
@@ -182,6 +183,21 @@ track_index_only() {
   run "${SCRIPT}"
   [[ "${status}" -eq 3 ]] || return 1
   [[ "${output}" == *"not a git work tree"* ]] || return 1
+}
+
+@test "derive: an absent tracked-path oracle exits 7 and prints no map" {
+  seed_history
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/scripts/lib/tracked-paths.sh"; fi
+  run --separate-stderr "${SCRIPT}"
+  [[ "${status}" -eq 7 ]] || {
+    echo "status ${status}: ${stderr}"
+    return 1
+  }
+  [[ "${stderr}" == *'tracked-paths.sh required'* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  [[ -z "${output}" ]] || return 1
 }
 
 @test "derive: a spine that cannot load its path guard exits 7 and prints no map" {

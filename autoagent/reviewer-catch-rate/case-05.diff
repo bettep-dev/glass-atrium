@@ -1,0 +1,14 @@
+diff --git a/monitor/src/server/retry-delay.ts b/monitor/src/server/retry-delay.ts
+new file mode 100644
+index 0000000..26c7eb8
+--- /dev/null
++++ b/monitor/src/server/retry-delay.ts
+@@ -0,0 +1,8 @@
++/** Delay before retry `attempt` (1-based): doubles from the base up to the cap, plus up to one base of jitter. */
++export function getRetryDelayMs(attempt: number, random: () => number = Math.random): number {
++  const backoffBaseMs = 250;
++  const backoffCapMs = 8_000;
++  const backoffExponent = Math.max(0, attempt - 1);
++  const delayMs = Math.min(backoffCapMs, backoffBaseMs * 2 ** backoffExponent);
++  return delayMs + Math.floor(random() * backoffBaseMs);
++}

@@ -391,6 +391,7 @@ PY
   assert_ok
   assert_has "the task writes a hook"
   assert_has "scoped/hook.md"
+  assert_has "first action under that condition"
   # The pointer carries no body, and a rules/glass-atrium/ conditional is host-delivered.
   assert_lacks "Hook Capability Contract"
   assert_lacks "shared-self-improve-hygiene"

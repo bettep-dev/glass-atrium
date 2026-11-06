@@ -129,9 +129,6 @@ function ScreenCost({ onNav }) {
           - .cost-foot: 카드 하단 footnote/helper line — fs-meta --dim (text-faint mono 보다 한 단 밝게, 읽기용).
           - .kpi-hint --dim override: KPI 타일 sub-caption 을 --faint 에서 --dim 으로 (ui.jsx 정의 셀프 보존, cost 화면만 승격). */}
       <style>{`
-        @keyframes skelPulseC { 0%,100%{opacity:.7} 50%{opacity:.35} }
-        .skel-pulse-c { animation: skelPulseC 1.4s ease-in-out infinite; }
-        @media (prefers-reduced-motion: reduce) { .skel-pulse-c { animation: none; } }
         .cost-tbl tbody td { color: rgb(var(--dim)); }
         .cost-tbl tbody td.num { color: rgb(var(--dim)); }
         .cost-foot { font-size: var(--fs-meta); line-height: 1.5; color: rgb(var(--dim)); }
@@ -140,26 +137,24 @@ function ScreenCost({ onNav }) {
       <div className="flex-shrink-0">
         <PageHeader
           title="Cost & usage"
-          right={
-            <>
-              <div className="seg" role="group" aria-label="Time range">
-                {COST_PERIODS.map((p) => (
-                  <button
-                    key={p.value}
-                    type="button"
-                    className={days === p.value ? 'active' : ''}
-                    disabled={isBusy && days !== p.value}
-                    onClick={() => setDays(p.value)}
-                    aria-pressed={days === p.value}
-                    aria-label={`Last ${p.label}`}>
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-              <RefreshButton isBusy={isBusy} hasRead={asOfAt !== null} onRefresh={triggerRefresh} label="Refresh cost data"/>
-              <FreshnessStamp {...freshnessInput}/>
-            </>
+          freshness={<FreshnessStamp {...freshnessInput}/>}
+          range={
+            <div className="seg" role="group" aria-label="Time range">
+              {COST_PERIODS.map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  className={days === p.value ? 'active' : ''}
+                  disabled={isBusy && days !== p.value}
+                  onClick={() => setDays(p.value)}
+                  aria-pressed={days === p.value}
+                  aria-label={`Last ${p.label}`}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
           }
+          refresh={<RefreshButton isBusy={isBusy} hasRead={asOfAt !== null} onRefresh={triggerRefresh} label="Refresh cost data"/>}
         />
       </div>
 
@@ -210,7 +205,7 @@ function ScreenCost({ onNav }) {
             <TokenStackedBody state={tokenState} days={days} onRetry={triggerRefresh}
               failures={sourceFailures}/>
           </RefreshingRegionC>
-          <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-5">
+          <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-4">
             <CacheHitBody state={cacheState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
           </RefreshingRegionC>
         </Disclosure>
@@ -218,7 +213,7 @@ function ScreenCost({ onNav }) {
         {/* both cards fit the 920px lg column at 2:1 → split from lg (a 1:1 half overlaps the stop-reason table); the decision pair's session table does not, so it keeps xl */}
         <SplitRow ratio="2:1" layout="equal" className="lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <Disclosure kind="status" level={3} title="Turn statistics" sub="Stop reasons and turn counts"
-            className="cost-inst">
+            isFlush={window.UI.hasRegionRows(turnState, turnState.data?.stop_reasons ?? [])} className="cost-inst">
             <RefreshingRegionC id={COST_REGION_IDS.turns} states={[turnState]}>
               <TurnStatsBody state={turnState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
             </RefreshingRegionC>
@@ -387,7 +382,7 @@ function AlarmLaneC({ rows }) {
       {rows.map((r) => (
         <div key={r.key} role="alert" className="alarm-row" data-tone={r.tone}>
           <span className="alarm-row-glyph"><Icon name="warn" size={16}/></span>
-          <div className="fs-body text-ink">{r.text}</div>
+          <div className="fs-body text-ink"><window.UI.DayTokens>{r.text}</window.UI.DayTokens></div>
         </div>
       ))}
     </div>
@@ -567,18 +562,19 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
         <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
           focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures} className="mb-4"/>
       )}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-card mb-4">
         <CostTileC
+          id="cost-tile-today"
           label="Today vs. normal"
           windowTag="today"
           status={getTileStatus(kpiState, hot.ratio, false)}
           value={hot.todayCost === null ? '—' : formatUsdC(hot.todayCost)}
           hint={hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`}
-          unavailableNote="No cost in the last 7 days — no normal to compare against.">
-          <HotBulletC hot={hot}/>
-        </CostTileC>
+          unavailableNote="No cost in the last 7 days — no normal to compare against."
+          delta={<HotBulletC hot={hot}/>}/>
 
         <CostTileC
+          id="cost-tile-window"
           label={`Cost, last ${trendDays} days`}
           windowTag={`${trendDays}d`}
           status={getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty)}
@@ -586,46 +582,54 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
           hint={windowTotal.total === null
             ? ''
             : `${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
-          labelId="cost-tile-window-label"
           info="Recorded cost: the sum of the cost events recorded on each day of the window, today's partial day included. The average divides that total by the days shown; the peak is the costliest single day."
-          unavailableNote="Trend payload carries no cost figure.">
-          <TrendDeltaC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>
-        </CostTileC>
+          unavailableNote="Trend payload carries no cost figure."
+          delta={<TrendDeltaC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>}/>
 
         <CostTileC
+          id="cost-tile-per-task"
           label="Cost per finished task"
           windowTag="7d fixed"
           status={getTileStatus(kpiState, costPerDone, false)}
           value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
           hint={`7-day cost / ${formatIntC(doneCount)} finished`}
-          unavailableNote="No finished task in the last 7 days.">
-          <div className="cost-foot mt-1.5">Fixed 7-day window — the range above does not change it.</div>
-        </CostTileC>
+          unavailableNote="No finished task in the last 7 days."
+          foot={<div className="cost-foot"><window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens></div>}/>
 
         <CostTileC
+          id="cost-tile-cache"
           label="Cache share of cost"
           windowTag={`${modelDays}d`}
           status={getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty)}
           value={cacheShare.share === null ? '—' : `${(cacheShare.share * 100).toFixed(0)}%`}
           hint={cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`}
-          unavailableNote="No priced model cost in this window.">
-          <div className="cost-foot mt-1.5">
-            {getCacheTotalNoteC({
-              listTotal: cacheShare.totalCost,
-              recordedTotal: trendDays === modelDays ? windowTotal.total : null,
-              days: modelDays,
-            })}
-          </div>
-        </CostTileC>
+          unavailableNote="No priced model cost in this window."
+          foot={
+            <div className="cost-foot">
+              {/* the window ("30 days") stays one token; the sentence wraps around it */}
+              <window.UI.DateRange range={getDaySpanC(modelDays)}>
+                {getCacheTotalNoteC({
+                  listTotal: cacheShare.totalCost,
+                  recordedTotal: trendDays === modelDays ? windowTotal.total : null,
+                  days: modelDays,
+                })}
+              </window.UI.DateRange>
+            </div>
+          }/>
       </div>
     </>
   );
 }
 
+// a day count + its unit — one unbreakable token in the copy that names it
+function getDaySpanC(days) {
+  return `${days} days`;
+}
+
 // List-price total set beside the recorded total only when both read one window → equal figures never read as a contradiction.
 function getCacheTotalNoteC({ listTotal, recordedTotal, days }) {
   const listLabel = formatUsdC(listTotal);
-  const base = `of ${listLabel} at list token prices, last ${days} days`;
+  const base = `of ${listLabel} at list token prices, last ${getDaySpanC(days)}`;
   if (recordedTotal === null) return base;
   return listLabel === formatUsdC(recordedTotal)
     ? `${base} — matches the recorded total`
@@ -641,32 +645,32 @@ function getShownDays(state, requestedDays) {
   return match ? Number(match[1]) : requestedDays;
 }
 
+// Cost tile status → the shared KPI state: a window holding nothing and an underivable measure both read as the unknown dash.
+const COST_TILE_KPI_STATE = { loading: 'loading', error: 'error', empty: 'empty', unavailable: 'empty' };
+
 /**
- * Cost-local tile shell — the shared KPI atom is a single-value button, tile 1 carries a bar + a verdict.
- * All four tiles take this one shell rather than mixing two tile idioms in one band.
+ * One Cost tile on the shared KPI anatomy — the window tag rides the label row's right edge on every tile,
+ * so the four windows compare at one glance; a non-ready tile says why in its hint, under the unknown dash.
+ * delta → the comparison under the value (tile 1's bar, tile 2's prior-window line) · foot → the tile's footnote.
  */
-function CostTileC({ label, labelId, info, windowTag, status, value, hint, unavailableNote, children }) {
-  const { CardInfo, KpiValue } = window.UI;
+function CostTileC({ id, label, info, windowTag, status, value, hint, unavailableNote, delta = null, foot = null }) {
+  const { KPI, CardInfo, DayTokens } = window.UI;
   const isReady = status === 'ready';
-  const note = getTileNote(status, unavailableNote);
+  // the hint or the state note, one plain string → it keeps its title and clamp, and its day tokens stay whole
+  const note = isReady ? (hint || null) : getTileNote(status, unavailableNote);
+  // the ⓘ is described by the label alone; the tile's group name is the whole label row, window tag included
+  const nameId = `${id}-name`;
 
   return (
-    <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
-      {/* window tag at the label's right edge on every tile → the four windows compare at one glance */}
-      {/* one control-height label row on every tile → an ⓘ on one tile never drops its value below its peers' */}
-      <div className="flex items-center justify-between gap-2 min-h-[32px]">
-        <div className="flex items-center gap-1 min-w-0">
-          <div id={labelId} className="kpi-label">{label}</div>
-          {info && <CardInfo label={`How ${label} is counted`} describedBy={labelId}>{info}</CardInfo>}
-        </div>
-        <span className="kpi-window fs-meta font-mono text-faint shrink-0">{windowTag}</span>
-      </div>
-      <KpiValue>
-        {status === 'loading' ? <SkelC w={110} h={26}/> : isReady ? value : '—'}
-      </KpiValue>
-      {isReady && hint && <div className="fs-meta kpi-hint mt-1">{hint}</div>}
-      {isReady ? children : note && <div className="cost-foot mt-1.5">{note}</div>}
-    </div>
+    <KPI labelId={`${id}-label`} label={<span id={nameId}>{label}</span>} labelTitle={label}
+      aside={windowTag} asideClassName="kpi-window ml-auto fs-meta font-mono text-faint"
+      info={info && <CardInfo label={`How ${label} is counted`} describedBy={nameId}>{info}</CardInfo>}
+      state={COST_TILE_KPI_STATE[status] ?? 'ready'} loadingLabel={label.toLowerCase()}
+      value={isReady ? value : undefined}
+      delta={isReady ? delta : null}
+      hint={note && <DayTokens>{note}</DayTokens>} hintTitle={typeof note === 'string' ? note : undefined}
+      isHintClamped={typeof note === 'string'} hintFace=""
+      foot={isReady ? foot : null}/>
   );
 }
 
@@ -680,7 +684,7 @@ function HotBulletC({ hot }) {
   const valueNorm = Math.min(hot.ratio / 2, 1);
 
   return (
-    <div className="mt-2">
+    <div>
       <BulletBar
         value={valueNorm}
         target={0.5}
@@ -688,7 +692,7 @@ function HotBulletC({ hot }) {
         ariaLabel={`Today ${formatUsdC(hot.todayCost)} against a 7-day normal of ${formatUsdC(hot.normalDaily)} per day`}
         showValue={false}
       />
-      <div className="cost-foot mt-1.5">{getTileVerdictTextC(hot)}</div>
+      <div className="cost-foot mt-1.5"><window.UI.DayTokens>{getTileVerdictTextC(hot)}</window.UI.DayTokens></div>
     </div>
   );
 }
@@ -699,15 +703,16 @@ function TrendDeltaC({ delta, prior, noun }) {
     return <div className="cost-foot mt-1.5">No comparison — the prior window did not arrive with this range.</div>;
   }
   const span = `the ${prior.days} days before ${prior.period_end.slice(5)}`;
+  const { DayTokens } = window.UI;
   if (delta === null) {
-    return <div className="cost-foot mt-1.5">{`No comparison — ${span} held no ${noun}.`}</div>;
+    return <div className="cost-foot mt-1.5"><DayTokens>{`No comparison — ${span} held no ${noun}.`}</DayTokens></div>;
   }
   const [glyph, direction] = delta > 0 ? ['\u25b2', 'up'] : delta < 0 ? ['\u25bc', 'down'] : ['\u2014', 'unchanged'];
   return (
     <div className="cost-foot mt-1.5">
       <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
       <span className="sr-only">{direction} </span>
-      {`${Math.abs(delta).toFixed(0)}% vs ${span}, cut at this time of day`}
+      <DayTokens>{`${Math.abs(delta).toFixed(0)}% vs ${span}, cut at this time of day`}</DayTokens>
     </div>
   );
 }
@@ -1328,7 +1333,7 @@ function isUnattributedModel(model) {
 }
 
 function ModelCostCard({ state, days, failures, onRetry, onNav }) {
-  const { Card, Pill } = window.UI;
+  const { Badge, Card } = window.UI;
   const [isShowingAll, setShowingAll] = useStateC(false);
 
   const rows = state.status === 'ready' ? (state.data?.rows ?? []) : [];
@@ -1345,6 +1350,7 @@ function ModelCostCard({ state, days, failures, onRetry, onNav }) {
     <Card
       size={CARD_SIZE.MODEL}
       title="Cost by model"
+      isFlush={window.UI.hasRegionRows(state, state.data?.rows ?? [])}
       info="Cost per agent is not available — cost events carry a model, not an agent. A session using several models counts under each, so the Total row carries no session count."
       foot={other && (
         <ModelCostFootC other={other} modelCount={rows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
@@ -1352,9 +1358,10 @@ function ModelCostCard({ state, days, failures, onRetry, onNav }) {
       right={
           <div className="flex items-center gap-2">
             {fallbackCount > 0 && (
-              <span title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
-                <Pill>{fallbackCount} est. rate</Pill>
-              </span>
+              <Badge role="metadata" className="pill--ctl-h"
+                title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
+                {fallbackCount} est. rate
+              </Badge>
             )}
             <button type="button" className="btn sm" onClick={() => onNav('model-config')}>
               Models &amp; budgets ›
@@ -1430,9 +1437,12 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
 
   return (
     <>
-      <SectionLabel level={3} className="mb-2">By token type</SectionLabel>
-      <CategoryShareRowC rows={computeCategoryCostRows(modelRows)}/>
-      <SectionLabel level={3} className="mb-2 mt-4">By model</SectionLabel>
+      {/* the body is flush for the ledger → the share block and the footnote take the card padding themselves */}
+      <div className="px-4 pt-4">
+        <SectionLabel level={3} className="mb-2">By token type</SectionLabel>
+        <CategoryShareRowC rows={computeCategoryCostRows(modelRows)}/>
+        <SectionLabel level={3} className="mb-2 mt-4">By model</SectionLabel>
+      </div>
       <table className="tbl cost-tbl">
         <caption className="sr-only">{`Cost by model, last ${days} days — the costliest ${top.length} of ${modelRows.length}`}</caption>
         <thead>
@@ -1459,7 +1469,7 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
         </tfoot>
       </table>
       {/* Named gap, never proxied — the per-agent gap sits behind the card's info button. */}
-      <div className="cost-foot mt-2">Multi-model sessions count once per model</div>
+      <div className="cost-foot px-4 pt-2 pb-4">Multi-model sessions count once per model</div>
     </>
   );
 }
@@ -1469,6 +1479,7 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
  * The default table stays at the four columns a spend decision needs.
  */
 function ModelCostRow({ r }) {
+  const { DisclosureChevron } = window.UI;
   const [expanded, setExpanded] = useStateC(false);
   const avgPerSession = r.session_count > 0 ? r.cost_usd / r.session_count : null;
 
@@ -1478,12 +1489,12 @@ function ModelCostRow({ r }) {
         <td>
           <button
             type="button"
-            className="flex items-center gap-2 text-left"
+            className="group inline-target gap-1 text-left"
             aria-expanded={expanded}
             title={r.fullModel}
             onClick={() => setExpanded((v) => !v)}>
-            <span className="text-faint" aria-hidden="true">{expanded ? '−' : '+'}</span>
-            {r.model}
+            <DisclosureChevron isOpen={expanded}/>
+            <span>{r.model}</span>
           </button>
         </td>
         <td className="num">{formatUsdC(r.cost_usd)}</td>
@@ -1774,11 +1785,12 @@ function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
     <Card
       size={CARD_SIZE.SESSION}
       title="Most expensive sessions"
+      isFlush={window.UI.hasRegionRows(state, rollup.top)}
       sub={state.status === 'ready'
         ? concentrationText || `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}`
         : undefined}
       right={truncated
-        ? <span title={`Showing ${sessions.length} of ${totalCount} sessions`}><Pill>{`${sessions.length} of ${totalCount} loaded`}</Pill></span>
+        ? <Pill className="pill--ctl-h" title={`Showing ${sessions.length} of ${totalCount} sessions`}>{`${sessions.length} of ${totalCount} loaded`}</Pill>
         : null}
       foot={rollup.other && (
         <>
@@ -2083,7 +2095,7 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
           {critDays > 0 && (
             <div className="mb-2">
               {/* The lane owns this alarm; inside the disclosure the count is a neutral fact. */}
-              <Badge role="metadata">{critDays} of {dayCount} days over threshold</Badge>
+              <Badge role="metadata">{critDays} of <window.UI.NoWrap>{dayCount} days</window.UI.NoWrap> over threshold</Badge>
             </div>
           )}
           <div style={{ width: '100%', height: window.UI.CARD_SLOTS.M.plotPx }}
@@ -2095,9 +2107,9 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
         </>
       ) : (
         <div className="fs-body text-dim text-center py-8" aria-label="no parse_error — chart omitted">
-          No parse_error in the last {days} days.
+          No parse_error in the last <window.UI.NoWrap>{days} days</window.UI.NoWrap>.
           <div className="fs-meta text-faint mt-2 font-mono">
-            {rows.length} days analyzed · {formatIntC(totalEvents)} events total
+            <window.UI.NoWrap>{rows.length} days</window.UI.NoWrap> analyzed · {formatIntC(totalEvents)} events total
           </div>
         </div>
       )}
@@ -2370,7 +2382,7 @@ function TurnAggregateRow({ turns, sessionPopulation }) {
   ];
 
   return (
-    <div className="mb-4">
+    <div className="px-4 mb-4">
       <div className="flex items-baseline gap-2 flex-wrap">
         {headline.value && <span className="font-mono fs-display font-semibold tracking-tight">{headline.value}</span>}
         <span className="fs-meta text-dim">{headline.note}</span>
@@ -2397,7 +2409,7 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
 
   return (
     <table className="tbl cost-tbl">
-      <caption className="fs-meta text-dim text-left pb-2">
+      <caption className="fs-meta text-dim text-left px-4 pb-2">
         Counted once per stop reason
       </caption>
       <thead>
@@ -2460,25 +2472,6 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
 function EmptyStateC({ message }) {
   const { EmptyState } = window.UI;
   return <EmptyState message={message} />;
-}
-
-// 인라인 skeleton — sunken 토큰 pulse placeholder.
-function SkelC({ w = '100%', h = 14, style }) {
-  return (
-    <span
-      aria-hidden="true"
-      className="skel-pulse-c"
-      style={{
-        display: 'inline-block',
-        width: w,
-        height: h,
-        background: 'rgb(var(--sunken))',
-        borderRadius: 4,
-        opacity: 0.7,
-        ...style,
-      }}
-    />
-  );
 }
 
 // 순수 helper

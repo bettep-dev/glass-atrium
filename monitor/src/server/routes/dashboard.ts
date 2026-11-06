@@ -433,7 +433,7 @@ function decimalToNumber(value: Prisma.Decimal | null): number {
 // Narrows raw PG `core.DaemonStatus` enum string into the typed union.
 // Future enum additions on the DB side that aren't reflected here surface as
 // `null` (forces explicit type extension rather than silent type leakage).
-const KNOWN_DAEMON_STATUSES: ReadonlySet<DaemonStatusValue> = new Set([
+export const KNOWN_DAEMON_STATUSES: ReadonlySet<DaemonStatusValue> = new Set([
   "ok",
   "partial",
   "error",

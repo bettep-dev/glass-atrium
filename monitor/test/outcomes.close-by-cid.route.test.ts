@@ -1,6 +1,6 @@
 // Regression tests for PATCH /api/outcomes/close-by-cid — the set-operation sibling of
 // PATCH /api/outcomes/:id/close.
-// Runner: npx tsx --test test/outcomes.close-by-cid.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/outcomes.close-by-cid.route.test.ts
 //
 // Pinned invariants:
 //   (S1) Every OPEN done_with_concerns row sharing the cid closes in ONE call; the

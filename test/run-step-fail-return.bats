@@ -51,7 +51,7 @@ setup() {
   STUB_BIN="${SANDBOX}/bin"
   DB_DRIVER="${SANDBOX}/db-driver.sh"
   GATE_DRIVER="${SANDBOX}/gate-driver.sh"
-  mkdir -p "${SANDBOX_ROOT}/monitor/scripts" "${STUB_BIN}"
+  mkdir -p "${SANDBOX_ROOT}/monitor/scripts" "${STUB_BIN}" "${SANDBOX}/tmp"
 
   # psql stub: the setup_database db-exists probe prints PSQL_DB_EXISTS (empty = DB absent → control
   # falls through to run_db_setup; "1" = DB present); exit 0 so `|| true` is a no-op. NEVER touches a
@@ -122,17 +122,28 @@ DRV
 }
 
 teardown() {
+  [[ -n "${BATS_TEST_COMPLETED:-}" || -z "${SANDBOX:-}" ]] || print_step_captures
   if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
+# A driver that dies inside run_step leaves its FATAL line only in the step capture — print every one.
+print_step_captures() {
+  local capture
+  for capture in "${SANDBOX}"/tmp/ga-step.*; do
+    [[ -f "${capture}" ]] || continue
+    printf -- '--- %s\n' "${capture##*/}"
+    cat -- "${capture}"
+  done
+}
+
 # drive_db OSS_RC [NAME=VALUE…] — GA_LIB_DIR points ga_init_env's lib source at the real repo (the
-# sandbox root has none). GA_TARGET_HOME, GA_DATA_ROOT and AUTOAGENT_REPORTS_DIR all resolve inside
-# the sandbox, so no row writes a live path; trailing NAME=VALUE pairs override the defaults (env
-# applies them in order).
+# sandbox root has none). GA_TARGET_HOME, GA_DATA_ROOT, AUTOAGENT_REPORTS_DIR and TMPDIR all resolve
+# inside the sandbox, so no row writes a live path; trailing NAME=VALUE pairs override the defaults (env
+# applies them in order). GA_PG_SOCKET is stripped: an ambient off-/tmp seam trips the DB-setup guard.
 drive_db() {
   local oss_rc="${1:-6}"
   shift || true
-  run env -u GA_SKIP_DB_SETUP -u DATABASE_URL -u ATRIUM_UPDATE_DB_NAME \
+  run env -u GA_SKIP_DB_SETUP -u DATABASE_URL -u ATRIUM_UPDATE_DB_NAME -u GA_PG_SOCKET \
     GA_REAL="${GA}" \
     GA_SANDBOX_ROOT="${SANDBOX_ROOT}" \
     GA_LIB_DIR="${GA}/scripts/lib" \
@@ -142,6 +153,7 @@ drive_db() {
     AUTOAGENT_REPORTS_DIR="${SANDBOX}/reports" \
     OSS_DB_EXIT="${oss_rc}" \
     OSS_DB_RAN="${SANDBOX}/oss-ran" \
+    TMPDIR="${SANDBOX}/tmp" \
     PATH="${STUB_BIN}:${PATH}" \
     "$@" \
     bash "${DB_DRIVER}"
@@ -153,6 +165,7 @@ drive_gate() {
     GA_SANDBOX_ROOT="${SANDBOX_ROOT}" \
     GA_LIB_DIR="${GA}/scripts/lib" \
     ATRIUM_MONITOR_PORT="16145" \
+    TMPDIR="${SANDBOX}/tmp" \
     PATH="${STUB_BIN}:${PATH}" \
     bash "${GATE_DRIVER}"
 }
@@ -176,6 +189,17 @@ drive_gate() {
   drive_db 0
   [[ "${status}" -eq 0 ]] \
     && [[ "${output}" == *"REACHED_AFTER rc=0"* ]]
+}
+
+@test "setup_database runs to its marker when the caller exports an off-/tmp GA_PG_SOCKET" {
+  # An ambient socket seam must not reach the driver — the fail-closed DB-setup guard would end it.
+  export GA_PG_SOCKET="${SANDBOX}/pgsock"
+  mkdir -p "${GA_PG_SOCKET}"
+  drive_db 0
+  [[ "${status}" -eq 0 && "${output}" == *"REACHED_AFTER rc=0"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 # === Backfill re-arm marker — db-setup leg (setup_database → run_db_setup) =============================
