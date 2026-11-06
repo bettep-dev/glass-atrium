@@ -54,7 +54,7 @@ from fractions import Fraction
 from itertools import groupby, starmap, takewhile
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType, SimpleNamespace
-from typing import TYPE_CHECKING, Literal, NamedTuple, Optional
+from typing import TYPE_CHECKING, Literal, NamedTuple, Optional, TypeVar
 
 # -- Constants --------------------------------------------------------------
 
@@ -15655,6 +15655,11 @@ def run_cycle(
     A writing cycle (skip_loop_emit False) from a code tree that is not its install
     raises InstallRefusedError before any stage, reads included.
 
+    The trial, shadow and A/A stages are each contained: a raise is a named WARN under its
+    stage area and the stages after it still run; a trial-stage raise hands the looks no
+    trial. Graduation is not: a raise there ends the cycle ahead of generation, so no agent
+    whose row an apply may have reached gets a generator call.
+
     Returns the in-memory CycleReport. Caller decides where to persist it.
     """
     if not skip_loop_emit:
@@ -15720,12 +15725,29 @@ def run_cycle(
     )
     if not skip_loop_emit:  # no-write mode (--dry-run) writes no ledger row
         # the trial stage ahead of the looks → a trial takes one only when that stage judged it
-        judged_trials = run_trial_stage()
-        run_shadow_stage(power, report.cycle_date, judged_trials)
+        judged_trials = _run_contained_stage(
+            STAGE_AREA.TRIAL,
+            lambda: run_trial_stage(),
+            frozenset[str](),
+            "no trial takes a look this cycle",
+        )
+        _run_contained_stage(
+            STAGE_AREA.SHADOW,
+            lambda: run_shadow_stage(power, report.cycle_date, judged_trials),
+            None,
+            "the cycle runs on to the A/A stage",
+        )
         # after every decision writer, before graduation, generation and the push
         update_decided_trial_proposals()
-        run_aa_stage(
-            report.cycle_date, manifest_ingest=report.manifest_ingest, agents_dir=agents_dir
+        _run_contained_stage(
+            STAGE_AREA.AA,
+            lambda: run_aa_stage(
+                report.cycle_date,
+                manifest_ingest=report.manifest_ingest,
+                agents_dir=agents_dir,
+            ),
+            None,
+            "the cycle runs on to graduation",
         )
         # the intake above was read before the apply → a called row's agent sits this cycle out
         agent_groups = _drop_graduating_agents(agent_groups, run_graduation_stage())
@@ -15861,6 +15883,20 @@ class GenerationRun(NamedTuple):
     skip_pre_verify: bool
     skip_loop_emit: bool
     power: PowerResult | None = None  # the passes a candidate's pre-registration is sized on
+
+
+_StageResult = TypeVar("_StageResult")
+
+
+def _run_contained_stage(
+    area: str, stage: Callable[[], _StageResult], fallback: _StageResult, scope: str
+) -> _StageResult:
+    """One run_cycle stage: a raise → named WARN under `area`, `fallback` returned."""
+    try:
+        return stage()
+    except Exception as exc:  # noqa: BLE001 — a stage fault never ends the cycle before the next
+        _warn_stage(area, f"the stage raised: {_describe_fault(exc)}", scope)
+        return fallback
 
 
 def _run_generation_loop(

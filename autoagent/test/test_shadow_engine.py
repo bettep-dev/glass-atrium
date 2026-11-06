@@ -4768,6 +4768,53 @@ class CycleWiringTest(_ShadowFixture):
         self.assertEqual(stages, ["ingest", "trial", "shadow", "aa", "graduation"])
         self.assertEqual(handed, [(judged,)])  # the trial stage's set, handed to the looks
 
+    def test_a_stage_that_raises_is_warned_by_name_and_every_stage_after_it_still_runs(
+        self,
+    ) -> None:
+        judged = frozenset({_LIVE_KEY})
+        # the stage that raises, its stage area, the trial set the looks are handed
+        rows: tuple[tuple[str, str, frozenset[str]], ...] = (
+            ("trial", dc.STAGE_AREA.TRIAL, frozenset()),
+            ("shadow", dc.STAGE_AREA.SHADOW, judged),
+            ("aa", dc.STAGE_AREA.AA, judged),
+        )
+        stages: list[str] = []
+        handed: list[object] = []
+        self._open_writing_stages()
+        for raised, area, looked in rows:
+            with self.subTest(raised):
+                stages.clear()
+                handed.clear()
+
+                def _run(
+                    name: str, value: object = None, raised: str = raised
+                ) -> object:
+                    stages.append(name)
+                    if name == raised:
+                        raise RuntimeError(f"{name} probe fault")
+                    return value
+
+                def _run_shadow(*args: object, raised: str = raised) -> object:
+                    handed.append(args[2])
+                    return _run("shadow", raised=raised)
+
+                self._patch("run_trial_stage", lambda: _run("trial", judged))
+                self._patch("run_shadow_stage", _run_shadow)
+                self._patch("run_aa_stage", lambda *args, **kwargs: _run("aa"))
+                self._patch(
+                    "run_graduation_stage", lambda: _run("graduation", frozenset())
+                )
+
+                self._run_cycle(skip_loop_emit=False)
+
+                self.assertEqual(stages, ["trial", "shadow", "aa", "graduation"])
+                self.assertEqual(handed, [looked])
+                self.assertIn(
+                    f"[daemon-cycle] WARN: {area} — the stage raised: RuntimeError: {raised} "
+                    "probe fault;",
+                    self.stderr.getvalue(),
+                )
+
     def test_an_unusable_stored_live_preregistration_leaves_the_cycle_running_through_the_aa_stage(
         self,
     ) -> None:
