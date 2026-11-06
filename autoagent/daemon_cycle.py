@@ -3101,46 +3101,67 @@ def generate_consolidated_proposal(
     """
     target_file = agents_dir / f"{agent}.md"
     if not target_file.exists():
-        return PatchProposal(
-            target_file=str(target_file),
-            rationale=f"target agent file not found: {target_file.name}",
-            proposed_diff="",
-            touched_frontmatter=False,
-            estimated_added_lines=0,
-            raw_response="",
-            parse_mode="skipped",
-        )
-
+        return _get_skipped_proposal(target_file, f"target agent file not found: {target_file.name}")
     if skip_haiku:
-        return PatchProposal(
-            target_file=str(target_file),
-            rationale="skip_haiku=True (test/preflight)",
-            proposed_diff="",
-            touched_frontmatter=False,
-            estimated_added_lines=0,
-            raw_response="",
-            parse_mode="skipped",
-        )
+        return _get_skipped_proposal(target_file, "skip_haiku=True (test/preflight)")
+    return _run_haiku_with_retry(
+        base_prompt=_build_consolidated_prompt(agent, patterns, target_file),
+        target_file=target_file,
+        label_hint=patterns[0].label if patterns else agent,
+        claude_bin=claude_bin,
+        timeout_sec=timeout_sec,
+    )
 
+
+def _get_skipped_proposal(target_file: Path, rationale: str) -> PatchProposal:
+    """An empty proposal no generator call authored."""
+    return PatchProposal(
+        target_file=str(target_file),
+        rationale=rationale,
+        proposed_diff="",
+        touched_frontmatter=False,
+        estimated_added_lines=0,
+        raw_response="",
+        parse_mode="skipped",
+    )
+
+
+def _build_consolidated_prompt(agent: str, patterns: list[Pattern], target_file: Path) -> str:
+    """The consolidated prompt: the agent's signals, its optimizer-side memory and its whole body."""
     # Whole body: a head slice hides the editable regions the model must edit into.
     agent_text = target_file.read_text(encoding="utf-8")
     signals_block = _render_signals_block(patterns, _fetch_pattern_evidence(agent))
+    avoid_patterns_block = _get_avoid_patterns_block(agent)
+    attempts = _fetch_prior_attempts(agent) or []
+    return _CONSOLIDATED_PROMPT_TEMPLATE.format(
+        pattern_agent=agent,
+        signals_block=signals_block,
+        avoid_patterns_block=avoid_patterns_block,
+        prior_attempts_block=_get_prior_attempts_block(attempts),
+        landed_history_block=_get_landed_history_block(agent, attempts),
+        agent_path=str(target_file),
+        agent_excerpt=agent_text,
+        agent_basename=target_file.name,
+    )
 
-    # Optimizer-side memory (SkillOpt R2): prepend this agent's known-bad
-    # diff shapes. PG-off / empty-history → "" → block omitted cleanly.
+
+def _get_avoid_patterns_block(agent: str) -> str:
+    """Optimizer-side memory (SkillOpt R2): this agent's known-bad diff shapes; PG-off or an
+    empty history → "" → block omitted cleanly."""
     failures = _fetch_pre_verify_failures(agent)
     failures_body = _render_pre_verify_failures_block(failures) if failures else ""
-    avoid_patterns_block = (
+    return (
         "diff types that previously failed pre_verify for this agent "
         "(patterns to avoid):\n" + failures_body + "\n"
         if failures_body
         else ""
     )
 
-    # Feedback half: what this agent already trialled, then what it landed with no ledger row
-    attempts = _fetch_prior_attempts(agent) or []
+
+def _get_prior_attempts_block(attempts: list[PriorAttempt]) -> str:
+    """Feedback half: what this agent already trialled; "" when it trialled nothing."""
     attempts_body = _render_prior_attempts_block(attempts)
-    prior_attempts_block = (
+    return (
         "prior trial attempts for this agent, with their measured effect from the trial "
         "ledger (an entry marked LANDED is already in the body — build on it, never "
         "re-propose it; an entry marked NOT LANDED was trialled and did not land — never "
@@ -3148,6 +3169,10 @@ def generate_consolidated_proposal(
         if attempts_body
         else ""
     )
+
+
+def _get_landed_history_block(agent: str, attempts: list[PriorAttempt]) -> str:
+    """Feedback half: what this agent landed with no ledger row; "" when nothing landed."""
     # SQL already drops trialled ids; this keeps one block per id whatever the reader returns
     attempted = {attempt.proposal_id for attempt in attempts}
     landed = [
@@ -3156,33 +3181,13 @@ def generate_consolidated_proposal(
         if proposal_id not in attempted
     ]
     landed_body = _render_landed_history_block(landed)
-    landed_history_block = (
+    return (
         "rules that previously LANDED for this agent "
         "(already in the body — build on them, never re-propose them):\n"
         + landed_body
         + "\n"
         if landed_body
         else ""
-    )
-
-    base_prompt = _CONSOLIDATED_PROMPT_TEMPLATE.format(
-        pattern_agent=agent,
-        signals_block=signals_block,
-        avoid_patterns_block=avoid_patterns_block,
-        prior_attempts_block=prior_attempts_block,
-        landed_history_block=landed_history_block,
-        agent_path=str(target_file),
-        agent_excerpt=agent_text,
-        agent_basename=target_file.name,
-    )
-
-    label_hint = patterns[0].label if patterns else agent
-    return _run_haiku_with_retry(
-        base_prompt=base_prompt,
-        target_file=target_file,
-        label_hint=label_hint,
-        claude_bin=claude_bin,
-        timeout_sec=timeout_sec,
     )
 
 
@@ -9063,20 +9068,27 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> Pow
     for pattern in keyed:
         verdict, detail, power_pass = _get_pattern_power_verdict(pattern, inputs, windows)
         if verdict is None:
-            _warn_pattern_skip(
-                pattern.agent,
-                pattern.raw_line,
-                event_ts,
-                eval_result=PAIR_FAIL_EVAL,
-                reason=detail,
-                skip_loop_emit=skip_loop_emit,
-            )
+            _warn_floor_fail_skip(pattern, detail, event_ts, skip_loop_emit=skip_loop_emit)
             continue
         counts[verdict] += 1
         if power_pass is not None:
             passes.append(power_pass)
         _send_power_verdict(pattern, verdict, detail, event_ts, skip_loop_emit=skip_loop_emit)
     return PowerResult(counts, passes, windows)
+
+
+def _warn_floor_fail_skip(
+    pattern: Pattern, reason: str, event_ts: str, *, skip_loop_emit: bool
+) -> None:
+    """A floor-failing keyed pattern's named stale-pattern-skip, carrying PAIR_FAIL_EVAL."""
+    _warn_pattern_skip(
+        pattern.agent,
+        pattern.raw_line,
+        event_ts,
+        eval_result=PAIR_FAIL_EVAL,
+        reason=reason,
+        skip_loop_emit=skip_loop_emit,
+    )
 
 
 def _get_pattern_power_verdict(
@@ -10928,11 +10940,7 @@ def run_trial_stage() -> frozenset[str]:
     trials = open_trials.current
     judgment = _judge_stored_rows(trials)
     trials = [trial for trial in trials if trial.key not in judgment.voided]
-    past_bound = [
-        trial
-        for trial in trials
-        if _is_unstarted_past_bound(trial, is_judged=trial.key not in judgment.unjudged)
-    ]
+    past_bound = _get_unstarted_past_bound(trials, judgment.unjudged)
     for trial in past_bound:
         _void_unstarted_trial(trial)
     unwritten = judgment.unjudged | {trial.key for trial in past_bound}
@@ -10946,21 +10954,45 @@ class OpenTrials(NamedTuple):
     invalidated: list[TrialCanary]  # sized on an A/A start invalidated since → voided, unjudged
 
 
+def _get_unstarted_past_bound(
+    trials: list[TrialCanary], unjudged: frozenset[str]
+) -> list[TrialCanary]:
+    """The trials unstarted at or past their stated horizon (_is_unstarted_past_bound)."""
+    return [
+        trial
+        for trial in trials
+        if _is_unstarted_past_bound(trial, is_judged=trial.key not in unjudged)
+    ]
+
+
 def _get_open_trial_canaries() -> OpenTrials | None:
     """The open live trials, split on their A/A start's invalidation; None = unreadable, WARNed."""
+    trials = _get_trial_canaries()
+    if trials is None:
+        return None
+    return _get_split_open_trials(trials)
+
+
+def _get_trial_canaries() -> list[TrialCanary] | None:
+    """The open live trials as read; None after a WARN naming the unreadable read."""
     if not HAS_PG_LOOP_WRITE:
         _warn_trial(
             "open live trials unreadable: PG helper import failed", "no trial canary written"
         )
         return None
     try:
-        trials = _read_trial_canaries()
+        return _read_trial_canaries()
     except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
         _warn_trial(
             f"open live trials unreadable: {_describe_fault(exc)}",
             "no trial canary written this cycle",
         )
         return None
+
+
+def _get_split_open_trials(trials: list[TrialCanary]) -> OpenTrials | None:
+    """`trials` split on their A/A start's invalidation; None when the invalidations are
+    unreadable, WARNed."""
     invalidated = (
         _get_invalidated_trial_keys(STAGE_AREA.TRIAL, "no trial canary written this cycle")
         if trials
