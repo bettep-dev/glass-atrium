@@ -954,8 +954,7 @@ class DesignEffectReadLivePgTest(_StageFixture):
         event = dc.TRIAL_LEDGER.EVENT
         raised = _build_design_effect_payload(_DESIGN_EFFECT * 1.2)
         latest = _DAY - timedelta(days=1)
-        # passed A/As 1-4: older and higher · a tie at the latest instant broken by insertion
-        # order · a higher row on the other key after it · another event last
+        # A/As 1-4: older and higher · latest-instant tie, insertion order · other key higher · other event
         self._insert_design_effect(_DAY - timedelta(days=3), 1, raised)
         self._insert_design_effect(latest, 2, raised)
         self._insert_design_effect(latest, 3, _build_design_effect_payload())

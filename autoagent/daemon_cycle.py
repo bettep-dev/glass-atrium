@@ -2122,8 +2122,8 @@ class PatchResult:
     learning_pattern_id: int | None = None
     # GENERATOR_INPUT_VERSION as build_patch_result stamps it; None on a row built elsewhere.
     generator_input_version: str | None = None
-    # A bound candidate's live pre-registration body, plain dicts only (asdict turns a
-    # NamedTuple into an array); the push writes it with the proposal in one transaction.
+    # bound candidate's pre-registration body — plain dicts only (asdict: NamedTuple → array)
+    # written by the push with the proposal, one transaction
     preregistration_payload: dict | None = None
 
 
@@ -8655,7 +8655,7 @@ def drop_reject_streak_patterns(
         agent: pattern target agent (group key).
         patterns: the agent's intake patterns (freq DESC).
         rows: pre-fetched _fetch_proposal_history result — _drop_gated_patterns
-            shares one fetch across both proposal-history gates (read-only
+            shares one fetch across every proposal-history gate (read-only
             here). None → self-fetch (backward-compatible for direct callers).
 
     Returns:
@@ -9426,8 +9426,8 @@ _AA_INVALIDATED_TRIAL_SQL = (
 _OPEN_LIVE_TRIAL_SQL = (
     "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id " + _OPEN_LIVE_TRIAL_FROM
 )
-# held live trial = an open one, or a won one whose proposal row is still pending — the win does
-# not end the trial's holds, the row leaving pending does; binds the event as one parameter
+# held live trial: open, or won with its proposal row pending — the row leaving pending ends it
+# the event bound as one parameter
 _HELD_LIVE_TRIAL_SQL = (
     "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id "
     "FROM core.autoagent_trial_ledger p WHERE p.event = %s AND (NOT EXISTS ("
@@ -9439,8 +9439,7 @@ _HELD_LIVE_TRIAL_SQL = (
 LIVE_TRIAL = SimpleNamespace(
     OPEN_SQL=_OPEN_LIVE_TRIAL_SQL,
     HELD_SQL=_HELD_LIVE_TRIAL_SQL,
-    # each open trial's committed pre-registration row — its id the canary's salt, its
-    # recorded_at the unstarted bound's origin — and whether its <live trial key>:start row landed
+    # open trials' pre-registration rows: id (canary salt) · recorded_at (unstarted origin) · :start
     CANARY_SQL=(
         "SELECT p.id, p.agent, p.trial_key, p.learning_pattern_id, p.payload, p.recorded_at, "
         "EXISTS ("
@@ -9466,8 +9465,7 @@ LIVE_TRIAL = SimpleNamespace(
     ),
     # the payload.void.reason of a trial voided because its A/A start is invalidated
     AA_INVALIDATED_REASON="aa-invalidated",
-    # each open trial as the ingest binds to it: agent, trial key, pattern id, canary hash, the
-    # pre-registration's commit instant and its start record's instant (NULL = no start record)
+    # open trial binding row: agent, trial key, pattern id, canary hash, commit and start instants
     BINDING_SQL=(
         "SELECT p.agent, p.trial_key, p.learning_pattern_id, p.payload->'canary'->>'text_sha256', "
         "p.recorded_at, (SELECT s.payload->>'started_at' FROM core.autoagent_trial_ledger s "
@@ -9840,7 +9838,7 @@ REDELEGATION_ROW = SimpleNamespace(
             "test, and on the reference install its rise fell outside this bracket"
         ),
     ),
-    # part (d)'s read on the reference install, shipped as a dated snapshot: both reference rows
+    # the reference install's read, shipped as a dated snapshot: both reference rows
     REFERENCE=SimpleNamespace(
         READ_DATE="2026-10-10",
         LABELS=SimpleNamespace(
@@ -9896,8 +9894,7 @@ class FollowUpBaseline(NamedTuple):
 def get_redelegation_row(
     spawns: RosterSpawns, power_pass: PowerPass, windows: PairWindows
 ) -> dict:
-    """W with its tier and gap count by `get_redelegation_window`, over the covered baseline,
-    beside the count's margin, statistics, baseline coverage and blind spots.
+    """W with its tier and gap count by `get_redelegation_window`, over the covered baseline.
 
     Spawns started at or after D are cut before the primitives, so no spawn from the trial's
     start on moves the row; the pool is every roster type's gaps, the trial's agent included.
@@ -11414,8 +11411,7 @@ AA = SimpleNamespace(
             "WHERE m.agent_id = o.agent_id)) FROM core.outcomes o "
             "WHERE o.agent = ANY(%(agents)s) AND o.record_ts >= %(start)s AND o.record_ts < %(end)s"
         ),
-        # the given salt ids that name one of the events → (id, event, agent, canary hash, whether
-        # its trial has a <live trial key>:decision row)
+        # given salt ids naming one of the events → id, event, agent, canary hash, decision row
         SALT_ROWS=(
             "SELECT s.id, s.event, s.agent, s.payload->'canary'->>'text_sha256', EXISTS ("
             "SELECT 1 FROM core.autoagent_trial_ledger d "
@@ -15137,10 +15133,9 @@ MANIFEST = SimpleNamespace(
     STORED_OFFSETS_SQL="SELECT line_offset FROM core.spawn_manifest WHERE spool = %(spool)s",
     # The migration adding arm, salt_id, delivered and delivered_hash.
     EXPOSURE_MIGRATION="20261009000000_add_spawn_manifest_arm_fields",
-    # Every open trial's stored delivered rows of another canary text, in one statement: the
-    # three arrays run in parallel, one element per trial — its agent in the hook_path_safe_key
-    # form, its commit second, its canary hash. IS DISTINCT FROM: a delivered row with no hash
-    # is another text's row, which <> would drop.
+    # every open trial's stored delivered rows of another canary text, in one statement
+    # three parallel arrays, one element per trial: agent (hook_path_safe_key form), commit, hash
+    # IS DISTINCT FROM: a delivered row with no hash is another text's row, which <> would drop
     OTHER_HASH_ROWS_SQL=(
         "SELECT m.spool, m.line_offset, m.agent_id, m.agent_type, m.session_id, m.started_at, "
         "m.ctx_bytes, m.blocks, m.arm, m.salt_id, m.delivered, m.delivered_hash "
@@ -15644,23 +15639,31 @@ def _write_trial_void(void: TrialVoid, area: str) -> None:
     """Its <live trial key>:decision row; a void the ledger did not take WARNs and is not held —
     the next trial stage reads the stored row again."""
     detail = {"reason": CANARY.VOID_REASON, "agent": void.agent, "text_sha256": void.text_sha256}
-    label = void.text_sha256 or "(unrecorded)"
-    cause = (
-        f"{void.agent}'s canary text {label} is not the pre-registered one "
-        f"({void.spool} line {void.line_offset}"
-    )
     try:
         landed = _write_live_decision(void.key, void.agent, void.pattern_id, {"void": detail})
     except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
         sys.stderr.write(
-            f"[daemon-cycle] WARN: {area} — trial {void.key} void not recorded: {cause}): "
+            f"[daemon-cycle] WARN: {area} — trial {void.key} void not recorded: "
+            f"{_get_void_cause(void)}): "
             f"{_describe_fault(exc)}; not held — the next trial stage reads its stored row "
             "again; no canary is written or renewed for that trial at this cycle's trial stage\n"
         )
         return
+    _log_trial_void(void, area, landed)
+
+
+def _get_void_cause(void: TrialVoid) -> str:
+    label = void.text_sha256 or "(unrecorded)"
+    return (
+        f"{void.agent}'s canary text {label} is not the pre-registered one "
+        f"({void.spool} line {void.line_offset}"
+    )
+
+
+def _log_trial_void(void: TrialVoid, area: str, landed: int) -> None:
     if landed == 1:
         sys.stderr.write(
-            f"[daemon-cycle] WARN: {area} — trial {void.key} voided: {cause}, "
+            f"[daemon-cycle] WARN: {area} — trial {void.key} voided: {_get_void_cause(void)}, "
             f"{void.key}:decision)\n"
         )
     else:  # 0 = the once-only key taken by another decider (or the ledger absent)
@@ -16074,8 +16077,7 @@ def _run_generation_loop(
     """
     seen_targets: set[str] = set()
     preregistration = _get_preregistration_source(run)
-    # PG gates → full-real mode only: skip_haiku (test/preflight) bypasses them like the
-    # timeout back-off, skip_loop_emit (no-PG-write) like the supersede.
+    # PG gates in full-real mode only — skipped under skip_haiku and skip_loop_emit (test/preflight)
     if not run.skip_haiku and not run.skip_loop_emit:
         agent_groups = _drop_trial_held_agents(agent_groups)
     for agent, agent_patterns in agent_groups:
@@ -16247,9 +16249,8 @@ def _drop_gated_patterns(
     alternating apply/reject fossil is invisible to the streak gate and is exactly
     what the cap exists to catch.
     """
-    # One shared fetch serves the proposal-history gates (none mutates rows).
-    # None (PG off / read error) → skip them, matching each gate's own fail-open
-    # branch without a doomed re-fetch.
+    # one shared fetch serves every proposal-history gate (none mutates rows)
+    # None (PG off / read error) → every gate skipped, each gate's own fail-open, no doomed re-fetch
     history_rows = _fetch_proposal_history(agent)
     if history_rows is not None:
         agent_patterns = drop_reverted_patterns(agent, agent_patterns, rows=history_rows)
@@ -16436,9 +16437,8 @@ def build_patch_result(
 
     promotion_tier = "mention"
 
-    # After pre-verify and safety routing: only a verified non-safety candidate of a
-    # passing lead pattern, in a writing cycle, is bound — its push opens the live trial.
-    # Off-map agents get no code-side stop: pre-verify's C3 directive is the only one.
+    # bound: a verified non-safety candidate of a passing lead pattern, writing cycle → trial opens
+    # off-map agents: no code-side stop, pre-verify's C3 directive the only one
     preregistration_payload = _get_bound_preregistration_payload(
         preregistration,
         TrialCandidate(
@@ -16449,9 +16449,8 @@ def build_patch_result(
         ),
         skip_loop_emit=skip_loop_emit,
     )
-    # The floor: every unbound auto candidate reaches a terminal state this cycle — it
-    # would otherwise sit pending forever with no apply path. Safety tier is untouched
-    # (the floor is auto-only) — the human queue is preserved.
+    # floor: every unbound auto candidate terminal this cycle — pending it has no apply path
+    # safety tier untouched (auto-only floor) → the human queue kept
     terminalize = resolve_floor_terminalization(
         classification=classification,
         approval_tier=approval_tier,
@@ -16508,14 +16507,11 @@ def build_patch_result(
                 f"resolution lost: {type(exc).__name__}: {str(exc)[:160]}\n"
             )
 
-    # Same-agent supersede — only when the new proposal is an actual emit
-    # target (pending), terminate the agent's OTHER pending rows (block
-    # backlog re-accumulation). The skip_loop_emit (test/preflight) path does
-    # not touch PG → supersede also skipped. Its scope is the candidate's tier:
-    # a pending auto candidate closes auto rows only, safety and infra-pending
-    # every tier; a row an open live trial names is never closed.
-    # The cycle date + consolidated label are the identity this run's own push
-    # will update, so they are what the supersede must spare.
+    # same-agent supersede on a pending emit → the agent's OTHER pending rows closed (no backlog)
+    # skip_loop_emit (test/preflight) touches no PG → no supersede
+    # scope = the candidate's tier: auto closes auto rows, safety / infra-pending every tier
+    # never closed: a row a held live trial names
+    # spared: the cycle date + consolidated label this run's own push updates
     if status_value == "pending" and not skip_loop_emit:
         supersede_prior_pending_for_agent(
             agent,
