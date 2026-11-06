@@ -1025,6 +1025,18 @@ LANDED_HISTORY_ENTRY_CHAR_CAP = 400
 PRIOR_ATTEMPTS = SimpleNamespace(
     CHAR_CAP=4000,
     LIMIT=5,
+    # binds the look event, the pre-registration event, the agent, then the limit
+    SQL=(
+        "SELECT pr.id, pr.pattern_label, pr.status::text, pr.proposed_diff, "
+        "(SELECT l.payload FROM core.autoagent_trial_ledger l "
+        "WHERE l.event = %s AND l.trial_key = t.trial_key ORDER BY l.id DESC LIMIT 1), "
+        "(SELECT d.payload FROM core.autoagent_trial_ledger d "
+        "WHERE d.dedupe_key = t.trial_key || ':decision') "
+        "FROM core.autoagent_trial_ledger t JOIN core.autoagent_proposals pr "
+        "ON pr.id = (t.payload->>'proposal_id')::bigint "
+        "WHERE t.event = %s AND pr.target_agent = %s "
+        "ORDER BY t.id DESC LIMIT %s"
+    ),
     # the only look and decision fields the effect text renders, in order; a dot = a nested key
     EFFECT_FIELDS=(
         "reason",
@@ -9703,21 +9715,15 @@ class PreregistrationInputs(NamedTuple):
 
 
 def get_preregistration_payload(power_pass: PowerPass, inputs: PreregistrationInputs) -> dict:
-    """The trial's frozen sizing: trial_design's maximum and boundaries, look milestones on the required units.
-
-    Also the proposal row's generator-input version: the ledger's mark of the trial's input set,
-    the canary text beside its sha256 — the trial stage writes exactly that text — and the
-    re-delegation guardrail's window row beside its randomization test's parameters.
-    """
+    """The trial's frozen sizing: trial_design's maximum and boundaries, look milestones on the required units."""
     baseline = power_pass.baseline
     boundaries = trial_design.get_boundaries()
     maximum = _get_maximum_sample_size(
         baseline.events, baseline.spawns, get_guardrail_count(power_pass.pattern.agent)
     )
-    detection_start, canary_text = inputs.detection_start, inputs.canary_text
     return {
         "metric_key": power_pass.pattern.metric_key,
-        "detection_start": detection_start.isoformat(),
+        "detection_start": inputs.detection_start.isoformat(),
         "baseline": {"events": baseline.events, "spawns": baseline.spawns},
         "maximum_per_arm": maximum,
         "design_effect": power_pass.design_effect,
@@ -9726,6 +9732,19 @@ def get_preregistration_payload(power_pass: PowerPass, inputs: PreregistrationIn
         "boundaries": list(boundaries),
         "looks": _get_looks(power_pass.required, boundaries),
         "task_window_seconds": SHADOW.TASK_WINDOW.total_seconds(),
+        **_get_trial_inputs_payload(inputs, maximum),
+        **_get_harm_payload(power_pass, inputs.detection_start, maximum),
+    }
+
+
+def _get_trial_inputs_payload(inputs: PreregistrationInputs, maximum: int | None) -> dict:
+    """The proposal row's generator-input version: the ledger's mark of the trial's input set.
+
+    Beside it the canary text and its sha256 — the trial stage writes exactly that text — and
+    the re-delegation guardrail's window row beside its randomization test's parameters.
+    """
+    canary_text = inputs.canary_text
+    return {
         "generator_input_version": GENERATOR_INPUT_VERSION,
         "horizon_days": trial_design.HORIZON_DAYS,
         "canary": {"text": canary_text, "text_sha256": _get_text_sha256(canary_text)},
@@ -9734,7 +9753,6 @@ def get_preregistration_payload(power_pass: PowerPass, inputs: PreregistrationIn
             "rise": _get_follow_up_rise(inputs.redelegation["follow_ups"]["sd"], maximum),
         },
         "redelegation_test": get_redelegation_test(),
-        **_get_harm_payload(power_pass, detection_start, maximum),
     }
 
 
@@ -13765,20 +13783,9 @@ def _fetch_prior_attempts(
     """
     if not HAS_PG_LOOP_WRITE:
         return None
-    select_sql = (
-        "SELECT pr.id, pr.pattern_label, pr.status::text, pr.proposed_diff, "
-        "(SELECT l.payload FROM core.autoagent_trial_ledger l "
-        "WHERE l.event = %s AND l.trial_key = t.trial_key ORDER BY l.id DESC LIMIT 1), "
-        "(SELECT d.payload FROM core.autoagent_trial_ledger d "
-        "WHERE d.dedupe_key = t.trial_key || ':decision') "
-        "FROM core.autoagent_trial_ledger t JOIN core.autoagent_proposals pr "
-        "ON pr.id = (t.payload->>'proposal_id')::bigint "
-        "WHERE t.event = %s AND pr.target_agent = %s "
-        "ORDER BY t.id DESC LIMIT %s"
-    )
     event = TRIAL_LEDGER.EVENT
     params = (event.LIVE_LOOK, event.LIVE_PREREGISTRATION, target_agent, limit)
-    rows = _fetch_proposal_rows(target_agent, select_sql, params, "prior-attempts")
+    rows = _fetch_proposal_rows(target_agent, PRIOR_ATTEMPTS.SQL, params, "prior-attempts")
     if rows is None:
         return None
     return [
