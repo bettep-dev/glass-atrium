@@ -826,11 +826,11 @@ class BodyComparatorsReadBodyLinesAsGitDoes(unittest.TestCase):
 
     _NAME = Path(_TARGET).name
 
-    def _write_body(self, *lines: str) -> Path:
+    def _write_body(self, *lines: str, ending: str = "\n") -> Path:
         work_dir = tempfile.TemporaryDirectory(prefix="parity-body-")
         self.addCleanup(work_dir.cleanup)
         target = Path(work_dir.name) / self._NAME
-        target.write_bytes("".join(f"{line}\n" for line in lines).encode("utf-8"))
+        target.write_bytes("".join(f"{line}{ending}" for line in lines).encode("utf-8"))
         return target
 
     def _diff(self, hunk: str) -> str:
@@ -879,3 +879,11 @@ class BodyComparatorsReadBodyLinesAsGitDoes(unittest.TestCase):
                 target = self._write_body(protected, "<!-- EDITABLE:BEGIN -->", "keep", "<!-- EDITABLE:END -->")
                 diff = self._diff(f"@@ -1,1 +1,0 @@\n-{protected}\n")
                 self.assertTrue(dc._diff_modifies_out_of_region(diff, target))
+
+    def test_should_call_the_removal_of_a_line_outside_every_region_out_of_region_on_a_crlf_body(self) -> None:
+        # the CR of a CRLF ending is the line ending's, never the line's → the LF body's verdict holds
+        target = self._write_body(
+            "guard line", "<!-- EDITABLE:BEGIN -->", "keep", "<!-- EDITABLE:END -->", ending="\r\n"
+        )
+        diff = self._diff("@@ -1,1 +1,0 @@\n-guard line\n")
+        self.assertTrue(dc._diff_modifies_out_of_region(diff, target))

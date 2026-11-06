@@ -875,17 +875,27 @@ class AaCycleStartTest(_AaFixture):
 
     def test_of_two_racing_cycles_one_writes_the_aa_start_row(self) -> None:
         self._install_fresh()
+        winner_canaries: dict[str, dict] = {}
 
-        def _write_after_the_other_start(*args: object, **kwargs: object) -> int:
-            self._open()  # the other cycle's start lands after this cycle's state read
-            return self.ledger.write(*args, **kwargs)
+        @contextlib.contextmanager
+        def _read_then_the_other_start_lands() -> Iterator[_LedgerCursor]:
+            with self.ledger.connect() as conn:
+                yield conn
+            # the other cycle's start and its canaries land right after this cycle's state read
+            if not winner_canaries:
+                self._open()
+                (start,) = self._get_starts()
+                for stem in _ROSTER:
+                    dc.put_canary_file(stem, start.id, "", _NOW)
+                winner_canaries.update(self._get_canaries())
 
-        self._patch("_pg_write_trial_ledger_row", _write_after_the_other_start)
+        self._patch("_pg_connect", _read_then_the_other_start_lands)
 
         stderr_text = self._cycle()
 
         self.assertEqual([row.dedupe_key for row in self.ledger.rows], ["aa-start:after:0"])
-        self.assertEqual(self._get_canaries(), {})
+        self.assertEqual(set(winner_canaries), set(_ROSTER))
+        self.assertEqual(self._get_canaries(), winner_canaries)
         self.assertIn(
             "WARN: A/A harness — A/A not started: already-open — start key aa-start:after:0 "
             "taken by a concurrent start",
