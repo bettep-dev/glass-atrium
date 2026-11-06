@@ -10844,9 +10844,10 @@ def _write_look_time_decision(canary: TrialCanary, payload: dict, occasion: str)
             "the trial stays open",
         )
         return False
+    result = "recorded" if landed else f"not written ({_DECISION_UNLANDED})"
     sys.stderr.write(
         f"[daemon-cycle] INFO: shadow stage — trial {canary.key}: {outcome} decision at {occasion} "
-        f"({landed} row landed)\n"
+        f"{result}\n"
     )
     if outcome == "win" and landed:
         path = _get_canary_path(canary.agent)
@@ -11106,9 +11107,8 @@ def _log_invalidated_void(trial: TrialCanary, cause: str, landed: int) -> None:
     if landed == 1:
         _warn_trial(f"{cause} → voided", f"no look and no graduation ({trial.key}:decision)")
         return
-    # 0 = the once-only key taken by another decider (or the ledger absent) → decided, no fault
     sys.stderr.write(
-        f"[daemon-cycle] INFO: trial stage — {cause}: already decided, no void written\n"
+        f"[daemon-cycle] INFO: trial stage — {cause}: no void written ({_DECISION_UNLANDED})\n"
     )
 
 
@@ -11297,10 +11297,9 @@ def _log_unstarted_void(trial: TrialCanary, landed: int) -> None:
             f"canary never started by its stated horizon ({trial.key}:decision)\n"
         )
         return
-    # 0 = the once-only key taken by another decider (or the ledger absent) → decided, no fault
     sys.stderr.write(
-        f"[daemon-cycle] INFO: trial stage — trial {trial.key} already decided: no unstarted "
-        "void written\n"
+        f"[daemon-cycle] INFO: trial stage — trial {trial.key}: no unstarted void written "
+        f"({_DECISION_UNLANDED})\n"
     )
 
 
@@ -11398,6 +11397,8 @@ def _write_trial_start(trial: TrialCanary, started_at: datetime) -> str | None:
     return None if landed == 1 else f"{landed} rows landed"
 
 
+# a once-only decision write's 0 return: the key taken by another decider, or the ledger absent
+_DECISION_UNLANDED = "already decided or the ledger absent"
 STAGE_AREA = SimpleNamespace(
     AA="A/A harness",
     TRIAL="trial stage",
@@ -15712,10 +15713,10 @@ def _log_trial_void(void: TrialVoid, area: str, landed: int) -> None:
             f"[daemon-cycle] WARN: {area} — trial {void.key} voided: {_get_void_cause(void)}, "
             f"{void.key}:decision)\n"
         )
-    else:  # 0 = the once-only key taken by another decider (or the ledger absent)
+    else:
         sys.stderr.write(
-            f"[daemon-cycle] INFO: {area} — trial {void.key} already decided: no foreign-hash "
-            "void written\n"
+            f"[daemon-cycle] INFO: {area} — trial {void.key}: no foreign-hash void written "
+            f"({_DECISION_UNLANDED})\n"
         )
 
 

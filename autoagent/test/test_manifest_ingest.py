@@ -814,6 +814,18 @@ class TestManifestDeliveryBinding(_DeliveryCase):
         self.assertEqual(len(_TRIAL_VOIDED_RE.findall(self.stderr)), 1)
         self.assertEqual(_TRIAL_VOID_REFUSED_RE.findall(self.stderr), [])
 
+    def test_a_foreign_hash_void_the_ledger_takes_no_row_for_is_logged_unwritten(self) -> None:
+        self._open_trial()
+        self.ledger.write_outcome = 0
+        self._ingest_trial_rows({"text_sha256": _PLAIN_SHA256})
+
+        self.assertEqual(_TRIAL_VOIDED_RE.findall(self.stderr), [])
+        self.assertIn(
+            f"INFO: manifest binding — trial {_TRIAL.KEY}: no foreign-hash void written "
+            "(already decided or the ledger absent)",
+            self.stderr,
+        )
+
     def test_an_agent_without_an_open_trial_keeps_the_a_a_leg_and_the_no_trial_branch(
         self,
     ) -> None:

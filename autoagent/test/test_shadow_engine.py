@@ -2001,6 +2001,25 @@ class LookDecisionTest(_ShadowFixture):
         self.assertEqual(self._get_decisions(), [])
         self.assertIn(_AGENT, self.ledger.read_open_trials())
 
+    def test_a_win_decision_the_ledger_takes_no_row_for_is_logged_unwritten(
+        self,
+    ) -> None:
+        key, salt_id = self._open_started_trial()
+        self._add_spawns(salt_id, _MILESTONES[0], tenths=_TENTHS.REDUCED)
+        write = self.ledger.write
+        decision_event = stub.get_trial_ledger().EVENT.LIVE_DECISION
+
+        def _take_no_decision(event, *args, **kwargs):
+            return 0 if event == decision_event else write(event, *args, **kwargs)
+
+        self._patch("_pg_write_trial_ledger_row", _take_no_decision)
+        stderr = self._cycle(_NEXT_NOW)
+        self.assertIn(
+            f"INFO: shadow stage — trial {key}: win decision at look 1 not written (already "
+            "decided or the ledger absent)",
+            stderr,
+        )
+
     def test_a_harm_stop_whose_decision_write_faulted_is_written_at_the_next_cycle_from_its_recorded_look_ahead_of_a_later_look_that_would_win(
         self,
     ) -> None:
@@ -4033,9 +4052,10 @@ class TrialCanaryTest(_ShadowFixture):
                 f"WARN: trial stage — trial {key}: {_AGENT}'s {_START_WARN.VOID_FAULT}",
             ),
             (
-                "a 0 return: the trial already decided",
+                "a 0 return: the key taken or the ledger absent",
                 lambda *args, **kwargs: 0,
-                f"INFO: trial stage — trial {key} already decided",
+                f"INFO: trial stage — trial {key}: no unstarted void written (already decided "
+                "or the ledger absent)",
             ),
         )
         for name, refuse, line in rows:
@@ -4240,9 +4260,10 @@ class TrialCanaryTest(_ShadowFixture):
                 f"WARN: trial stage — {cause}, its void not recorded: ConnectionError",
             ),
             (
-                "a 0 return: the trial already decided",
+                "a 0 return: the key taken or the ledger absent",
                 lambda *args, **kwargs: 0,
-                f"INFO: trial stage — {cause}: already decided, no void written",
+                f"INFO: trial stage — {cause}: no void written (already decided or the ledger "
+                "absent)",
             ),
         )
         for name, refuse, line in rows:
