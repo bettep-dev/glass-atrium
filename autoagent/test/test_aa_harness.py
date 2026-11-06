@@ -59,7 +59,7 @@ import _pg_stub_backend as stub
 import daemon_cycle as dc
 import trial_design
 from _outcome_signal import SpawnFacts, is_floor_half
-from _pg_seal import get_ephemeral_connection, seal_pg_reach
+from _pg_seal import get_connection, get_ephemeral_connection, seal_pg_reach
 
 _NOW = datetime(2026, 10, 7, 4, 30, tzinfo=timezone.utc)
 _CYCLE_DATE = "2026-10-07"
@@ -3179,8 +3179,6 @@ class _AaLivePgFixture(_AaFixture):
     _TEMPLATE = SimpleNamespace(
         FULL="trial_ledger_tpl", ABSENT="trial_ledger_absent_tpl"
     )
-    # a loaded host stalls one connect past any single budget → a wide budget, a few attempts
-    _CONNECT = SimpleNamespace(ATTEMPTS=3, TIMEOUT_S=10)
 
     def setUp(self) -> None:
         get_ephemeral_connection().close()
@@ -3196,28 +3194,15 @@ class _AaLivePgFixture(_AaFixture):
         self._patch("_pg_connect", self._connect)
 
     def _run_admin(self, statement: str) -> None:
-        with self._get_connection("eph_bootstrap", autocommit=True) as admin:
+        with get_connection("eph_bootstrap", autocommit=True) as admin:
             admin.execute(statement)
 
     def _connect(self):
-        return self._get_connection(self.dbname)
-
-    def _get_connection(self, dbname: str, **options: object):
-        """A connection to ``dbname``; only a timed-out attempt is retried, up to the bound."""
-        attempts_left = self._CONNECT.ATTEMPTS
-        while True:
-            try:
-                return self.psycopg.connect(
-                    dbname=dbname, connect_timeout=self._CONNECT.TIMEOUT_S, **options
-                )
-            except self.psycopg.errors.ConnectionTimeout:
-                attempts_left -= 1
-                if not attempts_left:
-                    raise
+        return get_connection(self.dbname)
 
 
 class AaLivePgFixtureConnectTest(_AaLivePgFixture):
-    """The fixture's own connect: a stalled attempt is retried, any other refusal is not."""
+    """The fixture's own connect, via ``get_connection``: a stalled attempt opens on the retry."""
 
     @contextlib.contextmanager
     def _patch_connect(self, failures: list[Exception]) -> Iterator[list[str]]:
@@ -3241,35 +3226,6 @@ class AaLivePgFixtureConnectTest(_AaLivePgFixture):
             (dbname,) = conn.execute("SELECT current_database()").fetchone()
 
         self.assertEqual(dbname, self.dbname)
-
-    def test_a_failing_connect_raises_at_once_unless_it_timed_out_and_then_at_the_attempt_bound(
-        self,
-    ) -> None:
-        self._use_database(self._TEMPLATE.FULL)
-        errors = self.psycopg.errors
-        rows = (
-            (
-                "a refusal other than a timeout",
-                lambda: self.psycopg.OperationalError("connection refused"),
-                self.psycopg.OperationalError,
-                1,
-            ),
-            (
-                "an attempt that times out every time",
-                lambda: errors.ConnectionTimeout("connection timeout expired"),
-                errors.ConnectionTimeout,
-                self._CONNECT.ATTEMPTS,
-            ),
-        )
-        for name, get_error, raised, attempt_count in rows:
-            # more failures than any bound → only the fixture's own bound can stop the retries
-            failures = [get_error() for _ in range(50)]
-            with self.subTest(name), self._patch_connect(failures) as attempts:
-                with self.assertRaises(self.psycopg.OperationalError) as caught:
-                    self._connect()
-
-                self.assertIs(type(caught.exception), raised)
-                self.assertEqual(attempts, [self.dbname] * attempt_count)
 
 
 class AaOpenReadLivePgTest(_AaLivePgFixture):

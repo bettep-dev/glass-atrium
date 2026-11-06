@@ -1,7 +1,8 @@
 """Live-DB seal for the autoagent tests: no test reaches an install's live database.
 
 ``seal_pg_reach`` serves tests that drive ``daemon_cycle`` without a database;
-``get_ephemeral_connection`` serves classes that need real PostgreSQL;
+``get_ephemeral_connection`` serves classes that need real PostgreSQL, and its bounded-retry
+``get_connection`` serves their fixtures' own connects on the same cluster;
 ``set_install_tree`` gives a test a temp code tree that is its own install;
 ``create_trial_ledger_table`` / ``create_live_trial`` seed the trial ledger on the
 stdlib stand-in (``scripts/test/_pg_stub_backend.py``, anchored by the caller).
@@ -19,6 +20,7 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest import mock
 
@@ -53,6 +55,9 @@ _SEAMS: dict[str | None, tuple[str, ...]] = {
 }
 
 _AVAILABILITY_FLAGS = ("HAS_PG_LOOP_WRITE", "HAS_PG_PATTERN_READ", "HAS_PG_OUTCOME_READ")
+
+# a loaded host stalls one connect past any single budget → a wide budget, a few attempts
+CONNECT = SimpleNamespace(ATTEMPTS=3, TIMEOUT_S=10)
 
 
 def seal_pg_reach(testcase: unittest.TestCase) -> list[str]:
@@ -186,11 +191,23 @@ def get_ephemeral_connection() -> psycopg.Connection:
     import psycopg
 
     try:
-        return psycopg.connect(
-            dbname="glass_atrium",
-            host=sockdir,
-            port=os.environ.get("EPH_PORT") or None,
-            connect_timeout=2,
-        )
+        return get_connection("glass_atrium", host=sockdir, port=os.environ.get("EPH_PORT") or None)
     except psycopg.OperationalError as exc:
         raise unittest.SkipTest(f"ephemeral cluster unreachable: {exc}") from exc
+
+
+def get_connection(dbname: str, **options: object) -> psycopg.Connection:
+    """A connection to ``dbname``; only a timed-out attempt is retried, up to ``CONNECT.ATTEMPTS``.
+
+    Any other refusal is raised at once, so a dead or misnamed cluster still fails loudly.
+    """
+    import psycopg
+
+    attempts_left = CONNECT.ATTEMPTS
+    while True:
+        try:
+            return psycopg.connect(dbname=dbname, connect_timeout=CONNECT.TIMEOUT_S, **options)
+        except psycopg.errors.ConnectionTimeout:
+            attempts_left -= 1
+            if not attempts_left:
+                raise
