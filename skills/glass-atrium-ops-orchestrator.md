@@ -980,7 +980,7 @@ Approval is required for the delta only.
 
 #### Orchestrator operational delta
 
-- The safety-only queue and the worker-model retry routing execute in `daemon_cycle.py` / `daemon-apply.sh`; the orchestrator's role is downstream surfacing only.
+- The safety-only queue, the pre-verify routing and the trial-gated graduation apply execute in `daemon_cycle.py` / `daemon-apply.sh`; the orchestrator's role is downstream surfacing only.
 - After 7+ days of accumulated rejects, a hint surfaces in the "long-term accumulation" card of the monitor `#improvement` dashboard — for after-the-fact user review, not a pre-approval queue.
 
 #### Automation Boundary

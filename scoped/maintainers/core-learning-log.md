@@ -11,7 +11,15 @@ Corpus-maintenance companion to that Tier-1 rule file; this note reaches no agen
 
 ## Coupled readers
 
-- `autoagent/test/test_tier1_rule_parity.py` reads the span from `**Tier 1 — Auto (default)**:` up to `**Tier 2 — Safety**:`; it pins both bounds, the closed-interim literals and every `` `<file>.py` → `<symbol>` `` anchor in the span.
+- `autoagent/test/test_tier1_rule_parity.py` reads the span from `**Tier 1 — Auto (default)**:` up to `**Tier 2 — Safety**:` and pins it to the daemon code it describes.
+  - Present: the anchors of what the cycle ships (`run_trial_stage`, `run_graduation_stage`, `regression_gate_live_enabled`) and the gate's opt-in env var.
+  - Equal to the code constants: the added-line cap, the `haiku_status` prefix and the safety-routed storage tier.
+  - Every `` `<file>.py` → `<symbol>` `` anchor resolves to a top-level definition; every cited `daemon_cycle.py` function has a production caller.
+  - Its stale-claim scan runs a fixed list of retired literals over the whole `## Instruction Improvement Approval Tier` section and fails on any hit: the generation-closed and no-auto-apply wording, and the `_GENERATION_CLOSED_REASON` text.
+    - Each list rides on a code fact the row also asserts — `run_cycle` reaching generation or graduation, or the closed-rationale writer having no production caller — so a row fails once its fact no longer holds.
+    - A contradicted claim outside the list passes it.
+  - It pins each span bound to one occurrence — the two Tier markers above, `## Instruction Improvement Approval Tier` and `## Correction Signal Capture` — so renaming either heading fails it.
+  - It pins the Tier-2 trigger lines byte-identical.
 - `autoagent/test/test_sensitive_patterns.py` → `RuleFileRowsAreOutOfReach` names the file's path, not its text, as a row the daemon's sensitive-path matchers never refuse; both matcher consumers are handed an `agents/<name>.md` body path.
   - Renaming the file is a multi-site edit.
   - So the trigger clause "any change to `core-learning-log.md`" is policy, not a path matcher: a benign edit to the rule file classifies auto.
