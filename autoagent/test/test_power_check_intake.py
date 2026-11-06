@@ -81,13 +81,13 @@ _AA_START_ID = 1
 _REQUIRED_UNITS = trial_design.get_required_units(
     trial_design.get_trial_sample_size(_BASELINE_RATE), design_effect=_DESIGN_EFFECT
 )
-# baseline 19/39: maximum 146 grown to 183 at dev-python's k 4 → bound 366 at design effect 1
-# = exactly 122 × 84 / 28; (122 / 28) × 84 rounds below 366 in floating point
-_EXACT_BOUND_BASELINE = WindowCount(spawns=39, events=19, sessions=19)
-# 28-day spawn counts: 84-day projection just at-or-above / just below the bound; 122 at 19/39
+# baseline 43/100: maximum 191 grown to 225 at the passing agent's k 4 → bound 450 at design
+# effect 1 = exactly 150 × 84 / 28; (150 / 28) × 84 rounds below 450 in floating point
+_EXACT_BOUND_BASELINE = WindowCount(spawns=100, events=43, sessions=43)
+# 28-day spawn counts: 84-day projection just at-or-above / just below the bound; 150 at 43/100
 _UNITS = SimpleNamespace(
     AT_BOUND=math.ceil(_REQUIRED_UNITS * 28 / 84),
-    AT_EXACT_BOUND=122,
+    AT_EXACT_BOUND=150,
 )
 _UNITS.BELOW_BOUND = _UNITS.AT_BOUND - 1
 
@@ -328,44 +328,45 @@ class GetPowerCheckTest(unittest.TestCase):
                 self.assertEqual((check.verdict, check.units.required), (verdict, required))
 
     def test_the_bound_sizes_the_trial_maximum_grown_at_the_agents_own_k(self) -> None:
-        # agent, baseline events / spawns, the ungrown per-arm maximum, the grown one
+        # agent, synthetic baseline events / spawns, the ungrown per-arm maximum, the grown one;
+        # the agent sets only k, and the baselines are not that agent's recorded rates
         rows = [
-            ("dev-react grows ×1.008 at k 4", "glass-atrium-dev-react", 50, 270, 690, 696),
-            ("dev-shell stays ungrown at k 4", "glass-atrium-dev-shell", 81, 487, 790, 790),
-            ("dev-nestjs stays ungrown at k 4", "glass-atrium-dev-nestjs", 31, 319, 1485, 1485),
+            ("dev-react grows ×1.004 at k 4", "glass-atrium-dev-react", 50, 282, 729, 733),
+            ("dev-shell stays ungrown at k 4", "glass-atrium-dev-shell", 88, 532, 795, 795),
+            ("dev-nestjs stays ungrown at k 4", "glass-atrium-dev-nestjs", 36, 350, 1393, 1393),
             (
                 "qa-code-reviewer stays ungrown at k 3",
                 "glass-atrium-qa-code-reviewer",
-                90,
-                1450,
-                2432,
-                2432,
+                85,
+                1500,
+                2681,
+                2681,
             ),
             (
                 "meta-prompt-engineer stays ungrown at k 3",
                 "glass-atrium-meta-prompt-engineer",
-                70,
-                468,
-                899,
-                899,
+                66,
+                480,
+                995,
+                995,
             ),
             (
                 "intel-planner stays ungrown at k 3",
                 "glass-atrium-intel-planner",
-                34,
-                347,
-                1472,
-                1472,
+                38,
+                360,
+                1353,
+                1353,
             ),
             (
-                "a k-3 agent grows 51/91 less than k 4",
+                "a k-3 agent grows 55/100 less than k 4",
                 "glass-atrium-qa-code-reviewer",
-                51,
-                91,
-                112,
-                134,
+                55,
+                100,
+                116,
+                139,
             ),
-            ("a k-4 agent grows 51/91 more than k 3", _AGENT.PASSING, 51, 91, 112, 142),
+            ("a k-4 agent grows 55/100 more than k 3", _AGENT.PASSING, 55, 100, 116, 147),
         ]
         for name, agent, events, spawns, maximum, grown in rows:
             with self.subTest(name):
