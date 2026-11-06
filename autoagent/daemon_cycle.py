@@ -1520,12 +1520,9 @@ except Exception as _pause_import_exc:  # noqa: BLE001 — lib missing → grace
         f"disabled: {type(_pause_import_exc).__name__}: {_pause_import_exc}\n"
     )
 
-# Promotion ladder thresholds. The n>=MIN_OBSERVATIONS candidate floor gates on
-# the TRUE qualifying-outcome count (_count_outcome_signals — uncapped COUNT(*)
-# over the lookback window), NOT on the capped posterior sample length: tying
-# n to a sample cap below the floor would silently disable candidate promotion
-# and with it every unattended auto-apply (user-approved to be live; the
-# apply-side quality floor — 'mention' excluded — still gates each apply).
+# Promotion ladder thresholds (classify_promotion_tier). n = the TRUE qualifying-outcome
+# count (_count_outcome_signals — uncapped COUNT(*) over the lookback window), never the
+# capped posterior sample length → a sample cap below the floor leaves 'candidate' unreachable.
 PROMOTION_CANDIDATE_CONFIDENCE = 0.7
 PROMOTION_CANDIDATE_MIN_OBSERVATIONS = 10
 PROMOTION_PROPOSAL_CONFIDENCE = 0.85
