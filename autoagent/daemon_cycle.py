@@ -8328,28 +8328,20 @@ def update_decided_trial_proposals() -> list[int]:
             "— skipped\n"
         )
         return []
-    # one key per decision payload (_write_look_time_decision) → min() names it
-    update_sql = (
-        "UPDATE core.autoagent_proposals AS w "
-        f"SET status = CASE WHEN d.outcome IN ('void', 'win') THEN {_PG_PROPOSAL_STATUS_SQL} "
-        "ELSE 'rejected' END, "
-        "rationale = CASE WHEN d.outcome IN ('void', 'win') THEN %s::text ELSE %s::text END "
-        "|| ': ' || d.outcome || ' (' || COALESCE(d.reason, 'no reason') || ')' "
-        "|| COALESCE(': ' || NULLIF(w.rationale, ''), ''), "
-        "reviewed_at = now(), reviewed_by = %s "
-        "FROM (SELECT (p.payload->>'proposal_id')::bigint AS proposal_id, k.outcome, "
-        "CASE WHEN k.outcome = 'win' THEN %s::text "
-        "ELSE decision.payload -> k.outcome ->> 'reason' END AS reason "
-        "FROM core.autoagent_trial_ledger p "
-        "JOIN core.autoagent_trial_ledger decision "
-        "ON decision.dedupe_key = p.trial_key || ':decision' "
-        "CROSS JOIN LATERAL (SELECT min(key) AS outcome "
-        "FROM jsonb_object_keys(decision.payload) AS key) AS k "
-        "WHERE p.event = %s AND jsonb_typeof(decision.payload) = 'object' "
-        f"AND (NOT decision.payload ? 'win' OR {_AA_INVALIDATED_TRIAL_SQL})) AS d "
-        "WHERE w.id = d.proposal_id AND w.status = 'pending' "
-        "RETURNING w.id, w.status::text, d.outcome, d.reason"
-    )
+    try:
+        moved = _pg_update_decided_trials()
+    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
+        sys.stderr.write(
+            "[daemon-cycle] WARN: trial decision step — decided trials' pending bound rows not "
+            f"terminalized: {_describe_fault(exc)}; the next writing cycle moves them\n"
+        )
+        return []
+    _log_decided_trial_moves(moved)
+    return [proposal_id for proposal_id, _status, _outcome, _reason in moved]
+
+
+def _pg_update_decided_trials() -> list[tuple]:
+    """(id, status, outcome, reason) of each row the one statement moved; raises on a PG fault."""
     update_params = (
         "unadjudicated",
         _TRIAL_DECISION.VOID_REASON,
@@ -8359,24 +8351,36 @@ def update_decided_trial_proposals() -> list[int]:
         TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
         TRIAL_LEDGER.EVENT.AA_INVALIDATION,
     )
-    try:
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(update_sql, update_params)
-                moved = cur.fetchall()
-            conn.commit()
-    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
-        sys.stderr.write(
-            "[daemon-cycle] WARN: trial decision step — decided trials' pending bound rows not "
-            f"terminalized: {_describe_fault(exc)}; the next writing cycle moves them\n"
-        )
-        return []
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_get_decided_trial_update_sql(), update_params)
+            moved = cur.fetchall()
+        conn.commit()
+    return moved
+
+
+def _get_decided_trial_update_sql() -> str:
+    # built at call time → the status fragment is read only where the PG helper imported
+    return (
+        "UPDATE core.autoagent_proposals AS w "
+        f"SET status = CASE WHEN d.outcome IN ('void', 'win') THEN {_PG_PROPOSAL_STATUS_SQL} "
+        "ELSE 'rejected' END, "
+        "rationale = CASE WHEN d.outcome IN ('void', 'win') THEN %s::text ELSE %s::text END "
+        "|| ': ' || d.outcome || ' (' || COALESCE(d.reason, 'no reason') || ')' "
+        "|| COALESCE(': ' || NULLIF(w.rationale, ''), ''), "
+        "reviewed_at = now(), reviewed_by = %s "
+        f"FROM ({_DECIDED_TRIAL_SQL}) AS d "
+        "WHERE w.id = d.proposal_id AND w.status = 'pending' "
+        "RETURNING w.id, w.status::text, d.outcome, d.reason"
+    )
+
+
+def _log_decided_trial_moves(moved: list[tuple]) -> None:
     for proposal_id, status, outcome, reason in moved:
         sys.stderr.write(
             f"[daemon-cycle] INFO: trial decision step — proposal id={proposal_id} → {status} "
             f"({outcome} {reason or 'no reason'}): reviewed, frozen against a same-key push\n"
         )
-    return [proposal_id for proposal_id, _status, _outcome, _reason in moved]
 
 
 def update_generation_closed_proposals() -> int:
@@ -9436,6 +9440,20 @@ _HELD_LIVE_TRIAL_SQL = (
     "WHERE d.dedupe_key = p.trial_key || ':decision' AND d.payload->'win' IS NOT NULL "
     "AND w.id = (p.payload->>'proposal_id')::bigint AND w.status = 'pending'))"
 )
+# per decided pre-registration: proposal id, outcome (one key per decision payload → min()), reason
+# binds the win's reason, the pre-registration event, then the invalidation event
+_DECIDED_TRIAL_SQL = (
+    "SELECT (p.payload->>'proposal_id')::bigint AS proposal_id, k.outcome, "
+    "CASE WHEN k.outcome = 'win' THEN %s::text "
+    "ELSE decision.payload -> k.outcome ->> 'reason' END AS reason "
+    "FROM core.autoagent_trial_ledger p "
+    "JOIN core.autoagent_trial_ledger decision "
+    "ON decision.dedupe_key = p.trial_key || ':decision' "
+    "CROSS JOIN LATERAL (SELECT min(key) AS outcome "
+    "FROM jsonb_object_keys(decision.payload) AS key) AS k "
+    "WHERE p.event = %s AND jsonb_typeof(decision.payload) = 'object' "
+    f"AND (NOT decision.payload ? 'win' OR {_AA_INVALIDATED_TRIAL_SQL})"
+)
 LIVE_TRIAL = SimpleNamespace(
     OPEN_SQL=_OPEN_LIVE_TRIAL_SQL,
     HELD_SQL=_HELD_LIVE_TRIAL_SQL,
@@ -9601,14 +9619,7 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
     if not HAS_PG_LOOP_WRITE:
         _warn_shadow("trial ledger unwritable: PG helper import failed", "no shadow row this cycle")
         return
-    _write_shadow_row(
-        ShadowRow(
-            TRIAL_LEDGER.EVENT.POWER_PASS_COUNT,
-            TRIAL_LEDGER.ACTOR.SHADOW,
-            power.counts,
-            dedupe_key=f"power-pass-count:{cycle_date}",
-        )
-    )
+    _write_power_pass_count(power, cycle_date)
     trials = _read_started_trials(judged_trials)
     if not trials:
         return
@@ -9617,14 +9628,32 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
     if spawns is None:
         return
     for trial in trials:
-        recorded = _read_recorded_looks(trial.canary)
-        if recorded is None:
-            continue
-        agent_spawns = spawns.get(trial.canary.agent, [])
-        counted = _get_counted_spawns(trial, agent_spawns, windows.end)
-        count = CountInputs(agent_spawns, windows.end, recorded)
-        if not _write_trial_looks(trial, counted, count):
-            _write_horizon_decision(trial, counted)
+        _write_trial_decision(trial, spawns, windows)
+
+
+def _write_power_pass_count(power: PowerResult, cycle_date: str) -> None:
+    _write_shadow_row(
+        ShadowRow(
+            TRIAL_LEDGER.EVENT.POWER_PASS_COUNT,
+            TRIAL_LEDGER.ACTOR.SHADOW,
+            power.counts,
+            dedupe_key=f"power-pass-count:{cycle_date}",
+        )
+    )
+
+
+def _write_trial_decision(
+    trial: StartedTrial, spawns: Mapping[str, list[SpawnFacts]], windows: PairWindows
+) -> None:
+    """One started trial's looks this cycle, else its horizon retire; unread looks → neither."""
+    recorded = _read_recorded_looks(trial.canary)
+    if recorded is None:
+        return
+    agent_spawns = spawns.get(trial.canary.agent, [])
+    counted = _get_counted_spawns(trial, agent_spawns, windows.end)
+    count = CountInputs(agent_spawns, windows.end, recorded)
+    if not _write_trial_looks(trial, counted, count):
+        _write_horizon_decision(trial, counted)
 
 
 def _read_recorded_looks(canary: TrialCanary) -> dict[int, dict] | None:
@@ -10520,30 +10549,39 @@ def _write_shadow_looks(
         return _write_look_time_decision(canary, void or decision, f"look {number}")
     accrual = _get_look_accrual(trial, counted)
     looks = canary.payload["looks"]
-    reached = list(
-        takewhile(
-            lambda look: accrual.tasks >= look.registration["milestone"],
-            starmap(Look, enumerate(looks, start=1)),
-        )
-    )
+    reached = _get_reached_looks(looks, accrual)
     count = _get_look_count(trial, reached, inputs)
     readings = LookReadings(accrual, _get_harm_rises(counted, accrual), count)
     for look in reached:
         payload = _get_live_look_payload(canary, look, readings)
         # read before the row lands → an unusable boundary or harm check records no look
         decision = _get_look_decision(canary, payload, is_last=look.number == len(looks))
-        row = ShadowRow(
-            TRIAL_LEDGER.EVENT.LIVE_LOOK,
-            TRIAL_LEDGER.ACTOR.LIVE,
-            payload,
-            dedupe_key=f"{canary.key}:look:{look.number}",
-        )
+        row = _get_live_look_row(canary, look, payload)
         # 0 = a look already recorded, None = a faulted write → no decision on any later data
         if _write_shadow_row(row, canary) != 1 or decision is None:
             continue
         void = _get_validity_void(canary, counted)
         return _write_look_time_decision(canary, void or decision, f"look {look.number}")
     return False
+
+
+def _get_reached_looks(looks: Sequence[Mapping[str, float]], accrual: LookAccrual) -> list[Look]:
+    """The pre-registered looks, in order, whose milestone the accrual's total tasks reach."""
+    return list(
+        takewhile(
+            lambda look: accrual.tasks >= look.registration["milestone"],
+            starmap(Look, enumerate(looks, start=1)),
+        )
+    )
+
+
+def _get_live_look_row(canary: TrialCanary, look: Look, payload: dict) -> ShadowRow:
+    return ShadowRow(
+        TRIAL_LEDGER.EVENT.LIVE_LOOK,
+        TRIAL_LEDGER.ACTOR.LIVE,
+        payload,
+        dedupe_key=f"{canary.key}:look:{look.number}",
+    )
 
 
 def _get_live_look_payload(canary: TrialCanary, look: Look, readings: LookReadings) -> dict:
@@ -11940,13 +11978,17 @@ def run_aa_stage(
         return
     if latest is None:
         _start_first_aa(agents_dir)
-        return
-    if latest.is_closed:
+    elif latest.is_closed:
         _delete_aa_canaries("no open A/A or trial")
-        return
+    else:
+        _advance_open_aa(latest, cycle_date, AaSource(manifest_ingest, agents_dir))
+
+
+def _advance_open_aa(latest: AaStart, cycle_date: str, source: AaSource) -> None:
+    """The open A/A's cycle: pending void, sweep, restart, else lease renewal and the result."""
     if _retry_pending_void(latest):
         return
-    roster = _agent_roster(agents_dir)
+    roster = _agent_roster(source.agents_dir)
     if _sweep_aa_canaries(latest, roster):
         return
     restart = _get_aa_restart(latest)
@@ -11955,7 +11997,6 @@ def run_aa_stage(
         _restart_aa_canaries(latest, roster)
         return  # the restart row starts a new window
     _put_aa_canaries(latest, roster)
-    source = AaSource(manifest_ingest, agents_dir)
     if _evaluate_aa(latest, source):
         _delete_aa_canaries("the A/A has its result")
 
@@ -15482,7 +15523,7 @@ def bind_manifest_deliveries(
     ]
     foreign = [row for row in in_trial if not _is_trial_hash(row, binding)]
     _log_trial_filing(spool, [row for row in in_trial if row not in foreign], binding)
-    _bind_unjudged(spool, foreign, outside, binding)
+    _bind_unjudged(spool, UnjudgedRows(foreign, outside), binding)
 
 
 def _read_binding_state(binding: DeliveryBinding) -> None:
@@ -15563,10 +15604,16 @@ def _log_trial_filing(spool: str, rows: list[ManifestRow], binding: DeliveryBind
         )
 
 
-def _bind_unjudged(
-    spool: str, foreign: list[ManifestRow], outside: list[ManifestRow], binding: DeliveryBinding
-) -> None:
+class UnjudgedRows(NamedTuple):
+    """An ingest's delivered rows the racing predicate judges."""
+
+    foreign: list[ManifestRow]  # in an open trial, another hash than the trial's
+    outside: list[ManifestRow]  # bound to no open trial or A/A
+
+
+def _bind_unjudged(spool: str, unjudged: UnjudgedRows, binding: DeliveryBinding) -> None:
     """The rows the racing predicate judges: one salt read; a fault leaves them unbound, named."""
+    foreign, outside = unjudged
     rows = foreign + outside
     if not rows:
         return
@@ -15922,14 +15969,7 @@ def run_cycle(
             report.cycle_date, manifest_ingest=report.manifest_ingest, agents_dir=agents_dir
         )
         # the intake above was read before the apply → a called row's agent sits this cycle out
-        graduating_agents = run_graduation_stage()
-        for agent, _ in agent_groups:
-            if agent in graduating_agents:
-                sys.stderr.write(
-                    f"[daemon-cycle] INFO: graduation — agent={agent}: apply called this cycle "
-                    "— no generator call this cycle\n"
-                )
-        agent_groups = [group for group in agent_groups if group[0] not in graduating_agents]
+        agent_groups = _drop_graduating_agents(agent_groups, run_graduation_stage())
 
     # T3 corpus/compliance telemetry — DETECTION-ONLY, fired ONCE per cycle.
     # Fully wrapped: any failure is swallowed so it can NEVER block or raise into
@@ -16135,6 +16175,19 @@ def _drop_trial_held_agents(
                 f"{held_trials[agent]}) — no generator call this cycle\n"
             )
     return [group for group in agent_groups if group[0] not in held_trials]
+
+
+def _drop_graduating_agents(
+    agent_groups: list[tuple[str, list[Pattern]]], graduating_agents: frozenset[str]
+) -> list[tuple[str, list[Pattern]]]:
+    """No generator call this cycle for an agent whose graduation apply the cycle called."""
+    for agent, _ in agent_groups:
+        if agent in graduating_agents:
+            sys.stderr.write(
+                f"[daemon-cycle] INFO: graduation — agent={agent}: apply called this cycle "
+                "— no generator call this cycle\n"
+            )
+    return [group for group in agent_groups if group[0] not in graduating_agents]
 
 
 def run_graduation_stage() -> frozenset[str]:

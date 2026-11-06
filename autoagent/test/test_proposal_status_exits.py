@@ -78,7 +78,7 @@ STATUS_DISPOSITIONS = {
                 "trial-decision terminalization",
                 "python",
                 _CYCLE_PY,
-                "update_decided_trial_proposals",
+                "_get_decided_trial_update_sql",
                 SELECTED,
             ),
             Site("stale-drain", "shell", _APPLY_SH, "mark_stale_attempt", SELECTED),
