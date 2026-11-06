@@ -35,7 +35,7 @@ Canonical in `agents/glass-atrium-intel-reporter.md`: the baseline requirement l
   - `rgba(0,0,0,X)` shadows on dark surfaces
   - at most 1 gradient per layer, 2 stops max
   - decoration stacking (one treatment per element)
-- **SoT**: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`, which carries none of these patterns.
+- **SoT**: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`, which carries the purple/indigo gradient and gradient-text patterns, for admin consoles only (`#### Admin-console tropes (data screens)` → `##### Color, type and decoration`); the residual list covers document HTML.
   - Glassmorphism is not on the residual list: the over-text readability case is a baseline item, and the broader blur+gradient+shadow case is the SoT's **Glassmorphism overuse** entry.
 
 ### Dark base default
