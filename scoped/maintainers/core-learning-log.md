@@ -18,7 +18,7 @@ Corpus-maintenance companion to that Tier-1 rule file; this note reaches no agen
   - Its stale-claim scan runs a fixed list of retired literals over the whole `## Instruction Improvement Approval Tier` section and fails on any hit: the generation-closed and no-auto-apply wording, and the `_GENERATION_CLOSED_REASON` text.
     - Each list rides on a code fact the row also asserts — `run_cycle` reaching generation or graduation, or the closed-rationale writer having no production caller — so a row fails once its fact no longer holds.
     - A contradicted claim outside the list passes it.
-  - It pins each span bound to one occurrence — the two Tier markers above, `## Instruction Improvement Approval Tier` and `## Correction Signal Capture` — so renaming either heading fails it.
+  - It pins each span bound to one occurrence — the two Tier markers above, `## Instruction Improvement Approval Tier` and `## Correction Signal Capture` — so renaming any of the four fails it.
   - It pins the Tier-2 trigger lines byte-identical.
 - `autoagent/test/test_sensitive_patterns.py` → `RuleFileRowsAreOutOfReach` names the file's path, not its text, as a row the daemon's sensitive-path matchers never refuse; both matcher consumers are handed an `agents/<name>.md` body path.
   - Renaming the file is a multi-site edit.
