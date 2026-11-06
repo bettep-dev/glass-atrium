@@ -4556,59 +4556,59 @@ _SYNTHETIC_MEASUREMENTS = (
     _SyntheticMeasurement(
         "agent A, k 3",
         3,
-        0.05,
-        2000,
-        (0.06, 0.01, (24.0, 15.0)),
+        0.08,
+        1800,
+        (0.045, 0.015, (21.5, 13.0)),
         {
-            "no_subagent_stop": ((1.334, 1.405), (1.487, 1.592)),
-            "tool_use": ((1.179, 1.409), (1.668, 1.992)),
+            "no_subagent_stop": ((1.418, 1.507), (1.612, 1.749)),
+            "tool_use": ((1.077, 1.287), (1.524, 1.820)),
         },
     ),
     _SyntheticMeasurement(
         "agent B, k 4",
         4,
-        0.15,
-        800,
-        (0.05, 0.01, (27.0, 21.0)),
+        0.13,
+        1100,
+        (0.035, 0.04, (30.0, 24.0)),
         {
-            "no_subagent_stop": ((1.614, 1.784), (1.912, 2.177)),
-            "verified_fail": ((2.667, 3.211), (3.645, 4.586)),
-            "tool_use": ((2.611, 3.237), (3.692, 4.578)),
+            "no_subagent_stop": ((1.635, 1.812), (1.946, 2.224)),
+            "verified_fail": ((1.587, 1.749), (1.871, 2.123)),
+            "tool_use": ((2.545, 3.155), (3.599, 4.462)),
         },
     ),
     _SyntheticMeasurement(
-        "agent C, k 4",
-        4,
-        0.10,
-        1200,
-        (0.02, 0.03, (25.0, 14.0)),
+        "agent C, k 3",
+        3,
+        0.22,
+        520,
+        (0.11, 0.015, (19.0, 12.0)),
         {
-            "no_subagent_stop": ((1.843, 2.088), (2.277, 2.672)),
-            "verified_fail": ((1.662, 1.848), (1.989, 2.282)),
-            "tool_use": ((1.421, 1.762), (2.010, 2.492)),
+            "no_subagent_stop": ((1.481, 1.584), (1.704, 1.860)),
+            "tool_use": ((1.850, 2.210), (2.617, 3.125)),
         },
     ),
     _SyntheticMeasurement(
         "agent D, k 4",
         4,
-        0.20,
-        600,
-        (0.07, 0.01, (16.0, 10.0)),
+        0.04,
+        2600,
+        (0.09, 0.004, (33.0, 27.0)),
         {
-            "no_subagent_stop": ((1.588, 1.749), (1.870, 2.119)),
-            "verified_fail": ((3.011, 3.691), (4.236, 5.431)),
-            "tool_use": ((1.436, 1.780), (2.030, 2.517)),
+            "no_subagent_stop": ((1.230, 1.289), (1.332, 1.418)),
+            "verified_fail": ((2.421, 2.874), (3.233, 4.009)),
+            "tool_use": ((1.862, 2.309), (2.633, 3.265)),
         },
     ),
     _SyntheticMeasurement(
-        "agent E, k 3",
-        3,
-        0.12,
-        1000,
-        (0.08, 0.01, (26.0, 18.0)),
+        "agent E, k 4",
+        4,
+        0.25,
+        400,
+        (0.14, 0.055, (12.0, 8.0)),
         {
-            "no_subagent_stop": ((1.410, 1.497), (1.599, 1.731)),
-            "tool_use": ((2.002, 2.391), (2.831, 3.381)),
+            "no_subagent_stop": ((1.475, 1.600), (1.693, 1.881)),
+            "verified_fail": ((1.859, 2.106), (2.294, 2.686)),
+            "tool_use": ((1.407, 1.744), (1.989, 2.466)),
         },
     ),
 )
@@ -4634,7 +4634,7 @@ class HarmCheckTest(unittest.TestCase):
         self,
     ) -> None:
         readings = dc.GuardrailBaseline(0.10, 0.02, dc.ToolUseBaseline(20.0, 12.0))
-        checks = dc.get_harm_checks(_BUDGET_KEY, readings, dc.HarmSizing(0.05, 790, 4))
+        checks = dc.get_harm_checks(_BUDGET_KEY, readings, dc.HarmSizing(0.05, 840, 4))
         guardrails = checks["guardrails"]
         # the leg's margin: the trial's absolute effect 0.3 × 0.05 read as a fold at the leg's 0.10
         self.assertAlmostEqual(guardrails["no_subagent_stop"]["margin"], 1.15)
@@ -4646,14 +4646,14 @@ class HarmCheckTest(unittest.TestCase):
             for stage, alpha in (("trial", 0.05), ("watch", 0.0125)):
                 for key, design_effect in zip(_DESIGN_EFFECT_KEYS, (1, 2)):
                     expected = trial_design.get_rate_harm(
-                        rate, 790, alpha=alpha, design_effect=design_effect
+                        rate, 840, alpha=alpha, design_effect=design_effect
                     )
                     actual = guardrails[name][stage]["minimum_detectable"][key]
                     self.assertAlmostEqual(
                         actual, expected, msg=f"{name} {stage} {key}"
                     )
         expected = trial_design.get_tool_use_harm(
-            12.0, 790, is_overage_primary=True, alpha=0.0125, design_effect=2
+            12.0, 840, is_overage_primary=True, alpha=0.0125, design_effect=2
         )
         self.assertAlmostEqual(
             guardrails["tool_use"]["watch"]["minimum_detectable"]["design_effect_2"],
@@ -4673,7 +4673,7 @@ class HarmCheckTest(unittest.TestCase):
             with self.subTest(name):
                 readings = dc.GuardrailBaseline(leg_rate, 0.02, dc.ToolUseBaseline(20.0, 12.0))
                 checks = dc.get_harm_checks(
-                    _BUDGET_KEY, readings, dc.HarmSizing(primary_rate, 790, 4)
+                    _BUDGET_KEY, readings, dc.HarmSizing(primary_rate, 840, 4)
                 )
                 self.assertAlmostEqual(checks["guardrails"]["no_subagent_stop"]["margin"], margin)
 
@@ -4683,7 +4683,7 @@ class HarmCheckTest(unittest.TestCase):
         readings = dc.GuardrailBaseline(0.10, 0.02, dc.ToolUseBaseline(20.0, 12.0))
         with mock.patch.object(trial_design, "DEFAULT_RELATIVE_REDUCTION", 0.50):
             checks = dc.get_harm_checks(
-                _BUDGET_KEY, readings, dc.HarmSizing(0.05, 790, 4)
+                _BUDGET_KEY, readings, dc.HarmSizing(0.05, 840, 4)
             )
         # 0.5 × 0.05 read as a fold at the leg's 0.10 → 1.25, under the 30% rise
         self.assertAlmostEqual(checks["guardrails"]["no_subagent_stop"]["margin"], 1.25)
@@ -4695,7 +4695,7 @@ class HarmCheckTest(unittest.TestCase):
         for metric_key, sides in ((_BUDGET_KEY, 1), ("emit_failure", 2)):
             for count in (3, 4):
                 checks = dc.get_harm_checks(
-                    metric_key, readings, dc.HarmSizing(0.1, 900, count)
+                    metric_key, readings, dc.HarmSizing(0.1, 960, count)
                 )
                 guardrails = checks["guardrails"]
                 label = f"{metric_key} k {count}"
@@ -4783,7 +4783,7 @@ class HarmCheckTest(unittest.TestCase):
         leg = _get_harm_checks(_SYNTHETIC_MEASUREMENTS[1])["guardrails"][
             "no_subagent_stop"
         ]["widening"]["own_unit"]
-        self.assertAlmostEqual(leg["design_effect_1"], 1.276, delta=5e-4)
+        self.assertAlmostEqual(leg["design_effect_1"], 1.279, delta=5e-4)
 
     def test_the_watch_widens_by_1187_and_1231_with_each_alphas_four_look_inflation(
         self,
@@ -4825,12 +4825,12 @@ class HarmCheckTest(unittest.TestCase):
         readings = dc.GuardrailBaseline(0.05, 0.02, dc.ToolUseBaseline(20.0, 12.0))
         for metric_key in sorted(dc.METRIC_KEYS):
             checks = dc.get_harm_checks(
-                metric_key, readings, dc.HarmSizing(0.1, 900, 4)
+                metric_key, readings, dc.HarmSizing(0.1, 960, 4)
             )
             self.assertEqual(checks["primary"]["metric_key"], metric_key)
             self.assertIn("verified_fail", checks["guardrails"])
         with self.assertRaises(ValueError):
-            dc.get_harm_checks("verified_fail", readings, dc.HarmSizing(0.1, 900, 4))
+            dc.get_harm_checks("verified_fail", readings, dc.HarmSizing(0.1, 960, 4))
 
 
 class GuardrailCountTest(unittest.TestCase):
