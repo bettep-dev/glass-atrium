@@ -1512,6 +1512,32 @@ def _read_spawn_facts(
     `get_floor_verdict` places outside it (up to `evaluated_at`, None → windows.end); raises on
     any failure. A schema without the canary exposure columns reads every spawn's as None.
     Each outcome row carries its attribution_source and grader_verdict, None while ungraded."""
+    provenance_start, rows = _fetch_spawn_rows(agents, windows, evaluated_at, redelegation_window)
+    spawns: defaultdict[str, list[SpawnFacts]] = defaultdict(list)
+    for (
+        agent_type, agent_id, session_id, started_at, overage_rows, stopped_at, attributions,
+        verdicts, tool_use_actual, *exposure, activations,
+    ) in rows:
+        spawns[agent_type].append(SpawnFacts(
+            agent_id, session_id, started_at, int(overage_rows), stopped_at is not None,
+            tuple(
+                {"attribution_source": source, "grader_verdict": verdict}
+                for source, verdict in zip(attributions, verdicts)
+            ),
+            stopped_at, None if tool_use_actual is None else int(tool_use_actual), *exposure,
+            int(activations),
+        ))
+    return provenance_start, spawns
+
+
+def _fetch_spawn_rows(
+    agents: list[str],
+    windows: PairWindows,
+    evaluated_at: datetime | None,
+    redelegation_window: timedelta,
+) -> tuple[datetime | None, list[tuple]]:
+    """The provenance start and the spawn select's rows, its exposure columns read only on a
+    schema that has them; raises on any failure."""
     upper = windows.end if evaluated_at is None else max(windows.end, evaluated_at)
     params = (
         agents, upper, windows.start.baseline, windows.start.baseline - redelegation_window,
@@ -1528,21 +1554,7 @@ def _read_spawn_facts(
             sql = _SPAWN_FACTS_SELECT_SQL.TEMPLATE.format(exposure_columns=columns)
             cur.execute(sql, params)
             rows = cur.fetchall()
-    spawns: defaultdict[str, list[SpawnFacts]] = defaultdict(list)
-    for (
-        agent_type, agent_id, session_id, started_at, overage_rows, stopped_at, attributions,
-        verdicts, tool_use_actual, *exposure, activations,
-    ) in rows:
-        spawns[agent_type].append(SpawnFacts(
-            agent_id, session_id, started_at, int(overage_rows), stopped_at is not None,
-            tuple(
-                {"attribution_source": source, "grader_verdict": verdict}
-                for source, verdict in zip(attributions, verdicts)
-            ),
-            stopped_at, None if tool_use_actual is None else int(tool_use_actual), *exposure,
-            int(activations),
-        ))
-    return provenance_start, spawns
+    return provenance_start, rows
 
 
 # Generator evidence read

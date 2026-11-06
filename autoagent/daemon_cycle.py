@@ -6628,6 +6628,24 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
     if not HAS_PG_LOOP_WRITE or not current_cycle_date:
         return 0
 
+    last_applied = _get_last_applied_date(current_cycle_date)
+    if last_applied is None:
+        return 0
+    try:
+        current = date.fromisoformat(str(current_cycle_date))
+        last = (
+            last_applied
+            if isinstance(last_applied, date)
+            else date.fromisoformat(str(last_applied))
+        )
+    except (ValueError, TypeError):
+        return 0
+    return max((current - last).days, 0)
+
+
+def _get_last_applied_date(current_cycle_date: str) -> object:
+    """The latest applied row's landing day on or before `current_cycle_date`; None when no
+    row lands there or the read fails (fail-open, the failure on stderr)."""
     landed_on = "coalesce((reviewed_at AT TIME ZONE 'UTC')::date, cycle_date)"
     select_sql = (
         f"SELECT max({landed_on}) "
@@ -6644,21 +6662,8 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
             f"[daemon-cycle] days-since-applied: PG read failed — "
             f"fail-open (days=0): {type(exc).__name__}: {str(exc)[:200]}\n"
         )
-        return 0
-
-    last_applied = row[0] if row else None
-    if last_applied is None:
-        return 0
-    try:
-        current = date.fromisoformat(str(current_cycle_date))
-        last = (
-            last_applied
-            if isinstance(last_applied, date)
-            else date.fromisoformat(str(last_applied))
-        )
-    except (ValueError, TypeError):
-        return 0
-    return max((current - last).days, 0)
+        return None
+    return row[0] if row else None
 
 
 def _all_rejected_this_cycle(report: CycleReport) -> bool:

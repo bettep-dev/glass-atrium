@@ -133,41 +133,50 @@ def _breaks_table(hunks):
     table-row addition (the added line is itself '|...|') and any insert NOT
     bounded by pipe rows on both sides are admitted (no false positive on append-
     after-table, prepend-before-table, or text between two separate tables)."""
-    for hunk in hunks:
-        new_side = []  # (is_added, body) in post-apply document order
-        for raw in hunk:
-            if not raw:
-                new_side.append((False, ""))  # blank context line
-                continue
-            marker, body = raw[0], raw[1:]
-            if marker == "-":
-                continue  # removed → absent post-apply
-            if marker == "+":
-                new_side.append((True, body))
-            elif marker == " ":
-                new_side.append((False, body))
-            # other markers ('\' no-newline-at-EOF) carry no table signal
-        n = len(new_side)
-        i = 0
-        while i < n:
-            is_added, body = new_side[i]
-            if is_added and not _row_is_pipe(body):
-                # extend over a run of consecutive added non-pipe lines (RC1
-                # inserted TWO) so the bounding pipe-rows are tested once.
-                run_end = i
-                while (
-                    run_end < n
-                    and new_side[run_end][0]
-                    and not _row_is_pipe(new_side[run_end][1])
-                ):
-                    run_end += 1
-                before_pipe = i - 1 >= 0 and _row_is_pipe(new_side[i - 1][1])
-                after_pipe = run_end < n and _row_is_pipe(new_side[run_end][1])
-                if before_pipe and after_pipe:
-                    return True
-                i = run_end
-            else:
-                i += 1
+    return any(_has_bounded_insert(_get_new_side(hunk)) for hunk in hunks)
+
+
+def _get_new_side(hunk):
+    """The hunk's post-apply view: (is_added, body) per line, in document order."""
+    new_side = []
+    for raw in hunk:
+        if not raw:
+            new_side.append((False, ""))  # blank context line
+            continue
+        marker, body = raw[0], raw[1:]
+        if marker == "-":
+            continue  # removed → absent post-apply
+        if marker == "+":
+            new_side.append((True, body))
+        elif marker == " ":
+            new_side.append((False, body))
+        # other markers ('\' no-newline-at-EOF) carry no table signal
+    return new_side
+
+
+def _has_bounded_insert(new_side):
+    """True when a run of added non-pipe lines sits between two pipe rows."""
+    n = len(new_side)
+    i = 0
+    while i < n:
+        is_added, body = new_side[i]
+        if is_added and not _row_is_pipe(body):
+            # extend over a run of consecutive added non-pipe lines (RC1
+            # inserted TWO) so the bounding pipe-rows are tested once.
+            run_end = i
+            while (
+                run_end < n
+                and new_side[run_end][0]
+                and not _row_is_pipe(new_side[run_end][1])
+            ):
+                run_end += 1
+            before_pipe = i - 1 >= 0 and _row_is_pipe(new_side[i - 1][1])
+            after_pipe = run_end < n and _row_is_pipe(new_side[run_end][1])
+            if before_pipe and after_pipe:
+                return True
+            i = run_end
+        else:
+            i += 1
     return False
 
 

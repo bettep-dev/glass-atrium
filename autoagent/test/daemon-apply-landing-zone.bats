@@ -14,6 +14,10 @@
 #                            → REJECT + byte-unchanged
 #   * lone-CR anchor         → a body line carrying a lone CR stays ONE line: an
 #                            in-region hunk anchored on it → ACCEPT
+#   * table split            → an in-region run of added non-pipe lines between two
+#                            table rows → REJECT (table_break) + unchanged; a
+#                            pipe-row insert or a run with one pipe-row neighbour
+#                            → ACCEPT
 #
 # GIT-FREE MODEL (P1-T2): the daemon no longer wraps applies in git commits. The
 # transaction is a before-image copy + `git apply --recount` (which lands a unified
@@ -522,6 +526,46 @@ applied_log_path() {
   }
   log="$(applied_log_path)"
   grep -q '"status":"applied"' "${log}"
+}
+
+@test "an in-region insert is rejected only when its added non-pipe run has a table row on both sides" {
+  local names=('one non-pipe line between two rows' 'two non-pipe lines between two rows'
+    'a pipe row between two rows' 'a non-pipe line after the last row')
+  local anchors=(7 7 7 8)
+  local added=($'+loose note' $'+note one\n+note two' $'+| gamma | three |' $'+closing note')
+  local is_rejected=(1 1 0 0)
+  local i diff
+  for i in 0 1 2 3; do
+    printf '%s\n' \
+      '# Probe Agent' '' '## Goal' '<!-- EDITABLE:BEGIN -->' \
+      '| key | value |' '|-----|-------|' '| alpha | one |' '| beta | two |' \
+      'editable trailer line' '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
+    snapshot_pristine "${AGENTS}/probe.md"
+
+    diff="$(printf '%s\n' '--- a/probe.md' '+++ b/probe.md' \
+      "@@ -${anchors[i]},2 +${anchors[i]},$((2 + $(grep -c '' <<<"${added[i]}"))) @@" \
+      " $(sed -n "${anchors[i]}p" "${AGENTS}/probe.md")" "${added[i]}" \
+      " $(sed -n "$((anchors[i] + 1))p" "${AGENTS}/probe.md")")"
+    write_proposal_row "${AGENTS}/probe.md" "probe-table-${i}" "${diff}"
+    run_apply
+
+    if ((is_rejected[i])); then
+      [[ "${output}" == *'landing_zone_reject verdict=table_break'* ]] \
+        && cmp -s "${PRISTINE_SNAPSHOT}" "${AGENTS}/probe.md" \
+        || {
+          echo "${names[i]}: not rejected as table_break with the target unchanged"
+          echo "${output}"
+          return 1
+        }
+    else
+      [[ "${status}" -eq 0 ]] && grep -qF -- "${added[i]#+}" "${AGENTS}/probe.md" \
+        || {
+          echo "${names[i]}: the insert did not land"
+          echo "${output}"
+          return 1
+        }
+    fi
+  done
 }
 
 # ---------------------------------------------------------------------------
