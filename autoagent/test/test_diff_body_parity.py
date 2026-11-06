@@ -886,7 +886,6 @@ class BodyComparatorsReadBodyLinesAsGitDoes(unittest.TestCase):
                 self.assertTrue(dc._diff_modifies_out_of_region(diff, target))
 
     def test_should_call_the_removal_of_a_line_outside_every_region_out_of_region_on_a_crlf_body(self) -> None:
-        # the CR of a CRLF ending is the line ending's, never the line's → the LF body's verdict holds
         target = self._write_body(
             "guard line", "<!-- EDITABLE:BEGIN -->", "keep", "<!-- EDITABLE:END -->", ending="\r\n"
         )
