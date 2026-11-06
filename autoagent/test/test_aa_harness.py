@@ -1087,10 +1087,11 @@ def _put_code_tree(root: Path) -> Path:
 class AaUnsealedRunTest(unittest.TestCase):
     """The four install-guarded entries — a writing run_cycle through the CLI, run_aa_stage,
     run_trial_stage and ingest_manifest_log, each refusing first, with or without the PG layer —
-    unsealed, in a child running a code tree this test copies, so the tree's install identity is the test's, never that
-    of the tree the suite runs from. The child's "live" is a decoy: a temp HOME holding the default data root with its canary files and
-    a live MANIFEST log, PGHOST and PGPORT on an empty temp socket dir, and neither GA_DATA_ROOT,
-    EPH_SOCKDIR nor the PG-sandbox recorder's variables — the decoy reach is libpq's own, never recorded."""
+    unsealed, in a child running a code tree this test copies, so the tree's install identity is
+    the test's, never that of the tree the suite runs from. The child's "live" is a decoy: a temp
+    HOME holding the default data root with its canary files and a live MANIFEST log, PGHOST and
+    PGPORT on an empty temp socket dir, and neither GA_DATA_ROOT, EPH_SOCKDIR nor the PG-sandbox
+    recorder's variables — the decoy reach is libpq's own, never recorded."""
 
     _INHERITED = (
         "GA_DATA_ROOT", "EPH_SOCKDIR", "EPH_PORT", "PGHOSTADDR", "PGSERVICE", "PGDATABASE",
