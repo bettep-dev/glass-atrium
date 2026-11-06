@@ -402,8 +402,11 @@ class UnadjudicatedBackfillTest(unittest.TestCase):
     def test_each_gate_answers_in_precondition_order_before_any_proposal_read(
         self,
     ) -> None:
-        cycle_sh = f"4242 1 bash {_ROOT}/autoagent/daemon-cycle.sh"
-        regen = f"4343 1 python3 {_ROOT}/autoagent/daemon_cycle.py --regenerate-stale"
+        # fake pids past any pid range, as _STRANGER_PID → never the test's ancestor
+        cycle_sh = f"99999902 1 bash {_ROOT}/autoagent/daemon-cycle.sh"
+        regen = (
+            f"99999903 1 python3 {_ROOT}/autoagent/daemon_cycle.py --regenerate-stale"
+        )
 
         def sandbox_db() -> None:
             os.environ["GA_DB_NAME"] = "sbx_db"

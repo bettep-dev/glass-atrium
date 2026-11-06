@@ -1094,7 +1094,7 @@
     "autoagent/test/test_timeout_backoff_release.py": "472f5eeffcd03c17c873751799cecb630e044a99ac0eff5392e539daa0d12b39",
     "autoagent/test/test_transient_backoff_polarity.py": "bbd38ece6d8849f29cdccda77a9399f6ef38b773361080f889f055b145611252",
     "autoagent/test/test_trial_design.py": "9ad2e8a93a7c840aa5347e21b9a449a40fb34e5f06987e054ca97d0fdcdf1eb1",
-    "autoagent/test/test_unadjudicated_backfill.py": "7bde7da947b54c5bc6642a7c06dcc85e95027576eb6aabfb7799b1e279ac0eba",
+    "autoagent/test/test_unadjudicated_backfill.py": "f1d0e440c461052a34d3fd71ae491b23773557d74496780dcbe03f98e74c03c2",
     "config.toml.example": "efd7749b9624c16fad7910e9881680d1c5c68ba7a152ebf2199ba580c6bb8354",
     "docs/assets/bulldog-braille.txt": "af01b543354cb7dbd5e547043f24c2ebeed3b9d2c3a30683044779c01882ebcb",
     "glass-atrium": "8cd7f68b88c114861820599df534a3ad8b6fa8a3297171709f3fc9d0aa8eeec4",
