@@ -1,8 +1,9 @@
-"""Live-DB seal for the autoagent tests: no test reaches an install's live database.
+"""Live-DB seal for autoagent, hooks and scripts tests: no test reaches an install's live database.
 
 ``seal_pg_reach`` serves tests that drive ``daemon_cycle`` without a database;
 ``get_ephemeral_connection`` serves classes that need real PostgreSQL, and its bounded-retry
-``get_connection`` serves their fixtures' own connects on the same cluster;
+``get_connection`` serves their fixtures' own connects on the same cluster, plus the
+``hooks/test/track-outcome-*.bats`` row reads and teardowns on each file's own cluster;
 ``set_install_tree`` gives a test a temp code tree that is its own install;
 ``create_trial_ledger_table`` / ``create_live_trial`` seed the trial ledger on the
 stdlib stand-in (``scripts/test/_pg_stub_backend.py``, anchored by the caller);
