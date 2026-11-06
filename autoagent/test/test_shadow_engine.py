@@ -582,6 +582,15 @@ class _LedgerCursor:
             ]
         elif statement == dc.MANIFEST.OTHER_HASH_ROWS_SQL:
             self.result = [row for row in self.ledger.stored_rows if row[3] in params["agents"]]
+        elif statement == dc.LIVE_TRIAL.INVALIDATED_SQL:
+            event, invalidation, _ = params
+            starts = {row.payload["start_id"] for row in self.ledger.get_rows(invalidation)}
+            held = {pid for ids in self.ledger.read_held_trials().values() for pid in ids}
+            self.result = [
+                (row.trial_key,)
+                for row in self.ledger.get_rows(event)
+                if row.payload.get("aa_start_id") in starts and row.payload["proposal_id"] in held
+            ]
         elif statement == dc.AA.SQL.SALT_ROWS:
             self.result = []  # no stored row's salt names an A/A or a decided pre-registration
         elif statement == dc.LIVE_TRIAL.LOOK_SQL:
@@ -816,6 +825,16 @@ class _ShadowFixture(unittest.TestCase):
         key = self._open_live_trial()
         self._start_trial(key)
         return key, self._get_preregistrations()[-1].id
+
+    def _invalidate(self, start_id: int) -> None:
+        """The owner's aa-invalidation record of one A/A start, as --aa-invalidate writes it."""
+        trial_ledger = stub.get_trial_ledger()
+        self.ledger.write(
+            trial_ledger.EVENT.AA_INVALIDATION,
+            trial_ledger.ACTOR.AA,
+            {"start_id": start_id, "cause": "a canary fault"},
+            dedupe_key=f"{trial_ledger.EVENT.AA_INVALIDATION}:{start_id}",
+        )
 
     def _open_trial_on(self, agent: str, proposal_id: int, **changes: object) -> str:
         """A further live pre-registration: the first trial's payload on `agent`, `changes`
@@ -3094,6 +3113,65 @@ class TrialDecisionTerminalizationLivePgTest(_LivePgFixture):
                 self.assertIn(f"proposal id={proposal_id} → {status}", stderr_text)
         self.assertEqual(self.pg_reach, [])
 
+    def test_a_held_trial_on_an_invalidated_aa_start_reads_as_such_and_only_a_won_one_ends_unadjudicated(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        trial_ledger = stub.get_trial_ledger()
+        event = trial_ledger.EVENT
+        win = {"win": {"look": 1}}
+        # name, its decision (None = open), its A/A start, whether the read names it, its status
+        # after the step
+        rows = (
+            ("a won trial on the invalidated start", win, _AA_START_ID, True, "unadjudicated"),
+            ("an open trial on the invalidated start", None, _AA_START_ID, True, "pending"),
+            ("a won trial on another start", win, _AA_START_ID + 1, False, "pending"),
+            (
+                "a voided trial on the invalidated start",
+                {"void": {"reason": "low-delivery"}},
+                _AA_START_ID,
+                False,
+                "unadjudicated",
+            ),
+        )
+        ids = {}
+        for name, decision, start_id, *_ in rows:
+            ids[name] = self._insert_proposal("2026-10-01", status="pending")
+            self._insert_trial_row(
+                ids[name],
+                event.LIVE_PREREGISTRATION,
+                {"metric_key": _BUDGET_KEY, "proposal_id": ids[name], "aa_start_id": start_id},
+            )
+            if decision is not None:
+                self._insert_trial_row(ids[name], event.LIVE_DECISION, decision, suffix=":decision")
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO core.autoagent_trial_ledger (event, actor, payload, dedupe_key)"
+                " VALUES (%s, %s, %s::jsonb, %s)",
+                (
+                    event.AA_INVALIDATION,
+                    trial_ledger.ACTOR.AA,
+                    json.dumps({"start_id": _AA_START_ID, "cause": "a canary fault"}),
+                    f"{event.AA_INVALIDATION}:{_AA_START_ID}",
+                ),
+            )
+
+        invalidated = dc._read_invalidated_trial_keys()
+        self._terminalize()
+
+        for name, _decision, _start_id, is_named, status in rows:
+            with self.subTest(name):
+                self.assertEqual(f"{ids[name]:064x}" in invalidated, is_named)
+                self.assertEqual(self._get_row(ids[name])[0], status)
+        rationale = self._get_row(ids["a won trial on the invalidated start"])[1]
+        # the void head keeps the row out of the reject streak; the tail names the win and why
+        self.assertTrue(
+            rationale.startswith(f"{dc._TRIAL_DECISION.VOID_REASON}: win (aa-invalidated)"),
+            rationale,
+        )
+        self.assertEqual(dc.classify_failure_rationale(rationale), dc.FAILURE_CLASS_SKIPPED)
+        self.assertEqual(self.pg_reach, [])
+
     def test_a_won_trial_a_row_no_longer_pending_and_a_second_run_are_left_untouched(
         self,
     ) -> None:
@@ -4109,6 +4187,47 @@ class TrialCanaryTest(_ShadowFixture):
         self.assertIsNone(self._get_canary())
         self.assertEqual(self._get_starts(), [])
 
+    def test_an_open_trial_is_voided_unjudged_only_once_the_aa_start_it_was_sized_on_is_invalidated(
+        self,
+    ) -> None:
+        # name, the start the owner invalidates, whether the trial is voided
+        rows = (
+            ("its own start invalidated", _AA_START_ID, True),
+            ("another start invalidated", _AA_START_ID + 1, False),
+        )
+        for name, start_id, is_voided in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.history = list(_get_passing_history())
+                key = self._open_live_trial()
+                self._stage(_NOW)  # the first write and its start record
+                self.history += _get_arm_spawns(
+                    (self._get_preregistration().id,),
+                    _NOW,
+                    math.ceil(_MILESTONES[0]),
+                    tenths=_TENTHS.REDUCED,
+                )
+                self._invalidate(start_id)
+
+                judged = self._judge_and_look(_NEXT_NOW)
+
+                void = {
+                    "reason": dc.LIVE_TRIAL.AA_INVALIDATED_REASON,
+                    "agent": _AGENT,
+                    "aa_start_id": _AA_START_ID,
+                }
+                decision = {"void": void} if is_voided else {"win"}
+                self.assertEqual(
+                    [
+                        (row.trial_key, row.payload if is_voided else set(row.payload))
+                        for row in self._get_decisions()
+                    ],
+                    [(key, decision)],
+                )
+                self.assertEqual(judged, frozenset() if is_voided else {key})
+                self.assertEqual(self._get_looks() == [], is_voided)
+                self.assertIsNone(self._get_canary())
+
     def test_a_win_removes_its_trials_canary_file_in_the_cycle_that_decides_it(self) -> None:
         key = self._open_live_trial()
         self._stage(_NOW)  # the first write and its start record
@@ -4190,6 +4309,25 @@ class GraduationApplyTest(_ShadowFixture):
                     ],
                 )
                 self.assertEqual(generated, [] if is_held else groups)
+
+    def test_a_win_on_an_aa_start_invalidated_since_gets_no_apply_call_and_is_named(self) -> None:
+        key = self._win()
+        self._invalidate(_AA_START_ID)
+        calls = _fake_apply_script(self, ())
+
+        lines = self._graduate()
+
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            lines,
+            [
+                (
+                    f"[daemon-cycle] WARN: graduation — trial {key}: proposal {_PROPOSAL_ID} won "
+                    "on an A/A start invalidated since; no apply call; the trial decision step "
+                    "ends its row unadjudicated"
+                )
+            ],
+        )
 
     def test_a_faulted_read_of_the_won_trials_warns_by_name_and_makes_no_apply_call(self) -> None:
         self._win()

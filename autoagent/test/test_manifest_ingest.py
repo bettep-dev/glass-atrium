@@ -389,6 +389,8 @@ class _Database:
             self.result = self.ledger.get_canary_rows()
         elif refusal is None and statement == dc.LIVE_TRIAL.BINDING_SQL:
             self.result = self.ledger.get_binding_rows()
+        elif refusal is None and statement == dc.LIVE_TRIAL.INVALIDATED_SQL:
+            self.result = []  # no A/A start here is invalidated
         elif refusal is None and statement == dc.MANIFEST.OTHER_HASH_ROWS_SQL:
             self.result = self.table.get_other_hash_rows(**params)
         else:
@@ -401,9 +403,17 @@ class _Database:
 
 def _get_parameter_refusal(statement: str, params: dict | tuple) -> str | None:
     """Why psycopg would refuse ``params`` for ``statement``; None when every name binds. A
-    positional statement here takes the live pre-registration event alone."""
+    positional statement here takes the live pre-registration event alone — the invalidated
+    trials' read, that event around the invalidation event."""
     if isinstance(params, tuple):
-        expected = (dc.TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,)
+        event = dc.TRIAL_LEDGER.EVENT
+        expected = (event.LIVE_PREREGISTRATION,)
+        if statement == dc.LIVE_TRIAL.INVALIDATED_SQL:
+            expected = (
+                event.LIVE_PREREGISTRATION,
+                event.AA_INVALIDATION,
+                event.LIVE_PREREGISTRATION,
+            )
         is_bound = statement.count("%s") == len(params) and params == expected
         return None if is_bound else f"parameters {params} ≠ {expected}: {statement[:60]}"
     names = set(_PLACEHOLDER_RE.findall(statement))

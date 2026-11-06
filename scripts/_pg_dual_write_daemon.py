@@ -1238,8 +1238,8 @@ _TRIAL_LEDGER_EVENT = SimpleNamespace(
     AA_INSTRUMENT_VERDICT="aa-instrument-verdict",
     # a canary bound to no trial; dedupe_key = canary-unbound-delivery:<spool>:<line offset>
     CANARY_UNBOUND_DELIVERY="canary-unbound-delivery",
-    # the owner's void-by-defect record of one A/A start: it closes the start, and its result
-    # sizes nothing; dedupe_key = aa-invalidation:<start id>
+    # the owner's void-by-defect record of one A/A start: it closes the start, its result sizes
+    # nothing, and a live trial sized on it is voided; dedupe_key = aa-invalidation:<start id>
     AA_INVALIDATION="aa-invalidation",
 )
 

@@ -8297,14 +8297,17 @@ _TRIAL_DECISION = SimpleNamespace(
 
 
 def update_decided_trial_proposals() -> list[int]:
-    """Terminalize every pending bound row of a live trial decided without a win → ids moved.
+    """Terminalize every pending bound row of a live trial decided without a win, or won on an
+    A/A start invalidated since → ids moved.
 
     One idempotent statement, whatever cycle wrote the decision: a harm or retire key stores
-    'rejected' (the trial judged the change), a void key 'unadjudicated' through the shared
-    status fragment ('rejected' on a schema without that label, its rationale head keeping it
-    out of the reject streak), the generator's rationale kept after that head. reviewed_at is
-    stamped → the push UPSERT's freeze keeps the row and its diff against a same-key push. A
-    won trial's row and a row no longer pending are never touched.
+    'rejected' (the trial judged the change), a void key — and a win whose pre-registration's
+    aa_start_id holds an aa-invalidation row (D7: that start sized nothing), its reason
+    LIVE_TRIAL.AA_INVALIDATED_REASON — 'unadjudicated' through the shared status fragment
+    ('rejected' on a schema without that label, its rationale head keeping it out of the reject
+    streak), the generator's rationale kept after that head. reviewed_at is stamped → the push
+    UPSERT's freeze keeps the row and its diff against a same-key push. Any other won trial's row
+    and a row no longer pending are never touched.
 
     Runs apart from the decision writer: a fault here is a named WARN and an empty list, the
     landed decision stays reported as recorded, and the next writing cycle moves the row.
@@ -8319,21 +8322,22 @@ def update_decided_trial_proposals() -> list[int]:
     # one key per decision payload (_write_look_time_decision) → min() names it
     update_sql = (
         "UPDATE core.autoagent_proposals AS w "
-        f"SET status = CASE WHEN d.outcome = 'void' THEN {_PG_PROPOSAL_STATUS_SQL} "
+        f"SET status = CASE WHEN d.outcome IN ('void', 'win') THEN {_PG_PROPOSAL_STATUS_SQL} "
         "ELSE 'rejected' END, "
-        "rationale = CASE WHEN d.outcome = 'void' THEN %s::text ELSE %s::text END "
+        "rationale = CASE WHEN d.outcome IN ('void', 'win') THEN %s::text ELSE %s::text END "
         "|| ': ' || d.outcome || ' (' || COALESCE(d.reason, 'no reason') || ')' "
         "|| COALESCE(': ' || NULLIF(w.rationale, ''), ''), "
         "reviewed_at = now(), reviewed_by = %s "
         "FROM (SELECT (p.payload->>'proposal_id')::bigint AS proposal_id, k.outcome, "
-        "decision.payload -> k.outcome ->> 'reason' AS reason "
+        "CASE WHEN k.outcome = 'win' THEN %s::text "
+        "ELSE decision.payload -> k.outcome ->> 'reason' END AS reason "
         "FROM core.autoagent_trial_ledger p "
         "JOIN core.autoagent_trial_ledger decision "
         "ON decision.dedupe_key = p.trial_key || ':decision' "
         "CROSS JOIN LATERAL (SELECT min(key) AS outcome "
         "FROM jsonb_object_keys(decision.payload) AS key) AS k "
         "WHERE p.event = %s AND jsonb_typeof(decision.payload) = 'object' "
-        "AND NOT decision.payload ? 'win') AS d "
+        f"AND (NOT decision.payload ? 'win' OR {_AA_INVALIDATED_TRIAL_SQL})) AS d "
         "WHERE w.id = d.proposal_id AND w.status = 'pending' "
         "RETURNING w.id, w.status::text, d.outcome, d.reason"
     )
@@ -8342,7 +8346,9 @@ def update_decided_trial_proposals() -> list[int]:
         _TRIAL_DECISION.VOID_REASON,
         _TRIAL_DECISION.REASON,
         _TRIAL_DECISION.ACTOR,
+        LIVE_TRIAL.AA_INVALIDATED_REASON,
         TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
+        TRIAL_LEDGER.EVENT.AA_INVALIDATION,
     )
     try:
         with _pg_connect() as conn:
@@ -9394,6 +9400,13 @@ _OPEN_LIVE_TRIAL_FROM = (
     "FROM core.autoagent_trial_ledger p WHERE p.event = %s AND NOT EXISTS ("
     "SELECT 1 FROM core.autoagent_trial_ledger d WHERE d.dedupe_key = p.trial_key || ':decision')"
 )
+# pre-registration p sized on an A/A start holding an aa-invalidation row (D7: its rows size
+# nothing); binds the invalidation event as one parameter · text compare → a malformed id never
+# faults the read
+_AA_INVALIDATED_TRIAL_SQL = (
+    "p.payload->>'aa_start_id' IN (SELECT i.payload->>'start_id' "
+    "FROM core.autoagent_trial_ledger i WHERE i.event = %s)"
+)
 _OPEN_LIVE_TRIAL_SQL = (
     "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id " + _OPEN_LIVE_TRIAL_FROM
 )
@@ -9426,6 +9439,17 @@ LIVE_TRIAL = SimpleNamespace(
     ),
     # an unstarted void's payload.void.reason; the doctor counts the void by this literal
     UNSTARTED_REASON="unstarted",
+    # each held trial sized on an invalidated A/A start → its trial key; binds the
+    # pre-registration event, the invalidation event, then the pre-registration event again
+    INVALIDATED_SQL=(
+        "SELECT p.trial_key FROM core.autoagent_trial_ledger p WHERE p.event = %s AND "
+        + _AA_INVALIDATED_TRIAL_SQL
+        + " AND (p.payload->>'proposal_id')::bigint IN (SELECT proposal_id FROM ("
+        + _HELD_LIVE_TRIAL_SQL
+        + ") AS held_trial)"
+    ),
+    # the payload.void.reason of a trial voided because its A/A start is invalidated
+    AA_INVALIDATED_REASON="aa-invalidated",
     # each open trial as the ingest binds to it: agent, trial key, pattern id, canary hash, the
     # pre-registration's commit instant and its start record's instant (NULL = no start record)
     BINDING_SQL=(
@@ -10871,6 +10895,10 @@ def run_trial_stage() -> frozenset[str]:
       any ledger read: no row read or written, no canary file changed
     - open trial: a live pre-registration with no <live trial key>:decision row, read from the
       ledger → a pre-registration the push has not committed gets no canary
+    - invalidated start: an open trial whose pre-registration's aa_start_id holds an
+      aa-invalidation row (D7: that start's rows size nothing) → its void decision naming the
+      start, written ahead of every other judgment, its file removed whether or not the row
+      lands, nothing more for it this stage — never judged, no look, no graduation
     - stored rows: each open trial's delivered rows in core.spawn_manifest judged by the ingest's
       own rule at every stage, before any void or canary write (_judge_stored_rows) → a row an
       ingest stored and left unjudged is judged by that cycle's stage; a foreign row → the
@@ -10900,9 +10928,12 @@ def run_trial_stage() -> frozenset[str]:
     if refusal is not None:
         _warn_trial(refusal, "no ledger read or write and no canary file change this cycle")
         return frozenset()
-    trials = _get_open_trial_canaries()
-    if trials is None:
+    open_trials = _get_open_trial_canaries()
+    if open_trials is None:
         return frozenset()
+    for trial in open_trials.invalidated:
+        _void_invalidated_trial(trial)
+    trials = open_trials.current
     judgment = _judge_stored_rows(trials)
     trials = [trial for trial in trials if trial.key not in judgment.voided]
     past_bound = [
@@ -10918,21 +10949,31 @@ def run_trial_stage() -> frozenset[str]:
     return frozenset(trial.key for trial in judged)
 
 
-def _get_open_trial_canaries() -> list[TrialCanary] | None:
-    """The open live trials; None = unreadable, WARNed."""
+class OpenTrials(NamedTuple):
+    current: list[TrialCanary]
+    invalidated: list[TrialCanary]  # sized on an A/A start invalidated since → voided, unjudged
+
+
+def _get_open_trial_canaries() -> OpenTrials | None:
+    """The open live trials, split on their A/A start's invalidation; None = unreadable, WARNed."""
     if not HAS_PG_LOOP_WRITE:
         _warn_trial(
             "open live trials unreadable: PG helper import failed", "no trial canary written"
         )
         return None
     try:
-        return _read_trial_canaries()
+        trials = _read_trial_canaries()
+        invalidated = _read_invalidated_trial_keys() if trials else frozenset()
     except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
         _warn_trial(
             f"open live trials unreadable: {_describe_fault(exc)}",
             "no trial canary written this cycle",
         )
         return None
+    return OpenTrials(
+        [trial for trial in trials if trial.key not in invalidated],
+        [trial for trial in trials if trial.key in invalidated],
+    )
 
 
 def _read_trial_canaries() -> list[TrialCanary]:
@@ -10940,6 +10981,40 @@ def _read_trial_canaries() -> list[TrialCanary]:
         cur.execute(LIVE_TRIAL.CANARY_SQL, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
         rows = cur.fetchall()
     return [TrialCanary(*row) for row in rows]
+
+
+def _read_invalidated_trial_keys() -> frozenset[str]:
+    """The held live trials sized on an invalidated A/A start → their keys; raises on a fault."""
+    event = TRIAL_LEDGER.EVENT
+    params = (event.LIVE_PREREGISTRATION, event.AA_INVALIDATION, event.LIVE_PREREGISTRATION)
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(LIVE_TRIAL.INVALIDATED_SQL, params)
+        return frozenset(key for (key,) in cur.fetchall())
+
+
+def _void_invalidated_trial(trial: TrialCanary) -> None:
+    """Its void naming the invalidated A/A start; the file it holds removed whether or not the
+    row lands — a void the ledger refuses is written by the next writing cycle."""
+    start_id = trial.payload.get("aa_start_id")
+    void = {
+        "reason": LIVE_TRIAL.AA_INVALIDATED_REASON,
+        "agent": trial.agent,
+        "aa_start_id": start_id,
+    }
+    cause = f"trial {trial.key}: {trial.agent}'s A/A start {start_id} is invalidated"
+    try:
+        landed = _write_live_decision(trial.key, trial.agent, trial.pattern_id, {"void": void})
+    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
+        _warn_trial(
+            f"{cause}, its void not recorded: {_describe_fault(exc)}",
+            "no canary written; the next writing cycle retries",
+        )
+    else:
+        verdict = "voided" if landed else "already decided, no void written"
+        _warn_trial(f"{cause} → {verdict}", f"no look and no graduation ({trial.key}:decision)")
+    path = _get_canary_path(trial.agent)
+    if path in _get_canary_files(STAGE_AREA.TRIAL):
+        _delete_canaries([path], f"trial {trial.key} voided", STAGE_AREA.TRIAL)
 
 
 class StageJudgment(NamedTuple):
@@ -16002,11 +16077,13 @@ def run_graduation_stage() -> frozenset[str]:
     Derived every writing cycle from stored rows: the win row is the decision, the apply its
     effect. A row still pending after its call → a named WARN, whatever the exit; the next
     writing cycle calls again, and the apply path's stale drain ends a diff that never lands.
+    A win whose A/A start is invalidated since gets no call, with a named WARN — the trial
+    decision step ends its row unadjudicated; that read faulting → named WARN, no call at all.
 
     Returns the agents of the rows it called the apply for, whatever each call's outcome:
     run_cycle makes no generator call for them this cycle.
     """
-    won_agents = _read_won_pending_agents("no apply call this cycle")
+    won_agents = _get_graduating_agents(_read_won_pending_agents("no apply call this cycle"))
     if not won_agents:
         return frozenset()
     outcomes = {proposal_id: _call_graduation_apply(proposal_id) for proposal_id in won_agents}
@@ -16022,6 +16099,34 @@ def run_graduation_stage() -> frozenset[str]:
                 "the next writing cycle calls again",
             )
     return frozenset(won_agents.values())
+
+
+def _get_graduating_agents(won_agents: dict[int, str] | None) -> dict[int, str] | None:
+    """The won pending rows less each one whose trial's A/A start is invalidated, WARNed by name;
+    None, with a named WARN, when that read faults."""
+    if not won_agents:
+        return won_agents
+    try:
+        invalidated = _read_invalidated_trial_keys()
+    except Exception as exc:  # noqa: BLE001 — a read fault holds the apply, never the cycle
+        _warn_stage(
+            STAGE_AREA.GRADUATION,
+            f"invalidated A/A starts unreadable: {_describe_fault(exc)}",
+            "no apply call this cycle",
+        )
+        return None
+    for proposal_id in won_agents:
+        if (key := get_live_trial_key(proposal_id)) in invalidated:
+            _warn_stage(
+                STAGE_AREA.GRADUATION,
+                f"trial {key}: proposal {proposal_id} won on an A/A start invalidated since",
+                "no apply call; the trial decision step ends its row unadjudicated",
+            )
+    return {
+        proposal_id: agent
+        for proposal_id, agent in won_agents.items()
+        if get_live_trial_key(proposal_id) not in invalidated
+    }
 
 
 def _read_won_pending_agents(fault_scope: str) -> dict[int, str] | None:

@@ -634,7 +634,8 @@ model AutoagentProposal {
   //     `daemon-cycle-generation-closed` — generation-closed terminalization, NOT a
   //       review: a stored pending auto row closed while generation is off
   //     `daemon-cycle-trial-decision` — a live trial's decision without a win:
-  //       harm / retire → rejected, void → unadjudicated, verdict instant stamped
+  //       harm / retire → rejected, void → unadjudicated, verdict instant stamped;
+  //       a win on an A/A start invalidated since → unadjudicated
   //     `daemon-cycle-push` — cycle push
   //     `updater-resolved-gap` — updater resolved-gap accountability row
   //     `status-backfill` — status backfill
