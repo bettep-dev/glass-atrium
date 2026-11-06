@@ -16,6 +16,8 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=../../hooks/test/lib/forced-write.bash
+source "${GA}/hooks/test/lib/forced-write.bash"
 
 BEGIN_MARK='<!-- EDITABLE:BEGIN -->'
 END_MARK='<!-- EDITABLE:END -->'
@@ -579,6 +581,46 @@ has_abort_row() {
     }
     [[ "$(cat "${PG}/row-status")" == "pending" && "$(insert_count)" -eq 0 ]] || {
       echo "${name}: DB written"
+      return 1
+    }
+  done
+}
+
+# The approve route's own argv under the forced-interrupt harness: a late child kept through exec, the
+# stderr pipe full → on bash 3.2 its SIGCHLD interrupts a blocked builtin write in the script's shell.
+@test "a live-trial refusal keeps exit 27 when a child's exit interrupts its blocked stderr line" {
+  # name | decision-state answer kind | the refusal text
+  local rows=(
+    "an open trial, the approve route|open|live trial is open"
+    "a decision state that is no state line, the approve route|held|decision state could not be read"
+  )
+  local wrapper="${WORK}/approve-route.sh" row name kind needle answer rest
+  printf 'exec /bin/bash %q --agents-dir %q --proposal-id %q --auto-regen --actor monitor-user\n' \
+    "${REAL_SCRIPT}" "${AGENTS}" "${ROW_ID}" >"${wrapper}"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind needle <<<"${row}"
+    answer="${kind}"
+    [[ "${kind}" == "held" ]] || answer="${kind}|${TRIAL_SHA}"
+    : >"${WORK}/other"
+    run --separate-stderr env PATH="${STUB}:${PATH}" \
+      HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
+      GIT_CONFIG_GLOBAL="${FAKE_HOME}/.gitconfig" \
+      AUTOAGENT_REMOVAL_LIVE=1 AUTOAGENT_REPORTS_DIR="${REPORTS}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
+      AUTOAGENT_DAEMON_CYCLE_PY="${SEAM}" STUB_PG="${PG}" STUB_ROW_ID="${ROW_ID}" \
+      STUB_CYCLE="2026-10-01" STUB_LABEL="${LABEL}" STUB_AGENT="probe" STUB_TARGET="${PROBE}" \
+      STUB_DIFF_B64="$(offset_diff | base64 | tr -d '\n')" STUB_TRIAL="${answer}" \
+      python3 -c "${FORCED_HARNESS_PY}" "${wrapper}" /dev/null "${WORK}/other" stderr
+    rest="${output#*"${needle}"}"
+    [[ "${status}" -eq 27 && "${output}" == *"${needle}"* && "${rest}" != *"${needle}"* ]] || {
+      echo "${name}: exit ${status}: ${output} ${stderr}"
+      return 1
+    }
+    cmp -s "${PROBE}" "${BEFORE}" || {
+      echo "${name}: target changed"
+      return 1
+    }
+    [[ "$(cat "${PG}/row-status")" == "pending" && "$(insert_count)" -eq 0 ]] || {
+      echo "${name}: row $(cat "${PG}/row-status"), records $(insert_count)"
       return 1
     }
   done

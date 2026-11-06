@@ -1327,14 +1327,15 @@ select_single_proposal() {
 # or decided without a win → nobody. The row's status adds no leg: a won row
 # drained to snoozed is still the machine actor's alone. A read that fails or answers anything but
 # one state line is refused too — a trial that cannot be read is never "no trial".
+# Both lines from a subshell, for assert_approval_tier's reason: an EINTR'd in-shell printf would exit 1.
 assert_trial_decision_state() {
     local answer leg grammar='^(open|won|decided)\|[0-9a-f]*$'
     if ! answer="$(get_trial_decision_state)"; then
         answer='unread'
     fi
     if [[ -n "${answer}" ]] && ! [[ "${answer}" =~ ${grammar} ]]; then
-        printf '[daemon-apply] FATAL: proposal id=%s live-trial decision state could not be read — nothing applied (never read as no trial)\n' \
-            "${PROPOSAL_ID}" >&2
+        (printf '[daemon-apply] FATAL: proposal id=%s live-trial decision state could not be read — nothing applied (never read as no trial)\n' \
+            "${PROPOSAL_ID}") >&2 || true # GA-ABSORB[handled@exit 27]: the exit is the verdict
         exit 27
     fi
     case "${answer%%|*}" in
@@ -1349,8 +1350,8 @@ assert_trial_decision_state() {
         open) leg='open — no decision yet, no actor applies it' ;;
         *) leg='decided without a win — no actor applies it' ;;
     esac
-    printf '[daemon-apply] REFUSED proposal id=%s actor=%s — its live trial is %s; nothing applied, row left as it was\n' \
-        "${PROPOSAL_ID}" "${REVIEW_ACTOR}" "${leg}" >&2
+    (printf '[daemon-apply] REFUSED proposal id=%s actor=%s — its live trial is %s; nothing applied, row left as it was\n' \
+        "${PROPOSAL_ID}" "${REVIEW_ACTOR}" "${leg}") >&2 || true # GA-ABSORB[handled@exit 27]: the exit is the verdict
     exit 27
 }
 
@@ -1387,7 +1388,7 @@ assert_approval_tier() {
             ;;
     esac
     (printf '[daemon-apply] REFUSED proposal id=%s actor=%s — its %s; nothing applied, row left as it was\n' \
-        "${PROPOSAL_ID}" "${REVIEW_ACTOR}" "${leg}") >&2 || true
+        "${PROPOSAL_ID}" "${REVIEW_ACTOR}" "${leg}") >&2 || true # GA-ABSORB[handled@exit 28]: the exit is the verdict
     exit 28
 }
 
