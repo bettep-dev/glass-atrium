@@ -10917,7 +10917,7 @@ def _write_shadow_row(row: ShadowRow, trial: TrialCanary | None = None) -> int |
 
 
 def _warn_shadow(cause: str, scope: str) -> None:
-    sys.stderr.write(f"[daemon-cycle] WARN: shadow stage — {cause}; {scope}\n")
+    _warn_stage(STAGE_AREA.SHADOW, cause, scope)
 
 
 class TrialCanary(NamedTuple):

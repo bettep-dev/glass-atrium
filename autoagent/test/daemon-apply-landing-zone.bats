@@ -477,8 +477,8 @@ applied_log_path() {
       '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
     snapshot_pristine "${AGENTS}/probe.md"
 
-    # The text after the break is the rest of the ADDED line, never a context
-    # line: the hunk's one anchor is the blank protected line 4.
+    # text after the break → the rest of the ADDED line, never a context line
+    # the hunk's one anchor → the blank protected line 4
     diff="$(printf '%s\n' '--- a/probe.md' '+++ b/probe.md' '@@ -4,1 +4,2 @@' \
       "+new rule${seps[i]} editable rule alpha" ' ')"
     write_proposal_row "${AGENTS}/probe.md" "probe-break-${i}" "${diff}"

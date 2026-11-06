@@ -13,8 +13,9 @@ import sys
 
 def get_verdict(diff_text: str, target_path: str) -> str:
     """The guard's verdict on diff_text against the file at target_path."""
-    # git apply breaks a diff and a body at "\n" alone; str.splitlines and a
-    # translating open also break at FF, U+0085, U+2028 and a lone CR.
+    # git apply breaks a diff and a body at "\n" alone
+    # str.splitlines also breaks at FF, U+0085, U+2028 and a lone CR
+    # a translating open rewrites a lone CR to "\n"
     lines = [ln.removesuffix("\r") for ln in diff_text.split("\n")]
 
     # Header-less Strategy-B fragment → EOF append, outside any region. Reject.
