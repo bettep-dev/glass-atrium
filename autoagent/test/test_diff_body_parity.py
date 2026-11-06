@@ -822,7 +822,12 @@ class NormalizerKeepsMarkdownDashAndPlusLines(unittest.TestCase):
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
 class BodyComparatorsReadBodyLinesAsGitDoes(unittest.TestCase):
-    """A body line carrying a non-newline separator is one line to every comparator, as it is to git apply."""
+    """How the body comparators split a body into lines.
+
+    - a non-newline separator inside a line → still one line to every comparator, as to git apply
+    - a CRLF ending → its CR dropped with the ending, never kept as the line's → a CRLF body keeps the LF body's
+      out-of-region verdict
+    """
 
     _NAME = Path(_TARGET).name
 

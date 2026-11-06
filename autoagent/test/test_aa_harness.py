@@ -873,7 +873,7 @@ class AaCycleStartTest(_AaFixture):
                     {stem: (start.id, "") for stem in roster},
                 )
 
-    def test_of_two_racing_cycles_one_writes_the_aa_start_row(self) -> None:
+    def test_of_two_racing_cycles_one_writes_the_aa_start_row_and_the_loser_keeps_the_winners_canaries(self) -> None:
         self._install_fresh()
         winner_canaries: dict[str, dict] = {}
 
