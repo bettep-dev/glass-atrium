@@ -140,7 +140,6 @@ _PG_OUTCOME_IMPORT_EXC: Exception | None = None
 try:
     with contextlib.redirect_stderr(io.StringIO()):
         from _pg_learning_dualwrite import (
-            count_outcomes_since as _pg_count_outcomes_since,
             read_outcomes_since as _pg_read_outcomes_since,
             read_pending_learning_patterns as _pg_read_pending_patterns,
             read_coverage_learning_patterns as _pg_read_coverage_patterns,
@@ -283,12 +282,6 @@ from daemon_config import (  # noqa: E402 — hooks dir prepended above (repo-re
 # Per-cycle agent cap sentinel — 0/negative/None → unlimited (ALL agents).
 # Positive int → ceiling. cost_guard is informational only (not a gate).
 UNLIMITED_AGENTS = 1_000_000
-
-# Outcome sampling cap — bounds the posterior's recency sample only, NEVER
-# evidence volume: the promotion ladder's observation_count comes from
-# _count_outcome_signals (uncapped COUNT(*) over the same window), so this cap
-# cannot starve the n>=10 candidate floor.
-OUTCOME_SAMPLE_LIMIT = 5
 
 # Chronic Haiku-timeout back-off (generation side) -------------------------
 #
@@ -1472,12 +1465,11 @@ def match_budget_family(pattern_label: str, target_file: str, diff: str) -> str 
     return f"site:{site}" if site else None
 
 
-# -- Promotion ladder config ------------------------------------------------
+# -- Promotion tier label ---------------------------------------------------
 #
-# Ladder mention → candidate → proposal → instruction-edit | skill-candidate on a
-# Beta-Binomial posterior (lib/confidence.py); rungs → classify_promotion_tier.
-# A proposal-row label only: run_cycle stamps the 'mention' floor → no rung gates
-# generation or apply; a pre-registered row lands only on its live trial's win.
+# promotion_tier is a proposal-row label only: run_cycle stamps the 'mention' floor
+# → no tier gates generation or apply; a pre-registered row lands only on its live
+# trial's win.
 
 # Add lib/ to sys.path — the daemon runs from autoagent root, where lib/ may not
 # be on the path automatically.
@@ -1486,7 +1478,6 @@ if str(_AUTOAGENT_LIB_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_LIB_DIR))
 try:
     from confidence import (  # noqa: E402
-        OutcomeSignal,
         POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS,
         POST_APPLY_REGRESSION_RATE_DELTA,
         beta_smoothed_rate,
@@ -1531,19 +1522,6 @@ except Exception as _pause_import_exc:  # noqa: BLE001 — lib missing → grace
         f"[daemon-cycle] WARN: pause-flag lib import failed — update-pause gate "
         f"disabled: {type(_pause_import_exc).__name__}: {_pause_import_exc}\n"
     )
-
-# Promotion ladder thresholds (classify_promotion_tier). n = the TRUE qualifying-outcome
-# count (_count_outcome_signals — uncapped COUNT(*) over the lookback window), never the
-# capped posterior sample length → a sample cap below the floor leaves 'candidate' unreachable.
-PROMOTION_CANDIDATE_CONFIDENCE = 0.7
-PROMOTION_CANDIDATE_MIN_OBSERVATIONS = 10
-PROMOTION_PROPOSAL_CONFIDENCE = 0.85
-PROMOTION_SUSTAIN_DAYS = 7
-
-# Promotion tier label — core.autoagent_proposals.promotion_tier column value.
-PromotionTier = Literal[
-    "mention", "candidate", "proposal", "instruction-edit", "skill-candidate"
-]
 
 # Rationale persisted on an auto candidate terminalized at generation (vs. emitted
 # as auto-pending limbo). Distinct from a quality reject so the board reads true.
@@ -1711,234 +1689,6 @@ def resolve_floor_terminalization(
         terminalized=True,
         promotion_tier=promotion_tier,
     )
-
-
-def _fetch_outcome_signals(
-    agent: str,
-    *,
-    limit: int = OUTCOME_SAMPLE_LIMIT,
-) -> list[OutcomeSignal]:
-    """PG core.outcomes → list[OutcomeSignal] (empirical signal tuple).
-
-    Input for the confidence.py posterior — the writer self-report ``confidence``
-    enum is deliberately excluded; only the PG row's revision_count / result /
-    evaluative_signal are used (read via the raw helper dict).
-
-    - PG unavailable → empty list → cold-start posterior 0.5 (fails the 0.7 gate
-      → stays at mention, safe).
-    - filesystem `.md` fallback has incomplete revision_count/evaluative_signal
-      frontmatter → PG-only path (empirical-signal integrity first).
-
-    Args:
-        agent: pattern target agent.
-        limit: most recent N records (default OUTCOME_SAMPLE_LIMIT).
-
-    Returns:
-        list[OutcomeSignal] (record_ts DESC, up to limit).
-    """
-    if not HAS_PG_OUTCOME_READ or not agent:
-        return []
-
-    since_epoch = time.time() - PG_OUTCOME_LOOKBACK_DAYS * 86400
-    try:
-        rows = _pg_read_outcomes_since(
-            since_epoch,
-            agent=agent,
-            task_type=None,
-            limit=limit,
-            order="DESC",
-        )
-    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: PG outcome-signal read failed "
-            f"(promotion gate degrades to cold-start): "
-            f"{type(exc).__name__}: {exc}\n"
-        )
-        return []
-
-    signals: list[OutcomeSignal] = []
-    for row in rows:
-        # Preserve record_ts (time-decay input). PG returns a tz-aware datetime;
-        # absent → None → compute treats as legacy.
-        signals.append(
-            OutcomeSignal(
-                revision_count=int(row.get("revision_count") or 0),
-                result=row.get("result", "") or "",
-                evaluative_signal=int(row.get("evaluative_signal") or 0),
-                record_ts=row.get("record_ts"),
-            )
-        )
-    return signals
-
-
-def _count_outcome_signals(agent: str) -> int | None:
-    """True qualifying-outcome count — the promotion ladder's observation_count.
-
-    Same window + filters as _fetch_outcome_signals (90-day lookback, agent
-    scope, learning-signal exclusions incl. poisoned_window — WHERE shared
-    inside the PG helper), with no LIMIT: OUTCOME_SAMPLE_LIMIT bounds the
-    posterior's sample, never the evidence volume the n>=10 floor gates on.
-
-    Returns:
-        int — qualifying-row count · None on PG-off / read failure (caller
-        degrades to the capped sample length → n stays below the candidate
-        floor → 'mention', fail-closed).
-    """
-    if not HAS_PG_OUTCOME_READ or not agent:
-        return None
-
-    since_epoch = time.time() - PG_OUTCOME_LOOKBACK_DAYS * 86400
-    try:
-        return _pg_count_outcomes_since(since_epoch, agent=agent, task_type=None)
-    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: PG outcome-count read failed "
-            f"(observation_count degrades to capped sample length): "
-            f"{type(exc).__name__}: {exc}\n"
-        )
-        return None
-
-
-def _fetch_promotion_stats(agent: str) -> tuple[list[OutcomeSignal], int]:
-    """(posterior sample, observation_count) for the promotion ladder — decoupled.
-
-    The sample (capped at OUTCOME_SAMPLE_LIMIT, most-recent-first) feeds the
-    Beta-Binomial posterior via α/β accumulation — compute_confidence_observed
-    never divides by the sample length, so a capped sample cannot corrupt the
-    posterior. observation_count is the uncapped COUNT(*) of the same window,
-    so the n>=10 candidate floor measures real evidence volume. Count
-    unavailable → degrade to the capped sample length (n<=cap stays below the
-    floor → 'mention', fail-closed).
-    """
-    signals = _fetch_outcome_signals(agent, limit=OUTCOME_SAMPLE_LIMIT)
-    true_count = _count_outcome_signals(agent)
-    if true_count is None:
-        return signals, len(signals)
-    return signals, true_count
-
-
-def _first_observation_ts(agent: str) -> datetime | None:
-    """Oldest qualifying core.outcomes record_ts for `agent` — the sustain signal.
-
-    core.learning_log.discovered_date CANNOT answer this question, which is why
-    this read exists. That column is a LAST-observed date (every writer restamps
-    it on re-emit), so reading it as first-observed
-    INVERTS the sustain gate: a pattern re-observed every cycle is restamped to
-    today and never sustains, while one whose evidence stopped arriving sustains
-    purely by ageing. The two gates now read two columns with one meaning each,
-    instead of one column with two.
-
-    ASC/limit-1 twin of _fetch_promotion_stats' read — same 90-day lookback, same
-    agent scope, same learning-signal exclusions — so the span is measured over
-    exactly the evidence the posterior scores. Uncapped by OUTCOME_SAMPLE_LIMIT
-    on purpose: the capped sample holds the 5 most RECENT rows, whose span
-    collapses toward zero precisely for the high-volume agents the ladder targets.
-
-    Returns:
-        datetime (tz-aware) of the oldest qualifying outcome · None on PG-off,
-        read failure, or an empty window → caller fails CLOSED (not sustained).
-    """
-    if not HAS_PG_OUTCOME_READ or not agent:
-        return None
-
-    since_epoch = time.time() - PG_OUTCOME_LOOKBACK_DAYS * 86400
-    try:
-        rows = _pg_read_outcomes_since(
-            since_epoch,
-            agent=agent,
-            task_type=None,
-            limit=1,
-            order="ASC",
-        )
-    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: PG first-observation read failed "
-            f"(sustain gate fails closed): {type(exc).__name__}: {exc}\n"
-        )
-        return None
-    if not rows:
-        return None
-    record_ts = rows[0].get("record_ts")
-    return record_ts if isinstance(record_ts, datetime) else None
-
-
-def _is_sustained(
-    first_observed: datetime | None,
-    *,
-    sustain_days: int = PROMOTION_SUSTAIN_DAYS,
-) -> bool:
-    """7-day rolling sustain check — has this agent's evidence spanned the window?
-
-    - `first_observed` = oldest qualifying core.outcomes record_ts
-      (_first_observation_ts), NOT core.learning_log.discovered_date. The column
-      name reads first-observed; the value is last-observed. See
-      _first_observation_ts for why substituting it inverts this gate.
-    - now - first_observed >= sustain_days → sustained.
-    - None (PG off, read failure, empty window) → False (conservative — blocks
-      proposal promotion, same fail-closed posture as the observation_count floor).
-
-    Args:
-        first_observed: tz-aware datetime of the oldest qualifying outcome.
-        sustain_days: sustain threshold in days (default 7).
-
-    Returns:
-        bool — whether sustain is met.
-    """
-    if not isinstance(first_observed, datetime):
-        return False
-    observed = (
-        first_observed.replace(tzinfo=timezone.utc)
-        if first_observed.tzinfo is None
-        else first_observed
-    )
-    elapsed_days = (datetime.now(timezone.utc) - observed).days
-    return elapsed_days >= sustain_days
-
-
-def classify_promotion_tier(
-    *,
-    confidence_observed: float,
-    observation_count: int,
-    sustained: bool,
-    touches_frontmatter: bool,
-) -> PromotionTier:
-    """Beta-Binomial posterior + observation count + sustain → promotion tier.
-
-    Promotion ladder:
-      - mention   : default (observed only, raw log)
-      - candidate : confidence_observed >= 0.7  AND observation_count >= 10
-      - proposal  : (candidate) AND confidence_observed >= 0.85 AND sustained
-      - terminal  : on reaching proposal —
-          * touches_frontmatter=True  → skill-candidate (Tier-2 user_pending)
-          * touches_frontmatter=False → instruction-edit (Tier-1 Auto)
-
-    Skill graduation (frontmatter-identity change) is always Tier-2 user_pending
-    (the "frontmatter identity field change" safety trigger).
-
-    Args:
-        confidence_observed: posterior mean in (0,1).
-        observation_count: pattern outcome observation count (n).
-        sustained: whether 7-day sustain is met.
-        touches_frontmatter: whether the proposal diff touches frontmatter identity.
-
-    Returns:
-        PromotionTier — one of the 5 stages.
-    """
-    candidate_ok = (
-        confidence_observed >= PROMOTION_CANDIDATE_CONFIDENCE
-        and observation_count >= PROMOTION_CANDIDATE_MIN_OBSERVATIONS
-    )
-    if not candidate_ok:
-        return "mention"
-
-    proposal_ok = confidence_observed >= PROMOTION_PROPOSAL_CONFIDENCE and sustained
-    if not proposal_ok:
-        return "candidate"
-
-    # Reached proposal → terminal-stage branch.
-    if touches_frontmatter:
-        return "skill-candidate"
-    return "instruction-edit"
 
 
 # -- Data models ------------------------------------------------------------
@@ -6964,8 +6714,8 @@ def alert_post_apply_regression() -> None:
     Next-cycle step: for each recently applied proposal, the target agent's
     Beta(1,1)-smoothed soft-negative outcome rate BEFORE the apply is compared
     to the rate AFTER it. Both windows read through _pg_read_outcomes_since —
-    the same shared learning-signal exclusion scope as _count_outcome_signals
-    (attribution failures + poisoned_window excluded inside the PG helper).
+    the shared learning-signal exclusion scope (attribution failures +
+    poisoned_window excluded inside the PG helper).
     Degradation (post rate exceeding pre by >= POST_APPLY_REGRESSION_RATE_DELTA
     with post n >= POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS) emits ONE WARN
     loop event whose stderr line names the proposal id + the agents-bak

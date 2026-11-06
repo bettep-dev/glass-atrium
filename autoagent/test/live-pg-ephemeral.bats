@@ -177,9 +177,8 @@ PY
   [[ "${output}" == "1" ]] || { echo "${output}"; return 1; }
 }
 
-@test "the observation-count live classes run against the migrated cluster, none skipped" {
-  _assert_live_module test_observation_count_decouple \
-    TestTrueCountWithCappedSample TestApplyGateAllowlist
+@test "the backlog-gate allowlist live class runs against the migrated cluster, none skipped" {
+  _assert_live_module test_observation_count_decouple TestApplyGateAllowlist
 }
 
 @test "the reject-learning-pattern live class runs against the migrated cluster, none skipped" {

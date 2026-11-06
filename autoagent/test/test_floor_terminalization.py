@@ -9,9 +9,9 @@ source: every auto+pending candidate the cycle bound to no live pre-registration
 rewritten to a terminal ``status='unadjudicated'``; a bound candidate stays pending,
 in trial, and safety-tier rows stay pending for human approval.
 
-The posterior and its promotion tier are a label only: whatever tier the ladder
-assigns, the status, approval tier and terminalization verdict stay the same, and
-the tier itself is carried through unchanged.
+The promotion tier is a label only: whatever tier a candidate carries, the status,
+approval tier and terminalization verdict stay the same, and the tier itself is
+carried through unchanged.
 
 With generation closed, ``daemon_cycle.update_generation_closed_proposals`` closes
 the same limbo for STORED rows: one idempotent statement moves every pending auto
@@ -62,43 +62,21 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
 
-# One row per tier class: (row name, posterior mean, observation count, sustained,
-# touches frontmatter) → the tier the real ladder assigns to that posterior.
-_LADDER_ROWS: tuple[tuple[str, float, int, bool, bool], ...] = (
-    ("mention", 0.5, 0, False, False),
-    ("candidate", 0.75, 12, False, False),
-    ("instruction-edit", 0.95, 50, True, False),
-    ("skill-candidate", 0.95, 50, True, True),
+# Every promotion_tier label a stored row carries: the 'mention' floor run_cycle
+# stamps, the above-floor labels and the retired-bypass empty label.
+_TIERS: tuple[str, ...] = (
+    "mention",
+    "candidate",
+    "proposal",
+    "instruction-edit",
+    "skill-candidate",
+    "",
 )
-# Labels the ladder never assigns today but stored rows carry: the
-# retired-bypass empty label and the proposal rung.
-_STORED_ONLY_TIERS: tuple[str, ...] = ("", "proposal")
-
-
-def _get_tier_rows() -> list[tuple[str, str]]:
-    """(row name, promotion tier) — the ladder rows classified, then stored-only labels."""
-    rows = []
-    for name, posterior, count, sustained, touches_frontmatter in _LADDER_ROWS:
-        tier = dc.classify_promotion_tier(
-            confidence_observed=posterior,
-            observation_count=count,
-            sustained=sustained,
-            touches_frontmatter=touches_frontmatter,
-        )
-        rows.append((name, tier))
-    rows.extend((f"stored {tier!r}", tier) for tier in _STORED_ONLY_TIERS)
-    return rows
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class TestPromotionTierIsALabel(unittest.TestCase):
-    """A candidate's posterior and tier never change its status, tier or verdict."""
-
-    def test_when_ladder_row_classified_then_it_lands_in_its_named_tier(self) -> None:
-        # Guards the table below: each ladder row really exercises its tier class.
-        for name, tier in _get_tier_rows()[: len(_LADDER_ROWS)]:
-            with self.subTest(row=name):
-                self.assertEqual(tier, name)
+    """A candidate's tier never changes its status, tier or verdict."""
 
     def test_when_auto_pending_then_only_a_bound_candidate_stays_pending_whatever_its_tier(
         self,
@@ -110,8 +88,8 @@ class TestPromotionTierIsALabel(unittest.TestCase):
             ("unbound — no payload attached", False, floored),
         )
         for row_name, is_bound, expected in rows:
-            for name, tier in _get_tier_rows():
-                with self.subTest(candidate=row_name, row=name):
+            for tier in _TIERS:
+                with self.subTest(candidate=row_name, tier=tier):
                     result = dc.resolve_floor_terminalization(
                         classification="body-auto",
                         approval_tier="auto",
@@ -141,8 +119,8 @@ class TestPromotionTierIsALabel(unittest.TestCase):
             ("back-off snooze", "body-auto", "", "snoozed"),
         )
         for shape, classification, approval_tier, status_value in shapes:
-            for name, tier in _get_tier_rows():
-                with self.subTest(shape=shape, row=name):
+            for tier in _TIERS:
+                with self.subTest(shape=shape, tier=tier):
                     result = dc.resolve_floor_terminalization(
                         classification=classification,
                         approval_tier=approval_tier,

@@ -1183,11 +1183,11 @@ WHERE approval_tier      = 'auto'::core."ApprovalTier"
   -- candidate-tier apply is live by explicit user approval; this floor (not a
   -- blanket brake) is what keeps it safe. Widening the allowlist (adding
   -- 'mention') requires explicit user approval.
-  -- The floor token 'mention' (classify_promotion_tier's lowest
-  -- Beta-Binomial rung + the loop's fail-CLOSED floor state) is deliberately ABSENT, so
+  -- The floor token 'mention' (the label run_cycle stamps on every row + the
+  -- loop's fail-CLOSED floor state) is deliberately ABSENT, so
   -- it is excluded. NULL (legacy/pre-feature rows) + '' (explicit BYPASS,
-  -- floorless) + the four above-floor tiers (the PromotionTier
-  -- enum minus 'mention') all PASS. Behaviorally identical to a plain
+  -- floorless) + the four above-floor labels (candidate / proposal /
+  -- instruction-edit / skill-candidate) all PASS. Behaviorally identical to a plain
   -- `IS DISTINCT FROM 'mention'` on current data, but stating the intent
   -- POSITIVELY makes a future column-default flip ('' -> 'mention') unable to
   -- silently INVERT flag-OFF behavior: an eligible row must MATCH the allowlist,

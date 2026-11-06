@@ -1104,10 +1104,8 @@ def _learning_window_where(
 ) -> tuple[list[str], list[object]]:
     """WHERE clauses + params for the learning-signal window — single SoT.
 
-    Shared by read_outcomes_since (row read) and count_outcomes_since
-    (observation count) so the two consumers can never diverge on what
-    "qualifying outcome" means. Learning-signal exclusion (always on) drops
-    rows that are not real per-agent signal:
+    What "qualifying outcome" means for read_outcomes_since. Learning-signal
+    exclusion (always on) drops rows that are not real per-agent signal:
       1) sentinel agents (subagent_stop_missing / agent_id_missing) are
          attribution failures — counting them invents a phantom top-agent.
       2) attribution_source IS NULL = legacy rows with no recoverable agent
@@ -1301,50 +1299,6 @@ def _fetch_outcome_rows(sql: str, params: list[object]) -> list[dict]:
                     "attribution_source": attribution_source or "",
                 })
     return rows
-
-
-def count_outcomes_since(
-    since_epoch: float,
-    *,
-    agent: str | None = None,
-    task_type: str | None = None,
-) -> int | None:
-    """COUNT(*) of qualifying core.outcomes rows over the learning-signal window.
-
-    Same WHERE as read_outcomes_since (shared _learning_window_where — the row
-    read and the count can never diverge on what "qualifying" means), with no
-    LIMIT: a row-read cap bounds LLM-context size, never evidence volume. This
-    is the promotion ladder's observation_count source — len() of a capped
-    sample undercounts and silently blocks the n>=10 candidate floor.
-
-    - fallback: PG unreachable / query error → None (caller chooses the
-      degrade; None is distinct from a true 0 of an empty window).
-    """
-    where_clauses, params = _learning_window_where(
-        since_epoch, agent=agent, task_type=task_type
-    )
-    sql = (
-        "SELECT count(*) FROM core.outcomes WHERE " + " AND ".join(where_clauses)
-    )
-    try:
-        with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, tuple(params))
-                row = cur.fetchone()
-        return int(row[0]) if row is not None else None
-    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
-        sys.stderr.write(
-            '{"hook":"_pg_learning_dualwrite","op":"count_outcomes_since",'
-            '"error_kind":"%s","fallback":"none","since_epoch":%s,'
-            '"agent":%s,"task_type":%s}\n'
-            % (
-                type(exc).__name__,
-                since_epoch,
-                ('"%s"' % agent) if agent else "null",
-                ('"%s"' % task_type) if task_type else "null",
-            )
-        )
-        return None
 
 
 # Per-pattern metric window read: one row per spawn unit of any listed agent type
