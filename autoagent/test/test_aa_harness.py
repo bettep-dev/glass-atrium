@@ -8,8 +8,8 @@ writes one arm-difference design-effect row per agent and metric key, the instru
 row and the aa-result row. Every row outside the live class is
 database-free under ``seal_pg_reach``; the ledger is an in-memory append-only fake behind the
 writer and connection seams. The live classes run the open-state, join-coverage and spool-close
-reads' SQL, and the close-count writer, on the cluster ``autoagent/test/live-pg-ephemeral.bats``
-provisions and skip elsewhere.
+reads' SQL, the close-count writer and the live fixture's own connect, on the cluster
+``autoagent/test/live-pg-ephemeral.bats`` provisions and skip elsewhere.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_aa_harness.py -v
@@ -35,7 +35,7 @@ import sys
 import tempfile
 import unittest
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -3179,6 +3179,8 @@ class _AaLivePgFixture(_AaFixture):
     _TEMPLATE = SimpleNamespace(
         FULL="trial_ledger_tpl", ABSENT="trial_ledger_absent_tpl"
     )
+    # a loaded host stalls one connect past any single budget → a wide budget, a few attempts
+    _CONNECT = SimpleNamespace(ATTEMPTS=3, TIMEOUT_S=10)
 
     def setUp(self) -> None:
         get_ephemeral_connection().close()
@@ -3194,13 +3196,80 @@ class _AaLivePgFixture(_AaFixture):
         self._patch("_pg_connect", self._connect)
 
     def _run_admin(self, statement: str) -> None:
-        with self.psycopg.connect(
-            dbname="eph_bootstrap", connect_timeout=2, autocommit=True
-        ) as admin:
+        with self._get_connection("eph_bootstrap", autocommit=True) as admin:
             admin.execute(statement)
 
     def _connect(self):
-        return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
+        return self._get_connection(self.dbname)
+
+    def _get_connection(self, dbname: str, **options: object):
+        """A connection to ``dbname``; only a timed-out attempt is retried, up to the bound."""
+        attempts_left = self._CONNECT.ATTEMPTS
+        while True:
+            try:
+                return self.psycopg.connect(
+                    dbname=dbname, connect_timeout=self._CONNECT.TIMEOUT_S, **options
+                )
+            except self.psycopg.errors.ConnectionTimeout:
+                attempts_left -= 1
+                if not attempts_left:
+                    raise
+
+
+class AaLivePgFixtureConnectTest(_AaLivePgFixture):
+    """The fixture's own connect: a stalled attempt is retried, any other refusal is not."""
+
+    @contextlib.contextmanager
+    def _patch_connect(self, failures: list[Exception]) -> Iterator[list[str]]:
+        """Connect raises ``failures`` in turn, then opens; yields each attempt's dbname."""
+        real_connect, pending, attempts = self.psycopg.connect, list(failures), []
+
+        def connect(*args, **kwargs):
+            attempts.append(kwargs["dbname"])
+            if pending:
+                raise pending.pop(0)
+            return real_connect(*args, **kwargs)
+
+        with mock.patch.object(self.psycopg, "connect", connect):
+            yield attempts
+
+    def test_a_connect_attempt_that_times_out_once_opens_on_the_retry(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        timeout = self.psycopg.errors.ConnectionTimeout("connection timeout expired")
+
+        with self._patch_connect([timeout]), self._connect() as conn:
+            (dbname,) = conn.execute("SELECT current_database()").fetchone()
+
+        self.assertEqual(dbname, self.dbname)
+
+    def test_a_failing_connect_raises_at_once_unless_it_timed_out_and_then_at_the_attempt_bound(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        errors = self.psycopg.errors
+        rows = (
+            (
+                "a refusal other than a timeout",
+                lambda: self.psycopg.OperationalError("connection refused"),
+                self.psycopg.OperationalError,
+                1,
+            ),
+            (
+                "an attempt that times out every time",
+                lambda: errors.ConnectionTimeout("connection timeout expired"),
+                errors.ConnectionTimeout,
+                self._CONNECT.ATTEMPTS,
+            ),
+        )
+        for name, get_error, raised, attempt_count in rows:
+            # more failures than any bound → only the fixture's own bound can stop the retries
+            failures = [get_error() for _ in range(50)]
+            with self.subTest(name), self._patch_connect(failures) as attempts:
+                with self.assertRaises(self.psycopg.OperationalError) as caught:
+                    self._connect()
+
+                self.assertIs(type(caught.exception), raised)
+                self.assertEqual(attempts, [self.dbname] * attempt_count)
 
 
 class AaOpenReadLivePgTest(_AaLivePgFixture):
