@@ -4304,7 +4304,9 @@ class TrialCanaryTest(_ShadowFixture):
 class GraduationApplyTest(_ShadowFixture):
     """A won trial's proposal row is applied by the cycle while it stays pending: one apply call
     a cycle, a named WARN only while the row is still pending after it, whatever the call's
-    exit, no call once the row left pending, and none for a trial still open."""
+    exit, no call once the row left pending, and none for a trial still open. No call either,
+    each named, for a win on an A/A start invalidated since or when the won trials or the
+    invalidated starts are unreadable."""
 
     def _win(self) -> str:
         """A started trial won at look 2, one shadow stage → its key."""

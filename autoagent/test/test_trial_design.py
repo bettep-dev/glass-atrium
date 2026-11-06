@@ -592,26 +592,26 @@ def _get_statistic(clusters) -> float | None:
     return look.statistic
 
 
-# Source: the lane's S5 pre-step 3 (b) record → closed clusters and cluster sizes per look, dev-react —
-# the fewest look-1 sessions among the agents reaching all four looks. Spawns closed by looks 1-4, one
-# row per session: sessions 7 / 10 / 13 / 15, spawns 248 / 573 / 911 / 1256, largest 84 / 239 / 304 / 415
+# Synthetic fan-out shape: few look-1 sessions, one cluster near a third of each look's spawns,
+# sessions joining at every look. Spawns closed by looks 1-4, one row per session
 _CALIBRATION = SimpleNamespace(
     SESSIONS=(
-        (2, 3, 3, 3),
-        (5, 6, 6, 6),
-        (9, 12, 12, 12),
-        (25, 25, 25, 40),
-        (40, 46, 84, 89),
-        (83, 139, 239, 239),
-        (84, 239, 304, 415),
-        (0, 4, 4, 4),
-        (0, 25, 25, 84),
-        (0, 74, 150, 226),
-        (0, 0, 15, 15),
-        (0, 0, 22, 40),
-        (0, 0, 22, 41),
-        (0, 0, 0, 20),
-        (0, 0, 0, 22),
+        (3, 4, 4, 4),
+        (11, 14, 14, 14),
+        (29, 29, 31, 46),
+        (61, 70, 97, 103),
+        (79, 168, 251, 263),
+        (93, 197, 288, 371),
+        (0, 8, 8, 8),
+        (0, 6, 6, 6),
+        (0, 33, 33, 71),
+        (0, 61, 128, 197),
+        (0, 5, 18, 19),
+        (0, 0, 27, 36),
+        (0, 0, 33, 58),
+        (0, 0, 12, 17),
+        (0, 0, 0, 24),
+        (0, 0, 0, 29),
     ),
     SEED=20261013,
     DRAWS=200,
@@ -623,7 +623,7 @@ def _get_fan_out_looks(generator: random.Random, salt: str) -> list[list[list[tu
     """One no-harm draw per look: a session's spawns share a Pareto fan-out level, arms under ``salt``."""
     sessions = []
     for session, sizes in enumerate(_CALIBRATION.SESSIONS):
-        level = 5 * generator.paretovariate(1.5)  # mean 15 per spawn, inside the recorded 13-16; no finite variance
+        level = 5 * generator.paretovariate(1.5)  # mean 15 per spawn; no finite variance
         agent_ids = [f"c{session:02d}{position:03d}" for position in range(sizes[-1])]
         sessions.append(
             [
