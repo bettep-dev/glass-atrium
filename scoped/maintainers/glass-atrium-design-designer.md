@@ -27,6 +27,10 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | Body text | Cited from |
 |---|---|
 | `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` | **AI Slop Tropes citers** |
+| `#### Admin-console tropes (data screens)` | **Admin-console tropes citers** |
+| `##### Owner-review signatures` | `## Pre-Emit 5-Axis Self-Critique` → **Admin-console recheck** |
+| `##### Tables and pagination` | `agents/glass-atrium-intel-reporter.md` → `### Comparison Tables (MUST ≤5 columns)` why line |
+| `##### Color, type and decoration` | `scoped/scope-report.md` → `### Visual-Maximization Floor` → **SoT** |
 | `## Red Flags` (WCAG AA not verified · **Color & contrast** derive-then-verify) | `scoped/maintainers/scope-design.md` · AI Slop Tropes citers' heading paths |
 | `## Pre-Emit 5-Axis Self-Critique` (axes · band rubric · emit gate) | 5-axis-critique skill, whose `**Gate**: PASS (all ≥7)` line reads the band rubric · `scoped/scope-design.md` |
 | `## Design Evaluation 4-Axis (1-5 each, 20 total)` | 5-axis-critique skill · `scoped/scope-qa.md` |
@@ -38,6 +42,9 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | `## Pre-Execution Verification` contrast row | `scoped/maintainers/scope-design.md` |
 
 - **AI Slop Tropes citers**: `git grep 'AI Slop Tropes'`; the `hooks/test/` hits are the frontmatter copy's `skills:` comment and `rationale` literal (`## Machine constraints on the body`), plus the `AC-B7 containment` fixture in `enforce-harness-critical-frontmatter.bats`, quoting the rationale.
+- **Admin-console tropes citers** (citers of the heading and of its `#####` rows by path): `git grep 'Admin-console tropes'`.
+  - Hits: `skills/glass-atrium-design-anti-slop/SKILL.md` · `agents/glass-atrium-intel-reporter.md` → `### Comparison Tables (MUST ≤5 columns)` why line · `scoped/scope-report.md` → `### Visual-Maximization Floor` → **SoT**.
+  - Body-internal: `## Pre-Emit 5-Axis Self-Critique` → **Admin-console recheck** · **Lucide/Hero Icons uniform stroke-width** → **Source IDs**.
 - **HTML Primary Co-Emission Role citers** (trigger · output fields · markup prohibition · veto line, its sole copy): `git grep 'HTML Primary Co-Emission Role'`.
 
 ## Copies kept in step with this body
@@ -45,7 +52,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 - **AI Slop Tropes mirrors** (a closed set — edit together):
   - `skills/glass-atrium-design-anti-slop/SKILL.md` → `## Pattern Categories (mirror glass-atrium-design-designer.md SoT)` — the detector layer, preloaded by the agent.
   - `agents/glass-atrium-dev-front.md` → `### Anti-AI-Slop (Mandatory — single SoT for full catalogue)` — pointer plus enforcement subset.
-  - `scoped/scope-report.md` → `### Visual-Maximization Floor` → **Residual anti-slop patterns** — a deliberate supplement of patterns the SoT lacks, not a copy.
+  - `scoped/scope-report.md` → `### Visual-Maximization Floor` → **Residual anti-slop patterns** — a deliberate supplement of patterns the SoT lacks outside its admin-console scope, not a copy.
 - **Diverged, unreconciled** (the rule owner's call):
   - the detector holds patterns absent from the SoT: three colour patterns (a white-on-dark text floor whose hex has no canonical home among them) and the 3-column equal-distribution layout;
   - the SoT holds the pure-black `#000` text trope, the mixed-radius trope and the Workflow-tropes group, which the detector lacks.
@@ -77,6 +84,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 ## Decisions worth keeping
 
 - **No-self-approval kernel**: the canvas waits for the user's explicit go-ahead on both philosophy documents — a consent point, not a process step, so it stays in Guardrails.
+- **Admin-console heading anchors**: the admin-console bundle uses `####`/`#####` headings, unlike the bold-lead bundles above it, because other files cite its parts by heading — keep them headings.
 - The no-`completion_block` fallback stays in the body: neither `rules/glass-atrium/core-outcome-record.md` nor the emit-format block states it.
 - **Numbers that stay**:
   - WCAG ratios and the 44×44px target — WCAG criteria the contrast-check skill and the template use.
