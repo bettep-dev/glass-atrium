@@ -2244,7 +2244,10 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
         start = {"started_at": _TRIAL.START.isoformat(), "text_sha256": started.sha256}
         self._create_ledger_row(event.LIVE_START, start, f"{started.key}:start", started)
         trials.decision_id = self._create_ledger_row(
-            event.LIVE_DECISION, {"outcome": "stop"}, f"{decided.key}:decision", decided
+            event.LIVE_DECISION,
+            {"harm": {"reason": "primary", "agent": decided.agent}},
+            f"{decided.key}:decision",
+            decided,
         )
         return trials
 

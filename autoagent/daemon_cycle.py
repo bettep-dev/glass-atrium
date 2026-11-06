@@ -1462,15 +1462,10 @@ def match_budget_family(pattern_label: str, target_file: str, diff: str) -> str 
 
 # -- Promotion ladder config ------------------------------------------------
 #
-# Confidence-weighted learning loop — a Beta-Binomial posterior gate atop the
-# binary threshold (5+ occurrences → Tier-1 Auto), promoting mention → candidate
-# → proposal → instruction|skill. Wires in lib/confidence.py + lib/project_key.py.
-#
-# Thresholds:
-#   candidate : confidence_observed >= 0.7  AND n >= 10
-#   proposal  : confidence_observed >= 0.85 AND 7-day sustain
-#   terminal  : instruction-edit (Tier-1 Auto, body edit)
-#               OR skill-candidate (Tier-2 user_pending, frontmatter identity)
+# Ladder mention → candidate → proposal → instruction-edit | skill-candidate on a
+# Beta-Binomial posterior (lib/confidence.py); rungs → classify_promotion_tier.
+# A proposal-row label only: run_cycle stamps the 'mention' floor → no rung gates
+# generation or apply; a body changes only on a live trial's win.
 
 # Add lib/ to sys.path — the daemon runs from autoagent root, where lib/ may not
 # be on the path automatically.
@@ -1958,7 +1953,6 @@ class Pattern:
     # agent='dev-node'), so a "label|agent" reconstruction silently misses them.
     row_id: int = 0
     metric_key: str | None = None  # one of the helper's METRIC_KEYS; None = keyless row
-    last_transition_at: datetime | None = None  # latest lifecycle move; None = never moved
 
     @property
     def freq_int(self) -> int:
@@ -2306,7 +2300,6 @@ def read_user_pending_patterns(
                 raw_line=f"pg:learning_log:{row['id']}:{signature}",
                 row_id=row["id"],
                 metric_key=row.get("metric_key"),
-                last_transition_at=row.get("last_transition_at"),
             )
         )
 

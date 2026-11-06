@@ -455,9 +455,10 @@ class _RegenStoreFixture(unittest.TestCase):
 
 
 class StaleSweepTrialTest(_RegenStoreFixture):
-    """The sweep keeps an open trial's diff as trialled and takes the row back once decided."""
+    """The sweep keeps a held trial's diff as trialled and takes the row back once its trial no
+    longer holds it."""
 
-    def test_the_sweep_skips_exactly_the_rows_an_open_trial_names(self) -> None:
+    def test_the_sweep_skips_exactly_the_rows_a_held_trial_names(self) -> None:
         with redirect_stderr(io.StringIO()):
             results = dc.regenerate_stale_proposals(agents_dir=self.target.parent)
         self.assertEqual(self.pg_reach, [])
@@ -473,9 +474,9 @@ class StaleSweepTrialTest(_RegenStoreFixture):
 
 
 class SingleRegenTrialTest(_RegenStoreFixture):
-    """The single-id path refuses an open trial's id on its named action and writes nothing."""
+    """The single-id path refuses a held trial's id on its named action and writes nothing."""
 
-    def test_the_single_path_refuses_exactly_an_open_trial_id(self) -> None:
+    def test_the_single_path_refuses_exactly_a_held_trial_id(self) -> None:
         for label, expected_action, expected_diff in (
             ("open trial", "in_trial", _DIFF.STORED),
             ("decided trial", "regenerated", _DIFF.REDERIVED),

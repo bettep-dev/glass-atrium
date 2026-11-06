@@ -621,9 +621,7 @@ class _LedgerCursor:
         return self.result[0] if self.result else None
 
 
-def _pattern(
-    *, last_transition_at: datetime | None = None, agent: str = _AGENT
-) -> dc.Pattern:
+def _pattern(*, agent: str = _AGENT) -> dc.Pattern:
     label = "budget-overage concentration"
     return dc.Pattern(
         date="2026-08-01",
@@ -635,7 +633,6 @@ def _pattern(
         raw_line=f"{label}|{agent}",
         row_id=_PATTERN_ID,
         metric_key=_BUDGET_KEY,
-        last_transition_at=last_transition_at,
     )
 
 
@@ -1493,7 +1490,7 @@ class BoundPayloadTest(_ShadowFixture):
                 )
                 self.assertEqual(self.pg_reach, [])
 
-    def test_an_agent_in_trial_gets_no_second_preregistration_until_its_trial_is_decided(
+    def test_an_agent_gets_no_second_preregistration_while_its_live_trial_is_held(
         self,
     ) -> None:
         trial_ledger = stub.get_trial_ledger()
@@ -1734,15 +1731,6 @@ class LookTest(_ShadowFixture):
                 self._cycle(_NEXT_NOW)
                 self.assertEqual(len(self.power.passes), len(patterns))
                 self.assertEqual([look.payload["look"] for look in self._get_looks()], [1])
-
-    def test_a_trial_whose_pattern_transitioned_after_its_preregistration_takes_its_look(
-        self,
-    ) -> None:
-        self.patterns = [_pattern(last_transition_at=_NOW + timedelta(minutes=30))]
-        self._open_started_trial()
-        self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
-        self._cycle(_NEXT_NOW)
-        self.assertEqual([look.payload["look"] for look in self._get_looks()], [1])
 
     def test_a_faulted_read_of_the_trial_agents_spawns_warns_by_name_and_the_next_cycle_takes_the_look(
         self,
@@ -2861,6 +2849,10 @@ class _LivePgFixture(_ShadowFixture):
         )
 
 
+# a decision row in the writer's shape: the harm stop of a crossed primary check
+_HARM_STOP = {"harm": {"reason": "primary", "agent": _AGENT}}
+
+
 class PreRegistrationReadLivePgTest(_LivePgFixture):
     """The live pre-registration reads' real SQL on the ephemeral cluster. The power check runs
     on the fake ledger; only the stage's ledger connection then points at the clone."""
@@ -2886,13 +2878,13 @@ class PreRegistrationReadLivePgTest(_LivePgFixture):
             )
         self._preregister(decided)
         self._insert_trial_row(decided, event.LIVE_LOOK, {"look": 1}, suffix=":look:1")
-        self._insert_trial_row(decided, event.LIVE_DECISION, {"outcome": "stop"}, suffix=":decision")
+        self._insert_trial_row(decided, event.LIVE_DECISION, _HARM_STOP, suffix=":decision")
         self._preregister(foreign)
         attempts = dc._fetch_prior_attempts(_AGENT)
         self.assertEqual(
             [(a.proposal_id, a.status, a.look, a.decision) for a in attempts],
             [
-                (decided, "rejected", {"look": 1}, {"outcome": "stop"}),
+                (decided, "rejected", {"look": 1}, _HARM_STOP),
                 (landed, "applied", {"look": 2}, None),
             ],
         )
@@ -2924,7 +2916,7 @@ class PreRegistrationReadLivePgTest(_LivePgFixture):
             {"started_at": _NOW.isoformat(), "text_sha256": "0" * 64},
             suffix=":start",
         )
-        self._insert_trial_row(decided, event.LIVE_DECISION, {"outcome": "stop"}, suffix=":decision")
+        self._insert_trial_row(decided, event.LIVE_DECISION, _HARM_STOP, suffix=":decision")
 
         with self._connect() as conn:
             recorded_at = dict(
@@ -2966,7 +2958,7 @@ class PreRegistrationReadLivePgTest(_LivePgFixture):
                     {"look": number, "of": proposal_id},
                     suffix=f":look:{number}",
                 )
-        self._insert_trial_row(read, event.LIVE_DECISION, {"outcome": "stop"}, suffix=":decision")
+        self._insert_trial_row(read, event.LIVE_DECISION, _HARM_STOP, suffix=":decision")
         self.assertEqual(
             dc._read_look_payloads(f"{read:064x}"),
             {number: {"look": number, "of": read} for number in (1, 2)},
@@ -4464,7 +4456,6 @@ class CycleWiringTest(_ShadowFixture):
             "status": "identified",
             "discovered_date": date(2026, 8, 1),
             "metric_key": _BUDGET_KEY,
-            "last_transition_at": None,
         }
         self.intakes = [intake]
         self._patch("_pg_read_pending_patterns", lambda: [dict(row) for row in self.intakes])

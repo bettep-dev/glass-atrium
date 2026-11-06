@@ -2382,7 +2382,7 @@ class AaCanaryTest(_AaResultFixture):
             self.ledger.write(
                 trial_ledger.EVENT.LIVE_DECISION,
                 trial_ledger.ACTOR.LIVE,
-                {"outcome": "stop"},
+                {"harm": {"reason": "primary", "agent": agent}},
                 trial_key=key,
                 agent=agent,
                 dedupe_key=f"{key}:decision",

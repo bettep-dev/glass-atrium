@@ -987,7 +987,7 @@ def read_learning_log_signatures() -> dict:
 # user-pending flow downstream, never dropped). Served by learning_log_status_tier_idx.
 _PENDING_PATTERNS_SELECT_TEMPLATE = """
 SELECT id, discovered_date, pattern_signature, frequency, agent,
-       status::text, approval_tier::text, {metric_key_column}, last_transition_at
+       status::text, approval_tier::text, {metric_key_column}
 FROM core.learning_log
 WHERE status = 'identified'::core."LearningStatus"
   AND approval_tier IN ('user-pending'::core."ApprovalTier",
@@ -1013,9 +1013,8 @@ def read_pending_learning_patterns() -> list[dict]:
 
     Shape: [{"id": int, "discovered_date": date, "pattern_signature": str,
     "frequency": int, "agent": str, "status": str, "approval_tier": str,
-    "metric_key": str | None, "last_transition_at": datetime | None}], frequency
-    DESC. metric_key is None for a keyless row and for every row of a schema
-    without the column; last_transition_at is None for a row never transitioned.
+    "metric_key": str | None}], frequency DESC. metric_key is None for a keyless
+    row and for every row of a schema without the column.
     Falls back to [] on any failure — the daemon takes the zero-pattern path
     (no generation this cycle; next cycle retries).
     """
@@ -1032,7 +1031,7 @@ def read_pending_learning_patterns() -> list[dict]:
                 rows: list[dict] = []
                 for (
                     row_id, discovered_date, signature, frequency, agent,
-                    status, tier, metric_key, last_transition_at,
+                    status, tier, metric_key,
                 ) in cur.fetchall():
                     rows.append({
                         "id": row_id,
@@ -1043,7 +1042,6 @@ def read_pending_learning_patterns() -> list[dict]:
                         "status": status or "identified",
                         "approval_tier": tier or "user-pending",
                         "metric_key": metric_key,
-                        "last_transition_at": last_transition_at,
                     })
                 return rows
     except Exception as exc:  # noqa: BLE001 — read fallback is loud (stderr) + safe

@@ -26,7 +26,7 @@ Four properties are covered:
     the identity the unit binds into it;
 (5) the scope — a bound candidate (approval tier ``auto``) closes only the
     agent's pending ``auto`` rows, an unbound one (safety, infra-pending) every
-    tier, and no candidate closes a row an open live trial names.
+    tier, and no candidate closes a row a held live trial names.
 
 Backend: the stdlib sqlite stand-in from ``scripts/test/_pg_stub_backend.py``
 runs the REAL statement text (cast-stripped, qmark-rewritten), so no Postgres
