@@ -858,7 +858,7 @@ class TestManifestDeliveryBinding(_DeliveryCase):
                 filing = _FILED_RE.findall(self.stderr)
                 self.assertEqual(filing, [(_TRIAL.KEY, "1", filed, unfiled)], name)
 
-    def test_a_racing_row_leaves_the_open_trial_open_unless_another_agent_s(self) -> None:
+    def test_a_racing_row_leaves_the_open_trial_open_unless_it_names_another_agents_trial(self) -> None:
         events = dc.TRIAL_LEDGER.EVENT
         own_sha256 = hashlib.sha256(b"an earlier trial of the agent").hexdigest()
         other_sha256 = hashlib.sha256(b"a trial of another agent").hexdigest()
@@ -1391,8 +1391,7 @@ class TestStoredRowsJudgment(_DeliveryCase):
         self,
     ) -> None:
         decision = f"{_TRIAL.KEY}:decision"
-        # name, whether an ingest's void is the first refused (False = the row stored and never
-        # bound), the trial stages the ledger refuses before one takes the void
+        # name, ingest void refused first (False: stored, never bound), stages refused before one takes it
         rows = (
             ("refused at the ingest, taken by the next stage", True, 0),
             ("refused at the ingest and by the next stage", True, 1),

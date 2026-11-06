@@ -1211,10 +1211,10 @@ class BoundPayloadTest(_ShadowFixture):
                 _POOL_AGENT: _get_gap_spawns("pool", pool_minutes),
             }
         )
-        pooled = [float(gap) for gap in (*own_minutes, *pool_minutes)]
+        pooled_gaps = [float(gap) for gap in (*own_minutes, *pool_minutes)]
         self.assertEqual(row["tier"], "pooled")
         self.assertEqual(row["gap_count"], 100)
-        self.assertEqual(row["minutes"], dc.get_redelegation_window([], pooled).minutes)
+        self.assertEqual(row["minutes"], dc.get_redelegation_window([], pooled_gaps).minutes)
 
     def test_one_stems_bare_and_prefixed_manifest_rows_form_one_type(self) -> None:
         # each overran spawn under the bare name, its next start under the prefixed one
@@ -1375,7 +1375,7 @@ class BoundPayloadTest(_ShadowFixture):
         model_based = [label for label in rise["labels"] if label.startswith("model-based")]
         self.assertEqual(len(model_based), 1)
 
-    def test_the_reference_rise_is_a_dated_four_look_snapshot_the_rise_is_not_bounded_by(
+    def test_the_dated_four_look_reference_rise_is_one_the_model_based_rise_does_not_bound(
         self,
     ) -> None:
         reference = self._get_row([])["reference_rise"]

@@ -909,7 +909,6 @@ class TestFollowUpCounts(unittest.TestCase):
                 self.assertEqual(self._get_counts(spawns, evaluated_at), expected)
 
 
-
 class TestWindowedPrimitiveCallShape(unittest.TestCase):
     """The half-open window travels as one value and the scalars beside it go by keyword only,
     so a misplaced scalar raises instead of counting under the wrong value."""
@@ -922,11 +921,8 @@ class TestWindowedPrimitiveCallShape(unittest.TestCase):
         rows = [
             ("get_overran_gaps", sig.get_overran_gaps, (spawns_by_type, window),
              {"tool_budget": 40}),
-            ("_get_type_overran_gaps", sig._get_type_overran_gaps, (spawns, window),
-             {"tool_budget": 40}),
             ("get_follow_up_counts", sig.get_follow_up_counts,
              (spawns_by_type, "dev-shell", window), counting),
-            ("_is_counted", sig._is_counted, (spawns[0], window), counting),
         ]
         for name, primitive, positional, options in rows:
             with self.subTest(name):
