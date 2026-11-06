@@ -139,8 +139,8 @@ class TrialSampleSize(unittest.TestCase):
                 self.assertEqual(td.get_trial_sample_size(baseline), harm if binding == "harm" else efficacy)
 
     def test_the_per_arm_maxima_reproduce_to_the_unit(self) -> None:
-        # synthetic baselines: reference rates + per-agent tables (tasks, both versions; spawns,
-        # methods A and B), rates 0.017-0.48 over 5-1500 units; efficacy → R33
+        # synthetic baselines: reference rates + per-agent tables (tasks; spawns, methods A and B)
+        # rates 0.017-0.48 over 5-1500 units
         rows = (
             ("reference 4.0%", 0.040, 2901, 3876),
             ("reference 7.5%", 0.075, 1499, 1980),
@@ -218,11 +218,11 @@ class TrialSampleSize(unittest.TestCase):
 
 class GraduationGrowth(unittest.TestCase):
     def test_sequential_graduation_and_its_ceiling_reproduce_the_per_agent_figures(self) -> None:
-        # synthetic agents, spawns and tasks baselines → α 0.05 on each guardrail,
-        # the sequential reading at R33's per-arm maximum, guardrails independent, no harm;
+        # synthetic agents' spawns and tasks baselines; the sequential reading at the per-arm max
+        # guardrails independent at α 0.05 each, no harm
         # ceiling = the share of efficacy crossings no guardrail stops at or before the crossing look
         rows = (
-            # (name, baseline, R33 per-arm maximum, guardrails, graduation, ceiling)
+            # (name, baseline, per-arm maximum, guardrails, graduation, ceiling)
             ("agent A spawns", 85 / 1500, 2681, 3, 0.831, 0.934),
             ("agent A tasks", 98 / 600, 808, 3, 0.819, 0.932),
             ("agent B spawns", 88 / 532, 795, 4, 0.800, 0.911),
@@ -244,9 +244,9 @@ class GraduationGrowth(unittest.TestCase):
                 self.assertAlmostEqual(graduation / efficacy, ceiling, delta=5e-4)
 
     def test_the_grown_sample_is_the_smallest_reaching_graduation_0_8(self) -> None:
-        # synthetic agents → R45's grown sample on the sequential reading
+        # synthetic agents → the grown sample on the sequential reading
         rows = (
-            # (name, baseline, R33 per-arm maximum, guardrails, growth factor, grown per-arm maximum)
+            # (name, baseline, per-arm maximum, guardrails, growth factor, grown per-arm maximum)
             ("agent A spawns, not grown", 85 / 1500, 2681, 3, 1.000, 2681),
             ("agent B spawns, not grown", 88 / 532, 795, 4, 1.000, 795),
             ("agent F spawns, not grown", 36 / 350, 1393, 4, 1.000, 1393),

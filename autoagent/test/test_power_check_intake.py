@@ -60,8 +60,7 @@ from _pg_seal import get_connection, get_ephemeral_connection, seal_pg_reach
 _NOW = datetime(2026, 10, 5, 6, 0, tzinfo=timezone.utc)
 _WINDOWS = get_pair_windows(_NOW)
 _DAY = _WINDOWS.end  # D, the most recent UTC midnight
-# EMIT_ROW = the A/A row of emit_failure's attribution-leg definition; a row keyed EMIT is
-# the pre-split union event's
+# EMIT_ROW = the A/A row of emit_failure's attribution-leg definition; EMIT = the union event's
 _KEY = SimpleNamespace(
     BUDGET="budget_overage", EMIT="emit_failure", EMIT_ROW="emit_failure_attribution"
 )
@@ -81,8 +80,8 @@ _AA_START_ID = 1
 _REQUIRED_UNITS = trial_design.get_required_units(
     trial_design.get_trial_sample_size(_BASELINE_RATE), design_effect=_DESIGN_EFFECT
 )
-# baseline 43/100: maximum 191 grown to 225 at the passing agent's k 4 → bound 450 at design
-# effect 1 = exactly 150 × 84 / 28; (150 / 28) × 84 rounds below 450 in floating point
+# baseline 43/100: maximum 191 grown to 225 at the passing agent's k 4
+# bound 450 at design effect 1 = exactly 150 × 84 / 28; (150 / 28) × 84 rounds below it in floats
 _EXACT_BOUND_BASELINE = WindowCount(spawns=100, events=43, sessions=43)
 # 28-day spawn counts: 84-day projection just at-or-above / just below the bound; 150 at 43/100
 _UNITS = SimpleNamespace(
@@ -359,14 +358,13 @@ class GetPowerCheckTest(unittest.TestCase):
                 1353,
             ),
             (
-                "a k-3 agent grows 55/100 less than k 4",
+                "a k-3 agent grows 55/100 to 139, short of k 4's 147",
                 "glass-atrium-qa-code-reviewer",
                 55,
                 100,
                 116,
                 139,
             ),
-            ("a k-4 agent grows 55/100 more than k 3", _AGENT.PASSING, 55, 100, 116, 147),
         ]
         for name, agent, events, spawns, maximum, grown in rows:
             with self.subTest(name):

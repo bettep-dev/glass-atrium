@@ -9490,10 +9490,9 @@ LIVE_TRIAL = SimpleNamespace(
         + _OPEN_LIVE_TRIAL_FROM
         + " ORDER BY p.id"
     ),
-    # one trial's recorded looks in the order they landed; the count's crossings ride on them
+    # one trial's recorded look payloads; the look dedupe key holds one row per look number
     LOOK_SQL=(
-        "SELECT payload FROM core.autoagent_trial_ledger "
-        "WHERE event = %s AND trial_key = %s ORDER BY id"
+        "SELECT payload FROM core.autoagent_trial_ledger WHERE event = %s AND trial_key = %s"
     ),
 )
 
@@ -10167,8 +10166,8 @@ HARM_CHECK = SimpleNamespace(
 def get_guardrail_count(agent: str) -> int:
     """k of the agent's guardrail family: 3 where the scope map names a non-DEV scope file, else 4.
 
-    k decides the watch share 0.05/k and whether the verified_fail guardrail exists; an agent
-    the map does not name keeps it.
+    k decides the watch share 0.05/k, whether the verified_fail guardrail exists and the trial
+    maximum's growth; an agent the map does not name takes 4.
     """
     scope_file = _AGENT_SCOPE_MAP.get(agent)
     if scope_file is not None and scope_file != _DEV_SCOPE_FILE:

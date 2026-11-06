@@ -280,8 +280,7 @@ METRIC_EMIT_FAILURE = "emit_failure"
 METRIC_KEYS = frozenset({METRIC_BUDGET_OVERAGE, METRIC_EMIT_FAILURE})
 # emit failure's cut-off leg (quota stop, user interrupt, kill): a guardrail, never a pattern key
 METRIC_NO_SUBAGENT_STOP = "no_subagent_stop"
-# A/A design-effect row key per metric definition; a row counts only for the definition it was
-# measured under → the pre-split union-event row, keyed `emit_failure`, sizes no key here
+# A/A design-effect row key per metric definition → a pre-split union `emit_failure` row sizes none
 DESIGN_EFFECT_ROW_KEYS = MappingProxyType({
     METRIC_BUDGET_OVERAGE: METRIC_BUDGET_OVERAGE,
     METRIC_EMIT_FAILURE: "emit_failure_attribution",

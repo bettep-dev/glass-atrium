@@ -274,7 +274,7 @@ PY
   _assert_live_module test_power_check_intake DesignEffectReadLivePgTest
 }
 
-@test "the shadow stage's pre-registration ledger read runs against the migrated cluster, none skipped" {
+@test "the live trial ledger reads and the decision step's statement run against the migrated cluster, none skipped" {
   _assert_live_module test_shadow_engine PreRegistrationReadLivePgTest \
     TrialDecisionTerminalizationLivePgTest
 }
