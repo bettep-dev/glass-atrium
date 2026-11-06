@@ -23,8 +23,9 @@ ROW_ID=2763
 # A quote inside the label: an inlined value would break or alter the SQL the stand-in receives.
 LABEL="probe 'landed' record"
 ADDED_LINE='record probe insertion'
-# The pre-registered text hash the decision-state stand-in answers beside a trial's state.
-TRIAL_SHA='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+# The pre-registered text hash the decision-state stand-in answers beside a trial's state: the
+# probe insertion's own canary text (its added line, newline-ended), so a won offset_diff lands.
+TRIAL_SHA="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(f"{sys.argv[1]}\n".encode()).hexdigest())' "${ADDED_LINE}")"
 
 setup() {
   [[ -x "${REAL_SCRIPT}" ]] || skip "daemon-apply.sh not executable: ${REAL_SCRIPT}"
@@ -173,6 +174,12 @@ offset_diff() {
 stale_diff() {
   printf '%s\n' '--- a/probe.md' '+++ b/probe.md' '@@ -21,2 +21,3 @@' \
     ' editable goal line 10' "+${ADDED_LINE}" ' editable goal line 12'
+}
+
+# offset_diff with CR-ended hunk lines: its canary text drops the CR, git apply on a CRLF body keeps it.
+cr_hunk_diff() {
+  printf '%s\n' '--- a/probe.md' '+++ b/probe.md' '@@ -5,2 +5,3 @@'
+  printf '%s\r\n' ' editable goal line 10' "+${ADDED_LINE}" ' editable goal line 11'
 }
 
 headerless_diff() {
@@ -584,6 +591,26 @@ has_abort_row() {
   }
   [[ "$(cat "${PG}/flip/actor")" == "daemon-apply-flip" && "$(insert_count)" -eq 1 ]] || {
     echo "flip actor $(cat "${PG}/flip/actor"), records $(insert_count): ${output}"
+    return 1
+  }
+}
+
+@test "a graduation whose landed lines are not its pre-registered text applies nothing and counts one stale attempt" {
+  # the body turned CRLF mid-trial: the CR-ended hunk now lands, writing a CR the trialled text never held
+  awk '{ printf "%s\r\n", $0 }' "${BEFORE}" >"${PROBE}"
+  cp -p -- "${PROBE}" "${BEFORE}"
+  STUB_TRIAL="won|${TRIAL_SHA}" run_apply cr_hunk_diff --proposal-id "${ROW_ID}" --actor daemon-apply-flip
+  [[ "${status}" -eq 9 && "${output}" == *"trialled_text_mismatch"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  cmp -s "${PROBE}" "${BEFORE}" || {
+    echo "target changed: ${output}"
+    return 1
+  }
+  [[ "$(cat "${PG}/row-status")" == "pending" && "$(insert_count)" -eq 0 ]] \
+    && grep -q 'stale_attempt_count' "${PG}/psql.log" || {
+    echo "row $(cat "${PG}/row-status"), records $(insert_count), stale attempt counted: no: ${output}"
     return 1
   }
 }

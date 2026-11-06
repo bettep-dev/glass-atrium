@@ -1340,6 +1340,7 @@ assert_trial_decision_state() {
         '') return 0 ;;
         won)
             if [[ "${REVIEW_ACTOR}" == "${REVIEW_ACTOR_FLIP}" ]]; then
+                TRIAL_TEXT_SHA256="${answer#*|}"
                 return 0
             fi
             leg="won — only the graduation actor ${REVIEW_ACTOR_FLIP} applies it"
@@ -1814,6 +1815,13 @@ verify_patched() {
         fi
     fi
 
+    # A won trial's graduation lands exactly its pre-registered bytes (rationale: is_trialled_text_landed).
+    if [[ -n "${TRIAL_TEXT_SHA256}" ]] && ! is_trialled_text_landed "${before}" "${target}"; then
+        printf '[daemon-apply] WARN verify_patched trialled_text_mismatch target=%s — the landed lines are not the pre-registered text (sha256 %s); failing verify\n' \
+            "${target}" "${TRIAL_TEXT_SHA256}" >&2
+        return 1
+    fi
+
     # Proportional shrink floor: keep at least half the before-image line count.
     # Guts a body-stripping patch while a normal edit (near-original size) passes.
     local before_lines after_lines
@@ -1824,6 +1832,46 @@ verify_patched() {
     fi
 
     return 0
+}
+
+# is_trialled_text_landed BEFORE TARGET — 0 when TARGET is BEFORE with the stored diff's added lines
+# inserted, in order, as git apply wrote them, and those bytes hash to TRIAL_TEXT_SHA256.
+# Why the written bytes, not get_canary_text(PATCH_DIFF): the canary text drops a CR ending an added
+# line, which git apply keeps — a CR-ended hunk landing on a body turned CRLF mid-trial would write
+# bytes the trial never ran under a matching hash. Why an interleave, not a line diff of the two
+# images: a diff aligns an added line equal to its neighbour either way, so a legitimate landing
+# could read as other text.
+_PY_TRIALLED_TEXT_LANDED='
+import hashlib, sys
+
+def get_lines(data):
+    lines = data.split(b"\n")
+    tail = lines.pop()
+    return [line + b"\n" for line in lines] + ([tail] if tail else [])
+
+before, after = (get_lines(open(path, "rb").read()) for path in sys.argv[1:3])
+written, kind = [], ""
+for line in get_lines(sys.stdin.buffer.read().rstrip(b"\n") + b"\n"):
+    if line.startswith(b"@@"):
+        kind = "hunk"
+    elif kind and line.startswith(b"+"):
+        written.append(line[1:])
+        kind = "added"
+    elif line.startswith(b"\\") and kind == "added":
+        written[-1] = written[-1].removesuffix(b"\n")
+    elif kind:
+        kind = "hunk"
+reach = {0} if len(after) == len(before) + len(written) else set()
+for k, line in enumerate(after):
+    reach = {i + 1 for i in reach if i < len(before) and before[i] == line} | {
+        i for i in reach if k - i < len(written) and written[k - i] == line}
+landed = len(before) in reach and hashlib.sha256(b"".join(written)).hexdigest() == sys.argv[3]
+sys.exit(0 if landed else 1)
+'
+# shellcheck disable=SC2329
+#   Called only from verify_patched, itself invoked indirectly as git_txn_apply's verify callback.
+is_trialled_text_landed() {
+    printf '%s' "${PATCH_DIFF}" | python3 -c "${_PY_TRIALLED_TEXT_LANDED}" "$1" "$2" "${TRIAL_TEXT_SHA256}"
 }
 
 # short_label — first 40 chars of pattern label, sanitised for commit message.
@@ -2432,6 +2480,8 @@ PATCH_SOURCE="report"
 BATCH_PATCH_LINES=""
 # Generation outcome (haiku_status) of the single proposal, set by select_single_proposal.
 SINGLE_HAIKU_STATUS=""
+# A won trial's pre-registered text hash, set by assert_trial_decision_state, read by verify_patched.
+TRIAL_TEXT_SHA256=""
 
 # Batch mode is closed until live trials: no flag, env or data-root input reopens it, so every install
 # selects nothing here — no backlog SELECT, no report read. The batch sources below stay for the
