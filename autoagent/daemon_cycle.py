@@ -10645,14 +10645,8 @@ def _get_harm_rises(
     reductions = {
         "primary": accrual.z,
         names.NO_STOP: _get_look_z(settled, lambda spawn: not spawn.has_subagent_stop),
-        names.TOOL_USE: _get_look_z(
-            [item for item in settled if item.spawn.tool_use_actual is not None],
-            lambda spawn: spawn.tool_use_actual,
-        ),
-        names.VERIFIED_FAIL: _get_look_z(
-            [item for item in settled if _get_verified_fail(item.spawn) is not None],
-            _get_verified_fail,
-        ),
+        names.TOOL_USE: _get_look_z(settled, lambda spawn: spawn.tool_use_actual),
+        names.VERIFIED_FAIL: _get_look_z(settled, _get_verified_fail),
     }
     return {name: None if z is None else -z for name, z in reductions.items()}
 
@@ -10886,12 +10880,14 @@ def _get_settled_spawns(counted: Sequence[ArmedSpawn]) -> list[ArmedSpawn]:
 
 
 def _get_look_z(
-    items: Sequence[ArmedSpawn], get_value: Callable[[SpawnFacts], float]
+    items: Sequence[ArmedSpawn], get_value: Callable[[SpawnFacts], float | None]
 ) -> float | None:
     """The reduction (control mean of a spawn's value above treatment's positive) over its
-    independent-spawn standard error, whatever the spawns' sessions; None when undefined."""
+    independent-spawn standard error, whatever the spawns' sessions; None when undefined. A
+    spawn whose value is None is in neither arm."""
+    values = [(item.arm, get_value(item.spawn)) for item in items]
     z = trial_design.get_independent_z(
-        [(item.arm, float(get_value(item.spawn))) for item in items]
+        [(arm, float(value)) for arm, value in values if value is not None]
     )
     return None if z is None else -z
 
