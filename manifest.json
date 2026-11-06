@@ -1070,7 +1070,7 @@
     "autoagent/package.json": "8495c5dba4543252564c8ee24bde73fb7eb6759fdb4271891f43a8bfb80aeaee",
     "autoagent/reviewer-catch-rate.sh": "5f539bd08359361985e10de9d1c0ea7cb0a44bd26165331d04622e3dcc5c6f31",
     "autoagent/test/_aa_unsealed_probe.py": "2e523c55d5f183c514c4a7d3f9ada6e33b111dc3cd10e700ad619daf63473348",
-    "autoagent/test/_pg_seal.py": "7b536c74cff53f726bf0c2d950289f72cb5f916dbedcf37e2301378f7d74ca36",
+    "autoagent/test/_pg_seal.py": "b2bbc99233b489f227bb149076b3574b5ac49637b31a24e6df2ccca3a533f261",
     "autoagent/test/autoagents-eval-arg-combo.bats": "a38461d951387e2ae29f25bea1114555dae539d9bce244a37bdaeb4fd1bca50a",
     "autoagent/test/autoagents-eval-git-status-failure.bats": "3c56e6ec6bf6007927b3dc95bf268653193d95344446147ca2c0f302dce23e7c",
     "autoagent/test/autoagents-eval-verdict.bats": "233a2be940142c8e773a41e490a9500d09c8cdfa85e7b93ea388830c6fd5bc24",
