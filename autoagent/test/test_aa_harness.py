@@ -4,7 +4,7 @@ An install's first A/A opens at a writing cycle on a ledger holding no aa-start 
 one through --aa-start; its fingerprint is the installed manifest's scoped hashes. While it is
 open each writing cycle compares the fingerprint and writes an
 aa-restart row when it moved or cannot be read. Once its window's duration ends, a cycle
-writes one arm-difference design-effect row per agent and metric key, the instrument verdict
+writes one arm-difference design-effect row per agent and row key, the instrument verdict
 row and the aa-result row. Every row outside the live class is
 database-free under ``seal_pg_reach``; the ledger is an in-memory append-only fake behind the
 writer and connection seams. The live classes run the open-state, join-coverage and spool-close
@@ -1526,6 +1526,18 @@ class AaResultTest(_AaResultFixture):
             },
         )
         self.assertLess(row.id, self._get_results()[0].id)
+
+    def test_the_instrument_verdict_reads_its_metric_under_whatever_row_key_names_it(
+        self,
+    ) -> None:
+        row_keys = dict(dc.DESIGN_EFFECT_ROW_KEYS, budget_overage="budget_overage_per_spawn")
+        self._patch("DESIGN_EFFECT_ROW_KEYS", row_keys)
+
+        self._evaluate("2026-10-07")
+        self._evaluate("2026-10-08")
+
+        (row,) = self._get_instrument_verdicts()
+        self.assertEqual(set(row.payload["agents"]), {"glass-atrium-dev-python"})
 
     def test_the_evidence_reads_cover_the_roster_with_its_aliases_from_the_window_start(
         self,

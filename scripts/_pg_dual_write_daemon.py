@@ -1230,8 +1230,8 @@ _TRIAL_LEDGER_EVENT = SimpleNamespace(
     AA_START="aa-start",  # opens the A/A; dedupe_key = aa-start:after:<latest start id | 0>
     AA_RESTART="aa-restart",  # dedupe_key = aa-restart:<start id>:<cycle date>
     AA_RESULT="aa-result",  # closes the A/A; dedupe_key = aa-result:<start id>
-    # Arm-difference design effect per agent and metric key, clustered by parent session;
-    # dedupe_key = aa-arm-design-effect:<start id>:<agent>:<metric key>
+    # Arm-difference design effect per agent and row key, clustered by parent session;
+    # dedupe_key = aa-arm-design-effect:<start id>:<agent>:<row key>
     AA_ARM_DESIGN_EFFECT="aa-arm-design-effect",
     # the D1 break-even verdict at the A/A result; dedupe_key = aa-instrument-verdict:<start id>,
     # or aa-instrument-verdict:<start id>:extend:<salt id> for a straddle's window extension

@@ -8948,7 +8948,7 @@ POWER = SimpleNamespace(
     ),
     # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
     CHECK_EVAL_PREFIX="power-check-",
-    # latest design-effect row per agent and metric key among A/As whose aa-result passed, with
+    # latest design-effect row per agent and row key among A/As whose aa-result passed, with
     # its start id; the start id in the dedupe keys joins them → one join for whole-roster and
     # subset A/As alike. An invalidated start drops out in the join, before DISTINCT ON picks →
     # an older valid pass stays readable under it
@@ -11878,7 +11878,7 @@ def run_aa_stage(
     - Then one aa-restart row per cycle date when the installed fingerprint moved or cannot be
       read, with every canary rewritten on the restart row's salt; otherwise each roster
       agent's canary lease is renewed, and once the window's duration has ended the result
-      lands — the instrument verdict row, then one design-effect row per agent and metric key,
+      lands — the instrument verdict row, then one design-effect row per agent and row key,
       then the aa-result row — and every canary file but an open live trial's is deleted. A
       landed verdict is read back, never decided again.
     - A verdict straddling at the duration end writes the window's extension row instead, once
@@ -12661,14 +12661,14 @@ def _get_arm_design_effect(
 def _write_aa_design_effects(
     start_id: int, effects: Mapping[tuple[str, str], trial_design.ArmDesignEffect]
 ) -> bool:
-    """One row per agent and metric key (a taken key = written earlier); False after a WARNed fault."""
+    """One row per agent and row key (a taken key = written earlier); False after a WARNed fault."""
     event = TRIAL_LEDGER.EVENT.AA_ARM_DESIGN_EFFECT
     is_complete = True
-    for (agent, metric_key), reading in effects.items():
+    for (agent, row_key), reading in effects.items():
         landed = _write_aa_row(
             event,
-            {"metric_key": metric_key, **reading._asdict()},
-            f"{event}:{start_id}:{agent}:{metric_key}",
+            {"metric_key": row_key, **reading._asdict()},
+            f"{event}:{start_id}:{agent}:{row_key}",
             agent=agent,
         )
         is_complete = is_complete and landed is not None
@@ -12712,10 +12712,11 @@ def _get_instrument_verdict_payload(
 ) -> dict | None:
     """The D1 verdict row's payload on INSTRUMENT.METRIC_KEY; None after a WARNed break-even
     history fault, the result deferred."""
+    instrument_row_key = DESIGN_EFFECT_ROW_KEYS[INSTRUMENT.METRIC_KEY]
     readings = {
         agent: reading
-        for (agent, metric_key), reading in effects.items()
-        if metric_key == INSTRUMENT.METRIC_KEY
+        for (agent, row_key), reading in effects.items()
+        if row_key == instrument_row_key
     }
     try:
         recomputed = _read_recomputed_break_evens(sorted(readings), now)
