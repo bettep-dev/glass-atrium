@@ -256,13 +256,16 @@ utc_days_ago() {
     "arm-imbalance|1|0|glass-atrium-dev-shell||warn : 1 canary trial void(s) for arm imbalance in the last 14d (agents: glass-atrium-dev-shell)"
     "low-delivery|0|1||glass-atrium-qa-debugger|warn : 1 canary trial void(s) for low delivery in the last 14d (agents: glass-atrium-qa-debugger)"
   )
-  local row name imbalance low_delivery imbalance_agents low_delivery_agents want
+  # a validity void precedes every trial decision, the harm stop included
+  local decisions="so the daemon voided it ahead of a win, a harm stop or a retire"
+  local row name imbalance low_delivery imbalance_agents low_delivery_agents want line
   for row in "${rows[@]}"; do
     IFS='|' read -r name imbalance low_delivery imbalance_agents low_delivery_agents want <<<"${row}"
     ledger_answer 0 0 0 '' '' '' "${imbalance}" "${low_delivery}" "${imbalance_agents}" "${low_delivery_agents}"
     run_doctor_sandbox
-    [[ "${output}" == *"${want}"* ]] || {
-      echo "${name}: missing '${want}' — output:"
+    line="$(printf '%s\n' "${output}" | grep -F -- "${want}" || true)"
+    [[ "${line}" == *"${want}"*" — "*"${decisions}" ]] || {
+      echo "${name}: missing '${want} — … ${decisions}' — output:"
       echo "${output}"
       return 1
     }

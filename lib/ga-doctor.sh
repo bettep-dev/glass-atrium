@@ -1713,10 +1713,7 @@ _doctor_report_canary_digest() {
 
 # §28 ledger leg: logs its verdict, stdout = the warning count it adds (0 on every unread branch).
 _doctor_report_canary_ledger() {
-  local probe="" answer="" voids="" unstarted="" unbound=""
-  local void_agents="" unstarted_agents="" unbound_agents=""
-  local imbalance="" low_delivery="" imbalance_agents="" low_delivery_agents=""
-  local days="${CANARY_TRIAL_WINDOW_DAYS}"
+  local probe="" answer="" days="${CANARY_TRIAL_WINDOW_DAYS}"
   # shellcheck disable=SC2310,SC2311  # rc-capturing probe calls: an unreachable server must stay distinguishable
   if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
     log "  note : canary trial ledger check skipped (GA_SKIP_DB_SETUP set)"
@@ -1728,44 +1725,40 @@ _doctor_report_canary_ledger() {
     log "  note : database '${DB_NAME}' absent — no canary trial rows to check"
   elif ! answer="$(_pg_canary_ledger_probe "${DB_NAME}" "${days}")"; then
     log "  note : canary trial ledger unread — the read against '${DB_NAME}' failed"
-  else
-    # Unit separator, never whitespace: an empty agent list is a field the split must keep.
-    IFS=$'\x1f' read -r voids unstarted unbound void_agents unstarted_agents unbound_agents \
-      imbalance low_delivery imbalance_agents low_delivery_agents <<<"${answer}"
-    if ! [[ "${voids},${unstarted},${unbound},${imbalance},${low_delivery}" =~ ^[0-9]+(,[0-9]+){4}$ ]]; then
-      log "  note : canary trial ledger unread — the read against '${DB_NAME}' answered something other than five counts"
-    else
-      _log_canary_ledger_verdict "${voids}" "${unstarted}" "${unbound}" \
-        "${void_agents}" "${unstarted_agents}" "${unbound_agents}" "${days}" \
-        "${imbalance}" "${low_delivery}" "${imbalance_agents}" "${low_delivery_agents}"
-      printf '%s' "$((voids + unstarted + unbound + imbalance + low_delivery))"
-      return 0
-    fi
+  elif _log_canary_ledger_verdict "${answer}" "${days}"; then
+    return 0
   fi
   printf '0'
 }
 
-# Args: $1-$3 = the foreign-hash void, unstarted void and unbound-delivery counts, $4-$6 = their
-# agents in that order, $7 = window days, $8-$9 = the arm-imbalance and low-delivery void counts,
-# $10-$11 = their agents.
+# Args: $1 = the ledger probe's answer, $2 = window days. Logs each count's warning; stdout = the
+# warning count. rc 1, nothing printed = the answer is not five counts.
 _log_canary_ledger_verdict() {
+  local voids unstarted unbound void_agents unstarted_agents unbound_agents
+  local imbalance low_delivery imbalance_agents low_delivery_agents days="$2"
+  # Unit separator, never whitespace: an empty agent list is a field the split must keep.
+  IFS=$'\x1f' read -r voids unstarted unbound void_agents unstarted_agents unbound_agents \
+    imbalance low_delivery imbalance_agents low_delivery_agents <<<"$1"
+  if ! [[ "${voids},${unstarted},${unbound},${imbalance},${low_delivery}" =~ ^[0-9]+(,[0-9]+){4}$ ]]; then
+    log "  note : canary trial ledger unread — the read against '${DB_NAME}' answered something other than five counts"
+    return 1
+  fi
+  _log_canary_count_warn "${voids}" "canary trial void(s) for a foreign canary hash in the last ${days}d (agents: ${void_agents}) — a delivered canary text was not the open trial's, so the daemon voided the trial and removed its canary files"
+  _log_canary_count_warn "${unstarted}" "canary trial void(s) for a trial that never started in the last ${days}d (agents: ${unstarted_agents}) — no canary was first written by the trial's pre-registered horizon, so the daemon voided it; a failed canary write is named by a 'trial stage' WARN line in the daemon log"
+  _log_canary_count_warn "${unbound}" "canary delivery(ies) bound to no open trial in the last ${days}d (agents: ${unbound_agents}) — a spawn delivered canary text while no trial was open; the daemon removed those canary files"
+  _log_canary_count_warn "${imbalance}" "canary trial void(s) for arm imbalance in the last ${days}d (agents: ${imbalance_agents}) — the trial's counted spawns split unevenly between its arms, so the daemon voided it ahead of a win, a harm stop or a retire"
+  _log_canary_count_warn "${low_delivery}" "canary trial void(s) for low delivery in the last ${days}d (agents: ${low_delivery_agents}) — the canary reached too few of the trial's treatment spawns, or reached a control spawn, so the daemon voided it ahead of a win, a harm stop or a retire"
+  local total="$((voids + unstarted + unbound + imbalance + low_delivery))"
+  if [[ "${total}" -eq 0 ]]; then
+    log "  ok   : no canary void or unbound canary delivery in the last ${days}d"
+  fi
+  printf '%s' "${total}"
+}
+
+# Args: $1 = a count, $2 = the warning after it; logs nothing at a zero count.
+_log_canary_count_warn() {
   if [[ "$1" -gt 0 ]]; then
-    log "  warn : $1 canary trial void(s) for a foreign canary hash in the last $7d (agents: $4) — a delivered canary text was not the open trial's, so the daemon voided the trial and removed its canary files"
-  fi
-  if [[ "$2" -gt 0 ]]; then
-    log "  warn : $2 canary trial void(s) for a trial that never started in the last $7d (agents: $5) — no canary was first written by the trial's pre-registered horizon, so the daemon voided it; a failed canary write is named by a 'trial stage' WARN line in the daemon log"
-  fi
-  if [[ "$3" -gt 0 ]]; then
-    log "  warn : $3 canary delivery(ies) bound to no open trial in the last $7d (agents: $6) — a spawn delivered canary text while no trial was open; the daemon removed those canary files"
-  fi
-  if [[ "$8" -gt 0 ]]; then
-    log "  warn : $8 canary trial void(s) for arm imbalance in the last $7d (agents: ${10}) — the trial's counted spawns split unevenly between its arms, so the daemon voided it ahead of a win or a retire"
-  fi
-  if [[ "$9" -gt 0 ]]; then
-    log "  warn : $9 canary trial void(s) for low delivery in the last $7d (agents: ${11}) — the canary reached too few of the trial's treatment spawns, or reached a control spawn, so the daemon voided it ahead of a win or a retire"
-  fi
-  if [[ "$1" -eq 0 && "$2" -eq 0 && "$3" -eq 0 && "$8" -eq 0 && "$9" -eq 0 ]]; then
-    log "  ok   : no canary void or unbound canary delivery in the last $7d"
+    log "  warn : $1 $2"
   fi
 }
 
