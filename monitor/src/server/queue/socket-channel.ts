@@ -65,7 +65,7 @@ export function buildFrames(frame: UserFrame, token: string | null): string {
  * The session's messaging token from its 0600 file (written by the SessionStart hook), read as untrusted input.
  * @returns null when the file is missing or its content is not a token shape
  */
-export async function readSessionToken(tokenDir: string, sessionId: string): Promise<string | null> {
+export async function getSessionToken(tokenDir: string, sessionId: string): Promise<string | null> {
   try {
     const raw = await readFile(path.join(tokenDir, sessionId));
     if (raw.byteLength > TOKEN_MAX_BYTES) return null;

@@ -6,9 +6,9 @@ import path from "node:path";
 
 import { logger } from "../logger.js";
 import { getProcessStartTime } from "./process-start-time.js";
-import { findClaudePath, removeLeftoverCaptureDirs, spawnClaudeLauncher } from "./resume-spawn.js";
+import { deleteLeftoverCaptureDirs, findClaudePath, spawnClaudeLauncher } from "./resume-spawn.js";
 import { connectUnixSocket } from "./socket-channel.js";
-import { type SweepDeps, removeOrphanTokenFiles, runSweepPass } from "./sweep.js";
+import { type SweepDeps, deleteOrphanTokenFiles, runSweepPass } from "./sweep.js";
 
 const SWEEP_INTERVAL_MS = 30_000;
 
@@ -21,13 +21,13 @@ export interface QueueScheduler {
  * Production deps under `${GA_ROOT:-$HOME/.glass-atrium}`: token files in data/queue/tokens, resume captures in
  * data/queue/resume-capture, the CLI in scripts/. No `claude` on PATH → automatic resume off (fail closed).
  */
-export function resolveSweepDeps(gaRoot: string = process.env.GA_ROOT || path.join(os.homedir(), ".glass-atrium")): SweepDeps {
+export function getSweepDeps(gaRoot: string = process.env.GA_ROOT || path.join(os.homedir(), ".glass-atrium")): SweepDeps {
   const claudePath = findClaudePath();
   if (claudePath === null) logger.warn("queue automatic resume off — no executable claude on the monitor PATH");
   return {
     connector: connectUnixSocket,
     readStartTime: getProcessStartTime,
-    // ponytail: socket delivery stays off until the format-drift guard (S3b) passes a scan for the current key → live rows get answers by pull
+    // ponytail: socket delivery stays off until a format-drift guard passes a scan for the current key → live rows get answers by pull
     isSocketDeliveryOn: () => false,
     now: () => new Date(),
     cliPath: path.join(gaRoot, "scripts", "atrium-queue.sh"),
@@ -70,9 +70,9 @@ function withStopSignal(deps: SweepDeps, stopSignal: AbortSignal): SweepDeps {
 
 async function runScheduledPass(deps: SweepDeps, isStart: boolean): Promise<void> {
   try {
-    if (isStart && deps.resume !== undefined) await removeLeftoverCaptureDirs(deps.resume.captureDir);
+    if (isStart && deps.resume !== undefined) await deleteLeftoverCaptureDirs(deps.resume.captureDir);
     await runSweepPass(deps);
-    await removeOrphanTokenFiles(deps);
+    await deleteOrphanTokenFiles(deps);
   } catch (error) {
     logger.error({ err: error }, "queue sweep pass failed — the next interval retries");
   }

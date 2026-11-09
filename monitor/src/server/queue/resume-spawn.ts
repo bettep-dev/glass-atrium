@@ -22,7 +22,8 @@ const CAPTURE = {
 } as const;
 // Leading letter or digit → the marker card pastes it into `claude logs <id>`, where `-h` would read as an option
 const BG_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
-const SESSION_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** Lowercase UUID: the argv guard here and the sweep's token-file filter. */
+export const SESSION_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export interface LaunchRequest {
   command: string;
@@ -92,20 +93,20 @@ export async function startResumeSpawn(claim: ResumeClaim, payload: string, deps
     return false;
   }
   if (!(await capture.launch.started)) {
-    await removeCaptureDir(path.dirname(capture.filePath));
+    await deleteCaptureDir(path.dirname(capture.filePath));
     return false;
   }
-  deps.onCapture?.(storeBgId(claim, capture.filePath, capture.launch.exited, deps.signal, now));
+  deps.onCapture?.(setBgId(claim, capture.filePath, capture.launch.exited, deps.signal, now));
   return true;
 }
 
 /** Start sweep: removes per-spawn directories a restart left behind; an entry holding anything else stays, logged. */
-export async function removeLeftoverCaptureDirs(captureDir: string): Promise<void> {
+export async function deleteLeftoverCaptureDirs(captureDir: string): Promise<void> {
   const names = await readdir(captureDir).catch((error: unknown) => {
     if (errnoCode(error) === "ENOENT") return [];
     throw error;
   });
-  await Promise.all(names.map((name) => removeCaptureDir(path.join(captureDir, name))));
+  await Promise.all(names.map((name) => deleteCaptureDir(path.join(captureDir, name))));
 }
 
 /** First absolute PATH entry holding an executable `claude`; null → automatic resume stays off. Init-time only. */
@@ -138,19 +139,19 @@ async function createCaptureFile(captureDir: string): Promise<{ filePath: string
   return { filePath, handle: await open(filePath, "wx", 0o600) };
 }
 
-async function storeBgId(claim: ResumeClaim, filePath: string, exited: Promise<void>, signal: AbortSignal | undefined, now: () => Date): Promise<void> {
+async function setBgId(claim: ResumeClaim, filePath: string, exited: Promise<void>, signal: AbortSignal | undefined, now: () => Date): Promise<void> {
   try {
-    const line = await readFirstLine(filePath, exited, signal, now);
+    const line = await getFirstLine(filePath, exited, signal, now);
     if (line !== null && BG_ID_SHAPE.test(line)) await putBgId(claim, line);
   } catch (error) {
     logger.warn({ err: error, sessionId: claim.sessionId }, "queue resume bg id capture failed — field left empty");
   } finally {
-    await removeCaptureDir(path.dirname(filePath));
+    await deleteCaptureDir(path.dirname(filePath));
   }
 }
 
 // Follows the growing file; stops at a newline, the launcher's exit, the size cap, the time bound or an abort
-async function readFirstLine(filePath: string, exited: Promise<void>, signal: AbortSignal | undefined, now: () => Date): Promise<string | null> {
+async function getFirstLine(filePath: string, exited: Promise<void>, signal: AbortSignal | undefined, now: () => Date): Promise<string | null> {
   let hasExited = false;
   void exited.then(() => (hasExited = true));
   const handle = await open(filePath, "r");
@@ -183,7 +184,7 @@ function getCompleteLine(bytes: Buffer, hasExited: boolean): string | null | und
 }
 
 // No recursive delete: the one capture file, then the empty directory; anything else stays in place, logged
-async function removeCaptureDir(spawnDir: string): Promise<void> {
+async function deleteCaptureDir(spawnDir: string): Promise<void> {
   try {
     const entries = await readdir(spawnDir);
     if (entries.some((entry) => entry !== CAPTURE.FILE_NAME)) {

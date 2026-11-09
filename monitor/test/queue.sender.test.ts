@@ -20,8 +20,9 @@ import { buildClaudeChildEnv } from "../src/server/queue/child-env.js";
 import { getProcessStartTime } from "../src/server/queue/process-start-time.js";
 import { registerSession } from "../src/server/queue/registry.js";
 import { startQueueScheduler } from "../src/server/queue/scheduler.js";
-import { type SweepDeps, removeOrphanTokenFiles, runSweepPass } from "../src/server/queue/sweep.js";
+import { type SweepDeps, deleteOrphanTokenFiles, runSweepPass } from "../src/server/queue/sweep.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
+import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 
 const CLI_PATH = "/opt/atrium-test/scripts/atrium-queue.sh";
 const authValue = randomUUID();
@@ -39,6 +40,7 @@ const received = new Map<string, string[]>();
 let livePid: { pid: number; startTime: string };
 
 before(async () => {
+  await lockQueueRows();
   mkdirSync(dir.tokens, { recursive: true, mode: 0o700 });
   mkdirSync(dir.home, { recursive: true });
   mkdirSync(dir.cwd, { recursive: true });
@@ -52,6 +54,7 @@ after(async () => {
   await prisma.queueDelivery.deleteMany({ where: { item: { sessionId: { in: trackedSessionIds } } } });
   await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
   await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await unlockQueueRows();
   await disconnectPrisma();
   deleteDirectory(fixtureRoot);
 });
@@ -375,7 +378,7 @@ describe("orphan token files", () => {
       if (key !== "unknownFresh") utimesSync(path.join(tokenDir, name), hourAgo, hourAgo);
     }
 
-    await removeOrphanTokenFiles(buildDeps([liveId, exitedId, files.unknownOld, files.unknownFresh], { tokenDir }));
+    await deleteOrphanTokenFiles(buildDeps([liveId, exitedId, files.unknownOld, files.unknownFresh], { tokenDir }));
 
     assert.deepEqual(readdirSync(tokenDir).sort(), [files.live, files.unknownFresh, files.notUuid].sort());
   });

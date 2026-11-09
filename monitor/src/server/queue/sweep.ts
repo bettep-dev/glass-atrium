@@ -13,9 +13,9 @@ import { errnoCode } from "../errno.js";
 import { logger } from "../logger.js";
 import { buildEnvelope, buildResumePayload } from "./envelope.js";
 import { lockSession } from "./registry.js";
-import { type ResumeClaim, claimResume, getRereadOutcome, putSpawnAborted, putSpawnFailed, refreshWorktreeRoots } from "./resume-claim.js";
-import { type ResumeDeps, startResumeSpawn } from "./resume-spawn.js";
-import { type SocketConnector, buildFrames, openSocket, readSessionToken, writeFrames } from "./socket-channel.js";
+import { type ResumeClaim, claimResume, findClaimableSessionIds, getRereadOutcome, putSpawnAborted, putSpawnFailed, putWorktreeRoots } from "./resume-claim.js";
+import { type ResumeDeps, SESSION_ID_SHAPE, startResumeSpawn } from "./resume-spawn.js";
+import { type SocketConnector, buildFrames, getSessionToken, openSocket, writeFrames } from "./socket-channel.js";
 
 const SWEEP = {
   BATCH_LIMIT: 200,
@@ -25,7 +25,6 @@ const SWEEP = {
   TOKEN_GRACE_MS: 10 * 60_000,
 } as const;
 const EXITED_MOVABLE: QueueItemStatus[] = ["answered", "unacked", "held", "expired"];
-const UUID_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export interface SweepDeps {
   connector: SocketConnector;
@@ -65,40 +64,41 @@ interface AnsweredItem {
 
 /** Resume claims run before the settle step → an item turned resume-pending in this pass resumes on the next one. */
 export async function runSweepPass(deps: SweepDeps): Promise<void> {
-  await refreshWorktreeRoots(getScopeWhere(deps));
-  await refreshSessionStates(deps);
+  await putWorktreeRoots(getScopeWhere(deps));
+  await putSessionStates(deps);
   await resumeExitedSessions(deps);
   await settleItems(deps);
   await deliverAnsweredItems(deps);
 }
 
 /** Removes token files of exited or unknown sessions once older than the grace period; other names stay, logged. */
-export async function removeOrphanTokenFiles(deps: SweepDeps): Promise<void> {
+export async function deleteOrphanTokenFiles(deps: SweepDeps): Promise<void> {
   const names = await getDirectoryNames(deps.tokenDir);
-  const strayCount = names.filter((name) => !UUID_NAME.test(name)).length;
+  const strayCount = names.filter((name) => !SESSION_ID_SHAPE.test(name)).length;
   if (strayCount > 0) logger.warn({ tokenDir: deps.tokenDir, strayCount }, "queue token dir holds non-session entries — left in place");
-  const scoped = names.filter((name) => UUID_NAME.test(name) && (deps.scope?.sessionIds.includes(name) ?? true));
+  const scoped = names.filter((name) => SESSION_ID_SHAPE.test(name) && (deps.scope?.sessionIds.includes(name) ?? true));
   const rows = await getPrisma().queueSession.findMany({ where: { sessionId: { in: scoped } }, select: { sessionId: true, state: true } });
   const stateById = new Map(rows.map((row) => [row.sessionId, row.state]));
   const orphans = scoped.filter((name) => (stateById.get(name) ?? "exited") === "exited");
-  await Promise.all(orphans.map((name) => removeIfOld(path.join(deps.tokenDir, name), deps.now())));
+  await Promise.all(orphans.map((name) => deleteIfOld(path.join(deps.tokenDir, name), deps.now())));
 }
 
 function getScopeWhere(deps: SweepDeps): { sessionId?: { in: string[] } } {
   return deps.scope === undefined ? {} : { sessionId: { in: deps.scope.sessionIds } };
 }
 
-async function refreshSessionStates(deps: SweepDeps): Promise<void> {
+async function putSessionStates(deps: SweepDeps): Promise<void> {
   const rows = await getPrisma().queueSession.findMany({
     where: { ...getScopeWhere(deps), state: { in: ["live", "stale"] } },
     select: { sessionId: true, pid: true, processStartTime: true, socketPath: true, state: true },
+    // ponytail: unordered, 200 per pass → past 200 live/stale rows some go unprobed; add a lastProbedAt order if one machine ever runs that many
     take: SWEEP.BATCH_LIMIT,
   });
-  await Promise.all(rows.map((row) => refreshSessionState(row, deps)));
+  await Promise.all(rows.map((row) => putProbedState(row, deps)));
 }
 
 // stale → probe again; live → a cheap start-time read, and a socket probe only once the process looks gone
-async function refreshSessionState(row: SessionProbeRow, deps: SweepDeps): Promise<void> {
+async function putProbedState(row: SessionProbeRow, deps: SweepDeps): Promise<void> {
   if (row.state === "stale" && row.socketPath !== null) {
     const outcome = await probeSocket(row.socketPath, deps.connector);
     if (outcome === "open") await putSessionState(row, "live");
@@ -134,12 +134,7 @@ async function putSessionState(row: SessionProbeRow, state: QueueSessionState): 
 async function resumeExitedSessions(deps: SweepDeps): Promise<void> {
   const resume = deps.resume;
   if (resume === undefined) return;
-  const sessions = await getPrisma().queueSession.findMany({
-    where: { ...getScopeWhere(deps), state: "exited", items: { some: { status: "resume_pending" } } },
-    select: { sessionId: true },
-    take: SWEEP.BATCH_LIMIT,
-  });
-  for (const { sessionId } of sessions) {
+  for (const sessionId of await findClaimableSessionIds(deps.scope)) {
     // a claim that lost a race rolls back and spawns nothing; the next pass re-checks the session
     await resumeSession(sessionId, resume, deps).catch((error: unknown) => logger.warn({ err: error, sessionId }, "queue resume claim rolled back — no spawn"));
   }
@@ -217,7 +212,7 @@ async function deliverAnsweredItems(deps: SweepDeps): Promise<void> {
 
 // Connect (the send-time probe) → claim commit → write; a crash between commit and write ends in unacked by the deadline
 async function deliverOverSocket(item: AnsweredItem, deps: SweepDeps): Promise<"sent" | "refused" | "skipped"> {
-  const token = await readSessionToken(deps.tokenDir, item.session.sessionId);
+  const token = await getSessionToken(deps.tokenDir, item.session.sessionId);
   const outcome = await openSocket(item.session.socketPath ?? "", deps.connector);
   if (outcome.kind === "refused") {
     await applyRefusedRule(item.session, deps);
@@ -270,7 +265,7 @@ async function getDirectoryNames(dir: string): Promise<string[]> {
   }
 }
 
-async function removeIfOld(filePath: string, now: Date): Promise<void> {
+async function deleteIfOld(filePath: string, now: Date): Promise<void> {
   try {
     if (now.getTime() - (await stat(filePath)).mtimeMs < SWEEP.TOKEN_GRACE_MS) return;
     await unlink(filePath);

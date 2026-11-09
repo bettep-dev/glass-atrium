@@ -23,6 +23,7 @@ import { buildApp } from "../src/server/app.js";
 import { ROUTE_RESOURCE, registerAuditLogHook } from "../src/server/middleware/audit-log.js";
 import { registerRoutes } from "../src/server/routes/index.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
+import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 
 // Unique marker isolates this suite's rows in payload for scrub + assertion.
 const SUITE_MARKER = `audit-test-${randomUUID()}`;
@@ -113,6 +114,8 @@ async function countAuditRows(actionKind: string, targetId: number | null = null
 }
 
 before(async () => {
+  // one test commits a queue item → held for the count test in queue.session-api.route.test.ts
+  await lockQueueRows();
   app = buildAppWithCoveredRoutes();
   await app.ready();
 });
@@ -136,6 +139,7 @@ after(async () => {
   } catch (error) {
     console.error("[audit-test cleanup] DB scrub failed:", error);
   }
+  await unlockQueueRows();
   await disconnectPrisma();
 });
 

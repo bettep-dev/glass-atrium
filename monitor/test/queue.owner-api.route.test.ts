@@ -18,6 +18,7 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerRoutes } from "../src/server/routes/index.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
+import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 
 const PORT = 16145;
 const HOST = `127.0.0.1:${PORT}`;
@@ -33,6 +34,7 @@ let app: FastifyInstance;
 let ownerCookie: string;
 
 before(async () => {
+  await lockQueueRows();
   mkdirSync(dir.secrets, { mode: 0o700 });
   mkdirSync(dir.home);
   writeSecrets(dir.secrets);
@@ -46,6 +48,7 @@ after(async () => {
   await prisma.queueDelivery.deleteMany({ where: { item: { sessionId: { in: trackedSessionIds } } } });
   await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
   await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await unlockQueueRows();
   await disconnectPrisma();
   deleteDirectory(fixtureRoot);
 });

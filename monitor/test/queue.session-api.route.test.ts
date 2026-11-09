@@ -19,6 +19,7 @@ import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
+import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/queue-rows-lock.js";
 
 const PORT = 16145;
 const QUEUE_KEY = "test-queue-key-0123456789abcdef";
@@ -31,6 +32,7 @@ const trackedSessionIds: string[] = [];
 let app: FastifyInstance;
 
 before(async () => {
+  await lockQueueRows();
   mkdirSync(dir.secrets, { mode: 0o700 });
   writeFileSync(path.join(dir.secrets, "queue-key"), `${QUEUE_KEY}\n`, { mode: 0o600 });
   mkdirSync(path.join(dir.home, ".claude-work"), { recursive: true });
@@ -44,6 +46,7 @@ after(async () => {
   await prisma.queueDelivery.deleteMany({ where: { item: { sessionId: { in: trackedSessionIds } } } });
   await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
   await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await unlockQueueRows();
   await disconnectPrisma();
   deleteDirectory(fixtureRoot);
 });
@@ -499,13 +502,8 @@ describe("count", () => {
       const counted = await readCount();
       return { awaiting: counted.awaiting - baseline.awaiting, deviations: counted.deviations - baseline.deviations, oldestAgeSeconds: counted.oldestAgeSeconds };
     };
-    // the count is database-wide and other test files write queue rows concurrently → a miscount fails every attempt,
-    // a neighbour's write between the two reads only the one it lands in
-    let delta = await measureSeedDelta();
-    for (let attempt = 1; attempt < 10 && (delta.awaiting !== 1 || delta.deviations !== 6); attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      delta = await measureSeedDelta();
-    }
+    // the count is database-wide → measured while no other suite holds queue items
+    const delta = await withQueueRowsExclusive(measureSeedDelta);
     assert.deepEqual({ awaiting: delta.awaiting, deviations: delta.deviations }, { awaiting: 1, deviations: 6 });
     assert.ok((delta.oldestAgeSeconds ?? 0) >= 3600, `oldest age ${delta.oldestAgeSeconds}`);
   });

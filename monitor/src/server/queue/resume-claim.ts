@@ -4,7 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { Prisma, type QueueDeliveryAbortReason, type QueueItemKind } from "../../generated/prisma/client.js";
+import { Prisma, type QueueDeliveryAbortReason, type QueueItemKind, type QueueItemStatus } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { logger } from "../logger.js";
 import type { EnvelopeItem } from "./envelope.js";
@@ -43,17 +43,35 @@ interface ResumeCandidate {
 
 type RawReader = Pick<Prisma.TransactionClient, "$queryRaw">;
 
-// An item of the session in delivering whose newest Delivery row took the resume route
-const inFlightOf = (sessionIdColumn: Prisma.Sql): Prisma.Sql => Prisma.sql`EXISTS (
+/** Resume in flight: an item of the session in delivering whose newest Delivery row took the resume route. */
+export const buildResumeInFlightSql = (sessionIdColumn: Prisma.Sql): Prisma.Sql => Prisma.sql`EXISTS (
   SELECT 1 FROM "monitor"."queue_items" i
   WHERE i."session_id" = ${sessionIdColumn} AND i."status" = 'delivering'
     AND (SELECT d."route"::text FROM "monitor"."queue_deliveries" d WHERE d."item_id" = i."id" ORDER BY d."id" DESC LIMIT 1) = 'resume')`;
+
+// A resume-pending item (alias i) the claim can take: not approval class, no resume row for its current attempt
+const CLAIMABLE_ITEM_SQL = Prisma.sql`i."status" = 'resume_pending' AND NOT i."approval_class" AND NOT EXISTS (
+  SELECT 1 FROM "monitor"."queue_deliveries" d WHERE d."item_id" = i."id" AND d."route" = 'resume' AND d."attempt" = i."next_attempt")`;
+
+/**
+ * Exited sessions holding a claimable item, oldest item first → items that wait on the owner for good (approval
+ * class, used attempt) never crowd eligible sessions out of the batch.
+ */
+export async function findClaimableSessionIds(scope: { sessionIds: string[] } | undefined): Promise<string[]> {
+  const scopeSql = scope === undefined ? Prisma.empty : Prisma.sql`AND i."session_id" = ANY(${scope.sessionIds}::uuid[])`;
+  const rows = await getPrisma().$queryRaw<Array<{ sessionId: string }>>`
+    SELECT i."session_id"::text AS "sessionId" FROM "monitor"."queue_items" i
+    JOIN "monitor"."queue_sessions" s ON s."session_id" = i."session_id"
+    WHERE s."state" = 'exited' AND ${CLAIMABLE_ITEM_SQL} ${scopeSql}
+    GROUP BY i."session_id" ORDER BY min(i."queue_position") LIMIT ${RESUME.BATCH_LIMIT}`;
+  return rows.map((row) => row.sessionId);
+}
 
 /**
  * Root refresh at the start of a pass for every row the occupancy test can count (live, stale, marked, resume in
  * flight). Each is its own single-row update with no worktree lock → no new lock-order edge.
  */
-export async function refreshWorktreeRoots(scopeWhere: { sessionId?: { in: string[] } }): Promise<void> {
+export async function putWorktreeRoots(scopeWhere: { sessionId?: { in: string[] } }): Promise<void> {
   const rows = await getPrisma().queueSession.findMany({
     where: {
       ...scopeWhere,
@@ -93,6 +111,11 @@ export async function claimResume(sessionId: string, now: Date, hooks: ClaimHook
   );
 }
 
+/** Text hashed into the per-worktree advisory lock id. */
+export function buildWorktreeLockKey(root: string): string {
+  return RESUME.LOCK_KEY_PREFIX + root;
+}
+
 /** After the claim commits, right before the spawn: a returned session or a new worktree occupant stops it. */
 export async function getRereadOutcome(claim: ResumeClaim): Promise<RereadOutcome> {
   const row = await getPrisma().queueSession.findUnique({ where: { sessionId: claim.sessionId }, select: { state: true, worktreeRoot: true } });
@@ -106,24 +129,15 @@ export async function getRereadOutcome(claim: ResumeClaim): Promise<RereadOutcom
  * - shared worktree → items back to resume-pending; the aborted row uses the attempt (no re-claim loop)
  */
 export async function putSpawnAborted(claim: ResumeClaim, reason: QueueDeliveryAbortReason): Promise<void> {
-  await getPrisma().$transaction(async (tx) => {
-    await lockSession(tx, claim.sessionId);
-    await tx.queueItem.updateMany({
-      where: { id: { in: claim.items.map((item) => BigInt(item.id)) }, status: "delivering" },
-      data: { status: reason === "session_returned" ? "answered" : "resume_pending" },
-    });
-    await tx.queueDelivery.updateMany({ where: { msgId: { in: getMsgIds(claim) }, result: "sent" }, data: { result: "aborted", abortReason: reason } });
-    await clearOwnMarker(tx, claim);
-  });
+  await putUnspawned(claim, reason === "session_returned" ? "answered" : "resume_pending", { result: "aborted", abortReason: reason });
 }
 
-/** No process started → the rows record the failure and the marker clears; the attempt stays used. */
+/**
+ * No process started → rows failed, items back to resume-pending at once: the attempt stays used, Resend opens and
+ * the worktree holds no resume in flight (waiting out the ack deadline would block every neighbour for 30 min).
+ */
 export async function putSpawnFailed(claim: ResumeClaim): Promise<void> {
-  await getPrisma().$transaction(async (tx) => {
-    await lockSession(tx, claim.sessionId);
-    await tx.queueDelivery.updateMany({ where: { msgId: { in: getMsgIds(claim) }, result: "sent" }, data: { result: "failed" } });
-    await clearOwnMarker(tx, claim);
-  });
+  await putUnspawned(claim, "resume_pending", { result: "failed" });
 }
 
 /** The captured bg id onto every resume row of the spawn. */
@@ -139,7 +153,7 @@ async function putWorktreeRoot(row: { sessionId: string; cwd: string; worktreeRo
 }
 
 async function lockWorktree(tx: Prisma.TransactionClient, root: string): Promise<void> {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${RESUME.LOCK_KEY_PREFIX + root}, 0))`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${buildWorktreeLockKey(root)}, 0))`;
 }
 
 // Session-wide gates first (marker, resume in flight, occupied worktree), then the per-item ones
@@ -147,17 +161,14 @@ async function findEligibleItems(tx: Prisma.TransactionClient, sessionId: string
   const session = await tx.queueSession.findUniqueOrThrow({ where: { sessionId }, select: { resumeAwaitingRegisterAt: true } });
   if (session.resumeAwaitingRegisterAt !== null || (await hasResumeInFlight(tx, sessionId))) return [];
   if (root !== null && (await isWorktreeOccupied(tx, sessionId, root))) return [];
-  const items = await tx.queueItem.findMany({
-    where: { sessionId, status: "resume_pending", isApprovalClass: false },
-    orderBy: { queuePosition: "asc" },
-    take: RESUME.BATCH_LIMIT,
-    select: { id: true, kind: true, nextAttempt: true, deliveries: { where: { route: "resume" }, select: { attempt: true } } },
-  });
-  return items.filter((item) => !item.deliveries.some((delivery) => delivery.attempt === item.nextAttempt));
+  return tx.$queryRaw<ResumeCandidate[]>`
+    SELECT i."id", i."kind"::text AS "kind", i."next_attempt" AS "nextAttempt" FROM "monitor"."queue_items" i
+    WHERE i."session_id" = ${sessionId}::uuid AND ${CLAIMABLE_ITEM_SQL}
+    ORDER BY i."queue_position" LIMIT ${RESUME.BATCH_LIMIT}`;
 }
 
 async function hasResumeInFlight(tx: Prisma.TransactionClient, sessionId: string): Promise<boolean> {
-  const rows = await tx.$queryRaw<Array<{ isInFlight: boolean }>>`SELECT ${inFlightOf(Prisma.sql`${sessionId}::uuid`)} AS "isInFlight"`;
+  const rows = await tx.$queryRaw<Array<{ isInFlight: boolean }>>`SELECT ${buildResumeInFlightSql(Prisma.sql`${sessionId}::uuid`)} AS "isInFlight"`;
   return rows[0]?.isInFlight === true;
 }
 
@@ -167,7 +178,7 @@ async function isWorktreeOccupied(reader: RawReader, sessionId: string, root: st
     SELECT EXISTS (
       SELECT 1 FROM "monitor"."queue_sessions" s
       WHERE s."session_id" <> ${sessionId}::uuid AND s."worktree_root" = ${root}
-        AND (s."state" IN ('live', 'stale') OR s."resume_awaiting_register_at" IS NOT NULL OR ${inFlightOf(Prisma.sql`s."session_id"`)})
+        AND (s."state" IN ('live', 'stale') OR s."resume_awaiting_register_at" IS NOT NULL OR ${buildResumeInFlightSql(Prisma.sql`s."session_id"`)})
     ) AS "isOccupied"`;
   return rows[0]?.isOccupied === true;
 }
@@ -185,6 +196,16 @@ async function putClaimedItems(tx: Prisma.TransactionClient, sessionId: string, 
   }
   if (claimed.length > 0) await tx.queueSession.update({ where: { sessionId }, data: { resumeAwaitingRegisterAt: now } });
   return claimed;
+}
+
+// One registry-locked transaction: claimed items still delivering, their sent rows, then this claim's own marker
+async function putUnspawned(claim: ResumeClaim, itemStatus: QueueItemStatus, delivery: Prisma.QueueDeliveryUpdateManyMutationInput): Promise<void> {
+  await getPrisma().$transaction(async (tx) => {
+    await lockSession(tx, claim.sessionId);
+    await tx.queueItem.updateMany({ where: { id: { in: claim.items.map((item) => BigInt(item.id)) }, status: "delivering" }, data: { status: itemStatus } });
+    await tx.queueDelivery.updateMany({ where: { msgId: { in: getMsgIds(claim) }, result: "sent" }, data: delivery });
+    await clearOwnMarker(tx, claim);
+  });
 }
 
 async function clearOwnMarker(tx: Prisma.TransactionClient, claim: ResumeClaim): Promise<void> {

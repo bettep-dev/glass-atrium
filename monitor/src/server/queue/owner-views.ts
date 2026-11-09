@@ -1,10 +1,11 @@
 // Owner-side reads: the queue list and item detail, each item carrying its session, resume record, deviation,
 // sweep skip reason (Item states → Card precedence) and whether Resend is allowed.
-// The skip reason is derived from stored rows at read time, by the same rules the S3a sweep applies.
+// The skip reason is derived from stored rows at read time, by the same rules the sweep in sweep.ts / resume-claim.ts applies.
 
-import type { Prisma, QueueDelivery, QueueItem, QueueItemStatus, QueueSession } from "../../generated/prisma/client.js";
+import { Prisma, type QueueDelivery, type QueueItem, type QueueItemStatus, type QueueSession } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { QueueRequestError } from "./errors.js";
+import { buildResumeInFlightSql } from "./resume-claim.js";
 import type { OwnerListQuery } from "./schemas.js";
 
 const TERMINAL: QueueItemStatus[] = ["delivered", "seen", "withdrawn"];
@@ -153,11 +154,7 @@ async function getSessionFacts(items: ItemWithRelations[]): Promise<Map<string, 
       s."cwd",
       s."resume_awaiting_register_at" IS NOT NULL AS "isMarked",
       s."state" IN ('live', 'stale') AS "isLiveOrStale",
-      EXISTS (
-        SELECT 1 FROM "monitor"."queue_items" i
-        WHERE i."session_id" = s."session_id" AND i."status" = 'delivering'
-          AND (SELECT d."route"::text FROM "monitor"."queue_deliveries" d WHERE d."item_id" = i."id" ORDER BY d."id" DESC LIMIT 1) = 'resume'
-      ) AS "hasResumeInFlight",
+      ${buildResumeInFlightSql(Prisma.sql`s."session_id"`)} AS "hasResumeInFlight",
       (
         SELECT d."bg_id" FROM "monitor"."queue_deliveries" d
         JOIN "monitor"."queue_items" i ON i."id" = d."item_id"

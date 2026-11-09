@@ -21,11 +21,13 @@ import { buildResumePayload } from "../src/server/queue/envelope.js";
 import { putResend } from "../src/server/queue/owner-items.js";
 import { getOwnerItemOrThrow } from "../src/server/queue/owner-views.js";
 import { getProcessStartTime } from "../src/server/queue/process-start-time.js";
-import { deregisterSession, registerSession } from "../src/server/queue/registry.js";
+import { deregisterSession, findWorktreeRoot, registerSession } from "../src/server/queue/registry.js";
+import { buildWorktreeLockKey, claimResume, findClaimableSessionIds, getRereadOutcome } from "../src/server/queue/resume-claim.js";
 import { type ClaudeLauncher, type LaunchRequest, buildResumeArgs, spawnClaudeLauncher } from "../src/server/queue/resume-spawn.js";
 import { startQueueScheduler } from "../src/server/queue/scheduler.js";
 import { type SweepDeps, runSweepPass } from "../src/server/queue/sweep.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
+import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 
 const CLI_PATH = "/opt/atrium-test/scripts/atrium-queue.sh";
 const CLAUDE_PATH = "/opt/atrium-test/bin/claude";
@@ -42,7 +44,8 @@ const servers: Server[] = [];
 const socketMap = new Map<string, string>();
 const received = new Map<string, string[]>();
 
-before(() => {
+before(async () => {
+  await lockQueueRows();
   for (const fixtureDir of Object.values(dir)) mkdirSync(fixtureDir, { recursive: true, mode: 0o700 });
 });
 
@@ -53,6 +56,7 @@ after(async () => {
   await prisma.queueDelivery.deleteMany({ where: { item: { sessionId: { in: trackedSessionIds } } } });
   await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
   await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await unlockQueueRows();
   await disconnectPrisma();
   deleteDirectory(fixtureRoot);
   deleteDirectory(realpathSync(tmpRoot));
@@ -321,19 +325,40 @@ describe("automatic resume of an exited session", () => {
     assert.deepEqual([await getStatus(usedItemId), await getStatus(freshItemId)], ["resume_pending", "delivering"]);
   });
 
-  test("a spawn that starts no process marks its resume row failed, clears the marker and is never retried for that attempt", async () => {
-    const sessionId = await seedSession();
-    const itemId = await seedItem(sessionId, "resume_pending");
-    const harness = buildHarness([sessionId], buildFakeLauncher("exit 0", { fail: true }));
+  test("a spawn that starts no process fails its row, clears the marker, puts the item back to resume-pending with Resend open, frees the worktree and is never retried for that attempt", async () => {
+    const repo = makeRepo(newFixtureDir("failed-spawn"));
+    const ids = [await seedSession({ cwd: repo }), await seedSession({ cwd: repo })];
+    const itemIds = [await seedItem(ids[0] ?? "", "resume_pending"), await seedItem(ids[1] ?? "", "resume_pending")];
+    const harness = buildHarness(ids, buildFakeLauncher("exit 0", { fail: true }));
 
-    await runPasses(harness, 1);
-    harness.clock.ms += 31 * MINUTE_MS;
     await runPasses(harness, 3);
 
-    assert.equal(harness.fake.calls.length, 1);
-    assert.deepEqual((await getResumeRows(itemId)).map((row) => row.result), ["failed"]);
-    assert.equal(await isMarked(sessionId), false);
-    assert.equal(await getStatus(itemId), "resume_pending");
+    // one spawn each: the first failed spawn leaves no resume in flight that would block its worktree neighbour
+    assert.equal(harness.fake.calls.length, 2);
+    for (const [index, itemId] of itemIds.entries()) {
+      assert.deepEqual((await getResumeRows(itemId)).map((row) => row.result), ["failed"], `item ${index}`);
+      assert.equal(await getStatus(itemId), "resume_pending", `item ${index}`);
+      assert.equal(await isMarked(ids[index] ?? ""), false, `session ${index}`);
+      assert.equal((await getOwnerItemOrThrow(Number(itemId))).canResend, true, `item ${index}`);
+    }
+  });
+
+  test("the resume batch lists only exited sessions holding a claimable item, so items waiting on the owner never crowd it", async () => {
+    const claimableId = await seedSession();
+    await seedItem(claimableId, "resume_pending");
+    const approvalId = await seedSession();
+    await seedItem(approvalId, "resume_pending", { isApprovalClass: true });
+    const usedId = await seedSession();
+    const usedItemId = await seedItem(usedId, "resume_pending");
+    await getPrisma().queueDelivery.create({
+      data: { msgId: randomUUID(), itemId: usedItemId, route: "resume", attempt: 1, result: "failed", sentAt: new Date(Date.now() - 40 * MINUTE_MS), ackDeadlineAt: new Date(Date.now() - 10 * MINUTE_MS) },
+    });
+    const liveId = await seedSession({ state: "live" });
+    await seedItem(liveId, "resume_pending");
+
+    const listed = await findClaimableSessionIds({ sessionIds: [claimableId, approvalId, usedId, liveId] });
+
+    assert.deepEqual(listed, [claimableId]);
   });
 
   test("two resume-pending items of one session go out in one spawn carrying both envelopes, and no second spawn runs while it is in flight", async () => {
@@ -406,12 +431,12 @@ describe("pre-spawn re-read", () => {
     const cwd = makeRepo(newFixtureDir("race"));
     const sessionId = await seedSession({ cwd, identity: { pid: identity.pid, startTime: "Mon Jan  1 00:00:00 2026" } });
     await seedItem(sessionId, "resume_pending");
-    const harness = buildHarness([sessionId]);
 
-    await Promise.all([runSweepPass(harness.deps), registerSession({ sessionId, pid: identity.pid, cwd }, dir.home)]);
-    await Promise.all(harness.captures);
+    // raced directly, not through the sweep → a claim picked as the deadlock victim rejects here instead of being logged
+    const [claim] = await Promise.all([claimResume(sessionId, new Date()), registerSession({ sessionId, pid: identity.pid, cwd }, dir.home)]);
 
-    assert.ok(harness.fake.calls.length <= 1);
+    // both committed → a claim that won the race meets the live row at the pre-spawn re-read, so nothing spawns
+    assert.ok(claim === null || (await getRereadOutcome(claim)) === "session_returned");
   });
 
   test("a register committing after the claim stops the spawn, aborts its row as session returned, and the item goes back out over the socket", async () => {
@@ -573,9 +598,9 @@ describe("worktree occupancy", () => {
     const second = buildHarness([secondId], shared);
 
     const firstPass = runSweepPass(first.deps);
-    await waitForClaimHeld(firstId);
+    await waitForWorktreeLock(repo, true);
     const secondPass = runSweepPass(second.deps);
-    await waitForAdvisoryWaiter();
+    await waitForWorktreeLock(repo, false);
     release();
     await Promise.all([firstPass, secondPass]);
     await Promise.all([...first.captures, ...second.captures]);
@@ -586,18 +611,16 @@ describe("worktree occupancy", () => {
   });
 });
 
-async function waitForClaimHeld(sessionId: string): Promise<void> {
+// Only this worktree's advisory lock: a bigint key shows in pg_locks as classid = high 32 bits, objid = low 32 bits, objsubid 1
+async function waitForWorktreeLock(repo: string, isGranted: boolean): Promise<void> {
+  const root = await findWorktreeRoot(repo);
+  if (root === null) throw new Error(`no worktree root for ${repo}`);
+  const lockKey = buildWorktreeLockKey(root);
   await waitFor(async () => {
     const rows = await getPrisma().$queryRaw<Array<{ n: bigint }>>`
-      SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND granted`;
-    return (rows[0]?.n ?? 0n) > 0n && sessionId !== "";
-  });
-}
-
-async function waitForAdvisoryWaiter(): Promise<void> {
-  await waitFor(async () => {
-    const rows = await getPrisma().$queryRaw<Array<{ n: bigint }>>`
-      SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`;
+      SELECT count(*) AS n FROM pg_locks l CROSS JOIN (SELECT hashtextextended(${lockKey}, 0) AS k) h
+      WHERE l.locktype = 'advisory' AND l.granted = ${isGranted} AND l.objsubid = 1
+        AND l.classid::bigint = (h.k >> 32) & 4294967295 AND l.objid::bigint = h.k & 4294967295`;
     return (rows[0]?.n ?? 0n) > 0n;
   });
 }
