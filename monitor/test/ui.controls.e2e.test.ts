@@ -79,16 +79,27 @@ const MOUNT_FIXTURE = `(fixture) => {
         options: [{ key: 'opus', label: 'Opus' }, { key: 'sonnet', label: 'Sonnet' }] }),
       h('p', null, 'Commit ', h(UI.MachineString, null, '1a251d81')));
   };
+  const Selects = () => {
+    const [effort, setEffort] = React.useState('high');
+    const [tier, setTier] = React.useState('auto');
+    return h(UI.Stack, { gap: 'block' },
+      h('div', { className: 'flex gap-4' }, h('span', null, 'Research'),
+        h(UI.Select, { id: 'effort', label: 'Research effort', isLabelHidden: true, isError: true, value: effort, onChange: setEffort,
+          options: [{ key: 'high', label: 'High', title: 'More reasoning per turn' }, { key: 'custom', label: 'custom…' }] },
+          h('input', { id: 'custom-entry', className: 'field', 'aria-label': 'Custom effort' }))),
+      h(UI.Select, { id: 'tier', label: 'Tier', value: tier, onChange: setTier, options: [{ key: 'auto', label: 'Auto' }] }),
+      h('span', { id: 'crit-probe', style: { color: 'rgb(var(--crit))' } }, 'x'));
+  };
   const Gaps = () => h('div', { id: 'gaps' },
     ['block', 'label', 'stack', 'list'].map((gap) => h(UI.Stack, { key: gap, gap }, h('div', null, 'a'), h('div', null, 'b'))),
     ['control', 'control-group'].map((gap) => h(UI.Cluster, { key: gap, gap }, h('span', null, 'a'), h('span', null, 'b'))));
-  const fixtures = { filters: Filters, range: Range, views: Views, atoms: Atoms, gaps: Gaps };
+  const fixtures = { filters: Filters, range: Range, views: Views, atoms: Atoms, selects: Selects, gaps: Gaps };
   const host = document.body.appendChild(document.createElement('div'));
   host.id = 'fixture';
   ReactDOM.createRoot(host).render(h(fixtures[fixture]));
 }`;
 
-type FixtureKind = "filters" | "range" | "views" | "atoms" | "gaps";
+type FixtureKind = "filters" | "range" | "views" | "atoms" | "selects" | "gaps";
 
 async function openFixture(kind: FixtureKind): Promise<Page> {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -454,6 +465,45 @@ describe("markup-only atoms", () => {
     const page = await openFixture("atoms");
 
     assert.equal(await page.locator("#fixture").getByLabel("Model", { exact: true }).evaluate((el) => el.tagName), "SELECT");
+    await page.close();
+  });
+
+  test("a select whose row names it keeps its label for assistive tech only, on no line of its own", async () => {
+    const page = await openFixture("selects");
+    const select = page.locator("#fixture").getByLabel("Research effort", { exact: true });
+    const tops = await select.evaluate((el) => [el.getBoundingClientRect().top, (el.parentElement as HTMLElement).getBoundingClientRect().top]);
+
+    assert.equal(await select.evaluate((el) => el.tagName), "SELECT");
+    assert.equal(tops[0], tops[1]);
+    await page.close();
+  });
+
+  test("an errored select reads invalid on a crit edge, and a clean one on neither", async () => {
+    const page = await openFixture("selects");
+    const crit = await page.locator("#crit-probe").evaluate((el) => getComputedStyle(el).color);
+    const looks = await page.locator("#fixture select").evaluateAll((nodes) => nodes.map((el) => ({ invalid: el.getAttribute("aria-invalid"), edge: getComputedStyle(el).borderTopColor })));
+
+    assert.deepEqual(looks.map((look) => look.invalid), ["true", null]);
+    assert.deepEqual(looks.map((look) => look.edge === crit), [true, false]);
+    await page.close();
+  });
+
+  test("an option carries the tooltip it is given, and only that one", async () => {
+    const page = await openFixture("selects");
+    const titles = await page.locator("#effort option").evaluateAll((nodes) => nodes.map((el) => el.getAttribute("title")));
+
+    assert.deepEqual(titles, ["More reasoning per turn", null]);
+    await page.close();
+  });
+
+  test("the entry slot sits in the select's field group, below the select", async () => {
+    const page = await openFixture("selects");
+    const place = await page.locator("#custom-entry").evaluate((el) => {
+      const select = document.getElementById("effort") as HTMLElement;
+      return { isSibling: el.parentElement === select.parentElement, isBelow: el.getBoundingClientRect().top >= select.getBoundingClientRect().bottom };
+    });
+
+    assert.deepEqual(place, { isSibling: true, isBelow: true });
     await page.close();
   });
 
