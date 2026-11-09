@@ -358,7 +358,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 
 	return (
 		<ul
-			className="rounded-md border border-line m-0 p-0 list-none"
+			className="m-0 p-0 list-none"
 			aria-label="Wiki alarms"
 		>
 			{rows.map((alarm) => (
@@ -925,7 +925,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 						<div className="fs-meta text-dim leading-tight">
 							Each proposal merges the notes after the arrow into the note before it.
 						</div>
-						<ul className="flex flex-col gap-2 m-0 p-0 list-none">
+						<ul className="m-0 p-0 list-none">
 							{model.proposals.map((proposal, i) => (
 								<MergeSuggestionItem
 									key={proposal.cluster_hash || i}
@@ -1057,9 +1057,7 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 						onRetry={onRetry}
 					/>
 				) : model.rows.length === 0 ? (
-					<EmptyStateW
-						message={`No wiki compile runs in the last ${WIKI_CYCLE_DAYS} days.`}
-					/>
+					<EmptyStateW {...describeRunHistoryEmptyW(summaryState)} />
 				) : (
 					<div className="flex flex-col gap-2">
 						{/* The window is a fetch bound, not what is drawn → name the days the bars cover. */}
@@ -1076,6 +1074,18 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 			</window.UI.Card>
 		</div>
 	);
+}
+
+// Never-run and quiet-window are different facts → the summary's last run tells them apart.
+function describeRunHistoryEmptyW(summaryState) {
+	const summary = summaryState.status === "ready" ? summaryState.data : null;
+	if (summary && !summary.last_cycle_started_at) {
+		return { message: "No runs yet", hint: "History fills after the first daily wiki cycle." };
+	}
+	return {
+		message: `No runs in the last ${WIKI_CYCLE_DAYS} days`,
+		hint: summary?.last_run_date ? `Last run ${summary.last_run_date}` : null,
+	};
 }
 
 // Per-run record — a detail fold whose summary line states the run streak without a click.
@@ -1495,7 +1505,7 @@ function MergeSuggestionItem({ proposal }) {
 	const action = readProposalActionW(proposal);
 
 	return (
-		<li className="rounded border border-line bg-card px-3 py-1.5">
+		<li className="border-b border-line last:border-b-0 py-2">
 			<div className="flex items-baseline gap-2 flex-wrap fs-meta font-mono">
 				<span className="text-ink font-medium break-words min-w-0">{target}</span>
 				<span className="inline-flex items-center text-faint">
@@ -1671,9 +1681,9 @@ function isSameRunW(a, b) {
 
 // Shared chrome (wiki-scoped — health.jsx 패턴 미러).
 
-function EmptyStateW({ message }) {
+function EmptyStateW({ message, hint }) {
 	const { EmptyState } = window.UI;
-	return <EmptyState message={message} className="m-3" />;
+	return <EmptyState message={message} hint={hint} className="m-3" />;
 }
 
 // 희소 추세(비0 포인트 < SPARSE_MIN_NONZERO) 공용 렌더 — 넓은 트랙 외톨이 막대가 "차트 깨짐"으로 읽히는 문제 회피.

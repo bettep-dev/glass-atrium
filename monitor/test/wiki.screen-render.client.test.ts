@@ -510,6 +510,8 @@ test("alarms are flat hairline rows whose tone rides a leading glyph, with no st
     assert.ok(row.props["data-tone"], "each row names its tone");
     assert.equal(findNodes(row, (n) => /\balarm-row-glyph\b/.test(classOf(n))).length, 1);
   }
+  const [list] = findNodes(lane, (n) => n.type === "ul");
+  assert.doesNotMatch(classOf(list), /\b(border|rounded)/, "the lane is rows on the page, never a bordered box");
   const table = renderScreen(
     mod.React.createElement(mod.WikiReportsTable as Component, { reports: [{ run_date: "2026-09-24", status: "error", deadlinks_count: 0, dedup_count: 0 }] }),
   );
@@ -584,6 +586,46 @@ test("the dry-run notice is stated once above the proposals instead of on every 
 
   assert.equal(text.match(/dry[ -]run/gi)?.length, 1, "one notice for the whole list");
   assert.ok(text.search(/dry[ -]run/i) < text.indexOf("s1"), "the notice sits above the first proposal");
+});
+
+test("merge proposals are hairline rows, never bordered boxes", async () => {
+  const mod = await loadWikiScreen();
+  const backlog = {
+    status: "ready",
+    error: null,
+    data: { backlog: { run_date: "2026-09-24", dedup_proposals: { proposals: [
+      { cluster_hash: "c1", target_slug: "agent-routing-confidence-thresholds", source_slugs: ["routing-confidence"] },
+      { cluster_hash: "c2", target_slug: "keep-b", source_slugs: ["drop-2", "drop-3"] },
+    ] } } },
+  };
+  const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} }));
+  const rows = findNodes(tree, (n) => n.type === "li");
+
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.match(classOf(row), /\bborder-b\b/, "a hairline under each row");
+    assert.doesNotMatch(classOf(row), /\brounded|\bbg-|(^|\s)border(\s|$)/, "no box, fill or four-side edge");
+  }
+});
+
+test("the run-history empty state tells a wiki that never ran from a quiet window", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const rows = [
+    { name: "never ran", summaryState: ready({ last_cycle_started_at: null }), message: "No runs yet", hint: /first daily wiki cycle/ },
+    { name: "ran before the window", summaryState: ready({ last_cycle_started_at: "2026-08-01T04:30:00Z", last_run_date: "2026-08-01" }), message: "No runs in the last 30 days", hint: /^Last run 2026-08-01$/ },
+    { name: "summary still loading", summaryState: LOADING, message: "No runs in the last 30 days", hint: null },
+  ];
+  for (const row of rows) {
+    const tree = renderScreen(
+      mod.React.createElement(mod.WikiRunHistorySection as Component, { cyclesState: ready({ cycles: [] }), summaryState: row.summaryState, onRetry: () => {} }),
+    );
+    const [empty] = findNodes(tree, (n) => n.props.atom === "EmptyState");
+    assert.ok(empty, `${row.name}: an empty state renders`);
+    assert.equal(empty.props.message, row.message, row.name);
+    if (row.hint) assert.match(String(empty.props.hint), row.hint, row.name);
+    else assert.equal(empty.props.hint ?? null, null, row.name);
+  }
 });
 
 test("every merge proposal states in text which note absorbs which, not only by the arrow glyph", async () => {
