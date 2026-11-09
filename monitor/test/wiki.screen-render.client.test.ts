@@ -426,12 +426,19 @@ test("the run table sits in page scroll with a caption and scoped column heads",
 });
 
 // Table is a stub atom here → its row function renders against a wide view
-function renderRunRowsOf(mod: ScreenModule, reports: unknown[]): RenderedNode | string | null {
-  const [table] = findNodes(renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports })), (n) => n.props.atom === "Table");
+function renderTableRowsOf(mod: ScreenModule, tree: RenderedNode | string | null): RenderedNode | string | null {
+  const [table] = findNodes(tree, (n) => n.props.atom === "Table");
   // the stub's createElement keeps children as an array → the one child is the row function
   const [rows] = [table.props.children].flat() as Array<(view: unknown) => unknown>;
-  return renderScreen(mod.React.createElement("tbody", null, rows({ isStacked: false, columnCount: 5 })));
+  const columnCount = (table.props.columns as unknown[]).length;
+  return renderScreen(mod.React.createElement("tbody", null, rows({ isStacked: false, columnCount })));
 }
+
+function renderRunRowsOf(mod: ScreenModule, reports: unknown[]): RenderedNode | string | null {
+  return renderTableRowsOf(mod, renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports })));
+}
+
+const WIDE_VIEW = { isStacked: false, columnCount: 4 };
 
 test("a run's status reads as a tone glyph and a word, never a pill", async () => {
   const mod = await loadWikiScreen();
@@ -499,7 +506,9 @@ test("the merge-proposals fold opens itself only while it holds a waiting (warn)
 test("a merge proposal's reasons wrap in full", async () => {
   const mod = await loadWikiScreen();
   const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" };
-  const tree = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal }));
+  const tree = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal, view: WIDE_VIEW }));
+  const [reason] = findNodes(tree, (n) => n.props.atom === "TableCell" && n.props.label === "Reason");
+  assert.match(classOf(reason), /\bbreak-words\b/, "a long reason breaks inside its cell");
   for (const node of findNodes(tree, () => true)) {
     assert.doesNotMatch(classOf(node), /\btruncate\b/, "no part of the proposal hides behind a hover title");
   }
@@ -588,7 +597,7 @@ test("wiki text never uses the retired micro type step and words are never set i
     renderStatsOf(mod, renderScreen(createElement(mod.WikiTileBand, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, onRetry: () => {} }))),
     renderScreen(createElement(mod.WikiRunHistorySection, { cyclesState: ready({ cycles: [] }), summaryState: ready({}), reportState: ready({ reports: [] }), days: 30, onChangeDays: () => {}, onRetry: () => {} })),
     renderScreen(createElement(mod.WikiMaintenanceSection, { backlogState: READY_BACKLOG, onRetry: () => {} })),
-    renderScreen(createElement(mod.MergeSuggestionItem, { proposal: { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" } })),
+    renderScreen(createElement(mod.MergeSuggestionItem, { proposal: { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" }, view: WIDE_VIEW })),
   ];
   // Card titles render through the shared atom, outside this stub tree → not listed.
   const words = ["Search index", "Clean", "Merge proposals", "merge because both notes describe one concept"];
@@ -611,7 +620,7 @@ test("figures read in sans and only note slugs ride the machine-string atom", as
   const { createElement } = mod.React;
   const notes = renderScreen(createElement(mod.WikiNotesByTypeSection, { state: { status: "ready", error: null, data: { by_type: [{ note_type: "raw", count: 1204 }] } }, onRetry: () => {} }));
   const proposal = { cluster_hash: "c1", target_slug: "agent-routing", source_slugs: ["routing-confidence"], similarity_score: 0.91 };
-  const item = renderScreen(createElement(mod.MergeSuggestionItem, { proposal }));
+  const item = renderScreen(createElement(mod.MergeSuggestionItem, { proposal, view: WIDE_VIEW }));
   const machine = findNodes(item, (n) => n.props.atom === "MachineString").map(collectText);
 
   assert.deepEqual(machine, ["agent-routing", "routing-confidence"], "the target and source slugs are machine strings");
@@ -627,14 +636,15 @@ test("cyan tints no wiki text: the similarity reads as a figure and the lane sta
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], similarity_score: 1 };
-  const item = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal }));
+  const item = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal, view: WIDE_VIEW }));
   const lane = renderScreen(
     mod.React.createElement(mod.WikiAlarmLane as Component, {
       summaryState: ready({}), indexState: ready({}), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
     }),
   );
-  const sim = findNodes(item, (n) => n.children.join("") === "100% similar").pop();
-  assert.ok(sim, "the similarity reads in words");
+  const [sim] = findNodes(item, (n) => n.props.atom === "TableCell" && n.props.label === "Similarity");
+  assert.equal(collectText(sim), "100%", "the similarity reads as a figure under its column head");
+  assert.equal(sim.props.isNumeric, true, "the figure aligns as a number");
   for (const tree of [item, lane]) {
     for (const node of findNodes(tree, () => true)) assert.doesNotMatch(classOf(node), /\btext-info\b/);
   }
@@ -658,13 +668,17 @@ test("the dry-run notice is stated once above the proposals instead of on every 
       { cluster_hash: "c2", target_slug: "t", source_slugs: ["s2"], suggested_action: action("s2") },
     ] } } },
   };
-  const text = collectText(renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} })));
+  const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} }));
+  const order = findNodes(tree, () => true);
+  const notice = order.findIndex((n) => /^dry[ -]run/i.test(collectText(n)) && n.type === "div");
+  const table = order.findIndex((n) => n.props.atom === "Table");
 
-  assert.equal(text.match(/dry[ -]run/gi)?.length, 1, "one notice for the whole list");
-  assert.ok(text.search(/dry[ -]run/i) < text.indexOf("s1"), "the notice sits above the first proposal");
+  assert.equal(collectText(tree).match(/dry[ -]run/gi)?.length, 1, "one notice for the whole list");
+  assert.doesNotMatch(collectText(renderTableRowsOf(mod, tree)), /dry[ -]run/i, "no row repeats it");
+  assert.ok(notice >= 0 && notice < table, "the notice sits above the proposals table");
 });
 
-test("merge proposals are hairline rows, never bordered boxes", async () => {
+test("merge proposals are table rows on the fold's flush body, never bordered boxes", async () => {
   const mod = await loadWikiScreen();
   const backlog = {
     status: "ready",
@@ -675,13 +689,34 @@ test("merge proposals are hairline rows, never bordered boxes", async () => {
     ] } } },
   };
   const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} }));
-  const rows = findNodes(tree, (n) => n.type === "li");
+  const fold = findNodes(tree, (n) => n.type === "details" && n.props.id === "wiki-merge-proposals")[0];
+  const [body] = fold.children.filter((child): child is RenderedNode => typeof child !== "string" && child.type !== "summary");
+  const rows = findNodes(renderTableRowsOf(mod, tree), (n) => n.props.atom === "TableRow");
 
-  assert.equal(rows.length, 2);
-  for (const row of rows) {
-    assert.match(classOf(row), /\bborder-b\b/, "a hairline under each row");
-    assert.doesNotMatch(classOf(row), /\brounded|\bbg-|(^|\s)border(\s|$)/, "no box, fill or four-side edge");
-  }
+  assert.doesNotMatch(classOf(body), /\bp[xb]-card-pad\b/, "the body is flush, so the table's edge cells hold the card-pad column");
+  assert.equal(rows.length, 2, "one table row per proposal");
+  assert.equal(findNodes(fold, (n) => n.type === "li" || /\brounded|\bbg-|(^|\s)border(-b)?(\s|$)/.test(classOf(n))).length, 0, "no box, fill or edge of its own");
+});
+
+test("the merge-proposals loading line takes the card inset itself inside the flush fold", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: LOADING, onRetry: () => {} }));
+  const [body] = findNodes(tree, (n) => n.type === "details")[0].children.filter((child): child is RenderedNode => typeof child !== "string" && child.type !== "summary");
+  const insets = findNodes(body, (n) => /\bpx-card-pad\b.*\bpb-card-pad\b/.test(classOf(n)) && findNodes(n, (m) => m.props.atom === "LoadingPlaceholder").length > 0);
+
+  assert.equal(insets.length, 1, "one inset wrapper holds the loading line");
+  assert.notEqual(insets[0], body, "the inset is the loading line's own, not the fold body's");
+});
+
+test("the page's meters share the small radius, never a full pill", async () => {
+  const mod = await loadWikiScreen();
+  const ready = { status: "ready", error: null, data: { by_type: [{ note_type: "raw", count: 3 }] } };
+  const mix = renderScreen(mod.React.createElement(mod.WikiStatusMixW as Component, { mix: { ok: 70, partial: 10, error: 10, quota: 10 } }));
+  const types = renderScreen(mod.React.createElement(mod.WikiNotesByTypeSection as Component, { state: ready, onRetry: () => {} }));
+  const tracks = [...findNodes(mix, (n) => n.props.role === "img"), ...findNodes(types, (n) => /\boverflow-hidden\b/.test(classOf(n)))];
+
+  assert.equal(tracks.length, 2, "the mix bar and the type bar both render");
+  for (const track of tracks) assert.match(classOf(track), /\brounded-sm\b/);
 });
 
 test("the run-history empty state tells a wiki that never ran from a quiet window", async () => {
@@ -715,7 +750,7 @@ test("a wiki empty state takes the shared atom's own inset, adding no margin of 
   assert.doesNotMatch(String(empty.props.className ?? ""), /(^|\s)-?m[trblxy]?-/);
 });
 
-test("every merge proposal states in text which note absorbs which, not only by the arrow glyph", async () => {
+test("every merge proposal states in text which note absorbs which, through its column heads", async () => {
   const mod = await loadWikiScreen();
   const backlog = {
     status: "ready",
@@ -726,11 +761,14 @@ test("every merge proposal states in text which note absorbs which, not only by 
     ] } } },
   };
   const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} }));
-  const rows = findNodes(tree, (n) => n.type === "li").map((n) => collectText(n));
+  const [table] = findNodes(tree, (n) => n.props.atom === "Table");
+  const cells = (kind: string) => findNodes(renderTableRowsOf(mod, tree), (n) => n.props.atom === "TableCell" && (n.props.kind === kind || n.props.label === kind)).map(collectText);
 
-  assert.equal(rows.length, 2);
-  assert.match(rows[0], /keep-a\s*absorbs\s*drop-1/);
-  assert.match(rows[1], /keep-b\s*absorbs\s*drop-2, drop-3/);
+  // the screen module runs in its own realm → copy its array before a strict deep compare
+  const heads = Array.from(table.props.columns as Array<{ label: string }>, (c) => c.label);
+  assert.deepEqual(heads.slice(0, 2), ["Kept note", "Absorbs"]);
+  assert.deepEqual(cells("row-header"), ["keep-a", "keep-b"], "the kept note heads each row");
+  assert.deepEqual(cells("Absorbs"), ["drop-1", "drop-2, drop-3"], "the absorbed notes sit under their own head");
 });
 
 test("the missed-cycle alarm states its age in the short relative form", async () => {

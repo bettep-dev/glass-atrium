@@ -827,9 +827,13 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 				label="Merge proposals"
 				count={describeProposalCountW(model)}
 				tone={model.proposalTone}
+				bodyClassName="flex flex-col"
 			>
 				{model.state === "loading" ? (
-					<LoadingPlaceholder label="merge proposals" />
+					// the fold body is flush for the table → the loading line takes the card inset itself
+					<div className="px-card-pad pb-card-pad">
+						<LoadingPlaceholder label="merge proposals" />
+					</div>
 				) : model.state === "error" ? (
 					<EmptyStateW message="The maintenance backlog could not be read — see above." />
 				) : !model.proposals || model.proposals.length === 0 ? (
@@ -842,24 +846,19 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 					/>
 				) : (
 					<window.UI.Stack gap="label">
-						{model.isDryRun && (
+						<window.UI.Stack gap="label" className="px-card-pad">
+							{model.isDryRun && (
+								<div className="fs-meta text-dim leading-tight">
+									Dry run — nothing merges until you approve it.
+								</div>
+							)}
 							<div className="fs-meta text-dim leading-tight">
-								Dry run — nothing merges until you approve it.
+								Each proposal merges the absorbed notes into the kept note.
 							</div>
-						)}
-						<div className="fs-meta text-dim leading-tight">
-							Each proposal merges the notes after the arrow into the note before it.
-						</div>
-						<ul className="list-none">
-							{model.proposals.map((proposal, i) => (
-								<MergeSuggestionItem
-									key={proposal.cluster_hash || i}
-									proposal={proposal}
-								/>
-							))}
-						</ul>
+						</window.UI.Stack>
+						<WikiProposalsTable proposals={model.proposals} />
 						{model.residueLine && (
-							<div className="fs-meta text-faint leading-tight">
+							<div className="px-card-pad pb-card-pad fs-meta text-faint leading-tight">
 								{model.residueLine}
 							</div>
 						)}
@@ -1246,7 +1245,7 @@ function WikiStatusMixW({ mix }) {
 	return (
 		<>
 			<div
-				className="flex w-full h-2.5 rounded-full overflow-hidden bg-sunken"
+				className="flex w-full h-2.5 rounded-sm overflow-hidden bg-sunken"
 				role="img"
 				aria-label={`Run status mix: healthy ${mix.ok}%, warning ${mix.partial}%, down ${mix.error}%, usage limit ${mix.quota}%`}
 			>
@@ -1410,44 +1409,54 @@ function BacklogExplorer({ label, count, payload }) {
 	);
 }
 
-function MergeSuggestionItem({ proposal }) {
-	const { Icon, MachineString } = window.UI;
+const WIKI_PROPOSAL_COLUMNS = [
+	{ key: "target", label: "Kept note" },
+	{ key: "sources", label: "Absorbs" },
+	{ key: "similarity", label: "Similarity", isNumeric: true },
+	{ key: "reason", label: "Reason" },
+];
 
-	const target = proposal.target_slug || "—";
-	const sources = Array.isArray(proposal.source_slugs)
-		? proposal.source_slugs.join(", ")
-		: "—";
-	const similarity =
-		typeof proposal.similarity_score === "number"
-			? `${Math.round(proposal.similarity_score * 100)}% similar`
-			: null;
-	const action = readProposalActionW(proposal);
+// One row per proposal on the fold's flush body; the column heads say which note absorbs which.
+function WikiProposalsTable({ proposals }) {
+	const { Table } = window.UI;
 
 	return (
-		<li className="border-b border-line last:border-b-0 py-2">
-			<div className="flex items-baseline gap-label flex-wrap fs-meta">
-				<MachineString className="text-ink font-medium min-w-0">{target}</MachineString>
-				<span className="inline-flex items-center text-faint">
-					<Icon name="arrow-left" size={12} />
-					{/* the arrow glyph is aria-hidden → direction needs a text equivalent per row */}
-					<span className="sr-only">{" absorbs "}</span>
-				</span>
-				<MachineString className="text-dim min-w-0">{sources}</MachineString>
-				{similarity && <span className="ml-auto text-dim">{similarity}</span>}
-			</div>
-			{action && (
-				<div className="fs-meta text-faint mt-stack leading-tight break-words whitespace-pre-wrap">
-					{action}
-				</div>
-			)}
-		</li>
+		<Table caption="Merge proposals, one row per kept note" columns={WIKI_PROPOSAL_COLUMNS}>
+			{(view) => proposals.map((proposal, i) => (
+				<MergeSuggestionItem key={proposal.cluster_hash || i} proposal={proposal} view={view} />
+			))}
+		</Table>
+	);
+}
+
+function MergeSuggestionItem({ proposal, view }) {
+	const { TableRow, TableCell, MachineString } = window.UI;
+	const sources = Array.isArray(proposal.source_slugs) ? proposal.source_slugs.join(", ") : "";
+	const similarity =
+		typeof proposal.similarity_score === "number" ? `${Math.round(proposal.similarity_score * 100)}%` : null;
+
+	return (
+		<TableRow view={view}>
+			<TableCell view={view} kind="row-header">
+				<WikiCellValueW value={proposal.target_slug ? <MachineString>{proposal.target_slug}</MachineString> : null} />
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Absorbs">
+				<WikiCellValueW value={sources ? <MachineString>{sources}</MachineString> : null} />
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Similarity" isNumeric>
+				<WikiCellValueW value={similarity} />
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Reason" className="break-words whitespace-pre-wrap">
+				<WikiCellValueW value={readProposalActionW(proposal) || null} />
+			</TableCell>
+		</TableRow>
 	);
 }
 
 // The cleaner tags every action DRY-RUN → the list states it once, each row keeps its own action.
 const DRY_RUN_TAIL_W = /\s*DRY-RUN\b[\s\S]*$/;
 
-// "Merge notes/a.md into notes/b.md." restates the row's target ← sources → the list explains the arrow once.
+// "Merge notes/a.md into notes/b.md." restates the row's kept note and absorbed notes → the column heads already say it.
 const MERGE_RESTATEMENT_W = /^Merge\s+\S.*\s+into\s+\S+$/i;
 
 function readProposalActionW(proposal) {
