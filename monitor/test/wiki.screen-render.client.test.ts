@@ -211,6 +211,26 @@ test("the Per-run fold's trend note rides DayTokens, so its N-day window stays w
   assert.match(notes[0], /^The window drives the table only — the trend keeps a fixed \d+-day window\.$/);
 });
 
+test("the Per-run fold body is flush so the table's edge cells hold the one card-pad column, controls on the card bar", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
+  const [fold] = findNodes(tree, (n) => n.type === "details");
+  const [body] = fold.children.filter((child): child is RenderedNode => typeof child !== "string" && child.type !== "summary");
+  const [controls] = findNodes(fold, (n) => n.props.atom === "Cluster");
+
+  assert.doesNotMatch(classOf(body), /\bp[xb]-card-pad\b/, "the body adds no inline inset of its own");
+  assert.match(String(controls.props.className), /\bcard-bar\b/);
+});
+
+test("the Per-run failure block takes the card inset itself inside the flush fold", async () => {
+  const mod = await loadWikiScreen();
+  const failed = { status: "error", data: null, error: OUTAGE, busy: false };
+  const tree = renderScreen(mod.React.createElement(mod.WikiReportsBody as Component, { state: failed, days: 30, shared: null, onRetry: () => {} }));
+  const insets = findNodes(tree, (n) => /\bpx-card-pad\b/.test(classOf(n)) && findNodes(n, (m) => m.props.atom === "RegionFailure").length > 0);
+
+  assert.equal(insets.length, 1);
+});
+
 test("the Per-run fold's ⓘ is described by the fold's own heading", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));

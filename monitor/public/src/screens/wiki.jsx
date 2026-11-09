@@ -92,9 +92,7 @@ function ScreenWiki() {
         .alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
         /* Name, bar and count stay within reading distance on a wide panel. */
         .w-type-list { max-width: 40rem; }
-        .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; gap: 0.75rem; height: var(--row-h); }
-        .w-type-track { display: block; height: 6px; border-radius: 9999px; background: rgb(var(--line)); }
-        .w-type-fill { display: block; height: 100%; border-radius: inherit; background: rgb(var(--dim)); }
+        .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; height: var(--row-h); }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -1024,9 +1022,10 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 			id={WIKI_REGION_IDS.runTable}
 			label="Per-run table"
 			count={describeRunTableW(reportState, days)}
-			bodyClassName="px-card-pad pb-card-pad flex flex-col gap-label"
+			bodyClassName="flex flex-col"
 		>
-			<window.UI.Cluster gap="control">
+			{/* flush body → the table's edge cells carry the card-pad column once (spec §1 O4); controls ride the card bar */}
+			<window.UI.Cluster gap="control" className="card-bar">
 				<span className="fs-meta text-faint leading-tight">
 					<window.UI.DayTokens>{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}</window.UI.DayTokens>
 				</span>
@@ -1169,10 +1168,10 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 				) : (
 					<ul className="w-type-list flex flex-col list-none">
 						{rows.map((t) => (
-							<li key={t.type} className="w-type-row fs-meta" title={t.type}>
+							<li key={t.type} className="w-type-row gap-label fs-meta" title={t.type}>
 								<span className="text-dim truncate">{t.label}</span>
-								<span className="w-type-track" aria-hidden="true">
-									<span className="w-type-fill" style={{ width: `${t.share}%` }} />
+								<span className="block h-1.5 rounded-sm overflow-hidden bg-line" aria-hidden="true">
+									<span className="block h-full bg-dim" style={{ width: `${t.share}%` }} />
 								</span>
 								<span className="text-ink text-right tabular-nums">{formatCountW(t.count)}</span>
 								<span className="text-faint text-right tabular-nums">{`${t.pct}%`}</span>
@@ -1465,16 +1464,19 @@ function WikiReportsBody({ state, days, shared, onRetry }) {
 		return <WikiReportsTable reports={[]} isLoading />;
 	}
 	if (window.UI.getRegionView(state) === "error") {
+		// the fold body is flush for the table → the failure block takes the card inset itself
 		return (
-			<WikiRegionFailureW
-				feeders={[WIKI_FEEDERS.runTable]}
-				source="the run table"
-				error={state.error}
-				isBusy={state.busy}
-				shared={shared}
-				focusTargetId={WIKI_REGION_IDS.runTable}
-				onRetry={onRetry}
-			/>
+			<div className="px-card-pad pb-card-pad">
+				<WikiRegionFailureW
+					feeders={[WIKI_FEEDERS.runTable]}
+					source="the run table"
+					error={state.error}
+					isBusy={state.busy}
+					shared={shared}
+					focusTargetId={WIKI_REGION_IDS.runTable}
+					onRetry={onRetry}
+				/>
+			</div>
 		);
 	}
 	const reports = state.data?.reports || [];
