@@ -26,7 +26,7 @@ interface RosterEntry {
 
 interface CardSandbox {
   React: { createElement: unknown; useState: unknown };
-  window: { UI: { CARD_SLOTS: Record<string, { rowCount: number }> } };
+  window: { UI: { CARD_SLOTS: Record<string, { rowCount: number }>; Table: unknown; TableRow: unknown; TableCell: unknown } };
   ProseOnlyAddCardI: (props: Record<string, unknown>) => unknown;
 }
 

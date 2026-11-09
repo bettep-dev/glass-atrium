@@ -614,7 +614,7 @@ function StyleRefCardI({ state, styleRef }) {
 	];
 
 	const statRow = <StatRow stats={stats} />;
-	// 데이터 부재 → 3-count partition 과 표 대신 "누적 중" 안내, 표가 없으니 패딩 본문
+	// no data → "Collecting data" instead of the 3-count split and table; no table, so a padded body
 	return (
 		<Card
 			title={title}

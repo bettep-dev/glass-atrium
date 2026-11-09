@@ -174,7 +174,8 @@ for (const width of [1280, 1440, 1920]) {
 }
 
 // design-spec §1 one inline column per side: a card's head, stat row and table header open on one column, its last cell closes on the other
-for (const width of [1280, 1920]) {
+// 1024 = narrowest card, where a double inset or a wrap shows first; 1440 + 1920 = the shipped desktop widths
+for (const width of [1024, 1440, 1920]) {
   test(`each mixed instrumentation card keeps its stat row and table on the card head's inline column at ${width}px`, async () => {
     await withInstrumentationPage(width, async (page) => {
       const cards = await page.evaluate(() =>
