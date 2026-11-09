@@ -3561,7 +3561,7 @@ function getTrendDates(rows) {
   return Array.from(dates).sort().slice(-7);
 }
 
-// MiniBars 추세 — 일별 실행 수(total_count) 합계를 agent × date 로 group → 최근 7일 series.
+// MiniBars trend — daily run count (total_count) summed per agent × date → last-7-day series.
 // agent at 0 on all 7 days → absent from trendMap → its row renders "None" (no estimated value injected)
 function buildAgentTrendMap(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return new Map();
@@ -3592,7 +3592,7 @@ function buildAgentTrendMap(rows) {
 }
 
 // SUMMARY_SORT_DIR key → comparator · null p95 sorts last (negative magic sentinel)
-// failures comparator 는 외부 map 의존 → sortAgentSummary 에서 closure 로 wrapping.
+// failures comparator depends on an outside map → wrapped in a closure inside sortAgentSummary.
 const AGENT_SUMMARY_COMPARATORS = {
   name:    (a, b) => String(a.agent_name || '').localeCompare(String(b.agent_name || '')),
   runs:    (a, b) => (Number(b.runs)        || 0) - (Number(a.runs)        || 0),

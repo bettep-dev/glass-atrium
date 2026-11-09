@@ -334,7 +334,7 @@ async function fetchAttentionO(days, signal) {
 const LOOP_EVENTS_URL = '/api/improvement/loop-events?limit=50';
 
 // daemon eval_result → glyph + word (tone color + symbol + label, color-blind safe)
-//   verified=✓ ok · reject/fail=✕ crit · *_dryrun=⚠ warn(드라이런 — 미적용) · 기타 fallback ℹ info.
+//   verified=✓ ok · reject/fail=✕ crit · *_dryrun=⚠ warn (dry run — not applied) · anything else falls back to ℹ info.
 function loopResultMetaO(result) {
   if (result === 'verified') return { tone: 'ok', symbol: '✓', icon: 'check', label: 'Passed' };
   if (result === 'reject' || result === 'fail') return { tone: 'crit', symbol: '✕', icon: 'x', label: result === 'fail' ? 'Failed' : 'Declined' };
@@ -1295,10 +1295,10 @@ function OpenCaveatCellO({ count, view }) {
   );
 }
 
-// ----- Attribution Health (텔레메트리 귀속 품질) ------------------------------
-// /api/outcomes/attribution-daily — attribution_source 4-category 분해.
+// ----- Attribution Health (telemetry attribution quality) ------------------
+// /api/outcomes/attribution-daily — attribution_source split into 4 categories.
 // daily stacked bar (inline SVG, no Recharts) + window summary stat row + literal-omission severity head status (glyph + word)
-// NULL attribution_source 행은 backend 가 제외 (귀속 추적 이전 행) → 모든 비율 분모 = total_attributed.
+// NULL attribution_source rows excluded by the backend (rows older than attribution tracking) → every ratio denominator = total_attributed.
 
 // A card head's own status: glyph + word, tone on the glyph only, no container (design-spec §3 Status)
 const HEAD_STATUS_GLYPHS_O = Object.freeze({ ok: 'circle-check', warn: 'warn', crit: 'x', info: 'info' });
