@@ -1210,13 +1210,14 @@ test("the matrix region draws no card inside its fold and nothing in it scrolls 
 });
 
 const OFF_TARGET_BOUNDARY_ROWS = [
-  { name: "a pair at exactly the crit step (95.0% success)", success: 19, failure: 1, isOffTarget: true },
-  { name: "a pair well under the crit step", success: 15, failure: 5, isOffTarget: true },
-  { name: "a pair just inside the target", success: 39, failure: 1, isOffTarget: false },
-  { name: "a clear pair", success: 40, failure: 0, isOffTarget: false },
+  { name: "a pair at exactly the crit step (95.0% success)", success: 19, failure: 1, isMostFailing: true, isCrit: true },
+  { name: "a pair well under the crit step", success: 15, failure: 5, isMostFailing: true, isCrit: true },
+  { name: "a pair just inside the target", success: 39, failure: 1, isMostFailing: false, isCrit: false },
+  { name: "a clear pair", success: 40, failure: 0, isMostFailing: false, isCrit: false },
+  { name: "an off-target pair under the low-N floor ranks without the glyph", success: 3, failure: 1, isMostFailing: true, isCrit: false },
 ];
 
-describe("a pair is a Most-failing row exactly when its matrix cell takes the crit glyph", () => {
+describe("the matrix crit glyph marks exactly the Most-failing pairs whose sample clears the low-N floor", () => {
   for (const row of OFF_TARGET_BOUNDARY_ROWS) {
     test(row.name, async () => {
       const mod = await loadAgentsScreen();
@@ -1225,8 +1226,8 @@ describe("a pair is a Most-failing row exactly when its matrix cell takes the cr
       const isCrit = (mod.getCellFailShareTone as (c: unknown) => string | null)(matrix.cells["a|feature"]) === "crit";
       const { failingTotal } = (mod.buildTopNFailing as (r: unknown[], l: number) => { failingTotal: number })(rows, Number.POSITIVE_INFINITY);
 
-      assert.equal(isCrit, row.isOffTarget, "matrix crit glyph");
-      assert.equal(failingTotal === 1, row.isOffTarget, "Most-failing membership");
+      assert.equal(isCrit, row.isCrit, "matrix crit glyph");
+      assert.equal(failingTotal === 1, row.isMostFailing, "Most-failing membership");
     });
   }
 });
