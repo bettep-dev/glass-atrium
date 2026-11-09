@@ -297,26 +297,6 @@ describe("the ledger's pills sit on the interactive pill tier", () => {
   });
 });
 
-describe("the open-summary rail's Oldest open link is a small button", () => {
-  const OLDEST = "#docs-list .doc-open-oldest";
-
-  test("beside the ledger it keeps the small-button padding on one line, its label starting at the rail's label edge", async () => {
-    await setCardWidth(1300);
-    for (const side of ["top", "right", "bottom", "left"]) {
-      assert.equal(await readStyle(OLDEST, `padding-${side}`), await readStyle("#ref-btn-sm", `padding-${side}`), `padding-${side}`);
-    }
-    assert.equal((await readBox(OLDEST)).height, 32, "one line");
-    const { text, label } = await page.$eval("#docs-list .doc-open-summary", (rail) => {
-      const range = document.createRange();
-      range.selectNodeContents(rail.querySelector(".doc-open-oldest")!);
-      return { text: range.getBoundingClientRect().left, label: rail.querySelector("dt")!.getBoundingClientRect().left };
-    });
-    assert.ok(Math.abs(text - label) <= 1, `Oldest open text at ${text}, labels at ${label}`);
-  });
-
-  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(OLDEST));
-});
-
 describe("the version-history fold opens on the disclosure atom", () => {
   const SUMMARY = "details.doc-version-history > summary";
 

@@ -65,7 +65,6 @@ const LEDGER_CD = {
 		},
 	},
 };
-const OPEN_SUMMARY_RAIL_WIDTH_CD = 200;
 
 // Open-versus-closed chips. countKey indexes the server's group-unit counts (group_counts);
 // a count the payload does not carry renders as nothing, never as 0.
@@ -110,17 +109,6 @@ const DAY_MS_CD = 86_400_000;
 const FRESH_AGE_DAYS_CD = 3;
 // past this many days an open document reads as stale
 const STALE_AGE_DAYS_CD = 7;
-const AGE_BUCKETS_CD = [
-	{ key: "fresh", label: `Under ${FRESH_AGE_DAYS_CD} days` },
-	{ key: "aging", label: `${FRESH_AGE_DAYS_CD}–${STALE_AGE_DAYS_CD} days` },
-	{ key: "stale", label: `Over ${STALE_AGE_DAYS_CD} days` },
-];
-const STAGE_HEADLINE_CD = {
-	doc_review: "awaiting doc review",
-	implementing: "implementing",
-	impl_review: "awaiting impl review",
-	impl_done: "impl done",
-};
 
 function getAgeLabelCD(days) {
 	return days === 0 ? "today" : `${days}d`;
@@ -140,46 +128,6 @@ function getDocAgeCD(iso, nowMs) {
 function getOpenStageEntryCD(row) {
 	const entry = stageEntryCD(rowStageCD(row));
 	return entry != null && entry.value !== TERMINAL_STAGE_CD ? entry : null;
-}
-
-// Open = a known stage short of done · counts are over the rows passed in (the loaded page).
-function getOpenSummaryCD(rows, nowMs) {
-	const stageCounts = new Map();
-	const buckets = { fresh: 0, aging: 0, stale: 0 };
-	let oldest = null;
-	let openCount = 0;
-	for (const row of rows) {
-		const age = getDocAgeCD(row.created_at, nowMs);
-		const entry = getOpenStageEntryCD(row);
-		if (!entry || !age) continue;
-
-		const stage = entry.value;
-		openCount += 1;
-		stageCounts.set(stage, (stageCounts.get(stage) || 0) + 1);
-		buckets[age.bucket] += 1;
-		if (!oldest || age.days > oldest.days) oldest = { id: row.id, days: age.days };
-	}
-	const stages = DOC_STAGES_CD.filter((stage) => stageCounts.has(stage.value)).map((stage) => ({
-		value: stage.value,
-		label: stage.label,
-		count: stageCounts.get(stage.value),
-	}));
-	return { stages, buckets, oldest, openCount };
-}
-
-// isPartial → the summary saw the loaded page only · openTotal (chip count, null when unknown) reconciles the two numbers.
-function getOpenHeadlineCD(summary, isPartial = false, openTotal = null) {
-	const parts = summary.stages.map((stage) => `${formatIntCD(stage.count)} ${STAGE_HEADLINE_CD[stage.value]}`);
-	if (summary.oldest) {
-		const { id, days } = summary.oldest;
-		parts.push(`oldest open ${days === 0 ? "since today" : `${formatIntCD(days)} ${days === 1 ? "day" : "days"}`} (#${id})`);
-	}
-	const headline = parts.join(" · ");
-	if (!isPartial) return headline;
-
-	return typeof openTotal === "number"
-		? `Loaded rows only — ${formatIntCD(summary.openCount)} of ${formatIntCD(openTotal)} open: ${headline}`
-		: `Loaded rows only: ${headline}`;
 }
 
 // format 배지 데이터 — doc.format 실값으로 dual-encode (색 + glyph). html 외 포맷은 agent-only 변종.
@@ -1131,34 +1079,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-age-value, .doc-age-flag { flex: none; }
         /* the Created floor holds no room for the word → glyph-only; "stale" rides the title and sr-only text (relative → the sr-only box resolves here) */
         .doc-age-flag { position: relative; display: inline-flex; align-items: center; color: rgb(var(--dim)); }
-        /* .card overflow:hidden = a scroll container → traps the rail's sticky in the card · clip trims the corners only, sticky stays viewport-relative */
-        .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
         /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
         .card.doc-list-card { scroll-margin-top: 96px; }
         /* clip trims an outside ring → the card ring drawn inset */
         .card.doc-list-card:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
-        .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
-        /* rail beside only when the ledger keeps its column floors there → narrower stacks the rail above */
-        .doc-layout { container: doc-layout / inline-size; }
-        @container doc-layout (width >= ${LEDGER_CD.FLOOR.sum + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
-          .doc-layout .doc-layout-row { flex-direction: row-reverse; align-items: flex-start; }
-          .doc-layout .doc-open-summary { flex-direction: column; align-items: stretch; width: ${OPEN_SUMMARY_RAIL_WIDTH_CD}px; flex-shrink: 0; position: sticky; top: 1.5rem; padding-block: 0.75rem; border-bottom: 0; border-left: 1px solid rgb(var(--line)); }
-        }
-        .doc-open-summary-block { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
-        .doc-open-summary-heading { margin: 0; font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--dim)); }
-        .doc-open-summary-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; margin: 0; font-size: var(--fs-meta); }
-        .doc-open-summary-group dt { display: inline-flex; align-items: center; gap: 4px; color: rgb(var(--ink)); }
-        .doc-open-summary-group dd { margin: 0 8px 0 0; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
-        @container doc-layout (width >= ${LEDGER_CD.FLOOR.sum + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
-          .doc-open-summary .doc-open-summary-block { display: block; }
-          .doc-open-summary .doc-open-summary-heading { margin-bottom: 4px; }
-          .doc-open-summary .doc-open-summary-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; }
-          .doc-open-summary .doc-open-summary-group dd { margin: 0; text-align: right; }
-          /* small-button padding kept; the box hangs its padding and 1px ghost border into the rail gutter each side → its label starts at the label edge, on one line */
-          .doc-open-summary .doc-open-oldest { margin-inline: calc(-1 * (var(--space-2) + 1px)); justify-content: flex-start; text-align: left; white-space: nowrap; }
-          .doc-open-summary .doc-open-oldest-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        }
-        .doc-open-summary-note { font-size: var(--fs-meta); color: rgb(var(--faint)); }
         .doc-stage-note { font-size: var(--fs-meta); color: rgb(var(--dim)); }
         .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--overlay-surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); box-shadow: var(--shadow-overlay); }
         .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: var(--radius-badge); color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
@@ -1206,7 +1130,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 				style={{ minHeight: 0, flex: "1 1 auto", width: "100%" }}
 			>
 				<DocListCardCD
-					asOf={asOf}
 					state={listState}
 					rows={visibleRows}
 					isSearchMode={isSearchMode}
@@ -1384,7 +1307,6 @@ const DOC_LIST_CARD_ID_CD = "docs-list";
 
 // Center list card — toolbar (search + facets + count) + ledger · ledger scroll = page scroll
 function DocListCardCD({
-	asOf,
 	state,
 	rows,
 	isSearchMode,
@@ -1416,7 +1338,7 @@ function DocListCardCD({
 	onSelect,
 	onRetry,
 }) {
-	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, PageVerdict, getRegionView } = window.UI;
+	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, getRegionView } = window.UI;
 	const [focusRowId, setFocusRowId] = useStateCD(null);
 	// load-more keeps its own button spinner → only a first-page read dims the held rows
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
@@ -1456,8 +1378,6 @@ function DocListCardCD({
 			inlineFilterProps.docStatusFilter === "open");
 	const orderedRows = isSectioned ? sortRowsByStageCD(rows) : rows;
 	const nowMs = Date.now();
-	const openSummary = isSectioned ? getOpenSummaryCD(orderedRows, nowMs) : null;
-	const hasOpenSummary = openSummary != null && openSummary.openCount > 0;
 	const rovingId = getRovingIdCD(orderedRows.map((r) => r.id), focusRowId, selectedId);
 	const commonFormat = getCommonFormatCD(orderedRows);
 	const commonAudience = getCommonAudienceCD(orderedRows);
@@ -1618,7 +1538,7 @@ function DocListCardCD({
 					maxHeight: "none",
 					flex: "1 1 auto",
 					minHeight: 0,
-					// no scroller here — a scrolling box would pin the sticky rail to it · x-overflow belongs to the table wrapper
+					// the list grows with the page → the page scrolls, never this body · x-overflow belongs to the table wrapper
 					overflow: "visible",
 				}}
 			>
@@ -1636,32 +1556,14 @@ function DocListCardCD({
 					</div>
 				)}
 				{state.status === "ready" && rows.length === 0 && (
-					/* S6 정직한 빈 상태 — 적용 중 필터 echo + reset 제공 (blank 패널 금지). WCAG 4.1.3 announce. */
+					/* WCAG 4.1.3 → the empty state announces itself */
 					<DocEmptyStateCD
 						isSearchMode={isSearchMode}
 						inlineFilterProps={inlineFilterProps}
 					/>
 				)}
-				{state.status === "ready" && hasOpenSummary && (
-					<PageVerdict
-						tone={openSummary.buckets.stale > 0 ? "warn" : "ok"}
-						freshness={getFreshnessInputCD(asOf, state)}
-						className="mx-4 mt-3">
-						{getOpenHeadlineCD(openSummary, canLoadMore, groupCounts ? groupCounts.open : null)}
-					</PageVerdict>
-				)}
 				{state.status === "ready" && rows.length > 0 && (
-					<div className="doc-layout">
-					<div className="doc-layout-row flex flex-col">
-					{hasOpenSummary && (
-						<DocOpenSummaryCD
-							summary={openSummary}
-							isPartial={canLoadMore}
-							isLastKnown={state.error != null}
-							onSelect={onSelect}
-						/>
-					)}
-					{/* own x-scroll → a table wider than its column scrolls here instead of running under the sticky rail */}
+					// own x-scroll → a table wider than the card scrolls here, never the page
 					<div className="doc-ledger-scroll min-w-0 flex-1 overflow-x-auto">
 					<table className={isHeldBusy ? "tbl doc-ledger-busy" : "tbl"} aria-busy={isHeldBusy ? "true" : undefined}>
 						<caption className="sr-only">
@@ -1891,8 +1793,6 @@ function DocListCardCD({
 						</tbody>
 					</table>
 					</div>
-					</div>
-					</div>
 				)}
 				{/* Load More 버튼.
             · canLoadMore = !isSearchMode AND ready AND consumedCount < total (server groups consumed, not deduped rows)
@@ -1919,54 +1819,6 @@ function DocListCardCD({
 				)}
 			</div>
 		</div>
-	);
-}
-
-// Pipeline shape at a glance — a right rail from xl, a one-line strip above the table below it.
-// A failed refresh keeps the held counts → they read as Last known, like the verdict above them.
-function DocOpenSummaryCD({ summary, isPartial, isLastKnown = false, onSelect }) {
-	const { oldest } = summary;
-	const oldestLabel = oldest ? `Oldest open #${oldest.id} · ${getAgeLabelCD(oldest.days)}` : null;
-	return (
-		<aside
-			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2"
-			aria-label={isLastKnown ? "Open documents summary, last known" : "Open documents summary"}>
-			{isLastKnown && <span className="doc-open-summary-note">Last known</span>}
-			<div className="doc-open-summary-block">
-				<h2 className="doc-open-summary-heading">Open by stage</h2>
-				<dl className="doc-open-summary-group">
-					{summary.stages.map((stage) => (
-						<React.Fragment key={stage.value}>
-							<dt>{stage.label}</dt>
-							<dd>{formatIntCD(stage.count)}</dd>
-						</React.Fragment>
-					))}
-				</dl>
-			</div>
-			<div className="doc-open-summary-block">
-				<h2 className="doc-open-summary-heading">Age</h2>
-				<dl className="doc-open-summary-group">
-					{AGE_BUCKETS_CD.map((bucket) => {
-						const isStaleShown = bucket.key === "stale" && summary.buckets.stale > 0;
-						return (
-							<React.Fragment key={bucket.key}>
-								<dt>
-									{isStaleShown && <ToneGlyphCD tone="warn" />}
-									<window.UI.DayTokens>{bucket.label}</window.UI.DayTokens>
-								</dt>
-								<dd>{formatIntCD(summary.buckets[bucket.key])}</dd>
-							</React.Fragment>
-						);
-					})}
-				</dl>
-			</div>
-			{oldest && (
-				<button type="button" className="btn ghost sm doc-open-oldest" title={oldestLabel} onClick={() => onSelect(oldest.id)}>
-					<span className="doc-open-oldest-label">{oldestLabel}</span>
-				</button>
-			)}
-			{isPartial && <span className="doc-open-summary-note">Loaded rows only</span>}
-		</aside>
 	);
 }
 
@@ -3500,19 +3352,10 @@ function getFreshnessInputCD(asOf, listState) {
 	return { at: asOf, regions: [listState] };
 }
 
-// 필터마다 다른 빈 상태 문구 — "없음" 하나로 뭉치면 어떤 목록이 비었는지 알 수 없다.
-function emptyHeadlineCD(isSearchMode, docStatusFilter) {
-	if (isSearchMode) return "No documents match this search";
-	// 칩의 한국어 stage 단어만 옮기고 문장은 화면 나머지와 같은 영어 — 한 면 안에서 언어가 갈리지 않게.
-	const option = DOC_STATUS_OPTIONS_CD.find((o) => o.value === docStatusFilter);
-	if (option && option.value) return `No ${option.label} documents`;
-	return "No documents";
-}
-
-// S6 정직한 빈 상태 — 적용 중인 필터(검색어/상태/대상)를 명시 echo + 한 번에 초기화.
-//   · docStatus 기본값은 'open'(종료 문서를 숨기는 필터) · audience 기본값 'all' — 빈 값이 아닌 쪽만 active.
-//   · active 0건(빈 목록 자체) → reset 버튼 미노출 ("초기화할 필터 없음" 정직성).
+// spec §5 two empty states — any applied filter (incl. default 'open' stage) → no-results + echo + reset · none → first use
+//   docStatus is ignored while searching → never echoed as applied
 function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
+	const { EmptyState } = window.UI;
 	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
 	const statusLabel = (
 		DOC_STATUS_OPTIONS_CD.find((o) => o.value === docStatusFilter) || {}
@@ -3524,7 +3367,6 @@ function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
 	if (keyword && keyword.trim()) activeFilters.push(`“${keyword.trim()}”`);
 	if (docStatusFilter && !isSearchMode) activeFilters.push(`status: ${statusLabel}`);
 	if (audienceFilter !== "all") activeFilters.push(`audience: ${audienceLabel}`);
-	const hasActiveFilters = activeFilters.length > 0;
 
 	const resetFilters = () => {
 		inlineFilterProps.onKeywordChange("");
@@ -3533,26 +3375,11 @@ function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
 	};
 
 	return (
-		<div className="doc-empty m-4" role="status" aria-live="polite">
-			<div>{emptyHeadlineCD(isSearchMode, docStatusFilter)}</div>
-			{hasActiveFilters && (
-				<div
-					className="fs-meta mt-2"
-					style={{ color: "rgb(var(--faint))" }}
-				>
-					Filters: {activeFilters.join(" · ")}
-				</div>
-			)}
-			{hasActiveFilters && (
-				<button
-					type="button"
-					className="btn ghost sm mt-3"
-					onClick={resetFilters}
-					style={{ minHeight: 32 }}
-					aria-label="Clear all filters"
-				>
-					Clear filters
-				</button>
+		<div role="status" aria-live="polite">
+			{activeFilters.length > 0 ? (
+				<EmptyState kind="no-results" hint={`Filters: ${activeFilters.join(" · ")}`} onReset={resetFilters} />
+			) : (
+				<EmptyState message="No documents yet" hint="A report or plan appears here once an agent posts it." />
 			)}
 		</div>
 	);
