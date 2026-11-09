@@ -43,8 +43,7 @@ for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
 UI_SCALARS.formatInt = REAL_UI.formatInt;
 // Tables ride the shipped Table and cell atoms → head cells and body rows render as on the page.
 for (const name of ["Table", "TableRow", "TableCell"]) UI_SCALARS[name] = REAL_UI[name];
-// The page verdict rolls tones up and names agents with the shipped helpers.
-UI_SCALARS.getWorstTone = REAL_UI.getWorstTone;
+// Health marks and lists name agents with the shipped helper.
 UI_SCALARS.getAgentDisplayName = REAL_UI.getAgentDisplayName;
 // Recharts charts take their image name and edge tick from the shipped chart helpers.
 UI_SCALARS.getChartImageProps = REAL_UI.getChartImageProps;
@@ -621,6 +620,7 @@ function renderSortedCard(mod: Record<string, unknown>, failureStatus: string): 
       state: { status: "ready", data: { agents, meta: { total_agents: 2 } }, error: null },
       days: 30, sortBy: "failures", onSortChange: () => {}, selectedAgent: null, onSelect: () => {}, onRetry: () => {},
       trendByAgent: new Map(), failureByAgent, overageByAgent: new Map(), failureStatus, trendStatus: "ready",
+      revisionState: LOADING_STATE, reviewByAgentState: LOADING_STATE,
     }),
   );
 }
@@ -1604,7 +1604,7 @@ test("a drawer concern shows as a whole item clamped to two lines, with the full
 });
 
 // Stub LOW_N_MIN = 5. revision bucket '0' → health 1 (ok) · avg 0.3 → health 0.64 (warn) · bucket '4+' → health 0.4 (crit).
-describe("the Agents page verdict rolls up the health rule and every status tile", () => {
+describe("the ledger head names the agents the health rule flags, and stays silent otherwise", () => {
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const revision = (agent: string, buckets: Record<string, number>) =>
     Object.entries(buckets).map(([revision_bucket, occurrence_count]) => ({ agent, revision_bucket, occurrence_count }));
@@ -1612,76 +1612,37 @@ describe("the Agents page verdict rolls up the health rule and every status tile
   const watched = revision("a-watch", { "0": 7, "1": 3 });
   const critical = revision("a-crit", { "4+": 10 });
   const thin = revision("a-thin", { "4+": 2 });
-  const clearSources = {
-    days: 30,
-    summaryState: getSummaryState(BREAKER_LOADED_ZERO, [{ runs: 100, needs_context_count: 0 }]),
-    failureState: ready([]),
-    overageState: ready([]),
-    failureByAgent: new Map(),
-    overageByAgent: new Map(),
+  const renderMarks = async (revisionState: unknown, reviewByAgentState: unknown = ready({ rows: [] })) => {
+    const tree = await renderComponent("HealthMarkAg", { revisionState, reviewByAgentState });
+    return findNodes(tree, (n) => n.props?.["data-health-mark"] !== undefined).map((n) => ({ tone: n.props["data-health-mark"], text: collectText(n).trim() }));
   };
-  const renderVerdict = async (revisionRows: unknown[], sources: Record<string, unknown> = {}, reviewByAgentState: unknown = ready({ rows: [] })) => {
-    const mod = await loadAgentsScreen();
-    const buildTiles = mod.buildAgentStatusTiles as (s: Record<string, unknown>) => unknown[];
-    const tree = await renderComponent("AgentPageVerdict", {
-      revisionState: ready({ rows: revisionRows }), reviewByAgentState, statusTiles: buildTiles({ ...clearSources, ...sources }), days: 30,
-    });
-    return findNodes(tree, (n) => n.props?.atom === "PageVerdict")[0] ?? null;
-  };
-  const failedRun = new Map([["glass-atrium-dev-shell", { fail_count: 1, blocked_count: 0 }]]);
   const rows = [
-    { name: "a crit agent makes the page crit and names it", revision: [...healthy, ...watched, ...critical], sources: {}, tone: "crit", text: /1 agent needs attention .*\(a-crit\).*1 agent to watch .*\(a-watch\)/ },
-    { name: "a watch-band agent alone makes the page warn under the Watch label", revision: [...healthy, ...watched], sources: {}, tone: "warn", text: /^Last 30d: 1 agent to watch/ },
-    { name: "a failed run makes the page crit though every agent's health is ok", revision: healthy, sources: { failureByAgent: failedRun }, tone: "crit", text: /1 agent with a failed run \(dev-shell\)/ },
-    { name: "a suspended agent makes the page crit though every agent's health is ok", revision: healthy, sources: { summaryState: getSummaryState({ ...BREAKER_LOADED_ZERO, suspended_count: 1 }) }, tone: "crit", text: /1 unsafe to route now/ },
-    {
-      name: "a current breaker clause leads and never sits under the window prefix",
-      revision: healthy,
-      sources: { summaryState: getSummaryState({ ...BREAKER_LOADED_ZERO, suspended_count: 1 }), failureByAgent: failedRun },
-      tone: "crit",
-      text: /^1 unsafe to route now · last 30d: 1 agent with a failed run/,
-    },
-    { name: "a clear fleet with every judged agent healthy is ok, the thin one left out", revision: [...healthy, ...thin], sources: {}, tone: "ok", text: /the 1 agent with enough runs .* is healthy/ },
-    { name: "no agent above the low-N floor claims no tone", revision: thin, sources: {}, tone: "neutral", text: /too few runs/ },
-    { name: "an unread status tile holds back the all-clear", revision: healthy, sources: { failureState: ERROR_STATE }, tone: "neutral", text: /couldn't check failed runs\.$/ },
+    { name: "a crit and a watch agent each get a mark, crit first, in the drawer's words", revision: ready({ rows: [...healthy, ...watched, ...critical] }), marks: [{ tone: "crit", text: "Needs attention · a-crit" }, { tone: "warn", text: "Watch · a-watch" }] },
+    { name: "a watch-band agent alone gets only the watch mark", revision: ready({ rows: [...healthy, ...watched] }), marks: [{ tone: "warn", text: "Watch · a-watch" }] },
+    { name: "a healthy fleet is silent, the agent below the low-N floor left out", revision: ready({ rows: [...healthy, ...thin] }), marks: [] },
+    { name: "a pending revision read marks nothing", revision: LOADING_STATE, marks: [] },
   ];
   for (const row of rows) {
     test(row.name, async () => {
-      const verdict = await renderVerdict(row.revision, row.sources);
-      assert.ok(verdict, "renders the shared PageVerdict atom");
-      assert.equal(verdict.props.tone, row.tone);
-      assert.match(collectText(verdict), row.text);
+      assert.deepEqual(await renderMarks(row.revision), row.marks);
     });
   }
 
-  test("the warn verdict reads Watch, and a verdict tone never says zero agents need attention", async () => {
-    const verdict = await renderVerdict([...healthy, ...watched]);
-    assert.equal(verdict?.props.label, "Watch");
-    assert.doesNotMatch(collectText(verdict), /\b0 /);
+  test("an unread flag rate marks nothing rather than judging on rework alone", async () => {
+    assert.deepEqual(await renderMarks(ready({ rows: critical }), ERROR_STATE), []);
   });
 
-  test("an unread flag rate is unknown, never all-clear", async () => {
-    const verdict = await renderVerdict(healthy, {}, ERROR_STATE);
-    assert.equal(verdict?.props.tone, "neutral");
-    assert.match(collectText(verdict), /unknown/);
+  test("the page mounts no verdict and carries the mark in the ledger head", async () => {
+    const tree = await renderScreenAgents({
+      status: "ready", busy: false, key: null, error: null,
+      data: { rows: critical, agents: [{ agent: "a-crit", runs: 10 }], meta: { total_agents: 1 }, fetched_at: "2026-01-10T11:59:00.000Z" },
+    });
+    assert.equal(findAtoms(tree, "PageVerdict").length, 0);
+    const [head] = findAtoms(tree, "CardHead").filter((n) => n.props.title === "Performance by agent");
+    assert.ok(head, "the ledger card draws its head");
+    const marks = findNodes(renderScreen(head.props.right), (n) => n.props?.["data-health-mark"] === "crit");
+    assert.equal(marks.length, 1, "the crit agent is named in the ledger head");
   });
-
-  test("a pending read with nothing flagged renders no premature verdict", async () => {
-    const tree = await renderComponent("AgentPageVerdict", { revisionState: LOADING_STATE, reviewByAgentState: LOADING_STATE, statusTiles: [], days: 30 });
-    assert.equal(findNodes(tree, (n) => n.props?.atom === "PageVerdict").length, 0);
-  });
-});
-
-test("a warm error hands the verdict its failed region, so the page never reads Healthy over it", async () => {
-  const warmError = { status: "ready", busy: false, key: null, data: { rows: [], agents: [], fetched_at: "2026-01-10T11:59:00.000Z" }, error: "HTTP 500 Internal Server Error" };
-  const tree = await renderScreenAgents(warmError);
-  const [verdict] = findAtoms(tree, "PageVerdict");
-  const freshness = verdict?.props.freshness as Record<string, unknown> | undefined;
-  assert.ok(freshness, "the verdict is freshness-driven");
-  const getFreshnessVerdict = REAL_UI.getFreshnessVerdict as (input: Record<string, unknown>) => { tone: string; label: string };
-  const settled = getFreshnessVerdict({ ...freshness, tone: "ok", now: Date.parse("2026-01-10T12:00:00.000Z") });
-  assert.notEqual(settled.tone, "ok", "an all-clear over a failed read drops its tone");
-  assert.doesNotMatch(settled.label, /Healthy/);
 });
 
 test("a lifecycle row names its agent through the shared agent name, never a raw id the cell truncates", async () => {
