@@ -59,6 +59,8 @@ const SHIPPED_ATOMS = {
   getRegionView: shippedUi.getRegionView,
   TONE_GLYPH: shippedUi.TONE_GLYPH,
   TONE_ICON: shippedUi.TONE_ICON,
+  TableRow: shippedUi.TableRow,
+  TableCell: shippedUi.TableCell,
 };
 
 // in-memory Storage → the screen's group-expand hydrate reads an empty store instead of failing
@@ -329,6 +331,20 @@ function renderListCard(screen: Record<string, unknown>, overrides: Record<strin
   const props = { ...listCardProps(() => undefined), ...overrides };
   return renderScreen((screen.DocListCardCD as Component)(props));
 }
+
+test("every cell of a ledger row renders through the shared cell atom", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderListCard(screen, { state: { status: "ready", data: {}, error: null, busy: false } });
+  const rowCells = findNodes(tree, (n) => n.type === "tr" && String(n.props.className).split(" ").includes("doc-row"))
+    .flatMap((row) => findNodes(row, (n) => n.type === "td"));
+
+  assert.ok(rowCells.length > 0, "the ledger renders its rows");
+  assert.deepEqual(
+    rowCells.filter((cell) => !String(cell.props.className).split(" ").includes("tbl-cell")).map((cell) => cell.props.className),
+    [],
+    "a raw cell bypasses the atom's cell classes",
+  );
+});
 
 test("a read in flight over held rows keeps them on screen, dimmed and busy, with the held count; only a search names itself inline", async () => {
   const screen = await loadDocsScreen();

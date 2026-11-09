@@ -1261,10 +1261,10 @@ function ShellPageStateCD({ input }) {
 }
 
 // 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.
-function DocTagsCellCD({ audience, format, commonFormat, commonAudience = null }) {
-	const { Badge } = window.UI;
+function DocTagsCellCD({ view, audience, format, commonFormat, commonAudience = null }) {
+	const { Badge, TableCell } = window.UI;
 	return (
-		<td className="doc-tags-cell doc-col-tags">
+		<TableCell view={view} textRole="meta" label="Tags" className="doc-tags-cell doc-col-tags">
 			{/* nowrap — 칩이 2줄로 접히면 행 높이가 튄다. */}
 			<span className="inline-flex items-center gap-1 whitespace-nowrap">
 				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
@@ -1276,18 +1276,19 @@ function DocTagsCellCD({ audience, format, commonFormat, commonAudience = null }
 					<Badge role="metadata">{format}</Badge>
 				)}
 			</span>
-		</td>
+		</TableCell>
 	);
 }
 
 // 작성자 셀 — 1줄 클램프. 전체 값은 title= 툴팁이 운반.
-function DocAuthorCellCD({ author }) {
+function DocAuthorCellCD({ view, author }) {
+	const { TableCell, AgentName } = window.UI;
 	return (
-		<td className="doc-meta-text" style={{ color: "rgb(var(--dim))" }}>
+		<TableCell view={view} textRole="meta" label="Author" className="doc-meta-text" style={{ color: "rgb(var(--dim))" }}>
 			<span className="doc-cell-clamp" title={author}>
-				<window.UI.AgentName name={author} />
+				<AgentName name={author} />
 			</span>
-		</td>
+		</TableCell>
 	);
 }
 
@@ -1327,7 +1328,7 @@ function DocListCardCD({
 	onSelect,
 	onRetry,
 }) {
-	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, getRegionView } = window.UI;
+	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, getRegionView, TableRow, TableCell } = window.UI;
 	const [focusRowId, setFocusRowId] = useStateCD(null);
 	// load-more keeps its own button spinner → only a first-page read dims the held rows
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
@@ -1564,7 +1565,7 @@ function DocListCardCD({
 								return (
 									<React.Fragment key={row.id}>
 										{renderSectionHead(row, rowIndex)}
-										<tr
+										<TableRow
 											className={rowClass}
 											onClick={(e) => {
 												// checkbox / action 버튼 클릭은 row click 으로 buble 시키지 않음.
@@ -1594,7 +1595,8 @@ function DocListCardCD({
 											aria-current={isSelectedViewer ? "true" : undefined}
 											aria-busy={isPending ? "true" : undefined}
 										>
-											<td
+											<TableCell
+												textRole="label"
 												className="doc-checkbox-cell"
 												onClick={(e) => e.stopPropagation()}
 											>
@@ -1604,10 +1606,10 @@ function DocListCardCD({
 													onChange={() => onToggleSelection(row.id)}
 													ariaLabel={`Select ${row.title}`}
 												/>
-											</td>
+											</TableCell>
 											{/* optimisticStatusOverrides 우선 — 서버 refresh 도착 전 고른 stage 즉시 반영. */}
 											{/* last stage actor → the cell tooltip + the viewer rail, so the row stays one line · unknown → no tooltip */}
-											<td title={row.last_status_model ? `Set by ${formatActorCD(row.last_status_model)}` : undefined}>
+											<TableCell textRole="label" title={row.last_status_model ? `Set by ${formatActorCD(row.last_status_model)}` : undefined}>
 													<DocStagePillCD
 														isRowControl
 														docStatus={shownStage}
@@ -1615,11 +1617,11 @@ function DocListCardCD({
 														isChanging={togglingIds.has(row.id)}
 														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
-												</td>
-											<td className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+												</TableCell>
+											<TableCell textRole="meta" label="ID" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
 													<window.UI.MachineString>#{row.id}</window.UI.MachineString>
-												</td>
-											<td className="title-cell">
+												</TableCell>
+											<TableCell className="title-cell">
 												<div
 													className="doc-title-row font-medium fs-body"
 													style={{ color: "rgb(var(--ink))" }}
@@ -1689,7 +1691,7 @@ function DocListCardCD({
 														{parseSnippetCD(snippetText)}
 													</div>
 												)}
-											</td>
+											</TableCell>
 											{hasTagsColumn && (
 												<DocTagsCellCD
 													audience={row.audience}
@@ -1700,7 +1702,7 @@ function DocListCardCD({
 											)}
 											<DocAuthorCellCD author={row.author} />
 											<DocAgeCellCD createdAt={row.created_at} age={age} isStale={isStaleRow} />
-										</tr>
+										</TableRow>
 										{isExpanded && (
 											<GroupMembersRowsCD
 												folderId={row.folder_id}
@@ -1810,9 +1812,14 @@ function getStageOptionsCD(groupCounts) {
 }
 
 // Relative age leads · the absolute KST date stays one hover away.
-function DocAgeCellCD({ createdAt, age, isStale }) {
+function DocAgeCellCD({ view, createdAt, age, isStale }) {
+	const { TableCell } = window.UI;
 	return (
-		<td
+		<TableCell
+			view={view}
+			textRole="meta"
+			label="Created"
+			isNumeric
 			className="doc-age-cell doc-meta-text doc-col-num"
 			style={{ color: "rgb(var(--dim))" }}
 			title={`Created ${formatDateCD(createdAt)}`}>
@@ -1825,7 +1832,7 @@ function DocAgeCellCD({ createdAt, age, isStale }) {
 					</span>
 				)}
 			</div>
-		</td>
+		</TableCell>
 	);
 }
 
@@ -1933,6 +1940,7 @@ function GroupMembersRowsCD({
 	togglingIds,
 	optimisticStatusOverrides,
 }) {
+	const { TableRow, TableCell } = window.UI;
 	const { Icon } = window.UI;
 	const [memberState, setMemberState] = useStateCD({
 		status: "loading",
@@ -2107,7 +2115,7 @@ function GroupMembersRowsCD({
 			.filter(Boolean)
 			.join(" ");
 		return (
-			<tr
+			<TableRow
 				key={member.id}
 				className={rowClass}
 				// 행 전체를 draggable 로 (멤버 ≥ 2 + onReorder + non-search 시).
@@ -2164,17 +2172,17 @@ function GroupMembersRowsCD({
 				aria-current={isSelectedViewer ? "true" : undefined}
 				aria-busy={isPending ? "true" : undefined}
 			>
-				<td className="doc-checkbox-cell" onClick={(e) => e.stopPropagation()}>
+				<TableCell textRole="label" className="doc-checkbox-cell" onClick={(e) => e.stopPropagation()}>
 					<DocCheckboxCD
 						isRowControl
 						checked={isSelectedMulti}
 						onChange={() => onToggleSelection(member.id)}
 						ariaLabel={`Select ${member.title}`}
 					/>
-				</td>
+				</TableCell>
 				{/* doc_status badge 별도 column (GroupMembersRows · 사용자 directive).
             onPickStage 주입 (list-row 와 동일 동작). */}
-				<td>
+				<TableCell textRole="label">
 					{member.doc_status ? (
 						<DocStagePillCD
 								isRowControl
@@ -2189,11 +2197,11 @@ function GroupMembersRowsCD({
 							—
 						</span>
 					)}
-				</td>
-				<td className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+				</TableCell>
+				<TableCell textRole="meta" label="ID" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
 					<window.UI.MachineString>#{member.id}</window.UI.MachineString>
-				</td>
-				<td className="title-cell">
+				</TableCell>
+				<TableCell className="title-cell">
 					<div
 						className="doc-title-row font-medium fs-title"
 						style={{ color: "rgb(var(--ink))" }}
@@ -2218,7 +2226,7 @@ function GroupMembersRowsCD({
 							</span>
 						</span>
 					</div>
-				</td>
+				</TableCell>
 				{/* 멤버 행 태그 — 서술 속성만. 체인(rev)은 그룹 루트 행이 표시한다. */}
 				{hasTagsColumn && (
 					<DocTagsCellCD
@@ -2229,10 +2237,10 @@ function GroupMembersRowsCD({
 					/>
 				)}
 				<DocAuthorCellCD author={member.author} />
-				<td className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+				<TableCell textRole="meta" label="Created" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
 					{formatDateCD(member.created_at)}
-				</td>
-			</tr>
+				</TableCell>
+			</TableRow>
 		);
 	});
 
