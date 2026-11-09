@@ -180,6 +180,8 @@ async function getFocusedRingBox(page: Page) {
 async function openTaskTypeFold(page: Page): Promise<void> {
   const toggle = page.getByRole("button", { name: /By task type/ });
   if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  const fullMatrix = page.getByRole("button", { name: /Full matrix/ });
+  if ((await fullMatrix.getAttribute("aria-expanded")) !== "true") await fullMatrix.click();
   await page.waitForSelector(MATRIX_SELECTOR, { timeout: 30_000 });
 }
 
@@ -391,6 +393,10 @@ describe("agents screen at 1440px, sticky table heads", () => {
 
   before(async () => {
     ctx = await openRenderContext(1440);
+    // room below the last card → each ledger scrolls half a body past its head, whatever the folds below it hold
+    await ctx.page.evaluate(() => {
+      document.body.style.paddingBottom = "100vh";
+    });
   });
 
   after(() => closeRenderContext(ctx));

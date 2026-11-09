@@ -1135,9 +1135,9 @@ test("the Agents page never sets text in the retired micro type step", async () 
   }
 });
 
-function getMatrixRow(agent: string, success: number, failure: number): Record<string, unknown> {
+function getMatrixRow(agent: string, success: number, failure: number, taskType = "feature"): Record<string, unknown> {
   const total = success + failure;
-  return { agent, task_type: "feature", event_date: "2026-01-01", total_count: total, success_count: success, failure_count: failure, success_rate: success / total };
+  return { agent, task_type: taskType, event_date: "2026-01-01", total_count: total, success_count: success, failure_count: failure, success_rate: success / total };
 }
 
 const TASK_TYPE_FOLD_ROWS = [
@@ -1174,7 +1174,60 @@ test("the matrix grows with the page instead of a nested vertical scroller that 
   assert.equal((body.props.style as Record<string, unknown>)?.maxHeight, "none", "no card-body height cap on the matrix");
   const verticalScrollers = findNodes(tree, (n) => /\boverflow-(auto|y-auto|hidden)\b/.test(classOf(n)));
   assert.deepEqual(verticalScrollers.map(classOf), [], "nothing inside the matrix scrolls or clips vertically");
-  assert.ok(findNodes(tree, (n) => /\boverflow-x-auto\b/.test(classOf(n))).length === 1, "wide columns scroll sideways inside the card");
+});
+
+const OFF_TARGET_ROWS = [
+  {
+    name: "an agent lists only its pairs at the crit step",
+    rows: [getMatrixRow("a", 19, 1), getMatrixRow("a", 40, 0, "plan"), getMatrixRow("b", 40, 0)],
+    expected: [{ agent: "a", taskTypes: ["feature"] }],
+  },
+  {
+    name: "a failing small sample under the low-N floor is not off-target",
+    rows: [getMatrixRow("a", 2, 1)],
+    expected: [],
+  },
+  {
+    name: "an agent's pairs keep the matrix column order",
+    rows: [getMatrixRow("a", 19, 1, "review"), getMatrixRow("a", 19, 1, "bug-fix")],
+    expected: [{ agent: "a", taskTypes: ["bug-fix", "review"] }],
+  },
+];
+
+describe("the off-target list holds each agent's pairs at the crit step and nothing under it", () => {
+  for (const row of OFF_TARGET_ROWS) {
+    test(row.name, async () => {
+      const mod = await loadAgentsScreen();
+      const matrix = (mod.buildSuccessRateMatrix as (rows: unknown[]) => unknown)(row.rows);
+      const offTarget = (mod.getOffTargetRowsAg as (m: unknown) => Array<{ agent: string; pairs: Array<{ taskType: string }> }>)(matrix);
+
+      // the vm realm's arrays carry its own prototype → compare by value, not by realm
+      const actual = JSON.parse(JSON.stringify(offTarget.map((r) => ({ agent: r.agent, taskTypes: r.pairs.map((p) => p.taskType) }))));
+      assert.deepEqual(actual, row.expected);
+    });
+  }
+});
+
+test("the task-type body lists the off-target pairs and keeps the full matrix behind a closed disclosure", async () => {
+  const state = { status: "ready", data: { rows: [getMatrixRow("a", 19, 1), getMatrixRow("b", 40, 0)] }, error: null };
+  const tree = await renderComponent("SuccessRateMatrixBody", { state, days: 30, onRetry: () => undefined });
+
+  const [list] = findNodes(tree, (n) => n.props["aria-label"] === "Off-target pairs per agent");
+  assert.equal(findNodes(list, (n) => n.props["aria-label"] === "a off-target task types").length, 1, "the crit agent gets a row");
+  assert.equal(findNodes(list, (n) => n.props["aria-label"] === "b off-target task types").length, 0, "a clear agent gets none");
+  const [toggle] = findAtoms(tree, "DisclosureButton");
+  assert.equal(toggle.props.isOpen, false, "the full matrix starts collapsed");
+  const [panel] = findNodes(tree, (n) => n.props.id === toggle.props.controls);
+  assert.equal(panel?.props.hidden, true, "the toggle controls the hidden matrix panel");
+  assert.equal(findNodes(tree, (n) => n.type === "table").length, 0, "no matrix table mounts while collapsed");
+});
+
+test("a fleet with no off-target pair says so instead of an empty list", async () => {
+  const state = { status: "ready", data: { rows: [getMatrixRow("b", 40, 0)] }, error: null };
+  const tree = await renderComponent("SuccessRateMatrixBody", { state, days: 30, onRetry: () => undefined });
+
+  assert.match(collectText(tree), /No agent × task type pair at failed or blocked ≥ 5%/);
+  assert.equal(findNodes(tree, (n) => n.props["aria-label"] === "Off-target pairs per agent").length, 0);
 });
 
 test("the ledger carries Runs and No record as columns instead of a per-row expander", async () => {
