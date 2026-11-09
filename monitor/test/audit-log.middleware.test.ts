@@ -308,12 +308,24 @@ test("audit INSERT failure does NOT propagate to the handler (response still suc
 //   '/api/telemetry/activation'            — append-only skill/agent activation ingest, one row per
 //                                            spawn; same volume argument, and the telemetry table is
 //                                            its own immutable record.
+//   '/api/queue/sessions/register'         — owner-queue session-side routes: high-volume machine calls
+//   '/api/queue/sessions/deregister'         (SessionStart / SessionEnd hooks, the queue CLI), already
+//   '/api/queue/items'                       recorded in the queue session, item and delivery rows; the
+//   '/api/queue/pending'                     fixed monitor-web actor would mislabel a session as the
+//   '/api/queue/items/:id/ack'               owner. `pending` claims items, so it stays a POST and
+//   '/api/queue/items/:id/withdraw'          keeps the request gate's mutation check.
 const NON_AUDITED_MUTATIONS: ReadonlySet<string> = new Set([
   "/api/clauded-docs/html-export",
   "/api/clauded-docs/search",
   "/api/outcomes/:id/close",
   "/api/outcomes/close-by-cid",
   "/api/telemetry/activation",
+  "/api/queue/sessions/register",
+  "/api/queue/sessions/deregister",
+  "/api/queue/items",
+  "/api/queue/pending",
+  "/api/queue/items/:id/ack",
+  "/api/queue/items/:id/withdraw",
 ]);
 
 const MUTATING_METHOD_SET: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
