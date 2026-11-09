@@ -1,6 +1,6 @@
 // Task results controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the
-// screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" and the result drawer's record
-// "Previous / Next" draw the same small ghost button at rest and on hover, each keeps one box in every state, a card head's static
+// screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" each keep one box in every
+// state, the Time sort control draws the drawer's small ghost button, a card head's static
 // pill stands on the 32 control height (§7.16), and the Results filter bar holds still as a keyword lands, each trigger naming its value.
 // Runner: npx tsx --test test/outcomes.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
@@ -136,18 +136,6 @@ async function readVariantIn(selector: string, state: readonly string[]): Promis
   }
 }
 
-describe("the ledger pages with the drawer's Previous / Next variant", () => {
-  for (const label of LABELS) {
-    test(`ledger ${label} reads "${label}" and draws the drawer's ${label} button at rest and on hover`, async () => {
-      const ledger = LEDGER_BUTTON("mid-page", label);
-      assert.equal((await page.$eval(ledger, (el) => el.textContent))?.trim(), label);
-      for (const state of [[], ["hover"]] as const) {
-        assert.deepEqual(await readVariantIn(ledger, state), await readVariantIn(DRAWER_BUTTON(label), state), `${state[0] ?? "rest"}`);
-      }
-    });
-  }
-});
-
 describe("each pagination button keeps one 32 box in every state", () => {
   for (const label of LABELS) {
     test(`ledger ${label} keeps its box under hover, focus-visible and active`, async () => {
@@ -157,9 +145,9 @@ describe("each pagination button keeps one 32 box in every state", () => {
     });
   }
 
-  test("disabled on the first page, Previous keeps its enabled box", async () => {
+  test("unavailable on the first page, Previous stays focusable and keeps its enabled box", async () => {
     const disabled = LEDGER_BUTTON("first-page", "Previous");
-    assert.equal(await page.$eval(disabled, (el) => (el as HTMLButtonElement).disabled), true);
+    assert.equal(await page.$eval(disabled, (el) => el.getAttribute("aria-disabled")), "true");
     const enabled = await readBox(LEDGER_BUTTON("mid-page", "Previous"));
     const box = await readBox(disabled);
     assert.ok(isSameBox(box, enabled), `disabled ${box.width}x${box.height} vs enabled ${enabled.width}x${enabled.height}`);

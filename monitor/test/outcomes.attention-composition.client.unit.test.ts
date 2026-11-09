@@ -852,9 +852,12 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
   const table = flattenNodes(helpers.ResultTable({
     rows: [{ id: 1, result: "fail" }], sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
   }));
-  const heading = table.find((n) => n.props?.id === attention.jumpTo);
-  assert.ok(heading, "the ledger renders the jump target");
-  assert.strictEqual(heading!.props!.tabIndex, -1, "the heading can take focus without joining the tab order");
+  const target = table.find((n) => n.props?.id === attention.jumpTo);
+  assert.ok(target, "the ledger renders the jump target");
+  // the target is the cell atom's group header → render it to read the cell it draws
+  const heading = (typeof target!.type === "function" ? (target!.type as (props: unknown) => typeof target)(target!.props) : target)!;
+  assert.strictEqual(heading.props!.role, "heading", "the target is a heading");
+  assert.strictEqual(heading.props!.tabIndex, -1, "the heading can take focus without joining the tab order");
 
   const asRendered = (tile: BandTile) => renderKpiO(helpers.BandTileO({ tile, windowLabel: "30d" }));
   const live = asRendered(attention);
@@ -967,7 +970,7 @@ const ledgerHeaderLabelsO = (table: unknown): string[] => {
     .map((n) => (n.type === sortable ? String(n.props!.label) : textOf(n)));
 };
 
-test("ledger: every scroller is the containing block of its visually hidden names, so they cannot stretch the page", () => {
+test("ledger: each table sits in a clipped .tbl-wrap, never a scroller, so hidden names cannot stretch the page", () => {
   const ledger = helpers.ResultTable({
     rows: [ledgerRowOf("done")], sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
   });
@@ -978,12 +981,11 @@ test("ledger: every scroller is the containing block of its visually hidden name
     } as unknown as PayloadState<unknown>,
     onRetry: () => {},
   });
-  const scrollers = [...flattenNodes(ledger), ...flattenNodes(failures)]
-    .filter((n) => /\boverflow-(x-)?auto\b/.test(String(n.props?.className ?? "")));
-  assert.strictEqual(scrollers.length, 2, "the ledger and the by-agent table each render a scroller");
-  for (const scroller of scrollers) {
-    assert.strictEqual((scroller.props!.style as Record<string, unknown>)?.position, "relative");
-  }
+  const nodes = [...flattenNodes(ledger), ...flattenNodes(failures)];
+  const wraps = nodes.filter((n) => /\btbl-wrap\b/.test(String(n.props?.className ?? "")));
+  assert.strictEqual(wraps.length, 2, "the ledger and the by-agent table each sit in a .tbl-wrap");
+  const scrollers = nodes.filter((n) => /\boverflow-(x-|y-)?(auto|scroll)\b/.test(String(n.props?.className ?? "")));
+  assert.deepEqual(scrollers.map((n) => n.props?.className), [], "no scroller wraps either table");
 });
 
 test("ledger: the ledger and the by-agent table grow with the page instead of capping their height", () => {

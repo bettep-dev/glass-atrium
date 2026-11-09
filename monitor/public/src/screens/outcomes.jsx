@@ -1383,7 +1383,8 @@ function AgentFailureBodyO({ state, onRetry, shared, stickyStyle }) {
   }
 
   return (
-    <div className="overflow-x-auto" style={{ position: 'relative' }}>
+    // .tbl-wrap clips sideways and never scrolls → the sticky head reaches the 70vh card body, the scroller that does
+    <div className="tbl-wrap">
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         {AgentFailureHeadO({ stickyStyle })}
         <tbody className="tbl-compact">
@@ -2439,11 +2440,9 @@ function ResultTableCard({
   onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, shared, closure, needsYou, needsYouCap, onToggleNeedsYou,
   filterControls = {},
 }) {
-  const { CardHead } = window.UI;
+  const { CardHead, Pagination } = window.UI;
   const { keywordInput = '', distinctAgents = [], includeAll = false, ...barHandlers } = filterControls;
 
-  const totalPages = Math.max(1, Math.ceil(totalMatched / limit));
-  const currentPage = page + 1;
   // the drawn set (capped Needs-you + Routine), not the page's rows → same count as the section headings and the drawer's 'k of X shown'
   const shownCount = getLedgerDisplayRowsO(buildLedgerSectionsO(rows, closure, needsYou, needsYouCap)).length;
 
@@ -2478,25 +2477,8 @@ function ResultTableCard({
         />
       </div>
       {state.status === 'ready' && totalMatched > 0 && (
-        <div className="card-foot justify-between font-mono">
-          <span>{formatIntO(page * limit + 1)}–{formatIntO(Math.min((page + 1) * limit, totalMatched))} / {formatIntO(totalMatched)}</span>
-          <div className="flex items-center gap-2">
-            <button
-              className="btn ghost sm"
-              disabled={page <= 0}
-              onClick={() => onPageChange(Math.max(0, page - 1))}
-              aria-label="Previous page">
-              Previous
-            </button>
-            <span>page {currentPage} / {totalPages}</span>
-            <button
-              className="btn ghost sm"
-              disabled={currentPage >= totalPages}
-              onClick={() => onPageChange(page + 1)}
-              aria-label="Next page">
-              Next
-            </button>
-          </div>
+        <div className="card-foot">
+          <Pagination page={page} pageSize={limit} total={totalMatched} onPageChange={onPageChange} label="Results pages"/>
         </div>
       )}
     </div>
@@ -2643,13 +2625,13 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
   const [activeRow, setActiveRow] = useStateO(0);
   const rowStarts = getLedgerRowStartsO(sections);
   const rowCount = getLedgerDisplayRowsO(sections).length;
-  const { TableHead } = window.UI;
+  const { TableHead, TableCell } = window.UI;
 
   return (
-    // position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page.
+    // .tbl-wrap: positioned → AgentName's sr-only spans resolve inside it; clipped, never a scroller → the sticky head reaches the page.
     // .tbl--own-face: the .tbl cell geometry (40 rows, 16 edge cells, the control-cell step) under this ledger's own header and body face.
     // separate borders: a collapsed border would not travel with the sticky header row.
-    <div className="overflow-x-auto" style={{ position: 'relative' }}>
+    <div className="tbl-wrap">
       <table className="tbl tbl--own-face fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
@@ -2665,14 +2647,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
             section.rows.length === 0 ? null : (
               <React.Fragment key={section.key}>
                 <tr>
-                  <th
-                    id={section.anchorId}
-                    tabIndex={section.anchorId ? -1 : undefined}
-                    colSpan={LEDGER_COLUMN_COUNT}
-                    scope="colgroup"
-                    className="fs-meta font-mono uppercase tracking-wider text-faint">
-                    {section.heading}
-                  </th>
+                  <TableCell view={LEDGER_VIEW_O} kind="group-header" id={section.anchorId}>{section.heading}</TableCell>
                 </tr>
                 {section.rows.map((row, i) => (
                   <ResultTableRow
@@ -2702,6 +2677,8 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
 }
 
 const LEDGER_COLUMN_COUNT = 5;
+// the ledger's hand-built table → the cell atom's view: wide, its group header spanning every column
+const LEDGER_VIEW_O = Object.freeze({ isStacked: false, columnCount: LEDGER_COLUMN_COUNT });
 // the ledger's own header face (sentence case, dim, medium) — .tbl--own-face leaves it to these classes; one line, never wrapping
 const LEDGER_HEAD_CLASS = 'text-dim font-medium whitespace-nowrap';
 

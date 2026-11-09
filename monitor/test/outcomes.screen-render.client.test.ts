@@ -377,11 +377,15 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
     }
   });
 
-  test("a section heading keeps its own mono upper-case face", () => {
+  test("a section heading is a level-3 heading on the cell atom's group-header face, sans and sentence case", () => {
     const headings = findNodes(tree, (n) => n.type === "th" && n.props.scope === "colgroup");
     assert.ok(headings.length >= 2, "Needs you and Routine");
     for (const heading of headings) {
-      assert.ok(["font-mono", "uppercase", "tracking-wider", "text-faint"].every((t) => tokensOf(heading).includes(t)));
+      const label = collectText(heading).trim();
+      assert.equal(heading.props.role, "heading", label);
+      assert.equal(heading.props["aria-level"], 3, label);
+      assert.ok(tokensOf(heading).includes("tbl-cell--group-header"), label);
+      assert.deepEqual(tokensOf(heading).filter((t) => ["font-mono", "uppercase", "tracking-wider"].includes(t)), [], label);
     }
   });
 });

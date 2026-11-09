@@ -256,3 +256,74 @@ describe("the Results filter bar drives the ledger fetch", () => {
     });
   }
 });
+
+// Sticky heads: the ledger sticks to the page viewport (its card lifts the body cap), Failures by agent to its own 70vh card body.
+const STICKY_ROW_PX = 40;
+const STICKY_LEDGER_ROWS = Array.from({ length: 40 }, (_, i) => ({
+  id: 100 + i, agent: BAND_AGENT, task_type: "review", result: "done", closed_at: null,
+  record_ts: `2026-10-01T${String(23 - Math.floor(i / 2)).padStart(2, "0")}:${i % 2 ? "30" : "00"}:00Z`, summary: `Routine row ${i + 1}`, review_flag: false,
+}));
+const STICKY_OVERALL = {
+  ...BAND_OVERALL,
+  by_agent_result: Array.from({ length: 30 }, (_, i) => ({ agent: `glass-atrium-dev-sticky-${i + 1}`, result: "fail", count: 30 - i, reconstructed_count: 0 })),
+};
+const STICKY_TABLES = [
+  { name: "the ledger", cardId: "outcomes-ledger", scroller: "the page viewport" },
+  { name: "Failures by agent", cardId: "outcomes-agent-failures", scroller: "its 70vh card body" },
+];
+
+describe("outcomes screen at 1440px, sticky table heads", () => {
+  let app: FastifyInstance;
+  let browser: Browser;
+  let serverUrl: string;
+
+  before(async () => {
+    app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/outcomes/cross-analysis", async () => STICKY_OVERALL);
+    app.get("/api/outcomes/search", async (req) => {
+      const query = req.query as Record<string, string>;
+      if (query.limit === "1") return { rows: [], total: 0 };
+      return { rows: query.review_flag || query.result ? [] : STICKY_LEDGER_ROWS, total: STICKY_LEDGER_ROWS.length };
+    });
+    app.get("/api/*", async () => ({ rows: [] }));
+    await app.ready();
+    serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    browser = await chromium.launch({ headless: true });
+  });
+
+  after(async () => {
+    await browser?.close();
+    await app?.close();
+  });
+
+  for (const row of STICKY_TABLES) {
+    test(`${row.name}: the column head sticks to the top of ${row.scroller} after a scroll into the body`, async () => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      try {
+        await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+        await page.waitForFunction((id) => (document.querySelector(`#${id} tbody`)?.getBoundingClientRect().height ?? 0) > 800, row.cardId, { timeout: 30_000 });
+        const result = await page.evaluate(({ cardId, rowPx }) => {
+          const head = document.querySelector(`#${cardId} thead th`) as HTMLElement;
+          const body = document.querySelector(`#${cardId} tbody`) as HTMLElement;
+          let scroller: HTMLElement | null = head.parentElement;
+          while (scroller && !(/(auto|scroll)/.test(getComputedStyle(scroller).overflowY) && scroller.scrollHeight > scroller.clientHeight)) scroller = scroller.parentElement;
+          const target = scroller ?? (document.scrollingElement as HTMLElement);
+          const viewTop = scroller ? scroller.getBoundingClientRect().top : 0;
+          // a quarter of the body under the head: far enough that an unstuck head leaves the view, near enough to stay in its table
+          const offsetPx = body.getBoundingClientRect().height / 4;
+          const headStartPx = head.getBoundingClientRect().top - viewTop + target.scrollTop;
+          const room = target.scrollHeight - target.clientHeight - headStartPx;
+          target.scrollTop = headStartPx + offsetPx;
+          return { isPage: scroller === null, canScroll: room > offsetPx && offsetPx >= rowPx, offsetPx: head.getBoundingClientRect().top - viewTop };
+        }, { cardId: row.cardId, rowPx: STICKY_ROW_PX });
+
+        assert.equal(result.isPage, row.cardId === "outcomes-ledger", `${row.name}: scrolls in ${row.scroller}`);
+        assert.equal(result.canScroll, true, `${row.name}: the scroller reaches a quarter body past the head's start`);
+        assert.ok(Math.abs(result.offsetPx) <= 1, `${row.name}: head ${result.offsetPx}px off the scroller top`);
+      } finally {
+        await page.close();
+      }
+    });
+  }
+});
