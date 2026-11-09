@@ -12,6 +12,7 @@ import { probeBrowserLaunch } from "./clauded-docs/browser-pool.js";
 import { auditHtmlRootAtBoot } from "./maintenance/html-root-audit.js";
 import { isLoopbackHost } from "./host-guard.js";
 import { getMonitorPort } from "./monitor-port.js";
+import { type QueueScheduler, resolveSweepDeps, startQueueScheduler } from "./queue/scheduler.js";
 
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
 const PORT = getMonitorPort();
@@ -32,6 +33,8 @@ if (!isLoopbackHost(HOST)) {
   );
   process.exit(1);
 }
+let queueScheduler: QueueScheduler | null = null;
+
 function attachShutdown(app: FastifyInstance): void {
   let shuttingDown = false;
   const handle = (signal: NodeJS.Signals): void => {
@@ -48,6 +51,7 @@ function attachShutdown(app: FastifyInstance): void {
 
 async function shutdown(app: FastifyInstance, signal: NodeJS.Signals): Promise<void> {
   try {
+    await queueScheduler?.stop();
     await app.close();
     await disconnectPrisma();
     app.log.info({ signal }, "graceful shutdown complete");
@@ -88,6 +92,9 @@ async function main(): Promise<void> {
   // DB gate + pre-warm 통과 후에만 포트 bind — DB unavailable 은 여기 도달 전 exit
   await app.listen({ host: HOST, port: PORT });
   app.log.info(`listening on http://${HOST}:${PORT}`);
+
+  // after listen → a DB gate failure above exits before any sweep runs
+  queueScheduler = startQueueScheduler(resolveSweepDeps());
 
   // boot-stage chromium launch probe — playwright 업그레이드 후 브라우저 바이너리 드리프트를 부팅 시점에 loud 표면화 (/api/health browser 필드 + health 카드).
   await probeStartupBrowser(app);
