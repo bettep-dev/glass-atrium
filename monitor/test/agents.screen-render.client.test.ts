@@ -1214,6 +1214,11 @@ const OFF_TARGET_ROWS = [
     expected: [{ agent: "a", taskTypes: ["feature"] }],
   },
   {
+    name: "a failing pair below the crit step is not off-target",
+    rows: [getMatrixRow("a", 39, 1)],
+    expected: [],
+  },
+  {
     name: "a failing small sample under the low-N floor is not off-target",
     rows: [getMatrixRow("a", 2, 1)],
     expected: [],
