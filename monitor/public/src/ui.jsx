@@ -1468,7 +1468,6 @@ function MachineString({ className = '', children }) {
 /**
  * Pagination bar: the row range left, Previous · current page · Next right; nothing renders for an empty result.
  * An end step stays focusable (aria-disabled + click guard) → pressing Next onto the last page never drops focus to the body.
- * Display-only clamp → a page past the end reads the last page here, but the caller's held page stays put.
  * @param page - 0-based page index; caller clamps its own held page to `ceil(total / pageSize) - 1` when total shrinks → the rows it slices match the range shown
  * @param total - matched row count
  */
