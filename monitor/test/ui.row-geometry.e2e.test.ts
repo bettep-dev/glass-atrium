@@ -216,7 +216,7 @@ describe("a .tbl row is one 40px line whatever its cells hold", () => {
     assert.equal(await rowHeight("text"), ROW_PX);
   });
 
-  test("a row holding a 24px pill stays 40", async () => {
+  test("a row holding a badge stays 40", async () => {
     assert.equal(await rowHeight("pill"), ROW_PX);
   });
 

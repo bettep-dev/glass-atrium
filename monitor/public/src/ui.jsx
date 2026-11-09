@@ -1529,13 +1529,13 @@ function getDisplayName(kind, value) {
   return format ? format(text) : text;
 }
 
-// Label + value pair that renders nothing for an empty or placeholder value.
+// One drawer fact as a one-pair dl (valid without a caller's dl wrapper); an empty or placeholder value renders nothing.
 function DetailField({ label, value, mono = false }) {
   if (!hasFieldValue(value)) return null;
-  return <div>
-    <div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">{label}</div>
-    <div className={`fs-body ${mono ? 'font-mono text-dim' : 'text-ink'} break-words`}>{value}</div>
-  </div>;
+  return <dl className="detail-fact">
+    <dt className="detail-fact-label">{label}</dt>
+    <dd className="detail-fact-value">{mono ? <MachineString>{value}</MachineString> : value}</dd>
+  </dl>;
 }
 
 /**

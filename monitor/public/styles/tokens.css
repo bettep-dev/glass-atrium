@@ -36,7 +36,7 @@
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
 
   /* ── Badge form (신규 · additive) ─ kind B length: 전 배지 shell 공용 radius (form 통일) */
-  --radius-badge: 6px;
+  --radius-badge: 6px; /* TODO(mon-ui/43942): deprecated — badges take --radius-inline; delete once the clauded-docs editor and menu rules move to role tokens (U10) */
 
   /* type steps — the only scale source, whole px, 13px meta floor */
   --fs-kpi:     32px;

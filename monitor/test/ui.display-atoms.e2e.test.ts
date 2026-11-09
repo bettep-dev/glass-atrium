@@ -1,4 +1,4 @@
-// Display atoms measured in a real browser: the page header's line box, a card's bars on one inline column per side, the current-page look and the stat row's hairlines.
+// Display atoms measured in a real browser: the page header's line box, a card's bars on one inline column per side, the current-page look, the stat row's hairlines, the badge chip and the drawer fact row.
 // Runner: npx tsx --test test/ui.display-atoms.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -34,6 +34,12 @@ const statRow = renderToStaticMarkup(h(UI.StatRow, { stats: [
   { label: "Runs", value: "1,284", href: "#/runs" },
   { label: "Median run", value: "38", unit: "s" },
 ] }));
+const badges = renderToStaticMarkup(h("div", null,
+  h(UI.Badge, { role: "metadata" }, "html"),
+  h(UI.Badge, { role: "count" }, "1,284"),
+  h("button", { type: "button", className: "btn", id: "control" }, "Save"),
+));
+const fact = renderToStaticMarkup(h(UI.DetailField, { label: "File path", value: "hooks/track-outcome-with-a-very-long-name-that-has-to-wrap.sh", mono: true }));
 const getHeader = (id: string, title: string) => renderToStaticMarkup(h("div", { id }, h(UI.PageHeader, {
   title,
   sub: "retired sub-line",
@@ -45,7 +51,7 @@ const getHeader = (id: string, title: string) => renderToStaticMarkup(h("div", {
 })));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div style="padding: 24px; width: 900px;">${statRow}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div style="padding: 24px; width: 900px;">${statRow}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -156,5 +162,56 @@ describe("the page header", () => {
 
     assert.ok(line.cluster.top >= line.lead.bottom - 1, `cluster top ${line.cluster.top} vs lead bottom ${line.lead.bottom}`);
     assert.ok(Math.abs(line.cluster.right - line.head.right) < 1 && Math.abs(ends.right - line.head.right) < 1, `cluster ends ${line.head.right - line.cluster.right}px, last control ${line.head.right - ends.right}px from the edge`);
+  });
+});
+
+describe("a badge", () => {
+  test("is a 20px sunken chip with a 4px corner and no edge, never as tall as a control", async () => {
+    const looks = await page.$$eval("#badges .pill", (els) => els.map((el) => {
+      const style = getComputedStyle(el);
+      return { height: el.getBoundingClientRect().height, radius: style.borderTopLeftRadius, border: style.borderTopWidth, background: style.backgroundColor };
+    }));
+    const sunken = await page.$eval("#sunken", (el) => getComputedStyle(el).backgroundColor);
+    const control = await boxOf("#control");
+
+    assert.equal(looks.length, 2);
+    for (const look of looks) assert.deepEqual(look, { height: 20, radius: "4px", border: "0px", background: sunken });
+    assert.ok(control.height > looks[0].height, `control ${control.height}px vs badge ${looks[0].height}px`);
+  });
+
+  test("a count reads in the sans face with tabular digits", async () => {
+    const face = await page.$eval(".pill--count", (el) => ({ family: getComputedStyle(el).fontFamily, numeric: getComputedStyle(el).fontVariantNumeric }));
+    assert.ok(!/mono/i.test(face.family), face.family);
+    assert.equal(face.numeric, "tabular-nums");
+  });
+});
+
+describe("a drawer fact", () => {
+  test("is one 32px row: dim 13/500 label left, long machine value wrapping on the right inside the drawer", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const row = await boxOf("#drawer .detail-fact");
+    const label = await boxOf("#drawer dt");
+    const value = await boxOf("#drawer dd");
+    const labelLook = await page.$eval("#drawer dt", (el) => {
+      const style = getComputedStyle(el);
+      return { size: style.fontSize, weight: style.fontWeight, transform: style.textTransform, isMono: /mono/i.test(style.fontFamily), color: style.color };
+    });
+    const valueAlign = await page.$eval("#drawer dd", (el) => getComputedStyle(el).textAlign);
+    const scrolls = await page.$eval("#drawer .detail-fact", (el) => el.scrollWidth > el.clientWidth);
+    const dim = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "rgb(var(--dim))";
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    });
+    const read = { row, label, value, valueAlign, scrolls };
+
+    assert.deepEqual(labelLook, { size: "13px", weight: "500", transform: "none", isMono: false, color: dim });
+    assert.ok(read.row.height >= 32, `row ${read.row.height}px`);
+    assert.ok(read.label.left < read.value.left && Math.abs(read.value.right - read.row.right) < 1, "label left, value on the row's end");
+    assert.equal(read.valueAlign, "right");
+    assert.equal(read.scrolls, false, "the long value wraps instead of scrolling");
   });
 });
