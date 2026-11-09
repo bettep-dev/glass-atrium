@@ -81,6 +81,7 @@ Each step builds on the previous.
 - **Mock only at boundaries**: external APIs, databases, file systems, time
   - A boundary fake models the real system's observable behavior independently of the code under test: it never reuses the code's own guard or predicate.
   - A behavior that depends on the boundary's real response (a stored content type, a query filter, a constraint) is checked once against the real system or a recorded capture before it is reported done.
+    - A live call needs the user's approval first (`rules/glass-atrium/core-security.md` → `## Agent Tool Authorization [LLM06:2025]`); without it, check against a recorded capture.
     - Not checked → `concerns` carries "fixture-only".
   - Why: a fake that drops a content type or re-implements the query predicate stays green until the first real run.
 - Internal module mocking SHOULD be minimized → excessive mocking signals a design problem
@@ -152,8 +153,8 @@ Every table row carries a name stating its condition — an unnamed row fails wi
   - Wrong: its subject remains, but it fails because it expects the old text or behavior.
   - Fix each inside the declared file set; outside it → name the test and its class in `concerns`.
   - Remove only a test this change made stale or obsolete, named with its reason per **Deletion duty**; never delete, skip or loosen a test to turn a red run green.
-    - Every test the change loosens (wider tolerance, weaker bound, an exact match widened to a partial one), re-pins (changed expected value), renames or retires is named in `concerns`.
-    - Each names the rule change that requires it and that rule's source: the user's words, or a plan line the user approved.
+    - Every test the change loosens (wider tolerance, weaker bound, an exact match widened to a partial one) or re-pins (changed expected value) is named in `concerns` with the rule change that requires it and that rule's source: the user's words, or a plan line the user approved.
+    - Every test the change renames or retires is named in `concerns` with its own reason: a **Deletion duty** subsumption, stale or obsolete under this check, the **ID ban**, or a **Fold-back** merge.
     - "To make it pass" or a bare "by design" is never a reason.
   - Why: agents fix what fails and miss what stays green, so a stale test survives every run.
 

@@ -221,7 +221,7 @@ The canonical rule for what language this system writes in.
 #### Work-unit checkpoint dimension
 
 - A single turn can exhaust a token or tool-use budget before any turn boundary fires, so checkpoint the resume point to the progress file after each completed work-unit (each file, each fix), not only at turn boundaries.
-- Index owner in code work: `rules/glass-atrium/core-git-workflow.md` → `### Worktree occupancy` → **Who commits**.
+- Index owner in code work: the work-unit checkpoint is also a commit — `rules/glass-atrium/core-git-workflow.md` → `### Worktree occupancy` → **Who commits**.
 - A work-unit that cannot be completed and verified before the ceiling is split or not opened.
 
 #### Truncation recovery
