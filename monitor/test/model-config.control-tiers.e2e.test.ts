@@ -129,26 +129,23 @@ after(async () => {
   await browser?.close();
 });
 
-describe("the In effect file-count fold sits on the interactive pill", () => {
-  test("its summary is a 32 bordered pill whose chevron alone marks it open", () => assertFoldOnOneBox(FILES, FILES_SUMMARY));
+describe("the In effect file-count fold opens on the ghost disclosure atom", () => {
+  test("its summary is a 32 disclosure whose chevron alone marks it open", () => assertFoldOnOneBox(FILES, FILES_SUMMARY));
 
   test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(FILES_SUMMARY));
 
-  test("it draws the pill edge and inline padding", async () => {
-    assert.equal(await readStyle(FILES_SUMMARY, "border-top-width"), "1px");
-    assert.equal(await readStyle(FILES_SUMMARY, "padding-left"), "8px");
+  test("it draws no pill edge", async () => {
+    assert.equal(await readStyle(FILES_SUMMARY, "border-top-width"), "0px");
   });
 
-  // the pill makes the In effect cell a control cell → its first line still centres on the row's Model select
-  test("the In effect first line centres on the Model select in its row", async () => {
+  // a steady row puts nothing above the fold → the summary itself is the cell's control line
+  test("the fold summary centres on the Model select in its row", async () => {
     const offset = await page.$eval("#models tbody tr", (tr) => {
       const select = tr.querySelector("select")!.getBoundingClientRect();
-      const range = document.createRange();
-      range.selectNodeContents(tr.querySelector("td:last-child .tbl-first-line")!);
-      const line = range.getClientRects()[0];
-      return line.top + line.height / 2 - (select.top + select.height / 2);
+      const summary = tr.querySelector("td details > summary")!.getBoundingClientRect();
+      return summary.top + summary.height / 2 - (select.top + select.height / 2);
     });
-    assert.ok(Math.abs(offset) <= 0.5, `first line ${offset}px off the select centre`);
+    assert.ok(Math.abs(offset) <= 0.5, `fold summary ${offset}px off the select centre`);
   });
 });
 

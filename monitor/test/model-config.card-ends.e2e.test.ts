@@ -177,7 +177,12 @@ for (const width of [1024, 1280, 1440, 1920]) {
           const control = tr.querySelector(controls)!.getBoundingClientRect();
           for (const td of tr.cells) {
             if (td.querySelector(controls)) continue;
-            const first = td.querySelector(".tbl-first-line")!;
+            const first = td.querySelector(".tbl-first-line");
+            // a silent cell has no line to centre · a worded cell without the first-line hook fails as NaN
+            if (!first) {
+              if ((td.textContent ?? "").trim() !== "") offsets.push({ row: tr.cells[0].textContent ?? "", offset: NaN });
+              continue;
+            }
             const range = document.createRange();
             range.selectNodeContents(first);
             const line = range.getClientRects()[0];

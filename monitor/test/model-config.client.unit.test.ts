@@ -546,6 +546,7 @@ async function loadMcScreens(
     Icon: (p: Record<string, unknown>) => hMc("i", { "data-icon": p.name, className: p.className }),
     DisclosureChevron: () => hMc("i", { "data-icon": "chevR", className: "disclosure-chevron" }),
     TypeScaleStyle: () => null,
+    MachineString: (p: Record<string, unknown>) => hMc("code", { "data-atom": "MachineString" }, p.children),
     Badge: (p: Record<string, unknown>) =>
       hMc("span", { className: `badge ${p.className ?? ""}`.trim(), "data-tone": p.tone ?? "neutral" }, p.children),
     CardHead: cardHeadStubMc,
@@ -665,7 +666,7 @@ test("render harness: a screen component's emitted tree is readable as tags and 
   assert.strictEqual(tagsMc(tree, "select").length, 1, "the editable row's select is reachable");
   // Text: row content from the fixture, not from a copy of the component.
   assert.ok(textMc(tree).includes("Dev agents"), "row label rendered from DOMAIN_META_MC");
-  assert.ok(textMc(tree).includes("claude-opus-4-8"), "the fixture value reaches the tree");
+  assert.strictEqual(tagsMc(tree, "select")[0].props.value, "claude-opus-4-8", "the fixture value reaches the select");
 });
 
 test("render harness: the tree tracks the props it was given, not a fixed snapshot", async () => {
@@ -769,9 +770,9 @@ test("clearing a cap field records the knob as unset ('inherit'), never as an em
   assert.deepStrictEqual(changes, [["tier.worker_max_output_tokens", INHERIT_VALUE]]);
 });
 
-describe("a knob with no key in the file reads as the CLI default in effect only when the file was read", () => {
+describe("a knob with no key in the file stays silent when the file was read and names the unread source otherwise", () => {
   const rows = [
-    { name: "a read file: the CLI default, never an unread value", isFileRead: true, isCliDefault: true },
+    { name: "a read file: silence, never an unread value", isFileRead: true, isCliDefault: true },
     { name: "a missing file: an unread value, never the CLI default", isFileRead: false, isCliDefault: false },
   ];
   for (const row of rows) {
@@ -783,7 +784,7 @@ describe("a knob with no key in the file reads as the CLI default in effect only
       const cell = tagsMc(effortRow.children, "td")[2];
       const live = textMc(cell.children);
       const titles = findAllMc(cell.children, (n) => typeof n.props.title === "string").map((n) => String(n.props.title));
-      assert.strictEqual([live, ...titles].some((s) => s.includes("CLI default")), row.isCliDefault, `${live} | ${titles.join(" | ")}`);
+      assert.strictEqual(live === "", row.isCliDefault, `${live} | ${titles.join(" | ")}`);
       assert.strictEqual(live.includes("No value read"), !row.isCliDefault, live);
     });
   }
@@ -830,17 +831,32 @@ test("every ledger column header goes through the shared TableHead atom, so it c
   }
 });
 
-test("a row in its steady state spends no tone; only a drifted row raises one warn badge", () => {
+const iconsMc = (nodes: McNode[], name: string): McTag[] => findAllMc(nodes, (n) => n.props["data-icon"] === name);
+
+test("a row in its steady state shows no mark; only a drifted row raises one warn glyph, outside any pill", () => {
   const steady = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
-  assert.strictEqual(tonedMc(steady, "ok").length, 0, "no steady-state ok pill");
-  assert.strictEqual(tonedMc(steady, "warn").length, 0, "nothing to warn about");
+  assert.strictEqual(iconsMc(steady, "check").length, 0, "agreement is silence");
+  assert.strictEqual(iconsMc(steady, "warn").length, 0, "nothing to warn about");
 
   const drifted = renderComponentMc(
     screens.DomainsSectionMC,
     domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: "claude-sonnet-5", drift: true }]),
   );
-  assert.strictEqual(tonedMc(drifted, "warn").length, 1, "exactly one warn badge per drifted row");
+  assert.strictEqual(iconsMc(drifted, "warn").length, 1, "exactly one warn glyph per drifted row");
+  assert.strictEqual(tonedMc(drifted, "warn").length, 0, "the drift mark is glyph + word, not a badge");
   assert.ok(textMc(drifted).includes("claude-sonnet-5"), "the live value is shown, not just a flag");
+});
+
+test("a listed model shows its name only; its id rides the select tooltip, never a second line", () => {
+  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
+  const row = tagsMc(tree, "tr").find((tr) => tagsMc(tr.children, "select").length > 0);
+  assert.ok(row, "an editable domain row is rendered");
+  const [select] = tagsMc(row.children, "select");
+  const id = String(select.props.value);
+  assert.match(id, /^claude-(opus|sonnet|haiku)-/, "the fixture holds a listed family id");
+
+  assert.strictEqual(select.props.title, id, "the id is the select's tooltip");
+  assert.ok(!textMc(tagsMc(row.children, "td")[1].children).includes(id), "the id is not printed under the name");
 });
 
 test("an apply_mode the screen does not map is stated verbatim as the take-effect mode", () => {
@@ -1430,9 +1446,7 @@ test("Live repeats nothing in the steady state and shows the value only when it 
     ["BudgetsSectionMC", budgetsPropsMc(), budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: "12.00", drift: true }])],
   ] as const) {
     const steady = liveCellMc(renderComponentMc(screens[name], props));
-    assert.ok(textMc([steady]).startsWith("Matches saved"), `${name}: a matching live value says so in words`);
-    assert.ok(!textMc([steady]).includes("claude-opus-4-8"), `${name}: the matching value is not repeated`);
-    assert.strictEqual(tagsMc([steady], "i")[0]?.props["data-icon"], "check", `${name}: the match carries an ok glyph`);
+    assert.strictEqual(textMc([steady]).trim(), "", `${name}: a matching live value adds no words`);
 
     const differs = textMc([liveCellMc(renderComponentMc(screens[name], drifted))]);
     assert.ok(!differs.includes("Matches saved"), `${name}: a differing value never reads as matching`);
@@ -1717,7 +1731,7 @@ test("a model id reads as its family and version; an id outside the naming patte
   }
 });
 
-test("the model mix counts every tier once under its family, and each select names its family in text with its id below", () => {
+test("the model mix counts every tier once under its family, and each select names its family in text", () => {
   const models = { "model.dev": "claude-opus-4-8", "model.research": "claude-sonnet-5", "model.meta": "claude-opus-4-8" };
   const tree = renderComponentMc(screens.DomainsSectionMC, {
     ...domainsPropsMc(THREE_TIERS_MC),
@@ -1731,15 +1745,10 @@ test("the model mix counts every tier once under its family, and each select nam
     return textMc(picked.children);
   });
   assert.deepStrictEqual(shown, ["Opus 4.8", "Sonnet 5", "Opus 4.8"], "each select names its tier's family");
-  const ids = findAllMc(tree, (n) => n.props["data-slot"] === "model-id");
-  assert.deepStrictEqual(textsMc(ids), Object.values(models), "one id tag per select, naming its saved id");
-  for (const id of ids) {
-    assert.match(String(id.props.className), /\btruncate\b/, "the id is one nowrap token with an end ellipsis");
-    assert.strictEqual(id.props.title, textMc(id.children), "a clipped id keeps its full value in the title");
-  }
+  assert.deepStrictEqual(selects.map((select) => select.props.title), Object.values(models), "each select's tooltip is its saved id");
 });
 
-test("a tier set to inherit reads as the session model in its select and shows no id tag", () => {
+test("a tier set to inherit reads as the session model in its select and never surfaces the raw inherit key", () => {
   const models = { "model.dev": "claude-opus-4-8", "model.research": "inherit", "model.meta": "claude-sonnet-5" };
   const tree = renderComponentMc(screens.DomainsSectionMC, {
     ...domainsPropsMc(THREE_TIERS_MC),
@@ -1750,9 +1759,8 @@ test("a tier set to inherit reads as the session model in its select and shows n
   assert.ok(research, "the inherit tier is a listed select value, not custom mode");
   const picked = tagsMc(research!.children, "option").find((o) => o.props.value === "inherit")!;
   assert.strictEqual(textMc(picked.children), "Session model", "the select words inherit");
-  const ids = textsMc(findAllMc(tree, (n) => n.props["data-slot"] === "model-id"));
-  assert.deepStrictEqual(ids, ["claude-opus-4-8", "claude-sonnet-5"], "only the tiers with a real id carry an id tag");
-  assert.ok(!ids.includes("inherit"), "the raw inherit key never shows as an id");
+  assert.strictEqual(research!.props.title, undefined, "inherit is no id, so its select carries no id tooltip");
+  assert.ok(!/\binherit\b/.test(textMc(tree)), "the raw inherit key never shows as text");
 });
 
 test("a model option reads as its friendly name with the id leading its title; an id outside the pattern reads as itself", () => {
@@ -1770,7 +1778,7 @@ test("a model option reads as its friendly name with the id leading its title; a
   }
 });
 
-test("the file list toggle is an interactive pill on the disclosure atom, not a heading or a card", () => {
+test("the file list toggle is a ghost disclosure, not a pill, a heading or a card", () => {
   const tree = renderComponentMc(screens.LiveValueMC, {
     value: "claude-opus-4-8",
     drift: false,
@@ -1780,7 +1788,8 @@ test("the file list toggle is an interactive pill on the disclosure atom, not a 
   assert.ok(summary, "the toggle is a native summary");
   assert.ok(textMc(summary.children).includes("1 file"), "the toggle names the file count");
   const classes = String(summary.props.className ?? "").split(/\s+/);
-  for (const name of ["disclosure", "pill", "pill--interactive"]) assert.ok(classes.includes(name), `summary class ${name}: ${classes}`);
+  assert.ok(classes.includes("disclosure"), `summary sits on the disclosure atom: ${classes}`);
+  assert.ok(!classes.some((name) => name.startsWith("pill")), `summary carries no pill: ${classes}`);
   assert.strictEqual(findAllMc(tree, (n) => /^h[1-6]$/.test(n.tag) || "data-kind" in n.props).length, 0, "no heading, no card fold");
 });
 
@@ -2073,10 +2082,10 @@ describe("a Refresh or Retry result is announced in one polite live region, moun
   }
 });
 
-test("under a failed reload no row keeps a green 'Matches saved'; the match is dated to the last good read", async () => {
-  for (const [name, error, isStale] of [
-    ["fresh read", null, false],
-    ["warm error", "HTTP 500", true],
+test("a matching row stays silent whether the read is fresh or a failed reload holds it", async () => {
+  for (const [name, error] of [
+    ["fresh read", null],
+    ["warm error", "HTTP 500"],
   ] as const) {
     const tree = await renderSeededScreenMc({
       config: seededConfigMc({ status: "ready", data: SCREEN_DATA_MC, key: "config", error, busy: false }),
@@ -2086,11 +2095,12 @@ test("under a failed reload no row keeps a green 'Matches saved'; the match is d
     const bodies = tagsMc(tree, "tbody");
     const rowCount = bodies.flatMap((b) => tagsMc(b.children, "tr")).length;
     const text = textMc(bodies);
-    const checks = findAllMc(bodies, (n) => n.props["data-icon"] === "check").length;
 
-    assert.strictEqual(countMc(text, "Matches saved"), isStale ? 0 : rowCount, `${name}: matching rows`);
-    assert.strictEqual(checks, isStale ? 0 : rowCount, `${name}: ok glyphs`);
-    assert.strictEqual(countMc(text, "Matched at last read"), isStale ? rowCount : 0, `${name}: stale rows dated`);
+    assert.ok(rowCount > 0, `${name}: rows rendered`);
+    for (const claim of ["Matches saved", "Matched at last read", "Read from daemon-config.json"]) {
+      assert.strictEqual(countMc(text, claim), 0, `${name}: no row says '${claim}'`);
+    }
+    assert.strictEqual(iconsMc(bodies, "check").length, 0, `${name}: no ok glyphs`);
   }
 });
 
@@ -2125,7 +2135,7 @@ test("the glossary labels are headings, and their notes never repeat the agent a
   assert.ok(!notes.includes("glass-atrium-"), `a note repeats an agent id the row shows: ${notes}`);
 });
 
-test("every In-effect cell is filled: a tier without a file list names where its value was read from", () => {
+test("a tier without a file list names where its value was read from; a cap's shared source sits once in the card foot", () => {
   const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(ALL_TIERS_MC));
   const bodyRows = tagsMc(tagsMc(tree, "tbody")[0].children, "tr");
   const sources: Record<string, string> = {
@@ -2142,8 +2152,11 @@ test("every In-effect cell is filled: a tier without a file list names where its
     assert.ok(live.includes(source), `${domain}: reads from ${source} (${live})`);
   }
 
-  const cap = textMc([liveCellMc(renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc()))]);
-  assert.ok(cap.includes("Read from daemon-config.json"), `a cap names its source (${cap})`);
+  const budgets = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc());
+  const cap = textMc([liveCellMc(budgets)]);
+  const foot = textMc(findAllMc(budgets, (n) => n.props.className === "card-foot"));
+  assert.ok(!cap.includes("Read from"), `a cap reading the card's source stays silent (${cap})`);
+  assert.strictEqual(countMc(foot, "Read from daemon-config.json"), 1, `the foot names the source once (${foot})`);
 });
 
 test("a sourced In-effect cell with no live value names the source without claiming it was read", () => {
