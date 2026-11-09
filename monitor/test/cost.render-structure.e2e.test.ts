@@ -21,11 +21,14 @@ import { chromium } from "playwright";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
-// The screen's own tier order, as the target composition states it: four KPI tiles, then the
+// The screen's own tier order, as the target composition states it: the Spend stat card, then the
 // three decision cards, then the three instrumentation status cards.
-const DECISION_CARD_TITLES = ["Cost over time", "Cost by model", "Most expensive sessions"];
+const DECISION_CARD_TITLES = ["Spend", "Cost over time", "Cost by model", "Most expensive sessions"];
 const DISCLOSURE_TITLES = ["Token volume", "Turn statistics", "Log integrity"];
-const KPI_TILE_COUNT = 4;
+const SPEND_STAT_COUNT = 4;
+// the Spend region's row — the instrumentation cards carry stat rows of their own
+const SPEND_STAT_ROW = "#cost-region-kpis .stat-row";
+const SPEND_STAT_SELECTOR = `${SPEND_STAT_ROW} .stat`;
 const LEDGER_MODELS = [
   "claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-fable-5",
   "claude-opus-4-8", "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "unknown",
@@ -44,6 +47,8 @@ interface CostFixture {
   parseErrorRatio: number;
   // every cost payload route answers 503 → a cold shared outage, nothing ever loaded
   isOutage?: boolean;
+  // every by-model row carries tokens but no priced cost → the share bar yields to its footnote
+  isLedgerUnpriced?: boolean;
 }
 
 // today = ratio x the 7-day daily normal; the burn rate extrapolates to the same ratio.
@@ -113,7 +118,7 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
   app.get("/api/cost/by-model", async () => ({
     rows: LEDGER_MODELS.map((model, i) => ({
       model,
-      cost_usd: 80 - i * 8,
+      cost_usd: fixture.isLedgerUnpriced ? 0 : 80 - i * 8,
       session_count: 12,
       input_tokens: 10_000,
       output_tokens: 5000,
@@ -198,18 +203,14 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     return { app, browser, page };
   }
 
-  // Render complete = the wave resolved: every tile has left its loading skeleton, so the
+  // Render complete = the wave resolved: the stat row has left its loading state, so the
   // lane has had its inputs and an absent lane is a verdict rather than a pending state.
-  await page.waitForSelector(".cost-screen .kpi", { timeout: 30_000 });
+  await page.waitForSelector(SPEND_STAT_SELECTOR, { timeout: 30_000 });
   await page.waitForFunction(
-    (expected: number) => {
-      const tiles = Array.from(document.querySelectorAll(".cost-screen .kpi"));
-      return (
-        tiles.length === expected &&
-        tiles.every((t) => t.getAttribute("aria-busy") !== "true")
-      );
-    },
-    KPI_TILE_COUNT,
+    ({ expected, selector }: { expected: number; selector: string }) =>
+      document.querySelectorAll(selector).length === expected
+      && document.querySelector('.cost-screen [aria-busy="true"] > .stat-row') === null,
+    { expected: SPEND_STAT_COUNT, selector: SPEND_STAT_SELECTOR },
     { timeout: 30_000 },
   );
 
@@ -271,20 +272,11 @@ describe("calm fixture — nothing is running hot", () => {
     const titles = await getCardTitles(ctx.page);
     assert.deepStrictEqual(titles, [...DECISION_CARD_TITLES, ...DISCLOSURE_TITLES]);
 
-    const kpiPrecedesFirstCard = await ctx.page.evaluate(() => {
-      const tiles = Array.from(document.querySelectorAll(".cost-screen .kpi"));
-      const firstCard = document.querySelector(".cost-screen .card-title");
-      if (tiles.length === 0 || firstCard === null) return false;
-      const last = tiles[tiles.length - 1] as Element;
-      return Boolean(
-        last.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING,
-      );
-    });
-    assert.equal(
-      kpiPrecedesFirstCard,
-      true,
-      "the four KPI tiles lead the screen — every card follows them",
+    const statCardTitle = await ctx.page.evaluate(
+      (selector) => (document.querySelector(selector)?.closest(".card")?.querySelector(".card-title")?.textContent || "").trim(),
+      SPEND_STAT_SELECTOR,
     );
+    assert.equal(statCardTitle, "Spend", "the four spend stats live in the leading Spend card");
   });
 
   test("the instrumentation tier is three status cards, all open", async () => {
@@ -309,19 +301,19 @@ describe("calm fixture — nothing is running hot", () => {
     assert.equal(await countAlarmRows(ctx.page), 0);
     const laneHeight = await ctx.page.evaluate(() => {
       const header = document.querySelector(".cost-screen .flex-shrink-0");
-      const verdict = document.querySelector(".cost-screen .page-verdict");
-      if (header === null || verdict === null) return -1;
-      return verdict.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
+      const firstCard = document.querySelector(".cost-screen .card");
+      if (header === null || firstCard === null) return -1;
+      return firstCard.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
     });
     assert.ok(
       laneHeight >= 0 && laneHeight < 24,
-      `a calm lane must cost no vertical band; measured ${laneHeight}px between header and verdict`,
+      `a calm lane must cost no vertical band; measured ${laneHeight}px between header and first card`,
     );
   });
 
   test("every cost table sits flush in its card, its edge cells carrying the card padding, in the house table face", async () => {
     const tables = await ctx.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".cost-screen table.cost-tbl")).map((table) => {
+      Array.from(document.querySelectorAll(".cost-screen table.tbl")).map((table) => {
         const card = table.closest(".card")!;
         const cardBox = card.getBoundingClientRect();
         const border = parseFloat(getComputedStyle(card).borderLeftWidth);
@@ -334,8 +326,8 @@ describe("calm fixture — nothing is running hot", () => {
           inset: [Math.round(tableBox.left - cardBox.left - border), Math.round(cardBox.right - border - tableBox.right)],
           edge: [getComputedStyle(firstCell).paddingLeft, getComputedStyle(lastCell).paddingRight],
           headCase: head.textTransform,
-          // the share block, the turn aggregates and the footnote inset themselves to the card padding
-          contentInsets: Array.from(card.querySelectorAll(".section-label, .cost-foot, dl"))
+          // the section labels and the turn aggregates inset themselves to the card padding
+          contentInsets: Array.from(card.querySelectorAll(".section-label, dl"))
             .filter((el) => el.closest("thead, .card-head") === null)
             .map((el) => Math.round(el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft) - cardBox.left - border)),
         };
@@ -353,13 +345,41 @@ describe("calm fixture — nothing is running hot", () => {
 
   test("the ledger Total row carries no session count — per-model counts do not sum", async () => {
     const totalCells = await ctx.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".cost-screen .cost-tbl tfoot td")).map((td) =>
-        (td.textContent || "").trim(),
+      Array.from(document.querySelectorAll(".cost-screen table.tbl tfoot :is(th, td)")).map((cell) =>
+        (cell.textContent || "").trim(),
       ),
     );
     assert.strictEqual(totalCells[0], "Total");
-    assert.deepStrictEqual(totalCells.slice(2), ["—", "—"]);
+    assert.deepStrictEqual(totalCells.slice(2), ["None", "None"]);
   });
+
+  for (const width of [1440, 1024]) {
+    test(`at ${width}px the by-model head sticks to the viewport top after a page scroll`, async () => {
+      await ctx.page.setViewportSize({ width, height: 900 });
+      const SCROLL_INTO_TABLE_PX = 80;
+      const measured = await ctx.page.evaluate((scrollIntoPx) => {
+        const table = Array.from(document.querySelectorAll(".cost-screen table.tbl"))
+          .find((t) => (t.querySelector("caption")?.textContent || "").startsWith("Cost by model"));
+        const head = table?.querySelector("thead th") as HTMLElement | undefined;
+        if (!table || !head) return null;
+        window.scrollTo(0, 0);
+        const headStartPx = head.getBoundingClientRect().top;
+        const headHeightPx = head.getBoundingClientRect().height;
+        const tableHeightPx = table.getBoundingClientRect().height;
+        // the page must scroll past the head's start, and the table must outlast the scroll, or a non-sticky head passes too
+        const pageRoomPx = document.documentElement.scrollHeight - window.innerHeight - headStartPx;
+        const precondition = { canPageScroll: pageRoomPx > scrollIntoPx, isTableTaller: tableHeightPx - headHeightPx > scrollIntoPx };
+        window.scrollTo(0, headStartPx + scrollIntoPx);
+        const offsetPx = head.getBoundingClientRect().top;
+        window.scrollTo(0, 0);
+        return { precondition, offsetPx };
+      }, SCROLL_INTO_TABLE_PX);
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+      assert.ok(measured, "the by-model ledger renders a column head");
+      assert.deepEqual(measured.precondition, { canPageScroll: true, isTableTaller: true });
+      assert.ok(Math.abs(measured.offsetPx) <= 1, `head ${measured.offsetPx}px off the viewport top`);
+    });
+  }
 
   test("the decision tier draws exactly one chart root", async () => {
     assert.equal(
@@ -377,32 +397,29 @@ describe("calm fixture — nothing is running hot", () => {
     assert.equal(strayRoots, 0, "every chart lives in a card");
   });
 
-  test("one verdict line precedes the tiles, and every tile carries its window tag", async () => {
-    const shape = await ctx.page.evaluate(() => {
-      const verdicts = document.querySelectorAll(".cost-screen .page-verdict");
-      const firstTile = document.querySelector(".cost-screen .kpi");
-      const tags = Array.from(document.querySelectorAll(".cost-screen .kpi")).map((tile) =>
-        Array.from(tile.querySelectorAll(".kpi-window")).map((t) => (t.textContent || "").trim()),
-      );
-      const leads = verdicts.length === 1 && firstTile !== null
-        && Boolean(verdicts[0]!.compareDocumentPosition(firstTile) & Node.DOCUMENT_POSITION_FOLLOWING);
-      return { count: verdicts.length, leads, tags };
-    });
-    assert.equal(shape.count, 1, "one spend verdict per page");
-    assert.equal(shape.leads, true, "the verdict reads before the tiles");
-    assert.equal(shape.tags.length, KPI_TILE_COUNT);
-    for (const tags of shape.tags) {
-      assert.equal(tags.length, 1, "each tile names its window exactly once");
-      assert.ok(tags[0]!.length > 0, "a window tag is never blank");
-    }
+  test("no page verdict and no window tag — each ranged stat names its window in its label", async () => {
+    const shape = await ctx.page.evaluate((row) => ({
+      verdicts: document.querySelectorAll(".cost-screen .page-verdict").length,
+      windowTags: document.querySelectorAll(".cost-screen .kpi-window").length,
+      labels: Array.from(document.querySelectorAll(`${row} .stat-label`))
+        .map((el) => (el.textContent || "").trim()),
+    }), SPEND_STAT_ROW);
+    assert.equal(shape.verdicts, 0, "spend state rides the stat and the alarm lane, not a verdict line");
+    assert.equal(shape.windowTags, 0, "the window is part of the label, never a separate tag");
+    assert.equal(shape.labels.length, SPEND_STAT_COUNT);
+    assert.equal(
+      shape.labels.filter((label) => /, last \d+ days$/.test(label)).length,
+      2,
+      `the cost and the cache-share stats follow the range: ${shape.labels.join(" | ")}`,
+    );
   });
 
-  test("the tiles compare with the prior window the screen opts into", async () => {
-    const feet = await ctx.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".cost-screen .cost-foot")).map((el) => (el.textContent || "").trim()),
-    );
-    assert.ok(feet.some((text) => /cut at this time of day/.test(text)), "a measured delta line renders");
-    assert.ok(!feet.some((text) => /did not arrive/.test(text)), "no tile reads the prior window as missing");
+  test("the stats compare with the prior window the screen opts into", async () => {
+    const contexts = await ctx.page.evaluate((row) =>
+      Array.from(document.querySelectorAll(`${row} .stat-context`)).map((el) => (el.textContent || "").trim()),
+    SPEND_STAT_ROW);
+    assert.ok(contexts.some((text) => /cut at this time of day/.test(text)), "a measured delta line renders");
+    assert.ok(!contexts.some((text) => /did not arrive/.test(text)), "no stat reads the prior window as missing");
   });
 
   test("each card pair splits from the narrowest width its content fits and stacks below it", async () => {
@@ -587,17 +604,17 @@ describe("hot fixture — today is running over the normal", () => {
       "the hot row and the conditional parse-error row, and nothing else",
     );
 
-    const lanePrecedesTiles = await ctx.page.evaluate(() => {
+    const lanePrecedesStats = await ctx.page.evaluate((row) => {
       const lastAlert = Array.from(
         document.querySelectorAll('.cost-screen [role="alert"]'),
       ).pop();
-      const firstTile = document.querySelector(".cost-screen .kpi");
-      if (lastAlert === undefined || firstTile === null) return false;
+      const statRow = document.querySelector(row);
+      if (lastAlert === undefined || statRow === null) return false;
       return Boolean(
-        lastAlert.compareDocumentPosition(firstTile) & Node.DOCUMENT_POSITION_FOLLOWING,
+        lastAlert.compareDocumentPosition(statRow) & Node.DOCUMENT_POSITION_FOLLOWING,
       );
-    });
-    assert.equal(lanePrecedesTiles, true, "the lane leads — the tiles follow it");
+    }, SPEND_STAT_ROW);
+    assert.equal(lanePrecedesStats, true, "the lane leads — the spend stats follow it");
   });
 
   test("the log-integrity threshold line and the days over it draw in one tone", async () => {
@@ -652,5 +669,37 @@ describe("cold outage — every cost payload fails before any has loaded", () =>
     assert.ok(settled, `covered slots: ${counts.covered.join(", ")}`);
     assert.equal(counts.banners, 1);
     assert.equal(counts.retries, 1, "the banner's Retry is the only one");
+  });
+});
+
+describe("unpriced ledger — the models carry tokens but no priced cost", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext({ ...getFixture(1, 0), isLedgerUnpriced: true });
+  });
+
+  after(async () => {
+    await closeRenderContext(ctx);
+  });
+
+  test("the category footnote stands in for the share bar and keeps the card padding beside the flush ledger", async () => {
+    await ctx.page.waitForSelector('.cost-screen .card [role="note"]', { timeout: 30_000 });
+    const notes = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll('.cost-screen .card [role="note"]')).flatMap((note) => {
+        const card = note.closest(".card");
+        if (card === null || card.querySelector("table.tbl") === null) return [];
+        const cardLeft = card.getBoundingClientRect().left + parseFloat(getComputedStyle(card).borderLeftWidth);
+        return [{
+          text: (note.textContent || "").trim(),
+          inset: Math.round(note.getBoundingClientRect().left + parseFloat(getComputedStyle(note).paddingLeft) - cardLeft),
+          hasShareBar: card.querySelector('[role="img"]') !== null,
+        }];
+      }),
+    );
+    assert.equal(notes.length, 1, `one footnote, in the model ledger card: ${JSON.stringify(notes)}`);
+    assert.match(notes[0]!.text, /^No priced token cost in this window/);
+    assert.equal(notes[0]!.hasShareBar, false, "the footnote replaces the share bar, never sits beside it");
+    assert.equal(notes[0]!.inset, 16, "the footnote insets to the card padding like the section labels");
   });
 });

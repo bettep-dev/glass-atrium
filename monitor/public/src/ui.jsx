@@ -1516,15 +1516,20 @@ function BarSearch({ label, value, onChange, placeholder, className = '' }) {
 }
 
 /**
- * Form select with its visible label above it.
- * @param options - { key, label }
+ * Form select with its label above it; extra props (title, aria-describedby) land on the <select>.
+ * @param options - { key, label, title? } — `title` = that option's tooltip
+ * @param isLabelHidden - a row header already names the field on screen → the label stays for assistive tech only, on no line of its own
+ * @param isError - crit edge + aria-invalid; the caller renders the worded message
+ * @param children - entry slot under the select (e.g. a custom-value field), inside the same field group
  */
-function Select({ id, label, value, options, onChange, className = '' }) {
+function Select({ id, label, value, options, onChange, isLabelHidden = false, isError = false, className = '', children, ...props }) {
   return <Stack gap="label" className={className}>
-    <label htmlFor={id} className="field-label">{label}</label>
-    <select id={id} className="field field-select" value={value} onChange={(event) => onChange(event.target.value)}>
-      {options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+    <label htmlFor={id} className={isLabelHidden ? 'sr-only' : 'field-label'}>{label}</label>
+    <select id={id} className={`field field-select${isError ? ' is-error' : ''}`} value={value} aria-invalid={isError ? 'true' : undefined}
+      onChange={(event) => onChange(event.target.value)} {...props}>
+      {options.map((option) => <option key={option.key} value={option.key} title={option.title}>{option.label}</option>)}
     </select>
+    {children}
   </Stack>;
 }
 
