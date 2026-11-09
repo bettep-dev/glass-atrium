@@ -981,10 +981,10 @@ interface RenderModule {
   [name: string]: unknown;
 }
 
-// the spend stats are a model over the shared stat row → the real StatRow and loading row render, other atoms stay stubs
+// the spend stats and the ledgers are models over shared atoms → the real stat row, loading row, Stack and table atoms render, other atoms stay stubs
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
-const REAL_ATOMS = new Set(["StatRow", "LoadingPlaceholder"]);
+const REAL_ATOMS = new Set(["StatRow", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
 
 // real ui.jsx helpers, with every rendered atom a host element carrying its props (the stat row anatomy itself real)
 function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
@@ -992,13 +992,21 @@ function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
   return new Proxy({}, {
     get: (_target, name: string) => {
       if (name in overrides) return overrides[name];
-      if (REAL_ATOMS.has(name)) return realUi[name];
+      if (REAL_ATOMS.has(name)) return getReactPropsAtom(realUi[name] as (props: Record<string, unknown>) => unknown);
       const value = real[name];
       if (typeof value !== "function" || /^[a-z]/.test(name)) return value;
       return (props: Record<string, unknown>) => ({ __element: true, type: "ui-atom", props: { ...props, atom: name } });
     },
     has: () => true,
   });
+}
+
+// React hands a lone child over as itself, the stub always as an array → a render-function child (Table rows) only runs unwrapped
+function getReactPropsAtom(atom: (props: Record<string, unknown>) => unknown) {
+  return (props: Record<string, unknown>) => {
+    const { children } = props;
+    return atom(Array.isArray(children) && children.length === 1 ? { ...props, children: children[0] } : props);
+  };
 }
 
 const isStat = (n: RenderedNode) => n.type === "div" && n.props.className === "stat";
@@ -1532,7 +1540,7 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
     {
       name: "both unattributed buckets fold into one row — summed cost, no summed session count",
       rows: [priced, { model: "unknown", cost_usd: 2.5, session_count: 3, ...tokens }, { model: "<synthetic>", cost_usd: 1.25, session_count: 1, ...tokens }],
-      cost: "3.75", sessions: "—",
+      cost: "3.75", sessions: "None",
     },
     {
       name: "a lone unattributed bucket keeps its own session count",

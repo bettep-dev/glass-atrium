@@ -123,12 +123,8 @@ function ScreenCost() {
     <div className="cost-screen flex flex-col">
       {/* 공유 타입스케일(--fs 토큰 + fs 클래스) 마운트 — SPA 단일 screen 모델: cost 활성 시 토큰·클래스 가용화 (ui.jsx 정의 소비, 미정의 시 클래스 no-op 회귀 차단). */}
       <TypeScaleStyle/>
-      {/* Screen-scoped readability layer (W3-T5):
-          - .cost-tbl: 본문 셀 --faint→--dim 으로 승격 (산문 가독 tier) · 행 높이는 공용 --row-h.
-          - .cost-foot: 카드 하단 footnote/helper line — fs-meta --dim (text-faint mono 보다 한 단 밝게, 읽기용). */}
+      {/* .cost-foot: card footnote / helper line → fs-meta in dim ink */}
       <style>{`
-        .cost-tbl tbody td { color: rgb(var(--dim)); }
-        .cost-tbl tbody td.num { color: rgb(var(--dim)); }
         .cost-foot { font-size: var(--fs-meta); line-height: 1.5; color: rgb(var(--dim)); }
       `}</style>
       <div className="flex-shrink-0">
@@ -1251,11 +1247,11 @@ function computeCategoryCostRows(modelCostRows) {
 function CategoryShareRowC({ rows }) {
   const total = rows.reduce((s, r) => s + r.cost, 0);
   if (total <= 0) {
-    return <div className="cost-foot mb-3">No priced token cost in this window — category split unavailable.</div>;
+    return <div className="cost-foot">No priced token cost in this window — category split unavailable.</div>;
   }
 
   return (
-    <div className="mb-3">
+    <div>
       <div
         className="flex h-2 rounded-sm overflow-hidden bg-sunken"
         role="img"
@@ -1368,7 +1364,7 @@ function rollupModelRows(modelRows, topN) {
 }
 
 function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false }) {
-  const { getRegionView, LoadingPlaceholder, RegionFailure, SectionLabel, TableHead } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionFailure, SectionLabel, Stack, Table, TableRow, TableCell } = window.UI;
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="cost by model" minHeight={300}/>;
@@ -1388,55 +1384,57 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
 
   return (
-    <>
-      {/* the body is flush for the ledger → the share block takes the card padding itself */}
-      <div className="px-4 pt-4">
-        <SectionLabel level={3} className="mb-2">By token type</SectionLabel>
+    // the body is flush for the ledger → the labels and the share block take the card padding themselves
+    <Stack gap="block" className="pt-card-pad">
+      <Stack gap="label" className="px-card-pad">
+        <SectionLabel level={3}>By token type</SectionLabel>
         <CategoryShareRowC rows={computeCategoryCostRows(modelRows)}/>
-        <SectionLabel level={3} className="mb-2 mt-4">By model</SectionLabel>
-      </div>
-      <table className="tbl cost-tbl">
-        <caption className="sr-only">{`Cost by model, last ${days} days — the costliest ${top.length} of ${modelRows.length}`}</caption>
-        <thead>
-          <tr>
-            <TableHead isSticky>Model</TableHead>
-            <TableHead isNumeric isSticky>Cost</TableHead>
-            <TableHead isNumeric isSticky>Sessions</TableHead>
-            <TableHead isNumeric isSticky>Avg / session</TableHead>
-          </tr>
-        </thead>
-        <tbody>
-          {top.map((r) => (
-            <ModelCostRow key={r.fullModel} r={r}/>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr style={{ borderTop: '2px solid rgb(var(--line))' }}>
-            <td className="font-semibold">Total</td>
-            <td className="num font-semibold">{formatUsdC(totalCost)}</td>
-            {/* A session spanning several models sits in each model's count → the column does not sum. */}
-            <td className="num text-dim">—</td>
-            <td className="num text-dim">—</td>
-          </tr>
-        </tfoot>
-      </table>
-    </>
+      </Stack>
+      <Stack gap="label">
+        <SectionLabel level={3} className="px-card-pad">By model</SectionLabel>
+        <Table caption={`Cost by model, last ${days} days — the costliest ${top.length} of ${modelRows.length}`}
+          columns={MODEL_COLUMNS} isHeadSticky
+          foot={(view) => (
+            <TableRow view={view}>
+              <TableCell view={view} kind="row-header">Total</TableCell>
+              <TableCell view={view} textRole="meta" label="Cost" isNumeric className="font-semibold">{formatUsdC(totalCost)}</TableCell>
+              {/* A session spanning several models sits in each model's count → the column does not sum. */}
+              <TableCell view={view} textRole="meta" label="Sessions" isNumeric><NoneCellC/></TableCell>
+              <TableCell view={view} textRole="meta" label="Avg / session" isNumeric><NoneCellC/></TableCell>
+            </TableRow>
+          )}>
+          {(view) => top.map((r) => <ModelCostRow key={r.fullModel} r={r} view={view}/>)}
+        </Table>
+      </Stack>
+    </Stack>
   );
+}
+
+const MODEL_COLUMNS = Object.freeze([
+  { key: 'model', label: 'Model' },
+  { key: 'cost', label: 'Cost', isNumeric: true },
+  { key: 'sessions', label: 'Sessions', isNumeric: true },
+  { key: 'avg', label: 'Avg / session', isNumeric: true },
+]);
+
+// an empty cell reads None in faint ink, never blank or a dash
+function NoneCellC() {
+  return <span className="text-faint">None</span>;
 }
 
 /**
  * One ledger row — token columns behind the row's own expand.
  * The default table stays at the four columns a spend decision needs.
  */
-function ModelCostRow({ r }) {
-  const { DisclosureChevron } = window.UI;
+function ModelCostRow({ r, view }) {
+  const { DisclosureChevron, TableRow, TableCell } = window.UI;
   const [expanded, setExpanded] = useStateC(false);
   const avgPerSession = r.session_count > 0 ? r.cost_usd / r.session_count : null;
 
   return (
     <>
-      <tr>
-        <td>
+      <TableRow view={view}>
+        <TableCell view={view}>
           <button
             type="button"
             className="group inline-target gap-1 text-left"
@@ -1446,17 +1444,21 @@ function ModelCostRow({ r }) {
             <DisclosureChevron isOpen={expanded}/>
             <span>{r.model}</span>
           </button>
-        </td>
-        <td className="num">{formatUsdC(r.cost_usd)}</td>
-        <td className={r.session_count === null ? 'num text-dim' : 'num'}>{r.session_count === null ? '—' : formatIntC(r.session_count)}</td>
-        <td className="num text-dim">{avgPerSession === null ? '—' : formatUsdC(avgPerSession)}</td>
-      </tr>
+        </TableCell>
+        <TableCell view={view} textRole="meta" label="Cost" isNumeric>{formatUsdC(r.cost_usd)}</TableCell>
+        <TableCell view={view} textRole="meta" label="Sessions" isNumeric>
+          {r.session_count === null ? <NoneCellC/> : formatIntC(r.session_count)}
+        </TableCell>
+        <TableCell view={view} textRole="meta" label="Avg / session" isNumeric>
+          {avgPerSession === null ? <NoneCellC/> : formatUsdC(avgPerSession)}
+        </TableCell>
+      </TableRow>
       {expanded && (
-        <tr>
-          <td colSpan={4} className="fs-meta text-dim tabular-nums pl-6">
+        <TableRow view={view}>
+          <TableCell view={view} kind="span" className="fs-meta text-dim tabular-nums">
             <span aria-hidden="true">└ </span>{getModelTokenDetail(r)}
-          </td>
-        </tr>
+          </TableCell>
+        </TableRow>
       )}
     </>
   );
@@ -1741,7 +1743,7 @@ function getSpendConcentrationText(concentration, sessionCount) {
 }
 
 function SessionDistributionCard({ state, days, failures, onRetry }) {
-  const { Card, Pill } = window.UI;
+  const { Card } = window.UI;
   const [histogramOpen, setHistogramOpen] = useStateC(false);
   const truncated = state.status === 'ready' && state.data?.truncated === true;
   const totalCount = state.status === 'ready' ? Number(state.data?.total_session_count) || 0 : 0;
@@ -1762,7 +1764,7 @@ function SessionDistributionCard({ state, days, failures, onRetry }) {
       info={concentrationText ?? undefined}
       infoLabel="How spend concentrates"
       right={truncated
-        ? <Pill className="pill--ctl-h" title={`Showing ${sessions.length} of ${totalCount} sessions`}>{`${sessions.length} of ${totalCount} loaded`}</Pill>
+        ? <span className="fs-meta text-dim" title={`Showing ${sessions.length} of ${totalCount} sessions`}>{`${sessions.length} of ${totalCount} loaded`}</span>
         : null}
       foot={rollup.other && (
         <>
@@ -1815,9 +1817,9 @@ function SessionDistributionBody({ state, rows = [], days, failures, onRetry }) 
 
   return (
     <>
-      <Table caption={`Most expensive sessions, last ${days} days — open a row for its details`} columns={SESSION_COLUMNS} className="cost-tbl">
-        {rows.map((s, i) => (
-          <SessionRowC key={s.session_id} session={s} focusProps={getFocusProps(i)} onOpen={() => openRow(i)}/>
+      <Table caption={`Most expensive sessions, last ${days} days — open a row for its details`} columns={SESSION_COLUMNS}>
+        {(view) => rows.map((s, i) => (
+          <SessionRowC key={s.session_id} session={s} view={view} focusProps={getFocusProps(i)} onOpen={() => openRow(i)}/>
         ))}
       </Table>
       {openSession && (
@@ -1863,26 +1865,27 @@ function getSessionFactsC(session, nowMs) {
   return facts.filter(([, value]) => hasFieldValue(value));
 }
 
-function SessionRowC({ session, focusProps, onOpen }) {
-  const { formatRelativeTime, formatKstFull } = window.UI;
+function SessionRowC({ session, view, focusProps, onOpen }) {
+  const { formatRelativeTime, formatKstFull, MachineString, TableRow, TableCell } = window.UI;
   const modelLabel = getModelLabelC(session.top_model);
   const shortId = getSessionShortId(session.session_id);
   const lastSeen = getClampedInstantC(session.last_event_at, Date.now());
 
   return (
-    <tr
+    <TableRow
+      view={view}
       {...focusProps}
       className="cursor-pointer"
       aria-label={`Session ${shortId}, ${modelLabel}, ${formatUsdC(session.total_cost_usd)} — open details`}
       onClick={onOpen}>
-      <td title={session.session_id}><window.UI.MachineString>{shortId}</window.UI.MachineString></td>
-      <td>{modelLabel}</td>
-      <td className="num text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</td>
-      <td className="num">{formatTokenCompactC(session.total_tokens)}</td>
-      <td className="num" title={lastSeen ? formatKstFull(lastSeen) : undefined}>
-        {lastSeen ? formatRelativeTime(lastSeen) : '—'}
-      </td>
-    </tr>
+      <TableCell view={view} title={session.session_id}><MachineString>{shortId}</MachineString></TableCell>
+      <TableCell view={view} textRole="meta" label="Model">{modelLabel}</TableCell>
+      <TableCell view={view} textRole="meta" label="Cost" isNumeric className="text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</TableCell>
+      <TableCell view={view} textRole="meta" label="Tokens" isNumeric>{formatTokenCompactC(session.total_tokens)}</TableCell>
+      <TableCell view={view} textRole="meta" label="Last seen" isNumeric title={lastSeen ? formatKstFull(lastSeen) : undefined}>
+        {lastSeen ? formatRelativeTime(lastSeen) : <NoneCellC/>}
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -2377,68 +2380,61 @@ function getStopReasonSessionShare(sessionCount, population) {
 }
 
 function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }) {
-  const { TableHead } = window.UI;
+  const { Table, TableRow, TableCell } = window.UI;
 
   return (
-    <table className="tbl cost-tbl">
-      <caption className="fs-meta text-dim text-left px-4 pb-2">
-        Counted once per stop reason
-      </caption>
-      <thead>
-        <tr>
-          <TableHead>Stop reason</TableHead>
-          <TableHead isNumeric>Events</TableHead>
-          <TableHead isNumeric>Sessions</TableHead>
-          <TableHead isNumeric>Event share</TableHead>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => {
-          const meta = turnStopReasonMeta(r.stop_reason);
-          const events = Number(r.event_count) || 0;
-          const sessions = Number(r.session_count) || 0;
-          const pct = totalEvents > 0 ? (events / totalEvents) : 0;
-          const sessionShare = getStopReasonSessionShare(sessions, sessionPopulation);
-          const barPct = maxEvents > 0 ? (events / maxEvents) * 100 : 0;
-          return (
-            <tr key={r.stop_reason}>
-              {/* 라벨+desc 단일행 고정 — 좁은 뷰포트서 desc 래핑→행높이 1↔2줄 점프 차단:
-                  flex 1행 + desc truncate(min-w-0) + 전문 title= 툴팁 보존. */}
-              {/* w-full + max-w-0 → the column takes the leftover width instead of the desc's nowrap width, so truncate engages */}
-              <td className="w-full max-w-0">
-                <div className="flex items-center min-w-0" title={[meta.label, meta.desc, meta.raw].filter(Boolean).join(' — ')}>
-                  <span
-                    className="inline-block w-[3px] h-3 rounded-sm mr-3 shrink-0"
-                    style={{ background: `rgb(var(${meta.colorVar}))` }}
-                  />
-                  <span className="shrink-0">{meta.label}</span>
-                  <span className="fs-meta text-dim ml-2 truncate">{meta.desc}</span>
-                </div>
-              </td>
-              <td className="num">
-                {/* 인라인 정규화 막대 — max 대비 폭 (sandbox-safe, JS 차트 미사용). */}
-                <div className="flex items-center justify-end gap-2">
-                  <span
-                    className="inline-block h-1.5 rounded-sm"
-                    style={{ width: `${Math.max(barPct, 2)}%`, maxWidth: 120, background: `rgb(var(${meta.colorVar}) / 0.7)` }}
-                  />
-                  <span className="tabular-nums">{formatIntC(events)}</span>
-                </div>
-              </td>
-              <td className="num">
-                {formatIntC(sessions)}
-                {sessionShare !== null && (
-                  <span className="text-dim"> · {(sessionShare * 100).toFixed(0)}%</span>
-                )}
-              </td>
-              <td className="num text-dim">{(pct * 100).toFixed(1)}%</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <Table caption="Counted once per stop reason" isCaptionShown columns={STOP_REASON_COLUMNS}>
+      {(view) => rows.map((r) => {
+        const meta = turnStopReasonMeta(r.stop_reason);
+        const events = Number(r.event_count) || 0;
+        const sessions = Number(r.session_count) || 0;
+        const pct = totalEvents > 0 ? (events / totalEvents) : 0;
+        const sessionShare = getStopReasonSessionShare(sessions, sessionPopulation);
+        const barPct = maxEvents > 0 ? (events / maxEvents) * 100 : 0;
+        return (
+          <TableRow key={r.stop_reason} view={view}>
+            {/* one line → desc truncates (full text in title), so a narrow view never jumps the row height;
+                w-full + max-w-0 → the column takes the leftover width instead of the desc's nowrap width */}
+            <TableCell view={view} className="w-full max-w-0">
+              <div className="flex items-center gap-label min-w-0" title={[meta.label, meta.desc, meta.raw].filter(Boolean).join(' — ')}>
+                <span
+                  className="inline-block w-[3px] h-3 rounded-sm shrink-0"
+                  style={{ background: `rgb(var(${meta.colorVar}))` }}
+                />
+                <span className="shrink-0">{meta.label}</span>
+                <span className="fs-meta text-dim truncate">{meta.desc}</span>
+              </div>
+            </TableCell>
+            <TableCell view={view} textRole="meta" label="Events" isNumeric>
+              {/* inline bar normalised to the max row (sandbox-safe, no chart runtime) */}
+              <div className="flex items-center justify-end gap-label">
+                <span
+                  className="inline-block h-1.5 rounded-sm"
+                  style={{ width: `${Math.max(barPct, 2)}%`, maxWidth: 120, background: `rgb(var(${meta.colorVar}) / 0.7)` }}
+                />
+                <span className="tabular-nums">{formatIntC(events)}</span>
+              </div>
+            </TableCell>
+            <TableCell view={view} textRole="meta" label="Sessions" isNumeric>
+              {formatIntC(sessions)}
+              {sessionShare !== null && (
+                <span className="text-dim"> · {(sessionShare * 100).toFixed(0)}%</span>
+              )}
+            </TableCell>
+            <TableCell view={view} textRole="meta" label="Event share" isNumeric>{(pct * 100).toFixed(1)}%</TableCell>
+          </TableRow>
+        );
+      })}
+    </Table>
   );
 }
+
+const STOP_REASON_COLUMNS = Object.freeze([
+  { key: 'reason', label: 'Stop reason' },
+  { key: 'events', label: 'Events', isNumeric: true },
+  { key: 'sessions', label: 'Sessions', isNumeric: true },
+  { key: 'share', label: 'Event share', isNumeric: true },
+]);
 
 // 공통 chrome
 function EmptyStateC({ message }) {

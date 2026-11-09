@@ -309,7 +309,7 @@ describe("calm fixture — nothing is running hot", () => {
 
   test("every cost table sits flush in its card, its edge cells carrying the card padding, in the house table face", async () => {
     const tables = await ctx.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".cost-screen table.cost-tbl")).map((table) => {
+      Array.from(document.querySelectorAll(".cost-screen table.tbl")).map((table) => {
         const card = table.closest(".card")!;
         const cardBox = card.getBoundingClientRect();
         const border = parseFloat(getComputedStyle(card).borderLeftWidth);
@@ -341,13 +341,41 @@ describe("calm fixture — nothing is running hot", () => {
 
   test("the ledger Total row carries no session count — per-model counts do not sum", async () => {
     const totalCells = await ctx.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".cost-screen .cost-tbl tfoot td")).map((td) =>
-        (td.textContent || "").trim(),
+      Array.from(document.querySelectorAll(".cost-screen table.tbl tfoot :is(th, td)")).map((cell) =>
+        (cell.textContent || "").trim(),
       ),
     );
     assert.strictEqual(totalCells[0], "Total");
-    assert.deepStrictEqual(totalCells.slice(2), ["—", "—"]);
+    assert.deepStrictEqual(totalCells.slice(2), ["None", "None"]);
   });
+
+  for (const width of [1440, 1024]) {
+    test(`at ${width}px the by-model head sticks to the viewport top after a page scroll`, async () => {
+      await ctx.page.setViewportSize({ width, height: 900 });
+      const SCROLL_INTO_TABLE_PX = 80;
+      const measured = await ctx.page.evaluate((scrollIntoPx) => {
+        const table = Array.from(document.querySelectorAll(".cost-screen table.tbl"))
+          .find((t) => (t.querySelector("caption")?.textContent || "").startsWith("Cost by model"));
+        const head = table?.querySelector("thead th") as HTMLElement | undefined;
+        if (!table || !head) return null;
+        window.scrollTo(0, 0);
+        const headStartPx = head.getBoundingClientRect().top;
+        const headHeightPx = head.getBoundingClientRect().height;
+        const tableHeightPx = table.getBoundingClientRect().height;
+        // the page must scroll past the head's start, and the table must outlast the scroll, or a non-sticky head passes too
+        const pageRoomPx = document.documentElement.scrollHeight - window.innerHeight - headStartPx;
+        const precondition = { canPageScroll: pageRoomPx > scrollIntoPx, isTableTaller: tableHeightPx - headHeightPx > scrollIntoPx };
+        window.scrollTo(0, headStartPx + scrollIntoPx);
+        const offsetPx = head.getBoundingClientRect().top;
+        window.scrollTo(0, 0);
+        return { precondition, offsetPx };
+      }, SCROLL_INTO_TABLE_PX);
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+      assert.ok(measured, "the by-model ledger renders a column head");
+      assert.deepEqual(measured.precondition, { canPageScroll: true, isTableTaller: true });
+      assert.ok(Math.abs(measured.offsetPx) <= 1, `head ${measured.offsetPx}px off the viewport top`);
+    });
+  }
 
   test("the decision tier draws exactly one chart root", async () => {
     assert.equal(

@@ -58,7 +58,7 @@ const MODEL_CARD = getMarkup(closedScreen, "ModelCostCard", {
 });
 const LEDGER_ROW = { ...ROWS[0], fullModel: ROWS[0].model };
 const getLedger = (screen: Record<string, unknown>) =>
-  `<table class="tbl cost-tbl" style="width: 560px;"><tbody>${getMarkup(screen, "ModelCostRow", { r: LEDGER_ROW })}</tbody></table>`;
+  `<table class="tbl" style="width: 560px;"><tbody>${getMarkup(screen, "ModelCostRow", { r: LEDGER_ROW })}</tbody></table>`;
 
 // the server capped the session read → the head says how many of the window's sessions loaded
 const SESSION_ROW = { session_id: "s-1", cost_usd: 4.2, started_at: "2026-10-29T10:00:00Z", agent_count: 2 };
@@ -119,12 +119,17 @@ describe("the Cost by model head states est. rate as an attribute and navigates 
   });
 });
 
-describe("the Most expensive sessions head holds the loaded-count pill on the control height", () => {
-  test("the pill is 32 and carries its own hover title", async () => {
-    const selector = "#sessions .card-head .pill";
+describe("the Most expensive sessions head states the loaded count as an attribute", () => {
+  test("the count is plain text off the control height, with its own hover title", async () => {
+    const selector = '#sessions .card-head [title="Showing 1 of 1800 sessions"]';
     assert.match((await page.$eval(selector, (el) => el.textContent)) ?? "", /1 of 1800 loaded/);
-    assert.equal((await readBox(selector)).height, 32);
-    assert.equal(await page.$eval(selector, (el) => el.getAttribute("title")), "Showing 1 of 1800 sessions");
+    assert.equal(await page.$$eval("#sessions .card-head .pill", (pills) => pills.length), 0, "no pill in the head");
+    const face = await page.$eval(selector, (el) => {
+      const style = getComputedStyle(el);
+      return [style.borderTopWidth, style.backgroundColor];
+    });
+    assert.deepEqual(face, ["0px", "rgba(0, 0, 0, 0)"], "no edge, no fill");
+    assert.ok((await readBox(selector)).height < 32, "never height-matched to a control");
   });
 });
 
