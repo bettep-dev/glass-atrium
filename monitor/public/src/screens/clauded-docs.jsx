@@ -889,7 +889,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* title-cell 레이아웃 — 고정폭 leading slot(20px) + 제목 main(flex).
            사유 — chevron toggle 이 group-root 행에만 있어 일반/멤버 행은 제목 시작 x 가 어긋남.
            모든 행에 동일폭 slot 예약 → 제목 컬럼 정렬 통일 + 행 높이 차이 제거. */
-        .title-cell .doc-title-row { display: flex; align-items: center; gap: var(--space-1_5); }
+        .doc-title-row { display: flex; align-items: center; gap: var(--space-1_5); }
+        /* spacer slot on the snippet line and the Title header → the title x without the title line's height floor */
+        .doc-title-lead.is-spacer { min-height: 0; }
         .doc-title-lead { flex: 0 0 ${DOC_LEAD_SLOT_PX_CD}px; width: ${DOC_LEAD_SLOT_PX_CD}px; display: flex; align-items: center; justify-content: center; min-height: 20px; }
         .doc-title-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: nowrap; }
         /* 1줄 클램프 — 제목·작성자 셀 공용. 초과분은 말줄임, 전체 값은 title= 툴팁이 운반.
@@ -908,7 +910,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
            no row opacity — any fade drops the light empty pip on a checked row below 3:1 (default accent: 0.85 → 2.72; unfaded 3.41) */
         .doc-row.is-pending-delete .doc-title-text { text-decoration: line-through; }
         /* margin-left = lead slot + title row gap → the snippet starts under the title */
-        .doc-snippet { margin-left: calc(${DOC_LEAD_SLOT_PX_CD}px + var(--space-1_5)); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+        .doc-snippet { flex: 1 1 auto; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
         /* trailing title-line pills never shrink → the title text ellipsizes first */
         button.doc-lineage { flex: none; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
         .doc-revision-count { flex: none; }
@@ -1051,8 +1053,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-reorder-error { color: rgb(var(--ink)); }
         .doc-inline-alert { display: inline-flex; align-items: center; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
-        /* header text at the title text's x — lead slot + title row gap */
-        .doc-col-title-text { margin-left: calc(${DOC_LEAD_SLOT_PX_CD}px + var(--space-1_5)); }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
@@ -1305,7 +1305,15 @@ function getLedgerColumnsCD({ hasTagsColumn, selectAll }) {
 		{ key: "select", label: selectAll },
 		{ key: "status", label: "Status" },
 		{ key: "id", label: "ID", isNumeric: true },
-		{ key: "title", label: <span className="doc-col-title-text">Title</span> },
+		{
+			key: "title",
+			label: (
+				<span className="doc-title-row">
+					<span className="doc-title-lead is-spacer" />
+					<span>Title</span>
+				</span>
+			),
+		},
 		hasTagsColumn && { key: "tags", label: "Tags" },
 		{ key: "author", label: "Author" },
 		{ key: "created", label: "Created", isNumeric: true },
@@ -1681,11 +1689,11 @@ function DocListCardCD({
 													</span>
 												</div>
 												{snippetText && (
-													<div
-														className="doc-snippet fs-meta mt-stack"
-														style={{ color: "rgb(var(--dim))" }}
-													>
-														{parseSnippetCD(snippetText)}
+													<div className="doc-title-row mt-stack">
+														<span className="doc-title-lead is-spacer" />
+														<div className="doc-snippet fs-meta" style={{ color: "rgb(var(--dim))" }}>
+															{parseSnippetCD(snippetText)}
+														</div>
 													</div>
 												)}
 											</TableCell>

@@ -161,18 +161,20 @@ test("the snippet line clamps at two lines", async () => {
   assert.match(rule, /overflow\s*:\s*hidden/);
 });
 
-test("the snippet line starts at the title's x: indented by the lead slot plus the title row gap", async () => {
-  const source = getScreenCss(await loadDocsScreen());
-  const px = (rule: string, property: string) => {
-    const match = rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*(\\d+)px`));
-    assert.ok(match, `${property} is set in px`);
-    return Number(match[1]);
-  };
-  const value = (rule: string, property: string) => rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*([^;]+?)\\s*(?:;|$)`))?.[1];
-  const leadWidth = px(cssRuleBody(source, ".doc-title-lead"), "width");
-  // the indent is derived from the two parts (ladder derived-offset rule), never a summed literal
-  const rowGap = value(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
-  assert.equal(value(cssRuleBody(source, ".doc-snippet"), "margin-left"), `calc(${leadWidth}px + ${rowGap})`);
+// the title x comes from the title row's own lead slot + gap → a line reusing that row shares it, no indent sum to drift
+test("the snippet line starts at the title's x: it follows an empty lead slot in a title row and sets no indent of its own", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const has = (n: RenderedNode, name: string) => String(n.props?.className ?? "").split(/\s+/).includes(name);
+  const tree = renderListCard(screen, { isSearchMode: true, rows: [row] });
+  const [line] = findNodes(tree, (n) => has(n, "doc-title-row") && findNodes(n, (c) => has(c, "doc-snippet")).length > 0);
+
+  assert.ok(line, "the snippet sits in a title row");
+  const parts = findNodes(line, (n) => has(n, "doc-title-lead") || has(n, "doc-snippet"));
+  assert.deepEqual(parts.map((n) => (has(n, "doc-title-lead") ? "lead" : "snippet")), ["lead", "snippet"]);
+  assert.equal(collectText(parts[0]), "", "the snippet's lead slot is empty");
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-snippet"), /(^|[;\s])margin(-left|-inline)?\s*:/);
 });
 
 test("the Tags column states the page's majority format once and prints only exceptions per row", async () => {
@@ -1084,11 +1086,14 @@ test("a search snippet sits under its title on the stack role, with no number in
   const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
     audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
   const tree = renderListCard(screen, { isSearchMode: true, rows: [row] });
-  const [snippet] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-snippet"));
+  const has = (n: RenderedNode, name: string) => String(n.props?.className ?? "").split(/\s+/).includes(name);
+  const [line] = findNodes(tree, (n) => has(n, "doc-title-row") && findNodes(n, (c) => has(c, "doc-snippet")).length > 0);
 
-  assert.ok(snippet, "the snippet renders");
-  assert.match(String(snippet.props.className), /(^|\s)mt-stack(\s|$)/);
-  assert.doesNotMatch(String(snippet.props.className), /(^|\s)-?m[trblxy]?-(\d|\[)/);
+  assert.ok(line, "the snippet line renders");
+  assert.match(String(line.props.className), /(^|\s)mt-stack(\s|$)/);
+  for (const node of [line, ...findNodes(line, (n) => has(n, "doc-snippet"))]) {
+    assert.doesNotMatch(String(node.props.className), /(^|\s)-?m[trblxy]?-(\d|\[)/);
+  }
   assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-snippet"), /(^|[;\s])margin-top\s*:/);
 });
 
@@ -1127,17 +1132,18 @@ test("the last stage actor rides the Status cell's tooltip, never a line under t
   assert.deepEqual(statusCells.map((td) => td.props.title), ["Set by operator", undefined]);
 });
 
-test("the Title header starts at the title text's x: indented by the lead slot plus the title row gap", async () => {
+test("the Title header starts at the title text's x: its label follows an empty lead slot in a title row and no rule indents it", async () => {
   const screen = await loadDocsScreen();
-  const source = getScreenCss(screen);
-  const value = (rule: string, property: string) => rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*([^;]+?)\\s*(?:;|$)`))?.[1];
-  // the indent is derived from the lead slot width plus the title row gap (ladder derived-offset rule)
-  const indent = `calc(${value(cssRuleBody(source, ".doc-title-lead"), "width")} + ${value(cssRuleBody(source, ".title-cell .doc-title-row"), "gap")})`;
+  const has = (n: RenderedNode, name: string) => String(n.props?.className ?? "").split(/\s+/).includes(name);
+  const titleHeader = findNodes(renderListCard(screen, {}), (n) => n.type === "th" && collectText(n).trim() === "Title")[0];
+  assert.ok(titleHeader, "the Title header renders");
+  const [line] = findNodes(titleHeader, (n) => has(n, "doc-title-row"));
 
-  const titleHeader = findNodes(renderListCard(screen, {}), (n) => n.type === "th" && collectText(n) === "Title")[0];
-  const label = findNodes(titleHeader, (n) => n.type === "span" && n.props.className === "doc-col-title-text");
-  assert.equal(label.length, 1);
-  assert.equal(value(cssRuleBody(source, ".doc-col-title-text"), "margin-left"), indent);
+  assert.ok(line, "the header label sits in a title row");
+  const parts = findNodes(line, (n) => has(n, "doc-title-lead") || (n.type === "span" && n !== line && collectText(n).trim() === "Title"));
+  assert.deepEqual(parts.map((n) => (has(n, "doc-title-lead") ? "lead" : "label")), ["lead", "label"]);
+  assert.equal(collectText(parts[0]), "", "the header's lead slot is empty");
+  assert.doesNotMatch(getScreenCss(screen), /\.doc-col-title-text\s*\{/);
 });
 
 const SETTLED_LIST = { status: "ready", data: {}, error: null, busy: false };

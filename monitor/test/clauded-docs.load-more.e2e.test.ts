@@ -1038,6 +1038,32 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
   }
 });
 
+test("search mode: the snippet line and the Title header label start at the title text's x", async () => {
+  const title = `${SUITE_MARKER} alignpin row`;
+  const doc = await postCreate({ title, author: "load-more-tester", html_body: makeHtmlBody("alignpin snippet words") });
+  try {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      await page.locator("input.bar-search-field").fill("alignpin");
+      const row = page.locator("tr.doc-row", { hasText: "alignpin" }).first();
+      await row.locator(".doc-snippet").waitFor({ state: "visible" });
+
+      const titleBox = await row.locator(".doc-title-text").boundingBox();
+      const snippet = await row.locator(".doc-snippet").boundingBox();
+      const header = await page.locator(".doc-ledger thead th").getByText("Title", { exact: true }).boundingBox();
+      assert.ok(titleBox && snippet && header, "title, snippet and header label all render");
+      assert.ok(Math.abs(snippet.x - titleBox.x) < 0.5, `snippet x ${snippet.x} = title x ${titleBox.x}`);
+      assert.ok(Math.abs(header.x - titleBox.x) < 0.5, `header label x ${header.x} = title x ${titleBox.x}`);
+    } finally {
+      await context.close();
+    }
+  } finally {
+    await deleteDoc(doc.id);
+  }
+});
+
 test("search mode: entering and leaving it moves neither the focused search field nor the Show and Audience triggers", async () => {
   // a search response carries no group counts → this pins that the Show trigger keeps its width, and the note lands after the triggers
   const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
