@@ -1591,9 +1591,9 @@ function DrawerSectionSkeleton({ rows = 2, label }) {
 
 function DrawerSectionEmpty({ message }) {
   return (
-    <div className="rounded-md border border-dashed border-line px-3 py-3 fs-meta font-mono text-faint">
+    <p className="fs-meta text-faint">
       <window.UI.DayTokens>{message}</window.UI.DayTokens>
-    </div>
+    </p>
   );
 }
 
@@ -2099,7 +2099,7 @@ function AgentRecentActivitySection({ recentState, days, onRetry }) {
     return <DrawerSectionEmpty message="No outcomes recorded for this agent."/>;
   }
   return (
-    <div className="space-y-2">
+    <div className="divide-y divide-line">
       {rows.map((r) => (
         <RecentActivityRow key={r.id} row={r}/>
       ))}
@@ -2121,7 +2121,7 @@ function RecentActivityRow({ row }) {
   const { Badge, Icon, TONE_ICON } = window.UI;
   const revision = Number(row.revision_count) || 0;
   return (
-    <div className="flex items-center justify-between gap-2 rounded border border-line px-3 py-2 fs-body">
+    <div className="flex items-center justify-between gap-2 py-2 fs-body">
       <div className="flex items-center gap-2 min-w-0">
         <Badge role="status" tone={resultToneAg(row.result)}>{row.result}</Badge>
         <span className="font-mono fs-meta text-dim truncate">{row.task_type}</span>

@@ -2049,6 +2049,20 @@ test("the delete panel states its warning and its failure as inset alert cards, 
   }
 });
 
+test("a drawer activity row and the drawer empty note draw no box", async () => {
+  const BOX_CLASS = /(^|\s)(rounded(-[a-z]+)?|border(-dashed)?)(\s|$)/;
+  const rows = [
+    { name: "activity row", atom: "RecentActivityRow", props: { row: { result: "done", task_type: "feature", confidence: "high", revision_count: 0, record_ts: "2026-10-04T00:00:00Z" } } },
+    { name: "empty note", atom: "DrawerSectionEmpty", props: { message: "No outcomes recorded for this agent." } },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent(row.atom, row.props);
+    const boxed = findNodes(tree, (n) => BOX_CLASS.test(String(n.props?.className ?? "")));
+    assert.deepEqual(boxed.map((n) => n.props.className), [], `${row.name}: no bordered or rounded box`);
+    assert.ok(collectText(tree).trim().length > 0, `${row.name}: still renders its content`);
+  }
+});
+
 test("a run's rework count reads in the row meta tier, its warn tone on a glyph alone", async () => {
   const rows = [
     { name: "a reworked run", revision_count: 2, hasMark: true },
