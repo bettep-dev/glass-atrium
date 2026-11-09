@@ -1022,12 +1022,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
            natural height 차이가 아래 목록을 (de)select 마다 점프시킴 → 상수 높이 + box-sizing
            border-box + 수직 center 정렬로 양 모드 픽셀 동일. flex-wrap 제거 (좁은 폭에서 2줄
            래핑이 다시 높이 변동 유발 → 단일행 유지 + 버튼이 reserved 높이 초과 차단). */
-        .doc-group-action-bar { box-sizing: border-box; min-height: 44px; padding: 6px 16px; background: rgb(var(--sunken)); border-top: 1px solid rgb(var(--line)); display: flex; align-items: center; gap: 12px; }
+        .doc-group-action-bar { box-sizing: border-box; min-height: 44px; background: rgb(var(--sunken)); border-top: 1px solid rgb(var(--line)); display: flex; align-items: center; }
         .doc-group-action-bar.is-hint { color: rgb(var(--faint)); font-size: var(--fs-meta); }
         .doc-group-action-bar .selection-count { font-size: var(--fs-body); font-weight: 600; color: rgb(var(--ink)); font-variant-numeric: tabular-nums; }
         /* 버튼이 reserved 44px 를 넘기지 않도록 상한 — 초과 시 bar 자체가 늘어나 점프 재발. */
         .doc-group-action-bar .btn.sm { max-height: 30px; }
-        .doc-group-action-bar .ml-auto-actions { margin-left: auto; display: flex; gap: 8px; }
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
         .doc-group-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; background: transparent; border: none; padding: 2px 6px; color: rgb(var(--dim)); font-size: var(--fs-meta); border-radius: var(--radius-badge); }
         .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
@@ -1444,8 +1443,7 @@ function DocListCardCD({
 					state.status === "ready" &&
 					state.data?.bigmEnabled === false && (
 						<div
-							className="px-4 pb-2 fs-meta"
-							style={{ color: "rgb(var(--faint))" }}
+							className="px-card-pad mb-label fs-meta text-faint"
 							role="note">
 							Whole-word matches only — Korean partial-word search is unavailable.
 						</div>
@@ -1858,7 +1856,7 @@ function GroupActionBarCD({
 	}
 	return (
 		<div
-			className="doc-group-action-bar"
+			className="doc-group-action-bar px-card-pad gap-control"
 			role="toolbar"
 			aria-label="Bulk group actions"
 		>
@@ -1899,7 +1897,7 @@ function GroupActionBarCD({
 				<Icon name="download" size={13} />
 				Download as zip
 			</button>
-			<div className="ml-auto-actions">
+			<div className="ml-auto flex gap-control">
 				<button
 					type="button"
 					className="btn ghost sm"

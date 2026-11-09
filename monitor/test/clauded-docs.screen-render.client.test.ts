@@ -947,6 +947,36 @@ describe("the list sets only the document id in the machine-string face", () => 
   }
 });
 
+// spacing reads the role-key ladder (index.html tailwind config) → a number or a px value in a list node or its rule is drift
+describe("the bulk bar and the whole-word note space on role keys only", () => {
+  const numericSpacing = /(^|\s)-?(p|m|gap|space)(x|y|t|r|b|l|s|e)?-(\d|\[)/;
+  const nodes = [
+    {
+      name: "the bulk bar",
+      render: (screen: Record<string, unknown>) => renderScreen((screen.GroupActionBarCD as Component)({ selectionSize: 2, canGroup: true, canUngroup: true })),
+      pick: (n: { props: Record<string, unknown> }) => n.props.role === "toolbar",
+      rule: ".doc-group-action-bar",
+    },
+    {
+      name: "the whole-word search note",
+      render: (screen: Record<string, unknown>) => renderListCard(screen, { isSearchMode: true, state: { status: "ready", data: { bigmEnabled: false } } }),
+      pick: (n: { props: Record<string, unknown> }) => n.props.role === "note" && /Whole-word/.test(collectText(n)),
+      rule: null,
+    },
+  ];
+  for (const row of nodes) {
+    test(`${row.name} carries role-key spacing and no number`, async () => {
+      const screen = await loadDocsScreen();
+      const [container] = findNodes(row.render(screen), row.pick);
+      assert.ok(container, `${row.name} renders`);
+      assert.match(String(container.props.className ?? ""), /(^|\s)px-card-pad(\s|$)/, row.name);
+      const classes = findNodes(container, () => true).map((n) => String(n.props?.className ?? ""));
+      assert.deepEqual(classes.filter((c) => numericSpacing.test(c)), [], row.name);
+      if (row.rule) assert.doesNotMatch(cssRuleBody(getScreenCss(screen), row.rule), /(^|[;\s])(padding|gap)\s*:/, row.rule);
+    });
+  }
+});
+
 test("the last stage actor rides the Status cell's tooltip, never a line under the pill", async () => {
   const screen = await loadDocsScreen();
   const base = listCardProps(() => undefined);
