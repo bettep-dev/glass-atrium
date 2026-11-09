@@ -241,7 +241,7 @@ function buildLiteralOmissionBreakdownO(breakdown) {
   return { budget, truncated, missing };
 }
 
-// window_summary.dev_scope → DEV-agent truncation/synthesized baseline (compact 2-tile).
+// window_summary.dev_scope → DEV-agent truncation/synthesized baseline (StatRow).
 //   同一 window 텔레메트리의 DEV 하위집합 — no-[COMPLETION]/budget-truncation 실패 모드를
 //   DEV 에이전트 한정으로 가시화 + rolling baseline(비율 자체가 baseline).
 //   DEV window 에 귀속행 0건(부재/빈 subset) → null (0/0 clutter 회피).
@@ -334,7 +334,7 @@ async function fetchAttentionO(days, signal) {
 //   소유 endpoint: /api/improvement/loop-events (core.autoagent_loop_events per-cycle stage stream).
 const LOOP_EVENTS_URL = '/api/improvement/loop-events?limit=50';
 
-// daemon eval_result → dual-encoded 배지 (색 + 기호 + 라벨, 색맹 안전).
+// daemon eval_result → glyph + 단어 (tone 색 + 기호 + 라벨, 색맹 안전).
 //   verified=✓ ok · reject/fail=✕ crit · *_dryrun=⚠ warn(드라이런 — 미적용) · 기타 fallback ℹ info.
 function loopResultMetaO(result) {
   if (result === 'verified') return { tone: 'ok', symbol: '✓', icon: 'check', label: 'Passed' };
@@ -382,13 +382,6 @@ function crosstabConfidenceKeyO(confidence) {
 
 // 화면 전용 inline CSS — render 마다 string 재할당 회피 위해 모듈 상수.
 const SCREEN_OUTCOMES_CSS = `
-/* cross table rows on the 40 step */
-/* count + bar cell → the house .tbl-bar-cell; a row header (a foot th included) takes the row step too */
-.crosstab-tbl :is(tbody, tfoot) > tr > :is(th, td) { height: var(--row-h); line-height: var(--lh-row); }
-/* .tbl--own-face leaves the column-header face to the table → dim, medium, as the ledger's */
-.crosstab-tbl thead th { color: rgb(var(--dim)); font-weight: 500; }
-/* the cell atom lifts a body row header to the control step → the cross table keeps every row on its own meta step */
-.tbl.crosstab-tbl :is(tbody, tfoot) > tr > .tbl-cell--row-header { font-size: inherit; }
 @keyframes skelPulseO { 0%,100%{opacity:.7} 50%{opacity:.35} }
 .skel-pulse-o { animation: skelPulseO 1.4s ease-in-out infinite; }
 .outcome-md { font-size: var(--fs-body); line-height: 1.65; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
@@ -716,7 +709,7 @@ function ScreenOutcomes({ onNav }) {
         {...regionRetry}
       />
 
-      {/* page scroll only — no inner scroller; the filters sit behind the Results head button, so the ledger takes the full width */}
+      {/* page scroll only — no inner scroller; the filters sit in the Results card's filter bar, so the ledger takes the full width */}
       <div className="mt-section">
         <ResultTableCard
           state={searchState}
@@ -1236,7 +1229,7 @@ function AgentFailureBodyO({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') return <AgentFailureSkeletonO/>;
   if (view === 'error') {
-    return <RegionErrorO source="by-agent failures" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.agentFailures}/>;
+    return <RegionErrorO source="by-agent failures" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.agentFailures} isInset/>;
   }
 
   const rows = buildAgentFailureRowsO(state.data?.agentStack, state.data?.overall?.by_agent_top_10);
@@ -1303,7 +1296,7 @@ function OpenCaveatCellO({ count, view }) {
 
 // ----- Attribution Health (텔레메트리 귀속 품질) ------------------------------
 // /api/outcomes/attribution-daily — attribution_source 4-category 분해.
-// 일별 stacked-bar (inline SVG, Recharts 미사용) + window 요약 4-tile + literal-omission 심각도 배지.
+// 일별 stacked-bar (inline SVG, Recharts 미사용) + window 요약 stat row + literal-omission 심각도 배지.
 // NULL attribution_source 행은 backend 가 제외 (귀속 추적 이전 행) → 모든 비율 분모 = total_attributed.
 
 // A card head's own status: glyph + word, tone on the glyph only, no container (design-spec §3 Status)
@@ -1395,9 +1388,9 @@ function AttributionBreakdownO({ state }) {
   );
 }
 
-// window 요약 4-tile — 카테고리별 비율 (분모 = total_attributed).
-//   'Missing report'(literal_omission) tile 아래 세부 sub-line 추가 — budget-kill/truncated/missing 내역.
-//   tile/rate 렌더는 불변 · sub-line 은 count 내역만 (총계·비율 미변경).
+// window 요약 stat row — 카테고리별 비율 (분모 = total_attributed).
+//   'Missing report'(literal_omission) stat 아래 세부 sub-line — budget-kill/truncated/missing 내역.
+//   sub-line 은 count 내역만 (총계·비율 미포함).
 function AttributionSummaryRow({ summary, totalAttributed }) {
   const omissionBreakdown = buildLiteralOmissionBreakdownO(summary?.literal_omission_breakdown);
   const omissionMeta = ATTRIBUTION_CATEGORY_META.literal_omission;
@@ -1656,7 +1649,7 @@ function ChannelLivenessCard({ state, onRetry, shared }) {
   );
 }
 
-// 적재 전·실패한 payload 의 'All recording' 은 확인한 적 없는 all-clear → 주장 없는 neutral 배지.
+// 적재 전·실패한 payload 의 'All recording' 은 확인한 적 없는 all-clear → 주장 없는 neutral HeadStatusO.
 function getChannelLivenessBadgeO(state) {
   if (state.status !== 'ready') return { tone: 'neutral', text: getUnloadedSummaryO(state.status) };
 
@@ -1985,10 +1978,10 @@ function CrosstabBody({ state, onRetry, shared }) {
 
   const max = crosstabMaxCountO(crosstab.byCell);
 
-  // .tbl--own-face: the .tbl cell geometry under the card's meta step, with no clickable-row hover (these rows open nothing)
+  // the page's own-face table class: the .tbl cell geometry and the ledger's column-header face, no clickable-row hover (these rows open nothing)
   return (
     <window.UI.Table caption="Records by writer confidence and self-check result" columns={CROSSTAB_COLUMNS_O}
-      className="tbl--own-face crosstab-tbl fs-meta"
+      className={OWN_FACE_TABLE_CLASS_O}
       bodies={[{ key: 'body', rows: (view) => getCrosstabVisibleRowsO(crosstab.byCell).map((rowKey) => (
         <CrosstabRow key={rowKey} view={view} rowKey={rowKey} byCell={crosstab.byCell} max={max}/>
       )) }]}
@@ -2108,8 +2101,8 @@ function crosstabMaxCountO(byCell) {
 // ----- Loop-events log (raw daemon cycle stream, relocated from Learning) -----
 // /api/improvement/loop-events — core.autoagent_loop_events per-cycle stage stream.
 // operational data(집계 신호 아님)라 Task results 가 소유 (W3-T3 이관 · W3-T7 수신).
-// 고정 높이 스크롤 카드 + 요약 3-tile(neutral count) + 이벤트 표(행=이벤트 / 열=5).
-//   density: 행 라벨 --dim · mono 는 timestamp/id 만 · agent truncate+tooltip.
+// 고정 높이 스크롤 카드 + 요약 count 행(plain tabular count) + 이벤트 표(행=이벤트 / 열=5).
+//   density: 행 라벨 --dim · timestamp 는 sans tabular-nums · agent truncate+tooltip.
 //   eval_result → loopResultMetaO 기호(tone 색) + 라벨, 배지 없음.
 
 function LoopEventsCard({ state, onRetry, shared }) {
@@ -2129,7 +2122,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
     return <ChartSkeletonO height={200} label="run events"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="run events" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.loopEvents}/>;
+    return <RegionErrorO source="run events" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.loopEvents} isInset/>;
   }
 
   const total    = Number(state.data?.total_events ?? 0);
@@ -2333,7 +2326,7 @@ function getDetailValueLabelO(axis, value) {
   return getOptionLabelO(options, String(value ?? 'null'));
 }
 
-// Active-filter chip badges for the empty-state echo (ResultTableZeroStateO); the caller owns the wrapper div.
+// Active-filter chip badges for the empty-state echo (ResultTableZeroStateO); the caller's Cluster lays them out.
 function FilterChipsO({ chips }) {
   const { Badge } = window.UI;
   return <>{chips.map((c) => <Badge key={c} role="metadata">{c}</Badge>)}</>;
@@ -2347,10 +2340,10 @@ function ResultTableBody({
     return <ChartSkeletonO height={400} label="results"/>;
   }
   if (state.status === 'blocked') {
-    return <PayloadUnavailableO label="Records"/>;
+    return <PayloadUnavailableO label="Records" isInset/>;
   }
   if (view !== 'ready') {
-    return <RegionErrorO source="the record ledger" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.ledger}/>;
+    return <RegionErrorO source="the record ledger" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.ledger} isInset/>;
   }
   if (rows.length === 0) {
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
@@ -2624,7 +2617,7 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
       </TableCell>
       <TableCell view={view} textRole="meta" label="Task type" className="text-dim whitespace-nowrap">{row.task_type}</TableCell>
       <TableCell view={view} textRole="meta" label="Result" title={resultMeta.label}>
-        {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
+        {/* 결과 glyph+단어와 종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
         <span className="inline-flex items-center gap-label-inline whitespace-nowrap">
           <span data-group="result" className="inline-flex items-center gap-label-inline text-ink" style={{ fontWeight: 500 }}>
             <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
@@ -2994,16 +2987,17 @@ function EmptyStateO({ message }) {
  * Plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it.
  * @param state - the failed region: its error is the answer, busy while a Retry re-reads it
  * @param focusTargetId - the region's own card, which takes focus when a focused Retry succeeds
+ * @param isInset - a flush card body → the failure takes the card padding as its own inset
  */
-function RegionErrorO({ source, state, onRetry, shared, focusTargetId }) {
+function RegionErrorO({ source, state, onRetry, shared, focusTargetId, isInset = false }) {
   const { RegionFailure } = window.UI;
-  return <RegionFailure source={source} error={state.error} shared={shared} onRetry={onRetry} isBusy={state.busy} focusTargetId={focusTargetId} className="m-3"/>;
+  return <RegionFailure source={source} error={state.error} shared={shared} onRetry={onRetry} isBusy={state.busy} focusTargetId={focusTargetId} className={isInset ? 'p-card-pad' : ''}/>;
 }
 
-// 레인이 실패 배너를 소유하므로 본문은 '적재 실패' 만 말한다 — 같은 오류를 두 번 쓰지 않는다.
-function PayloadUnavailableO({ label }) {
+// 레인이 실패 배너를 소유하므로 본문은 '적재 실패' 만 말한다 — 같은 오류를 두 번 쓰지 않는다 · isInset → flush 카드 본문에서 card-pad 여백.
+function PayloadUnavailableO({ label, isInset = false }) {
   return (
-    <div className="p-4 fs-meta text-dim" role="status">
+    <div className={`fs-meta text-dim ${isInset ? 'p-card-pad' : ''}`.trim()} role="status">
       {label} unavailable — see the alarm above.
     </div>
   );

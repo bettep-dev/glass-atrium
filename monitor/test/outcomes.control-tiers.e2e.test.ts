@@ -1,7 +1,7 @@
-// Task results controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the
-// screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" each keep one box in every
-// state, the Time sort control draws the drawer's small ghost button, a card head's static
-// pill stands on the 32 control height (§7.16), and the Results filter bar holds still as a keyword lands, each trigger naming its value.
+// Task results controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css, the role-key
+// utilities and the screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" each keep one
+// box in every state, the Time sort control draws the drawer's small ghost button, a card head's own status reads as glyph and word
+// with no pill, the cross table's rows sit on the row step, and the Results filter bar holds still as a keyword lands, each trigger naming its value.
 // Runner: npx tsx --test test/outcomes.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -12,6 +12,7 @@ import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 import { createControlProbe, isSameBox } from "./lib/control-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -31,21 +32,17 @@ const SCREEN_CSS = findNodes(renderScreen((resultsScreen.ScreenOutcomes as Compo
   .map((n) => collectText(n))
   .join("\n");
 
-// The app loads Tailwind preflight and utilities from its CDN; these are the rules the measured geometry depends on, at their shipped values.
+// The app loads Tailwind preflight and utilities from its CDN; these are the non-role rules the measured geometry depends on, at their shipped values.
 const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 solid; }
   html { line-height: 1.5; font-family: ui-sans-serif, system-ui, sans-serif; }
   svg { display: block; vertical-align: middle; }
   button { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; background-color: transparent; }
-  .flex { display: flex; } .items-center { align-items: center; } .justify-between { justify-content: space-between; }
-  summary { display: list-item; }
-  .ml-auto { margin-left: auto; } .shrink-0 { flex-shrink: 0; } .inline-grid { display: inline-grid; } .justify-items-end { justify-items: end; }
-  .col-start-1 { grid-column-start: 1; } .row-start-1 { grid-row-start: 1; } .invisible { visibility: hidden; }
-  .tabular-nums { font-variant-numeric: tabular-nums; }
-  .gap-2 { gap: 0.5rem; } .mb-1 { margin-bottom: 0.25rem; } .mr-auto { margin-right: auto; } .px-4 { padding-left: 1rem; padding-right: 1rem; }
-  .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .border-t { border-top-width: 1px; } .border-b { border-bottom-width: 1px; }
-  .border-line { border-color: rgb(var(--line)); } .gap-1 { gap: 0.25rem; } .flex-wrap { flex-wrap: wrap; }
-  .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
-  .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; }`;
+  .flex { display: flex; } .inline-flex { display: inline-flex; } .items-center { align-items: center; } .flex-wrap { flex-wrap: wrap; }
+  .ml-auto { margin-left: auto; } .mr-auto { margin-right: auto; } .shrink-0 { flex-shrink: 0; } .min-w-0 { min-width: 0; }
+  .gap-1 { gap: 0.25rem; } .gap-2 { gap: 0.5rem; } .whitespace-nowrap { white-space: nowrap; }
+  .border-separate { border-collapse: separate; } .border-spacing-0 { border-spacing: 0; }
+  .font-medium { font-weight: 500; } .font-semibold { font-weight: 600; } .tabular-nums { font-variant-numeric: tabular-nums; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }`;
 
 const noop = () => undefined;
 const READY = { status: "ready", busy: false, data: null, error: null };
@@ -72,7 +69,7 @@ const DRAWER = getMarkup("DetailModal", {
   detailRow: RECORDS[1], detailState: { status: "loading", data: null, error: null }, rows: RECORDS, onClose: noop, onNav: noop,
 });
 
-// a card head whose right slot holds a static status pill: beside the info button (Confident but failed) or alone
+// a card head whose right slot holds its own status: beside the info button (Confident but failed) or alone
 const CROSSTAB = getMarkup("CrosstabCard", {
   state: { status: "ready", data: { crosstab: { polarTotal: 4, total: 40, byCell: { "high|false": { count: 3 } }, cells: [] } }, error: null },
   onRetry: noop, shared: {},
@@ -109,6 +106,7 @@ before(async () => {
   await page.setContent(PAGE);
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+  await page.addStyleTag({ content: getRoleKeyCss() });
   await page.addStyleTag({ content: SCREEN_CSS });
   cdp = await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
@@ -229,6 +227,14 @@ describe("a card head's own status reads as glyph and word, never a pill", () =>
       assert.ok(((await page.$eval(`#${card} ${STATUS}`, (el) => el.textContent)) ?? "").trim().length > 0, "the status word");
     });
   }
+});
+
+describe("the cross table sits on the row step", () => {
+  test("every body row and the Total foot row is 40 tall", async () => {
+    const heights = await page.$$eval("#crosstab table :is(tbody, tfoot) > tr", (rows) => rows.map((row) => row.getBoundingClientRect().height));
+    assert.ok(heights.length >= 2, `${heights.length} rows`);
+    assert.deepEqual(heights, heights.map(() => 40));
+  });
 });
 
 describe("the Results filter bar holds still as its filters change", () => {
