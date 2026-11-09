@@ -77,33 +77,6 @@ function render(name: string, props: Record<string, unknown>): RenderedNode {
   return renderScreen(create(screen[name] as Component, props)) as RenderedNode;
 }
 
-const OK_OVERALL = { total: 200, reconstructed_total: 0, by_result: [{ result: "done", count: 200 }] };
-const settled: RegionState = { ...first, status: "ready", data: { overall: OK_OVERALL }, busy: false };
-const warmError: RegionState = { ...settled, error: "HTTP 500" };
-const channelsOk: RegionState = { ...first, status: "ready", data: { alerting: [] }, busy: false };
-
-function getVerdictText(analytics: RegionState, at: string | null, regions: RegionState[]): string {
-  const tree = render("PageVerdictO", {
-    analyticsState: analytics, channelLivenessState: regions.includes(first) ? first : channelsOk,
-    windowDays: 7, freshness: { at, regions, now: NOW },
-  });
-  return collectText(tree);
-}
-
-const verdictRows = [
-  { name: "a settled fresh read with an ok rate reads Healthy", analytics: settled, at: READ_AT, regions: [settled, channelsOk], has: "Healthy", lacks: "Last known" },
-  { name: "a warm error over an ok rate reads Last known, never Healthy", analytics: warmError, at: READ_AT, regions: [warmError, channelsOk], has: "Last known", lacks: "Healthy" },
-  { name: "a cold load reads No signal with a checking note, never Healthy", analytics: first, at: null, regions: [first, first], has: "No signal", lacks: "Healthy" },
-];
-
-for (const row of verdictRows) {
-  test(`the verdict: ${row.name}`, () => {
-    const text = getVerdictText(row.analytics, row.at, row.regions);
-    assert.ok(text.includes(row.has), `expected "${row.has}" in: ${text}`);
-    assert.ok(!text.includes(row.lacks), `unexpected "${row.lacks}" in: ${text}`);
-  });
-}
-
 test("a cold-error Retry in flight keeps the status band's failure card instead of a loader", () => {
   const retrying: RegionState = { ...first, status: "loading", busy: true, error: "HTTP 500" };
   const tree = render("StatusBandO", { analyticsState: retrying, attentionState: first, windowDays: 7, onRetry: () => undefined });
@@ -125,13 +98,12 @@ for (const row of foldRows) {
   });
 }
 
-test("each reporting-health tile is a named group, so a tab or reader lands on one unit", () => {
+test("each reporting-health category is one stat whose name, share and run count read together", () => {
   const summary = { healthy_rate: 0.9, attribution_loss_rate: 0.05, literal_omission_rate: 0.03, synthesized_rate: 0.02 };
-  const tree = render("AttributionSummaryRow", { summary, totalAttributed: 100 });
-  const tiles = findNodes(tree, (n) => n.props.role === "group");
-  const names = tiles.map((n) => String(n.props["aria-label"]));
-  for (const label of ["Recorded properly", "Untraceable"]) {
-    assert.ok(names.some((name) => name.startsWith(label)), `no group named ${label}: ${names.join(" | ")}`);
+  const tree = render("AttributionSummaryRow", { summary, totalAttributed: 200 });
+  const stats = findNodes(tree, (n) => n.props.className === "stat").map((n) => collectText(n));
+  for (const [label, share, runs] of [["Recorded properly", "90.0%", "180 runs"], ["Untraceable", "5.0%", "10 runs"]]) {
+    assert.ok(stats.some((text) => text.includes(label) && text.includes(share) && text.includes(runs)), `no stat ${label} ${share} ${runs}: ${stats.join(" | ")}`);
   }
 });
 

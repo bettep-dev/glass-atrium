@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { TEXT_SCALE, getWidenedMetaFits } from "./lib/painted-text.js";
@@ -54,16 +54,16 @@ describe("outcomes crosstab header", () => {
   });
 
   for (const width of [1280, 1440, 1920]) {
-    test(`the meta reads whole beside the mismatch badge with the header text ${TEXT_SCALE}× as wide at ${width}px`, async () => {
+    test(`the meta reads whole beside the mismatch status with the header text ${TEXT_SCALE}× as wide at ${width}px`, async () => {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       try {
         await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
-        await page.waitForSelector(`${CROSSTAB_HEAD} .pill`, { timeout: 30_000 });
+        await page.waitForSelector(`${CROSSTAB_HEAD} [data-role="head-status"]`, { timeout: 30_000 });
         await page.evaluate(() => document.fonts.ready);
-        const badge = await page.textContent(`${CROSSTAB_HEAD} .pill`);
+        const badge = await page.textContent(`${CROSSTAB_HEAD} [data-role="head-status"]`);
         const [fit] = await page.$$eval(`${CROSSTAB_HEAD} .card-sub`, getWidenedMetaFits, TEXT_SCALE);
 
-        assert.ok(badge?.includes(POLAR_TOTAL_TEXT), `the badge keeps the mismatch count: "${badge}"`);
+        assert.ok(badge?.includes(POLAR_TOTAL_TEXT), `the status keeps the mismatch count: "${badge}"`);
         assert.ok(fit, "the header carries a meta");
         assert.ok(
           fit.needPx <= fit.shownPx,
@@ -99,8 +99,8 @@ describe("outcomes crosstab header", () => {
   });
 });
 
-// The status band and the ledger as painted: a stretched "Needs you" hero keeps its body at the top,
-// each prior range paints whole on one line, and every summary starts at one x beside its row's pill.
+// The status band and the ledger as painted: the band is one stat row card with no tile inside it,
+// no stat states the prior range, and every summary starts at one x beside its row's pill.
 const BAND_AGENT = "glass-atrium-dev-react";
 const BAND_OVERALL = {
   total: 400, reconstructed_total: 0, excluded_poisoned_count: 0,
@@ -154,40 +154,352 @@ describe("outcomes status band and ledger as painted", () => {
   });
 
   for (const width of [800, 1440]) {
-    test(`the hero body sits at the top, each range paints whole, every summary starts at one x at ${width}px`, async () => {
+    test(`the band is one stat row, no stat states a range, every summary starts at one x at ${width}px`, async () => {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       try {
         await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
         await page.waitForSelector("tr.outcome-row td", { timeout: 30_000 });
-        await page.waitForFunction(() => /pts since|Level since/.test(document.body.innerText), null, { timeout: 30_000 });
+        await page.waitForFunction(() => / pt\b|\bLevel\b/.test(document.body.innerText), null, { timeout: 30_000 });
         await page.evaluate(() => document.fonts.ready);
         const painted = await page.evaluate(() => {
-          const hero = [...document.querySelectorAll<HTMLElement>(".kpi")].find((tile) => /Needs you/.test(tile.textContent ?? ""))!;
-          const heroStyle = getComputedStyle(hero);
-          const ranges = [...document.querySelectorAll<HTMLElement>(".kpi .whitespace-nowrap")]
+          const band = [...document.querySelectorAll<HTMLElement>(".stat-row")].find((row) => /Needs you/.test(row.textContent ?? ""));
+          const ranges = [...(band?.querySelectorAll<HTMLElement>(".whitespace-nowrap") ?? [])]
             .filter((span) => /^\d\d-\d\d – \d\d-\d\d$/.test(span.textContent ?? ""));
           const summaries = [...document.querySelectorAll<HTMLTableRowElement>("tr.outcome-row")].map((tr) => ({
             rowH: tr.getBoundingClientRect().height,
             x: tr.cells[tr.cells.length - 1].querySelector(".truncate")!.getBoundingClientRect().x,
           }));
           return {
-            heroH: hero.getBoundingClientRect().height,
-            headOffset: hero.querySelector(".kpi-head")!.getBoundingClientRect().y - hero.getBoundingClientRect().y,
-            headFloor: parseFloat(heroStyle.borderTopWidth) + parseFloat(heroStyle.paddingTop),
-            rangeRects: ranges.map((span) => span.getClientRects().length),
+            stats: band?.querySelectorAll(":scope > .stat").length ?? 0,
+            tiles: band?.closest(".card")?.querySelectorAll(".kpi").length ?? -1,
+            ranges: ranges.length,
             summaries,
           };
         });
 
-        assert.ok(painted.heroH > 200, `the hero stretches beside the volume column: ${painted.heroH}px`);
-        assert.ok(Math.abs(painted.headOffset - painted.headFloor) <= 1, `label row ${painted.headOffset}px below the tile top, not ${painted.headFloor}px`);
-        assert.strictEqual(painted.rangeRects.length, 4, "the hero and three volume facts each state a prior range");
-        assert.deepStrictEqual(painted.rangeRects, [1, 1, 1, 1], "a range never breaks across lines");
+        assert.strictEqual(painted.stats, 4, "needs you, failed or blocked and the two volume facts sit in one stat row");
+        assert.strictEqual(painted.tiles, 0, "the band card holds no KPI tile");
+        assert.strictEqual(painted.ranges, 0, "the comparison window sits in the band's ⓘ, never on a stat");
         // the needs-you read answers with the same fixture rows → the ledger paints at least every fixture row
         assert.ok(painted.summaries.length >= LEDGER_ROWS.length, `ledger rows painted: ${painted.summaries.length}`);
         const xs = painted.summaries.map((row) => row.x);
         assert.ok(Math.max(...xs) - Math.min(...xs) <= 0.5, `summaries start at one x: ${xs.join(", ")}`);
         for (const row of painted.summaries) assert.ok(Math.abs(row.rowH - 40) <= 0.5, `ledger row ${row.rowH}px`);
+      } finally {
+        await page.close();
+      }
+    });
+  }
+});
+
+const DRAWER_ROW = {
+  ...LEDGER_ROWS[0],
+  cid: "2026-10-01T1000_outcomes-drawer-one-column-with-a-correlation-id-long-enough-to-wrap_9e1a",
+  qa_score: "cov=4,ins=4,instr=5,clar=4",
+  confidence: null,
+  has_body_md: true,
+};
+const DRAWER_FILES = [
+  "monitor/public/src/screens/outcomes.jsx",
+  "monitor/test/outcomes.render-structure.e2e.test.ts",
+  "monitor/test/outcomes.attention-composition.client.unit.test.ts",
+  "hooks/lib/a-deliberately-long-directory-name-so-the-path-cannot-fit-the-drawer-value-column/track-outcome-body.sh",
+];
+const DRAWER_STYLE_REF = "monitor/public/src/screens/runs.jsx";
+// body_md as hooks/track-outcome.sh → BODY_MD writes it: set fields as bullets, unset Lesson / Concerns / Directive Hint as placeholder sections
+const DRAWER_BODY_MD = [
+  "# Outcome Record", "", `- **Agent**: ${BAND_AGENT}`, "- **Task type**: feature", "- **Result**: done_with_concerns",
+  `- **Style Ref**: ${DRAWER_STYLE_REF}`, `- **Files**: ${DRAWER_FILES.join(", ")}`, "- **Tool use**: actual=18 declared=20", "",
+  "## Summary", "", "Moved the drawer onto one column.", "",
+  "## Lesson", "", "(not recorded)", "",
+  "## Concerns", "", "(none)", "",
+  "## Directive Hint", "", "(none)", "",
+].join("\n");
+
+describe("the outcomes drawer at 1024px", () => {
+  let app: FastifyInstance;
+  let browser: Browser;
+  let serverUrl: string;
+
+  before(async () => {
+    app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/outcomes/cross-analysis", async () => BAND_OVERALL);
+    app.get("/api/outcomes/search", async (req) => {
+      const query = req.query as Record<string, string>;
+      if (query.limit === "1") return { rows: [], total: getAttentionTotal(query), prior_window: { total: 25 } };
+      return { rows: [DRAWER_ROW], total: 1 };
+    });
+    app.get(`/api/outcomes/${DRAWER_ROW.id}`, async () => ({ ...DRAWER_ROW, body_md: DRAWER_BODY_MD }));
+    app.get("/api/*", async () => ({ rows: [] }));
+    await app.ready();
+    serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    browser = await chromium.launch({ headless: true });
+  });
+
+  after(async () => {
+    await browser?.close();
+    await app?.close();
+  });
+
+  test("facts sit in one column, an absent fact or section is left out, paths read as machine strings, nothing scrolls sideways", async () => {
+    const page = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+    try {
+      await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+      await page.locator("tr.outcome-row").first().click();
+      await page.waitForFunction(() => /Moved the drawer onto one column/.test(document.querySelector('[role="dialog"]')?.textContent ?? ""), null, { timeout: 30_000 });
+      await page.evaluate(() => document.fonts.ready);
+      const drawer = await page.evaluate(() => {
+        const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+        const facts = [...dialog.querySelectorAll<HTMLElement>(".detail-fact")].map((fact) => {
+          const box = fact.getBoundingClientRect();
+          return { left: box.left, right: box.right, label: fact.querySelector("dt")?.textContent ?? "" };
+        });
+        const all = [...dialog.querySelectorAll<HTMLElement>("*")];
+        return {
+          title: dialog.querySelector(".detail-title")?.textContent ?? "",
+          text: dialog.textContent ?? "",
+          headings: [...dialog.querySelectorAll<HTMLElement>("h1, h2, h3, h4")].map((h) => h.textContent ?? ""),
+          machine: [...dialog.querySelectorAll<HTMLElement>(".machine")].map((el) => el.textContent ?? ""),
+          facts,
+          sideways: all.filter((el) => el.scrollWidth - el.clientWidth > 1 && /auto|scroll/.test(getComputedStyle(el).overflowX)).length,
+          italic: all.filter((el) => getComputedStyle(el).fontStyle === "italic").length,
+          upper: all.filter((el) => getComputedStyle(el).textTransform === "uppercase").length,
+          strayMono: all.filter((el) => /mono/i.test(getComputedStyle(el).fontFamily) && el.closest(".machine") == null).map((el) => el.textContent).slice(0, 3),
+        };
+      });
+
+      assert.strictEqual(drawer.title, `${BAND_AGENT} · feature`, "the title names the record, not the row's result and time");
+      assert.ok(drawer.facts.length >= 6, `drawer facts: ${drawer.facts.map((f) => f.label).join(", ")}`);
+      for (const edge of ["left", "right"] as const) {
+        const xs = drawer.facts.map((fact) => fact[edge]);
+        assert.ok(Math.max(...xs) - Math.min(...xs) <= 0.5, `every fact shares one ${edge} edge: ${xs.join(", ")}`);
+      }
+      const labels = drawer.facts.map((fact) => fact.label);
+      assert.ok(labels.includes("Tool use") && labels.includes("Correlation ID"), `record and reference facts: ${labels.join(", ")}`);
+      assert.ok(!labels.includes("Confidence") && !labels.includes("Directive Hint"), `absent facts left out: ${labels.join(", ")}`);
+      assert.doesNotMatch(drawer.text, /\(none\)|\(not recorded\)/, "no recorder placeholder printed");
+      for (const heading of ["Lesson", "Concerns", "Directive Hint"]) {
+        assert.ok(!drawer.headings.includes(heading), `an unset ${heading} section is left out: ${drawer.headings.join(", ")}`);
+      }
+      for (const path of [...DRAWER_FILES, DRAWER_STYLE_REF]) {
+        assert.ok(drawer.machine.includes(path), `${path} is its own machine string: ${drawer.machine.join(" | ")}`);
+      }
+      assert.strictEqual(drawer.sideways, 0, "no element in the drawer scrolls sideways");
+      assert.strictEqual(drawer.italic, 0, "no italics");
+      assert.strictEqual(drawer.upper, 0, "labels in sentence case, never uppercased");
+      assert.deepStrictEqual(drawer.strayMono, [], "mono only inside a machine string");
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("the Results filter bar drives the ledger fetch", () => {
+  const BAR = "#outcomes-ledger .card-bar";
+  let app: FastifyInstance;
+  let browser: Browser;
+  let serverUrl: string;
+
+  before(async () => {
+    app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/outcomes/search", async () => ({ rows: [], total: 0 }));
+    app.get("/api/*", async () => ({ rows: [] }));
+    await app.ready();
+    serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    browser = await chromium.launch({ headless: true });
+  });
+
+  after(async () => {
+    await browser?.close();
+    await app?.close();
+  });
+
+  test("every filter axis is a trigger on the bar naming its value, with no Filters popover left", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+      await page.waitForSelector(`${BAR} .filter-trigger`, { timeout: 30_000 });
+      const triggers = await page.$$eval(`${BAR} .filter-trigger`, (buttons) => buttons.map((button) =>
+        [button.querySelector(".filter-trigger-axis")!.textContent, button.querySelector(".filter-trigger-value")!.textContent]));
+      assert.deepEqual(triggers, [
+        ["Agent", "All"], ["Result", "All"], ["Flagged", "All"], ["Task type", "All"], ["Confidence", "All"],
+        ["Self-check", "All"], ["Attribution", "All"], ["Scope", "Registry agents"], ["Sort", "Newest first"],
+      ]);
+      assert.equal(await page.locator('#outcomes-ledger [aria-haspopup="dialog"]').count(), 0, "Filters popover trigger");
+    } finally {
+      await page.close();
+    }
+  });
+
+  const picks = [
+    { name: "a Result pick reaches the ledger request as its wire value", axis: "Result", option: "Failed", param: "result", wire: "fail" },
+    { name: "the All records scope reaches the ledger request as include_all", axis: "Scope", option: "All records", param: "include_all", wire: "1" },
+  ];
+  for (const row of picks) {
+    test(row.name, async () => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      try {
+        await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+        const trigger = page.locator(`${BAR} .filter-trigger`, { hasText: row.axis });
+        await trigger.click();
+        const request = page.waitForRequest((req) => {
+          const url = new URL(req.url());
+          return url.pathname === "/api/outcomes/search" && url.searchParams.get(row.param) === row.wire;
+        }, { timeout: 30_000 });
+        await page.getByRole("menuitemradio", { name: row.option }).click();
+        await request;
+        assert.equal(await trigger.locator(".filter-trigger-value").textContent(), row.option);
+      } finally {
+        await page.close();
+      }
+    });
+  }
+});
+
+// The ledger read alone: page size 50, never the needs-you read (needs_attention) nor the attention counts (limit=1).
+const isLedgerRead = (query: URLSearchParams): boolean => query.get("limit") === "50" && !query.has("needs_attention");
+
+describe("a refresh that shrinks the match count under a held page", () => {
+  const getPager = (page: Page) => page.getByRole("navigation", { name: "Results pages" });
+  let app: FastifyInstance;
+  let browser: Browser;
+  let serverUrl: string;
+  let ledgerTotal = 120;
+  const ledgerOffsets: string[] = [];
+
+  before(async () => {
+    app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/outcomes/search", async (req) => {
+      const query = new URLSearchParams(req.query as Record<string, string>);
+      if (!isLedgerRead(query)) return { rows: [], total: 0 };
+      const offset = Number(query.get("offset"));
+      ledgerOffsets.push(String(offset));
+      const rows = Array.from({ length: Math.max(0, Math.min(50, ledgerTotal - offset)) }, (_, i) => ({
+        id: 1_000 + offset + i, agent: BAND_AGENT, task_type: "review", result: "done", closed_at: null,
+        record_ts: "2026-10-01T12:00:00Z", summary: `Ledger row ${offset + i + 1}`, review_flag: false,
+      }));
+      return { rows, total: ledgerTotal };
+    });
+    app.get("/api/*", async () => ({ rows: [] }));
+    await app.ready();
+    serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    browser = await chromium.launch({ headless: true });
+  });
+
+  after(async () => {
+    await browser?.close();
+    await app?.close();
+  });
+
+  test("re-reads the ledger from the last page that still has rows and paints them", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const ledgerRows = page.locator("#outcomes-ledger tr.outcome-row");
+    const getLedgerResponse = (offset: string) => page.waitForResponse((res) => {
+      const url = new URL(res.url());
+      return url.pathname === "/api/outcomes/search" && isLedgerRead(url.searchParams) && url.searchParams.get("offset") === offset;
+    }, { timeout: 30_000 });
+    try {
+      await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+      await page.waitForSelector("#outcomes-ledger tr.outcome-row td", { timeout: 30_000 });
+      for (const offset of ["50", "100"]) {
+        const response = getLedgerResponse(offset);
+        await getPager(page).getByRole("button", { name: "Next page" }).click();
+        await response;
+      }
+      await page.waitForFunction(() => /Ledger row 101\b/.test(document.body.innerText), null, { timeout: 30_000 });
+
+      ledgerTotal = 30;
+      const refreshedFrom = ledgerOffsets.length;
+      await page.getByRole("button", { name: "Refresh" }).click();
+      await page.waitForFunction(() => document.querySelectorAll("#outcomes-ledger tr.outcome-row").length === 30, null, { timeout: 15_000 })
+        .catch(() => undefined);
+
+      assert.deepEqual(ledgerOffsets.slice(refreshedFrom, refreshedFrom + 2), ["100", "0"], "the held page's read, then the first page's");
+      assert.equal(await ledgerRows.count(), 30, "every row still matched is painted");
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+// Sticky heads: the ledger sticks to the page viewport (its card lifts the body cap), Failures by agent to its own 70vh card body,
+// the run-event log to its 42vh log box once its fold opens.
+const STICKY_ROW_PX = 40;
+const STICKY_LEDGER_ROWS = Array.from({ length: 40 }, (_, i) => ({
+  id: 100 + i, agent: BAND_AGENT, task_type: "review", result: "done", closed_at: null,
+  record_ts: `2026-10-01T${String(23 - Math.floor(i / 2)).padStart(2, "0")}:${i % 2 ? "30" : "00"}:00Z`, summary: `Routine row ${i + 1}`, review_flag: false,
+}));
+const STICKY_OVERALL = {
+  ...BAND_OVERALL,
+  by_agent_result: Array.from({ length: 30 }, (_, i) => ({ agent: `glass-atrium-dev-sticky-${i + 1}`, result: "fail", count: 30 - i, reconstructed_count: 0 })),
+};
+const STICKY_TABLES = [
+  { name: "the ledger", cardId: "outcomes-ledger", scroller: "the page viewport" },
+  { name: "Failures by agent", cardId: "outcomes-agent-failures", scroller: "its 70vh card body" },
+  { name: "the run-event log", cardId: "outcomes-loop-events", scroller: "its 42vh log box", fold: "Learning-run events" },
+];
+const STICKY_LOOP_EVENTS = Array.from({ length: 50 }, (_, i) => ({
+  id: 500 + i, event_ts: `2026-10-01T${String(23 - Math.floor(i / 3)).padStart(2, "0")}:${String((i % 3) * 20).padStart(2, "0")}:00Z`,
+  agent: BAND_AGENT, eval_result: i % 4 ? "verified" : "reject", changes_added: i, changes_removed: 1,
+}));
+
+describe("outcomes screen at 1440px, sticky table heads", () => {
+  let app: FastifyInstance;
+  let browser: Browser;
+  let serverUrl: string;
+
+  before(async () => {
+    app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/outcomes/cross-analysis", async () => STICKY_OVERALL);
+    app.get("/api/outcomes/search", async (req) => {
+      const query = req.query as Record<string, string>;
+      if (query.limit === "1") return { rows: [], total: 0 };
+      return { rows: query.review_flag || query.result ? [] : STICKY_LEDGER_ROWS, total: STICKY_LEDGER_ROWS.length };
+    });
+    app.get("/api/improvement/loop-events", async () => ({
+      events: STICKY_LOOP_EVENTS, total_events: STICKY_LOOP_EVENTS.length,
+      result_distribution: [{ eval_result: "verified", count: 37 }, { eval_result: "reject", count: 13 }],
+    }));
+    app.get("/api/*", async () => ({ rows: [] }));
+    await app.ready();
+    serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    browser = await chromium.launch({ headless: true });
+  });
+
+  after(async () => {
+    await browser?.close();
+    await app?.close();
+  });
+
+  for (const row of STICKY_TABLES) {
+    test(`${row.name}: the column head sticks to the top of ${row.scroller} after a scroll into the body`, async () => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      try {
+        await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+        if (row.fold) await page.getByRole("button", { name: new RegExp(row.fold) }).click();
+        await page.waitForFunction((id) => (document.querySelector(`#${id} tbody`)?.getBoundingClientRect().height ?? 0) > 800, row.cardId, { timeout: 30_000 });
+        const result = await page.evaluate(({ cardId, rowPx }) => {
+          const head = document.querySelector(`#${cardId} thead th`) as HTMLElement;
+          const body = document.querySelector(`#${cardId} tbody`) as HTMLElement;
+          let scroller: HTMLElement | null = head.parentElement;
+          while (scroller && !(/(auto|scroll)/.test(getComputedStyle(scroller).overflowY) && scroller.scrollHeight > scroller.clientHeight)) scroller = scroller.parentElement;
+          const target = scroller ?? (document.scrollingElement as HTMLElement);
+          const viewTop = scroller ? scroller.getBoundingClientRect().top : 0;
+          // a quarter of the body under the head: far enough that an unstuck head leaves the view, near enough to stay in its table
+          const offsetPx = body.getBoundingClientRect().height / 4;
+          const headStartPx = head.getBoundingClientRect().top - viewTop + target.scrollTop;
+          const room = target.scrollHeight - target.clientHeight - headStartPx;
+          target.scrollTop = headStartPx + offsetPx;
+          return { isPage: scroller === null, canScroll: room > offsetPx && offsetPx >= rowPx, offsetPx: head.getBoundingClientRect().top - viewTop };
+        }, { cardId: row.cardId, rowPx: STICKY_ROW_PX });
+
+        assert.equal(result.isPage, row.cardId === "outcomes-ledger", `${row.name}: scrolls in ${row.scroller}`);
+        assert.equal(result.canScroll, true, `${row.name}: the scroller reaches a quarter body past the head's start`);
+        assert.ok(Math.abs(result.offsetPx) <= 1, `${row.name}: head ${result.offsetPx}px off the scroller top`);
       } finally {
         await page.close();
       }
