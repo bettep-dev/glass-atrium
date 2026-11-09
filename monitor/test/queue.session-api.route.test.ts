@@ -486,18 +486,27 @@ describe("count", () => {
   test("counts open items as awaiting and every deviation, delivery off and not reachable included", async () => {
     const readCount = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> =>
       (await send("GET", "/api/queue/count", undefined, { key: null })).json();
-    const baseline = await readCount();
-    const live = await seedSession();
-    const deliveryOff = await seedSession({ socketPath: null });
-    const notReachable = await seedSession({ state: "stale" });
-    await seedItem(live, { status: "open", askedAt: new Date(Date.now() - 3_600_000) });
-    await seedItem(live, { status: "answered" });
-    for (const status of ["unacked", "held", "expired", "resume_pending"] as const) await seedItem(live, { status });
-    await seedItem(deliveryOff, { status: "answered" });
-    await seedItem(notReachable, { status: "answered" });
-    const counted = await readCount();
-    assert.equal(counted.awaiting - baseline.awaiting, 1);
-    assert.equal(counted.deviations - baseline.deviations, 6);
-    assert.ok((counted.oldestAgeSeconds ?? 0) >= 3600, `oldest age ${counted.oldestAgeSeconds}`);
+    const measureSeedDelta = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> => {
+      const baseline = await readCount();
+      const live = await seedSession();
+      const deliveryOff = await seedSession({ socketPath: null });
+      const notReachable = await seedSession({ state: "stale" });
+      await seedItem(live, { status: "open", askedAt: new Date(Date.now() - 3_600_000) });
+      await seedItem(live, { status: "answered" });
+      for (const status of ["unacked", "held", "expired", "resume_pending"] as const) await seedItem(live, { status });
+      await seedItem(deliveryOff, { status: "answered" });
+      await seedItem(notReachable, { status: "answered" });
+      const counted = await readCount();
+      return { awaiting: counted.awaiting - baseline.awaiting, deviations: counted.deviations - baseline.deviations, oldestAgeSeconds: counted.oldestAgeSeconds };
+    };
+    // the count is database-wide and other test files write queue rows concurrently → a miscount fails every attempt,
+    // a neighbour's write between the two reads only the one it lands in
+    let delta = await measureSeedDelta();
+    for (let attempt = 1; attempt < 10 && (delta.awaiting !== 1 || delta.deviations !== 6); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      delta = await measureSeedDelta();
+    }
+    assert.deepEqual({ awaiting: delta.awaiting, deviations: delta.deviations }, { awaiting: 1, deviations: 6 });
+    assert.ok((delta.oldestAgeSeconds ?? 0) >= 3600, `oldest age ${delta.oldestAgeSeconds}`);
   });
 });

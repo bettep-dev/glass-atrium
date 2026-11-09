@@ -1,5 +1,6 @@
-// Database-driven sweep pass: the stale / exited rule on live and stale rows, overdue and exited-row item moves,
-// then socket delivery of answered items. No delivery window lives in a process timer → a restart loses nothing.
+// Database-driven sweep pass: the worktree root refresh, the stale / exited rule on live and stale rows, the automatic
+// resume of exited sessions, overdue and exited-row item moves, then socket delivery of answered items.
+// No delivery window lives in a process timer → a restart loses nothing.
 // Every transaction touching items locks the registry row first (registry.ts lock order).
 
 import { randomUUID } from "node:crypto";
@@ -10,8 +11,10 @@ import type { Prisma, QueueItemKind, QueueItemStatus, QueueSessionState } from "
 import { getPrisma } from "../db.js";
 import { errnoCode } from "../errno.js";
 import { logger } from "../logger.js";
-import { buildEnvelope } from "./envelope.js";
+import { buildEnvelope, buildResumePayload } from "./envelope.js";
 import { lockSession } from "./registry.js";
+import { type ResumeClaim, claimResume, getRereadOutcome, putSpawnAborted, putSpawnFailed, refreshWorktreeRoots } from "./resume-claim.js";
+import { type ResumeDeps, startResumeSpawn } from "./resume-spawn.js";
 import { type SocketConnector, buildFrames, openSocket, readSessionToken, writeFrames } from "./socket-channel.js";
 
 const SWEEP = {
@@ -35,6 +38,8 @@ export interface SweepDeps {
   tokenDir: string;
   /** Limits the pass to these sessions (isolation on a shared test database); absent → every session. */
   scope?: { sessionIds: string[] };
+  /** Absent → no automatic resume (no `claude` found at start). */
+  resume?: ResumeDeps;
 }
 
 interface SessionProbeRow {
@@ -58,8 +63,11 @@ interface AnsweredItem {
   session: SessionProbeRow;
 }
 
+/** Resume claims run before the settle step → an item turned resume-pending in this pass resumes on the next one. */
 export async function runSweepPass(deps: SweepDeps): Promise<void> {
+  await refreshWorktreeRoots(getScopeWhere(deps));
   await refreshSessionStates(deps);
+  await resumeExitedSessions(deps);
   await settleItems(deps);
   await deliverAnsweredItems(deps);
 }
@@ -121,6 +129,38 @@ async function putSessionState(row: SessionProbeRow, state: QueueSessionState): 
   const data: Prisma.QueueSessionUpdateManyMutationInput =
     state === "exited" ? { state, exitReason: "dead" } : { state, exitReason: null, ...(state === "live" ? { lastSeenAt: new Date() } : {}) };
   await getPrisma().queueSession.updateMany({ where: { sessionId: row.sessionId, pid: row.pid, state: row.state }, data });
+}
+
+async function resumeExitedSessions(deps: SweepDeps): Promise<void> {
+  const resume = deps.resume;
+  if (resume === undefined) return;
+  const sessions = await getPrisma().queueSession.findMany({
+    where: { ...getScopeWhere(deps), state: "exited", items: { some: { status: "resume_pending" } } },
+    select: { sessionId: true },
+    take: SWEEP.BATCH_LIMIT,
+  });
+  for (const { sessionId } of sessions) {
+    // a claim that lost a race rolls back and spawns nothing; the next pass re-checks the session
+    await resumeSession(sessionId, resume, deps).catch((error: unknown) => logger.warn({ err: error, sessionId }, "queue resume claim rolled back — no spawn"));
+  }
+}
+
+// One spawn per session; the pre-spawn re-read stops it when the session returned or the worktree gained an occupant
+async function resumeSession(sessionId: string, resume: ResumeDeps, deps: SweepDeps): Promise<void> {
+  const claim = await claimResume(sessionId, deps.now(), resume.hooks);
+  if (claim === null) return;
+  await resume.hooks?.beforeReread?.();
+  const outcome = await getRereadOutcome(claim);
+  if (outcome !== "spawn") {
+    await putSpawnAborted(claim, outcome);
+    return;
+  }
+  await spawnClaimed(claim, resume, deps);
+}
+
+async function spawnClaimed(claim: ResumeClaim, resume: ResumeDeps, deps: SweepDeps): Promise<void> {
+  const isStarted = await startResumeSpawn(claim, buildResumePayload(claim.items, deps.cliPath), resume, deps.now);
+  if (!isStarted) await putSpawnFailed(claim);
 }
 
 async function settleItems(deps: SweepDeps): Promise<void> {

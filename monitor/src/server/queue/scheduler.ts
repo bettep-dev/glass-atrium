@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { logger } from "../logger.js";
 import { getProcessStartTime } from "./process-start-time.js";
+import { findClaudePath, removeLeftoverCaptureDirs, spawnClaudeLauncher } from "./resume-spawn.js";
 import { connectUnixSocket } from "./socket-channel.js";
 import { type SweepDeps, removeOrphanTokenFiles, runSweepPass } from "./sweep.js";
 
@@ -16,8 +17,13 @@ export interface QueueScheduler {
   stop(): Promise<void>;
 }
 
-/** Production deps under `${GA_ROOT:-$HOME/.glass-atrium}`: token files in data/queue/tokens, the CLI in scripts/. */
+/**
+ * Production deps under `${GA_ROOT:-$HOME/.glass-atrium}`: token files in data/queue/tokens, resume captures in
+ * data/queue/resume-capture, the CLI in scripts/. No `claude` on PATH → automatic resume off (fail closed).
+ */
 export function resolveSweepDeps(gaRoot: string = process.env.GA_ROOT || path.join(os.homedir(), ".glass-atrium")): SweepDeps {
+  const claudePath = findClaudePath();
+  if (claudePath === null) logger.warn("queue automatic resume off — no executable claude on the monitor PATH");
   return {
     connector: connectUnixSocket,
     readStartTime: getProcessStartTime,
@@ -26,31 +32,45 @@ export function resolveSweepDeps(gaRoot: string = process.env.GA_ROOT || path.jo
     now: () => new Date(),
     cliPath: path.join(gaRoot, "scripts", "atrium-queue.sh"),
     tokenDir: path.join(gaRoot, "data", "queue", "tokens"),
+    ...(claudePath === null ? {} : { resume: { launcher: spawnClaudeLauncher, claudePath, captureDir: path.join(gaRoot, "data", "queue", "resume-capture") } }),
   };
 }
 
-/** Runs one pass at once (the start sweep), then one per interval; a tick while a pass runs is skipped. */
+/**
+ * Runs one pass at once (the start sweep, after clearing capture dirs a restart left behind), then one per interval;
+ * a tick while a pass runs is skipped. Stop ends the capture reads, never the resumed sessions.
+ */
 export function startQueueScheduler(deps: SweepDeps, intervalMs: number = SWEEP_INTERVAL_MS): QueueScheduler {
+  const abort = new AbortController();
+  const passDeps = withStopSignal(deps, abort.signal);
   let running: Promise<void> | null = null;
-  const tick = (): void => {
+  const tick = (isStart: boolean): void => {
     if (running !== null) return;
-    running = runScheduledPass(deps).finally(() => {
+    running = runScheduledPass(passDeps, isStart).finally(() => {
       running = null;
     });
   };
-  tick();
-  const timer = setInterval(tick, intervalMs);
+  tick(true);
+  const timer = setInterval(() => tick(false), intervalMs);
   timer.unref();
   return {
     async stop() {
       clearInterval(timer);
+      abort.abort();
       await running;
     },
   };
 }
 
-async function runScheduledPass(deps: SweepDeps): Promise<void> {
+function withStopSignal(deps: SweepDeps, stopSignal: AbortSignal): SweepDeps {
+  if (deps.resume === undefined) return deps;
+  const signal = deps.resume.signal === undefined ? stopSignal : AbortSignal.any([stopSignal, deps.resume.signal]);
+  return { ...deps, resume: { ...deps.resume, signal } };
+}
+
+async function runScheduledPass(deps: SweepDeps, isStart: boolean): Promise<void> {
   try {
+    if (isStart && deps.resume !== undefined) await removeLeftoverCaptureDirs(deps.resume.captureDir);
     await runSweepPass(deps);
     await removeOrphanTokenFiles(deps);
   } catch (error) {
