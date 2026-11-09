@@ -194,9 +194,9 @@ const ATTRIBUTION_CATEGORY_META = {
 
 // literal_omission 선택 기간 비율 → 심각도 밴드 (분모 = 선택 기간 전체 창).
 const ATTRIBUTION_OMISSION_BANDS = [
-  { max: 0.03, symbol: '✓', icon: 'check', colorVar: '--ok',   label: 'OK'          },
-  { max: 0.08, symbol: '⚠', icon: 'warn',  colorVar: '--warn', label: 'Watch'       },
-  { max: Infinity, symbol: '✕', icon: 'x', colorVar: '--crit', label: 'Investigate' },
+  { max: 0.03,     colorVar: '--ok',   label: 'OK'          },
+  { max: 0.08,     colorVar: '--warn', label: 'Watch'       },
+  { max: Infinity, colorVar: '--crit', label: 'Investigate' },
 ];
 
 // attribution_loss 노트 컨텍스트 (정적 문구 — 건수·비율은 window_summary 에서 라이브 산출).
@@ -3242,14 +3242,14 @@ function formatRateO(rate) {
   return `${(Number(rate) * 100).toFixed(1)}%`;
 }
 
-// literal-omission 선택 기간 비율 → attribution head status 의 심각도 tone(colorVar) + 문구. null → ℹ '—' (데이터 부재).
+// literal-omission 선택 기간 비율 → attribution head status 의 심각도 tone(colorVar) + 문구. null → info tone '—' (데이터 부재).
 function attributionOmissionBadgeO(rate) {
   if (rate === null || rate === undefined || Number.isNaN(Number(rate))) {
-    return { symbol: 'ℹ', icon: 'info', colorVar: '--info', text: '—' };
+    return { colorVar: '--info', text: '—' };
   }
   const value = Number(rate);
   const band = ATTRIBUTION_OMISSION_BANDS.find((b) => value < b.max) || ATTRIBUTION_OMISSION_BANDS[ATTRIBUTION_OMISSION_BANDS.length - 1];
-  return { symbol: band.symbol, icon: band.icon, colorVar: band.colorVar, text: `${(value * 100).toFixed(2)}% ${band.label}` };
+  return { colorVar: band.colorVar, text: `${(value * 100).toFixed(2)}% ${band.label}` };
 }
 
 // 활동일만 담긴 days_series ('YYYY-MM-DD' ASC) → 최근 N 일 0-fill 그리드.
