@@ -635,9 +635,9 @@ function buildLastRunTileW(state, at) {
 		state: "ready",
 		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
 		sub: overdue
-			? `${outcome.label} · cycle ${d.last_run_date}`
+			? `${outcome.label}${describeCycleDateW(d.last_run_date)}`
 			: `${outcome.label}${describeP95W(d.cycle_p95_ms)}`,
-		hint: `Cycle ${d.last_run_date}`,
+		hint: d.last_run_date ? `Cycle ${d.last_run_date}` : undefined,
 		tone,
 	};
 }
@@ -655,6 +655,10 @@ function getLastRunOutcomeW(state, at, overdue) {
 
 function describeP95W(ms) {
 	return typeof ms === "number" ? ` · p95 ${window.UI.formatDuration(ms, "ms")}` : "";
+}
+// unrecorded cycle date → no suffix, never "cycle undefined"
+function describeCycleDateW(date) {
+	return date ? ` · cycle ${date}` : "";
 }
 
 // A zero names its cause: idle (nothing waiting) stays quiet, stalled (originals waiting) tints.

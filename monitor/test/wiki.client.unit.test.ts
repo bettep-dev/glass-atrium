@@ -683,3 +683,20 @@ test("the compiled tile and Run history name the same span for the same total", 
   assert.match(tile.sub ?? "", /\b22 in 29d\b/);
   assert.match(history, /^3 runs in 29d\b/, "runs are counted as runs over the same span");
 });
+
+test("the last-run stat names its cycle date only when the summary records one", () => {
+  const rows = [
+    { name: "dated, on time", date: "2026-09-24", hours: undefined, hint: "Cycle 2026-09-24", subCycle: false },
+    { name: "dated, overdue", date: "2026-09-24", hours: 999, hint: "Cycle 2026-09-24", subCycle: true },
+    { name: "undated, on time", date: null, hours: undefined, hint: undefined, subCycle: false },
+    { name: "undated, overdue", date: null, hours: 999, hint: undefined, subCycle: false },
+  ];
+  for (const row of rows) {
+    const extra = row.hours === undefined ? {} : { hours_since_last_cycle: row.hours };
+    const summary = healthySummary({ last_run_date: row.date, ...extra });
+    const tile = glanceHelpers.buildLastRunTileW(summary) as { sub: string; hint?: string };
+    assert.equal(tile.hint, row.hint, row.name);
+    assert.equal(/· cycle 2026-09-24$/.test(tile.sub), row.subCycle, `${row.name}: cycle date in the context line`);
+    assert.doesNotMatch(tile.sub, /undefined|null/, `${row.name}: the context line holds no missing value`);
+  }
+});

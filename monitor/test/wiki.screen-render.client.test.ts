@@ -45,7 +45,7 @@ function uiStub(): unknown {
 
 type Component = (props: unknown) => unknown;
 interface ScreenModule {
-  React: { createElement: (t: unknown, p: unknown) => unknown };
+  React: { createElement: (t: unknown, p: unknown, ...children: unknown[]) => unknown };
   [name: string]: unknown;
 }
 
