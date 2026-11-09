@@ -85,7 +85,6 @@ interface OutcomesHelpers {
     closure?: ClosureState,
     needsYou?: { rows: LedgerRow[]; total: number; windowLabel: string } | null,
   ) => { key: string; label: string; heading: string; rows: LedgerRow[]; anchorId?: string }[];
-  BandRulesO: (props: { tiles: BandTile[]; priorRange: string | null }) => RenderNode;
   ResultTable: (props: Record<string, unknown>) => RenderNode;
   ResultTableRow: (props: { row: LedgerRow & { agent: string; task_type: string }; onRowClick: () => void; closure?: ClosureState }) => RenderNode;
   focusLedgerSectionO: (id: string, doc: { getElementById: (id: string) => unknown }) => boolean;
@@ -670,10 +669,10 @@ test("AgentFailureBodyO: loading draws the table's own skeleton rows, not a blan
   const body = helpers.AgentFailureBodyO({ state: { status: "loading" }, onRetry: () => {} });
   // the body returns its skeleton element — render that one level to read the markup it draws
   const skeleton = typeof body.type === "function" ? (body.type as (p: unknown) => RenderNode)(body.props) : body;
-  const nodes = flattenNodes(skeleton);
+  const nodes = expandNodes(skeleton);
   const table = nodes.find((n) => n.type === "table");
   assert.ok(table, "the loading body keeps the table shape");
-  assert.ok(nodes.some((n) => n.props?.["aria-busy"] === true), "the loading body is marked busy");
+  assert.ok(nodes.some((n) => n.props?.["aria-busy"] === "true"), "the loading body is marked busy");
   const text = nodes.flatMap((n) => n.children.filter((c) => typeof c === "string")).join(" ");
   assert.match(text, /Failed/, "the column headers render while loading");
   assert.ok(nodes.filter((n) => n.type === "tr").length > 1, "skeleton rows sit under the header");
@@ -684,7 +683,7 @@ test("AgentFailureBodyO: loading draws the table's own skeleton rows, not a blan
 test("AgentFailureBodyO: body and skeleton rows ride the shared compact atom, no cell padding its own block", () => {
   // a row's cell components render one level, so their own td is read too
   const renderCells = (nodes: RenderNode[]): RenderNode[] => nodes.flatMap((n) =>
-    typeof n.type === "function" ? flattenNodes((n.type as (p: unknown) => unknown)({ ...n.props, children: n.children })) : [n]);
+    typeof n.type === "function" ? expandNodes((n.type as (p: unknown) => unknown)({ ...n.props, children: n.children })) : [n]);
   const ready = helpers.AgentFailureBodyO({
     state: {
       status: "ok",
@@ -695,11 +694,11 @@ test("AgentFailureBodyO: body and skeleton rows ride the shared compact atom, no
   const loading = helpers.AgentFailureBodyO({ state: { status: "loading" }, onRetry: () => {} });
   const skeleton = typeof loading.type === "function" ? (loading.type as (p: unknown) => RenderNode)(loading.props) : loading;
   for (const [name, tree] of [["ready", ready], ["loading", skeleton]] as const) {
-    const nodes = renderCells(flattenNodes(tree));
+    const nodes = renderCells(expandNodes(tree));
     const bodies = nodes.filter((n) => n.type === "tbody");
     assert.strictEqual(bodies.length, 1, `${name}: one body`);
     assert.strictEqual(bodies[0].props?.className, "tbl-compact", `${name}: the body takes the compact atom`);
-    const cells = renderCells(flattenNodes(bodies[0])).filter((n) => n.type === "td");
+    const cells = renderCells(expandNodes(bodies[0])).filter((n) => n.type === "td");
     assert.ok(cells.length > 0, `${name}: the body carries cells`);
     for (const cell of cells) assert.doesNotMatch(String(cell.props?.className ?? ""), /\b(py|pt|pb)-/, `${name}: a cell keeps its block padding off`);
   }
@@ -736,7 +735,7 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
   assert.ok(attention.jumpTo, "the attention tile names a jump target");
   assert.strictEqual(attention.jumpTo, needsYou.anchorId, "the target is the ledger's Needs-you section");
 
-  const table = flattenNodes(helpers.ResultTable({
+  const table = expandNodes(helpers.ResultTable({
     rows: [{ id: 1, result: "fail" }], sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
   }));
   const target = table.find((n) => n.props?.id === attention.jumpTo);
@@ -822,13 +821,24 @@ const renderLedgerRow = (row: ReturnType<typeof ledgerRowOf>) => helpers.ResultT
 const textOf = (node: RenderNode): string => flattenNodes(node)
   .flatMap((n) => n.children.filter((c) => typeof c === "string" || typeof c === "number"))
   .join("");
-// the ledger's column headers: the sortable Time header by its label, every other column as the shared TableHead atom by its text
+// the ledger's body rows as their row components, unexpanded: the shared Table's bodies, read in its wide view
+const ledgerBodyRowsO = (table: unknown): RenderNode[] => {
+  const { Table } = helpers.window.UI as unknown as Record<string, unknown>;
+  const node = flattenNodes(table).find((n) => n.type === Table);
+  const view = { isStacked: false, columnCount: ((node?.props?.columns ?? []) as unknown[]).length };
+  const bodies = (node?.props?.bodies ?? [{ rows: node?.props?.children ?? node?.children[0] }]) as { rows: unknown }[];
+  return [...bodies].flatMap(({ rows }) => flattenNodes(typeof rows === "function" ? (rows as (v: unknown) => unknown)(view) : rows));
+};
+// the ledger's column headers, read from the shared Table's columns: a sortable header by its button label, the rest by text
 const ledgerHeaderLabelsO = (table: unknown): string[] => {
-  const { TableHead } = helpers.window.UI as unknown as Record<string, unknown>;
-  const sortable = (helpers as unknown as Record<string, unknown>).SortableHeader;
-  return flattenNodes(table)
-    .filter((n) => n.type === sortable || n.type === TableHead)
-    .map((n) => (n.type === sortable ? String(n.props!.label) : textOf(n)));
+  const { Table } = helpers.window.UI as unknown as Record<string, unknown>;
+  const node = flattenNodes(table).find((n) => n.type === Table);
+  const columns = (node?.props?.columns ?? []) as { label: unknown }[];
+  return columns.map(({ label }) => {
+    if (typeof label === "string") return label;
+    const el = label as RenderNode;
+    return el.props?.label != null ? String(el.props.label) : renderText(el).trim();
+  });
 };
 
 test("ledger: each table sits in a clipped .tbl-wrap, never a scroller, so hidden names cannot stretch the page", () => {
@@ -842,7 +852,7 @@ test("ledger: each table sits in a clipped .tbl-wrap, never a scroller, so hidde
     } as unknown as PayloadState<unknown>,
     onRetry: () => {},
   });
-  const nodes = [...flattenNodes(ledger), ...flattenNodes(failures)];
+  const nodes = [...expandNodes(ledger), ...expandNodes(failures)];
   const wraps = nodes.filter((n) => /\btbl-wrap\b/.test(String(n.props?.className ?? "")));
   assert.strictEqual(wraps.length, 2, "the ledger and the by-agent table each sit in a .tbl-wrap");
   const scrollers = nodes.filter((n) => /\boverflow-(x-|y-)?(auto|scroll)\b/.test(String(n.props?.className ?? "")));
@@ -860,7 +870,7 @@ test("ledger: the ledger and the by-agent table grow with the page instead of ca
     } as unknown as PayloadState<unknown>,
     onRetry: () => {},
   });
-  const capped = [...flattenNodes(ledger), ...flattenNodes(failures)]
+  const capped = [...expandNodes(ledger), ...expandNodes(failures)]
     .filter((n) => (n.props?.style as Record<string, unknown> | undefined)?.maxHeight != null);
   assert.deepStrictEqual(capped.map((n) => n.props?.className), []);
 });
@@ -868,7 +878,7 @@ test("ledger: the ledger and the by-agent table grow with the page instead of ca
 test("ledger: the rows form one Tab stop and keep their row semantics", () => {
   const rows = [ledgerRowOf("done", { id: 1 }), ledgerRowOf("fail", { id: 2 }), ledgerRowOf("done", { id: 3 })];
   const ledger = helpers.ResultTable({ rows, sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {} });
-  const rendered = flattenNodes(ledger)
+  const rendered = ledgerBodyRowsO(ledger)
     .filter((n) => n.props?.focusProps != null)
     .map((n) => helpers.ResultTableRow(n.props as Parameters<typeof helpers.ResultTableRow>[0]));
   assert.strictEqual(rendered.length, rows.length);
@@ -887,7 +897,7 @@ test("ledger: every column header uses sentence case, never a raw field name", (
 
 test("ledger row: a long summary keeps its full text for a CSS ellipsis and carries it as the title", () => {
   const summary = "Bounded the ledger inside its card so the page ends where its content ends, and truncated the summary with an ellipsis";
-  const nodes = flattenNodes(renderLedgerRow(ledgerRowOf("done", { summary })));
+  const nodes = expandNodes(renderLedgerRow(ledgerRowOf("done", { summary })));
   const clip = nodes.find((n) => n.children.includes(summary));
   assert.ok(clip, "the summary is rendered in full, not cut in script");
   assert.match(String(clip!.props?.className), /\btruncate\b/);
@@ -972,7 +982,7 @@ test("ResultTable: no Check column, and a capped Needs-you offers one control to
   assert.ok(!headerLabels.includes("Check"), "the check verdict lives in the drawer, not a mostly-N/A column");
 
   // the toggle row is its own component — render it one level to read its control
-  const toggle = nodes.find((n) => n.props?.section !== undefined)!;
+  const toggle = ledgerBodyRowsO(nodes).find((n) => n.type === (helpers as unknown as Record<string, unknown>).NeedsYouToggleRowO)!;
   const buttons = flattenNodes((toggle.type as (p: unknown) => RenderNode)(toggle.props)).filter((n) => n.type === "button");
   assert.strictEqual(buttons.length, 1);
   assert.match(collectText([buttons[0]]), /Show all 12/);
@@ -1235,8 +1245,8 @@ describe("Task results reads opt into the prior window", () => {
 // --- ledger summary cell: every summary starts on one line, whatever pill its row carries ---
 
 const summaryLineOf = (tr: RenderNode): unknown[] => {
-  const summaryCell = flattenNodes(tr).filter((n) => n.type === "td").at(-1);
-  const line = flattenNodes(summaryCell).find((n) => n.type === "div");
+  const summaryCell = expandNodes(tr).filter((n) => n.type === "td").at(-1);
+  const line = expandNodes(summaryCell).find((n) => n.type === "div");
   assert.ok(line, "the summary cell lays its parts out on one line");
   return line.children.filter((child) => child !== null && child !== false && child !== undefined);
 };
@@ -1273,6 +1283,9 @@ describe("ledger row: the summary starts right after the fixed flag slot, and th
 const B5_CLASSES = ["text-right", "tabular-nums", "whitespace-nowrap"];
 const assertB5 = (node: RenderNode, what: string): void => {
   const className = String(node.props?.className ?? "");
+  // a .tbl cell's num class is the B5 trio as one class (base.css .tbl td.num); any other node spells the trio out
+  const isTableCell = node.type === "td" || node.type === "th";
+  if (isTableCell && className.split(/\s+/).includes("num")) return;
   for (const cls of B5_CLASSES) assert.ok(className.split(/\s+/).includes(cls), `${what} lacks ${cls}: "${className}"`);
   assert.doesNotMatch(className, /\btext-center\b/, `${what} is centred`);
 };
@@ -1294,7 +1307,10 @@ describe("sub-tables: every numeric value and its header are right-aligned, tabu
     const nodes = expandNodes(failures);
     const heads = nodes.filter((n) => n.type === "th");
     assert.strictEqual(heads.length, 6);
-    assert.match(String(heads[0].props?.className), /\btext-left\b/, "the agent column stays left");
+    // own-face cells read left at zero specificity (base.css) → the agent head stays left by carrying no right-align class
+    const table = nodes.find((n) => n.type === "table")!;
+    assert.match(String(table.props?.className), /\btbl--own-face\b/, "the table reads its cells left");
+    assert.doesNotMatch(String(heads[0].props?.className ?? ""), /\b(num|text-right)\b/, "the agent column stays left");
     heads.slice(1).forEach((th) => assertB5(th, `header "${renderText(th).trim()}"`));
 
     const cells = nodes.filter((n) => n.type === "td");
@@ -1302,10 +1318,12 @@ describe("sub-tables: every numeric value and its header are right-aligned, tabu
     // the rate cell holds a bar → its share, not the cell, carries the alignment, and it ends the cell
     const [, rateCell, ...countCells] = cells;
     countCells.forEach((td) => assertB5(td, `cell "${renderText(td).trim()}"`));
-    const rateLine = flattenNodes(rateCell).find((n) => n.type === "span")!;
+    const rateLine = expandNodes(rateCell).find((n) => n.type === "span")!;
     const share = rateLine.children.filter((child) => child !== null && child !== false && child !== undefined).at(-1) as RenderNode;
     assert.strictEqual(renderText(share).trim(), "9.1%", "the share ends the rate cell");
-    assertB5(share, "the failure-rate share");
+    // the share inherits the right alignment of its num cell (.tbl td.num), and keeps its own figures tabular on one line
+    assert.ok(String(rateCell.props?.className ?? "").split(/\s+/).includes("num"), "the rate cell aligns right as a num cell");
+    for (const cls of ["tabular-nums", "whitespace-nowrap"]) assert.match(String(share.props?.className), new RegExp(`\\b${cls}\\b`), `the share keeps ${cls}`);
     assert.doesNotMatch(String(share.props?.className), /\bfont-mono\b/, "the share reads in the sans face, its digits tabular");
   });
 

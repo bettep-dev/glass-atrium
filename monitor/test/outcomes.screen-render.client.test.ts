@@ -314,20 +314,23 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
   const tokensOf = (node: RenderedNode): string[] => String(node.props.className ?? "").split(/\s+/).filter(Boolean);
   const columnHeads = findNodes(tree, (n) => n.type === "th" && n.props.scope === "col");
 
-  test("the ledger is a .tbl table marked own-face, not the shared Table component", () => {
+  test("the ledger is a .tbl table marked own-face, drawn by the shared Table component", () => {
     const tables = findNodes(tree, (n) => n.type === "table");
     assert.equal(tables.length, 1);
     assert.ok(tokensOf(tables[0]).includes("tbl"), "the .tbl cell geometry applies");
     assert.ok(tokensOf(tables[0]).includes("tbl--own-face"), "the house header face and row states stay off");
-    assert.equal(findNodes(tree, (n) => n.type === "Table").length, 0);
+    assert.equal(findNodes(tree, (n) => n.type === "Table").length, 1);
   });
 
   test("every column header is the shared TableHead in the ledger's own sentence-case face, one line each", () => {
     assert.deepEqual(findNodes(tree, (n) => n.type === "TableHead").length, 5);
     assert.deepEqual(columnHeads.map((th) => collectText(th).trim()), ["Time", "Agent", "Task type", "Result", "Summary"]);
+    // the head face rides the table's thead variants → every column head takes it, none spells it out
+    const [table] = findNodes(tree, (n) => n.type === "table");
+    const faces = ["text-dim", "font-medium", "whitespace-nowrap"].map((t) => `[&_thead_th]:${t}`);
+    assert.ok(faces.every((t) => tokensOf(table).includes(t)), `the head face: ${tokensOf(table)}`);
     for (const th of columnHeads) {
       const tokens = tokensOf(th);
-      assert.ok(["text-dim", "font-medium", "whitespace-nowrap"].every((t) => tokens.includes(t)), `'${collectText(th)}' keeps its face: ${tokens}`);
       assert.ok(!tokens.includes("uppercase"), `'${collectText(th)}' is not upper-cased`);
       assert.equal((th.props.style as Record<string, unknown>).position, "sticky");
     }

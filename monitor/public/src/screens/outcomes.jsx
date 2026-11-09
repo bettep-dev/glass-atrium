@@ -1189,64 +1189,50 @@ function compareAgentFailureRowsO(a, b) {
 }
 
 function AgentFailureTableO({ state, onRetry, shared }) {
-  const { Card, STICKY_TH_STYLE } = window.UI;
+  const { Card } = window.UI;
 
   return (
     <div id={REGION_CARD_IDS.agentFailures}>
       <Card title="Failures by agent" sub="Worst failure rate first" isFlush
         info={<p className="fs-body m-0">Failed or blocked records per registry agent. Agents with none are left out; the worst rate comes first.</p>}>
-        <AgentFailureBodyO state={state} onRetry={onRetry} shared={shared} stickyStyle={STICKY_TH_STYLE}/>
+        <AgentFailureBodyO state={state} onRetry={onRetry} shared={shared}/>
       </Card>
     </div>
   );
 }
 
 // Numeric columns, alignment only: values and headers right-aligned, tabular figures, one line — every typeface stays as it is
-const NUM_ALIGN_O = 'text-right tabular-nums whitespace-nowrap';
-
-const AGENT_FAILURE_COLUMNS_O = [
-  { label: 'Agent', align: 'left' },
-  { label: 'Failure rate', align: 'right' },
-  { label: 'Failed', align: 'right' },
-  { label: 'Blocked', align: 'right' },
-  { label: 'Open caveats', align: 'right' },
-  { label: 'Total records', align: 'right' },
-];
-
-function AgentFailureHeadO({ stickyStyle }) {
-  return (
-    <thead className="tbl-head">
-      <tr>
-        {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
-          <th key={label} scope="col" className={`${align === 'right' ? NUM_ALIGN_O : 'text-left'} text-dim font-medium px-3 border-b border-line`} style={stickyStyle}>{label}</th>
-        ))}
-      </tr>
-    </thead>
-  );
-}
+const AGENT_FAILURE_COLUMNS_O = Object.freeze([
+  { key: 'agent', label: 'Agent' },
+  { key: 'rate', label: 'Failure rate', isNumeric: true },
+  { key: 'failed', label: 'Failed', isNumeric: true },
+  { key: 'blocked', label: 'Blocked', isNumeric: true },
+  { key: 'caveats', label: 'Open caveats', isNumeric: true },
+  { key: 'total', label: 'Total records', isNumeric: true },
+]);
+// six numeric columns stop fitting under this width → each agent stacks onto a two-line item, no column lost to the wrapper clip
+const AGENT_FAILURE_STACK_BELOW_PX = 560;
+// .tbl--own-face: the .tbl cell geometry under this page's meta-step body and dim one-line head, with no clickable-row hover.
+// separate borders: a collapsed border would not travel with the sticky header row
+const OWN_FACE_TABLE_CLASS_O = 'tbl--own-face fs-meta border-separate border-spacing-0 [&_thead_th]:text-dim [&_thead_th]:font-medium [&_thead_th]:whitespace-nowrap';
 
 // 적재 중에도 표의 모양을 유지 — 빈 본문은 '실패한 agent 없음' 으로 읽힌다.
-function AgentFailureSkeletonO({ stickyStyle }) {
-  return (
-    <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }} aria-busy={true} aria-label="Loading by-agent failures">
-      {/* called, not mounted → <thead> stays a direct child in the element tree */}
-      {AgentFailureHeadO({ stickyStyle })}
-      <tbody className="tbl-compact">
-        {[0, 1, 2].map((i) => (
-          <tr key={i}>
-            <td colSpan={AGENT_FAILURE_COLUMNS_O.length} className="px-3 border-b border-line">
-              <div className="skel-pulse-o" style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))' }}/>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+function AgentFailureSkeletonO() {
+  const { Table, TableRow, TableCell } = window.UI;
+  const rows = (view) => [0, 1, 2].map((i) => (
+    <TableRow key={i} view={view}>
+      <TableCell view={view} kind="span">
+        <div className="skel-pulse-o" style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))' }}/>
+      </TableCell>
+    </TableRow>
+  ));
+  return <Table caption="Loading by-agent failures" columns={AGENT_FAILURE_COLUMNS_O} isHeadSticky className={OWN_FACE_TABLE_CLASS_O}
+    bodies={[{ key: 'skeleton', rows, isBusy: true, className: 'tbl-compact' }]}/>;
 }
 
-function AgentFailureBodyO({ state, onRetry, shared, stickyStyle }) {
+function AgentFailureBodyO({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
-  if (view === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
+  if (view === 'loading') return <AgentFailureSkeletonO/>;
   if (view === 'error') {
     return <RegionErrorO source="by-agent failures" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.agentFailures}/>;
   }
@@ -1256,25 +1242,24 @@ function AgentFailureBodyO({ state, onRetry, shared, stickyStyle }) {
     return <EmptyStateO message="No registry agent failed or blocked in this window."/>;
   }
 
+  // the table's .tbl-wrap clips sideways and never scrolls → the sticky head reaches the 70vh card body, the scroller that does
+  const getRows = (tableView) => rows.map((row) => <AgentFailureRowO key={row.agent} row={row} view={tableView}/>);
+  return <window.UI.Table caption="Failure rate by registry agent, worst first" columns={AGENT_FAILURE_COLUMNS_O} isHeadSticky
+    stackBelowPx={AGENT_FAILURE_STACK_BELOW_PX} className={OWN_FACE_TABLE_CLASS_O}
+    bodies={[{ key: 'agents', rows: getRows, className: 'tbl-compact' }]}/>;
+}
+
+function AgentFailureRowO({ row, view }) {
+  const { TableRow, TableCell } = window.UI;
   return (
-    // .tbl-wrap clips sideways and never scrolls → the sticky head reaches the 70vh card body, the scroller that does
-    <div className="tbl-wrap">
-      <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-        {AgentFailureHeadO({ stickyStyle })}
-        <tbody className="tbl-compact">
-          {rows.map((row) => (
-            <tr key={row.agent} className="outcome-row">
-              <td className="text-left text-ink px-3 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
-              <AgentFailureRateCellO row={row}/>
-              <td className={`${NUM_ALIGN_O} text-ink px-3 border-b border-line`}>{formatIntO(row.failed)}</td>
-              <td className={`${NUM_ALIGN_O} text-ink px-3 border-b border-line`}>{formatIntO(row.blocked)}</td>
-              <OpenCaveatCellO count={row.openCaveats}/>
-              <td className={`${NUM_ALIGN_O} text-faint px-3 border-b border-line`}>{formatIntO(row.total)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <TableRow view={view} className="outcome-row">
+      <TableCell view={view} className="text-ink truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></TableCell>
+      <AgentFailureRateCellO row={row} view={view}/>
+      <TableCell view={view} textRole="meta" label="Failed" isNumeric className="text-ink">{formatIntO(row.failed)}</TableCell>
+      <TableCell view={view} textRole="meta" label="Blocked" isNumeric className="text-ink">{formatIntO(row.blocked)}</TableCell>
+      <OpenCaveatCellO count={row.openCaveats} view={view}/>
+      <TableCell view={view} textRole="meta" label="Total records" isNumeric className="text-faint">{formatIntO(row.total)}</TableCell>
+    </TableRow>
   );
 }
 
@@ -1285,34 +1270,32 @@ function getFailureRateFillO(row) {
   return outcomeShareTone(row.failed + row.blocked, row.total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') ? '--crit' : '--ok';
 }
 
-function AgentFailureRateCellO({ row }) {
-  const { LowSampleMark } = window.UI;
+function AgentFailureRateCellO({ row, view }) {
+  const { LowSampleMark, TableCell } = window.UI;
   const pct = row.rate * 100;
   return (
-    <td
-      className="px-3 border-b border-line"
+    <TableCell view={view} textRole="meta" label="Failure rate" isNumeric
       title={`${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`}>
       {/* the share ends the cell → every rate shares one right edge under its right-aligned header; the bar and the low-sample mark lead it */}
-      <span className="flex items-center gap-2">
+      <span className="flex items-center gap-control">
         <span aria-hidden="true" className="flex-1" style={{ minWidth: 40, height: 6, borderRadius: 3, background: 'rgb(var(--sunken))' }}>
           <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${getFailureRateFillO(row)}))` }}/>
         </span>
         <LowSampleMark n={row.total}/>
-        <span className={`${NUM_ALIGN_O} ${row.isLowSample ? 'text-faint' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
+        <span className={`tabular-nums whitespace-nowrap ${row.isLowSample ? 'text-faint' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
       </span>
-    </td>
+    </TableCell>
   );
 }
 
 // null = the agent sits outside the top-10 rollup → em-dash, never a zero that was not loaded.
-function OpenCaveatCellO({ count }) {
+function OpenCaveatCellO({ count, view }) {
   const isLoaded = count !== null;
   return (
-    <td
-      className={`${NUM_ALIGN_O} text-ink px-3 border-b border-line`}
+    <window.UI.TableCell view={view} textRole="meta" label="Open caveats" isNumeric className="text-ink"
       title={isLoaded ? undefined : 'Not loaded — only the top 10 agents by volume carry an open-caveat count'}>
       {isLoaded ? formatIntO(count) : '—'}
-    </td>
+    </window.UI.TableCell>
   );
 }
 
@@ -2138,8 +2121,6 @@ function LoopEventsCard({ state, onRetry, shared }) {
 }
 
 function LoopEventsBody({ state, onRetry, shared }) {
-  const { TableHead } = window.UI;
-
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
     return <ChartSkeletonO height={200} label="run events"/>;
@@ -2170,57 +2151,58 @@ function LoopEventsBody({ state, onRetry, shared }) {
     ['info', 'info',  'All events',    total],
   ];
 
+  const { Stack, Cluster, Table } = window.UI;
+  const getRows = (tableView) => events.map((event) => <LoopEventRowO key={event.id} event={event} view={tableView}/>);
   return (
-    <div className="p-4">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3">
+    <Stack gap="block" className="pt-card-pad">
+      <Cluster gap="control-group" className="px-card-pad">
         {summary.map(([tone, iconName, label, count]) => (
-          <span key={label} className="fs-body inline-flex items-center gap-1.5">
+          <span key={label} className="fs-body inline-flex items-center gap-label-inline">
             <span style={{ color: `rgb(var(--${tone}))` }} aria-hidden="true"><GlyphO name={iconName}/></span>
             <span className="text-dim">{label}</span>
             <span className="text-ink tabular-nums">{formatIntO(count)}</span>
           </span>
         ))}
+      </Cluster>
+      {/* 고정 높이 스크롤 — raw 로그가 페이지를 무한 늘이지 않도록 (max-height 42vh + 내부 스크롤); the sticky head stops at its top. */}
+      <div className="overflow-y-auto" style={{ maxHeight: '42vh' }}>
+        <Table caption="Learning-run events" columns={LOOP_EVENT_COLUMNS_O} isHeadSticky stackBelowPx={LOOP_EVENT_STACK_BELOW_PX}
+          className={OWN_FACE_TABLE_CLASS_O} bodies={[{ key: 'events', rows: getRows, className: 'tbl-compact' }]}/>
       </div>
-      {/* 고정 높이 스크롤 — raw 로그가 페이지를 무한 늘이지 않도록 (max-height 42vh + 내부 스크롤). */}
-      {/* position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page. */}
-      <div className="overflow-y-auto" style={{ maxHeight: '42vh', position: 'relative' }}>
-        <table className="w-full fs-meta">
-          <thead className="tbl-head">
-            {/* sticky th, not tr → each head cell keeps its own rule and background over the rows scrolling under it */}
-            <tr className="text-dim">
-              <TableHead isSticky className="text-left font-medium px-2 border-b border-line">Time</TableHead>
-              <TableHead isSticky className="text-left font-medium px-2 border-b border-line">Agent</TableHead>
-              <TableHead isSticky className="text-left font-medium px-2 border-b border-line">Result</TableHead>
-              <TableHead isSticky className={`${NUM_ALIGN_O} font-medium px-2 border-b border-line`}>Added</TableHead>
-              <TableHead isSticky className={`${NUM_ALIGN_O} font-medium px-2 border-b border-line`}>Removed</TableHead>
-            </tr>
-          </thead>
-          <tbody>
-            {events.map((e) => {
-              const meta = loopResultMetaO(e.eval_result);
-              return (
-                <tr key={e.id}>
-                  <td className="text-left text-faint tabular-nums px-2 py-1.5 border-b border-line whitespace-nowrap">
-                    {window.UI.formatKstDateTime(e.event_ts)}
-                  </td>
-                  <td className="text-left text-dim px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={e.agent || ''}>
-                    <window.UI.AgentName name={e.agent}/>
-                  </td>
-                  <td className="text-left px-2 py-1.5 border-b border-line" title={String(e.eval_result || '')}>
-                    <span className="inline-flex items-center gap-0.5 text-ink whitespace-nowrap">
-                      <span style={{ color: `rgb(var(--${meta.tone}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-                      {meta.label}
-                    </span>
-                  </td>
-                  <td className={`${NUM_ALIGN_O} text-dim px-2 py-1.5 border-b border-line`}>+{formatIntO(Number(e.changes_added ?? 0))}</td>
-                  <td className={`${NUM_ALIGN_O} text-dim px-2 py-1.5 border-b border-line`}>-{formatIntO(Number(e.changes_removed ?? 0))}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    </Stack>
+  );
+}
+
+const LOOP_EVENT_COLUMNS_O = Object.freeze([
+  { key: 'time', label: 'Time' },
+  { key: 'agent', label: 'Agent' },
+  { key: 'result', label: 'Result' },
+  { key: 'added', label: 'Added', isNumeric: true },
+  { key: 'removed', label: 'Removed', isNumeric: true },
+]);
+// five columns stop fitting under this width → each event stacks onto a two-line item, its agent first
+const LOOP_EVENT_STACK_BELOW_PX = 480;
+
+function LoopEventRowO({ event, view }) {
+  const { TableRow, TableCell } = window.UI;
+  const meta = loopResultMetaO(event.eval_result);
+  return (
+    <TableRow view={view}>
+      <TableCell view={view} textRole="meta" label="Time" className="text-faint tabular-nums whitespace-nowrap">
+        {window.UI.formatKstDateTime(event.event_ts)}
+      </TableCell>
+      <TableCell view={view} className="text-dim truncate" style={{ maxWidth: 160 }} title={event.agent || ''}>
+        <window.UI.AgentName name={event.agent}/>
+      </TableCell>
+      <TableCell view={view} textRole="meta" label="Result" title={String(event.eval_result || '')}>
+        <span className="inline-flex items-center gap-label-inline text-ink whitespace-nowrap">
+          <span style={{ color: `rgb(var(--${meta.tone}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
+          {meta.label}
+        </span>
+      </TableCell>
+      <TableCell view={view} textRole="meta" label="Added" isNumeric className="text-dim">+{formatIntO(Number(event.changes_added ?? 0))}</TableCell>
+      <TableCell view={view} textRole="meta" label="Removed" isNumeric className="text-dim">-{formatIntO(Number(event.changes_removed ?? 0))}</TableCell>
+    </TableRow>
   );
 }
 
@@ -2460,83 +2442,68 @@ function applyClosureToWindowO(windowNeedsYou, pageRows, closure) {
 }
 
 function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, needsYouCap = null, onToggleNeedsYou }) {
-  // mono 는 timestamp/id/숫자 컬럼만 — 산문(agent/task_type/result/summary)은 sans (W3-T7 density).
   // 5 columns — confidence · self-check · automatic check · reworks · cid live in the drawer; nearly every row's check is 'not checked'.
   const sections = buildLedgerSectionsO(rows, closure, needsYou, needsYouCap);
   const [activeRow, setActiveRow] = useStateO(0);
   const rowStarts = getLedgerRowStartsO(sections);
   const rowCount = getLedgerDisplayRowsO(sections).length;
-  const { TableHead, TableCell } = window.UI;
+  const getFocusProps = (row, index) => window.UI.getRowFocusProps({
+    index, activeIndex: activeRow, count: rowCount, onActivate: () => onRowClick(row), onActiveChange: setActiveRow,
+  });
+  const getRows = (view) => sections.flatMap((section, sectionIndex) => (section.rows.length === 0 ? [] : [
+    <LedgerGroupRowO key={`group-${section.key}`} section={section} view={view}/>,
+    ...section.rows.map((row, i) => <ResultTableRow key={row.id} row={row} view={view} onRowClick={onRowClick} closure={closure}
+      focusProps={getFocusProps(row, rowStarts[sectionIndex] + i)}/>),
+    section.key === 'needs-you' && <NeedsYouToggleRowO key={`toggle-${section.key}`} section={section} view={view}
+      isCapped={needsYouCap != null} onToggle={onToggleNeedsYou}/>,
+  ]));
 
-  return (
-    // .tbl-wrap: positioned → AgentName's sr-only spans resolve inside it; clipped, never a scroller → the sticky head reaches the page.
-    // .tbl--own-face: the .tbl cell geometry (40 rows, 16 edge cells, the control-cell step) under this ledger's own header and body face.
-    // separate borders: a collapsed border would not travel with the sticky header row.
-    <div className="tbl-wrap">
-      <table className="tbl tbl--own-face fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-        <thead>
-          <tr>
-            <SortableHeader label="Time" sortKey="record_ts" currentSort={sort} onSortChange={onSortChange} width={120}/>
-            <TableHead isSticky className={LEDGER_HEAD_CLASS} style={{ minWidth: 110 }}>Agent</TableHead>
-            <TableHead isSticky className={LEDGER_HEAD_CLASS}>Task type</TableHead>
-            <TableHead isSticky className={LEDGER_HEAD_CLASS}>Result</TableHead>
-            <TableHead isSticky className={LEDGER_HEAD_CLASS}>Summary</TableHead>
-          </tr>
-        </thead>
-        <tbody>
-          {sections.map((section, sectionIndex) => (
-            section.rows.length === 0 ? null : (
-              <React.Fragment key={section.key}>
-                <tr>
-                  <TableCell view={LEDGER_VIEW_O} kind="group-header" id={section.anchorId}>{section.heading}</TableCell>
-                </tr>
-                {section.rows.map((row, i) => (
-                  <ResultTableRow
-                    key={row.id}
-                    row={row}
-                    onRowClick={onRowClick}
-                    closure={closure}
-                    focusProps={window.UI.getRowFocusProps({
-                      index: rowStarts[sectionIndex] + i,
-                      activeIndex: activeRow,
-                      count: rowCount,
-                      onActivate: () => onRowClick(row),
-                      onActiveChange: setActiveRow,
-                    })}
-                  />
-                ))}
-                {section.key === 'needs-you' && (
-                  <NeedsYouToggleRowO section={section} isCapped={needsYouCap != null} onToggle={onToggleNeedsYou}/>
-                )}
-              </React.Fragment>
-            )
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  // the table's .tbl-wrap is positioned → AgentName's sr-only spans resolve inside it; clipped, never a scroller → the sticky head reaches the page
+  return <window.UI.Table caption="Outcome records" columns={getLedgerColumnsO(sort, onSortChange)} widths={LEDGER_WIDTHS_O}
+    isHeadSticky stackBelowPx={LEDGER_STACK_BELOW_PX} className={OWN_FACE_TABLE_CLASS_O} bodies={[{ key: 'ledger', rows: getRows }]}/>;
 }
 
-const LEDGER_COLUMN_COUNT = 5;
-// the ledger's hand-built table → the cell atom's view: wide, its group header spanning every column
-const LEDGER_VIEW_O = Object.freeze({ isStacked: false, columnCount: LEDGER_COLUMN_COUNT });
-// the ledger's own header face (sentence case, dim, medium) — .tbl--own-face leaves it to these classes; one line, never wrapping
-const LEDGER_HEAD_CLASS = 'text-dim font-medium whitespace-nowrap';
+const LEDGER_PLAIN_COLUMNS_O = Object.freeze([
+  { key: 'agent', label: 'Agent' },
+  { key: 'task_type', label: 'Task type' },
+  { key: 'result', label: 'Result' },
+  { key: 'summary', label: 'Summary' },
+]);
+// Time and Agent keep their one-line minimum; the summary takes the width left
+const LEDGER_WIDTHS_O = Object.freeze(['120px', '110px', undefined, undefined, undefined]);
+// five columns stop fitting under this width → each record stacks onto a two-line item, its summary first
+const LEDGER_STACK_BELOW_PX = 640;
+
+// aria-sort sits on the Time column's th; the sort button inside it is the Tab stop and takes Enter and Space
+function getLedgerColumnsO(sort, onSortChange) {
+  const [field, dir] = sort.split(':');
+  return [
+    { key: 'record_ts', label: <SortButtonO label="Time" sortKey="record_ts" currentSort={sort} onSortChange={onSortChange}/>,
+      sort: getAriaSort(field === 'record_ts', dir) },
+    ...LEDGER_PLAIN_COLUMNS_O,
+  ];
+}
+
+function LedgerGroupRowO({ section, view }) {
+  const { TableRow, TableCell } = window.UI;
+  return <TableRow view={view}><TableCell view={view} kind="group-header" id={section.anchorId}>{section.heading}</TableCell></TableRow>;
+}
 
 // Capped → 'Show all N'; expanded past the cap → 'Show first N'; nothing to toggle → no row.
-function NeedsYouToggleRowO({ section, isCapped, onToggle }) {
+function NeedsYouToggleRowO({ section, isCapped, onToggle, view }) {
   const needsYouTotal = section.rows.length + section.hiddenCount;
   const hasToggle = typeof onToggle === 'function'
     && (isCapped ? section.hiddenCount > 0 : needsYouTotal > NEEDS_YOU_PAGE_CAP);
   if (!hasToggle) return null;
+  const { TableRow, TableCell } = window.UI;
   return (
-    <tr>
-      <td colSpan={LEDGER_COLUMN_COUNT}>
+    <TableRow view={view}>
+      <TableCell view={view} kind="span">
         <button type="button" className="btn ghost sm" aria-expanded={!isCapped} onClick={onToggle}>
           {isCapped ? `Show all ${formatIntO(needsYouTotal)} needs-you rows` : `Show first ${NEEDS_YOU_PAGE_CAP} only`}
         </button>
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -2560,8 +2527,8 @@ function getAriaSort(isActive, dir) {
   return dir === 'asc' ? 'ascending' : 'descending';
 }
 
-function SortableHeader({ label, sortKey, currentSort, onSortChange, width, descOnly }) {
-  const { TableHead } = window.UI;
+// The 32 control in a th puts the header row on the control-cell step → it stays 40
+function SortButtonO({ label, sortKey, currentSort, onSortChange, descOnly }) {
   const [field, dir] = currentSort.split(':');
   const isActive = field === sortKey;
   const arrowIcon = getSortArrowIcon(isActive, dir);
@@ -2576,19 +2543,11 @@ function SortableHeader({ label, sortKey, currentSort, onSortChange, width, desc
     onSortChange(`${sortKey}:${nextDir}`);
   };
 
-  // aria-sort stays on the cell; the native button inside it is the Tab stop and takes Enter and Space.
-  // The 32 control in a th puts the header row on the control-cell step → it stays 40
   return (
-    <TableHead
-      isSticky
-      className={LEDGER_HEAD_CLASS}
-      style={{ minWidth: width }}
-      aria-sort={getAriaSort(isActive, dir)}>
-      <button type="button" className="btn ghost sm tbl-sort" onClick={handleClick}>
-        {label}
-        {arrowIcon && <GlyphO name={arrowIcon} className="text-accent"/>}
-      </button>
-    </TableHead>
+    <button type="button" className="btn ghost sm tbl-sort" onClick={handleClick}>
+      {label}
+      {arrowIcon && <GlyphO name={arrowIcon} className="text-accent"/>}
+    </button>
   );
 }
 
@@ -2633,7 +2592,8 @@ function QaScoreDotsO({ qaScore }) {
 
 // revision_count 미니 flag — ≥2 (process improvement 대상, core-learning-log.md) 일 때 UI.Bar 막대 표식.
 //   숫자 + warn-tone Bar (max 5 정규화) dual-encode. <2 = 숫자만 (또는 0=dash).
-function ResultTableRow({ row, onRowClick, closure, focusProps }) {
+function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
+  const { TableRow, TableCell } = window.UI;
   const ts      = formatTimestampO(row.record_ts);
   const summary  = row.summary || '';
   // result tone/icon/label = RESULT_META SoT (T-OUT-1 — 로컬 result→color map 제거, 색맹 안전 듀얼인코딩).
@@ -2647,19 +2607,20 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
   const needsYouReason = getNeedsYouReasonO(row, closedAt);
 
   return (
-    <tr
+    <TableRow
+      view={view}
       className="outcome-row cursor-pointer"
       onClick={() => onRowClick(row)}
       {...focusProps}
       aria-label={[row.agent, row.task_type, resultMeta.label, needsYouReason, row.summary].filter(Boolean).join(' ')}>
-      <td className="text-ink tabular-nums whitespace-nowrap">
+      <TableCell view={view} textRole="meta" label="Time" className="text-ink tabular-nums whitespace-nowrap">
         {ts}
-      </td>
-      <td className="text-ink truncate" style={{ maxWidth: 140 }} title={row.agent}>
+      </TableCell>
+      <TableCell view={view} textRole="meta" label="Agent" className="text-ink truncate" style={{ maxWidth: 140 }} title={row.agent}>
         <window.UI.AgentName name={row.agent}/>
-      </td>
-      <td className="text-dim whitespace-nowrap">{row.task_type}</td>
-      <td title={resultMeta.label}>
+      </TableCell>
+      <TableCell view={view} textRole="meta" label="Task type" className="text-dim whitespace-nowrap">{row.task_type}</TableCell>
+      <TableCell view={view} textRole="meta" label="Result" title={resultMeta.label}>
         {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
         <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
           <span data-group="result" className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
@@ -2692,10 +2653,11 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
             </button>
           )}
         </span>
-      </td>
+      </TableCell>
       {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card. */}
       {/* fixed flag slot | summary | reason → every summary starts at one x; the flag glyph leads, the variable-width reason sits at the cell's end, never truncated. */}
-      <td className="text-ink" style={{ width: '100%', maxWidth: 0 }} title={summary}>
+      {/* stacked → the summary leads its two-line item at full width, so the wide-mode squeeze drops */}
+      <TableCell view={view} className="text-ink" style={view?.isStacked ? undefined : SUMMARY_WIDE_STYLE_O} title={summary}>
         <div className="flex items-center">
           <SummaryFlagSlotO row={row}/>
           <span className="flex-1 truncate" style={{ minWidth: 0 }}>{summary}</span>
@@ -2703,10 +2665,12 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
             <span className="shrink-0 whitespace-nowrap ml-control text-dim">{needsYouReason}</span>
           )}
         </div>
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
+
+const SUMMARY_WIDE_STYLE_O = Object.freeze({ width: '100%', maxWidth: 0 });
 
 // Why a needs-you row needs you, in words — null for a broken row (its Result cell says it) and for routine rows.
 function getNeedsYouReasonO(row, closedAt) {
