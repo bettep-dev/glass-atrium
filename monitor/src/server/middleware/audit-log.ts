@@ -1,5 +1,5 @@
 // Audit-log middleware: fire-and-forget monitor.audit_log INSERT for every mutating /api/* response.
-// Registered in main.ts after registerRoutes(), before app.listen(); covers clauded-docs + improvement routes.
+// Registered in app.ts (buildApp) after registerRoutes(), before main.ts calls app.listen(); covers the ROUTE_RESOURCE routes.
 // Safety bar: INSERT is not awaited (zero added latency); a failed/slow audit must NEVER block/delay/fail the mutation.
 // Hook failure = silent log only. Scope: mutating methods (POST/PUT/PATCH/DELETE) on covered routes only (reads/other routes ignored).
 
@@ -35,6 +35,14 @@ export const ROUTE_RESOURCE: ReadonlyMap<string, string> = new Map([
   ["/api/agents/:name", "agents"],
   // Self-update control plane — applies a release to the live install (irreversible, host-wide).
   ["/api/dashboard/update", "self-update"],
+  // Owner queue: login/logout and every owner decision on an item; the body (passphrase, answer text) is never recorded.
+  ["/api/queue/owner/login", "queue-owner"],
+  ["/api/queue/owner/logout", "queue-owner"],
+  ["/api/queue/owner/items/:id/answer", "queue-item"],
+  ["/api/queue/owner/items/:id/later", "queue-item"],
+  ["/api/queue/owner/items/:id/seen", "queue-item"],
+  ["/api/queue/owner/items/:id/reply", "queue-item"],
+  ["/api/queue/owner/items/:id/resend", "queue-item"],
 ]);
 
 // Single-writer enrichment seam: a covered handler may attach a curated old→new diff — never the raw request body (PII/secret guard).
@@ -144,7 +152,7 @@ function buildPayload(
 }
 
 /**
- * Register the audit-log hook. Called by main.ts after registerRoutes(), before app.listen().
+ * Register the audit-log hook. Called by app.ts (buildApp) after registerRoutes(), before main.ts calls app.listen().
  * onResponse (post-send, zero latency) → skip non-mutating/uncovered routes → fire-and-forget INSERT
  * (not awaited) → INSERT failure = silent log + swallow (the mutation already completed).
  */

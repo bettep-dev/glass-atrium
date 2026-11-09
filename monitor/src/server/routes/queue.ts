@@ -1,15 +1,13 @@
 // Owner queue API — the monitor's first encapsulated plugin (deliberately NOT fastify-plugin wrapped):
-// its Host allowlist and queue-key hooks reach only /api/queue/* routes, never a root route.
+// its Host allowlist, queue-key, cookie and owner-session hooks reach only /api/queue/* routes, never a root route.
+// Two credentials, no overlap: session routes take the queue key, owner routes (queue-owner.ts) the owner cookie.
 
 import os from "node:os";
 import path from "node:path";
 
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { z } from "zod";
+import type { FastifyInstance } from "fastify";
 
-import { respondDbFailure } from "../db-failure.js";
 import { getMonitorPort } from "../monitor-port.js";
-import { QueueEnvironmentError, QueueRequestError } from "../queue/errors.js";
 import { ackItem, claimPendingItems, withdrawItem } from "../queue/delivery.js";
 import { createItem, getCount, getItemOrThrow } from "../queue/items.js";
 import { deregisterSession, registerSession } from "../queue/registry.js";
@@ -21,31 +19,20 @@ import {
   registerBodySchema,
   sessionBodySchema,
 } from "../queue/schemas.js";
-import { parseIdParam } from "../route-params.js";
+import { ownerRoutesPlugin } from "./queue-owner.js";
+import { type IdParams, handleItemRequest, handleParsed, handleQueueRequest } from "./queue-request.js";
 
 /** Title 200 + body 20000 + options 20000 chars at up to 4 UTF-8 bytes each, plus JSON framing. */
 const POST_ROUTE_OPTIONS = { bodyLimit: 192 * 1024 } as const;
 
 export interface QueueRouteOptions {
-  /** Directory holding the 0600 `queue-key` file; read lazily, never at registration. */
+  /** Directory holding the 0600 `queue-key` and `owner-passphrase.json` files; read lazily, never at registration. */
   secretsDir: string;
   /** Port the Host allowlist pins (`127.0.0.1:<port>` · `localhost:<port>` · `[::1]:<port>`). */
   port: number;
   /** Home whose `.claude` / `.claude-<name>` directories are the only accepted config dirs. */
   homeDir: string;
 }
-
-type IdParams = { id: string };
-
-/** One queue route call: route label (logs), the schema its raw input must pass, and the work it then runs. */
-interface RequestSpec<S extends z.ZodType, W> {
-  route: string;
-  schema: S;
-  input: unknown;
-  work: W;
-}
-
-type RouteWork<R> = Pick<RequestSpec<z.ZodType, () => Promise<R>>, "route" | "work">;
 
 /** Defaults resolved at registration time (never import time) so a caller-supplied secrets dir always wins. */
 export function resolveQueueRouteOptions(secretsDir?: string): QueueRouteOptions {
@@ -67,6 +54,7 @@ async function queuePlugin(app: FastifyInstance, options: QueueRouteOptions): Pr
     handleQueueRequest(request, reply, { route: "/api/queue/count", work: () => getCount() }),
   );
   await app.register(sessionRoutesPlugin, options);
+  await app.register(ownerRoutesPlugin, options);
 }
 
 async function sessionRoutesPlugin(app: FastifyInstance, options: QueueRouteOptions): Promise<void> {
@@ -144,45 +132,4 @@ function registerWithdrawRoute(app: FastifyInstance): void {
       work: (id, body) => withdrawItem(id, body.sessionId).then(() => ({ ok: true })),
     }),
   );
-}
-
-async function handleItemRequest<S extends z.ZodType, R>(
-  request: FastifyRequest<{ Params: IdParams }>,
-  reply: FastifyReply,
-  spec: RequestSpec<S, (id: number, parsed: z.infer<S>) => Promise<R>>,
-): Promise<R | object> {
-  const id = parseIdParam(request.params.id);
-  if (id === null) return reply.code(400).send({ error: "invalid_id" });
-  return handleParsed(request, reply, { ...spec, work: (parsed) => spec.work(id, parsed) });
-}
-
-// Issue paths + messages only → a rejected value is never echoed back
-async function handleParsed<S extends z.ZodType, R>(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  spec: RequestSpec<S, (parsed: z.infer<S>) => Promise<R>>,
-): Promise<R | object> {
-  const parsed = spec.schema.safeParse(spec.input ?? {});
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
-    return reply.code(400).send({ error: "invalid_input", issues });
-  }
-  return handleQueueRequest(request, reply, { route: spec.route, work: () => spec.work(parsed.data) });
-}
-
-async function handleQueueRequest<R>(request: FastifyRequest, reply: FastifyReply, spec: RouteWork<R>): Promise<R | object> {
-  try {
-    return await spec.work();
-  } catch (error) {
-    if (error instanceof QueueRequestError) {
-      reply.code(error.statusCode);
-      return { error: error.code, reason: error.message };
-    }
-    if (error instanceof QueueEnvironmentError) {
-      request.log.error({ err: error, route: spec.route }, "queue environment read failed");
-      reply.code(500);
-      return { error: "queue_environment_failure" };
-    }
-    return respondDbFailure(request, reply, spec.route, error, "queue request failed");
-  }
 }

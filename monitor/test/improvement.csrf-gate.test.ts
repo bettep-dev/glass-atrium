@@ -8,26 +8,32 @@
 //   - gate leg · header-absence pass-through (curl + agent paths) and GET exemption
 //   - parser leg · text/plain with a body → 415 (the one row a gate 403 cannot mask)
 //   - body-limit leg · over-limit JSON → 413
-//   - production attachment · main.ts calls registerRequestGuards before registerRoutes
+//   - production assembly · guards ahead of the routes (queue owner route: text/plain → 415) and attached (cross-site → 403)
 //
 // Test infra:
-//   - No DB: the guards are route-agnostic, so two echo routes stand in for the 17 real
-//     mutation routes and keep the assertions about the guards alone.
+//   - Stripped-app rows need no DB: the guards are route-agnostic, so two echo routes stand in for
+//     the real mutation routes and keep the assertions about the guards alone.
+//   - Assembly rows run the real buildApp with a mktemp secrets dir; their fire-and-forget audit
+//     rows land in the test DB and are scrubbed in after().
 //   - App: stripped Fastify + registerRequestGuards() attached exactly as buildApp does,
 //     then app.inject() — no port binding.
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { randomBytes, scryptSync } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import "dotenv/config";
 
 import Fastify, { type FastifyInstance } from "fastify";
 
+import { buildApp } from "../src/server/app.js";
+import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { BODY_LIMIT_BYTES, registerRequestGuards } from "../src/server/request-guards.js";
+import { deleteDirectory } from "./lib/remove-dir.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const MAIN_SRC = resolve(__dirname, "../src/server/main.ts");
 
 const EVIL_ORIGIN = "https://evil.example";
 const LOOPBACK_ORIGIN = "http://127.0.0.1:16145";
@@ -183,21 +189,72 @@ test("bodyLimit: JSON body over the stated limit → 413", async () => {
   assert.strictEqual(status, 413);
 });
 
-// main.ts self-executes main() on import, so no test can import it and exercise buildApp —
-// which leaves the single production attachment of the guards covered by nothing. Every test
-// above would stay green with that one line deleted while all 17 mutation routes went
-// unguarded. Anchor it on the source text instead (same shape as ui.review-flag-reasons.unit).
-// Order is asserted too, not just presence: the body-limit leg rides an onRoute hook, which
-// only sees routes registered after it.
-test("attachment: main.ts registers the guards before the routes", () => {
-  const src = readFileSync(MAIN_SRC, "utf8");
-  const guardsAt = src.search(/registerRequestGuards\(\s*app\s*\)/);
-  const routesAt = src.search(/registerRoutes\(\s*app\s*\)/);
+// Production assembly: the real buildApp, aimed at a queue owner mutation route inside the first
+// encapsulated plugin. A child plugin copies its parent's content-type parsers when it loads, so the
+// text/plain row fails if the guards ever move after registerRoutes; the cross-site row fails if the
+// guards are missing from the assembly.
+const ASSEMBLY = {
+  HOST: "127.0.0.1:16145",
+  PASSPHRASE: "csrf-gate assembly passphrase",
+  ANSWER_URL: "/api/queue/owner/items/1/answer",
+} as const;
 
-  assert.notStrictEqual(guardsAt, -1, "main.ts must call registerRequestGuards(app)");
-  assert.notStrictEqual(routesAt, -1, "main.ts must call registerRoutes(app)");
-  assert.ok(
-    guardsAt < routesAt,
-    `registerRequestGuards(app) must precede registerRoutes(app) (got ${guardsAt} vs ${routesAt})`,
-  );
+async function withOwnerAssembly(run: (assembly: FastifyInstance, cookie: string) => Promise<void>): Promise<void> {
+  const secretsDir = mkdtempSync(path.join(tmpdir(), "csrf-assembly-"));
+  const salt = randomBytes(16);
+  const hash = scryptSync(ASSEMBLY.PASSPHRASE, salt, 32, { N: 16_384, r: 8, p: 1 });
+  const record = { algorithm: "scrypt", N: 16_384, r: 8, p: 1, keyLength: 32, salt: salt.toString("base64"), hash: hash.toString("base64") };
+  writeFileSync(path.join(secretsDir, "owner-passphrase.json"), JSON.stringify(record), { mode: 0o600 });
+  const assembly = await buildApp({ secretsDir });
+  try {
+    const login = await assembly.inject({
+      method: "POST",
+      url: "/api/queue/owner/login",
+      headers: { host: ASSEMBLY.HOST },
+      payload: { passphrase: ASSEMBLY.PASSPHRASE },
+    });
+    const cookie = login.cookies.find((entry) => entry.name === "atrium_queue_owner");
+    assert.ok(cookie !== undefined, `owner login through the assembly failed: ${login.statusCode} ${login.body}`);
+    await run(assembly, `atrium_queue_owner=${cookie.value}`);
+  } finally {
+    await assembly.close();
+    deleteDirectory(secretsDir);
+  }
+}
+
+test("assembly: text/plain with a body to a queue owner route, with a valid owner session → 415", async () => {
+  await withOwnerAssembly(async (assembly, cookie) => {
+    const res = await assembly.inject({
+      method: "POST",
+      url: ASSEMBLY.ANSWER_URL,
+      headers: { host: ASSEMBLY.HOST, cookie, "content-type": "text/plain" },
+      payload: '{"code":"R1"}',
+    });
+    assert.strictEqual(res.statusCode, 415, res.body);
+  });
+});
+
+test("assembly: a cross-site mutation to a queue owner route is refused with 403 before its handler", async () => {
+  await withOwnerAssembly(async (assembly, cookie) => {
+    const res = await assembly.inject({
+      method: "POST",
+      url: ASSEMBLY.ANSWER_URL,
+      headers: { host: ASSEMBLY.HOST, cookie, "content-type": "application/json", "sec-fetch-site": "cross-site", origin: EVIL_ORIGIN },
+      payload: { code: "R1" },
+    });
+    assert.strictEqual(res.statusCode, 403, res.body);
+  });
+});
+
+after(async () => {
+  try {
+    await getPrisma().$executeRaw`
+      DELETE FROM monitor.audit_log
+      WHERE actor = 'monitor-web'
+        AND ((target_table = 'queue-owner' AND target_id IS NULL) OR (target_table = 'queue-item' AND target_id = 1))
+        AND event_ts >= NOW() - INTERVAL '10 minutes'
+    `;
+  } finally {
+    await disconnectPrisma();
+  }
 });

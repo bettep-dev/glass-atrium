@@ -3,21 +3,15 @@
 
 import "dotenv/config";
 
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import type { FastifyInstance } from "fastify";
 
-import Fastify, { type FastifyInstance } from "fastify";
-import fastifyStatic from "@fastify/static";
-
+import { buildApp } from "./app.js";
 import { logger } from "./logger.js";
 import { assertSessionTimezoneIsUtc, disconnectPrisma, getPrisma } from "./db.js";
-import { registerRoutes } from "./routes/index.js";
-import { probeBrowserLaunch, registerBrowserShutdownHook } from "./clauded-docs/browser-pool.js";
-import { registerAuditLogHook } from "./middleware/audit-log.js";
+import { probeBrowserLaunch } from "./clauded-docs/browser-pool.js";
 import { auditHtmlRootAtBoot } from "./maintenance/html-root-audit.js";
 import { isLoopbackHost } from "./host-guard.js";
 import { getMonitorPort } from "./monitor-port.js";
-import { registerRequestGuards } from "./request-guards.js";
 
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
 const PORT = getMonitorPort();
@@ -38,31 +32,6 @@ if (!isLoopbackHost(HOST)) {
   );
   process.exit(1);
 }
-const HERE = dirname(fileURLToPath(import.meta.url));
-const PUBLIC_ROOT = resolve(HERE, "..", "..", "public");
-
-async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ loggerInstance: logger, disableRequestLogging: false });
-
-  registerRequestGuards(app);
-
-  await app.register(fastifyStatic, {
-    root: PUBLIC_ROOT,
-    prefix: "/",
-    index: ["index.html"],
-  });
-
-  await registerRoutes(app);
-
-  // audit-trail hook — mutating write 를 monitor.audit_log 에 fire-and-forget 기록(mutation 미차단)
-  registerAuditLogHook(app);
-
-  // onClose 에서 chromium 종료 → SIGTERM 시 zombie chromium 미잔류
-  registerBrowserShutdownHook(app);
-
-  return app;
-}
-
 function attachShutdown(app: FastifyInstance): void {
   let shuttingDown = false;
   const handle = (signal: NodeJS.Signals): void => {

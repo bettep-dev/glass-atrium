@@ -3,7 +3,10 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, scryptSync } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import "dotenv/config";
 
@@ -16,8 +19,10 @@ import Fastify, {
 
 import { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { buildApp } from "../src/server/app.js";
 import { ROUTE_RESOURCE, registerAuditLogHook } from "../src/server/middleware/audit-log.js";
 import { registerRoutes } from "../src/server/routes/index.js";
+import { deleteDirectory } from "./lib/remove-dir.js";
 
 // Unique marker isolates this suite's rows in payload for scrub + assertion.
 const SUITE_MARKER = `audit-test-${randomUUID()}`;
@@ -390,5 +395,73 @@ test("coverage-drift guard: ROUTE_RESOURCE is a superset of all registered mutat
       registered.has(auditedKey),
       `ROUTE_RESOURCE key '${auditedKey}' no longer matches any registered mutating route (stale)`,
     );
+  }
+});
+
+// Production assembly: the root audit hook, added after registerRoutes, still reaches the queue's
+// encapsulated owner routes, and one owner answer writes exactly one row (no source-order pin).
+test("assembly: one owner answer through the production buildApp writes exactly one audit row", async () => {
+  const passphrase = "audit assembly passphrase";
+  const secretsDir = mkdtempSync(path.join(tmpdir(), "audit-assembly-"));
+  const salt = randomBytes(16);
+  const hash = scryptSync(passphrase, salt, 32, { N: 16_384, r: 8, p: 1 });
+  const record = { algorithm: "scrypt", N: 16_384, r: 8, p: 1, keyLength: 32, salt: salt.toString("base64"), hash: hash.toString("base64") };
+  writeFileSync(path.join(secretsDir, "owner-passphrase.json"), JSON.stringify(record), { mode: 0o600 });
+  const prisma = getPrisma();
+  const sessionId = randomUUID();
+  await prisma.queueSession.create({
+    data: {
+      sessionId,
+      isConfigDirSet: false,
+      profileLabel: "default",
+      cwd: "/Users/owner/Desktop/git/glass-atrium",
+      processStartTime: "Mon Nov  9 08:01:12 2026",
+      state: "live",
+      lastSeenAt: new Date(),
+      pid: 812_345,
+    },
+  });
+  const item = await prisma.queueItem.create({
+    data: {
+      kind: "decision",
+      sessionId,
+      title: "Pick a merge order",
+      body: "S2a first or S2b first?",
+      isFreeTextAllowed: false,
+      options: [
+        { code: "R1", label: "S2a first", pros: "", cons: "" },
+        { code: "R2", label: "S2b first", pros: "", cons: "" },
+      ],
+      recommendedCode: "R1",
+    },
+  });
+  const assembly = await buildApp({ secretsDir });
+  const host = "127.0.0.1:16145";
+  try {
+    const login = await assembly.inject({ method: "POST", url: "/api/queue/owner/login", headers: { host }, payload: { passphrase } });
+    const cookie = login.cookies.find((entry) => entry.name === "atrium_queue_owner");
+    assert.ok(cookie !== undefined, `login failed: ${login.statusCode} ${login.body}`);
+    const answer = await assembly.inject({
+      method: "POST",
+      url: `/api/queue/owner/items/${item.id}/answer`,
+      headers: { host, cookie: `atrium_queue_owner=${cookie.value}` },
+      payload: { code: "R2" },
+    });
+    assert.strictEqual(answer.statusCode, 200, answer.body);
+    const row = await findAuditRow("queue-item.answer", Number(item.id));
+    assert.ok(row !== null, "the answer wrote an audit row");
+    assert.strictEqual(row.result_code, "success");
+    assert.strictEqual(await countAuditRows("queue-item.answer", Number(item.id)), 1);
+  } finally {
+    await assembly.close();
+    deleteDirectory(secretsDir);
+    await prisma.$executeRaw`
+      DELETE FROM monitor.audit_log
+      WHERE actor = 'monitor-web'
+        AND ((target_table = 'queue-item' AND target_id = ${item.id}) OR (target_table = 'queue-owner' AND target_id IS NULL))
+        AND event_ts >= NOW() - INTERVAL '10 minutes'
+    `;
+    await prisma.queueItem.delete({ where: { id: item.id } });
+    await prisma.queueSession.delete({ where: { sessionId } });
   }
 });
