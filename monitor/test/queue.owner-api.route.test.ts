@@ -15,6 +15,7 @@ import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fast
 
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { setSocketDeliveryOn } from "../src/server/queue/drift-guard.js";
 import { registerRoutes } from "../src/server/routes/index.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
@@ -438,19 +439,41 @@ describe("list and item detail", () => {
     assert.equal(second.nextCursor, null, "the last page announces none");
   });
 
-  test("an answered item's deviation follows its session's reachability", async () => {
+  test("an answered item's deviation follows its session's reachability and the drift guard's switch", async () => {
     const rows = [
-      { name: "live with a socket", session: { state: "live" as const }, deviation: null },
-      { name: "stale with a socket", session: { state: "stale" as const }, deviation: "session_not_reachable" },
-      { name: "live with no socket", session: { state: "live" as const, socketPath: null }, deviation: "delivery_off" },
-      { name: "stale with no socket", session: { state: "stale" as const, socketPath: null }, deviation: "delivery_off" },
-      { name: "exited with a socket", session: { state: "exited" as const, exitReason: "dead" as const }, deviation: null },
+      { name: "live with a socket", session: { state: "live" as const }, isOn: true, deviation: null },
+      { name: "stale with a socket", session: { state: "stale" as const }, isOn: true, deviation: "session_not_reachable" },
+      { name: "live with no socket", session: { state: "live" as const, socketPath: null }, isOn: true, deviation: "delivery_off" },
+      { name: "stale with no socket", session: { state: "stale" as const, socketPath: null }, isOn: true, deviation: "delivery_off" },
+      { name: "exited with a socket", session: { state: "exited" as const, exitReason: "dead" as const }, isOn: true, deviation: null },
+      { name: "live with a socket, delivery degraded", session: { state: "live" as const }, isOn: false, deviation: "delivery_off" },
+      { name: "stale with a socket, delivery degraded", session: { state: "stale" as const }, isOn: false, deviation: "delivery_off" },
+      { name: "exited with a socket, delivery degraded", session: { state: "exited" as const, exitReason: "dead" as const }, isOn: false, deviation: null },
     ];
-    for (const row of rows) {
-      const itemId = await seedDecision(await seedSession(row.session), { status: "answered", answerCode: "R1", answeredAt: new Date() });
-      const detail = (await send("GET", `/api/queue/owner/items/${itemId}`)).json();
-      assert.equal(detail.deviation, row.deviation, row.name);
+    try {
+      for (const row of rows) {
+        setSocketDeliveryOn(row.isOn);
+        const itemId = await seedDecision(await seedSession(row.session), { status: "answered", answerCode: "R1", answeredAt: new Date() });
+        const detail = (await send("GET", `/api/queue/owner/items/${itemId}`)).json();
+        assert.equal(detail.deviation, row.deviation, row.name);
+      }
+    } finally {
+      setSocketDeliveryOn(false);
     }
+  });
+
+  test("the list carries the drift guard's socket delivery switch for the degraded banner", async () => {
+    const seen: boolean[] = [];
+    try {
+      for (const isOn of [true, false]) {
+        setSocketDeliveryOn(isOn);
+        seen.push((await send("GET", "/api/queue/owner/items?limit=1")).json().isSocketDeliveryOn);
+      }
+    } finally {
+      setSocketDeliveryOn(false);
+    }
+
+    assert.deepEqual(seen, [true, false]);
   });
 
   test("a resume-pending item carries its resume rows and the first skip reason by card precedence", async () => {

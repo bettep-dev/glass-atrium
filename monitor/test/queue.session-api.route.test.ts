@@ -17,6 +17,7 @@ import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fast
 
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { setSocketDeliveryOn } from "../src/server/queue/drift-guard.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/queue-rows-lock.js";
@@ -489,8 +490,13 @@ describe("count", () => {
   test("counts open items as awaiting and every deviation, delivery off and not reachable included", async () => {
     const readCount = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> =>
       (await send("GET", "/api/queue/count", undefined, { key: null })).json();
-    const measureSeedDelta = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> => {
-      const baseline = await readCount();
+    const readCountWith = async (isOn: boolean): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> => {
+      setSocketDeliveryOn(isOn);
+      return readCount();
+    };
+    const measureSeedDelta = async (): Promise<{ awaiting: number; deviations: number; degradedDeviations: number; oldestAgeSeconds: number | null }> => {
+      const baseline = await readCountWith(true);
+      const degradedBaseline = await readCountWith(false);
       const live = await seedSession();
       const deliveryOff = await seedSession({ socketPath: null });
       const notReachable = await seedSession({ state: "stale" });
@@ -499,12 +505,22 @@ describe("count", () => {
       for (const status of ["unacked", "held", "expired", "resume_pending"] as const) await seedItem(live, { status });
       await seedItem(deliveryOff, { status: "answered" });
       await seedItem(notReachable, { status: "answered" });
-      const counted = await readCount();
-      return { awaiting: counted.awaiting - baseline.awaiting, deviations: counted.deviations - baseline.deviations, oldestAgeSeconds: counted.oldestAgeSeconds };
+      const counted = await readCountWith(true);
+      const degraded = await readCountWith(false);
+      return {
+        awaiting: counted.awaiting - baseline.awaiting,
+        deviations: counted.deviations - baseline.deviations,
+        degradedDeviations: degraded.deviations - degradedBaseline.deviations,
+        oldestAgeSeconds: counted.oldestAgeSeconds,
+      };
     };
     // the count is database-wide → measured while no other suite holds queue items
-    const delta = await withQueueRowsExclusive(measureSeedDelta);
-    assert.deepEqual({ awaiting: delta.awaiting, deviations: delta.deviations }, { awaiting: 1, deviations: 6 });
+    const delta = await withQueueRowsExclusive(measureSeedDelta).finally(() => setSocketDeliveryOn(false));
+    assert.deepEqual(
+      { awaiting: delta.awaiting, deviations: delta.deviations, degradedDeviations: delta.degradedDeviations },
+      { awaiting: 1, deviations: 6, degradedDeviations: 7 },
+      "degraded: the live row's answered item counts as delivery off too",
+    );
     assert.ok((delta.oldestAgeSeconds ?? 0) >= 3600, `oldest age ${delta.oldestAgeSeconds}`);
   });
 });

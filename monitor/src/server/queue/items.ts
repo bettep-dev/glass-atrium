@@ -2,6 +2,7 @@
 
 import type { Prisma, QueueItem } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import { isSocketDeliveryOn } from "./drift-guard.js";
 import { QueueRequestError } from "./errors.js";
 import { lockSession } from "./registry.js";
 import type { PostItemBody } from "./schemas.js";
@@ -53,15 +54,17 @@ export async function getItemOrThrow(id: number, sessionId: string): Promise<Que
 
 /**
  * Deviations: unacked · held · expired · resume-pending, plus answered items derived from their session row:
- * stale with a socket → "session not reachable"; live with no socket → "delivery off — session alive".
+ * stale → "session not reachable" or "delivery off"; live with the socket path off (no socket, or delivery degraded)
+ * → "delivery off — session alive".
  */
 export async function getCount(): Promise<QueueCount> {
+  const isDeliveryOn = isSocketDeliveryOn();
   const [row] = await getPrisma().$queryRaw<Array<{ awaiting: bigint; deviations: bigint; oldest_age_seconds: number | null }>>`
     SELECT
       count(*) FILTER (WHERE i."status" = 'open') AS "awaiting",
       count(*) FILTER (
         WHERE i."status" IN ('unacked', 'held', 'expired', 'resume_pending')
-           OR (i."status" = 'answered' AND (s."state" = 'stale' OR (s."state" = 'live' AND s."socket_path" IS NULL)))
+           OR (i."status" = 'answered' AND (s."state" = 'stale' OR (s."state" = 'live' AND (s."socket_path" IS NULL OR NOT ${isDeliveryOn}))))
       ) AS "deviations",
       floor(extract(epoch FROM now() - min(i."asked_at") FILTER (WHERE i."status" = 'open')))::int AS "oldest_age_seconds"
     FROM "monitor"."queue_items" i

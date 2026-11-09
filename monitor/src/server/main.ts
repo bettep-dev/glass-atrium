@@ -1,5 +1,5 @@
 // Fastify server entry — single-origin localhost; bind 127.0.0.1 ONLY (never 0.0.0.0 / ::).
-// Static public/ at /, API at /api/*; graceful shutdown SIGINT/SIGTERM -> queue scheduler stop, app.close() + prisma.$disconnect().
+// Static public/ at /, API at /api/*; graceful shutdown SIGINT/SIGTERM -> queue scheduler + receipt listener stop, app.close() + prisma.$disconnect().
 
 import "dotenv/config";
 
@@ -12,6 +12,7 @@ import { probeBrowserLaunch } from "./clauded-docs/browser-pool.js";
 import { auditHtmlRootAtBoot } from "./maintenance/html-root-audit.js";
 import { isLoopbackHost } from "./host-guard.js";
 import { getMonitorPort } from "./monitor-port.js";
+import { type ReceiptListener, startReceiptListener } from "./queue/receipt-listener.js";
 import { type QueueScheduler, getSweepDeps, startQueueScheduler } from "./queue/scheduler.js";
 
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
@@ -34,6 +35,7 @@ if (!isLoopbackHost(HOST)) {
   process.exit(1);
 }
 let queueScheduler: QueueScheduler | null = null;
+let receiptListener: ReceiptListener | null = null;
 
 function attachShutdown(app: FastifyInstance): void {
   let shuttingDown = false;
@@ -52,6 +54,7 @@ function attachShutdown(app: FastifyInstance): void {
 async function shutdown(app: FastifyInstance, signal: NodeJS.Signals): Promise<void> {
   try {
     await queueScheduler?.stop();
+    await receiptListener?.stop();
     await app.close();
     await disconnectPrisma();
     app.log.info({ signal }, "graceful shutdown complete");
@@ -93,8 +96,9 @@ async function main(): Promise<void> {
   await app.listen({ host: HOST, port: PORT });
   app.log.info(`listening on http://${HOST}:${PORT}`);
 
-  // after listen → a DB gate failure above exits before any sweep runs
-  queueScheduler = startQueueScheduler(getSweepDeps());
+  // after listen → a DB gate failure above exits before any sweep runs; the drift scan runs inside the sweep, off the boot path
+  receiptListener = await startReceiptListener();
+  queueScheduler = startQueueScheduler(getSweepDeps(receiptListener?.replyAddress ?? null));
 
   // boot-stage chromium launch probe — playwright 업그레이드 후 브라우저 바이너리 드리프트를 부팅 시점에 loud 표면화 (/api/health browser 필드 + health 카드).
   await probeStartupBrowser(app);

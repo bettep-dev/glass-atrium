@@ -4,6 +4,7 @@
 
 import { Prisma, type QueueDelivery, type QueueItem, type QueueItemStatus, type QueueSession } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import { isSocketDeliveryOn } from "./drift-guard.js";
 import { QueueRequestError } from "./errors.js";
 import { buildResumeInFlightSql } from "./resume-claim.js";
 import type { OwnerListQuery } from "./schemas.js";
@@ -105,7 +106,8 @@ export function canResend(facts: ResendFacts): boolean {
   return facts.status === "resume_pending" && facts.resumeAttempts.includes(facts.nextAttempt);
 }
 
-export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: OwnerItemView[]; nextCursor: number | null }> {
+/** The page; `isSocketDeliveryOn` false → the degraded banner (live sessions answered by pull). */
+export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: OwnerItemView[]; nextCursor: number | null; isSocketDeliveryOn: boolean }> {
   const rows = await getPrisma().queueItem.findMany({
     where: {
       status: { notIn: TERMINAL },
@@ -120,7 +122,7 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
   const page = rows.slice(0, query.limit);
   const items = await buildViews(page);
   const last = page[page.length - 1];
-  return { items, nextCursor: rows.length > query.limit && last !== undefined ? Number(last.queuePosition) : null };
+  return { items, nextCursor: rows.length > query.limit && last !== undefined ? Number(last.queuePosition) : null, isSocketDeliveryOn: isSocketDeliveryOn() };
 }
 
 export async function getOwnerItemOrThrow(id: number): Promise<OwnerItemView> {
@@ -220,11 +222,12 @@ function toResumeRecord(delivery: QueueDelivery): ResumeRecord {
   };
 }
 
-// Same classes the count route counts: stale + socket → not reachable; live or stale with no socket → delivery off
+// Same classes the count route counts: stale + socket path on → not reachable; live or stale with the socket path off
+// (no socket, or delivery degraded by the drift guard) → delivery off
 function getDeviation(status: QueueItemStatus, session: QueueSession): Deviation | null {
   if (DEVIATION_STATUSES.has(status)) return status as Deviation; // the set holds exactly the status-named Deviation members
   if (status !== "answered" || (session.state !== "live" && session.state !== "stale")) return null;
-  if (session.socketPath === null) return "delivery_off";
+  if (session.socketPath === null || !isSocketDeliveryOn()) return "delivery_off";
   return session.state === "stale" ? "session_not_reachable" : null;
 }
 

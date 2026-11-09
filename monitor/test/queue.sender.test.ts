@@ -7,6 +7,7 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { EventEmitter, once } from "node:events";
 import { mkdirSync, mkdtempSync, readdirSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { type Server, Socket, createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -17,10 +18,12 @@ import "dotenv/config";
 import type { QueueDelivery, QueueDeliveryRoute, QueueItemStatus, QueueSessionState } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { buildClaudeChildEnv } from "../src/server/queue/child-env.js";
+import { BUNDLE_LITERALS, createDriftGuard } from "../src/server/queue/drift-guard.js";
 import { getProcessStartTime } from "../src/server/queue/process-start-time.js";
 import { registerSession } from "../src/server/queue/registry.js";
 import { startQueueScheduler } from "../src/server/queue/scheduler.js";
 import { type SweepDeps, deleteOrphanTokenFiles, runSweepPass } from "../src/server/queue/sweep.js";
+import { createBundleFixture, writeBundle } from "./lib/claude-bundle-fixture.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 
@@ -32,11 +35,14 @@ const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const fixtureRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "queue-sender-")));
 const dir = { tokens: path.join(fixtureRoot, "tokens"), home: path.join(fixtureRoot, "home"), cwd: path.join(fixtureRoot, "cwd") };
 const trackedSessionIds: string[] = [];
+const driftVersions: string[] = [];
 const children: ChildProcess[] = [];
 const servers: Server[] = [];
 // confined cc-socks path → fixture socket path; an unmapped path connects to a missing file (ENOENT)
 const socketMap = new Map<string, string>();
 const received = new Map<string, string[]>();
+// emits "lines" once a fake socket's connection ended and its lines are recorded
+const frameEvents = new EventEmitter();
 let livePid: { pid: number; startTime: string };
 
 before(async () => {
@@ -54,6 +60,7 @@ after(async () => {
   await prisma.queueDelivery.deleteMany({ where: { item: { sessionId: { in: trackedSessionIds } } } });
   await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
   await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await prisma.queueDriftCheck.deleteMany({ where: { version: { in: driftVersions } } });
   await unlockQueueRows();
   await disconnectPrisma();
   deleteDirectory(fixtureRoot);
@@ -90,7 +97,10 @@ async function serveSocket(confinedPath: string): Promise<void> {
   const server = createServer((socket: Socket) => {
     let buffer = "";
     socket.on("data", (chunk) => (buffer += chunk.toString("utf8")));
-    socket.on("end", () => lines.push(...buffer.split("\n").filter((line) => line !== "")));
+    socket.on("end", () => {
+      lines.push(...buffer.split("\n").filter((line) => line !== ""));
+      frameEvents.emit("lines");
+    });
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(fixturePath, resolve));
@@ -181,6 +191,12 @@ function getUserFrames(pid: number): string[] {
   return (received.get(confinedSocketPath(pid)) ?? []).filter((line) => JSON.parse(line).type === "user");
 }
 
+/** The pid's user frames once at least `count` arrived; rejects after 5 s so a missing frame fails, never hangs. */
+async function waitForUserFrames(pid: number, count: number): Promise<string[]> {
+  while (getUserFrames(pid).length < count) await once(frameEvents, "lines", { signal: AbortSignal.timeout(5_000) });
+  return getUserFrames(pid);
+}
+
 describe("socket delivery of an answered item", () => {
   test("a live row's answered item goes out as an auth line then one user frame naming the session and the Delivery msg id", async () => {
     const sessionId = await seedSession({ socket: "served" });
@@ -207,6 +223,39 @@ describe("socket delivery of an answered item", () => {
     assert.equal(await getStatus(itemId), "delivering");
     assert.deepEqual([delivery.route, delivery.attempt, delivery.result], ["socket", 2, "sent"]);
     assert.ok(delivery.ackDeadlineAt > delivery.sentAt);
+  });
+
+  const replyRows = [
+    { name: "receipt listener bound", replyAddress: "uds:/tmp/cc-socks/4242.sock", from: "uds:/tmp/cc-socks/4242.sock" },
+    { name: "no receipt listener", replyAddress: undefined, from: undefined },
+  ];
+  for (const row of replyRows) {
+    test(`the user frame carries the listener's reply address as from only when one is bound: ${row.name}`, async () => {
+      const identity = await spawnLiveProcess();
+      const sessionId = await seedSession({ ...identity, socket: "served" });
+      await seedItem(sessionId, "answered");
+
+      await runSweepPass(buildDeps([sessionId], row.replyAddress === undefined ? {} : { replyAddress: row.replyAddress }));
+
+      const [frame] = (await waitForUserFrames(identity.pid, 1)).map((line) => JSON.parse(line));
+      assert.equal(frame?.from, row.from, row.name);
+    });
+  }
+
+  test("a pass checks the drift guard first, so a passing scan delivers in that same pass", async () => {
+    const identity = await spawnLiveProcess();
+    const sessionId = await seedSession({ ...identity, socket: "served" });
+    await seedItem(sessionId, "answered");
+    const version = `9.9.9-test.${randomUUID().slice(0, 8)}`;
+    driftVersions.push(version);
+    const fixture = createBundleFixture(path.join(fixtureRoot, `bundle-${version}`), version);
+    writeBundle(fixture, [...BUNDLE_LITERALS]);
+    let isOn = false;
+    const driftGuard = createDriftGuard({ claudePath: fixture.claudePath, now: () => new Date(), setDeliveryOn: (value) => (isOn = value) });
+
+    await runSweepPass(buildDeps([sessionId], { driftGuard, isSocketDeliveryOn: () => isOn }));
+
+    assert.equal((await waitForUserFrames(identity.pid, 1)).length, 1);
   });
 
   test("two overlapping sweep passes over one answered item send one frame and insert one Delivery row", async () => {

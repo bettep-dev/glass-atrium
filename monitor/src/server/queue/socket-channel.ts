@@ -22,6 +22,8 @@ export interface UserFrame {
   sessionId: string;
   msgId: string;
   content: string;
+  /** The receipt listener's `uds:` address; absent → the receiver sends no receipts. */
+  from?: string;
 }
 
 export const connectUnixSocket: SocketConnector = (socketPath) => createConnection({ path: socketPath });
@@ -57,7 +59,13 @@ export function writeFrames(socket: Socket, payload: string): Promise<void> {
 export function buildFrames(frame: UserFrame, token: string | null): string {
   const lines: object[] = [];
   if (token !== null) lines.push({ type: "auth", token });
-  lines.push({ type: "user", session_id: frame.sessionId, msg_id: frame.msgId, message: { role: "user", content: frame.content } });
+  lines.push({
+    type: "user",
+    session_id: frame.sessionId,
+    msg_id: frame.msgId,
+    message: { role: "user", content: frame.content },
+    ...(frame.from === undefined ? {} : { from: frame.from }),
+  });
   return lines.map((line) => `${JSON.stringify(line)}\n`).join("");
 }
 

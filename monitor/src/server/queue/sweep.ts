@@ -1,16 +1,18 @@
-// Database-driven sweep pass: the worktree root refresh, the stale / exited rule on live and stale rows, the automatic
-// resume of exited sessions, overdue and exited-row item moves, then socket delivery of answered items.
+// Database-driven sweep pass: the format-drift check, the worktree root refresh, the stale / exited rule on live and
+// stale rows, the automatic resume of exited sessions, overdue and exited-row item moves, then socket delivery.
 // No delivery window lives in a process timer → a restart loses nothing.
 // Every transaction touching items locks the registry row first (registry.ts lock order).
 
 import { randomUUID } from "node:crypto";
 import { readdir, stat, unlink } from "node:fs/promises";
+import type { Socket } from "node:net";
 import path from "node:path";
 
 import type { Prisma, QueueItemKind, QueueItemStatus, QueueSessionState } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { errnoCode } from "../errno.js";
 import { logger } from "../logger.js";
+import type { DriftGuard } from "./drift-guard.js";
 import { buildEnvelope, buildResumePayload } from "./envelope.js";
 import { lockSession } from "./registry.js";
 import { type ResumeClaim, claimResume, findClaimableSessionIds, getRereadOutcome, putSpawnAborted, putSpawnFailed, putWorktreeRoots } from "./resume-claim.js";
@@ -31,6 +33,12 @@ export interface SweepDeps {
   readStartTime: (pid: number) => Promise<string | null>;
   /** False while the format-drift guard has not passed a scan for the current Claude Code key (fail closed). */
   isSocketDeliveryOn: () => boolean;
+  /** Re-keyed on every pass before any step reads the switch; absent → the switch is never re-checked. */
+  driftGuard?: DriftGuard;
+  /** The receipt listener's `uds:` address, sent as each frame's `from`; absent → no receipts. */
+  replyAddress?: string;
+  /** Monitor stop → ends the pass's long reads (the drift scan). */
+  signal?: AbortSignal;
   now: () => Date;
   /** Absolute queue CLI literal printed in every envelope — the one the settings allow rule names. */
   cliPath: string;
@@ -62,8 +70,15 @@ interface AnsweredItem {
   session: SessionProbeRow;
 }
 
+interface ClaimedFrame {
+  item: AnsweredItem;
+  msgId: string;
+  token: string | null;
+}
+
 /** Resume claims run before the settle step → an item turned resume-pending in this pass resumes on the next one. */
 export async function runSweepPass(deps: SweepDeps): Promise<void> {
+  await deps.driftGuard?.check(deps.signal);
   await putWorktreeRoots(getScopeWhere(deps));
   await putSessionStates(deps);
   await resumeExitedSessions(deps);
@@ -227,7 +242,7 @@ async function deliverOverSocket(item: AnsweredItem, deps: SweepDeps): Promise<"
     outcome.socket.destroy();
     return "skipped";
   }
-  await writeClaimedFrame(outcome.socket, item, msgId, token, deps.cliPath);
+  await writeClaimedFrame(outcome.socket, { item, msgId, token }, deps);
   return "sent";
 }
 
@@ -245,10 +260,11 @@ async function claimSocketDelivery(item: AnsweredItem, now: Date): Promise<strin
   });
 }
 
-async function writeClaimedFrame(socket: import("node:net").Socket, item: AnsweredItem, msgId: string, token: string | null, cliPath: string): Promise<void> {
-  const content = buildEnvelope({ id: Number(item.id), kind: item.kind, msgId }, cliPath);
+async function writeClaimedFrame(socket: Socket, claimed: ClaimedFrame, deps: SweepDeps): Promise<void> {
+  const { item, msgId, token } = claimed;
+  const content = buildEnvelope({ id: Number(item.id), kind: item.kind, msgId }, deps.cliPath);
   try {
-    await writeFrames(socket, buildFrames({ sessionId: item.session.sessionId, msgId, content }, token));
+    await writeFrames(socket, buildFrames({ sessionId: item.session.sessionId, msgId, content, from: deps.replyAddress }, token));
   } catch (error) {
     // the item stays delivering → its deadline moves it to unacked, the owner resends
     await getPrisma().queueDelivery.updateMany({ where: { msgId, result: "sent" }, data: { result: "dead_socket" } });
