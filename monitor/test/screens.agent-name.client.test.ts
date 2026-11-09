@@ -82,6 +82,7 @@ const NAME_SITES: Array<[string, Record<string, unknown>, string, Record<string,
   }],
   ["Agents latency bars", agentsMod, "LatencyBars", { agents: [{ agent_id: FULL, agent_name: FULL, p50_ms: 1, p95_ms: 2, p99_ms: 3 }] }],
   ["Agents success matrix", agentsMod, "SuccessRateMatrixRow", { agent: FULL, cells: {} }],
+  ["Agents off-target list", agentsMod, "SuccessRateOffTargetRow", { agent: FULL, pairs: [] }],
   ["Agents failing pairs", agentsMod, "TopNFailingAgentsTable", {
     pairs: [{ agent: FULL, task_type: "feature", failed: 3, rateDenominator: 10 }], failureByAgent: new Map(), days: 30,
   }],

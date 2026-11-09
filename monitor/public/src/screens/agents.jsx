@@ -592,6 +592,18 @@ function TaskTypeFold({ failures, state, days, onRetry }) {
   );
 }
 
+// off-target = a pair at the matrix crit glyph · agents in matrix order, pairs in column order, clear agents left out
+function getOffTargetRowsAg(matrix) {
+  return matrix.agents
+    .map((agent) => ({
+      agent,
+      pairs: TASK_TYPE_COLUMNS
+        .map((column) => ({ taskType: column.label, cell: matrix.cells[`${agent}|${column.key}`] }))
+        .filter(({ cell }) => getCellFailShareTone(cell) === 'crit'),
+    }))
+    .filter((row) => row.pairs.length > 0);
+}
+
 // Alarm lane — one row per suspended or streaking agent, nothing when the fleet
 // is clear. An unreadable state dir renders unavailable; it is never a zero.
 function AgentAlarmLane({ failures, state, onRetry }) {
@@ -2289,18 +2301,74 @@ function SuccessRateMatrixBody({ failures, state, days, onRetry }) {
   return <SuccessRateMatrixPanel matrix={matrix} notice={notice}/>;
 }
 
-// fold open → the matrix itself: the fold mounts its body only when open, so the sparklines cost nothing until asked for
+const MATRIX_FULL_ID = 'agents-success-matrix-full';
+
+// off-target list first, every pair behind a collapsed disclosure → the table mounts only once opened, so its sparklines cost nothing until asked for
 function SuccessRateMatrixPanel({ matrix, notice }) {
+  const [isOpen, setOpen] = useStateAg(false);
+  const agentCount = matrix.agents.length;
+
   return (
     <>
       <MatrixInsetAg>
+        {notice}
+        <SuccessRateOffTargetList rows={getOffTargetRowsAg(matrix)}/>
         <window.UI.Cluster gap="control-group" className="items-center">
-          {notice}
+          <window.UI.DisclosureButton
+            isOpen={isOpen}
+            onToggle={() => setOpen((v) => !v)}
+            controls={MATRIX_FULL_ID}
+            className="fs-meta"
+            label={`Full matrix — ${agentCount} ${agentCount === 1 ? 'agent' : 'agents'} × ${TASK_TYPE_COLUMNS.length} task types`}
+          />
           <window.UI.CardInfo label="How the task-type matrix is counted"><SuccessRateLegend/></window.UI.CardInfo>
         </window.UI.Cluster>
       </MatrixInsetAg>
-      <SuccessRateMatrixTable matrix={matrix}/>
+      <div id={MATRIX_FULL_ID} hidden={!isOpen}>
+        {isOpen && <SuccessRateMatrixTable matrix={matrix}/>}
+      </div>
     </>
+  );
+}
+
+function SuccessRateOffTargetList({ rows }) {
+  if (rows.length === 0) {
+    return <p className="fs-meta text-faint">{`No agent × task type pair at ${getFailShareLabel()}.`}</p>;
+  }
+
+  return (
+    <ul aria-label="Off-target pairs per agent" className="divide-y divide-line">
+      {rows.map((row) => <SuccessRateOffTargetRow key={row.agent} agent={row.agent} pairs={row.pairs}/>)}
+    </ul>
+  );
+}
+
+function SuccessRateOffTargetRow({ agent, pairs }) {
+  const isUnknownAgent = agent === UNKNOWN_AGENT_ID;
+
+  return (
+    <li className="flex flex-wrap items-center gap-control min-h-[var(--row-h)]">
+      <span className="text-ink min-w-0 truncate" title={isUnknownAgent ? UNKNOWN_AGENT_TITLE : agent}>
+        {isUnknownAgent
+          ? <span className="text-dim">{UNKNOWN_AGENT_LABEL}</span>
+          : <window.UI.AgentName name={agent}/>}
+      </span>
+      <ul aria-label={`${agent} off-target task types`} className="flex flex-wrap gap-control">
+        {pairs.map(({ taskType, cell }) => <SuccessRateOffTargetPair key={taskType} taskType={taskType} cell={cell}/>)}
+      </ul>
+    </li>
+  );
+}
+
+function SuccessRateOffTargetPair({ taskType, cell }) {
+  return (
+    <li className="inline-flex items-center gap-label-inline fs-meta tnum whitespace-nowrap"
+      title={`${taskType} — ${cell.failureCount} of ${cell.rateDenominator} failed or blocked`}>
+      <FailShareGlyph tone="crit"/>
+      <span>{taskType}</span>
+      <span className="font-semibold">{(cell.pooledRate * 100).toFixed(0)}%</span>
+      <span className="text-dim">n={cell.rateDenominator}</span>
+    </li>
   );
 }
 

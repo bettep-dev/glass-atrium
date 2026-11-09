@@ -1186,18 +1186,79 @@ describe("a truncated matrix reports the row limit as a warn glyph and a word wi
   }
 });
 
-test("the open fold goes straight to the matrix, its legend and counting method behind the info button only", async () => {
-  const state = { status: "ready", data: { rows: [getMatrixRow("a", 19, 1)] }, error: null };
-  const tree = await renderComponent("SuccessRateMatrixBody", { state, days: 30, onRetry: () => undefined });
-  const swatchCount = (root: RenderedNode | string | null) => findNodes(root, (n) => n.type === "LegendSwatch").length;
+describe("the matrix legend and its counting method sit behind the fold's info button, never on the page", () => {
+  for (const row of [{ name: "with the Full matrix closed", isOpen: false }, { name: "with the Full matrix open", isOpen: true }]) {
+    test(row.name, async () => {
+      // the Full matrix toggle is the only boolean state in this tree → the stub seats it open or closed
+      const react = { ...createReactStub(), useState: (initial: unknown) => [initial === false ? row.isOpen : initial, () => undefined] };
+      const mod = await loadScreenModule(AGENTS_SRC, { UI: uiStub(), Recharts: uiStub(), React: react });
+      const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+      const state = { status: "ready", data: { rows: [getMatrixRow("a", 19, 1)] }, error: null };
+      const tree = renderScreen(React.createElement(mod.SuccessRateMatrixBody as Component, { state, days: 30, onRetry: () => undefined }));
+      const swatchCount = (root: RenderedNode | string | null) => findNodes(root, (n) => n.type === "LegendSwatch").length;
 
-  const [info] = findAtoms(tree, "CardInfo");
-  assert.ok(info, "the fold carries an info button");
-  assert.equal(findAtoms(tree, "DisclosureButton").length, 0, "no second disclosure inside the fold");
-  assert.equal(findNodes(tree, (n) => n.type === "SuccessRateMatrixRow").length, 1, "the matrix mounts with the fold body");
-  assert.equal(swatchCount(info), 2, "the legend rides the info button");
-  assert.equal(swatchCount(tree), 2, "no second legend anywhere on the fold");
-  assert.equal(collectText(tree).match(/n = passed \+ failed/g)?.length, 1, "the counting method appears once, behind the info button");
+      const [info] = findAtoms(tree, "CardInfo");
+      assert.ok(info, "the fold carries an info button");
+      assert.equal(findNodes(tree, (n) => n.type === "SuccessRateMatrixRow").length, row.isOpen ? 1 : 0, "the table mounts only while open");
+      assert.equal(swatchCount(info), 2, "the legend rides the info button");
+      assert.equal(swatchCount(tree), 2, "no second legend anywhere on the fold");
+      assert.equal(collectText(tree).match(/n = passed \+ failed/g)?.length, 1, "the counting method appears once, behind the info button");
+    });
+  }
+});
+
+const OFF_TARGET_ROWS = [
+  {
+    name: "an agent lists only its pairs at the crit step",
+    rows: [getMatrixRow("a", 19, 1), getMatrixRow("a", 40, 0, "plan"), getMatrixRow("b", 40, 0)],
+    expected: [{ agent: "a", taskTypes: ["feature"] }],
+  },
+  {
+    name: "a failing small sample under the low-N floor is not off-target",
+    rows: [getMatrixRow("a", 2, 1)],
+    expected: [],
+  },
+  {
+    name: "an agent's pairs keep the matrix column order",
+    rows: [getMatrixRow("a", 19, 1, "review"), getMatrixRow("a", 19, 1, "bug-fix")],
+    expected: [{ agent: "a", taskTypes: ["bug-fix", "review"] }],
+  },
+];
+
+describe("the off-target list holds each agent's pairs at the matrix crit glyph and nothing else", () => {
+  for (const row of OFF_TARGET_ROWS) {
+    test(row.name, async () => {
+      const mod = await loadAgentsScreen();
+      const matrix = (mod.buildSuccessRateMatrix as (rows: unknown[]) => unknown)(row.rows);
+      const offTarget = (mod.getOffTargetRowsAg as (m: unknown) => Array<{ agent: string; pairs: Array<{ taskType: string }> }>)(matrix);
+
+      // the vm realm's arrays carry its own prototype → compare by value, not by realm
+      const actual = JSON.parse(JSON.stringify(offTarget.map((r) => ({ agent: r.agent, taskTypes: r.pairs.map((p) => p.taskType) }))));
+      assert.deepEqual(actual, row.expected);
+    });
+  }
+});
+
+test("the task-type body lists the off-target pairs above the full matrix, which stays behind a closed disclosure", async () => {
+  const state = { status: "ready", data: { rows: [getMatrixRow("a", 19, 1), getMatrixRow("b", 40, 0)] }, error: null };
+  const tree = await renderComponent("SuccessRateMatrixBody", { state, days: 30, onRetry: () => undefined });
+
+  const [list] = findNodes(tree, (n) => n.props["aria-label"] === "Off-target pairs per agent");
+  assert.equal(findNodes(list, (n) => n.props["aria-label"] === "a off-target task types").length, 1, "the crit agent gets a row");
+  assert.equal(findNodes(list, (n) => n.props["aria-label"] === "b off-target task types").length, 0, "a clear agent gets none");
+  const [toggle] = findAtoms(tree, "DisclosureButton");
+  assert.equal(toggle.props.isOpen, false, "the full matrix starts collapsed");
+  const [panel] = findNodes(tree, (n) => n.props.id === toggle.props.controls);
+  assert.equal(panel?.props.hidden, true, "the toggle controls the hidden matrix panel");
+  assert.equal(findNodes(tree, (n) => n.type === "SuccessRateMatrixRow").length, 0, "no matrix row mounts while collapsed");
+});
+
+test("a fleet with no off-target pair says so instead of an empty list", async () => {
+  const state = { status: "ready", data: { rows: [getMatrixRow("b", 40, 0)] }, error: null };
+  const tree = await renderComponent("SuccessRateMatrixBody", { state, days: 30, onRetry: () => undefined });
+
+  assert.match(collectText(tree), /No agent × task type pair at failed or blocked ≥ 5%/);
+  assert.equal(findNodes(tree, (n) => n.props["aria-label"] === "Off-target pairs per agent").length, 0);
 });
 
 test("the matrix region draws no card inside its fold and nothing in it scrolls vertically", async () => {
@@ -2225,6 +2286,7 @@ test("an unidentified agent reads its label dim in upright type, the row at full
   const rows = [
     { name: "ledger row", atom: "AgentSummaryRow", props: { agent: { agent_id: "unknown", agent_name: "unknown", status: "active", runs: 12 }, days: 30, isSelected: false, onSelect: () => {}, trend: null, failure: null, overage: null } },
     { name: "task-type matrix row", atom: "SuccessRateMatrixRow", props: { agent: "unknown", cells: {} } },
+    { name: "off-target row", atom: "SuccessRateOffTargetRow", props: { agent: "unknown", pairs: [] } },
   ];
   for (const row of rows) {
     const tree = await renderComponent(row.atom, row.props);
