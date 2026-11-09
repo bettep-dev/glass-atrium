@@ -120,12 +120,18 @@ function Pill({ children, tone='neutral', title, className }) {
 //   .placeholder(base.css) dashed 관용구 재사용 → repo 전역 단일 빈-상태 표기.
 //   message = 핵심 원인 한 줄 · hint = 다음 단계/부연(선택) · action = 슬롯(재시도 버튼 등, 선택).
 //   타입은 스케일 토큰(fs-meta)로 고정 — 화면별 off-scale px 리터럴 제거.
-function EmptyState({ message, hint, action, className='' }) {
+//   kind 'no-results' → one fixed sentence + a quiet reset (only with onReset); 'first-use' → the caller's message.
+const NO_RESULTS_MESSAGE = 'No records match these filters.';
+
+function EmptyState({ kind = 'first-use', message, hint, action, onReset, className='' }) {
+  const isNoResults = kind === 'no-results';
+  const text = isNoResults ? NO_RESULTS_MESSAGE : message;
+  const slot = isNoResults && onReset ? <QuietButton onClick={onReset}>Reset filters</QuietButton> : action;
   return (
     <div className={`placeholder ${className}`.trim()}>
-      <div className="fs-meta"><DayTokens>{message}</DayTokens></div>
+      <div className="fs-meta"><DayTokens>{text}</DayTokens></div>
       {hint && <div className="fs-meta text-faint mt-1"><DayTokens>{hint}</DayTokens></div>}
-      {action && <div className="mt-2 flex">{action}</div>}
+      {slot && <div className="mt-2 flex">{slot}</div>}
     </div>
   );
 }
@@ -981,13 +987,15 @@ function getSlotRows(items, size = 'M') {
 /**
  * Card anatomy: one-line header, a body that fills the card, an optional foot pinned to the bottom edge.
  * @param size - 'S' | 'M' | 'L' slot; S/M bodies never scroll inside the card
+ * @param bar - filter bar or toolbar between the head and the body
  * @param foot - "Show all N" / "Other" / one footnote
  */
-function Card({ size, title, sub, info, infoLabel, right, foot, isFlush = false, children, className = '' }) {
+function Card({ size, title, sub, info, infoLabel, right, bar, foot, isFlush = false, children, className = '' }) {
   const sizeClass = CARD_SLOTS[size] ? `card--${size.toLowerCase()}` : '';
 
   return <div className={`card ${sizeClass} ${className}`.replace(/\s+/g, ' ').trim()}>
     {title && <CardHead title={title} sub={sub} info={info} infoLabel={infoLabel} right={right} />}
+    {bar && <div className="card-bar">{bar}</div>}
     <div className={`card-body ${isFlush ? 'flush' : ''}`.trim()}>{children}</div>
     {foot && <div className="card-foot">{foot}</div>}
   </div>;
@@ -1437,6 +1445,29 @@ function MachineString({ className = '', children }) {
   return <code className={`machine ${className}`.trim()}>{children}</code>;
 }
 
+/**
+ * Pagination bar: the row range left, Previous · current page · Next right; nothing renders for an empty result.
+ * An end step stays focusable (aria-disabled + click guard) → pressing Next onto the last page never drops focus to the body.
+ * @param page - 0-based page index · @param total - matched row count
+ */
+function Pagination({ page, pageSize, total, onPageChange, label = 'Pages', className = '' }) {
+  if (!(total > 0)) return null;
+  const pageCount = Math.ceil(total / pageSize);
+  const last = Math.min((page + 1) * pageSize, total);
+  const hasPrev = page > 0;
+  const hasNext = last < total;
+  const getStepHandler = (isEnabled, next) => () => { if (isEnabled) onPageChange(next); };
+
+  return <nav className={`pagination ${className}`.trim()} aria-label={label}>
+    <span className="pagination-range">{`${formatInt(page * pageSize + 1)}–${formatInt(last)} of ${formatInt(total)}`}</span>
+    <div className="pagination-steps">
+      <QuietButton aria-label="Previous page" aria-disabled={hasPrev ? undefined : 'true'} onClick={getStepHandler(hasPrev, page - 1)}>Previous</QuietButton>
+      <span className="pagination-current" aria-current="page"><span className="sr-only">Page </span>{page + 1}<span className="sr-only">{` of ${pageCount}`}</span></span>
+      <QuietButton aria-label="Next page" aria-disabled={hasNext ? undefined : 'true'} onClick={getStepHandler(hasNext, page + 1)}>Next</QuietButton>
+    </div>
+  </nav>;
+}
+
 const BLANK_FIELD_TEXT = new Set(['', '—', '-', 'unknown', 'n/a', 'null', 'undefined']);
 
 // placeholder text counts as empty → the field is hidden instead of printing "unknown"
@@ -1493,19 +1524,24 @@ function DetailField({ label, value, mono = false }) {
  * @param freshness - the status group: the FreshnessStamp and any status token read beside it
  * @param range - the time-range control · @param refresh - the RefreshButton
  * @param actions - optional page actions, set apart from the status group
+ * @param back - back link of a detail page, before the h1 · @param status - the record's status pill, after the h1
+ * @param primary - the page's one primary button, right-most
  */
-function PageHeader({ title, sub, actions, freshness, range, refresh }) {
+function PageHeader({ title, sub, back, status, actions, freshness, range, refresh, primary }) {
   const hasSub = sub && sub !== title;
   const hasStatus = Boolean(freshness || range || refresh);
-  const hasCluster = Boolean(actions || hasStatus);
+  const hasCluster = Boolean(actions || hasStatus || primary);
   return <div className="page-head">
     <div className="min-w-0">
+      {back}
       <h1 className="page-head-title fs-display font-semibold">{title}</h1>
+      {status}
       {hasSub && <div className="page-head-sub fs-meta font-mono text-faint tracking-wider uppercase">{sub}</div>}
     </div>
     {hasCluster && <div className="page-head-cluster">
       {actions && <div className="page-head-group">{actions}</div>}
       {hasStatus && <div className="page-head-group">{freshness}{range}{refresh}</div>}
+      {primary}
     </div>}
   </div>;
 }
@@ -2603,7 +2639,7 @@ window.UI = {
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
-  Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString,
+  Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, Pagination,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
