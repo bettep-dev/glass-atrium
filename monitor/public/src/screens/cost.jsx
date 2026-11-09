@@ -123,10 +123,6 @@ function ScreenCost() {
     <div className="cost-screen flex flex-col">
       {/* 공유 타입스케일(--fs 토큰 + fs 클래스) 마운트 — SPA 단일 screen 모델: cost 활성 시 토큰·클래스 가용화 (ui.jsx 정의 소비, 미정의 시 클래스 no-op 회귀 차단). */}
       <TypeScaleStyle/>
-      {/* .cost-foot: card footnote / helper line → fs-meta in dim ink */}
-      <style>{`
-        .cost-foot { font-size: var(--fs-meta); line-height: 1.5; color: rgb(var(--dim)); }
-      `}</style>
       <div className="flex-shrink-0">
         <PageHeader
           title="Cost & usage"
@@ -653,7 +649,7 @@ function SpendStatValueC({ stat }) {
 
 // Window change on its own block line — the token card's foot.
 function TrendDeltaC({ delta, prior, noun }) {
-  return <div className="cost-foot mt-stack"><TrendDeltaTextC delta={delta} prior={prior} noun={noun}/></div>;
+  return <div className="fs-meta text-dim mt-stack"><TrendDeltaTextC delta={delta} prior={prior} noun={noun}/></div>;
 }
 
 // Window change — direction rides on the glyph, never on the text colour.
@@ -949,19 +945,19 @@ function CostTrendTooltipC({ active, payload, bandOn }) {
   const hasBand = bandOn && row.rollingMean !== null && row.rollingMean !== undefined;
 
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
-      <div style={tooltipRowStyle}>
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
+      <div className={tooltip.rowClassName}>
+        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
         {row.isPartial ? 'Today so far' : 'Daily cost'} {row.actual === null ? 'no data' : formatUsdC(row.actual)}
       </div>
       {hasBand && (
-        <div style={{ color: 'rgb(var(--faint))', marginTop: 4 }}>
+        <div className="mt-stack text-faint">
           Normal range {formatUsdC(row.lowerBand)} – {formatUsdC(row.upperBand)}
         </div>
       )}
       {typeof row.session_count === 'number' && (
-        <div style={{ color: 'rgb(var(--dim))' }}>Sessions {formatIntC(row.session_count)}</div>
+        <div className="text-dim">Sessions {formatIntC(row.session_count)}</div>
       )}
     </div>
   );
@@ -990,7 +986,6 @@ function TokenStackedBody({ state, days, failures, onRetry }) {
 
   return (
     <Stack gap="block">
-      {/* 세 수치 동일 크기(fs-display) — 위계는 굵기·색으로만 */}
       <div className="flex items-start gap-block">
         <div>
           <div className="fs-meta text-dim">Tokens</div>
@@ -1189,23 +1184,23 @@ function TokenTooltipC({ active, payload }) {
   }
   const row = payload[0].payload;
   if (row.isNoData) {
-    return <div style={tooltipStyle}><div style={{ color: 'rgb(var(--ink))', fontWeight: 600 }}>{row.fullDate}</div>No data</div>;
+    return <div className={tooltip.className} style={tooltip.style}><div className="mb-label text-ink font-semibold">{row.fullDate}</div>No data</div>;
   }
   const totalTokens =
     row.input_tokens + row.output_tokens + row.cache_read_tokens + row.cache_creation_tokens;
 
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
+      <div className="text-dim">
         Cost {formatUsdC(row.cost_usd)} · sessions {formatIntC(row.session_count)}
       </div>
-      <div style={{ color: 'rgb(var(--dim))', marginBottom: 6 }}>
+      <div className="mb-label text-dim">
         Total tokens {formatTokenCompactC(totalTokens)}
       </div>
       {TOKEN_CATEGORIES.slice().reverse().map((cat) => (
-        <div key={cat.key} style={tooltipRowStyle}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: `rgb(var(${cat.colorVar}))` }}/>
+        <div key={cat.key} className={tooltip.rowClassName}>
+          <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: `rgb(var(${cat.colorVar}))` }}/>
           {cat.label} {formatTokenCompactC(row[cat.key])}
         </div>
       ))}
@@ -1246,7 +1241,7 @@ function computeCategoryCostRows(modelCostRows) {
 function CategoryShareRowC({ rows }) {
   const total = rows.reduce((s, r) => s + r.cost, 0);
   if (total <= 0) {
-    return <div className="cost-foot">No priced token cost in this window — category split unavailable.</div>;
+    return <div className="fs-meta text-dim">No priced token cost in this window — category split unavailable.</div>;
   }
 
   return (
@@ -1696,12 +1691,12 @@ function CacheHitTooltipC({ active, payload }) {
   const row = payload[0].payload;
   const ratePct = row.rate_pct;
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
+      <div className="text-dim">
         Hit rate {ratePct === null || ratePct === undefined ? 'no data' : ratePct.toFixed(1) + '%'}
       </div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+      <div className="text-dim">
         cache_read {formatTokenCompactC(row.total_cache_read)} · input {formatTokenCompactC(row.total_input)}
       </div>
     </div>
@@ -2005,9 +2000,9 @@ function SessionBinTooltipC({ active, payload }) {
   }
   const bin = payload[0].payload;
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{bin.label}</div>
-      <div style={{ color: 'rgb(var(--dim))' }}>{bin.count.toLocaleString('en-US')} sessions</div>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{bin.label}</div>
+      <div className="text-dim">{bin.count.toLocaleString('en-US')} sessions</div>
     </div>
   );
 }
@@ -2173,12 +2168,12 @@ function ParseErrorTooltipC({ active, payload }) {
   }
   const row = payload[0].payload;
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
+      <div className="text-dim">
         Errors {formatIntC(row.error_count)} / total {formatIntC(row.total_count)}
       </div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+      <div className="text-dim">
         Rate {row.error_ratio_pct.toFixed(2)}% · threshold {formatIntC(Math.ceil(row.threshold_count))}{row.isCrit ? ' · over threshold' : ''}
       </div>
     </div>
@@ -2423,22 +2418,16 @@ function EmptyStateC({ message, hint }) {
 }
 
 // 순수 helper
-const tooltipStyle = {
-  background: 'rgb(var(--overlay-surface))',
-  border: '1px solid rgb(var(--line))',
-  borderRadius: 'var(--radius-tile)',
-  padding: 'var(--space-2) var(--space-3)',
-  // 툴팁 = HTML DOM div → fs-meta 보조 콘텐츠 tier.
-  fontSize: 'var(--fs-meta)',
-  fontVariantNumeric: 'tabular-nums',
-  boxShadow: 'var(--shadow-overlay)',
-};
-
-const tooltipRowStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  color: 'rgb(var(--dim))',
+// 툴팁 = HTML DOM div → fs-meta 보조 콘텐츠 tier · padding = base.css 오버레이 면(.popover-panel / .menu)과 같은 card-pad
+const tooltip = {
+  className: 'p-card-pad border border-line fs-meta tabular-nums',
+  rowClassName: 'flex items-center gap-label-inline text-dim',
+  // 오버레이 면 칠만 인라인 — overlay-surface 는 Tailwind 색 키에 없음
+  style: {
+    background: 'rgb(var(--overlay-surface))',
+    borderRadius: 'var(--radius-tile)',
+    boxShadow: 'var(--shadow-overlay)',
+  },
 };
 
 async function fetchJsonC(url, signal) {

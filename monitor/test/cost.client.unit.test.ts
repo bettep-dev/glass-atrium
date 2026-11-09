@@ -130,7 +130,6 @@ interface CostHelpers {
     session: Record<string, unknown>,
     nowMs: number,
   ) => ReadonlyArray<readonly [string, string]>;
-  getTileVerdictTextC: (hot: HotVerdict) => string;
   getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
   markPartialDay: (rows: ReadonlyArray<{ actual: number }>) => ReadonlyArray<{
     actual: number;

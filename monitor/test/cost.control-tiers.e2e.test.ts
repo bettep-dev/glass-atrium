@@ -1,5 +1,5 @@
-// Cost controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the screen's own
-// style block, rendered from the shipped components: the Cost by model head's "est. rate" attribute and link off the control height, and the
+// Cost controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css, the shared type scale
+// and the role-key utilities, rendered from the shipped components: the Cost by model head's "est. rate" attribute and link off the control height, and the
 // model ledger's row expander as a 24 target that keeps one box collapsed, expanded and in every pointer/keyboard state (§7.16).
 // Runner: npx tsx --test test/cost.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
-import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { createReactStub, collectText, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 import { createControlProbe, QUARTER_TURN, isSameBox } from "./lib/control-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -29,20 +30,18 @@ const closedScreen = await getScreen(createReactStub());
 const openScreen = await getScreen({ ...createReactStub(), useState: (initial: unknown) => [initial === false ? true : initial, () => undefined] });
 const getMarkup = (screen: Record<string, unknown>, component: string, props: Record<string, unknown>): string =>
   getHtml(renderScreen((screen[component] as Component)(props)) as RenderedNode);
-const SCREEN_CSS = findNodes(renderScreen((closedScreen.ScreenCost as Component)({})), (n) => n.type === "style")
-  .map((n) => collectText(n))
-  .join("\n");
+// the screen mounts the shared type scale (ui.jsx TypeScaleStyle) → the fs-* classes its markup carries
+const TYPE_SCALE_CSS = collectText(renderScreen(((ui.UI as Record<string, Component>).TypeScaleStyle)({})) as RenderedNode);
 
-// The app loads Tailwind preflight and utilities from its CDN; these are the rules the measured geometry depends on, at their shipped values.
+// The app loads Tailwind preflight and utilities from its CDN; these are the non-role rules the measured geometry depends on, at their shipped values.
 const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 solid; }
   html { line-height: 1.5; font-family: ui-sans-serif, system-ui, sans-serif; }
   svg { display: block; vertical-align: middle; }
   table { border-collapse: collapse; }
   button { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; background-color: transparent; }
-  .flex { display: flex; } .items-center { align-items: center; } .gap-1 { gap: 0.25rem; } .gap-2 { gap: 0.5rem; }
-  .ml-auto { margin-left: auto; } .shrink-0 { flex-shrink: 0; } .text-left { text-align: left; } .pl-6 { padding-left: 1.5rem; }
-  .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; } .font-semibold { font-weight: 600; }
-  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .rotate-90 { transform: rotate(90deg); }
+  .flex { display: flex; } .items-center { align-items: center; } .gap-2 { gap: 0.5rem; }
+  .ml-auto { margin-left: auto; } .shrink-0 { flex-shrink: 0; } .text-left { text-align: left; }
+  .font-semibold { font-weight: 600; } .tabular-nums { font-variant-numeric: tabular-nums; } .rotate-90 { transform: rotate(90deg); }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }`;
 
 const noop = () => undefined;
@@ -87,7 +86,8 @@ before(async () => {
   await page.setContent(PAGE);
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
-  await page.addStyleTag({ content: SCREEN_CSS });
+  await page.addStyleTag({ content: TYPE_SCALE_CSS });
+  await page.addStyleTag({ content: getRoleKeyCss() });
   cdp = await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
   await cdp.send("CSS.enable");
