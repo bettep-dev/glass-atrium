@@ -999,7 +999,7 @@ function TokenStackedBody({ state, days, failures, onRetry }) {
       <div className="flex items-start gap-4 mb-3">
         <div>
           <div className="fs-meta text-dim">Tokens</div>
-          <div className="font-mono fs-display text-dim tracking-tight">{formatTokenCompactC(totalTokens)}</div>
+          <div className="fs-display text-dim tabular-nums">{formatTokenCompactC(totalTokens)}</div>
           <TrendDeltaC {...computeTokenWindowDelta(state, totalTokens)} noun="tokens"/>
         </div>
       </div>
@@ -1094,7 +1094,7 @@ function TokenShareRowC({ shares }) {
       {shares.map((r) => (
         <span key={r.key} className="flex items-center gap-1.5 fs-meta text-dim">
           <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
-          {r.label} <span className="font-mono">{formatTokenShareC(r.share)}</span> · {formatTokenCompactC(r.total)}
+          {r.label} <span className="tabular-nums">{formatTokenShareC(r.share)}</span> · {formatTokenCompactC(r.total)}
         </span>
       ))}
     </div>
@@ -1453,7 +1453,7 @@ function ModelCostRow({ r }) {
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={4} className="fs-meta text-dim font-mono pl-6">
+          <td colSpan={4} className="fs-meta text-dim tabular-nums pl-6">
             <span aria-hidden="true">└ </span>{getModelTokenDetail(r)}
           </td>
         </tr>
@@ -1583,7 +1583,7 @@ function CacheHitBody({ state, days, failures, onRetry }) {
   return (
     <>
       <div className="flex items-baseline gap-3 mb-3">
-        <div className="font-mono fs-stat font-semibold tracking-tight">
+        <div className="fs-stat font-semibold tabular-nums">
           {pooledRate === null ? '—' : (pooledRate * 100).toFixed(1) + '%'}
         </div>
         <div className="fs-meta text-dim">pooled hit rate</div>
@@ -1853,7 +1853,7 @@ function getSessionFactsC(session, nowMs) {
   const { formatKstFull, hasFieldValue } = window.UI;
   const lastSeen = getClampedInstantC(session.last_event_at, nowMs);
   const facts = [
-    ['Session', session.session_id],
+    ['Session', session.session_id, true],
     ['Model', getModelLabelC(session.top_model)],
     ['Cost', formatUsdC(session.total_cost_usd)],
     ['Tokens', formatTokenCompactC(session.total_tokens)],
@@ -1875,10 +1875,10 @@ function SessionRowC({ session, focusProps, onOpen }) {
       className="cursor-pointer"
       aria-label={`Session ${shortId}, ${modelLabel}, ${formatUsdC(session.total_cost_usd)} — open details`}
       onClick={onOpen}>
-      <td className="font-mono" title={session.session_id}>{shortId}</td>
+      <td title={session.session_id}><window.UI.MachineString>{shortId}</window.UI.MachineString></td>
       <td>{modelLabel}</td>
-      <td className="num font-mono text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</td>
-      <td className="num font-mono">{formatTokenCompactC(session.total_tokens)}</td>
+      <td className="num text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</td>
+      <td className="num">{formatTokenCompactC(session.total_tokens)}</td>
       <td className="num" title={lastSeen ? formatKstFull(lastSeen) : undefined}>
         {lastSeen ? formatRelativeTime(lastSeen) : '—'}
       </td>
@@ -1887,16 +1887,16 @@ function SessionRowC({ session, focusProps, onOpen }) {
 }
 
 function SessionDetailDrawerC({ session, onClose }) {
-  const { DetailSurface, Link } = window.UI;
+  const { DetailSurface, Link, MachineString } = window.UI;
   const facts = getSessionFactsC(session, Date.now());
 
   return (
     <DetailSurface open onClose={onClose} variant="drawer" title="Session cost">
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 fs-meta">
-        {facts.map(([term, value]) => (
+        {facts.map(([term, value, isMachine]) => (
           <React.Fragment key={term}>
             <dt className="text-dim">{term}</dt>
-            <dd className="font-mono text-ink break-all">{value}</dd>
+            <dd className="text-ink break-all tabular-nums">{isMachine ? <MachineString>{value}</MachineString> : value}</dd>
           </React.Fragment>
         ))}
       </dl>
@@ -2048,14 +2048,14 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
       <div className="grid grid-cols-2 gap-3 mb-3">
         <div>
           <div className="fs-meta text-dim">Unreadable entries</div>
-          <div className="font-mono fs-stat font-semibold tracking-tight">
+          <div className="fs-stat font-semibold tabular-nums">
             {formatIntC(totalErrors)}
           </div>
         </div>
         <div>
           <div className="fs-meta text-dim">Last seen</div>
           {/* 날짜 = 보조 stat — fs-stat(18px). */}
-          <div className="font-mono fs-stat text-fg/80">
+          <div className="fs-stat text-fg/80 tabular-nums">
             {lastErrorDate
               ? <span title={lastErrorDate}>{getDaysAgoText(lastErrorDate)}</span>
               : <span className="text-dim">—</span>}
@@ -2080,7 +2080,7 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
       ) : (
         <div className="fs-body text-dim text-center py-8" aria-label="no parse_error — chart omitted">
           No parse_error in the last <window.UI.NoWrap>{days} days</window.UI.NoWrap>.
-          <div className="fs-meta text-faint mt-2 font-mono">
+          <div className="fs-meta text-faint mt-2 tabular-nums">
             <window.UI.NoWrap>{rows.length} days</window.UI.NoWrap> analyzed · {formatIntC(totalEvents)} events total
           </div>
         </div>
@@ -2356,14 +2356,14 @@ function TurnAggregateRow({ turns, sessionPopulation }) {
   return (
     <div className="px-4 mb-4">
       <div className="flex items-baseline gap-2 flex-wrap">
-        {headline.value && <span className="font-mono fs-display font-semibold tracking-tight">{headline.value}</span>}
+        {headline.value && <span className="fs-display font-semibold tabular-nums">{headline.value}</span>}
         <span className="fs-meta text-dim">{headline.note}</span>
       </div>
       <dl className="grid grid-cols-3 gap-3 mt-2">
         {secondary.map((item) => (
           <div key={item.label} className="min-w-0">
             <dt className="fs-meta text-dim">{item.label}</dt>
-            <dd className="font-mono fs-stat text-dim tracking-tight">{item.value}</dd>
+            <dd className="fs-stat text-dim tabular-nums">{item.value}</dd>
           </div>
         ))}
       </dl>
@@ -2422,7 +2422,7 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
                     className="inline-block h-1.5 rounded-sm"
                     style={{ width: `${Math.max(barPct, 2)}%`, maxWidth: 120, background: `rgb(var(${meta.colorVar}) / 0.7)` }}
                   />
-                  <span className="font-mono">{formatIntC(events)}</span>
+                  <span className="tabular-nums">{formatIntC(events)}</span>
                 </div>
               </td>
               <td className="num">

@@ -680,6 +680,43 @@ test("the session drawer's task-results link does not promise a session-scoped v
   assert.match(String(link.props.children), /^All task results/, "an unscoped destination is labelled as the whole list");
 });
 
+test("the session drawer sets only the session id in the machine-string face; every other fact reads in sans", async () => {
+  interface DrawerElement {
+    type: unknown;
+    props: Record<string, unknown>;
+  }
+  interface DrawerSandbox {
+    React: { createElement: unknown };
+    SessionDetailDrawerC: (props: Record<string, unknown>) => DrawerElement;
+  }
+  const sandbox = await buildScreenSandbox<DrawerSandbox>(COST_SRC);
+  sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | null, ...rest: unknown[]) => ({
+    type,
+    props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
+  });
+  const collect = (node: unknown, isMatch: (el: DrawerElement) => boolean, out: DrawerElement[] = []): DrawerElement[] => {
+    if (Array.isArray(node)) {
+      for (const child of node) collect(child, isMatch, out);
+      return out;
+    }
+    if (typeof node !== "object" || node === null || !("props" in node)) return out;
+    const el = node as DrawerElement;
+    if (isMatch(el)) out.push(el);
+    return collect(el.props.children, isMatch, out);
+  };
+  const isMachine = (el: DrawerElement) => typeof el.type === "function" && el.type.name === "MachineString";
+  const session = {
+    session_id: "12345678-9abc-4def-8123-456789abcdef", top_model: "claude-opus-5-5",
+    total_cost_usd: 1.25, total_tokens: 120_000, event_count: 42,
+  };
+  const facts = collect(sandbox.SessionDetailDrawerC({ session, onClose: () => {} }), (el) => el.type === "dd");
+
+  assert.ok(facts.length >= 4, `the drawer lists the session facts (${facts.length})`);
+  const machineText = facts.map((dd) => collect(dd.props.children, isMachine).map((el) => String(el.props.children)));
+  assert.deepEqual(machineText.filter((texts) => texts.length > 0), [[session.session_id]]);
+  assert.ok(facts.every((dd) => !/font-mono/.test(String(dd.props.className))), "no fact falls back to a mono class");
+});
+
 test("the running-hot sentence is stated once, in the lane, exactly when a hot trigger fires", () => {
   const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
     ["calm", {}, false],
