@@ -1,10 +1,7 @@
-// Task results controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the
-// screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" and the result drawer's record
-// "Previous / Next" draw the same small ghost button at rest and on hover, the filter panel's "More filters" fold opens on the
-// disclosure atom, each keeps one box in every state, the panel's Record scope checkbox stands on the 24 inline-target tier and
-// draws the Documents ledger's checkbox in both themes, a card head's static pill stands on the 32 control height (§7.16), and the
-// active-filter row under the Results head is one 48 control row above its rule, and the Results head holds still as a keyword lands or a
-// popover filter is counted.
+// Task results controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css, the role-key
+// utilities and the screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" each keep one
+// box in every state, the Time sort control draws the drawer's small ghost button, a card head's own status reads as glyph and word
+// with no pill, and the Results filter bar holds still as a keyword lands, each trigger naming its value.
 // Runner: npx tsx --test test/outcomes.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -15,6 +12,7 @@ import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 import { createControlProbe, isSameBox } from "./lib/control-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -34,21 +32,17 @@ const SCREEN_CSS = findNodes(renderScreen((resultsScreen.ScreenOutcomes as Compo
   .map((n) => collectText(n))
   .join("\n");
 
-// The app loads Tailwind preflight and utilities from its CDN; these are the rules the measured geometry depends on, at their shipped values.
+// The app loads Tailwind preflight and utilities from its CDN; these are the non-role rules the measured geometry depends on, at their shipped values.
 const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 solid; }
   html { line-height: 1.5; font-family: ui-sans-serif, system-ui, sans-serif; }
   svg { display: block; vertical-align: middle; }
   button { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; background-color: transparent; }
-  .flex { display: flex; } .items-center { align-items: center; } .justify-between { justify-content: space-between; }
-  summary { display: list-item; }
-  .ml-auto { margin-left: auto; } .shrink-0 { flex-shrink: 0; } .inline-grid { display: inline-grid; } .justify-items-end { justify-items: end; }
-  .col-start-1 { grid-column-start: 1; } .row-start-1 { grid-row-start: 1; } .invisible { visibility: hidden; }
-  .tabular-nums { font-variant-numeric: tabular-nums; }
-  .gap-2 { gap: 0.5rem; } .mb-1 { margin-bottom: 0.25rem; } .mr-auto { margin-right: auto; } .px-4 { padding-left: 1rem; padding-right: 1rem; }
-  .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .border-t { border-top-width: 1px; } .border-b { border-bottom-width: 1px; }
-  .border-line { border-color: rgb(var(--line)); } .gap-1 { gap: 0.25rem; } .flex-wrap { flex-wrap: wrap; }
-  .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
-  .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; }`;
+  .flex { display: flex; } .inline-flex { display: inline-flex; } .items-center { align-items: center; } .flex-wrap { flex-wrap: wrap; }
+  .ml-auto { margin-left: auto; } .mr-auto { margin-right: auto; } .shrink-0 { flex-shrink: 0; } .min-w-0 { min-width: 0; }
+  .gap-1 { gap: 0.25rem; } .gap-2 { gap: 0.5rem; } .whitespace-nowrap { white-space: nowrap; }
+  .border-separate { border-collapse: separate; } .border-spacing-0 { border-spacing: 0; }
+  .font-medium { font-weight: 500; } .font-semibold { font-weight: 600; } .tabular-nums { font-variant-numeric: tabular-nums; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }`;
 
 const noop = () => undefined;
 const READY = { status: "ready", busy: false, data: null, error: null };
@@ -75,22 +69,7 @@ const DRAWER = getMarkup("DetailModal", {
   detailRow: RECORDS[1], detailState: { status: "loading", data: null, error: null }, rows: RECORDS, onClose: noop, onNav: noop,
 });
 
-// the reference is the shipped ledger box under the Documents screen's own style block, beside the Task results panel
-const docsScreen = await loadScreenModule(resolve(HERE, "../public/src/screens/clauded-docs.jsx"), {
-  UI: ui.UI,
-  React: createReactStub(),
-  localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
-});
-const DOCS_CSS = findNodes(renderScreen((docsScreen.ScreenClaudedDocs as Component)({})), (n) => n.type === "style")
-  .map((n) => collectText(n))
-  .join("\n");
-
-const FILTERS = getMarkup("FilterPanelO", {
-  filter: {}, distinctAgents: ["glass-atrium-dev-front"], includeAll: false, sort: "newest",
-  onPatchFilter: noop, onToggleIncludeAll: noop, onSortChange: noop, onReset: noop,
-});
-
-// a card head whose right slot holds a static status pill: beside the info button (Confident but failed) or alone
+// a card head whose right slot holds its own status: beside the info button (Confident but failed) or alone
 const CROSSTAB = getMarkup("CrosstabCard", {
   state: { status: "ready", data: { crosstab: { polarTotal: 4, total: 40, byCell: { "high|false": { count: 3 } }, cells: [] } }, error: null },
   onRetry: noop, shared: {},
@@ -99,33 +78,27 @@ const LOADING = { status: "loading", data: null, error: null };
 const ATTRIBUTION = getMarkup("AttributionHealthCard", { state: LOADING, period: 30, onRetry: noop, shared: {} });
 const CHANNELS = getMarkup("ChannelLivenessCard", { state: LOADING, onRetry: noop, shared: {} });
 
-// the active-filter row: the page-owned Period pill, two removable chips and Clear all
-const CHIPS = getMarkup("ActiveFilterChips", { filter: { days: 7, agent: "glass-atrium-dev-front", q: "phase" }, onRemove: noop, onClearAll: noop });
-
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="first-page" style="width: 1170px; padding: 24px;">${getLedger(0)}</div>
   <div id="mid-page" style="width: 1170px; padding: 24px;">${getLedger(1)}</div>
   <div id="ledger-rows" style="width: 1170px; padding: 24px;">${LEDGER_WITH_ROWS}</div>
   <div id="drawer">${DRAWER}</div>
-  <div id="filters" style="width: 280px; padding: 12px;">${FILTERS}</div>
   <div id="crosstab" style="width: 560px; padding: 24px;">${CROSSTAB}</div>
   <div id="attribution" style="width: 560px; padding: 24px;">${ATTRIBUTION}</div>
   <div id="channels" style="width: 560px; padding: 24px;">${CHANNELS}</div>
   ${Object.entries(HEADS).map(([name, markup]) => `<div id="head-${name}" style="width: 1170px; padding: 24px;">${markup}</div>`).join("\n  ")}
-  <div id="chips" style="width: 1170px; padding: 24px;"><div class="card">${CHIPS}<div class="card-body" style="height: 40px;"></div></div></div>
 </body></html>`;
 
 const LEDGER_BUTTON = (id: string, label: string) => `#${id} button[aria-label="${label} page"]`;
 const DRAWER_BUTTON = (label: string) => `#drawer .detail-nav button[aria-label="${label} record"]`;
 const LABELS = ["Previous", "Next"] as const;
-const MORE_FILTERS = "#filters details";
 // the properties that make a button variant: its edge, fill, ink, type and box
 const VARIANT_PROPS = ["border-top-color", "border-top-width", "background-color", "color", "font-size", "font-weight", "padding-top", "padding-left", "height"] as const;
 
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
-const { readBox, setOpen, forcePseudo, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
+const { readBox, forcePseudo, assertBoxHeldAcrossStates } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -133,6 +106,7 @@ before(async () => {
   await page.setContent(PAGE);
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+  await page.addStyleTag({ content: getRoleKeyCss() });
   await page.addStyleTag({ content: SCREEN_CSS });
   cdp = await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
@@ -160,18 +134,6 @@ async function readVariantIn(selector: string, state: readonly string[]): Promis
   }
 }
 
-describe("the ledger pages with the drawer's Previous / Next variant", () => {
-  for (const label of LABELS) {
-    test(`ledger ${label} reads "${label}" and draws the drawer's ${label} button at rest and on hover`, async () => {
-      const ledger = LEDGER_BUTTON("mid-page", label);
-      assert.equal((await page.$eval(ledger, (el) => el.textContent))?.trim(), label);
-      for (const state of [[], ["hover"]] as const) {
-        assert.deepEqual(await readVariantIn(ledger, state), await readVariantIn(DRAWER_BUTTON(label), state), `${state[0] ?? "rest"}`);
-      }
-    });
-  }
-});
-
 describe("each pagination button keeps one 32 box in every state", () => {
   for (const label of LABELS) {
     test(`ledger ${label} keeps its box under hover, focus-visible and active`, async () => {
@@ -181,9 +143,9 @@ describe("each pagination button keeps one 32 box in every state", () => {
     });
   }
 
-  test("disabled on the first page, Previous keeps its enabled box", async () => {
+  test("unavailable on the first page, Previous stays focusable and keeps its enabled box", async () => {
     const disabled = LEDGER_BUTTON("first-page", "Previous");
-    assert.equal(await page.$eval(disabled, (el) => (el as HTMLButtonElement).disabled), true);
+    assert.equal(await page.$eval(disabled, (el) => el.getAttribute("aria-disabled")), "true");
     const enabled = await readBox(LEDGER_BUTTON("mid-page", "Previous"));
     const box = await readBox(disabled);
     assert.ok(isSameBox(box, enabled), `disabled ${box.width}x${box.height} vs enabled ${enabled.width}x${enabled.height}`);
@@ -247,157 +209,50 @@ describe("the ledger's pagination row is the card's 40 foot", () => {
   });
 });
 
-describe("the filter panel's More filters fold opens on the disclosure atom", () => {
-  const summary = `${MORE_FILTERS} > summary`;
+describe("a card head's own status reads as glyph and word, never a pill", () => {
+  const STATUS = '.card-head [data-role="head-status"]';
 
-  test("its summary is a 32 disclosure with the chevron as the one open-state cue, turned 90 once open", () => assertFoldOnOneBox(MORE_FILTERS, summary));
-
-  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(summary));
-});
-
-describe("the filter panel's Record scope checkbox stands on the C24 inline-target tier", () => {
-  const hit = `${MORE_FILTERS} label:has(input[type="checkbox"])`;
-  const box = `${hit} input`;
-
-  test("its label is a 24 hit area around a 16 box, the text on the box's centre line, 4 below the group label", async () => {
-    await setOpen(MORE_FILTERS, true);
-    try {
-      const [hitBox, visual, text, groupLabel] = await Promise.all([readBox(hit), readBox(box), readBox(`${hit} > span:last-child`), readBox(`${MORE_FILTERS} div:has(input[type="checkbox"]) > div.fs-meta`)]);
-      assert.ok(hitBox.height >= 24 && hitBox.width >= 24, `hit ${hitBox.width}x${hitBox.height}`);
-      assert.deepEqual([visual.width, visual.height], [16, 16], "checkbox visual");
-      assert.ok(Math.abs(text.top + text.height / 2 - (visual.top + visual.height / 2)) < 0.5, "one centre line");
-      assert.equal(hitBox.top - groupLabel.bottom, 4, "label-to-content step");
-    } finally {
-      await setOpen(MORE_FILTERS, false);
-    }
-  });
-});
-
-describe("the Record scope checkbox draws the Documents ledger checkbox in both themes", () => {
-  const getLedgerBox = (checked: boolean) =>
-    getHtml(renderScreen((docsScreen.DocCheckboxCD as Component)({ checked, onChange: noop, ariaLabel: "Select Plan" })) as RenderedNode);
-  const getScope = (includeAll: boolean) =>
-    getMarkup("FilterPanelO", { filter: {}, distinctAgents: [], includeAll, sort: "newest", onPatchFilter: noop, onToggleIncludeAll: noop, onSortChange: noop, onReset: noop });
-  // the ledger box's wrapper and mark lay out on these Tailwind utilities, at their shipped values
-  const UTILITIES = ".relative { position: relative; } .absolute { position: absolute; } .justify-center { justify-content: center; }" +
-    " .mx-auto { margin-left: auto; margin-right: auto; } .pointer-events-none { pointer-events: none; }";
-  const PAIR_PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
-    <div id="scope-off" style="width: 280px;">${getScope(false)}</div>
-    <div id="scope-on" style="width: 280px;">${getScope(true)}</div>
-    <div class="card"><table class="tbl"><tbody><tr>
-      <td class="doc-checkbox-cell" id="ledger-off">${getLedgerBox(false)}</td>
-      <td class="doc-checkbox-cell" id="ledger-on">${getLedgerBox(true)}</td>
-    </tr></tbody></table></div>
-  </body></html>`;
-  // the properties that make the box: its kind, edge, corner, fill and visual size
-  const BOX_PROPS = ["appearance", "border-top-width", "border-top-color", "border-top-left-radius", "background-color", "width", "height"] as const;
-  let pairPage: Page;
-
-  before(async () => {
-    pairPage = await browser.newPage({ viewport: { width: 900, height: 900 }, reducedMotion: "reduce" });
-    await pairPage.setContent(PAIR_PAGE);
-    await pairPage.addStyleTag({ path: resolve(STYLES, "tokens.css") });
-    await pairPage.addStyleTag({ path: resolve(STYLES, "base.css") });
-    await pairPage.addStyleTag({ content: SCREEN_CSS });
-    await pairPage.addStyleTag({ content: DOCS_CSS });
-    await pairPage.$$eval("details", (folds) => folds.forEach((fold) => { (fold as HTMLDetailsElement).open = true; }));
-  });
-
-  after(async () => {
-    await pairPage?.close();
-  });
-
-  const readCheckbox = (root: string) =>
-    pairPage.$eval(`${root} input[type="checkbox"]`, (input, props) => {
-      const style = getComputedStyle(input);
-      const box = Object.fromEntries(props.map((p) => [p, style.getPropertyValue(p)]));
-      const mark = input.closest("label")?.parentElement?.querySelector("svg");
-      if (!mark) return { ...box, mark: "none" };
-      // the glyph's ink and its offset inside the box
-      const [glyph, frame] = [mark.getBoundingClientRect(), input.getBoundingClientRect()];
-      return { ...box, mark: getComputedStyle(mark).color, markOffset: [glyph.left - frame.left, glyph.top - frame.top] };
-    }, [...BOX_PROPS]);
-
-  for (const theme of ["dark", "light"]) {
-    for (const [state, scope, ledger] of [["at rest", "#scope-off", "#ledger-off"], ["checked", "#scope-on", "#ledger-on"]]) {
-      test(`${theme}, ${state}: the same box, edge, corner, fill and mark`, async () => {
-        await pairPage.evaluate((name) => { document.documentElement.dataset.theme = name; }, theme);
-        assert.deepEqual(await readCheckbox(scope), await readCheckbox(ledger));
-      });
-    }
-  }
-});
-
-describe("a static pill in a card head stands on the head's 32 control height", () => {
-  test("Confident but failed: the mismatches pill matches the info button's height and centre line", async () => {
-    const pill = await readBox("#crosstab .card-head .pill");
+  test("Confident but failed: the mismatches status sits on the info button's centre line, unboxed", async () => {
+    const status = await readBox(`#crosstab ${STATUS}`);
     const info = await readBox("#crosstab .card-head .btn.icon");
-    assert.match((await page.$eval("#crosstab .card-head .pill", (el) => el.textContent)) ?? "", /4 mismatches/);
-    assert.equal(info.height, 32);
-    assert.equal(pill.height, info.height, `pill ${pill.height} vs info ${info.height}`);
-    assert.ok(Math.abs(pill.top + pill.height / 2 - (info.top + info.height / 2)) < 0.5, "one centre line");
+    assert.match((await page.$eval(`#crosstab ${STATUS}`, (el) => el.textContent)) ?? "", /4 mismatches/);
+    assert.equal(await page.locator("#crosstab .card-head .pill").count(), 0, "a pill in the head");
+    assert.ok(await page.$eval(`#crosstab ${STATUS}`, (el) => el.querySelector("svg") !== null), "the warn glyph leads the word");
+    assert.ok(Math.abs(status.top + status.height / 2 - (info.top + info.height / 2)) < 0.5, "one centre line");
   });
 
   for (const card of ["attribution", "channels"]) {
-    test(`${card}: the head's lone status pill is 32 too`, async () => {
-      assert.equal((await readBox(`#${card} .card-head .pill`)).height, 32);
+    test(`${card}: the head's lone status is glyph and word, no pill`, async () => {
+      assert.equal(await page.locator(`#${card} .card-head .pill`).count(), 0, "a pill in the head");
+      assert.ok(((await page.$eval(`#${card} ${STATUS}`, (el) => el.textContent)) ?? "").trim().length > 0, "the status word");
     });
   }
 });
 
-describe("the active-filter row under the Results head is one 48 control row", () => {
-  const CLEAR_ALL = '#chips button[aria-label="Clear all filters"]';
-  const readChipRow = () =>
-    page.$eval(CLEAR_ALL, (clear) => {
-      const row = clear.parentElement!;
-      const items = [...row.querySelectorAll(".pill, button")].map((el) => el.getBoundingClientRect().toJSON() as DOMRect);
-      return { row: row.getBoundingClientRect().toJSON() as DOMRect, items };
-    });
+describe("the Results filter bar holds still as its filters change", () => {
+  const BAR_CONTROLS = ':is(input[aria-label="Keyword search"], .filter-trigger, .filter-bar-reset)';
+  const readBar = (name: keyof typeof HEADS) =>
+    page.$$eval(`#head-${name} .card-bar ${BAR_CONTROLS}`, (controls) => controls.map((control) => {
+      const bar = control.closest(".card-bar")!.getBoundingClientRect();
+      const { left, top, width, height } = control.getBoundingClientRect();
+      return { left: left - bar.left, top: top - bar.top, width, height, visibility: getComputedStyle(control).visibility };
+    }));
 
-  test("the row is 48 and every chip, the period pill included, is a 32 item on its centre line", async () => {
-    const { row, items } = await readChipRow();
-    assert.equal(items.length, 4, "period pill, two remove chips, Clear all");
-    assert.equal(row.height, 48);
-    const centre = row.top + row.height / 2;
-    for (const [i, item] of items.entries()) {
-      assert.equal(item.height, 32, `item ${i} height`);
-      assert.ok(Math.abs(item.top + item.height / 2 - centre) <= 0.5, `item ${i} centre ${item.top + item.height / 2} vs row centre ${centre}`);
-    }
+  test("a typed keyword reaching the filter shows Reset in the slot it kept at defaults, every control in place", async () => {
+    const [idle, typed] = await Promise.all([readBar("idle"), readBar("typed")]);
+    assert.deepEqual(idle.map(({ visibility }) => visibility).at(-1), "hidden", "Reset at defaults");
+    assert.deepEqual(typed.map(({ visibility }) => visibility).at(-1), "visible", "Reset once a keyword applies");
+    assert.deepEqual(typed.map(({ visibility, ...box }) => box), idle.map(({ visibility, ...box }) => box), "boxes typed vs idle");
   });
 
-  test("the chips sit 4 apart as one group, Clear all the 12 between-groups step after them", async () => {
-    const { items } = await readChipRow();
-    const gaps = items.slice(1).map((item, i) => item.left - items[i].right);
-    assert.deepEqual(gaps, [4, 4, 12]);
-  });
-
-  test("the head-to-body rule runs directly under the row, in the card head's rule colour", async () => {
-    const [rule, headRule] = await Promise.all([
-      page.$eval(CLEAR_ALL, (clear) => {
-        const row = clear.parentElement!;
-        const holder = row.parentElement!;
-        const style = getComputedStyle(holder);
-        return { width: style.borderBottomWidth, color: style.borderBottomColor, below: holder.getBoundingClientRect().bottom - row.getBoundingClientRect().bottom };
-      }),
-      page.$eval("#crosstab .card-head", (head) => getComputedStyle(head).borderBottomColor),
-    ]);
-    assert.deepEqual(rule, { width: "1px", color: headRule, below: 1 });
-  });
-});
-
-describe("the Results head holds still as its filters change", () => {
-  const SEARCH = 'input[aria-label="Keyword search"]';
-  const TRIGGER = 'button[aria-haspopup="dialog"]';
-  const readHead = (name: keyof typeof HEADS) =>
-    Promise.all([SEARCH, TRIGGER].map((control) => readBox(`#head-${name} .card-head ${control}`)))
-      .then((boxes) => boxes.map(({ left, width, height }) => ({ left, width, height })));
-
-  test("a typed keyword reaching the filter leaves the search's box and the Filters trigger in place", async () => {
-    assert.deepEqual(await readHead("typed"), await readHead("idle"), "[search, trigger] typed vs idle");
-  });
-
-  test("a popover filter's count appearing on the trigger moves nothing in the head", async () => {
-    assert.match((await page.$eval(`#head-filtered .card-head ${TRIGGER}`, (el) => el.textContent)) ?? "", /Filters · 1/);
-    assert.deepEqual(await readHead("filtered"), await readHead("idle"), "[search, trigger] filtered vs idle");
+  test("an applied axis names its value on its trigger, the rest name All", async () => {
+    const readValues = (name: keyof typeof HEADS) =>
+      page.$$eval(`#head-${name} .filter-trigger`, (triggers) => triggers.map((trigger) => trigger.querySelector(".filter-trigger-value")!.textContent));
+    const [idle, filtered] = await Promise.all([readValues("idle"), readValues("filtered")]);
+    // loadScreenModule types every export unknown → ui.jsx's shipped name helper
+    const { getAgentDisplayName } = ui.UI as { getAgentDisplayName: (name: string) => string };
+    assert.equal(filtered[0], getAgentDisplayName("glass-atrium-dev-front"));
+    assert.deepEqual(filtered.slice(1), idle.slice(1));
+    assert.equal(idle[0], "All");
   });
 });
