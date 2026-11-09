@@ -686,7 +686,7 @@ const LEDGER_COL_COUNT_MC = LEDGER_COL_WIDTHS_MC.length;
 const LEDGER_TABLE_STYLE_MC = { tableLayout: "fixed" };
 // the inline Reset's 24 target height (§7.15 C24) → the saved/reset slot holds it while empty, so a reset never moves the row
 const SAVED_LINE_STYLE_MC = { minHeight: "24px" };
-// The page's one link token — section link and inline reset read alike.
+// The inline Reset's text-action look — navigation takes the Link atom instead.
 const LINK_CLASS_MC = "text-dim underline underline-offset-2";
 // a link beside a card's or a row's controls → the 24 target (§7.15)
 const LINK_TARGET_CLASS_MC = `inline-target ${LINK_CLASS_MC}`;
@@ -711,7 +711,7 @@ function DomainsSectionMC({
 	errors,
 	onModelChange,
 }) {
-	const { Card, SkeletonRows, TableHead } = window.UI;
+	const { Card, Link, SkeletonRows, TableHead } = window.UI;
 	const rows = sortDomainsMC(domains || []);
 	const mix = form ? getModelMixMC(rows.map((d) => form.models[d.domain] || d.desired)) : "";
 	const timing = getApplyTimingMC(rows);
@@ -733,9 +733,9 @@ function DomainsSectionMC({
 				right={
 					<span className="flex items-center gap-3">
 						{state === "ready" && <UnreadMarkMC rows={rows} />}
-						<a href="#cost" className={`fs-meta ${LINK_TARGET_CLASS_MC}`}>
+						<Link href="#cost" className="fs-meta inline-target">
 							Cost & usage
-						</a>
+						</Link>
 					</span>
 				}
 				foot={mix ? <span className="truncate min-w-0" title={mix}>{mix}</span> : null}
@@ -851,7 +851,7 @@ function groupFilesByModelMC(fileRows) {
 // An ID or file name is one unbreakable token, never broken at its hyphens; it ellipsizes with a title only when its own line is too narrow.
 function IdTokenMC({ title, children }) {
 	return (
-		<span className="font-mono truncate max-w-full" title={title}>
+		<span className="truncate max-w-full" title={title}>
 			{children}
 		</span>
 	);
@@ -894,7 +894,7 @@ function getFileAgentNameMC(file) {
  * No file list → names the source, or that it yielded no value; a source the card foot names stays silent on a read.
  */
 function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, driftTitle }) {
-	const { AgentName, DisclosureChevron, Icon } = window.UI;
+	const { AgentName, DisclosureChevron, Icon, MachineString } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
 	const isSteady = !drift && value != null;
 	const isValueShown = !isSteady && value != null;
@@ -933,8 +933,12 @@ function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, drif
 						aria-label={`${fileRows.length} agent files`}>
 						{fileGroups.map(([model, files]) => (
 							<div key={model}>
-								<div className={`font-mono text-dim${isSpacedLabelMC(model) ? "" : " whitespace-nowrap"}`}>{model}</div>
-								<div className="font-mono flex flex-wrap gap-x-3 pl-3">
+								{isSpacedLabelMC(model) ? (
+									<div className="text-dim">{model}</div>
+								) : (
+									<div className="text-dim whitespace-nowrap"><MachineString>{model}</MachineString></div>
+								)}
+								<div className="flex flex-wrap gap-x-3 pl-3">
 									{files.map((file) => (
 										<AgentName key={file} name={getFileAgentNameMC(file)} className="whitespace-nowrap" />
 									))}
@@ -949,7 +953,7 @@ function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, drif
 					{/* null live value = source unreadable or key missing → never claim a read */}
 					<span>{value != null ? "Read from" : "No value read from"}</span>
 					<IdTokenMC title={source}>
-						{isConfigFileMC(source) ? source : <AgentName name={source} />}
+						{isConfigFileMC(source) ? <MachineString>{source}</MachineString> : <AgentName name={source} />}
 					</IdTokenMC>
 				</div>
 			)}
@@ -1117,7 +1121,7 @@ function ModelSelectMC({
 			)}
 			<GhostResetMC
 				overridden={overridden}
-				defaultValue={defaultValue}
+				defaultValue={defaultValue && getModelOptionLabelMC(defaultValue)}
 				onReset={() => onChange(defaultValue)}
 			/>
 		</div>
@@ -1162,7 +1166,7 @@ function GhostResetMC({ overridden, defaultValue, onReset }) {
 					{defaultValue && (
 						<>
 							<span>Saved:</span>
-							<span className="font-mono text-dim">{defaultValue}</span>
+							<span className="text-dim">{defaultValue}</span>
 						</>
 					)}
 					<button
@@ -1273,6 +1277,7 @@ const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
  * + 실측 + ghost default/reset (T-MDL-6).
  */
 function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChange }) {
+	const { Link } = window.UI;
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
 	const showError = Boolean(error);
@@ -1302,12 +1307,12 @@ function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChang
 						/>
 					</span>
 					{/* cost/outcome payload carries no per-call maximum → Cost & usage is the reference point */}
-					<a
+					<Link
 						href="#cost"
-						className={`fs-meta ${LINK_TARGET_CLASS_MC}`}
+						className="fs-meta inline-target"
 						aria-label={`Recent ${meta.label} costs on Cost & usage`}>
 						Recent costs
-					</a>
+					</Link>
 				</div>
 				{showError && (
 					<div className="fs-meta text-crit mt-1" role="alert">
@@ -1555,7 +1560,7 @@ const SURFACE_STATUS_MC = {
 
 // Words for the status, mono for the surface id alone — an empty field is left out, never dashed.
 function SurfaceResultRowMC({ result: r }) {
-	const { Badge } = window.UI;
+	const { Badge, MachineString } = window.UI;
 	const status = r.status ? SURFACE_STATUS_MC[r.status] ?? { word: r.status, tone: "crit" } : null;
 	const surface = r.surface ?? r.target ?? r.file ?? r.domain;
 
@@ -1566,7 +1571,11 @@ function SurfaceResultRowMC({ result: r }) {
 					{status.word}
 				</Badge>
 			)}
-			{surface && <span className="font-mono text-dim truncate">{surface}</span>}
+			{surface && (
+				<span className="text-dim truncate min-w-0">
+					<MachineString>{surface}</MachineString>
+				</span>
+			)}
 			{r.reason && <span className="text-faint truncate">{r.reason}</span>}
 		</div>
 	);
@@ -1604,12 +1613,13 @@ function getDriftCopyMC(sync) {
 }
 
 function getMigrationCopyMC() {
+	const { MachineString } = window.UI;
 	return {
 		title: "Config rows still carry their pre-rename names",
 		body: (
 			<>
 				Values below are read from the old rows. Run{" "}
-				<span className="font-mono">glass-atrium db-setup</span> to complete the
+				<MachineString>glass-atrium db-setup</MachineString> to complete the
 				rename.
 			</>
 		),

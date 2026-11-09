@@ -547,6 +547,10 @@ async function loadMcScreens(
     DisclosureChevron: () => hMc("i", { "data-icon": "chevR", className: "disclosure-chevron" }),
     TypeScaleStyle: () => null,
     MachineString: (p: Record<string, unknown>) => hMc("code", { "data-atom": "MachineString" }, p.children),
+    Link: (p: Record<string, unknown>) => {
+      const { children, ...rest } = p;
+      return hMc("a", { ...rest, "data-atom": "Link" }, children);
+    },
     Badge: (p: Record<string, unknown>) =>
       hMc("span", { className: `badge ${p.className ?? ""}`.trim(), "data-tone": p.tone ?? "neutral" }, p.children),
     CardHead: cardHeadStubMc,
@@ -1040,7 +1044,7 @@ describe("a save-result row reads as words: status in plain words, mono only on 
       const tree = renderComponentMc(screens.SurfaceResultRowMC, { result: row.result });
       const text = textMc(tree);
       const surface = row.result.surface ?? row.result.file;
-      const mono = findAllMc(tree, (n) => String(n.props.className ?? "").includes("font-mono"));
+      const mono = findAllMc(tree, (n) => n.props["data-atom"] === "MachineString");
 
       assert.ok(text.includes(row.word), `status reads "${row.word}"`);
       assert.ok(!text.includes(row.result.status), "the raw status token is not shown");
@@ -1861,7 +1865,44 @@ test("every cap carries its own reference link to Cost & usage", () => {
   for (const row of rows) {
     const links = tagsMc(row.children, "a").filter((a) => a.props.href === "#cost");
     assert.strictEqual(links.length, 1, "one reference link per cap row");
+    assert.strictEqual(links[0].props["data-atom"], "Link", "the cap's link is the shared Link atom");
   }
+});
+
+test("the card-head Cost & usage navigation is the shared Link atom", () => {
+  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
+  const links = tagsMc(tree, "a").filter((a) => a.props.href === "#cost");
+  assert.deepStrictEqual(links.map((a) => a.props["data-atom"]), ["Link"]);
+});
+
+test("mono comes only from the machine-string atom: no element styles itself mono", () => {
+  const files = [{ file: "glass-atrium-qa-code-reviewer.md", model: "claude-opus-4-8" }];
+  const domains = renderComponentMc(
+    screens.DomainsSectionMC,
+    domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], drift: true, files }]),
+  );
+  const trees = [
+    domains,
+    renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc()),
+    renderComponentMc(screens.SurfaceResultRowMC, { result: { file: "frontmatter-dev", status: "failed", reason: "denied" } }),
+  ];
+  for (const tree of trees) {
+    const selfMono = findAllMc(tree, (n) => /\bfont-mono\b/.test(String(n.props.className ?? "")));
+    assert.deepStrictEqual(selfMono.map((n) => textMc(n.children)), [], "no ad-hoc mono class");
+  }
+  const machine = findAllMc(domains, (n) => n.props["data-atom"] === "MachineString").map((n) => textMc(n.children));
+  assert.ok(machine.includes("claude-opus-4-8"), "the file fold's model id is a machine string");
+});
+
+test("a differing model's saved line names the saved model, never its raw id", () => {
+  const tree = renderComponentMc(screens.DomainsSectionMC, {
+    ...domainsPropsMc(),
+    baseline: { models: { "model.dev": "claude-sonnet-5" }, budgets: {} },
+  });
+  const [slot] = findAllMc(tree, (n) => n.props["data-slot"] === "saved-line");
+  const text = textMc(slot.children);
+  assert.ok(!text.includes("claude-sonnet-5"), `no raw id: ${text}`);
+  assert.ok(text.includes("Sonnet 5"), `the friendly name: ${text}`);
 });
 
 test("a listed agent file reads as the shared agent name, never the raw file name", () => {
