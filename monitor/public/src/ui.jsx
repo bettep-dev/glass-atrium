@@ -860,7 +860,13 @@ function PopoverPanel({ id, title, rootRef, onClose, children }) {
 
   useDismissFocus({ onDismiss: onClose, isKeyOwner: () => getTopSurface() === panelRef, panelRef });
 
-  // press, not click — closes before the pressed control takes focus; the trigger (inside root) keeps its own toggle.
+  useOutsidePress(rootRef, onClose);
+
+  return <div ref={panelRef} id={id} role="dialog" aria-label={title} tabIndex={-1} className="popover-panel">{children}</div>;
+}
+
+// press, not click — closes before the pressed control takes focus; the trigger (inside root) keeps its own toggle.
+function useOutsidePress(rootRef, onClose) {
   useEffect(() => {
     const onPointerDown = (e) => {
       const root = rootRef.current;
@@ -870,8 +876,6 @@ function PopoverPanel({ id, title, rootRef, onClose, children }) {
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [onClose, rootRef]);
-
-  return <div ref={panelRef} id={id} role="dialog" aria-label={title} tabIndex={-1} className="popover-panel">{children}</div>;
 }
 
 /**
@@ -1193,6 +1197,183 @@ function ChipGroup({ label, chips, onToggle, className = '' }) {
       tabIndex={getRovingTabIndex(i, activeIndex, chips.length)} onFocus={() => setActiveIndex(i)} onClick={() => onToggle(chip.key)}>
       {chip.label}
     </button>)}
+  </div>;
+}
+
+/**
+ * Arrow press inside a roving single-choice set (segmented range, tabs) → chooses and focuses the next item.
+ * Choice follows focus, so the set keeps one Tab stop on its chosen item.
+ */
+function putRovingChoice(event, keys, onChange) {
+  const items = [...event.currentTarget.querySelectorAll('[data-choice]')];
+  const index = items.indexOf(event.target);
+  const next = getRovingIndex(event.key, index < 0 ? null : index, items.length);
+
+  if (next === undefined) return;
+  event.preventDefault();
+  items[next].focus();
+  onChange(keys[next]);
+}
+
+// A page-wide window (range 7d/30d/90d), never a list filter.
+function Segmented({ label, options, value, onChange, className = '' }) {
+  const chosenIndex = options.findIndex((option) => option.key === value);
+  const keys = options.map((option) => option.key);
+
+  return <div role="radiogroup" aria-label={label} className={`seg ${className}`.trim()}
+    onKeyDown={(event) => putRovingChoice(event, keys, onChange)}>
+    {options.map((option, i) => <button key={option.key} type="button" role="radio" data-choice=""
+      aria-checked={i === chosenIndex} tabIndex={getRovingTabIndex(i, chosenIndex, options.length)}
+      onClick={() => onChange(option.key)}>{option.label}</button>)}
+  </div>;
+}
+
+const getTabId = (id, key) => `${id}-tab-${key}`;
+const getTabPanelId = (id, key) => `${id}-panel-${key}`;
+
+// Switch between distinct views; the caller renders the one panel through getTabPanelProps.
+function Tabs({ id, label, tabs, value, onChange, className = '' }) {
+  const chosenIndex = tabs.findIndex((tab) => tab.key === value);
+  const keys = tabs.map((tab) => tab.key);
+
+  return <div role="tablist" aria-label={label} className={`tabs ${className}`.trim()}
+    onKeyDown={(event) => putRovingChoice(event, keys, onChange)}>
+    {tabs.map((tab, i) => <button key={tab.key} type="button" role="tab" data-choice="" id={getTabId(id, tab.key)}
+      aria-selected={i === chosenIndex} aria-controls={getTabPanelId(id, tab.key)}
+      tabIndex={getRovingTabIndex(i, chosenIndex, tabs.length)} onClick={() => onChange(tab.key)}>{tab.label}</button>)}
+  </div>;
+}
+
+function getTabPanelProps(id, key) {
+  return { role: 'tabpanel', id: getTabPanelId(id, key), 'aria-labelledby': getTabId(id, key), tabIndex: 0 };
+}
+
+const MENU_ITEM_ROLES = Object.freeze({ radio: 'menuitemradio', checkbox: 'menuitemcheckbox', action: 'menuitem' });
+
+/**
+ * Key inside an open menu → { focus: index } or { leave: true } on Tab; undefined = left to the browser.
+ * Escape is the surface stack's (useDismissFocus), Enter and Space click the focused item natively.
+ */
+function getMenuKeyAction(key, index, count) {
+  if (key === 'Tab') return { leave: true };
+  const next = getRovingIndex(key, index, count, 'vertical');
+  return next === undefined ? undefined : { focus: next };
+}
+
+let menuSeq = 0;
+
+/**
+ * Open state + trigger props of a menu button; Enter and Space open through the button's native click, ArrowDown opens too.
+ * Wrap trigger and MenuPanel in an element carrying rootRef → a press on the trigger is never an outside press.
+ */
+function useMenuButton() {
+  const [isOpen, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const idRef = useRef(null);
+
+  if (idRef.current === null) idRef.current = `menu-${++menuSeq}`;
+  const triggerProps = {
+    'aria-haspopup': 'menu',
+    'aria-expanded': isOpen,
+    'aria-controls': isOpen ? idRef.current : undefined,
+    onClick: () => setOpen((v) => !v),
+    onKeyDown: (event) => {
+      if (event.key !== 'ArrowDown' || isOpen) return;
+      event.preventDefault();
+      setOpen(true);
+    },
+  };
+  return { isOpen, close: () => setOpen(false), rootRef, menuId: idRef.current, triggerProps };
+}
+
+/**
+ * Menu surface of a menu button, mounted only while open: focus lands on the first checked item (else the first),
+ * a radio or action pick closes it and focus returns to the trigger, a checkbox pick keeps it open.
+ * @param items - { key, label, isChecked } — isChecked read for the radio and checkbox kinds only
+ */
+function MenuPanel({ id, label, kind = 'action', items, rootRef, onPick, onClose }) {
+  const panelRef = useRef(null);
+  const role = MENU_ITEM_ROLES[kind];
+  const isCheckable = kind !== 'action';
+
+  const openIndex = Math.max(0, isCheckable ? items.findIndex((item) => item.isChecked) : -1);
+
+  useEffect(() => {
+    setSurfaceOpen(panelRef, true);
+    panelRef.current.querySelectorAll('[role^="menuitem"]')[openIndex]?.focus();
+
+    return () => setSurfaceOpen(panelRef, false);
+  }, []);
+
+  useDismissFocus({ onDismiss: onClose, isKeyOwner: () => getTopSurface() === panelRef, panelRef });
+
+  useOutsidePress(rootRef, onClose);
+
+  const onItemClick = (key) => {
+    onPick(key);
+    if (kind !== 'checkbox') onClose();
+  };
+
+  return <div ref={panelRef} id={id} role="menu" aria-label={label} className="menu" onKeyDown={(event) => putMenuKeyFocus(event, onClose)}>
+    {items.map((item) => <button key={item.key} type="button" role={role} tabIndex={-1} className="menu-item"
+      aria-checked={isCheckable ? Boolean(item.isChecked) : undefined} onClick={() => onItemClick(item.key)}>
+      {isCheckable && item.isChecked && <span aria-hidden="true" className="menu-item-check">✓</span>}
+      {item.label}
+    </button>)}
+  </div>;
+}
+
+function putMenuKeyFocus(event, onClose) {
+  const nodes = [...event.currentTarget.querySelectorAll('[role^="menuitem"]')];
+  const action = getMenuKeyAction(event.key, nodes.indexOf(event.target), nodes.length);
+
+  if (!action) return;
+  // Tab keeps its default → focus leaves from the trigger the closed menu hands it back to
+  if (action.leave) {
+    onClose();
+    return;
+  }
+  event.preventDefault();
+  nodes[action.focus].focus();
+}
+
+/**
+ * One filter axis on a bar: dim axis name + ink value, no colon; the menu checks the chosen value(s).
+ * @param kind - 'radio' (one value, a pick closes) | 'checkbox' (several, the menu stays open)
+ * @param chosenKeys - keys of the chosen options
+ */
+function FilterTrigger({ axis, value, kind = 'radio', options, chosenKeys, onPick }) {
+  const menu = useMenuButton();
+  const items = options.map((option) => ({ ...option, isChecked: chosenKeys.includes(option.key) }));
+
+  return <div ref={menu.rootRef} className="filter-trigger-root">
+    <button type="button" className="filter-trigger" {...menu.triggerProps}>
+      <span className="filter-trigger-axis">{axis}</span>
+      <span className="filter-trigger-value">{value}</span>
+      <DisclosureChevron isOpen={menu.isOpen} />
+    </button>
+    {menu.isOpen && <MenuPanel id={menu.menuId} label={axis} kind={kind} items={items}
+      rootRef={menu.rootRef} onPick={onPick} onClose={menu.close} />}
+  </div>;
+}
+
+const RESET_HIDDEN_STYLE = Object.freeze({ visibility: 'hidden' });
+
+/**
+ * Filter triggers in one bar; the quiet reset shows only while a filter is applied and holds its slot at defaults.
+ * A reset moves focus to the bar's first control — the hidden reset would otherwise drop it to the page.
+ */
+function FilterBar({ label, isApplied, onReset, children, className = '' }) {
+  const barRef = useRef(null);
+  const onResetClick = () => {
+    onReset();
+    barRef.current?.querySelector('[aria-haspopup]')?.focus();
+  };
+
+  return <div ref={barRef} role="group" aria-label={label} className={`filter-bar ${className}`.trim()}>
+    {children}
+    <button type="button" className="btn ghost sm" style={isApplied ? undefined : RESET_HIDDEN_STYLE}
+      onClick={onResetClick}>Reset filters</button>
   </div>;
 }
 
@@ -2362,6 +2543,7 @@ window.UI = {
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
+  Segmented, Tabs, getTabPanelProps, getMenuKeyAction, useMenuButton, MenuPanel, FilterTrigger, FilterBar,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
