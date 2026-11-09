@@ -802,6 +802,67 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	font-variant-numeric: tabular-nums;
 }
 
+/* stat row — one card's top-line numbers: a hairline between stats, no tile per stat; stacked on a hairline at 640px or narrower */
+.stat-row {
+	display: flex;
+	margin: 0;
+}
+.stat {
+	flex: 1 1 0;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-stack);
+	padding-inline: var(--space-4);
+	border-inline-start: 1px solid rgb(var(--line));
+}
+.stat:first-child {
+	padding-inline-start: 0;
+	border-inline-start: 0;
+}
+.stat:last-child { padding-inline-end: 0; }
+.stat-label {
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	line-height: 1.4;
+	color: rgb(var(--dim));
+}
+.stat-value {
+	margin: 0;
+	font-size: var(--fs-stat);
+	font-weight: 600;
+	line-height: 1.3;
+	font-variant-numeric: tabular-nums;
+	color: rgb(var(--ink));
+}
+.stat-value.text-faint { color: rgb(var(--faint)); }
+.stat-value .unit {
+	margin-left: var(--space-1);
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	color: rgb(var(--dim));
+}
+.stat-context {
+	margin: 0;
+	font-size: var(--fs-meta);
+	line-height: 1.4;
+	color: rgb(var(--dim));
+}
+@media (max-width: 640px) {
+	.stat-row { flex-direction: column; }
+	.stat,
+	.stat:first-child,
+	.stat:last-child {
+		padding: var(--space-2) 0 0;
+		border-inline-start: 0;
+		border-block-start: 1px solid rgb(var(--line));
+	}
+	.stat:first-child {
+		padding-block-start: 0;
+		border-block-start: 0;
+	}
+}
+
 .kpi {
 	background: rgb(var(--elev));
 	border: 1px solid rgb(var(--line));

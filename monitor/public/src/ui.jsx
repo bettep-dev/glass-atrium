@@ -677,6 +677,25 @@ function KPI({
   );
 }
 
+/**
+ * One card's top-line numbers, a hairline between stats — never a tile per stat.
+ * @param stats - each { label, value, unit?, context?, href?, key? }: context = the one period or delta line,
+ *   href → the value is a Link to its drill-down; an absent value reads None, a 0 stays 0
+ */
+function StatRow({ stats, className = '' }) {
+  return <dl className={`stat-row ${className}`.trim()}>
+    {stats.map((stat) => {
+      const isAbsent = stat.value == null;
+      const value = <>{isAbsent ? 'None' : stat.value}{!isAbsent && stat.unit && <span className="unit">{stat.unit}</span>}</>;
+      return <div key={stat.key ?? stat.label} className="stat">
+        <dt className="stat-label">{stat.label}</dt>
+        <dd className={`stat-value${isAbsent ? ' text-faint' : ''}`}>{stat.href ? <Link href={stat.href}>{value}</Link> : value}</dd>
+        {stat.context && <dd className="stat-context">{stat.context}</dd>}
+      </div>;
+    })}
+  </dl>;
+}
+
 // 공용 오버레이 surface — variant 로 배치만 전환, 상호작용 계약은 단일 (presentation-only).
 //   drawer     = 우측 슬라이드인 레코드 상세 (기본)
 //   fullscreen = 불투명 장문 리딩 면 (페이드)
@@ -2115,7 +2134,7 @@ function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
 }
 
 /**
- * Quiet per-region failure on a neutral surface; keeps the grid slot and shows the raw answer behind Details.
+ * Quiet per-region failure inline in its card, no surface of its own; keeps the grid slot and shows the raw answer behind Details.
  * @param onRetry - omit when a PageErrorBanner already carries the one Retry for this outage
  * @param isBusy - a Retry is in flight; keep rendering this card (see getRegionView) so its Retry keeps focus
  * @param focusTargetId - region card id that takes focus if this card unmounts while its Retry is focused
@@ -2124,8 +2143,8 @@ function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
 function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
   const copy = getErrorCopy(error, source);
   return (
-    <div className={`sub-card bg-sunken flex flex-col gap-1.5 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}>
-      <div className="fs-body flex items-center gap-1.5">
+    <div className={`stack stack--label ${className}`.trim()} style={minHeight ? { minHeight } : undefined}>
+      <div className="fs-body cluster cluster--control">
         <Icon name={TONE_ICON.crit} size={14} className="text-crit"/>
         <span>{copy.sentence}</span>
       </div>
@@ -2643,7 +2662,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,

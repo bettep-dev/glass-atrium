@@ -1,4 +1,4 @@
-// Display atoms: the two empty states, the page header's one-line slots and the pagination bar.
+// Display atoms: the two empty states, the page header's one-line slots, the pagination bar and the stat row.
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -102,4 +102,47 @@ describe("pagination", () => {
     const tree = render("Pagination", { page: 0, pageSize: 20, total: 0, onPageChange: () => {} });
     assert.equal(findNodes(tree, (n) => n.type === "nav" || n.type === "button").length, 0);
   });
+});
+
+describe("stat row", () => {
+  const getTerms = (tree: RenderedNode) => findNodes(tree, (n) => n.type === "dt").map((n) => collectText(n).trim());
+  const getValues = (tree: RenderedNode) => findNodes(tree, (n) => n.type === "dd" && /\bstat-value\b/.test(String(n.props.className)));
+
+  test("each stat pairs its label term with its value and unit, in the caller's order", () => {
+    const tree = render("StatRow", { stats: [
+      { label: "Spend", value: "$41.20", context: "last 7 days" },
+      { label: "Runs", value: "1,284" },
+      { label: "Median run", value: "38", unit: "s" },
+    ] });
+    assert.equal(findNodes(tree, (n) => n.type === "dl").length, 1);
+    assert.deepEqual(getTerms(tree), ["Spend", "Runs", "Median run"]);
+    assert.deepEqual(getValues(tree).map((n) => collectText(n).replace(/\s+/g, "")), ["$41.20", "1,284", "38s"]);
+  });
+
+  test("a context line renders only for the stat that has one", () => {
+    const tree = render("StatRow", { stats: [{ label: "Spend", value: "$41.20", context: "last 7 days" }, { label: "Runs", value: "1,284" }] });
+    const contexts = findNodes(tree, (n) => n.type === "dd" && /\bstat-context\b/.test(String(n.props.className)));
+    assert.deepEqual(contexts.map((n) => collectText(n)), ["last 7 days"]);
+  });
+
+  test("only a stat with a drill-down target makes its value a link to that target", () => {
+    const tree = render("StatRow", { stats: [{ label: "Failed", value: "3", href: "#/outcomes?result=fail" }, { label: "Runs", value: "1,284" }] });
+    const links = findNodes(tree, (n) => n.type === "a");
+    assert.equal(links.length, 1);
+    assert.equal(links[0].props.href, "#/outcomes?result=fail");
+    assert.match(collectText(links[0]), /^3/);
+    assert.equal(findNodes(tree, (n) => n.type === "button").length, 0);
+  });
+
+  const valueRows = [
+    { name: "zero is a real value", value: 0, text: "0" },
+    { name: "null reads None", value: null, text: "None" },
+    { name: "a missing value reads None", value: undefined, text: "None" },
+  ];
+  for (const row of valueRows) {
+    test(`an absent value reads None, a present one as given: ${row.name}`, () => {
+      const tree = render("StatRow", { stats: [{ label: "Runs", value: row.value }] });
+      assert.equal(collectText(getValues(tree)[0]).trim(), row.text);
+    });
+  }
 });
