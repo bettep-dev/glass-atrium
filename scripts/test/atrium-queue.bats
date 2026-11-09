@@ -344,7 +344,7 @@ run_cli() {
   done
 }
 
-@test "help names every command with the absolute installed CLI path and no interpreter or env prefix" {
+@test "help names every command and the allow rule with the absolute installed CLI path and no interpreter or env prefix" {
   run_cli help
   local cli_path="${GA_ROOT}/scripts/atrium-queue.sh" cmd
   [[ "${status}" -eq 0 ]] || {
@@ -357,6 +357,11 @@ run_cli() {
       return 1
     }
   done
+  # the settings proposal copies this rule → its prefix is the literal the pointer line and pending print
+  grep -qxF "  Bash(${cli_path}:*)" <<<"${output}" || {
+    echo "allow rule: ${output}"
+    return 1
+  }
 }
 
 @test "an unknown command or no command prints usage and exits 64" {

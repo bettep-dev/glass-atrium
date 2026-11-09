@@ -96,6 +96,8 @@ Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision add
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.
 The session id comes from CLAUDE_CODE_SESSION_ID and the queue key from its 0600 file — pass neither.
 Exit codes: 0 done · 1 monitor unreachable or failing · 2 refused by the monitor · 3 item of another session · 64 usage
+Prompt-free in default permission mode, through this allow rule in the shared user settings:
+  Bash(${cli}:*)
 USAGE
 }
 
