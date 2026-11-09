@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 # shellcheck disable=SC2154,SC2312  # BATS_* and run results are set by bats; a masked status fails its comparison
 # The opt-in accept launch wrapper against a stand-in claude. Protects the accept file passed only through
-# --settings from a 0700 temp dir, its removal on exit, the refused --bg, the guarded delete of a forced
-# empty or relative temp dir, the env marker the SessionStart register turns into the accept-wrapper hint,
-# and the same-uid risk in the help.
+# --settings from a 0700 temp dir, its removal on exit, the refused --bg, the refusal that deletes nothing
+# for a forced temp dir value that is empty, relative, a link or no directory, the env marker the
+# SessionStart register turns into the accept-wrapper hint, and the same-uid risk in the help.
 #
 # Run via: bats scripts/test/atrium-queue-accept-launch.bats
 # Requires: bats, bash 3.2+, jq, curl, python3
