@@ -67,6 +67,23 @@ const ROSTERS = [
   { name: "fourteen add-only agents", suggestions: LONG_ROSTER_SUGGESTIONS },
 ];
 
+// the instrumentation payload plus a style-check cohort, so both mixed cards (stat row + table) render their table
+const MIXED_CARD_SUGGESTIONS = {
+  ...SUGGESTIONS,
+  style_ref_summary: {
+    overall_emission_rate: 0.6,
+    overall_uncorroborated_rate: 0.05,
+    overall_corroborated_count: 19,
+    overall_uncorroborated_count: 1,
+    overall_unverifiable_count: 4,
+    overall_greenfield_count: 2,
+    agents: [
+      { agent: "glass-atrium-agent-a", emission_count: 12, emission_total: 20, emission_rate: 0.6, corroborated_count: 11, uncorroborated_count: 1, unverifiable_count: 3, eligible_count: 12 },
+      { agent: "glass-atrium-agent-b", emission_count: 12, emission_total: 20, emission_rate: 0.6, corroborated_count: 8, uncorroborated_count: 0, unverifiable_count: 1, eligible_count: 8 },
+    ],
+  },
+};
+
 interface RowReading {
   cards: string;
   bodies: number[];
@@ -136,22 +153,60 @@ for (const width of [1440, 1920]) {
 
 // 1280 is the narrowest width where the check-status card sits in a half column
 for (const width of [1280, 1440, 1920]) {
-  test(`every check-status tile label reads on one line at ${width}px`, async () => {
+  test(`every check-status stat label reads on one line at ${width}px`, async () => {
     await withInstrumentationPage(width, async (page) => {
       const labels = await page.evaluate(() => {
         const title = [...document.querySelectorAll<HTMLElement>("#improvement-instrumentation .card-title")].find(
           (heading) => heading.textContent === "Results by check status",
         )!;
-        return [...title.closest(".card")!.querySelectorAll<HTMLElement>(".grid > div .flex > span:last-child")].map((span) => ({
+        return [...title.closest(".card")!.querySelectorAll<HTMLElement>(".stat-row .stat-label")].map((span) => ({
           text: span.textContent ?? "",
           lineCount: Math.round(span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight)),
         }));
       });
 
-      assert.equal(labels.length, 4, "the card shows its four tiles");
+      assert.equal(labels.length, 4, "the card shows its four stats");
       for (const label of labels) {
         assert.equal(label.lineCount, 1, `${width}px: "${label.text}" wraps onto ${label.lineCount} lines`);
       }
     });
+  });
+}
+
+// design-spec §1 one inline column per side: a card's head, stat row and table header open on one column, its last cell closes on the other
+// 1024 = narrowest card, where a double inset or a wrap shows first; 1440 + 1920 = the shipped desktop widths
+for (const width of [1024, 1440, 1920]) {
+  test(`each mixed instrumentation card keeps its stat row and table on the card head's inline column at ${width}px`, async () => {
+    await withInstrumentationPage(width, async (page) => {
+      const cards = await page.evaluate(() =>
+        ["Suggestion confidence", "Style-check rate"].map((name) => {
+          const title = [...document.querySelectorAll<HTMLElement>("#improvement-instrumentation .card-title")].find(
+            (heading) => heading.textContent === name,
+          );
+          const card = title?.closest(".card");
+          const table = card?.querySelector("table");
+          if (!card || !table) return { name, columns: null };
+          const cardBox = card.getBoundingClientRect();
+          const border = parseFloat(getComputedStyle(card).borderLeftWidth);
+          const innerLeft = cardBox.left + border;
+          const innerRight = cardBox.right - parseFloat(getComputedStyle(card).borderRightWidth);
+          // content edge = box edge inset by its own padding, measured from the card's inner edge
+          const [head, statRow, header] = [card.querySelector(".card-head")!, card.querySelector(".stat-row")!, table.querySelector("thead th")!].map(
+            (el) => Math.round(el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft) - innerLeft),
+          );
+          const [headEnd, lastCell] = [card.querySelector(".card-head")!, table.querySelector("tbody tr td:last-child")!].map(
+            (el) => Math.round(innerRight - el.getBoundingClientRect().right + parseFloat(getComputedStyle(el).paddingRight)),
+          );
+          return { name, columns: { start: { head, statRow, header }, end: { head: headEnd, lastCell } } };
+        }),
+      );
+
+      for (const { name, columns } of cards) {
+        assert.ok(columns, `${width}px: "${name}" renders a table in its card`);
+        const { start, end } = columns;
+        assert.deepEqual([start.statRow, start.header], [start.head, start.head], `${width}px: "${name}" opens on one column — ${JSON.stringify(start)}`);
+        assert.equal(end.lastCell, end.head, `${width}px: "${name}" closes on one column — ${JSON.stringify(end)}`);
+      }
+    }, MIXED_CARD_SUGGESTIONS);
   });
 }
