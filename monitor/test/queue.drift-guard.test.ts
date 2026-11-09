@@ -12,6 +12,7 @@ import path from "node:path";
 import "dotenv/config";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { logger } from "../src/server/logger.js";
 import { BUNDLE_LITERALS, createDriftGuard } from "../src/server/queue/drift-guard.js";
 import { type BundleFixture, createBundleFixture, hasRun, writeBundle, writePackageVersion } from "./lib/claude-bundle-fixture.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
@@ -82,6 +83,26 @@ describe("bundle-literal check", () => {
     });
   }
 
+  describe("user-frame handler", () => {
+    // 2.1.319 excerpts: the inbox handler's routing log · generic minified type checks found all over the bundle
+    const inboxHandler = "zC(R),k.queued(),t(`[uds-messaging] Routed user message to queue (priority=${w}): ${q_(S,80)}`)";
+    const genericUserChecks = 'if(e.type==="user")return e.message;let n=e.type==="user"&&e.isMeta';
+    const otherLiterals = BUNDLE_LITERALS.filter((literal) => !inboxHandler.includes(literal));
+    const rows = [
+      { name: "generic user type checks alone keep delivery off", parts: [...otherLiterals, genericUserChecks], isOn: false },
+      { name: "the inbox handler's routing log turns delivery on", parts: [...otherLiterals, genericUserChecks, inboxHandler], isOn: true },
+    ];
+    for (const row of rows) {
+      test(`only the inbox user-frame handler satisfies its literal: ${row.name}`, async () => {
+        const { check, history } = buildGuard(setupInstall(row.parts));
+
+        await check();
+
+        assert.equal(getLatest(history), row.isOn, row.name);
+      });
+    }
+  });
+
   test("a literal split across a chunk boundary is found", async () => {
     const fixture = setupInstall();
     const content = readFileSync(fixture.binaryPath);
@@ -127,6 +148,20 @@ describe("bundle key", () => {
 
     assert.equal(getLatest(first.history), true, "same run: the stored pass stands");
     assert.equal(getLatest(restarted.history), true, "restart: the stored row for the key is reused");
+  });
+
+  test("a restart that reuses a stored fail logs why socket delivery is off", async (t) => {
+    const fixture = setupInstall(BUNDLE_LITERALS.slice(1));
+    await buildGuard(fixture).check();
+    const warn = t.mock.method(logger, "warn", () => {});
+
+    const restarted = buildGuard(fixture);
+    await restarted.check();
+
+    assert.deepEqual(restarted.history, [false, false]);
+    assert.equal(warn.mock.callCount(), 1, "one warn for the reused fail");
+    const version = JSON.parse(readFileSync(fixture.packageJsonPath, "utf8")).version;
+    assert.partialDeepStrictEqual(warn.mock.calls[0]?.arguments[0], { version });
   });
 
   test("the version from the package.json two levels above the binary's realpath re-keys the check", async () => {

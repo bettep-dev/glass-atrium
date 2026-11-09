@@ -12,7 +12,14 @@ import { getPrisma } from "../db.js";
 import { logger } from "../logger.js";
 
 /** Auth frame · user-frame handler · receipt action · inbound policy setting · socket dir. */
-export const BUNDLE_LITERALS = ['"type":"auth"', 'e.type==="user"', "peer_message_status", "crossSessionInbound", "cc-socks"] as const;
+export const BUNDLE_LITERALS = [
+  '"type":"auth"',
+  // the inbox user-frame handler's routing log → gone with the handler; a generic `e.type==="user"` check is not
+  "[uds-messaging] Routed user message to queue",
+  "peer_message_status",
+  "crossSessionInbound",
+  "cc-socks",
+] as const;
 
 const SCAN_CHUNK_BYTES = 8 * 1024 * 1024;
 const PACKAGE_JSON_MAX_BYTES = 64 * 1024;
@@ -73,7 +80,7 @@ class BundleDriftGuard implements DriftGuard {
       if (this.checkedKey !== null && isSameKey(key, this.checkedKey)) return;
       this.checkedKey = null;
       this.deps.setDeliveryOn(false);
-      const result = (await findStoredResult(key)) ?? (await putScanResult(key, this.deps, signal));
+      const result = await getBundleResult(key, this.deps, signal);
       this.checkedKey = key;
       this.hasFailed = false;
       this.deps.setDeliveryOn(result === "pass");
@@ -110,6 +117,14 @@ function isSameKey(left: BundleKey, right: BundleKey): boolean {
     left.binaryModifiedAt.getTime() === right.binaryModifiedAt.getTime() &&
     left.version === right.version
   );
+}
+
+// Reached only on a key change → a reused fail warns once per key, as a fresh failing scan does
+async function getBundleResult(key: BundleKey, deps: DriftGuardDeps, signal?: AbortSignal): Promise<QueueBundleResult> {
+  const stored = await findStoredResult(key);
+  if (stored === null) return putScanResult(key, deps, signal);
+  if (stored === "fail") logger.warn({ version: key.version }, "queue drift check: stored scan for this bundle failed — socket delivery off");
+  return stored;
 }
 
 /** @returns the stored result when the version's row carries this exact key; null → scan */

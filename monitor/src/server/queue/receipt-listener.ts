@@ -79,24 +79,6 @@ export async function startReceiptListener(options: ReceiptListenerOptions = {})
   }
 }
 
-/** Applies one receipt to the socket Delivery row it names; the item moves only when that row is its latest. */
-export async function putReceipt(msgId: string, status: ReceiptStatus, now: Date): Promise<void> {
-  const delivery = await getPrisma().queueDelivery.findUnique({
-    where: { msgId },
-    select: { id: true, itemId: true, route: true, item: { select: { sessionId: true } } },
-  });
-  if (delivery === null || delivery.route !== "socket") return;
-  const rule = RECEIPT_RULES[status];
-  await getPrisma().$transaction(async (tx) => {
-    await lockSession(tx, delivery.item.sessionId);
-    const marked = await tx.queueDelivery.updateMany({ where: { id: delivery.id, result: { in: rule.deliveryFrom } }, data: { result: status, receiptAt: now } });
-    if (marked.count === 0) return;
-    const latest = await tx.queueDelivery.findFirst({ where: { itemId: delivery.itemId }, orderBy: { id: "desc" }, select: { id: true } });
-    if (latest?.id !== delivery.id) return;
-    await tx.queueItem.updateMany({ where: { id: delivery.itemId, status: rule.item.from }, data: { status: rule.item.to } });
-  });
-}
-
 async function getSocketDirRefusal(socketDir: string): Promise<string | null> {
   try {
     await mkdir(socketDir, { mode: 0o700 });
@@ -263,4 +245,22 @@ function getReceiptStatus(status: string, statusDetail: string | undefined): Rec
   if (status === "held") return "held";
   if (status === "expired" && statusDetail !== "refused") return "expired";
   return null;
+}
+
+/** Applies one receipt to the socket Delivery row it names; the item moves only when that row is its latest. */
+async function putReceipt(msgId: string, status: ReceiptStatus, now: Date): Promise<void> {
+  const delivery = await getPrisma().queueDelivery.findUnique({
+    where: { msgId },
+    select: { id: true, itemId: true, route: true, item: { select: { sessionId: true } } },
+  });
+  if (delivery === null || delivery.route !== "socket") return;
+  const rule = RECEIPT_RULES[status];
+  await getPrisma().$transaction(async (tx) => {
+    await lockSession(tx, delivery.item.sessionId);
+    const marked = await tx.queueDelivery.updateMany({ where: { id: delivery.id, result: { in: rule.deliveryFrom } }, data: { result: status, receiptAt: now } });
+    if (marked.count === 0) return;
+    const latest = await tx.queueDelivery.findFirst({ where: { itemId: delivery.itemId }, orderBy: { id: "desc" }, select: { id: true } });
+    if (latest?.id !== delivery.id) return;
+    await tx.queueItem.updateMany({ where: { id: delivery.itemId, status: rule.item.from }, data: { status: rule.item.to } });
+  });
 }
