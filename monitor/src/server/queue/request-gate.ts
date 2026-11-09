@@ -8,10 +8,12 @@ import type { FastifyReply, FastifyRequest, onRequestAsyncHookHandler } from "fa
 
 import { errnoCode } from "../errno.js";
 
-/** Header carrying the shared queue key; the CLI and hooks read the key from their own 0600 file. */
-export const QUEUE_KEY_HEADER = "x-atrium-queue-key";
-/** Key file name under the secrets directory, written by the owner-run provisioning script. */
-export const QUEUE_KEY_FILE = "queue-key";
+export const QUEUE_KEY = {
+  /** Header carrying the shared queue key; the CLI and hooks read the key from their own 0600 file. */
+  HEADER: "x-atrium-queue-key",
+  /** Key file name under the secrets directory, written by the owner-run provisioning script. */
+  FILE: "queue-key",
+} as const;
 
 const LOOPBACK_HOSTNAMES = ["127.0.0.1", "localhost", "[::1]"] as const;
 
@@ -29,7 +31,7 @@ export function buildQueueKeyHook(secretsDir: string): onRequestAsyncHookHandler
   return async (request: FastifyRequest, reply: FastifyReply) => {
     const keyDigest = await getKeyDigest();
     if (keyDigest === null) return reply.code(503).send({ error: "not_provisioned" });
-    if (!isKeyMatch(request.headers[QUEUE_KEY_HEADER], keyDigest)) {
+    if (!isKeyMatch(request.headers[QUEUE_KEY.HEADER], keyDigest)) {
       return reply.code(401).send({ error: "unauthorized" });
     }
   };
@@ -41,7 +43,7 @@ function createKeyDigestReader(secretsDir: string): () => Promise<Buffer | null>
   return async () => {
     if (cached !== null) return cached;
     try {
-      const key = (await readFile(path.join(secretsDir, QUEUE_KEY_FILE), "utf8")).trim();
+      const key = (await readFile(path.join(secretsDir, QUEUE_KEY.FILE), "utf8")).trim();
       if (key === "") return null;
       cached = digest(key);
       return cached;

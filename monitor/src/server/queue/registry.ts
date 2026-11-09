@@ -7,7 +7,7 @@ import path from "node:path";
 import type { Prisma, QueuePermissionHint } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { errnoCode } from "../errno.js";
-import { QueueRequestError } from "./errors.js";
+import { QueueEnvironmentError, QueueRequestError } from "./errors.js";
 import { getProcessStartTime } from "./process-start-time.js";
 import type { DeregisterBody, PERMISSION_HINTS, RegisterBody } from "./schemas.js";
 
@@ -37,6 +37,12 @@ interface SessionFacts {
   processStartTime: string;
 }
 
+/** pid + `ps` start time: together they name one process across pid reuse. */
+interface ProcessIdentity {
+  pid: number;
+  startTime: string;
+}
+
 /** Locks one registry row for the transaction; null when the session id is unknown. */
 export async function lockSession(tx: Prisma.TransactionClient, sessionId: string): Promise<LockedSession | null> {
   const rows = await tx.$queryRaw<LockedSession[]>`
@@ -59,11 +65,12 @@ export async function findWorktreeRoot(cwd: string): Promise<string | null> {
  */
 export async function registerSession(body: RegisterBody, homeDir: string): Promise<{ answeredWaiting: number }> {
   const facts = await getSessionFacts(body, homeDir);
+  const identity: ProcessIdentity = { pid: body.pid, startTime: facts.processStartTime };
   return getPrisma().$transaction(async (tx) => {
-    const replacedIds = await findReplacedSessionIds(tx, body, facts.processStartTime);
+    const replacedIds = await findReplacedSessionIds(tx, body.sessionId, identity);
     await lockSessions(tx, [body.sessionId, ...replacedIds]);
     await putLiveSession(tx, body, facts);
-    await markReplaced(tx, replacedIds, body.pid, facts.processStartTime);
+    await markReplaced(tx, replacedIds, identity);
     await tx.queueItem.updateMany({ where: { sessionId: body.sessionId, status: "resume_pending" }, data: { status: "answered" } });
     return { answeredWaiting: await tx.queueItem.count({ where: { sessionId: body.sessionId, status: "answered" } }) };
   });
@@ -121,11 +128,19 @@ function isConfinedSocketPath(socketPath: string, pid: number): boolean {
 }
 
 async function getConfigDir(configDir: string, homeDir: string): Promise<string> {
-  const [resolved, home] = await Promise.all([getExistingDirectory(configDir, "configDir"), realpath(homeDir)]);
+  const [resolved, home] = await Promise.all([getExistingDirectory(configDir, "configDir"), getRealHome(homeDir)]);
   if (path.dirname(resolved) !== home || !CONFIG_DIR_NAME.test(path.basename(resolved))) {
     throw new QueueRequestError(400, "invalid_config_dir", "config dir must resolve to $HOME/.claude or $HOME/.claude-<name>");
   }
   return resolved;
+}
+
+async function getRealHome(homeDir: string): Promise<string> {
+  try {
+    return await realpath(homeDir);
+  } catch (error) {
+    throw new QueueEnvironmentError("home dir resolve failed", { cause: error });
+  }
 }
 
 async function getExistingDirectory(candidate: string, field: string): Promise<string> {
@@ -133,7 +148,7 @@ async function getExistingDirectory(candidate: string, field: string): Promise<s
     const resolved = await realpath(candidate);
     if ((await stat(resolved)).isDirectory()) return resolved;
   } catch (error) {
-    if (!isMissingPath(error)) throw new Error(`${field} resolve failed`, { cause: error });
+    if (!isMissingPath(error)) throw new QueueEnvironmentError(`${field} resolve failed`, { cause: error });
   }
   throw new QueueRequestError(400, `invalid_${field}`, `${field} must be an existing directory`);
 }
@@ -144,7 +159,7 @@ async function hasGitEntry(dir: string): Promise<boolean> {
     return true;
   } catch (error) {
     if (isMissingPath(error)) return false;
-    throw new Error("worktree root lookup failed", { cause: error });
+    throw new QueueEnvironmentError("worktree root lookup failed", { cause: error });
   }
 }
 
@@ -153,9 +168,9 @@ function isMissingPath(error: unknown): boolean {
   return code === "ENOENT" || code === "ENOTDIR";
 }
 
-async function findReplacedSessionIds(tx: Prisma.TransactionClient, body: RegisterBody, processStartTime: string): Promise<string[]> {
+async function findReplacedSessionIds(tx: Prisma.TransactionClient, sessionId: string, identity: ProcessIdentity): Promise<string[]> {
   const rows = await tx.queueSession.findMany({
-    where: { pid: body.pid, processStartTime, sessionId: { not: body.sessionId }, state: { not: "exited" } },
+    where: { pid: identity.pid, processStartTime: identity.startTime, sessionId: { not: sessionId }, state: { not: "exited" } },
     select: { sessionId: true },
   });
   return rows.map((row) => row.sessionId);
@@ -188,10 +203,10 @@ async function putLiveSession(tx: Prisma.TransactionClient, body: RegisterBody, 
 }
 
 // Re-checked under the lock: the pre-lock read may be stale
-async function markReplaced(tx: Prisma.TransactionClient, sessionIds: string[], pid: number, processStartTime: string): Promise<void> {
+async function markReplaced(tx: Prisma.TransactionClient, sessionIds: string[], identity: ProcessIdentity): Promise<void> {
   if (sessionIds.length === 0) return;
   await tx.queueSession.updateMany({
-    where: { sessionId: { in: sessionIds }, pid, processStartTime, state: { not: "exited" } },
+    where: { sessionId: { in: sessionIds }, pid: identity.pid, processStartTime: identity.startTime, state: { not: "exited" } },
     data: { state: "exited", exitReason: "replaced" },
   });
 }

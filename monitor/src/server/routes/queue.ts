@@ -8,7 +8,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";
 
 import { respondDbFailure } from "../db-failure.js";
-import { QueueRequestError } from "../queue/errors.js";
+import { getMonitorPort } from "../monitor-port.js";
+import { QueueEnvironmentError, QueueRequestError } from "../queue/errors.js";
 import { ackItem, claimPendingItems, withdrawItem } from "../queue/delivery.js";
 import { createItem, getCount, getItem } from "../queue/items.js";
 import { deregisterSession, registerSession } from "../queue/registry.js";
@@ -23,8 +24,7 @@ import {
 import { parseIdParam } from "../route-params.js";
 
 /** Title 200 + body 20000 + options 20000 chars at up to 4 UTF-8 bytes each, plus JSON framing. */
-const QUEUE_BODY_LIMIT_BYTES = 192 * 1024;
-const DEFAULT_MONITOR_PORT = 16145;
+const POST_ROUTE_OPTIONS = { bodyLimit: 192 * 1024 } as const;
 
 export interface QueueRouteOptions {
   /** Directory holding the 0600 `queue-key` file; read lazily, never at registration. */
@@ -37,13 +37,22 @@ export interface QueueRouteOptions {
 
 type IdParams = { id: string };
 
+/** One queue route call: route label (logs), the schema its raw input must pass, and the work it then runs. */
+interface RequestSpec<S extends z.ZodType, W> {
+  route: string;
+  schema: S;
+  input: unknown;
+  work: W;
+}
+
+type RouteWork<R> = Pick<RequestSpec<z.ZodType, () => Promise<R>>, "route" | "work">;
+
 /** Defaults resolved at registration time (never import time) so a caller-supplied secrets dir always wins. */
 export function resolveQueueRouteOptions(secretsDir?: string): QueueRouteOptions {
   const gaRoot = process.env.GA_ROOT || path.join(os.homedir(), ".glass-atrium");
   return {
     secretsDir: secretsDir ?? path.join(gaRoot, "secrets"),
-    // same resolution as main.ts PORT, which validates it before listen
-    port: Number(process.env.ATRIUM_MONITOR_PORT ?? process.env.PORT ?? DEFAULT_MONITOR_PORT),
+    port: getMonitorPort(),
     homeDir: os.homedir(),
   };
 }
@@ -55,50 +64,84 @@ export async function registerQueueRoutes(app: FastifyInstance, options: QueueRo
 async function queuePlugin(app: FastifyInstance, options: QueueRouteOptions): Promise<void> {
   app.addHook("onRequest", buildHostAllowlistHook(options.port));
   app.get("/api/queue/count", async (request, reply) =>
-    handleQueueRequest(request, reply, "/api/queue/count", () => getCount()),
+    handleQueueRequest(request, reply, { route: "/api/queue/count", work: () => getCount() }),
   );
   await app.register(sessionRoutesPlugin, options);
 }
 
 async function sessionRoutesPlugin(app: FastifyInstance, options: QueueRouteOptions): Promise<void> {
   app.addHook("onRequest", buildQueueKeyHook(options.secretsDir));
-  const post = { bodyLimit: QUEUE_BODY_LIMIT_BYTES };
-  app.post("/api/queue/sessions/register", post, async (request, reply) =>
-    handleParsedBody(request, reply, "/api/queue/sessions/register", registerBodySchema, (body) => registerSession(body, options.homeDir)),
-  );
-  app.post("/api/queue/sessions/deregister", post, async (request, reply) =>
-    handleParsedBody(request, reply, "/api/queue/sessions/deregister", deregisterBodySchema, async (body) => {
-      await deregisterSession(body);
-      return { ok: true };
-    }),
-  );
-  app.post("/api/queue/items", post, async (request, reply) =>
-    handleParsedBody(request, reply, "/api/queue/items", postItemBodySchema, async (body) => {
-      reply.code(201);
-      return createItem(body);
-    }),
-  );
-  registerItemRoutes(app, post);
+  registerSessionRoutes(app, options.homeDir);
+  registerItemRoutes(app);
+  registerDeliveryRoutes(app);
+  registerWithdrawRoute(app);
 }
 
-function registerItemRoutes(app: FastifyInstance, post: { bodyLimit: number }): void {
+function registerSessionRoutes(app: FastifyInstance, homeDir: string): void {
+  app.post("/api/queue/sessions/register", POST_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/sessions/register",
+      schema: registerBodySchema,
+      input: request.body,
+      work: (body) => registerSession(body, homeDir),
+    }),
+  );
+  app.post("/api/queue/sessions/deregister", POST_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/sessions/deregister",
+      schema: deregisterBodySchema,
+      input: request.body,
+      work: (body) => deregisterSession(body).then(() => ({ ok: true })),
+    }),
+  );
+}
+
+function registerItemRoutes(app: FastifyInstance): void {
+  app.post("/api/queue/items", POST_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/items",
+      schema: postItemBodySchema,
+      input: request.body,
+      // 201 only once the row exists → a failed post keeps its own error status
+      work: (body) => createItem(body).then((created) => { reply.code(201); return created; }),
+    }),
+  );
   app.get<{ Params: IdParams }>("/api/queue/items/:id", async (request, reply) =>
-    handleItemRequest(request, reply, "/api/queue/items/:id", request.query, sessionBodySchema, (id, query) => getItem(id, query.sessionId)),
+    handleItemRequest(request, reply, {
+      route: "/api/queue/items/:id",
+      schema: sessionBodySchema,
+      input: request.query,
+      work: (id, query) => getItem(id, query.sessionId),
+    }),
   );
-  app.post("/api/queue/pending", post, async (request, reply) =>
-    handleParsedBody(request, reply, "/api/queue/pending", sessionBodySchema, async (body) => ({
-      items: await claimPendingItems(body.sessionId),
-    })),
+}
+
+function registerDeliveryRoutes(app: FastifyInstance): void {
+  app.post("/api/queue/pending", POST_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/pending",
+      schema: sessionBodySchema,
+      input: request.body,
+      work: async (body) => ({ items: await claimPendingItems(body.sessionId) }),
+    }),
   );
-  app.post<{ Params: IdParams }>("/api/queue/items/:id/ack", post, async (request, reply) =>
-    handleItemRequest(request, reply, "/api/queue/items/:id/ack", request.body, ackBodySchema, async (id, body) => ({
-      result: await ackItem(id, body.sessionId, body.msgId),
-    })),
+  app.post<{ Params: IdParams }>("/api/queue/items/:id/ack", POST_ROUTE_OPTIONS, async (request, reply) =>
+    handleItemRequest(request, reply, {
+      route: "/api/queue/items/:id/ack",
+      schema: ackBodySchema,
+      input: request.body,
+      work: async (id, body) => ({ result: await ackItem(id, body.sessionId, body.msgId) }),
+    }),
   );
-  app.post<{ Params: IdParams }>("/api/queue/items/:id/withdraw", post, async (request, reply) =>
-    handleItemRequest(request, reply, "/api/queue/items/:id/withdraw", request.body, sessionBodySchema, async (id, body) => {
-      await withdrawItem(id, body.sessionId);
-      return { ok: true };
+}
+
+function registerWithdrawRoute(app: FastifyInstance): void {
+  app.post<{ Params: IdParams }>("/api/queue/items/:id/withdraw", POST_ROUTE_OPTIONS, async (request, reply) =>
+    handleItemRequest(request, reply, {
+      route: "/api/queue/items/:id/withdraw",
+      schema: sessionBodySchema,
+      input: request.body,
+      work: (id, body) => withdrawItem(id, body.sessionId).then(() => ({ ok: true })),
     }),
   );
 }
@@ -106,51 +149,40 @@ function registerItemRoutes(app: FastifyInstance, post: { bodyLimit: number }): 
 async function handleItemRequest<S extends z.ZodType, R>(
   request: FastifyRequest<{ Params: IdParams }>,
   reply: FastifyReply,
-  route: string,
-  input: unknown,
-  schema: S,
-  work: (id: number, parsed: z.infer<S>) => Promise<R>,
+  spec: RequestSpec<S, (id: number, parsed: z.infer<S>) => Promise<R>>,
 ): Promise<R | object> {
   const id = parseIdParam(request.params.id);
   if (id === null) return reply.code(400).send({ error: "invalid_id" });
-  return handleParsed(request, reply, route, input, schema, (parsed) => work(id, parsed));
-}
-
-function handleParsedBody<S extends z.ZodType, R>(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  route: string,
-  schema: S,
-  work: (parsed: z.infer<S>) => Promise<R>,
-): Promise<R | object> {
-  return handleParsed(request, reply, route, request.body, schema, work);
+  return handleParsed(request, reply, { ...spec, work: (parsed) => spec.work(id, parsed) });
 }
 
 // Issue paths + messages only → a rejected value is never echoed back
 async function handleParsed<S extends z.ZodType, R>(
   request: FastifyRequest,
   reply: FastifyReply,
-  route: string,
-  input: unknown,
-  schema: S,
-  work: (parsed: z.infer<S>) => Promise<R>,
+  spec: RequestSpec<S, (parsed: z.infer<S>) => Promise<R>>,
 ): Promise<R | object> {
-  const parsed = schema.safeParse(input ?? {});
+  const parsed = spec.schema.safeParse(spec.input ?? {});
   if (!parsed.success) {
     const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
     return reply.code(400).send({ error: "invalid_input", issues });
   }
-  return handleQueueRequest(request, reply, route, () => work(parsed.data));
+  return handleQueueRequest(request, reply, { route: spec.route, work: () => spec.work(parsed.data) });
 }
 
-async function handleQueueRequest<R>(request: FastifyRequest, reply: FastifyReply, route: string, work: () => Promise<R>): Promise<R | object> {
+async function handleQueueRequest<R>(request: FastifyRequest, reply: FastifyReply, spec: RouteWork<R>): Promise<R | object> {
   try {
-    return await work();
+    return await spec.work();
   } catch (error) {
     if (error instanceof QueueRequestError) {
       reply.code(error.statusCode);
       return { error: error.code, reason: error.message };
     }
-    return respondDbFailure(request, reply, route, error, "queue request failed");
+    if (error instanceof QueueEnvironmentError) {
+      request.log.error({ err: error, route: spec.route }, "queue environment read failed");
+      reply.code(500);
+      return { error: "queue_environment_failure" };
+    }
+    return respondDbFailure(request, reply, spec.route, error, "queue request failed");
   }
 }

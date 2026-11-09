@@ -19,8 +19,8 @@ export interface QueueItemView {
   isApprovalClass: boolean;
   status: string;
   nextAttempt: number;
-  answerCode: string | null;
-  answerText: string | null;
+  /** Owner's answer: the chosen option code and/or free text; both null until answered. */
+  answer: { code: string | null; text: string | null };
   askedAt: string;
   answeredAt: string | null;
   deliveredAt: string | null;
@@ -104,8 +104,7 @@ function toItemView(item: QueueItem): QueueItemView {
     isApprovalClass: item.isApprovalClass,
     status: item.status,
     nextAttempt: item.nextAttempt,
-    answerCode: item.answerCode,
-    answerText: item.answerText,
+    answer: { code: item.answerCode, text: item.answerText },
     askedAt: item.askedAt.toISOString(),
     answeredAt: item.answeredAt?.toISOString() ?? null,
     deliveredAt: item.deliveredAt?.toISOString() ?? null,

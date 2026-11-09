@@ -8,18 +8,20 @@ import { getPrisma } from "../db.js";
 import { QueueRequestError } from "./errors.js";
 import { lockSession } from "./registry.js";
 
-// The session fetches then acks right after a pull → a missed window means the process died mid-turn
-const PULL_ACK_WINDOW_MS = 10 * 60_000;
-// Bounded claim per call; the CLI pulls again while items remain
-const PULL_BATCH_LIMIT = 20;
+const PULL = {
+  // The session fetches then acks right after a pull → a missed window means the process died mid-turn
+  ACK_WINDOW_MS: 10 * 60_000,
+  // Bounded claim per call; the CLI pulls again while items remain
+  BATCH_LIMIT: 20,
+} as const;
 
 const ACKABLE: QueueItemStatus[] = ["answered", "delivering", "unacked", "held", "expired", "resume_pending"];
 // Every non-terminal state except delivering → the session retries once it has acked or the item moved on
 const WITHDRAWABLE: QueueItemStatus[] = ["open", "answered", "unacked", "held", "expired", "resume_pending"];
 
+/** One claimed item: its id and the msg id of the pull Delivery row the session acks with. */
 export interface PullClaim {
-  itemId: number;
-  msgId: string;
+  id: { item: number; msg: string };
 }
 
 export type AckResult = "first" | "already_handled";
@@ -31,7 +33,7 @@ export async function claimPendingItems(sessionId: string): Promise<PullClaim[]>
     const answered = await tx.queueItem.findMany({
       where: { sessionId, status: "answered" },
       orderBy: { queuePosition: "asc" },
-      take: PULL_BATCH_LIMIT,
+      take: PULL.BATCH_LIMIT,
       select: { id: true, nextAttempt: true },
     });
     const claims: PullClaim[] = [];
@@ -85,9 +87,9 @@ async function claimOne(tx: Prisma.TransactionClient, itemId: bigint, attempt: n
   const msgId = randomUUID();
   const sentAt = new Date();
   await tx.queueDelivery.create({
-    data: { msgId, itemId, route: "pull", attempt, result: "sent", sentAt, ackDeadlineAt: new Date(sentAt.getTime() + PULL_ACK_WINDOW_MS) },
+    data: { msgId, itemId, route: "pull", attempt, result: "sent", sentAt, ackDeadlineAt: new Date(sentAt.getTime() + PULL.ACK_WINDOW_MS) },
   });
-  return { itemId: Number(itemId), msgId };
+  return { id: { item: Number(itemId), msg: msgId } };
 }
 
 async function lockOwnSession(tx: Prisma.TransactionClient, sessionId: string): Promise<void> {

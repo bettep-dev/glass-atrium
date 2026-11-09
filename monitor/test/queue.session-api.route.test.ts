@@ -7,7 +7,7 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -18,6 +18,7 @@ import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fast
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
+import { deleteDirectory } from "./lib/remove-dir.js";
 
 const PORT = 16145;
 const QUEUE_KEY = "test-queue-key-0123456789abcdef";
@@ -25,17 +26,16 @@ const HOST = `127.0.0.1:${PORT}`;
 const ACK_DEADLINE_MS = 120_000;
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), "queue-api-"));
-const secretsDir = path.join(fixtureRoot, "secrets");
-const homeDir = path.join(fixtureRoot, "home");
+const dir = { secrets: path.join(fixtureRoot, "secrets"), home: path.join(fixtureRoot, "home") };
 const trackedSessionIds: string[] = [];
 let app: FastifyInstance;
 
 before(async () => {
-  mkdirSync(secretsDir, { mode: 0o700 });
-  writeFileSync(path.join(secretsDir, "queue-key"), `${QUEUE_KEY}\n`, { mode: 0o600 });
-  mkdirSync(path.join(homeDir, ".claude-work"), { recursive: true });
-  mkdirSync(path.join(homeDir, "elsewhere"), { recursive: true });
-  app = await buildApp(secretsDir);
+  mkdirSync(dir.secrets, { mode: 0o700 });
+  writeFileSync(path.join(dir.secrets, "queue-key"), `${QUEUE_KEY}\n`, { mode: 0o600 });
+  mkdirSync(path.join(dir.home, ".claude-work"), { recursive: true });
+  mkdirSync(path.join(dir.home, "elsewhere"), { recursive: true });
+  app = await buildApp(dir.secrets);
 });
 
 after(async () => {
@@ -45,13 +45,13 @@ after(async () => {
   await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
   await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
   await disconnectPrisma();
-  rmSync(fixtureRoot, { recursive: true, force: true });
+  deleteDirectory(fixtureRoot);
 });
 
 async function buildApp(secrets: string): Promise<FastifyInstance> {
   const instance = Fastify({ logger: false });
   instance.get("/api/root-probe", async () => ({ ok: true }));
-  await registerQueueRoutes(instance, { secretsDir: secrets, port: PORT, homeDir });
+  await registerQueueRoutes(instance, { secretsDir: secrets, port: PORT, homeDir: dir.home });
   await instance.ready();
   return instance;
 }
@@ -131,6 +131,7 @@ describe("queue request gate", () => {
   test("Host allowlist runs first, then the queue key", async () => {
     const rows = [
       { name: "rebinding host", host: `evil.example:${PORT}`, key: QUEUE_KEY, status: 403 },
+      { name: "rebinding host with no key is refused by the Host check", host: `evil.example:${PORT}`, key: null, status: 403 },
       { name: "allowlisted name on another port", host: "127.0.0.1:1", key: QUEUE_KEY, status: 403 },
       { name: "no key", host: HOST, key: null, status: 401 },
       { name: "wrong key", host: `localhost:${PORT}`, key: "not-the-key", status: 401 },
@@ -178,7 +179,7 @@ describe("register", () => {
       { name: "client-sent start time", extra: { processStartTime: "Mon Nov  9 08:01:12 2026" }, error: "invalid_input" },
       { name: "relative cwd", extra: { cwd: "relative/dir" }, error: "invalid_input" },
       { name: "cwd is a file", extra: { cwd: regularFile }, error: "invalid_cwd" },
-      { name: "config dir outside $HOME/.claude*", extra: { configDir: path.join(homeDir, "elsewhere") }, error: "invalid_config_dir" },
+      { name: "config dir outside $HOME/.claude*", extra: { configDir: path.join(dir.home, "elsewhere") }, error: "invalid_config_dir" },
       { name: "socket path naming another pid", extra: { socketPath: `/tmp/cc-socks/${process.pid + 1}.sock` }, error: "invalid_socket_path" },
       { name: "pid of no running process", extra: { pid: 2_147_483_646 }, error: "invalid_pid" },
     ];
@@ -196,6 +197,20 @@ describe("register", () => {
     assert.equal(response.statusCode, 400);
   });
 
+  test("a cwd the monitor may not read is an environment failure, never a database outage", async () => {
+    const locked = makeFixtureDir("locked");
+    const cwd = path.join(locked, "inner");
+    mkdirSync(cwd);
+    chmodSync(locked, 0o000);
+    try {
+      const sessionId = trackSessionId();
+      const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId, { cwd }));
+      assert.deepEqual([response.statusCode, response.json()], [500, { error: "queue_environment_failure" }]);
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+  });
+
   test("stores the realpath of a /tmp cwd", async () => {
     const tmpCwd = mkdtempSync("/tmp/queue-api-cwd-");
     try {
@@ -205,7 +220,7 @@ describe("register", () => {
       assert.equal(response.statusCode, 200);
       assert.equal(stored.cwd, `/private${tmpCwd}`);
     } finally {
-      rmSync(tmpCwd, { recursive: true, force: true });
+      deleteDirectory(tmpCwd);
     }
   });
 
@@ -243,7 +258,7 @@ describe("register", () => {
 
   test("labels the profile by the config dir basename, or default when unset", async () => {
     const rows = [
-      { name: "config dir set", extra: { configDir: path.join(homeDir, ".claude-work") }, label: ".claude-work", isSet: true },
+      { name: "config dir set", extra: { configDir: path.join(dir.home, ".claude-work") }, label: ".claude-work", isSet: true },
       { name: "config dir unset", extra: {}, label: "default", isSet: false },
     ];
     for (const row of rows) {
@@ -256,16 +271,14 @@ describe("register", () => {
   });
 
   test("a new session id on the same pid and start time marks the old row replaced", async () => {
-    const oldId = trackSessionId();
-    const newId = trackSessionId();
-    await send("POST", "/api/queue/sessions/register", registerBody(oldId));
-    await send("POST", "/api/queue/sessions/register", registerBody(newId));
-    const [oldRow, newRow] = await Promise.all([
-      getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId: oldId } }),
-      getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId: newId } }),
-    ]);
-    assert.deepEqual([oldRow.state, oldRow.exitReason], ["exited", "replaced"]);
-    assert.deepEqual([newRow.state, newRow.exitReason], ["live", null]);
+    const id = { old: trackSessionId(), new: trackSessionId() };
+    await send("POST", "/api/queue/sessions/register", registerBody(id.old));
+    await send("POST", "/api/queue/sessions/register", registerBody(id.new));
+    const row = await Promise.all([id.old, id.new].map((sessionId) => getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } }))).then(
+      ([old, current]) => ({ old, new: current }),
+    );
+    assert.deepEqual([row.old.state, row.old.exitReason], ["exited", "replaced"]);
+    assert.deepEqual([row.new.state, row.new.exitReason], ["live", null]);
   });
 
   test("clears the marker, returns resume-pending items to answered and reports the answered count", async () => {
@@ -341,8 +354,8 @@ describe("post and get by id", () => {
     assert.equal(posted.statusCode, 201);
     assert.equal(own.statusCode, 200);
     assert.deepEqual(
-      [own.json().kind, own.json().status, own.json().recommendedCode, own.json().isApprovalClass, own.json().options.length],
-      ["decision", "open", "R1", true, 2],
+      [own.json().kind, own.json().status, own.json().recommendedCode, own.json().isApprovalClass, own.json().options.length, own.json().answer],
+      ["decision", "open", "R1", true, 2, { code: null, text: null }],
     );
     assert.equal(foreign.statusCode, 404);
   });
@@ -399,8 +412,11 @@ describe("pending (pull claim)", () => {
     const foreign = await seedItem(other, { status: "answered" });
     const response = await send("POST", "/api/queue/pending", { sessionId: caller });
     const deliveries = await getPrisma().queueDelivery.findMany({ where: { itemId: { in: [...answered, open, foreign] } } });
-    const claimedIds = response.json().items.map((claim: { itemId: number }) => BigInt(claim.itemId)).sort();
+    const claims: Array<{ id: { item: number; msg: string } }> = response.json().items;
+    const claimedIds = claims.map((claim) => BigInt(claim.id.item)).sort();
+    const msgIds = new Set(deliveries.map((row) => row.msgId));
     assert.deepEqual(claimedIds, [...answered].sort());
+    assert.ok(claims.every((claim) => msgIds.has(claim.id.msg)), "every claim names its own pull delivery");
     assert.deepEqual(await Promise.all(answered.map(getStatus)), ["delivering", "delivering"]);
     assert.deepEqual([await getStatus(open), await getStatus(foreign)], ["open", "answered"]);
     assert.deepEqual(deliveries.map((row) => [row.itemId, row.route, row.attempt]).sort(), [[answered[0], "pull", 2], [answered[1], "pull", 1]].sort());
@@ -443,10 +459,9 @@ describe("ack", () => {
     const sessionId = await seedSession();
     const itemId = await seedItem(sessionId, { status: "delivering" });
     await seedDelivery(itemId);
-    const foreignMsgId = await seedDelivery(await seedItem(sessionId, { status: "delivering" }));
-    const ownMsgId = await seedDelivery(itemId);
-    const foreignMsg = await send("POST", `/api/queue/items/${itemId}/ack`, { sessionId, msgId: foreignMsgId });
-    const foreignCaller = await send("POST", `/api/queue/items/${itemId}/ack`, { sessionId: await seedSession(), msgId: ownMsgId });
+    const msgId = { foreign: await seedDelivery(await seedItem(sessionId, { status: "delivering" })), own: await seedDelivery(itemId) };
+    const foreignMsg = await send("POST", `/api/queue/items/${itemId}/ack`, { sessionId, msgId: msgId.foreign });
+    const foreignCaller = await send("POST", `/api/queue/items/${itemId}/ack`, { sessionId: await seedSession(), msgId: msgId.own });
     assert.deepEqual([foreignMsg.statusCode, foreignCaller.statusCode], [404, 404]);
     assert.equal(await getStatus(itemId), "delivering");
   });

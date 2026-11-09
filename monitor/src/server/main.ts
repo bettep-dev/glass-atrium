@@ -16,11 +16,11 @@ import { probeBrowserLaunch, registerBrowserShutdownHook } from "./clauded-docs/
 import { registerAuditLogHook } from "./middleware/audit-log.js";
 import { auditHtmlRootAtBoot } from "./maintenance/html-root-audit.js";
 import { isLoopbackHost } from "./host-guard.js";
+import { getMonitorPort } from "./monitor-port.js";
 import { registerRequestGuards } from "./request-guards.js";
 
-// Port SoT = config.toml [ports].monitor → 배포 시 ATRIUM_MONITOR_PORT 렌더(render-monitor-env.sh); 미설정 → 16145 default, PORT = generic fallback
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.ATRIUM_MONITOR_PORT ?? process.env.PORT ?? 16145);
+const PORT = getMonitorPort();
 // Reject a non-bindable port loudly — never silently bind a wrong port.
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   logger.error(
