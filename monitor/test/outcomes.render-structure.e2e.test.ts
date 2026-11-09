@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { TEXT_SCALE, getWidenedMetaFits } from "./lib/painted-text.js";
@@ -253,6 +253,73 @@ describe("the Results filter bar drives the ledger fetch", () => {
       }
     });
   }
+});
+
+// The ledger read alone: page size 50, never the needs-you read (needs_attention) nor the attention counts (limit=1).
+const isLedgerRead = (query: URLSearchParams): boolean => query.get("limit") === "50" && !query.has("needs_attention");
+
+describe("a refresh that shrinks the match count under a held page", () => {
+  const getPager = (page: Page) => page.getByRole("navigation", { name: "Results pages" });
+  let app: FastifyInstance;
+  let browser: Browser;
+  let serverUrl: string;
+  let ledgerTotal = 120;
+  const ledgerOffsets: string[] = [];
+
+  before(async () => {
+    app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/outcomes/search", async (req) => {
+      const query = new URLSearchParams(req.query as Record<string, string>);
+      if (!isLedgerRead(query)) return { rows: [], total: 0 };
+      const offset = Number(query.get("offset"));
+      ledgerOffsets.push(String(offset));
+      const rows = Array.from({ length: Math.max(0, Math.min(50, ledgerTotal - offset)) }, (_, i) => ({
+        id: 1_000 + offset + i, agent: BAND_AGENT, task_type: "review", result: "done", closed_at: null,
+        record_ts: "2026-10-01T12:00:00Z", summary: `Ledger row ${offset + i + 1}`, review_flag: false,
+      }));
+      return { rows, total: ledgerTotal };
+    });
+    app.get("/api/*", async () => ({ rows: [] }));
+    await app.ready();
+    serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    browser = await chromium.launch({ headless: true });
+  });
+
+  after(async () => {
+    await browser?.close();
+    await app?.close();
+  });
+
+  test("re-reads the ledger from the last page that still has rows and paints them", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const ledgerRows = page.locator("#outcomes-ledger tr.outcome-row");
+    const getLedgerResponse = (offset: string) => page.waitForResponse((res) => {
+      const url = new URL(res.url());
+      return url.pathname === "/api/outcomes/search" && isLedgerRead(url.searchParams) && url.searchParams.get("offset") === offset;
+    }, { timeout: 30_000 });
+    try {
+      await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+      await page.waitForSelector("#outcomes-ledger tr.outcome-row td", { timeout: 30_000 });
+      for (const offset of ["50", "100"]) {
+        const response = getLedgerResponse(offset);
+        await getPager(page).getByRole("button", { name: "Next page" }).click();
+        await response;
+      }
+      await page.waitForFunction(() => /Ledger row 101\b/.test(document.body.innerText), null, { timeout: 30_000 });
+
+      ledgerTotal = 30;
+      const refreshedFrom = ledgerOffsets.length;
+      await page.getByRole("button", { name: "Refresh" }).click();
+      await page.waitForFunction(() => document.querySelectorAll("#outcomes-ledger tr.outcome-row").length === 30, null, { timeout: 15_000 })
+        .catch(() => undefined);
+
+      assert.deepEqual(ledgerOffsets.slice(refreshedFrom, refreshedFrom + 2), ["100", "0"], "the held page's read, then the first page's");
+      assert.equal(await ledgerRows.count(), 30, "every row still matched is painted");
+    } finally {
+      await page.close();
+    }
+  });
 });
 
 // Sticky heads: the ledger sticks to the page viewport (its card lifts the body cap), Failures by agent to its own 70vh card body,
