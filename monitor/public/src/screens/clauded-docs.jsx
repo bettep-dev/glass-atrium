@@ -1038,8 +1038,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
         .doc-group-toggle.is-expanded .chevron { transform: rotate(90deg); }
         /* member rows — indent + 좌측 가는 가이드 선 (group 소속 시각 hint). */
-        tr.doc-row.is-group-member td.title-cell { padding-left: 32px; position: relative; }
-        tr.doc-row.is-group-member td.title-cell::before { content: ''; position: absolute; left: 14px; top: 0; bottom: 0; width: 1px; background: rgb(var(--line)); }
+        /* one nesting step = the lead slot; --doc-member-inset = the house cell inset per table mode (wide 12 · stacked 0, row owns the padding) */
+        tr.doc-row.is-group-member td.title-cell { --doc-member-inset: var(--space-3); padding-left: calc(var(--doc-member-inset) + ${DOC_LEAD_SLOT_PX_CD}px); position: relative; }
+        .tbl--stacked tr.doc-row.is-group-member td.title-cell { --doc-member-inset: 0px; }
+        tr.doc-row.is-group-member td.title-cell::before { content: ''; position: absolute; left: calc(var(--doc-member-inset) + ${DOC_LEAD_SLOT_PX_CD / 2}px - 0.5px); top: 0; bottom: 0; width: 1px; background: rgb(var(--line)); }
         /* group divider — root row 위쪽 subtle border (dark base 정합). */
         tr.doc-row.is-group-root { border-top: 1px solid rgb(var(--line) / 0.4); }
         /* DnD 재정렬 affordance.

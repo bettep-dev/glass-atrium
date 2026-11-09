@@ -433,3 +433,44 @@ describe("the select column and the stage section heads sit on the ledger's grid
     assert.notEqual(head.background, "rgba(0, 0, 0, 0)", "the head keeps the sunken header fill");
   });
 });
+
+describe("a group member nests one lead slot under its root on both table modes", () => {
+  const groupRows = (mode: string) => `
+    <tr class="doc-row is-group-root"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-root"><div class="doc-title-row"><span class="doc-title-lead"><button type="button" class="doc-group-toggle inline-target" aria-label="Collapse group (2 documents)"><svg class="chevron" width="10" height="10"></svg></button></span><span class="doc-title-main">Release plan</span></div></td></tr>
+    <tr class="doc-row is-group-member"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-member"><div class="doc-title-row"><span class="doc-title-lead"><span class="doc-drag-handle">⠿</span></span><span class="doc-title-main">Release plan rev 2</span></div></td></tr>`;
+  const nestPage = `<!doctype html><html data-theme="dark"><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; }</style></head><body style="margin: 0;">
+    <div style="padding: 48px;"><div class="card">
+      <table class="tbl doc-ledger" style="width: 600px;"><tbody>${groupRows("wide")}</tbody></table>
+      <table class="tbl tbl--stacked doc-ledger" style="width: 600px;"><tbody>${groupRows("stacked")}</tbody></table>
+    </div></div>
+  </body></html>`;
+  let page: Page;
+
+  before(async () => {
+    page = await browser.newPage({ viewport: { width: 900, height: 600 } });
+    await page.setContent(nestPage);
+    await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+    await page.addStyleTag({ content: SCREEN_CSS });
+  });
+
+  after(async () => {
+    await page?.close();
+  });
+
+  for (const mode of ["wide", "stacked"]) {
+    test(`${mode}: the member title starts one lead slot right of the root title, its guide on the root chevron's centre`, async () => {
+      const lead = vm.runInContext("DOC_LEAD_SLOT_PX_CD", docsScreen) as number;
+      const rootMainLeft = await page.$eval(`#${mode}-root .doc-title-main`, (el) => el.getBoundingClientRect().left);
+      const chevron = await page.$eval(`#${mode}-root svg`, (el) => el.getBoundingClientRect().toJSON() as DOMRect);
+      const member = await page.$eval(`#${mode}-member`, (td) => {
+        const guide = getComputedStyle(td, "::before");
+        return { mainLeft: td.querySelector(".doc-title-main")!.getBoundingClientRect().left,
+          guideCentre: td.getBoundingClientRect().left + parseFloat(guide.left) + parseFloat(guide.width) / 2 };
+      });
+      assert.ok(Math.abs(member.mainLeft - rootMainLeft - lead) < 0.5, `member title ${member.mainLeft - rootMainLeft}px right of the root's, lead slot ${lead}px`);
+      const chevronCentre = (chevron.left + chevron.right) / 2;
+      assert.ok(Math.abs(member.guideCentre - chevronCentre) < 0.5, `guide centre ${member.guideCentre - chevronCentre}px off the root chevron centre`);
+    });
+  }
+});
