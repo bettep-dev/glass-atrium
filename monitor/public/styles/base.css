@@ -533,7 +533,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 .tbl:where(:not(.tbl--own-face)) tbody tr:hover {
 	background: rgb(var(--sunken));
 }
-.tbl tbody tr:last-child td {
+.tbl tbody tr:last-child > :is(td, th) {
 	border-bottom: none;
 }
 .tbl td.num,

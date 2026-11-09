@@ -158,7 +158,7 @@ describe("table — mode switch", () => {
 });
 
 // layout fixture — a table inside a real width chain; nowrap numeric columns and an unbroken path push the table's min-content past its wrapper
-// shape: block (host is the parent) · grid-track (a card on a 1fr track around a 1fr grid body) · flex-item (a card as a flex item) · scroller (300px overflow-y box) · page-card (a page-scrolled card)
+// shape: block (host is the parent) · grid-track (a card on a 1fr track around a 1fr grid body) · flex-item (a card as a flex item) · scroller (300px overflow-y box) · page-card (a page-scrolled S Card, its body's 70vh cap lifted)
 const MOUNT_LAYOUT = `(opts) => {
   const { React, ReactDOM, UI } = window;
   const h = React.createElement;
@@ -179,7 +179,7 @@ const MOUNT_LAYOUT = `(opts) => {
     'grid-track': h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' } }, card({}, h('div', { id: 'parent', style: { display: 'grid', gridTemplateColumns: '1fr' } }, table)), card({}, 'Neighbour')),
     'flex-item': h('div', { style: { display: 'flex' } }, card({ flex: '1 1 0' }, h('div', { id: 'parent' }, table))),
     'scroller': h('div', { id: 'scroller', style: { height: '300px', overflowY: 'auto' } }, table),
-    'page-card': card({}, table),
+    'page-card': h(UI.Card, { size: 'S', title: 'Runs by agent' }, table),
   }[opts.shape];
   document.body.prepend(host);
   ReactDOM.createRoot(host).render(tree);
@@ -250,6 +250,15 @@ describe("table — fit and look", () => {
     await page.close();
   });
 
+  test("wide with no foot: no cell of the last body row, its row header included, draws a rule under it", async () => {
+    const page = await openLayout({ shape: "block", widthPx: 900, stackBelowPx: 700, rowCount: 2 }, "wide");
+
+    const rules = await page.evaluate(() => [...document.querySelectorAll("#fixture tbody tr:last-child > *")].map((cell) => `${cell.tagName} ${getComputedStyle(cell).borderBottomWidth}`));
+
+    assert.deepEqual(rules, ["TH 0px", ...Array(6).fill("TD 0px")]);
+    await page.close();
+  });
+
   test("stacked: a row is a two-line item — its header on line one, meta facts on line two behind their label — a span cell runs full width and the foot sits below a rule", async () => {
     const page = await openFixture(NARROW_PX);
 
@@ -287,7 +296,8 @@ describe("table — width source", () => {
       const page = await openLayout({ shape: row.shape, widthPx: row.narrowPx, stackBelowPx: 700, rowCount: 2 }, "stacked");
       const readFit = () => page.evaluate(() => {
         const wrap = document.querySelector("#fixture .tbl-wrap") as HTMLElement;
-        return { mode: wrap.dataset.tableMode, gapPx: Math.round(wrap.getBoundingClientRect().width - (document.getElementById("parent") as HTMLElement).clientWidth) };
+        const table = wrap.querySelector("table") as HTMLElement;
+        return { mode: wrap.dataset.tableMode, gapPx: Math.round(wrap.getBoundingClientRect().width - (document.getElementById("parent") as HTMLElement).clientWidth), isTableWider: table.scrollWidth > wrap.clientWidth };
       });
       const stacked = await readFit();
       await page.evaluate((px) => { (document.getElementById("fixture") as HTMLElement).style.width = `${px}px`; }, row.widePx);
@@ -296,7 +306,8 @@ describe("table — width source", () => {
 
       const wide = await readFit();
 
-      assert.deepEqual({ stacked, wide }, { stacked: { mode: "stacked", gapPx: 0 }, wide: { mode: "wide", gapPx: 0 } });
+      // wide: a table wider than its wrapper is the case this guards — the wrapper keeps its track width anyway
+      assert.deepEqual({ stacked: { mode: stacked.mode, gapPx: stacked.gapPx }, wide }, { stacked: { mode: "stacked", gapPx: 0 }, wide: { mode: "wide", gapPx: 0, isTableWider: true } });
       await page.close();
     });
   }
@@ -306,28 +317,141 @@ describe("table — sticky head", () => {
   const rows = [
     { name: "wide in a scroll box", shape: "scroller", stackBelowPx: 700, mode: "wide" },
     { name: "stacked in a scroll box", shape: "scroller", stackBelowPx: 1000, mode: "stacked" },
-    { name: "wide in a page-scrolled card lifted by an open row menu", shape: "page-card", stackBelowPx: 700, mode: "wide" },
-    { name: "stacked in a page-scrolled card lifted by an open row menu", shape: "page-card", stackBelowPx: 1000, mode: "stacked" },
+    { name: "wide in a page-scrolled card whose body lifts its cap", shape: "page-card", stackBelowPx: 700, mode: "wide" },
+    { name: "stacked in a page-scrolled card whose body lifts its cap", shape: "page-card", stackBelowPx: 1000, mode: "stacked" },
   ];
   for (const row of rows) {
     test(`${row.name}: the column head sticks to the nearest vertical scroller`, async () => {
       const page = await openLayout({ shape: row.shape, widthPx: 900, stackBelowPx: row.stackBelowPx, rowCount: 40 }, row.mode);
-      const isPageCard = row.shape === "page-card";
-      if (isPageCard) await page.getByRole("button", { name: "More for r0" }).click();
-      const menuOverrunPx = isPageCard ? await page.evaluate(() => document.querySelector("#fixture .menu")!.getBoundingClientRect().right - document.querySelector("#fixture .tbl-wrap")!.getBoundingClientRect().right) : 0;
-
+      const isPage = row.shape === "page-card";
       // wide → each th sticks on its own; stacked → the head row block sticks as one
+      const headSelector = row.mode === "stacked" ? "#fixture thead" : "#fixture thead th";
+      // a scroller that cannot scroll 400px past the head's start would pass vacuously
+      const precondition = await page.evaluate(({ isPage, headSelector }) => {
+        const headTopPx = (document.querySelector(headSelector) as HTMLElement).getBoundingClientRect().top + window.scrollY;
+        const scroller = document.getElementById("scroller");
+        const room = scroller ? scroller.scrollHeight - scroller.clientHeight : document.documentElement.scrollHeight - window.innerHeight - headTopPx;
+        const cardBody = document.querySelector("#fixture .card-body");
+        return { canScroll: room > 400, isCapLifted: cardBody ? getComputedStyle(cardBody).maxHeight === "none" : !isPage };
+      }, { isPage, headSelector });
+
       const offsetPx = await page.evaluate(({ isPage, headSelector }) => {
         const head = document.querySelector(headSelector) as HTMLElement;
         const scroller = isPage ? null : document.getElementById("scroller")!;
         if (scroller) scroller.scrollTop = 400;
         else window.scrollTo(0, head.getBoundingClientRect().top + window.scrollY + 400);
         return head.getBoundingClientRect().top - (scroller ? scroller.getBoundingClientRect().top : 0);
-      }, { isPage: isPageCard, headSelector: row.mode === "stacked" ? "#fixture thead" : "#fixture thead th" });
+      }, { isPage, headSelector });
 
+      assert.deepEqual(precondition, { canScroll: true, isCapLifted: true });
       assert.ok(Math.abs(offsetPx) <= 1, `${row.name}: head ${offsetPx}px off the scroller top`);
-      assert.ok(menuOverrunPx <= 0.5, `${row.name}: menu runs ${menuOverrunPx}px past the wrapper`);
       await page.close();
     });
   }
+});
+
+describe("table — row menu", () => {
+  for (const row of [{ name: "wide", stackBelowPx: 700, mode: "wide" }, { name: "stacked", stackBelowPx: 1000, mode: "stacked" }]) {
+    test(`${row.name}: an open row menu opens inward, inside the table's wrapper`, async () => {
+      const page = await openLayout({ shape: "page-card", widthPx: 900, stackBelowPx: row.stackBelowPx, rowCount: 3 }, row.mode);
+
+      await page.getByRole("button", { name: "More for r0" }).click();
+
+      const overrunPx = await page.evaluate(() => document.querySelector("#fixture .menu")!.getBoundingClientRect().right - document.querySelector("#fixture .tbl-wrap")!.getBoundingClientRect().right);
+      assert.ok(overrunPx <= 0.5, `${row.name}: menu runs ${overrunPx}px past the wrapper`);
+      await page.close();
+    });
+  }
+});
+
+// roving rows in a keyed body, each with RowActions → every row activation, menu pick and body key lands in window.rowLog
+const MOUNT_ROW_ACTIONS = `() => {
+  const { React, ReactDOM, UI } = window;
+  const h = React.createElement;
+  const NAMES = ['dev-react', 'dev-front', 'qa-code-reviewer'];
+  const ITEMS = [{ key: 'copy', label: 'Copy id' }, { key: 'pin', label: 'Pin agent' }];
+  window.rowLog = [];
+  const log = (entry) => window.rowLog.push(entry);
+  function Fixture() {
+    const [activeIndex, setActiveIndex] = React.useState(0);
+    const rows = (view) => NAMES.map((name, index) => h(UI.TableRow, { view, key: name, id: 'row' + index,
+      ...UI.getRowFocusProps({ index, activeIndex, count: NAMES.length, onActivate: (i) => log('activate ' + i), onActiveChange: setActiveIndex }) },
+      h(UI.TableCell, { view, kind: 'row-header' }, name),
+      h(UI.TableCell, { view }, h(UI.RowActions, { label: 'More for ' + name, isRowControl: true, items: ITEMS, onPick: (key) => log('pick ' + key),
+        action: h('button', { type: 'button', className: 'btn ghost sm', ...UI.ROW_CONTROL_PROPS }, 'Open ' + name) }))));
+    return h(UI.Table, { caption: 'Agents', columns: [{ key: 'agent', label: 'Agent' }, { key: 'actions', label: 'Actions' }],
+      bodies: [{ key: 'agents', rows, onKeyDown: (event) => log('body ' + event.key) }] });
+  }
+  const host = document.createElement('div');
+  host.id = 'fixture';
+  host.style.width = '900px';
+  document.body.prepend(host);
+  ReactDOM.createRoot(host).render(h(Fixture));
+}`;
+
+async function openRowActions(): Promise<Page> {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+  await page.waitForFunction(() => Boolean((window as unknown as { UI?: unknown; ReactDOM?: unknown }).UI && (window as unknown as { ReactDOM?: unknown }).ReactDOM), null, { timeout: 30_000 });
+  await page.evaluate(`(${MOUNT_ROW_ACTIONS})()`);
+  await page.waitForSelector("#fixture [data-roving-row]", { timeout: 30_000 });
+  return page;
+}
+
+async function openRowMenu(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "More for dev-react" }).focus();
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("#fixture [role=menu]");
+  await page.evaluate(() => { (window as unknown as { rowLog: string[] }).rowLog = []; });
+}
+
+// active element as its accessible name + the open menu count + every row or body handler call
+const readRowState = (page: Page) => page.evaluate(() => ({
+  active: document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.textContent ?? "",
+  menuCount: document.querySelectorAll("#fixture [role=menu]").length,
+  log: (window as unknown as { rowLog: string[] }).rowLog,
+}));
+
+describe("table — row actions keys", () => {
+  test("ArrowRight from the visible action reaches the overflow trigger as a row control", async () => {
+    const page = await openRowActions();
+    await page.getByRole("button", { name: "Open dev-react" }).focus();
+
+    await page.keyboard.press("ArrowRight");
+
+    assert.deepEqual(await readRowState(page), { active: "More for dev-react", menuCount: 0, log: ["body ArrowRight"] });
+    await page.close();
+  });
+
+  test("Enter on the overflow trigger opens its menu on the first item and never activates the row", async () => {
+    const page = await openRowActions();
+    await page.getByRole("button", { name: "More for dev-react" }).focus();
+
+    await page.keyboard.press("Enter");
+
+    await page.waitForSelector("#fixture [role=menu]");
+    assert.deepEqual(await readRowState(page), { active: "Copy id", menuCount: 1, log: [] });
+    await page.close();
+  });
+
+  test("ArrowDown in the open menu moves to the next item, keeps the menu open and never reaches the row or body", async () => {
+    const page = await openRowActions();
+    await openRowMenu(page);
+
+    await page.keyboard.press("ArrowDown");
+
+    assert.deepEqual(await readRowState(page), { active: "Pin agent", menuCount: 1, log: [] });
+    await page.close();
+  });
+
+  test("Escape in the open menu closes it and returns focus to the trigger without reaching the row or body", async () => {
+    const page = await openRowActions();
+    await openRowMenu(page);
+
+    await page.keyboard.press("Escape");
+
+    await page.waitForFunction(() => document.querySelectorAll("#fixture [role=menu]").length === 0);
+    assert.deepEqual(await readRowState(page), { active: "More for dev-react", menuCount: 0, log: [] });
+    await page.close();
+  });
 });

@@ -1087,7 +1087,7 @@ function TableRow({ view, children, ...rest }) {
 /**
  * One cell of four kinds; stacked mode restates its role and prefixes a meta cell with its column label, aria-hidden.
  * @param kind - 'data' (textRole 'label' | 'primary' | 'meta') · 'span' (start → rest of the row) · 'row-header' · 'group-header' (heading anchor at level, id)
- * @param start - columns before a span or group-header cell
+ * @param start - columns before a span or group-header cell; the row's width is view.columnCount, from Table columns or widths → a table with neither spans one column
  * @param rest - cell attributes only (title, aria-label)
  */
 function TableCell({ view, kind = 'data', textRole = 'primary', label, start = 0, level = 3, id, isNumeric = false, className = '', children, ...rest }) {
@@ -1107,19 +1107,34 @@ function TableCell({ view, kind = 'data', textRole = 'primary', label, start = 0
 
 /**
  * A row's actions, two at most: the visible action, then the S2a overflow menu only when items exist.
+ * The trigger's menu-button keys and every key inside the open menu stop here → a row or body key handler never acts on them.
  * @param label - accessible name of the overflow trigger, naming its row
  * @param items - MenuPanel action items
+ * @param isRowControl - the row is a getRowFocusProps row → the trigger leaves the Tab order and ArrowRight reaches it
  */
-function RowActions({ label, action, items = [], onPick }) {
+function RowActions({ label, action, items = [], onPick, isRowControl = false }) {
   const menu = useMenuButton();
-  return <div ref={menu.rootRef} className="row-actions">
+  return <div ref={menu.rootRef} className="row-actions" onKeyDown={(event) => putRowActionsKey(event, menu.close)}>
     {action}
-    {items.length > 0 && <button type="button" className="btn ghost icon row-actions-more" aria-label={label} {...menu.triggerProps}>
+    {items.length > 0 && <button type="button" className="btn ghost icon row-actions-more" aria-label={label} {...menu.triggerProps}
+      {...(isRowControl ? ROW_CONTROL_PROPS : null)}>
       <Icon name="ellipsis" size={16} />
     </button>}
     {menu.isOpen && <MenuPanel id={menu.menuId} label={label} kind="action" items={items}
       rootRef={menu.rootRef} onPick={onPick} onClose={menu.close} />}
   </div>;
+}
+
+const MENU_TRIGGER_KEYS = Object.freeze(['Enter', ' ', 'ArrowDown']);
+
+function putRowActionsKey(event, onClose) {
+  const isInMenu = event.target.closest('[role="menu"]') !== null;
+  const isTriggerKey = event.target.getAttribute('aria-haspopup') === 'menu' && MENU_TRIGGER_KEYS.includes(event.key);
+
+  if (!isInMenu && !isTriggerKey) return;
+  event.stopPropagation();
+  // stopped → the document dismiss listener never hears this Escape, so the menu closes here
+  if (isInMenu && event.key === 'Escape') onClose();
 }
 
 const DISCLOSURE_CHEVRON_PX = 14;
