@@ -96,7 +96,7 @@ export async function startResumeSpawn(claim: ResumeClaim, payload: string, deps
     await deleteCaptureDir(path.dirname(capture.filePath));
     return false;
   }
-  deps.onCapture?.(setBgId(claim, capture.filePath, capture.launch.exited, deps.signal, now));
+  deps.onCapture?.(putCapturedBgId(claim, capture.filePath, capture.launch.exited, deps.signal, now));
   return true;
 }
 
@@ -139,7 +139,7 @@ async function createCaptureFile(captureDir: string): Promise<{ filePath: string
   return { filePath, handle: await open(filePath, "wx", 0o600) };
 }
 
-async function setBgId(claim: ResumeClaim, filePath: string, exited: Promise<void>, signal: AbortSignal | undefined, now: () => Date): Promise<void> {
+async function putCapturedBgId(claim: ResumeClaim, filePath: string, exited: Promise<void>, signal: AbortSignal | undefined, now: () => Date): Promise<void> {
   try {
     const line = await getFirstLine(filePath, exited, signal, now);
     if (line !== null && BG_ID_SHAPE.test(line)) await putBgId(claim, line);

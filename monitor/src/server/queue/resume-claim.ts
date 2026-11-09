@@ -54,7 +54,7 @@ const CLAIMABLE_ITEM_SQL = Prisma.sql`i."status" = 'resume_pending' AND NOT i."a
   SELECT 1 FROM "monitor"."queue_deliveries" d WHERE d."item_id" = i."id" AND d."route" = 'resume' AND d."attempt" = i."next_attempt")`;
 
 /**
- * Exited sessions holding a claimable item, oldest item first → items that wait on the owner for good (approval
+ * Exited sessions holding a claimable item, earliest queue position first → items that wait on the owner for good (approval
  * class, used attempt) never crowd eligible sessions out of the batch.
  */
 export async function findClaimableSessionIds(scope: { sessionIds: string[] } | undefined): Promise<string[]> {
