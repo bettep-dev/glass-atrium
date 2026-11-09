@@ -2379,10 +2379,15 @@ const MATRIX_COLUMNS = [
   { key: 'agent', label: 'Agent' },
   ...TASK_TYPE_COLUMNS.map((c) => ({ key: c.key, label: c.label, isNumeric: true })),
 ];
-const MATRIX_AGENT_CELL_PX = 164;
+// agent-name width the threshold reserves — a budget, not a cell width: the row-header cell has none and wraps anywhere
+const MATRIX_AGENT_NAME_PX = 132;
 const MATRIX_CELL_PAD_PX = 12; // --space-3 on each side of a cell
-// agent cell + every sparkline column with its padding → narrower than this, rows stack rather than clip a column
-const MATRIX_STACK_BELOW_PX = MATRIX_AGENT_CELL_PX + TASK_TYPE_COLUMNS.length * (SPARK_WIDTH + 2 * MATRIX_CELL_PAD_PX);
+const MATRIX_EDGE_PAD_PX = 16; // --card-pad on the outer side of the first and last cell
+// agent name + sparklines + every cell's padding, edge cells' card-pad surplus included → narrower than this, rows stack rather than clip a column
+const MATRIX_STACK_BELOW_PX = MATRIX_AGENT_NAME_PX
+  + TASK_TYPE_COLUMNS.length * SPARK_WIDTH
+  + (TASK_TYPE_COLUMNS.length + 1) * 2 * MATRIX_CELL_PAD_PX
+  + 2 * (MATRIX_EDGE_PAD_PX - MATRIX_CELL_PAD_PX);
 
 function SuccessRateMatrixTable({ matrix }) {
   return (

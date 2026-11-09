@@ -1188,14 +1188,20 @@ describe("a truncated matrix reports the row limit as a warn glyph and a word wi
 });
 
 test("the matrix legend and its counting method sit behind the fold's info button, never on the page", async () => {
-  const state = { status: "ready", data: { rows: [getMatrixRow("a", 19, 1)] }, error: null };
-  const tree = await renderComponent("SuccessRateMatrixBody", { state, days: 30, onRetry: () => undefined });
+  const rows = [getMatrixRow("a", 19, 1)];
+  const mod = await loadAgentsScreen();
+  const tree = await renderComponent("SuccessRateMatrixBody", { state: { status: "ready", data: { rows }, error: null }, days: 30, onRetry: () => undefined });
+  // the stub useState keeps the Full matrix closed → its table is rendered on its own, as the open state mounts it
+  const openTable = await renderComponent("SuccessRateMatrixTable", { matrix: (mod.buildSuccessRateMatrix as (rows: unknown[]) => unknown)(rows) });
   const swatchCount = (root: RenderedNode | string | null) => findNodes(root, (n) => n.type === "LegendSwatch").length;
 
   const [info] = findAtoms(tree, "CardInfo");
   assert.ok(info, "the fold carries an info button");
   assert.equal(swatchCount(info), 2, "the legend rides the info button");
-  assert.equal(swatchCount(tree), 2, "no second legend on the page");
+  assert.equal(swatchCount(tree), 2, "no second legend on the closed fold");
+  assert.equal(findNodes(openTable, (n) => n.type === "SuccessRateMatrixRow").length, 1, "the open table renders its agent row");
+  assert.equal(swatchCount(openTable), 0, "no legend inside the open matrix");
+  assert.doesNotMatch(collectText(openTable), /n = passed \+ failed/, "no counting method inside the open matrix");
 });
 
 test("the matrix region draws no card inside its fold and nothing in it scrolls vertically", async () => {
