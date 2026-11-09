@@ -131,3 +131,21 @@ test("the hover edge stays a visible step above the resting control edge, in bot
     assert.ok(hover > rest, `${theme} hover --faint ${hover.toFixed(2)}:1 must exceed the resting edge ${rest.toFixed(2)}:1 on --elev`);
   }
 });
+
+// the dark accent sits on the root-only dark rule, apart from the dark block (a nested dark scope keeps the user's accent tweak)
+const darkAccentBlock = css.match(/:root\[data-theme="dark"\]\s*\{([^}]*)\}/)?.[1] ?? "";
+
+// text the base looks set on the sunken track and the raised thumb clears 4.5:1 on every surface; the focus ring clears 3:1 on the page
+test("base-look text and the focus ring clear their floors on every surface they sit on, in both themes", () => {
+  for (const [theme, block, surfaces] of THEMES) {
+    for (const fg of ["--ink", "--dim", "--faint", "--accent"]) {
+      for (const surface of surfaces) {
+        const fgBlock = fg === "--accent" && theme === "dark" ? darkAccentBlock : block;
+        const ratio = contrastRatio(parseTriplet(fgBlock, fg), parseTriplet(block, surface));
+        assert.ok(ratio >= AA_NORMAL, `${theme} ${fg} on ${surface} = ${ratio.toFixed(2)}:1 < ${AA_NORMAL}:1`);
+      }
+    }
+    const ring = contrastRatio(parseTriplet(block, "--focus-ring"), parseTriplet(block, "--surface"));
+    assert.ok(ring >= UI_GLYPH, `${theme} --focus-ring on --surface = ${ring.toFixed(2)}:1 < ${UI_GLYPH}:1`);
+  }
+});

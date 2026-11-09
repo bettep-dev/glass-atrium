@@ -346,7 +346,7 @@ describe("calm fixture — nothing is running hot", () => {
       const label = JSON.stringify(table);
       assert.deepEqual(table.inset, [0, 0], `flush, never nested in a padded body — ${label}`);
       assert.deepEqual(table.edge, ["16px", "16px"], `edge cells line up with the card head — ${label}`);
-      assert.equal(table.headCase, "uppercase", `the house header face stays — ${label}`);
+      assert.equal(table.headCase, "none", `headers keep sentence case — ${label}`);
       assert.ok(table.contentInsets.every((x) => x === 16), `content beside the table keeps the card padding — ${label}`);
     }
   });

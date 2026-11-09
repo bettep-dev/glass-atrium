@@ -116,7 +116,7 @@ describe("structure atoms carry headings, captions and column scope", async () =
   const render = (name: string, props: Record<string, unknown>, ...children: unknown[]): RenderedNode =>
     (renderScreen(React.createElement(ui[name] as Component, props, ...children)) as RenderedNode).children[0] as RenderedNode;
 
-  test("a section label is an h2 by default and keeps the uppercase section-label style", () => {
+  test("a section label is an h2 by default and carries the section-label style", () => {
     const tree = render("SectionLabel", {}, "Pinned models");
     assert.equal(tree.type, "h2");
     assert.match(String(tree.props.className), /\bsection-label\b/);

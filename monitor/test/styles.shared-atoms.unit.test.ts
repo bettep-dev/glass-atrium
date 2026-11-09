@@ -110,11 +110,11 @@ test("tokens.css is the only place a type step is declared", () => {
   assert.ok(declared(TOKENS_CSS).includes("--fs-meta"), "tokens.css declares the steps");
 });
 
-test("mono stays on numeric atoms and off word-carrying atoms", () => {
+test("each atom sets the face its role names: sans for words and the stat figure, mono for the remaining numeric atoms", () => {
   const rows = [
     { selector: ".pill", isMono: false },
     { selector: ".pill--count", isMono: true },
-    { selector: ".kpi-value", isMono: true },
+    { selector: ".kpi-value", isMono: false },
     { selector: ".tbl td.num", isMono: true },
   ];
   for (const row of rows) {
@@ -136,17 +136,27 @@ test("every interactive control atom is at least 32px tall", () => {
   }
 });
 
-test("every pressed or selected control draws the one filled selected-state token", () => {
-  const selectors = [
-    '.btn[aria-pressed="true"]',
-    '.seg button[aria-pressed="true"]',
-    ".seg button.active",
-    '.pill--interactive[aria-pressed="true"]',
-  ];
-  for (const selector of selectors) {
+test("a pressed toggle keeps its fill and draws an ink edge, never the selected-fill inversion", () => {
+  for (const selector of ['.btn[aria-pressed="true"]', '.pill--interactive[aria-pressed="true"]']) {
     const body = getRuleBodies(BASE_CSS, selector).join(";");
-    assert.match(body, /background:\s*rgb\(var\(--selected-fill\)\)/, `${selector} fill`);
-    assert.match(body, /color:\s*rgb\(var\(--selected-ink\)\)/, `${selector} ink`);
+    assert.match(body, /border-color:\s*rgb\(var\(--ink\)\)/, `${selector} edge`);
+    assert.doesNotMatch(body, /--selected-fill/, `${selector} fill`);
+  }
+});
+
+test("a selected segment is a raised thumb on the control edge, on a track with no outer edge", () => {
+  for (const selector of ['.seg button[aria-pressed="true"]', ".seg button.active"]) {
+    const body = getRuleBodies(BASE_CSS, selector).join(";");
+    assert.match(body, /background:\s*rgb\(var\(--surface-raised-2\)\)/, `${selector} thumb`);
+    assert.match(body, /box-shadow:\s*inset 0 0 0 1px rgb\(var\(--control-edge\)\)/, `${selector} edge`);
+  }
+  assert.doesNotMatch(getRuleBodies(BASE_CSS, ".seg").join(";"), /box-shadow|border:/, ".seg outer edge");
+});
+
+test("section and sub-card labels keep sentence case: no uppercase transform or eyebrow tracking", () => {
+  for (const selector of [".section-label", ".sub-card-label"]) {
+    const body = getRuleBodies(BASE_CSS, selector).join(";");
+    assert.doesNotMatch(body, /text-transform:\s*uppercase|letter-spacing/, selector);
   }
 });
 

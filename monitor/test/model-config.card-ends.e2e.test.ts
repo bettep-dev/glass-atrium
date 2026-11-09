@@ -137,7 +137,7 @@ test("every tier-table cell takes the shared .tbl padding, a text cell starting 
 
     assert.strictEqual(tables.length, 3, "model, cap and call-tier tables render");
     for (const table of tables) {
-      assert.strictEqual(table.header.transform, "uppercase", `${table.caption}: the house header case stays`);
+      assert.strictEqual(table.header.transform, "none", `${table.caption}: headers keep sentence case`);
       assert.ok(table.cells.length >= 6, `${table.caption}: rows render`);
       for (const cell of table.cells) {
         const [top, bottom] = cell.isControl ? [3.5, 3.5] : [3.5 + (32 - 20) / 2, 7.5];

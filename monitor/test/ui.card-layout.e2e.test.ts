@@ -266,13 +266,19 @@ describe("card anatomy at real viewports", () => {
     assert.ok(Math.abs(body.left - card.left - 1 - CARD.PAD_PX) < 1, `inset ${body.left - card.left}px`);
   });
 
-  test("a light card rests on its border alone; a dark card keeps its depth", async () => {
-    const shadowOf = () => anatomy.$eval("#head-card", (el) => getComputedStyle(el).boxShadow);
-    assert.equal(await shadowOf(), "none");
-    await anatomy.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-    const dark = await shadowOf();
-    await anatomy.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
-    assert.notEqual(dark, "none");
+  test("a card rests on one hairline in both themes, with no shadow or inset highlight", async () => {
+    const readEdge = () => anatomy.$eval("#head-card", (el) => {
+      const style = getComputedStyle(el);
+      return { shadow: style.boxShadow, width: style.borderTopWidth };
+    });
+    for (const theme of ["light", "dark"]) {
+      await anatomy.evaluate((next) => document.documentElement.setAttribute("data-theme", next), theme);
+      try {
+        assert.deepEqual(await readEdge(), { shadow: "none", width: "1px" }, theme);
+      } finally {
+        await anatomy.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+      }
+    }
   });
 
   test("a stretched row grows with its content instead of scrolling inside a card", async () => {
