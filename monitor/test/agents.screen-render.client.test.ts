@@ -1187,21 +1187,25 @@ describe("a truncated matrix reports the row limit as a warn glyph and a word wi
   }
 });
 
-test("the matrix legend and its counting method sit behind the fold's info button, never on the page", async () => {
-  const rows = [getMatrixRow("a", 19, 1)];
-  const mod = await loadAgentsScreen();
-  const tree = await renderComponent("SuccessRateMatrixBody", { state: { status: "ready", data: { rows }, error: null }, days: 30, onRetry: () => undefined });
-  // the stub useState keeps the Full matrix closed → its table is rendered on its own, as the open state mounts it
-  const openTable = await renderComponent("SuccessRateMatrixTable", { matrix: (mod.buildSuccessRateMatrix as (rows: unknown[]) => unknown)(rows) });
-  const swatchCount = (root: RenderedNode | string | null) => findNodes(root, (n) => n.type === "LegendSwatch").length;
+describe("the matrix legend and its counting method sit behind the fold's info button, never on the page", () => {
+  for (const row of [{ name: "with the Full matrix closed", isOpen: false }, { name: "with the Full matrix open", isOpen: true }]) {
+    test(row.name, async () => {
+      // the Full matrix toggle is the only boolean state in this tree → the stub seats it open or closed
+      const react = { ...createReactStub(), useState: (initial: unknown) => [initial === false ? row.isOpen : initial, () => undefined] };
+      const mod = await loadScreenModule(AGENTS_SRC, { UI: uiStub(), Recharts: uiStub(), React: react });
+      const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+      const state = { status: "ready", data: { rows: [getMatrixRow("a", 19, 1)] }, error: null };
+      const tree = renderScreen(React.createElement(mod.SuccessRateMatrixBody as Component, { state, days: 30, onRetry: () => undefined }));
+      const swatchCount = (root: RenderedNode | string | null) => findNodes(root, (n) => n.type === "LegendSwatch").length;
 
-  const [info] = findAtoms(tree, "CardInfo");
-  assert.ok(info, "the fold carries an info button");
-  assert.equal(swatchCount(info), 2, "the legend rides the info button");
-  assert.equal(swatchCount(tree), 2, "no second legend on the closed fold");
-  assert.equal(findNodes(openTable, (n) => n.type === "SuccessRateMatrixRow").length, 1, "the open table renders its agent row");
-  assert.equal(swatchCount(openTable), 0, "no legend inside the open matrix");
-  assert.doesNotMatch(collectText(openTable), /n = passed \+ failed/, "no counting method inside the open matrix");
+      const [info] = findAtoms(tree, "CardInfo");
+      assert.ok(info, "the fold carries an info button");
+      assert.equal(findNodes(tree, (n) => n.type === "SuccessRateMatrixRow").length, row.isOpen ? 1 : 0, "the table mounts only while open");
+      assert.equal(swatchCount(info), 2, "the legend rides the info button");
+      assert.equal(swatchCount(tree), 2, "no second legend anywhere on the fold");
+      assert.equal(collectText(tree).match(/n = passed \+ failed/g)?.length, 1, "the counting method appears once, behind the info button");
+    });
+  }
 });
 
 test("the matrix region draws no card inside its fold and nothing in it scrolls vertically", async () => {
