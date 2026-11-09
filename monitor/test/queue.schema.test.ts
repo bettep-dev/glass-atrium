@@ -69,6 +69,22 @@ function buildDelivery(
   return { msgId: randomUUID(), itemId, route, attempt, result: "sent", sentAt: SENT_AT, ackDeadlineAt: ACK_DEADLINE_AT };
 }
 
+/** Option entries R1..R<count> in the route's entry shape. */
+function buildOptions(count: number): Prisma.InputJsonArray {
+  return Array.from({ length: count }, (_, i) => ({ code: `R${i + 1}`, label: `Interval ${i + 1}`, pros: "fast", cons: "costly" }));
+}
+
+function buildDriftCheck(): Prisma.QueueDriftCheckCreateInput {
+  return {
+    binaryRealpath: "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+    binarySize: 319598464n,
+    binaryModifiedAt: new Date("2026-11-01T02:00:00.000Z"),
+    version: "2.1.318",
+    bundleResult: "pass",
+    checkedAt: SENT_AT,
+  };
+}
+
 /**
  * Rejection oracle for one unique key: Prisma P2002 whose Postgres 23505 names `index`.
  * P2002's own message lists the key's fields only → the name comes from the driver-adapter cause.
@@ -254,6 +270,37 @@ describe("monitor.queue_* length and shape limits", () => {
       constraint: /queue_items_body_check/,
     },
     {
+      name: "rejects a blank item body",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { body: "   " } }),
+      constraint: /queue_items_body_check/,
+    },
+    {
+      name: "rejects an answer text past 20000 characters",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { answerText: "a".repeat(20001) } }),
+      constraint: /queue_items_answer_text_check/,
+    },
+    {
+      name: "rejects more than 20 linked doc ids",
+      write: (tx, itemId) =>
+        tx.queueItem.update({
+          where: { id: itemId },
+          data: { linkedDocIds: Array.from({ length: 21 }, (_, i) => BigInt(43900 + i)) },
+        }),
+      constraint: /queue_items_linked_doc_ids_check/,
+    },
+    {
+      // Raw SQL → the typed client cannot write a NULL array or a NULL entry
+      name: "rejects a NULL linked doc ids array",
+      write: (tx, itemId) => tx.$executeRaw`UPDATE "monitor"."queue_items" SET "linked_doc_ids" = NULL WHERE "id" = ${itemId}`,
+      constraint: /queue_items_linked_doc_ids_check/,
+    },
+    {
+      name: "rejects a linked doc id entry that is NULL",
+      write: (tx, itemId) =>
+        tx.$executeRaw`UPDATE "monitor"."queue_items" SET "linked_doc_ids" = ARRAY[43944, NULL]::bigint[] WHERE "id" = ${itemId}`,
+      constraint: /queue_items_linked_doc_ids_check/,
+    },
+    {
       name: "rejects a blank item title",
       write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { title: "   " } }),
       constraint: /queue_items_title_check/,
@@ -266,6 +313,37 @@ describe("monitor.queue_* length and shape limits", () => {
     {
       name: "rejects a report that carries options",
       write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { kind: "report" } }),
+      constraint: /queue_items_decision_options_check/,
+    },
+    {
+      name: "rejects a decision with fewer than 2 options",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { options: buildOptions(1) } }),
+      constraint: /queue_items_decision_options_check/,
+    },
+    {
+      name: "rejects a decision with more than 9 options",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { options: buildOptions(10) } }),
+      constraint: /queue_items_decision_options_check/,
+    },
+    {
+      name: "rejects a decision without an options array",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { options: Prisma.DbNull } }),
+      constraint: /queue_items_decision_options_check/,
+    },
+    {
+      // the code names an entry → only the R1..R9 form is under test
+      name: "rejects a recommended code outside R1 to R9",
+      write: (tx, itemId) =>
+        tx.queueItem.update({
+          where: { id: itemId },
+          data: {
+            options: [
+              { code: "X1", label: "30 seconds", pros: "fast recovery", cons: "more probes" },
+              { code: "R2", label: "2 minutes", pros: "fewer probes", cons: "slower recovery" },
+            ],
+            recommendedCode: "X1",
+          },
+        }),
       constraint: /queue_items_decision_options_check/,
     },
     {
@@ -288,6 +366,16 @@ describe("monitor.queue_* length and shape limits", () => {
       constraint: /queue_items_answer_code_check/,
     },
     {
+      name: "rejects a next attempt below 1",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { nextAttempt: 0 } }),
+      constraint: /queue_items_next_attempt_check/,
+    },
+    {
+      name: "rejects a negative defer count",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { deferCount: -1 } }),
+      constraint: /queue_items_defer_count_check/,
+    },
+    {
       name: "rejects a bg id that starts with a hyphen",
       write: (tx, itemId) => tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "resume", 1), bgId: "-h" } }),
       constraint: /queue_deliveries_bg_id_check/,
@@ -308,9 +396,28 @@ describe("monitor.queue_* length and shape limits", () => {
       constraint: /queue_deliveries_abort_reason_check/,
     },
     {
+      name: "rejects an abort reason on a row that did not abort",
+      write: (tx, itemId) =>
+        tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "resume", 1), abortReason: "shared_worktree" } }),
+      constraint: /queue_deliveries_abort_reason_check/,
+    },
+    {
+      name: "rejects an aborted row on a route other than resume",
+      write: (tx, itemId) =>
+        tx.queueDelivery.create({
+          data: { ...buildDelivery(itemId, "socket", 1), result: "aborted", abortReason: "session_returned" },
+        }),
+      constraint: /queue_deliveries_abort_reason_check/,
+    },
+    {
       name: "rejects an attempt below 1",
       write: (tx, itemId) => tx.queueDelivery.create({ data: buildDelivery(itemId, "pull", 0) }),
       constraint: /queue_deliveries_attempt_check/,
+    },
+    {
+      name: "rejects an ack deadline that is not after the send time",
+      write: (tx, itemId) => tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "socket", 1), ackDeadlineAt: SENT_AT } }),
+      constraint: /queue_deliveries_ack_deadline_check/,
     },
   ];
 
@@ -349,9 +456,35 @@ describe("monitor.queue_* length and shape limits", () => {
       constraint: /queue_sessions_config_dir_check/,
     },
     {
+      name: "rejects a relative config dir",
+      override: { configDir: ".claude-work" },
+      constraint: /queue_sessions_config_dir_check/,
+    },
+    {
       name: "rejects a relative cwd",
       override: { cwd: "Desktop/git/glass-atrium" },
       constraint: /queue_sessions_cwd_check/,
+    },
+    {
+      name: "rejects a relative worktree root",
+      override: { worktreeRoot: "Desktop/git/glass-atrium" },
+      constraint: /queue_sessions_worktree_root_check/,
+    },
+    {
+      // no socket path → the pid-keyed socket path CHECK stays out of the way
+      name: "rejects a pid of 0",
+      override: { pid: 0, socketPath: null },
+      constraint: /queue_sessions_pid_check/,
+    },
+    {
+      name: "rejects an empty profile label",
+      override: { profileLabel: "" },
+      constraint: /queue_sessions_profile_label_check/,
+    },
+    {
+      name: "rejects an empty process start time",
+      override: { processStartTime: "" },
+      constraint: /queue_sessions_process_start_time_check/,
     },
   ];
 
@@ -363,6 +496,67 @@ describe("monitor.queue_* length and shape limits", () => {
       );
     });
   }
+
+  const rejectedDriftChecks: readonly {
+    name: string;
+    override: Partial<Prisma.QueueDriftCheckCreateInput>;
+    constraint: RegExp;
+  }[] = [
+    {
+      name: "rejects a relative binary realpath",
+      override: { binaryRealpath: "bin/claude.exe" },
+      constraint: /queue_drift_checks_binary_realpath_check/,
+    },
+    {
+      name: "rejects a negative binary size",
+      override: { binarySize: -1n },
+      constraint: /queue_drift_checks_binary_size_check/,
+    },
+    {
+      name: "rejects an empty version",
+      override: { version: "" },
+      constraint: /queue_drift_checks_version_check/,
+    },
+  ];
+
+  for (const row of rejectedDriftChecks) {
+    test(row.name, async () => {
+      await assert.rejects(
+        runRolledBack((tx) => tx.queueDriftCheck.create({ data: { ...buildDriftCheck(), ...row.override } })),
+        row.constraint,
+      );
+    });
+  }
+
+  test("accepts an item at every length and count cap", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const itemId = await createItem(tx, 41012);
+        const item = await tx.queueItem.update({
+          where: { id: itemId },
+          data: {
+            title: "t".repeat(200),
+            body: "b".repeat(20000),
+            answerText: "a".repeat(20000),
+            linkedDocIds: Array.from({ length: 20 }, (_, i) => BigInt(43900 + i)),
+            options: buildOptions(9),
+          },
+          select: { title: true, body: true, answerText: true, linkedDocIds: true, options: true },
+        });
+        assert.deepEqual(
+          {
+            title: item.title.length,
+            body: item.body.length,
+            answerText: item.answerText?.length,
+            linkedDocIds: item.linkedDocIds.length,
+            options: Array.isArray(item.options) ? item.options.length : null,
+          },
+          { title: 200, body: 20000, answerText: 20000, linkedDocIds: 20, options: 9 },
+        );
+      }),
+      Rollback,
+    );
+  });
 
   test("accepts a resume row carrying a bg id of letters, digits and a hyphen", async () => {
     await assert.rejects(
@@ -381,14 +575,7 @@ describe("monitor.queue_* length and shape limits", () => {
 
 describe("monitor.queue_drift_checks one row per Claude Code version", () => {
   test("a second row for a recorded version is rejected", async () => {
-    const row: Prisma.QueueDriftCheckCreateInput = {
-      binaryRealpath: "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
-      binarySize: 319598464n,
-      binaryModifiedAt: new Date("2026-11-01T02:00:00.000Z"),
-      version: "2.1.318",
-      bundleResult: "pass",
-      checkedAt: SENT_AT,
-    };
+    const row = buildDriftCheck();
     await assert.rejects(
       runRolledBack(async (tx) => {
         await tx.queueDriftCheck.create({ data: row });

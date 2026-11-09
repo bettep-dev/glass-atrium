@@ -245,7 +245,7 @@ get_script_partial_index_counts() {
   [[ "${output}" == *"core.budget_overages verification query failed"* ]]
 }
 
-@test "post-deploy step verifies all 9 raw-SQL partial indexes via pg_indexes (DF-4)" {
+@test "post-deploy step verifies all 9 raw-SQL partial indexes via pg_indexes" {
   # record every psql invocation's args; answer the pg_indexes count probe with 9 (all present)
   # and existence probes with 1 so the createdb branch is skipped and the run reaches step 7.
   printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/psql-args"\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 9 ;; *) echo 1 ;; esac\nexit 0\n' \
@@ -541,7 +541,7 @@ STUB
 # plain command and any final command gate on EVERY version.
 # Every assertion below `return 1`s with its own message, so each fails independently on every version.
 
-@test "AC-C3 GA_DB_RECREATE backup lands under a CONFIGURED backup_dir" {
+@test "GA_DB_RECREATE backup lands under a CONFIGURED backup_dir" {
   # Same stub shape as the DEFAULT test: dropdb fails (exit 1) so the run stops at
   # EXIT_RECREATE=8 right after the backup dir + dump file are created.
   printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 9 ;; *) echo 1 ;; esac\nexit 0\n' >"${STUB_BIN}/psql"
@@ -575,7 +575,7 @@ STUB
 # and its two siblings together. See test/lib/stat-mode.bash.
 load 'lib/stat-mode'
 
-@test "AC-C7 the recreate backup and the dir created for it are owner-only (0700 / 0600)" {
+@test "the recreate backup and the dir created for it are owner-only (0700 / 0600)" {
   local dump dir_mode dump_mode
   # Same stub shape as the backup-before-drop test above: the main db reports
   # 'exists' until dropdb clears its sentinel, so recreate_database engages and its
@@ -616,7 +616,7 @@ STUB
   }
 }
 
-@test "AC-C7 the creation mask is RESTORED for the steps after the recreate backup" {
+@test "the creation mask is RESTORED for the steps after the recreate backup" {
   local mode
   # Two 077 scopes run on this path — one around recreate_database's mkdir, one inside
   # backup_db_to_file around pg_dump — and the mask is process-global, so a leaked one

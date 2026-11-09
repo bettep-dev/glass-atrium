@@ -1980,7 +1980,7 @@
     "test/manifest-key-containment.bats": "13a4ab0dd5f38725d2635138ca26162dab446912511debf3ad7a79e6d8e5e417",
     "test/merged-box-shape.bats": "41bad090c3cc0ddfcb22559340d0cb7aa4c7761b46d3b4e5bad0d943cbbc58b9",
     "test/monitor-build-selfheal.bats": "d20de314ca83081dfa8a793898e95b510a3176aa704b325c69cdd950ad14cfee",
-    "test/oss-db-setup.bats": "762b540674728ce5845ba75d1fed823a2a6712d3100d27a3824033a21c1b39e2",
+    "test/oss-db-setup.bats": "b5e9512b454bd5fc8bb43f7c91dc3fed4eaebb8a6771df6948dd1b159bfe7fd1",
     "test/oss-e2e-bootstrap.sh": "7bd3166cf7f1cfab8c09a47d68ef136adec21c94b1ef4cbfa52d3c8f8a109f50",
     "test/pg-backup-rotation.bats": "d2f9d2775d3a04a5ba8755f62b173694da1d4fe4a96ec4faea40cf67b92af59d",
     "test/pg-detect-connect-deadline.bats": "b2574c17e3af78e2fd6be46390c959133c2ddcbc6d62d3ceff2e9cff987882ae",
