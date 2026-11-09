@@ -1158,15 +1158,20 @@ test("list card: a mouse click never rings the card, a keyboard-driven handoff r
 });
 
 // mirrors LEDGER_CD.FLOOR in screens/clauded-docs.jsx (browser JSX, outside the test import graph) → a floor change there moves every boundary row below
-const LEDGER_FLOOR = { sum: 969, title: 434, tags: 148 };
+const LEDGER_FLOOR = { sum: 969, title: 434, tags: 148, titleNarrow: 240 };
 const WIDTH = {
   // app shell beside the card: viewport − shell = the ledger container width (asserted per row)
-  SHELL: 270,
+  SHELL: {
+    SIDEBAR: 270,
+    // < 1200px viewport → the sidebar collapses to its icon rail (base.css `.shell-sidebar`)
+    ICON_RAIL: 106,
+  },
 };
 // first viewport width at which each container threshold holds
 const THRESHOLD_VIEWPORT = {
-  tagsShown: WIDTH.SHELL + LEDGER_FLOOR.sum + LEDGER_FLOOR.tags,
-  titleFloor: WIDTH.SHELL + LEDGER_FLOOR.sum,
+  tagsShown: WIDTH.SHELL.SIDEBAR + LEDGER_FLOOR.sum + LEDGER_FLOOR.tags,
+  titleFloor: WIDTH.SHELL.SIDEBAR + LEDGER_FLOOR.sum,
+  stacked: WIDTH.SHELL.ICON_RAIL + LEDGER_FLOOR.sum - LEDGER_FLOOR.title + LEDGER_FLOOR.titleNarrow,
 };
 
 // the ledger keeps its column floors at every width → never a sideways scroll
@@ -1219,18 +1224,20 @@ describe("ledger columns: Tags and the title floor follow the ledger's width", (
       const { context, page } = await openLedger(row.width, "font" in row ? row.font : undefined);
       try {
         const mixedFormatRow = await revealRowByTitle(page, mixedFormatTitle);
-        await page.locator("table.tbl th.doc-col-tags").waitFor({ state: "attached" });
+        await page.locator("table.tbl thead th", { hasText: "Tags" }).waitFor({ state: "attached" });
         await mixedFormatRow.locator(`td[title="Set by ${widestActor}"]`).waitFor({ state: "visible" });
 
         const layout = await page.evaluate(() => {
           const scroller = document.querySelector("table.tbl")?.parentElement;
-          const titleBox = document.querySelector("table.tbl th.doc-col-title")?.getBoundingClientRect();
+          const headers = [...document.querySelectorAll("table.tbl thead th")];
+          // inline finds, no named helper → tsx's keepNames `__name` wrapper never reaches the page
+          const titleBox = headers.find((th) => th.textContent?.trim() === "Title")?.getBoundingClientRect();
           if (!scroller || !titleBox) throw new Error("ledger scroller or title header missing");
           const ledgerBox = scroller.getBoundingClientRect();
           const columns = [...document.querySelectorAll("table.tbl thead th")]
             .map((th) => `${th.textContent?.trim() || "select"}=${Math.round(th.getBoundingClientRect().width)}`)
             .join(" ");
-          const isTagsShown = (document.querySelector("table.tbl th.doc-col-tags")?.getBoundingClientRect().width ?? 0) > 0;
+          const isTagsShown = (headers.find((th) => th.textContent?.trim() === "Tags")?.getBoundingClientRect().width ?? 0) > 0;
           return {
             ledgerWidth: Math.round(ledgerBox.width),
             scrollWidth: scroller.scrollWidth,
@@ -1240,7 +1247,7 @@ describe("ledger columns: Tags and the title floor follow the ledger's width", (
             isTagsShown,
           };
         });
-        assert.equal(layout.ledgerWidth, row.width - WIDTH.SHELL, `ledger width at ${row.width}px — the shell width the boundary rows derive from`);
+        assert.equal(layout.ledgerWidth, row.width - WIDTH.SHELL.SIDEBAR, `ledger width at ${row.width}px — the shell width the boundary rows derive from`);
         assert.ok(
           layout.scrollWidth <= layout.clientWidth,
           `ledger overflows its column (${layout.scrollWidth} > ${layout.clientWidth}; ${layout.columns}) → last header clipped`,
@@ -1253,6 +1260,28 @@ describe("ledger columns: Tags and the title floor follow the ledger's width", (
     });
   }
 
+  const modeRows = [
+    { name: "at the narrowest wide layout the ledger keeps its columns", width: THRESHOLD_VIEWPORT.stacked, mode: "wide" },
+    { name: "one px below the narrowest wide layout the ledger stacks its rows", width: THRESHOLD_VIEWPORT.stacked - 1, mode: "stacked" },
+  ] as const;
+  for (const row of modeRows) {
+    test(`${row.name}, and never scrolls sideways`, async () => {
+      const { context, page } = await openLedger(row.width);
+      try {
+        await revealRowByTitle(page, mixedFormatTitle);
+        const layout = await page.evaluate(() => {
+          const wrap = document.querySelector("table.tbl")?.parentElement;
+          if (!wrap) throw new Error("ledger wrapper missing");
+          return { mode: wrap.getAttribute("data-table-mode"), width: Math.round(wrap.getBoundingClientRect().width), scrollWidth: wrap.scrollWidth, clientWidth: wrap.clientWidth };
+        });
+        assert.equal(layout.width, row.width - WIDTH.SHELL.ICON_RAIL, `ledger width at ${row.width}px beside the icon rail`);
+        assert.equal(layout.mode, row.mode, `table mode at ${layout.width}px`);
+        assert.ok(layout.scrollWidth <= layout.clientWidth, `ledger overflows (${layout.scrollWidth} > ${layout.clientWidth})`);
+      } finally {
+        await context.close();
+      }
+    });
+  }
 });
 
 // The 13px meta floor covers every drawn text node on the Documents screen: the ledger with its bulk action bar, and the full-screen viewer with its metadata side, version history and stage menu open.

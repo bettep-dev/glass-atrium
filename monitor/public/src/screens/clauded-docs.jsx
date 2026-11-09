@@ -37,9 +37,6 @@ const OPERATOR_ACTOR_CD = "operator";
 const DOC_LEAD_SLOT_PX_CD = 20;
 
 const LEDGER_CD = {
-	// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
-	//   · Tags drops out when no row carries a tag of its own → one column fewer.
-	COLUMN_COUNT: 7,
 	// .tbl th/td inline padding per column class (base.css): an edge cell is 16 + 12, an interior cell 12 + 12
 	PADDING: { edge: 28, interior: 24 },
 	/**
@@ -59,6 +56,10 @@ const LEDGER_CD = {
 		// Tags drops first + the narrow title floor applies only below this sum → both left out
 		get sum() {
 			return this.select + this.status + this.id + this.title + this.author + this.created;
+		},
+		// the narrowest wide ledger (no Tags, narrow title) → a thinner one stacks its rows, never scrolls sideways
+		get stackBelow() {
+			return this.sum - this.title + this.titleNarrow;
 		},
 	},
 };
@@ -1003,17 +1004,23 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* multi-select + group UI tokens. */
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
         /* the checkbox is block and centered in its cell; the cell takes the select floor (checkbox + edge padding) */
-        .doc-checkbox-cell { width: ${LEDGER_CD.FLOOR.select}px; text-align: center; vertical-align: middle; }
+        .doc-checkbox-cell, .doc-ledger thead th:first-child { width: ${LEDGER_CD.FLOOR.select}px; text-align: center; vertical-align: middle; }
         /* the edge cell's 16 + 12 split evenly (the same 28) → the checkbox sits on the cell centre */
-        .tbl tr > :is(th, td).doc-checkbox-cell { padding-inline: calc((var(--space-4) + var(--space-3)) / 2); }
+        .tbl tr > :is(th, td).doc-checkbox-cell, .tbl.doc-ledger thead th:first-child { padding-inline: calc((var(--space-4) + var(--space-3)) / 2); }
         /* C24 hit area (§7.15) — padding out to 24, the equal negative margin keeps the 16 layout box → the select floor holds */
         .doc-checkbox-hit { padding: var(--space-1); margin: calc(-1 * var(--space-1)); cursor: pointer; }
-        .doc-col-title { min-width: ${LEDGER_CD.FLOOR.title}px; }
+        /* header floors by position (getLedgerColumnsCD order) — width alone gives way to min-content once the table overflows; Author and Created count from the end, past an absent Tags */
+        .doc-ledger:not(.tbl--stacked) thead th:nth-child(2) { width: ${LEDGER_CD.FLOOR.status}px; min-width: ${LEDGER_CD.FLOOR.status}px; }
+        .doc-ledger:not(.tbl--stacked) thead th:nth-child(3) { width: ${LEDGER_CD.FLOOR.id}px; min-width: ${LEDGER_CD.FLOOR.id}px; }
+        .doc-ledger:not(.tbl--stacked) thead th:nth-child(4) { min-width: ${LEDGER_CD.FLOOR.title}px; }
+        .doc-ledger--tags:not(.tbl--stacked) thead th:nth-child(5) { width: ${LEDGER_CD.FLOOR.tags}px; min-width: ${LEDGER_CD.FLOOR.tags}px; }
+        .doc-ledger:not(.tbl--stacked) thead th:nth-last-child(2) { width: ${LEDGER_CD.FLOOR.author}px; min-width: ${LEDGER_CD.FLOOR.author}px; }
+        .doc-ledger:not(.tbl--stacked) thead th:last-child { width: ${LEDGER_CD.FLOOR.created}px; min-width: ${LEDGER_CD.FLOOR.created}px; }
         /* column floors + Tags → a narrower ledger drops Tags, the viewer still carries it */
         .doc-ledger-scroll { container: doc-ledger / inline-size; }
-        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum + LEDGER_CD.FLOOR.tags}px) { .doc-col-tags { display: none; } }
+        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum + LEDGER_CD.FLOOR.tags}px) { .doc-col-tags, .doc-ledger--tags thead th:nth-child(5) { display: none; } }
         /* a ledger under its column floors → the title floor narrows */
-        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum}px) { .doc-col-title { min-width: ${LEDGER_CD.FLOOR.titleNarrow}px; } }
+        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum}px) { .doc-ledger:not(.tbl--stacked) thead th:nth-child(4) { min-width: ${LEDGER_CD.FLOOR.titleNarrow}px; } }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
         .tbl tbody tr.doc-row.is-multi-selected { background: rgb(var(--accent) / 0.07); }
         .tbl tbody tr.doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.11); }
@@ -1263,18 +1270,17 @@ function ShellPageStateCD({ input }) {
 // 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.
 function DocTagsCellCD({ view, audience, format, commonFormat, commonAudience = null }) {
 	const { Badge, TableCell } = window.UI;
+	const isAudienceShown = audience === "hidden" && commonAudience !== "hidden";
+	const isFormatShown = Boolean(DOC_FORMAT_BADGE_CD[format]) && format !== commonFormat;
 	return (
-		<TableCell view={view} textRole="meta" label="Tags" className="doc-tags-cell doc-col-tags">
+		// no chip → no label: a stacked row never prints a bare "Tags"
+		<TableCell view={view} textRole="meta" label={isAudienceShown || isFormatShown ? "Tags" : undefined} className="doc-tags-cell doc-col-tags">
 			{/* nowrap — 칩이 2줄로 접히면 행 높이가 튄다. */}
 			<span className="inline-flex items-center gap-1 whitespace-nowrap">
 				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
-				{audience === "hidden" && commonAudience !== "hidden" && (
-					<Badge role="metadata">agent-only</Badge>
-				)}
+				{isAudienceShown && <Badge role="metadata">agent-only</Badge>}
 				{/* format = 서술 속성 → neutral metadata pill. */}
-				{DOC_FORMAT_BADGE_CD[format] && format !== commonFormat && (
-					<Badge role="metadata">{format}</Badge>
-				)}
+				{isFormatShown && <Badge role="metadata">{format}</Badge>}
 			</span>
 		</TableCell>
 	);
@@ -1296,6 +1302,19 @@ function DocAuthorCellCD({ view, author }) {
 const DOC_LIST_CARD_ID_CD = "docs-list";
 
 // Center list card — toolbar (search + facets + count) + ledger · ledger scroll = page scroll
+// Ledger columns in render order; Tags only while a row carries a tag of its own.
+function getLedgerColumnsCD({ hasTagsColumn, selectAll }) {
+	return [
+		{ key: "select", label: selectAll },
+		{ key: "status", label: "Status" },
+		{ key: "id", label: "ID", isNumeric: true },
+		{ key: "title", label: <span className="doc-col-title-text">Title</span> },
+		hasTagsColumn && { key: "tags", label: "Tags" },
+		{ key: "author", label: "Author" },
+		{ key: "created", label: "Created", isNumeric: true },
+	].filter(Boolean);
+}
+
 function DocListCardCD({
 	state,
 	rows,
@@ -1328,7 +1347,7 @@ function DocListCardCD({
 	onSelect,
 	onRetry,
 }) {
-	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, getRegionView, TableRow, TableCell } = window.UI;
+	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, getRegionView, Table, TableRow, TableCell } = window.UI;
 	const [focusRowId, setFocusRowId] = useStateCD(null);
 	// load-more keeps its own button spinner → only a first-page read dims the held rows
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
@@ -1372,7 +1391,6 @@ function DocListCardCD({
 	const commonFormat = getCommonFormatCD(orderedRows);
 	const commonAudience = getCommonAudienceCD(orderedRows);
 	const hasTagsColumn = orderedRows.some((row) => hasOwnTagCD(row, commonFormat, commonAudience));
-	const columnCount = hasTagsColumn ? LEDGER_CD.COLUMN_COUNT : LEDGER_CD.COLUMN_COUNT - 1;
 	// shared tag values in words → said once beside the count, never per row nor under the header
 	const sharedTagsLabel =
 		commonAudience === "hidden"
@@ -1387,23 +1405,21 @@ function DocListCardCD({
 		sectionCounts.set(rank, (sectionCounts.get(rank) || 0) + 1);
 	}
 	// 섹션 첫 행 앞에만 헤더 — 같은 stage 가 이어지면 null.
-	const renderSectionHead = (row, index) => {
+	const renderSectionHead = (row, index, view) => {
 		if (!isSectioned) return null;
 		const rank = stageRankCD(rowStageCD(row));
 		const previous = index === 0 ? null : orderedRows[index - 1];
 		if (previous && stageRankCD(rowStageCD(previous)) === rank) return null;
 		const entry = stageEntryCD(rowStageCD(row));
 		return (
-			<tr className="doc-stage-section">
-				<th colSpan={columnCount} scope="colgroup">
-					<span role="heading" aria-level={2}>
-						{entry ? entry.label : "stage unavailable"}
-					</span>
+			<TableRow view={view} className="doc-stage-section">
+				<TableCell view={view} kind="group-header" level={2}>
+					{entry ? entry.label : "stage unavailable"}
 					<span className="doc-stage-section-count ml-label-inline">
 						{formatIntCD(sectionCounts.get(rank) || 0)}
 					</span>
-				</th>
-			</tr>
+				</TableCell>
+			</TableRow>
 		);
 	};
 
@@ -1499,46 +1515,28 @@ function DocListCardCD({
 				)}
 				{state.status === "ready" && rows.length > 0 && (
 					// own x-scroll → a table wider than the card scrolls here, never the page
-					<div className="doc-ledger-scroll min-w-0 flex-1 overflow-x-auto">
-					<table className={isHeldBusy ? "tbl doc-ledger-busy" : "tbl"} aria-busy={isHeldBusy ? "true" : undefined}>
-						<caption className="sr-only">
-							Documents ledger. Up and Down move between rows, Right reaches a row's controls, Enter opens the focused document.
-						</caption>
-						<thead>
-							<tr>
-								{/* DocCheckboxCD (theme-token states · WCAG 2.2 AA).
-                    select-all 3-state cycle: unchecked → checked → indeterminate → checked (단방향 — UX 단순화). */}
-								<th scope="col" className="doc-checkbox-cell">
-									<DocCheckboxCD
-										checked={isAllSelected}
-										indeterminate={isPartialSelected}
-										onChange={() => {
-											if (isAllSelected) onClearSelection();
-											else onSelectAll(allRowIds);
-										}}
-										ariaLabel={isAllSelected ? "Clear selection" : "Select all"}
-									/>
-								</th>
-								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
-								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
-								<th scope="col" style={{ width: LEDGER_CD.FLOOR.status, minWidth: LEDGER_CD.FLOOR.status }}>Status</th>
-								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호). */}
-								<th scope="col" className="doc-col-num" style={{ width: LEDGER_CD.FLOOR.id, minWidth: LEDGER_CD.FLOOR.id }}>ID</th>
-								<th scope="col" className="doc-col-title">
-									<span className="doc-col-title-text">Title</span>
-								</th>
-								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}
-								{hasTagsColumn && (
-									<th scope="col" className="doc-col-tags" style={{ width: LEDGER_CD.FLOOR.tags, minWidth: LEDGER_CD.FLOOR.tags }}>
-										Tags
-									</th>
-								)}
-								<th scope="col" style={{ width: LEDGER_CD.FLOOR.author, minWidth: LEDGER_CD.FLOOR.author }}>Author</th>
-								<th scope="col" className="doc-col-num" style={{ width: LEDGER_CD.FLOOR.created, minWidth: LEDGER_CD.FLOOR.created }}>Created</th>
-							</tr>
-						</thead>
-						<tbody onKeyDown={moveRowFocusCD}>
-							{orderedRows.map((row, rowIndex) => {
+					<div className="doc-ledger-scroll min-w-0 flex-1">
+					<Table
+						caption="Documents ledger. Up and Down move between rows, Right reaches a row's controls, Enter opens the focused document."
+						columns={getLedgerColumnsCD({
+							hasTagsColumn,
+							selectAll: (
+								/* select-all 3-state cycle: unchecked → checked → indeterminate → checked */
+								<DocCheckboxCD
+									checked={isAllSelected}
+									indeterminate={isPartialSelected}
+									onChange={() => {
+										if (isAllSelected) onClearSelection();
+										else onSelectAll(allRowIds);
+									}}
+									ariaLabel={isAllSelected ? "Clear selection" : "Select all"}
+								/>
+							),
+						})}
+						stackBelowPx={LEDGER_CD.FLOOR.stackBelow}
+						className={["doc-ledger", hasTagsColumn && "doc-ledger--tags", isHeldBusy && "doc-ledger-busy"].filter(Boolean).join(" ")}
+						bodies={[{ key: "rows", isBusy: isHeldBusy, onKeyDown: moveRowFocusCD, rows: (view) =>
+							orderedRows.map((row, rowIndex) => {
 								const isSelectedViewer = row.id === selectedId;
 								const isSelectedMulti = selectedIds.has(row.id);
 								const isPending = pendingDelete && pendingDelete.id === row.id;
@@ -1564,8 +1562,9 @@ function DocListCardCD({
 									.join(" ");
 								return (
 									<React.Fragment key={row.id}>
-										{renderSectionHead(row, rowIndex)}
+										{renderSectionHead(row, rowIndex, view)}
 										<TableRow
+											view={view}
 											className={rowClass}
 											onClick={(e) => {
 												// checkbox / action 버튼 클릭은 row click 으로 buble 시키지 않음.
@@ -1596,6 +1595,7 @@ function DocListCardCD({
 											aria-busy={isPending ? "true" : undefined}
 										>
 											<TableCell
+												view={view}
 												textRole="label"
 												className="doc-checkbox-cell"
 												onClick={(e) => e.stopPropagation()}
@@ -1609,7 +1609,7 @@ function DocListCardCD({
 											</TableCell>
 											{/* optimisticStatusOverrides 우선 — 서버 refresh 도착 전 고른 stage 즉시 반영. */}
 											{/* last stage actor → the cell tooltip + the viewer rail, so the row stays one line · unknown → no tooltip */}
-											<TableCell textRole="label" title={row.last_status_model ? `Set by ${formatActorCD(row.last_status_model)}` : undefined}>
+											<TableCell view={view} textRole="label" title={row.last_status_model ? `Set by ${formatActorCD(row.last_status_model)}` : undefined}>
 													<DocStagePillCD
 														isRowControl
 														docStatus={shownStage}
@@ -1618,10 +1618,10 @@ function DocListCardCD({
 														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
 												</TableCell>
-											<TableCell textRole="meta" label="ID" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+											<TableCell view={view} textRole="meta" label="ID" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
 													<window.UI.MachineString>#{row.id}</window.UI.MachineString>
 												</TableCell>
-											<TableCell className="title-cell">
+											<TableCell view={view} className="title-cell">
 												<div
 													className="doc-title-row font-medium fs-body"
 													style={{ color: "rgb(var(--ink))" }}
@@ -1694,14 +1694,15 @@ function DocListCardCD({
 											</TableCell>
 											{hasTagsColumn && (
 												<DocTagsCellCD
+													view={view}
 													audience={row.audience}
 													format={row.format}
 													commonFormat={commonFormat}
 													commonAudience={commonAudience}
 												/>
 											)}
-											<DocAuthorCellCD author={row.author} />
-											<DocAgeCellCD createdAt={row.created_at} age={age} isStale={isStaleRow} />
+											<DocAuthorCellCD view={view} author={row.author} />
+											<DocAgeCellCD view={view} createdAt={row.created_at} age={age} isStale={isStaleRow} />
 										</TableRow>
 										{isExpanded && (
 											<GroupMembersRowsCD
@@ -1713,6 +1714,7 @@ function DocListCardCD({
 												commonFormat={commonFormat}
 												commonAudience={commonAudience}
 												hasTagsColumn={hasTagsColumn}
+												view={view}
 												selectedId={selectedId}
 												selectedIds={selectedIds}
 												pendingDelete={pendingDelete}
@@ -1725,9 +1727,8 @@ function DocListCardCD({
 										)}
 									</React.Fragment>
 								);
-							})}
-						</tbody>
-					</table>
+							}) }]}
+					/>
 					</div>
 				)}
 				{/* Load More 버튼.
@@ -1930,6 +1931,7 @@ function GroupMembersRowsCD({
 	commonFormat,
 	commonAudience,
 	hasTagsColumn,
+	view,
 	selectedId,
 	selectedIds,
 	pendingDelete,
@@ -2029,7 +2031,6 @@ function GroupMembersRowsCD({
 		[memberState, draggingId, moveMember],
 	);
 
-	const colSpan = hasTagsColumn ? LEDGER_CD.COLUMN_COUNT : LEDGER_CD.COLUMN_COUNT - 1;
 	// 재정렬 affordance 노출 조건: rep 포함 멤버 ≥ 2 (rep 도 행에 포함되므로 2건이면 순서 바꿔 rep 변경 가능)
 	//   AND onReorder 주입됨 AND search mode 아님 (search 는 rank 정렬 — 재정렬 의미 없음).
 	const members = memberState.status === "ready" ? memberState.data || [] : [];
@@ -2038,24 +2039,28 @@ function GroupMembersRowsCD({
 
 	if (memberState.status === "loading") {
 		return (
-			<tr className="doc-row is-group-member" aria-live="polite">
-				<td className="doc-checkbox-cell" />
-				<td
-					colSpan={colSpan - 1}
+			<TableRow view={view} className="doc-row is-group-member" aria-live="polite">
+				<TableCell view={view} textRole="label" className="doc-checkbox-cell" />
+				<TableCell
+					view={view}
+					kind="span"
+					start={1}
 					className="fs-meta"
 					style={{ color: "rgb(var(--faint))", padding: "6px 12px" }}
 				>
 					Loading group members…
-				</td>
-			</tr>
+				</TableCell>
+			</TableRow>
 		);
 	}
 	if (memberState.status === "error") {
 		return (
-			<tr className="doc-row is-group-member" role="alert">
-				<td className="doc-checkbox-cell" />
-				<td
-					colSpan={colSpan - 1}
+			<TableRow view={view} className="doc-row is-group-member" role="alert">
+				<TableCell view={view} textRole="label" className="doc-checkbox-cell" />
+				<TableCell
+					view={view}
+					kind="span"
+					start={1}
 					className="fs-meta"
 					style={{ color: "rgb(var(--ink))", padding: "6px 12px" }}
 				>
@@ -2063,31 +2068,35 @@ function GroupMembersRowsCD({
 						<ToneGlyphCD tone="crit" />
 						Couldn't load group members — {memberState.error}
 					</span>
-				</td>
-			</tr>
+				</TableCell>
+			</TableRow>
 		);
 	}
 	if (members.length === 0) {
 		return (
-			<tr className="doc-row is-group-member">
-				<td className="doc-checkbox-cell" />
-				<td
-					colSpan={colSpan - 1}
+			<TableRow view={view} className="doc-row is-group-member">
+				<TableCell view={view} textRole="label" className="doc-checkbox-cell" />
+				<TableCell
+					view={view}
+					kind="span"
+					start={1}
 					className="fs-meta"
 					style={{ color: "rgb(var(--faint))", padding: "6px 12px" }}
 				>
 					This group is empty
-				</td>
-			</tr>
+				</TableCell>
+			</TableRow>
 		);
 	}
 	// Phase F — inline 재정렬 에러 행 (rollback 발생 시만 노출 · WCAG 4.1.3 role=alert announce).
 	//   · React 는 array fragment 반환 시 각 원소 key 필요 → 에러 행 + 멤버 행 배열을 단일 array 로 concat.
 	const errorRow = reorderError ? (
-		<tr key="reorder-error" className="doc-row is-group-member" role="alert">
-			<td className="doc-checkbox-cell" />
-			<td
-				colSpan={colSpan - 1}
+		<TableRow view={view} key="reorder-error" className="doc-row is-group-member" role="alert">
+			<TableCell view={view} textRole="label" className="doc-checkbox-cell" />
+			<TableCell
+				view={view}
+				kind="span"
+				start={1}
 				className="doc-reorder-error fs-meta"
 				style={{ padding: "4px 12px" }}
 			>
@@ -2095,8 +2104,8 @@ function GroupMembersRowsCD({
 					<ToneGlyphCD tone="crit" />
 					{reorderError}
 				</span>
-			</td>
-		</tr>
+			</TableCell>
+		</TableRow>
 	) : null;
 
 	const memberRows = members.map((member) => {
@@ -2116,6 +2125,7 @@ function GroupMembersRowsCD({
 			.join(" ");
 		return (
 			<TableRow
+				view={view}
 				key={member.id}
 				className={rowClass}
 				// 행 전체를 draggable 로 (멤버 ≥ 2 + onReorder + non-search 시).
@@ -2172,7 +2182,7 @@ function GroupMembersRowsCD({
 				aria-current={isSelectedViewer ? "true" : undefined}
 				aria-busy={isPending ? "true" : undefined}
 			>
-				<TableCell textRole="label" className="doc-checkbox-cell" onClick={(e) => e.stopPropagation()}>
+				<TableCell view={view} textRole="label" className="doc-checkbox-cell" onClick={(e) => e.stopPropagation()}>
 					<DocCheckboxCD
 						isRowControl
 						checked={isSelectedMulti}
@@ -2182,7 +2192,7 @@ function GroupMembersRowsCD({
 				</TableCell>
 				{/* doc_status badge 별도 column (GroupMembersRows · 사용자 directive).
             onPickStage 주입 (list-row 와 동일 동작). */}
-				<TableCell textRole="label">
+				<TableCell view={view} textRole="label">
 					{member.doc_status ? (
 						<DocStagePillCD
 								isRowControl
@@ -2198,10 +2208,10 @@ function GroupMembersRowsCD({
 						</span>
 					)}
 				</TableCell>
-				<TableCell textRole="meta" label="ID" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+				<TableCell view={view} textRole="meta" label="ID" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
 					<window.UI.MachineString>#{member.id}</window.UI.MachineString>
 				</TableCell>
-				<TableCell className="title-cell">
+				<TableCell view={view} className="title-cell">
 					<div
 						className="doc-title-row font-medium fs-title"
 						style={{ color: "rgb(var(--ink))" }}
@@ -2230,14 +2240,15 @@ function GroupMembersRowsCD({
 				{/* 멤버 행 태그 — 서술 속성만. 체인(rev)은 그룹 루트 행이 표시한다. */}
 				{hasTagsColumn && (
 					<DocTagsCellCD
+						view={view}
 						audience={member.audience}
 						format={member.format}
 						commonFormat={commonFormat}
 						commonAudience={commonAudience}
 					/>
 				)}
-				<DocAuthorCellCD author={member.author} />
-				<TableCell textRole="meta" label="Created" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+				<DocAuthorCellCD view={view} author={member.author} />
+				<TableCell view={view} textRole="meta" label="Created" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
 					{formatDateCD(member.created_at)}
 				</TableCell>
 			</TableRow>

@@ -59,6 +59,7 @@ const SHIPPED_ATOMS = {
   getRegionView: shippedUi.getRegionView,
   TONE_GLYPH: shippedUi.TONE_GLYPH,
   TONE_ICON: shippedUi.TONE_ICON,
+  Table: shippedUi.Table,
   TableRow: shippedUi.TableRow,
   TableCell: shippedUi.TableCell,
 };
@@ -80,6 +81,14 @@ async function loadDocsScreen(react: Record<string, unknown> = createReactStub()
 function getScreenCss(screen: Record<string, unknown>): string {
   const tree = renderScreen((screen.ScreenClaudedDocs as Component)({}));
   return findNodes(tree, (n) => n.type === "style").map((n) => collectText(n)).join("\n");
+}
+
+// a ledger header's floor rule, found by the header's position → the rule the browser applies to it
+function headerFloorRule(screen: Record<string, unknown>, tree: ReturnType<typeof renderScreen>, label: string): string {
+  const headers = findNodes(tree, (n) => n.type === "th" && n.props.scope === "col");
+  const position = headers.findIndex((th) => collectText(th) === label) + 1;
+  assert.ok(position > 0, `${label} header present`);
+  return cssRuleBody(getScreenCss(screen), `.doc-ledger:not(.tbl--stacked) thead th:nth-child(${position})`);
 }
 
 function cssRuleBody(source: string, selector: string): string {
@@ -180,6 +189,22 @@ test("the Tags column states the page's majority format once and prints only exc
   assert.deepEqual(chips({ audience: "hidden", format: "html", commonFormat: "md" }), ["agent-only", "html"]);
   assert.deepEqual(chips({ audience: "hidden", format: "md", commonFormat: "md", commonAudience: "hidden" }), []);
   assert.deepEqual(chips({ audience: "exposed", format: "md", commonFormat: null }), ["md"]);
+});
+
+// stacked rows prefix a meta cell with its column label → a Tags cell with no exception chip prints no bare "Tags"
+test("a stacked Tags cell prints its column label only when it carries a chip", async () => {
+  const screen = await loadDocsScreen();
+  const DocTagsCell = screen.DocTagsCellCD as Component;
+  const view = { isStacked: true, columnCount: 7 };
+  const labelsOf = (props: Record<string, unknown>) =>
+    findNodes(renderScreen(DocTagsCell({ view, ...props })), (n) => String(n.props.className).includes("tbl-cell-label")).map((n) => collectText(n));
+
+  const rows = [
+    { name: "no exception → no label", props: { audience: "exposed", format: "md", commonFormat: "md" }, labels: [] },
+    { name: "format exception → labelled", props: { audience: "exposed", format: "html", commonFormat: "md" }, labels: ["Tags"] },
+    { name: "audience exception → labelled", props: { audience: "hidden", format: "md", commonFormat: "md" }, labels: ["Tags"] },
+  ];
+  for (const row of rows) assert.deepEqual(labelsOf(row.props), row.labels, row.name);
 });
 
 function listCardProps(onSelect: (id: number) => void): Record<string, unknown> {
@@ -304,15 +329,22 @@ test("mounting the viewer's actions bar focuses none of its controls, so the ope
   assert.deepEqual(focused, []);
 });
 
-// the width at which Tags hides is owned by the e2e rail table → this pins only the column hook it hides by
-test("the Tags header and every row's Tags cell carry the doc-col-tags column class", async () => {
+// the width at which Tags hides is owned by the e2e ledger-columns table → this pins only the hooks it hides by
+test("the Tags header and every row's Tags cell are what the narrow-ledger rule hides", async () => {
   const screen = await loadDocsScreen();
   const props = listCardProps(() => undefined);
   (props.rows as Array<Record<string, unknown>>)[0].format = "html";
   const tree = renderScreen((screen.DocListCardCD as Component)(props));
 
-  const tagCells = findNodes(tree, (n) => (n.type === "th" || n.type === "td") && String(n.props.className).includes("doc-col-tags"));
-  assert.equal(tagCells.length, 3, "the Tags header and both row cells carry the column class");
+  const tagCells = findNodes(tree, (n) => n.type === "td" && String(n.props.className).includes("doc-col-tags"));
+  assert.equal(tagCells.length, 2, "both row cells carry the column class");
+  const [ledger] = findNodes(tree, (n) => n.type === "table");
+  assert.match(String(ledger.props.className), /\bdoc-ledger--tags\b/);
+  const headers = findNodes(tree, (n) => n.type === "th" && n.props.scope === "col");
+  const position = headers.findIndex((th) => collectText(th) === "Tags") + 1;
+  const hideRule = getScreenCss(screen).match(/@container doc-ledger \([^)]*\) \{ ([^{]*) \{ display: none; \} \}/);
+  assert.ok(hideRule, "one container rule hides the Tags column");
+  assert.deepEqual(hideRule[1].split(", "), [".doc-col-tags", `.doc-ledger--tags thead th:nth-child(${position})`]);
 });
 
 test("'rev of #N' is a control that opens the predecessor", async () => {
@@ -363,7 +395,8 @@ test("a read in flight over held rows keeps them on screen, dimmed and busy, wit
     });
     const tables = findNodes(tree, (n) => n.type === "table");
     assert.equal(tables.length, 1, `${row.name}: held rows stay`);
-    assert.equal(tables[0].props["aria-busy"], row.isDimmed ? "true" : undefined, row.name);
+    const [body] = findNodes(tables[0], (n) => n.type === "tbody");
+    assert.equal(body.props["aria-busy"], row.isDimmed ? "true" : undefined, row.name);
     assert.doesNotMatch(collectText(tree), /Refreshing/, `${row.name}: the ledger never repeats the header's busy word`);
     assert.match(collectText(tree), row.isSearchMode ? /2 matched/ : /2 documents/, `${row.name}: held count stays`);
 
@@ -437,7 +470,7 @@ test("each stage group opens with a level-2 heading under the page H1, and the l
   const [ledger] = findNodes(tree, (n) => n.type === "table");
 
   const headings = findNodes(ledger, (n) => n.props.role === "heading" || /^h[1-6]$/.test(String(n.type)));
-  assert.deepEqual(headings.map((n) => collectText(n)), ["Doc review", "Implementing"]);
+  assert.deepEqual(headings.map((n) => collectText(n)), ["Doc review 1", "Implementing 1"], "stage name, then its section count");
   for (const heading of headings) assert.equal(heading.props["aria-level"], 2, "one level below the page H1");
 });
 
@@ -445,7 +478,8 @@ const HANGUL = /\p{Script=Hangul}/u;
 
 describe("the ledger names the Tags column only when a row differs, and states a shared value once", () => {
   const tagCellsOf = (tree: ReturnType<typeof renderScreen>) =>
-    findNodes(tree, (n) => (n.type === "th" || n.type === "td") && String(n.props.className).includes("doc-col-tags"));
+    [...findNodes(tree, (n) => n.type === "th" && collectText(n) === "Tags"),
+      ...findNodes(tree, (n) => n.type === "td" && String(n.props.className).includes("doc-col-tags"))];
   const rows = [
     { name: "every row agent-only md → no column, the audience said once in words", patch: [{ audience: "hidden" }, { audience: "hidden" }], cells: 0, onceText: "agent records" },
     { name: "one row in another format → the column stays", patch: [{ format: "html" }, {}], cells: 3, onceText: null },
@@ -836,19 +870,6 @@ function pipelineRows() {
   ];
 }
 
-test("the ledger table scrolls inside its own column, so the open-summary rail beside it never covers a column", async () => {
-  const screen = await loadDocsScreen();
-  const props = listCardProps(() => undefined);
-  props.rows = pipelineRows();
-  const tree = renderScreen((screen.DocListCardCD as Component)(props));
-
-  const tableColumn = findNodes(tree, (n) => n.type === "div" && findNodes(n, (c) => c.type === "table").length > 0
-    && String(n.props.className ?? "").split(" ").includes("flex-1"));
-  assert.equal(tableColumn.length, 1);
-  const classes = String(tableColumn[0].props.className).split(" ");
-  assert.ok(classes.includes("min-w-0") && classes.includes("overflow-x-auto"), `table column classes: ${classes.join(" ")}`);
-});
-
 test("Created shows relative age with the date in a tooltip, and only an open row past seven days is marked stale with a glyph and a text label", async () => {
   const screen = await loadDocsScreen();
   const props = listCardProps(() => undefined);
@@ -877,14 +898,10 @@ test("Created shows relative age with the date in a tooltip, and only an open ro
 
 test("the Status column keeps room for the stage name inside stage sections as in a flat list", async () => {
   const screen = await loadDocsScreen();
-  const statusWidth = (overrides: Record<string, unknown>) => {
-    const tree = renderListCard(screen, overrides);
-    const th = findNodes(tree, (n) => n.type === "th" && collectText(n) === "Status")[0];
-    return (th.props.style as { width: number }).width;
-  };
-  const sectioned = statusWidth({});
-  const flat = statusWidth({ isSearchMode: true });
-  assert.equal(sectioned, flat);
+  const statusFloor = (overrides: Record<string, unknown>) => headerFloorRule(screen, renderListCard(screen, overrides), "Status");
+  const sectioned = statusFloor({});
+  assert.match(sectioned, /min-width: \d+px/);
+  assert.equal(sectioned, statusFloor({ isSearchMode: true }));
 });
 
 // the page header's freshness and refresh slots, rendered side by side the way PageHeader groups them
@@ -933,8 +950,7 @@ test("'rev of #N' trails the title as a pill that never wraps or shrinks, so the
   assert.match(collectText(idCell), /^#\s*11$/);
 
   // a six-digit id in 13px mono (0.6em a glyph) plus the cell padding fits the ID column
-  const idHeader = findNodes(tree, (n) => n.type === "th" && collectText(n) === "ID")[0];
-  const width = (idHeader.props.style as { width: number }).width;
+  const width = Number(headerFloorRule(screen, tree, "ID").match(/min-width: (\d+)px/)?.[1]);
   assert.ok(width >= 28 + 13 * 0.6 * "#123456".length, `ID column ${width}px`);
 });
 

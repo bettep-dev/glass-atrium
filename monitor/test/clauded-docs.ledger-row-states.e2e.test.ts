@@ -342,7 +342,7 @@ describe("the select column and the stage section heads sit on the ledger's grid
     <div style="padding: 48px;"><div class="card"><table class="tbl" style="width: 600px;">
       <thead><tr><th scope="col" class="doc-checkbox-cell" id="head-select">${checkbox}</th><th scope="col">Title</th></tr></thead>
       <tbody>
-        <tr class="doc-stage-section" id="section"><th colspan="2" scope="colgroup"><span role="heading" aria-level="2">Implementing</span><span class="doc-stage-section-count">3</span></th></tr>
+        <tr class="doc-stage-section" id="section"><th scope="colgroup" colspan="2" role="heading" aria-level="2" tabindex="-1" class="tbl-cell tbl-cell--group-header">Implementing<span class="doc-stage-section-count ml-label-inline">3</span></th></tr>
         <tr class="doc-row" id="doc"><td class="doc-checkbox-cell" id="row-select">${checkbox}</td><td>Plan</td></tr>
       </tbody>
     </table></div></div>
