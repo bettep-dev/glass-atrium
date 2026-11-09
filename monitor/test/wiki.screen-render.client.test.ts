@@ -350,13 +350,13 @@ describe("the page banner's Retry hands focus to a region card every page state 
     { name: "ready", region: { status: "ready", data: {}, error: null, busy: false } },
   ];
   for (const row of rows) {
-    test(`${row.name}: the fallback card renders once, outside the banner and the page verdict`, async () => {
+    test(`${row.name}: the fallback card renders once, outside the banner`, async () => {
       const fallbackId = getBanners(await renderWikiInState(retrying))[0].props.focusTargetId;
       // host nodes only — a stubbed atom also appears as its component node
       const targets = findNodes(await renderWikiInState(row.region), (n) => /^[a-z]/.test(n.type) && n.props.id === fallbackId);
 
       assert.equal(targets.length, 1, `focus target ${String(fallbackId)} is one rendered element`);
-      assert.ok(!["PageErrorBanner", "PageVerdict"].includes(String(targets[0].props.atom)), "never the banner that unmounts on recovery, never the retiring page verdict");
+      assert.notEqual(String(targets[0].props.atom), "PageErrorBanner", "never the banner that unmounts on recovery");
     });
   }
 });
@@ -441,7 +441,7 @@ test("a merge proposal's reasons wrap in full", async () => {
   }
 });
 
-test("the alarm lane keeps actionable rows only; waiting proposals ride the verdict line instead", async () => {
+test("the alarm lane keeps actionable rows only; waiting proposals stay in their own fold", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const tree = renderScreen(
@@ -458,25 +458,21 @@ test("the alarm lane keeps actionable rows only; waiting proposals ride the verd
   assert.equal(findNodes(tree, (n) => n.type === "button").length, 0);
 });
 
-test("the page opens on one verdict line that carries no signal before anything loads", async () => {
+test("the page mounts no page verdict: each card states its own status", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
-  const verdict = findNodes(tree, (n) => n.props.atom === "PageVerdict");
-  assert.equal(verdict.length, 1);
-  assert.equal(verdict[0].props.tone, "neutral", "nothing loaded yet → no signal");
+  assert.equal(findNodes(tree, (n) => n.props.atom === "PageVerdict").length, 0);
 });
 
-test("the verdict's proposals chip targets the merge-proposals fold, which opens on focus", async () => {
+test("a failed backlog read points its Retry at the merge-proposals fold, which opens on focus", async () => {
   const mod = await loadWikiScreen();
-  const fold = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: READY_BACKLOG, onRetry: () => {} }));
+  const failed = { status: "error", data: null, error: "HTTP 500", busy: false };
+  const fold = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: failed, onRetry: () => {} }));
   const details = findNodes(fold, (n) => n.type === "details")[0];
-  const ready = (data: unknown) => ({ status: "ready", data, error: null });
-  const chip = (mod.buildWikiVerdictW as (...states: unknown[]) => { chips: Array<{ targetId: string }> })(
-    ready({}), ready({}), READY_BACKLOG, ready({ cycles: [] }),
-  ).chips[0];
+  const failure = findNodes(fold, (n) => n.props.atom === "RegionFailure")[0];
   assert.ok(details.props.id, "the fold carries an id");
-  assert.equal(chip.targetId, details.props.id, "the chip's target is the fold itself");
-  assert.equal(typeof details.props.onFocus, "function", "focus from the chip opens the fold");
+  assert.equal(failure.props.focusTargetId, details.props.id, "the Retry target is the fold itself");
+  assert.equal(typeof details.props.onFocus, "function", "focus from the Retry opens the fold");
 });
 
 test("the per-run table gives every run its own row, unchanged runs included", async () => {

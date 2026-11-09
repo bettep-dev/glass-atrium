@@ -1,4 +1,4 @@
-// 위키 화면 — wiki.* + core.daemon_runs PG 소스 (파일시스템 비결합). 판정 줄 + 알람 레인 + 타일 밴드 + 열린 상태 행 + 상세 디스클로저.
+// 위키 화면 — wiki.* + core.daemon_runs PG 소스 (파일시스템 비결합). 알람 레인 + 타일 밴드 + 열린 상태 행 + 상세 디스클로저.
 const {
 	useState: useStateW,
 	useEffect: useEffectW,
@@ -23,7 +23,6 @@ const SPARSE_MIN_NONZERO = 4;
 function ScreenWiki() {
 	const {
 		PageHeader,
-		PageVerdict,
 		TypeScaleStyle,
 		FreshnessStamp,
 		RefreshButton,
@@ -56,10 +55,6 @@ function ScreenWiki() {
 	const isBusy = getRegionSummary(waveStates).isBusy;
 	const hasRead = settledAt != null || waveStates.some((st) => st.data != null);
 	const outage = readWikiOutageW(waveSections);
-	const verdict = useMemoW(
-		() => buildWikiVerdictW(summaryState, indexState, backlogState, cyclesState),
-		[summaryState, indexState, backlogState, cyclesState],
-	);
 
 	// Parallel reads — each region keeps its last payload until its own answer lands.
 	useEffectW(() => {
@@ -135,14 +130,6 @@ function ScreenWiki() {
 						focusTargetId={WIKI_REGION_IDS.tiles}
 					/>
 				)}
-				<PageVerdict
-					id="wiki-verdict"
-					tone={verdict.tone}
-					chips={verdict.chips}
-					freshness={{ at: settledAt, regions: waveStates }}
-				>
-					{verdict.text}
-				</PageVerdict>
 				{/* Above the fold — what needs a hand, then the health band. */}
 				<WikiAlarmLane
 					summaryState={summaryState}
@@ -240,7 +227,7 @@ const PROPOSAL_PARKED_RUNS = 7;
 // Same threshold on the dated source — the cycle is daily, so a run and a day match.
 const PROPOSAL_PARKED_DAYS = PROPOSAL_PARKED_RUNS;
 
-// Element id of the merge-proposals fold — the verdict chip's target.
+// Element id of the merge-proposals fold — the backlog failure's Retry target.
 const MERGE_PROPOSALS_ID = "wiki-merge-proposals";
 
 // Wave section names — the banner lists them, and a region is covered when its feeder is among them.
@@ -260,72 +247,6 @@ const WIKI_REGION_IDS = Object.freeze({
 	runTable: "wiki-run-table",
 });
 
-// One sentence over the lane's checks; a parked proposal informs but never raises the tone.
-// An unread summary adds no sentence — PageVerdict's shared not-read note speaks for it.
-function buildWikiVerdictW(summaryState, indexState, backlogState, cyclesState) {
-	if (summaryState.status !== "ready") {
-		const isFailed = window.UI.getRegionView(summaryState) === "error";
-		const text = isFailed ? "The daily cycle summary could not be read." : null;
-		return { tone: "neutral", text, chips: [] };
-	}
-
-	const summary = summaryState.data || {};
-	const lane = buildAlarmLaneModel(summaryState, indexState, backlogState, cyclesState);
-	const proposals = lane.alarms.filter((alarm) => alarm.proposal);
-	const compiled = buildCompiledTileW(summaryState, backlogState, cyclesState);
-	const tones = [
-		wikiStatusToneW(summary.last_status),
-		compiled.tone,
-		...lane.alarms.map((alarm) => alarm.tone),
-	];
-	const parts = [
-		summary.last_cycle_started_at
-			? `last run ${window.UI.formatRelativeTime(summary.last_cycle_started_at)}`
-			: "no run recorded",
-		typeof summary.latest_compiled_count === "number"
-			? `${formatCountW(summary.latest_compiled_count)} compiled`
-			: null,
-		describeProposalBacklogW(proposals),
-		describeLaneGapW(lane),
-	];
-
-	return {
-		tone: getVerdictToneW(tones, lane),
-		text: parts.filter(Boolean).join(" · "),
-		chips:
-			proposals.length > 0
-				? [{ key: "proposals", label: "Open proposals", targetId: MERGE_PROPOSALS_ID }]
-				: [],
-	};
-}
-
-// A known warn/crit stands; the all-clear waits until every lane feeder has answered.
-function getVerdictToneW(tones, lane) {
-	const worst = window.UI.getWorstTone(tones);
-	if (worst && worst !== "ok") return worst;
-
-	const complete = !lane.pending && lane.unchecked.length === 0;
-	return complete ? "ok" : "neutral";
-}
-
-function describeLaneGapW(lane) {
-	if (lane.unchecked.length > 0) return `couldn't check ${lane.unchecked.join(", ")}`;
-	return lane.pending ? "still checking" : null;
-}
-
-// Rows arrive parked-last and oldest-last, so the final row carries the oldest age.
-function describeProposalBacklogW(proposals) {
-	if (proposals.length === 0) return null;
-
-	const count = proposals.length;
-	const parked = proposals.filter((p) => p.parked).length;
-	const noun = count === 1 ? "merge" : "merges";
-	const state =
-		parked === count ? "parked" : parked === 0 ? "waiting" : `waiting (${parked} parked)`;
-	const oldest = proposals[count - 1].ageLabel;
-	return `${count} ${noun} ${state}${oldest ? `, oldest ${oldest}` : ""}`;
-}
-
 // Alarm lane — domain facts awaiting a decision, in decision order: dirty index →
 // missed daily cycle → proposals awaiting approval (parked ones last). A failed payload
 // renders its banner at the group it feeds, never a lane row.
@@ -344,7 +265,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 		[summaryState, indexState, backlogState, cyclesState],
 	);
 
-	// Proposals ride the page verdict; the lane keeps what needs a hand now.
+	// Proposals live in their own fold, whose head carries count and tone; the lane keeps what needs a hand now.
 	const rows = model.alarms.filter((alarm) => !alarm.proposal);
 
 	// Empty lane and unloaded lane must not look alike — silence only once every feeder answered.
@@ -896,7 +817,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 				/>
 			) : null}
 
-			{/* Always present, so the verdict's proposals chip and the page layout never lose it. */}
+			{/* Always present, so the backlog failure's Retry target and the page layout never lose it. */}
 			<WikiDisclosureW
 				id={MERGE_PROPOSALS_ID}
 				label="Merge proposals"
