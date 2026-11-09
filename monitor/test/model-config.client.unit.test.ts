@@ -1553,6 +1553,13 @@ test("tier notes show one unfolded entry per described tier", () => {
   assert.ok(textMc(tree).includes("self-improvement loop"), "every description stays reachable");
 });
 
+test("the model glossary names each tier's saved id, which the select shows only by its friendly name", () => {
+  const props = domainsPropsMc(THREE_TIERS_MC.map((d) => ({ ...d, desired: "claude-opus-4-8" })));
+  const drawer = drawersMc(renderComponentMc(screens.DomainsSectionMC, props))[0];
+  const ids = textsMc(tagsMc(drawer.children, "dd")).filter((text) => text.startsWith("Saved id"));
+  assert.deepStrictEqual(ids, THREE_TIERS_MC.map(() => "Saved id claude-opus-4-8"), "one saved id per tier entry");
+});
+
 test("no ledger text drops below the 13px type floor", () => {
   const overridden = {
     ...domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], files: [{ file: "agents/a.md", model: "claude-opus-4-8" }] }]),
@@ -1724,13 +1731,15 @@ test("a live value the payload does not carry is left out, never shown as a plac
   assert.strictEqual(textMc([liveCellMc(tree)]), "", "an absent live value renders nothing");
 });
 
-describe("a ledger card head counts the rows whose live value was not read, since such a row renders nothing", () => {
+describe("a ledger card head counts only the unread rows that render nothing, and a row that names its unread source keeps the fact to itself", () => {
   const unreadTier = THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, actual: null, drift: false } : d));
   const rows = [
     { name: "every model row read: the head stays silent", section: "DomainsSectionMC", props: domainsPropsMc(THREE_TIERS_MC), mark: null },
     { name: "a drifted model row: the row carries it, the head stays silent", section: "DomainsSectionMC", props: domainsPropsMc(THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, drift: true } : d))), mark: null },
     { name: "an unread model row: the head names it", section: "DomainsSectionMC", props: domainsPropsMc(unreadTier), mark: "1 not read" },
-    { name: "an unread cap row: the head names it", section: "BudgetsSectionMC", props: budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: null, drift: false }]), mark: "1 not read" },
+    { name: "an unread cap row names its source in the row, so the head stays silent", section: "BudgetsSectionMC", props: budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: null, drift: false }]), mark: null },
+    { name: "an unread model row with a source names it in the row, so the head stays silent", section: "DomainsSectionMC", props: domainsPropsMc(THREE_TIERS_MC.map((d, i) => (i === 1 ? { ...d, actual: null, drift: false } : d))), mark: null },
+    { name: "an unread model row with agent files shows its files, so the head stays silent", section: "DomainsSectionMC", props: domainsPropsMc([{ ...unreadTier[0], files: [{ file: "agents/a.md", model: "claude-opus-4-8" }] }]), mark: null },
     { name: "a loading ledger claims nothing", section: "DomainsSectionMC", props: { ...domainsPropsMc(unreadTier), state: "loading" }, mark: null },
   ];
   for (const row of rows) {

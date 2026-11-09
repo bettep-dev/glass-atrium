@@ -1,6 +1,6 @@
 // Screen 12 — Models & budgets (/api/model-config GET 단일 fetch + 명시 Save PUT).
 // Layout: header sync token → model ledger | per-call budget cap ledger (side by side at xl).
-// DB(saved target) = UI SoT · actual = 소비 지점 실측 — 차이는 drift 배지로 공시 (spec doc 36166 D2).
+// DB(saved target) = UI SoT · actual = 소비 지점 실측 — 차이는 drift 경고 글리프+단어로 공시 (spec doc 36166 D2).
 // 예산 = per-call HARD CAP (claude -p --max-budget-usd) — OAuth 구독이라 월 청구 상한이 아님 (단일 폭주 호출 차단).
 // Hooks MC-suffix aliased — window-scope 충돌 방지.
 const {
@@ -232,7 +232,6 @@ const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
 
 // Ledger anchors — a failed read's Retry hands focus to the model ledger.
 const MODELS_SECTION_ID_MC = "mc-models";
-const BUDGETS_SECTION_ID_MC = "mc-budgets";
 
 const MODEL_FAMILY_RE_MC = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?$/;
 
@@ -464,7 +463,7 @@ function ScreenModelConfig() {
 
 			{hasAlarm && (
 				<div
-					className="mb-4 flex flex-col gap-3"
+					className="mb-section flex flex-col gap-section"
 					role="region"
 					aria-label="Alerts">
 					{configState.error && (
@@ -477,7 +476,7 @@ function ScreenModelConfig() {
 								focusTargetId={MODELS_SECTION_ID_MC}
 							/>
 							{data != null && asOfAt !== null && (
-								<p className="fs-meta text-dim mt-1">
+								<p className="fs-meta text-dim mt-stack">
 									The figures below are the last good read, from{" "}
 									{formatKstTime(asOfAt)}.
 								</p>
@@ -545,7 +544,7 @@ function ScreenModelConfig() {
 
 			{ready && isDirty && (
 				<div className="save-banner" role="region" aria-label="Unsaved changes">
-					<div className="flex items-center gap-2 min-w-0">
+					<div className="flex items-center gap-control min-w-0">
 						<span className="fs-body font-medium text-ink">
 							{changeCount} unsaved change
 							{changeCount === 1 ? "" : "s"}
@@ -632,7 +631,7 @@ function SyncTokenMC({ state, sync, freshness }) {
 
 	return (
 		<span
-			className="fs-meta text-dim flex items-center gap-1.5"
+			className="fs-meta text-dim flex items-center gap-label-inline"
 			title={meta.desc}>
 			{glyph && (
 				<Icon
@@ -669,12 +668,13 @@ const SETTINGS_INFO_LABEL_MC = "About settings";
 
 // About settings drawer — the card's timing caveat, an optional lead line, then its glossary.
 function SettingsInfoMC({ caveat, lead, title, rows }) {
+	const { Stack } = window.UI;
 	return (
-		<div className="flex flex-col gap-3 fs-body">
+		<Stack gap="block" className="fs-body">
 			{caveat && <p>{caveat}</p>}
 			{lead && <p>{lead}</p>}
 			<TierNotesMC title={title} rows={rows} />
-		</div>
+		</Stack>
 	);
 }
 
@@ -726,13 +726,13 @@ function DomainsSectionMC({
 					<SettingsInfoMC
 						caveat={timing.caveat}
 						title="Who each tier covers"
-						rows={rows.map((d) => DOMAIN_META_MC[d.domain])}
+						rows={rows.map((d) => DOMAIN_META_MC[d.domain] && { ...DOMAIN_META_MC[d.domain], savedId: d.desired })}
 					/>
 				}
 				infoLabel={SETTINGS_INFO_LABEL_MC}
 				right={
-					<span className="flex items-center gap-3">
-						{state === "ready" && <UnreadMarkMC rows={rows} />}
+					<span className="flex items-center gap-control">
+						{state === "ready" && <UnreadMarkMC rows={rows} metaOf={DOMAIN_META_MC} />}
 						<Link href="#cost" className="fs-meta inline-target">
 							Cost & usage
 						</Link>
@@ -801,19 +801,22 @@ function RowHintMC({ hint }) {
 
 // Full descriptions in one labelled list per section — a note per row repeats one affordance N times.
 function TierNotesMC({ title, rows }) {
-	const { SectionLabel } = window.UI;
-	const notes = rows.filter((meta) => meta?.desc && meta.desc !== meta.hint);
+	const { MachineString, SectionLabel } = window.UI;
+	const isDescShown = (meta) => Boolean(meta.desc) && meta.desc !== meta.hint;
+	const notes = rows.filter((meta) => meta && (isDescShown(meta) || meta.savedId));
 	if (notes.length === 0) return null;
 
 	return (
 		<section className="text-dim" aria-label={title}>
 			<SectionLabel level={3}>{title}</SectionLabel>
-			<dl className="mt-1 flex flex-col gap-2">
+			<dl className="mt-label flex flex-col gap-list">
 				{notes.map((meta) => (
 					<div key={meta.label}>
 						<dt className="text-ink">{meta.label}</dt>
-						<dd className="is-wrap">{meta.desc}</dd>
+						{isDescShown(meta) && <dd className="is-wrap">{meta.desc}</dd>}
 						{meta.note && <dd className="is-wrap">{meta.note}</dd>}
+						{/* the select shows the friendly name → the saved id is read here, by keyboard and touch too */}
+						{meta.savedId && <dd>Saved id <MachineString>{meta.savedId}</MachineString></dd>}
 					</div>
 				))}
 			</dl>
@@ -886,8 +889,8 @@ function getFileAgentNameMC(file) {
  * Matching the saved target → silence · differing → the value + one warn glyph and word · absent → nothing.
  * No file list → names the source, or that it yielded no value; a source the card foot names stays silent on a read.
  */
-function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, driftTitle }) {
-	const { AgentName, DisclosureChevron, Icon, MachineString } = window.UI;
+function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, isNumeric = false, driftTitle }) {
+	const { AgentName, DisclosureChevron, Icon, MachineString, Stack } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
 	const isSteady = !drift && value != null;
 	const isValueShown = !isSteady && value != null;
@@ -897,16 +900,16 @@ function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, drif
 	const isFoldAlerting = drift || fileGroups.length > 1;
 
 	return (
-		<div className="flex flex-col gap-1 min-w-0">
+		<Stack gap="stack" className="min-w-0">
 			{(isValueShown || drift) && (
-				<div className="flex items-center gap-2 min-w-0" style={fileRows.length > 0 || drift ? CONTROL_LINE_STYLE_MC : undefined}>
+				<div className={`flex items-center gap-control min-w-0${isNumeric ? " justify-end" : ""}`} style={fileRows.length > 0 || drift ? CONTROL_LINE_STYLE_MC : undefined}>
 					{isValueShown && (
-						<span className="fs-meta truncate text-ink tbl-first-line" title={label}>
+						<span className={`fs-meta truncate text-ink tbl-first-line${isNumeric ? " tabular-nums" : ""}`} title={label}>
 							{label}
 						</span>
 					)}
 					{drift && (
-						<span className="fs-meta text-dim flex items-center gap-1" title={driftTitle}>
+						<span className="fs-meta text-dim flex items-center gap-label-inline" title={driftTitle}>
 							<Icon name="warn" size={12} className="text-warn" />
 							drift
 						</span>
@@ -921,7 +924,7 @@ function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, drif
 						<span>{`${fileRows.length} ${fileRows.length === 1 ? "file" : "files"}`}</span>
 					</summary>
 					<div
-						className="text-faint flex flex-col gap-1 mt-1"
+						className="text-faint flex flex-col gap-stack mt-stack"
 						role="region"
 						aria-label={`${fileRows.length} agent files`}>
 						{fileGroups.map(([model, files]) => (
@@ -931,7 +934,7 @@ function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, drif
 								) : (
 									<div className="text-dim whitespace-nowrap"><MachineString>{model}</MachineString></div>
 								)}
-								<div className="flex flex-wrap gap-x-3 pl-3">
+								<div className="flex flex-wrap gap-x-list ml-label">
 									{files.map((file) => (
 										<AgentName key={file} name={getFileAgentNameMC(file)} className="whitespace-nowrap" />
 									))}
@@ -942,7 +945,7 @@ function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, drif
 				</details>
 			)}
 			{fileRows.length === 0 && source && (value == null || !isSourceInFoot) && (
-				<div className={`fs-meta text-faint flex flex-wrap items-baseline gap-x-1${isValueShown || drift ? "" : " tbl-first-line"}`}>
+				<div className={`fs-meta text-faint flex flex-wrap items-baseline gap-x-label-inline${isValueShown || drift ? "" : " tbl-first-line"}`}>
 					{/* null live value = source unreadable or key missing → never claim a read */}
 					<span>{value != null ? "Read from" : "No value read from"}</span>
 					<IdTokenMC title={source}>
@@ -950,7 +953,7 @@ function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, drif
 					</IdTokenMC>
 				</div>
 			)}
-		</div>
+		</Stack>
 	);
 }
 
@@ -1111,7 +1114,7 @@ function ModelSelectMC({
 				)}
 			</Select>
 			{error && (
-				<div id={`${id}-error`} className="fs-meta text-crit mt-1" role="alert">
+				<div id={`${id}-error`} className="fs-meta text-crit mt-stack" role="alert">
 					<span aria-hidden="true">✕ </span>
 					{error}
 				</div>
@@ -1141,7 +1144,7 @@ function PricingNoteMC({ pricingKnown }) {
 	if (pricingKnown !== false) return null;
 
 	return (
-		<div className="fs-meta mt-1 text-dim">
+		<div className="fs-meta mt-stack text-dim">
 			<span className="text-warn" aria-hidden="true">
 				{TONE_GLYPH.warn}
 			</span>{" "}
@@ -1155,7 +1158,7 @@ function GhostResetMC({ overridden, defaultValue, onReset }) {
 	return (
 		<div
 			data-slot="saved-line"
-			className="fs-meta text-faint mt-1 flex items-center gap-1.5 flex-wrap"
+			className="fs-meta text-faint mt-stack flex items-center gap-label-inline flex-wrap"
 			style={SAVED_LINE_STYLE_MC}
 		>
 			{overridden && (
@@ -1194,61 +1197,59 @@ function BudgetsSectionMC({
 	const timing = getApplyTimingMC(rows);
 
 	return (
-		<div id={BUDGETS_SECTION_ID_MC}>
-			<Card
-				size="M"
-				title="Per-call budget caps"
-				right={state === "ready" ? <UnreadMarkMC rows={rows} /> : null}
-				foot={<SourceFootMC source={DAEMON_CONFIG_FILE_MC} />}
-				sub={timing.meta}
-				info={
-					<SettingsInfoMC
-						caveat={timing.caveat}
-						lead="A cap that trips aborts the runaway call."
-						title="When a cap trips"
-						rows={rows.map((b) => BUDGET_META_MC[b.domain])}
-					/>
-				}
-				infoLabel={SETTINGS_INFO_LABEL_MC}
-				isFlush={state !== "unavailable"}>
-				{state === "unavailable" ? (
-					<SectionUnavailableMC />
-				) : (
-					<Table
-						caption="Per-call budget cap per background call"
-						columns={getLedgerColumnsMC("Background call", "Per-call cap", IN_EFFECT_TITLE_MC.budgets)}
-						widths={LEDGER_COL_WIDTHS_MC}
-						className={LEDGER_TABLE_CLASS_MC}
-						bodies={[{ key: "budgets", isBusy: state === "loading", rows: (
-							state === "loading" ? (
-								<SkeletonRows
-									rows={2}
-									columns={LEDGER_COL_COUNT_MC}
-									rowHeight={LEDGER_ROW_HEIGHT_MC}
+		<Card
+			size="M"
+			title="Per-call budget caps"
+			right={state === "ready" ? <UnreadMarkMC rows={rows} metaOf={BUDGET_META_MC} /> : null}
+			foot={<SourceFootMC source={DAEMON_CONFIG_FILE_MC} />}
+			sub={timing.meta}
+			info={
+				<SettingsInfoMC
+					caveat={timing.caveat}
+					lead="A cap that trips aborts the runaway call."
+					title="When a cap trips"
+					rows={rows.map((b) => BUDGET_META_MC[b.domain])}
+				/>
+			}
+			infoLabel={SETTINGS_INFO_LABEL_MC}
+			isFlush={state !== "unavailable"}>
+			{state === "unavailable" ? (
+				<SectionUnavailableMC />
+			) : (
+				<Table
+					caption="Per-call budget cap per background call"
+					columns={getLedgerColumnsMC("Background call", "Per-call cap", IN_EFFECT_TITLE_MC.budgets)}
+					widths={LEDGER_COL_WIDTHS_MC}
+					className={LEDGER_TABLE_CLASS_MC}
+					bodies={[{ key: "budgets", isBusy: state === "loading", rows: (
+						state === "loading" ? (
+							<SkeletonRows
+								rows={2}
+								columns={LEDGER_COL_COUNT_MC}
+								rowHeight={LEDGER_ROW_HEIGHT_MC}
+							/>
+						) : rows.length === 0 ? (
+							<EmptyRowMC
+								colSpan={LEDGER_COL_COUNT_MC}
+								message="No budget caps reported."
+							/>
+						) : (
+							rows.map((b) => (
+								<BudgetRowMC
+									key={b.domain}
+									budget={b}
+									departure={timing.departures.get(b.domain)}
+									value={form.budgets[b.domain] ?? ""}
+									defaultValue={baseline?.budgets[b.domain] ?? ""}
+									error={errors[b.domain]}
+									onChange={(v) => onBudgetChange(b.domain, v)}
 								/>
-							) : rows.length === 0 ? (
-								<EmptyRowMC
-									colSpan={LEDGER_COL_COUNT_MC}
-									message="No budget caps reported."
-								/>
-							) : (
-								rows.map((b) => (
-									<BudgetRowMC
-										key={b.domain}
-										budget={b}
-										departure={timing.departures.get(b.domain)}
-										value={form.budgets[b.domain] ?? ""}
-										defaultValue={baseline?.budgets[b.domain] ?? ""}
-										error={errors[b.domain]}
-										onChange={(v) => onBudgetChange(b.domain, v)}
-									/>
-								))
-							)
-						) }]}
-					/>
-				)}
-			</Card>
-		</div>
+							))
+						)
+					) }]}
+				/>
+			)}
+		</Card>
 	);
 }
 
@@ -1259,7 +1260,7 @@ function budgetPlaceholderMC() {
 	return BUDGET_SEED_DEFAULT_MC;
 }
 
-// Mono digits → ch is one digit; 6ch holds the widest cap ("50.00") plus the caret, beside the affix padding.
+// Tabular digits → each digit is one ch; 6ch holds the widest cap ("50.00") plus the caret, beside the affix padding.
 const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
 
 /**
@@ -1267,7 +1268,7 @@ const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
  * + 실측 + ghost default/reset (T-MDL-6).
  */
 function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChange }) {
-	const { Link } = window.UI;
+	const { Cluster, Link } = window.UI;
 	const id = `mc-budget-${b.domain}`;
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
@@ -1282,7 +1283,7 @@ function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChang
 				<RowHintMC hint={departure} />
 			</td>
 			<td>
-				<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+				<Cluster gap="control">
 					<span className={`field-affix flex-shrink-0${showError ? " is-error" : ""}`}>
 						<span className="field-affix__sym">$</span>
 						<input
@@ -1305,9 +1306,9 @@ function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChang
 						aria-label={`Recent ${meta.label} costs on Cost & usage`}>
 						Recent costs
 					</Link>
-				</div>
+				</Cluster>
 				{showError && (
-					<div id={`${id}-error`} className="fs-meta text-crit mt-1" role="alert">
+					<div id={`${id}-error`} className="fs-meta text-crit mt-stack" role="alert">
 						<span aria-hidden="true">✕ </span>
 						{error}
 					</div>
@@ -1323,6 +1324,7 @@ function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChang
 					value={b.actual ? `$${b.actual}` : null}
 					drift={b.drift}
 					source={meta.source}
+					isNumeric
 					isSourceInFoot={meta.source === DAEMON_CONFIG_FILE_MC}
 					driftTitle="daemon-config.json differs from the saved cap — press Save again"
 				/>
@@ -1404,7 +1406,7 @@ function TiersSectionMC({
 	);
 }
 
-// Mono digits → 11ch holds the "CLI default" placeholder and the widest cap (6 digits)
+// Tabular digits → each digit is one ch; 11ch holds the widest cap (6 digits) and the "CLI default" placeholder
 // border box: + the caret (4), both inline paddings, both 1px borders → the placeholder shows whole
 const TIER_CAP_FIELD_STYLE_MC = { width: "calc(11ch + 4px + 2 * var(--ctl-pad-x) + 2px)" };
 
@@ -1463,7 +1465,7 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 					/>
 				)}
 				{showError && (
-					<div id={`${id}-error`} className="fs-meta text-crit mt-1" role="alert">
+					<div id={`${id}-error`} className="fs-meta text-crit mt-stack" role="alert">
 						<span aria-hidden="true">✕ </span>
 						{error}
 					</div>
@@ -1486,6 +1488,7 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 						value={live}
 						drift={t.drift}
 						source={meta.source}
+						isNumeric={meta.kind !== "effort" && t.actual != null}
 						isSourceInFoot={meta.source === DAEMON_CONFIG_FILE_MC}
 						driftTitle="daemon-config.json differs from the saved setting — press Save again"
 					/>
@@ -1498,7 +1501,7 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 // Save 의 per-surface 결과 공시 — 문제 행(failed/skipped)만 펼쳐 두고 ok 행은 접힌 disclosure 뒤로
 // (silent skip 금지, AC-5 — 접어도 목록에는 남는다).
 function SurfaceResultsCardMC({ results, onDismiss }) {
-	const { CardHead, DisclosureChevron, Icon } = window.UI;
+	const { Card, DisclosureChevron, Icon, Stack } = window.UI;
 
 	const rows = Array.isArray(results) ? results : [];
 	if (rows.length === 0) return null;
@@ -1507,37 +1510,35 @@ function SurfaceResultsCardMC({ results, onDismiss }) {
 	const okRows = rows.filter((r) => r.status === "ok");
 
 	return (
-		<div className="card">
-			<CardHead
-				title={`Save touched ${rows.length} surface${rows.length === 1 ? "" : "s"}`}
-				right={
-					<button
-						className="btn ghost sm"
-						onClick={onDismiss}
-						aria-label="Dismiss save results">
-						<Icon name="x" size={14} />
-					</button>
-				}
-			/>
-			<div className="card-body">
+		<Card
+			title={`Save touched ${rows.length} surface${rows.length === 1 ? "" : "s"}`}
+			right={
+				<button
+					className="btn ghost sm"
+					onClick={onDismiss}
+					aria-label="Dismiss save results">
+					<Icon name="x" size={14} />
+				</button>
+			}>
+			<Stack gap="list">
 				{problems.map((r, i) => (
 					<SurfaceResultRowMC key={i} result={r} />
 				))}
 				{okRows.length > 0 && (
-					<details className="fs-meta text-faint mt-1">
+					<details className="fs-meta text-faint">
 						<summary className="group disclosure">
 							<DisclosureChevron />
 							<span>{okRows.length} surfaces written without error</span>
 						</summary>
-						<div className="mt-1">
+						<Stack gap="list" className="mt-stack">
 							{okRows.map((r, i) => (
 								<SurfaceResultRowMC key={i} result={r} />
 							))}
-						</div>
+						</Stack>
 					</details>
 				)}
-			</div>
-		</div>
+			</Stack>
+		</Card>
 	);
 }
 
@@ -1554,7 +1555,7 @@ function SurfaceResultRowMC({ result: r }) {
 	const surface = r.surface ?? r.target ?? r.file ?? r.domain;
 
 	return (
-		<div className="flex items-center gap-2 fs-meta py-1 border-b border-line last:border-0">
+		<div className="flex items-center gap-control fs-meta">
 			{status && (
 				<Badge role="status" tone={status.tone} icon={true}>
 					{status.word}
@@ -1684,14 +1685,15 @@ function ErrorBannerMC({ title, detail, onRetry }) {
 	);
 }
 
-// Card-head count of rows whose live value was not read — such a row renders nothing, unlike a drifted one.
-function UnreadMarkMC({ rows }) {
+// Card-head count of unread rows that name no source and list no files → such a row renders nothing; a sourced row says it itself.
+function UnreadMarkMC({ rows, metaOf }) {
 	const { Icon } = window.UI;
-	const count = rows.filter((row) => !row.drift && row.actual == null).length;
+	const isSilent = (row) => !metaOf[row.domain]?.source && !(Array.isArray(row.files) && row.files.length > 0);
+	const count = rows.filter((row) => !row.drift && row.actual == null && isSilent(row)).length;
 	if (count === 0) return null;
 
 	return (
-		<span className="fs-meta text-dim flex items-center gap-1">
+		<span className="fs-meta text-dim flex items-center gap-label-inline">
 			<Icon name="warn" size={12} className="text-warn" />
 			{`${count} not read`}
 		</span>
@@ -1701,7 +1703,7 @@ function UnreadMarkMC({ rows }) {
 // Unavailable must read as 'not read', never as zero — the cause rides the alarm lane.
 function SectionUnavailableMC() {
 	return (
-		<div className="fs-meta text-faint py-2">
+		<div className="fs-meta text-faint">
 			Not available — the saved config could not be loaded.
 		</div>
 	);

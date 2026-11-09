@@ -1,5 +1,5 @@
 // Models & budgets controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and type
-// scale, rendered from the shipped components: the file-count fold on the interactive pill, the save-results fold on the disclosure
+// scale, rendered from the shipped components: the file-count fold and the save-results fold on the ghost disclosure
 // atom — each keeps one box closed, open and in every pointer/keyboard state (§7.16) — the Cost & usage links as 24 targets, and a
 // field's inline Reset as a 24 target in a saved line that keeps its height whether the field is overridden or not.
 // Runner: npx tsx --test test/model-config.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
@@ -13,6 +13,7 @@ import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { createControlProbe } from "./lib/control-probe.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -32,7 +33,7 @@ const TYPE_SCALE_CSS = findNodes(renderScreen(UI.TypeScaleStyle({})), (n) => n.t
   .map((n) => collectText(n))
   .join("\n");
 
-// The app loads Tailwind preflight and utilities from its CDN; these are the rules the measured geometry depends on, at their shipped values.
+// The app loads Tailwind preflight and utilities from its CDN; these are the rules the measured geometry depends on, at their shipped values — role keys come from the shared shim.
 const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 solid; }
   html { line-height: 1.5; font-family: ui-sans-serif, system-ui, sans-serif; }
   svg { display: block; vertical-align: middle; }
@@ -42,8 +43,8 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   summary { display: list-item; }
   .flex { display: flex; } .inline-flex { display: inline-flex; } .flex-col { flex-direction: column; } .flex-wrap { flex-wrap: wrap; }
   .items-center { align-items: center; } .min-w-0 { min-width: 0; } .max-w-full { max-width: 100%; } .shrink-0 { flex-shrink: 0; }
-  .gap-1 { gap: 0.25rem; } .gap-1\\.5 { gap: 0.375rem; } .gap-2 { gap: 0.5rem; } .gap-x-2 { column-gap: 0.5rem; } .gap-x-3 { column-gap: 0.75rem; }
-  .gap-y-1 { row-gap: 0.25rem; } .mt-1 { margin-top: 0.25rem; } .pl-3 { padding-left: 0.75rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
+  .gap-1 { gap: 0.25rem; } .gap-1\\.5 { gap: 0.375rem; } .gap-2 { gap: 0.5rem; }
+  .mt-1 { margin-top: 0.25rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
   .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; } .border { border-width: 1px; } .border-b { border-bottom-width: 1px; }
   .underline { text-decoration-line: underline; } .underline-offset-2 { text-underline-offset: 2px; }
   .text-right { text-align: right; } .table-fixed { table-layout: fixed; } .tabular-nums { font-variant-numeric: tabular-nums; } .whitespace-nowrap { white-space: nowrap; } .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
@@ -120,6 +121,7 @@ before(async () => {
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
   await page.addStyleTag({ content: TYPE_SCALE_CSS });
+  await page.addStyleTag({ content: getRoleKeyCss() });
   cdp = await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
   await cdp.send("CSS.enable");
