@@ -1679,6 +1679,53 @@ test("a drawer concern shows as a whole item clamped to two lines, with the full
   assert.equal((item?.props.style as Record<string, unknown> | undefined)?.WebkitLineClamp, 2, "clamped to two lines");
 });
 
+test("a drawer section spaces its sub-blocks through the block role, whatever each sub-block renders", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown, ...kids: unknown[]) => unknown };
+  const tree = renderScreen(React.createElement(
+    mod.AgentDrawerSection as Component,
+    { id: "drawer-overview", title: "Overview" },
+    React.createElement("div", null, "breaker line"),
+    React.createElement("div", null, "success-rate hero"),
+  ));
+  const stack = findNodes(tree, (n) => n.props.atom === "Stack")[0];
+  assert.equal(stack?.props.gap, "block", "the sub-blocks share one block-role stack");
+  assert.equal(collectText(stack), "breaker line success-rate hero", "both sub-blocks sit inside it");
+});
+
+describe("a drawer sub-block label sits on its own content through the label role", () => {
+  const idle = { status: "idle", data: null, error: null };
+  const agentId = "glass-atrium-dev-react";
+  const breakages = (failure: unknown) => ({
+    component: "AgentReliabilityBreakages",
+    props: {
+      drawerAgent: agentId, days: 30, onRetry: () => undefined, detailState: idle, blockedState: idle,
+      failureByAgent: new Map(failure ? [[agentId, failure]] : []),
+      failureState: { status: "ready", data: { rows: [] }, error: null },
+    },
+  });
+  const lifecycle = (rows: unknown[]) => ({
+    component: "AgentReliabilityLifecycle",
+    props: { agent: null, drawerAgent: agentId, onRetry: () => undefined, lifecycleState: { status: "ready", data: { rows }, error: null } },
+  });
+  const rows = [
+    { name: "Breakages with breakages", label: "Breakages", ...breakages({ total_breakages: 3, fail_count: 2, blocked_count: 1, reconstructed: 0, breakage_rate: 0.1 }) },
+    { name: "Breakages with none", label: "Breakages", ...breakages(null) },
+    { name: "Lifecycle with a row", label: "Lifecycle", ...lifecycle([{ agent_type: agentId, start_count: 10, completed_count: 9, avg_duration_sec: 30, p95_duration_sec: 60, max_duration_sec: 90 }]) },
+    { name: "Lifecycle with no row", label: "Lifecycle", ...lifecycle([]) },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const tree = await renderComponent(row.component, row.props);
+      const label = findNodes(tree, (n) => n.type === "div" && collectText(n) === row.label)[0];
+      assert.match(String(label?.props.className), /\bmb-label\b/, "the label carries the label role");
+      const parent = findNodes(tree, (n) => n.children.includes(label!))[0];
+      assert.doesNotMatch(String(parent?.props.className ?? ""), /space-y-|\bstack\b/, "no stacking parent widens the label gap to its own");
+    });
+  }
+});
+
 // Stub LOW_N_MIN = 5. revision bucket '0' → health 1 (ok) · avg 0.3 → health 0.64 (warn) · bucket '4+' → health 0.4 (crit).
 describe("the ledger head names the agents the health rule flags, and stays silent otherwise", () => {
   const ready = (data: unknown) => ({ status: "ready", data, error: null });

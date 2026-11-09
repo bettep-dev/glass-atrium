@@ -154,7 +154,7 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
   return visualSet.has(agentId);
 }
 
-// 카드 본문 flex 컨테이너 + 스크롤 — inline style 으로 빼두면 JSX 노이즈가 큼.
+// 카드 본문 스크롤 + roving-row focus ring — inline style 으로 빼두면 JSX 노이즈가 큼.
 const AGENTS_INLINE_CSS = ''
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
   // row fills its scroller edge to edge → the global outset ring is clipped; inset keeps the focus-ring token visible
@@ -1468,7 +1468,7 @@ function AgentDetailDrawer({
               onRetry={onRetry}
             />
             {/* The composite ranking lives on Learning, which owns the improvement answer. */}
-            <a className="btn ghost sm" href="#improvement">Open in Learning</a>
+            <a className="btn ghost sm self-start" href="#improvement">Open in Learning</a>
           </AgentDrawerSection>
           <AgentDrawerSection id={IDS.DRAWER_SECTION.recent} title="Recent">
             <AgentRecentActivitySection recentState={recentState} days={days} onRetry={onRetry}/>
@@ -1575,13 +1575,14 @@ function formatConsecutiveFails(count) {
   return `${count} consecutive ${count === 1 ? 'fail' : 'fails'}`;
 }
 
-// 드로어 섹션 래퍼 — 공용 SubCard(ring + 16px padding + --dim 라벨) 로 5 섹션을 각각
-// 독립 면으로 분리 (1px-hairline 합쳐보임 해소 #region). SubCard 가 라벨/패딩/면 idiom 단일 소유.
+// 드로어 섹션 래퍼 — SubCard 가 라벨/패딩/면, Stack 이 sub-block 간격 소유 (SubCard 는 자식 비스택).
 function AgentDrawerSection({ id, title, children }) {
-  const { SubCard } = window.UI;
+  const { SubCard, Stack } = window.UI;
   return (
     <section id={id}>
-      <SubCard label={title} labelLevel={2}>{children}</SubCard>
+      <SubCard label={title} labelLevel={2}>
+        <Stack gap="block">{children}</Stack>
+      </SubCard>
     </section>
   );
 }
@@ -1938,57 +1939,59 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
 
   return (
     <div className="space-y-block">
-      <div className="fs-meta text-faint">Breakages</div>
-      {failure && failure.total_breakages > 0 ? (
-        <>
-          <div className="flex items-center gap-list flex-wrap">
-            <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate)}>
-              {formatIntAg(split.breakages)} failed or blocked{failure.reconstructed > 0 ? '' : ` · ${rateText}`}
-            </Badge>
-            {split.blocked.max > 0 && (
-              <span className="fs-meta text-dim">
-                of which {split.blocked.min === split.blocked.max ? '' : 'up to '}{formatIntAg(split.blocked.max)} blocked — a compliant halt, not a defect
-              </span>
-            )}
-            {failure.reconstructed > 0 && (
-              <span
-                className="fs-meta text-faint"
-                title="Harness-reconstructed records (recovery artifacts) excluded from the writer-emitted breakage headline">
-                ↺ {formatIntAg(failure.reconstructed)} reconstructed, left out of this count
-              </span>
-            )}
-          </div>
-          {/* rate + Failed/Blocked are all-records figures → captioned apart from the writer-basis headline */}
-          <div>
-            {failure.reconstructed > 0 && (
-              <div className="fs-meta text-faint">
-                All records, {formatIntAg(failure.reconstructed)} reconstructed included · {rateText} of outcomes
+      <div>
+        <div className="fs-meta text-faint mb-label">Breakages</div>
+        {failure && failure.total_breakages > 0 ? (
+          <div className="space-y-block">
+            <div className="flex items-center gap-list flex-wrap">
+              <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate)}>
+                {formatIntAg(split.breakages)} failed or blocked{failure.reconstructed > 0 ? '' : ` · ${rateText}`}
+              </Badge>
+              {split.blocked.max > 0 && (
+                <span className="fs-meta text-dim">
+                  of which {split.blocked.min === split.blocked.max ? '' : 'up to '}{formatIntAg(split.blocked.max)} blocked — a compliant halt, not a defect
+                </span>
+              )}
+              {failure.reconstructed > 0 && (
+                <span
+                  className="fs-meta text-faint"
+                  title="Harness-reconstructed records (recovery artifacts) excluded from the writer-emitted breakage headline">
+                  ↺ {formatIntAg(failure.reconstructed)} reconstructed, left out of this count
+                </span>
+              )}
+            </div>
+            {/* rate + Failed/Blocked are all-records figures → captioned apart from the writer-basis headline */}
+            <div>
+              {failure.reconstructed > 0 && (
+                <div className="fs-meta text-faint">
+                  All records, {formatIntAg(failure.reconstructed)} reconstructed included · {rateText} of outcomes
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-block">
+                <DetailMetric label="Failed" value={formatIntAg(failure.fail_count)}/>
+                <DetailMetric label="Blocked" value={formatIntAg(failure.blocked_count)}/>
+              </div>
+            </div>
+            <DrawerInfoRow
+              label="last breakage"
+              value={failure.last_breakage_at ? formatRelativeTimeAg(failure.last_breakage_at) : '—'}
+              title={failure.last_breakage_at || undefined}
+            />
+            {topConcerns.length > 0 && (
+              <div>
+                <div className="fs-meta text-faint mb-label">Top concerns</div>
+                <ul className="flex flex-col gap-stack">
+                  {topConcerns.map((c, i) => (
+                    <li key={i} className="fs-body text-dim leading-snug" style={CONCERN_CLAMP_STYLE} title={c}>{getConcernTextAg(c)}</li>
+                  ))}
+                </ul>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-block">
-              <DetailMetric label="Failed" value={formatIntAg(failure.fail_count)}/>
-              <DetailMetric label="Blocked" value={formatIntAg(failure.blocked_count)}/>
-            </div>
           </div>
-          <DrawerInfoRow
-            label="last breakage"
-            value={failure.last_breakage_at ? formatRelativeTimeAg(failure.last_breakage_at) : '—'}
-            title={failure.last_breakage_at || undefined}
-          />
-          {topConcerns.length > 0 && (
-            <div>
-              <div className="fs-meta text-faint mb-label">Top concerns</div>
-              <ul className="flex flex-col gap-stack">
-                {topConcerns.map((c, i) => (
-                  <li key={i} className="fs-body text-dim leading-snug" style={CONCERN_CLAMP_STYLE} title={c}>{getConcernTextAg(c)}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </>
-      ) : (
-        <DrawerSectionEmpty message={`No fail or blocked outcomes in the last ${days} days.`}/>
-      )}
+        ) : (
+          <DrawerSectionEmpty message={`No fail or blocked outcomes in the last ${days} days.`}/>
+        )}
+      </div>
 
       {/* fail/blocked 키워드 원인 분류 — 기존 컴포넌트 재사용. */}
       <MergedBreakageSection
@@ -2038,10 +2041,12 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
 
   if (!row) {
     return (
-      <div className="space-y-block">
-        <div className="fs-meta text-faint">Lifecycle</div>
-        <DrawerInfoRow label="last active" value={lastRun} title={agent?.last_run_at || undefined}/>
-        <DrawerSectionEmpty message="No SubagentStart/Stop lifecycle events for this agent."/>
+      <div>
+        <div className="fs-meta text-faint mb-label">Lifecycle</div>
+        <div className="space-y-block">
+          <DrawerInfoRow label="last active" value={lastRun} title={agent?.last_run_at || undefined}/>
+          <DrawerSectionEmpty message="No SubagentStart/Stop lifecycle events for this agent."/>
+        </div>
       </div>
     );
   }
@@ -2059,29 +2064,31 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
   const fmtDur = (sec) => sec == null ? '—' : formatDurationSecAg(sec);
 
   return (
-    <div className="space-y-block">
-      <div className="fs-meta text-faint">Lifecycle</div>
-      <div className="flex items-center gap-list flex-wrap">
-        <Badge role="status" tone={orphanTone}>
-          {formatIntAg(orphans)} unfinished · {(orphanRatio * 100).toFixed(0)}%
-        </Badge>
-      </div>
-      {/* started 대비 finished 비례 막대 — 비율 숫자 옆 완주율 shape (높을수록 누수 적음). */}
-      {startCount > 0 && (
-        <BulletBar
-          value={finishedRatio}
-          tone={orphanTone}
-          ariaLabel={`finished ${completedCount} of started ${startCount} (${(finishedRatio * 100).toFixed(0)}%)`}
-        />
-      )}
-      {/* 단일 2-col — Started/Finished (2번째 3-box grid 폐지). */}
-      <div className="grid grid-cols-2 gap-block">
-        <DetailMetric label="Started" value={formatIntAg(startCount)}/>
-        <DetailMetric label="Finished" value={formatIntAg(completedCount)}/>
-      </div>
-      {/* duration triplet — 3-box grid 대신 1 라인 (tnum 자릿수 정렬, #5c). */}
-      <div className="fs-meta text-dim tnum" title="avg takes in the slowest runs beyond p95, so a long tail can lift it above p95">
-        avg {fmtDur(row.avg_duration_sec)} · p95 {fmtDur(row.p95_duration_sec)} · max {fmtDur(row.max_duration_sec)}
+    <div>
+      <div className="fs-meta text-faint mb-label">Lifecycle</div>
+      <div className="space-y-block">
+        <div className="flex items-center gap-list flex-wrap">
+          <Badge role="status" tone={orphanTone}>
+            {formatIntAg(orphans)} unfinished · {(orphanRatio * 100).toFixed(0)}%
+          </Badge>
+        </div>
+        {/* started 대비 finished 비례 막대 — 비율 숫자 옆 완주율 shape (높을수록 누수 적음). */}
+        {startCount > 0 && (
+          <BulletBar
+            value={finishedRatio}
+            tone={orphanTone}
+            ariaLabel={`finished ${completedCount} of started ${startCount} (${(finishedRatio * 100).toFixed(0)}%)`}
+          />
+        )}
+        {/* 단일 2-col — Started/Finished (2번째 3-box grid 폐지). */}
+        <div className="grid grid-cols-2 gap-block">
+          <DetailMetric label="Started" value={formatIntAg(startCount)}/>
+          <DetailMetric label="Finished" value={formatIntAg(completedCount)}/>
+        </div>
+        {/* duration triplet — 3-box grid 대신 1 라인 (tnum 자릿수 정렬, #5c). */}
+        <div className="fs-meta text-dim tnum" title="avg takes in the slowest runs beyond p95, so a long tail can lift it above p95">
+          avg {fmtDur(row.avg_duration_sec)} · p95 {fmtDur(row.p95_duration_sec)} · max {fmtDur(row.max_duration_sec)}
+        </div>
       </div>
     </div>
   );
