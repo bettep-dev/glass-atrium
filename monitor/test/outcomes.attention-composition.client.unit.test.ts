@@ -11,7 +11,6 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
@@ -102,6 +101,7 @@ interface OutcomesHelpers {
   BandStatValueO: (props: { tile: BandTile; isLoading: boolean; unloadedText: string }) => RenderNode | string;
   BandRulesO: (props: { tiles: BandTile[]; reasons: { key: string; label: string; count: number | null; tone: string }[]; priorRange: string | null }) => RenderNode;
   getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
+  AttributionSummaryRow: (props: { summary: Record<string, unknown> | null; totalAttributed: number }) => RenderNode;
   window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; Card: unknown; StatRow: unknown } };
 }
 
@@ -797,14 +797,6 @@ test("focusLedgerSectionO: scrolls to and focuses the target, and reports a miss
   assert.strictEqual(helpers.focusLedgerSectionO("x", { getElementById: () => null }), false);
 });
 
-test("Recorded properly: one label, one population — the band never reuses the attribution category's name", () => {
-  const src = readFileSync(OUTCOMES_SRC, "utf8");
-  const healthyLabel = /healthy:\s*\{\s*label:\s*'([^']+)'/.exec(src)?.[1];
-  assert.ok(healthyLabel, "the attribution healthy label is found");
-  const labels = helpers.buildStatusBandTilesO(aboveFloor({ done: 190 }, 40), 0).map((t) => t.label);
-  assert.ok(!labels.includes(healthyLabel!), `the band's writer-emitted tile must not read '${healthyLabel}'`);
-});
-
 test("ledger row: the accessible name carries the word that tells Done from Closed", () => {
   const nameOf = (result: string, closedAt: string | null) => String(helpers.ResultTableRow({
     row: { id: 7, agent: "a", task_type: "feature", result, closed_at: closedAt },
@@ -1155,6 +1147,15 @@ const getTileText = (band: unknown, key: string): string => {
 };
 const BAND_KEYS = ["attention", "broken", "recorded", "done"];
 const getBandText = (band: unknown): string => BAND_KEYS.map((key) => getTileText(band, key)).join(" | ");
+
+test("Recorded properly: one label, one population — the band never reuses the attribution category's name", () => {
+  const row = helpers.AttributionSummaryRow({ summary: { healthy_rate: 0.9 }, totalAttributed: 200 });
+  const stats = flattenNodes(row).find((n) => n.type === helpers.window.UI.StatRow)!.props!.stats as { key: string; label: unknown }[];
+  const healthyLabel = renderText(stats.find((stat) => stat.key === "healthy")!.label).trim();
+  assert.ok(healthyLabel, "the attribution card draws a healthy label");
+  const labels = helpers.buildStatusBandTilesO(aboveFloor({ done: 190 }, 40), 0).map((t) => t.label);
+  assert.ok(!labels.includes(healthyLabel), `the band's writer-emitted tile must not read '${healthyLabel}'`);
+});
 
 describe("StatusBandO: every tile states one share delta, its comparison window inside the band's ⓘ", () => {
   const band = buildBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), 10);
