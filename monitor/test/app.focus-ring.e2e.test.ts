@@ -129,9 +129,9 @@ async function readRingOverflow(page: Page): Promise<Record<"top" | "right" | "b
   });
 }
 
-async function openSurfaceByEnter(page: Page, fixture: FixtureKind): Promise<void> {
+async function openSurfaceByEnter(page: Page, fixture: FixtureKind, trigger = "#open-record"): Promise<void> {
   await mountFixture(page, fixture);
-  await page.focus("#open-record");
+  await page.focus(trigger);
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "dialog", null, { timeout: 30_000 });
   await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)).then(() => undefined));
@@ -201,7 +201,7 @@ const RING_CONTRAST_ROWS = (["light", "dark"] as const).flatMap((theme) => [
   { theme, surface: "drawer", fixture: "drawer-on-trigger" as FixtureKind },
   { theme, surface: "fullscreen", fixture: "fullscreen-on-trigger" as FixtureKind },
   { theme, surface: "confirm", fixture: "confirm-on-trigger" as FixtureKind },
-  { theme, surface: "popover", fixture: "popover-in-view" as FixtureKind },
+  { theme, surface: "popover", fixture: "popover-in-view" as FixtureKind, trigger: "#fixture button[aria-haspopup='dialog']" },
 ]);
 
 describe("a keyboard-focused panel ring reaches 3:1 against the colours it is drawn on, on every side, in both themes (WCAG 1.4.11)", () => {
@@ -210,13 +210,7 @@ describe("a keyboard-focused panel ring reaches 3:1 against the colours it is dr
       const page = await openApp();
       // data-theme = the attribute tweaks.theme writes
       await page.evaluate((theme) => document.documentElement.setAttribute("data-theme", theme), row.theme);
-      if (row.fixture === "popover-in-view") {
-        await mountFixture(page, row.fixture);
-        await page.focus("#fixture button[aria-haspopup='dialog']");
-        await page.keyboard.press("Enter");
-      } else {
-        await openSurfaceByEnter(page, row.fixture);
-      }
+      await openSurfaceByEnter(page, row.fixture, row.trigger);
 
       const { ring, ground } = await readRingGround(page);
       const unpainted = Object.entries(ground).filter(([, stack]) => !stack.some((color) => parseColor(color)[3] === 1));
