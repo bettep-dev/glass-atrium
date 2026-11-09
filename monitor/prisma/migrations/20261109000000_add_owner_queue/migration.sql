@@ -1,4 +1,4 @@
--- Owner report / decision queue tables — plan clauded-docs/43944 S1.
+-- Owner report / decision queue tables.
 -- monitor.queue_sessions: one row per registered Claude session (realpath cwd, derived worktree root, session marker).
 -- monitor.queue_items: one report or decision per row; queue_position draws from the owned sequence
 --   queue_items_queue_position_seq on insert, and Later sets nextval() on the same sequence → concurrent writers
@@ -158,9 +158,7 @@ ALTER TABLE "monitor"."queue_items" ADD CONSTRAINT "queue_items_session_id_fkey"
 ALTER TABLE "monitor"."queue_deliveries" ADD CONSTRAINT "queue_deliveries_item_id_fkey" FOREIGN KEY ("item_id") REFERENCES "monitor"."queue_items"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 
--- ---------------------------------------------------------------------------------------------------------------
 -- Raw SQL only — CHECKs (each nested CASE keeps a JSON function off a value it would raise on)
--- ---------------------------------------------------------------------------------------------------------------
 
 ALTER TABLE "monitor"."queue_sessions"
     -- path present only when CLAUDE_CONFIG_DIR was set
@@ -186,7 +184,8 @@ ALTER TABLE "monitor"."queue_items"
         AND cardinality("linked_doc_ids") <= 20
         AND array_position("linked_doc_ids", NULL) IS NULL
     ),
-    -- decision ⇔ 2..9 R-coded options + a recommended code naming one of them; report ⇒ neither
+    -- decision ⇒ 2..9-entry options array + an R[1-9] recommended_code equal to one entry's code; report ⇒ neither
+    -- per-entry shape and unique codes → not checked here (the post route's Zod schema)
     ADD CONSTRAINT "queue_items_decision_options_check" CHECK (
         CASE
             WHEN "kind" = 'decision' THEN
@@ -200,6 +199,8 @@ ALTER TABLE "monitor"."queue_items"
             ELSE "options" IS NULL AND "recommended_code" IS NULL
         END
     ),
+    -- serialized-size backstop beside the route's per-field caps, same bound as body and answer_text
+    ADD CONSTRAINT "queue_items_options_check" CHECK (char_length("options"::text) <= 20000),
     ADD CONSTRAINT "queue_items_answer_code_check" CHECK (
         "answer_code" IS NULL
         OR CASE
@@ -217,9 +218,9 @@ ALTER TABLE "monitor"."queue_deliveries"
     ADD CONSTRAINT "queue_deliveries_abort_reason_check" CHECK (
         (("result" = 'aborted') = ("abort_reason" IS NOT NULL)) AND ("result" <> 'aborted' OR "route" = 'resume')
     ),
-    -- pasted into owner-run `claude logs|stop <bg id>` → a leading letter or digit, never an option token
+    -- pasted into owner-run `claude logs|stop <bg id>` → letters, digits, hyphens; a leading letter or digit, never an option token
     ADD CONSTRAINT "queue_deliveries_bg_id_check" CHECK (
-        "bg_id" IS NULL OR ("route" = 'resume' AND "bg_id" ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+        "bg_id" IS NULL OR ("route" = 'resume' AND "bg_id" ~ '^[A-Za-z0-9][A-Za-z0-9-]{0,63}$')
     ),
     ADD CONSTRAINT "queue_deliveries_ack_deadline_check" CHECK ("ack_deadline_at" > "sent_at");
 
@@ -228,11 +229,9 @@ ALTER TABLE "monitor"."queue_drift_checks"
     ADD CONSTRAINT "queue_drift_checks_binary_size_check" CHECK ("binary_size" >= 0),
     ADD CONSTRAINT "queue_drift_checks_version_check" CHECK ("version" <> '');
 
--- ---------------------------------------------------------------------------------------------------------------
 -- Raw SQL only — at most one automatic resume per item and attempt; socket and pull rows repeat freely.
 -- The resume claim's per-attempt check runs inside its locked transaction; this index backs it structurally,
 -- so two overlapping sweep passes cannot both insert a resume row → the losing claim rolls back and spawns nothing.
--- ---------------------------------------------------------------------------------------------------------------
 
 CREATE UNIQUE INDEX "queue_deliveries_resume_item_attempt_key"
     ON "monitor"."queue_deliveries" ("item_id", "attempt")

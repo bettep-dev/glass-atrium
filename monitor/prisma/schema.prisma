@@ -1247,14 +1247,11 @@ model SkillActivation {
   @@schema("core")
 }
 
-// ============================================================================
-// Owner report / decision queue (plan clauded-docs/43944) — session registry, items,
-// deliveries, format-drift checks. Rules the Prisma DSL cannot declare live in migration
-// 20261109000000_add_owner_queue raw SQL only → a squash MUST carry that SQL:
-//   - CHECKs named on each model below
-//   - partial unique index queue_deliveries_resume_item_attempt_key
+// Owner report / decision queue — session registry, items, deliveries, format-drift checks.
+// Rules the Prisma DSL cannot declare live in migration 20261109000000_add_owner_queue raw SQL only
+//   → a squash MUST carry that SQL: the CHECKs named on each model below
+//   + partial unique index queue_deliveries_resume_item_attempt_key.
 // monitor/test/queue.schema.test.ts runs them against the migrated chain.
-// ============================================================================
 
 enum QueueSessionState {
   live
@@ -1297,7 +1294,7 @@ enum QueueItemKind {
   @@schema("monitor")
 }
 
-/// Terminal: delivered · seen · withdrawn. Transitions are the route layer's (plan Item states).
+/// Terminal: delivered · seen · withdrawn. Transitions are the route layer's.
 enum QueueItemStatus {
   open
   answered
@@ -1398,6 +1395,7 @@ model QueueSession {
 /// CHECKs (migration raw SQL only):
 ///   - title non-blank · body 1..20000 chars · answer_text ≤ 20000 chars · linked_doc_ids ≤ 20 entries
 ///   - decision ⇔ options (2..9-entry JSON array) + recommended_code naming one entry's code; report ⇒ neither
+///   - options serialized text ≤ 20000 chars → the route's per-field caps for 9 entries must fit under it
 ///   - answer_code only on a decision, naming one entry's code · next_attempt ≥ 1 · defer_count ≥ 0
 /// Per-entry option shape and unique codes → the post route's Zod schema (a CHECK cannot iterate the array).
 model QueueItem {
@@ -1441,7 +1439,7 @@ model QueueItem {
 ///   - partial unique index queue_deliveries_resume_item_attempt_key ON (item_id, attempt) WHERE route = 'resume'
 ///     → at most one automatic resume per answer attempt; socket and pull rows repeat freely
 ///   - CHECKs: attempt ≥ 1 · abort_reason present ⇔ result = aborted, on resume rows only
-///     · bg_id on resume rows only, leading letter or digit, [A-Za-z0-9._-] → never read as a CLI option
+///     · bg_id on resume rows only, letters, digits and hyphens, leading letter or digit → never read as a CLI option
 ///     · ack_deadline_at > sent_at
 model QueueDelivery {
   id            BigInt                    @id @default(autoincrement())

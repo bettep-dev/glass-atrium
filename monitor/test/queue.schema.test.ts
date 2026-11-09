@@ -69,6 +69,33 @@ function buildDelivery(
   return { msgId: randomUUID(), itemId, route, attempt, result: "sent", sentAt: SENT_AT, ackDeadlineAt: ACK_DEADLINE_AT };
 }
 
+/**
+ * Rejection oracle for one unique key: Prisma P2002 whose Postgres 23505 names `index`.
+ * P2002's own message lists the key's fields only → the name comes from the driver-adapter cause.
+ */
+function expectUniqueViolation(index: string): (error: unknown) => true {
+  return (error) => {
+    assert.ok(error instanceof Prisma.PrismaClientKnownRequestError, `expected a Prisma request error, got ${String(error)}`);
+    assert.equal(error.code, "P2002");
+    const postgres = getPostgresCause(error);
+    assert.equal(postgres.code, "23505");
+    assert.ok(typeof postgres.message === "string", "driver-adapter cause carries no Postgres message");
+    assert.ok(postgres.message.includes(`"${index}"`), `unique violation names another key: ${postgres.message}`);
+    return true;
+  };
+}
+
+/** meta.driverAdapterError.cause → the Postgres SQLSTATE and message behind a Prisma error code. */
+function getPostgresCause(error: Prisma.PrismaClientKnownRequestError): { code: unknown; message: unknown } {
+  const adapterError = error.meta?.driverAdapterError;
+  const cause = typeof adapterError === "object" && adapterError !== null && "cause" in adapterError ? adapterError.cause : null;
+  if (typeof cause !== "object" || cause === null) return { code: undefined, message: undefined };
+  return {
+    code: "originalCode" in cause ? cause.originalCode : undefined,
+    message: "originalMessage" in cause ? cause.originalMessage : undefined,
+  };
+}
+
 /** Session + one decision item → the item id the delivery cases hang rows on. */
 async function createItem(tx: Prisma.TransactionClient, pid: number): Promise<bigint> {
   const { sessionId } = await tx.queueSession.create({ data: buildSession(pid), select: { sessionId: true } });
@@ -84,7 +111,7 @@ describe("monitor.queue_deliveries resume bound", () => {
         await tx.queueDelivery.create({ data: buildDelivery(itemId, "resume", 1) });
         await tx.queueDelivery.create({ data: buildDelivery(itemId, "resume", 1) });
       }),
-      /queue_deliveries_resume_item_attempt_key/,
+      expectUniqueViolation("queue_deliveries_resume_item_attempt_key"),
     );
   });
 
@@ -124,7 +151,7 @@ describe("monitor.queue_deliveries msg id", () => {
         await tx.queueDelivery.create({ data: first });
         await tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "pull", 1), msgId: first.msgId } });
       }),
-      /queue_deliveries_msg_id_key|Unique constraint failed/,
+      expectUniqueViolation("queue_deliveries_msg_id_key"),
     );
   });
 });
@@ -242,6 +269,20 @@ describe("monitor.queue_* length and shape limits", () => {
       constraint: /queue_items_decision_options_check/,
     },
     {
+      name: "rejects options whose serialized text passes 20000 characters",
+      write: (tx, itemId) =>
+        tx.queueItem.update({
+          where: { id: itemId },
+          data: {
+            options: [
+              { code: "R1", label: "30 seconds", pros: "p".repeat(20000), cons: "more probes" },
+              { code: "R2", label: "2 minutes", pros: "fewer probes", cons: "slower recovery" },
+            ],
+          },
+        }),
+      constraint: /queue_items_options_check/,
+    },
+    {
       name: "rejects an answer code that names no option",
       write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { answerCode: "R9" } }),
       constraint: /queue_items_answer_code_check/,
@@ -249,6 +290,11 @@ describe("monitor.queue_* length and shape limits", () => {
     {
       name: "rejects a bg id that starts with a hyphen",
       write: (tx, itemId) => tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "resume", 1), bgId: "-h" } }),
+      constraint: /queue_deliveries_bg_id_check/,
+    },
+    {
+      name: "rejects a bg id carrying a character other than letters, digits and hyphens",
+      write: (tx, itemId) => tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "resume", 1), bgId: "a.b" } }),
       constraint: /queue_deliveries_bg_id_check/,
     },
     {
@@ -318,15 +364,15 @@ describe("monitor.queue_* length and shape limits", () => {
     });
   }
 
-  test("accepts a resume row carrying a well-formed bg id", async () => {
+  test("accepts a resume row carrying a bg id of letters, digits and a hyphen", async () => {
     await assert.rejects(
       runRolledBack(async (tx) => {
         const itemId = await createItem(tx, 41011);
         const { bgId } = await tx.queueDelivery.create({
-          data: { ...buildDelivery(itemId, "resume", 1), bgId: "a1b2c3" },
+          data: { ...buildDelivery(itemId, "resume", 1), bgId: "a1b2-c3d4" },
           select: { bgId: true },
         });
-        assert.equal(bgId, "a1b2c3");
+        assert.equal(bgId, "a1b2-c3d4");
       }),
       Rollback,
     );
@@ -348,7 +394,7 @@ describe("monitor.queue_drift_checks one row per Claude Code version", () => {
         await tx.queueDriftCheck.create({ data: row });
         await tx.queueDriftCheck.create({ data: { ...row, binarySize: 319598465n } });
       }),
-      /queue_drift_checks_version_key|Unique constraint failed/,
+      expectUniqueViolation("queue_drift_checks_version_key"),
     );
   });
 });
