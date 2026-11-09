@@ -60,8 +60,6 @@ function lowInvocationThresholdForWindow(days) {
   return Math.max(1, Math.round(LOW_INVOCATION_PER_30D * (Number(days) || 30) / 30));
 }
 
-// Top-N failing — 매트릭스 green-bias 보완 (action-triggering compact view).
-const TOPN_FAILING_THRESHOLD = 0.95;
 const CIRCUIT_BREAKER_UNREADABLE_COPY = 'circuit-breaker state unreadable — check permissions on the hook data dir';
 // One slot for the top-N failing card and the lifecycle card it pairs with → the two fill one row height at xl.
 const PAIRED_CARD_SIZE = 'S';
@@ -592,18 +590,6 @@ function TaskTypeFold({ failures, state, days, onRetry }) {
       <SuccessRateMatrixRegion failures={failures} state={state} days={days} onRetry={onRetry}/>
     </window.UI.Disclosure>
   );
-}
-
-// off-target = a pair at the crit fail-share step · agents in matrix order, pairs in column order, clear agents left out
-function getOffTargetRowsAg(matrix) {
-  return matrix.agents
-    .map((agent) => ({
-      agent,
-      pairs: TASK_TYPE_COLUMNS
-        .map((column) => ({ taskType: column.label, cell: matrix.cells[`${agent}|${column.key}`] }))
-        .filter(({ cell }) => getCellFailShareTone(cell) === 'crit'),
-    }))
-    .filter((row) => row.pairs.length > 0);
 }
 
 // Alarm lane — one row per suspended or streaking agent, nothing when the fleet
@@ -2301,76 +2287,20 @@ function SuccessRateMatrixBody({ failures, state, days, onRetry }) {
   if (matrix.agents.length === 0) {
     return <MatrixInsetAg>{notice}<EmptyStateAg message={`No success-rate events in the last ${days} days.`}/></MatrixInsetAg>;
   }
-  return <SuccessRateFullMatrix matrix={matrix} notice={notice}/>;
+  return <SuccessRateMatrixPanel matrix={matrix} notice={notice}/>;
 }
 
-function SuccessRateOffTargetList({ rows }) {
-  if (rows.length === 0) {
-    return <p className="fs-meta text-faint">{`No agent × task type pair at ${getFailShareLabel()}.`}</p>;
-  }
-
-  return (
-    <ul aria-label="Off-target pairs per agent" className="divide-y divide-line">
-      {rows.map((row) => <SuccessRateOffTargetRow key={row.agent} agent={row.agent} pairs={row.pairs}/>)}
-    </ul>
-  );
-}
-
-function SuccessRateOffTargetRow({ agent, pairs }) {
-  const isUnknownAgent = agent === UNKNOWN_AGENT_ID;
-
-  return (
-    <li className="flex flex-wrap items-center gap-control min-h-[var(--row-h)]">
-      <span className="text-ink min-w-0 truncate" title={isUnknownAgent ? UNKNOWN_AGENT_TITLE : agent}>
-        {isUnknownAgent
-          ? <span className="text-dim">{UNKNOWN_AGENT_LABEL}</span>
-          : <window.UI.AgentName name={agent}/>}
-      </span>
-      <ul aria-label={`${agent} off-target task types`} className="flex flex-wrap gap-control">
-        {pairs.map(({ taskType, cell }) => <SuccessRateOffTargetPair key={taskType} taskType={taskType} cell={cell}/>)}
-      </ul>
-    </li>
-  );
-}
-
-function SuccessRateOffTargetPair({ taskType, cell }) {
-  return (
-    <li className="inline-flex items-center gap-label-inline fs-meta tnum whitespace-nowrap"
-      title={`${taskType} — ${cell.failureCount} of ${cell.rateDenominator} failed or blocked`}>
-      <FailShareGlyph tone="crit"/>
-      <span>{taskType}</span>
-      <span className="font-semibold">{(cell.pooledRate * 100).toFixed(0)}%</span>
-      <span className="text-dim">n={cell.rateDenominator}</span>
-    </li>
-  );
-}
-
-const MATRIX_FULL_ID = 'agents-success-matrix-full';
-
-// off-target list over every pair, collapsed by default — mounted only once opened, so its sparklines cost nothing until asked for
-function SuccessRateFullMatrix({ matrix, notice }) {
-  const [isOpen, setOpen] = useStateAg(false);
-  const agentCount = matrix.agents.length;
-
+// fold open → the matrix itself: the fold mounts its body only when open, so the sparklines cost nothing until asked for
+function SuccessRateMatrixPanel({ matrix, notice }) {
   return (
     <>
       <MatrixInsetAg>
-        {notice}
-        <SuccessRateOffTargetList rows={getOffTargetRowsAg(matrix)}/>
         <window.UI.Cluster gap="control-group" className="items-center">
-          <window.UI.DisclosureButton
-            isOpen={isOpen}
-            onToggle={() => setOpen((v) => !v)}
-            controls={MATRIX_FULL_ID}
-            className="fs-meta"
-            label={`Full matrix — ${agentCount} ${agentCount === 1 ? 'agent' : 'agents'} × ${TASK_TYPE_COLUMNS.length} task types`}
-          />
+          {notice}
           <window.UI.CardInfo label="How the task-type matrix is counted"><SuccessRateLegend/></window.UI.CardInfo>
         </window.UI.Cluster>
       </MatrixInsetAg>
-      <div id={MATRIX_FULL_ID} hidden={!isOpen}>
-        {isOpen && <SuccessRateMatrixTable matrix={matrix}/>}
-      </div>
+      <SuccessRateMatrixTable matrix={matrix}/>
     </>
   );
 }
@@ -2525,7 +2455,7 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
 
   // 매트릭스와 동일 row 입력 — duplicate fetch 회피 · every failing pair kept, the slot decides how many show.
   const { failingPairs, failingTotal, measuredPairs } = useMemoAg(
-    () => buildTopNFailing(readyData(state)?.rows ?? [], TOPN_FAILING_THRESHOLD, Number.POSITIVE_INFINITY),
+    () => buildTopNFailing(readyData(state)?.rows ?? [], Number.POSITIVE_INFINITY),
     [state],
   );
   const { rows, hiddenCount } = window.UI.getSlotRows(failingPairs, PAIRED_CARD_SIZE);
@@ -2539,7 +2469,7 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
         sub={getFailingPairsSub(state.status, failingTotal, measuredPairs, days)}
         isFlush={window.UI.hasRegionRows(state, failingPairs)}
         foot={state.status === 'ready' && (
-          <PairedCardFootAg note={`Below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · solid samples first`} total={failingPairs.length}
+          <PairedCardFootAg note={`At or below ${getOffTargetRateLabelAg()} · solid samples first`} total={failingPairs.length}
             hiddenCount={hiddenCount} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
         )}>
         <TopNFailingAgentsBody failures={failures} state={state} days={days} onRetry={onRetry} pairs={isShowingAll ? failingPairs : rows} failureByAgent={failureByAgent}/>
@@ -2552,7 +2482,7 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
 function getFailingPairsSub(status, failingTotal, measuredCount, days) {
   if (status === 'loading') return `last ${days} days`;
   if (status !== 'ready') return 'Unavailable — not loaded';
-  return `${failingTotal} of ${measuredCount} below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · ${days}d`;
+  return `${failingTotal} of ${measuredCount} ≤ ${getOffTargetRateLabelAg()} · ${days}d`;
 }
 
 /**
@@ -2586,10 +2516,10 @@ function TopNFailingAgentsBody({ failures, state, days, onRetry, pairs, failureB
     return (
       <div className="flex flex-col items-center justify-center gap-label" style={{ minHeight: 180 }}>
         <Badge role="status" tone="ok" icon>
-          Every (agent, task_type) success_rate ≥ {(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}%
+          Every (agent, task_type) success_rate &gt; {getOffTargetRateLabelAg()}
         </Badge>
         <div className="fs-meta text-faint">
-          Nothing under the threshold in the last <window.UI.NoWrap>{days} days</window.UI.NoWrap>
+          Nothing at or below the threshold in the last <window.UI.NoWrap>{days} days</window.UI.NoWrap>
         </div>
       </div>
     );
@@ -3194,10 +3124,10 @@ function buildSuccessRateMatrix(rows) {
   return { agents, cells: Object.fromEntries(cellMap) };
 }
 
-// flat row → per-pair stats · threshold 미달만 반환 · pooledRate ASC sort · limit cap.
+// flat row → per-pair stats · crit fail-share step 이상 pair 만 반환 (매트릭스 crit glyph 와 동일 경계) · pooledRate ASC sort · limit cap.
 // 합산 비율 + 최소 표본 floor (분모 < TOPN_MIN_SAMPLE 쌍 랭킹 제외, A5).
 // server 가 last_failure_at 미반환 → failure_count > 0 row 의 event_date 로 client-side 도출.
-function buildTopNFailing(rows, threshold, limit) {
+function buildTopNFailing(rows, limit) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return { failingPairs: [], measuredPairs: 0 };
   }
@@ -3251,7 +3181,7 @@ function buildTopNFailing(rows, threshold, limit) {
     measuredPairs += 1;
 
     const pooledRate = writerSuccess / rateDenominator;
-    if (pooledRate < threshold) {
+    if (getFailShareTone(agg.failureCount, rateDenominator) === 'crit') {
       failingPairs.push({
         agent: agg.agent,
         task_type: agg.task_type,
@@ -3495,6 +3425,11 @@ function getSummaryRateAg(agent) {
   const isLowSample = denominator > 0 && denominator < window.UI.LOW_N_MIN;
   const tone = denominator === 0 || isLowSample ? null : getFailShareTone(denominator - numerator, denominator);
   return { successPct, needsContextCount, denominator, numerator, isLowSample, tone };
+}
+
+// success side of the same crit step → the rate Most-failing pairs names, so its copy and the matrix glyph share one boundary
+function getOffTargetRateLabelAg() {
+  return `${((1 - window.UI.OUTCOME_BREAKAGE_CRIT_SHARE) * 100).toFixed(0)}%`;
 }
 
 function getFailShareLabel(outcome = 'failed or blocked') {

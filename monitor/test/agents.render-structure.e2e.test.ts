@@ -180,8 +180,6 @@ async function getFocusedRingBox(page: Page) {
 async function openTaskTypeFold(page: Page): Promise<void> {
   const toggle = page.getByRole("button", { name: /By task type/ });
   if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
-  const fullMatrix = page.getByRole("button", { name: /Full matrix/ });
-  if ((await fullMatrix.getAttribute("aria-expanded")) !== "true") await fullMatrix.click();
   await page.waitForSelector(MATRIX_SELECTOR, { timeout: 30_000 });
 }
 
@@ -393,8 +391,7 @@ describe("agents screen at 1440px", () => {
       // [name, element, measure its content edge rather than its box edge]
       const blocks: Array<[string, Element | null | undefined, boolean]> = [
         ["fold head toggle", card.querySelector(":scope > :first-child button"), false],
-        ["first body block", region.querySelector('[aria-label="Off-target pairs per agent"]') ?? region.querySelector("p"), false],
-        ["full matrix toggle", Array.from(region.querySelectorAll("button")).find((b) => /Full matrix/.test(b.textContent ?? "")), false],
+        ["first body line", region.querySelector(".px-card-pad > * > :first-child"), false],
         ["matrix head cell", region.querySelector("thead th"), true],
         ["matrix row cell", region.querySelector("tbody tr > :first-child"), true],
       ];
@@ -415,7 +412,7 @@ const STICKY_TABLES = [
   { name: "activity ledger", cardId: "agents-summary", isShowAll: false },
   { name: "most-failing pairs after Show all", cardId: "agents-failing-pairs", isShowAll: true },
   { name: "no completion record after Show all", cardId: "agents-lifecycle", isShowAll: true },
-  { name: "task-type full matrix", cardId: "agents-success-rates", isShowAll: false, isFold: true },
+  { name: "task-type matrix", cardId: "agents-success-rates", isShowAll: false, isFold: true },
 ];
 
 describe("agents screen at 1024px, task-type matrix", () => {
@@ -427,7 +424,7 @@ describe("agents screen at 1024px, task-type matrix", () => {
 
   after(() => closeRenderContext(ctx));
 
-  test("the full matrix stacks its rows instead of clipping a column past the fold", async () => {
+  test("the matrix stacks its rows instead of clipping a column past the fold", async () => {
     await openTaskTypeFold(ctx.page);
     const result = await ctx.page.locator(MATRIX_SELECTOR).evaluate((el) => ({
       mode: el.getAttribute("data-table-mode"),

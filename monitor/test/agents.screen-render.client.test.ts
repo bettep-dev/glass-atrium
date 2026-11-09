@@ -231,7 +231,6 @@ test("the failing-pairs denominator counts judged agent x task_type pairs, not t
   const mod = await loadAgentsScreen();
   const buildTopNFailing = mod.buildTopNFailing as (
     rows: unknown[],
-    threshold: number,
     limit: number,
   ) => { failingPairs: unknown[]; measuredPairs: number };
 
@@ -243,16 +242,16 @@ test("the failing-pairs denominator counts judged agent x task_type pairs, not t
   const split = [row("a", "feature", "2026-09-01", 2, 4), row("a", "feature", "2026-09-02", 2, 4), row("a", "feature", "2026-09-03", 2, 4)];
   const single = [row("a", "feature", "2026-09-01", 6, 12)];
 
-  const splitOut = buildTopNFailing(split, 0.95, 5);
-  const singleOut = buildTopNFailing(single, 0.95, 5);
+  const splitOut = buildTopNFailing(split, 5);
+  const singleOut = buildTopNFailing(single, 5);
   assert.equal(splitOut.measuredPairs, singleOut.measuredPairs);
   assert.equal(splitOut.measuredPairs, 1);
   assert.equal(splitOut.failingPairs.length, 1);
 
   // A second pair adds exactly one to the denominator, whatever its row count.
   const two = [...split, row("b", "review", "2026-09-01", 30, 0)];
-  assert.equal(buildTopNFailing(two, 0.95, 5).measuredPairs, 2);
-  assert.equal(buildTopNFailing([], 0.95, 5).measuredPairs, 0);
+  assert.equal(buildTopNFailing(two, 5).measuredPairs, 2);
+  assert.equal(buildTopNFailing([], 5).measuredPairs, 0);
 });
 
 // Circuit-breaker state split — loading, error, unavailable and a loaded zero are
@@ -1187,25 +1186,18 @@ describe("a truncated matrix reports the row limit as a warn glyph and a word wi
   }
 });
 
-describe("the matrix legend and its counting method sit behind the fold's info button, never on the page", () => {
-  for (const row of [{ name: "with the Full matrix closed", isOpen: false }, { name: "with the Full matrix open", isOpen: true }]) {
-    test(row.name, async () => {
-      // the Full matrix toggle is the only boolean state in this tree → the stub seats it open or closed
-      const react = { ...createReactStub(), useState: (initial: unknown) => [initial === false ? row.isOpen : initial, () => undefined] };
-      const mod = await loadScreenModule(AGENTS_SRC, { UI: uiStub(), Recharts: uiStub(), React: react });
-      const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
-      const state = { status: "ready", data: { rows: [getMatrixRow("a", 19, 1)] }, error: null };
-      const tree = renderScreen(React.createElement(mod.SuccessRateMatrixBody as Component, { state, days: 30, onRetry: () => undefined }));
-      const swatchCount = (root: RenderedNode | string | null) => findNodes(root, (n) => n.type === "LegendSwatch").length;
+test("the open fold goes straight to the matrix, its legend and counting method behind the info button only", async () => {
+  const state = { status: "ready", data: { rows: [getMatrixRow("a", 19, 1)] }, error: null };
+  const tree = await renderComponent("SuccessRateMatrixBody", { state, days: 30, onRetry: () => undefined });
+  const swatchCount = (root: RenderedNode | string | null) => findNodes(root, (n) => n.type === "LegendSwatch").length;
 
-      const [info] = findAtoms(tree, "CardInfo");
-      assert.ok(info, "the fold carries an info button");
-      assert.equal(findNodes(tree, (n) => n.type === "SuccessRateMatrixRow").length, row.isOpen ? 1 : 0, "the table mounts only while open");
-      assert.equal(swatchCount(info), 2, "the legend rides the info button");
-      assert.equal(swatchCount(tree), 2, "no second legend anywhere on the fold");
-      assert.equal(collectText(tree).match(/n = passed \+ failed/g)?.length, 1, "the counting method appears once, behind the info button");
-    });
-  }
+  const [info] = findAtoms(tree, "CardInfo");
+  assert.ok(info, "the fold carries an info button");
+  assert.equal(findAtoms(tree, "DisclosureButton").length, 0, "no second disclosure inside the fold");
+  assert.equal(findNodes(tree, (n) => n.type === "SuccessRateMatrixRow").length, 1, "the matrix mounts with the fold body");
+  assert.equal(swatchCount(info), 2, "the legend rides the info button");
+  assert.equal(swatchCount(tree), 2, "no second legend anywhere on the fold");
+  assert.equal(collectText(tree).match(/n = passed \+ failed/g)?.length, 1, "the counting method appears once, behind the info button");
 });
 
 test("the matrix region draws no card inside its fold and nothing in it scrolls vertically", async () => {
@@ -1217,58 +1209,26 @@ test("the matrix region draws no card inside its fold and nothing in it scrolls 
   assert.deepEqual(verticalScrollers.map(classOf), [], "nothing inside the matrix scrolls or clips vertically");
 });
 
-const OFF_TARGET_ROWS = [
-  {
-    name: "an agent lists only its pairs at the crit step",
-    rows: [getMatrixRow("a", 19, 1), getMatrixRow("a", 40, 0, "plan"), getMatrixRow("b", 40, 0)],
-    expected: [{ agent: "a", taskTypes: ["feature"] }],
-  },
-  {
-    name: "a failing small sample under the low-N floor is not off-target",
-    rows: [getMatrixRow("a", 2, 1)],
-    expected: [],
-  },
-  {
-    name: "an agent's pairs keep the matrix column order",
-    rows: [getMatrixRow("a", 19, 1, "review"), getMatrixRow("a", 19, 1, "bug-fix")],
-    expected: [{ agent: "a", taskTypes: ["bug-fix", "review"] }],
-  },
+const OFF_TARGET_BOUNDARY_ROWS = [
+  { name: "a pair at exactly the crit step (95.0% success)", success: 19, failure: 1, isOffTarget: true },
+  { name: "a pair well under the crit step", success: 15, failure: 5, isOffTarget: true },
+  { name: "a pair just inside the target", success: 39, failure: 1, isOffTarget: false },
+  { name: "a clear pair", success: 40, failure: 0, isOffTarget: false },
 ];
 
-describe("the off-target list holds each agent's pairs at the crit step and nothing under it", () => {
-  for (const row of OFF_TARGET_ROWS) {
+describe("a pair is a Most-failing row exactly when its matrix cell takes the crit glyph", () => {
+  for (const row of OFF_TARGET_BOUNDARY_ROWS) {
     test(row.name, async () => {
       const mod = await loadAgentsScreen();
-      const matrix = (mod.buildSuccessRateMatrix as (rows: unknown[]) => unknown)(row.rows);
-      const offTarget = (mod.getOffTargetRowsAg as (m: unknown) => Array<{ agent: string; pairs: Array<{ taskType: string }> }>)(matrix);
+      const rows = [getMatrixRow("a", row.success, row.failure)];
+      const matrix = (mod.buildSuccessRateMatrix as (r: unknown[]) => { cells: Record<string, unknown> })(rows);
+      const isCrit = (mod.getCellFailShareTone as (c: unknown) => string | null)(matrix.cells["a|feature"]) === "crit";
+      const { failingTotal } = (mod.buildTopNFailing as (r: unknown[], l: number) => { failingTotal: number })(rows, Number.POSITIVE_INFINITY);
 
-      // the vm realm's arrays carry its own prototype → compare by value, not by realm
-      const actual = JSON.parse(JSON.stringify(offTarget.map((r) => ({ agent: r.agent, taskTypes: r.pairs.map((p) => p.taskType) }))));
-      assert.deepEqual(actual, row.expected);
+      assert.equal(isCrit, row.isOffTarget, "matrix crit glyph");
+      assert.equal(failingTotal === 1, row.isOffTarget, "Most-failing membership");
     });
   }
-});
-
-test("the task-type body lists the off-target pairs and keeps the full matrix behind a closed disclosure", async () => {
-  const state = { status: "ready", data: { rows: [getMatrixRow("a", 19, 1), getMatrixRow("b", 40, 0)] }, error: null };
-  const tree = await renderComponent("SuccessRateMatrixBody", { state, days: 30, onRetry: () => undefined });
-
-  const [list] = findNodes(tree, (n) => n.props["aria-label"] === "Off-target pairs per agent");
-  assert.equal(findNodes(list, (n) => n.props["aria-label"] === "a off-target task types").length, 1, "the crit agent gets a row");
-  assert.equal(findNodes(list, (n) => n.props["aria-label"] === "b off-target task types").length, 0, "a clear agent gets none");
-  const [toggle] = findAtoms(tree, "DisclosureButton");
-  assert.equal(toggle.props.isOpen, false, "the full matrix starts collapsed");
-  const [panel] = findNodes(tree, (n) => n.props.id === toggle.props.controls);
-  assert.equal(panel?.props.hidden, true, "the toggle controls the hidden matrix panel");
-  assert.equal(findNodes(tree, (n) => n.type === "table").length, 0, "no matrix table mounts while collapsed");
-});
-
-test("a fleet with no off-target pair says so instead of an empty list", async () => {
-  const state = { status: "ready", data: { rows: [getMatrixRow("b", 40, 0)] }, error: null };
-  const tree = await renderComponent("SuccessRateMatrixBody", { state, days: 30, onRetry: () => undefined });
-
-  assert.match(collectText(tree), /No agent × task type pair at failed or blocked ≥ 5%/);
-  assert.equal(findNodes(tree, (n) => n.props["aria-label"] === "Off-target pairs per agent").length, 0);
 });
 
 test("the ledger carries Runs and No record as columns instead of a per-row expander", async () => {
@@ -1704,10 +1664,10 @@ test("the success cell shows the rate alone, its fraction kept in the tooltip", 
 
 test("the failing-pairs limit keeps a solid signal over a worse small sample while the total still counts both", async () => {
   const mod = await loadAgentsScreen();
-  const buildTopNFailing = mod.buildTopNFailing as (rows: unknown[], t: number, l: number) => { failingPairs: Array<{ task_type: string }>; failingTotal: number; measuredPairs: number };
+  const buildTopNFailing = mod.buildTopNFailing as (rows: unknown[], l: number) => { failingPairs: Array<{ task_type: string }>; failingTotal: number; measuredPairs: number };
   const day = (task_type: string, success: number, failure: number) => ({ agent: "glass-atrium-dev-node", task_type, event_date: "2026-09-01", success_count: success, failure_count: failure, total_count: success + failure });
   const rows = [day("tiny", 0, 3), day("solid", 5, 5), day("healthy", 20, 0)];
-  const out = buildTopNFailing(rows, 0.95, 1);
+  const out = buildTopNFailing(rows, 1);
   assert.deepEqual(Array.from(out.failingPairs, (p) => p.task_type), ["solid"], "the limit keeps the solid signal over a worse small sample");
   assert.equal(out.failingTotal, 2);
 });
@@ -1716,7 +1676,7 @@ test("the failing-pairs header meta counts failing over judged pairs within the 
   const mod = await loadAgentsScreen();
   const getSub = mod.getFailingPairsSub as (...a: unknown[]) => string;
   const sub = getSub("ready", 120, 1500, 90);
-  assert.equal(sub, "120 of 1500 below 95% · 90d");
+  assert.equal(sub, "120 of 1500 ≤ 95% · 90d");
   assert.ok(sub.length <= 32, `${sub.length} chars`);
 });
 
@@ -2264,7 +2224,6 @@ test("an unidentified agent reads its label dim in upright type, the row at full
   const rows = [
     { name: "ledger row", atom: "AgentSummaryRow", props: { agent: { agent_id: "unknown", agent_name: "unknown", status: "active", runs: 12 }, days: 30, isSelected: false, onSelect: () => {}, trend: null, failure: null, overage: null } },
     { name: "task-type matrix row", atom: "SuccessRateMatrixRow", props: { agent: "unknown", cells: {} } },
-    { name: "off-target row", atom: "SuccessRateOffTargetRow", props: { agent: "unknown", pairs: [] } },
   ];
   for (const row of rows) {
     const tree = await renderComponent(row.atom, row.props);
