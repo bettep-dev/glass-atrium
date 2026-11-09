@@ -84,6 +84,11 @@ const CORPUS_GROWTH = getMarkup(
   },
   instrumentationScreen,
 );
+const FLAGGED = getMarkup(
+  "FlaggedResultsCardI",
+  { state: { status: "ready", data: { review_flag_last_7d: 3 } }, reviewReasons: null },
+  instrumentationScreen,
+);
 const LEARNING_MEMORY = getMarkup("BucketRowI", {
   state: { status: "ready", busy: false, data: {}, error: null }, buckets: { ctm: 12, epm: 3 }, failures: [], onRetry: noop,
 });
@@ -99,6 +104,7 @@ const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</
   <div id="held" style="width: 420px; padding: 24px;">${HELD_CAUSE}</div>
   <div id="corpus" style="width: 560px; padding: 24px;">${CORPUS_GROWTH}</div>
   <div id="learning-memory" style="width: 560px; padding: 24px;">${LEARNING_MEMORY}</div>
+  <div id="flagged" style="width: 560px; padding: 24px;">${FLAGGED}</div>
 </body></html>`;
 
 const TOGGLE_OPTIONS = ["Operator", "Instrumentation"] as const;
@@ -203,6 +209,18 @@ describe("the corpus-growth headline sets its figure and unit on one baseline, t
     const delta = await readStatPart(".stat-context");
     assert.equal(delta.text, CORPUS_TEXT.delta);
     assert.ok(delta.top >= value.baseline, `delta top ${delta.top} above the figure baseline ${value.baseline}`);
+  });
+});
+
+describe("the flagged-results head leads to Task results on the Link atom", () => {
+  test("its one way out is an inline link to #outcomes named by its text, never a button", async () => {
+    const head = await page.locator("#flagged .card-head").evaluate((el) => ({
+      links: [...el.querySelectorAll("a.link")].map((a) => [a.getAttribute("href"), a.textContent]),
+      buttons: el.querySelectorAll(".btn").length,
+    }));
+
+    assert.deepEqual(head, { links: [["#outcomes", "Task results→"]], buttons: 0 });
+    assert.ok((await readBox("#flagged .card-head a.link")).height < 32, "the link keeps its inline height");
   });
 });
 

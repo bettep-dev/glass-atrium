@@ -1,5 +1,5 @@
 // Screen 02 — Cost / Token (live data via /api/dashboard/* + /api/cost/*).
-// Decision tier: alarm lane → KPI x4 → cost trend → model ledger → session list.
+// Decision tier: alarm lane → Spend stat card → cost trend → model ledger → session list.
 // Instrumentation tier: three closed disclosures — token volume, turn statistics, log integrity.
 // Single global period 토글이 모든 fetch 의 days 매개변수를 구동 (AbortController 1개/wave).
 // Hooks C-suffix aliased — window-scope 충돌 방지.
@@ -2041,7 +2041,7 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
 
   return (
     <Stack gap="block">
-      {/* 총 발생 + 마지막 발생 = stat row · 0건 → 차트 대신 빈 상태 (action-trigger 부재) */}
+      {/* total + last seen = stat row · none → empty state instead of a chart (no action trigger) */}
       <StatRow stats={[
         { label: 'Unreadable entries', value: formatIntC(totalErrors) },
         { label: 'Last seen', value: lastErrorDate && <span title={lastErrorDate}>{getDaysAgoText(lastErrorDate)}</span> },
@@ -2418,11 +2418,11 @@ function EmptyStateC({ message, hint }) {
 }
 
 // 순수 helper
-// 툴팁 = HTML DOM div → fs-meta 보조 콘텐츠 tier · padding = base.css 오버레이 면(.popover-panel / .menu)과 같은 card-pad
+// tooltip = HTML DOM div → fs-meta supporting-content tier · padding = card-pad, as on the base.css overlay surfaces (.popover-panel / .menu)
 const tooltip = {
   className: 'p-card-pad border border-line fs-meta tabular-nums',
   rowClassName: 'flex items-center gap-label-inline text-dim',
-  // 오버레이 면 칠만 인라인 — overlay-surface 는 Tailwind 색 키에 없음
+  // overlay-surface paint only, inline — overlay-surface is no Tailwind colour key
   style: {
     background: 'rgb(var(--overlay-surface))',
     borderRadius: 'var(--radius-tile)',

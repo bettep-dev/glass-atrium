@@ -43,8 +43,8 @@ function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTarge
 
 // 플래그된 결과 — 운영 밴드가 아니라 계기판에 산다. 이 수는 루프가 무엇을 내놓았는지가
 // 아니라 판정기가 무엇을 걸렀는지를 말하고, 걸린 행 자체는 Task results 가 소유한다.
-function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
-	const { Card, Icon, LoadingPlaceholder, Stack, StatRow } = window.UI;
+function FlaggedResultsCardI({ state, reviewReasons }) {
+	const { Card, Link, LoadingPlaceholder, Stack, StatRow } = window.UI;
 	const title = "Flagged results (7 days)";
 
 	if (state.status === "error") return null;
@@ -60,17 +60,7 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 		<Card
 			title={title}
 			sub="Quarantined rows excluded"
-			right={
-					<button
-						className="btn ghost sm"
-						onClick={() => {
-							if (typeof onNav === "function") onNav("outcomes");
-						}}
-						aria-label="Open the flagged rows on the Task results screen"
-					>
-						Task results <Icon name="arrow-right" size={14} />
-					</button>
-			}
+			right={<Link href="#outcomes">Task results</Link>}
 		>
 			<Stack gap="block">
 				<StatRow stats={[{ key: "flagged", label: "Flagged rows", value: formatIntI(Number(state.data.review_flag_last_7d ?? 0)) }]} />
@@ -136,14 +126,13 @@ function ImprovementInstrumentationViewI({
 	tierBreakdown,
 	confidenceDist,
 	reviewReasons,
-	onNav,
 	onRetry,
 	failures,
 }) {
 	const { SplitRow, SplitColumn, getRegionView } = window.UI;
 
 	return (
-		<div className="space-sections">
+		<div className="flex flex-col gap-section">
 			<div id={PAYLOAD_SLOT_ID_I.flaggedResults}>
 				{getRegionView(statsState) === "error" ? (
 					<PayloadErrorCardI
@@ -158,7 +147,6 @@ function ImprovementInstrumentationViewI({
 					<FlaggedResultsCardI
 						state={statsState}
 						reviewReasons={reviewReasons}
-						onNav={onNav}
 					/>
 				)}
 			</div>
@@ -192,7 +180,7 @@ function ImprovementInstrumentationViewI({
 					)}
 				</div>
 			</SplitRow>
-			<div id={PAYLOAD_SLOT_ID_I.proposalMeasurements} className="space-sections">
+			<div id={PAYLOAD_SLOT_ID_I.proposalMeasurements} className="flex flex-col gap-section">
 				{getRegionView(listState) === "error" ? (
 					<PayloadErrorCardI
 						focusTargetId={PAYLOAD_SLOT_ID_I.proposalMeasurements}
@@ -300,14 +288,9 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 
 // ----- ConfidenceDist card -------------------
 //
-// confidence_observed × promotion_tier 분포. 사용자 선택 window (proposal-side).
-// headline stat + 척도 bar:
-//   - Overall confidence_observed (전체 가중 평균 · NULL → "미산정")
-// + per-lane 분포 표 (행=lane / 열=3: lane · proposal_count · confidence_avg).
-//
-// 데이터 부재 분기:
-//   - buckets 비어있음 → "데이터 부재" 회색 indicator (daemon-wiring 미적용 OR window 0건)
-//   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
+// confidence_observed × promotion_tier distribution, 30-day window (proposal-side)
+// headline stat + scale bar: overall confidence_observed (weighted mean of the measured lanes) + per-lane table (lane · proposal_count · confidence_avg)
+// no buckets → empty state · error → the view renders one list-payload error banner instead of the card
 
 function ConfidenceDistCardI({ state, confidenceDist }) {
 	const { Card, BulletBar, EmptyState, LoadingPlaceholder, StatRow } = window.UI;
@@ -694,9 +677,8 @@ function StyleRefAgentTableI({ rows }) {
 	);
 }
 
-// corroborated/uncorroborated/unverifiable 3-count + greenfield 도표 (P13).
-// 비율 하나로 접지 않는다 — 판정 가능했던 row 와 아예 보지 못한 row 가 한 숫자에 섞인다.
-// 비율은 헤드라인 stat 이 한 번만 보인다.
+// corroborated / uncorroborated / unverifiable counts + greenfield
+// never folded into one rate → judged rows and never-seen rows would mix in one number; the rate shows once, on the headline stat
 function StyleRefSplitI({ corroborated, uncorroborated, unverifiable, greenfield }) {
 	const { Cluster } = window.UI;
 	const cells = [
