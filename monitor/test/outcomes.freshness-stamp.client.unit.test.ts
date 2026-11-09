@@ -77,9 +77,6 @@ function render(name: string, props: Record<string, unknown>): RenderedNode {
   return renderScreen(create(screen[name] as Component, props)) as RenderedNode;
 }
 
-const OK_OVERALL = { total: 200, reconstructed_total: 0, by_result: [{ result: "done", count: 200 }] };
-const settled: RegionState = { ...first, status: "ready", data: { overall: OK_OVERALL }, busy: false };
-
 test("a cold-error Retry in flight keeps the status band's failure card instead of a loader", () => {
   const retrying: RegionState = { ...first, status: "loading", busy: true, error: "HTTP 500" };
   const tree = render("StatusBandO", { analyticsState: retrying, attentionState: first, windowDays: 7, onRetry: () => undefined });

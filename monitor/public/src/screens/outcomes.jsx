@@ -387,6 +387,8 @@ const SCREEN_OUTCOMES_CSS = `
 .crosstab-tbl :is(tbody, tfoot) > tr > :is(th, td) { height: var(--row-h); line-height: var(--lh-row); }
 /* .tbl--own-face leaves the column-header face to the table → dim, medium, as the ledger's */
 .crosstab-tbl thead th { color: rgb(var(--dim)); font-weight: 500; }
+/* the cell atom lifts a body row header to the control step → the cross table keeps every row on its own meta step */
+.tbl.crosstab-tbl :is(tbody, tfoot) > tr > .tbl-cell--row-header { font-size: inherit; }
 @keyframes skelPulseO { 0%,100%{opacity:.7} 50%{opacity:.35} }
 .skel-pulse-o { animation: skelPulseO 1.4s ease-in-out infinite; }
 .outcome-md { font-size: var(--fs-body); line-height: 1.65; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
@@ -1987,11 +1989,10 @@ function CrosstabBody({ state, onRetry, shared }) {
   return (
     <window.UI.Table caption="Records by writer confidence and self-check result" columns={CROSSTAB_COLUMNS_O}
       className="tbl--own-face crosstab-tbl fs-meta"
-      foot={<CrosstabTotalRow byCell={crosstab.byCell} total={crosstab.total}/>}>
-      {getCrosstabVisibleRowsO(crosstab.byCell).map((rowKey) => (
-        <CrosstabRow key={rowKey} rowKey={rowKey} byCell={crosstab.byCell} max={max}/>
-      ))}
-    </window.UI.Table>
+      bodies={[{ key: 'body', rows: (view) => getCrosstabVisibleRowsO(crosstab.byCell).map((rowKey) => (
+        <CrosstabRow key={rowKey} view={view} rowKey={rowKey} byCell={crosstab.byCell} max={max}/>
+      )) }]}
+      foot={(view) => <CrosstabTotalRow view={view} byCell={crosstab.byCell} total={crosstab.total}/>}/>
   );
 }
 
@@ -2013,31 +2014,35 @@ function CrosstabLegendO() {
   );
 }
 
-function CrosstabRow({ rowKey, byCell, max }) {
+function CrosstabRow({ view, rowKey, byCell, max }) {
+  const { TableRow, TableCell } = window.UI;
   let rowTotal = 0;
   for (const col of CROSSTAB_METRIC_COLS) {
     rowTotal += (byCell[`${rowKey}|${col.key}`]?.count) || 0;
   }
 
   return (
-    <tr>
-      <th scope="row" className="text-ink font-medium">{rowKey === 'null' ? 'None' : rowKey}</th>
+    <TableRow view={view}>
+      <TableCell view={view} kind="row-header" className="font-medium">{rowKey === 'null' ? 'None' : rowKey}</TableCell>
       {CROSSTAB_METRIC_COLS.map((col) => {
         const cell = byCell[`${rowKey}|${col.key}`] || { count: 0, isPolar: false };
-        return <CrosstabCell key={col.key} cell={cell} max={max} rowLabel={rowKey} colLabel={col.label}/>;
+        return <CrosstabCell key={col.key} view={view} cell={cell} max={max} rowLabel={rowKey} colLabel={col.label}/>;
       })}
-      <td className="num text-dim">{formatIntO(rowTotal)}</td>
-    </tr>
+      <TableCell view={view} textRole="meta" label="Total" isNumeric className="text-dim">{formatIntO(rowTotal)}</TableCell>
+    </TableRow>
   );
 }
 
-function CrosstabCell({ cell, max, rowLabel, colLabel }) {
+function CrosstabCell({ view, cell, max, rowLabel, colLabel }) {
+  const { TableCell } = window.UI;
   const count = cell.count || 0;
   const bar = getCrosstabBarO(cell, max);
 
   return (
-    <td
-      className="num tbl-bar-cell"
+    <TableCell
+      view={view}
+      isNumeric
+      className="tbl-bar-cell"
       title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
       aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
       <span className="inline-flex items-center gap-label-inline justify-end">
@@ -2048,7 +2053,7 @@ function CrosstabCell({ cell, max, rowLabel, colLabel }) {
         {/* anchored to the right edge → the bar ends under its right-aligned count */}
         {bar && <span className="block ml-auto" style={{ height: '100%', width: `${bar.widthPct}%`, background: `rgb(var(${bar.colorVar}))`, borderRadius: 1 }}/>}
       </span>
-    </td>
+    </TableCell>
   );
 }
 
@@ -2060,21 +2065,22 @@ function getCrosstabBarO(cell, max) {
   return { colorVar: cell.isPolar ? '--warn' : '--accent', widthPct: Math.max(4, (count / max) * 100) };
 }
 
-function CrosstabTotalRow({ byCell, total }) {
+function CrosstabTotalRow({ view, byCell, total }) {
+  const { TableRow, TableCell } = window.UI;
   return (
-    <tr>
-      <th scope="row" className="text-dim font-medium">Total</th>
+    <TableRow view={view}>
+      <TableCell view={view} kind="row-header" className="font-medium">Total</TableCell>
       {CROSSTAB_METRIC_COLS.map((col) => {
         let colTotal = 0;
         for (const rowKey of CROSSTAB_CONFIDENCE_ROWS) {
           colTotal += (byCell[`${rowKey}|${col.key}`]?.count) || 0;
         }
         return (
-          <td key={col.key} className="num text-dim">{formatIntO(colTotal)}</td>
+          <TableCell key={col.key} view={view} textRole="meta" label={col.label} isNumeric className="text-dim">{formatIntO(colTotal)}</TableCell>
         );
       })}
-      <td className="num text-ink font-semibold">{formatIntO(total)}</td>
-    </tr>
+      <TableCell view={view} textRole="meta" label="Total" isNumeric className="text-ink font-semibold">{formatIntO(total)}</TableCell>
+    </TableRow>
   );
 }
 
