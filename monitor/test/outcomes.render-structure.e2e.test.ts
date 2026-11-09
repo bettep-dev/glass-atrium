@@ -199,9 +199,21 @@ const DRAWER_ROW = {
   confidence: null,
   has_body_md: true,
 };
+const DRAWER_FILES = [
+  "monitor/public/src/screens/outcomes.jsx",
+  "monitor/test/outcomes.render-structure.e2e.test.ts",
+  "monitor/test/outcomes.attention-composition.client.unit.test.ts",
+  "hooks/lib/a-deliberately-long-directory-name-so-the-path-cannot-fit-the-drawer-value-column/track-outcome-body.sh",
+];
+const DRAWER_STYLE_REF = "monitor/public/src/screens/runs.jsx";
+// body_md as hooks/track-outcome.sh → BODY_MD writes it: set fields as bullets, unset Lesson / Concerns / Directive Hint as placeholder sections
 const DRAWER_BODY_MD = [
-  "# Outcome Record", "", `- **Agent**: ${BAND_AGENT}`, "- **Directive Hint**: (none)", "- **Tool use**: actual=18 declared=20", "",
-  "## Summary", "", "Moved the drawer onto one column.", "", "## Lesson", "", "An absent fact is left out, never printed as none.",
+  "# Outcome Record", "", `- **Agent**: ${BAND_AGENT}`, "- **Task type**: feature", "- **Result**: done_with_concerns",
+  `- **Style Ref**: ${DRAWER_STYLE_REF}`, `- **Files**: ${DRAWER_FILES.join(", ")}`, "- **Tool use**: actual=18 declared=20", "",
+  "## Summary", "", "Moved the drawer onto one column.", "",
+  "## Lesson", "", "(not recorded)", "",
+  "## Concerns", "", "(none)", "",
+  "## Directive Hint", "", "(none)", "",
 ].join("\n");
 
 describe("the outcomes drawer at 1024px", () => {
@@ -230,12 +242,12 @@ describe("the outcomes drawer at 1024px", () => {
     await app?.close();
   });
 
-  test("facts sit in one column, an absent fact is left out, mono marks only machine strings, nothing scrolls sideways", async () => {
+  test("facts sit in one column, an absent fact or section is left out, paths read as machine strings, nothing scrolls sideways", async () => {
     const page = await browser.newPage({ viewport: { width: 1024, height: 900 } });
     try {
       await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
       await page.locator("tr.outcome-row").first().click();
-      await page.waitForFunction(() => /An absent fact is left out/.test(document.querySelector('[role="dialog"]')?.textContent ?? ""), null, { timeout: 30_000 });
+      await page.waitForFunction(() => /Moved the drawer onto one column/.test(document.querySelector('[role="dialog"]')?.textContent ?? ""), null, { timeout: 30_000 });
       await page.evaluate(() => document.fonts.ready);
       const drawer = await page.evaluate(() => {
         const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
@@ -247,6 +259,8 @@ describe("the outcomes drawer at 1024px", () => {
         return {
           title: dialog.querySelector(".detail-title")?.textContent ?? "",
           text: dialog.textContent ?? "",
+          headings: [...dialog.querySelectorAll<HTMLElement>("h1, h2, h3, h4")].map((h) => h.textContent ?? ""),
+          machine: [...dialog.querySelectorAll<HTMLElement>(".machine")].map((el) => el.textContent ?? ""),
           facts,
           sideways: all.filter((el) => el.scrollWidth - el.clientWidth > 1 && /auto|scroll/.test(getComputedStyle(el).overflowX)).length,
           italic: all.filter((el) => getComputedStyle(el).fontStyle === "italic").length,
@@ -264,7 +278,13 @@ describe("the outcomes drawer at 1024px", () => {
       const labels = drawer.facts.map((fact) => fact.label);
       assert.ok(labels.includes("Tool use") && labels.includes("Correlation ID"), `record and reference facts: ${labels.join(", ")}`);
       assert.ok(!labels.includes("Confidence") && !labels.includes("Directive Hint"), `absent facts left out: ${labels.join(", ")}`);
-      assert.doesNotMatch(drawer.text, /\(none\)/);
+      assert.doesNotMatch(drawer.text, /\(none\)|\(not recorded\)/, "no recorder placeholder printed");
+      for (const heading of ["Lesson", "Concerns", "Directive Hint"]) {
+        assert.ok(!drawer.headings.includes(heading), `an unset ${heading} section is left out: ${drawer.headings.join(", ")}`);
+      }
+      for (const path of [...DRAWER_FILES, DRAWER_STYLE_REF]) {
+        assert.ok(drawer.machine.includes(path), `${path} is its own machine string: ${drawer.machine.join(" | ")}`);
+      }
       assert.strictEqual(drawer.sideways, 0, "no element in the drawer scrolls sideways");
       assert.strictEqual(drawer.italic, 0, "no italics");
       assert.strictEqual(drawer.upper, 0, "labels in sentence case, never uppercased");

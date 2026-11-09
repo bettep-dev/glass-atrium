@@ -383,7 +383,7 @@ function crosstabConfidenceKeyO(confidence) {
 const SCREEN_OUTCOMES_CSS = `
 @keyframes skelPulseO { 0%,100%{opacity:.7} 50%{opacity:.35} }
 .skel-pulse-o { animation: skelPulseO 1.4s ease-in-out infinite; }
-.outcome-md { font-size: var(--fs-body); line-height: 1.65; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+.outcome-md { font-size: var(--fs-body); line-height: 1.6; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
 /* md 헤딩 3레벨 → title 토큰 공통 (동일 content-level) · 시각 위계는 font-weight 600 + margin 으로 보존 */
 .outcome-md h1, .outcome-md h2, .outcome-md h3, .outcome-md h4 { font-weight: 600; margin: var(--space-3) 0 var(--space-1_5); line-height: 1.3; }
 .outcome-md h1, .outcome-md h2, .outcome-md h3 { font-size: var(--fs-title); }
@@ -2853,7 +2853,7 @@ function QaScoreFactO({ qaScore }) {
 
 // 서사 영역 (S2 narrative) — lesson(작성자 distilled 패턴) + body_md(전문). 식별/수치 다음, references 앞.
 function DetailNarrative({ row, detailState, markdown }) {
-  const { lesson, body } = splitLessonO(markdown);
+  const { lesson, body } = splitLessonO(dropAbsentSectionsO(markdown));
   const lessonText = lesson || row?.lesson;
 
   return (
@@ -2861,7 +2861,7 @@ function DetailNarrative({ row, detailState, markdown }) {
       {lessonText && (
         <window.UI.Stack gap="label">
           <h3 className="fs-title font-semibold m-0">Lesson</h3>
-          <p className="fs-body text-ink m-0" style={{ lineHeight: 1.6 }}>{lessonText}</p>
+          <p className="outcome-md m-0">{lessonText}</p>
         </window.UI.Stack>
       )}
       <DetailBody detailState={detailState} markdown={body}/>
@@ -2879,20 +2879,45 @@ function splitLessonO(markdown) {
 // Fields the drawer already shows — title (agent/type/result) and references (cid).
 const RECORD_FIELDS_SHOWN_ELSEWHERE = new Set(['Agent', 'Task type', 'Result', 'Correlation ID']);
 
-// body_md '# Outcome Record' bullet list → drawer facts, an absent value ('(none)', '—') left out.
+// body_md '## Heading' section holding only a recorder placeholder → left out (spec §6: an absent fact is omitted)
+function dropAbsentSectionsO(markdown) {
+  return markdown.replace(/^##[ \t]+[^\n]*\n([\s\S]*?)(?=^#{1,2}\s|(?![\s\S]))/gm, (section, body) => (isAbsentRecordValueO(body) ? '' : section)).trim();
+}
+
+// body_md '# Outcome Record' bullet list → drawer facts; the recorder writes a bullet only when its value is set.
 function splitRecordFieldsO(markdown) {
   const match = /^#\s+Outcome Record[ \t]*\n((?:[ \t]*\n|- \*\*[^*\n]+\*\*:[^\n]*\n?)*)/m.exec(markdown);
   if (!match) return { fields: [], body: markdown };
   const fields = [];
   for (const [, label, value] of match[1].matchAll(/^- \*\*([^*\n]+)\*\*:[ \t]*(.*?)[ \t]*$/gm)) {
-    if (!RECORD_FIELDS_SHOWN_ELSEWHERE.has(label) && !isAbsentRecordValueO(value)) fields.push({ label, value: label === 'Tool use' ? formatToolUseO(value) : value });
+    if (!RECORD_FIELDS_SHOWN_ELSEWHERE.has(label) && !isAbsentRecordValueO(value)) fields.push(getRecordFactO(label, value));
   }
   return { fields, body: (markdown.slice(0, match.index) + markdown.slice(match.index + match[0].length)).trim() };
 }
 
-// the recorder writes '(none)' for an unset field; the rest of the placeholder set is the shared one
+// hooks/track-outcome.sh → BODY_MD: an unset Lesson / Concerns / Directive Hint section body; the rest of the placeholder set is the shared one
+const RECORDER_PLACEHOLDERS_O = new Set(['(none)', '(not recorded)']);
+
 function isAbsentRecordValueO(value) {
-  return value.trim().toLowerCase() === '(none)' || !window.UI.hasFieldValue(value);
+  return RECORDER_PLACEHOLDERS_O.has(value.trim().toLowerCase()) || !window.UI.hasFieldValue(value);
+}
+
+// path-valued record fields → machine strings (spec §2 family rule); Files one path per line (spec §6)
+function getRecordFactO(label, value) {
+  if (label === 'Tool use') return { label, value: formatToolUseO(value) };
+  if (label === 'Style Ref') return { label, value, isMachine: true };
+  if (label === 'Files') return { label, value: <FileListO files={value}/> };
+  return { label, value };
+}
+
+// recorder joins Files with ', '
+function FileListO({ files }) {
+  const paths = files.split(',').map((path) => path.trim()).filter(Boolean);
+  return (
+    <ul className="list-none m-0 p-0">
+      {paths.map((path, i) => <li key={`${path}#${i}`}><window.UI.MachineString>{path}</window.UI.MachineString></li>)}
+    </ul>
+  );
 }
 
 // Recorder's 'actual=N declared=M' → words; any other shape passes through.

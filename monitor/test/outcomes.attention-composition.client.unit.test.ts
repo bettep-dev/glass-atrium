@@ -935,6 +935,10 @@ interface LedgerViewHelpers {
   getLedgerDisplayRowsO: (sections: { rows: LedgerRow[] }[]) => LedgerRow[];
   getDetailPositionLabelO: (rows: LedgerRow[], row: LedgerRow) => string;
   splitRecordFieldsO: (markdown: string) => { fields: { label: string; value: string }[]; body: string };
+  dropAbsentSectionsO: (markdown: string) => string;
+  splitLessonO: (markdown: string) => { lesson: string; body: string };
+  getRecordFactO: (label: string, value: string) => { label: string; value: unknown; isMachine?: boolean };
+  FileListO: (props: { files: string }) => RenderNode;
   getDetailFactsO: (row: Record<string, unknown>, detail: Record<string, unknown> | null, recordFields: { label: string; value: string }[]) => { label: string }[];
   AttributionLegend: () => RenderNode;
 }
@@ -991,18 +995,49 @@ test("ResultTable: no Check column, and a capped Needs-you offers one control to
   assert.strictEqual(toggled, 1);
 });
 
+// body_md as hooks/track-outcome.sh → BODY_MD writes it: a bullet only for a set field, a placeholder body for an unset section
+const getRecorderBodyMd = (bullets: string[], sections: { lesson?: string; concerns?: string; directiveHint?: string } = {}): string => [
+  "# Outcome Record", "", ...bullets, "",
+  "## Summary", "", "Moved the drawer onto one column.", "",
+  "## Lesson", "", sections.lesson ?? "(not recorded)", "",
+  "## Concerns", "", sections.concerns ?? "(none)", "",
+  "## Directive Hint", "", sections.directiveHint ?? "(none)", "",
+].join("\n");
+
 test("splitRecordFieldsO: record fields become KV pairs, minus the ones the drawer already shows elsewhere", () => {
-  const md = [
-    "# Outcome Record", "", "- **Agent**: glass-atrium-qa-code-reviewer", "- **Task type**: review",
-    "- **Result**: done", "- **Correlation ID**: 2026-09-25T1150_x_9e1a", "- **Directive Hint**: (none)",
-    "- **Tool use**: actual=18 declared=20", "",
-    "## Summary", "", "Passes.",
-  ].join("\n");
+  const md = getRecorderBodyMd([
+    "- **Agent**: glass-atrium-qa-code-reviewer", "- **Task type**: review", "- **Result**: done",
+    "- **Correlation ID**: 2026-09-25T1150_x_9e1a", "- **Tool use**: actual=18 declared=20",
+  ]);
   const { fields, body } = sameRealm(view.splitRecordFieldsO(md));
   assert.deepStrictEqual(fields, [{ label: "Tool use", value: "18 tool calls · 20 estimated" }], "the cid stays in references, an unset field is left out");
   assert.doesNotMatch(body, /Outcome Record|\*\*Agent\*\*/, "the bullet list leaves the narrative");
   assert.match(body, /## Summary/);
   assert.deepStrictEqual(sameRealm(view.splitRecordFieldsO("## Summary\n\nx")), { fields: [], body: "## Summary\n\nx" });
+});
+
+test("dropAbsentSectionsO: a recorder section shows exactly when the record holds its value, the Lesson included", () => {
+  const held = { lesson: "Read the recorder before pinning its shape.", concerns: "F7 focus ring stays open", directiveHint: "User wanted the section dropped" };
+  for (const isHeld of [true, false]) {
+    const { lesson, body } = view.splitLessonO(view.dropAbsentSectionsO(getRecorderBodyMd(["- **Agent**: glass-atrium-dev-front"], isHeld ? held : {})));
+    const name = isHeld ? "held" : "unset";
+    assert.strictEqual(lesson, isHeld ? held.lesson : "", `${name}: the lifted Lesson`);
+    assert.strictEqual(/^## Concerns$/m.test(body), isHeld, `${name}: the Concerns section`);
+    assert.strictEqual(/^## Directive Hint$/m.test(body), isHeld, `${name}: the Directive Hint section`);
+    assert.doesNotMatch(body, /\(none\)|\(not recorded\)/, `${name}: no placeholder text`);
+    assert.match(body, /^## Summary\n\nMoved the drawer onto one column\.$/m, `${name}: a held section stays`);
+  }
+});
+
+test("getRecordFactO: path-valued record fields read as machine strings, Files one path per line", () => {
+  const paths = ["monitor/public/src/screens/outcomes.jsx", "monitor/test/outcomes.render-structure.e2e.test.ts"];
+  const files = view.getRecordFactO("Files", paths.join(", "));
+  const list = flattenNodes(view.FileListO((files.value as RenderNode).props as { files: string }));
+  const machine = list.filter((n) => n.type === (helpers as unknown as { window: { UI: Record<string, unknown> } }).window.UI.MachineString);
+  assert.deepStrictEqual(sameRealm(machine.map((n) => n.children.join(""))), paths, "every path its own machine string, in order");
+  assert.strictEqual(list.filter((n) => n.type === "li").length, paths.length, "one list row per path");
+  assert.strictEqual(view.getRecordFactO("Style Ref", "monitor/public/src/screens/runs.jsx").isMachine, true);
+  assert.notStrictEqual(view.getRecordFactO("Effort", "high").isMachine, true, "a word value stays sans");
 });
 
 test("getDetailFactsO: an optional drawer fact shows exactly when the record holds its value", () => {
