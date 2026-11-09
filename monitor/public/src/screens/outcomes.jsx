@@ -2731,17 +2731,13 @@ function DetailModal({ detailRow, detailState, rows, onClose, onNav }) {
   const hasPrev = idx > 0;
   const hasNext = idx >= 0 && idx < rows.length - 1;
 
-  const titleParts = [
-    detailRow?.agent,
-    detailRow?.task_type,
-    detailRow?.result && window.UI.resolveResultMeta(detailRow.result, null).label,
-    formatTimestampO(detailRow?.record_ts),
-  ].filter(Boolean);
+  // identity only — result and time are facts in the body, so the title never restates the ledger row
+  const titleParts = [detailRow?.agent, detailRow?.task_type].filter(Boolean);
 
   // nav footer 와 병존하는 추가 footer — 페이지 내 위치 인디케이터 + 1차 Close 버튼.
   const extraFoot = (
     <>
-      <div className="fs-meta text-dim font-mono mr-auto">
+      <div className="fs-meta text-dim tabular-nums mr-auto">
         {getDetailPositionLabelO(rows, detailRow)}
       </div>
       <button className="btn sm primary" onClick={onClose} aria-label="Close">
@@ -2758,10 +2754,12 @@ function DetailModal({ detailRow, detailState, rows, onClose, onNav }) {
       title={titleParts.join(' · ')}
       nav={{ onPrev: () => onNav('prev'), onNext: () => onNav('next'), hasPrev, hasNext }}
       footer={extraFoot}>
-      {/* T-OUT-5 / S2 body order: identity(title) → numeric grid → narrative → references. */}
-      <DetailMetadata row={detailRow} detail={detailState?.status === 'ready' ? detailState.data : null} recordFields={fields}/>
-      <DetailNarrative row={detailRow} detailState={detailState} markdown={body}/>
-      <DetailReferences row={detailRow}/>
+      {/* body order: identity (title) → facts → narrative → references */}
+      <window.UI.Stack gap="block">
+        <DetailMetadata row={detailRow} detail={detailState?.status === 'ready' ? detailState.data : null} recordFields={fields}/>
+        <DetailNarrative row={detailRow} detailState={detailState} markdown={body}/>
+        <DetailReferences row={detailRow}/>
+      </window.UI.Stack>
     </DetailSurface>
   );
 }
@@ -2772,71 +2770,84 @@ function getGraderNoteO(verdict) {
   return '';
 }
 
-function reviewFlagLabel(flag) {
-  if (flag === true)  return 'Yes';
-  if (flag === false) return 'No';
-  return '—';
+function DetailMetadata({ row, detail, recordFields = [] }) {
+  // defensive guard — row undefined 에서 React batching edge case 회피.
+  if (!row) return null;
+  const { Stack, DetailField } = window.UI;
+  return (
+    <Stack gap="list">
+      {getDetailFactsO(row, detail, recordFields).map((fact) => (
+        <DetailField key={fact.label} label={fact.label} value={fact.value} mono={fact.isMachine === true}/>
+      ))}
+    </Stack>
+  );
 }
 
-function DetailMetadata({ row, detail, recordFields = [] }) {
-  // defensive guard — row undefined 에서 React batching edge case 회피 (내부 optional chaining 도 이중 안전망).
-  if (!row) return null;
-  const { Badge } = window.UI;
+/**
+ * Drawer facts in reading order, an absent fact left out (spec §6: a detail list, not a table cell).
+ * evaluative_signal / metric_type exist only on the /api/outcomes/:id detail response → absent until it loads.
+ */
+function getDetailFactsO(row, detail, recordFields) {
+  const facts = [
+    row.result && { label: 'Result', value: <ResultFactO result={row.result}/> },
+    row.record_ts && { label: 'Time', value: <span className="tabular-nums">{formatTimestampO(row.record_ts)}</span> },
+    row.confidence != null && { label: 'Confidence', value: getDetailValueLabelO('confidence', row.confidence) },
+    row.metric_pass != null && { label: 'Self-check', value: getDetailValueLabelO('metric_pass', row.metric_pass) },
+    { label: 'Automatic check', value: <GraderFactO verdict={row.grader_verdict}/> },
+    { label: 'Reworks', value: <span className="tabular-nums">{formatIntO(row.revision_count || 0)}</span> },
+    row.review_flag != null && { label: 'Flagged for review', value: <ReviewFlagFactO row={row}/> },
+    row.poisoned_window === true && { label: 'Quarantined window', value: 'Yes — excluded from analysis' },
+    detail?.evaluative_signal != null && { label: 'User signal', value: formatEvaluativeSignalO(detail.evaluative_signal) },
+    detail?.metric_type != null && detail.metric_type !== '' && { label: 'Check type', value: String(detail.metric_type) },
+    ...recordFields,
+    parseQaScoreO(row.qa_score) != null && { label: 'QA score', value: <QaScoreFactO qaScore={row.qa_score}/> },
+  ];
+  return facts.filter(Boolean);
+}
 
-  // concerns/files_modified 는 전 표본 빈 배열 → length>0 게이트 영구 미렌더 (dead UI 제거).
-  // 데이터 미채움 자체는 쓰기 파이프라인 결함 가능성 → 모니터 범위 밖, 시스템 트랙 에스컬레이션.
-
-  // evaluative_signal / metric_type 는 /api/outcomes/:id detail 응답에만 존재 (search row 미포함).
-  //   비-null 일 때만 노출 (대다수 null — concerns/files_modified 와 동일 length-gate 패턴).
-  const evalSignal = detail ? detail.evaluative_signal : null;
-  const metricType = detail ? detail.metric_type : null;
-
-  const grader = graderVerdictMetaO(row?.grader_verdict);
-  const graderNote = getGraderNoteO(row?.grader_verdict);
-
+function ResultFactO({ result }) {
+  const meta = window.UI.resolveResultMeta(result, null);
   return (
-    <div className="grid grid-cols-2 gap-3 mb-4 fs-meta font-mono">
-      <MetaField label="Confidence" value={getDetailValueLabelO('confidence', row?.confidence)}/>
-      <MetaField label="Self-check" value={getDetailValueLabelO('metric_pass', row?.metric_pass)}/>
-      <div>
-        <div className="fs-meta text-faint uppercase tracking-wider">Automatic check</div>
-        <div className="inline-flex items-center gap-1" style={{ color: `rgb(var(${grader.colorVar}))`, fontWeight: 500 }}>
-          <GlyphO name={grader.icon}/>
-          {grader.label}
-        </div>
-        {graderNote && <div className="text-dim">{graderNote}</div>}
-      </div>
-      <MetaField label="Reworks" value={formatIntO(row?.revision_count || 0)}/>
-      <div>
-        <div className="fs-meta text-faint uppercase tracking-wider">Flagged for review</div>
-        <div className="text-ink inline-flex items-center gap-1.5 flex-wrap">
-          {reviewFlagLabel(row?.review_flag)}
-          {/* 미상 사유는 여러 토큰이 같은 버킷 키로 접히므로 index 를 섞어 React key 충돌을 막는다. */}
-          {row?.review_flag === true && window.UI.reviewFlagReasons(row).map((r, i) => (
-            <Badge key={`${r.key}#${i}`} role="status" tone="warn" icon title={r.title}>{r.label}</Badge>
-          ))}
-        </div>
-      </div>
-      {row?.poisoned_window === true && (
-        <MetaField label="Quarantined window" value="Yes — excluded from analysis"/>
-      )}
-      {evalSignal != null && (
-        <MetaField label="User signal" value={formatEvaluativeSignalO(evalSignal)}/>
-      )}
-      {metricType != null && metricType !== '' && (
-        <MetaField label="Check type" value={String(metricType)}/>
-      )}
-      {recordFields.map((field) => <MetaField key={field.label} label={field.label} value={field.value}/>)}
-      {parseQaScoreO(row?.qa_score) != null && (
-        <div>
-          <div className="fs-meta text-faint uppercase tracking-wider">QA score</div>
-          <div className="text-ink inline-flex items-center gap-2">
-            <QaScoreDotsO qaScore={row.qa_score}/>
-            <span className="font-mono text-dim">{row.qa_score}</span>
-          </div>
-        </div>
-      )}
-    </div>
+    <span className="inline-flex items-center gap-label-inline">
+      <span style={{ color: `rgb(var(${resultColorVarO(result, null)}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
+      {meta.label}
+    </span>
+  );
+}
+
+function GraderFactO({ verdict }) {
+  const grader = graderVerdictMetaO(verdict);
+  const note = getGraderNoteO(verdict);
+  return (
+    <span className="inline-flex flex-col items-end">
+      <span className="inline-flex items-center gap-label-inline" style={{ color: `rgb(var(${grader.colorVar}))`, fontWeight: 500 }}>
+        <GlyphO name={grader.icon}/>
+        {grader.label}
+      </span>
+      {note && <span className="fs-meta text-dim">{note}</span>}
+    </span>
+  );
+}
+
+function ReviewFlagFactO({ row }) {
+  const { Badge, reviewFlagReasons } = window.UI;
+  return (
+    <span className="inline-flex items-center justify-end gap-label-inline flex-wrap">
+      {row.review_flag ? 'Yes' : 'No'}
+      {/* 미상 사유는 여러 토큰이 같은 버킷 키로 접히므로 index 를 섞어 React key 충돌을 막는다. */}
+      {row.review_flag === true && reviewFlagReasons(row).map((r, i) => (
+        <Badge key={`${r.key}#${i}`} role="status" tone="warn" icon title={r.title}>{r.label}</Badge>
+      ))}
+    </span>
+  );
+}
+
+function QaScoreFactO({ qaScore }) {
+  return (
+    <span className="inline-flex items-center gap-label-inline">
+      <QaScoreDotsO qaScore={qaScore}/>
+      <window.UI.MachineString className="text-dim">{qaScore}</window.UI.MachineString>
+    </span>
   );
 }
 
@@ -2846,15 +2857,15 @@ function DetailNarrative({ row, detailState, markdown }) {
   const lessonText = lesson || row?.lesson;
 
   return (
-    <div className="mb-4">
+    <window.UI.Stack gap="block">
       {lessonText && (
-        <div className="mb-3">
-          <div className="fs-meta text-faint uppercase tracking-wider mb-0.5">Lesson</div>
-          <div className="fs-body text-ink">{lessonText}</div>
-        </div>
+        <window.UI.Stack gap="label">
+          <h3 className="fs-title font-semibold m-0">Lesson</h3>
+          <p className="fs-body text-ink m-0" style={{ lineHeight: 1.6 }}>{lessonText}</p>
+        </window.UI.Stack>
       )}
       <DetailBody detailState={detailState} markdown={body}/>
-    </div>
+    </window.UI.Stack>
   );
 }
 
@@ -2868,15 +2879,20 @@ function splitLessonO(markdown) {
 // Fields the drawer already shows — title (agent/type/result) and references (cid).
 const RECORD_FIELDS_SHOWN_ELSEWHERE = new Set(['Agent', 'Task type', 'Result', 'Correlation ID']);
 
-// body_md '# Outcome Record' bullet list → KV pairs for the metadata grid, so the drawer holds one KV grid.
+// body_md '# Outcome Record' bullet list → drawer facts, an absent value ('(none)', '—') left out.
 function splitRecordFieldsO(markdown) {
   const match = /^#\s+Outcome Record[ \t]*\n((?:[ \t]*\n|- \*\*[^*\n]+\*\*:[^\n]*\n?)*)/m.exec(markdown);
   if (!match) return { fields: [], body: markdown };
   const fields = [];
   for (const [, label, value] of match[1].matchAll(/^- \*\*([^*\n]+)\*\*:[ \t]*(.*?)[ \t]*$/gm)) {
-    if (!RECORD_FIELDS_SHOWN_ELSEWHERE.has(label)) fields.push({ label, value: label === 'Tool use' ? formatToolUseO(value) : value });
+    if (!RECORD_FIELDS_SHOWN_ELSEWHERE.has(label) && !isAbsentRecordValueO(value)) fields.push({ label, value: label === 'Tool use' ? formatToolUseO(value) : value });
   }
   return { fields, body: (markdown.slice(0, match.index) + markdown.slice(match.index + match[0].length)).trim() };
+}
+
+// the recorder writes '(none)' for an unset field; the rest of the placeholder set is the shared one
+function isAbsentRecordValueO(value) {
+  return value.trim().toLowerCase() === '(none)' || !window.UI.hasFieldValue(value);
 }
 
 // Recorder's 'actual=N declared=M' → words; any other shape passes through.
@@ -2887,15 +2903,10 @@ function formatToolUseO(value) {
   return `${actual} tool call${actual === '1' ? '' : 's'}${declared ? ` · ${declared} estimated` : ''}`;
 }
 
-// 참조 영역 (S2 references) — cid(delegation tracking ID). 본문 가장 뒤 = 식별→수치→서사→참조 순서 종결.
+// references block — the delegation's correlation id, last in the drawer
 function DetailReferences({ row }) {
   if (!row?.cid) return null;
-  return (
-    <div className="pt-3 border-t border-line">
-      <div className="fs-meta text-faint uppercase tracking-wider mb-0.5">references</div>
-      <div className="fs-meta font-mono text-dim">cid: {row.cid}</div>
-    </div>
-  );
+  return <window.UI.DetailField label="Correlation ID" value={row.cid} mono/>;
 }
 
 // evaluative_signal (-1/0/+1 ternary) → 부호 + 의미 라벨. 숫자 단독 대신 의미 부여 (dual-encoding).
@@ -2904,15 +2915,6 @@ function formatEvaluativeSignalO(signal) {
   if (n > 0)  return '+1 (praised)';
   if (n < 0)  return '-1 (corrected)';
   return '0 (neutral)';
-}
-
-function MetaField({ label, value, className = '' }) {
-  return (
-    <div className={className}>
-      <div className="fs-meta text-faint uppercase tracking-wider">{label}</div>
-      <div className="text-ink">{value}</div>
-    </div>
-  );
 }
 
 function DetailBody({ detailState, markdown }) {
@@ -2929,9 +2931,7 @@ function DetailBody({ detailState, markdown }) {
 
   if (!markdown) {
     return (
-      <div className="fs-body text-faint font-mono italic">
-        No body text — showing metadata only.
-      </div>
+      <p className="fs-body text-faint m-0">No body text — showing the facts only.</p>
     );
   }
 

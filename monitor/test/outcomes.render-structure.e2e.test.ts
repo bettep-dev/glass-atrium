@@ -192,6 +192,89 @@ describe("outcomes status band and ledger as painted", () => {
   }
 });
 
+const DRAWER_ROW = {
+  ...LEDGER_ROWS[0],
+  cid: "2026-10-01T1000_outcomes-drawer-one-column-with-a-correlation-id-long-enough-to-wrap_9e1a",
+  qa_score: "cov=4,ins=4,instr=5,clar=4",
+  confidence: null,
+  has_body_md: true,
+};
+const DRAWER_BODY_MD = [
+  "# Outcome Record", "", `- **Agent**: ${BAND_AGENT}`, "- **Directive Hint**: (none)", "- **Tool use**: actual=18 declared=20", "",
+  "## Summary", "", "Moved the drawer onto one column.", "", "## Lesson", "", "An absent fact is left out, never printed as none.",
+].join("\n");
+
+describe("the outcomes drawer at 1024px", () => {
+  let app: FastifyInstance;
+  let browser: Browser;
+  let serverUrl: string;
+
+  before(async () => {
+    app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/outcomes/cross-analysis", async () => BAND_OVERALL);
+    app.get("/api/outcomes/search", async (req) => {
+      const query = req.query as Record<string, string>;
+      if (query.limit === "1") return { rows: [], total: getAttentionTotal(query), prior_window: { total: 25 } };
+      return { rows: [DRAWER_ROW], total: 1 };
+    });
+    app.get(`/api/outcomes/${DRAWER_ROW.id}`, async () => ({ ...DRAWER_ROW, body_md: DRAWER_BODY_MD }));
+    app.get("/api/*", async () => ({ rows: [] }));
+    await app.ready();
+    serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    browser = await chromium.launch({ headless: true });
+  });
+
+  after(async () => {
+    await browser?.close();
+    await app?.close();
+  });
+
+  test("facts sit in one column, an absent fact is left out, mono marks only machine strings, nothing scrolls sideways", async () => {
+    const page = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+    try {
+      await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+      await page.locator("tr.outcome-row").first().click();
+      await page.waitForFunction(() => /An absent fact is left out/.test(document.querySelector('[role="dialog"]')?.textContent ?? ""), null, { timeout: 30_000 });
+      await page.evaluate(() => document.fonts.ready);
+      const drawer = await page.evaluate(() => {
+        const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+        const facts = [...dialog.querySelectorAll<HTMLElement>(".detail-fact")].map((fact) => {
+          const box = fact.getBoundingClientRect();
+          return { left: box.left, right: box.right, label: fact.querySelector("dt")?.textContent ?? "" };
+        });
+        const all = [...dialog.querySelectorAll<HTMLElement>("*")];
+        return {
+          title: dialog.querySelector(".detail-title")?.textContent ?? "",
+          text: dialog.textContent ?? "",
+          facts,
+          sideways: all.filter((el) => el.scrollWidth - el.clientWidth > 1 && /auto|scroll/.test(getComputedStyle(el).overflowX)).length,
+          italic: all.filter((el) => getComputedStyle(el).fontStyle === "italic").length,
+          upper: all.filter((el) => getComputedStyle(el).textTransform === "uppercase").length,
+          strayMono: all.filter((el) => /mono/i.test(getComputedStyle(el).fontFamily) && el.closest(".machine") == null).map((el) => el.textContent).slice(0, 3),
+        };
+      });
+
+      assert.strictEqual(drawer.title, `${BAND_AGENT} · feature`, "the title names the record, not the row's result and time");
+      assert.ok(drawer.facts.length >= 6, `drawer facts: ${drawer.facts.map((f) => f.label).join(", ")}`);
+      for (const edge of ["left", "right"] as const) {
+        const xs = drawer.facts.map((fact) => fact[edge]);
+        assert.ok(Math.max(...xs) - Math.min(...xs) <= 0.5, `every fact shares one ${edge} edge: ${xs.join(", ")}`);
+      }
+      const labels = drawer.facts.map((fact) => fact.label);
+      assert.ok(labels.includes("Tool use") && labels.includes("Correlation ID"), `record and reference facts: ${labels.join(", ")}`);
+      assert.ok(!labels.includes("Confidence") && !labels.includes("Directive Hint"), `absent facts left out: ${labels.join(", ")}`);
+      assert.doesNotMatch(drawer.text, /\(none\)/);
+      assert.strictEqual(drawer.sideways, 0, "no element in the drawer scrolls sideways");
+      assert.strictEqual(drawer.italic, 0, "no italics");
+      assert.strictEqual(drawer.upper, 0, "labels in sentence case, never uppercased");
+      assert.deepStrictEqual(drawer.strayMono, [], "mono only inside a machine string");
+    } finally {
+      await page.close();
+    }
+  });
+});
+
 describe("the Results filter bar drives the ledger fetch", () => {
   const BAR = "#outcomes-ledger .card-bar";
   let app: FastifyInstance;

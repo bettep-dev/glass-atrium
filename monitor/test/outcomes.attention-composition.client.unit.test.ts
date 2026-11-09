@@ -935,6 +935,7 @@ interface LedgerViewHelpers {
   getLedgerDisplayRowsO: (sections: { rows: LedgerRow[] }[]) => LedgerRow[];
   getDetailPositionLabelO: (rows: LedgerRow[], row: LedgerRow) => string;
   splitRecordFieldsO: (markdown: string) => { fields: { label: string; value: string }[]; body: string };
+  getDetailFactsO: (row: Record<string, unknown>, detail: Record<string, unknown> | null, recordFields: { label: string; value: string }[]) => { label: string }[];
   AttributionLegend: () => RenderNode;
 }
 const view = helpers as unknown as LedgerViewHelpers;
@@ -993,14 +994,30 @@ test("ResultTable: no Check column, and a capped Needs-you offers one control to
 test("splitRecordFieldsO: record fields become KV pairs, minus the ones the drawer already shows elsewhere", () => {
   const md = [
     "# Outcome Record", "", "- **Agent**: glass-atrium-qa-code-reviewer", "- **Task type**: review",
-    "- **Result**: done", "- **Correlation ID**: 2026-09-25T1150_x_9e1a", "- **Tool use**: actual=18 declared=20", "",
+    "- **Result**: done", "- **Correlation ID**: 2026-09-25T1150_x_9e1a", "- **Directive Hint**: (none)",
+    "- **Tool use**: actual=18 declared=20", "",
     "## Summary", "", "Passes.",
   ].join("\n");
   const { fields, body } = sameRealm(view.splitRecordFieldsO(md));
-  assert.deepStrictEqual(fields, [{ label: "Tool use", value: "18 tool calls · 20 estimated" }], "the cid stays in references");
+  assert.deepStrictEqual(fields, [{ label: "Tool use", value: "18 tool calls · 20 estimated" }], "the cid stays in references, an unset field is left out");
   assert.doesNotMatch(body, /Outcome Record|\*\*Agent\*\*/, "the bullet list leaves the narrative");
   assert.match(body, /## Summary/);
   assert.deepStrictEqual(sameRealm(view.splitRecordFieldsO("## Summary\n\nx")), { fields: [], body: "## Summary\n\nx" });
+});
+
+test("getDetailFactsO: an optional drawer fact shows exactly when the record holds its value", () => {
+  const optional = ["Result", "Time", "Confidence", "Self-check", "Flagged for review", "QA score"];
+  const full = {
+    result: "done", record_ts: "2026-10-01T10:00:00Z", confidence: "high", metric_pass: true, review_flag: false,
+    qa_score: "cov=4,ins=4,instr=5,clar=4", revision_count: 0, grader_verdict: "verified_pass",
+  };
+  const bare = { ...full, result: null, record_ts: null, confidence: null, metric_pass: null, review_flag: null, qa_score: null };
+  const shown = (row: Record<string, unknown>) => {
+    const labels = view.getDetailFactsO(row, null, []).map((fact) => fact.label);
+    return optional.filter((label) => labels.includes(label));
+  };
+  assert.deepStrictEqual(shown(full), optional, "a held value shows its fact");
+  assert.deepStrictEqual(shown(bare), [], "an absent value prints no fact, never a placeholder");
 });
 
 test("AttributionLegend: an empty day's two meanings are labelled — no records versus not read", () => {
