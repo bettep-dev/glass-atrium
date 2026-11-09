@@ -93,13 +93,16 @@ describe("bundle-literal check", () => {
 
     assert.equal(getLatest(history), true);
   });
+});
 
-  test("an unreadable key turns socket delivery off", async () => {
-    const rows = [
-      { name: "no package.json version", breakInstall: (fixture: BundleFixture) => writeFileSync(fixture.packageJsonPath, "{}") },
-      { name: "binary removed", breakInstall: (fixture: BundleFixture) => rmSync(fixture.binaryPath) },
-    ];
-    for (const row of rows) {
+describe("unreadable key", () => {
+  const rows = [
+    { name: "no package.json version", breakInstall: (fixture: BundleFixture) => writeFileSync(fixture.packageJsonPath, "{}") },
+    { name: "a version outside the version shape", breakInstall: (fixture: BundleFixture) => writeFileSync(fixture.packageJsonPath, JSON.stringify({ version: "../9.9.9" })) },
+    { name: "binary removed", breakInstall: (fixture: BundleFixture) => rmSync(fixture.binaryPath) },
+  ];
+  for (const row of rows) {
+    test(`an unreadable key turns socket delivery off: ${row.name}`, async () => {
       const fixture = setupInstall();
       row.breakInstall(fixture);
       const { check, history } = buildGuard(fixture);
@@ -107,8 +110,8 @@ describe("bundle-literal check", () => {
       await check();
 
       assert.deepEqual(history, [false], row.name);
-    }
-  });
+    });
+  }
 });
 
 describe("bundle key", () => {

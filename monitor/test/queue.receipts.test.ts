@@ -10,12 +10,14 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync,
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import "dotenv/config";
 
 import type { QueueDeliveryResult, QueueDeliveryRoute, QueueItemStatus } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { type ReceiptListener, startReceiptListener } from "../src/server/queue/receipt-listener.js";
+import { lockSession } from "../src/server/queue/registry.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 
@@ -49,7 +51,7 @@ interface DeliverySeed {
 }
 
 /** One live session, one report item in `status`, and its Delivery rows in insert order; returns the msg ids. */
-async function seedItem(status: QueueItemStatus, deliveries: DeliverySeed[]): Promise<{ itemId: bigint; msgIds: string[] }> {
+async function seedItem(status: QueueItemStatus, deliveries: DeliverySeed[]): Promise<{ sessionId: string; itemId: bigint; msgIds: string[] }> {
   const sessionId = randomUUID();
   trackedSessionIds.push(sessionId);
   const prisma = getPrisma();
@@ -68,7 +70,7 @@ async function seedItem(status: QueueItemStatus, deliveries: DeliverySeed[]): Pr
       data: { msgId, itemId: item.id, route: seed.route ?? "socket", attempt: 1, result: seed.result, sentAt, ackDeadlineAt: new Date(sentAt.getTime() + 10 * MINUTE_MS) },
     });
   }
-  return { itemId: item.id, msgIds };
+  return { sessionId, itemId: item.id, msgIds };
 }
 
 function buildReceipt(msgId: string, status: string, extra: Record<string, unknown> = {}): string {
@@ -169,7 +171,76 @@ describe("peer_message_status receipts", () => {
   });
 });
 
+describe("connection bounds", () => {
+  test("a line past the per-connection byte cap is not applied, though every line is under the line cap", async () => {
+    const { itemId, msgIds } = await seedItem("delivering", [{ result: "sent" }]);
+    const filler = buildReceipt(randomUUID(), "held", { padding: "x".repeat(3_500) });
+    const fillers = Array.from({ length: Math.ceil((64 * 1_024) / filler.length) + 1 }, () => filler);
+
+    await sendLines([...fillers, buildReceipt(msgIds[0] ?? "", "held")]);
+
+    assert.ok(filler.length < 4_096, "each filler line stays under the line cap");
+    assert.deepEqual(await getState(itemId), { item: "delivering", deliveries: [{ result: "sent", hasReceipt: false }] });
+  });
+
+  test("the listener ends a connection that stays idle", { timeout: 5_000 }, async () => {
+    const started = await startReceiptListener({ socketDir: path.join(fixtureRoot, "idle-socks"), pid: LISTENER_PID, idleTimeoutMs: 50 });
+    assert.ok(started !== null);
+    try {
+      const socket = createConnection({ path: started.socketPath });
+      const hasEnded = await new Promise<boolean>((resolve) => {
+        let isEnded = false;
+        socket.on("end", () => (isEnded = true));
+        socket.on("error", () => undefined);
+        socket.on("close", () => resolve(isEnded));
+      });
+
+      assert.equal(hasEnded, true, "the listener closed its side; the client never wrote or ended");
+    } finally {
+      await started.stop();
+    }
+  });
+});
+
 describe("listener start and stop", () => {
+  test("stop waits for a receipt still being applied", { timeout: 10_000 }, async () => {
+    let signalReceived = (): void => undefined;
+    const received = new Promise<void>((resolve) => (signalReceived = resolve));
+    const now = (): Date => {
+      signalReceived();
+      return new Date();
+    };
+    const started = await startReceiptListener({ socketDir: path.join(fixtureRoot, "drain-socks"), pid: LISTENER_PID, now });
+    assert.ok(started !== null);
+    const { sessionId, itemId, msgIds } = await seedItem("delivering", [{ result: "sent" }]);
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let signalLocked = (): void => undefined;
+    const locked = new Promise<void>((resolve) => (signalLocked = resolve));
+    // the test holds the session row lock → the receipt's apply blocks inside its transaction
+    const holding = getPrisma().$transaction(
+      async (tx) => {
+        await lockSession(tx, sessionId);
+        signalLocked();
+        await released;
+      },
+      { timeout: 10_000 },
+    );
+    await locked;
+    const sent = sendLines([buildReceipt(msgIds[0] ?? "", "held")], started.socketPath);
+    await received;
+
+    const stateAtStop = started.stop().then(() => getState(itemId));
+    // a stop that does not wait resolves while the lock is held → its state is read first; the bound only delays a waiting stop
+    await Promise.race([stateAtStop, delay(500)]);
+    release();
+    await holding;
+
+    assert.equal((await stateAtStop).item, "held", "the apply in flight at stop finished before stop resolved");
+    await sent;
+  });
+
+
   test("the socket dir is created 0700 and the reply address names <dir>/<pid>.sock", async () => {
     const socketDir = path.join(fixtureRoot, "fresh-socks");
     const started = await startReceiptListener({ socketDir, pid: LISTENER_PID });

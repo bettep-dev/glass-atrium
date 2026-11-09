@@ -36,22 +36,24 @@ const receiptFrameSchema = z.object({
 type ReceiptStatus = "held" | "expired";
 
 // Item states: delivering → held on a held receipt, held → expired on an expired receipt; the row records either
-const RECEIPT_RULES: Record<ReceiptStatus, { deliveryFrom: QueueDeliveryResult[]; itemFrom: QueueItemStatus; itemTo: QueueItemStatus }> = {
-  held: { deliveryFrom: ["sent"], itemFrom: "delivering", itemTo: "held" },
-  expired: { deliveryFrom: ["sent", "held"], itemFrom: "held", itemTo: "expired" },
+const RECEIPT_RULES: Record<ReceiptStatus, { deliveryFrom: QueueDeliveryResult[]; item: { from: QueueItemStatus; to: QueueItemStatus } }> = {
+  held: { deliveryFrom: ["sent"], item: { from: "delivering", to: "held" } },
+  expired: { deliveryFrom: ["sent", "held"], item: { from: "held", to: "expired" } },
 };
 
 export interface ReceiptListenerOptions {
   socketDir?: string;
   pid?: number;
   now?: () => Date;
+  /** A connection with no traffic for this long is closed; defaults to RECEIPT.IDLE_TIMEOUT_MS. */
+  idleTimeoutMs?: number;
 }
 
 export interface ReceiptListener {
   socketPath: string;
   /** The frame's `from` value: `uds:<socket path>`. */
   replyAddress: string;
-  /** Closes the socket and its connections, then removes the socket file. */
+  /** Closes the socket and its connections, waits for the receipts still being applied, then removes the socket file. */
   stop(): Promise<void>;
 }
 
@@ -64,12 +66,13 @@ export async function startReceiptListener(options: ReceiptListenerOptions = {})
   const socketDir = options.socketDir ?? DEFAULT_SOCKET_DIR;
   const socketPath = path.join(socketDir, `${options.pid ?? process.pid}.sock`);
   try {
-    const refusal = (await getSocketDirRefusal(socketDir)) ?? (await deleteStaleSocket(socketPath));
+    const refusal = (await getSocketDirRefusal(socketDir)) ?? (await getSocketPathRefusal(socketPath));
     if (refusal !== null) {
       logger.warn({ socketDir, reason: refusal }, "queue receipt listener off — frames carry no reply address");
       return null;
     }
-    return await bindListener(socketPath, options.now ?? (() => new Date()));
+    await deleteSocketFile(socketPath); // a live process never shares this pid → a socket at the own path is a dead one's leftover
+    return await createListener(socketPath, { now: options.now ?? (() => new Date()), idleTimeoutMs: options.idleTimeoutMs ?? RECEIPT.IDLE_TIMEOUT_MS });
   } catch (error) {
     logger.warn({ err: error, socketPath }, "queue receipt listener failed to start — frames carry no reply address");
     return null;
@@ -90,7 +93,7 @@ export async function putReceipt(msgId: string, status: ReceiptStatus, now: Date
     if (marked.count === 0) return;
     const latest = await tx.queueDelivery.findFirst({ where: { itemId: delivery.itemId }, orderBy: { id: "desc" }, select: { id: true } });
     if (latest?.id !== delivery.id) return;
-    await tx.queueItem.updateMany({ where: { id: delivery.itemId, status: rule.itemFrom }, data: { status: rule.itemTo } });
+    await tx.queueItem.updateMany({ where: { id: delivery.itemId, status: rule.item.from }, data: { status: rule.item.to } });
   });
 }
 
@@ -107,25 +110,38 @@ async function getSocketDirRefusal(socketDir: string): Promise<string | null> {
   return null;
 }
 
-// A live process never shares this pid → a socket at the own path is a dead one's leftover
-async function deleteStaleSocket(socketPath: string): Promise<string | null> {
+async function getSocketPathRefusal(socketPath: string): Promise<string | null> {
   try {
-    if (!(await lstat(socketPath)).isSocket()) return "a non-socket entry holds the own socket path";
+    return (await lstat(socketPath)).isSocket() ? null : "a non-socket entry holds the own socket path";
   } catch (error) {
     if (errnoCode(error) === "ENOENT") return null;
     throw error;
   }
-  await unlink(socketPath);
-  return null;
 }
 
-async function bindListener(socketPath: string, now: () => Date): Promise<ReceiptListener> {
+async function deleteSocketFile(socketPath: string): Promise<void> {
+  try {
+    await unlink(socketPath);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") throw error;
+  }
+}
+
+interface ConnectionOptions {
+  now: () => Date;
+  idleTimeoutMs: number;
+  /** Every receipt apply still running, across connections → stop waits for them before the DB client goes. */
+  applies: Set<Promise<void>>;
+}
+
+async function createListener(socketPath: string, options: Omit<ConnectionOptions, "applies">): Promise<ReceiptListener> {
   const sockets = new Set<Socket>();
+  const connectionOptions: ConnectionOptions = { ...options, applies: new Set() };
   // half-open → the peer's end does not close our side before its lines are applied
   const server = createServer({ allowHalfOpen: true }, (socket) => {
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
-    handleConnection(socket, now);
+    handleConnection(socket, connectionOptions);
   });
   server.maxConnections = RECEIPT.MAX_CONNECTIONS;
   await new Promise<void>((resolve, reject) => {
@@ -138,37 +154,43 @@ async function bindListener(socketPath: string, now: () => Date): Promise<Receip
   // an accept failure (EMFILE) after listen → logged; an unhandled server error would end the monitor
   server.on("error", (error) => logger.warn({ err: error, socketPath }, "queue receipt listener error — receipts may be missed"));
   await chmod(socketPath, 0o600);
-  return { socketPath, replyAddress: `uds:${socketPath}`, stop: () => stopListener(server, sockets, socketPath) };
+  return { socketPath, replyAddress: `uds:${socketPath}`, stop: () => stopListener(server, sockets, connectionOptions.applies, socketPath) };
 }
 
-async function stopListener(server: Server, sockets: Set<Socket>, socketPath: string): Promise<void> {
+async function stopListener(server: Server, sockets: Set<Socket>, applies: Set<Promise<void>>, socketPath: string): Promise<void> {
   const closed = new Promise((resolve) => server.close(resolve));
   for (const socket of sockets) socket.destroy();
   await closed;
-  try {
-    await unlink(socketPath);
-  } catch (error) {
-    if (errnoCode(error) !== "ENOENT") throw error;
-  }
+  await Promise.allSettled(applies);
+  await deleteSocketFile(socketPath);
 }
 
 // Lines apply in arrival order; the connection closes once every line it carried is applied
-function handleConnection(socket: Socket, now: () => Date): void {
+function handleConnection(socket: Socket, options: ConnectionOptions): void {
   let applying = Promise.resolve();
   const splitter = new LineSplitter(
-    (line) => (applying = applying.then(() => applyLine(line, now))),
+    (line) => (applying = createTrackedApply(applying, line, options)),
     (reason) => {
       logger.warn({ reason }, "queue receipt connection dropped");
       socket.destroy();
     },
   );
-  socket.setTimeout(RECEIPT.IDLE_TIMEOUT_MS, () => socket.destroy());
+  socket.setTimeout(options.idleTimeoutMs, () => socket.destroy());
   socket.on("error", (error) => logger.debug({ err: error }, "queue receipt connection error"));
   socket.on("data", (chunk: Buffer) => splitter.push(chunk));
   socket.on("end", () => {
     splitter.flush();
     void applying.then(() => socket.end());
   });
+}
+
+/** Chains one line's apply after the connection's earlier lines and tracks it until it settles. @returns the new chain tail */
+function createTrackedApply(previous: Promise<void>, line: string, options: ConnectionOptions): Promise<void> {
+  const tracked = previous.then(() => putReceiptLine(line, options.now));
+  const untrack = (): boolean => options.applies.delete(tracked);
+  options.applies.add(tracked);
+  void tracked.then(untrack, untrack);
+  return tracked;
 }
 
 /** NDJSON splitter with the line and connection caps; a breach stops all further lines. */
@@ -209,7 +231,7 @@ class LineSplitter {
 }
 
 // Untrusted input: a parse failure or an inapplicable status is dropped, never logged with its content
-async function applyLine(line: string, now: () => Date): Promise<void> {
+async function putReceiptLine(line: string, now: () => Date): Promise<void> {
   const frame = receiptFrameSchema.safeParse(getParsedJson(line));
   if (!frame.success) {
     logger.debug("queue receipt frame ignored — not a peer_message_status frame");

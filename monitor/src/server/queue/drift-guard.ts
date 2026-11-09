@@ -5,6 +5,8 @@
 import { type FileHandle, open, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
+import { z } from "zod";
+
 import type { QueueBundleResult } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { logger } from "../logger.js";
@@ -15,6 +17,8 @@ export const BUNDLE_LITERALS = ['"type":"auth"', 'e.type==="user"', "peer_messag
 const SCAN_CHUNK_BYTES = 8 * 1024 * 1024;
 const PACKAGE_JSON_MAX_BYTES = 64 * 1024;
 const VERSION_SHAPE = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/;
+// Untrusted file content: only `version` is read, and only in the shape a drift-check key may hold
+const packageJsonSchema = z.object({ version: z.string().regex(VERSION_SHAPE) });
 
 export interface DriftGuardDeps {
   /** The resolved `claude` launcher; its realpath is the scanned binary. */
@@ -69,7 +73,7 @@ class BundleDriftGuard implements DriftGuard {
       if (this.checkedKey !== null && isSameKey(key, this.checkedKey)) return;
       this.checkedKey = null;
       this.deps.setDeliveryOn(false);
-      const result = (await findStoredResult(key)) ?? (await scanAndStore(key, this.deps, signal));
+      const result = (await findStoredResult(key)) ?? (await putScanResult(key, this.deps, signal));
       this.checkedKey = key;
       this.hasFailed = false;
       this.deps.setDeliveryOn(result === "pass");
@@ -94,10 +98,9 @@ async function getBundleKey(claudePath: string): Promise<BundleKey> {
 
 async function getPackageVersion(packageJsonPath: string): Promise<string> {
   if ((await stat(packageJsonPath)).size > PACKAGE_JSON_MAX_BYTES) throw new Error(`${packageJsonPath} exceeds ${PACKAGE_JSON_MAX_BYTES} bytes`);
-  const parsed: unknown = JSON.parse(await readFile(packageJsonPath, "utf8"));
-  const version = typeof parsed === "object" && parsed !== null ? (parsed as { version?: unknown }).version : undefined; // non-null object → a property read is safe; the value stays unknown
-  if (typeof version !== "string" || !VERSION_SHAPE.test(version)) throw new Error(`${packageJsonPath} holds no usable version`);
-  return version;
+  const parsed = packageJsonSchema.safeParse(JSON.parse(await readFile(packageJsonPath, "utf8")));
+  if (!parsed.success) throw new Error(`${packageJsonPath} holds no usable version`, { cause: parsed.error });
+  return parsed.data.version;
 }
 
 function isSameKey(left: BundleKey, right: BundleKey): boolean {
@@ -117,7 +120,7 @@ async function findStoredResult(key: BundleKey): Promise<QueueBundleResult | nul
 }
 
 // One row per version: a changed key for the same version rewrites it; canary stays empty (none configured)
-async function scanAndStore(key: BundleKey, deps: DriftGuardDeps, signal?: AbortSignal): Promise<QueueBundleResult> {
+async function putScanResult(key: BundleKey, deps: DriftGuardDeps, signal?: AbortSignal): Promise<QueueBundleResult> {
   const missing = await findMissingLiterals(key.binaryRealpath, deps.chunkBytes ?? SCAN_CHUNK_BYTES, signal);
   const result: QueueBundleResult = missing.length === 0 ? "pass" : "fail";
   if (result === "fail") logger.warn({ version: key.version, missing }, "queue drift check: bundle literals missing — socket delivery off");
