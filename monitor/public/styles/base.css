@@ -491,11 +491,11 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 /* edge cells take the card padding → the first and last column line up with the card head; flush comes from an unpadded card body */
 .tbl th:first-child,
 .tbl td:first-child {
-	padding-inline-start: var(--space-4);
+	padding-inline-start: var(--card-pad);
 }
 .tbl th:last-child,
 .tbl td:last-child {
-	padding-inline-end: var(--space-4);
+	padding-inline-end: var(--card-pad);
 }
 /* control cell — a cell holding a --ctl-min-h control takes the --space-1 step (less half the rule), so the row stays --row-h beside its text cells.
    Block longhands, so the inline edge rule above still applies. A new 32px control class joins this list in the change that creates it.
@@ -538,7 +538,6 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 }
 .tbl td.num,
 .tbl th.num {
-	font-family: "JetBrains Mono", monospace;
 	font-variant-numeric: tabular-nums;
 	text-align: right;
 	white-space: nowrap;
@@ -546,6 +545,116 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 
 .tbl tbody tr.is-grouped > td {
 	border-bottom: none;
+}
+/* a second body and the foot are their own groups → each opens on a rule; the foot's last row closes on the card edge */
+.tbl :is(tbody + tbody, tfoot) > tr:first-child > :is(td, th) {
+	border-top: var(--tbl-rule) solid rgb(var(--line));
+}
+.tbl tfoot > tr:last-child > :is(td, th) {
+	border-bottom: none;
+}
+
+/* Table's own measured wrapper — never a scroll container (clip, not auto), so a sticky th reaches the nearest vertical scroller.
+   min-width 0 → its width comes from its parent, never from the table; positioned → a cell's absolute sr-only span resolves here */
+.tbl-wrap {
+	position: relative;
+	min-width: 0;
+	overflow-x: clip;
+}
+/* lifted only while a row menu is open, as .card is */
+.tbl-wrap:has(.menu) {
+	overflow: visible;
+}
+.tbl > caption.tbl-caption {
+	text-align: left;
+	padding: 0 var(--card-pad) var(--gap-label);
+}
+/* cell atom — a long unbroken name wraps inside its cell instead of widening the table past its wrapper */
+.tbl :is(.tbl-cell--primary, .tbl-cell--row-header, .tbl-cell--span) {
+	overflow-wrap: anywhere;
+}
+/* a body row header reads as the row's primary text, not as a column-header face */
+.tbl :is(tbody, tfoot) > tr > .tbl-cell--row-header {
+	color: rgb(var(--ink));
+	background: none;
+	font-size: var(--fs-control);
+}
+.tbl td:has(> .row-actions) {
+	text-align: right;
+}
+.row-actions {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: var(--gap-control);
+}
+/* the overflow menu opens inward from the row's end → it never crosses the wrapper's clip edge */
+.row-actions > .menu {
+	left: auto;
+	right: 0;
+}
+
+/* stacked mode — each row a two-line item on the card-pad column: line one the row header or primary cell (15 ink),
+   line two the meta facts (13 dim) behind their aria-hidden label. Table roles are restated in markup */
+.tbl--stacked,
+.tbl--stacked > :is(caption, thead, tbody, tfoot) {
+	display: block;
+}
+/* 7.5 + 20 + 20 + 7.5 + 1 = 56 → --row-h-2; the 16 fact gap is the cluster break between groups */
+.tbl--stacked tr {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	column-gap: var(--gap-control-group);
+	min-height: var(--row-h-2);
+	padding: calc((var(--row-h-2) - 2 * var(--lh-row) - var(--tbl-rule)) / 2) var(--card-pad);
+	border-bottom: var(--tbl-rule) solid rgb(var(--line));
+}
+/* the row owns padding and rule → cells drop the wide-mode box; specificity sits above the edge and control-cell rules */
+.tbl.tbl--stacked :is(th, td) {
+	display: block;
+	min-width: 0;
+	height: auto;
+	padding: 0;
+	border: none;
+	background: none;
+	text-align: left;
+}
+/* .tbl doubled → above the wide row-header face */
+.tbl.tbl--stacked :is(.tbl-cell--primary, .tbl-cell--row-header, .tbl-cell--span, .tbl-cell--group-header) {
+	order: -1;
+	flex: 1 0 100%;
+	font-size: var(--fs-body);
+	color: rgb(var(--ink));
+}
+.tbl--stacked :is(.tbl-cell--meta, .tbl-cell--label) {
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+.tbl-cell-label {
+	margin-inline-end: var(--gap-label-inline);
+	font-weight: 500;
+}
+.tbl--stacked td:has(> .row-actions) {
+	margin-inline-start: auto;
+}
+/* head row on the 32 compact step: 5.5 + 20 + 5.5 + 1; elev like the sticky th's own fill → one face whether or not it sticks */
+.tbl--stacked > thead > tr {
+	min-height: var(--row-h-compact);
+	padding-block: var(--tbl-head-pad-block);
+	background: rgb(var(--elev));
+}
+/* a th cannot stick past its flex row → the stacked head sticks as one block */
+.tbl--stacked > thead.is-sticky {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+}
+.tbl--stacked > :is(tbody, tfoot) > tr:last-child {
+	border-bottom: none;
+}
+.tbl--stacked > :is(tbody + tbody, tfoot) > tr:first-child {
+	border-top: var(--tbl-rule) solid rgb(var(--line));
 }
 
 /* sunken track, no outer edge → the selected option is the one boxed thing: a raised thumb + the control edge, drawn inset so no state resizes it */

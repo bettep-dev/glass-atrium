@@ -110,12 +110,12 @@ test("tokens.css is the only place a type step is declared", () => {
   assert.ok(declared(TOKENS_CSS).includes("--fs-meta"), "tokens.css declares the steps");
 });
 
-test("each atom sets the face its role names: sans for words, counts and the stat figure, mono for the remaining numeric atoms", () => {
+test("each atom sets the sans face its role names: words, counts, the stat figure and table numbers", () => {
   const rows = [
     { selector: ".pill", isMono: false },
     { selector: ".pill--count", isMono: false },
     { selector: ".kpi-value", isMono: false },
-    { selector: ".tbl td.num", isMono: true },
+    { selector: ".tbl td.num", isMono: false },
   ];
   for (const row of rows) {
     const family = getRuleBodies(BASE_CSS, row.selector)

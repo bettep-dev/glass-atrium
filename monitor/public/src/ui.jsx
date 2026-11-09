@@ -1052,7 +1052,7 @@ function Table({ caption, isCaptionShown = false, isHeadSticky = false, columns,
   const sections = bodies ?? [{ key: 'body', rows: children }];
   return <div ref={wrapRef} className="tbl-wrap" data-table-mode={mode}>
     <table role={view.isStacked ? 'table' : undefined} className={`tbl ${view.isStacked ? 'tbl--stacked' : ''} ${className}`.replace(/\s+/g, ' ').trim()}>
-      <caption className={isCaptionShown ? 'section-label text-left pb-2' : 'sr-only'}>{caption}</caption>
+      <caption className={isCaptionShown ? 'tbl-caption section-label' : 'sr-only'}>{caption}</caption>
       {widths && !view.isStacked && <colgroup>{widths.map((width, i) => <col key={i} style={{ width }} />)}</colgroup>}
       {columns && <TableColumns columns={columns} view={view} isSticky={isHeadSticky} />}
       {sections.map((body) => <tbody key={body.key} role={groupRole} aria-busy={body.isBusy ? 'true' : undefined}
@@ -1074,7 +1074,7 @@ function getTableRows(rows, view) {
 
 function TableColumns({ columns, view, isSticky }) {
   const role = view.isStacked ? 'columnheader' : undefined;
-  return <thead role={view.isStacked ? 'rowgroup' : undefined}><TableRow view={view}>
+  return <thead role={view.isStacked ? 'rowgroup' : undefined} className={isSticky ? 'is-sticky' : undefined}><TableRow view={view}>
     {columns.map((c) => <TableHead key={c.key} isNumeric={c.isNumeric} isSticky={isSticky} role={role} aria-sort={c.sort}>{c.label}</TableHead>)}
   </TableRow></thead>;
 }
@@ -1114,7 +1114,7 @@ function RowActions({ label, action, items = [], onPick }) {
   const menu = useMenuButton();
   return <div ref={menu.rootRef} className="row-actions">
     {action}
-    {items.length > 0 && <button type="button" className="row-actions-more" aria-label={label} {...menu.triggerProps}>
+    {items.length > 0 && <button type="button" className="btn ghost icon row-actions-more" aria-label={label} {...menu.triggerProps}>
       <Icon name="ellipsis" size={16} />
     </button>}
     {menu.isOpen && <MenuPanel id={menu.menuId} label={label} kind="action" items={items}
