@@ -120,7 +120,7 @@ function Pill({ children, tone='neutral', title, className }) {
 //   .placeholder(base.css) 무테두리·무배경 폼 재사용 → repo 전역 단일 빈-상태 표기.
 //   message = 핵심 원인 한 줄 · hint = 다음 단계/부연(선택) · action = 슬롯(재시도 버튼 등, 선택).
 //   타입은 atom 소유 — message 14 ink(.placeholder) · hint 13 dim(.placeholder-hint), 유틸 클래스로 덮지 않음.
-//   kind 'no-results' → one fixed sentence + a quiet reset (only with onReset); 'first-use' → the caller's message.
+//   kind 'no-results' → 고정 문장 한 줄 + 조용한 reset(onReset 있을 때만) · 'first-use' → 호출자 message.
 const NO_RESULTS_MESSAGE = 'No records match these filters.';
 
 function EmptyState({ kind = 'first-use', message, hint, action, onReset, className='' }) {
@@ -1468,7 +1468,9 @@ function MachineString({ className = '', children }) {
 /**
  * Pagination bar: the row range left, Previous · current page · Next right; nothing renders for an empty result.
  * An end step stays focusable (aria-disabled + click guard) → pressing Next onto the last page never drops focus to the body.
- * @param page - 0-based page index · @param total - matched row count
+ * Display-only clamp → a page past the end reads the last page here, but the caller's held page stays put.
+ * @param page - 0-based page index; caller clamps its own held page to `ceil(total / pageSize) - 1` when total shrinks → the rows it slices match the range shown
+ * @param total - matched row count
  */
 function Pagination({ page, pageSize, total, onPageChange, label = 'Pages', className = '' }) {
   if (!(total > 0)) return null;

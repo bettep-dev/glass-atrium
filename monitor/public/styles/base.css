@@ -1472,7 +1472,7 @@ button.kpi:hover {
 	.detail-confirm .detail-panel { animation-duration: 0.01ms !important; }
 }
 
-/* TODO(mon-ui/43942): deprecated for the EmptyState component — delete once no caller remains */
+/* TODO(mon-ui/43942): direct className="placeholder" use in screens deprecated for EmptyState — move each screen caller; .placeholder + .placeholder-hint stay as EmptyState's own styling */
 /* the one empty-state form — borderless, left-aligned at the card inset, message in ink at the control size, hint 13 dim under it */
 .placeholder {
 	padding: var(--card-pad);
