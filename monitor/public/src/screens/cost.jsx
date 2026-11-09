@@ -1405,10 +1405,9 @@ function rollupModelRows(modelRows, topN) {
   const other = rest.reduce(
     (acc, r) => ({
       cost_usd: acc.cost_usd + r.cost_usd,
-      session_count: acc.session_count + r.session_count,
       count: acc.count + 1,
     }),
-    { cost_usd: 0, session_count: 0, count: 0 },
+    { cost_usd: 0, count: 0 },
   );
   return { top, other };
 }
