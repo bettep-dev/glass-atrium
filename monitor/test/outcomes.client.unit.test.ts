@@ -63,11 +63,6 @@ interface OutcomesHelpers {
   getDetailValueLabelO: (axis: string, value: unknown) => string;
   splitLessonO: (markdown: string) => { lesson: string; body: string };
   formatToolUseO: (value: string) => string;
-  buildFilterChipsO: (
-    options: Array<{ value: string; label: string }>,
-    value: string,
-  ) => Array<{ key: string; label: string; isPressed: boolean }>;
-  getFilterChipValueO: (key: string) => string;
   getLedgerRowStartsO: (sections: Array<{ rows: unknown[] }>) => number[];
   getBandTileGlyphO: (tone: string) => string | null;
   getGraderTileKeysO: (breakdown: Record<string, unknown>) => string[];
@@ -549,27 +544,6 @@ describe("putSearchFailureO: only a sustained first-load failure reads as an out
   test("a superseded request's failure leaves the newer request's state untouched", () => {
     const started = region.window.UI.putRegionRequest(region.window.UI.INITIAL_REGION_STATE, "/api/search", {});
     assert.strictEqual(region.putSearchFailureO(started, {}, new Error("HTTP 500"), OUTAGE_MS), started);
-  });
-});
-
-describe("buildFilterChipsO: the shared chip toolbar selects the same filter value the option carries", () => {
-  const options = [
-    { value: "", label: "All" },
-    { value: "done", label: "Done" },
-    { value: "fail", label: "Failed" },
-  ];
-
-  test("every chip's key maps back to its option's value, so a toggle sets exactly that filter", () => {
-    const chips = sameRealm(outcomes.buildFilterChipsO(options, ""));
-    assert.deepEqual(chips.map((chip) => outcomes.getFilterChipValueO(chip.key)), options.map((opt) => opt.value));
-    assert.equal(new Set(chips.map((chip) => chip.key)).size, options.length);
-  });
-
-  test("exactly the chip holding the current value is pressed, for every value", () => {
-    for (const option of options) {
-      const pressed = sameRealm(outcomes.buildFilterChipsO(options, option.value)).filter((chip) => chip.isPressed);
-      assert.deepEqual(pressed.map((chip) => chip.label), [option.label], `value "${option.value}"`);
-    }
   });
 });
 

@@ -1,5 +1,5 @@
 // Screen 04 — Outcome analysis (live data via /api/outcomes/*) · window.ScreenOutcomes.
-// Analysis sections on top, explorer below (Filters popover in the Results card head + results table).
+// Analysis sections on top, explorer below (filter bar under the Results card head + results table).
 // Hooks aliased with an O suffix → no window-scope collisions across modules.
 //
 // SECURITY: body_md carries user-supplied strings (concerns/lesson) → MarkdownView injects HTML only past the DOMPurify gate, else raw pre (core-security.md).
@@ -124,7 +124,7 @@ const PAGE_LIMIT_DEFAULT = 50;
 // Needs-you rows shown before 'Show all' — a full page of them buries Routine below the fold.
 const NEEDS_YOU_PAGE_CAP = 10;
 
-// Sort options — 백엔드 allowlist 와 동일 wire format (chip → hash → URL 변환 미경유).
+// Sort options — 백엔드 allowlist 와 동일 wire format (trigger → hash → URL 변환 미경유).
 const SORT_OPTIONS = [
   { value: 'record_ts:desc',      label: 'Newest first'  },
   { value: 'record_ts:asc',       label: 'Oldest first'  },
@@ -532,10 +532,9 @@ function ScreenOutcomes({ onNav }) {
     setIncludeAll(false);
   }, []);
 
-  // one filter-axis patch — a removed keyword chip also empties the inline search box
+  // one filter-axis patch from the bar
   const patchFilter = useCallbackO((patch) => {
     setFilter((prev) => ({ ...prev, ...patch }));
-    if (patch.q === '') setKeywordInput('');
     setPage(0);
   }, []);
 
@@ -2374,175 +2373,69 @@ function LoopEventsBody({ state, onRetry, shared }) {
   );
 }
 
-// ----- Panel 1: Filters popover ----------------------------------------------
+// ----- Panel 1: Filter bar ---------------------------------------------------
 
-// 칩 축 driver — label, axis key (filter prop), 옵션 목록을 1행 1축으로 표현.
-// Always-visible axes, beside Agent at the popover top; the rest fold behind 'More filters' (period → header, keyword → Results head).
-const CHIP_FILTER_AXES = [
+// One trigger per axis on the Results bar, after Agent (period → page header, keyword → bar search).
+const FILTER_AXES_O = [
   { axis: 'result',      label: 'Result',      options: RESULT_OPTIONS      },
   { axis: 'review_flag', label: 'Flagged',     options: REVIEW_FLAG_OPTIONS },
   { axis: 'task_type',   label: 'Task type',   options: TASK_TYPE_OPTIONS   },
-];
-
-const MORE_FILTER_AXES = [
   { axis: 'confidence',  label: 'Confidence',  options: CONFIDENCE_OPTIONS  },
   { axis: 'metric_pass', label: 'Self-check',  options: METRIC_PASS_OPTIONS },
   { axis: 'attribution_source', label: 'Attribution', options: ATTRIBUTION_SOURCE_OPTIONS },
 ];
 
-const FILTER_AXES_O = [...CHIP_FILTER_AXES, ...MORE_FILTER_AXES];
+// Forensic 'all records' — include_all=1 lifts the server registry gate.
+const SCOPE_OPTIONS_O = [
+  { value: 'registry', label: 'Registry agents' },
+  { value: 'all',      label: 'All records'     },
+];
 
-// Filters popover body — every axis but period (header) and keyword (inline in the Results head).
-function FilterPanelO({
-  filter, distinctAgents, includeAll, sort,
-  onPatchFilter, onToggleIncludeAll, onSortChange, onReset,
+/**
+ * The Results filter bar: bar search, then Agent, every axis, Scope and Sort as triggers naming their value.
+ * Reset shows while a filter, keyword or the all-records scope is applied — sort orders the rows, it filters none.
+ */
+function ResultFilterBarO({
+  filter, sort, keywordInput, distinctAgents, includeAll,
+  onPatchFilter, onKeywordChange, onToggleIncludeAll, onSortChange, onReset,
 }) {
-  return (
-    <div>
-      <FilterAxisGroup label="Agent">
-        <select
-          className="field field-select"
-          value={filter.agent || ''}
-          onChange={(e) => onPatchFilter({ agent: e.target.value })}
-          aria-label="Agent filter">
-          <option value="">All</option>
-          {distinctAgents.map((a) => (
-            <option key={a} value={a}>{a}</option>
-          ))}
-        </select>
-      </FilterAxisGroup>
-
-      {CHIP_FILTER_AXES.map(({ axis, label, options }) => (
-        <FilterAxisGroup key={axis} label={label}>
-          <FilterChipGroupO
-            options={options}
-            value={filter[axis] || ''}
-            onChange={(v) => onPatchFilter({ [axis]: v })}
-            ariaLabel={`${label} filter`}
-          />
-        </FilterAxisGroup>
-      ))}
-
-      <details className="mb-3">
-        <summary className="group disclosure fs-meta uppercase tracking-wider select-none">
-          <window.UI.DisclosureChevron />
-          <span>More filters</span>
-        </summary>
-        <div className="pt-2">
-          {MORE_FILTER_AXES.map(({ axis, label, options }) => (
-            <FilterAxisGroup key={axis} label={label}>
-              <FilterChipGroupO
-                options={options}
-                value={filter[axis] || ''}
-                onChange={(v) => onPatchFilter({ [axis]: v })}
-                ariaLabel={`${label} filter`}
-              />
-            </FilterAxisGroup>
-          ))}
-
-          <FilterAxisGroup label="Sort">
-            <FilterChipGroupO
-              options={SORT_OPTIONS}
-              value={sort}
-              onChange={onSortChange}
-              ariaLabel="Sort order"
-            />
-          </FilterAxisGroup>
-
-          {/* Forensic 'show all' — include_all=1 lifts the server registry gate. */}
-          <FilterAxisGroup label="Record scope">
-            {/* a flex item has no line box → the 24 target sits on the group's 4 label step */}
-            <div className="flex">
-              <label className="inline-target gap-2 fs-meta cursor-pointer select-none">
-                <span className="relative flex items-center justify-center">
-                  <input
-                    type="checkbox"
-                    className="ctl-checkbox"
-                    checked={includeAll}
-                    onChange={(e) => onToggleIncludeAll(e.target.checked)}
-                    aria-label="Show all records including non-registry and de-registered agents"/>
-                  {includeAll && (
-                    <window.UI.Icon name="check" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute"/>
-                  )}
-                </span>
-                <span className={includeAll ? 'text-ink' : 'text-dim'}>
-                  Show all (incl. non-registry)
-                </span>
-              </label>
-            </div>
-          </FilterAxisGroup>
-        </div>
-      </details>
-
-      <div className="mt-3 pt-3 border-t border-line">
-        <button
-          className="btn sm w-full justify-center"
-          onClick={onReset}
-          aria-label="Reset filters">
-          Reset filters
-        </button>
-      </div>
-    </div>
-  );
+  const { FilterBar, BarSearch } = window.UI;
+  return <FilterBar label="Result filters" isApplied={isFilterAppliedO(filter, includeAll)} onReset={onReset}>
+    <BarSearch label="Keyword search" value={keywordInput} onChange={onKeywordChange}
+      placeholder="Search summary, lesson, concerns" />
+    <FilterAxisTriggerO axis="Agent" options={buildAgentOptionsO(distinctAgents, filter.agent)} value={filter.agent || ''}
+      onPick={(agent) => onPatchFilter({ agent })} />
+    {FILTER_AXES_O.map(({ axis, label, options }) => <FilterAxisTriggerO key={axis} axis={label} options={options}
+      value={filter[axis] || ''} onPick={(value) => onPatchFilter({ [axis]: value })} />)}
+    <FilterAxisTriggerO axis="Scope" options={SCOPE_OPTIONS_O} value={includeAll ? 'all' : 'registry'}
+      onPick={(scope) => onToggleIncludeAll(scope === 'all')} />
+    <FilterAxisTriggerO axis="Sort" options={SORT_OPTIONS} value={sort} onPick={onSortChange} />
+  </FilterBar>;
 }
 
-function FilterAxisGroup({ label, children }) {
-  return (
-    <div className="mb-3">
-      <div className="fs-meta text-faint mb-1">
-        {label}
-      </div>
-      {children}
-    </div>
-  );
+// One radio axis — '' (All) is a real option, so the trigger always names the value in force.
+function FilterAxisTriggerO({ axis, options, value, onPick }) {
+  return <window.UI.FilterTrigger axis={axis} value={getOptionLabelO(options, value)}
+    options={options.map(({ value: key, label }) => ({ key, label }))} chosenKeys={[value]} onPick={onPick} />;
 }
 
-// '' (All) option value → a non-empty chip key
-const ALL_CHIP_KEY_O = '_all';
-
-// One facet as the shared chip toolbar: one Tab stop per group, arrows between chips.
-function FilterChipGroupO({ options, value, onChange, ariaLabel }) {
-  return (
-    <window.UI.ChipGroup
-      label={ariaLabel}
-      chips={buildFilterChipsO(options, value)}
-      onToggle={(key) => onChange(getFilterChipValueO(key))}
-    />
-  );
-}
-
-function buildFilterChipsO(options, value) {
-  return options.map((opt) => ({ key: opt.value || ALL_CHIP_KEY_O, label: opt.label, isPressed: opt.value === value }));
-}
-
-function getFilterChipValueO(key) {
-  return key === ALL_CHIP_KEY_O ? '' : key;
+// distinct agent ids → the Agent axis options, All first, each under its display name
+// a chosen agent outside the facet set (a hash link) stays an option → its trigger and check still name it
+function buildAgentOptionsO(agents, chosen) {
+  const getName = window.UI.getAgentDisplayName;
+  const ids = chosen && !agents.includes(chosen) ? [chosen, ...agents] : agents;
+  return [{ value: '', label: 'All' }, ...ids.map((agent) => ({ value: agent, label: getName(agent) }))];
 }
 
 // ----- Panel 2: Result table -------------------------------------------------
-
-/**
- * Filters trigger label — the label and a hidden twin at the highest count share one cell → the trigger is always that wide, so a count appearing moves nothing.
- * End-aligned → the visible label, not the reserved room, meets the head's right edge (RefreshButton's fixed-width pattern).
- */
-function buildFiltersLabelO(activeCount) {
-  const cellClass = 'col-start-1 row-start-1';
-  return (
-    <span className="inline-grid justify-items-end tabular-nums">
-      <span className={cellClass}>{activeCount > 0 ? `Filters · ${activeCount}` : 'Filters'}</span>
-      <span className={`${cellClass} invisible`} aria-hidden="true">{`Filters · ${POPOVER_FILTER_AXES_O.length}`}</span>
-    </span>
-  );
-}
 
 function ResultTableCard({
   state, rows, totalMatched, page, limit, sort, filter,
   onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, shared, closure, needsYou, needsYouCap, onToggleNeedsYou,
   filterControls = {},
 }) {
-  const { CardHead, Popover } = window.UI;
-  const { keywordInput = '', distinctAgents = [], includeAll = false, onPatchFilter, onKeywordChange, onToggleIncludeAll } = filterControls;
-  const activeCount = countActiveFacetsO(filter);
+  const { CardHead } = window.UI;
+  const { keywordInput = '', distinctAgents = [], includeAll = false, ...barHandlers } = filterControls;
 
   const totalPages = Math.max(1, Math.ceil(totalMatched / limit));
   const currentPage = page + 1;
@@ -2556,33 +2449,11 @@ function ResultTableCard({
         sub={state.status === 'ready'
           ? `${formatIntO(totalMatched)} matched · ${formatIntO(shownCount)} shown`
           : state.status === 'loading' ? 'Loading…' : 'Records unavailable'}
-        right={
-          <div className="flex items-center gap-2">
-            <input
-              type="search"
-              className="field"
-              style={{ width: 'clamp(140px, 18vw, 240px)' }}
-              placeholder="Search summary / lesson / concerns…"
-              value={keywordInput}
-              onChange={(e) => onKeywordChange(e.target.value)}
-              aria-label="Keyword search"
-            />
-            <Popover label={buildFiltersLabelO(activeCount)} title="Filters">
-              <FilterPanelO
-                filter={filter}
-                distinctAgents={distinctAgents}
-                includeAll={includeAll}
-                sort={sort}
-                onPatchFilter={onPatchFilter}
-                onToggleIncludeAll={onToggleIncludeAll}
-                onSortChange={onSortChange}
-                onReset={onResetFilter}
-              />
-            </Popover>
-          </div>
-        }
       />
-      <ActiveFilterChips filter={filter} onRemove={onPatchFilter} onClearAll={onResetFilter}/>
+      <div className="card-bar">
+        <ResultFilterBarO filter={filter} sort={sort} keywordInput={keywordInput} distinctAgents={distinctAgents}
+          includeAll={includeAll} {...barHandlers} onSortChange={onSortChange} onReset={onResetFilter} />
+      </div>
       {/* lifts the shared 70vh card-body cap → the Routine rows scroll with the page, not in a nested box */}
       <div className="card-body" style={{ padding: 0, maxHeight: 'none', overflowY: 'visible' }}>
         <ResultTableBody
@@ -2627,28 +2498,23 @@ function ResultTableCard({
   );
 }
 
-// Active filters → 'Axis: value' chip labels for the empty-state echo; default axes omitted, names follow the popover labels.
+// Active filters → 'Axis: value' chip labels for the empty-state echo; default axes omitted, names follow the bar's axes.
 function buildActiveFilterChipsO(filter) {
-  return buildActiveFilterEntriesO(filter).map((entry) => entry.label);
-}
-
-// patch = clears that one axis · null = not removable here (period belongs to the page header)
-function buildActiveFilterEntriesO(filter) {
-  const entries = [];
-  if (filter.days && filter.days !== 30) entries.push({ key: 'days', label: `Period: ${filter.days}d`, patch: null });
-  if (filter.agent) entries.push({ key: 'agent', label: `Agent: ${window.UI.getAgentDisplayName(filter.agent)}`, patch: { agent: '' } });
+  const chips = [];
+  if (filter.days && filter.days !== 30) chips.push(`Period: ${filter.days}d`);
+  if (filter.agent) chips.push(`Agent: ${window.UI.getAgentDisplayName(filter.agent)}`);
   for (const { axis, label, options } of FILTER_AXES_O) {
-    if (filter[axis]) entries.push({ key: axis, label: `${label}: ${getOptionLabelO(options, filter[axis])}`, patch: { [axis]: '' } });
+    if (filter[axis]) chips.push(`${label}: ${getOptionLabelO(options, filter[axis])}`);
   }
-  if (filter.q) entries.push({ key: 'q', label: `Keyword: "${truncateO(filter.q, 18)}"`, patch: { q: '' } });
-  return entries;
+  if (filter.q) chips.push(`Keyword: "${truncateO(filter.q, 18)}"`);
+  return chips;
 }
 
 function getOptionLabelO(options, value) {
   return options.find((option) => option.value === value)?.label ?? value;
 }
 
-// Drawer value → the filter chip's name for it, so chip, ledger cell and drawer agree.
+// Drawer value → the filter bar's name for it, so bar, ledger cell and drawer agree.
 function getDetailValueLabelO(axis, value) {
   const { options } = FILTER_AXES_O.find((group) => group.axis === axis);
   return getOptionLabelO(options, String(value ?? 'null'));
@@ -2658,38 +2524,6 @@ function getDetailValueLabelO(axis, value) {
 function FilterChipsO({ chips }) {
   const { Badge } = window.UI;
   return <>{chips.map((c) => <Badge key={c} role="metadata">{c}</Badge>)}</>;
-}
-
-// Active filters under the Results head — one remove button per chip, plus Clear all.
-// the rule sits on the holder, outside the 48 control row, as on the Documents toolbar
-function ActiveFilterChips({ filter, onRemove, onClearAll }) {
-  const { Badge } = window.UI;
-  const entries = buildActiveFilterEntriesO(filter);
-  if (entries.length === 0) return null;
-
-  return (
-    <div className="border-b border-line">
-      <div className="control-row">
-        <div className="flex items-center gap-1 flex-wrap">
-          {entries.map((entry) => (entry.patch === null
-            ? <Badge key={entry.key} role="metadata" className="pill--ctl-h">{entry.label}</Badge>
-            : (
-              <button
-                key={entry.key}
-                type="button"
-                className="btn ghost sm"
-                aria-label={`Remove filter ${entry.label}`}
-                onClick={() => onRemove(entry.patch)}>
-                {entry.label}<span aria-hidden="true"> ×</span>
-              </button>
-            )))}
-        </div>
-        <button type="button" className="btn ghost sm" aria-label="Clear all filters" onClick={onClearAll}>
-          Clear all
-        </button>
-      </div>
-    </div>
-  );
 }
 
 function ResultTableBody({
@@ -3422,11 +3256,9 @@ function defaultFilterO() {
   };
 }
 
-// the Filters popover's own axes → its trigger counts only what is set inside it (period → page header, keyword → Results head)
-const POPOVER_FILTER_AXES_O = ['agent', ...FILTER_AXES_O.map(({ axis }) => axis)];
-
-function countActiveFacetsO(filter) {
-  return POPOVER_FILTER_AXES_O.filter((axis) => filter[axis]).length;
+// Reset's visibility — what resetFilter clears, minus period (page header) and sort (an order, not a filter)
+function isFilterAppliedO(filter, includeAll) {
+  return includeAll || Boolean(filter.agent || filter.q) || FILTER_AXES_O.some(({ axis }) => filter[axis]);
 }
 
 // URL hash format: #outcomes?days=30&agent=glass-atrium-dev-react&q=phase&sort=record_ts:desc

@@ -194,3 +194,66 @@ describe("outcomes status band and ledger as painted", () => {
     });
   }
 });
+
+describe("the Results filter bar drives the ledger fetch", () => {
+  const BAR = "#outcomes-ledger .card-bar";
+  let app: FastifyInstance;
+  let browser: Browser;
+  let serverUrl: string;
+
+  before(async () => {
+    app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/outcomes/search", async () => ({ rows: [], total: 0 }));
+    app.get("/api/*", async () => ({ rows: [] }));
+    await app.ready();
+    serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    browser = await chromium.launch({ headless: true });
+  });
+
+  after(async () => {
+    await browser?.close();
+    await app?.close();
+  });
+
+  test("every filter axis is a trigger on the bar naming its value, with no Filters popover left", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+      await page.waitForSelector(`${BAR} .filter-trigger`, { timeout: 30_000 });
+      const triggers = await page.$$eval(`${BAR} .filter-trigger`, (buttons) => buttons.map((button) =>
+        [button.querySelector(".filter-trigger-axis")!.textContent, button.querySelector(".filter-trigger-value")!.textContent]));
+      assert.deepEqual(triggers, [
+        ["Agent", "All"], ["Result", "All"], ["Flagged", "All"], ["Task type", "All"], ["Confidence", "All"],
+        ["Self-check", "All"], ["Attribution", "All"], ["Scope", "Registry agents"], ["Sort", "Newest first"],
+      ]);
+      assert.equal(await page.locator('#outcomes-ledger [aria-haspopup="dialog"]').count(), 0, "Filters popover trigger");
+    } finally {
+      await page.close();
+    }
+  });
+
+  const picks = [
+    { name: "a Result pick reaches the ledger request as its wire value", axis: "Result", option: "Failed", param: "result", wire: "fail" },
+    { name: "the All records scope reaches the ledger request as include_all", axis: "Scope", option: "All records", param: "include_all", wire: "1" },
+  ];
+  for (const row of picks) {
+    test(row.name, async () => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      try {
+        await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+        const trigger = page.locator(`${BAR} .filter-trigger`, { hasText: row.axis });
+        await trigger.click();
+        const request = page.waitForRequest((req) => {
+          const url = new URL(req.url());
+          return url.pathname === "/api/outcomes/search" && url.searchParams.get(row.param) === row.wire;
+        }, { timeout: 30_000 });
+        await page.getByRole("menuitemradio", { name: row.option }).click();
+        await request;
+        assert.equal(await trigger.locator(".filter-trigger-value").textContent(), row.option);
+      } finally {
+        await page.close();
+      }
+    });
+  }
+});

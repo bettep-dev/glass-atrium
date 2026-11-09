@@ -100,8 +100,8 @@ interface OutcomesHelpers {
   getChannelLivenessBadgeO: (state: PayloadState<{ alerting?: string[]; days?: number }>) => { tone: string; text: string };
   AgentFailureBodyO: (props: { state: PayloadState<unknown>; onRetry: () => void; stickyStyle?: unknown }) => RenderNode;
   buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
-  buildActiveFilterEntriesO: (filter: Record<string, unknown>) => { key: string; label: string; patch: Record<string, string> | null }[];
-  ActiveFilterChips: (props: { filter: Record<string, unknown>; onRemove?: (patch: Record<string, string>) => void; onClearAll?: () => void }) => RenderNode | null;
+  isFilterAppliedO: (filter: Record<string, unknown>, includeAll: boolean) => boolean;
+  buildAgentOptionsO: (agents: string[], chosen: string) => { value: string; label: string }[];
   getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
   window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; PageVerdict: unknown; CardInfo: unknown } };
 }
@@ -1135,75 +1135,34 @@ test("AttributionLegend: an empty day's two meanings are labelled — no records
   assert.match(text, /Not read/);
 });
 
-// --- Filters popover: the ledger's filters sit behind one head button; each active filter is one removable chip ---
+// --- Results filter bar: one trigger per axis naming its value; Reset shows while a filter applies ---
 
-const FULL_FILTER = { days: 7, agent: LEDGER_AGENT, result: "fail", task_type: "feature", q: "phase" };
-const pressButton = (node: RenderNode) => (node.props!.onClick as () => void)();
-
-test("filter chips: removing one chip clears its own axis and leaves every other chip in place", () => {
-  const entries = helpers.buildActiveFilterEntriesO(FULL_FILTER);
-  const removable = entries.filter((entry) => entry.patch !== null);
-  assert.strictEqual(removable.length, 4, "agent, result, task type and keyword are removable");
-  for (const entry of removable) {
-    const remaining = helpers.buildActiveFilterChipsO({ ...FULL_FILTER, ...entry.patch });
-    const expected = entries.map((e) => e.label).filter((label) => label !== entry.label);
-    assert.deepEqual(sameRealm(remaining), sameRealm(expected), entry.label);
+describe("isFilterAppliedO: Reset shows for whatever resetFilter clears, never for the page-owned period", () => {
+  const AXES = ["agent", "result", "review_flag", "task_type", "confidence", "metric_pass", "attribution_source", "q"];
+  const rows = [
+    { name: "defaults", filter: { days: 30 }, includeAll: false, isApplied: false },
+    { name: "a period of its own", filter: { days: 7 }, includeAll: false, isApplied: false },
+    { name: "the all-records scope", filter: { days: 30 }, includeAll: true, isApplied: true },
+    ...AXES.map((axis) => ({ name: `the ${axis} axis set`, filter: { days: 30, [axis]: "x" }, includeAll: false, isApplied: true })),
+  ];
+  for (const row of rows) {
+    test(row.name, () => assert.strictEqual(helpers.isFilterAppliedO(row.filter, row.includeAll), row.isApplied));
   }
 });
 
-test("filter chips: the period chip is not removable — the page's period control owns that axis", () => {
-  const period = helpers.buildActiveFilterEntriesO(FULL_FILTER).find((entry) => entry.label.startsWith("Period"))!;
-  assert.strictEqual(period.patch, null);
-});
-
-test("ActiveFilterChips: each remove button names its filter and hands back that filter's patch", () => {
-  const removed: unknown[] = [];
-  const nodes = flattenNodes(helpers.ActiveFilterChips({
-    filter: { days: 30, agent: LEDGER_AGENT, q: "phase" }, onRemove: (patch) => removed.push(patch), onClearAll: () => {},
-  }));
-  const removeButtons = nodes.filter((n) => n.type === "button" && /^Remove filter /.test(String(n.props?.["aria-label"])));
-  assert.deepEqual(removeButtons.map((b) => String(b.props!["aria-label"])), [
-    `Remove filter Agent: ${helpers.window.UI.getAgentDisplayName(LEDGER_AGENT)}`,
-    'Remove filter Keyword: "phase"',
-  ]);
-  removeButtons.forEach(pressButton);
-  assert.deepEqual(sameRealm(removed), [{ agent: "" }, { q: "" }]);
-});
-
-test("ActiveFilterChips: Clear all resets every filter, and no active filter renders nothing", () => {
-  let clearCount = 0;
-  const nodes = flattenNodes(helpers.ActiveFilterChips({ filter: { days: 30, result: "fail" }, onRemove: () => {}, onClearAll: () => { clearCount += 1; } }));
-  pressButton(nodes.find((n) => n.type === "button" && n.props?.["aria-label"] === "Clear all filters")!);
-  assert.strictEqual(clearCount, 1);
-  assert.strictEqual(helpers.ActiveFilterChips({ filter: { days: 30 } }), null);
-});
-
-// a node's text as the accessibility tree reads it → an aria-hidden subtree adds nothing
-const accessibleTextOf = (node: unknown): string => {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(accessibleTextOf).join("");
-  if (node === null || typeof node !== "object" || !("type" in node)) return "";
-  const el = node as RenderNode;
-  return el.props?.["aria-hidden"] === "true" ? "" : el.children.map(accessibleTextOf).join("");
-};
-
-test("Results card: the head's Filters button counts the filters set inside its popover, and Results carries no filter column", () => {
+describe("buildAgentOptionsO: All first, and the chosen agent is always one option under its display name", () => {
+  const OTHER = "glass-atrium-dev-node";
   const rows = [
-    { name: "no active filter", filter: { days: 30 }, label: "Filters" },
-    { name: "two active filters", filter: { days: 30, agent: LEDGER_AGENT, result: "fail" }, label: "Filters · 2" },
-    { name: "keyword and period live outside the popover", filter: { days: 7, q: "phase" }, label: "Filters" },
-    { name: "a popover filter beside keyword and period", filter: { days: 7, q: "phase", confidence: "low" }, label: "Filters · 1" },
+    { name: "chosen inside the facet set", agents: [LEDGER_AGENT, OTHER], chosen: LEDGER_AGENT, values: ["", LEDGER_AGENT, OTHER] },
+    { name: "chosen outside the facet set (a hash link)", agents: [OTHER], chosen: LEDGER_AGENT, values: ["", LEDGER_AGENT, OTHER] },
+    { name: "no agent chosen", agents: [OTHER], chosen: "", values: ["", OTHER] },
   ];
   for (const row of rows) {
-    const card = flattenNodes(helpers.ResultTableCard({
-      state: { status: "ready" }, rows: [], totalMatched: 0, page: 0, limit: 50, sort: "record_ts:desc", filter: row.filter,
-      filterControls: { keywordInput: "", distinctAgents: [], includeAll: false },
-    }));
-    const headRight = flattenNodes(card.find((n) => n.props?.title === "Results")!.props!.right);
-    const popover = headRight.find((n) => n.type === helpers.window.UI.Popover);
-    assert.strictEqual(accessibleTextOf(popover?.props?.label), row.label, row.name);
-    assert.ok(headRight.some((n) => n.type === "input" && n.props?.["aria-label"] === "Keyword search"), `${row.name}: keyword stays inline`);
-    assert.ok(card.some((n) => n.type === helpers.ActiveFilterChips), `${row.name}: active chips sit under the head`);
+    test(row.name, () => {
+      const options = sameRealm(helpers.buildAgentOptionsO(row.agents, row.chosen));
+      assert.deepEqual(options.map((option) => option.value), row.values);
+      assert.deepEqual(options.slice(1).map((option) => option.label), row.values.slice(1).map(helpers.window.UI.getAgentDisplayName));
+    });
   }
 });
 
