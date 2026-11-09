@@ -1,8 +1,8 @@
-// Screen 12 — Models & budgets (/api/model-config GET 단일 fetch + 명시 Save PUT).
+// Screen 12 — Models & budgets (/api/model-config single GET fetch + explicit Save PUT).
 // Layout: header sync token → model ledger | per-call budget cap ledger (side by side at xl).
-// DB(saved target) = UI SoT · actual = 소비 지점 실측 — 차이는 drift 경고 글리프+단어로 공시 (spec doc 36166 D2).
-// 예산 = per-call HARD CAP (claude -p --max-budget-usd) — OAuth 구독이라 월 청구 상한이 아님 (단일 폭주 호출 차단).
-// Hooks MC-suffix aliased — window-scope 충돌 방지.
+// DB (saved target) = UI SoT · actual = measured at the consumption point — a gap shows as a drift warning glyph + word.
+// Budget = per-call HARD CAP (claude -p --max-budget-usd), not a monthly billing cap under the OAuth subscription → stops a single runaway call.
+// Hooks MC-suffix aliased → no window-scope collision.
 const {
 	useState: useStateMC,
 	useEffect: useEffectMC,

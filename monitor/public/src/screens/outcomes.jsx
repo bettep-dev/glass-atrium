@@ -124,7 +124,7 @@ const PAGE_LIMIT_DEFAULT = 50;
 // Needs-you rows shown before 'Show all' — a full page of them buries Routine below the fold.
 const NEEDS_YOU_PAGE_CAP = 10;
 
-// Sort options — 백엔드 allowlist 와 동일 wire format (trigger → hash → URL 변환 미경유).
+// Sort options — the backend allowlist's wire format (no trigger → hash → URL conversion)
 const SORT_OPTIONS = [
   { value: 'record_ts:desc',      label: 'Newest first'  },
   { value: 'record_ts:asc',       label: 'Oldest first'  },
@@ -173,7 +173,7 @@ function buildClosureState(state, action) {
   return state;
 }
 
-// colorVar(--ok/--warn/--crit/--info) → HeadStatusO glyph · BulletBar 채움의 tone 이름 · 비-tone(--dim/--faint/--accent) → 'neutral'.
+// colorVar(--ok/--warn/--crit/--info) → HeadStatusO glyph · BulletBar fill tone name · non-tone (--dim/--faint/--accent) → 'neutral'
 function toneFromColorVarO(colorVar) {
   const t = String(colorVar || '').replace(/^--/, '');
   return (t === 'ok' || t === 'warn' || t === 'crit' || t === 'info') ? t : 'neutral';
@@ -333,7 +333,7 @@ async function fetchAttentionO(days, signal) {
 //   소유 endpoint: /api/improvement/loop-events (core.autoagent_loop_events per-cycle stage stream).
 const LOOP_EVENTS_URL = '/api/improvement/loop-events?limit=50';
 
-// daemon eval_result → glyph + 단어 (tone 색 + 기호 + 라벨, 색맹 안전).
+// daemon eval_result → glyph + word (tone color + symbol + label, color-blind safe)
 //   verified=✓ ok · reject/fail=✕ crit · *_dryrun=⚠ warn(드라이런 — 미적용) · 기타 fallback ℹ info.
 function loopResultMetaO(result) {
   if (result === 'verified') return { tone: 'ok', symbol: '✓', icon: 'check', label: 'Passed' };
@@ -1007,7 +1007,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   return (
     <div id={REGION_CARD_IDS.statusBand} className="mb-section flex-shrink-0">
       <Stack gap="block">
-        {/* 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 → sub-line 이 모든 stat 의 창을 한 번 말한다 */}
+        {/* window folded to {7,30,90} by analyticsDaysO → the sub-line states every stat's window once */}
         <Card title="Status" sub={`Last ${windowDays} days`} infoLabel="How the status band is counted"
           info={!isLoading && <BandRulesO tiles={tiles} reasons={reasons} priorRange={priorRange}/>}>
           <div aria-busy={isLoading ? 'true' : undefined}>
@@ -1297,7 +1297,7 @@ function OpenCaveatCellO({ count, view }) {
 
 // ----- Attribution Health (텔레메트리 귀속 품질) ------------------------------
 // /api/outcomes/attribution-daily — attribution_source 4-category 분해.
-// 일별 stacked-bar (inline SVG, Recharts 미사용) + window 요약 stat row + literal-omission 심각도 head status (glyph + word).
+// daily stacked bar (inline SVG, no Recharts) + window summary stat row + literal-omission severity head status (glyph + word)
 // NULL attribution_source 행은 backend 가 제외 (귀속 추적 이전 행) → 모든 비율 분모 = total_attributed.
 
 // A card head's own status: glyph + word, tone on the glyph only, no container (design-spec §3 Status)
@@ -1389,9 +1389,8 @@ function AttributionBreakdownO({ state }) {
   );
 }
 
-// window 요약 stat row — 카테고리별 비율 (분모 = total_attributed).
-//   'Missing report'(literal_omission) stat 아래 세부 sub-line — budget-kill/truncated/missing 내역.
-//   sub-line 은 count 내역만 (총계·비율 미포함).
+// window summary stat row — per-category rate (denominator = total_attributed)
+// 'Missing report' (literal_omission) stat → a budget-kill/truncated/missing sub-line, counts only (no total, no rate)
 function AttributionSummaryRow({ summary, totalAttributed }) {
   const omissionBreakdown = buildLiteralOmissionBreakdownO(summary?.literal_omission_breakdown);
   const omissionMeta = ATTRIBUTION_CATEGORY_META.literal_omission;
@@ -1650,7 +1649,7 @@ function ChannelLivenessCard({ state, onRetry, shared }) {
   );
 }
 
-// 적재 전·실패한 payload 의 'All recording' 은 확인한 적 없는 all-clear → 주장 없는 neutral HeadStatusO.
+// 'All recording' from an unloaded or failed payload = an unverified all-clear → neutral HeadStatusO with no claim
 function getChannelLivenessBadgeO(state) {
   if (state.status !== 'ready') return { tone: 'neutral', text: getUnloadedSummaryO(state.status) };
 
@@ -2101,10 +2100,10 @@ function crosstabMaxCountO(byCell) {
 
 // ----- Loop-events log (raw daemon cycle stream, relocated from Learning) -----
 // /api/improvement/loop-events — core.autoagent_loop_events per-cycle stage stream.
-// operational data(집계 신호 아님)라 Task results 가 소유 (W3-T3 이관 · W3-T7 수신).
-// 고정 높이 스크롤 카드 + 요약 count 행(plain tabular count) + 이벤트 표(행=이벤트 / 열=5).
-//   density: 행 라벨 --dim · timestamp 는 sans tabular-nums · agent truncate+tooltip.
-//   eval_result → loopResultMetaO 기호(tone 색) + 라벨, 배지 없음.
+// operational data, not an aggregate signal → owned by Task results
+// fixed-height scroll card + summary count row (plain tabular count) + event table (row = event · 5 columns)
+// density: row labels --dim · timestamps sans tabular-nums · agent truncate + tooltip
+// eval_result → loopResultMetaO symbol (tone color) + label, no badge
 
 function LoopEventsCard({ state, onRetry, shared }) {
   const { Card } = window.UI;
@@ -2141,7 +2140,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
   const verifiedCnt = distMap.verified || 0;
   const rejectCnt   = distMap.reject || 0;
 
-  // 요약 = 카테고리 기호(tone) + 라벨 + 수량은 평문 ink (color≠count 규칙).
+  // summary = category symbol (tone) + label + count in plain ink (color ≠ count)
   const summary = [
     ['ok',   'check', 'Runs applied',  verifiedCnt],
     ['crit', 'x',     'Runs declined', rejectCnt],
@@ -2161,7 +2160,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
           </span>
         ))}
       </Cluster>
-      {/* 고정 높이 스크롤 — raw 로그가 페이지를 무한 늘이지 않도록 (max-height 42vh + 내부 스크롤); the sticky head stops at its top. */}
+      {/* fixed-height scroll → the raw log never stretches the page (max-height 42vh + inner scroll); the sticky head stops at its top */}
       <div className="overflow-y-auto" style={{ maxHeight: '42vh' }}>
         <Table caption="Learning-run events" columns={LOOP_EVENT_COLUMNS_O} isHeadSticky stackBelowPx={LOOP_EVENT_STACK_BELOW_PX}
           className={OWN_FACE_TABLE_CLASS_O} bodies={[{ key: 'events', rows: getRows, className: 'tbl-compact' }]}/>
@@ -2618,7 +2617,7 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
       </TableCell>
       <TableCell view={view} textRole="meta" label="Task type" className="text-dim whitespace-nowrap">{row.task_type}</TableCell>
       <TableCell view={view} textRole="meta" label="Result" title={resultMeta.label}>
-        {/* 결과 glyph+단어와 종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
+        {/* result glyph + word and the closing affordance in one nowrap container — a wrap inside the cell doubles the row height against its siblings */}
         <span className="inline-flex items-center gap-label-inline whitespace-nowrap">
           <span data-group="result" className="inline-flex items-center gap-label-inline text-ink" style={{ fontWeight: 500 }}>
             <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
@@ -2771,7 +2770,7 @@ function getGraderNoteO(verdict) {
 }
 
 function DetailMetadata({ row, detail, recordFields = [] }) {
-  // defensive guard — row undefined 에서 React batching edge case 회피.
+  // defensive guard — undefined row from a React batching edge case
   if (!row) return null;
   const { Stack, DetailField } = window.UI;
   return (
@@ -2834,7 +2833,7 @@ function ReviewFlagFactO({ row }) {
   return (
     <span className="inline-flex items-center justify-end gap-label-inline flex-wrap">
       {row.review_flag ? 'Yes' : 'No'}
-      {/* 미상 사유는 여러 토큰이 같은 버킷 키로 접히므로 index 를 섞어 React key 충돌을 막는다. */}
+      {/* unknown reasons fold several tokens into one bucket key → index mixed into the React key to avoid collisions */}
       {row.review_flag === true && reviewFlagReasons(row).map((r, i) => (
         <Badge key={`${r.key}#${i}`} role="status" tone="warn" icon title={r.title}>{r.label}</Badge>
       ))}
@@ -3020,7 +3019,7 @@ function RegionErrorO({ source, state, onRetry, shared, focusTargetId, isInset =
   return <RegionFailure source={source} error={state.error} shared={shared} onRetry={onRetry} isBusy={state.busy} focusTargetId={focusTargetId} className={isInset ? 'p-card-pad' : ''}/>;
 }
 
-// 레인이 실패 배너를 소유하므로 본문은 '적재 실패' 만 말한다 — 같은 오류를 두 번 쓰지 않는다 · isInset → flush 카드 본문에서 card-pad 여백.
+// the lane owns the failure banner → the body says only '<label> unavailable', never the error twice · isInset → card-pad margin in a flush card body
 function PayloadUnavailableO({ label, isInset = false }) {
   return (
     <div className={`fs-meta text-dim ${isInset ? 'p-card-pad' : ''}`.trim()} role="status">
@@ -3267,7 +3266,7 @@ function formatRateO(rate) {
   return `${(Number(rate) * 100).toFixed(1)}%`;
 }
 
-// literal-omission 선택 기간 비율 → attribution head status 의 심각도 tone(colorVar) + 문구. null → info tone '—' (데이터 부재).
+// literal-omission rate over the selected window → attribution head-status severity tone (colorVar) + copy · null → info tone '—' (no data)
 function attributionOmissionBadgeO(rate) {
   if (rate === null || rate === undefined || Number.isNaN(Number(rate))) {
     return { colorVar: '--info', text: '—' };

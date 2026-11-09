@@ -152,7 +152,7 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
   return visualSet.has(agentId);
 }
 
-// 카드 본문 스크롤 + roving-row focus ring — inline style 으로 빼두면 JSX 노이즈가 큼.
+// card body scroll + roving-row focus ring — kept out of inline style to cut JSX noise
 const AGENTS_INLINE_CSS = ''
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
   // row fills its scroller edge to edge → the global outset ring is clipped; inset keeps the focus-ring token visible
@@ -412,7 +412,7 @@ function ScreenAgents() {
         <LifecycleStatsCard failures={sourceFailures} state={lifecycleState} days={days} onSelect={setSelectedAgent} onRetry={triggerRefresh}/>
       </window.UI.SplitRow>
 
-      {/* 의사결정 진입점. 행 클릭 → 우측 슬라이드인 드로어. */}
+      {/* decision entry point — row click → right slide-in drawer */}
         <AgentSummaryCard
           failures={sourceFailures}
           state={summaryState}
@@ -1564,7 +1564,7 @@ function formatConsecutiveFails(count) {
   return `${count} consecutive ${count === 1 ? 'fail' : 'fails'}`;
 }
 
-// 드로어 섹션 래퍼 — SubCard 가 라벨/패딩/면, Stack 이 sub-block 간격 소유 (SubCard 는 자식 비스택).
+// drawer section wrapper — SubCard owns label/padding/surface, Stack owns sub-block spacing (SubCard never stacks its children)
 function AgentDrawerSection({ id, title, children }) {
   const { SubCard, Stack } = window.UI;
   return (
@@ -1625,8 +1625,8 @@ function getDrawerHealthVerdictAg(entry, hasSignal, failure) {
   return { tone: health.tone, label: health.label, driver, indexPct };
 }
 
-// 라벨/값 한 줄 — Identity·Lifecycle 의 메타 나열 공통.
-// 라벨 = proportional · 값 = sans tnum 으로 자릿수 정렬 (#5c).
+// one label/value line — shared meta listing of Identity and Lifecycle
+// label = proportional · value = sans tnum → digit alignment
 function DrawerInfoRow({ label, value, title }) {
   return (
     <div className="flex items-start justify-between gap-label fs-body" title={title}>
@@ -1882,11 +1882,11 @@ function AgentLatencyRow({ latency, state, onRetry }) {
   );
 }
 
-// 3. Reliability — Failures + Lifecycle 를 한 섹션 두 sub-block 으로 병합 (hairline 분리, 디자인 #46399 §4.3).
-// (a) Breakages = headline pill + Failed/Blocked 2-col + last-breakage + top-concerns + keyword 분류(끝 muted 강등).
-// (b) Lifecycle = unfinished pill + Started/Finished 2-col + duration triplet 1 mono 라인 (2번째 3-box grid 폐지).
+// 3. Reliability — Failures + Lifecycle as one section of two sub-blocks
+// (a) Breakages = headline pill + Failed/Blocked 2-col + last breakage + top concerns + keyword classes (muted at the end)
+// (b) Lifecycle = unfinished pill + Started/Finished 2-col + duration triplet on one line
 function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureState, detailState, blockedState, lifecycleState, days, onRetry }) {
-  // separator 는 AgentDrawerSection 경계 한 곳 — 두 sub-block 은 gap-block 간격으로만 분리 (divider 어휘 하나)
+  // one separator at the AgentDrawerSection edge — the two sub-blocks split by gap-block spacing only (one divider vocabulary)
   return (
     <div className="space-y-block">
       <AgentReliabilityBreakages
@@ -2061,7 +2061,7 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
             {formatIntAg(orphans)} unfinished · {(orphanRatio * 100).toFixed(0)}%
           </Badge>
         </div>
-        {/* started 대비 finished 비례 막대 — 비율 숫자 옆 완주율 shape (높을수록 누수 적음). */}
+        {/* finished-vs-started bar — completion shape beside the ratio (higher = less leakage) */}
         {startCount > 0 && (
           <BulletBar
             value={finishedRatio}
@@ -2069,12 +2069,11 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
             ariaLabel={`finished ${completedCount} of started ${startCount} (${(finishedRatio * 100).toFixed(0)}%)`}
           />
         )}
-        {/* 단일 2-col — Started/Finished (2번째 3-box grid 폐지). */}
         <div className="grid grid-cols-2 gap-block">
           <DetailMetric label="Started" value={formatIntAg(startCount)}/>
           <DetailMetric label="Finished" value={formatIntAg(completedCount)}/>
         </div>
-        {/* duration triplet — 3-box grid 대신 1 라인 (tnum 자릿수 정렬, #5c). */}
+        {/* duration triplet on one line — tnum digit alignment */}
         <div className="fs-meta text-dim tnum" title="avg takes in the slowest runs beyond p95, so a long tail can lift it above p95">
           avg {fmtDur(row.avg_duration_sec)} · p95 {fmtDur(row.p95_duration_sec)} · max {fmtDur(row.max_duration_sec)}
         </div>
@@ -2256,7 +2255,7 @@ function MatrixInsetAg({ children }) {
   return <div className="px-card-pad pb-card-pad"><window.UI.Stack gap="block">{children}</window.UI.Stack></div>;
 }
 
-// 서버 SUCCESS_RATE_LIMIT 포화 → 행이 잘려 매트릭스 불완전 · status = glyph + word, tone 은 glyph 에만
+// server SUCCESS_RATE_LIMIT saturated → rows cut, matrix incomplete · status = glyph + word, tone on the glyph only
 function MatrixRowLimitNote() {
   const { Icon, TONE_ICON } = window.UI;
 
@@ -2383,7 +2382,7 @@ function SuccessRateCell({ view, agent, taskType, cell }) {
   if (!cell || cell.totalCount === 0) {
     return <window.UI.TableCell {...cellProps} title={`${agent} · ${taskType} — no data`}><NoneMarkAg/></window.UI.TableCell>;
   }
-  // 분모 0 (success/fail 외 result 만 존재) → 비율 미정의 — 0% 날조 대신 None.
+  // denominator 0 (only non-success/fail results) → rate undefined — None, never a fabricated 0%
   if (cell.pooledRate === null) {
     return (
       <window.UI.TableCell {...cellProps} title={`${agent} · ${taskType} — nothing conclusive to rate (no success/fail · ${cell.totalCount} total)`}>
@@ -3124,9 +3123,9 @@ function buildSuccessRateMatrix(rows) {
   return { agents, cells: Object.fromEntries(cellMap) };
 }
 
-// flat row → per-pair stats · crit fail-share step 이상 pair 만 반환 (매트릭스 crit glyph 와 동일 경계) · pooledRate ASC sort · limit cap.
-// 합산 비율 + 최소 표본 floor (분모 < TOPN_MIN_SAMPLE 쌍 랭킹 제외, A5).
-// server 가 last_failure_at 미반환 → failure_count > 0 row 의 event_date 로 client-side 도출.
+// flat rows → per-pair stats · only pairs at or past the crit fail-share step (the step the matrix crit glyph reads) · solid samples (n ≥ LOW_N_MIN) first, then pooledRate ASC · limit cap
+// pooled rate + min-sample floor → a pair with denominator < TOPN_MIN_SAMPLE stays unranked
+// server returns no last_failure_at → derived client-side from the event_date of failure_count > 0 rows
 function buildTopNFailing(rows, limit) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return { failingPairs: [], measuredPairs: 0 };
@@ -3563,7 +3562,7 @@ function getTrendDates(rows) {
 }
 
 // MiniBars 추세 — 일별 실행 수(total_count) 합계를 agent × date 로 group → 최근 7일 series.
-// 7일 모두 0 인 agent → trendMap 미수록 → row 측 "None" 렌더 (정도 점검: 추정값 주입 금지).
+// agent at 0 on all 7 days → absent from trendMap → its row renders "None" (no estimated value injected)
 function buildAgentTrendMap(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return new Map();
 
@@ -3592,7 +3591,7 @@ function buildAgentTrendMap(rows) {
   return trendMap;
 }
 
-// SUMMARY_SORT_DIR key → comparator. p95 null 은 가장 뒤로 (음수 magic 으로 sentinel).
+// SUMMARY_SORT_DIR key → comparator · null p95 sorts last (negative magic sentinel)
 // failures comparator 는 외부 map 의존 → sortAgentSummary 에서 closure 로 wrapping.
 const AGENT_SUMMARY_COMPARATORS = {
   name:    (a, b) => String(a.agent_name || '').localeCompare(String(b.agent_name || '')),
