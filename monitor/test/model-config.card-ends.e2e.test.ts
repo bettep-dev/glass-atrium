@@ -193,12 +193,15 @@ for (const width of [1024, 1280, 1440, 1920]) {
           }
         }
         const canvas = document.createElement("canvas").getContext("2d")!;
-        const selects = [...document.querySelectorAll<HTMLSelectElement>('tbody select[aria-label$=" model"]')].map((select) => {
+        const modelSelects = [...document.querySelectorAll<HTMLSelectElement>("tbody select")].filter((select) =>
+          (select.labels?.[0]?.textContent ?? "").endsWith(" model"),
+        );
+        const selects = modelSelects.map((select) => {
           const style = getComputedStyle(select);
           canvas.font = `${style.fontSize} ${style.fontFamily}`;
           const labels = [...select.options].filter((o) => o.value !== "__custom__").map((o) => o.textContent ?? "");
           return {
-            name: select.getAttribute("aria-label"),
+            name: select.labels?.[0]?.textContent ?? null,
             room: select.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
             longest: Math.max(...labels.map((label) => canvas.measureText(label).width)),
           };

@@ -551,6 +551,31 @@ async function loadMcScreens(
       const { children, ...rest } = p;
       return hMc("a", { ...rest, "data-atom": "Link" }, children);
     },
+    // the atom's shape: label (sr-only when hidden) · select with rest props, error edge and per-option titles · entry slot
+    Select: (p: Record<string, unknown>) => {
+      const { id, label, value, options, onChange, isLabelHidden, isError, className, children, ...rest } = p;
+      const onSelect = onChange as (value: string) => void;
+      return hMc(
+        "div",
+        { "data-atom": "Select", className },
+        hMc("label", { htmlFor: id, className: isLabelHidden ? "sr-only" : "field-label" }, label),
+        hMc(
+          "select",
+          {
+            ...rest,
+            id,
+            value,
+            className: `field field-select${isError ? " is-error" : ""}`,
+            "aria-invalid": isError ? "true" : undefined,
+            onChange: (event: { target: { value: string } }) => onSelect(event.target.value),
+          },
+          ...(options as Array<{ key: string; label: string; title?: string }>).map((o) =>
+            hMc("option", { key: o.key, value: o.key, title: o.title }, o.label),
+          ),
+        ),
+        children,
+      );
+    },
     Badge: (p: Record<string, unknown>) =>
       hMc("span", { className: `badge ${p.className ?? ""}`.trim(), "data-tone": p.tone ?? "neutral" }, p.children),
     CardHead: cardHeadStubMc,
@@ -1647,6 +1672,48 @@ test("an invalid cap shows its reason and aria-invalid as soon as it is invalid,
   assert.strictEqual(input.props["aria-invalid"], "true", "the field is marked invalid");
   const alerts = findAllMc(tree, (n) => n.props.role === "alert");
   assert.ok(textsMc(alerts).some((t) => t.includes("Must be between")), "the reason sits beside the field");
+  assert.strictEqual(input.props["aria-describedby"], alerts[0].props.id, "the field names its reason as its description");
+});
+
+// The form selects ride the shared Select atom; the row header shows the name, so the atom's label is for assistive tech only.
+test("each form select is the shared Select atom, named by a hidden label tied to it", () => {
+  const rows = [
+    { name: "model tier", tree: renderComponentMc(screens.DomainsSectionMC, domainsPropsMc()), suffix: " model" },
+    { name: "effort tier", tree: renderComponentMc(screens.TiersSectionMC, tiersPropsMc()), suffix: " level" },
+  ];
+  for (const row of rows) {
+    const atoms = findAllMc(row.tree, (n) => n.props["data-atom"] === "Select");
+    assert.strictEqual(atoms.length, tagsMc(row.tree, "select").length, `${row.name}: every select is the atom`);
+    const [label] = tagsMc(atoms[0].children, "label");
+    const [select] = tagsMc(atoms[0].children, "select");
+    assert.strictEqual(label.props.className, "sr-only", `${row.name}: the label takes no line of its own`);
+    assert.strictEqual(label.props.htmlFor, select.props.id, `${row.name}: the label names its select`);
+    assert.ok(textMc(label.children).endsWith(row.suffix), `${row.name}: the label words what is picked`);
+  }
+});
+
+// One crit edge per row: a listed value puts it on the select, custom mode on the entry field; either names the worded reason.
+test("an invalid model pick marks the control holding the value and points it at its reason", () => {
+  const renderInvalid = (value: string) =>
+    renderComponentMc(screens.DomainsSectionMC, {
+      ...domainsPropsMc(),
+      form: { models: { "model.dev": value }, budgets: {} },
+      errors: { "model.dev": "Unknown model id" },
+    });
+  const reasonId = (tree: McNode[]) => findAllMc(tree, (n) => n.props.role === "alert")[0].props.id;
+
+  const listed = renderInvalid("claude-opus-4-8");
+  const [listedSelect] = tagsMc(listed, "select");
+  assert.strictEqual(listedSelect.props["aria-invalid"], "true", "a listed value: the select is invalid");
+  assert.strictEqual(listedSelect.props["aria-describedby"], reasonId(listed), "a listed value: the select names its reason");
+
+  const custom = renderInvalid("my-model");
+  const [customSelect] = tagsMc(custom, "select");
+  const [entry] = tagsMc(custom, "input");
+  assert.strictEqual(entry.props["aria-invalid"], "true", "custom mode: the entry field is invalid");
+  assert.strictEqual(entry.props["aria-describedby"], reasonId(custom), "custom mode: the entry field names its reason");
+  assert.ok(!String(customSelect.props.className).includes("is-error"), "custom mode: the select keeps no second ring");
+  assert.strictEqual(customSelect.props["aria-invalid"], undefined, "custom mode: the select is not marked");
 });
 
 test("a live value the payload does not carry is left out, never shown as a placeholder dash", () => {

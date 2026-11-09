@@ -1048,10 +1048,9 @@ function DomainRowMC({
 	);
 }
 
-// 모델 선택 = 컴팩트 native <select>(.field-select) + 선택 옵션의 capability descriptor 1줄 +
-// custom free-text escape hatch. 목록 외 값(빈 문자열 포함) = custom 모드 → CUSTOM_OPTION_MC 표시값.
-// 옵션 = GET known_models (+ inherit) 규모라 세로 카드 스택 대신 1행 콤보가 적합 (옵션 多 → dropdown 패턴).
-// ghost default + reset (T-MDL-6): 저장된 baseline 과 다르면 ghost 라벨 + 되돌리기 링크.
+// Model pick = the house Select (one-row combo: the options are known_models + inherit) + a custom-id entry slot.
+// A value outside the list (empty included) = custom mode, shown as CUSTOM_OPTION_MC.
+// An edit away from the saved baseline → ghost label + revert link.
 function ModelSelectMC({
 	domain,
 	knownModels,
@@ -1068,8 +1067,7 @@ function ModelSelectMC({
 	// overridden = 편집값이 저장된 baseline 과 다름 → ghost+reset 노출 게이트 (T-MDL-6).
 	const overridden = defaultValue !== undefined && value !== defaultValue;
 
-	const handleSelect = (e) => {
-		const opt = e.target.value;
+	const handleSelect = (opt) => {
 		// '__custom__' 진입 = 빈 문자열로 custom 모드 시작 (기존 custom 버튼과 동일 동작).
 		if (opt === CUSTOM_OPTION_MC) {
 			if (!isCustom) onChange("");
@@ -1078,36 +1076,42 @@ function ModelSelectMC({
 		onChange(opt);
 	};
 
+	const { Select } = window.UI;
+	const id = `mc-model-${domain}`;
+	const selectOptions = [
+		...options.map((opt) => ({ key: opt, label: getModelOptionLabelMC(opt), title: getModelOptionTitleMC(opt) })),
+		{ key: CUSTOM_OPTION_MC, label: "custom…" },
+	];
+
 	return (
 		<div>
-			{/* error ring 은 custom 모드에선 아래 input 이 소유 → select 는 !isCustom 일 때만 is-error
-          (이중 --crit ring 회피, dual-encoding 텍스트 메시지는 양쪽 공통 유지). */}
-			<select
-				className={`field field-select${error && !isCustom ? " is-error" : ""}`}
+			{/* custom mode → the entry field owns the crit edge, so the select drops it (one ring; the worded message serves both) */}
+			<Select
+				id={id}
+				label={`${label} model`}
+				isLabelHidden
+				isError={Boolean(error) && !isCustom}
 				value={isCustom ? CUSTOM_OPTION_MC : value}
+				options={selectOptions}
 				onChange={handleSelect}
 				title={isListed && value !== "inherit" ? value : undefined}
-				aria-label={`${label} model`}
+				aria-describedby={error && !isCustom ? `${id}-error` : undefined}
 			>
-				{options.map((opt) => (
-					<option key={opt} value={opt} title={getModelOptionTitleMC(opt)}>
-						{getModelOptionLabelMC(opt)}
-					</option>
-				))}
-				<option value={CUSTOM_OPTION_MC}>custom…</option>
-			</select>
-			{isCustom && (
-				<input
-					type="text"
-					className={`field field--mono mt-1${error ? " is-error" : ""}`}
-					value={value}
-					placeholder="model id (lowercase)"
-					onChange={(e) => onChange(e.target.value)}
-					aria-label={`${label} custom model id`}
-				/>
-			)}
+				{isCustom && (
+					<input
+						type="text"
+						className={`field field--mono${error ? " is-error" : ""}`}
+						value={value}
+						placeholder="model id (lowercase)"
+						onChange={(e) => onChange(e.target.value)}
+						aria-label={`${label} custom model id`}
+						aria-invalid={error ? "true" : undefined}
+						aria-describedby={error ? `${id}-error` : undefined}
+					/>
+				)}
+			</Select>
 			{error && (
-				<div className="fs-meta text-crit mt-1" role="alert">
+				<div id={`${id}-error`} className="fs-meta text-crit mt-1" role="alert">
 					<span aria-hidden="true">✕ </span>
 					{error}
 				</div>
@@ -1264,6 +1268,7 @@ const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
  */
 function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChange }) {
 	const { Link } = window.UI;
+	const id = `mc-budget-${b.domain}`;
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
 	const showError = Boolean(error);
@@ -1290,6 +1295,7 @@ function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChang
 							onChange={(e) => onChange(e.target.value)}
 							aria-label={`${meta.label} per-call cap in USD`}
 							aria-invalid={showError ? "true" : undefined}
+							aria-describedby={showError ? `${id}-error` : undefined}
 						/>
 					</span>
 					{/* cost/outcome payload carries no per-call maximum → Cost & usage is the reference point */}
@@ -1301,7 +1307,7 @@ function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChang
 					</Link>
 				</div>
 				{showError && (
-					<div className="fs-meta text-crit mt-1" role="alert">
+					<div id={`${id}-error`} className="fs-meta text-crit mt-1" role="alert">
 						<span aria-hidden="true">✕ </span>
 						{error}
 					</div>
@@ -1404,6 +1410,9 @@ const TIER_CAP_FIELD_STYLE_MC = { width: "calc(11ch + 4px + 2 * var(--ctl-pad-x)
 
 // The unset effort level: a short option label that fits the select, the whole meaning in its title.
 const EFFORT_INHERIT_TITLE_MC = `${CLI_DEFAULT_LABEL_MC} — no --effort flag`;
+const EFFORT_OPTIONS_MC = ["inherit", ...EFFORT_LEVELS_MC].map((level) =>
+	level === "inherit" ? { key: level, label: CLI_DEFAULT_LABEL_MC, title: EFFORT_INHERIT_TITLE_MC } : { key: level, label: level },
+);
 
 /**
  * One knob row — an effort select (CLI default + the five levels) or a token-count field where
@@ -1416,6 +1425,8 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 	// absent key = the unset state, not an unread one — unless the file itself was not read
 	const live = t.actual ?? (isFileRead ? CLI_DEFAULT_LABEL_MC : null);
 	const labelOf = (v) => (v === "inherit" ? CLI_DEFAULT_LABEL_MC : v);
+	const { Select } = window.UI;
+	const id = `mc-tier-${t.domain}`;
 
 	return (
 		<tr className="is-grouped is-top-aligned">
@@ -1426,19 +1437,17 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 			</td>
 			<td>
 				{meta.kind === "effort" ? (
-					<select
-						className={`field field-select${showError ? " is-error" : ""}`}
+					<Select
+						id={id}
+						label={`${meta.label} level`}
+						isLabelHidden
+						isError={showError}
 						value={value}
-						onChange={(e) => onChange(e.target.value)}
+						options={EFFORT_OPTIONS_MC}
+						onChange={onChange}
 						title={value === "inherit" ? EFFORT_INHERIT_TITLE_MC : value}
-						aria-label={`${meta.label} level`}
-						aria-invalid={showError ? "true" : undefined}>
-						{["inherit", ...EFFORT_LEVELS_MC].map((level) => (
-							<option key={level} value={level} title={level === "inherit" ? EFFORT_INHERIT_TITLE_MC : undefined}>
-								{labelOf(level)}
-							</option>
-						))}
-					</select>
+						aria-describedby={showError ? `${id}-error` : undefined}
+					/>
 				) : (
 					<input
 						type="text"
@@ -1450,10 +1459,11 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 						onChange={(e) => onChange(e.target.value === "" ? "inherit" : e.target.value)}
 						aria-label={`${meta.label} in tokens`}
 						aria-invalid={showError ? "true" : undefined}
+						aria-describedby={showError ? `${id}-error` : undefined}
 					/>
 				)}
 				{showError && (
-					<div className="fs-meta text-crit mt-1" role="alert">
+					<div id={`${id}-error`} className="fs-meta text-crit mt-1" role="alert">
 						<span aria-hidden="true">✕ </span>
 						{error}
 					</div>
