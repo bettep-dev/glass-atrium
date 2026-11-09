@@ -188,6 +188,7 @@ The delegation-size discipline (`skills/glass-atrium-ops-orchestrator-role.md` �
 
 - **Output verification**: build success + existing tests passing, required before accepting team deliverables.
   - Tests scale to the code's risk, never one per file (`scoped/shared-testing.md` → **Depth follows risk**).
+  - A result naming a loosened, re-pinned, renamed or retired test → check it against `scoped/shared-testing.md` → **Coupled-test check**; a shortfall is a question for the user.
 - **Writer/Reviewer separation**: a fresh-session review is recommended after complex implementations, to reduce same-session self-bias.
 - **Confidence-based routing**:
 
@@ -196,19 +197,19 @@ The delegation-size discipline (`skills/glass-atrium-ops-orchestrator-role.md` �
   | confidence=low | automatic glass-atrium-qa-code-reviewer deployment |
   | confidence=medium + security code | glass-atrium-qa-code-reviewer deployment |
 
+  - A regression chain in an area, whatever the confidence → `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop` → **Regression-chain trigger**.
   - The test-first bar applies regardless of confidence (`rules/glass-atrium/core-outcome-record.md` → `### Field Input Guide` → `metric_pass`).
-- **Orchestrator-forced Deep-review override**: compose a glass-atrium-qa-code-reviewer **Deep (4-pass)** review, deterministically and regardless of the writer's self-reported confidence, when either trigger holds:
+- **Orchestrator-forced Deep-review override**: compose a glass-atrium-qa-code-reviewer **Deep (4-pass)** review, regardless of writer confidence, when either trigger holds:
   - a delegation's `[SCOPE] files=` lists ≥ 10 paths;
   - any listed path starts with a sensitive-path prefix — `hooks/` · `settings*.json` · `rules/` · `agents/` (frontmatter) · `autoagent/`.
-  - The threshold and the prefix list are single-sited here: other prose files carry a pointer, never a copy; `hooks/enforce-verification-gate.sh` holds the same values as named constants and reports counts + matched prefix only.
   - Applies to every such delegation, not only the first in a cycle.
   - No doc-only skip tier exists: a rule-file change is reviewed, never exempted.
-  - Honest backing: the routing decision is orchestrator honor-system, and the hook leg is advisory + presence-only (stderr, exit 0, silent without a `[SCOPE]` line).
+  - Honest backing: routing is orchestrator honor-system; the hook leg is advisory + presence-only (stderr, exit 0, silent without a `[SCOPE]` line).
   - Describing this override as "enforced" is forbidden.
-  - Machine-checked repetition: `hooks/test/enforce-verification-gate-scope.bats` extracts the path-count number from this bullet and compares it with the hook's constant, so the two move together or that suite fails.
 - **Error recovery**: `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop`.
 - **Team termination**: complete → aggregate results → **reconcile and close** each plan the team built from (`## Managed Document Completion (Direct Handling)` → Step 3) → **Outcome Record** → retrospective (actual vs plan) → **instruction upgrade review**.
   - The retrospective's durable half is the Outcome Record's `summary` and `concerns` plus the learning-log aggregation (`core-learning-log.md` → Learning Log Auto-Aggregation).
+  - A defect class found twice in one target repo → propose it to the user as a note for that repo's anchor file (`scoped/scope-dev.md` → **Anchor file (SECONDARY)**).
 
 #### Review rounds and reviewer prompts
 

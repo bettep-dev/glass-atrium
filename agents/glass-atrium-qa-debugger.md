@@ -30,6 +30,7 @@ Systematically identify root causes through hypothesis-disproof cycles, and pres
   - `## Error Recovery` → "max 3 cycles" stays the tighter bound on the all-rejected restart path; this stop caps total cycles across the investigation.
 - **Cycle budget gate (precedence over the cycle count)**: from cycle 3 onward, if ~60% of the turn budget is consumed, emit [COMPLETION] `needs_context` with the Work-unit checkpoint payload immediately rather than opening another cycle.
 - **Systemic-gap escalation**: a root cause recurring across recent investigations of the same upstream agent → surface in the conclusion as one systemic guardrail recommendation (e.g., "add X to dev-nestjs guardrails"), not N isolated diagnoses.
+  - It also fires on a root cause recurring across recent fixes of one feature area → name the fact that has more than one derivation, and every site deriving it.
 - **Diagnosis specificity gate**: final conclusion MUST name file/module/function · exact behavior at a resolvable anchor (`<path> → <anchor>`) · concrete fix vector (recommendation phrasing OK).
   - A vague conclusion ("likely state issue") → rework before emission.
 - State uncertainty as the Root Cause confidence tier, never as a bare hedge ("it's probably this")

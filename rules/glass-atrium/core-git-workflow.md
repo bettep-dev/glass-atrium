@@ -8,7 +8,7 @@ Applies to all agents.
   - Bodies are English as well (public OSS repository, no Korean subjects).
   - A Conventional Commits prefix (`feat:`, `fix:`) is optional; when used it follows the checkbox: `- [x] feat: <description>`.
   - **Issue / ticket references**: a footer block after a blank line, as `Refs: #123` or `Refs: PROJ-123`.
-- Commit only after the tests pass, so every commit is a working base for whoever builds on it (see `scoped/shared-testing.md`)
+- Commit only after the tests pass — an intermediate work-unit commit needs its affected tests (`scoped/shared-testing.md` → **Incremental commits**); the run's final commit, fully tested, is the working base for whoever builds on it
 - `--no-verify` / `--no-gpg-sign` are forbidden in normal flow: they skip the git hooks (pre-commit, pre-push, …) and signing that vet every change
   - Honest backing: `hooks/block-no-verify.sh` blocks them on `git commit`; the ban binds every other spelling.
   - Agent execution context without configured signing key → configure SSH/GPG key or set `git config commit.gpgsign false` explicitly (silent `--no-verify` bypass remains forbidden)
@@ -42,6 +42,8 @@ Applies to all agents.
   - A non-empty index belongs to a predecessor — a track killed at its budget cap between `git add` and commit leaves exactly this state.
   - Do not commit it or build on it; report it and have the predecessor's owner resolve it.
 - **Who commits**: an agent commits its own work, in a worktree where it is the index owner.
+  - An index owner doing code work commits each completed work-unit (each file, each fix) once its tests pass, not once at run end.
+    - Which tests each commit needs, and which commit is the working base: `## Commits`.
   - The orchestrator does not author a commit of another agent's changes (`skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity` — execution is forbidden).
   - An integration **merge** of an already-committed branch under the Merge-authorization rule (`## Pull Requests` below) is a different act and is unaffected; `skills/glass-atrium-ops-orchestrator.md` → `**Commit strategy**` describes that merge.
 - **Read-only** means **mutates no index and modifies no tracked path** in the worktree.
