@@ -56,20 +56,40 @@ queue_get_socket_path() {
   if [[ "${socket}" == /* ]]; then printf '%s\n' "${socket}"; fi
 }
 
-# POST <route> <json body> → reply body on stdout; non-zero when unprovisioned, unreachable, slow or refused.
-queue_post() {
-  local route="$1" body="$2" key_file key port
+# The queue key from its 0600 file → stdout (callers hand it to curl's stdin config only); non-zero when unprovisioned.
+queue_get_key() {
+  local key_file key
   key_file="$(queue_get_root)/secrets/queue-key"
   [[ -f "${key_file}" && -r "${key_file}" ]] || return 1
   key="$(head -c 512 -- "${key_file}")"
   key="${key%%[[:space:]]*}"
   [[ "${key}" =~ ${QUEUE_KEY_SHAPE} ]] || return 1
+  printf '%s\n' "${key}"
+}
+
+# <method> <route> [json body] [max seconds] → the reply body, then a last line holding the HTTP status;
+# non-zero only with no reply at all (unprovisioned, unreachable or slow).
+queue_send() {
+  local method="$1" route="$2" body="${3:-}" max_time="${4:-${QUEUE_MAX_TIME_S}}" key port
+  key="$(queue_get_key)" || return 1
   port="$(atrium_monitor_port 2>/dev/null)" || return 1
+  local -a args=(--silent --config - --connect-timeout "${QUEUE_CONNECT_TIMEOUT_S}" --max-time "${max_time}"
+    --request "${method}" --write-out '\n%{http_code}')
+  if [[ -n "${body}" ]]; then
+    args+=(--header 'content-type: application/json' --data-binary "${body}")
+  fi
   # key → curl's stdin config, never argv
-  printf 'header = "x-atrium-queue-key: %s"\n' "${key}" | curl --silent --fail --config - \
-    --connect-timeout "${QUEUE_CONNECT_TIMEOUT_S}" --max-time "${QUEUE_MAX_TIME_S}" \
-    --header 'content-type: application/json' --data-binary "${body}" \
-    "http://127.0.0.1:${port}${route}" 2>/dev/null
+  printf 'header = "x-atrium-queue-key: %s"\n' "${key}" | curl "${args[@]}" "http://127.0.0.1:${port}${route}" 2>/dev/null
+}
+
+# POST <route> <json body> [max seconds] → reply body on stdout; non-zero when unprovisioned, unreachable, slow or refused.
+queue_post() {
+  local reply status
+  # shellcheck disable=SC2310  # no reply → this function's own failure, never an errexit
+  reply="$(queue_send POST "$1" "$2" "${3:-}")" || return 1
+  status="${reply##*$'\n'}"
+  [[ "${status}" == 2?? ]] || return 1
+  printf '%s\n' "${reply%$'\n'*}"
 }
 
 # Copies the messaging token to its 0600 per-session file in the 0700 token dir; the sender reads it there.
@@ -91,9 +111,9 @@ queue_put_messaging_auth() {
 }
 
 # The register step: the token copy, then the register POST → the answered-waiting count on stdout.
-# $1: permission mode hint (optional; dropped unless one the monitor accepts)
+# $1: permission mode hint (optional; dropped unless one the monitor accepts) · $2: max seconds (optional)
 queue_register_session() {
-  local hint="${1:-}" session_id pid socket body reply count
+  local hint="${1:-}" max_time="${2:-}" session_id pid socket body reply count
   session_id="$(queue_get_session_id)"
   pid="$(queue_get_pid)"
   [[ -n "${session_id}" && -n "${pid}" ]] || return 1
@@ -104,7 +124,7 @@ queue_register_session() {
     --arg configDir "${CLAUDE_CONFIG_DIR:-}" --arg socketPath "${socket}" --arg permissionHint "${hint}" \
     --arg launchHint "${ATRIUM_QUEUE_ACCEPT_WRAPPER:+accept_wrapper}" \
     '{$sessionId, $pid, $cwd, $configDir, $socketPath, $permissionHint, $launchHint} | with_entries(select(.value != ""))')" || return 1
-  reply="$(queue_post /api/queue/sessions/register "${body}")" || return 1
+  reply="$(queue_post /api/queue/sessions/register "${body}" "${max_time}")" || return 1
   count="$(jq -r '.answeredWaiting // 0' <<<"${reply}" 2>/dev/null)" || return 1
   [[ "${count}" =~ ^[0-9]+$ ]] || return 1
   printf '%s\n' "${count}"
