@@ -79,6 +79,10 @@ Each step builds on the previous.
 ## Mocking Rules
 
 - **Mock only at boundaries**: external APIs, databases, file systems, time
+  - A boundary fake models the real system's observable behavior independently of the code under test: it never reuses the code's own guard or predicate.
+  - A behavior that depends on the boundary's real response (a stored content type, a query filter, a constraint) is checked once against the real system or a recorded capture before it is reported done.
+    - Not checked → `concerns` carries "fixture-only".
+  - Why: a fake that drops a content type or re-implements the query predicate stays green until the first real run.
 - Internal module mocking SHOULD be minimized → excessive mocking signals a design problem
 - **Mocking library**: use the one the sibling tests in the same directory already use; introducing a second one into a corpus needs a stated reason
 
@@ -109,6 +113,8 @@ Each step builds on the previous.
 - **Comments**: a test comment states what the test protects, never how the code or the test got here — `scoped/shared-comment-logging.md` binds test files like any other code.
   - A test that calls itself vacuous is fixed or deleted.
 - **Test data**: inline the few realistic values the assertion depends on; a placeholder (`'x'`, `'a@b.c'`) hides what matters.
+  - Use values at the precision and range real data has: sub-unit timestamps when production carries them; the real geometry and config constants, never reduced ones.
+  - Build input states through the code that produces them — a state the producer cannot emit is no evidence.
 - **Shared fixture**: a large fixture repeated byte-for-byte across tests or files, whose copies can drift, becomes one named fixture — or a builder with safe defaults once its variants multiply. Small readable setup stays inline.
 
 ### Table form per stack
@@ -146,6 +152,9 @@ Every table row carries a name stating its condition — an unnamed row fails wi
   - Wrong: its subject remains, but it fails because it expects the old text or behavior.
   - Fix each inside the declared file set; outside it → name the test and its class in `concerns`.
   - Remove only a test this change made stale or obsolete, named with its reason per **Deletion duty**; never delete, skip or loosen a test to turn a red run green.
+    - Every test the change loosens (wider tolerance, weaker bound, an exact match widened to a partial one), re-pins (changed expected value), renames or retires is named in `concerns`.
+    - Each names the rule change that requires it and that rule's source: the user's words, or a plan line the user approved.
+    - "To make it pass" or a bare "by design" is never a reason.
   - Why: agents fix what fails and miss what stays green, so a stale test survives every run.
 
 ### Legitimate example tests (this is NOT a ban on examples)
@@ -159,8 +168,13 @@ Each kind is legitimate when the stated purpose is the whole reason the test exi
 | executable-specification example | it is the one canonical worked example documenting the contract |
 | one-off verification test (a probe, an incident repro, a change check) | it is kept as a regression pin in the behavior's home file, or deleted in the change that wrote it |
 
+- **Regression pin data** (the regression pin row): the reproduction uses the data the defect was reported on — an export or capture turned fixture.
+  - Mask or synthesize personal data, keeping the precision and range that reproduce the defect (`rules/glass-atrium/core-security.md` → `## Secret Management`).
+  - No such data → the fixture-only disclosure (`## Mocking Rules` → **Mock only at boundaries**).
 - **One-off disposition** (the one-off verification test row): keep one only when deleting it could let a real break through later; equal coverage is never the reason to keep or delete a test (**Deletion duty**).
 - **Boundary**: an example test is never a substitute for the relationship test of the same behavior. Three examples of one behavior with no named relationship is enumeration, not coverage.
+  - A regression pin is not exempt from `### Decision procedure`: a second pin on one behavior is its "second test" and runs the procedure first.
+    - Example relationship for a layout or state engine: a sweep over every fixture × configuration × state.
 
 ## Rationalization Rejection (Testing)
 
@@ -184,11 +198,16 @@ Each kind is legitimate when the stated purpose is the whole reason the test exi
 |------|---------|------|-------------|
 | T1 Static | lint + typecheck | Free | After every change |
 | T2 Unit | Related unit tests | Low | For changed files |
-| T3 E2E/Integration | Full test suite | High | Before commit |
+| T3 E2E/Integration | Full test suite | High | Before the run's final commit, any push or PR |
 
 - Execute in T1 → T2 → T3 order (fast feedback first).
 - Diff-based: run the T2 tests related to changed files first, selected per that project's test structure (`src/foo.ts` → `test/foo.spec.ts` / `foo.test.ts`).
-- A full T3 pass is REQUIRED before commit.
+- **Incremental commits**: a full T3 pass is REQUIRED before the run's final commit, and before any push or PR.
+  - Each earlier per-work-unit commit (`rules/glass-atrium/core-git-workflow.md` → **Who commits**) needs its affected test paths passing.
+  - Why: a full suite per work-unit exhausts the turn budget; which commit is the working base: `rules/glass-atrium/core-git-workflow.md` → `## Commits`.
+  - A run that ends before that full pass names "full suite not run since the last full pass" in `concerns`.
+- A test you add or change counts as run only when the run's output shows it executed; a suite command that does not select it (a separate e2e target, an excluded directory) is not its run.
+- A test class that no CI job runs is named in `concerns` as "not run in CI".
 
 ## Mechanical Success Metrics
 

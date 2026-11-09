@@ -16,6 +16,7 @@
   - Self-evident code takes no comment · an appended `— because …` does not license one · in doubt, omit.
 - **Stale comments**: a stale comment is worse than none — change it together with the code it describes.
 - **Single Source of Truth**: each fact is documented at exactly one declaration site · restating it elsewhere (a docstring re-listing type members) is FORBIDDEN — drift risk.
+  - Reach: README, doc pages and API description strings too — a value (default, range, limit, timeout) restated there or in a comment is a second declaration → name the declaring constant or setting.
 
 ## Comment Language & Style
 

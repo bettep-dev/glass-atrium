@@ -71,6 +71,14 @@ Heading-position suite detail:
 - **`## Learning Log & Correction Signal [ALL]`**: `core-learning-log.md` → Write-Gate omits the auto-path ban because the charter states it.
 - **`## Rationalization Rejection [ALL]`**: the charter names the five domain home files, and `scoped/maintainers/shared-testing.md` cites it.
 
+## Held cap exception — `### Turn Budget & Graceful Exit [ALL]`
+
+- This H3 stays over the 3 KB H3 cap (UTF-8, heading to the next H3, its `####` subsections included).
+- Why it cannot split: it must stay one heading block.
+  - `autoagent/test/test_pre_verify_section_excerpt.py` requires the whole block, subsections included, in the daemon's pre-verify excerpt.
+  - Its `Exempt` bullet scopes "this entire section, including every `####` subsection", and `hooks/inject-scope-rules.sh` cites that bullet.
+- Hold it there: any addition is a pointer, never a restated rule; byte-measure before adding.
+
 ## Thinking Budget Policy — measured precedence
 
 - The charter's **Default tier** claim was measured for a parent tier at or above settings `effortLevel`.

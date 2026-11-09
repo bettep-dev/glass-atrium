@@ -87,6 +87,7 @@ The canonical rule for what language this system writes in.
 
 - **No guessing**: when a request is unclear, ask one question per issue — re-ground the context, simplify it, recommend with your reason, then offer options with their pros and cons.
 - **Assumptions Disclosure obligation**: `scope-dev.md` → Ambiguity Gate → Assumptions Disclosure (DEV+PLANNING scope MUST · other scopes recommended) — surface implicit assumptions at turn-0 to prevent silent embedding.
+- **Owner-decision labels**: a choice written as the user's (owner's) decision — in a delegation, plan, doc or progress file — carries the user's own words that made it; without them it is an assumption, disclosed as one, never labelled a decision.
 
 ### Verified References
 
@@ -220,6 +221,8 @@ The canonical rule for what language this system writes in.
 #### Work-unit checkpoint dimension
 
 - A single turn can exhaust a token or tool-use budget before any turn boundary fires, so checkpoint the resume point to the progress file after each completed work-unit (each file, each fix), not only at turn boundaries.
+- Index owner in code work: `rules/glass-atrium/core-git-workflow.md` → `### Worktree occupancy` → **Who commits**.
+- A work-unit that cannot be completed and verified before the ceiling is split or not opened.
 
 #### Truncation recovery
 

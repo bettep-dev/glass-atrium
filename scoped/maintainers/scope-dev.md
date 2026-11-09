@@ -213,9 +213,11 @@ Headings and bold leads other files resolve to — renaming or deleting one dang
   - rules and agents ← `rules/glass-atrium/core-outcome-record.md` (`style_ref` row) · `agents/glass-atrium-dev-android.md` · `agents/glass-atrium-dev-swift.md`
   - notes in `scoped/maintainers/` ← `glass-atrium-dev-android.md` · `glass-atrium-dev-nestjs.md` · `glass-atrium-dev-node.md` · `glass-atrium-dev-python.md` · `glass-atrium-dev-react.md` · `glass-atrium-dev-shell.md` · `glass-atrium-dev-swift.md` · `shared-search-first.md`
   - code comments ← `hooks/lib/style-ref-consts.sh` · `hooks/lib/styleref-roster.sh` · `hooks/test/style-ref-flag-predicate.bats`
+  - **Anchor file (SECONDARY)** ← `skills/glass-atrium-ops-orchestrator.md` → `### Quality Gates [ORCHESTRATOR]` → **Team termination**, which proposes drift notes into the anchor file; the rule file carries no back-link because DEV readers act on none of it.
 - `### Pre-Edit Facts Disclosure` ← `hooks/advisory-preedit-facts.sh` (header and the operator-visible `missing`-verdict message) · `scoped/maintainers/glass-atrium-dev-nestjs.md` · `scoped/maintainers/glass-atrium-dev-react.md`
 - `## Agent-Level Tool Exceptions` ← `agents/glass-atrium-dev-rag.md` (frontmatter NOTE, itself a fixture in `hooks/test/enforce-harness-critical-frontmatter.bats`)
-- `## Modification Scope Constraint (Surface Area Constraint) [DEV]` ← `scoped/shared-testing.md` · `agents/glass-atrium-intel-planner.md`
+- `## Modification Scope Constraint (Surface Area Constraint) [DEV]` ← `scoped/shared-testing.md` · `scoped/shared-search-first.md` (**Fact-ownership search**) · `agents/glass-atrium-intel-planner.md`
+- **Bug fix = root cause, not symptom** ← `scoped/shared-search-first.md` (**Fact-ownership search**, which names the difference from it)
 - **Minimalism reflex** and **Rule of Three before abstraction** ← `scoped/shared-comment-logging.md`
 - `### Dead Code Non-Touch Principle` ← `scoped/shared-comment-logging.md` (disambiguates itself against it by name)
 - `## Vendor-Routing Awareness [DEV]` has no external citer; the `Vendor-Routing` hits in `scoped/scope-design.md` and the designer body are their own sections.

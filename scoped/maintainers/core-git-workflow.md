@@ -34,12 +34,13 @@ Corpus-maintenance companion to that rule file. Nothing here is delivered to an 
 
 ## Why kept items stay
 
-- **Who commits**, both sub-bullets:
+- **Who commits**, all three sub-bullets:
+  - The work-unit commit duty is the single home of committing at each green work-unit; `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Work-unit checkpoint dimension` carries only a pointer to it.
   - The orchestrator commit ban lives only in the rule file: `## Orchestrator Identity` names no commit, and no other corpus site bans it.
   - The merge carve-out is the sole link to `skills/glass-atrium-ops-orchestrator.md` → **Commit strategy** (the post-Wave integration merge); without it that merge collides with the **Who commits** lead.
 - "Bodies are English as well (public OSS repository, no Korean subjects)": byte-identical, because cutting it widens the rule.
   - Flag: it overlaps `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Output Language`, which lets a user request a non-English deliverable; this sentence admits no such exception.
-- "(see `scoped/shared-testing.md`)" under `## Commits`: `scoped/maintainers/shared-testing.md` records the commit rule's which-tests-when half as deferred there.
+- The `scoped/shared-testing.md` → **Incremental commits** pointer in the `## Commits` tests-pass bullet: `scoped/maintainers/shared-testing.md` records the commit rule's which-tests-when half as deferred there, and the pointer keeps this Tier-1 line from reading as overriding that Tier-3 lead.
 - "(silent `--no-verify` bypass remains forbidden)": the parent ban binds "in normal flow", and a missing signing key reads as abnormal flow, so the parenthetical keeps the ban alive there.
 - **Regeneration barrier**: `scripts/generate-manifest.sh` takes its file list from `git ls-files` but its hashes from the working tree, so a run beside another track's uncommitted edits writes hashes that match no commit.
 - **Read-only**, both halves: a reviewer fixing a typo modifies a tracked path, and a reviewer running `git stash` to peek at a clean tree destroys the owner's staged work without modifying one.
