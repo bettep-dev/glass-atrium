@@ -48,13 +48,9 @@ describe("each config section holds its role set", () => {
   for (const section of ["gap", "margin", "space"] as const) {
     test(`${section} holds the --gap-* family without page`, () => {
       const expected = Object.fromEntries(GAP_FAMILY.map((key) => [key, `var(--gap-${key})`]));
-      assert.deepEqual(keys[section], expected);
+      assert.deepEqual(keys[section], expected, `${section} drifted from the --gap-* family; a card key would collide with .gap-card`);
     });
   }
-
-  test("no section holds a key named card, which would collide with .gap-card", () => {
-    for (const section of SECTIONS) assert.equal("card" in keys[section], false, `theme.extend.${section}.card exists`);
-  });
 });
 
 describe("the shim emits the utilities each section allows", () => {
