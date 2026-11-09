@@ -25,7 +25,8 @@ const AGENTS_SRC = resolve(__dirname, "../public/src/screens/agents.jsx");
 // stays inspectable; the few non-component members carry their real shapes.
 const UI_SCALARS: Record<string, unknown> = {
   LOW_N_MIN: 5,
-  TONE_ICON: new Proxy({}, { get: () => "dot" }),
+  // a per-tone name → a test can tell which tone a glyph was drawn for
+  TONE_ICON: new Proxy({}, { get: (_, tone) => `tone-glyph-${String(tone)}` }),
   resolveBadge: () => ({ label: "badge", tone: "warn" }),
   formatPctWithDenominator: (pct: number) => `${pct}%`,
   formatKstFull: (iso: string) => iso,
@@ -197,10 +198,12 @@ test("the ledger grows with the page instead of a nested vertical scroller that 
   );
   const classOf = (n: RenderedNode) => String(n.props.className ?? "");
 
-  const [card] = findNodes(tree, (n) => /\bcard\b/.test(classOf(n)) && !/card-body/.test(classOf(n)));
-  assert.match(classOf(card), /\bmin-w-0\b/, "a wide ledger cannot widen the page grid");
-  const [body] = findNodes(tree, (n) => /card-body flush/.test(classOf(n)));
-  assert.equal((body.props.style as Record<string, unknown>)?.maxHeight, "none", "no card-body height cap on the ledger");
+  const [region] = findNodes(tree, (n) => n.props.id === "agents-summary");
+  assert.match(classOf(region), /\bmin-w-0\b/, "a wide ledger cannot widen the page grid");
+  const [card] = findAtoms(region, "Card");
+  assert.equal(card.props.isFlush, true, "the ledger sits flush in the shared card");
+  // the ag-summary rule of the screen style block lifts the card-body cap; the page-scroll sticky e2e measures it
+  assert.match(classOf(card), /\bag-summary\b/, "no card-body height cap on the ledger");
   assert.deepEqual(findNodes(tree, (n) => /\boverflow-/.test(classOf(n))).map(classOf), [], "no screen scroll box around the ledger");
   assert.equal(findNodes(tree, (n) => /\btbl-wrap\b/.test(classOf(n))).length, 1, "the Table wrapper holds the ledger");
 });
@@ -579,7 +582,9 @@ test("the status band is one card holding one stat row, a stat per fleet questio
     failureByAgent: new Map(), overageByAgent: new Map(), onRetry: () => undefined,
   });
   const hasClass = (name: string) => (n: RenderedNode) => new RegExp(`(^|\\s)${name}(\\s|$)`).test(String(n.props.className ?? ""));
-  assert.deepEqual(findNodes(tree, hasClass("card")).map((n) => n.props.id), ["agents-status"], "one card, no card per stat");
+  assert.equal(findAtoms(tree, "Card").length, 1, "one card, no card per stat");
+  const [band] = findNodes(tree, (n) => n.props.id === "agents-status");
+  assert.equal(findAtoms(band, "Card").length, 1, "the card sits inside the band's focus target");
   const statRows = findNodes(tree, hasClass("stat-row"));
   assert.equal(statRows.length, 1);
   // each label's own span — the ⓘ beside it carries the counting rule, not the label
@@ -675,7 +680,7 @@ function renderSortedCard(mod: Record<string, unknown>, failureStatus: string): 
 
 // the card head's right cluster, rendered → the sort control and its note as the head draws them
 function renderHeadRight(tree: RenderedNode | string | null): RenderedNode | string | null {
-  const [head] = findNodes(tree, (n) => n.props?.atom === "CardHead");
+  const [head] = findAtoms(tree, "Card");
   assert.ok(head, "the card draws the shared card head");
   return renderScreen(head.props.right);
 }
@@ -1211,6 +1216,19 @@ test("a ledger row leads with its failed count and keeps blocked as an untoned s
   }
 });
 
+test("a stat count reads grouped by thousands, as every other count on the page", async () => {
+  const rows = [
+    { name: "under a thousand stays bare", value: 999, tone: null, text: "999" },
+    { name: "a thousand and over groups", value: 1284, tone: null, text: "1,284" },
+    { name: "a toned count groups after its screen-reader word", value: 12840, tone: "crit", text: "Needs attention: 12,840" },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent("StatusStatValueAg", { label: "Failed", status: "ready", value: row.value, tone: row.tone });
+    // collectText joins sibling spans with a space → whitespace folded before the compare
+    assert.equal(collectText(tree).replace(/\s+/g, " ").trim(), row.text, row.name);
+  }
+});
+
 test("the status band counts failed agents in red and carries blocked-only agents as a neutral note", async () => {
   const ready = { status: "ready", data: [], error: null };
   const rows = [
@@ -1685,6 +1703,16 @@ describe("the ledger head names the agents the health rule flags, and stays sile
     });
   }
 
+  test("each mark draws its tone's shared glyph, the one the stat row draws for that tone", async () => {
+    const tree = await renderComponent("HealthMarkAg", { revisionState: ready({ rows: [...healthy, ...watched, ...critical] }), reviewByAgentState: ready({ rows: [] }) });
+    const marks = findNodes(tree, (n) => n.props?.["data-health-mark"] !== undefined);
+    assert.deepEqual(
+      marks.map((n) => findAtoms(n, "Icon").map((icon) => icon.props.name)),
+      marks.map((n) => [`tone-glyph-${String(n.props["data-health-mark"])}`]),
+    );
+    assert.equal(marks.length, 2, "a crit and a watch mark");
+  });
+
   test("an unread flag rate marks nothing rather than judging on rework alone", async () => {
     assert.deepEqual(await renderMarks(ready({ rows: critical }), ERROR_STATE), []);
   });
@@ -1695,7 +1723,7 @@ describe("the ledger head names the agents the health rule flags, and stays sile
       data: { rows: critical, agents: [{ agent: "a-crit", runs: 10 }], meta: { total_agents: 1 }, fetched_at: "2026-01-10T11:59:00.000Z" },
     });
     assert.equal(findAtoms(tree, "PageVerdict").length, 0);
-    const [head] = findAtoms(tree, "CardHead").filter((n) => n.props.title === "Performance by agent");
+    const [head] = findAtoms(tree, "Card").filter((n) => n.props.title === "Performance by agent");
     assert.ok(head, "the ledger card draws its head");
     const marks = findNodes(renderScreen(head.props.right), (n) => n.props?.["data-health-mark"] === "crit");
     assert.equal(marks.length, 1, "the crit agent is named in the ledger head");
