@@ -57,6 +57,13 @@ function classOf(node: RenderedNode): string {
   return String(node.props.className ?? "");
 }
 
+// StatRow is a stub atom here → the band's stats render through the real atom
+function renderStatsOf(mod: ScreenModule, band: RenderedNode | string | null): RenderedNode | string | null {
+  const rows = findNodes(band, (n) => n.props.atom === "StatRow");
+  assert.equal(rows.length, 1, "the band mounts one stat row");
+  return renderScreen(mod.React.createElement(realUi.StatRow, rows[0].props));
+}
+
 test("every disclosure leads its summary with the shared chevron the disclosure atom turns on open", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
@@ -522,7 +529,7 @@ test("wiki text never uses the retired micro type step and words are never set i
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const trees = [
     renderScreen(createElement(mod.WikiAlarmLane, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: true, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }) })),
-    renderScreen(createElement(mod.WikiTileBand, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, onRetry: () => {} })),
+    renderStatsOf(mod, renderScreen(createElement(mod.WikiTileBand, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, onRetry: () => {} }))),
     renderScreen(createElement(mod.WikiRunHistorySection, { cyclesState: ready({ cycles: [] }), summaryState: ready({}), reportState: ready({ reports: [] }), days: 30, onChangeDays: () => {}, onRetry: () => {} })),
     renderScreen(createElement(mod.WikiMaintenanceSection, { backlogState: READY_BACKLOG, onRetry: () => {} })),
     renderScreen(createElement(mod.MergeSuggestionItem, { proposal: { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" } })),
@@ -624,6 +631,17 @@ test("the run-history empty state tells a wiki that never ran from a quiet windo
   }
 });
 
+test("a wiki empty state takes the shared atom's own inset, adding no margin of its own", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const tree = renderScreen(
+    mod.React.createElement(mod.WikiRunHistorySection as Component, { cyclesState: ready({ cycles: [] }), summaryState: ready({ last_cycle_started_at: null }), onRetry: () => {} }),
+  );
+  const [empty] = findNodes(tree, (n) => n.props.atom === "EmptyState");
+  assert.ok(empty, "an empty state renders");
+  assert.doesNotMatch(String(empty.props.className ?? ""), /(^|\s)-?m[trblxy]?-/);
+});
+
 test("every merge proposal states in text which note absorbs which, not only by the arrow glyph", async () => {
   const mod = await loadWikiScreen();
   const backlog = {
@@ -664,12 +682,12 @@ test("the last-run age reads as words, so its space never widens into a mono gap
       indexState: ready({}), backlogState: READY_BACKLOG, onRetry: () => {},
     }),
   );
-  const age = findNodes(band, (n) => n.children.some((c) => typeof c === "string" && /^\d+h ago$/.test(c)));
+  const age = findNodes(renderStatsOf(mod, band), (n) => n.children.some((c) => typeof c === "string" && /^\d+h ago$/.test(c)));
   assert.equal(age.length, 1, "the tile shows the run's age");
   assert.doesNotMatch(classOf(age[0]), /\bfont-mono\b/);
 });
 
-test("tile captions wrap instead of cutting the figure's words, and a one-line label keeps its full text in its title", async () => {
+test("stat context lines wrap instead of cutting the figure's words, and each keeps its full detail in its title", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const band = renderScreen(
@@ -680,15 +698,19 @@ test("tile captions wrap instead of cutting the figure's words, and a one-line l
       onRetry: () => {},
     }),
   );
-  assert.ok(collectText(band).includes("22 in 29d"), "the window total is on the page");
-  for (const node of findNodes(band, () => true)) assert.doesNotMatch(classOf(node), /\btruncate\b/);
-  // the KPI label row is one line (amendment (c)) → its ellipsis fallback is the full label in the title
-  const labels = findNodes(band, (n) => /\bkpi-label-text\b/.test(classOf(n)));
-  assert.equal(labels.length, 4);
-  for (const label of labels) assert.equal(label.props.title, collectText(label));
+  const stats = renderStatsOf(mod, band);
+  assert.ok(collectText(stats).includes("22 in 29d"), "the window total is on the page");
+  for (const node of findNodes(stats, () => true)) assert.doesNotMatch(classOf(node), /\btruncate\b/);
+  const contexts = findNodes(stats, (n) => /\bstat-context\b/.test(classOf(n)));
+  assert.equal(contexts.length, 4);
+  for (const context of contexts) {
+    const [line] = findNodes(context, (n) => typeof n.props.title === "string");
+    assert.ok(line, `"${collectText(context)}" keeps a title`);
+    assert.ok(String(line.props.title).trim().length > 0, `"${collectText(line)}" has an empty title`);
+  }
 });
 
-test("a tile whose detail moved off its caption opens it from an info trigger described by the tile label", async () => {
+test("detail moved off the stat captions opens from the card's one info trigger, each note led by its stat label", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const band = renderScreen(
@@ -699,12 +721,25 @@ test("a tile whose detail moved off its caption opens it from an info trigger de
       onRetry: () => {},
     }),
   );
-  const triggers = findNodes(band, (n) => n.props.atom === "CardInfo");
-  assert.deepEqual(triggers.map((n) => n.props.label), ["How Compiled last cycle is counted", "How Library notes is counted"]);
-  for (const trigger of triggers) {
-    const [label] = findNodes(band, (n) => n.props.id === trigger.props.describedBy);
-    assert.ok(label, `${trigger.props.label}: the described-by id names a rendered label`);
-  }
+  assert.deepEqual(findNodes(band, (n) => n.props.atom === "CardInfo"), [], "no per-stat trigger");
+  const [card] = findNodes(band, (n) => n.props.atom === "Card");
+  const notes = findNodes(renderScreen(card.props.info), (n) => n.type === "p");
+  assert.equal(notes.length, 2);
+  assert.deepEqual(notes.map((n) => collectText(n.children[0] ?? null)), ["Compiled last cycle", "Library notes"]);
+  assert.match(collectText(notes[0]), /13 saved originals are waiting and the last cycle compiled none/);
+});
+
+test("a steady band carries no info trigger, since no stat has detail past its caption", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const band = renderScreen(
+    mod.React.createElement(mod.WikiTileBand as Component, {
+      summaryState: ready({ last_cycle_started_at: new Date().toISOString(), latest_compiled_count: 4, last_status: "ok" }),
+      indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: ready({ backlog: null }), onRetry: () => {},
+    }),
+  );
+  const [card] = findNodes(band, (n) => n.props.atom === "Card");
+  assert.ok(!card.props.info, "a steady band has nothing behind an ⓘ");
 });
 
 test("a feeder the alarm list could not read is named in plain words", async () => {
@@ -730,16 +765,15 @@ test("a loading open card or tile states loading once, through its placeholder, 
   for (const tree of trees.slice(0, 2)) assert.doesNotMatch(collectText(tree), /loading/i);
   assert.equal(findNodes(trees[0], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
   assert.equal(findNodes(trees[1], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
-  // a tile renders the shared KPI anatomy (real here) → its loading state is the KPI's own placeholder in the value row
-  const tiles = findNodes(trees[2], (n) => n.props.role === "group");
-  assert.equal(tiles.length, 4, "four tiles");
-  for (const tile of tiles) {
-    const placeholders = findNodes(tile, (n) => n.type === "LoadingPlaceholder");
-    assert.equal(placeholders.length, 1, "each tile states loading once, through its placeholder");
+  assert.equal(findNodes(trees[2], (n) => n.props["aria-busy"] === "true").length, 1, "the stat row reports busy once");
+  const stats = findNodes(renderStatsOf(mod, trees[2]), (n) => /^stat$/.test(classOf(n)));
+  assert.equal(stats.length, 4, "four stats");
+  for (const stat of stats) {
+    const placeholders = findNodes(stat, (n) => n.props.atom === "LoadingPlaceholder");
+    assert.equal(placeholders.length, 1, "each stat states loading once, through its placeholder");
     const outside = (n: RenderedNode | string): string =>
-      typeof n === "string" ? n : n.type === "LoadingPlaceholder" ? "" : n.children.map(outside).join(" ");
-    assert.doesNotMatch(outside(tile), /loading|…/i, "not through its count or caption");
-    assert.equal(tile.props["aria-busy"], "true", "each tile still reports busy");
+      typeof n === "string" ? n : n.props.atom === "LoadingPlaceholder" ? "" : n.children.map(outside).join(" ");
+    assert.doesNotMatch(outside(stat), /loading|…/i, "not through its count or caption");
   }
 });
 

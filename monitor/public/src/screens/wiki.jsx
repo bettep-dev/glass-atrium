@@ -482,10 +482,11 @@ function describeSnapshotAgeW(runDate) {
 	return stale ? `Figures as of ${runDate}, cycle overdue` : null;
 }
 
-// Four-tile band — last run · compiled last cycle · search index · library totals.
-// Steady state carries no tint (the last-run sub still names the outcome); only an actionable state tints.
+// One stat row — last run · compiled last cycle · search index · library totals.
+// Steady state carries no tint (the last-run context still names the outcome); only an actionable state marks its value.
 
 function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at, shared, onRetry }) {
+	const { Card, StatRow } = window.UI;
 	const tiles = useMemoW(
 		() => buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at),
 		[summaryState, indexState, backlogState, cyclesState, at],
@@ -494,6 +495,7 @@ function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at,
 	// a feeder the banner does not cover keeps its own sentence and Retry
 	const uncovered = failures.filter((f) => !shared?.sources?.includes(f.feeder));
 	const shown = uncovered.length > 0 ? uncovered : failures;
+	const details = tiles.filter((tile) => tile.info);
 
 	return (
 		<div id={WIKI_REGION_IDS.tiles} className="flex flex-col gap-2">
@@ -508,11 +510,11 @@ function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at,
 					onRetry={onRetry}
 				/>
 			)}
-			<div className="grid grid-cols-2 lg:grid-cols-4 gap-card">
-				{tiles.map((tile) => (
-					<WikiTile key={tile.key} tile={tile} />
-				))}
-			</div>
+			<Card title="Health" info={details.length > 0 && <WikiStatDetailsW tiles={details} />} infoLabel="How these figures are read">
+				<div aria-busy={tiles.some((tile) => tile.state === "loading") ? "true" : undefined}>
+					<StatRow stats={tiles.map(buildStatW)} />
+				</div>
+			</Card>
 		</div>
 	);
 }
@@ -525,14 +527,50 @@ function readTileBandFailuresW(summaryState, indexState) {
 	].filter((f) => window.UI.getRegionView(f.state) === "error");
 }
 
-// Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
-// figure, leaving tinted containers to the alarm lane (39578 §C/§D).
-// detail past the 40-char caption cap opens from an ⓘ placed on the label row
-function WikiTile({ tile }) {
-	const { Icon, TONE_ICON, CardInfo, KPI } = window.UI;
-	const alarmed = tile.tone === "warn" || tile.tone === "crit";
-	const labelId = `wiki-tile-${tile.key}-label`;
-	const value = alarmed ? (
+// detail past the 40-char context cap → the card's one ⓘ, each note led by its stat label
+function WikiStatDetailsW({ tiles }) {
+	return (
+		<>
+			{tiles.map((tile) => (
+				<p key={tile.key} className="m-0">
+					<strong className="font-medium text-ink">{tile.label}</strong>
+					{` — ${tile.info}`}
+				</p>
+			))}
+		</>
+	);
+}
+
+// tile model → one StatRow stat; the full context line rides its title when the caption is cut short
+function buildStatW(tile) {
+	const context = tile.sub ? <span title={tile.hint || tile.sub}>{tile.sub}</span> : null;
+	return { key: tile.key, label: tile.label, value: <WikiStatValueW tile={tile} />, context };
+}
+
+// Report surface → neutral chrome; a warn/crit stat carries its tone on a glyph beside the
+// figure, leaving tinted containers to the alarm lane.
+function WikiStatValueW({ tile }) {
+	const { Icon, TONE_ICON, LoadingPlaceholder } = window.UI;
+	// loading is stated once, through the shared placeholder — never as a "…" figure; inline-flex keeps it on the stat's start edge
+	if (tile.state === "loading") {
+		return (
+			<div className="inline-flex">
+				<LoadingPlaceholder label={tile.label.toLowerCase()} />
+			</div>
+		);
+	}
+	// the unknown dash names its cause on the context line; a failed read has none, so it is named here
+	if (tile.state !== "ready") {
+		const isFailed = tile.state === "error";
+		return (
+			<span className="text-faint">
+				<span aria-hidden={isFailed ? "true" : undefined}>{tile.value}</span>
+				{isFailed && <span className="sr-only">Not loaded</span>}
+			</span>
+		);
+	}
+	if (tile.tone !== "warn" && tile.tone !== "crit") return tile.value;
+	return (
 		<>
 			<span className={`text-${tile.tone} mr-1.5`} aria-hidden="true" title={tile.toneLabel}>
 				<Icon name={TONE_ICON[tile.tone]} size={13} />
@@ -540,35 +578,8 @@ function WikiTile({ tile }) {
 			{tile.toneLabel && <span className="sr-only">{`${tile.toneLabel}:`}</span>}
 			{tile.value}
 		</>
-	) : (
-		tile.value
-	);
-
-	return (
-		<KPI
-			labelId={labelId}
-			label={tile.label}
-			labelClassName="fs-meta text-faint"
-			info={
-				tile.info && (
-					<CardInfo label={`How ${tile.label} is counted`} describedBy={labelId}>
-						{tile.info}
-					</CardInfo>
-				)
-			}
-			state={WIKI_TILE_KPI_STATE[tile.state] ?? "ready"}
-			loadingLabel={tile.label.toLowerCase()}
-			value={value}
-			isWord={tile.isWord}
-			hint={tile.sub}
-			hintFace="text-faint"
-			hintTitle={tile.hint || tile.sub}
-		/>
 	);
 }
-
-// tile model state → the shared KPI state; unavailable and empty share the unknown dash, their sub says which
-const WIKI_TILE_KPI_STATE = { loading: "loading", error: "error", unavailable: "empty", empty: "empty" };
 
 function buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at) {
 	return [
@@ -625,8 +636,6 @@ function buildLastRunTileW(state, at) {
 		label,
 		state: "ready",
 		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
-		// "21h ago" in the mono stat face → its space reads as a double gap
-		isWord: true,
 		sub: overdue
 			? `${outcome.label} · cycle ${d.last_run_date}`
 			: `${outcome.label}${describeP95W(d.cycle_p95_ms)}`,
@@ -717,7 +726,6 @@ function buildIndexTileW(state) {
 			value: "Not reported",
 			sub: "Freshness not reported",
 			hint: "No dirty flag on record — the compiler has not written one, so cleanliness is unknown",
-			isWord: true,
 		};
 	}
 	if (d.dirty === true) {
@@ -726,7 +734,6 @@ function buildIndexTileW(state) {
 			label,
 			state: "ready",
 			value: "Dirty",
-			isWord: true,
 			sub:
 				typeof d.last_dirty_ms === "number"
 					? `Since ${window.UI.formatRelativeTime(new Date(d.last_dirty_ms).toISOString())}`
@@ -740,7 +747,6 @@ function buildIndexTileW(state) {
 		label,
 		state: "ready",
 		value: "Clean",
-		isWord: true,
 		sub: "Master index current",
 		tone: "neutral",
 	};
@@ -1604,7 +1610,7 @@ function isSameRunW(a, b) {
 
 function EmptyStateW({ message, hint }) {
 	const { EmptyState } = window.UI;
-	return <EmptyState message={message} hint={hint} className="m-3" />;
+	return <EmptyState message={message} hint={hint} />;
 }
 
 // 희소 추세(비0 포인트 < SPARSE_MIN_NONZERO) 공용 렌더 — 넓은 트랙 외톨이 막대가 "차트 깨짐"으로 읽히는 문제 회피.
