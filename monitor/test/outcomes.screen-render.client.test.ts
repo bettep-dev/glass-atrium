@@ -207,7 +207,7 @@ test("every card and fold header on the screen fits the title and header-meta ca
   }
 });
 
-describe("the cross-table header shows its share meta, count in the hover title, only when there are records, and always shows the mismatch badge", () => {
+describe("the cross-table header shows its share meta, count in the hover title, only when there are records, and always shows the mismatch status", () => {
   const rows = [
     {
       name: "a ready cross table with records",
@@ -229,9 +229,10 @@ describe("the cross-table header shows its share meta, count in the hover title,
         title: findNodes(meta, (n) => typeof n.props.title === "string")[0]?.props.title,
       }));
       assert.deepEqual(metas, row.metas);
-      const badges = findNodes(head, (n) => n.type === "Badge");
-      assert.equal(badges.length, 1);
-      assert.match(collectText(badges[0]), new RegExp(`${row.crosstab.polarTotal.toLocaleString("en-US")}\\s+mismatches`));
+      const statuses = findNodes(head, (n) => n.type === "HeadStatusO");
+      assert.equal(statuses.length, 1);
+      assert.equal(findNodes(head, (n) => n.type === "Badge").length, 0, "no badge in the head");
+      assert.match(collectText(statuses[0]), new RegExp(`${row.crosstab.polarTotal.toLocaleString("en-US")}\\s+mismatches`));
     });
   }
 });
@@ -414,14 +415,12 @@ test("the task ledger scrolls with the page, never inside a box of its own", asy
   const [ledger] = findNodes(tree, (n) => n.type === "ResultTableCard");
   assert.ok(ledger, "the ledger card renders");
 
-  const bodies = findNodes(ledger, (n) => String(n.props.className ?? "").split(" ").includes("card-body"));
-  assert.ok(bodies.length > 0, "the ledger has a card body");
-  for (const body of bodies) {
-    // the shared .card-body caps at 70vh with overflow-y auto → the Routine rows would sit in a nested scroller
-    const style = (body.props.style ?? {}) as Record<string, unknown>;
-    assert.equal(style.maxHeight, "none", "no height cap");
-    assert.equal(style.overflowY, "visible", "no inner vertical scroll");
-  }
+  const [card] = findNodes(ledger, (n) => String(n.props.className ?? "").split(" ").includes("card"));
+  assert.ok(card, "the ledger renders a card");
+  // the shared .card-body caps at 70vh with overflow-y auto → the Routine rows would sit in a nested scroller
+  const classes = String(card.props.className).split(" ");
+  assert.ok(classes.includes("[&>.card-body]:max-h-none"), "no height cap on its body");
+  assert.ok(classes.includes("[&>.card-body]:overflow-y-visible"), "no inner vertical scroll");
 });
 
 test("each recording channel's busiest recent day is drawn against the watch floor", async () => {

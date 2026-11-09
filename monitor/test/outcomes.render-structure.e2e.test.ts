@@ -54,16 +54,16 @@ describe("outcomes crosstab header", () => {
   });
 
   for (const width of [1280, 1440, 1920]) {
-    test(`the meta reads whole beside the mismatch badge with the header text ${TEXT_SCALE}× as wide at ${width}px`, async () => {
+    test(`the meta reads whole beside the mismatch status with the header text ${TEXT_SCALE}× as wide at ${width}px`, async () => {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       try {
         await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
-        await page.waitForSelector(`${CROSSTAB_HEAD} .pill`, { timeout: 30_000 });
+        await page.waitForSelector(`${CROSSTAB_HEAD} [data-role="head-status"]`, { timeout: 30_000 });
         await page.evaluate(() => document.fonts.ready);
-        const badge = await page.textContent(`${CROSSTAB_HEAD} .pill`);
+        const badge = await page.textContent(`${CROSSTAB_HEAD} [data-role="head-status"]`);
         const [fit] = await page.$$eval(`${CROSSTAB_HEAD} .card-sub`, getWidenedMetaFits, TEXT_SCALE);
 
-        assert.ok(badge?.includes(POLAR_TOTAL_TEXT), `the badge keeps the mismatch count: "${badge}"`);
+        assert.ok(badge?.includes(POLAR_TOTAL_TEXT), `the status keeps the mismatch count: "${badge}"`);
         assert.ok(fit, "the header carries a meta");
         assert.ok(
           fit.needPx <= fit.shownPx,

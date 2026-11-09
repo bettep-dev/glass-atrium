@@ -774,11 +774,24 @@ describe("Automatic check results: where each verdict came from is the card's fo
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const card = density.GraderBreakdownCard({ state: row.state });
-      const children = (Array.isArray(card.props.children) ? card.props.children : [card.props.children]).filter(Boolean) as RecordedElementO[];
-      const last = children[children.length - 1];
-      const drawn = typeof last.type === "function" ? (last.type as (props: unknown) => RecordedElementO | null)(last.props) : last;
-      assert.equal(String(drawn?.props.className ?? "").split(" ").includes("card-foot"), row.hasFoot);
+      const card = (density.GraderBreakdownCard({ state: row.state }).props.children) as RecordedElementO;
+      assert.equal(Boolean(card.props.foot), row.hasFoot);
+    });
+  }
+});
+
+describe("getClampedPageO: a held page never runs past the last page of the current total", () => {
+  const clamp = (rendered as unknown as { getClampedPageO: (page: number, total: number, pageSize: number) => number }).getClampedPageO;
+  const rows = [
+    { name: "a page inside the total stays", page: 2, total: 200, expected: 2 },
+    { name: "the exact last page stays", page: 3, total: 200, expected: 3 },
+    { name: "a total that shrank under the page steps back to its last page", page: 3, total: 120, expected: 2 },
+    { name: "a total one row past a page boundary keeps that extra page", page: 5, total: 101, expected: 2 },
+    { name: "an empty total returns to the first page", page: 4, total: 0, expected: 0 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(clamp(row.page, row.total, 50), row.expected);
     });
   }
 });

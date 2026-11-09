@@ -1241,7 +1241,7 @@ const summaryLineOf = (tr: RenderNode): unknown[] => {
   return line.children.filter((child) => child !== null && child !== false && child !== undefined);
 };
 
-describe("ledger row: the summary starts right after the fixed flag slot, and the variable reason pill follows it", () => {
+describe("ledger row: the summary starts right after the fixed flag slot, and the variable reason follows it as a dim word", () => {
   const sub = helpers as unknown as Record<string, unknown>;
   const rows = [
     { name: "an open caveat", row: ledgerRowOf("done_with_concerns", { summary: "Caveat" }), pill: /caveat open/ },
@@ -1256,13 +1256,14 @@ describe("ledger row: the summary starts right after the fixed flag slot, and th
       assert.deepStrictEqual(text.children, [row.summary]);
       assert.match(String(text.props?.className), /\btruncate\b/);
       if (pill === null) {
-        assert.strictEqual(rest.length, 0, "a routine row carries no pill");
+        assert.strictEqual(rest.length, 0, "a routine row carries no reason");
         return;
       }
-      assert.strictEqual(rest.length, 1, "the reason pill ends the line");
-      assert.strictEqual(rest[0].type, (helpers.window.UI as unknown as Record<string, unknown>).Badge);
+      assert.strictEqual(rest.length, 1, "the reason ends the line");
+      assert.strictEqual(rest[0].type, "span", "a bare word, no badge container");
       assert.match(renderText(rest[0]), pill);
-      assert.match(String(rest[0].props?.className), /\bshrink-0\b/, "the pill is never truncated");
+      assert.match(String(rest[0].props?.className), /\btext-dim\b/, "the reason reads dim");
+      assert.match(String(rest[0].props?.className), /\bshrink-0\b/, "the reason is never truncated");
     });
   }
 });

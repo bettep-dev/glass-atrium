@@ -211,19 +211,22 @@ describe("the ledger's pagination row is the card's 40 foot", () => {
   });
 });
 
-describe("a static pill in a card head stands on the head's 32 control height", () => {
-  test("Confident but failed: the mismatches pill matches the info button's height and centre line", async () => {
-    const pill = await readBox("#crosstab .card-head .pill");
+describe("a card head's own status reads as glyph and word, never a pill", () => {
+  const STATUS = '.card-head [data-role="head-status"]';
+
+  test("Confident but failed: the mismatches status sits on the info button's centre line, unboxed", async () => {
+    const status = await readBox(`#crosstab ${STATUS}`);
     const info = await readBox("#crosstab .card-head .btn.icon");
-    assert.match((await page.$eval("#crosstab .card-head .pill", (el) => el.textContent)) ?? "", /4 mismatches/);
-    assert.equal(info.height, 32);
-    assert.equal(pill.height, info.height, `pill ${pill.height} vs info ${info.height}`);
-    assert.ok(Math.abs(pill.top + pill.height / 2 - (info.top + info.height / 2)) < 0.5, "one centre line");
+    assert.match((await page.$eval(`#crosstab ${STATUS}`, (el) => el.textContent)) ?? "", /4 mismatches/);
+    assert.equal(await page.locator("#crosstab .card-head .pill").count(), 0, "a pill in the head");
+    assert.ok(await page.$eval(`#crosstab ${STATUS}`, (el) => el.querySelector("svg") !== null), "the warn glyph leads the word");
+    assert.ok(Math.abs(status.top + status.height / 2 - (info.top + info.height / 2)) < 0.5, "one centre line");
   });
 
   for (const card of ["attribution", "channels"]) {
-    test(`${card}: the head's lone status pill is 32 too`, async () => {
-      assert.equal((await readBox(`#${card} .card-head .pill`)).height, 32);
+    test(`${card}: the head's lone status is glyph and word, no pill`, async () => {
+      assert.equal(await page.locator(`#${card} .card-head .pill`).count(), 0, "a pill in the head");
+      assert.ok(((await page.$eval(`#${card} ${STATUS}`, (el) => el.textContent)) ?? "").trim().length > 0, "the status word");
     });
   }
 });
