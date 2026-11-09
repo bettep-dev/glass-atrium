@@ -4,10 +4,8 @@
 
 export const LOGIN_LIMIT = {
   FREE_FAILURES: 3,
-  BASE_DELAY_MS: 1_000,
-  MAX_DELAY_MS: 60_000,
-  LOCKOUT_FAILURES: 10,
-  LOCKOUT_MS: 15 * 60_000,
+  DELAY_MS: { BASE: 1_000, MAX: 60_000 },
+  LOCKOUT: { FAILURES: 10, MS: 15 * 60_000 },
   /** Wait reported while another verification runs (scrypt takes well under this) */
   PENDING_WAIT_MS: 1_000,
 } as const;
@@ -48,7 +46,7 @@ export class LoginLimiter {
 }
 
 function getDelayMs(failures: number): number {
-  if (failures >= LOGIN_LIMIT.LOCKOUT_FAILURES) return LOGIN_LIMIT.LOCKOUT_MS;
+  if (failures >= LOGIN_LIMIT.LOCKOUT.FAILURES) return LOGIN_LIMIT.LOCKOUT.MS;
   if (failures <= LOGIN_LIMIT.FREE_FAILURES) return 0;
-  return Math.min(LOGIN_LIMIT.BASE_DELAY_MS * 2 ** (failures - LOGIN_LIMIT.FREE_FAILURES - 1), LOGIN_LIMIT.MAX_DELAY_MS);
+  return Math.min(LOGIN_LIMIT.DELAY_MS.BASE * 2 ** (failures - LOGIN_LIMIT.FREE_FAILURES - 1), LOGIN_LIMIT.DELAY_MS.MAX);
 }

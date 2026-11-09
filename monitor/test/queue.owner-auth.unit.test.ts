@@ -23,9 +23,10 @@ function createClock(start = 1_000_000): { now: () => number; advance: (ms: numb
   return { now: () => current, advance: (ms) => { current += ms; } };
 }
 
-function writePassphraseFile(dir: string, passphrase: string, overrides: object = {}): void {
+const SCRYPT_PARAMS = { N: 16_384, r: 8, p: 1, keyLength: 32 };
+
+function writePassphraseFile(dir: string, passphrase: string, overrides: object = {}, params = SCRYPT_PARAMS): void {
   const salt = randomBytes(16);
-  const params = { N: 16_384, r: 8, p: 1, keyLength: 32 };
   const hash = scryptSync(passphrase, salt, params.keyLength, { N: params.N, r: params.r, p: params.p });
   const record = { algorithm: "scrypt", ...params, salt: salt.toString("base64"), hash: hash.toString("base64"), ...overrides };
   writeFileSync(path.join(dir, PASSPHRASE.FILE), JSON.stringify(record), { mode: 0o600 });
@@ -79,16 +80,16 @@ describe("login limiter", () => {
     const clock = createClock();
     const limiter = new LoginLimiter(clock.now);
     const waits: number[] = [];
-    for (let failure = 1; failure < LOGIN_LIMIT.LOCKOUT_FAILURES; failure += 1) {
+    for (let failure = 1; failure < LOGIN_LIMIT.LOCKOUT.FAILURES; failure += 1) {
       limiter.setPending();
       limiter.setResult(false);
       waits.push(limiter.getWaitMs());
       clock.advance(limiter.getWaitMs());
     }
-    const expected = Array.from({ length: LOGIN_LIMIT.LOCKOUT_FAILURES - 1 }, (_, index) => {
+    const expected = Array.from({ length: LOGIN_LIMIT.LOCKOUT.FAILURES - 1 }, (_, index) => {
       const failure = index + 1;
       if (failure <= LOGIN_LIMIT.FREE_FAILURES) return 0;
-      return Math.min(LOGIN_LIMIT.BASE_DELAY_MS * 2 ** (failure - LOGIN_LIMIT.FREE_FAILURES - 1), LOGIN_LIMIT.MAX_DELAY_MS);
+      return Math.min(LOGIN_LIMIT.DELAY_MS.BASE * 2 ** (failure - LOGIN_LIMIT.FREE_FAILURES - 1), LOGIN_LIMIT.DELAY_MS.MAX);
     });
     assert.deepEqual(waits, expected);
   });
@@ -96,13 +97,13 @@ describe("login limiter", () => {
   test("repeated failures lock the login for the lockout period", () => {
     const clock = createClock();
     const limiter = new LoginLimiter(clock.now);
-    for (let failure = 1; failure <= LOGIN_LIMIT.LOCKOUT_FAILURES; failure += 1) {
+    for (let failure = 1; failure <= LOGIN_LIMIT.LOCKOUT.FAILURES; failure += 1) {
       clock.advance(limiter.getWaitMs());
       limiter.setPending();
       limiter.setResult(false);
     }
-    assert.equal(limiter.getWaitMs(), LOGIN_LIMIT.LOCKOUT_MS, "locked right after the last failure");
-    clock.advance(LOGIN_LIMIT.LOCKOUT_MS - 1);
+    assert.equal(limiter.getWaitMs(), LOGIN_LIMIT.LOCKOUT.MS, "locked right after the last failure");
+    clock.advance(LOGIN_LIMIT.LOCKOUT.MS - 1);
     assert.equal(limiter.getWaitMs(), 1, "still locked one ms before the end");
     clock.advance(1);
     assert.equal(limiter.getWaitMs(), 0, "open once the lockout passed");
@@ -158,7 +159,9 @@ describe("passphrase verifier", () => {
       { name: "not JSON", content: "scrypt$abc" },
       { name: "unknown algorithm", overrides: { algorithm: "pbkdf2" } },
       { name: "N not a power of two", overrides: { N: 20_000 } },
-      { name: "N above the memory ceiling", overrides: { N: 2 ** 22 } },
+      { name: "N one step above the memory ceiling", overrides: { N: 2 ** 21 } },
+      { name: "r above the memory ceiling", overrides: { r: 9 } },
+      { name: "p above its cap", overrides: { p: 5 } },
       { name: "salt shorter than 16 bytes", overrides: { salt: randomBytes(8).toString("base64") } },
       { name: "hash length differs from keyLength", overrides: { keyLength: 64 } },
       { name: "unknown key", overrides: { pepper: "x" } },
@@ -170,4 +173,33 @@ describe("passphrase verifier", () => {
       await assert.rejects(createPassphraseVerifier(dir).verify("pw"), { name: "QueueEnvironmentError" }, row.name);
     }
   });
+
+  test("a record at the r and p caps still verifies", async () => {
+    const dir = makeSecretsDir("at-caps");
+    writePassphraseFile(dir, "capped passphrase", {}, { ...SCRYPT_PARAMS, r: 8, p: 4 });
+    assert.equal(await createPassphraseVerifier(dir).verify("capped passphrase"), "match");
+  });
+
+  // A logged error carries its message, stack and every cause → none of them may quote the record
+  test("a refused record's error chain carries none of the file's text", async () => {
+    const secretText = "zq7-secret-material";
+    const rows = [
+      { name: "not JSON", content: `${secretText} is not JSON` },
+      { name: "malformed", content: JSON.stringify({ algorithm: "scrypt", N: secretText }) },
+    ];
+    for (const row of rows) {
+      const dir = makeSecretsDir(`chain-${row.name.replaceAll(" ", "-")}`);
+      writeFileSync(path.join(dir, PASSPHRASE.FILE), row.content, { mode: 0o600 });
+      const error = await createPassphraseVerifier(dir).verify("pw").then(
+        () => assert.fail(`${row.name}: resolved`),
+        (rejection: unknown) => rejection,
+      );
+      assert.equal(getErrorChainText(error).includes(secretText.slice(0, 6)), false, row.name);
+    }
+  });
 });
+
+function getErrorChainText(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  return `${error.message}\n${error.stack ?? ""}\n${error.cause === undefined ? "" : getErrorChainText(error.cause)}`;
+}

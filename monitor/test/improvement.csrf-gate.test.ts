@@ -1,6 +1,6 @@
 // Integration tests for the mutation request guards (request-guards.ts).
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/improvement.csrf-gate.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.csrf-gate.test.ts
 //
 // Coverage:
 //   - gate leg · sec-fetch-site decision rows (same-origin / none / cross-site / same-site)
@@ -14,13 +14,13 @@
 //   - Stripped-app rows need no DB: the guards are route-agnostic, so two echo routes stand in for
 //     the real mutation routes and keep the assertions about the guards alone.
 //   - Assembly rows run the real buildApp with a mktemp secrets dir; their fire-and-forget audit
-//     rows land in the test DB and are scrubbed in after().
+//     rows land in the test DB, so the file needs the test DB, and after() scrubs only this file's rows.
 //   - App: stripped Fastify + registerRequestGuards() attached exactly as buildApp does,
 //     then app.inject() — no port binding.
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { randomBytes, scryptSync } from "node:crypto";
+import { randomBytes, randomInt, scryptSync } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -193,11 +193,20 @@ test("bodyLimit: JSON body over the stated limit → 413", async () => {
 // encapsulated plugin. A child plugin copies its parent's content-type parsers when it loads, so the
 // text/plain row fails if the guards ever move after registerRoutes; the cross-site row fails if the
 // guards are missing from the assembly.
+// An item id no sequence reaches → its audit rows are this file's alone; both rows stop before the handler
+const ASSEMBLY_ITEM_ID = Number.MAX_SAFE_INTEGER - randomInt(1_000_000_000);
 const ASSEMBLY = {
   HOST: "127.0.0.1:16145",
   PASSPHRASE: "csrf-gate assembly passphrase",
-  ANSWER_URL: "/api/queue/owner/items/1/answer",
+  ANSWER_URL: `/api/queue/owner/items/${ASSEMBLY_ITEM_ID}/answer`,
+  AUDITED_ANSWERS: 2,
 } as const;
+let auditBaselineId = 0n;
+
+before(async () => {
+  const [row] = await getPrisma().$queryRaw<{ maxId: bigint | null }[]>`SELECT MAX(id) AS "maxId" FROM monitor.audit_log`;
+  auditBaselineId = row?.maxId ?? 0n;
+});
 
 async function withOwnerAssembly(run: (assembly: FastifyInstance, cookie: string) => Promise<void>): Promise<void> {
   const secretsDir = mkdtempSync(path.join(tmpdir(), "csrf-assembly-"));
@@ -246,15 +255,27 @@ test("assembly: a cross-site mutation to a queue owner route is refused with 403
   });
 });
 
+// Login rows carry no field naming their writer → bounded to rows written since this file began (no test counts them)
 after(async () => {
   try {
+    await waitForAnswerAuditRows();
     await getPrisma().$executeRaw`
       DELETE FROM monitor.audit_log
-      WHERE actor = 'monitor-web'
-        AND ((target_table = 'queue-owner' AND target_id IS NULL) OR (target_table = 'queue-item' AND target_id = 1))
-        AND event_ts >= NOW() - INTERVAL '10 minutes'
+      WHERE actor = 'monitor-web' AND id > ${auditBaselineId}
+        AND ((target_table = 'queue-item' AND target_id = ${ASSEMBLY_ITEM_ID}) OR action_kind = 'queue-owner.login')
     `;
   } finally {
     await disconnectPrisma();
   }
 });
+
+// The audit INSERT is fire-and-forget → let this file's rows land before the scrub reads them
+async function waitForAnswerAuditRows(): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const [row] = await getPrisma().$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(*)::bigint AS count FROM monitor.audit_log
+      WHERE target_table = 'queue-item' AND target_id = ${ASSEMBLY_ITEM_ID} AND id > ${auditBaselineId}`;
+    if (Number(row?.count ?? 0n) >= ASSEMBLY.AUDITED_ANSWERS) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}

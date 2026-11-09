@@ -258,24 +258,23 @@ describe("provisioning", () => {
 describe("answer, reply, seen", () => {
   test("an answer is accepted only as the item allows it", async () => {
     const sessionId = await seedSession();
+    const unanswered = { code: null, text: null };
     const rows = [
-      { name: "an option code", seed: {}, body: { code: "R2" }, status: 200, answer: { code: "R2", text: null } },
-      { name: "a code and free text", seed: {}, body: { code: "R1", text: "and keep it partial" }, status: 200, answer: { code: "R1", text: "and keep it partial" } },
-      { name: "a code that is not an option", seed: {}, body: { code: "R3" }, status: 400 },
-      { name: "free text when the item forbids it", seed: { isFreeTextAllowed: false }, body: { text: "my own idea" }, status: 400 },
-      { name: "neither code nor text", seed: {}, body: {}, status: 400 },
-      { name: "an unknown key", seed: {}, body: { code: "R1", sessionId }, status: 400 },
-      { name: "an item already answered", seed: { status: "answered" as const }, body: { code: "R1" }, status: 409 },
+      { name: "an option code", seed: {}, body: { code: "R2" }, status: 200, after: { status: "answered", answer: { code: "R2", text: null } } },
+      { name: "a code and free text", seed: {}, body: { code: "R1", text: "and keep it partial" }, status: 200, after: { status: "answered", answer: { code: "R1", text: "and keep it partial" } } },
+      { name: "a code that is not an option", seed: {}, body: { code: "R3" }, status: 400, after: { status: "open", answer: unanswered } },
+      { name: "free text when the item forbids it", seed: { isFreeTextAllowed: false }, body: { text: "my own idea" }, status: 400, after: { status: "open", answer: unanswered } },
+      { name: "neither code nor text", seed: {}, body: {}, status: 400, after: { status: "open", answer: unanswered } },
+      { name: "an unknown key", seed: {}, body: { code: "R1", sessionId }, status: 400, after: { status: "open", answer: unanswered } },
+      { name: "an item already answered", seed: { status: "answered" as const }, body: { code: "R1" }, status: 409, after: { status: "answered", answer: unanswered } },
     ];
     for (const row of rows) {
       const itemId = await seedDecision(sessionId, row.seed);
       const response = await send("POST", `/api/queue/owner/items/${itemId}/answer`, row.body);
       assert.equal(response.statusCode, row.status, `${row.name}: ${response.body}`);
       const item = await getItemRow(itemId);
-      if (row.answer === undefined) continue;
-      assert.equal(item.status, "answered", row.name);
-      assert.deepEqual({ code: item.answerCode, text: item.answerText }, row.answer, row.name);
-      assert.ok(item.answeredAt !== null, row.name);
+      assert.deepEqual({ status: item.status, answer: { code: item.answerCode, text: item.answerText } }, row.after, row.name);
+      assert.equal(item.answeredAt !== null, row.status === 200, `${row.name}: answeredAt set only on acceptance`);
     }
   });
 
@@ -424,17 +423,50 @@ describe("list and item detail", () => {
     assert.equal((await send("GET", "/api/queue/owner/items?colour=red")).statusCode, 400);
   });
 
+  test("paging with nextCursor returns every awaiting item exactly once, in queue order", async () => {
+    const profileLabel = `.claude-page${randomUUID().slice(0, 6)}`;
+    const sessionId = await seedSession({ profileLabel });
+    const seeded = [await seedItem(sessionId), await seedItem(sessionId), await seedItem(sessionId)].map(Number);
+    const listUrl = `/api/queue/owner/items?profile=${encodeURIComponent(profileLabel)}&limit=2`;
+    const first = (await send("GET", listUrl)).json() as { items: Array<{ id: number }>; nextCursor: number | null };
+    assert.ok(first.nextCursor !== null, "a full page announces a next page");
+    const second = (await send("GET", `${listUrl}&after=${first.nextCursor}`)).json() as { items: Array<{ id: number }>; nextCursor: number | null };
+    assert.deepEqual([...first.items, ...second.items].map((item) => item.id), seeded);
+    assert.equal(second.nextCursor, null, "the last page announces none");
+  });
+
+  test("an answered item's deviation follows its session's reachability", async () => {
+    const rows = [
+      { name: "live with a socket", session: { state: "live" as const }, deviation: null },
+      { name: "stale with a socket", session: { state: "stale" as const }, deviation: "session_not_reachable" },
+      { name: "live with no socket", session: { state: "live" as const, socketPath: null }, deviation: "delivery_off" },
+      { name: "stale with no socket", session: { state: "stale" as const, socketPath: null }, deviation: "delivery_off" },
+      { name: "exited with a socket", session: { state: "exited" as const, exitReason: "dead" as const }, deviation: null },
+    ];
+    for (const row of rows) {
+      const itemId = await seedDecision(await seedSession(row.session), { status: "answered", answerCode: "R1", answeredAt: new Date() });
+      const detail = (await send("GET", `/api/queue/owner/items/${itemId}`)).json();
+      assert.equal(detail.deviation, row.deviation, row.name);
+    }
+  });
+
   test("a resume-pending item carries its resume rows and the first skip reason by card precedence", async () => {
     const root = `/Users/owner/Desktop/git/wt-skip-${randomUUID().slice(0, 8)}`;
-    const exited = { state: "exited" as const, exitReason: "dead" as const, worktreeRoot: root };
+    const exited = { state: "exited" as const, exitReason: "dead" as const };
+    const marked = { ...exited, resumeAwaitingRegisterAt: new Date() };
     const cases = [
-      { name: "marker set beats approval", session: { ...exited, resumeAwaitingRegisterAt: new Date() }, item: { isApprovalClass: true }, used: false, kind: "marker" },
-      { name: "approval beats a used attempt", session: exited, item: { isApprovalClass: true }, used: true, kind: "approval" },
-      { name: "a used attempt", session: exited, item: {}, used: true, kind: "resume_used" },
-      { name: "nothing blocks the next sweep", session: exited, item: {}, used: false, kind: null },
+      { name: "marker set beats approval", session: marked, item: { isApprovalClass: true }, used: false, hasOccupant: false, hasResumeInFlight: false, kind: "marker" },
+      { name: "approval beats a used attempt", session: exited, item: { isApprovalClass: true }, used: true, hasOccupant: false, hasResumeInFlight: false, kind: "approval" },
+      { name: "a used attempt beats a shared worktree", session: exited, item: {}, used: true, hasOccupant: true, hasResumeInFlight: false, kind: "resume_used" },
+      { name: "a shared worktree beats a resume in flight", session: exited, item: {}, used: false, hasOccupant: true, hasResumeInFlight: true, kind: "shared_worktree" },
+      { name: "a resume in flight for another item of the session", session: exited, item: {}, used: false, hasOccupant: false, hasResumeInFlight: true, kind: "in_flight" },
+      { name: "nothing blocks the next sweep", session: exited, item: {}, used: false, hasOccupant: false, hasResumeInFlight: false, kind: null },
     ];
-    for (const row of cases) {
-      const sessionId = await seedSession({ ...row.session, worktreeRoot: `${root}-${row.kind}` });
+    for (const [index, row] of cases.entries()) {
+      const worktreeRoot = `${root}-${index}`;
+      const sessionId = await seedSession({ ...row.session, worktreeRoot });
+      if (row.hasOccupant) await seedSession({ state: "live", worktreeRoot });
+      if (row.hasResumeInFlight) await seedResumeDelivery(await seedDecision(sessionId, { status: "delivering", answerCode: "R2", answeredAt: new Date() }), 1);
       const itemId = await seedDecision(sessionId, { status: "resume_pending", answerCode: "R1", answeredAt: new Date(), ...row.item });
       if (row.used) await seedResumeDelivery(itemId, 1, "bg42");
       const detail = (await send("GET", `/api/queue/owner/items/${itemId}`)).json();

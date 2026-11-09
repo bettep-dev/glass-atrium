@@ -47,7 +47,7 @@ export async function ownerRoutesPlugin(app: FastifyInstance, options: QueueRout
       route: "/api/queue/owner/login",
       schema: loginBodySchema,
       input: request.body,
-      work: (body) => logIn(auth, body.passphrase, reply),
+      work: (body) => createOwnerSession(auth, body.passphrase, reply),
     }),
   );
   await app.register(ownerSessionRoutesPlugin, auth);
@@ -60,7 +60,7 @@ async function ownerSessionRoutesPlugin(app: FastifyInstance, auth: OwnerAuth): 
       route: "/api/queue/owner/logout",
       schema: emptyBodySchema,
       input: request.body,
-      work: async () => logOut(auth, request, reply),
+      work: async () => deleteOwnerSession(auth, request, reply),
     }),
   );
   registerReadRoutes(app);
@@ -138,7 +138,7 @@ function buildOwnerSessionHook(auth: OwnerAuth): onRequestAsyncHookHandler {
   };
 }
 
-async function logIn(auth: OwnerAuth, passphrase: string, reply: FastifyReply): Promise<object> {
+async function createOwnerSession(auth: OwnerAuth, passphrase: string, reply: FastifyReply): Promise<object> {
   const waitMs = auth.limiter.getWaitMs();
   if (waitMs > 0) {
     const retryAfterSeconds = Math.ceil(waitMs / 1000);
@@ -164,7 +164,7 @@ async function logIn(auth: OwnerAuth, passphrase: string, reply: FastifyReply): 
   return { ok: true };
 }
 
-function logOut(auth: OwnerAuth, request: FastifyRequest, reply: FastifyReply): object {
+function deleteOwnerSession(auth: OwnerAuth, request: FastifyRequest, reply: FastifyReply): object {
   const id = request.cookies[OWNER_COOKIE.NAME];
   if (id !== undefined) auth.sessions.delete(id);
   reply.clearCookie(OWNER_COOKIE.NAME, { path: OWNER_COOKIE.PATH });

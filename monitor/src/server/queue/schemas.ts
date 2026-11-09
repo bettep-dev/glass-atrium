@@ -1,4 +1,4 @@
-// Zod request schemas for the session-side queue routes: strict objects (unknown keys rejected), length caps, enums.
+// Zod request schemas for the session-side and owner queue routes: strict objects (unknown keys rejected), length caps, enums.
 
 import { z } from "zod";
 

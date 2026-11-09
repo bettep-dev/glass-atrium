@@ -16,8 +16,8 @@ export const PASSPHRASE = {
   MAX_LENGTH: 1024,
 } as const;
 
-// Cost bounds → a replaced record can neither weaken the hash below N=2^14 nor make one login allocate >1 GiB
-const SCRYPT_BOUNDS = { MIN_LOG_N: 14, MAX_LOG_N: 20, MAX_R: 16, MAX_P: 4 } as const;
+// Cost bounds → a replaced record keeps N ≥ 2^14 and one login ≤ 1 GiB + 6 KiB at the caps (getScryptMemoryBytes)
+const SCRYPT_BOUNDS = { LOG_N: { MIN: 14, MAX: 20 }, MAX_R: 8, MAX_P: 4 } as const;
 
 const base64Bytes = (min: number) =>
   z
@@ -29,7 +29,7 @@ const base64Bytes = (min: number) =>
 const recordSchema = z
   .strictObject({
     algorithm: z.literal("scrypt"),
-    N: z.int().refine((n) => Number.isInteger(Math.log2(n)) && n >= 2 ** SCRYPT_BOUNDS.MIN_LOG_N && n <= 2 ** SCRYPT_BOUNDS.MAX_LOG_N, "N must be a power of two in bounds"),
+    N: z.int().refine((n) => Number.isInteger(Math.log2(n)) && n >= 2 ** SCRYPT_BOUNDS.LOG_N.MIN && n <= 2 ** SCRYPT_BOUNDS.LOG_N.MAX, "N must be a power of two in bounds"),
     r: z.int().min(1).max(SCRYPT_BOUNDS.MAX_R),
     p: z.int().min(1).max(SCRYPT_BOUNDS.MAX_P),
     keyLength: z.int().min(32).max(128),
@@ -82,13 +82,13 @@ async function readRecordFile(file: string): Promise<string | null> {
   }
 }
 
-// Field names only in the error → the record's values never reach a log
+// Field names only, no cause → a logged error chain never quotes the record (V8's SyntaxError message does)
 function parseRecord(raw: string): PassphraseRecord {
   let json: unknown;
   try {
     json = JSON.parse(raw);
-  } catch (error) {
-    throw new QueueEnvironmentError("owner passphrase file is not JSON", { cause: error });
+  } catch {
+    throw new QueueEnvironmentError("owner passphrase file is not JSON", { cause: undefined });
   }
   const parsed = recordSchema.safeParse(json);
   if (!parsed.success) {
@@ -99,12 +99,17 @@ function parseRecord(raw: string): PassphraseRecord {
 }
 
 function deriveKey(passphrase: string, record: PassphraseRecord): Promise<Buffer> {
-  // scrypt needs 128·N·r·p bytes; Node's 32 MiB default maxmem would refuse the setup script's N=2^17
-  const maxmem = 128 * record.N * record.r * record.p + 1024 * 1024;
+  // Node's 32 MiB default maxmem would refuse the setup script's N=2^17 → the exact need, so the bounds above hold
+  const maxmem = getScryptMemoryBytes(record);
   return new Promise((resolve, reject) => {
     scrypt(passphrase, record.salt, record.keyLength, { N: record.N, r: record.r, p: record.p, maxmem }, (error, key) => {
       if (error) reject(new QueueEnvironmentError("owner passphrase derivation failed", { cause: error }));
       else resolve(key);
     });
   });
+}
+
+/** OpenSSL's scrypt allocation: V (128·r·N) + B (128·r·p) + XY (256·r); maxmem below it → ERR_CRYPTO_INVALID_SCRYPT_PARAMS. */
+function getScryptMemoryBytes(record: PassphraseRecord): number {
+  return 128 * record.r * (record.N + record.p + 2);
 }

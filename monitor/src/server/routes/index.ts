@@ -1,4 +1,4 @@
-// Route barrel — single entry point for main.ts to register all /api/* routes.
+// Route barrel — single entry point for app.ts (buildApp) to register all /api/* routes.
 
 import type { FastifyInstance } from "fastify";
 import { registerHealthRoute } from "./health.js";
