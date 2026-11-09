@@ -255,7 +255,8 @@ describe("the Results filter bar drives the ledger fetch", () => {
   }
 });
 
-// Sticky heads: the ledger sticks to the page viewport (its card lifts the body cap), Failures by agent to its own 70vh card body.
+// Sticky heads: the ledger sticks to the page viewport (its card lifts the body cap), Failures by agent to its own 70vh card body,
+// the run-event log to its 42vh log box once its fold opens.
 const STICKY_ROW_PX = 40;
 const STICKY_LEDGER_ROWS = Array.from({ length: 40 }, (_, i) => ({
   id: 100 + i, agent: BAND_AGENT, task_type: "review", result: "done", closed_at: null,
@@ -268,7 +269,12 @@ const STICKY_OVERALL = {
 const STICKY_TABLES = [
   { name: "the ledger", cardId: "outcomes-ledger", scroller: "the page viewport" },
   { name: "Failures by agent", cardId: "outcomes-agent-failures", scroller: "its 70vh card body" },
+  { name: "the run-event log", cardId: "outcomes-loop-events", scroller: "its 42vh log box", fold: "Learning-run events" },
 ];
+const STICKY_LOOP_EVENTS = Array.from({ length: 50 }, (_, i) => ({
+  id: 500 + i, event_ts: `2026-10-01T${String(23 - Math.floor(i / 3)).padStart(2, "0")}:${String((i % 3) * 20).padStart(2, "0")}:00Z`,
+  agent: BAND_AGENT, eval_result: i % 4 ? "verified" : "reject", changes_added: i, changes_removed: 1,
+}));
 
 describe("outcomes screen at 1440px, sticky table heads", () => {
   let app: FastifyInstance;
@@ -284,6 +290,10 @@ describe("outcomes screen at 1440px, sticky table heads", () => {
       if (query.limit === "1") return { rows: [], total: 0 };
       return { rows: query.review_flag || query.result ? [] : STICKY_LEDGER_ROWS, total: STICKY_LEDGER_ROWS.length };
     });
+    app.get("/api/improvement/loop-events", async () => ({
+      events: STICKY_LOOP_EVENTS, total_events: STICKY_LOOP_EVENTS.length,
+      result_distribution: [{ eval_result: "verified", count: 37 }, { eval_result: "reject", count: 13 }],
+    }));
     app.get("/api/*", async () => ({ rows: [] }));
     await app.ready();
     serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -300,6 +310,7 @@ describe("outcomes screen at 1440px, sticky table heads", () => {
       const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
       try {
         await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
+        if (row.fold) await page.getByRole("button", { name: new RegExp(row.fold) }).click();
         await page.waitForFunction((id) => (document.querySelector(`#${id} tbody`)?.getBoundingClientRect().height ?? 0) > 800, row.cardId, { timeout: 30_000 });
         const result = await page.evaluate(({ cardId, rowPx }) => {
           const head = document.querySelector(`#${cardId} thead th`) as HTMLElement;

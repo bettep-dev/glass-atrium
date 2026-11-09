@@ -396,10 +396,10 @@ function crosstabConfidenceKeyO(confidence) {
 // 화면 전용 inline CSS — render 마다 string 재할당 회피 위해 모듈 상수.
 const SCREEN_OUTCOMES_CSS = `
 /* cross table rows on the 40 step */
-/* count + bar cell: the count on the row's centre line (40 less the 1px rule), the 3px bar in the band below */
-.crosstab-tbl { --crosstab-rule: 1px; }
+/* count + bar cell → the house .tbl-bar-cell; a row header (a foot th included) takes the row step too */
 .crosstab-tbl :is(tbody, tfoot) > tr > :is(th, td) { height: var(--row-h); line-height: var(--lh-row); }
-.crosstab-tbl td.crosstab-bar-cell { vertical-align: top; padding-block: calc((var(--row-h) - var(--crosstab-rule) - var(--lh-row)) / 2) 0; }
+/* .tbl--own-face leaves the column-header face to the table → dim, medium, as the ledger's */
+.crosstab-tbl thead th { color: rgb(var(--dim)); font-weight: 500; }
 @keyframes skelPulseO { 0%,100%{opacity:.7} 50%{opacity:.35} }
 .skel-pulse-o { animation: skelPulseO 1.4s ease-in-out infinite; }
 .outcome-md { font-size: var(--fs-body); line-height: 1.65; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
@@ -1307,7 +1307,7 @@ function AgentFailureRateCellO({ row }) {
           <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${getFailureRateFillO(row)}))` }}/>
         </span>
         <LowSampleMark n={row.total}/>
-        <span className={`${NUM_ALIGN_O} font-mono ${row.isLowSample ? 'text-faint italic' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
+        <span className={`${NUM_ALIGN_O} font-mono ${row.isLowSample ? 'text-faint' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
       </span>
     </td>
   );
@@ -1986,6 +1986,7 @@ function CrosstabCard({ state, onRetry, shared }) {
   const crosstab   = state.status === 'ready' ? state.data?.crosstab : null;
   const polarTotal = crosstab ? crosstab.polarTotal : 0;
   const confidentFailed = getConfidentFailedO(crosstab);
+  const hasTable = crosstab != null && crosstab.total > 0;
 
   // the meta keeps the share (width capped at "100.0%"; a count widens with the install) → the count rides the hover title
   return (
@@ -2006,9 +2007,11 @@ function CrosstabCard({ state, onRetry, shared }) {
           )
         }
       />
-      <div className="card-body">
+      {/* flush only under the table → its edge cells take the card padding; loading, error and empty keep the padded body */}
+      <div className={`card-body${hasTable ? ' flush' : ''}`}>
         <CrosstabBody state={state} onRetry={onRetry} shared={shared}/>
       </div>
+      {hasTable && <div className="card-foot"><CrosstabLegendO/></div>}
     </div>
   );
 }
@@ -2029,39 +2032,33 @@ function CrosstabBody({ state, onRetry, shared }) {
 
   const max = crosstabMaxCountO(crosstab.byCell);
 
+  // .tbl--own-face: the .tbl cell geometry under the card's meta step, with no clickable-row hover (these rows open nothing)
   return (
-    <div>
-      <div className="overflow-x-auto">
-        <table className="crosstab-tbl w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-          <thead className="tbl-head">
-            <tr>
-              <th scope="col" className="text-left text-dim font-medium px-2 border-b border-line">confidence \ self-check</th>
-              {CROSSTAB_METRIC_COLS.map((col) => (
-                <th key={col.key} scope="col" className={`${NUM_ALIGN_O} text-dim font-medium px-2 border-b border-line`}>
-                  {col.label}
-                </th>
-              ))}
-              <th scope="col" className={`${NUM_ALIGN_O} text-dim font-medium px-2 border-b border-line`}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {getCrosstabVisibleRowsO(crosstab.byCell).map((rowKey) => (
-              <CrosstabRow key={rowKey} rowKey={rowKey} byCell={crosstab.byCell} max={max}/>
-            ))}
-          </tbody>
-          <tfoot>
-            <CrosstabTotalRow byCell={crosstab.byCell} total={crosstab.total}/>
-          </tfoot>
-        </table>
-      </div>
-      <div className="flex flex-wrap items-center gap-3 fs-meta text-faint pt-3 border-t border-line mt-3">
-        <span className="inline-flex items-center gap-1">
-          <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>
-          polar mismatch (overconfidence high+fail · underconfidence low+pass)
-        </span>
-        <span>Empty rows hidden</span>
-      </div>
-    </div>
+    <window.UI.Table caption="Records by writer confidence and self-check result" columns={CROSSTAB_COLUMNS_O}
+      className="tbl--own-face crosstab-tbl fs-meta"
+      foot={<CrosstabTotalRow byCell={crosstab.byCell} total={crosstab.total}/>}>
+      {getCrosstabVisibleRowsO(crosstab.byCell).map((rowKey) => (
+        <CrosstabRow key={rowKey} rowKey={rowKey} byCell={crosstab.byCell} max={max}/>
+      ))}
+    </window.UI.Table>
+  );
+}
+
+const CROSSTAB_COLUMNS_O = [
+  { key: 'confidence', label: 'Confidence \\ self-check' },
+  ...CROSSTAB_METRIC_COLS.map((col) => ({ key: col.key, label: col.label, isNumeric: true })),
+  { key: 'total', label: 'Total', isNumeric: true },
+];
+
+function CrosstabLegendO() {
+  return (
+    <span className="flex flex-wrap items-center gap-3 fs-meta text-faint">
+      <span className="inline-flex items-center gap-1">
+        <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>
+        polar mismatch (overconfidence high+fail · underconfidence low+pass)
+      </span>
+      <span>Empty rows hidden</span>
+    </span>
   );
 }
 
@@ -2073,12 +2070,12 @@ function CrosstabRow({ rowKey, byCell, max }) {
 
   return (
     <tr>
-      <th scope="row" className="text-left text-ink font-medium px-2 py-1.5 border-b border-line">{rowKey === 'null' ? 'None' : rowKey}</th>
+      <th scope="row" className="text-ink font-medium">{rowKey === 'null' ? 'None' : rowKey}</th>
       {CROSSTAB_METRIC_COLS.map((col) => {
         const cell = byCell[`${rowKey}|${col.key}`] || { count: 0, isPolar: false };
         return <CrosstabCell key={col.key} cell={cell} max={max} rowLabel={rowKey} colLabel={col.label}/>;
       })}
-      <td className={`${NUM_ALIGN_O} text-dim px-2 py-1.5 border-b border-line`}>{formatIntO(rowTotal)}</td>
+      <td className="num text-dim">{formatIntO(rowTotal)}</td>
     </tr>
   );
 }
@@ -2089,7 +2086,7 @@ function CrosstabCell({ cell, max, rowLabel, colLabel }) {
 
   return (
     <td
-      className={`${NUM_ALIGN_O} crosstab-bar-cell px-2 border-b border-line`}
+      className="num tbl-bar-cell"
       title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
       aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
       <span className="inline-flex items-center gap-1 justify-end">
@@ -2115,17 +2112,17 @@ function getCrosstabBarO(cell, max) {
 function CrosstabTotalRow({ byCell, total }) {
   return (
     <tr>
-      <th scope="row" className="text-left text-dim font-medium px-2 py-1.5">Total</th>
+      <th scope="row" className="text-dim font-medium">Total</th>
       {CROSSTAB_METRIC_COLS.map((col) => {
         let colTotal = 0;
         for (const rowKey of CROSSTAB_CONFIDENCE_ROWS) {
           colTotal += (byCell[`${rowKey}|${col.key}`]?.count) || 0;
         }
         return (
-          <td key={col.key} className={`${NUM_ALIGN_O} text-dim px-2 py-1.5`}>{formatIntO(colTotal)}</td>
+          <td key={col.key} className="num text-dim">{formatIntO(colTotal)}</td>
         );
       })}
-      <td className={`${NUM_ALIGN_O} text-ink font-semibold px-2 py-1.5`}>{formatIntO(total)}</td>
+      <td className="num text-ink font-semibold">{formatIntO(total)}</td>
     </tr>
   );
 }
@@ -2156,7 +2153,7 @@ function crosstabMaxCountO(byCell) {
 // operational data(집계 신호 아님)라 Task results 가 소유 (W3-T3 이관 · W3-T7 수신).
 // 고정 높이 스크롤 카드 + 요약 3-tile(neutral count) + 이벤트 표(행=이벤트 / 열=5).
 //   density: 행 라벨 --dim · mono 는 timestamp/id 만 · agent truncate+tooltip.
-//   eval_result → loopResultMetaO dual-encoded 배지(색+기호+라벨).
+//   eval_result → loopResultMetaO 기호(tone 색) + 라벨, 배지 없음.
 
 function LoopEventsCard({ state, onRetry, shared }) {
   const { CardHead } = window.UI;
@@ -2173,7 +2170,7 @@ function LoopEventsCard({ state, onRetry, shared }) {
 }
 
 function LoopEventsBody({ state, onRetry, shared }) {
-  const { Badge } = window.UI;
+  const { TableHead } = window.UI;
 
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
@@ -2198,7 +2195,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
   const verifiedCnt = distMap.verified || 0;
   const rejectCnt   = distMap.reject || 0;
 
-  // 요약 = 카테고리(icon+tone+label) dual-encode + 수량 neutral count Badge (color≠count 규칙).
+  // 요약 = 카테고리 기호(tone) + 라벨 + 수량은 평문 ink (color≠count 규칙).
   const summary = [
     ['ok',   'check', 'Runs applied',  verifiedCnt],
     ['crit', 'x',     'Runs declined', rejectCnt],
@@ -2212,7 +2209,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
           <span key={label} className="fs-body inline-flex items-center gap-1.5">
             <span style={{ color: `rgb(var(--${tone}))` }} aria-hidden="true"><GlyphO name={iconName}/></span>
             <span className="text-dim">{label}</span>
-            <Badge role="count">{formatIntO(count)}</Badge>
+            <span className="text-ink tabular-nums">{formatIntO(count)}</span>
           </span>
         ))}
       </div>
@@ -2221,12 +2218,13 @@ function LoopEventsBody({ state, onRetry, shared }) {
       <div className="overflow-y-auto" style={{ maxHeight: '42vh', position: 'relative' }}>
         <table className="w-full fs-meta">
           <thead className="tbl-head">
-            <tr className="text-dim uppercase tracking-wider" style={{ position: 'sticky', top: 0, background: 'rgb(var(--elev))' }}>
-              <th className="text-left font-medium px-2 border-b border-line">Time</th>
-              <th className="text-left font-medium px-2 border-b border-line">Agent</th>
-              <th className="text-left font-medium px-2 border-b border-line">Result</th>
-              <th className={`${NUM_ALIGN_O} font-medium px-2 border-b border-line`}>Added</th>
-              <th className={`${NUM_ALIGN_O} font-medium px-2 border-b border-line`}>Removed</th>
+            {/* sticky th, not tr → each head cell keeps its own rule and background over the rows scrolling under it */}
+            <tr className="text-dim">
+              <TableHead isSticky className="text-left font-medium px-2 border-b border-line">Time</TableHead>
+              <TableHead isSticky className="text-left font-medium px-2 border-b border-line">Agent</TableHead>
+              <TableHead isSticky className="text-left font-medium px-2 border-b border-line">Result</TableHead>
+              <TableHead isSticky className={`${NUM_ALIGN_O} font-medium px-2 border-b border-line`}>Added</TableHead>
+              <TableHead isSticky className={`${NUM_ALIGN_O} font-medium px-2 border-b border-line`}>Removed</TableHead>
             </tr>
           </thead>
           <tbody>
@@ -2242,7 +2240,10 @@ function LoopEventsBody({ state, onRetry, shared }) {
                     <window.UI.AgentName name={e.agent}/>
                   </td>
                   <td className="text-left px-2 py-1.5 border-b border-line" title={String(e.eval_result || '')}>
-                    <Badge role="status" tone={meta.tone} icon>{meta.label}</Badge>
+                    <span className="inline-flex items-center gap-0.5 text-ink whitespace-nowrap">
+                      <span style={{ color: `rgb(var(--${meta.tone}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
+                      {meta.label}
+                    </span>
                   </td>
                   <td className={`${NUM_ALIGN_O} text-dim font-mono px-2 py-1.5 border-b border-line`}>+{formatIntO(Number(e.changes_added ?? 0))}</td>
                   <td className={`${NUM_ALIGN_O} text-dim font-mono px-2 py-1.5 border-b border-line`}>-{formatIntO(Number(e.changes_removed ?? 0))}</td>

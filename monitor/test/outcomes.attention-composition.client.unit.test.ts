@@ -1316,11 +1316,27 @@ describe("sub-tables: every numeric value and its header are right-aligned, tabu
     const table = nodes.find((n) => n.type === "table");
     assert.ok(table, "a ready cross table renders");
     const tableNodes = expandNodes(table);
-    assert.match(String(table.props?.className), /\bfont-mono\b/, "the table keeps its mono face");
+    assert.doesNotMatch(String(table.props?.className), /\bfont-mono\b/, "figures read in the sans face, tabular through .num");
     for (const n of tableNodes) assert.doesNotMatch(String(n.props?.className ?? ""), /\b(text|justify)-center\b/);
     const colHeads = tableNodes.filter((n) => n.type === "th" && n.props?.scope === "col");
-    assert.match(renderText(colHeads[0]), /confidence/);
-    colHeads.slice(1).forEach((th) => assertB5(th, `header "${renderText(th).trim()}"`));
-    tableNodes.filter((n) => n.type === "td").forEach((td) => assertB5(td, `cell "${renderText(td).trim()}"`));
+    assert.strictEqual(renderText(colHeads[0]).trim(), "Confidence \\ self-check", "sentence-case label column head");
+    // .tbl th.num / td.num → right-aligned, tabular, one line (base.css), the B5 trio as one class
+    for (const n of [...colHeads.slice(1), ...tableNodes.filter((n) => n.type === "td")]) {
+      assert.ok(String(n.props?.className ?? "").split(/\s+/).includes("num"), `"${renderText(n).trim()}" lacks num`);
+    }
+  });
+
+  test("the cross table's total rides the table foot, after its confidence rows", () => {
+    const crosstab = sub.buildCrosstabO([
+      { confidence: "high", metric_pass: true, count: 30, is_polar_mismatch: false },
+      { confidence: "low", metric_pass: false, count: 7, is_polar_mismatch: false },
+    ]);
+    const nodes = expandNodes(sub.CrosstabBody({ state: { status: "ok", data: { crosstab } }, onRetry: () => {} }));
+    const groups = nodes.filter((n) => n.type === "tbody" || n.type === "tfoot");
+    assert.deepStrictEqual(groups.map((n) => n.type), ["tbody", "tfoot"]);
+    const bodyLabels = expandNodes(groups[0]).filter((n) => n.type === "th").map((th) => renderText(th).trim());
+    assert.deepStrictEqual(bodyLabels, ["high", "low"], "only rows holding a record, total excluded");
+    const footCells = expandNodes(groups[1]).filter((n) => n.type === "th" || n.type === "td").map((c) => renderText(c).trim());
+    assert.deepStrictEqual(footCells, ["Total", "30", "7", "0", "37"], "column totals, then the grand total");
   });
 });
