@@ -78,6 +78,12 @@ const MOUNT_FIXTURE = `(fixture) => {
     const nav = { onPrev: () => setIndex(index - 1), onNext: () => setIndex(index + 1), hasPrev: index > 0, hasNext: index < 3 };
     return h(UI.DetailSurface, { open: true, onClose: () => {}, title: 'Record ' + (index + 1), nav }, h('p', null, 'Record body ' + (index + 1)));
   };
+  const OnTrigger = ({ variant }) => {
+    const [isOpen, setIsOpen] = React.useState(false);
+    return h(React.Fragment, null,
+      h('button', { type: 'button', id: 'open-record', onClick: () => setIsOpen(true) }, 'Open record'),
+      isOpen && h(UI.DetailSurface, { open: true, variant, onClose: () => setIsOpen(false), title: 'Record 1' }, h('p', null, 'Record body 1')));
+  };
   const Rows = () => {
     const [activeIndex, setActiveIndex] = React.useState(0);
     const rowOf = (index) => h('tr', { key: index, ...UI.getRowFocusProps({ index, activeIndex, count: 2, onActiveChange: setActiveIndex }) },
@@ -88,6 +94,8 @@ const MOUNT_FIXTURE = `(fixture) => {
   const fixtures = {
     popover: () => h(UI.Popover, { label: 'Filters' }, h('button', { type: 'button' }, 'Apply')),
     drawer: () => h(Drawer),
+    'drawer-on-trigger': () => h(OnTrigger, { variant: 'drawer' }),
+    'fullscreen-on-trigger': () => h(OnTrigger, { variant: 'fullscreen' }),
     rows: () => h(Rows),
   };
   const host = document.body.appendChild(document.createElement('div'));
@@ -95,9 +103,50 @@ const MOUNT_FIXTURE = `(fixture) => {
   ReactDOM.createRoot(host).render(fixtures[fixture]());
 }`;
 
-async function mountFixture(page: Page, kind: "popover" | "drawer" | "rows"): Promise<void> {
+type FixtureKind = "popover" | "drawer" | "drawer-on-trigger" | "fullscreen-on-trigger" | "rows";
+
+async function mountFixture(page: Page, kind: FixtureKind): Promise<void> {
   await page.evaluate(`(${MOUNT_FIXTURE})(${JSON.stringify(kind)})`);
 }
+
+// px by which the focused element's outline crosses each viewport edge → 0 on every side = the whole ring on screen
+async function readRingOverflow(page: Page): Promise<Record<"top" | "right" | "bottom" | "left", number>> {
+  return page.evaluate(() => {
+    const el = document.activeElement as HTMLElement;
+    const style = getComputedStyle(el);
+    const reach = parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth);
+    const box = el.getBoundingClientRect();
+    const { clientWidth, clientHeight } = document.documentElement;
+    return {
+      top: Math.max(0, reach - box.top),
+      right: Math.max(0, box.right + reach - clientWidth),
+      bottom: Math.max(0, box.bottom + reach - clientHeight),
+      left: Math.max(0, reach - box.left),
+    };
+  });
+}
+
+const SURFACE_RING_ROWS: Array<{ name: string; fixture: FixtureKind }> = [
+  { name: "a drawer flush with the right edge at full height", fixture: "drawer-on-trigger" },
+  { name: "a fullscreen surface at full height", fixture: "fullscreen-on-trigger" },
+];
+
+describe("a detail surface opened by Enter focuses its panel with the shared ring, drawn whole inside the viewport", () => {
+  for (const row of SURFACE_RING_ROWS) {
+    test(row.name, async () => {
+      const page = await openApp();
+      await mountFixture(page, row.fixture);
+      await page.focus("#open-record");
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "dialog", null, { timeout: 30_000 });
+      await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)).then(() => undefined));
+
+      assert.deepEqual(await readFocus(page), { tag: "DIV", label: "Record 1", isFocusVisible: true, outline: "solid" });
+      assert.deepEqual(await readRingOverflow(page), { top: 0, right: 0, bottom: 0, left: 0 });
+      await page.close();
+    });
+  }
+});
 
 describe("focus after a mouse move draws no ring, after a keyboard move draws the shared ring", () => {
   test("a nav click moves focus to the new route's h1 without a ring", async () => {

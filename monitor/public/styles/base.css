@@ -1082,6 +1082,11 @@ button.kpi:hover {
 	border-radius: 0;
 	animation: detailFade 180ms ease-out;
 }
+/* edge-flush panels → an outer ring would fall off the viewport; drawn inside the panel edge instead */
+.detail-drawer .detail-panel:focus-visible,
+.detail-fullscreen .detail-panel:focus-visible {
+	outline-offset: calc(var(--focus-ring-width) * -1);
+}
 .detail-confirm .detail-panel {
 	width: min(560px, 92vw);
 	max-height: 86vh;
