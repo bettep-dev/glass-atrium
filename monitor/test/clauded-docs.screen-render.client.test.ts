@@ -913,13 +913,38 @@ test("'rev of #N' trails the title as a pill that never wraps or shrinks, so the
   assert.match(String(lineage[0].props.className), /\bpill\b/);
   assert.match(cssRuleBody(getScreenCss(screen), ".doc-lineage"), /flex\s*:\s*none/);
 
-  const idCell = findNodes(revisionRow, (n) => n.type === "td" && String(n.props.className).includes("doc-meta-text-mono"))[0];
+  const idCell = findNodes(revisionRow, (n) => n.type === "td" && findNodes(n, (c) => c.props?.atom === "MachineString").length > 0)[0];
   assert.match(collectText(idCell), /^#\s*11$/);
 
   // a six-digit id in 13px mono (0.6em a glyph) plus the cell padding fits the ID column
   const idHeader = findNodes(tree, (n) => n.type === "th" && collectText(n) === "ID")[0];
   const width = (idHeader.props.style as { width: number }).width;
   assert.ok(width >= 28 + 13 * 0.6 * "#123456".length, `ID column ${width}px`);
+});
+
+// mono marks machine strings only → the id is one, an age, a count or a note never is
+describe("the list sets only the document id in the machine-string face", () => {
+  test("a ledger row's one machine string is its id, and no list node carries a mono class", async () => {
+    const tree = renderListCard(await loadDocsScreen(), { totalLabel: "12 documents" });
+    const [row] = findNodes(tree, (n) => n.type === "tr" && n.props["aria-label"] === "Doc 11");
+    const machine = findNodes(row, (n) => n.props?.atom === "MachineString").map((n) => collectText(n).replace(/\s+/g, ""));
+    assert.deepEqual(machine, ["#11"]);
+    assert.equal(findNodes(tree, (n) => String(n.props?.className ?? "").includes("doc-list-count")).length, 1, "the count line renders");
+    const monoClassed = findNodes(tree, (n) => /\b(font-mono|doc-meta-text-mono)\b/.test(String(n.props?.className ?? "")));
+    assert.deepEqual(monoClassed.map((n) => n.props.className), []);
+  });
+
+  const sansRules = [
+    { name: "a stage section's count", selector: ".doc-stage-section-count" },
+    { name: "the bulk bar hint", selector: ".doc-group-action-bar.is-hint" },
+    { name: "the bulk bar selection count", selector: ".doc-group-action-bar .selection-count" },
+    { name: "a reorder rollback message", selector: ".doc-reorder-error" },
+  ];
+  for (const row of sansRules) {
+    test(`${row.name} keeps the sans face`, async () => {
+      assert.doesNotMatch(cssRuleBody(getScreenCss(await loadDocsScreen()), row.selector), /monospace/);
+    });
+  }
 });
 
 test("the last stage actor rides the Status cell's tooltip, never a line under the pill", async () => {

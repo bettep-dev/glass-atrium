@@ -897,7 +897,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-title-text, .doc-cell-clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
         /* 표 셀 2차 정보 텍스트 (작성자/날짜/랭크) — meta 레벨 토큰 통일 (ad-hoc text-[11/11.5px] 대체). */
         .doc-meta-text { font-size: var(--fs-meta); }
-        .doc-meta-text-mono { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; }
         /* 태그 셀 폭 상한 — 칩이 nowrap 이라 상한이 없으면 셀이 칩 합까지 벌어진다.
            위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정 — 상한을 풀면 제목 본문 상자가 343→340px 로 깎이고 나머지는 가로 스크롤로 나간다.
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
@@ -1024,8 +1023,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
            border-box + 수직 center 정렬로 양 모드 픽셀 동일. flex-wrap 제거 (좁은 폭에서 2줄
            래핑이 다시 높이 변동 유발 → 단일행 유지 + 버튼이 reserved 높이 초과 차단). */
         .doc-group-action-bar { box-sizing: border-box; min-height: 44px; padding: 6px 16px; background: rgb(var(--sunken)); border-top: 1px solid rgb(var(--line)); display: flex; align-items: center; gap: 12px; }
-        .doc-group-action-bar.is-hint { color: rgb(var(--faint)); font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; }
-        .doc-group-action-bar .selection-count { font-size: var(--fs-body); font-weight: 600; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; }
+        .doc-group-action-bar.is-hint { color: rgb(var(--faint)); font-size: var(--fs-meta); }
+        .doc-group-action-bar .selection-count { font-size: var(--fs-body); font-weight: 600; color: rgb(var(--ink)); font-variant-numeric: tabular-nums; }
         /* 버튼이 reserved 44px 를 넘기지 않도록 상한 — 초과 시 bar 자체가 늘어나 점프 재발. */
         .doc-group-action-bar .btn.sm { max-height: 30px; }
         .doc-group-action-bar .ml-auto-actions { margin-left: auto; display: flex; gap: 8px; }
@@ -1046,7 +1045,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
         tr.doc-row.is-group-member.is-dragging { opacity: 0.5; box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.5); }
         /* reorder rollback error beside its group — the crit glyph carries the tone, the message stays ink */
-        .doc-reorder-error { color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; }
+        .doc-reorder-error { color: rgb(var(--ink)); }
         .doc-inline-alert { display: inline-flex; align-items: center; gap: 6px; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
         /* header text at the title text's x — lead slot + title row gap */
@@ -1104,7 +1103,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
         /* a section head is a 40 row like the ledger rows (its th takes the td row height) → every section starts at one height */
         tr.doc-stage-section > th { height: var(--row-h); padding-block: var(--space-3) var(--space-1); text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
-        .doc-stage-section-count { margin-left: 8px; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); font-variant-numeric: tabular-nums; }
+        .doc-stage-section-count { margin-left: 8px; font-size: var(--fs-meta); color: rgb(var(--faint)); font-variant-numeric: tabular-nums; }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -1426,7 +1425,7 @@ function DocListCardCD({
 								</span>
 							)}
 							{totalLabel && (
-								<span className="doc-list-count fs-meta font-mono" style={{ color: "rgb(var(--dim))" }} title={totalLabel} aria-live="polite">
+								<span className="doc-list-count fs-meta tabular-nums" style={{ color: "rgb(var(--dim))" }} title={totalLabel} aria-live="polite">
 									{totalLabel}
 								</span>
 							)}
@@ -1619,8 +1618,8 @@ function DocListCardCD({
 														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
 												</td>
-											<td className="doc-meta-text-mono doc-col-num" style={{ color: "rgb(var(--dim))" }}>
-													#{row.id}
+											<td className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+													<window.UI.MachineString>#{row.id}</window.UI.MachineString>
 												</td>
 											<td className="title-cell">
 												<div
@@ -1816,7 +1815,7 @@ function getStageOptionsCD(groupCounts) {
 function DocAgeCellCD({ createdAt, age, isStale }) {
 	return (
 		<td
-			className="doc-age-cell doc-meta-text-mono doc-col-num"
+			className="doc-age-cell doc-meta-text doc-col-num"
 			style={{ color: "rgb(var(--dim))" }}
 			title={`Created ${formatDateCD(createdAt)}`}>
 			<div className="doc-age-line">
@@ -2193,8 +2192,8 @@ function GroupMembersRowsCD({
 						</span>
 					)}
 				</td>
-				<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
-					#{member.id}
+				<td className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+					<window.UI.MachineString>#{member.id}</window.UI.MachineString>
 				</td>
 				<td className="title-cell">
 					<div
@@ -2232,7 +2231,7 @@ function GroupMembersRowsCD({
 					/>
 				)}
 				<DocAuthorCellCD author={member.author} />
-				<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
+				<td className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
 					{formatDateCD(member.created_at)}
 				</td>
 			</tr>
