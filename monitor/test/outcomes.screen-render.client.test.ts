@@ -282,6 +282,30 @@ test("a region's error card hands a focused, successful Retry to that region's o
   }
 });
 
+// the error card carries no outer margin → the band's own atoms own its inset and its gap from the Status card
+test("a status band failure takes its inset from a card and its distance from the Status card from the band's block stack", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const failed = { status: "error", busy: false, data: null, error: SERVER_ERROR };
+  const ready = { status: "ready", busy: false, data: { overall: {} }, error: null };
+  const render = (props: Record<string, unknown>) => renderScreen(create(mod.StatusBandO as Component,
+    { windowDays: 30, freshness: null, onRetry: () => undefined, ...props })) as RenderedNode;
+  const isRegionError = (n: RenderedNode) => n.type === "RegionUnavailable";
+
+  const bandFailed = render({ analyticsState: failed, attentionState: ready });
+  const insetCards = findNodes(bandFailed, (n) => n.type === "Card" && findNodes(n, isRegionError).length === 1);
+  assert.equal(insetCards.length, 1, "the band's own failure sits inside one card");
+
+  const countFailed = render({ analyticsState: ready, attentionState: failed });
+  const stacks = findNodes(countFailed, (n) => n.type === "Stack" && findNodes(n, isRegionError).length === 1);
+  assert.equal(stacks.length, 1, "one stack holds the needs-you failure");
+  const [stack] = stacks;
+  assert.equal(stack.props.gap ?? "block", "block", "the stack spaces on the block gap");
+  const [statusCard] = findNodes(stack, (n) => n.type === "Card");
+  assert.ok(statusCard, "the Status card shares the stack");
+  assert.equal(findNodes(statusCard, isRegionError).length, 0, "the failure is the card's sibling, never inside it");
+});
+
 test("a closed caveat row shows its result and its closure as two separate groups", async () => {
   const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
   const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;

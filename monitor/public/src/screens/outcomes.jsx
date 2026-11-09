@@ -173,8 +173,7 @@ function buildClosureState(state, action) {
   return state;
 }
 
-// colorVar(--ok/--warn/--crit/--info) → canonical Badge tone 이름. 비-tone(--dim/--faint/--accent) → 'neutral'.
-//   ad-hoc tone-fill 배지를 canonical Badge(role=status)로 접을 때 tone prop 공급 — shell 은 neutral 유지, 색은 내부 Icon 이 운반.
+// colorVar(--ok/--warn/--crit/--info) → HeadStatusO glyph · BulletBar 채움의 tone 이름 · 비-tone(--dim/--faint/--accent) → 'neutral'.
 function toneFromColorVarO(colorVar) {
   const t = String(colorVar || '').replace(/^--/, '');
   return (t === 'ok' || t === 'warn' || t === 'crit' || t === 'info') ? t : 'neutral';
@@ -969,7 +968,7 @@ function getBandTrendO(tile, priorTile) {
 
 // One stat row card — needs you · failed or blocked · the volume facts; the window once in the sub-line.
 function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry, shared }) {
-  const { getRegionView, getFreshnessVerdict, Card, StatRow } = window.UI;
+  const { getRegionView, getFreshnessVerdict, Card, StatRow, Stack } = window.UI;
   const view = getRegionView(analyticsState);
   // blocked 는 레인의 장애 배너가 원인을 소유 → 여기선 '적재 실패' 만. 그 밖의 실패는 band 자리의 배너 하나.
   if (analyticsState.status === 'blocked') {
@@ -982,7 +981,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   if (view === 'error') {
     return (
       <div id={REGION_CARD_IDS.statusBand} className="mb-section flex-shrink-0" aria-label="Status band">
-        <RegionErrorO source="the status band" state={analyticsState} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.statusBand}/>
+        <Card><RegionErrorO source="the status band" state={analyticsState} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.statusBand}/></Card>
       </div>
     );
   }
@@ -1007,16 +1006,18 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
 
   return (
     <div id={REGION_CARD_IDS.statusBand} className="mb-section flex-shrink-0">
-      {/* 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 → sub-line 이 모든 stat 의 창을 한 번 말한다 */}
-      <Card title="Status" sub={`Last ${windowDays} days`} infoLabel="How the status band is counted"
-        info={!isLoading && <BandRulesO tiles={tiles} reasons={reasons} priorRange={priorRange}/>}>
-        <div aria-busy={isLoading ? 'true' : undefined}>
-          <StatRow stats={stats}/>
-        </div>
-      </Card>
-      {isAttentionFailed && (
-        <RegionErrorO source="the needs-you count" state={attentionState} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.statusBand}/>
-      )}
+      <Stack gap="block">
+        {/* 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 → sub-line 이 모든 stat 의 창을 한 번 말한다 */}
+        <Card title="Status" sub={`Last ${windowDays} days`} infoLabel="How the status band is counted"
+          info={!isLoading && <BandRulesO tiles={tiles} reasons={reasons} priorRange={priorRange}/>}>
+          <div aria-busy={isLoading ? 'true' : undefined}>
+            <StatRow stats={stats}/>
+          </div>
+        </Card>
+        {isAttentionFailed && (
+          <RegionErrorO source="the needs-you count" state={attentionState} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.statusBand}/>
+        )}
+      </Stack>
     </div>
   );
 }
@@ -1296,7 +1297,7 @@ function OpenCaveatCellO({ count, view }) {
 
 // ----- Attribution Health (텔레메트리 귀속 품질) ------------------------------
 // /api/outcomes/attribution-daily — attribution_source 4-category 분해.
-// 일별 stacked-bar (inline SVG, Recharts 미사용) + window 요약 stat row + literal-omission 심각도 배지.
+// 일별 stacked-bar (inline SVG, Recharts 미사용) + window 요약 stat row + literal-omission 심각도 head status (glyph + word).
 // NULL attribution_source 행은 backend 가 제외 (귀속 추적 이전 행) → 모든 비율 분모 = total_attributed.
 
 // A card head's own status: glyph + word, tone on the glyph only, no container (design-spec §3 Status)
@@ -3241,7 +3242,7 @@ function formatRateO(rate) {
   return `${(Number(rate) * 100).toFixed(1)}%`;
 }
 
-// literal-omission 선택 기간 비율 → 심각도 밴드 배지. null → ℹ '—' (데이터 부재).
+// literal-omission 선택 기간 비율 → attribution head status 의 심각도 tone(colorVar) + 문구. null → ℹ '—' (데이터 부재).
 function attributionOmissionBadgeO(rate) {
   if (rate === null || rate === undefined || Number.isNaN(Number(rate))) {
     return { symbol: 'ℹ', icon: 'info', colorVar: '--info', text: '—' };

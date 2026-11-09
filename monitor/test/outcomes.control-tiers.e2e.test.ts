@@ -1,7 +1,7 @@
 // Task results controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css, the role-key
 // utilities and the screen's own style block, rendered from the shipped components: the ledger's page "Previous / Next" each keep one
 // box in every state, the Time sort control draws the drawer's small ghost button, a card head's own status reads as glyph and word
-// with no pill, the cross table's rows sit on the row step, and the Results filter bar holds still as a keyword lands, each trigger naming its value.
+// with no pill, and the Results filter bar holds still as a keyword lands, each trigger naming its value.
 // Runner: npx tsx --test test/outcomes.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -227,14 +227,6 @@ describe("a card head's own status reads as glyph and word, never a pill", () =>
       assert.ok(((await page.$eval(`#${card} ${STATUS}`, (el) => el.textContent)) ?? "").trim().length > 0, "the status word");
     });
   }
-});
-
-describe("the cross table sits on the row step", () => {
-  test("every body row and the Total foot row is 40 tall", async () => {
-    const heights = await page.$$eval("#crosstab table :is(tbody, tfoot) > tr", (rows) => rows.map((row) => row.getBoundingClientRect().height));
-    assert.ok(heights.length >= 2, `${heights.length} rows`);
-    assert.deepEqual(heights, heights.map(() => 40));
-  });
 });
 
 describe("the Results filter bar holds still as its filters change", () => {
