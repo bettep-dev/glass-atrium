@@ -777,7 +777,10 @@
 - **One focus rule**: the ring shows iff `:focus-visible` matches, operable or not = `outline` `--focus-ring-width` solid `--focus-ring` + `--focus-ring-offset`. box-shadow ring 금지.
   - Programmatic focus follows the input that caused it: after a keyboard action it rings, after a mouse click it does not (route h1 · Retry hand-off). No marker attribute forces a ring; no `[tabindex="-1"]:focus { outline: none }` override.
   - First load moves no focus (`app.jsx` → `focusedRoute` guard).
-  - `.seg` 버튼 · 화면 가장자리에 붙는 drawer · fullscreen 패널은 inset ring (`outline-offset` = −`--focus-ring-width`) · `.field-affix` 는 `:has(:focus-visible)` 로 wrapper outline · `outline: none` 은 대체 표시가 있을 때만.
+  - `.seg` 버튼은 inset ring (`outline-offset` = −`--focus-ring-width`) · `.field-affix` 는 `:has(:focus-visible)` 로 wrapper outline · `outline: none` 은 대체 표시가 있을 때만.
+  - Panel ring: a panel over a scrim (drawer · fullscreen · confirm) rings inset, on its own fill; a floating panel with no scrim (popover) keeps the outer 2px gap ring.
+    - Why: an outer ring on a scrim-backed panel lands on the scrim (light: 1.64:1) or off the viewport edge.
+    - Pinned: `app.focus-ring.e2e` — every surface ≥3:1 against the colours under its ring, both themes.
 - skip link = 첫 Tab stop → `#main-content`.
 - ⓘ 정의는 버튼 + `aria-describedby`, hover-only 금지. tone glyph 는 aria-hidden, 단어는 sr-only (`StatusDot` · nav badge).
 - 키보드: overlay 는 focus trap + 트리거 복귀 (§7.8) · 테이블 행 · chip 은 roving focus 헬퍼 (`getRovingIndex` · `getRowFocusProps`).

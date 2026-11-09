@@ -93,9 +93,12 @@ const MOUNT_FIXTURE = `(fixture) => {
   };
   const fixtures = {
     popover: () => h(UI.Popover, { label: 'Filters' }, h('button', { type: 'button' }, 'Apply')),
+    'popover-in-view': () => h('div', { style: { position: 'fixed', top: '160px', right: '560px' } },
+      h(UI.Popover, { label: 'Filters' }, h('button', { type: 'button' }, 'Apply'))),
     drawer: () => h(Drawer),
     'drawer-on-trigger': () => h(OnTrigger, { variant: 'drawer' }),
     'fullscreen-on-trigger': () => h(OnTrigger, { variant: 'fullscreen' }),
+    'confirm-on-trigger': () => h(OnTrigger, { variant: 'confirm' }),
     rows: () => h(Rows),
   };
   const host = document.body.appendChild(document.createElement('div'));
@@ -103,7 +106,7 @@ const MOUNT_FIXTURE = `(fixture) => {
   ReactDOM.createRoot(host).render(fixtures[fixture]());
 }`;
 
-type FixtureKind = "popover" | "drawer" | "drawer-on-trigger" | "fullscreen-on-trigger" | "rows";
+type FixtureKind = "popover" | "popover-in-view" | "drawer" | "drawer-on-trigger" | "fullscreen-on-trigger" | "confirm-on-trigger" | "rows";
 
 async function mountFixture(page: Page, kind: FixtureKind): Promise<void> {
   await page.evaluate(`(${MOUNT_FIXTURE})(${JSON.stringify(kind)})`);
@@ -126,23 +129,102 @@ async function readRingOverflow(page: Page): Promise<Record<"top" | "right" | "b
   });
 }
 
+async function openSurfaceByEnter(page: Page, fixture: FixtureKind): Promise<void> {
+  await mountFixture(page, fixture);
+  await page.focus("#open-record");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "dialog", null, { timeout: 30_000 });
+  await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)).then(() => undefined));
+}
+
 const SURFACE_RING_ROWS: Array<{ name: string; fixture: FixtureKind }> = [
   { name: "a drawer flush with the right edge at full height", fixture: "drawer-on-trigger" },
   { name: "a fullscreen surface at full height", fixture: "fullscreen-on-trigger" },
+  { name: "a confirm panel centred on the scrim", fixture: "confirm-on-trigger" },
 ];
 
-describe("a detail surface opened by Enter focuses its panel with the shared ring, drawn whole inside the viewport", () => {
+describe("a detail surface opened by Enter focuses its panel with the shared ring, drawn inset and whole inside the viewport", () => {
   for (const row of SURFACE_RING_ROWS) {
     test(row.name, async () => {
       const page = await openApp();
-      await mountFixture(page, row.fixture);
-      await page.focus("#open-record");
-      await page.keyboard.press("Enter");
-      await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "dialog", null, { timeout: 30_000 });
-      await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)).then(() => undefined));
+      await openSurfaceByEnter(page, row.fixture);
 
       assert.deepEqual(await readFocus(page), { tag: "DIV", label: "Record 1", isFocusVisible: true, outline: "solid" });
+      assert.equal(await page.evaluate(() => getComputedStyle(document.activeElement as HTMLElement).outlineOffset), "-2px");
       assert.deepEqual(await readRingOverflow(page), { top: 0, right: 0, bottom: 0, left: 0 });
+      await page.close();
+    });
+  }
+});
+
+type Side = "top" | "right" | "bottom" | "left";
+type Rgba = [number, number, number, number];
+
+// per side, the background stack painted under the ring's centre line (topmost first) → what the ring pixels replace when focus lands
+async function readRingGround(page: Page): Promise<{ ring: string; ground: Record<Side, string[]> }> {
+  return page.evaluate(() => {
+    const el = document.activeElement as HTMLElement;
+    const style = getComputedStyle(el);
+    const reach = parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth) / 2;
+    const box = el.getBoundingClientRect();
+    const midX = (box.left + box.right) / 2;
+    const midY = (box.top + box.bottom) / 2;
+    const points = { top: [midX, box.top - reach], right: [box.right + reach, midY], bottom: [midX, box.bottom + reach], left: [box.left - reach, midY] };
+    const ground = Object.fromEntries(Object.entries(points).map(([side, [x, y]]) =>
+      [side, document.elementsFromPoint(x, y).map((node) => getComputedStyle(node).backgroundColor)]));
+    return { ring: style.outlineColor, ground: ground as Record<"top" | "right" | "bottom" | "left", string[]> };
+  });
+}
+
+function parseColor(color: string): Rgba {
+  const [r, g, b, a = 1] = (color.match(/[\d.]+/g) ?? []).map(Number);
+  return [r, g, b, a];
+}
+
+// topmost-first stack → one colour; caller asserts an opaque layer exists, so the empty start never shows through
+function compositeStack(stack: string[]): Rgba {
+  return stack.map(parseColor).reduceRight<Rgba>(([br, bg, bb], [r, g, b, a]) =>
+    [r * a + br * (1 - a), g * a + bg * (1 - a), b * a + bb * (1 - a), 1], [0, 0, 0, 0]);
+}
+
+// WCAG 2.2 relative luminance + contrast ratio
+function getContrast([r1, g1, b1]: Rgba, [r2, g2, b2]: Rgba): number {
+  const luminance = (r: number, g: number, b: number) => {
+    const [lr, lg, lb] = [r, g, b].map((v) => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
+  };
+  const [high, low] = [luminance(r1, g1, b1), luminance(r2, g2, b2)].sort((x, y) => y - x);
+  return (high + 0.05) / (low + 0.05);
+}
+
+const RING_CONTRAST_ROWS = (["light", "dark"] as const).flatMap((theme) => [
+  { theme, surface: "drawer", fixture: "drawer-on-trigger" as FixtureKind },
+  { theme, surface: "fullscreen", fixture: "fullscreen-on-trigger" as FixtureKind },
+  { theme, surface: "confirm", fixture: "confirm-on-trigger" as FixtureKind },
+  { theme, surface: "popover", fixture: "popover-in-view" as FixtureKind },
+]);
+
+describe("a keyboard-focused panel ring reaches 3:1 against the colours it is drawn on, on every side, in both themes (WCAG 1.4.11)", () => {
+  for (const row of RING_CONTRAST_ROWS) {
+    test(`${row.surface} in the ${row.theme} theme`, async () => {
+      const page = await openApp();
+      // data-theme = the attribute tweaks.theme writes
+      await page.evaluate((theme) => document.documentElement.setAttribute("data-theme", theme), row.theme);
+      if (row.fixture === "popover-in-view") {
+        await mountFixture(page, row.fixture);
+        await page.focus("#fixture button[aria-haspopup='dialog']");
+        await page.keyboard.press("Enter");
+      } else {
+        await openSurfaceByEnter(page, row.fixture);
+      }
+
+      const { ring, ground } = await readRingGround(page);
+      const unpainted = Object.entries(ground).filter(([, stack]) => !stack.some((color) => parseColor(color)[3] === 1));
+      assert.deepEqual(unpainted, [], "every ring side lies on screen over an opaque layer");
+      const contrast = Object.fromEntries(Object.entries(ground).map(([side, stack]) =>
+        [side, Number(getContrast(parseColor(ring), compositeStack(stack)).toFixed(2))]));
+      const failing = Object.entries(contrast).filter(([, ratio]) => ratio < 3);
+      assert.deepEqual(failing, [], `ring ${ring} vs ground per side ${JSON.stringify(contrast)}`);
       await page.close();
     });
   }

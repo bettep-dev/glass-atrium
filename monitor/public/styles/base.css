@@ -1082,9 +1082,10 @@ button.kpi:hover {
 	border-radius: 0;
 	animation: detailFade 180ms ease-out;
 }
-/* edge-flush panels → an outer ring would fall off the viewport; drawn inside the panel edge instead */
+/* panel over a scrim → ring inset on the panel's own fill: an outer ring lands on the scrim (light 1.64:1) or off the viewport edge */
 .detail-drawer .detail-panel:focus-visible,
-.detail-fullscreen .detail-panel:focus-visible {
+.detail-fullscreen .detail-panel:focus-visible,
+.detail-confirm .detail-panel:focus-visible {
 	outline-offset: calc(var(--focus-ring-width) * -1);
 }
 .detail-confirm .detail-panel {
