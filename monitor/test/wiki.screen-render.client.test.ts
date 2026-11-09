@@ -105,6 +105,19 @@ test("the notes-per-day chart fills its panel with one dated bar per day and kee
   }
 });
 
+test("a series with too few active days states the gap through the shared empty state instead of a chart", async () => {
+  const mod = await loadWikiScreen();
+  const dates = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"];
+
+  const tree = renderScreen(mod.React.createElement(mod.SparseTrendW as Component, { label: "Notes per day", series: [0, 3, 0, 5, 1], dates }));
+
+  const empty = findNodes(tree, (n) => n.props.atom === "EmptyState");
+  assert.equal(empty.length, 1, "the shared empty-state atom carries the sparse note");
+  assert.equal(empty[0].props.message, "Too few active days to draw a trend.");
+  assert.equal(findNodes(tree, (n) => n.props.atom === "TrendChart").length, 0, "no chart is drawn for a sparse series");
+  assert.equal(findNodes(tree, (n) => /\bplaceholder\b/.test(classOf(n))).length, 0, "the screen sets no placeholder class of its own");
+});
+
 test("the notes-per-day chart takes its edge labels and y-scale from the shared chart atom", async () => {
   const mod = await loadWikiScreen();
   const series = [1, 2, 9, 3, 4];

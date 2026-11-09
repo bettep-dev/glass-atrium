@@ -134,8 +134,8 @@ test("loading, error and unreported each read as themselves, never as a value", 
     helpers.buildIndexTileW(errored),
     helpers.buildIndexTileW(ready({ has_dirty_flag: false, dirty: false, last_dirty_ms: null })),
   ];
-  const subs = states.map((t) => `${t.value} ${t.sub ?? ""}`);
-  assert.equal(new Set(subs).size, subs.length, `states must read distinctly: ${subs.join(" / ")}`);
+  const reads = states.map((t) => `${t.state} ${t.sub ?? ""}`);
+  assert.equal(new Set(reads).size, reads.length, `states must read distinctly: ${reads.join(" / ")}`);
   for (const tile of states) {
     assert.equal(/\d/.test(tile.value), false, `placeholder must carry no figure: ${tile.value}`);
     assert.equal(tile.tone, "neutral");

@@ -392,11 +392,6 @@ function buildProposalAlarmsW(backlog, proposals, cyclesState) {
 				: describeProposalAgeW(runs, parked, checking),
 			parked,
 			age: typeof age === "number" ? age : 0,
-			ageLabel: wait
-				? `${wait.days}d`
-				: typeof runs === "number"
-					? `${runs} ${runs === 1 ? "run" : "runs"}`
-					: null,
 			proposal,
 		};
 	});
@@ -590,7 +585,7 @@ function buildTileBandModel(summaryState, indexState, backlogState, cyclesState,
 
 // Shared non-ready tile shapes — loading, error and unavailable stay distinguishable and
 // none of them renders as a number (a zero nobody loaded is the failure mode).
-// Loading and errored tiles carry no sub text: the "…" value and the band's single banner speak for them.
+// Loading and errored tiles carry no sub text: the shared loading placeholder and the band's single banner speak for them.
 function tilePlaceholderW(key, label, state) {
 	const SUB = {
 		loading: null,
@@ -602,7 +597,7 @@ function tilePlaceholderW(key, label, state) {
 		key,
 		label,
 		state,
-		value: state === "loading" ? "…" : "—",
+		value: "—",
 		sub: SUB[state],
 		tone: "neutral",
 	};
@@ -1519,7 +1514,7 @@ function WikiReportsBody({ state, days, shared, onRetry }) {
 	return (
 		<div>
 			{/* per-run 보고는 동질 카드 N개 → 슬롭 card-grid 가 아니라 RECORD 표(.tbl)로 노출 (S1/S6).
-          최신 우선 · 수치 셀 .num · 시각 relative-time · 상태 DAEMON_STATUS_TONE · 상태 톤은 배지만 담당. */}
+          최신 우선 · 수치 셀 .num · 시각 relative-time · 상태 DAEMON_STATUS_TONE · 상태 톤은 톤 글리프 + 상태어가 담당. */}
 			<WikiReportsTable reports={sortedDesc} />
 		</div>
 	);
@@ -1621,7 +1616,7 @@ function SparseTrendW({ label, series, dates, stat }) {
 				<div className="card-sub">{label}</div>
 			</window.UI.Stack>
 			{sparse ? (
-				<div className="placeholder">Too few active days to draw a trend.</div>
+				<EmptyStateW message="Too few active days to draw a trend." />
 			) : (
 				<TrendChart
 					label={label}
