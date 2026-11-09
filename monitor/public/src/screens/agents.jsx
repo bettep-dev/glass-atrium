@@ -683,14 +683,15 @@ function getAgentSourceFailures(regionEntries) {
   return window.UI.getSourceFailures([...slotRows, ...readRows]);
 }
 
-// Status band — the four fleet questions the first screenful answers. Each tile
-// carries its own payload state so one unloaded source never reads as a zero.
+// Status band — the four fleet questions the first screenful answers, one stat row.
+// Each stat carries its own payload state so one unloaded source never reads as a zero.
 function AgentStatusBand({ failures, tiles, onRetry }) {
+  const cardId = IDS.REGION_CARD.status;
   return (
-    <div id={IDS.REGION_CARD.status} className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
-      {tiles.map((tile) => (
-        <AgentStatusTile key={tile.key} {...tile} failures={failures} cardId={`agents-tile-${tile.key}`} onRetry={onRetry}/>
-      ))}
+    <div id={cardId} className="card mb-4">
+      <div className="card-body">
+        <window.UI.StatRow stats={tiles.map((tile) => buildStatusStatAg({ ...tile, failures, cardId, onRetry }))}/>
+      </div>
     </div>
   );
 }
@@ -793,28 +794,35 @@ function joinSubAg(parts) {
   return parts.filter(Boolean).join(' · ');
 }
 
-// The hint stays one short line; the counting rule behind it opens from the ⓘ trigger.
-function AgentStatusTile({ failures, feeder, label, sub, info, unavailableSub, status, value, tone, error, busy, cardId, onRetry }) {
-  const { Badge, KpiValue, CardInfo } = window.UI;
-  const labelId = `${cardId}-label`;
+// tile model → one StatRow stat; the counting rule behind a label opens from its ⓘ trigger
+function buildStatusStatAg({ key, label, sub, info, unavailableSub, status, failures, cardId, onRetry, ...state }) {
+  const { CardInfo } = window.UI;
+  const labelId = `${cardId}-${key}-label`;
+  return {
+    key,
+    label: <>
+      <span id={labelId}>{label}</span>
+      {info && <CardInfo label={`How ${label} is counted`} describedBy={labelId}>{info}</CardInfo>}
+    </>,
+    value: <StatusStatValueAg label={label} status={status} failures={failures} cardId={cardId} onRetry={onRetry} {...state}/>,
+    context: status === 'unavailable' ? (unavailableSub ?? sub) : sub,
+  };
+}
 
-  return (
-    <div id={cardId} className="card h-full flex flex-col min-h-0">
-      <div className="card-body flex flex-col gap-1">
-        <div className="flex items-center gap-1 min-h-[32px]">
-          <span id={labelId} className="text-faint fs-meta">{label}</span>
-          {info && <CardInfo label={`How ${label} is counted`} describedBy={labelId}>{info}</CardInfo>}
-        </div>
-        {status === 'loading' && <span className="text-faint" aria-busy="true">…</span>}
-        {status === 'error' && (
-          <window.UI.RegionFailure source={feeder} region={label.toLowerCase()} error={error} isBusy={busy} failures={failures} focusTargetId={cardId} onRetry={onRetry}/>
-        )}
-        {status === 'unavailable' && <Badge role="status" tone="warn">unavailable</Badge>}
-        {status === 'ready' && <KpiValue tone={tone}>{value}</KpiValue>}
-        <span className="text-faint fs-meta">{status === 'unavailable' ? (unavailableSub ?? sub) : sub}</span>
-      </div>
-    </div>
-  );
+// Calm is silence → only a crit or warn count carries a glyph, its word for screen readers.
+function StatusStatValueAg({ label, status, feeder, value, tone, error, busy, failures, cardId, onRetry }) {
+  const { Badge, Icon, TONE_ICON } = window.UI;
+  if (status === 'loading') return <span className="text-faint" aria-busy="true">…</span>;
+  if (status === 'error') {
+    return <window.UI.RegionFailure source={feeder} region={label.toLowerCase()} error={error} isBusy={busy} failures={failures} focusTargetId={cardId} onRetry={onRetry}/>;
+  }
+  if (status === 'unavailable') return <Badge role="status" tone="warn">unavailable</Badge>;
+  if (tone !== 'crit' && tone !== 'warn') return value;
+  return <>
+    <span className={`text-${tone} mr-label-inline`} aria-hidden="true"><Icon name={TONE_ICON[tone]} size={13}/></span>
+    <span className="sr-only">{tone === 'crit' ? 'Needs attention: ' : 'Watch: '}</span>
+    {value}
+  </>;
 }
 
 // Unread payload mark — None would read as a loaded zero.

@@ -43,6 +43,8 @@ for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
 UI_SCALARS.formatInt = REAL_UI.formatInt;
 // Tables ride the shipped Table and cell atoms → head cells and body rows render as on the page.
 for (const name of ["Table", "TableRow", "TableCell"]) UI_SCALARS[name] = REAL_UI[name];
+// The status band rides the shipped stat row → labels, values and context lines render as on the page.
+UI_SCALARS.StatRow = REAL_UI.StatRow;
 // Health marks and lists name agents with the shipped helper.
 UI_SCALARS.getAgentDisplayName = REAL_UI.getAgentDisplayName;
 // Recharts charts take their image name and edge tick from the shipped chart helpers.
@@ -260,8 +262,16 @@ function getSummaryState(breaker: unknown, agents: unknown[] = []): unknown {
   return { status: "ready", data: { agents, meta: { circuit_breaker: breaker } }, error: null };
 }
 
+// a stat's count text — a loading mark, a badge or an error card in the value slot is no count
 function getValueTexts(tree: RenderedNode | string | null): string[] {
-  return findNodes(tree, (n) => n.props.atom === "KpiValue").map((n) => collectText(n));
+  return findNodes(tree, (n) => n.type === "dd" && /(^|\s)stat-value(\s|$)/.test(String(n.props.className ?? "")))
+    .map((n) => collectText(n).match(/\d[\d,.]*%?/)?.[0]).filter((text): text is string => Boolean(text));
+}
+
+// the tone a stat's glyph carries; a calm stat draws none
+function getStatTone(tree: RenderedNode | string | null): string | null {
+  const glyph = findNodes(tree, (n) => n.props["aria-hidden"] === "true" && /(^|\s)text-(crit|warn)(\s|$)/.test(String(n.props.className ?? "")))[0];
+  return String(glyph?.props.className ?? "").match(/text-(crit|warn)/)?.[1] ?? null;
 }
 
 function getBadgeTexts(tree: RenderedNode | string | null): string[] {
@@ -323,8 +333,7 @@ test("a Retry on a cold failure keeps the error card busy and hands focus to a c
   assert.ok(tileCards.length > 0, "the summary-backed tiles keep their error cards through the Retry");
   for (const card of tileCards) {
     assert.equal(card.props.isBusy, true);
-    const targets = findNodes(band, (n) => n.type === "div" && n.props.id === card.props.focusTargetId);
-    assert.equal(targets.length, 1, `tile focus target ${String(card.props.focusTargetId)} is the tile's own card`);
+    assert.equal(card.props.focusTargetId, "agents-status", "a stat's error card hands focus to the band card, which outlives recovery");
   }
 });
 
@@ -345,7 +354,7 @@ test("the unsafe-to-route tile shows a count only when the breaker state actuall
   };
 
   const loadedZero = await getUnsafeTile(getSummaryState(BREAKER_LOADED_ZERO));
-  assert.deepEqual(getValueTexts(loadedZero), ["0"], "the count rides the KPI value scale");
+  assert.deepEqual(getValueTexts(loadedZero), ["0"], "the count reads as the stat value");
   assert.deepEqual(getBadgeTexts(loadedZero), [], "the count is not a micro-sized pill");
   assert.match(collectText(loadedZero), /of 3 registered agents/);
 
@@ -561,6 +570,21 @@ test("an empty cell in an agents table reads None in faint ink, never a dash or 
     assert.equal(noneCells.length, row.noneCount, `${row.name}: None cells in ${texts.join(" | ")}`);
     noneCells.forEach((cell) => assert.ok(isFaint(cell) || findNodes(cell, isFaint).length > 0, `${row.name}: None is faint`));
   }
+});
+
+test("the status band is one card holding one stat row, a stat per fleet question", async () => {
+  const ready = { status: "ready", data: [], error: null };
+  const tree = await renderStatusBand({
+    summaryState: getSummaryState(BREAKER_LOADED_ZERO), failureState: ready, overageState: ready,
+    failureByAgent: new Map(), overageByAgent: new Map(), onRetry: () => undefined,
+  });
+  const hasClass = (name: string) => (n: RenderedNode) => new RegExp(`(^|\\s)${name}(\\s|$)`).test(String(n.props.className ?? ""));
+  assert.deepEqual(findNodes(tree, hasClass("card")).map((n) => n.props.id), ["agents-status"], "one card, no card per stat");
+  const statRows = findNodes(tree, hasClass("stat-row"));
+  assert.equal(statRows.length, 1);
+  // each label's own span — the ⓘ beside it carries the counting rule, not the label
+  assert.deepEqual(findNodes(statRows[0], (n) => n.type === "dt").map((n) => collectText(findNodes(n, (c) => c.type === "span")[0]).trim()),
+    ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"]);
 });
 
 test("every status-band tile names the window its count covers", async () => {
@@ -1094,7 +1118,10 @@ test("the Agents page never sets text in the retired micro type step", async () 
     renderLedger(mod),
     renderLoadRow(mod, "error", "error"),
     renderScreen(React.createElement(mod.AgentDisclosure as Component, { title: "By task type", sub: "Success rate" })),
-    renderScreen(React.createElement(mod.AgentStatusTile as Component, { label: "Failed or blocked", sub: "last 30 days", status: "ready", value: 3 })),
+    await renderStatusBand({
+      summaryState: getSummaryState(BREAKER_LOADED_ZERO), failureState: { status: "ready", data: [], error: null }, overageState: { status: "ready", data: [], error: null },
+      failureByAgent: new Map(), overageByAgent: new Map(), onRetry: () => undefined,
+    }),
   ];
   for (const tree of trees) {
     const micro = findNodes(tree, (n) => FS_MICRO.test(String(n.props?.className ?? "")));
@@ -1187,8 +1214,8 @@ test("a ledger row leads with its failed count and keeps blocked as an untoned s
 test("the status band counts failed agents in red and carries blocked-only agents as a neutral note", async () => {
   const ready = { status: "ready", data: [], error: null };
   const rows = [
-    { name: "a failing agent turns the tile red", fails: [1, 0], value: 1, tone: "crit" },
-    { name: "blocked-only agents keep the tile calm", fails: [0, 0], value: 0, tone: "ok" },
+    { name: "a failing agent marks the stat crit", fails: [1, 0], value: 1, tone: "crit", srWord: "Needs attention" },
+    { name: "blocked-only agents keep the stat calm", fails: [0, 0], value: 0, tone: null, srWord: null },
   ];
   for (const row of rows) {
     const failureByAgent = new Map(row.fails.map((fail, i) => [`glass-atrium-dev-${i}`, { fail_count: fail, blocked_count: 5, total_breakages: fail + 5, breakage_rate: 0.1 }]));
@@ -1197,9 +1224,9 @@ test("the status band counts failed agents in red and carries blocked-only agent
       failureByAgent, overageByAgent: new Map(), onRetry: () => undefined,
     });
     const tile = findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith("Failed") && !collectText(n).includes("Unsafe"))[0];
-    const value = findAtoms(tile, "KpiValue")[0];
-    assert.equal(value?.props.tone, row.tone, `${row.name}: tone`);
-    assert.equal(collectText(value), String(row.value), `${row.name}: value`);
+    assert.equal(getStatTone(tile), row.tone, `${row.name}: tone`);
+    assert.deepEqual(getValueTexts(tile), [String(row.value)], `${row.name}: value`);
+    assert.equal(collectText(tile).match(/(Needs attention|Watch):/)?.[1] ?? null, row.srWord, `${row.name}: the glyph's word for screen readers`);
     // the ledger's Failed or blocked column counts runs over the same window, so the tile states runs too
     assert.match(collectText(tile), /last 14d · 10 blocked runs in 2 agents/, `${row.name}: blocked runs and agents over the tile window`);
   }
@@ -1493,7 +1520,7 @@ test("the over-cap and needs-context tiles state their rate over runs, and the t
   const ready = { status: "ready", data: [], error: null };
   const agents = [{ agent_id: "a", runs: 600, needs_context_count: 2 }, { agent_id: "b", runs: 400, needs_context_count: 1 }];
   const rows = [
-    { name: "none crossed", overCap: 0, tone: "ok", ratePct: "0.0" },
+    { name: "none crossed", overCap: 0, tone: null, ratePct: "0.0" },
     { name: "3 of 1,000 stays under the 5% step", overCap: 3, tone: null, ratePct: "0.3" },
     { name: "60 of 1,000 crosses the 5% step", overCap: 60, tone: "warn", ratePct: "6.0" },
   ];
@@ -1504,11 +1531,11 @@ test("the over-cap and needs-context tiles state their rate over runs, and the t
       failureByAgent: new Map(), overageByAgent, onRetry: () => undefined,
     });
     const overCap = getBandTile(tree, "Over tool-use cap");
-    assert.equal(findAtoms(overCap, "KpiValue")[0]?.props.tone ?? null, row.tone, `${row.name}: tone`);
+    assert.equal(getStatTone(overCap), row.tone, `${row.name}: tone`);
     assert.equal(collectText(overCap).match(/([\d.]+)% of 1,?000 runs/)?.[1] ?? null, row.ratePct, `${row.name}: rate`);
     const needsContext = getBandTile(tree, "Needs info");
     assert.match(collectText(needsContext), /0\.3% of 1,?000 runs/, "needs context states its rate over the same runs");
-    assert.equal(findAtoms(needsContext, "KpiValue")[0]?.props.tone ?? null, null, "3 of 1,000 needs-context outcomes stay untoned");
+    assert.equal(getStatTone(needsContext), null, "3 of 1,000 needs-context outcomes stay untoned");
   }
 });
 
