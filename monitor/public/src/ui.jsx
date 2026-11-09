@@ -694,10 +694,8 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   useEffect(() => {
     setSurfaceOpen(panelRef, true);
 
-    const panel = panelRef.current;
-    const focusables = panel ? Array.from(panel.querySelectorAll(FOCUSABLE_SELECTOR)) : [];
-    const initialTarget = panel ? getTrapFocusTarget({ focusables, active: null, panel, shiftKey: false }) : null;
-    if (initialTarget) initialTarget.focus();
+    // opens on the panel, never a control → a mouse open rings nothing; Tab enters at the first control
+    panelRef.current?.focus();
 
     const inertTargets = overlayRef.current ? getInertTargets(overlayRef.current) : [];
     for (const node of inertTargets) node.inert = true;
@@ -854,9 +852,8 @@ function PopoverPanel({ id, title, rootRef, onClose, children }) {
   // joins the surface stack → one Esc closes one layer, whichever of popover and modal is on top
   useEffect(() => {
     setSurfaceOpen(panelRef, true);
-    const panel = panelRef.current;
-    const target = panel ? (panel.querySelectorAll(FOCUSABLE_SELECTOR)[0] || panel) : null;
-    if (target) target.focus();
+    // opens on the panel, never a control → a mouse open rings nothing; Tab enters at the first control
+    panelRef.current?.focus();
 
     return () => setSurfaceOpen(panelRef, false);
   }, []);
@@ -2270,9 +2267,6 @@ function putCardFocus(id) {
   if (!card) return;
 
   if (!card.hasAttribute('tabindex')) card.setAttribute('tabindex', '-1');
-  // programmatic focus after a mouse Retry misses :focus-visible → the marker draws the ring until the card blurs
-  card.setAttribute('data-focus-handoff', 'true');
-  card.addEventListener('blur', () => card.removeAttribute('data-focus-handoff'), { once: true });
   card.scrollIntoView({ block: 'nearest' });
   card.focus({ preventScroll: true });
 }

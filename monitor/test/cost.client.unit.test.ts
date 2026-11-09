@@ -1058,6 +1058,29 @@ test("every cost region error card carries the page Retry, so a region the banne
   }
 });
 
+describe("the page banner's Retry hands focus to a region card every page state renders", () => {
+  const renderInState = async (state: PanelState) => renderIn((await loadScreenModule(COST_SRC, {
+    UI: getAtomUi({ INITIAL_REGION_STATE: state }), React: createReactStub(),
+  })) as RenderModule, "ScreenCost", { onNav: () => {} });
+  const rows = [
+    { name: "loading", state: loading },
+    { name: "error", state: failed },
+    { name: "ready", state: ready({ ...getKpiAtRatio(1, 1), points: [], rows: [] }) },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name}: the fallback card renders once, outside the banner and the page verdict`, async () => {
+      const [banner] = findNodes(await renderInState(failed), (n) => n.props.atom === "PageErrorBanner");
+      const fallbackId = banner.props.focusTargetId;
+      // host nodes and stubbed atoms only — a screen component also carries the id it passes down
+      const targets = findNodes(await renderInState(row.state), (n) => /^[a-z]/.test(n.type) && n.props.id === fallbackId);
+
+      assert.equal(targets.length, 1, `focus target ${String(fallbackId)} is one rendered element`);
+      assert.ok(!["PageErrorBanner", "PageVerdict"].includes(String(targets[0].props.atom)), "never the banner that unmounts on recovery, never the retiring page verdict");
+    });
+  }
+});
+
 // each ScreenCost region state reads its initial value from this queue, in declaration order; the rest are first loads
 function renderCostWithRegions(regions: PanelState[]): Promise<RenderedNode> {
   const regionInitial = {};

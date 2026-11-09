@@ -1,8 +1,7 @@
 /* Component classes — light wrappers over Tailwind */
 
 /* the one focus indicator — outline + offset gap, never box-shadow → rings drawn with box-shadow or stroke stay untouched */
-:focus-visible,
-[data-focus-handoff]:focus {
+:focus-visible {
 	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
 	outline-offset: var(--focus-ring-offset);
 }

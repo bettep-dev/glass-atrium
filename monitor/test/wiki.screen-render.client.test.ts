@@ -3,7 +3,7 @@
 //
 // Runner: npx tsx --test test/wiki.screen-render.client.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -322,23 +322,43 @@ test("a tile-band feeder the banner does not cover keeps its own sentence beside
   assert.equal(cards[0].props.shared, null, "the uncovered feeder is not quieted by the banner");
 });
 
-test("the page banner shows its Retry in flight and hands focus to the verdict, which outlives recovery", async () => {
+// every region of the page starts from this one state
+async function renderWikiInState(region: Record<string, unknown>): Promise<RenderedNode> {
+  const ui = new Proxy(uiStub() as Record<string, unknown>, {
+    get: (target, name: string) => (name === "INITIAL_REGION_STATE" ? region : target[name]),
+  });
+  const mod = (await loadScreenModule(WIKI_SRC, { UI: ui, React: createReactStub() })) as ScreenModule;
+  return renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {})) as RenderedNode;
+}
+
+describe("the page banner's Retry hands focus to a region card every page state renders", () => {
   const initial = realUi.INITIAL_REGION_STATE as Record<string, unknown>;
   // the state putRegionRequest leaves behind when Retry is clicked on a region that never loaded
   const retrying = { ...initial, status: "loading", data: null, error: OUTAGE, busy: true };
-  const ui = new Proxy(uiStub() as Record<string, unknown>, {
-    get: (target, name: string) => (name === "INITIAL_REGION_STATE" ? retrying : target[name]),
-  });
-  const mod = (await loadScreenModule(WIKI_SRC, { UI: ui, React: createReactStub() })) as ScreenModule;
-  const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
+  const getBanners = (tree: RenderedNode) => findNodes(tree, (n) => n.props.atom === "PageErrorBanner");
 
-  const banners = findNodes(tree, (n) => n.props.atom === "PageErrorBanner");
-  assert.equal(banners.length, 1, "every section failing on one cause lifts to one page banner");
-  assert.equal(banners[0].props.isBusy, true, "a Retry in flight marks the banner busy");
-  // host nodes only — a stubbed atom also appears as its component node
-  const targets = findNodes(tree, (n) => /^[a-z]/.test(n.type) && n.props.id === banners[0].props.focusTargetId);
-  assert.equal(targets.length, 1, `focus target ${String(banners[0].props.focusTargetId)} is one rendered element`);
-  assert.notEqual(targets[0].props.atom, "PageErrorBanner", "focus lands outside the banner that unmounts on recovery");
+  test("an outage over every section is one banner with its Retry in flight", async () => {
+    const banners = getBanners(await renderWikiInState(retrying));
+
+    assert.equal(banners.length, 1, "every section failing on one cause lifts to one page banner");
+    assert.equal(banners[0].props.isBusy, true, "a Retry in flight marks the banner busy");
+  });
+
+  const rows = [
+    { name: "loading", region: { ...initial, status: "loading", data: null, error: null, busy: true } },
+    { name: "error with the Retry in flight", region: retrying },
+    { name: "ready", region: { status: "ready", data: {}, error: null, busy: false } },
+  ];
+  for (const row of rows) {
+    test(`${row.name}: the fallback card renders once, outside the banner and the page verdict`, async () => {
+      const fallbackId = getBanners(await renderWikiInState(retrying))[0].props.focusTargetId;
+      // host nodes only — a stubbed atom also appears as its component node
+      const targets = findNodes(await renderWikiInState(row.region), (n) => /^[a-z]/.test(n.type) && n.props.id === fallbackId);
+
+      assert.equal(targets.length, 1, `focus target ${String(fallbackId)} is one rendered element`);
+      assert.ok(!["PageErrorBanner", "PageVerdict"].includes(String(targets[0].props.atom)), "never the banner that unmounts on recovery, never the retiring page verdict");
+    });
+  }
 });
 
 test("the page banner covers an outage only when two or more sections fail for one cause", async () => {

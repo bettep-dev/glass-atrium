@@ -1139,8 +1139,8 @@ test("open-summary rail: beside the ledger (1920px) labels and counts share one 
   }
 });
 
-// the list card keeps tabindex=-1 after a Retry handoff → only the handoff marker may draw its ring
-test("list card: a mouse click never rings the card, a Retry handoff rings it inside the clipped edge", async () => {
+// the list card keeps tabindex=-1 after a Retry handoff → :focus-visible alone draws its ring
+test("list card: a mouse click never rings the card, a keyboard-driven handoff rings it inside the clipped edge", async () => {
   const ids = await seedManyDocs(3, "ring");
   try {
     const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -1160,13 +1160,19 @@ test("list card: a mouse click never rings the card, a Retry handoff rings it in
       assert.ok(clicked.focused, "the click focuses the card itself");
       assert.equal(clicked.style, "none", "a plain mouse focus draws no ring");
 
+      // a stand-in Retry as the card's first tabbable → Tab + Enter hands focus back the way Retry does
       await card.evaluate((el) => {
-        el.blur();
-        el.setAttribute("data-focus-handoff", "true");
-        (el as HTMLElement).focus();
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.textContent = "Retry";
+        retry.addEventListener("click", () => { retry.remove(); (el as HTMLElement).focus(); });
+        el.prepend(retry);
       });
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Enter");
       const handed = await ring();
-      assert.notEqual(handed.style, "none", "the handoff draws the ring");
+      assert.ok(handed.focused, "Enter on Retry hands focus to the card");
+      assert.notEqual(handed.style, "none", "the keyboard-driven handoff draws the ring");
       assert.ok(handed.offset < 0, `the ring sits inside the clipped card (offset ${handed.offset})`);
     } finally {
       await context.close();

@@ -1135,8 +1135,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
         /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
         .card.doc-list-card { scroll-margin-top: 96px; }
-        /* clip trims an outside ring → the shared handoff ring drawn inset */
-        .card.doc-list-card[data-focus-handoff]:focus { outline-offset: calc(-1 * var(--focus-ring-width)); }
+        /* clip trims an outside ring → the card ring drawn inset */
+        .card.doc-list-card:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
         /* rail beside only when the ledger keeps its column floors there → narrower stacks the rail above */
         .doc-layout { container: doc-layout / inline-size; }

@@ -161,7 +161,7 @@ function ScreenCost({ onNav }) {
       {sourceFailures.banner && (
         <div className="mb-4">
           <PageErrorBanner sources={sourceFailures.banner.sources} error={sourceFailures.banner.error} onRetry={triggerRefresh}
-            isBusy={isRetrying} focusTargetId="cost-verdict"/>
+            isBusy={isRetrying} focusTargetId={COST_REGION_IDS.kpis}/>
         </div>
       )}
 

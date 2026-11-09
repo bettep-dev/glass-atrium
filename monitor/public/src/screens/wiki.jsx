@@ -132,7 +132,7 @@ function ScreenWiki() {
 						error={outage.error}
 						onRetry={triggerRefresh}
 						isBusy={isBusy}
-						focusTargetId="wiki-verdict"
+						focusTargetId={WIKI_REGION_IDS.tiles}
 					/>
 				)}
 				<PageVerdict
