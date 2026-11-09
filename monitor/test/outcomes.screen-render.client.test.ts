@@ -403,13 +403,17 @@ test("a channel row keeps to two single lines, the detail line carrying its full
   };
   const tree = renderScreen(create(mod.ChannelLivenessRow as Component, { channel, days: 30, recencyDays: 7 })) as RenderedNode;
 
-  const lines = getRootHost(tree).children.filter((child): child is RenderedNode => typeof child !== "string");
+  // the glyph owns the first grid column → the two text lines share the second, so the detail aligns under the label
+  const lines = getRootHost(tree).children
+    .filter((child): child is RenderedNode => typeof child !== "string" && child.props["aria-hidden"] !== "true");
   assert.equal(lines.length, 2, "status line + detail line");
   for (const line of lines) {
     assert.match(String(line.props.className ?? ""), /whitespace-nowrap|truncate/, `"${collectText(line)}" cannot wrap`);
   }
   const detail = lines[1];
   assert.match(String(detail.props.className), /truncate/);
+  assert.match(String(detail.props.className), /\bcol-start-2\b/, "the detail sits in the text column, under the label");
+  assert.doesNotMatch(String(detail.props.className), /\bp[lxs]?-\d/, "no indent padding stands in for the column");
   assert.equal(detail.props.title, collectText(detail).trim());
 });
 

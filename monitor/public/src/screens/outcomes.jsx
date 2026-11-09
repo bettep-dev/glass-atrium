@@ -698,7 +698,7 @@ function ScreenOutcomes({ onNav }) {
       </div>
 
       {sharedFailure && (
-        <div className="mb-4 flex-shrink-0">
+        <div className="mb-section flex-shrink-0">
           <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
             isBusy={isRetrying} focusTargetId={REGION_CARD_IDS.statusBand}/>
         </div>
@@ -715,7 +715,7 @@ function ScreenOutcomes({ onNav }) {
       />
 
       {/* page scroll only — no inner scroller; the filters sit behind the Results head button, so the ledger takes the full width */}
-      <div className="mt-4">
+      <div className="mt-section">
         <ResultTableCard
           state={searchState}
           rows={rows}
@@ -746,10 +746,10 @@ function ScreenOutcomes({ onNav }) {
 
       {/* Reporting-trust signals are status → stay open; only the breakdown (daily chart, budget-kill list) folds into detail. */}
       {/* per-agent table full width — a half-width column beside the taller Reporting health stack leaves a hole; peer reporting cards pair at equal height */}
-      <div className="mt-4">
+      <div className="mt-section">
         <AgentFailureTableO state={analyticsState} {...regionRetry}/>
       </div>
-      <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)} className="mt-4">
+      <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)} className="mt-section">
         <window.UI.SplitRow ratio="1:1" layout="equal">
           <AttributionHealthCard state={attributionState} period={analyticsPeriod} {...regionRetry}/>
           <ChannelLivenessCard state={channelLivenessState} {...regionRetry}/>
@@ -759,7 +759,7 @@ function ScreenOutcomes({ onNav }) {
         </window.UI.Disclosure>
       </window.UI.Disclosure>
 
-      <window.UI.Disclosure kind="status" title="Self-report quality" sub={selfReportSummaryO(analyticsState)} className="mt-4">
+      <window.UI.Disclosure kind="status" title="Self-report quality" sub={selfReportSummaryO(analyticsState)} className="mt-section">
         <window.UI.SplitRow ratio="1:1" layout="content">
           <GraderBreakdownCard state={analyticsState} {...regionRetry}/>
           <CrosstabCard state={analyticsState} {...regionRetry}/>
@@ -771,7 +771,7 @@ function ScreenOutcomes({ onNav }) {
       </window.UI.Disclosure>
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
-      <window.UI.Disclosure kind="detail" title="Learning-run events" sub={loopEventsSummaryO(loopEventsState)} className="mt-4">
+      <window.UI.Disclosure kind="detail" title="Learning-run events" sub={loopEventsSummaryO(loopEventsState)} className="mt-section">
         <LoopEventsCard state={loopEventsState} {...regionRetry}/>
       </window.UI.Disclosure>
 
@@ -797,7 +797,7 @@ function AlarmLaneO({ channelLivenessState, searchState }) {
   if (silent.length === 0 && !isBlocked) return null;
 
   return (
-    <div className="flex flex-col gap-2 mb-4 flex-shrink-0" role="region" aria-label="Alarms">
+    <div className="flex flex-col gap-list mb-section flex-shrink-0" role="region" aria-label="Alarms">
       {isBlocked && <BlockedBannerO detail={searchState.error}/>}
       {silent.length > 0 && <SilentChannelRowO channels={silent}/>}
     </div>
@@ -1044,7 +1044,7 @@ function BandStatLabelO({ tile }) {
   const glyph = getBandTileGlyphO(tile.tone);
   if (!glyph) return tile.label;
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className="inline-flex items-center gap-label-inline">
       <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}>
         <GlyphO name={glyph} size={12}/>
       </span>
@@ -1099,7 +1099,7 @@ function formatShareO(count, population) {
 function BandRulesO({ tiles, reasons, priorRange }) {
   const { DateRange, LOW_N_MIN } = window.UI;
   return (
-    <dl className="fs-body flex flex-col gap-3">
+    <dl className="fs-body flex flex-col gap-list">
       {tiles.map((tile) => (
         <div key={tile.key}>
           <dt className="text-ink">{tile.label}</dt>
@@ -1112,7 +1112,7 @@ function BandRulesO({ tiles, reasons, priorRange }) {
         {reasons.map((reason) => {
           const glyph = getBandTileGlyphO(reason.tone);
           return (
-            <dd key={reason.key} className="flex items-center gap-1 text-dim">
+            <dd key={reason.key} className="flex items-center gap-label-inline text-dim">
               {glyph && <span className={`text-${reason.tone}`} aria-hidden="true"><GlyphO name={glyph} size={12}/></span>}
               {reason.label}
               <span className="ml-auto tabular-nums text-ink">{reason.count === null ? '—' : formatIntO(reason.count)}</span>
@@ -1194,7 +1194,7 @@ function AgentFailureTableO({ state, onRetry, shared }) {
   return (
     <div id={REGION_CARD_IDS.agentFailures}>
       <Card title="Failures by agent" sub="Worst failure rate first" isFlush
-        info={<p className="fs-body m-0">Failed or blocked records per registry agent. Agents with none are left out; the worst rate comes first.</p>}>
+        info={<p className="fs-body">Failed or blocked records per registry agent. Agents with none are left out; the worst rate comes first.</p>}>
         <AgentFailureBodyO state={state} onRetry={onRetry} shared={shared}/>
       </Card>
     </div>
@@ -1360,7 +1360,7 @@ function AttributionHealthBody({ state, onRetry, shared }) {
     <window.UI.Stack>
       <AttributionSummaryRow summary={summary} totalAttributed={totalAttributed}/>
       <div className="fs-meta text-faint leading-relaxed">
-        <span className="inline-flex items-center gap-1">
+        <span className="inline-flex items-center gap-label-inline">
           <span style={{ color: `rgb(var(${ATTRIBUTION_CATEGORY_META.attribution_loss.colorVar}))` }} aria-hidden="true">
             <GlyphO name={ATTRIBUTION_CATEGORY_META.attribution_loss.icon}/>
           </span>
@@ -1414,7 +1414,7 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
           className="fs-meta text-dim leading-relaxed"
           title={`Missing report breakdown — budget kill ${formatIntO(omissionBreakdown.budget)}, truncated completion ${formatIntO(omissionBreakdown.truncated)}, completion missing ${formatIntO(omissionBreakdown.missing)} (sums to the Missing report count; the rate is unchanged)`}>
           {/* glyph + label as one unbreakable unit → the × never wraps onto a line of its own */}
-          <span className="inline-flex items-center gap-0.5 whitespace-nowrap mr-1">
+          <span className="inline-flex items-center gap-label-inline whitespace-nowrap mr-label-inline">
             <span style={{ color: `rgb(var(${omissionMeta.colorVar}))` }} aria-hidden="true"><GlyphO name={omissionMeta.icon}/></span>
             {omissionMeta.label}:
           </span>
@@ -1427,7 +1427,7 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
 
 // a stat label led by its category glyph — colour + glyph + word, never colour alone
 function StatGlyphLabelO({ meta }) {
-  return <span className="inline-flex items-start gap-1.5">
+  return <span className="inline-flex items-start gap-label-inline">
     <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
     {meta.label}
   </span>;
@@ -1445,10 +1445,9 @@ function AttributionDailyChart({ grid }) {
   const barGap = (slot - barW) / 2;
 
   return (
-    <figure style={{ margin: 0, minWidth: 0 }}>
-      <div className="flex" style={{ gap: STACKED_Y_AXIS_GAP }}>
+    <figure className="min-w-0 grid gap-x-label-inline" style={{ gridTemplateColumns: `${STACKED_Y_AXIS_WIDTH}px minmax(0, 1fr)` }}>
       <StackedYAxisO barAreaH={barAreaH} chartHeight={chartHeight}/>
-      <div role="img" aria-label={getStackedChartLabelO(grid)} tabIndex={0} style={{ cursor: 'crosshair', flex: 1, minWidth: 0 }} {...handlers}>
+      <div role="img" aria-label={getStackedChartLabelO(grid)} tabIndex={0} style={{ cursor: 'crosshair', minWidth: 0 }} {...handlers}>
       <svg
         width="100%"
         height={chartHeight}
@@ -1505,8 +1504,7 @@ function AttributionDailyChart({ grid }) {
         })}
       </svg>
       </div>
-      </div>
-      <div style={{ paddingLeft: STACKED_Y_AXIS_WIDTH + STACKED_Y_AXIS_GAP }}>
+      <div className="col-start-2">
         <StackedChartTicksO grid={grid}/>
         <div aria-live="polite" className="fs-meta text-dim" style={{ minHeight: 18, fontVariantNumeric: 'tabular-nums' }}>
           {activeIndex === null ? 'Point at a day, or focus the chart and use the arrow keys, to read its counts.' : getStackedDayReadoutO(grid[activeIndex])}
@@ -1517,7 +1515,6 @@ function AttributionDailyChart({ grid }) {
 }
 
 const STACKED_Y_AXIS_WIDTH = 32;
-const STACKED_Y_AXIS_GAP = 4;
 // label box height in px → the end ticks clamp inside the plot instead of clipping at its edges
 const STACKED_Y_LABEL_H = 12;
 
@@ -1567,7 +1564,7 @@ function StackedChartTicksO({ grid }) {
   const ticks = window.UI.getChartTicks(grid.length);
   const last = grid.length - 1;
   return (
-    <div className="relative fs-meta tabular-nums text-faint mt-1" style={{ height: 18 }} aria-hidden="true">
+    <div className="relative fs-meta tabular-nums text-faint mt-stack" style={{ height: 18 }} aria-hidden="true">
       {ticks.map((i) => (
         <span
           key={i}
@@ -1601,11 +1598,11 @@ const EMPTY_DAY_LABEL_NOT_READ = 'Not read (before the data window)';
 // dual-encoded 범례 — 색상 + 기호 + 라벨 3중 부호화 (color-blind safety).
 function AttributionLegend() {
   return (
-    <div className="flex flex-wrap gap-3 fs-meta text-faint">
+    <div className="flex flex-wrap gap-list fs-meta text-faint">
       {ATTRIBUTION_CATEGORY_ORDER.map((key) => {
         const meta = ATTRIBUTION_CATEGORY_META[key];
         return (
-          <span key={key} className="flex items-center gap-1.5">
+          <span key={key} className="flex items-center gap-label-inline">
             {/* 범례 점 크기 통일 — w-2 h-2 (화면 공통, W3-T7). */}
             <span
               className="w-2 h-2 rounded-sm inline-flex items-center justify-center"
@@ -1617,11 +1614,11 @@ function AttributionLegend() {
         );
       })}
       {/* the chart's two empty-day hairlines: solid = a read day with no records, dashed = a day before the data window */}
-      <span className="flex items-center gap-1.5">
+      <span className="flex items-center gap-label-inline">
         <span className="w-3 inline-block" style={{ borderTop: '1px solid rgb(var(--line))' }} aria-hidden="true"/>
         {EMPTY_DAY_LABEL_NO_RECORDS}
       </span>
-      <span className="flex items-center gap-1.5">
+      <span className="flex items-center gap-label-inline">
         <span className="w-3 inline-block" style={{ borderTop: '1px dashed rgb(var(--line))' }} aria-hidden="true"/>
         {EMPTY_DAY_LABEL_NOT_READ}
       </span>
@@ -1690,14 +1687,14 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
 
   return (
     <div>
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-list">
         {ordered.map((channel) => (
           <ChannelLivenessRow key={channel.attribution_source} channel={channel} days={days}/>
         ))}
       </div>
       <ChannelPeakBarsO channels={ordered} threshold={threshold}/>
       {threshold ? (
-        <div className="fs-meta text-faint mt-3 leading-relaxed">
+        <div className="fs-meta text-faint mt-block leading-relaxed">
           Alerts once a channel that exceeded {formatIntO(threshold.eligibility_daily_floor)} rows/day
           within the last {threshold.eligibility_recency_days}d has recorded nothing
           for {threshold.silence_hours}h.
@@ -1716,16 +1713,16 @@ function ChannelPeakBarsO({ channels, threshold }) {
   const scale = Math.max(floor || 0, 1, ...peaks);
 
   return (
-    <div className="mt-3" role="group" aria-label="Busiest recent day per channel">
-      <div className="fs-meta text-dim mb-1.5">
+    <div className="mt-block" role="group" aria-label="Busiest recent day per channel">
+      <div className="fs-meta text-dim mb-label">
         Busiest day{recencyDays ? `, last ${recencyDays}d` : ''}{floor ? ` · watched from ${formatIntO(floor)}/day` : ''}
       </div>
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-list">
         {channels.map((channel, index) => {
           const peak = peaks[index];
           const label = `${channel.attribution_source}: ${formatIntO(peak)}/day${floor ? `, floor ${formatIntO(floor)}/day` : ''}`;
           return (
-            <div key={channel.attribution_source} className="grid items-center gap-2 fs-meta"
+            <div key={channel.attribution_source} className="grid items-center gap-label fs-meta"
               style={{ gridTemplateColumns: 'minmax(0, 11rem) minmax(0, 1fr) 4.5rem' }}>
               <span className="text-dim truncate" title={channel.attribution_source}><window.UI.MachineString>{channel.attribution_source}</window.UI.MachineString></span>
               <BulletBar value={peak / scale} target={floor ? floor / scale : null} showValue={false} ariaLabel={label}
@@ -1748,13 +1745,13 @@ function ChannelLivenessRow({ channel, days }) {
 
   // two fixed single lines (status + source, then detail) → a narrow column truncates instead of wrapping to 4–6 lines
   return (
-    <div className="fs-meta min-w-0">
-      <div className="flex items-center gap-2 whitespace-nowrap min-w-0">
-        <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
+    <div className="fs-meta min-w-0 grid items-center gap-x-label" style={{ gridTemplateColumns: 'auto minmax(0, 1fr)' }}>
+      <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
+      <div className="flex items-center gap-label whitespace-nowrap min-w-0">
         <span className="text-ink w-[6.5rem] flex-shrink-0">{meta.label}</span>
         <span className="text-ink truncate min-w-0" title={channel.attribution_source}><window.UI.MachineString>{channel.attribution_source}</window.UI.MachineString></span>
       </div>
-      <div className="text-dim tabular-nums truncate pl-6" title={detail}>{detail}</div>
+      <div className="col-start-2 text-dim tabular-nums truncate" title={detail}>{detail}</div>
     </div>
   );
 }
@@ -1879,7 +1876,7 @@ function TaskTypeGraderCrosstabO({ rows }) {
   const byDesign = rows.filter((r) => r.by_design_unverified === true);
 
   return (
-    <div className="mt-4 flex flex-col gap-3">
+    <div className="mt-block flex flex-col gap-block">
       <TaskTypeGraderGroupO label="By task type — checkable types" rows={measured} maxTotal={maxTotal}/>
       <TaskTypeGraderGroupO label="Types with nothing to check" rows={byDesign} maxTotal={maxTotal} isMuted/>
     </div>
@@ -1889,8 +1886,8 @@ function TaskTypeGraderCrosstabO({ rows }) {
 function TaskTypeGraderGroupO({ label, rows, maxTotal, isMuted }) {
   return (
     <div>
-      <div className="fs-meta text-faint mb-1">{label}</div>
-      <div className="flex flex-col gap-1">
+      <div className="fs-meta text-faint mb-label">{label}</div>
+      <div className="flex flex-col gap-list">
         {rows.map((row) => <TaskTypeGraderBarO key={row.task_type} row={row} maxTotal={maxTotal} isMuted={isMuted}/>)}
       </div>
     </div>
@@ -1906,7 +1903,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
   const title = `${row.task_type}: ${bucketText} — total ${formatIntO(total)}`;
 
   return (
-    <div className="flex items-center gap-2" role="img" aria-label={title} title={title}>
+    <div className="flex items-center gap-label" role="img" aria-label={title} title={title}>
       <span className={`fs-meta ${isMuted ? 'text-faint' : 'text-dim'}`} style={{ width: 76, flexShrink: 0 }}>
         {row.task_type}
       </span>
@@ -1955,7 +1952,7 @@ function CrosstabCard({ state, onRetry, shared }) {
             {formatRateO(confidentFailed.share)}
           </span>
         )}
-        info={<p className="fs-body m-0">Records whose writer reported high confidence while the record's own check failed.</p>}
+        info={<p className="fs-body">Records whose writer reported high confidence while the record's own check failed.</p>}
         right={
           state.status === 'ready' && (
             <HeadStatusO tone="warn">{formatIntO(polarTotal)} mismatches</HeadStatusO>
@@ -2006,8 +2003,8 @@ const CROSSTAB_COLUMNS_O = [
 
 function CrosstabLegendO() {
   return (
-    <span className="flex flex-wrap items-center gap-3 fs-meta text-faint">
-      <span className="inline-flex items-center gap-1">
+    <span className="flex flex-wrap items-center gap-list fs-meta text-faint">
+      <span className="inline-flex items-center gap-label-inline">
         <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>
         polar mismatch (overconfidence high+fail · underconfidence low+pass)
       </span>
@@ -2043,11 +2040,11 @@ function CrosstabCell({ cell, max, rowLabel, colLabel }) {
       className="num tbl-bar-cell"
       title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
       aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
-      <span className="inline-flex items-center gap-1 justify-end">
+      <span className="inline-flex items-center gap-label-inline justify-end">
         {cell.isPolar && count > 0 && <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>}
         <span className="text-ink">{count > 0 ? formatIntO(count) : '·'}</span>
       </span>
-      <span className="block mt-1" aria-hidden="true" style={{ height: 3 }}>
+      <span className="block mt-stack" aria-hidden="true" style={{ height: 3 }}>
         {/* anchored to the right edge → the bar ends under its right-aligned count */}
         {bar && <span className="block ml-auto" style={{ height: '100%', width: `${bar.widthPct}%`, background: `rgb(var(${bar.colorVar}))`, borderRadius: 1 }}/>}
       </span>
@@ -2136,7 +2133,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
   if (total === 0 || events.length === 0) {
     // 카드 card-body 는 padding:0(populated 테이블 소유) → empty 브랜치만 별도 패딩으로
     // the card-body default (--card-pad) 와 간격 일치. populated 테이블은 padding:0 유지.
-    return <div style={{ padding: 'var(--card-pad)' }}><EmptyStateO message="No run events recorded yet."/></div>;
+    return <div className="p-card-pad"><EmptyStateO message="No run events recorded yet."/></div>;
   }
 
   const distMap = {};
@@ -2366,17 +2363,17 @@ function ResultTableZeroStateO({ filter, onResetFilter }) {
   const chips = filter ? buildActiveFilterChipsO(filter) : [];
 
   return (
-    <div className="placeholder" style={{ margin: 24 }}>
+    <div className="placeholder">
       {chips.length === 0
         ? 'No results recorded yet for this period'
         : 'No results match the active filters'}
       {chips.length > 0 && (
-        <div className="flex items-center gap-1 flex-wrap justify-center mt-2">
+        <window.UI.Cluster className="justify-center mt-label">
           <span className="fs-meta text-faint">Active:</span>
           <FilterChipsO chips={chips}/>
-        </div>
+        </window.UI.Cluster>
       )}
-      <div className="mt-3">
+      <div className="mt-block">
         <button className="btn sm" onClick={onResetFilter} aria-label="Reset filters">
           Reset filters
         </button>
@@ -2575,7 +2572,7 @@ function QaScoreDotsO({ qaScore }) {
   const filled = Math.round(Math.min(Math.max(avg, 0), 5));
   return (
     <span
-      className="inline-flex items-center gap-0.5 align-middle"
+      className="inline-flex items-center gap-label-inline align-middle"
       role="img"
       aria-label={`qa score ${avg.toFixed(1)} of 5`}
       title={`QA score: ${qaScore}`}>
@@ -2622,8 +2619,8 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
       <TableCell view={view} textRole="meta" label="Task type" className="text-dim whitespace-nowrap">{row.task_type}</TableCell>
       <TableCell view={view} textRole="meta" label="Result" title={resultMeta.label}>
         {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
-        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-          <span data-group="result" className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
+        <span className="inline-flex items-center gap-label-inline whitespace-nowrap">
+          <span data-group="result" className="inline-flex items-center gap-label-inline text-ink" style={{ fontWeight: 500 }}>
             <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
             {resultLabel}
           </span>
@@ -2706,11 +2703,11 @@ function SummaryFlagSlotO({ row }) {
   const slotStyle = { width: SUMMARY_FLAG_SLOT };
 
   if (flag == null) {
-    return <span className="inline-block shrink-0 align-middle mr-1" style={slotStyle} aria-hidden="true"/>;
+    return <span className="inline-block shrink-0 align-middle mr-label-inline" style={slotStyle} aria-hidden="true"/>;
   }
   return (
     <span
-      className={`inline-flex items-center justify-center shrink-0 align-middle mr-1 text-${flag.tone}`}
+      className={`inline-flex items-center justify-center shrink-0 align-middle mr-label-inline text-${flag.tone}`}
       style={slotStyle}
       role="img"
       aria-label={flag.title}
