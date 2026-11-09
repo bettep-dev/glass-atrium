@@ -154,12 +154,12 @@ describe("outcomes status band and ledger as painted", () => {
   });
 
   for (const width of [800, 1440]) {
-    test(`the hero body sits at the top, each range paints whole, every summary starts at one x at ${width}px`, async () => {
+    test(`the hero body sits at the top, no tile states a range, every summary starts at one x at ${width}px`, async () => {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       try {
         await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
         await page.waitForSelector("tr.outcome-row td", { timeout: 30_000 });
-        await page.waitForFunction(() => /pts since|Level since/.test(document.body.innerText), null, { timeout: 30_000 });
+        await page.waitForFunction(() => / pt\b|\bLevel\b/.test(document.body.innerText), null, { timeout: 30_000 });
         await page.evaluate(() => document.fonts.ready);
         const painted = await page.evaluate(() => {
           const hero = [...document.querySelectorAll<HTMLElement>(".kpi")].find((tile) => /Needs you/.test(tile.textContent ?? ""))!;
@@ -174,15 +174,14 @@ describe("outcomes status band and ledger as painted", () => {
             heroH: hero.getBoundingClientRect().height,
             headOffset: hero.querySelector(".kpi-head")!.getBoundingClientRect().y - hero.getBoundingClientRect().y,
             headFloor: parseFloat(heroStyle.borderTopWidth) + parseFloat(heroStyle.paddingTop),
-            rangeRects: ranges.map((span) => span.getClientRects().length),
+            ranges: ranges.length,
             summaries,
           };
         });
 
         assert.ok(painted.heroH > 200, `the hero stretches beside the volume column: ${painted.heroH}px`);
         assert.ok(Math.abs(painted.headOffset - painted.headFloor) <= 1, `label row ${painted.headOffset}px below the tile top, not ${painted.headFloor}px`);
-        assert.strictEqual(painted.rangeRects.length, 4, "the hero and three volume facts each state a prior range");
-        assert.deepStrictEqual(painted.rangeRects, [1, 1, 1, 1], "a range never breaks across lines");
+        assert.strictEqual(painted.ranges, 0, "the comparison window sits in the band's ⓘ, never on a tile");
         // the needs-you read answers with the same fixture rows → the ledger paints at least every fixture row
         assert.ok(painted.summaries.length >= LEDGER_ROWS.length, `ledger rows painted: ${painted.summaries.length}`);
         const xs = painted.summaries.map((row) => row.x);

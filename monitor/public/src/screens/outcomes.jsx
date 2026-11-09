@@ -963,7 +963,7 @@ function buildStatusBandTilesO(data, attentionCount) {
 }
 
 /**
- * Share change of each band tile against the prior window — the Dashboard Task results tile's wording.
+ * Signed share delta of each band tile against the prior window; the window itself sits in the band's ⓘ.
  * The prior needs-you count reads closure as of now, so the hero compares shares, not two snapshots in time.
  * @param priorAttentionCount - the prior window's needs-you count; null → the hero states no change
  */
@@ -972,22 +972,17 @@ function buildBandTrendsO(data, tiles, priorAttentionCount) {
   if (!prior) return {};
   const priorData = { overall: prior, byResultCount: buildByResultCountMapO(prior.by_result) };
   const priorTiles = buildStatusBandTilesO(priorData, priorAttentionCount);
-  return Object.fromEntries(tiles.map((tile, i) => [tile.key, getBandTrendO(tile, priorTiles[i], prior)]));
+  return Object.fromEntries(tiles.map((tile, i) => [tile.key, getBandTrendO(tile, priorTiles[i])]));
 }
 
-function getBandTrendO(tile, priorTile, prior) {
+function getBandTrendO(tile, priorTile) {
   const { LOW_N_MIN } = window.UI;
   if (tile.count === null || priorTile.count === null || tile.population < LOW_N_MIN) return null;
-  const priorRange = window.UI.formatDayRange(prior);
-  if (priorTile.population < LOW_N_MIN) return `No comparison — too few records in ${priorRange}`;
+  if (priorTile.population < LOW_N_MIN) return 'No comparison';
   const points = (tile.count / tile.population - priorTile.count / priorTile.population) * 100;
-  const change = Math.abs(points) < 0.05 ? 'Level' : `${points > 0 ? 'Up' : 'Down'} ${Math.abs(points).toFixed(1)} pts`;
-  const priorShare = window.UI.formatPctWithDenominator(priorTile.count, priorTile.population).split(' (')[0];
-  return `${change} since ${formatDayO(prior.period_end)} vs ${priorShare} in ${priorRange}`;
-}
-
-function formatDayO(date) {
-  return String(date).slice(5, 10);
+  if (Math.abs(points) < 0.05) return 'Level';
+  // U+2212 minus → read as "minus", never as a dash
+  return `${points > 0 ? '+' : '\u2212'}${Math.abs(points).toFixed(1)} pt`;
 }
 
 function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry, shared }) {
@@ -1025,11 +1020,8 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   const bandTiles = buildStatusBandTilesO(analyticsState.data, attentionCount);
   const trends = buildBandTrendsO(analyticsState.data, bandTiles, attentionState.data?.priorTotal ?? null);
   const prior = analyticsState.data?.overall?.prior_window;
-  // trend stays a plain string (the aria-label reads it); the range token rides beside it for the render
-  const getTrendTile = (tile) => {
-    const trend = trends[tile.key] ?? null;
-    return { ...tile, trend, trendRange: trend ? window.UI.formatDayRange(prior) : null };
-  };
+  const priorRange = prior ? window.UI.formatDayRange(prior) : null;
+  const getTrendTile = (tile) => ({ ...tile, trend: trends[tile.key] ?? null });
   // stale or partial read → an ok tile drops to neutral, warn/crit kept (the verdict's rule)
   const tiles = bandTiles
     .map(getTrendTile)
@@ -1044,7 +1036,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   // a jumpable hero is a button → the rules ⓘ sits in the volume column, never inside a tile control
   const info = (
     <CardInfo label="How the status band is counted" describedBy={labelId}>
-      <BandRulesO tiles={tiles}/>
+      <BandRulesO tiles={tiles} priorRange={priorRange}/>
     </CardInfo>
   );
 
@@ -1070,15 +1062,16 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
 // unloadedText → a pending or failed count says so instead of a dash that reads as data
 // One KPI anatomy: label row · count · share and trend under it · the reasons as the split detail column.
 function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, className = '' }) {
-  const { KPI, formatPctWithDenominator, DateRange } = window.UI;
+  const { KPI } = window.UI;
   const glyph = getBandTileGlyphO(tile.tone);
   const loaded = tile.count !== null && tile.count !== undefined;
-  const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
+  // the count is the tile's value → the share carries no fraction
+  const share  = loaded ? formatShareO(tile.count, tile.population) : '—';
   const canJump = Boolean(tile.jumpTo) && loaded && tile.count > 0;
   const reasonText = reasons
     ? ` — reasons: ${reasons.map((r) => `${r.label} ${r.count === null ? 'not loaded' : r.count}`).join(', ')}`
     : '';
-  const trendText = tile.trend ? ` — ${tile.trend}` : '';
+  const trendText = tile.trend ? ` — ${tile.trend} against the prior window` : '';
   const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'}${trendText}${reasonText} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
 
   return (
@@ -1097,8 +1090,7 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
       delta={
         <>
           <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
-          {/* the range rides in its own nowrap span → the sentence wraps around it, never inside the dates */}
-          {tile.trend && <div className="fs-meta text-dim"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></div>}
+          {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
         </>
       }
       hint={reasons && <NeedsYouReasonsO reasons={reasons}/>} hintFace="" isSplit={Boolean(reasons)}
@@ -1193,7 +1185,7 @@ function formatShareO(count, population) {
 function NeedsYouReasonsO({ reasons }) {
   return (
     <span className="block fs-meta">
-      <span className="block text-faint">Reasons · each record counted once, flags first</span>
+      <span className="block text-faint">Reasons</span>
       {reasons.map((reason) => {
         const glyph = getBandTileGlyphO(reason.tone);
         return (
@@ -1216,7 +1208,7 @@ function getVolumeTilesO(tiles) {
 // volume facts demoted beside the hero; the Self-reported glyph stays the missing-report grade channel
 // a fact-list KPI: the ⓘ on the label row, level with the hero's label; the facts start where the hero's value does
 function VolumeTilesO({ tiles, windowLabel, info = null }) {
-  const { KPI, formatPctWithDenominator, DateRange } = window.UI;
+  const { KPI } = window.UI;
   return (
     <KPI hasValue={false} info={info} aria-label={`Volume · ${windowLabel}`} hintFace=""
       hint={
@@ -1228,8 +1220,8 @@ function VolumeTilesO({ tiles, windowLabel, info = null }) {
                 {glyph && <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}><GlyphO name={glyph} size={12}/></span>}
                 {tile.label}
                 <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
-                <span className="w-full text-right font-mono text-faint">{formatPctWithDenominator(tile.count, tile.population)}</span>
-                {tile.trend && <span className="w-full text-right"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></span>}
+                <span className="w-full text-right font-mono text-faint">{formatShareO(tile.count, tile.population)}</span>
+                {tile.trend && <span className="w-full text-right">{tile.trend}</span>}
               </div>
             );
           })}
@@ -1238,7 +1230,9 @@ function VolumeTilesO({ tiles, windowLabel, info = null }) {
   );
 }
 
-function BandRulesO({ tiles }) {
+// the counting method and the delta's comparison window live here, never on a tile
+function BandRulesO({ tiles, priorRange }) {
+  const { DateRange, LOW_N_MIN } = window.UI;
   return (
     <dl className="fs-body flex flex-col gap-3">
       {tiles.map((tile) => (
@@ -1247,6 +1241,17 @@ function BandRulesO({ tiles }) {
           <dd className="text-dim">{tile.hint}</dd>
         </div>
       ))}
+      <div>
+        <dt className="text-ink">Reasons</dt>
+        <dd className="text-dim">Each record counted once, flags first</dd>
+      </div>
+      {priorRange && (
+        <div>
+          <dt className="text-ink">Change</dt>
+          {/* the range rides in its own nowrap span → the sentence wraps around it, never inside the dates */}
+          <dd className="text-dim"><DateRange range={priorRange}>{`Points of share against the prior window, ${priorRange}; under ${LOW_N_MIN} records there it reads No comparison`}</DateRange></dd>
+        </div>
+      )}
     </dl>
   );
 }

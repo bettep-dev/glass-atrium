@@ -90,6 +90,7 @@ interface OutcomesHelpers {
   ) => { key: string; label: string; heading: string; rows: LedgerRow[]; anchorId?: string }[];
   BandTileO: (props: { tile: BandTile; windowLabel: string }) => RenderNode;
   VolumeTilesO: (props: { tiles: BandTile[]; windowLabel: string; info?: unknown }) => RenderNode;
+  BandRulesO: (props: { tiles: BandTile[]; priorRange: string | null }) => RenderNode;
   ResultTable: (props: Record<string, unknown>) => RenderNode;
   ResultTableRow: (props: { row: LedgerRow & { agent: string; task_type: string }; onRowClick: () => void; closure?: ClosureState }) => RenderNode;
   focusLedgerSectionO: (id: string, doc: { getElementById: (id: string) => unknown }) => boolean;
@@ -1273,7 +1274,6 @@ const buildBand = (prior: unknown, priorTotal: number | null): unknown => helper
   attentionState: { status: "ready", data: { total: 30, parts: { flagged: 30, fail: 0, blocked: 0, open: 0 }, priorTotal } as { total: number } },
   windowDays: 30,
 });
-const renderBand = (prior: unknown, priorTotal: number | null): string => renderText(buildBand(prior, priorTotal));
 
 // one tile's subtree → a change line there cannot hide behind another tile's text
 const findTile = (node: unknown, key: string): RenderNode | null => {
@@ -1284,48 +1284,72 @@ const findTile = (node: unknown, key: string): RenderNode | null => {
   return findTile(el.children, key);
 };
 
-describe("StatusBandO: every tile states its share change against the prior window", () => {
-  const text = renderBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), 10);
+// one band fact's own text, the ⓘ left out → a range or method there cannot pass for the tile's
+const findVolumeTiles = (node: unknown): BandTile[] => {
+  if (Array.isArray(node)) return node.flatMap(findVolumeTiles);
+  if (node === null || typeof node !== "object" || !("type" in node)) return [];
+  const el = node as RenderNode;
+  if (el.type === helpers.VolumeTilesO) return (el.props as { tiles: BandTile[] }).tiles;
+  return findVolumeTiles(el.children);
+};
+const getTileText = (band: unknown, key: string): string => {
+  const hero = findTile(band, key);
+  if (hero) return renderText(hero);
+  const tile = findVolumeTiles(band).find((entry) => entry.key === key);
+  return tile ? renderText(helpers.VolumeTilesO({ tiles: [tile], windowLabel: "30d" })) : "";
+};
+const BAND_KEYS = ["attention", "broken", "recorded", "done"];
+const getBandText = (band: unknown): string => BAND_KEYS.map((key) => getTileText(band, key)).join(" | ");
 
-  test("the hero states the points of change, the prior share and the prior range", () => {
-    // 30/200 = 15% now vs 10/100 = 10.0% in the prior window
-    assert.match(text, /Up 5\.0 pts since 09-01 vs 10\.0% in 08-02 – 08-31/);
-  });
-  test("a volume tile whose share fell states the drop", () => {
-    // Done: 150/200 = 75% now vs 80/100 = 80.0%
-    assert.match(text, /Down 5\.0 pts since 09-01 vs 80\.0% in 08-02 – 08-31/);
-  });
-  test("an unchanged share reads as level", () => {
-    // Failed or blocked: 12/200 = 6% vs 6/100 = 6.0%
-    assert.match(text, /Level since 09-01 vs 6\.0% in 08-02 – 08-31/);
-  });
+describe("StatusBandO: every tile states one share delta, its comparison window inside the band's ⓘ", () => {
+  const band = buildBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), 10);
+  const tileText = (key: string): string => getTileText(band, key);
+  const rows = [
+    // 30/200 = 15% now vs 10/100 = 10%
+    { name: "a share that rose states its signed points", key: "attention", delta: /\+5\.0 pt\b/ },
+    // Done: 150/200 = 75% vs 80/100 = 80%
+    { name: "a share that fell states its signed points", key: "done", delta: /\u22125\.0 pt\b/ },
+    // Failed or blocked: 12/200 = 6% vs 6/100 = 6%
+    { name: "an unchanged share reads as level", key: "broken", delta: /\bLevel\b/ },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const text = tileText(row.key);
+      assert.match(text, row.delta);
+      assert.doesNotMatch(text, /since|\bvs\b|08-02/, "the prior share and window stay out of the tile");
+    });
+  }
   test("a prior window under the low-N floor claims no comparison", () => {
-    const small = renderBand(buildPriorWindow(12, { done: 10, fail: 2 }), 2);
-    assert.match(small, /No comparison — too few records in 08-02 – 08-31/);
-    assert.doesNotMatch(small, /pts since/);
+    const small = getBandText(buildBand(buildPriorWindow(12, { done: 10, fail: 2 }), 2));
+    assert.match(small, /No comparison/);
+    assert.doesNotMatch(small, / pt\b|08-02/);
   });
-  test("every tile's prior range renders whole in one nowrap span, so the sentence wraps around the dates", () => {
-    for (const band of [
-      buildBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), 10),
-      buildBand(buildPriorWindow(12, { done: 10, fail: 2 }), 2),
-    ]) {
-      const ranges = expandNodes(band).filter((n) => /\bwhitespace-nowrap\b/.test(String(n.props?.className ?? ""))
-        && renderText(n) === "08-02 – 08-31");
-      // the hero and the three volume facts each state a change line
-      assert.strictEqual(ranges.length, 4, `nowrap range spans: ${ranges.length}`);
-    }
+  test("a response without a prior window draws no delta", () => {
+    assert.doesNotMatch(getBandText(buildBand(undefined, null)), / pt\b|\bLevel\b|No comparison/);
   });
-  test("a response without a prior window draws no change line", () => {
-    assert.doesNotMatch(renderBand(undefined, null), /since|No comparison/);
-  });
-  test("an unread prior attention count leaves the Needs you tile without a change line", () => {
-    const band = buildBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), null);
-    const hero = findTile(band, "attention");
-    assert.ok(hero, "the band draws a Needs you tile");
-    const heroText = renderText(hero);
+  test("an unread prior attention count leaves the Needs you tile without a delta", () => {
+    const unread = buildBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), null);
+    const heroText = getTileText(unread, "attention");
     assert.match(heroText, /Needs you/);
-    assert.doesNotMatch(heroText, /since|pts|No comparison/, "an unread prior count is never read as zero");
-    assert.match(renderText(band), /Down 5\.0 pts/);
+    assert.doesNotMatch(heroText, / pt\b|\bLevel\b|No comparison/, "an unread prior count is never read as zero");
+    assert.match(getTileText(unread, "done"), /\u22125\.0 pt/);
+  });
+  test("a share beside its own count drops the fraction", () => {
+    assert.match(tileText("attention"), /15\.0%/);
+    assert.doesNotMatch(getBandText(band), /\(\d[\d,]*\/\d[\d,]*\)/);
+  });
+  test("the band's ⓘ names the comparison window whole in one nowrap span and the reasons' counting method", () => {
+    const tiles = helpers.buildStatusBandTilesO({ overall: { total: 200 }, byResultCount: {} }, 30);
+    const rules = helpers.BandRulesO({ tiles, priorRange: "08-02 – 08-31" });
+    const ranges = expandNodes(rules).filter((n) => /\bwhitespace-nowrap\b/.test(String(n.props?.className ?? ""))
+      && renderText(n) === "08-02 – 08-31");
+    assert.strictEqual(ranges.length, 1, `nowrap range spans: ${ranges.length}`);
+    assert.match(renderText(rules), /counted once, flags first/);
+    assert.doesNotMatch(tileText("attention"), /counted once/, "the counting method sits in the ⓘ, not under the reasons");
+  });
+  test("without a prior window the band's ⓘ states no comparison window", () => {
+    const tiles = helpers.buildStatusBandTilesO({ overall: { total: 200 }, byResultCount: {} }, 30);
+    assert.doesNotMatch(renderText(helpers.BandRulesO({ tiles, priorRange: null })), /compar/i);
   });
 });
 
