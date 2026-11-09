@@ -15,6 +15,7 @@ import {
   renderScreen,
   collectText,
 } from "./lib/render-screen.js";
+import { getRoleKeys, type RoleSection } from "./lib/role-keys.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DOCS_SRC = resolve(__dirname, "../public/src/screens/clauded-docs.jsx");
@@ -1016,7 +1017,7 @@ describe("a ledger head count and a group toggle space their content on the labe
   const nodes = [
     { name: "a stage section's count", rule: ".doc-stage-section-count", property: "margin", roleClass: "ml-label-inline" },
     { name: "a group root's member toggle", rule: ".doc-group-toggle", property: "gap", roleClass: "gap-label-inline" },
-    { name: "a group root's member toggle hit area", rule: ".doc-group-toggle", property: "padding", roleClass: "p-label-inline" },
+    { name: "a group root's member toggle hit area", rule: ".doc-group-toggle", property: "padding", roleClass: "inline-target" },
     { name: "a group root's member toggle label", rule: ".doc-group-toggle", property: "font-size", roleClass: "fs-meta" },
   ];
   for (const row of nodes) {
@@ -1030,6 +1031,32 @@ describe("a ledger head count and a group toggle space their content on the labe
       assert.doesNotMatch(cssRuleBody(getScreenCss(screen), row.rule), new RegExp(`(^|[;\\s])${row.property}(-left)?\\s*:`), row.rule);
     });
   }
+});
+
+// a role utility the Tailwind config has no key for emits no CSS → the node silently keeps its UA spacing
+test("every spacing utility on the ledger names a key its Tailwind config section holds", async () => {
+  const sectionOf: Record<string, RoleSection> = {
+    p: "padding", px: "padding", py: "padding", pt: "padding", pr: "padding", pb: "padding", pl: "padding",
+    gap: "gap", "gap-x": "gap", "gap-y": "gap",
+    m: "margin", mx: "margin", my: "margin", mt: "margin", mr: "margin", mb: "margin", ml: "margin",
+    "space-x": "space", "space-y": "space",
+  };
+  const keys = getRoleKeys();
+  const screen = await loadDocsScreen();
+  const groupRoot = { id: 21, title: "Doc 21", snippet: "the <mark>auth</mark> gate", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z", member_count: 3, folder_id: 5 };
+  const tree = renderListCard(screen, { isSearchMode: true, rows: [groupRoot] });
+  const utilities = findNodes(tree, (n) => typeof n.props?.className === "string")
+    .flatMap((n) => String(n.props.className).split(/\s+/))
+    .map((cls) => /^(p[xytrbl]?|gap(?:-[xy])?|m[xytrbl]?|space-[xy])-(.+)$/.exec(cls))
+    .filter((match): match is RegExpExecArray => match !== null);
+  assert.ok(utilities.length > 0, "the ledger renders spacing utilities");
+  // margin auto → Tailwind's core centring value, never a spacing step
+  const isMarginAuto = (prefix: string, key: string) => sectionOf[prefix] === "margin" && key === "auto";
+  const unknown = utilities
+    .filter(([, prefix, key]) => !isMarginAuto(prefix, key) && !(key in keys[sectionOf[prefix]]))
+    .map(([cls]) => cls);
+  assert.deepEqual([...new Set(unknown)], []);
 });
 
 test("a search snippet sits under its title on the stack role, with no number in its class or its rule", async () => {

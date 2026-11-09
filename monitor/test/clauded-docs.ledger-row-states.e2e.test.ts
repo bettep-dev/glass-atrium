@@ -338,12 +338,13 @@ describe("the select column and the stage section heads sit on the ledger's grid
   const UTILITIES = ".relative { position: relative; } .absolute { position: absolute; } .flex { display: flex; } .items-center { align-items: center; }" +
     " .justify-center { justify-content: center; } .mx-auto { margin-left: auto; margin-right: auto; } .pointer-events-none { pointer-events: none; }";
   // the app's preflight sizes boxes border-box → the select floor is the cell's whole width, as it renders
-  const gridPage = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } ${UTILITIES}</style></head><body style="margin: 0;">
+  const gridPage = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; } ${UTILITIES}</style></head><body style="margin: 0;">
     <div style="padding: 48px;"><div class="card"><table class="tbl" style="width: 600px;">
       <thead><tr><th scope="col" class="doc-checkbox-cell" id="head-select">${checkbox}</th><th scope="col">Title</th></tr></thead>
       <tbody>
         <tr class="doc-stage-section" id="section"><th scope="colgroup" colspan="2" role="heading" aria-level="2" tabindex="-1" class="tbl-cell tbl-cell--group-header">Implementing<span class="doc-stage-section-count ml-label-inline">3</span></th></tr>
         <tr class="doc-row" id="doc"><td class="doc-checkbox-cell" id="row-select">${checkbox}</td><td>Plan</td></tr>
+        <tr class="doc-row" id="group"><td class="doc-checkbox-cell"></td><td class="title-cell"><div class="doc-title-row"><span class="doc-title-lead" id="group-lead"><button type="button" class="doc-group-toggle inline-target gap-label-inline" id="group-toggle" aria-label="Expand group (3 documents)"><svg class="chevron" width="10" height="10"></svg></button></span><span class="doc-title-main">Group</span></div></td></tr>
       </tbody>
     </table></div></div>
   </body></html>`;
@@ -397,6 +398,19 @@ describe("the select column and the stage section heads sit on the ledger's grid
       const after = await page.$eval("#row-select input", (el) => (el as HTMLInputElement).checked);
       assert.notEqual(after, before, `a click 3px past the ${edge.name} edge toggles the checkbox`);
     }
+  });
+
+  // the button resets to no padding → its hit area is the inline target filling the lead slot, chevron centred
+  test("a group toggle fills its 20 lead slot with a 24 hit area and centres its chevron", async () => {
+    const { lead, toggle, chevron } = await page.$eval("#group-lead", (el) => ({
+      lead: el.getBoundingClientRect().toJSON() as DOMRect,
+      toggle: el.querySelector("button")!.getBoundingClientRect().toJSON() as DOMRect,
+      chevron: el.querySelector("svg")!.getBoundingClientRect().toJSON() as DOMRect,
+    }));
+    assert.ok(Math.abs(toggle.width - lead.width) < 0.5 && Math.abs(lead.width - 20) < 0.5, `toggle ${toggle.width}px in a ${lead.width}px slot`);
+    assert.ok(Math.abs(toggle.height - 24) < 0.5, `toggle ${toggle.height}px tall`);
+    const offset = (chevron.left + chevron.right) / 2 - (toggle.left + toggle.right) / 2;
+    assert.ok(Math.abs(offset) <= 0.5, `chevron centre ${offset}px off the toggle centre`);
   });
 
   test("a stage section head is a 40 row like the ledger rows", async () => {

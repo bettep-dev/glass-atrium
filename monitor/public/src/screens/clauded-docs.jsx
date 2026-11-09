@@ -1035,7 +1035,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 버튼이 reserved 44px 를 넘기지 않도록 상한 — 초과 시 bar 자체가 늘어나 점프 재발. */
         .doc-group-action-bar .btn.sm { max-height: 30px; }
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
-        .doc-group-toggle { display: inline-flex; align-items: center; cursor: pointer; background: transparent; border: none; color: rgb(var(--dim)); border-radius: var(--radius-badge); }
+        .doc-group-toggle { width: 100%; justify-content: center; cursor: pointer; background: transparent; border: none; color: rgb(var(--dim)); border-radius: var(--radius-badge); }
         .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
         .doc-group-toggle.is-expanded .chevron { transform: rotate(90deg); }
         /* member rows — indent + 좌측 가는 가이드 선 (group 소속 시각 hint). */
@@ -1631,7 +1631,7 @@ function DocListCardCD({
 														{isGroupRoot && (
 															<button
 																type="button"
-																className={`doc-group-toggle gap-label-inline p-label-inline fs-meta ${isExpanded ? "is-expanded" : ""}`}
+																className={`doc-group-toggle inline-target gap-label-inline fs-meta ${isExpanded ? "is-expanded" : ""}`}
 																{...ROW_CONTROL_PROPS}
 																onClick={(e) => {
 																	e.stopPropagation();
