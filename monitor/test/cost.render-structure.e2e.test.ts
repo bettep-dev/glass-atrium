@@ -21,11 +21,12 @@ import { chromium } from "playwright";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
-// The screen's own tier order, as the target composition states it: four KPI tiles, then the
+// The screen's own tier order, as the target composition states it: the Spend stat card, then the
 // three decision cards, then the three instrumentation status cards.
-const DECISION_CARD_TITLES = ["Cost over time", "Cost by model", "Most expensive sessions"];
+const DECISION_CARD_TITLES = ["Spend", "Cost over time", "Cost by model", "Most expensive sessions"];
 const DISCLOSURE_TITLES = ["Token volume", "Turn statistics", "Log integrity"];
-const KPI_TILE_COUNT = 4;
+const SPEND_STAT_COUNT = 4;
+const SPEND_STAT_SELECTOR = ".cost-screen .stat-row .stat";
 const LEDGER_MODELS = [
   "claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-fable-5",
   "claude-opus-4-8", "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "unknown",
@@ -198,18 +199,14 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     return { app, browser, page };
   }
 
-  // Render complete = the wave resolved: every tile has left its loading skeleton, so the
+  // Render complete = the wave resolved: the stat row has left its loading state, so the
   // lane has had its inputs and an absent lane is a verdict rather than a pending state.
-  await page.waitForSelector(".cost-screen .kpi", { timeout: 30_000 });
+  await page.waitForSelector(SPEND_STAT_SELECTOR, { timeout: 30_000 });
   await page.waitForFunction(
-    (expected: number) => {
-      const tiles = Array.from(document.querySelectorAll(".cost-screen .kpi"));
-      return (
-        tiles.length === expected &&
-        tiles.every((t) => t.getAttribute("aria-busy") !== "true")
-      );
-    },
-    KPI_TILE_COUNT,
+    ({ expected, selector }: { expected: number; selector: string }) =>
+      document.querySelectorAll(selector).length === expected
+      && document.querySelector('.cost-screen [aria-busy="true"] > .stat-row') === null,
+    { expected: SPEND_STAT_COUNT, selector: SPEND_STAT_SELECTOR },
     { timeout: 30_000 },
   );
 
@@ -271,20 +268,11 @@ describe("calm fixture — nothing is running hot", () => {
     const titles = await getCardTitles(ctx.page);
     assert.deepStrictEqual(titles, [...DECISION_CARD_TITLES, ...DISCLOSURE_TITLES]);
 
-    const kpiPrecedesFirstCard = await ctx.page.evaluate(() => {
-      const tiles = Array.from(document.querySelectorAll(".cost-screen .kpi"));
-      const firstCard = document.querySelector(".cost-screen .card-title");
-      if (tiles.length === 0 || firstCard === null) return false;
-      const last = tiles[tiles.length - 1] as Element;
-      return Boolean(
-        last.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING,
-      );
-    });
-    assert.equal(
-      kpiPrecedesFirstCard,
-      true,
-      "the four KPI tiles lead the screen — every card follows them",
+    const statCardTitle = await ctx.page.evaluate(
+      (selector) => (document.querySelector(selector)?.closest(".card")?.querySelector(".card-title")?.textContent || "").trim(),
+      SPEND_STAT_SELECTOR,
     );
+    assert.equal(statCardTitle, "Spend", "the four spend stats live in the leading Spend card");
   });
 
   test("the instrumentation tier is three status cards, all open", async () => {
@@ -309,13 +297,13 @@ describe("calm fixture — nothing is running hot", () => {
     assert.equal(await countAlarmRows(ctx.page), 0);
     const laneHeight = await ctx.page.evaluate(() => {
       const header = document.querySelector(".cost-screen .flex-shrink-0");
-      const verdict = document.querySelector(".cost-screen .page-verdict");
-      if (header === null || verdict === null) return -1;
-      return verdict.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
+      const firstCard = document.querySelector(".cost-screen .card");
+      if (header === null || firstCard === null) return -1;
+      return firstCard.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
     });
     assert.ok(
       laneHeight >= 0 && laneHeight < 24,
-      `a calm lane must cost no vertical band; measured ${laneHeight}px between header and verdict`,
+      `a calm lane must cost no vertical band; measured ${laneHeight}px between header and first card`,
     );
   });
 
@@ -377,32 +365,29 @@ describe("calm fixture — nothing is running hot", () => {
     assert.equal(strayRoots, 0, "every chart lives in a card");
   });
 
-  test("one verdict line precedes the tiles, and every tile carries its window tag", async () => {
-    const shape = await ctx.page.evaluate(() => {
-      const verdicts = document.querySelectorAll(".cost-screen .page-verdict");
-      const firstTile = document.querySelector(".cost-screen .kpi");
-      const tags = Array.from(document.querySelectorAll(".cost-screen .kpi")).map((tile) =>
-        Array.from(tile.querySelectorAll(".kpi-window")).map((t) => (t.textContent || "").trim()),
-      );
-      const leads = verdicts.length === 1 && firstTile !== null
-        && Boolean(verdicts[0]!.compareDocumentPosition(firstTile) & Node.DOCUMENT_POSITION_FOLLOWING);
-      return { count: verdicts.length, leads, tags };
-    });
-    assert.equal(shape.count, 1, "one spend verdict per page");
-    assert.equal(shape.leads, true, "the verdict reads before the tiles");
-    assert.equal(shape.tags.length, KPI_TILE_COUNT);
-    for (const tags of shape.tags) {
-      assert.equal(tags.length, 1, "each tile names its window exactly once");
-      assert.ok(tags[0]!.length > 0, "a window tag is never blank");
-    }
+  test("no page verdict and no window tag — each ranged stat names its window in its label", async () => {
+    const shape = await ctx.page.evaluate(() => ({
+      verdicts: document.querySelectorAll(".cost-screen .page-verdict").length,
+      windowTags: document.querySelectorAll(".cost-screen .kpi-window").length,
+      labels: Array.from(document.querySelectorAll(".cost-screen .stat-row .stat-label"))
+        .map((el) => (el.textContent || "").trim()),
+    }));
+    assert.equal(shape.verdicts, 0, "spend state rides the stat and the alarm lane, not a verdict line");
+    assert.equal(shape.windowTags, 0, "the window is part of the label, never a separate tag");
+    assert.equal(shape.labels.length, SPEND_STAT_COUNT);
+    assert.equal(
+      shape.labels.filter((label) => /, last \d+ days$/.test(label)).length,
+      2,
+      `the cost and the cache-share stats follow the range: ${shape.labels.join(" | ")}`,
+    );
   });
 
-  test("the tiles compare with the prior window the screen opts into", async () => {
-    const feet = await ctx.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".cost-screen .cost-foot")).map((el) => (el.textContent || "").trim()),
+  test("the stats compare with the prior window the screen opts into", async () => {
+    const contexts = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll(".cost-screen .stat-row .stat-context")).map((el) => (el.textContent || "").trim()),
     );
-    assert.ok(feet.some((text) => /cut at this time of day/.test(text)), "a measured delta line renders");
-    assert.ok(!feet.some((text) => /did not arrive/.test(text)), "no tile reads the prior window as missing");
+    assert.ok(contexts.some((text) => /cut at this time of day/.test(text)), "a measured delta line renders");
+    assert.ok(!contexts.some((text) => /did not arrive/.test(text)), "no stat reads the prior window as missing");
   });
 
   test("each card pair splits from the narrowest width its content fits and stacks below it", async () => {
@@ -587,17 +572,17 @@ describe("hot fixture — today is running over the normal", () => {
       "the hot row and the conditional parse-error row, and nothing else",
     );
 
-    const lanePrecedesTiles = await ctx.page.evaluate(() => {
+    const lanePrecedesStats = await ctx.page.evaluate(() => {
       const lastAlert = Array.from(
         document.querySelectorAll('.cost-screen [role="alert"]'),
       ).pop();
-      const firstTile = document.querySelector(".cost-screen .kpi");
-      if (lastAlert === undefined || firstTile === null) return false;
+      const statRow = document.querySelector(".cost-screen .stat-row");
+      if (lastAlert === undefined || statRow === null) return false;
       return Boolean(
-        lastAlert.compareDocumentPosition(firstTile) & Node.DOCUMENT_POSITION_FOLLOWING,
+        lastAlert.compareDocumentPosition(statRow) & Node.DOCUMENT_POSITION_FOLLOWING,
       );
     });
-    assert.equal(lanePrecedesTiles, true, "the lane leads — the tiles follow it");
+    assert.equal(lanePrecedesStats, true, "the lane leads — the spend stats follow it");
   });
 
   test("the log-integrity threshold line and the days over it draw in one tone", async () => {

@@ -125,13 +125,11 @@ function ScreenCost() {
       <TypeScaleStyle/>
       {/* Screen-scoped readability layer (W3-T5):
           - .cost-tbl: 본문 셀 --faint→--dim 으로 승격 (산문 가독 tier) · 행 높이는 공용 --row-h.
-          - .cost-foot: 카드 하단 footnote/helper line — fs-meta --dim (text-faint mono 보다 한 단 밝게, 읽기용).
-          - .kpi-hint --dim override: KPI 타일 sub-caption 을 --faint 에서 --dim 으로 (ui.jsx 정의 셀프 보존, cost 화면만 승격). */}
+          - .cost-foot: 카드 하단 footnote/helper line — fs-meta --dim (text-faint mono 보다 한 단 밝게, 읽기용). */}
       <style>{`
         .cost-tbl tbody td { color: rgb(var(--dim)); }
         .cost-tbl tbody td.num { color: rgb(var(--dim)); }
         .cost-foot { font-size: var(--fs-meta); line-height: 1.5; color: rgb(var(--dim)); }
-        .cost-screen .kpi-hint { color: rgb(var(--dim)); }
       `}</style>
       <div className="flex-shrink-0">
         <PageHeader
@@ -302,11 +300,6 @@ function getHotToneC(hot, latestOutsideBand) {
   return hot.isPaceHot || latestOutsideBand ? 'warn' : null;
 }
 
-// The verdict lives in one place: the lane when a hot trigger fires it, tile 1 otherwise.
-function getTileVerdictTextC(hot) {
-  return hot.isHot || hot.isPaceHot ? 'Running hot — see the alert above.' : hot.verdict;
-}
-
 function getHotAlarmText(hot, latestOutsideBand) {
   const clauses = [];
   if (hot.isHot || hot.isPaceHot) clauses.push(hot.verdict);
@@ -366,12 +359,6 @@ function AlarmLaneC({ rows }) {
 
 // "Running hot" cut — today ≥ 1.25x the 7-day daily normal · defined once, inherited by the Dashboard.
 const HOT_RATIO_CUT = 1.25;
-
-// Bullet-bar zones over today / (normal x 2) → 0.5 = the normal · only the hot band carries a tone.
-const HOT_BULLET_ZONES = [
-  { upTo: HOT_RATIO_CUT / 2, tone: 'neutral' },
-  { upTo: 1.0,               tone: 'crit'    },
-];
 
 // Finite number or null — a missing or NaN payload field stays distinguishable from a real 0.
 function toFiniteOrNull(value) {
@@ -519,7 +506,28 @@ function computeCacheShare(modelState) {
 }
 
 function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetry }) {
-  const { getRegionView, RegionFailure } = window.UI;
+  const { getRegionView, RegionFailure, Card, StatRow } = window.UI;
+  const stats = buildSpendStatsC({ kpiState, hot, trendState, modelState, days });
+  const notes = stats.filter((stat) => stat.info);
+
+  return (
+    <>
+      {/* Payload failure is reported at the owning group — the KPI payload feeds stats 1 and 3. */}
+      {getRegionView(kpiState) === 'error' && (
+        <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
+          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
+      )}
+      <Card title="Spend" info={notes.length > 0 && <SpendStatNotesC stats={notes}/>} infoLabel="How these figures are read">
+        <div aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
+          <StatRow stats={stats.map(buildStatC)}/>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+// Four spend stats — each window rides its label, so the windows compare at one glance; a fixed window is named in ⓘ.
+function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
   const kpi = kpiState.status === 'ready' ? (kpiState.data || {}) : {};
   const windowTotal = computeWindowTotal(trendState);
   const cacheShare = computeCacheShare(modelState);
@@ -527,72 +535,48 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
   const doneCount = toFiniteOrNull(kpi.done_count_7d) ?? 0;
   const trendDays = getShownDays(trendState, days);
   const modelDays = getShownDays(modelState, days);
-
-  return (
-    <>
-      {/* Payload failure is reported at the owning group — the KPI payload feeds tiles 1 and 3. */}
-      {getRegionView(kpiState) === 'error' && (
-        <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
-          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
-      )}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-card">
-        <CostTileC
-          id="cost-tile-today"
-          label="Today vs. normal"
-          windowTag="today"
-          status={getTileStatus(kpiState, hot.ratio, false)}
-          value={hot.todayCost === null ? '—' : formatUsdC(hot.todayCost)}
-          hint={hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`}
-          unavailableNote="No cost in the last 7 days — no normal to compare against."
-          delta={<HotBulletC hot={hot}/>}/>
-
-        <CostTileC
-          id="cost-tile-window"
-          label={`Cost, last ${trendDays} days`}
-          windowTag={`${trendDays}d`}
-          status={getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty)}
-          value={windowTotal.total === null ? '—' : formatUsdC(windowTotal.total)}
-          hint={windowTotal.total === null
-            ? ''
-            : `${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
-          info="Recorded cost: the sum of the cost events recorded on each day of the window, today's partial day included. The average divides that total by the days shown; the peak is the costliest single day."
-          unavailableNote="Trend payload carries no cost figure."
-          delta={<TrendDeltaC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>}/>
-
-        <CostTileC
-          id="cost-tile-per-task"
-          label="Cost per finished task"
-          windowTag="7d fixed"
-          status={getTileStatus(kpiState, costPerDone, false)}
-          value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
-          hint={`7-day cost / ${formatIntC(doneCount)} finished`}
-          info={<window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens>}
-          unavailableNote="No finished task in the last 7 days."/>
-
-        <CostTileC
-          id="cost-tile-cache"
-          label="Cache share of cost"
-          windowTag={`${modelDays}d`}
-          status={getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty)}
-          value={cacheShare.share === null ? '—' : `${(cacheShare.share * 100).toFixed(0)}%`}
-          hint={cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`}
-          unavailableNote="No priced model cost in this window."
-          foot={
-            <div className="cost-foot">
-              {/* the window ("30 days") stays one token; the sentence wraps around it */}
-              <window.UI.DateRange range={getDaySpanC(modelDays)}>
-                {getCacheTotalNoteC({
-                  listTotal: cacheShare.totalCost,
-                  recordedTotal: trendDays === modelDays ? windowTotal.total : null,
-                  days: modelDays,
-                })}
-              </window.UI.DateRange>
-            </div>
-          }/>
-      </div>
-    </>
-  );
+  return [
+    {
+      key: 'today', label: 'Today vs. normal', tone: getHotToneC(hot, false),
+      status: getTileStatus(kpiState, hot.ratio, false),
+      value: formatUsdC(hot.todayCost),
+      hint: hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`,
+      unavailableNote: 'No cost in the last 7 days — no normal to compare against.',
+    },
+    {
+      key: 'window', label: `Cost, last ${trendDays} days`,
+      status: getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty),
+      value: formatUsdC(windowTotal.total),
+      context: <TrendDeltaTextC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>,
+      info: windowTotal.total === null ? WINDOW_COST_RULE_C
+        : `${WINDOW_COST_RULE_C} This window: ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}.`,
+      unavailableNote: 'Trend payload carries no cost figure.',
+    },
+    {
+      key: 'per-task', label: 'Cost per finished task',
+      status: getTileStatus(kpiState, costPerDone, false),
+      value: formatUsdC(costPerDone),
+      hint: `7-day cost / ${formatIntC(doneCount)} finished`,
+      info: <window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens>,
+      unavailableNote: 'No finished task in the last 7 days.',
+    },
+    {
+      key: 'cache', label: `Cache share, last ${modelDays} days`,
+      status: getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty),
+      value: cacheShare.share === null ? null : `${(cacheShare.share * 100).toFixed(0)}%`,
+      hint: cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`,
+      // the window ("30 days") stays one token; the sentence wraps around it
+      info: cacheShare.totalCost === null ? null : (
+        <window.UI.DateRange range={getDaySpanC(modelDays)}>
+          {getCacheTotalNoteC({ listTotal: cacheShare.totalCost, recordedTotal: trendDays === modelDays ? windowTotal.total : null, days: modelDays })}
+        </window.UI.DateRange>
+      ),
+      unavailableNote: 'No priced model cost in this window.',
+    },
+  ];
 }
+
+const WINDOW_COST_RULE_C = 'Recorded cost: the sum of the cost events recorded on each day of the window, today\'s partial day included. The average divides that total by the days shown; the peak is the costliest single day.';
 
 // a day count + its unit — one unbreakable token in the copy that names it
 function getDaySpanC(days) {
@@ -618,75 +602,77 @@ function getShownDays(state, requestedDays) {
   return match ? Number(match[1]) : requestedDays;
 }
 
-// Cost tile status → the shared KPI state: a window holding nothing and an underivable measure both read as the unknown dash.
-const COST_TILE_KPI_STATE = { loading: 'loading', error: 'error', empty: 'empty', unavailable: 'empty' };
-
-/**
- * One Cost tile on the shared KPI anatomy — the window tag rides the label row's right edge on every tile,
- * so the four windows compare at one glance; a non-ready tile says why in its hint, under the unknown dash.
- * delta → the comparison under the value (tile 1's bar, tile 2's prior-window line) · foot → the tile's footnote.
- */
-function CostTileC({ id, label, info, windowTag, status, value, hint, unavailableNote, delta = null, foot = null }) {
-  const { KPI, CardInfo, DayTokens } = window.UI;
-  const isReady = status === 'ready';
-  // the hint or the state note, one plain string → it keeps its title and clamp, and its day tokens stay whole
-  const note = isReady ? (hint || null) : getTileNote(status, unavailableNote);
-  // the ⓘ is described by the label alone; the tile's group name is the whole label row, window tag included
-  const nameId = `${id}-name`;
-
+// counting rules and windows → the card's one ⓘ, each note led by its stat label
+function SpendStatNotesC({ stats }) {
   return (
-    <KPI labelId={`${id}-label`} label={<span id={nameId}>{label}</span>} labelTitle={label}
-      aside={windowTag} asideClassName="kpi-window ml-auto fs-meta font-mono text-faint"
-      info={info && <CardInfo label={`How ${label} is counted`} describedBy={nameId}>{info}</CardInfo>}
-      state={COST_TILE_KPI_STATE[status] ?? 'ready'} loadingLabel={label.toLowerCase()}
-      value={isReady ? value : undefined}
-      delta={isReady ? delta : null}
-      hint={note && <DayTokens>{note}</DayTokens>} hintTitle={typeof note === 'string' ? note : undefined}
-      isHintClamped={typeof note === 'string'} hintFace=""
-      foot={isReady ? foot : null}/>
+    <>
+      {stats.map((stat) => (
+        <p key={stat.key} className="m-0">
+          <strong className="font-medium text-ink">{stat.label}</strong>
+          {' — '}{stat.info}
+        </p>
+      ))}
+    </>
   );
 }
 
-/**
- * Bullet bar carries the alarm tone, the sentence under it repeats the verdict in words.
- * The pace figure lives in that sentence alone → it can never colour the bar.
- */
-function HotBulletC({ hot }) {
-  const { BulletBar } = window.UI;
-  // today / (normal x 2) — the normal sits at 0.5, the 1.25x cut at 0.625, anything beyond clamps to 1.
-  const valueNorm = Math.min(hot.ratio / 2, 1);
+// stat model → one StatRow stat; a non-ready stat says why on its context line, under the unknown dash
+function buildStatC(stat) {
+  const { DayTokens } = window.UI;
+  const isReady = stat.status === 'ready';
+  // the hint or the state note, one plain string → its title carries it whole, and its day tokens stay whole
+  const note = isReady ? (stat.hint || null) : getTileNote(stat.status, stat.unavailableNote);
+  const context = isReady && stat.context ? stat.context
+    : note && <span title={note}><DayTokens>{note}</DayTokens></span>;
+  return { key: stat.key, label: stat.label, value: <SpendStatValueC stat={stat}/>, context: context || null };
+}
 
+// Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm lane holds the words.
+function SpendStatValueC({ stat }) {
+  const { Icon, TONE_ICON, LoadingPlaceholder } = window.UI;
+  // loading is stated once, through the shared placeholder — inline-flex keeps it on the stat's start edge
+  if (stat.status === 'loading') {
+    return <div className="inline-flex"><LoadingPlaceholder label={stat.label.toLowerCase()}/></div>;
+  }
+  // the unknown dash names its cause on the context line; a failed read is named here as well
+  if (stat.status !== 'ready') {
+    const isFailed = stat.status === 'error';
+    return (
+      <span className="text-faint">
+        <span aria-hidden={isFailed ? 'true' : undefined}>—</span>
+        {isFailed && <span className="sr-only">Not loaded</span>}
+      </span>
+    );
+  }
+  if (!stat.tone) return stat.value;
+  const toneLabel = stat.tone === 'crit' ? 'Running hot' : 'Heading above normal';
   return (
-    <div>
-      <BulletBar
-        value={valueNorm}
-        target={0.5}
-        zones={HOT_BULLET_ZONES}
-        ariaLabel={`Today ${formatUsdC(hot.todayCost)} against a 7-day normal of ${formatUsdC(hot.normalDaily)} per day`}
-        showValue={false}
-      />
-      <div className="cost-foot mt-1.5"><window.UI.DayTokens>{getTileVerdictTextC(hot)}</window.UI.DayTokens></div>
-    </div>
+    <>
+      <span className={`text-${stat.tone} mr-1.5`} aria-hidden="true" title={toneLabel}><Icon name={TONE_ICON[stat.tone]} size={13}/></span>
+      <span className="sr-only">{`${toneLabel}:`}</span>
+      {stat.value}
+    </>
   );
+}
+
+// Window change on its own block line — the token card's foot.
+function TrendDeltaC({ delta, prior, noun }) {
+  return <div className="cost-foot mt-1.5"><TrendDeltaTextC delta={delta} prior={prior} noun={noun}/></div>;
 }
 
 // Window change — direction rides on the glyph, never on the text colour.
-function TrendDeltaC({ delta, prior, noun }) {
-  if (!prior) {
-    return <div className="cost-foot mt-1.5">No comparison — the prior window did not arrive with this range.</div>;
-  }
-  const span = `the ${prior.days} days before ${prior.period_end.slice(5)}`;
+function TrendDeltaTextC({ delta, prior, noun }) {
   const { DayTokens } = window.UI;
-  if (delta === null) {
-    return <div className="cost-foot mt-1.5"><DayTokens>{`No comparison — ${span} held no ${noun}.`}</DayTokens></div>;
-  }
+  if (!prior) return 'No comparison — the prior window did not arrive with this range.';
+  const span = `the ${prior.days} days before ${prior.period_end.slice(5)}`;
+  if (delta === null) return <DayTokens>{`No comparison — ${span} held no ${noun}.`}</DayTokens>;
   const [glyph, direction] = delta > 0 ? ['\u25b2', 'up'] : delta < 0 ? ['\u25bc', 'down'] : ['\u2014', 'unchanged'];
   return (
-    <div className="cost-foot mt-1.5">
-      <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
+    <>
+      <span className="mr-1" aria-hidden="true">{glyph}</span>
       <span className="sr-only">{direction} </span>
       <DayTokens>{`${Math.abs(delta).toFixed(0)}% vs ${span}, cut at this time of day`}</DayTokens>
-    </div>
+    </>
   );
 }
 
