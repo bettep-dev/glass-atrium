@@ -109,11 +109,11 @@ describe("the Documents list toolbar is one control row", () => {
     await setCardWidth(1300);
     const row = await readBox(TOOLBAR);
     const { controlCentres, metaTop } = await page.$eval(TOOLBAR, (el) => ({
-      controlCentres: [...el.children].filter((child) => !child.classList.contains("doc-list-meta")).map((child) => { const r = child.getBoundingClientRect(); return (r.top + r.bottom) / 2; }),
+      controlCentres: [...el.querySelector(".filter-bar")!.children].map((child) => { const r = child.getBoundingClientRect(); return (r.top + r.bottom) / 2; }),
       metaTop: el.querySelector(".doc-list-meta")!.getBoundingClientRect().top,
     }));
     const bandCentre = row.top + 48 / 2;
-    assert.ok(controlCentres.length >= 2, `${controlCentres.length} control groups`);
+    assert.ok(controlCentres.length >= 4, `${controlCentres.length} bar items`);
     for (const [index, centre] of controlCentres.entries()) assert.ok(Math.abs(centre - bandCentre) <= 0.5, `item ${index} centre ${centre} vs band centre ${bandCentre}`);
     assert.equal(metaTop - row.top, 48, "the count line starts one row gap below the band's 32 line");
   });
@@ -122,60 +122,23 @@ describe("the Documents list toolbar is one control row", () => {
     test(`at a ${width} card every control in the row is one 32 control height`, async () => {
       await setCardWidth(width);
       const heights = await page.$$eval(`${TOOLBAR} :is(input, button)`, (els) => els.map((el) => el.getBoundingClientRect().height));
-      assert.ok(heights.length >= 7, `${heights.length} controls`);
+      // search · Show · Audience · reset (its slot is kept at defaults)
+      assert.equal(heights.length, 4, `${heights.length} controls`);
       for (const height of heights) assert.equal(height, 32, `control heights ${heights.join(", ")}`);
     });
   }
 });
 
-describe("the Documents search sits on the .field atom", () => {
-  const SEARCH = `${TOOLBAR} input[type="search"]`;
-
-  test("its box, type size and fill match a .field", async () => {
-    await setCardWidth(1300);
-    const [search, field] = await Promise.all([readBox(SEARCH), readBox("#ref-field")]);
-    assert.equal(search.height, field.height, `search ${search.height} vs field ${field.height}`);
-    for (const prop of ["font-size", "line-height", "background-color", "border-top-width", "border-top-color", "padding-top", "padding-right"]) {
-      assert.equal(await readStyle(SEARCH, prop), await readStyle("#ref-field", prop), prop);
-    }
-  });
-
-  test("the icon sits in the inline-start gutter: one field padding from the edge, one before the text, on the field's centre line", async () => {
-    const search = await readBox(SEARCH);
-    const icon = await readBox(`${TOOLBAR} .doc-search-icon`);
-    const [padStart, padEnd, border] = await Promise.all(["padding-left", "padding-right", "border-left-width"].map((prop) => readStyle(SEARCH, prop).then(parseFloat)));
-    assert.ok(Math.abs(icon.left - (search.left + border + padEnd)) <= 0.5, `icon at ${icon.left - search.left} from the edge`);
-    assert.ok(Math.abs(search.left + border + padStart - (icon.right + padEnd)) <= 0.5, `text starts ${search.left + border + padStart - icon.right} past the icon`);
-    assert.ok(Math.abs(centreOf(icon) - centreOf(search)) <= 0.5, `icon centre ${centreOf(icon)} vs field ${centreOf(search)}`);
-  });
-
-  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(SEARCH));
-});
-
-describe("each toolbar label wraps with its group, and the count meta wraps as one right-aligned unit", () => {
+describe("the count meta wraps as one right-aligned unit", () => {
   for (const width of CARD_WIDTHS) {
     test(`at a ${width} card`, async () => {
       await setCardWidth(width);
       // runs in the page → no named helper: tsx's keepNames wraps one in a __name call the page does not define
-      const reading = await page.$eval(TOOLBAR, (row) => {
-        const chips = [...row.querySelectorAll("[role=toolbar] button")];
-        const labels = [...row.querySelectorAll(".doc-filter-label")].map((label) => ({
-          text: label.textContent,
-          label: label.getBoundingClientRect().toJSON() as DOMRect,
-          // the label's group: the first chip after it in document order
-          chip: chips.find((b) => label.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)?.getBoundingClientRect().toJSON() as DOMRect | undefined,
-        }));
-        return {
-          labels,
-          count: row.querySelector("[aria-live]")?.getBoundingClientRect().toJSON() as DOMRect | undefined,
-          shared: row.querySelector(".doc-list-shared")?.getBoundingClientRect().toJSON() as DOMRect | undefined,
-          contentRight: row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight),
-        };
-      });
-      for (const { text, label, chip } of reading.labels) {
-        assert.ok(label && chip, `${text} has a group`);
-        assert.ok(Math.abs(centreOf(label as Box) - centreOf(chip as Box)) <= 1, `${text} label line ${centreOf(label as Box)} vs its first chip ${centreOf(chip as Box)}`);
-      }
+      const reading = await page.$eval(TOOLBAR, (row) => ({
+        count: row.querySelector("[aria-live]")?.getBoundingClientRect().toJSON() as DOMRect | undefined,
+        shared: row.querySelector(".doc-list-shared")?.getBoundingClientRect().toJSON() as DOMRect | undefined,
+        contentRight: row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight),
+      }));
       const { count, shared } = reading;
       assert.ok(count && shared, "the count and the shared tags show");
       assert.ok(Math.abs(centreOf(count as Box) - centreOf(shared as Box)) <= 1, `count line ${centreOf(count as Box)} vs shared tags ${centreOf(shared as Box)}`);
@@ -193,7 +156,7 @@ describe("each toolbar label wraps with its group, and the count meta wraps as o
 });
 
 // one card per filter state, all at one width → every state is compared box for box with the first; the corpus counts the
-// chips carry stay the same in every state (the server never narrows them by the filter), so only the state itself differs
+// Show menu carries stay the same in every state (the server never narrows them by the filter), so only the state itself differs
 const FILTERS = LIST_CARD_PROPS.inlineFilterProps;
 const CORPUS_COUNTS = { open: 23, done: 1094, total: 1117 };
 const FILTER_STATES = [
@@ -207,7 +170,7 @@ const FILTER_STATES = [
 // the 1440 and 1180 viewports' cards, where the audit saw the count change lines, then the band above
 const STATE_WIDTHS = [1170, 1074, ...CARD_WIDTHS] as const;
 
-describe("no Show, Audience or search state moves the Documents search, a group, a chip or the count line", () => {
+describe("no Show, Audience or search state moves the Documents search, a trigger, the reset slot or the count line", () => {
   let statePage: Page;
 
   before(async () => {
@@ -224,15 +187,15 @@ describe("no Show, Audience or search state moves the Documents search, a group,
     await statePage?.close();
   });
 
-  test("the Show cell paints the stage chips in list mode and only the note while searching", async () => {
+  test("the search note paints only while searching, in a slot list mode keeps", async () => {
     const searchingIndex = FILTER_STATES.findIndex((state) => state.name === "Searching");
-    const painted = await statePage.$$eval("[data-state]", (frames) => frames.map((frame) => ({
-      chips: getComputedStyle(frame.querySelector(".doc-stage-chips")!).visibility,
-      note: getComputedStyle(frame.querySelector(".doc-search-stage-note")!).visibility,
-    })));
-    for (const [index, { chips, note }] of painted.entries()) {
-      const isSearching = index === searchingIndex;
-      assert.deepEqual({ chips, note }, isSearching ? { chips: "hidden", note: "visible" } : { chips: "visible", note: "hidden" }, FILTER_STATES[index].name);
+    const notes = await statePage.$$eval("[data-state]", (frames) => frames.map((frame) => {
+      const note = frame.querySelector(".doc-show-note")!;
+      return { visibility: getComputedStyle(note).visibility, width: note.getBoundingClientRect().width };
+    }));
+    for (const [index, { visibility, width }] of notes.entries()) {
+      assert.equal(visibility, index === searchingIndex ? "visible" : "hidden", FILTER_STATES[index].name);
+      assert.ok(Math.abs(width - notes[searchingIndex].width) <= 0.5, `${FILTER_STATES[index].name}: note slot ${width} vs ${notes[searchingIndex].width} while searching`);
     }
   });
 
@@ -244,9 +207,9 @@ describe("no Show, Audience or search state moves the Documents search, a group,
         const origin = frame.getBoundingClientRect();
         const row = frame.querySelector(toolbar)!;
         const named = [
-          ["search", row.querySelector("input[type=search]")!],
-          ...[...row.querySelectorAll(".doc-filter-group")].map((el, i) => [`group ${i + 1}`, el]),
-          ...[...row.querySelectorAll("[role=toolbar] button")].map((el) => [`chip ${el.textContent}`, el]),
+          ["search", row.querySelector(".bar-search")!],
+          ...[...row.querySelectorAll(".filter-trigger")].map((el) => [`trigger ${el.querySelector(".filter-trigger-axis")!.textContent}`, el]),
+          ["reset", row.querySelector(".filter-bar-reset")!],
         ] as Array<[string, Element]>;
         return {
           items: named.map(([name, el]) => {
@@ -283,12 +246,6 @@ describe("the ledger's pills sit on the interactive pill tier", () => {
   });
 
   test("hover, focus-visible and active keep the lineage pill's box", () => assertBoxHeldAcrossStates(LINEAGE));
-
-  test("the stage picker and the filter chips share one .pill--interactive typography", async () => {
-    const STAGE = "#docs-list .doc-stage-pill";
-    const CHIP = `${TOOLBAR} [role=toolbar] button.pill--interactive`;
-    for (const prop of ["font-weight", "line-height", "font-size"]) assert.equal(await readStyle(STAGE, prop), await readStyle(CHIP, prop), prop);
-  });
 
   test("the clamped stage label keeps its face's descenders inside its box", async () => {
     const labels = await page.$$eval("#docs-list .doc-ledger-scroll .doc-stage-label", (els) => els.map((el) => ({ scroll: el.scrollHeight, client: el.clientHeight })));

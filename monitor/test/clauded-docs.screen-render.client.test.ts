@@ -100,10 +100,10 @@ test("a done stage reads in the neutral tone like every other stage, on the pill
   for (const pip of donePips) assert.doesNotMatch(String(pip.props.className), /is-terminal/, "done pips fill like any stage");
 
   const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
-  const stageGroup = findNodes(tree, (n) => n.props.atom === "ChipGroup" && n.props.label === "Stage filter")[0];
-  const doneChip = (stageGroup.props.chips as Array<Record<string, unknown>>).filter((c) => c.key === "done");
-  assert.equal(doneChip.length, 1);
-  assert.equal("style" in doneChip[0], false, "the shared pressed state draws the chip, never a per-stage tint");
+  const showTrigger = findNodes(tree, (n) => n.props.atom === "FilterTrigger" && n.props.axis === "Show")[0];
+  const doneOption = (showTrigger.props.options as Array<Record<string, unknown>>).filter((o) => o.key === "done");
+  assert.equal(doneOption.length, 1);
+  assert.equal("style" in doneOption[0], false, "the menu check marks the chosen stage, never a per-stage tint");
 });
 
 test("a done pill renders its check glyph inside the terminal glyph slot and its label outside it", async () => {
@@ -464,13 +464,13 @@ test("the last stage actor reads one display name for a model id with or without
   assert.equal(actorText("claude-opus-5-5"), "Set by Opus 5.5");
 });
 
-test("the filter chips and the stage names speak the English of the rest of the screen", async () => {
+test("the filter menus and the stage names speak the English of the rest of the screen", async () => {
   const screen = await loadDocsScreen();
   const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
-  const chipGroups = findNodes(tree, (n) => n.props.atom === "ChipGroup");
-  assert.equal(chipGroups.length, 2);
-  for (const group of chipGroups) {
-    for (const chip of group.props.chips as Array<{ label: unknown }>) assert.doesNotMatch(collectText(renderScreen(chip.label)), HANGUL);
+  const triggers = findTriggers(tree);
+  assert.equal(triggers.length, 2);
+  for (const trigger of triggers) {
+    for (const option of trigger.props.options as Array<{ label: unknown }>) assert.doesNotMatch(collectText(renderScreen(option.label as never)), HANGUL);
   }
   assert.doesNotMatch(collectText(tree), HANGUL);
   for (const stage of ["doc_review", "implementing", "impl_review", "impl_done", "done"]) {
@@ -522,36 +522,76 @@ test("Delete leaves the viewer's icon bar and sits apart in the metadata rail as
   assert.deepEqual(deleted, [9]);
 });
 
-type Chip = { key: string; label: unknown; isPressed: boolean };
+function findTriggers(tree: ReturnType<typeof renderScreen>) {
+  return findNodes(tree, (n) => n.props.atom === "FilterTrigger");
+}
 
-test("stage and audience filters are two separately labelled pressed-chip groups, one chip pressed in each, with no radio role", async () => {
+test("stage and audience filters are two filter triggers on one labelled bar, each checking its current value", async () => {
   const screen = await loadDocsScreen();
   const picked: string[] = [];
   const props = listCardProps(() => undefined);
   (props.inlineFilterProps as Record<string, unknown>).onDocStatusChange = (value: string) => picked.push(value);
   const tree = renderScreen((screen.DocListCardCD as Component)(props));
 
-  const groups = findNodes(tree, (n) => n.props.atom === "ChipGroup");
-  assert.deepEqual(groups.map((g) => g.props.label), ["Stage filter", "Audience filter"]);
-  assert.deepEqual(groups.map((g) => Array.from((g.props.chips as Chip[]).filter((c) => c.isPressed), (c) => c.key)), [[""], ["all"]]);
-  assert.equal(findNodes(tree, (n) => n.props.role === "radio" || n.props.role === "radiogroup").length, 0);
-  assert.equal(findNodes(tree, (n) => n.props.className === "doc-filter-label").length, 2, "each group carries its own visible label");
+  const [bar] = findNodes(tree, (n) => n.props.atom === "FilterBar");
+  assert.equal(bar.props.label, "Document filters");
+  const triggers = findTriggers(bar);
+  assert.deepEqual(triggers.map((t) => t.props.axis), ["Show", "Audience"]);
+  assert.deepEqual(triggers.map((t) => [...(t.props.chosenKeys as string[])]), [[""], ["all"]]);
+  // every option sits in the value cell, so the widest one sizes the trigger; only the chosen one is seen and named
+  const values = triggers.map((t) => renderScreen(t.props.value) as Exclude<ReturnType<typeof renderScreen>, string>);
+  assert.deepEqual(values.map((value) => findNodes(value, (n) => n.type === "span" && !n.props.className).map(collectText)), [["All"], ["All"]]);
+  assert.deepEqual(values.map((value) => findNodes(value, (n) => n.props["aria-hidden"] === "true").length), [2, 2]);
 
-  (groups[0].props.onToggle as (key: string) => void)("done");
+  (triggers[0].props.onPick as (key: string) => void)("done");
   assert.deepEqual(picked, ["done"]);
 });
 
-test("the filter label reads Show, and the caption counts documents, naming revisions as their own unit", async () => {
+test("the Show menu counts each stage it has a count for, and the caption counts documents, naming revisions as their own unit", async () => {
   const screen = await loadDocsScreen();
-  const filterLabel = (tree: ReturnType<typeof renderScreen>) =>
-    collectText(findNodes(tree, (n) => n.props.className === "doc-filter-label")[0]);
+  const optionTexts = (tree: ReturnType<typeof renderScreen>) =>
+    Array.from(findTriggers(tree)[0].props.options as Array<{ label: unknown }>, (o) => collectText(renderScreen(o.label as never)).replace(/\s+/g, " ").trim()); // Array.from → a test-realm array for strict deep-equal
 
   const counted = renderListCard(screen, { total: 3, docTotal: 5, groupCounts: { total: 3, open: 2, done: 1 } });
-  assert.equal(filterLabel(counted), "Show");
+  assert.deepEqual(optionTexts(counted), ["Open 2", "Done 1", "All 3"]);
   assert.match(collectText(counted), /\b3 documents · 5 with revisions\b/);
   assert.doesNotMatch(collectText(counted), /\bgroups\b/, "no internal grouping unit in the caption");
 
-  assert.equal(filterLabel(renderListCard(screen, {})), "Show");
+  assert.deepEqual(optionTexts(renderListCard(screen, {})), ["Open", "Done", "All"], "a count the payload lacks renders as nothing, never 0");
+});
+
+describe("the filter bar's reset shows only off the entry view", () => {
+  const entry = { keyword: "", docStatusFilter: "open", audienceFilter: "all" };
+  const rows = [
+    { name: "the entry view is not applied", filters: entry, isApplied: false },
+    { name: "a blank search is not applied", filters: { ...entry, keyword: "  " }, isApplied: false },
+    { name: "a search applies", filters: { ...entry, keyword: "plan" }, isApplied: true },
+    { name: "another stage applies", filters: { ...entry, docStatusFilter: "done" }, isApplied: true },
+    { name: "every stage applies", filters: { ...entry, docStatusFilter: "" }, isApplied: true },
+    { name: "another audience applies", filters: { ...entry, audienceFilter: "visible" }, isApplied: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const filters = { ...(listCardProps(() => undefined).inlineFilterProps as Record<string, unknown>), ...row.filters };
+      const [bar] = findNodes(renderListCard(screen, { inlineFilterProps: filters }), (n) => n.props.atom === "FilterBar");
+      assert.equal(bar.props.isApplied, row.isApplied);
+    });
+  }
+
+  test("reset returns every axis to the entry view", async () => {
+    const screen = await loadDocsScreen();
+    const calls: Array<[string, string]> = [];
+    const filters = {
+      keyword: "plan", docStatusFilter: "done", audienceFilter: "visible",
+      onKeywordChange: (v: string) => calls.push(["keyword", v]),
+      onDocStatusChange: (v: string) => calls.push(["docStatusFilter", v]),
+      onAudienceChange: (v: string) => calls.push(["audienceFilter", v]),
+    };
+    const [bar] = findNodes(renderListCard(screen, { inlineFilterProps: filters }), (n) => n.props.atom === "FilterBar");
+    (bar.props.onReset as () => void)();
+    assert.deepEqual(Object.fromEntries(calls), entry);
+  });
 });
 
 describe("a stage pill draws the shared stage pip, filled up to its stage", () => {
@@ -691,18 +731,19 @@ test("a collapsed search row says how many older revisions it stands for", async
   assert.deepEqual(marks.map((n) => collectText(n)), ["+2 revisions"]);
 });
 
-test("while searching, the stage filter visibly steps aside for all stages, and the empty state does not claim it", async () => {
+test("while searching, a note says every stage is read, the stored stage stays chosen, and the empty state does not claim it", async () => {
   const screen = await loadDocsScreen();
   const props = listCardProps(() => undefined);
   const filters = { ...(props.inlineFilterProps as Record<string, unknown>), keyword: "plan", docStatusFilter: "open" };
   const searching = renderListCard(screen, { isSearchMode: true, inlineFilterProps: filters });
 
-  const [slot] = findNodes(searching, (n) => String(n.props.className ?? "").includes("doc-show-slot--searching"));
-  assert.ok(slot, "the Show cell is marked as searching, which sets the stage chips aside");
-  const stageChips = findNodes(slot, (n) => n.props.atom === "ChipGroup").flatMap((g) => g.props.chips as Array<{ isPressed: boolean }>);
-  assert.ok(stageChips.length > 0, "the stage chips keep their cell");
-  assert.ok(stageChips.every((chip) => chip.isPressed === false), "no stage chip reads as pressed while it is not applied");
-  assert.match(collectText(slot), /All stages while searching/);
+  const findNote = (tree: ReturnType<typeof renderScreen>) => findNodes(tree, (n) => String(n.props.className ?? "").includes("doc-show-note"));
+  const [note] = findNote(searching);
+  assert.match(collectText(note), /All stages while searching/);
+  assert.doesNotMatch(String(note.props.className), /is-idle/, "the note shows while searching");
+  assert.deepEqual([...(findTriggers(searching)[0].props.chosenKeys as string[])], ["open"], "the stored stage applies once the search clears");
+  const [listed] = findNote(renderListCard(screen, { inlineFilterProps: filters }));
+  assert.match(String(listed.props.className), /is-idle/, "outside search mode the note keeps its slot, idle");
 
   const empty = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: true, inlineFilterProps: filters }));
   const [state] = findNodes(empty, (n) => n.props.atom === "EmptyState");

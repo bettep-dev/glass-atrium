@@ -165,20 +165,25 @@ async function clickAndWaitForListResponse(
   await Promise.all([respPromise, action()]);
 }
 
-// stage 필터 chip 클릭 helper.
-//   · stage filter chip ('Open' / 'Done' / 'All') → /api/clauded-docs/groups 호출 + ?doc_status= 송신.
-//   · chip 변경 → currentOffset=0 리셋 → offset 파라미터 미포함 응답이 reset 완료 시그널.
+// Show filter pick helper.
+//   · Show trigger → menu → menuitemradio ('Open' / 'Done' / 'All') → /api/clauded-docs/groups 호출 + ?doc_status= 송신.
+//   · 변경 → currentOffset=0 리셋 → offset 파라미터 미포함 응답이 reset 완료 시그널.
 //   · 응답 path: managedData.groups[] 정규화 후 setLoadedRows.
-async function clickDocStatusChip(page: Page, label: string): Promise<void> {
+async function pickDocStatus(page: Page, label: string): Promise<void> {
   await clickAndWaitForListResponse(
     page,
     async () => {
-      const within = page.getByRole("toolbar", { name: "Stage filter" });
-      // 칩 접근명은 라벨 + 그룹 단위 건수 → 부분 일치로 잡는다 (exact 는 건수 때문에 미스).
-      await within.getByRole("button", { name: label }).click();
+      await filterTrigger(page, "Show").click();
+      // 항목 접근명은 라벨 + 그룹 단위 건수 → 라벨로 시작하는 이름으로 잡는다 (exact 는 건수 때문에 미스).
+      await page.getByRole("menu", { name: "Show" }).getByRole("menuitemradio", { name: new RegExp(`^✓?${label}\\b`) }).click();
     },
     (url) => !url.includes("offset="),
   );
+}
+
+// the page's own filter bar → its triggers, never the Load More "Show N more" button
+function filterTrigger(page: Page, axis: "Show" | "Audience") {
+  return page.getByRole("group", { name: "Document filters" }).locator(".filter-trigger", { hasText: axis });
 }
 
 // helper — Load More 버튼 locator. aria-label `Show ${N} more` (N = formatIntCD 콤마 포함) —
@@ -303,7 +308,7 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
 
       // 'All' chip 으로 filter 변경 → offset 리셋 + 새 첫 50 fetch.
       // 누적된 60+ 행이 사라지고 최대 50 행만 표시되어야 (리셋 증거).
-      // clickDocStatusChip 는 offset 미포함 응답 대기 → reset 완료 시그널.
+      // pickDocStatus 는 offset 미포함 응답 대기 → reset 완료 시그널.
       // a reset that lands one render late still fires a stale offset=50 request first, which the row count alone cannot see
       const offsetRequests: string[] = [];
       page.on("request", (req) => {
@@ -312,7 +317,7 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
           offsetRequests.push(url.search);
         }
       });
-      await clickDocStatusChip(page, "All");
+      await pickDocStatus(page, "All");
       await waitForRowCountAtMost(page, 50);
       assert.deepStrictEqual(offsetRequests, [], "the chip change requests only the first page");
     } finally {
@@ -509,7 +514,7 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
       // '종료' chip → /groups?doc_status=done 호출 → done 상태 그룹만 가시화.
-      await clickDocStatusChip(page, "Done");
+      await pickDocStatus(page, "Done");
 
       // B + C 가 done 필터에서 가시 — server cascade 의 UI 가시화 확인.
       // 단, B/C 는 folder_id 가 동일하므로 group 1개 (representative_id=B 또는 C — created_at DESC 기준) → 1 row 가시.
@@ -1015,7 +1020,7 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
 
       // 검색 모드 — relevance 컬럼이 빠진 뒤로 컬럼 구성은 목록 모드와 같으나, 제목 하한은 따로 잰다.
       // stage 섹션 머리 소멸 = 모드 전환 완료 신호 (섹션은 목록 모드 열림/전체 필터 전용).
-      await page.locator("input.doc-search-input").fill("widthpin");
+      await page.locator("input.bar-search-field").fill("widthpin");
       await page.waitForFunction(
         () => document.querySelectorAll("tr.doc-stage-section").length === 0,
         undefined,
@@ -1033,17 +1038,22 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
   }
 });
 
-test("search mode: entering and leaving it moves neither the focused search field nor the Audience group", async () => {
-  // a search response carries no group counts → this pins that the stage chips keep theirs, and so their width, across it
+test("search mode: entering and leaving it moves neither the focused search field nor the Show and Audience triggers", async () => {
+  // a search response carries no group counts → this pins that the Show trigger keeps its width, and the note lands after the triggers
   const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page: Page = await context.newPage();
   try {
     await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-    const search = page.locator("input.doc-search-input");
-    const audience = page.getByRole("toolbar", { name: "Audience filter" });
+    const search = page.locator("input.bar-search-field");
+    const show = filterTrigger(page, "Show");
+    const audience = filterTrigger(page, "Audience");
     const count = page.locator(".doc-list-count");
-    await page.getByRole("toolbar", { name: "Stage filter" }).locator(".doc-chip-count").first().waitFor();
-    const readBoxes = async () => ({ search: await search.boundingBox(), audience: await audience.boundingBox() });
+    await count.filter({ hasText: /documents/ }).waitFor();
+    const readBoxes = async () => ({
+      search: await search.boundingBox(),
+      show: await show.boundingBox(),
+      audience: await audience.boundingBox(),
+    });
     const listed = await readBoxes();
 
     await clickAndWaitForListResponse(page, () => search.fill(`modepin${randomUUID().slice(0, 8)}`), (url) => url.includes("/search?"));
@@ -1055,7 +1065,7 @@ test("search mode: entering and leaving it moves neither the focused search fiel
     const relisted = await readBoxes();
 
     for (const [phase, boxes] of [["while searching", searching], ["after the query clears", relisted]] as const) {
-      for (const name of ["search", "audience"] as const) {
+      for (const name of ["search", "show", "audience"] as const) {
         for (const key of ["x", "y", "width", "height"] as const) {
           const [before, now] = [listed[name]![key], boxes[name]![key]];
           assert.ok(Math.abs(now - before) <= 0.5, `${phase}: ${name} ${key} ${now} vs ${before} in list mode`);

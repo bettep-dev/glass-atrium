@@ -36,9 +36,6 @@ const OPERATOR_ACTOR_CD = "operator";
 // Title-cell lead slot width (a size, not spacing) — the snippet and the Title header indent by it plus the row gap.
 const DOC_LEAD_SLOT_PX_CD = 20;
 
-// Search glyph size — the search field's inline-start gutter is sized from the same value.
-const SEARCH_ICON_PX_CD = 14;
-
 const LEDGER_CD = {
 	// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
 	//   · Tags drops out when no row carries a tag of its own → one column fewer.
@@ -66,7 +63,7 @@ const LEDGER_CD = {
 	},
 };
 
-// Open-versus-closed chips. countKey indexes the server's group-unit counts (group_counts);
+// Show filter options. countKey indexes the server's group-unit counts (group_counts);
 // a count the payload does not carry renders as nothing, never as 0.
 const DOC_STATUS_OPTIONS_CD = [
 	{ value: "open", label: "Open", countKey: "open" },
@@ -162,6 +159,9 @@ const AUDIENCE_OPTIONS_CD = [
 	{ value: "agent-only", label: "Agent-only" },
 ];
 
+// entry view of the list → the filter bar's reset target and its "applied" test
+const DEFAULT_FILTERS_CD = Object.freeze({ keyword: "", docStatusFilter: "open", audienceFilter: "all" });
+
 const SEARCH_DEBOUNCE_MS_CD = 250;
 
 const LIST_LIMIT_CD = 50;
@@ -194,12 +194,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	} = window.UI;
 
 	// 검색어 / 필터.
-	const [keyword, setKeyword] = useStateCD("");
+	const [keyword, setKeyword] = useStateCD(DEFAULT_FILTERS_CD.keyword);
 	const [debouncedQ, setDebouncedQ] = useStateCD("");
-	// 열림/종료/전체 chip. default 'open' — 운영자의 열린 목록이 화면의 진입 상태.
+	// Show filter · default 'open' — 운영자의 열린 목록이 화면의 진입 상태.
 	//   · /groups endpoint 의 ?doc_status= 송신용 — rows endpoint 는 미지원 (search mode 제외).
-	const [docStatusFilter, setDocStatusFilter] = useStateCD("open")
-	const [audienceFilter, setAudienceFilter] = useStateCD("all");
+	const [docStatusFilter, setDocStatusFilter] = useStateCD(DEFAULT_FILTERS_CD.docStatusFilter);
+	const [audienceFilter, setAudienceFilter] = useStateCD(DEFAULT_FILTERS_CD.audienceFilter);
 
 	// 목록 / 뷰어 / 폼 상태.
 	// region state (stale-while-revalidate) — data = latest page answer · shown rows = loadedRows (Load More append)
@@ -326,7 +326,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		setCurrentOffset(0);
 	}
 
-	// filter / refresh 변경 시 multi-select clear — chip 토글 = "다른 목록 보기" → 이전 선택 의미 소멸.
+	// filter / refresh 변경 시 multi-select clear — Show 필터 변경 = "다른 목록 보기" → 이전 선택 의미 소멸.
 	useEffectCD(() => {
 		setSelectedIds(new Set());
 	}, [debouncedQ, docStatusFilter, refreshTick]);
@@ -390,7 +390,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					typeof managedData?.bigm_enabled === "boolean"
 						? managedData.bigm_enabled
 						: null;
-					// groups 응답 한정 corpus-scoped group 단위 counts — chip 수치의 출처.
+					// groups 응답 한정 corpus-scoped group 단위 counts — Show 메뉴 수치의 출처.
 					const groupCounts =
 						managedData && typeof managedData.group_counts === "object"
 							? managedData.group_counts
@@ -401,7 +401,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					setListState((s) =>
 						putRegionData(s, ctrl, {
 							rows, total, docTotal, hiddenDocTotal, bigmEnabled,
-							// a search response carries none → the last corpus counts stay, so the stage chips keep one width across the mode
+							// a search response carries none → the last corpus counts stay, so the Show menu keeps its counts across the mode
 							groupCounts: groupCounts ?? s.data?.groupCounts ?? null,
 						}),
 					);
@@ -941,12 +941,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
         /* wraps between words; a single over-long token still breaks rather than spill */
         .doc-meta-value { color: rgb(var(--ink)); word-break: normal; overflow-wrap: break-word; font-size: var(--fs-meta); }
-        /* search on the .field atom → only the inline-start icon gutter is its own: field padding + icon + field padding */
-        .field.doc-search-input { --search-icon: ${SEARCH_ICON_PX_CD}px; padding-inline-start: calc(2 * var(--ctl-pad-x) + var(--search-icon)); }
         /* .doc-toast → shared SoT in base.css */
         .doc-empty { padding: var(--space-6); border: 1px dashed rgb(var(--faint) / 0.5); border-radius: 8px; color: rgb(var(--faint)); text-align: center; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-body); }
-        /* one field padding inside the 1px field border → the gutter above centres the icon between edge and text */
-        .doc-search-icon { position: absolute; left: calc(var(--ctl-pad-x) + 1px); top: 50%; transform: translateY(-50%); pointer-events: none; color: rgb(var(--faint)); }
         .doc-editor-input { width: 100%; padding: var(--space-1_5) var(--space-2); font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
         .doc-editor-input:focus { border-color: rgb(var(--accent)); }
         .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: var(--space-2); font-size: var(--fs-meta); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
@@ -1022,7 +1018,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
         .tbl tbody tr.doc-row.is-multi-selected { background: rgb(var(--accent) / 0.07); }
         .tbl tbody tr.doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.11); }
-        /* group action bar — filter chip 행 아래 sticky · zinc-900 코드블록 톤.
+        /* group action bar — filter bar 행 아래 sticky · zinc-900 코드블록 톤.
            height 고정 (44px min) 사유 — hint(텍스트 1줄) vs active(btn.sm 툴바) 두 모드의
            natural height 차이가 아래 목록을 (de)select 마다 점프시킴 → 상수 높이 + box-sizing
            border-box + 수직 center 정렬로 양 모드 픽셀 동일. flex-wrap 제거 (좁은 폭에서 2줄
@@ -1092,24 +1088,19 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-menu-rank { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); }
         .doc-stage-menu-item[aria-checked="true"] .doc-stage-menu-rank { color: inherit; }
         .doc-stage-menu-mark { margin-left: auto; }
-        .doc-filter-label { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; }
-        /* Show | Audience as one unit → the divider never ends a line; a narrow row wraps the chips inside their group instead */
-        .doc-filter-cluster { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
-        /* a label and its chips → one wrap unit, 4 apart; baseline → the label stays on the first chip line when the chips wrap */
-        .doc-filter-group { display: flex; align-items: baseline; gap: var(--space-1); min-width: 0; }
-        /* one grid cell for the stage chips and the search note, both always laid out → the cell is the wider of the two in either mode; baseline → the note reads on the chips' text line */
-        .doc-show-slot { display: grid; min-width: 0; }
-        .doc-show-slot > * { grid-area: 1 / 1; align-self: baseline; }
-        /* the idle one is hidden from sight, focus and the accessibility tree, yet keeps its share of the cell */
-        .doc-show-slot:not(.doc-show-slot--searching) > .doc-search-stage-note, .doc-show-slot--searching > .doc-stage-chips { visibility: hidden; }
-        /* 4 short of the controls' 32 each way → a rule between the groups, not a box edge */
-        .doc-filter-divider { align-self: stretch; width: 1px; margin-block: var(--space-1); background: rgb(var(--line)); }
+        /* the bar takes the row beside the meta line; the reset's auto margin takes its slack → a trigger value or the search note never resizes the field being typed in */
+        .doc-filter-bar { flex: 1 1 auto; min-width: 0; }
+        .doc-bar-search { flex: 0 1 200px; min-width: 180px; }
+        /* idle → hidden from sight and the accessibility tree, slot kept */
+        .doc-show-note { color: rgb(var(--dim)); white-space: nowrap; }
+        .doc-show-note.is-idle { visibility: hidden; }
+        .doc-trigger-value { display: inline-grid; }
+        .doc-trigger-value > * { grid-area: 1 / 1; }
+        .doc-trigger-value > .is-idle { visibility: hidden; }
         /* trailing meta → its own right-aligned line in every state: the count's length never picks its line nor hands its room to the search; it breaks inside only once it alone outgrows the row */
         .doc-list-meta { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; column-gap: var(--space-2); }
         /* number + unit never split (§5.3) */
         .doc-list-count { white-space: nowrap; }
-        /* chip 안 건수 — 그룹 단위 corpus 집계. 없는 수치는 자리도 만들지 않는다. */
-        .doc-chip-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
         /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
         /* a section head is a 40 row like the ledger rows (its th takes the td row height) → every section starts at one height */
         tr.doc-stage-section > th { height: var(--row-h); padding-block: var(--space-3) var(--space-1); text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
@@ -1347,7 +1338,7 @@ function DocListCardCD({
 	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (same rule as hiddenCount, F40) ·
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
 	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
-	// 건수는 아는 경우에만 — loading / error 에서 total 은 0 으로 강등되므로 미수신 수치가 '0 matched' 로 읽힌다 (chip 과 동일 규칙).
+	// 건수는 아는 경우에만 — loading / error 에서 total 은 0 으로 강등되므로 미수신 수치가 '0 matched' 로 읽힌다 (Show 메뉴와 동일 규칙).
 	// search total = uncollapsed server hits · visible/hidden = collapsed chain rows → the fraction stays in rows, hits get their own unit
 	const rowCount = visibleCount + hiddenCount;
 	const hitsLabel = isSearchMode && total !== rowCount ? ` · ${formatIntCD(total)} hits` : "";
@@ -1371,7 +1362,7 @@ function DocListCardCD({
 	const isPartialSelected =
 		!isAllSelected && allRowIds.some((id) => selectedIds.has(id));
 
-	// 스테이지 섹션 — 열림/전체 필터에서만. 단일 stage 필터에서는 chip 과 같은 말을 두 번 한다.
+	// 스테이지 섹션 — 열림/전체 필터에서만. 단일 stage 필터에서는 Show 값과 같은 말을 두 번 한다.
 	const isSectioned =
 		!isSearchMode &&
 		(inlineFilterProps.docStatusFilter === "" ||
@@ -1390,7 +1381,7 @@ function DocListCardCD({
 			: commonFormat
 				? `${commonFormat} format`
 				: "";
-	// 섹션 건수는 page-scoped — chip 의 corpus-scoped 수치와 단위가 다르다.
+	// 섹션 건수는 page-scoped — Show 메뉴의 corpus-scoped 수치와 단위가 다르다.
 	const sectionCounts = new Map();
 	for (const row of orderedRows) {
 		const rank = stageRankCD(rowStageCD(row));
@@ -1424,63 +1415,9 @@ function DocListCardCD({
 			style={{ height: "100%", flex: "1 1 auto", width: "100%" }}
 		>
 			<div style={{ borderBottom: "1px solid rgb(var(--line))" }}>
-				{/* one control row — search · the Show and Audience groups, each label wrapping with its chips · the count meta on its own right-aligned line */}
+				{/* one control row — the filter bar (search · Show · Audience · reset) · the count meta on its own right-aligned line */}
 				<div className="control-row">
-					<div className="relative" style={{ flex: "1 1 200px", minWidth: 180 }}>
-						<span className="doc-search-icon" aria-hidden="true">
-							<Icon name="search" size={SEARCH_ICON_PX_CD} />
-						</span>
-						<input
-							type="search"
-							className="field doc-search-input"
-							placeholder="Search…"
-							value={inlineFilterProps.keyword}
-							onChange={(e) => inlineFilterProps.onKeywordChange(e.target.value)}
-							aria-label="Search documents"
-						/>
-					</div>
-					<div className="doc-filter-cluster">
-						<div className="doc-filter-group">
-							<span className="doc-filter-label">Show</span>
-							{/* search reads every stage → the chips step aside rather than show a pressed filter it ignores; chips and note share one cell, so the mode never resizes the group */}
-							<div className={`doc-show-slot${isSearchMode ? " doc-show-slot--searching" : ""}`}>
-								<window.UI.ChipGroup
-									label="Stage filter"
-									className="doc-stage-chips"
-									chips={DOC_STATUS_OPTIONS_CD.map((opt) => ({
-										key: opt.value,
-										isPressed: !isSearchMode && inlineFilterProps.docStatusFilter === opt.value,
-										label: (
-											<>
-												{opt.label}
-												{/* 건수는 아는 경우에만 — 못 받은 수치가 0 으로 읽히면 안 된다. */}
-												{groupCounts && typeof groupCounts[opt.countKey] === "number" && (
-													<span className="doc-chip-count">{formatIntCD(groupCounts[opt.countKey])}</span>
-												)}
-											</>
-										),
-									}))}
-									onToggle={inlineFilterProps.onDocStatusChange}
-								/>
-								<span className="doc-search-stage-note fs-meta" style={{ color: "rgb(var(--dim))" }}>
-									All stages while searching
-								</span>
-							</div>
-						</div>
-						<span className="doc-filter-divider" aria-hidden="true" />
-						<div className="doc-filter-group">
-							<span className="doc-filter-label">Audience</span>
-							<window.UI.ChipGroup
-								label="Audience filter"
-								chips={AUDIENCE_OPTIONS_CD.map((opt) => ({
-									key: opt.value,
-									label: opt.label,
-									isPressed: inlineFilterProps.audienceFilter === opt.value,
-								}))}
-								onToggle={inlineFilterProps.onAudienceChange}
-							/>
-						</div>
-					</div>
+					<DocFilterBarCD isSearchMode={isSearchMode} groupCounts={groupCounts} inlineFilterProps={inlineFilterProps} />
 					{(busyText || totalLabel) && (
 						<div className="doc-list-meta">
 							{busyText && (
@@ -1820,6 +1757,59 @@ function DocListCardCD({
 			</div>
 		</div>
 	);
+}
+
+// search reads every stage → a note after the triggers says so; its slot is kept in list mode, so entering search moves nothing and wraps nothing. The Show value applies once the search clears
+function DocFilterBarCD({ isSearchMode, groupCounts, inlineFilterProps }) {
+	const { FilterBar, FilterTrigger, BarSearch } = window.UI;
+	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
+	const resetFilters = () => {
+		inlineFilterProps.onKeywordChange(DEFAULT_FILTERS_CD.keyword);
+		inlineFilterProps.onDocStatusChange(DEFAULT_FILTERS_CD.docStatusFilter);
+		inlineFilterProps.onAudienceChange(DEFAULT_FILTERS_CD.audienceFilter);
+	};
+
+	return (
+		<FilterBar label="Document filters" isApplied={isFilterAppliedCD(inlineFilterProps)} onReset={resetFilters} className="doc-filter-bar">
+			<BarSearch label="Search documents" value={keyword} onChange={inlineFilterProps.onKeywordChange} placeholder="Search…" className="doc-bar-search" />
+			<FilterTrigger axis="Show" value={<DocTriggerValueCD options={DOC_STATUS_OPTIONS_CD} chosenKey={docStatusFilter} />} options={getStageOptionsCD(groupCounts)}
+				chosenKeys={[docStatusFilter]} onPick={inlineFilterProps.onDocStatusChange} />
+			<FilterTrigger axis="Audience" value={<DocTriggerValueCD options={AUDIENCE_OPTIONS_CD} chosenKey={audienceFilter} />}
+				options={AUDIENCE_OPTIONS_CD.map((option) => ({ key: option.value, label: option.label }))}
+				chosenKeys={[audienceFilter]} onPick={inlineFilterProps.onAudienceChange} />
+			<span className={`doc-show-note fs-meta${isSearchMode ? "" : " is-idle"}`}>All stages while searching</span>
+		</FilterBar>
+	);
+}
+
+function isFilterAppliedCD({ keyword, docStatusFilter, audienceFilter }) {
+	return (
+		keyword.trim() !== DEFAULT_FILTERS_CD.keyword ||
+		docStatusFilter !== DEFAULT_FILTERS_CD.docStatusFilter ||
+		audienceFilter !== DEFAULT_FILTERS_CD.audienceFilter
+	);
+}
+
+// every option label in one cell, only the chosen one seen → the trigger keeps its widest value's width, so a pick never moves or wraps the bar
+function DocTriggerValueCD({ options, chosenKey }) {
+	return (
+		<span className="doc-trigger-value">
+			{options.map((option) => option.value === chosenKey
+				? <span key={option.value}>{option.label}</span>
+				: <span key={option.value} className="is-idle" aria-hidden="true">{option.label}</span>)}
+		</span>
+	);
+}
+
+// a count the payload does not carry renders as nothing, never as 0
+function getStageOptionsCD(groupCounts) {
+	return DOC_STATUS_OPTIONS_CD.map((option) => {
+		const count = groupCounts?.[option.countKey];
+		return {
+			key: option.value,
+			label: typeof count === "number" ? <>{option.label} <span className="tabular-nums" style={{ color: "rgb(var(--dim))" }}>{formatIntCD(count)}</span></> : option.label,
+		};
+	});
 }
 
 // Relative age leads · the absolute KST date stays one hover away.
