@@ -165,5 +165,4 @@ test("the three instrumentation tables render through the shared Table and its c
     const raw = findElements([tree, rows], (el) => ["table", "thead", "tbody", "tr", "td", "th"].includes(String(el.type)));
     assert.deepEqual(raw.map((el) => el.type), [], `${name}: no raw table markup beside the house Table`);
   }
-
 });

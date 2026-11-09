@@ -44,7 +44,7 @@ function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTarge
 // 플래그된 결과 — 운영 밴드가 아니라 계기판에 산다. 이 수는 루프가 무엇을 내놓았는지가
 // 아니라 판정기가 무엇을 걸렀는지를 말하고, 걸린 행 자체는 Task results 가 소유한다.
 function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
-	const { Card, Icon, LoadingPlaceholder, Stack } = window.UI;
+	const { Card, Icon, LoadingPlaceholder, Stack, StatRow } = window.UI;
 	const title = "Flagged results (7 days)";
 
 	if (state.status === "error") return null;
@@ -73,17 +73,12 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 			}
 		>
 			<Stack gap="block">
-				<div className="fs-display text-ink tnum">
-					{formatIntI(Number(state.data.review_flag_last_7d ?? 0))}
-				</div>
+				<StatRow stats={[{ key: "flagged", label: "Flagged rows", value: formatIntI(Number(state.data.review_flag_last_7d ?? 0)) }]} />
 				<FlaggedReasonBarsI segments={reviewReasons} />
 			</Stack>
 		</Card>
 	);
 }
-
-// label · bar · count columns → the control gap between them
-const REASON_ROW_STYLE_I = Object.freeze({ columnGap: "var(--gap-control)" });
 
 // Ranked reason bars — the dominant reason leads; bar length relative to the largest.
 function FlaggedReasonBarsI({ segments }) {
@@ -106,8 +101,7 @@ function FlaggedReasonBarsI({ segments }) {
 			{ranked.map((s) => (
 				<li
 					key={s.key}
-					className="grid grid-cols-[minmax(0,14rem)_1fr_3.5rem] items-center fs-meta"
-					style={REASON_ROW_STYLE_I}
+					className="grid grid-cols-[minmax(0,14rem)_1fr_3.5rem] gap-x-control items-center fs-meta"
 					title={s.title}
 				>
 					<span className="truncate">{s.label}</span>
@@ -316,7 +310,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 //   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
 
 function ConfidenceDistCardI({ state, confidenceDist }) {
-	const { Card, BulletBar, EmptyState, LoadingPlaceholder, Stack, StatRow } = window.UI;
+	const { Card, BulletBar, EmptyState, LoadingPlaceholder, StatRow } = window.UI;
 	const title = "Suggestion confidence";
 	const sub = "Measured · 30 days";
 	if (state.status === "error") return null;
@@ -375,24 +369,38 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 	];
 
 	return (
-		<Card title={title} sub={sub}>
-			<Stack gap="block">
-				<StatRow stats={stats} />
-				{hasOverall && (
-					<BulletBar
-						value={Number(overallAvg)}
-						showValue
-						zones={[
-							{ upTo: 0.4, tone: "crit" },
-							{ upTo: 0.7, tone: "warn" },
-							{ upTo: 1, tone: "ok" },
-						]}
-						ariaLabel={`Average measured confidence ${(Number(overallAvg) * 100).toFixed(0)}%`}
-					/>
-				)}
+		<Card title={title} sub={sub} isFlush>
+			<TableBodyI
+				lead={<>
+					<StatRow stats={stats} />
+					{hasOverall && (
+						<BulletBar
+							value={Number(overallAvg)}
+							showValue
+							zones={[
+								{ upTo: 0.4, tone: "crit" },
+								{ upTo: 0.7, tone: "warn" },
+								{ upTo: 1, tone: "ok" },
+							]}
+							ariaLabel={`Average measured confidence ${(Number(overallAvg) * 100).toFixed(0)}%`}
+						/>
+					)}
+				</>}
+			>
 				<ConfidenceLaneTableI buckets={buckets} />
-			</Stack>
+			</TableBodyI>
 		</Card>
+	);
+}
+
+// flush body for a table under lead blocks — the leads take the card-pad inset, the table's edge cells already carry it
+function TableBodyI({ lead, children }) {
+	const { Stack } = window.UI;
+	return (
+		<Stack gap="block" className="pt-card-pad">
+			<Stack gap="block" className="px-card-pad">{lead}</Stack>
+			{children}
+		</Stack>
 	);
 }
 
@@ -605,22 +613,35 @@ function StyleRefCardI({ state, styleRef }) {
 		},
 	];
 
+	const statRow = <StatRow stats={stats} />;
+	// 데이터 부재 → 3-count partition 과 표 대신 "누적 중" 안내, 표가 없으니 패딩 본문
 	return (
-		<Card title={title} sub={sub}>
-			<Stack gap="block">
-				<StatRow stats={stats} />
-				{/* 3-count partition + greenfield (P13) — 데이터 부재 시 미렌더(빈 상태로 위임). */}
-				{hasData && (
-					<StyleRefSplitI
-						corroborated={styleRef.overall_corroborated_count}
-						uncorroborated={styleRef.overall_uncorroborated_count}
-						unverifiable={styleRef.overall_unverifiable_count}
-						greenfield={styleRef.overall_greenfield_count}
-					/>
-				)}
-				{/* per-agent breakdown — 데이터 부재 시 "누적 중" 안내. */}
-				{hasData ? <StyleRefAgentTableI rows={agentRows} /> : <EmptyState message="Collecting data" />}
-			</Stack>
+		<Card
+			title={title}
+			sub={sub}
+			info="Uncorroborated share = uncorroborated ÷ (corroborated + uncorroborated) — adjudicated rows only, unverifiable excluded (graduation gate under 10%)."
+			isFlush={hasData}
+		>
+			{hasData ? (
+				<TableBodyI
+					lead={<>
+						{statRow}
+						<StyleRefSplitI
+							corroborated={styleRef.overall_corroborated_count}
+							uncorroborated={styleRef.overall_uncorroborated_count}
+							unverifiable={styleRef.overall_unverifiable_count}
+							greenfield={styleRef.overall_greenfield_count}
+						/>
+					</>}
+				>
+					<StyleRefAgentTableI rows={agentRows} />
+				</TableBodyI>
+			) : (
+				<Stack gap="block">
+					{statRow}
+					<EmptyState message="Collecting data" />
+				</Stack>
+			)}
 		</Card>
 	);
 }
@@ -765,7 +786,7 @@ function formatRateI(rate) {
 // + revision_count delta. orphan 테이블(미배포/빈 데이터)은 정직한 빈 상태로 노출 —
 // 가짜 0 금지. error(503/테이블 부재) → 뷰가 카드 대신 재시도 가능한 오류 배너를 렌더.
 function CorrectionSignalsCardI({ state }) {
-	const { Card, Cluster, EmptyState, formatKstDate, LoadingPlaceholder, Stack } = window.UI;
+	const { Card, Cluster, EmptyState, formatKstDate, LoadingPlaceholder, Stack, StatRow } = window.UI;
 	const title = "Detection agreement";
 
 	if (state.status === "error") return null;
@@ -800,12 +821,10 @@ function CorrectionSignalsCardI({ state }) {
 		<Card
 			title={title}
 			sub={`${formatIntI(total)} signals${latest ? ` · latest ${latest}` : ""}`}
+			info="Agreement = both + neither (the two stages concur) ÷ all signals."
 		>
 			<Stack gap="label">
-				<div className="fs-body">
-					<span className="text-ink tnum">{agreePct}%</span>{" "}
-					<span className="text-faint">stage1/stage2 agreement</span>
-				</div>
+				<StatRow stats={[{ key: "agreement", label: "Stage1/stage2 agreement", value: `${agreePct}%` }]} />
 				{/* 4-way disjoint 분해 — both / stage1-only / stage2-only / neither. */}
 				<Cluster gap="control-group" className="fs-meta text-faint tnum">
 					<span>
@@ -825,9 +844,6 @@ function CorrectionSignalsCardI({ state }) {
 						{formatIntI(agr.neither_matched)}
 					</span>
 				</Cluster>
-				<div className="card-sub is-wrap fs-meta">
-					Agreement = both + neither (the two stages concur) ÷ all signals.
-				</div>
 				<div className="fs-meta text-faint tnum">
 					revision delta Σ {formatIntI(d.revision_delta_sum)} · peak{" "}
 					{formatIntI(d.revision_delta_max)}
