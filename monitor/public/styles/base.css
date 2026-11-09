@@ -102,14 +102,18 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 
 /* flex column → the body takes the remaining height and the foot pins to the bottom edge.
-   One hairline edge in both themes — no shadow, no inset highlight. */
+   One hairline edge in both themes — no shadow, no inset highlight.
+   clip, not hidden → no scroll container, so a sticky inside sticks to the page scroller;
+   min 0 on both axes = the automatic minimum a scroll container had → flex and grid parents lay out unchanged */
 .card {
 	display: flex;
 	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
 	background: rgb(var(--elev));
 	border: 1px solid rgb(var(--line));
 	border-radius: var(--radius-card);
-	overflow: hidden;
+	overflow: clip;
 }
 /* one 48px line: title + meta left, actions right · wraps only when the controls do not fit.
    .control-row = the same geometry for a toolbar that is not the card's head — its direct children are groups, 12 apart */
@@ -191,6 +195,11 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 .card-body.flush {
 	padding: 0;
+}
+/* filter bar or toolbar between head and body · on the card's inline column; block 8 around a 32 control → 48 */
+.card-bar {
+	flex: none;
+	padding: var(--space-2) var(--card-pad);
 }
 /* pinned foot — "Show all N" / "Other" / one footnote line up across a stretched row */
 .card-foot {
@@ -758,6 +767,41 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	overflow-wrap: anywhere;
 }
 
+/* pagination — range on the left column, quiet Previous · current · Next on the right */
+.pagination {
+	flex: 1 1 auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--gap-control) var(--gap-control-group);
+}
+.pagination-range {
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+	font-variant-numeric: tabular-nums;
+}
+.pagination-steps {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-control);
+}
+/* O3 current page — sunken square, ink at 500, no border; the weight step is the cue, the fill alone is under 3:1 */
+.pagination-current {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: var(--ctl-min-h);
+	height: var(--ctl-min-h);
+	padding-inline: var(--space-2);
+	border-radius: var(--radius-control);
+	background: rgb(var(--sunken));
+	color: rgb(var(--ink));
+	font-size: var(--fs-control);
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+}
+
 .kpi {
 	background: rgb(var(--elev));
 	border: 1px solid rgb(var(--line));
@@ -1217,7 +1261,7 @@ button.kpi:hover {
 	position: relative;
 	display: inline-flex;
 }
-/* .card clips (overflow: hidden) → lifted only while a panel is open, so a short card never cuts it off */
+/* .card clips (overflow: clip) → lifted only while a panel is open, so a short card never cuts it off */
 .card:has(.popover-panel),
 .card:has(.menu) {
 	overflow: visible;

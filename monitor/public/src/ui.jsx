@@ -1928,7 +1928,7 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, shellReg
   const title = settled === 'not-read' ? word : `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at, now)})`;
 
   return (
-    <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={state === 'loading' || state === 'refreshing' ? 'true' : undefined}>
+    <span className="fs-meta text-faint tabular-nums whitespace-nowrap" title={title} aria-busy={state === 'loading' || state === 'refreshing' ? 'true' : undefined}>
       <span aria-hidden="true" className={`mr-1 ${meta.tone ? `text-${meta.tone}` : 'text-faint'}`}>{meta.tone ? TONE_GLYPH[meta.tone] : '…'}</span>
       <span className="sr-only">{word}</span>
       {/* first read in flight → no text, the paired Refresh label already reads "Loading…" */}
