@@ -859,12 +859,20 @@ test("the drawer's health word takes the page verdict's tone for the same agent:
   }
 });
 
-test("the task-type matrix scroller is a named tab stop, so a keyboard reaches the columns it clips", async () => {
-  const tree = await renderComponent("SuccessRateMatrixTable", { matrix: { agents: [], cells: {} } });
-  const [scroller] = findNodes(tree, (n) => /overflow-x-auto/.test(String(n.props?.className ?? "")));
-  assert.equal(scroller?.props.tabIndex, 0);
-  assert.equal(scroller?.props.role, "region");
-  assert.match(String(scroller?.props["aria-label"]), /success rate/i);
+test("a matrix cell draws its sparkline only in wide mode and, stacked, reads as one fact behind its task-type label", async () => {
+  const cell = { totalCount: 40, pooledRate: 0.5, rateDenominator: 40, successCount: 20, failureCount: 20, reconstructed: 0, points: [] };
+  const rows = [
+    { name: "wide", view: { isStacked: false, columnCount: 10 }, hasSpark: true, hasLabel: false },
+    { name: "stacked", view: { isStacked: true, columnCount: 10 }, hasSpark: false, hasLabel: true },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent("SuccessRateCell", { view: row.view, agent: "dev-react", taskType: "feature", cell });
+    const sparks = findNodes(tree, (n) => n.type === "SuccessRateSparkline" || n.props?.role === "img");
+    const labels = findNodes(tree, (n) => /\btbl-cell-label\b/.test(String(n.props?.className ?? "")));
+    assert.equal(sparks.length > 0, row.hasSpark, `${row.name}: sparkline`);
+    assert.equal(labels.length > 0 && collectText(labels[0]).includes("feature"), row.hasLabel, `${row.name}: task-type label prefix`);
+    assert.match(collectText(tree), /50\s*%/, `${row.name}: rate shown`);
+  }
 });
 
 test("a crosstab cell stacks its rate over its sample, each an unbroken line, so a column is as wide as its longest line", async () => {
@@ -1167,11 +1175,11 @@ describe("the By task type fold takes its tone from its worst pair", () => {
   });
 });
 
-test("the matrix grows with the page instead of a nested vertical scroller that clips a row", async () => {
-  const tree = await renderComponent("SuccessRateMatrixCard", { state: { status: "ready", data: { rows: [getMatrixRow("a", 9, 1)] }, error: null }, days: 30, onRetry: () => undefined });
+test("the matrix region draws no card inside its fold and nothing in it scrolls vertically", async () => {
+  const tree = await renderComponent("SuccessRateMatrixRegion", { state: { status: "ready", data: { rows: [getMatrixRow("a", 9, 1)] }, error: null }, days: 30, onRetry: () => undefined });
   const classOf = (n: RenderedNode) => String(n.props.className ?? "");
-  const [body] = findNodes(tree, (n) => /\bcard-body\b/.test(classOf(n)));
-  assert.equal((body.props.style as Record<string, unknown>)?.maxHeight, "none", "no card-body height cap on the matrix");
+  const cards = findNodes(tree, (n) => /\bcard(-body|-head)?\b/.test(classOf(n)));
+  assert.deepEqual(cards.map(classOf), [], "the By task type fold is the card — no card in card");
   const verticalScrollers = findNodes(tree, (n) => /\boverflow-(auto|y-auto|hidden)\b/.test(classOf(n)));
   assert.deepEqual(verticalScrollers.map(classOf), [], "nothing inside the matrix scrolls or clips vertically");
 });
@@ -1691,13 +1699,13 @@ test("the review-flag and task-type headers keep their meta within the 32-charac
   }
 });
 
-test("the review-flag and success-matrix cards keep their titles within the 24-character cap", async () => {
+test("the review-flag card and the task-type fold keep their titles within the 24-character cap", async () => {
   const props = { state: LOADING_STATE, days: 90, onRetry: () => undefined };
   const heads = [
     ...findAtoms(await renderComponent("ReviewFlagTimelineCard", props), "Card"),
-    ...findAtoms(await renderComponent("SuccessRateMatrixCard", { ...props, failures: undefined }), "CardHead"),
+    ...findAtoms(await renderComponent("TaskTypeFold", { ...props, failures: undefined }), "Disclosure"),
   ];
-  assert.equal(heads.length, 2, "both card heads render");
+  assert.equal(heads.length, 2, "both heads render");
   for (const head of heads) {
     const title = String(head.props.title);
     assert.ok(title.length <= 24, `"${title}" is ${title.length} chars`);
@@ -1857,7 +1865,7 @@ describe("a focused Retry that succeeds leaves focus on its region's card", () =
 
   test("each page card hands its error card's Retry to the card itself", async () => {
     const rows = [
-      { name: "success rates", component: "SuccessRateMatrixCard", props: { state: retrying, days: 30, onRetry } },
+      { name: "success rates", component: "SuccessRateMatrixRegion", props: { state: retrying, days: 30, onRetry } },
       { name: "failure rates", component: "TopNFailingAgentsCard", props: { state: retrying, days: 30, onRetry, failureByAgent: new Map() } },
       { name: "review flags", component: "ReviewFlagTimelineCard", props: { state: retrying, days: 30, onRetry } },
       { name: "lifecycle stats", component: "LifecycleStatsCard", props: { state: retrying, days: 30, onSelect: () => undefined, onRetry } },

@@ -589,8 +589,8 @@ function TaskTypeFold({ failures, state, days, onRetry }) {
   const tone = useMemoAg(() => getTaskTypeTone(state), [state]);
 
   return (
-    <window.UI.Disclosure kind="detail" title="By task type" sub="Success rate, agent × task type" tone={tone}>
-      <SuccessRateMatrixCard failures={failures} state={state} days={days} onRetry={onRetry}/>
+    <window.UI.Disclosure kind="detail" title="By task type" sub={`Success rate · last ${days} days`} tone={tone}>
+      <SuccessRateMatrixRegion failures={failures} state={state} days={days} onRetry={onRetry}/>
     </window.UI.Disclosure>
   );
 }
@@ -2264,34 +2264,22 @@ function DetailMetric({ label, value, tone = '', hero = false }) {
   );
 }
 
-// Panel 1: Success-rate matrix (small multiples)
+// Panel 1: Success-rate matrix — the "By task type" fold is its card, so the region draws none of its own
 
-function SuccessRateMatrixCard({ failures, state, days, onRetry }) {
-  const { CardHead, Pill } = window.UI;
-
-  const data = readyData(state);
+function SuccessRateMatrixRegion({ failures, state, days, onRetry }) {
   // 서버 SUCCESS_RATE_LIMIT 포화 (M8) — 행이 잘려 매트릭스 불완전 → silent 누락 대신 disclosure (cost.jsx 세션 분포 카드와 동일 규칙).
-  const isTruncated = data?.truncated === true;
-  const subText = `Last ${days} days`;
+  const isTruncated = readyData(state)?.truncated === true;
 
   return (
-    <div id={IDS.REGION_CARD.successRates} className="card min-w-0">
-      <CardHead
-        title="Success by agent"
-        sub={subText}
-        right={
-          <>
-            {isTruncated && (
-              <Pill tone="warn" className="pill--ctl-h" title="Server row limit hit — matrix incomplete. Shorten the time range for complete data.">
-                Row limit hit — some rows missing
-              </Pill>
-            )}
-          </>
-        }
-      />
-      <div className="card-body" style={MATRIX_BODY_STYLE}>
+    <div id={IDS.REGION_CARD.successRates} className="min-w-0">
+      <window.UI.Stack gap="block">
+        {isTruncated && (
+          <window.UI.Pill tone="warn" className="self-start" title="Server row limit hit — matrix incomplete. Shorten the time range for complete data.">
+            Row limit hit — some rows missing
+          </window.UI.Pill>
+        )}
         <SuccessRateMatrixBody failures={failures} state={state} days={days} onRetry={onRetry}/>
-      </div>
+      </window.UI.Stack>
     </div>
   );
 }
@@ -2386,86 +2374,60 @@ function SuccessRateFullMatrix({ matrix }) {
   );
 }
 
-// every row on the page — the matrix scrolls sideways only, its agent column pinned.
-const MATRIX_BODY_STYLE = { maxHeight: 'none', overflowY: 'visible' };
-const MATRIX_CORNER_TH_STYLE = {
-  position: 'sticky', left: 0, top: 0, background: 'rgb(var(--elev))', minWidth: 140, zIndex: 2,
-};
-const MATRIX_HEADER_TH_STYLE = {
-  position: 'sticky', top: 0, background: 'rgb(var(--elev))', minWidth: SPARK_WIDTH + 24, zIndex: 1,
-};
+const MATRIX_COLUMNS = [
+  { key: 'agent', label: 'Agent' },
+  ...TASK_TYPE_COLUMNS.map((c) => ({ key: c.key, label: c.label, isNumeric: true })),
+];
+// agent column + nine sparkline columns with their cell padding → narrower than this, rows stack rather than clip a column
+const MATRIX_STACK_BELOW_PX = 920;
 
 function SuccessRateMatrixTable({ matrix }) {
   return (
-    <>
+    <window.UI.Stack gap="label">
       <SuccessRateLegend/>
-      <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Success rate per agent and task type — scrolls sideways">
-        <table className="w-full fs-meta tnum" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-          <thead className="tbl-head">
-            <tr>
-              <th
-                scope="col"
-                className={`text-left ${HEAD.CLASS.TABLE}`}
-                style={MATRIX_CORNER_TH_STYLE}>
-                Agent
-              </th>
-              {TASK_TYPE_COLUMNS.map((c) => (
-                <th
-                  key={c.key}
-                  scope="col"
-                  className={`text-center ${HEAD.CLASS.TABLE}`}
-                  style={MATRIX_HEADER_TH_STYLE}>
-                  {c.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {matrix.agents.map((agent) => <SuccessRateMatrixRow key={agent} agent={agent} cells={matrix.cells}/>)}
-          </tbody>
-        </table>
-      </div>
-    </>
+      <window.UI.Table
+        caption="Success rate per agent and task type"
+        columns={MATRIX_COLUMNS}
+        isHeadSticky
+        stackBelowPx={MATRIX_STACK_BELOW_PX}
+        bodies={[{ key: 'agents', rows: (view) => matrix.agents.map((agent) => <SuccessRateMatrixRow key={agent} view={view} agent={agent} cells={matrix.cells}/>) }]}/>
+    </window.UI.Stack>
   );
 }
 
-function SuccessRateMatrixRow({ agent, cells }) {
-  // unknown row = PG fallback (legacy/deprecated) — sunken bg + dim 라벨로 시각 분리.
+function SuccessRateMatrixRow({ view, agent, cells }) {
+  const { TableRow, TableCell } = window.UI;
   const isUnknownAgent = agent === UNKNOWN_AGENT_ID;
-  const labelCellBg = isUnknownAgent ? 'rgb(var(--sunken))' : 'rgb(var(--elev))';
+
   return (
-    <tr
-      aria-label={isUnknownAgent ? UNKNOWN_AGENT_TITLE : undefined}>
-      <td
-        className="text-ink px-2 py-1.5 border-b border-line truncate"
-        style={{ position: 'sticky', left: 0, background: labelCellBg, maxWidth: 200 }}
-        title={isUnknownAgent ? UNKNOWN_AGENT_TITLE : agent}>
+    <TableRow view={view} aria-label={isUnknownAgent ? UNKNOWN_AGENT_TITLE : undefined}>
+      <TableCell view={view} kind="row-header" title={isUnknownAgent ? UNKNOWN_AGENT_TITLE : agent}>
         {isUnknownAgent
           ? <span className="text-dim">{UNKNOWN_AGENT_LABEL}</span>
           : <window.UI.AgentName name={agent}/>}
-      </td>
+      </TableCell>
       {TASK_TYPE_COLUMNS.map((c) => (
-        <SuccessRateCell key={c.key} agent={agent} taskType={c.label} cell={cells[`${agent}|${c.key}`]}/>
+        <SuccessRateCell key={c.key} view={view} agent={agent} taskType={c.label} cell={cells[`${agent}|${c.key}`]}/>
       ))}
-    </tr>
+    </TableRow>
   );
 }
 
 function SuccessRateLegend() {
   return (
-    <div className="flex items-center gap-3 mb-3 fs-meta text-dim flex-shrink-0">
+    <window.UI.Cluster gap="control-group" className="items-center fs-meta text-dim">
       <span className="text-faint">Legend</span>
       <LegendSwatch colorVar="--crit"  label={getFailShareLabel()}/>
       <LegendSwatch colorVar="--faint" label={`below that, or n < ${window.UI.LOW_N_MIN}`}/>
       <span className="text-faint">n = passed + failed; reconstructed records and other results are left out, so it can sit below the ledger's count</span>
-    </div>
+    </window.UI.Cluster>
   );
 }
 
 function LegendSwatch({ colorVar, label }) {
   return (
-    <span className="flex items-center gap-1.5">
-      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${colorVar}) / 0.45)`, border: `1px solid rgb(var(${colorVar}))` }}/>
+    <span className="inline-flex items-center gap-label-inline">
+      <span aria-hidden="true" className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${colorVar}) / 0.45)`, border: `1px solid rgb(var(${colorVar}))` }}/>
       {label}
     </span>
   );
@@ -2477,33 +2439,25 @@ function getCellFailShareTone(cell) {
   return getFailShareTone(cell.failureCount, cell.rateDenominator);
 }
 
-function SuccessRateCell({ agent, taskType, cell }) {
-  // 데이터 없음.
-  if (!cell || cell.totalCount === 0) {
-    return (
-      <td
-        className="text-center text-faint px-2 py-1.5 border-b border-line"
-        title={`${agent} · ${taskType} — no data`}>
-        —
-      </td>
-    );
-  }
+function SuccessRateCell({ view, agent, taskType, cell }) {
+  const cellProps = { view, textRole: 'meta', label: taskType, isNumeric: true };
 
-  // 분모 0 (success/fail 외 result 만 존재) → 비율 미정의 — 0% 날조 대신 '—' (A7).
+  if (!cell || cell.totalCount === 0) {
+    return <window.UI.TableCell {...cellProps} title={`${agent} · ${taskType} — no data`}><NoneMarkAg/></window.UI.TableCell>;
+  }
+  // 분모 0 (success/fail 외 result 만 존재) → 비율 미정의 — 0% 날조 대신 None (A7).
   if (cell.pooledRate === null) {
     return (
-      <td
-        className="text-center text-faint px-2 py-1.5 border-b border-line"
-        title={`${agent} · ${taskType} — nothing conclusive to rate (no success/fail · ${cell.totalCount} total)`}>
-        — · {cell.totalCount}
-      </td>
+      <window.UI.TableCell {...cellProps} title={`${agent} · ${taskType} — nothing conclusive to rate (no success/fail · ${cell.totalCount} total)`}>
+        <NoneMarkAg/> <span className="text-dim">· {cell.totalCount}</span>
+      </window.UI.TableCell>
     );
   }
 
   const isLowSample = cell.rateDenominator < window.UI.LOW_N_MIN;
   const failShareTone = getCellFailShareTone(cell);
   const isCrit = failShareTone === 'crit';
-  const colorVar = isCrit ? '--crit' : '--faint';
+  const isStacked = view?.isStacked ?? false;
   const ariaLabel =
     `${agent} ${taskType} — pooled success rate ${(cell.pooledRate * 100).toFixed(0)}% (${cell.successCount}/${cell.rateDenominator}), ` +
     `${cell.totalCount} total` +
@@ -2511,22 +2465,21 @@ function SuccessRateCell({ agent, taskType, cell }) {
     (isCrit ? ` (${getFailShareLabel()} — check this pair)` : '');
 
   return (
-    <td
-      className="text-center px-1 py-1.5 border-b border-line relative"
+    <window.UI.TableCell {...cellProps}
       title={`${agent} · ${taskType}\npooled ${(cell.pooledRate * 100).toFixed(1)}% (${cell.successCount}/${cell.rateDenominator})${isLowSample ? ` · small sample (n=${cell.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''} · ${cell.totalCount} total${cell.reconstructed > 0 ? ` · ${cell.reconstructed} reconstructed excluded` : ''}`}
       aria-label={ariaLabel}>
-      <div className="flex flex-col items-center gap-0.5">
-        <SuccessRateSparkline points={cell.points} colorVar={colorVar} name={`${agent} ${taskType}`}/>
-        {/* rate over sample, each unbroken → the column is as wide as its longest line, so all nine fit at 1440 */}
-        <div className="flex items-center gap-1 fs-meta whitespace-nowrap">
+      {/* wide: sparkline over rate over sample, each unbroken → a column is as wide as its longest line · stacked: one inline fact, no sparkline */}
+      <div className={isStacked ? 'inline-flex items-center gap-label-inline' : 'flex flex-col items-end gap-stack'}>
+        {!isStacked && <SuccessRateSparkline points={cell.points} colorVar={isCrit ? '--crit' : '--faint'} name={`${agent} ${taskType}`}/>}
+        <div className="flex items-center gap-label-inline whitespace-nowrap">
           <FailShareGlyph tone={failShareTone}/>
           <span className="font-semibold">{(cell.pooledRate * 100).toFixed(0)}%</span>
         </div>
-        <div className="fs-meta text-dim whitespace-nowrap">
+        <div className="text-dim whitespace-nowrap">
           {isLowSample ? <window.UI.LowSampleMark n={cell.rateDenominator}/> : `n=${cell.rateDenominator}`}
         </div>
       </div>
-    </td>
+    </window.UI.TableCell>
   );
 }
 
@@ -2558,11 +2511,6 @@ function SuccessRateSparkline({ points, colorVar, name }) {
 
 // Panel 1b: Top-N failing (agent, task_type) pairs.
 // 매트릭스 companion — 합산 성공률 < threshold 쌍만 노출 → 대부분 green 이어도 action item 가시 유지 (research R2).
-
-// Ledger `.tbl th` face → one header idiom per page.
-const HEAD_FACE = 'font-sans fs-meta text-dim font-medium';
-// TABLE carries its own cell geometry → the hand-rolled tables off the shared Table
-const HEAD = { FACE: HEAD_FACE, CLASS: { TABLE: `${HEAD_FACE} px-2 border-b border-line` } };
 
 function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent }) {
   const [isShowingAll, setShowingAll] = useStateAg(false);

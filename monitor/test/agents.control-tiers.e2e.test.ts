@@ -49,7 +49,7 @@ const LIFECYCLE = getMarkup("LifecycleStatsCard", {
   state: { status: "ready", data: { rows: [{ agent: "glass-atrium-dev-front", start_count: 12, completed_count: 9 }] }, error: null },
   days: DAYS, onSelect: noop, onRetry: noop,
 });
-const MATRIX = getMarkup("SuccessRateMatrixCard", {
+const MATRIX = getMarkup("SuccessRateMatrixRegion", {
   state: { status: "ready", data: { rows: [], truncated: true }, error: null }, days: DAYS, onRetry: noop,
 });
 
@@ -101,10 +101,10 @@ describe("a static pill in a card head stands on the head's 32 control height", 
     assert.ok(Math.abs(centreOf(pill) - centreOf(info)) < 0.5, "one centre line");
   });
 
-  test("Success by agent: the row-limit pill is 32 and carries its own hover title", async () => {
-    const selector = "#matrix .card-head .pill";
+  test("Success by agent: the row-limit pill sits in the region with no card head of its own and carries its own hover title", async () => {
+    const selector = "#matrix .pill";
     assert.match(await readText(selector), /Row limit hit/);
-    assert.equal((await readBox(selector)).height, 32);
+    assert.equal(await page.$$eval("#matrix .card-head", (heads) => heads.length), 0);
     assert.match(await page.$eval(selector, (el) => el.getAttribute("title") ?? ""), /matrix incomplete/);
   });
 });

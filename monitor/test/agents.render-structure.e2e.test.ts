@@ -20,7 +20,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const AGENT_NAMES = ["dev-react", "dev-shell", "dev-db"];
 const TASK_TYPES = ["bug-fix", "feature", "refactor", "research", "plan", "review", "diagnosis", "doc", "cleanup"];
-const MATRIX_SELECTOR = '[aria-label^="Success rate per agent"]';
+const MATRIX_SELECTOR = "#agents-success-rates .tbl-wrap";
 // More lifecycle agents than the S slot holds → the no-record card has a remainder to roll up.
 const LIFECYCLE_AGENTS = ["dev-react", "dev-shell", "dev-db", "dev-node", "dev-python", "dev-front", "dev-swift", "dev-rag"];
 const PAIRED_CARD_IDS = ["agents-failing-pairs", "agents-lifecycle"];
@@ -375,7 +375,7 @@ describe("agents screen at 1440px", () => {
 
   test("the task-type matrix shows every column without a sideways scroll", async () => {
     await openTaskTypeFold(ctx.page);
-    const overflow = await ctx.page.locator(MATRIX_SELECTOR).evaluate((el) => el.scrollWidth - el.clientWidth);
+    const overflow = await ctx.page.locator(MATRIX_SELECTOR).evaluate((el) => (el.querySelector("table") as HTMLElement).getBoundingClientRect().width - el.clientWidth);
 
     assert.ok(overflow <= 1, `matrix overflows its card by ${overflow}px`);
   });
@@ -386,7 +386,29 @@ const STICKY_TABLES = [
   { name: "activity ledger", cardId: "agents-summary", isShowAll: false },
   { name: "most-failing pairs after Show all", cardId: "agents-failing-pairs", isShowAll: true },
   { name: "no completion record after Show all", cardId: "agents-lifecycle", isShowAll: true },
+  { name: "task-type full matrix", cardId: "agents-success-rates", isShowAll: false, isFold: true },
 ];
+
+describe("agents screen at 1024px, task-type matrix", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext(1024);
+  });
+
+  after(() => closeRenderContext(ctx));
+
+  test("the full matrix stacks its rows instead of clipping a column past the fold", async () => {
+    await openTaskTypeFold(ctx.page);
+    const result = await ctx.page.locator(MATRIX_SELECTOR).evaluate((el) => ({
+      mode: el.getAttribute("data-table-mode"),
+      overflow: (el.querySelector("table") as HTMLElement).getBoundingClientRect().width - el.clientWidth,
+    }));
+
+    assert.equal(result.mode, "stacked");
+    assert.ok(result.overflow <= 1, `matrix overflows its fold by ${result.overflow}px`);
+  });
+});
 
 describe("agents screen at 1440px, sticky table heads", () => {
   let ctx: RenderContext;
@@ -403,6 +425,7 @@ describe("agents screen at 1440px, sticky table heads", () => {
 
   for (const row of STICKY_TABLES) {
     test(`${row.name}: the column head sticks to the top of its scroller after a scroll into the body`, async () => {
+      if (row.isFold) await openTaskTypeFold(ctx.page);
       if (row.isShowAll) await ctx.page.locator(`#${row.cardId} button`, { hasText: /^Show all/ }).click();
       const result = await ctx.page.evaluate(({ cardId, rowPx }) => {
         const head = document.querySelector(`#${cardId} thead th`) as HTMLElement;
