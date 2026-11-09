@@ -26,7 +26,9 @@ const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const DECISION_CARD_TITLES = ["Spend", "Cost over time", "Cost by model", "Most expensive sessions"];
 const DISCLOSURE_TITLES = ["Token volume", "Turn statistics", "Log integrity"];
 const SPEND_STAT_COUNT = 4;
-const SPEND_STAT_SELECTOR = ".cost-screen .stat-row .stat";
+// the Spend region's row — the instrumentation cards carry stat rows of their own
+const SPEND_STAT_ROW = "#cost-region-kpis .stat-row";
+const SPEND_STAT_SELECTOR = `${SPEND_STAT_ROW} .stat`;
 const LEDGER_MODELS = [
   "claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-fable-5",
   "claude-opus-4-8", "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "unknown",
@@ -394,12 +396,12 @@ describe("calm fixture — nothing is running hot", () => {
   });
 
   test("no page verdict and no window tag — each ranged stat names its window in its label", async () => {
-    const shape = await ctx.page.evaluate(() => ({
+    const shape = await ctx.page.evaluate((row) => ({
       verdicts: document.querySelectorAll(".cost-screen .page-verdict").length,
       windowTags: document.querySelectorAll(".cost-screen .kpi-window").length,
-      labels: Array.from(document.querySelectorAll(".cost-screen .stat-row .stat-label"))
+      labels: Array.from(document.querySelectorAll(`${row} .stat-label`))
         .map((el) => (el.textContent || "").trim()),
-    }));
+    }), SPEND_STAT_ROW);
     assert.equal(shape.verdicts, 0, "spend state rides the stat and the alarm lane, not a verdict line");
     assert.equal(shape.windowTags, 0, "the window is part of the label, never a separate tag");
     assert.equal(shape.labels.length, SPEND_STAT_COUNT);
@@ -411,9 +413,9 @@ describe("calm fixture — nothing is running hot", () => {
   });
 
   test("the stats compare with the prior window the screen opts into", async () => {
-    const contexts = await ctx.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".cost-screen .stat-row .stat-context")).map((el) => (el.textContent || "").trim()),
-    );
+    const contexts = await ctx.page.evaluate((row) =>
+      Array.from(document.querySelectorAll(`${row} .stat-context`)).map((el) => (el.textContent || "").trim()),
+    SPEND_STAT_ROW);
     assert.ok(contexts.some((text) => /cut at this time of day/.test(text)), "a measured delta line renders");
     assert.ok(!contexts.some((text) => /did not arrive/.test(text)), "no stat reads the prior window as missing");
   });
@@ -600,16 +602,16 @@ describe("hot fixture — today is running over the normal", () => {
       "the hot row and the conditional parse-error row, and nothing else",
     );
 
-    const lanePrecedesStats = await ctx.page.evaluate(() => {
+    const lanePrecedesStats = await ctx.page.evaluate((row) => {
       const lastAlert = Array.from(
         document.querySelectorAll('.cost-screen [role="alert"]'),
       ).pop();
-      const statRow = document.querySelector(".cost-screen .stat-row");
+      const statRow = document.querySelector(row);
       if (lastAlert === undefined || statRow === null) return false;
       return Boolean(
         lastAlert.compareDocumentPosition(statRow) & Node.DOCUMENT_POSITION_FOLLOWING,
       );
-    });
+    }, SPEND_STAT_ROW);
     assert.equal(lanePrecedesStats, true, "the lane leads — the spend stats follow it");
   });
 

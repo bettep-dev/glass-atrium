@@ -644,7 +644,7 @@ function SpendStatValueC({ stat }) {
   const toneLabel = stat.tone === 'crit' ? 'Running hot' : 'Heading above normal';
   return (
     <>
-      <span className={`text-${stat.tone} mr-1.5`} aria-hidden="true" title={toneLabel}><Icon name={TONE_ICON[stat.tone]} size={13}/></span>
+      <span className={`text-${stat.tone} mr-label-inline`} aria-hidden="true" title={toneLabel}><Icon name={TONE_ICON[stat.tone]} size={13}/></span>
       <span className="sr-only">{`${toneLabel}:`}</span>
       {stat.value}
     </>
@@ -653,7 +653,7 @@ function SpendStatValueC({ stat }) {
 
 // Window change on its own block line — the token card's foot.
 function TrendDeltaC({ delta, prior, noun }) {
-  return <div className="cost-foot mt-1.5"><TrendDeltaTextC delta={delta} prior={prior} noun={noun}/></div>;
+  return <div className="cost-foot mt-stack"><TrendDeltaTextC delta={delta} prior={prior} noun={noun}/></div>;
 }
 
 // Window change — direction rides on the glyph, never on the text colour.
@@ -665,7 +665,7 @@ function TrendDeltaTextC({ delta, prior, noun }) {
   const [glyph, direction] = delta > 0 ? ['\u25b2', 'up'] : delta < 0 ? ['\u25bc', 'down'] : ['\u2014', 'unchanged'];
   return (
     <>
-      <span className="mr-1" aria-hidden="true">{glyph}</span>
+      <span className="mr-label-inline" aria-hidden="true">{glyph}</span>
       <span className="sr-only">{direction} </span>
       <DayTokens>{`${Math.abs(delta).toFixed(0)}% vs ${span}, cut at this time of day`}</DayTokens>
     </>
@@ -915,23 +915,23 @@ function renderPartialDot({ cx, cy, index, payload }) {
 function CostTrendLegendC({ bandOn, rows }) {
   const gapLabel = getNoDataLabelC(rows.map((row) => row.actual));
   return (
-    <div className="flex items-center gap-3 flex-wrap mt-2 fs-meta text-dim">
-      <span className="flex items-center gap-1.5">
+    <div className="flex items-center gap-x-block gap-y-list flex-wrap mt-label fs-meta text-dim">
+      <span className="flex items-center gap-label-inline">
         <span aria-hidden="true" style={{ width: 14, height: 2, background: 'rgb(var(--accent))' }}/>
         Daily cost
       </span>
-      <span className="flex items-center gap-1.5">
+      <span className="flex items-center gap-label-inline">
         <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', border: '1.5px solid rgb(var(--accent))' }}/>
         Today so far
       </span>
       {bandOn && (
-        <span className="flex items-center gap-1.5">
+        <span className="flex items-center gap-label-inline">
           <span aria-hidden="true" style={{ width: 14, borderTop: '1.5px dashed rgb(var(--dim))' }}/>
           7-day average
         </span>
       )}
       {bandOn && (
-        <span className="flex items-center gap-1.5">
+        <span className="flex items-center gap-label-inline">
           <span aria-hidden="true" className="w-2.5 h-2.5 rounded-sm" style={{ background: 'rgb(var(--faint) / 0.35)' }}/>
           Normal range (7-day)
         </span>
@@ -968,7 +968,7 @@ function CostTrendTooltipC({ active, payload, bandOn }) {
 }
 
 function TokenStackedBody({ state, days, failures, onRetry }) {
-  const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionFailure, Stack } = window.UI;
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="token trend" minHeight={300}/>;
@@ -989,10 +989,9 @@ function TokenStackedBody({ state, days, failures, onRetry }) {
   const dayPoints = getTokenDayPoints(points);
 
   return (
-    <>
-      {/* 세 수치 동일 크기(display 토큰 22px) — 위계는 강조(기간 합계=semibold·기본색 / 토큰·세션=text-dim)로만 표현 → 베이스라인 정렬.
-          카드 지배 hero — 기존 20px 가 fs-stat(18) 로 축소됐던 것을 display 로 승격 → dashboard hero 와 크기 일치. */}
-      <div className="flex items-start gap-4 mb-3">
+    <Stack gap="block">
+      {/* 세 수치 동일 크기(fs-display) — 위계는 굵기·색으로만 */}
+      <div className="flex items-start gap-block">
         <div>
           <div className="fs-meta text-dim">Tokens</div>
           <div className="fs-display text-dim tabular-nums">{formatTokenCompactC(totalTokens)}</div>
@@ -1005,7 +1004,7 @@ function TokenStackedBody({ state, days, failures, onRetry }) {
         {...window.UI.getChartImageProps(getGapNameC('Daily tokens', dayPoints), dayPoints, formatTokenCompactC)}>
         {days === 7 ? <TokenStackedColumn points={points} order={order}/> : <TokenStackedArea points={points} order={order}/>}
       </div>
-    </>
+    </Stack>
   );
 }
 
@@ -1086,9 +1085,9 @@ function formatTokenShareC(share) {
 // Input/Output are invisible against cache read on the shared axis → their shares stated as text.
 function TokenShareRowC({ shares }) {
   return (
-    <div className="flex items-center gap-x-4 gap-y-1 flex-wrap mb-3">
+    <div className="flex items-center gap-x-block gap-y-stack flex-wrap">
       {shares.map((r) => (
-        <span key={r.key} className="flex items-center gap-1.5 fs-meta text-dim">
+        <span key={r.key} className="flex items-center gap-label-inline fs-meta text-dim">
           <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
           {r.label} <span className="tabular-nums">{formatTokenShareC(r.share)}</span> · {formatTokenCompactC(r.total)}
         </span>
@@ -1260,9 +1259,9 @@ function CategoryShareRowC({ rows }) {
           <div key={r.key} style={{ width: `${r.pct * 100}%`, background: `rgb(var(${r.colorVar}) / 0.8)` }}/>
         ))}
       </div>
-      <div className="flex items-center gap-3 flex-wrap mt-1.5">
+      <div className="flex items-center gap-x-block gap-y-stack flex-wrap mt-label">
         {rows.map((r) => (
-          <span key={r.key} className="flex items-center gap-1.5 fs-meta text-dim">
+          <span key={r.key} className="flex items-center gap-label-inline fs-meta text-dim">
             <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
             {r.label} {(r.pct * 100).toFixed(0)}% · {formatUsdC(r.cost)}
           </span>
@@ -1311,7 +1310,7 @@ function ModelCostCard({ state, days, failures, onRetry }) {
         <ModelCostFootC other={other} modelCount={modelRows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
       )}
       right={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-control">
             {/* the reason sits behind the card's ⓘ → the attribute stays plain text */}
             {fallbackCount > 0 && <span className="fs-meta text-dim">{fallbackCount} est. rate</span>}
             <Link href="#model-config">Models &amp; budgets</Link>
@@ -1437,7 +1436,7 @@ function ModelCostRow({ r, view }) {
         <TableCell view={view}>
           <button
             type="button"
-            className="group inline-target gap-1 text-left"
+            className="group inline-target gap-label-inline text-left"
             aria-expanded={expanded}
             title={r.fullModel}
             onClick={() => setExpanded((v) => !v)}>
@@ -1542,7 +1541,7 @@ function mergeUnattributedRowsC(modelRows) {
 const CACHE_HIT_LINE_COLOR = `rgb(var(${TOKEN_CATEGORIES.find((c) => c.key === 'cache_read_tokens').colorVar}))`;
 
 function CacheHitBody({ state, days, failures, onRetry }) {
-  const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionFailure, Stack } = window.UI;
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="cache hit rate" minHeight={220}/>;
@@ -1583,8 +1582,8 @@ function CacheHitBody({ state, days, failures, onRetry }) {
   const ratePoints = chartRows.map((r) => ({ label: r.fullDate, value: r.rate_pct }));
 
   return (
-    <>
-      <div className="flex items-baseline gap-3 mb-3">
+    <Stack gap="block">
+      <div className="flex items-baseline gap-label">
         <div className="fs-stat font-semibold tabular-nums">
           {pooledRate === null ? '—' : (pooledRate * 100).toFixed(1) + '%'}
         </div>
@@ -1599,7 +1598,7 @@ function CacheHitBody({ state, days, failures, onRetry }) {
       ) : (
         <div className="fs-meta text-dim">{`Flat at ${formatRatePctC(flatRate)} every day with data — no line to draw.`}</div>
       )}
-    </>
+    </Stack>
   );
 }
 
@@ -1890,12 +1889,12 @@ function SessionRowC({ session, view, focusProps, onOpen }) {
 }
 
 function SessionDetailDrawerC({ session, onClose }) {
-  const { DetailSurface, Link, MachineString } = window.UI;
+  const { Cluster, DetailSurface, Link, MachineString } = window.UI;
   const facts = getSessionFactsC(session, Date.now());
 
   return (
     <DetailSurface open onClose={onClose} variant="drawer" title="Session cost">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 fs-meta">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-block gap-y-list fs-meta">
         {facts.map(([term, value, isMachine]) => (
           <React.Fragment key={term}>
             <dt className="text-dim">{term}</dt>
@@ -1903,11 +1902,11 @@ function SessionDetailDrawerC({ session, onClose }) {
           </React.Fragment>
         ))}
       </dl>
-      <div className="flex flex-wrap items-center gap-2 mt-4">
+      <Cluster gap="control" className="mt-block">
         <SessionIdCopyC id={session.session_id}/>
         {/* Task results has no session filter → label the unscoped list, never imply this session's rows */}
         <Link href="#outcomes">All task results</Link>
-      </div>
+      </Cluster>
     </DetailSurface>
   );
 }
@@ -1954,9 +1953,9 @@ function SessionHistogramLegendC() {
   ];
 
   return (
-    <ul className="flex flex-wrap gap-4 mt-3 fs-meta text-dim" aria-label="Histogram legend">
+    <ul className="flex flex-wrap gap-x-block gap-y-list mt-label fs-meta text-dim" aria-label="Histogram legend">
       {items.map((item) => (
-        <li key={item.key} className="flex items-center gap-2">
+        <li key={item.key} className="flex items-center gap-label-inline">
           <span className="inline-block w-3 h-3 rounded-sm" style={{ background: item.color }} aria-hidden="true"/>
           {item.label}
         </li>
@@ -2014,7 +2013,7 @@ function SessionBinTooltipC({ active, payload }) {
 }
 
 function ParseErrorBody({ state, days, failures, onRetry }) {
-  const { getRegionView, Badge, LoadingPlaceholder, RegionFailure } = window.UI;
+  const { getRegionView, Badge, LoadingPlaceholder, RegionFailure, Stack, StatRow } = window.UI;
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="unreadable log entries" minHeight={220}/>;
@@ -2046,49 +2045,34 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
   const { crit: critDays, total: dayCount } = getParseErrorDayCounts(state);
 
   return (
-    <>
-      {/* KPI 2-col (총 발생 + 마지막 발생) → 0건 분기에선 차트 생략 (action-trigger 부재). */}
-      <div className="grid grid-cols-2 gap-3 mb-3">
-        <div>
-          <div className="fs-meta text-dim">Unreadable entries</div>
-          <div className="fs-stat font-semibold tabular-nums">
-            {formatIntC(totalErrors)}
-          </div>
-        </div>
-        <div>
-          <div className="fs-meta text-dim">Last seen</div>
-          {/* 날짜 = 보조 stat — fs-stat(18px). */}
-          <div className="fs-stat text-fg/80 tabular-nums">
-            {lastErrorDate
-              ? <span title={lastErrorDate}>{getDaysAgoText(lastErrorDate)}</span>
-              : <span className="text-dim">—</span>}
-          </div>
-        </div>
-      </div>
+    <Stack gap="block">
+      {/* 총 발생 + 마지막 발생 = stat row · 0건 → 차트 대신 빈 상태 (action-trigger 부재) */}
+      <StatRow stats={[
+        { label: 'Unreadable entries', value: formatIntC(totalErrors) },
+        { label: 'Last seen', value: lastErrorDate && <span title={lastErrorDate}>{getDaysAgoText(lastErrorDate)}</span> },
+      ]}/>
       {totalErrors > 0 ? (
         <>
           {critDays > 0 && (
-            <div className="mb-2">
+            <div>
               {/* The lane owns this alarm; inside the disclosure the count is a neutral fact. */}
               <Badge role="metadata">{critDays} of <window.UI.NoWrap>{dayCount} days</window.UI.NoWrap> over threshold</Badge>
             </div>
           )}
-          <div style={{ width: '100%', height: window.UI.CARD_SLOTS.M.plotPx }}
-            {...window.UI.getChartImageProps('Daily unreadable log entries',
-              rows.map((r) => ({ label: r.event_date, value: Number(r.error_count) || 0 })), formatIntC)}>
-            <ParseErrorChart rows={chartRows}/>
-          </div>
-          <ParseErrorLegendC hasCritDay={critDays > 0}/>
+          <Stack gap="label">
+            <div style={{ width: '100%', height: window.UI.CARD_SLOTS.M.plotPx }}
+              {...window.UI.getChartImageProps('Daily unreadable log entries',
+                rows.map((r) => ({ label: r.event_date, value: Number(r.error_count) || 0 })), formatIntC)}>
+              <ParseErrorChart rows={chartRows}/>
+            </div>
+            <ParseErrorLegendC hasCritDay={critDays > 0}/>
+          </Stack>
         </>
       ) : (
-        <div className="fs-body text-dim text-center py-8" aria-label="no parse_error — chart omitted">
-          No parse_error in the last <window.UI.NoWrap>{days} days</window.UI.NoWrap>.
-          <div className="fs-meta text-faint mt-2 tabular-nums">
-            <window.UI.NoWrap>{rows.length} days</window.UI.NoWrap> analyzed · {formatIntC(totalEvents)} events total
-          </div>
-        </div>
+        <EmptyStateC message={`No parse_error in the last ${days} days.`}
+          hint={`${rows.length} days analyzed · ${formatIntC(totalEvents)} events total`}/>
       )}
-    </>
+    </Stack>
   );
 }
 
@@ -2125,15 +2109,15 @@ const PARSE_ERROR_COLOR = {
 };
 
 function ParseErrorLegendC({ hasCritDay }) {
-  const swatchClass = 'inline-block w-2.5 h-2.5 rounded-sm mr-1.5';
+  const swatchClass = 'inline-block w-2.5 h-2.5 rounded-sm';
   return (
-    <ul className="flex flex-wrap gap-4 mt-2 fs-meta text-dim" aria-label="Log integrity legend">
-      <li><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.bar }}/>Unreadable entries</li>
+    <ul className="flex flex-wrap gap-x-block gap-y-list mt-label fs-meta text-dim" aria-label="Log integrity legend">
+      <li className="flex items-center gap-label-inline"><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.bar }}/>Unreadable entries</li>
       {hasCritDay && (
-        <li><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/>Day over threshold</li>
+        <li className="flex items-center gap-label-inline"><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/>Day over threshold</li>
       )}
-      <li>
-        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, marginRight: 6, verticalAlign: 'middle', borderTop: `2px dashed ${PARSE_ERROR_COLOR.threshold}` }}/>
+      <li className="flex items-center gap-label-inline">
+        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, borderTop: `2px dashed ${PARSE_ERROR_COLOR.threshold}` }}/>
         {PARSE_ERROR_THRESHOLD_LABEL}
       </li>
     </ul>
@@ -2274,7 +2258,7 @@ function pointCostC(p) {
 
 // Axis style hoist — JSX inline-object 할당 회피.
 // CSS style, not the font-size attribute — an SVG presentation attribute cannot resolve the --fs-meta token
-const axisTickStyle = { style: { fontSize: 'var(--fs-meta)' }, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' };
+const axisTickStyle = { style: { fontSize: 'var(--fs-meta)', fontVariantNumeric: 'tabular-nums' }, fill: 'rgb(var(--faint))' };
 const anomalyAxisLineStyle = { stroke: 'rgb(var(--line))' };
 
 // Turn statistics body — /api/cost/turn-stats: stop_reason 분포 + turns 집계.
@@ -2295,7 +2279,7 @@ function turnStopReasonMeta(reason) {
 }
 
 function TurnStatsBody({ state, days, failures, onRetry }) {
-  const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionFailure, Stack } = window.UI;
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="turn statistics" minHeight={220}/>;
@@ -2319,14 +2303,14 @@ function TurnStatsBody({ state, days, failures, onRetry }) {
   // Stacked, never split: the card is the 2fr side of a pair from lg → a table column beside the
   // aggregates would sit below the table's own minimum width.
   return (
-    <>
+    <Stack gap="block" className="pt-card-pad">
       {turns && <TurnAggregateRow turns={turns} sessionPopulation={sessionPopulation}/>}
       <TurnStopReasonTable
         rows={stopReasons}
         maxEvents={maxEvents}
         totalEvents={totalEvents}
         sessionPopulation={sessionPopulation}/>
-    </>
+    </Stack>
   );
 }
 
@@ -2356,21 +2340,17 @@ function TurnAggregateRow({ turns, sessionPopulation }) {
     { label: 'Total turns', value: formatIntC(Number(turns.total_turns) || 0) },
   ];
 
+  const { Stack, StatRow } = window.UI;
+
   return (
-    <div className="px-4 mb-4">
-      <div className="flex items-baseline gap-2 flex-wrap">
+    // the body is flush for the stop-reason table → the aggregates take the card padding themselves
+    <Stack gap="label" className="px-card-pad">
+      <div className="flex items-baseline gap-label flex-wrap">
         {headline.value && <span className="fs-display font-semibold tabular-nums">{headline.value}</span>}
         <span className="fs-meta text-dim">{headline.note}</span>
       </div>
-      <dl className="grid grid-cols-3 gap-3 mt-2">
-        {secondary.map((item) => (
-          <div key={item.label} className="min-w-0">
-            <dt className="fs-meta text-dim">{item.label}</dt>
-            <dd className="fs-stat text-dim tabular-nums">{item.value}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
+      <StatRow stats={secondary}/>
+    </Stack>
   );
 }
 
@@ -2437,9 +2417,9 @@ const STOP_REASON_COLUMNS = Object.freeze([
 ]);
 
 // 공통 chrome
-function EmptyStateC({ message }) {
+function EmptyStateC({ message, hint }) {
   const { EmptyState } = window.UI;
-  return <EmptyState message={message} />;
+  return <EmptyState message={message} hint={hint} />;
 }
 
 // 순수 helper
@@ -2447,10 +2427,10 @@ const tooltipStyle = {
   background: 'rgb(var(--overlay-surface))',
   border: '1px solid rgb(var(--line))',
   borderRadius: 'var(--radius-tile)',
-  padding: '8px 12px',
+  padding: 'var(--space-2) var(--space-3)',
   // 툴팁 = HTML DOM div → fs-meta 보조 콘텐츠 tier.
   fontSize: 'var(--fs-meta)',
-  fontFamily: 'JetBrains Mono, monospace',
+  fontVariantNumeric: 'tabular-nums',
   boxShadow: 'var(--shadow-overlay)',
 };
 

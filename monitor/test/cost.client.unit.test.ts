@@ -1057,6 +1057,56 @@ test("a cold-failed KPI payload retrying reads as failed on its stats, never a s
   assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 0, "no stat reads as loading beside the card");
 });
 
+describe("an instrumentation card sets its figures in one stat row, never a tile grid", () => {
+  const readStats = (tree: RenderedNode) => findNodes(tree, isStat).map((stat) => {
+    const [label] = findNodes(stat, (n) => n.props.className === "stat-label");
+    const [value] = findNodes(stat, (n) => typeof n.props.className === "string" && n.props.className.startsWith("stat-value"));
+    return [collectText(label), collectText(value)];
+  });
+  const rows = [
+    {
+      name: "log integrity with unreadable entries",
+      body: "ParseErrorBody",
+      data: { rows: [
+        { event_date: "2026-01-08", error_count: 0, total_count: 1240 },
+        { event_date: "2026-01-09", error_count: 3, total_count: 1187 },
+      ] },
+      stats: [["Unreadable entries", "3"], ["Last seen", undefined]],
+    },
+    {
+      name: "log integrity with none — Last seen reads None",
+      body: "ParseErrorBody",
+      data: { rows: [{ event_date: "2026-01-09", error_count: 0, total_count: 1187 }] },
+      stats: [["Unreadable entries", "0"], ["Last seen", "None"]],
+    },
+    {
+      name: "turn statistics",
+      body: "TurnStatsBody",
+      data: {
+        stop_reasons: [{ stop_reason: "end_turn", event_count: 1830, session_count: 412 }],
+        stop_reason_session_count: 412,
+        turns: { avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
+      },
+      stats: [["Avg turns per logged event", "3.25"], ["Most turns in one event", "1,204"], ["Total turns", "5,948"]],
+    },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name}: each figure is a stat, label then value`, async () => {
+      const mod = (await loadScreenModule(COST_SRC, {
+        UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
+      })) as RenderModule;
+      const stats = readStats(renderIn(mod, row.body, { state: ready(row.data), days: 30, onRetry: () => {} }));
+
+      assert.deepEqual(stats.map(([label]) => label), row.stats.map(([label]) => label));
+      // a relative day count moves with the clock → only its presence is pinned
+      row.stats.forEach(([label, value], i) => {
+        assert.ok(value === undefined ? stats[i][1].length > 0 : stats[i][1] === value, `${label} reads ${value ?? "a value"}`);
+      });
+    });
+  }
+});
+
 test("every cost region error card carries the page Retry, so a region the banner does not cover still offers one", async () => {
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi({ INITIAL_REGION_STATE: failed }), React: createReactStub(),
