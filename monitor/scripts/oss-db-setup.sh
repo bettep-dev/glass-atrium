@@ -404,17 +404,18 @@ fi
 # migrate deploy applies them, but a silent create miss carries NO error → confirm here, loud-fail otherwise
 # a miss is only a seq-scan on the plain indexes — a missed partial UNIQUE un-enforces single-active-job
 # a missed loop-event dedup key lets census rows accumulate → a corrected verdict stops superseding
-log "verifying 8 raw-SQL partial indexes exist (pg_indexes · SELECT-only)"
+# a missed queue resume key leaves overlapping sweep passes free to spawn two resumes for one attempt
+log "verifying 9 raw-SQL partial indexes exist (pg_indexes · SELECT-only)"
 # schemaname pinned — pg_indexes spans every schema → a name-only match can mask a missing index
 # schema granularity only — a per-name table map would be a second hand-maintained list, i.e. more drift
 idx_present="$(psql -h "${PG_SOCKET}" -d "${DB_NAME}" -tAc \
-  "SELECT count(*) FROM pg_indexes WHERE schemaname IN ('core','monitor') AND indexname IN ('update_job_single_active_uniq','outcomes_style_ref_agent_ts_idx','outcomes_baseline_pre_3tier_idx','autoagent_proposals_confidence_idx','monitor_documents_folder_id_idx','monitor_documents_folder_created_idx','autoagent_loop_events_census_dedup','autoagent_loop_events_verdict_dedup')")" \
+  "SELECT count(*) FROM pg_indexes WHERE schemaname IN ('core','monitor') AND indexname IN ('update_job_single_active_uniq','outcomes_style_ref_agent_ts_idx','outcomes_baseline_pre_3tier_idx','autoagent_proposals_confidence_idx','monitor_documents_folder_id_idx','monitor_documents_folder_created_idx','autoagent_loop_events_census_dedup','autoagent_loop_events_verdict_dedup','queue_deliveries_resume_item_attempt_key')")" \
   || fail "${EXIT_PARTIAL_IDX}" "pg_indexes verification query failed (DB '${DB_NAME}') — check core/monitor schemas + peer auth privileges"
 # the name list above and this count are STATED, never derived from the migration files
 # a derived expectation shrinks with a lost or unparseable source, then passes against the remnant
 # names, schemas and count are pinned against the migration DDL by test/oss-db-setup.bats
-if [[ "${idx_present}" != "8" ]]; then
-  fail "${EXIT_PARTIAL_IDX}" "expected 8 raw-SQL partial indexes, found ${idx_present} — 20260611000000_init_squashed, 20260718000000_restore_squash_lost_partial_indexes or 20260921000000_split_autoagent_loop_event_identity did not fully apply"
+if [[ "${idx_present}" != "9" ]]; then
+  fail "${EXIT_PARTIAL_IDX}" "expected 9 raw-SQL partial indexes, found ${idx_present} — 20260611000000_init_squashed, 20260718000000_restore_squash_lost_partial_indexes, 20260921000000_split_autoagent_loop_event_identity or 20261109000000_add_owner_queue did not fully apply"
 fi
 
 # no seed step
