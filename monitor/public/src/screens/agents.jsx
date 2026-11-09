@@ -817,9 +817,14 @@ function AgentStatusTile({ failures, feeder, label, sub, info, unavailableSub, s
   );
 }
 
-// Unread payload mark — a dash would read as a loaded zero.
+// Unread payload mark — None would read as a loaded zero.
 function NotLoadedMarkAg({ title }) {
   return <span className="text-faint fs-meta" title={title}>not loaded</span>;
+}
+
+// An empty table cell's word — never blank, never a dash.
+function NoneMarkAg({ title }) {
+  return <span className="text-faint" title={title}>None</span>;
 }
 
 function getNotLoadedTitleAg(what, status) {
@@ -979,7 +984,7 @@ function getSummaryColumnsAg(sortKey, onSortChange) {
 }
 
 function AgentSummaryTable({ agents, pseudoAgents, days, sortBy = 'failures', onSortChange = () => {}, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
-  const { Table } = window.UI;
+  const { Table, TableRow, TableCell } = window.UI;
   const [showPseudo, setShowPseudo] = useStateAg(false);
   const [activeIndex, setActiveIndex] = useStateAg(0);
   const [activePseudoIndex, setActivePseudoIndex] = useStateAg(0);
@@ -987,9 +992,10 @@ function AgentSummaryTable({ agents, pseudoAgents, days, sortBy = 'failures', on
   const p95WarnSec = getP95WarnSecAg(agents);
 
   // one roving set per tbody — arrow keys walk the rows of the set they start in
-  const renderRow = (a, index, rowSet) => (
+  const renderRow = (view, a, index, rowSet) => (
     <AgentSummaryRow
       key={a.agent_id}
+      view={view}
       focusProps={window.UI.getRowFocusProps({
         index,
         activeIndex: rowSet === agents ? activeIndex : activePseudoIndex,
@@ -1012,30 +1018,31 @@ function AgentSummaryTable({ agents, pseudoAgents, days, sortBy = 'failures', on
 
   const pseudoBody = {
     key: 'pseudo',
-    rows: (
+    rows: (view) => (
       <>
-        <tr>
-          <td colSpan={SUMMARY_COLUMNS.length}>
+        <TableRow view={view}>
+          <TableCell view={view} kind="span">
             <window.UI.DisclosureButton
               isOpen={showPseudo}
               onToggle={() => setShowPseudo((v) => !v)}
               className="w-full text-left fs-meta px-1"
               label={`${pseudoRows.length} non-actionable ${pseudoRows.length === 1 ? 'bucket' : 'buckets'} (unpaired / unidentified — not real agents)`}
             />
-          </td>
-        </tr>
-        {showPseudo && pseudoRows.map(renderRow)}
+          </TableCell>
+        </TableRow>
+        {showPseudo && pseudoRows.map((a, i) => renderRow(view, a, i, pseudoRows))}
       </>
     ),
   };
-  const bodies = [{ key: 'agents', rows: agents.map(renderRow) }, ...(pseudoRows.length > 0 ? [pseudoBody] : [])];
+  const agentBody = { key: 'agents', rows: (view) => agents.map((a, i) => renderRow(view, a, i, agents)) };
+  const bodies = [agentBody, ...(pseudoRows.length > 0 ? [pseudoBody] : [])];
 
   const columns = getSummaryColumnsAg(getSummarySortKeyAg(sortBy, failureStatus), onSortChange);
   return <Table caption="Performance by agent" isHeadSticky columns={columns} bodies={bodies}/>;
 }
 
-function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95WarnSec = P95_AGENT.WARN_SEC, failureStatus = 'ready', trendStatus = 'ready' }) {
-  const { MiniBars, Bar, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
+function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95WarnSec = P95_AGENT.WARN_SEC, failureStatus = 'ready', trendStatus = 'ready' }) {
+  const { MiniBars, Bar, LOW_N_MIN, Icon, TONE_ICON, AgentName, TableRow, TableCell } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
   const isUnknownAgent = isNonActionableAgentAg(agent.agent_id);
@@ -1082,14 +1089,15 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
   const handleClick = () => onSelect(agent.agent_id);
 
   return (
-    <tr
+    <TableRow
+      view={view}
       {...focusProps}
       onClick={handleClick}
       aria-current={isSelected ? 'true' : undefined}
       className={isSelected ? 'bg-sunken' : ''}
       style={isUnknownAgent ? { opacity: 0.65 } : undefined}
       title={isUnknownAgent ? nonActionableTitle : `Show details for ${agent.agent_name}`}>
-      <td>
+      <TableCell view={view}>
         {/* an agent name is an ID → one line; a narrow page scrolls the table sideways instead of breaking it at its hyphens */}
         <div className="flex items-center gap-1.5 whitespace-nowrap">
           <ActivityMark status={agent.status} lastRunAt={agent.last_run_at}/>
@@ -1098,31 +1106,31 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
             : <AgentName name={agent.agent_name} className="font-medium"/>}
           <CompatibilityBadge compatibility={agent.compatibility}/>
         </div>
-      </td>
-      <td className="num">{formatIntAg(runs)}</td>
-      <td className="num" title={`${noRecord.title} · ${formatInvocationsTitle(invocations, days)}`}>
-        {noRecord.count == null ? <span className="text-faint">—</span> : formatIntAg(noRecord.count)}
-      </td>
-      <td className="num" title={successTitle}>
+      </TableCell>
+      <TableCell view={view} isNumeric>{formatIntAg(runs)}</TableCell>
+      <TableCell view={view} isNumeric title={`${noRecord.title} · ${formatInvocationsTitle(invocations, days)}`}>
+        {noRecord.count == null ? <NoneMarkAg/> : formatIntAg(noRecord.count)}
+      </TableCell>
+      <TableCell view={view} isNumeric title={successTitle}>
         <span className="inline-flex items-center justify-end gap-1">
           <FailShareGlyph tone={failShareTone}/>
           <span className={successDenominator > 0 ? '' : 'text-faint'}>{formatRateAg(successNumerator, successDenominator)}</span>
           {isLowSample && <span className="fs-meta text-faint">low sample</span>}
         </span>
-      </td>
-      <td className="num tbl-bar-cell" title={failTitle}>
+      </TableCell>
+      <TableCell view={view} isNumeric className="tbl-bar-cell" title={failTitle}>
         {!isFailureRead ? (
           <NotLoadedMarkAg title={failTitle}/>
         ) : breakage.count > 0 ? (
           <span className="inline-flex items-baseline justify-end gap-1.5">
             <FailShareGlyph tone={failTone} label={getFailShareLabel('failed')}/>
-            <span className={failedCount > 0 ? '' : 'text-faint'}>{failedCount > 0 ? formatIntAg(failedCount) : '—'}</span>
+            <span className={failedCount > 0 ? '' : 'text-faint'}>{formatIntAg(failedCount)}</span>
             {blockedCount > 0 && <span className="fs-meta text-dim">{formatIntAg(blockedCount)} blocked</span>}
           </span>
         ) : (
-          <span className="text-faint">—</span>
+          <NoneMarkAg/>
         )}
-        {/* 0 → dash, no bar · ≥1 → bar always present (min-width floor), width = breakage_rate, tone = failed tone. */}
+        {/* 0 → None, no bar · ≥1 → bar always present (min-width floor), width = breakage_rate, tone = failed tone. */}
         {isFailureRead && breakage.count > 0 && (
           <Bar
             value={Math.max(breakage.rate, 0.01)}
@@ -1130,9 +1138,10 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
             ariaLabel={`breakage rate ${(breakage.rate * 100).toFixed(1)}%`}
           />
         )}
-      </td>
-      <td
-        className="num tbl-bar-cell"
+      </TableCell>
+      <TableCell view={view}
+        isNumeric
+        className="tbl-bar-cell"
         title={p95Sec == null ? undefined : [`p95 latency tier: ${p95Glyph} (warn >${Math.round(p95WarnSec / 60)}m, fleet p75 · crit >${P95_AGENT.CRIT_SEC / 60}m)`, overageNote].filter(Boolean).join(' · ')}>
         {/* tier 글리프 — 초-도메인 톤(p95GlyphTone warn=fleet p75·하한 600s / crit 1200s) KEY 의 ✓/⚠/✕ (shape = 색 외 인코딩).
             종전 StatusDot 은 tone KEY 를 status enum 으로 오인받아 의미가 흐려졌고, 컷 도메인까지 어긋나
@@ -1147,7 +1156,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
               <span>{formatDurationSecAg(p95Sec)}</span>
             </span>
           ) : (
-            <span className="text-faint">—</span>
+            <NoneMarkAg/>
           )}
         </span>
         {/* Fill-bar against the crit cut — the response-time card's comparison, per row. */}
@@ -1158,17 +1167,17 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
             ariaLabel={[`p95 ${formatDurationSecAg(p95Sec)}`, overageNote].filter(Boolean).join(' · ')}
           />
         )}
-      </td>
-      <td>
+      </TableCell>
+      <TableCell view={view}>
         {!isTrendRead ? (
           <NotLoadedMarkAg title={getNotLoadedTitleAg('7-day trend', trendStatus)}/>
         ) : hasTrend ? (
           <MiniBars data={trend} w={MINIBAR_WIDTH} h={MINIBAR_HEIGHT} color={trendColor} label={`${agent.agent_name} runs per day, last 7 days`}/>
         ) : (
-          <span className="text-faint fs-meta font-mono" title="no 7-day daily success-rate breakdown">—</span>
+          <NoneMarkAg title="no 7-day daily success-rate breakdown"/>
         )}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -2558,7 +2567,7 @@ function resolveLastBreakage(pair, failureByAgent) {
   if (pair.lastFailureDate) {
     return { text: pair.lastFailureDate, title: `Last fail event_date (client-derived · blocked not included) ${pair.lastFailureDate}`, fromServer: false };
   }
-  return { text: '—', title: 'no failure data', fromServer: false };
+  return { text: 'None', title: 'no failure data', fromServer: false };
 }
 
 // thead 컬럼 driver — alignment / width / 라벨만 다르고 sticky 스타일은 공통.
@@ -2980,7 +2989,7 @@ function LifecycleStatsRow({ view, row, onSelect, focusProps }) {
         {orphanCount > 0 ? `${formatIntAg(orphanCount)} · ${(orphanRatio * 100).toFixed(0)}%` : '0'}
       </TableCell>
       <TableCell view={view} isNumeric textRole="meta" className="text-dim">
-        {p95Sec == null ? '—' : formatDurationSecAg(p95Sec)}
+        {p95Sec == null ? <NoneMarkAg/> : formatDurationSecAg(p95Sec)}
       </TableCell>
     </TableRow>
   );
@@ -3430,7 +3439,7 @@ function getFailShareTone(failedCount, denominator) {
 // a rate alone — its passed ÷ denominator fraction stays in the cell's tooltip
 function formatRateAg(numerator, denominator) {
   const den = Number(denominator);
-  if (!Number.isFinite(den) || den <= 0) return '—';
+  if (!Number.isFinite(den) || den <= 0) return 'None';
   return `${(((Number(numerator) || 0) / den) * 100).toFixed(1)}%`;
 }
 
@@ -3576,7 +3585,7 @@ function getTrendDates(rows) {
 }
 
 // MiniBars 추세 — 일별 실행 수(total_count) 합계를 agent × date 로 group → 최근 7일 series.
-// 7일 모두 0 인 agent → trendMap 미수록 → row 측 "—" 렌더 (정도 점검: 추정값 주입 금지).
+// 7일 모두 0 인 agent → trendMap 미수록 → row 측 "None" 렌더 (정도 점검: 추정값 주입 금지).
 function buildAgentTrendMap(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return new Map();
 

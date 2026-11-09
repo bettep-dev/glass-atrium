@@ -539,6 +539,30 @@ test("a failing pair drills to Task results filtered by its agent, task type and
   assert.deepEqual(hrefs, ["#outcomes?agent=glass-atrium-dev-react&task_type=feature&days=14"]);
 });
 
+test("an empty cell in an agents table reads None in faint ink, never a dash or a blank", async () => {
+  const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const pair = { agent: "glass-atrium-dev-react", task_type: "feature", successCount: 1, rateDenominator: 5, pooledRate: 0.2, totalCount: 5 };
+  const lifecycle = { agent_type: "glass-atrium-dev-react", start_count: 10, stop_count: 9, completed_count: 9, p95_duration_sec: null };
+  const rows = [
+    { name: "ledger row with no launches, breakages, p95 or trend", noneCount: 4, render: () => renderToneRow(mod, { invocations: null, p95_ms: null }, null) },
+    { name: "failing pair with no breakage time", noneCount: 1, render: () => renderScreen(
+      React.createElement(mod.TopNFailingAgentsTable as Component, { pairs: [pair], failureByAgent: new Map(), days: 14 })) },
+    { name: "lifecycle row with no p95", noneCount: 1, render: () => renderScreen(
+      React.createElement(mod.LifecycleStatsRow as Component, { row: lifecycle, onSelect: null })) },
+  ];
+  const isFaint = (n: RenderedNode) => /\btext-faint\b/.test(String(n.props?.className ?? ""));
+  for (const row of rows) {
+    // the name cell's text comes from the stubbed AgentName atom → judged by the atom, not its text
+    const cells = findNodes(row.render(), (n) => n.type === "td" && findAtoms(n, "AgentName").length === 0);
+    const texts = cells.map((n) => getVisibleText(n).trim());
+    assert.deepEqual(texts.filter((t) => t === "" || t === "—"), [], `${row.name}: no blank or dash cell in ${texts.join(" | ")}`);
+    const noneCells = cells.filter((_, i) => texts[i] === "None");
+    assert.equal(noneCells.length, row.noneCount, `${row.name}: None cells in ${texts.join(" | ")}`);
+    noneCells.forEach((cell) => assert.ok(isFaint(cell) || findNodes(cell, isFaint).length > 0, `${row.name}: None is faint`));
+  }
+});
+
 test("every status-band tile names the window its count covers", async () => {
   const ready = { status: "ready", data: [], error: null };
   const tree = await renderStatusBand({
@@ -589,7 +613,7 @@ function renderLoadRow(mod: Record<string, unknown>, failureStatus: string, tren
   );
 }
 
-test("an unread breakage or trend payload shows 'not loaded', and only a loaded zero keeps the dash", async () => {
+test("an unread breakage or trend payload shows 'not loaded', and only a loaded zero reads None", async () => {
   const mod = await loadAgentsScreen();
   const rows = [
     { name: "both loading", failureStatus: "loading", trendStatus: "loading", notLoaded: 2 },
@@ -604,7 +628,7 @@ test("an unread breakage or trend payload shows 'not loaded', and only a loaded 
     const failCell = findNodes(tree, (n) => n.type === "td" && String(n.props?.title ?? "").length > 0)
       .find((n) => /breakage/.test(String(n.props.title)));
     const failText = collectText(failCell ?? null);
-    assert.equal(failText === "—", row.failureStatus === "ready", `${row.name}: the dash means a read zero only`);
+    assert.equal(failText === "None", row.failureStatus === "ready", `${row.name}: None means a read zero only`);
   }
 });
 
@@ -1125,7 +1149,7 @@ test("the ledger carries Runs and No record as columns instead of a per-row expa
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const rows = [
     { name: "launches past runs leave that many without a record", invocations: 50, noRecord: "10" },
-    { name: "unmeasured launches read as a dash", invocations: null, noRecord: "—" },
+    { name: "unmeasured launches read None", invocations: null, noRecord: "None" },
     { name: "fewer launches than runs never go negative", invocations: 30, noRecord: "0" },
   ];
   const agents = rows.map((row, i) => ({ ...LEDGER_AGENTS[0], agent_id: `glass-atrium-dev-${i}`, runs: 40, invocations: row.invocations }));
@@ -1144,14 +1168,20 @@ test("the ledger carries Runs and No record as columns instead of a per-row expa
 
 test("a ledger row leads with its failed count and keeps blocked as an untoned secondary", async () => {
   const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
-  // 1 fail + 29 blocked of 100 outcomes: a 30% breakage rate, but a 1% failed share.
-  const failure = { total_breakages: 30, fail_count: 1, blocked_count: 29, breakage_rate: 0.3 };
-  const cell = findCellByTitle(renderToneRow(mod, {}, failure), /^breakages/);
-  const text = collectText(cell).trim();
-  assert.match(text, /^1/, "the failed count leads");
-  assert.match(text, /29\s+blocked/, "blocked rides as the secondary");
-  const tonedClasses = findNodes(cell, (n) => TONED_CLASS.test(String(n.props?.className ?? "")));
-  assert.equal(tonedClasses.length, 0, "compliant halts do not raise the failure tone");
+  // 29 blocked of 100 outcomes: a 30% breakage rate, but a failed share of 1% or none.
+  const rows = [
+    { name: "one failed run", fail: 1, lead: /^1\b/ },
+    { name: "blocked runs only — the failed count still reads as a zero", fail: 0, lead: /^0\b/ },
+  ];
+  for (const row of rows) {
+    const failure = { total_breakages: row.fail + 29, fail_count: row.fail, blocked_count: 29, breakage_rate: 0.3 };
+    const cell = findCellByTitle(renderToneRow(mod, {}, failure), /^breakages/);
+    const text = collectText(cell).trim();
+    assert.match(text, row.lead, `${row.name}: the failed count leads`);
+    assert.match(text, /29\s+blocked/, `${row.name}: blocked rides as the secondary`);
+    const tonedClasses = findNodes(cell, (n) => TONED_CLASS.test(String(n.props?.className ?? "")));
+    assert.equal(tonedClasses.length, 0, `${row.name}: compliant halts do not raise the failure tone`);
+  }
 });
 
 test("the status band counts failed agents in red and carries blocked-only agents as a neutral note", async () => {
@@ -1520,7 +1550,7 @@ test("the success cell shows the rate alone, its fraction kept in the tooltip", 
   const mod = await loadAgentsScreen();
   const rows = [
     { name: "a measured rate", agent: { success_pct: 97.5, runs: 40, needs_context_count: 0 }, text: "97.5%", title: /^passed 39 ÷ denominator 40 / },
-    { name: "no outcome to rate", agent: { success_pct: 0, runs: 0, needs_context_count: 0 }, text: "—", title: /success rate undefined/ },
+    { name: "no outcome to rate", agent: { success_pct: 0, runs: 0, needs_context_count: 0 }, text: "None", title: /success rate undefined/ },
   ];
   for (const row of rows) {
     const cell = findCellByTitle(renderToneRow(mod, row.agent, null), /^passed|success rate undefined/);
