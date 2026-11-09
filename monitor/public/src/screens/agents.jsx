@@ -659,7 +659,7 @@ function AgentAlarmRow({ alarm }) {
   return (
     <div className="flex items-center gap-2">
       <Badge role="status" tone={getBreakerTone(alarm)}>{getBreakerLabel(alarm)}</Badge>
-      <AgentName name={alarm.agent} className="font-mono"/>
+      <AgentName name={alarm.agent}/>
       <span className="text-faint fs-meta">
         {formatConsecutiveFails(alarm.consecutive_fails)}
         {alarm.suspended_at ? ` · since ${alarm.suspended_at}` : ''}
@@ -1103,14 +1103,13 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
       onClick={handleClick}
       aria-current={isSelected ? 'true' : undefined}
       className={isSelected ? 'bg-sunken' : ''}
-      style={isUnknownAgent ? { opacity: 0.65 } : undefined}
       title={isUnknownAgent ? nonActionableTitle : `Show details for ${agent.agent_name}`}>
       <TableCell view={view}>
         {/* an agent name is an ID → one line; a narrow page scrolls the table sideways instead of breaking it at its hyphens */}
         <div className="flex items-center gap-1.5 whitespace-nowrap">
           <ActivityMark status={agent.status} lastRunAt={agent.last_run_at}/>
           {isUnknownAgent
-            ? <span className="font-medium">{nonActionableLabel}</span>
+            ? <span className="font-medium text-dim">{nonActionableLabel}</span>
             : <AgentName name={agent.agent_name} className="font-medium"/>}
           <CompatibilityBadge compatibility={agent.compatibility}/>
         </div>
@@ -1262,7 +1261,7 @@ function LatencyBars({ agents }) {
           <div key={a.agent_id} className="fs-body">
             <div className="flex items-center gap-2 mb-1.5">
               <window.UI.AgentName name={a.agent_name} className="flex-1 truncate"/>
-              <span className="font-mono text-faint fs-meta">P95 {formatDurationMsAg(p95)}</span>
+              <span className="text-faint fs-meta tnum">P95 {formatDurationMsAg(p95)}</span>
             </div>
             <div
               className="h-2.5 bg-sunken rounded-full relative overflow-hidden"
@@ -1400,7 +1399,7 @@ function AgentDetailDrawer({
       {isDeletable && (
         <button className="btn sm" style={DELETE_OUTLINE_STYLE} onClick={startConfirm} aria-label={`Delete ${agentName}`}>Delete</button>
       )}
-      <div className="fs-meta text-dim font-mono mr-auto">
+      <div className="fs-meta text-dim tnum mr-auto">
         {idx >= 0 ? `${idx + 1} of ${sortedAgents.length} agents` : 'not in the current list'}
       </div>
       <button className="btn sm primary" onClick={onClose} aria-label="Close">Close</button>
@@ -1496,7 +1495,7 @@ function AgentDrawerNameAg({ name }) {
 // typed-name 삭제 확인 패널 — drawer 본문 서브상태.
 // full name 정확 일치 시에만 푸터 커밋 버튼 활성 (비가역 작업 게이트는 푸터가 소유 · 여기선 입력+공시).
 function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange }) {
-  const { AlertCard } = window.UI;
+  const { AlertCard, MachineString } = window.UI;
   const matches = value === agentName;
   return (
     <div className="space-y-4">
@@ -1504,12 +1503,12 @@ function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange
         tone="warn"
         surface="inset"
         title="This removes a real agent."
-        body={<>Moves <span className="font-mono text-ink">{agentName}</span>'s file to the Trash and unwires it from the system.</>}/>
+        body={<>Moves <MachineString className="text-ink">{agentName}</MachineString>'s file to the Trash and unwires it from the system.</>}/>
 
       <div>
         <div className="fs-meta font-medium text-ink">Type the agent name to confirm</div>
         <div className="fs-meta text-faint mt-0.5 mb-1">
-          Type <span className="font-mono text-ink">{agentName}</span> exactly
+          Type <MachineString className="text-ink">{agentName}</MachineString> exactly
         </div>
         <input
           type="text"
@@ -1578,7 +1577,7 @@ function formatConsecutiveFails(count) {
   return `${count} consecutive ${count === 1 ? 'fail' : 'fails'}`;
 }
 
-// 드로어 섹션 래퍼 — 공용 SubCard(ring + 16px padding + uppercase --dim 라벨) 로 5 섹션을 각각
+// 드로어 섹션 래퍼 — 공용 SubCard(ring + 16px padding + --dim 라벨) 로 5 섹션을 각각
 // 독립 면으로 분리 (1px-hairline 합쳐보임 해소 #region). SubCard 가 라벨/패딩/면 idiom 단일 소유.
 function AgentDrawerSection({ id, title, children }) {
   const { SubCard } = window.UI;
@@ -1639,12 +1638,12 @@ function getDrawerHealthVerdictAg(entry, hasSignal, failure) {
 }
 
 // 라벨/값 한 줄 — Identity·Lifecycle 의 메타 나열 공통.
-// 라벨 = proportional(mono 아님, #6a) · 값 = mono+tnum 으로 자릿수 정렬 (#5c).
+// 라벨 = proportional · 값 = sans tnum 으로 자릿수 정렬 (#5c).
 function DrawerInfoRow({ label, value, title }) {
   return (
     <div className="flex items-start justify-between gap-3 fs-body" title={title}>
       <span className="fs-meta text-faint shrink-0">{label}</span>
-      <span className="text-dim text-right min-w-0 break-words font-mono tnum">{value}</span>
+      <span className="text-dim text-right min-w-0 break-words tnum">{value}</span>
     </div>
   );
 }
@@ -1714,7 +1713,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
       )}
 
       {/* status + last-run 1 메타 라인. 설명 부재 → 같은 줄 끝에 조용한 em-dash 로 신호 (#4). */}
-      <div className="fs-meta font-mono text-dim">
+      <div className="fs-meta text-dim">
         {agent.status || 'unknown'} · last run <span title={agent.last_run_at || undefined}>{lastRun}</span>
         {!agent.description && (
           <span className="text-faint" title="No role description in the agent .md frontmatter."> · — no role description</span>
@@ -1957,8 +1956,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
             )}
             {failure.reconstructed > 0 && (
               <span
-                className="fs-meta font-mono"
-                style={{ color: 'rgb(var(--faint))' }}
+                className="fs-meta text-faint"
                 title="Harness-reconstructed records (recovery artifacts) excluded from the writer-emitted breakage headline">
                 ↺ {formatIntAg(failure.reconstructed)} reconstructed, left out of this count
               </span>
@@ -2085,8 +2083,8 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
         <DetailMetric label="Started" value={formatIntAg(startCount)}/>
         <DetailMetric label="Finished" value={formatIntAg(completedCount)}/>
       </div>
-      {/* duration triplet — 3-box grid 대신 1 mono 라인 (tnum 자릿수 정렬, #5c). */}
-      <div className="fs-meta font-mono text-dim tnum" title="avg takes in the slowest runs beyond p95, so a long tail can lift it above p95">
+      {/* duration triplet — 3-box grid 대신 1 라인 (tnum 자릿수 정렬, #5c). */}
+      <div className="fs-meta text-dim tnum" title="avg takes in the slowest runs beyond p95, so a long tail can lift it above p95">
         avg {fmtDur(row.avg_duration_sec)} · p95 {fmtDur(row.p95_duration_sec)} · max {fmtDur(row.max_duration_sec)}
       </div>
     </div>
@@ -2126,15 +2124,15 @@ function resultToneAg(result) {
 }
 
 function RecentActivityRow({ row }) {
-  const { Badge, Icon, TONE_ICON } = window.UI;
+  const { Badge, Icon, TONE_ICON, MachineString } = window.UI;
   const revision = Number(row.revision_count) || 0;
   return (
     <div className="flex items-center justify-between gap-2 py-2 fs-body">
       <div className="flex items-center gap-2 min-w-0">
         <Badge role="status" tone={resultToneAg(row.result)}>{row.result}</Badge>
-        <span className="font-mono fs-meta text-dim truncate">{row.task_type}</span>
+        <MachineString className="fs-meta text-dim truncate">{row.task_type}</MachineString>
       </div>
-      <div className="flex items-center gap-2 shrink-0 fs-meta font-mono text-faint tnum">
+      <div className="flex items-center gap-2 shrink-0 fs-meta text-faint tnum">
         {row.confidence && <span title="confidence">{row.confidence}</span>}
         {revision > 0 && (
           <span title="revision_count" className="inline-flex items-center gap-1">
@@ -2180,14 +2178,14 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
 }
 
 function MergedBreakageBody({ merged, days }) {
-  const { Icon, EmptyState } = window.UI;
+  const { Icon, EmptyState, MachineString } = window.UI;
   if (!merged || merged.total === 0) {
     return <EmptyState message={`No failed or blocked tasks in the last ${days} days`}/>;
   }
 
   return (
     <div>
-      <div className="fs-meta font-mono text-dim mb-2">
+      <div className="fs-meta text-dim tnum mb-2">
         Total {formatIntAg(merged.total)} = <span className="inline-flex items-center gap-1"><span className="text-crit inline-flex" aria-hidden="true"><Icon name="x" size={11}/></span>fail {formatIntAg(merged.failTotal)}</span> + <span className="inline-flex items-center gap-1"><span className="text-info inline-flex" aria-hidden="true"><Icon name="info" size={11}/></span>blocked {formatIntAg(merged.blockedTotal)}</span>
       </div>
       <div className="space-y-2">
@@ -2196,9 +2194,9 @@ function MergedBreakageBody({ merged, days }) {
           return (
             <div key={r.category} className="fs-body">
               <div className="flex justify-between mb-1">
-                <span className="font-mono">{r.category}</span>
+                <MachineString>{r.category}</MachineString>
                 <span
-                  className="font-mono text-dim tnum"
+                  className="text-dim tnum"
                   title={`fail ${r.failCount} + blocked ${r.blockedCount}`}>
                   {r.count} · {pct.toFixed(0)}%
                 </span>
@@ -2241,12 +2239,12 @@ function mergeBreakageReasons(failData, blockedData) {
   return { reasons, failTotal, blockedTotal, total: failTotal + blockedTotal };
 }
 
-// Drawer metric — label over a mono value, flat on its section (no card inside the section card); hero enlarges the value only.
+// Drawer metric — label over a sans tnum value, flat on its section (no card inside the section card); hero enlarges the value only.
 function DetailMetric({ label, value, tone = '', hero = false }) {
   return (
     <div className="flex flex-col py-1">
       <div className="fs-meta text-faint min-h-[2.5em] leading-tight">{label}</div>
-      <div className={`font-mono font-semibold mt-0.5 tnum ${hero ? 'hero-stat' : 'fs-title'} ${tone}`}>{value}</div>
+      <div className={`font-semibold mt-0.5 tnum ${hero ? 'hero-stat' : 'fs-title'} ${tone}`}>{value}</div>
     </div>
   );
 }
@@ -2318,7 +2316,7 @@ function SuccessRateMatrixTable({ matrix }) {
     <>
       <SuccessRateLegend/>
       <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Success rate per agent and task type — scrolls sideways">
-        <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+        <table className="w-full fs-meta tnum" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead className="tbl-head">
             <tr>
               <th
@@ -2348,19 +2346,18 @@ function SuccessRateMatrixTable({ matrix }) {
 }
 
 function SuccessRateMatrixRow({ agent, cells }) {
-  // unknown row = PG fallback (legacy/deprecated) — opacity + sunken bg + italic 라벨로 시각 분리.
+  // unknown row = PG fallback (legacy/deprecated) — sunken bg + dim 라벨로 시각 분리.
   const isUnknownAgent = agent === UNKNOWN_AGENT_ID;
   const labelCellBg = isUnknownAgent ? 'rgb(var(--sunken))' : 'rgb(var(--elev))';
   return (
     <tr
-      style={isUnknownAgent ? { opacity: 0.65 } : undefined}
       aria-label={isUnknownAgent ? UNKNOWN_AGENT_TITLE : undefined}>
       <td
         className="text-ink px-2 py-1.5 border-b border-line truncate"
         style={{ position: 'sticky', left: 0, background: labelCellBg, maxWidth: 200 }}
         title={isUnknownAgent ? UNKNOWN_AGENT_TITLE : agent}>
         {isUnknownAgent
-          ? <span className="text-dim italic">{UNKNOWN_AGENT_LABEL}</span>
+          ? <span className="text-dim">{UNKNOWN_AGENT_LABEL}</span>
           : <window.UI.AgentName name={agent}/>}
       </td>
       {TASK_TYPE_COLUMNS.map((c) => (
@@ -2479,7 +2476,7 @@ function SuccessRateSparkline({ points, colorVar, name }) {
 // 매트릭스 companion — 합산 성공률 < threshold 쌍만 노출 → 대부분 green 이어도 action item 가시 유지 (research R2).
 
 // Ledger `.tbl th` face for the dense mono tables → one header idiom per page.
-const HEAD_FACE = 'font-sans uppercase tracking-wider fs-meta text-dim font-medium';
+const HEAD_FACE = 'font-sans fs-meta text-dim font-medium';
 // TABLE carries its own cell geometry → the hand-rolled tables off the shared Table
 const HEAD = { FACE: HEAD_FACE, CLASS: { TABLE: `${HEAD_FACE} px-2 border-b border-line` } };
 
@@ -2551,7 +2548,7 @@ function TopNFailingAgentsBody({ failures, state, days, onRetry, pairs, failureB
         <Badge role="status" tone="ok" icon>
           Every (agent, task_type) success_rate ≥ {(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}%
         </Badge>
-        <div className="fs-meta text-faint mt-3 font-mono">
+        <div className="fs-meta text-faint mt-3">
           Nothing under the threshold in the last <window.UI.NoWrap>{days} days</window.UI.NoWrap>
         </div>
       </div>
@@ -2738,7 +2735,7 @@ function QualityHealthTimeline({ failures, state, onRetry }) {
   return (
     <>
       <div className="flex items-baseline gap-3 mb-2 flex-wrap flex-shrink-0">
-        <div className="font-mono fs-stat font-semibold tracking-tight">
+        <div className="fs-stat font-semibold tnum">
           {formatIntAg(totalFlagged)}
         </div>
         {/* 합산 발생률 (총 flag ÷ 총 event) — 일별 비율 평균 아님 → '평균' 라벨 금지 (A5). */}

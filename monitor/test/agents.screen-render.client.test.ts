@@ -2090,6 +2090,42 @@ test("a drawer activity row and the drawer empty note draw no box", async () => 
   }
 });
 
+test("an unidentified agent reads its label dim in upright type, the row at full opacity", async () => {
+  const rows = [
+    { name: "ledger row", atom: "AgentSummaryRow", props: { agent: { agent_id: "unknown", agent_name: "unknown", status: "active", runs: 12 }, days: 30, isSelected: false, onSelect: () => {}, trend: null, failure: null, overage: null } },
+    { name: "task-type matrix row", atom: "SuccessRateMatrixRow", props: { agent: "unknown", cells: {} } },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent(row.atom, row.props);
+    const label = findNodes(tree, (n) => collectText(n).trim() === "Unidentified (old)" && typeof n.props?.className === "string").at(-1); // innermost node holding the label
+    assert.ok(label, `${row.name}: renders the unidentified label`);
+    assert.match(String(label.props.className), /\btext-dim\b/, `${row.name}: label in dim ink`);
+    assert.doesNotMatch(String(label.props.className), /\bitalic\b/, `${row.name}: label upright`);
+    const faded = findNodes(tree, (n) => (n.props?.style as Record<string, unknown> | undefined)?.opacity != null);
+    assert.deepEqual(faded.map((n) => n.type), [], `${row.name}: no faded row hides its numbers`);
+  }
+});
+
+test("a machine string reads through the mono atom and every other agents string in sans, sentence case and upright", async () => {
+  const TYPE_TROPE = /(^|\s)(font-mono|uppercase|italic|tracking-[a-z]+)(\s|$)/;
+  const rows = [
+    { name: "drawer activity row", atom: "RecentActivityRow", props: { row: { result: "done", task_type: "feature", confidence: "high", revision_count: 2, record_ts: "2026-10-04T00:00:00Z" } }, machine: ["feature"] },
+    { name: "failure-cause split", atom: "MergedBreakageBody", props: { merged: { total: 5, failTotal: 3, blockedTotal: 2, reasons: [{ category: "timeout", count: 5, failCount: 3, blockedCount: 2 }] }, days: 30 }, machine: ["timeout"] },
+    { name: "delete confirm", atom: "AgentDeleteConfirmPanel", props: { agentName: "glass-atrium-dev-node", value: "", committing: false, error: null, onChange: () => {} }, machine: ["glass-atrium-dev-node"] },
+    { name: "drawer metric", atom: "DetailMetric", props: { label: "Runs", value: "1,284" }, machine: [] },
+    { name: "drawer info row", atom: "DrawerInfoRow", props: { label: "last active", value: "3h ago" }, machine: [] },
+    { name: "latency bars", atom: "LatencyBars", props: { agents: [{ agent_id: "glass-atrium-dev-node", agent_name: "glass-atrium-dev-node", p50_ms: 1_000, p95_ms: 2_000, p99_ms: 3_000 }] }, machine: [] },
+    { name: "breaker alarm row", atom: "AgentAlarmRow", props: { alarm: { agent: "glass-atrium-dev-node", consecutive_fails: 3, suspended_at: null } }, machine: [] },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent(row.atom, row.props);
+    const tropes = findNodes(tree, (n) => TYPE_TROPE.test(String(n.props?.className ?? "")));
+    assert.deepEqual(tropes.map((n) => n.props.className), [], `${row.name}: no mono, caps, tracking or italic class`);
+    const machine = [...new Set(findAtoms(tree, "MachineString").map((n) => collectText(n).trim()))];
+    assert.deepEqual(machine, row.machine, `${row.name}: machine strings on the atom`);
+  }
+});
+
 test("a run's rework count reads in the row meta tier, its warn tone on a glyph alone", async () => {
   const rows = [
     { name: "a reworked run", revision_count: 2, hasMark: true },
