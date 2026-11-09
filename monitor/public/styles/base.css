@@ -65,8 +65,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	color: rgb(var(--selected-ink));
 }
 
-/* page header — top-aligned row; the h1 line box is one control height, so the controls and the
-   freshness line center on the title line with or without a sub-line. Narrow → the cluster wraps below the title. */
+/* page header — one line box: the h1 line is one control height, so back link, status and the cluster center on it.
+   Too narrow → the cluster wraps to a second line, its auto start margin keeping it right-aligned. */
 .page-head {
 	display: flex;
 	flex-wrap: wrap;
@@ -78,9 +78,12 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .page-head-title {
 	line-height: var(--ctl-min-h);
 }
-/* the h1 takes focus on a route change → the sub-line starts past the focus ring's reach */
-.page-head-sub {
-	margin-top: max(var(--space-1), calc(var(--focus-ring-width) + var(--focus-ring-offset)));
+.page-head-lead {
+	min-width: 0;
+	min-height: var(--ctl-min-h);
+	display: flex;
+	align-items: center;
+	column-gap: var(--space-3);
 }
 /* actions group ↔ status group 24; inside a group 12 (freshness · range · refresh) */
 .page-head-cluster,

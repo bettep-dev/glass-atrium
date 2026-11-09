@@ -1547,16 +1547,15 @@ function DetailField({ label, value, mono = false }) {
  * @param back - back link of a detail page, before the h1 · @param status - the record's status pill, after the h1
  * @param primary - the page's one primary button, right-most
  */
-function PageHeader({ title, sub, back, status, actions, freshness, range, refresh, primary }) {
-  const hasSub = sub && sub !== title;
+// O5 one line box: back · h1 · status left, the cluster right; no sub-line (a caller's `sub` renders nothing)
+function PageHeader({ title, back, status, actions, freshness, range, refresh, primary }) {
   const hasStatus = Boolean(freshness || range || refresh);
   const hasCluster = Boolean(actions || hasStatus || primary);
   return <div className="page-head">
-    <div className="min-w-0">
+    <div className="page-head-lead">
       {back}
       <h1 className="page-head-title fs-display font-semibold">{title}</h1>
       {status}
-      {hasSub && <div className="page-head-sub fs-meta font-mono text-faint tracking-wider uppercase">{sub}</div>}
     </div>
     {hasCluster && <div className="page-head-cluster">
       {actions && <div className="page-head-group">{actions}</div>}

@@ -1,4 +1,4 @@
-// Display atoms measured in a real browser: a card's bars on one inline column per side, the current-page look and the stat row's hairlines.
+// Display atoms measured in a real browser: the page header's line box, a card's bars on one inline column per side, the current-page look and the stat row's hairlines.
 // Runner: npx tsx --test test/ui.display-atoms.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -34,9 +34,18 @@ const statRow = renderToStaticMarkup(h(UI.StatRow, { stats: [
   { label: "Runs", value: "1,284", href: "#/runs" },
   { label: "Median run", value: "38", unit: "s" },
 ] }));
+const getHeader = (id: string, title: string) => renderToStaticMarkup(h("div", { id }, h(UI.PageHeader, {
+  title,
+  sub: "retired sub-line",
+  back: h(UI.Link, { href: "#/agents" }, "Agents"),
+  status: h(UI.Badge, { role: "status", tone: "warn" }, "Draft"),
+  freshness: h("span", { className: "fs-meta" }, "read 2m ago"),
+  refresh: h(UI.RefreshButton, { onRefresh: noop }),
+  primary: h("button", { type: "button", className: "btn" }, "Save"),
+})));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
-const PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px; width: 900px;">${card}</div><div style="padding: 24px; width: 900px;">${statRow}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span></body></html>`;
+const PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div style="padding: 24px; width: 900px;">${statRow}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -107,4 +116,45 @@ describe("the stat row", () => {
       assert.ok(stats.every((stat) => stat.background === "rgba(0, 0, 0, 0)" && stat.shadow === "none"), "no stat draws a tile");
     });
   }
+});
+
+describe("the page header", () => {
+  // no named helper inside the evaluated function — the test transform wraps named functions in a `__name` call the page lacks
+  const getLine = async (id: string) => {
+    const { boxes, controls, text } = await page.$eval(`#${id}`, (root) => {
+      const head = root.querySelector(".page-head")!;
+      const parts = [head, head.querySelector(".page-head-lead")!, head.querySelector("h1")!, head.querySelector(".page-head-cluster")!];
+      const lead = [...parts[1].children];
+      const right = [...head.querySelectorAll(".page-head-group > *, .page-head-cluster > .btn")];
+      return {
+        boxes: parts.map((el) => el.getBoundingClientRect().toJSON() as DOMRect),
+        controls: [...lead, ...right].map((el) => el.getBoundingClientRect().toJSON() as DOMRect),
+        text: head.textContent ?? "",
+      };
+    });
+    const [head, lead, title, cluster] = boxes;
+    return { head, lead, title, cluster, controls, text };
+  };
+
+  for (const width of [1440, 1024]) {
+    test(`at ${width}px back link, h1, status and the right group share the title's one line box`, async () => {
+      await page.setViewportSize({ width, height: 900 });
+      const line = await getLine("head-wide");
+      const center = line.title.top + line.title.height / 2;
+
+      assert.ok(line.controls.length >= 5, `${line.controls.length} controls measured`);
+      for (const box of line.controls) assert.ok(Math.abs(box.top + box.height / 2 - center) < 1, `a control centers ${box.top + box.height / 2 - center}px off the title line`);
+      assert.ok(Math.abs(line.head.height - line.title.height) < 1, `header ${line.head.height}px for a ${line.title.height}px title line`);
+      assert.doesNotMatch(line.text, /retired sub-line/, "nothing follows the h1 below it");
+    });
+  }
+
+  test("a right group that cannot fit lands on a second line, right-aligned", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const line = await getLine("head-narrow");
+    const ends = line.controls.slice(-1)[0];
+
+    assert.ok(line.cluster.top >= line.lead.bottom - 1, `cluster top ${line.cluster.top} vs lead bottom ${line.lead.bottom}`);
+    assert.ok(Math.abs(line.cluster.right - line.head.right) < 1 && Math.abs(ends.right - line.head.right) < 1, `cluster ends ${line.head.right - line.cluster.right}px, last control ${line.head.right - ends.right}px from the edge`);
+  });
 });
