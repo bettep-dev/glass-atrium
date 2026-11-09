@@ -68,7 +68,7 @@
   };
 </script>
 <link rel="stylesheet" href="styles/tokens.css?v=8" />
-<link rel="stylesheet" href="styles/base.css?v=15" />
+<link rel="stylesheet" href="styles/base.css?v=16" />
 <!-- 스크립트 이전 첫 페인트 = 다크 기본 표면 (Tailwind CDN 의 bg-surface 는 런타임 생성이라 늦다) — Tweaks 가 마운트 후 사용자 테마로 덮는다 -->
 <style>html, body { background: rgb(var(--surface)); }</style>
 <!-- Mermaid 11.15.0 — native flowchart rendering, dagre layout 내장. 옵시디언 system-diagrams.md 의 mermaid 블록을 백엔드(/api/architecture/diagrams.mermaid_source)가 그대로 전달, 프론트는 mermaid.render() 로 SVG 변환. 버전은 package.json 의존성과 정확히 같은 값으로 고정 — 뜬 태그(`mermaid@11`)는 CDN 이 패치를 낼 때마다 뷰어 엔진을 말없이 바꿔, 내보내기가 주입하는 번들과 같은 소스를 다른 폭으로 눕힌다(대조: test/mermaid-config.parity.test.ts). -->

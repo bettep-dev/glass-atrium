@@ -1391,13 +1391,13 @@ function Link({ href, className = '', children, ...props }) {
   </a>;
 }
 
-// Free-text filter on a bar: the sunken fill carries the field's focus ring.
+// Free-text filter on a bar: the sunken fill carries the field's focus ring; a <label> fill → a press on the icon or padding focuses the field.
 function BarSearch({ label, value, onChange, placeholder, className = '' }) {
-  return <div className={`bar-search ${className}`.trim()}>
+  return <label className={`bar-search ${className}`.trim()}>
     <Icon name="search" size={14} />
     <input type="search" className="bar-search-field" aria-label={label} value={value} placeholder={placeholder}
       onChange={(event) => onChange(event.target.value)} />
-  </div>;
+  </label>;
 }
 
 /**
@@ -2603,7 +2603,7 @@ window.UI = {
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
-  Segmented, Tabs, getTabPanelProps, getMenuKeyAction, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString,
+  Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,

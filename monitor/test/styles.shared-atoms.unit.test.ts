@@ -145,7 +145,7 @@ test("a pressed toggle keeps its fill and draws an ink edge, never the selected-
 });
 
 test("a selected segment is a raised thumb on the control edge, on a track with no outer edge", () => {
-  for (const selector of ['.seg button[aria-pressed="true"]', ".seg button.active"]) {
+  for (const selector of ['.seg button[aria-pressed="true"]', '.seg button[aria-checked="true"]', ".seg button.active"]) {
     const body = getRuleBodies(BASE_CSS, selector).join(";");
     assert.match(body, /background:\s*rgb\(var\(--surface-raised-2\)\)/, `${selector} thumb`);
     assert.match(body, /box-shadow:\s*inset 0 0 0 1px rgb\(var\(--control-edge\)\)/, `${selector} edge`);

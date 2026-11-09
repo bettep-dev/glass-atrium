@@ -644,26 +644,14 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	margin-inline-start: calc(var(--space-1_5) - var(--gap-label-inline));
 }
 
-/* menu — the one menu surface (filter trigger, row-action overflow): label-only items on the card inset and the list gap */
+/* menu — the one menu surface (filter trigger, row-action overflow): label-only items on the card inset and the list gap; overlay surface shared with .popover-panel */
 .menu {
 	--menu-check-w: 1em;
 	position: absolute;
 	top: calc(100% + var(--space-1));
 	left: 0;
-	z-index: calc(var(--z-overlay) - 1);
 	min-width: 100%;
 	width: max-content;
-	max-width: min(360px, calc(100vw - 32px));
-	max-height: 60vh;
-	overflow: auto;
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-list);
-	padding: var(--card-pad);
-	background: rgb(var(--overlay-surface));
-	border: 1px solid rgb(var(--line));
-	border-radius: var(--radius-card);
-	box-shadow: var(--shadow-overlay);
 }
 /* every checkable item holds the ✓ slot → checked and unchecked labels start on one column */
 .menu-item {
@@ -712,6 +700,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 }
 .bar-search-field {
 	flex: 1;
+	align-self: stretch; /* the field fills the 32px fill → the operable target is the whole height */
 	min-width: 0;
 	padding: 0;
 	font-size: var(--fs-control);
@@ -1233,12 +1222,10 @@ button.kpi:hover {
 .card:has(.menu) {
 	overflow: visible;
 }
-.popover-panel {
-	position: absolute;
-	top: calc(100% + 4px);
-	right: 0;
+/* one overlay surface for the popover and the menu → the two cannot drift */
+.popover-panel,
+.menu {
 	z-index: calc(var(--z-overlay) - 1);
-	min-width: 240px;
 	max-width: min(360px, calc(100vw - 32px));
 	max-height: 60vh;
 	overflow: auto;
@@ -1250,6 +1237,12 @@ button.kpi:hover {
 	border: 1px solid rgb(var(--line));
 	border-radius: var(--radius-card);
 	box-shadow: var(--shadow-overlay);
+}
+.popover-panel {
+	position: absolute;
+	top: calc(100% + 4px);
+	right: 0;
+	min-width: 240px;
 }
 
 .detail-panel {

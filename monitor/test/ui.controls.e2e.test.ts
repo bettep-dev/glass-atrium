@@ -198,15 +198,13 @@ describe("filter trigger — menu-button contract", () => {
 });
 
 describe("filter bar reset", () => {
-  test("at defaults the reset is hidden and out of the Tab order, its slot kept", async () => {
+  test("at defaults the reset is hidden and out of the Tab order", async () => {
     const page = await openFixture("filters");
     const reset = page.locator("#fixture button", { hasText: "Reset filters" });
-    const box = await reset.boundingBox();
     await resultTrigger(page).focus();
     await page.keyboard.press("Tab");
 
     assert.equal(await reset.evaluate((el) => getComputedStyle(el).visibility), "hidden");
-    assert.ok(box !== null && box.width > 0, "the hidden reset still holds its width");
     assert.equal((await readFocused(page)).id, "after");
     await page.close();
   });
@@ -224,6 +222,25 @@ describe("filter bar reset", () => {
     assert.equal(visibility, "visible");
     assert.equal((await showTrigger(page).textContent())?.trim(), "ShowClosed");
     assert.equal(await showTrigger(page).evaluate((el) => el === document.activeElement), true);
+    await page.close();
+  });
+
+  test("the hidden reset holds the box it shows in, so its neighbours stay still", async () => {
+    const page = await openFixture("filters");
+    const reset = "#fixture .filter-bar button:not([aria-haspopup])";
+    // offsets from the bar's own corner → the app loading above the fixture cannot move the frame
+    const readLayout = () => page.locator("#fixture .filter-bar").evaluate((bar) => {
+      const frame = bar.getBoundingClientRect();
+      const boxes = [bar.querySelector("button:not([aria-haspopup])"), document.getElementById("after")].map((el) => (el as HTMLElement).getBoundingClientRect());
+      return [frame.width, frame.height, ...boxes.flatMap((box) => [box.left - frame.left, box.top - frame.top, box.width, box.height])];
+    });
+    const atDefaults = await readLayout();
+    await openShowMenu(page);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+
+    assert.equal(await page.locator(reset).evaluate((el) => getComputedStyle(el).visibility), "visible");
+    assert.deepEqual(await readLayout(), atDefaults);
     await page.close();
   });
 });
@@ -251,6 +268,20 @@ describe("roving choice sets: one Tab stop on the chosen item, an arrow chooses 
     });
   }
 
+  test("only the selected tab reads in ink over a 2px inset underline", async () => {
+    const page = await openFixture("views");
+    const ink = await page.evaluate(() => `rgb(${getComputedStyle(document.documentElement).getPropertyValue("--ink").trim().split(/\s+/).join(", ")})`);
+    const looks = await page.locator('#fixture [role="tab"]').evaluateAll((nodes) => nodes.map((node) => ({
+      selected: node.getAttribute("aria-selected"), color: getComputedStyle(node).color, shadow: getComputedStyle(node).boxShadow })));
+
+    for (const look of looks) {
+      const isSelected = look.selected === "true";
+      assert.equal(look.shadow, isSelected ? `${ink} 0px -2px 0px 0px inset` : "none", `tab selected=${look.selected} underline`);
+      assert.equal(look.color === ink, isSelected, `tab selected=${look.selected} colour ${look.color}`);
+    }
+    await page.close();
+  });
+
   test("each tab controls the one panel, which names the chosen tab", async () => {
     const page = await openFixture("views");
     const tab = page.locator('#fixture [role="tab"][aria-selected="true"]');
@@ -277,6 +308,7 @@ const CONTROL_ROWS: Array<{ name: string; fixture: FixtureKind; selector: string
   { name: "tab", fixture: "views", selector: '#fixture [role="tab"][aria-selected="false"]' },
   { name: "quiet button", fixture: "atoms", selector: "#fixture button" },
   { name: "form select", fixture: "atoms", selector: "#fixture select" },
+  { name: "bar search field", fixture: "atoms", selector: "#fixture .bar-search-field" },
 ];
 
 describe("controls: one box in every state, a 24px+ target", () => {
@@ -388,27 +420,6 @@ describe("menu surface on role tokens", () => {
   });
 });
 
-describe("filter bar reset slot", () => {
-  test("the hidden reset holds the box it shows in, so its neighbours stay still", async () => {
-    const page = await openFixture("filters");
-    const reset = "#fixture .filter-bar button:not([aria-haspopup])";
-    // offsets from the bar's own corner → the app loading above the fixture cannot move the frame
-    const readLayout = () => page.locator("#fixture .filter-bar").evaluate((bar) => {
-      const frame = bar.getBoundingClientRect();
-      const boxes = [bar.querySelector("button:not([aria-haspopup])"), document.getElementById("after")].map((el) => (el as HTMLElement).getBoundingClientRect());
-      return [frame.width, frame.height, ...boxes.flatMap((box) => [box.left - frame.left, box.top - frame.top, box.width, box.height])];
-    });
-    const atDefaults = await readLayout();
-    await openShowMenu(page);
-    await page.keyboard.press("ArrowDown");
-    await page.keyboard.press("Enter");
-
-    assert.equal(await page.locator(reset).evaluate((el) => getComputedStyle(el).visibility), "visible");
-    assert.deepEqual(await readLayout(), atDefaults);
-    await page.close();
-  });
-});
-
 describe("markup-only atoms", () => {
   test("a link is named by its text alone and draws no box", async () => {
     const page = await openFixture("atoms");
@@ -428,6 +439,14 @@ describe("markup-only atoms", () => {
 
     assert.equal(await field.evaluate((el) => el === document.activeElement), true);
     assert.equal(ring, "solid");
+    await page.close();
+  });
+
+  test("a press on the bar search fill outside the field focuses the field", async () => {
+    const page = await openFixture("atoms");
+    await page.locator("#fixture .bar-search svg").click();
+
+    assert.equal(await page.locator("#fixture .bar-search-field").evaluate((el) => el === document.activeElement), true);
     await page.close();
   });
 
