@@ -173,6 +173,11 @@ test("detail sections fold behind an h2 in their summary; status sections render
     const summary = findNodes(tree, (n) => n.type === "summary").find((s) => findNodes(s, (n) => n === heading).length > 0);
     assert.ok(summary, `${row.name} keeps its h2 inside the toggling summary`);
     assert.equal((summary?.children[0] as RenderedNode).type, "DisclosureChevron", `${row.name} keeps the chevron first`);
+    const [card] = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("card"));
+    assert.equal(findNodes(card ?? null, (n) => n.type === "details").length, 1, `${row.name}'s fold is itself the card`);
+    for (const node of findNodes(card ?? null, () => true).filter((n) => n !== card)) {
+      assert.doesNotMatch(classOf(node), /(^|\s)(border|bg-sunken|rounded-md)(\s|$)/, `${row.name} draws no second box inside its card`);
+    }
   }
 });
 
@@ -396,7 +401,39 @@ test("the run table sits in page scroll with a caption and scoped column heads",
     const style = (node.props.style ?? {}) as Record<string, unknown>;
     assert.equal(style.maxHeight, undefined, "no inner vertical scroller clips the rows");
     assert.doesNotMatch(classOf(node), /overflow-y-auto|max-h-/, "no inner vertical scroller clips the rows");
+    assert.doesNotMatch(classOf(node), /overflow-x-auto|\bborder\b|rounded-md/, "the Table's own wrapper is the only box");
   }
+});
+
+// Table is a stub atom here → its row function renders against a wide view
+function renderRunRowsOf(mod: ScreenModule, reports: unknown[]): RenderedNode | string | null {
+  const [table] = findNodes(renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports })), (n) => n.props.atom === "Table");
+  // the stub's createElement keeps children as an array → the one child is the row function
+  const [rows] = [table.props.children].flat() as Array<(view: unknown) => unknown>;
+  return renderScreen(mod.React.createElement("tbody", null, rows({ isStacked: false, columnCount: 5 })));
+}
+
+test("a run's status reads as a tone glyph and a word, never a pill", async () => {
+  const mod = await loadWikiScreen();
+  const tbody = renderRunRowsOf(mod, [{ run_date: "2026-09-24", status: "fail", deadlinks_count: 0, dedup_count: 0 }]);
+  const [status] = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Status");
+  const [glyph] = findNodes(status, (n) => n.props["aria-hidden"] === "true");
+  assert.match(classOf(glyph), /\btext-crit\b/, "the glyph carries the tone");
+  assert.match(collectText(status), /Failed/, "the word names the state");
+  assert.equal(findNodes(tbody, (n) => n.props.atom === "Badge" || /\bpill\b/.test(classOf(n))).length, 0);
+});
+
+test("an unrecorded run cell reads None in faint ink, never a blank or a dash", async () => {
+  const mod = await loadWikiScreen();
+  const tbody = renderRunRowsOf(mod, [{ run_date: "2026-09-24", status: "ok", deadlinks_count: null, dedup_count: 3 }]);
+  const cells = findNodes(tbody, (n) => n.props.atom === "TableCell");
+  const byLabel = (label: string) => cells.find((c) => c.props.label === label) ?? null;
+  for (const label of ["Broken links", "Started"]) {
+    const [none] = findNodes(byLabel(label), (n) => collectText(n) === "None" && n.type === "span");
+    assert.match(classOf(none), /\btext-faint\b/, `${label} reads None in faint ink`);
+  }
+  assert.equal(collectText(byLabel("Duplicates")), "3", "a recorded count reads as itself");
+  assert.doesNotMatch(collectText(tbody), /\u2014/, "no dash stands in for a value");
 });
 
 const ERRORED = { status: "error", data: null, error: "boom" };
@@ -486,8 +523,7 @@ test("the per-run table gives every run its own row, unchanged runs included", a
   const mod = await loadWikiScreen();
   const dates = ["2026-09-24", "2026-09-23", "2026-09-22"];
   const reports = dates.map((run_date) => ({ run_date, status: "ok", deadlinks_count: 0, dedup_count: 3 }));
-  const tree = renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports }));
-  const rows = findNodes(tree, (n) => n.type === "tr");
+  const rows = findNodes(renderRunRowsOf(mod, reports), (n) => n.props.atom === "TableRow");
   assert.deepEqual(rows.map((row) => dates.find((d) => collectText(row).includes(d))), dates);
 });
 
@@ -550,6 +586,23 @@ test("wiki text never uses the retired micro type step and words are never set i
   assert.deepEqual(words.filter((w) => !seen.has(w)), [], "every listed word renders, so the mono check ran for each");
 });
 
+test("figures read in sans and only note slugs ride the machine-string atom", async () => {
+  const mod = await loadWikiScreen();
+  const { createElement } = mod.React;
+  const notes = renderScreen(createElement(mod.WikiNotesByTypeSection, { state: { status: "ready", error: null, data: { by_type: [{ note_type: "raw", count: 1204 }] } }, onRetry: () => {} }));
+  const proposal = { cluster_hash: "c1", target_slug: "agent-routing", source_slugs: ["routing-confidence"], similarity_score: 0.91 };
+  const item = renderScreen(createElement(mod.MergeSuggestionItem, { proposal }));
+  const machine = findNodes(item, (n) => n.props.atom === "MachineString").map(collectText);
+
+  assert.deepEqual(machine, ["agent-routing", "routing-confidence"], "the target and source slugs are machine strings");
+  for (const tree of [notes, item]) {
+    for (const node of findNodes(tree, () => true)) assert.doesNotMatch(classOf(node), /\bfont-mono\b/, "mono only through the atom");
+  }
+  const figures = findNodes(notes, (n) => ["1,204", "100%"].includes(collectText(n)) && n.type === "span");
+  assert.equal(figures.length, 2, "both figures render");
+  for (const figure of figures) assert.match(classOf(figure), /\btabular-nums\b/, "a figure aligns on sans tabular digits");
+});
+
 test("cyan tints no wiki text: the similarity reads as a figure and the lane stays uncoloured", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
@@ -569,7 +622,7 @@ test("cyan tints no wiki text: the similarity reads as a figure and the lane sta
 
 test("the window control rides the per-run table fold and never the open trend", async () => {
   const mod = await loadWikiScreen();
-  const control = (tree: RenderedNode | string | null) => findNodes(tree, (n) => n.props["aria-label"] === "Run table time range");
+  const control = (tree: RenderedNode | string | null) => findNodes(tree, (n) => n.props.atom === "Segmented" && n.props.label === "Run table time range");
   assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING))).length, 1);
   assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunHistorySection as Component, RUN_HISTORY_LOADING))).length, 0);
 });

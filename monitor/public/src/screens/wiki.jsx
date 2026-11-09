@@ -10,10 +10,10 @@ const {
 const WIKI_CYCLE_DAYS = 30;
 
 // 실행 표 기간 allowlist — server allowlist 와 정합 (routes/health.ts).
-const WIKI_REPORT_DAYS_OPTIONS = [
-	{ value: 7, label: "7d" },
-	{ value: 30, label: "30d" },
-	{ value: 90, label: "90d" },
+const WIKI_REPORT_DAYS_CHOICES = [
+	{ key: 7, label: "7d" },
+	{ key: 30, label: "30d" },
+	{ key: 90, label: "90d" },
 ];
 
 // 희소 데이터 공용 임계 — 비0 포인트가 이 값 미만이면 넓은 빈 차트 대신 compact stat 으로 대체 (A4 통일).
@@ -86,9 +86,6 @@ function ScreenWiki() {
 			<style>{`
         /* 상태 막대 셀 — status mix 비율 바 (0폭 셀도 보더 유지하지 않도록 min-w 0). */
         .w-mix-cell { min-width: 0; }
-        /* per-run 보고 표 — 읽기 전용 RECORD(상세 드로어 없음) → .tbl 기본 pointer 커서/hover 무력화 (가짜 인터랙션 암시 방지). */
-        .w-report-tbl tbody tr { cursor: default; }
-        .w-report-tbl tbody tr:hover { background: transparent; }
         /* fold summary = one full-width disclosure row (label left, count at the far end) → block flex over the atom's inline-flex */
         .w-disclosure > summary { display: flex; }
         /* base.css tints only status tones → a parked (neutral) glyph recedes locally. */
@@ -1033,23 +1030,13 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 				<CardInfo label="How a change is counted" describedBy={`${WIKI_REGION_IDS.runTable}-title`}>
 					A change is a run whose status or backlog differs from the run before.
 				</CardInfo>
-				<div
-					className="seg ml-auto"
-					role="group"
-					aria-label="Run table time range"
-				>
-					{WIKI_REPORT_DAYS_OPTIONS.map((p) => (
-						<button
-							key={p.value}
-							type="button"
-							className={days === p.value ? "active" : ""}
-							aria-pressed={days === p.value}
-							onClick={() => onChangeDays(p.value)}
-						>
-							{p.label}
-						</button>
-					))}
-				</div>
+				<window.UI.Segmented
+					label="Run table time range"
+					options={WIKI_REPORT_DAYS_CHOICES}
+					value={days}
+					onChange={onChangeDays}
+					className="ml-auto"
+				/>
 			</div>
 			<WikiReportsBody state={reportState} days={days} shared={shared} onRetry={onRetry} />
 		</WikiDisclosureW>
@@ -1117,20 +1104,23 @@ function WikiDisclosureW({
 		if (isAlerting) setAlerted(true);
 	}, [isAlerting]);
 
+	// The fold is itself the card (spec §6) → its body holds content directly, never a second box.
 	return (
-		<details
-			id={id}
-			open={hasAlerted || undefined}
-			onFocus={id ? openOnOwnFocusW : undefined}
-			className="w-disclosure rounded-md border border-line bg-sunken"
-		>
-			<summary className="group disclosure select-none px-3 flex-wrap">
-				<window.UI.DisclosureChevron />
-				<h2 id={id ? `${id}-title` : undefined} className="m-0 fs-body text-ink font-medium">{label}</h2>
-				<span className="ml-auto fs-meta text-dim">{count}</span>
-			</summary>
-			<div className={bodyClassName}>{children}</div>
-		</details>
+		<div className="card">
+			<details
+				id={id}
+				open={hasAlerted || undefined}
+				onFocus={id ? openOnOwnFocusW : undefined}
+				className="w-disclosure"
+			>
+				<summary className="group disclosure select-none px-3 flex-wrap">
+					<window.UI.DisclosureChevron />
+					<h2 id={id ? `${id}-title` : undefined} className="m-0 fs-body text-ink font-medium">{label}</h2>
+					<span className="ml-auto fs-meta text-dim">{count}</span>
+				</summary>
+				<div className={bodyClassName}>{children}</div>
+			</details>
+		</div>
 	);
 }
 
@@ -1181,8 +1171,8 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 								<span className="w-type-track" aria-hidden="true">
 									<span className="w-type-fill" style={{ width: `${t.share}%` }} />
 								</span>
-								<span className="font-mono text-ink text-right">{formatCountW(t.count)}</span>
-								<span className="font-mono text-faint text-right">{`${t.pct}%`}</span>
+								<span className="text-ink text-right tabular-nums">{formatCountW(t.count)}</span>
+								<span className="text-faint text-right tabular-nums">{`${t.pct}%`}</span>
 							</li>
 						))}
 					</ul>
@@ -1411,15 +1401,15 @@ function computeStatusMix(rows) {
 function BacklogExplorer({ label, count, payload }) {
 	return (
 		<WikiDisclosureW label={label} count={count}>
-			<pre className="fs-meta font-mono text-dim whitespace-pre-wrap break-words m-0 max-h-64 overflow-y-auto">
-				{stringifyPayloadW(payload)}
+			<pre className="fs-meta text-dim whitespace-pre-wrap m-0 max-h-64 overflow-y-auto">
+				<window.UI.MachineString>{stringifyPayloadW(payload)}</window.UI.MachineString>
 			</pre>
 		</WikiDisclosureW>
 	);
 }
 
 function MergeSuggestionItem({ proposal }) {
-	const { Icon } = window.UI;
+	const { Icon, MachineString } = window.UI;
 
 	const target = proposal.target_slug || "—";
 	const sources = Array.isArray(proposal.source_slugs)
@@ -1433,14 +1423,14 @@ function MergeSuggestionItem({ proposal }) {
 
 	return (
 		<li className="border-b border-line last:border-b-0 py-2">
-			<div className="flex items-baseline gap-2 flex-wrap fs-meta font-mono">
-				<span className="text-ink font-medium break-words min-w-0">{target}</span>
+			<div className="flex items-baseline gap-2 flex-wrap fs-meta">
+				<MachineString className="text-ink font-medium min-w-0">{target}</MachineString>
 				<span className="inline-flex items-center text-faint">
 					<Icon name="arrow-left" size={12} />
 					{/* the arrow glyph is aria-hidden → direction needs a text equivalent per row */}
 					<span className="sr-only">{" absorbs "}</span>
 				</span>
-				<span className="text-dim break-words min-w-0">{sources}</span>
+				<MachineString className="text-dim min-w-0">{sources}</MachineString>
 				{similarity && <span className="ml-auto text-dim">{similarity}</span>}
 			</div>
 			{action && (
@@ -1525,62 +1515,47 @@ const WIKI_REPORT_COLUMNS = [
 	{ key: "started", label: "Started" },
 ];
 
-// Rows flow in page scroll; the wrapper only scrolls sideways on a narrow pane.
+// Rows flow in page scroll; the Table wrapper clips, so a narrow pane never scrolls the run table sideways.
 function WikiReportsTable({ reports, isLoading = false }) {
-	const { Badge, Table, SkeletonRows } = window.UI;
+	const { Table, SkeletonRows } = window.UI;
 
 	return (
-		<div className="overflow-x-auto rounded-md border border-line">
-			<Table
-				caption="Wiki compile runs, newest first, one row per run"
-				columns={WIKI_REPORT_COLUMNS}
-				className="w-report-tbl"
-			>
-				{isLoading ? (
-					<SkeletonRows rows={5} columns={WIKI_REPORT_COLUMNS.length} rowHeight={36} />
-				) : (
-					reports.map((report) => (
-						<WikiReportRow key={report.run_date} report={report} Badge={Badge} />
-					))
-				)}
-			</Table>
-		</div>
+		<Table caption="Wiki compile runs, newest first, one row per run" columns={WIKI_REPORT_COLUMNS}>
+			{isLoading
+				? <SkeletonRows rows={5} columns={WIKI_REPORT_COLUMNS.length} rowHeight={36} />
+				: (view) => reports.map((report) => <WikiReportRow key={report.run_date} report={report} view={view} />)}
+		</Table>
 	);
 }
 
-// The status badge carries the tone; the row takes no stripe.
-function WikiReportRow({ report, Badge }) {
+// Status = tone glyph + word, no pill; the backlog columns are snapshots re-stamped each run.
+function WikiReportRow({ report, view }) {
+	const { TableRow, TableCell, TONE_GLYPH } = window.UI;
 	const tone = wikiStatusToneW(report.status);
 
 	return (
-		<tr>
-			<td>
-				<span className="font-mono text-ink font-medium">
-					{report.run_date}
-				</span>
-			</td>
-			<td>
-				<Badge role="status" tone={tone} icon>
-					{wikiStatusLabelW(report.status)}
-				</Badge>
-			</td>
-			{/* DEAD/DEDUP = 누적 백로그 스냅샷 (run time 컬럼은 항상 0 duration → 제거, A2). */}
-			<td className="num text-dim">{report.deadlinks_count ?? "—"}</td>
-			<td className="num text-dim">{report.dedup_count ?? "—"}</td>
-			<td
-				className="text-faint"
-				title={
-					report.started_at
-						? window.UI.formatKstFull(report.started_at)
-						: undefined
-				}
-			>
-				{report.started_at
-					? window.UI.formatRelativeTime(report.started_at)
-					: "—"}
-			</td>
-		</tr>
+		<TableRow view={view}>
+			<TableCell view={view} kind="row-header" className="tabular-nums">{report.run_date}</TableCell>
+			<TableCell view={view} textRole="meta" label="Status">
+				<span className={tone === "neutral" ? "text-dim" : `text-${tone}`} aria-hidden="true">{`${TONE_GLYPH[tone]} `}</span>
+				{wikiStatusLabelW(report.status)}
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Broken links" isNumeric>
+				<WikiCellValueW value={report.deadlinks_count} />
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Duplicates" isNumeric>
+				<WikiCellValueW value={report.dedup_count} />
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Started" title={report.started_at ? window.UI.formatKstFull(report.started_at) : undefined}>
+				<WikiCellValueW value={report.started_at ? window.UI.formatRelativeTime(report.started_at) : null} />
+			</TableCell>
+		</TableRow>
 	);
+}
+
+// An unrecorded cell reads "None" in faint ink (spec §6), never a blank or a dash.
+function WikiCellValueW({ value }) {
+	return value ?? <span className="text-faint">None</span>;
 }
 
 // Newest-first runs → one group per streak of equal status and backlog snapshot.
