@@ -30,7 +30,7 @@ const ROW_PX = 40;
 const META_FLOOR_PX = 13;
 
 const ROW_TABLES = [
-  { name: "ledger", selector: ".agent-table-minibars tr[data-roving-row]" },
+  { name: "ledger", selector: "#agents-summary tr[data-roving-row]" },
   { name: "lifecycle", selector: "#agents-lifecycle tr[data-roving-row]" },
 ];
 
@@ -293,7 +293,7 @@ describe("agents screen at 1440px", () => {
     }
   });
 
-  test("the paired tables sit flush on the .tbl cell geometry and keep their own header and body face", async () => {
+  test("the paired tables sit flush on the .tbl cell geometry in the shared sans face", async () => {
     const cards = await ctx.page.evaluate((ids) => ids.map((id) => {
       const card = document.getElementById(id)!.querySelector(".card")!;
       const body = getComputedStyle(card.querySelector(".card-body")!);
@@ -318,9 +318,9 @@ describe("agents screen at 1440px", () => {
       assert.deepEqual(card.edge, ["16px", "16px"], `edge cells carry the card padding — ${label}`);
       assert.ok(card.rowHeights.length > 0 && card.rowHeights.every((h) => h >= ROW_PX), `no row below the 40 line — ${label}`);
       assert.deepEqual(card.lastAlign, ["right", "right"], `the numeric column stays right-aligned — ${label}`);
-      assert.equal(card.headFace[0], "uppercase", `header case kept — ${label}`);
+      assert.equal(card.headFace[0], "none", `header in sentence case — ${label}`);
       assert.doesNotMatch(card.headFace[1], /JetBrains Mono/, `header stays sans — ${label}`);
-      assert.match(card.bodyFont, /JetBrains Mono/, `body stays mono — ${label}`);
+      assert.doesNotMatch(card.bodyFont, /JetBrains Mono/, `body sets sans — ${label}`);
     }
     const lifecycle = cards.find((c) => c.id === "agents-lifecycle")!;
     assert.ok(lifecycle.rowHeights.every((h) => h === ROW_PX), `one-line rows sit on the 40 line — ${JSON.stringify(lifecycle.rowHeights)}`);
@@ -374,4 +374,46 @@ describe("agents screen at 1440px", () => {
 
     assert.ok(overflow <= 1, `matrix overflows its card by ${overflow}px`);
   });
+});
+
+// Page-scrolled ledgers: the head sticks to the nearest vertical scroller once the page scrolls into the body.
+const STICKY_TABLES = [
+  { name: "activity ledger", cardId: "agents-summary", isShowAll: false },
+  { name: "most-failing pairs after Show all", cardId: "agents-failing-pairs", isShowAll: true },
+  { name: "no completion record after Show all", cardId: "agents-lifecycle", isShowAll: true },
+];
+
+describe("agents screen at 1440px, sticky table heads", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext(1440);
+  });
+
+  after(() => closeRenderContext(ctx));
+
+  for (const row of STICKY_TABLES) {
+    test(`${row.name}: the column head sticks to the top of its scroller after a scroll into the body`, async () => {
+      if (row.isShowAll) await ctx.page.locator(`#${row.cardId} button`, { hasText: /^Show all/ }).click();
+      const result = await ctx.page.evaluate(({ cardId, rowPx }) => {
+        const head = document.querySelector(`#${cardId} thead th`) as HTMLElement;
+        const body = document.querySelector(`#${cardId} tbody`) as HTMLElement;
+        let scroller: HTMLElement | null = head.parentElement;
+        while (scroller && !(/(auto|scroll)/.test(getComputedStyle(scroller).overflowY) && scroller.scrollHeight > scroller.clientHeight)) scroller = scroller.parentElement;
+        const target = scroller ?? (document.scrollingElement as HTMLElement);
+        // a head the previous case left stuck reads its stuck top → measure its start from an unscrolled view
+        target.scrollTop = 0;
+        const viewTop = scroller ? scroller.getBoundingClientRect().top : 0;
+        // half the body under the head: far enough that an unstuck head leaves the view, near enough to stay in its table
+        const offsetPx = body.getBoundingClientRect().height / 2;
+        const headStartPx = head.getBoundingClientRect().top - viewTop + target.scrollTop;
+        const room = target.scrollHeight - target.clientHeight - headStartPx;
+        target.scrollTop = headStartPx + offsetPx;
+        return { canScroll: room > offsetPx && offsetPx >= rowPx, offsetPx: head.getBoundingClientRect().top - viewTop };
+      }, { cardId: row.cardId, rowPx: ROW_PX });
+
+      assert.equal(result.canScroll, true, `${row.name}: the scroller reaches half a body past the head's start`);
+      assert.ok(Math.abs(result.offsetPx) <= 1, `${row.name}: head ${result.offsetPx}px off the scroller top`);
+    });
+  }
 });

@@ -41,6 +41,8 @@ const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionView", "hasRegionRows"
 for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
 // Count text rides the shipped formatter, so a KPI sub reads as it does on the page.
 UI_SCALARS.formatInt = REAL_UI.formatInt;
+// Tables ride the shipped Table and cell atoms → head cells and body rows render as on the page.
+for (const name of ["Table", "TableRow", "TableCell"]) UI_SCALARS[name] = REAL_UI[name];
 // The page verdict rolls tones up and names agents with the shipped helpers.
 UI_SCALARS.getWorstTone = REAL_UI.getWorstTone;
 UI_SCALARS.getAgentDisplayName = REAL_UI.getAgentDisplayName;
@@ -198,8 +200,8 @@ test("the ledger grows with the page instead of a nested vertical scroller that 
   assert.match(classOf(card), /\bmin-w-0\b/, "a wide ledger cannot widen the page grid");
   const [body] = findNodes(tree, (n) => /card-body flush/.test(classOf(n)));
   assert.equal((body.props.style as Record<string, unknown>)?.maxHeight, "none", "no card-body height cap on the ledger");
-  const [scroller] = findNodes(tree, (n) => /agent-table-minibars/.test(classOf(n)));
-  assert.match(classOf(scroller), /\boverflow-x-auto\b/, "wide columns scroll inside the card");
+  assert.deepEqual(findNodes(tree, (n) => /\boverflow-/.test(classOf(n))).map(classOf), [], "no screen scroll box around the ledger");
+  assert.equal(findNodes(tree, (n) => /\btbl-wrap\b/.test(classOf(n))).length, 1, "the Table wrapper holds the ledger");
 });
 
 test("the lifecycle table is one Tab stop and Enter on a row opens that agent", async () => {
@@ -441,7 +443,7 @@ test("the ledger and instrumentation card adopt the shared labels", async () => 
   const table = renderScreen(
     React.createElement(mod.AgentSummaryTable as Component, { agents: [], pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }),
   );
-  const headers = findAtoms(table, "TableHead").map((n) => collectText(n));
+  const headers = findColumnHeads(table).map((n) => collectText(n));
   assert.ok(headers.includes("Failed or blocked"), `ledger headers: ${headers.join(" | ")}`);
   assert.ok(!headers.includes("Breakages"));
 
@@ -688,6 +690,11 @@ async function renderScreenAgents(initialRegion?: Record<string, unknown>): Prom
 
 function findAtoms(tree: RenderedNode | string | null, atom: string): RenderedNode[] {
   return findNodes(tree, (n) => n.props.atom === atom);
+}
+
+// Table renders its column heads through the shipped TableHead → a th scoped to its column.
+function findColumnHeads(tree: RenderedNode | string | null): RenderedNode[] {
+  return findNodes(tree, (n) => n.type === "th" && n.props.scope === "col");
 }
 
 test("the header's Refresh and freshness stamp read every region, so a first load is never announced as fresh", async () => {
@@ -949,7 +956,7 @@ test("the ledger's activity mark names activity under a labelled column, never a
   const table = renderScreen(
     React.createElement(mod.AgentSummaryTable as Component, { agents: [], pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }),
   );
-  const headers = findAtoms(table, "TableHead").map((n) => collectText(n));
+  const headers = findColumnHeads(table).map((n) => collectText(n));
   assert.ok(headers.some((h) => /activity/i.test(h)), `ledger headers: ${headers.join(" | ")}`);
 
   const rows = [
@@ -1096,7 +1103,7 @@ test("the ledger carries Runs and No record as columns instead of a per-row expa
       trendByAgent: null, failureByAgent: null, overageByAgent: null, failureStatus: "ready", trendStatus: "ready",
     }),
   );
-  const headers = findAtoms(tree, "TableHead").map((n) => collectText(n));
+  const headers = findColumnHeads(tree).map((n) => collectText(n));
   assert.ok(headers.includes("Runs") && headers.includes("No record"), `ledger headers: ${headers.join(" | ")}`);
   assert.equal(findAtoms(tree, "DisclosureChevron").length, 0, "no per-row expander");
   const cells = findNodes(tree, (n) => n.type === "td" && /^no completion record/.test(String(n.props?.title ?? "")));
@@ -1238,8 +1245,9 @@ test("every ledger and pairs column header comes from the shared header atom", a
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const pairs = renderScreen(React.createElement(mod.TopNFailingAgentsTable as Component, { pairs: [], failureByAgent: new Map(), days: 14 }));
   for (const [name, tree] of [["ledger", renderLedger(mod)], ["pairs", pairs]] as const) {
-    assert.equal(findNodes(tree, (n) => n.type === "th").length, 0, `${name}: no hand-rolled th`);
-    assert.ok(findAtoms(tree, "TableHead").length > 0, `${name}: TableHead columns`);
+    const heads = findNodes(tree, (n) => n.type === "th");
+    assert.ok(heads.length > 0, `${name}: column heads rendered`);
+    assert.deepEqual(heads.filter((n) => n.props.scope !== "col").map((n) => collectText(n)), [], `${name}: no hand-rolled th`);
   }
 });
 
@@ -1901,7 +1909,7 @@ describe("the paired failing-pairs and no-record cards keep the S row budget and
   }
 });
 
-describe("the paired failing-pairs and no-record tables take the .tbl cell geometry in their own face", () => {
+describe("the paired failing-pairs and no-record tables take the shared .tbl face and cell geometry", () => {
   const tokensOf = (node: RenderedNode): string[] => String(node.props.className ?? "").split(/\s+/).filter(Boolean);
   const isAdHocGeometry = (t: string) => /^-?(p|m)[xytblrse]?-/.test(t) || /^border-b$/.test(t) || t === "border-line";
   const pair = (task_type: string, successCount: number, rateDenominator: number) =>
@@ -1911,16 +1919,17 @@ describe("the paired failing-pairs and no-record tables take the .tbl cell geome
     { name: "No completion record", component: "LifecycleStatsTable", props: { rows: getLifecycleRows(2), onSelect: () => undefined }, rightCols: 4 },
   ];
   for (const row of tables) {
-    test(`${row.name}: a .tbl own-face table whose cells carry no padding, margin or rule of their own`, async () => {
+    test(`${row.name}: a sans .tbl table with a sticky head and cells that carry no padding, margin or rule of their own`, async () => {
       const tree = await renderComponent(row.component, row.props) as RenderedNode;
       const [table] = findNodes(tree, (n) => n.type === "table");
-      assert.ok(["tbl", "tbl--own-face"].every((t) => tokensOf(table).includes(t)), `table: ${tokensOf(table)}`);
-      assert.ok(["fs-meta", "font-mono"].every((t) => tokensOf(table).includes(t)), "the body keeps its mono meta face");
-      const heads = findAtoms(tree, "TableHead");
+      assert.ok(tokensOf(table).includes("tbl"), `table: ${tokensOf(table)}`);
+      assert.deepEqual(tokensOf(table).filter((t) => ["tbl--own-face", "font-mono"].includes(t)), [], "the body takes the shared sans face");
+      assert.ok(findNodes(tree, (n) => n.type === "thead" && /\bis-sticky\b/.test(String(n.props.className ?? ""))).length === 1, "the head sticks");
+      const heads = findColumnHeads(tree);
       assert.ok(heads.length >= 4, "every column header is the shared TableHead");
       for (const head of heads) {
         const tokens = tokensOf(head);
-        assert.ok(["font-sans", "uppercase", "tracking-wider", "fs-meta", "text-dim", "font-medium"].every((t) => tokens.includes(t)), `header face kept: ${tokens}`);
+        assert.deepEqual(tokens.filter((t) => /^(uppercase|tracking-|font-mono)/.test(t)), [], `header in sentence case and sans: ${tokens}`);
         assert.deepEqual(tokens.filter(isAdHocGeometry), [], `header '${collectText(head).trim()}'`);
       }
       const cells = findNodes(tree, (n) => n.type === "td");
@@ -1929,8 +1938,8 @@ describe("the paired failing-pairs and no-record tables take the .tbl cell geome
         assert.deepEqual(tokensOf(cell).filter(isAdHocGeometry), [], `cell '${collectText(cell).trim().slice(0, 24)}'`);
       }
       const [firstRow] = findNodes(tree, (n) => n.type === "tr").slice(1);
-      const rightCells = findNodes(firstRow, (n) => n.type === "td").filter((td) => tokensOf(td).includes("text-right"));
-      assert.equal(rightCells.length, row.rightCols, "numeric columns keep their right alignment");
+      const rightCells = findNodes(firstRow, (n) => n.type === "td").filter((td) => tokensOf(td).includes("num"));
+      assert.equal(rightCells.length, row.rightCols, "numeric columns sit on the numeric cell atom");
     });
   }
 

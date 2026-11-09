@@ -35,6 +35,11 @@ const UI_SCALARS: Record<string, unknown> = {
   formatKstDateTime: (iso: string) => iso,
   outcomeShareTone: () => null,
   OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
+  // Table rows contract: each body's rows are a node or `(view) => rows` → a wide view renders them
+  Table: ({ bodies, children }: { bodies?: { rows: unknown }[]; children?: unknown }) => ({
+    __element: true, type: "ui-atom", props: { atom: "Table", children: (bodies ?? [{ rows: children }])
+      .map((body) => (typeof body.rows === "function" ? body.rows({ isStacked: false, columnCount: 0 }) : body.rows)) },
+  }),
 };
 
 // every other UI member → a transparent host element tagged with its atom name

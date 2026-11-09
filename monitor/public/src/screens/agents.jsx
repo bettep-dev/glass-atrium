@@ -999,10 +999,18 @@ function AgentSummaryBody({ failures, state, days, sortBy, selectedAgent, onSele
 }
 
 // Footer colSpan — Agent · Runs · No record · Success · Failed or blocked · P95 · Trend.
-const SUMMARY_TABLE_COLSPAN = 7;
+const SUMMARY_COLUMNS = [
+  { key: 'agent', label: <>Agent <span className="text-faint">· activity</span></> },
+  { key: 'runs', isNumeric: true, label: <span title="Times the agent finished and reported a result (outcome records)">Runs</span> },
+  { key: 'noRecord', isNumeric: true, label: <span title={NOTE.NO_RECORD}>No record</span> },
+  { key: 'success', isNumeric: true, label: 'Success rate' },
+  { key: 'failed', isNumeric: true, label: <span title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</span> },
+  { key: 'p95', isNumeric: true, label: <span title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</span> },
+  { key: 'trend', label: 'Trend' },
+];
 
 function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
-  const { TableHead } = window.UI;
+  const { Table } = window.UI;
   const [showPseudo, setShowPseudo] = useStateAg(false);
   const [activeIndex, setActiveIndex] = useStateAg(0);
   const [activePseudoIndex, setActivePseudoIndex] = useStateAg(0);
@@ -1033,41 +1041,27 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
     />
   );
 
-  return (
-    <div className="agent-table-minibars overflow-x-auto">
-      <table className="tbl">
-        <thead>
-          <tr>
-            <TableHead isSticky>Agent <span className="text-faint">· activity</span></TableHead>
-            <TableHead isSticky isNumeric><span title="Times the agent finished and reported a result (outcome records)">Runs</span></TableHead>
-            <TableHead isSticky isNumeric><span title={NOTE.NO_RECORD}>No record</span></TableHead>
-            <TableHead isSticky isNumeric>Success rate</TableHead>
-            <TableHead isSticky isNumeric><span title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</span></TableHead>
-            <TableHead isSticky isNumeric><span title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</span></TableHead>
-            <TableHead isSticky>Trend</TableHead>
-          </tr>
-        </thead>
-        <tbody>
-          {agents.map(renderRow)}
-        </tbody>
-        {pseudoRows.length > 0 && (
-          <tbody>
-            <tr>
-              <td colSpan={SUMMARY_TABLE_COLSPAN} className="border-t border-line">
-                <window.UI.DisclosureButton
-                  isOpen={showPseudo}
-                  onToggle={() => setShowPseudo((v) => !v)}
-                  className="w-full text-left fs-meta px-1"
-                  label={`${pseudoRows.length} non-actionable ${pseudoRows.length === 1 ? 'bucket' : 'buckets'} (unpaired / unidentified — not real agents)`}
-                />
-              </td>
-            </tr>
-            {showPseudo && pseudoRows.map(renderRow)}
-          </tbody>
-        )}
-      </table>
-    </div>
-  );
+  const pseudoBody = {
+    key: 'pseudo',
+    rows: (
+      <>
+        <tr>
+          <td colSpan={SUMMARY_COLUMNS.length}>
+            <window.UI.DisclosureButton
+              isOpen={showPseudo}
+              onToggle={() => setShowPseudo((v) => !v)}
+              className="w-full text-left fs-meta px-1"
+              label={`${pseudoRows.length} non-actionable ${pseudoRows.length === 1 ? 'bucket' : 'buckets'} (unpaired / unidentified — not real agents)`}
+            />
+          </td>
+        </tr>
+        {showPseudo && pseudoRows.map(renderRow)}
+      </>
+    ),
+  };
+  const bodies = [{ key: 'agents', rows: agents.map(renderRow) }, ...(pseudoRows.length > 0 ? [pseudoBody] : [])];
+
+  return <Table caption="Performance by agent" isHeadSticky columns={SUMMARY_COLUMNS} bodies={bodies}/>;
 }
 
 function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95WarnSec = P95_AGENT.WARN_SEC, failureStatus = 'ready', trendStatus = 'ready' }) {
@@ -2510,8 +2504,8 @@ function SuccessRateSparkline({ points, colorVar, name }) {
 
 // Ledger `.tbl th` face for the dense mono tables → one header idiom per page.
 const HEAD_FACE = 'font-sans uppercase tracking-wider fs-meta text-dim font-medium';
-// TABLE carries its own cell geometry; the PAIRED S tables sit on .tbl--own-face, so .tbl gives theirs and they take the face alone
-const HEAD = { FACE: HEAD_FACE, CLASS: { TABLE: `${HEAD_FACE} px-2 border-b border-line`, PAIRED: HEAD_FACE } };
+// TABLE carries its own cell geometry → the hand-rolled tables off the shared Table
+const HEAD = { FACE: HEAD_FACE, CLASS: { TABLE: `${HEAD_FACE} px-2 border-b border-line` } };
 
 function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent }) {
   const [isShowingAll, setShowingAll] = useStateAg(false);
@@ -2610,34 +2604,35 @@ function resolveLastBreakage(pair, failureByAgent) {
 
 // thead 컬럼 driver — alignment / width / 라벨만 다르고 sticky 스타일은 공통.
 const TOPN_FAILING_COLUMNS = [
-  { key: 'agent',   label: 'Agent',   align: 'left',  width: undefined, title: undefined },
-  { key: 'task',    label: 'Task',    align: 'left',  width: undefined, title: undefined },
-  { key: 'success', label: 'Success', align: 'right', width: 'w-28',    title: undefined },
+  { key: 'agent',   label: 'Agent',   align: 'left',  width: 'auto', title: undefined },
+  { key: 'task',    label: 'Task',    align: 'left',  width: 'auto', title: undefined },
+  { key: 'success', label: 'Success', align: 'right', width: '7rem', title: undefined },
   // failure-patterns last_breakage_at (서버 MAX(record_ts) · blocked 포함) 우선 채택.
-  { key: 'last',    label: 'Last failure', align: 'right', width: 'w-24',    title: 'Most recent failure per agent — failure-patterns last_breakage_at (fail+blocked) preferred · falls back to success-rate event_date (fail only)' },
+  { key: 'last',    label: 'Last failure', align: 'right', width: '6rem', title: 'Most recent failure per agent — failure-patterns last_breakage_at (fail+blocked) preferred · falls back to success-rate event_date (fail only)' },
 ];
 
 function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
-  const { TableHead } = window.UI;
+  const { Table, TableRow, TableCell } = window.UI;
   const lowN = window.UI.LOW_N_MIN;
   const solidPairs = pairs.filter((p) => p.rateDenominator >= lowN);
   const lowPairs = pairs.filter((p) => p.rateDenominator < lowN);
 
-  const renderPairRow = (p) => {
+  const renderPairRow = (p, view) => {
     const breakage = resolveLastBreakage(p, failureByAgent);
     const isLowSample = p.rateDenominator < lowN;
     return (
-      <tr key={`${p.agent}|${p.task_type}`}>
-        <td className="text-ink truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
+      <TableRow view={view} key={`${p.agent}|${p.task_type}`}>
+        <TableCell view={view} className="text-ink truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
           <a className="inline-target max-w-full underline decoration-dotted" href={getPairOutcomesHref(p, days)}>
             <window.UI.AgentName name={p.agent} className="truncate"/>
           </a>
-        </td>
-        <td className="text-dim">
+        </TableCell>
+        <TableCell view={view} textRole="meta" className="text-dim">
           {p.task_type}
-        </td>
-        <td
-          className="text-right font-semibold whitespace-nowrap tbl-bar-cell"
+        </TableCell>
+        <TableCell view={view}
+          isNumeric
+          className="font-semibold tbl-bar-cell"
           title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${lowN})` : ''}`}>
           {/* every listed pair is failing → the glyph marks it whatever its sample size */}
           <span className="inline-flex items-center justify-end gap-1">
@@ -2651,42 +2646,37 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
             tone={isLowSample ? 'neutral' : 'crit'}
             ariaLabel={`pair success rate ${(p.pooledRate * 100).toFixed(0)}%`}
           />
-        </td>
-        <td
-          className={`text-right whitespace-nowrap ${breakage.fromServer ? 'text-dim' : 'text-faint'}`}
+        </TableCell>
+        <TableCell view={view}
+          isNumeric
+          textRole="meta"
+          className={breakage.fromServer ? 'text-dim' : 'text-faint'}
           title={breakage.title}>
           {breakage.text}
-        </td>
-      </tr>
+        </TableCell>
+      </TableRow>
     );
   };
 
-  return (
-    <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
-      <table className="tbl tbl--own-face fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-        <thead>
-          <tr>
-            {TOPN_FAILING_COLUMNS.map((c) => (
-              <TableHead key={c.key} isSticky className={`text-${c.align} ${HEAD.CLASS.PAIRED} whitespace-nowrap${c.width ? ' ' + c.width : ''}`}>
-                <span title={c.title}>{c.label}</span>
-              </TableHead>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {solidPairs.map(renderPairRow)}
-          {lowPairs.length > 0 && (
-            <tr>
-              <td colSpan={TOPN_FAILING_COLUMNS.length} className="fs-meta text-dim">
-                Low sample — n under {lowN}, read as a hint
-              </td>
-            </tr>
-          )}
-          {lowPairs.map(renderPairRow)}
-        </tbody>
-      </table>
-    </div>
-  );
+  const renderPairRows = (view) => <>
+    {solidPairs.map((p) => renderPairRow(p, view))}
+    {lowPairs.length > 0 && (
+      <TableRow view={view}>
+        <TableCell view={view} kind="span" className="fs-meta text-dim">
+          Low sample — n under {lowN}, read as a hint
+        </TableCell>
+      </TableRow>
+    )}
+    {lowPairs.map((p) => renderPairRow(p, view))}
+  </>;
+
+  return <Table caption="Most-failing pairs" isHeadSticky columns={getPairedColumnsAg(TOPN_FAILING_COLUMNS)}
+    widths={TOPN_FAILING_COLUMNS.map((c) => c.width)} bodies={[{ key: 'pairs', rows: renderPairRows }]}/>;
+}
+
+// Paired column specs → Table columns: a right-aligned column is numeric, its title rides the label.
+function getPairedColumnsAg(specs) {
+  return specs.map((c) => ({ key: c.key, isNumeric: c.align === 'right', label: <span title={c.title}>{c.label}</span> }));
 }
 
 // AgentQualityHealth (col-span-full) — 자가개선 신호 단일화.
@@ -2978,75 +2968,62 @@ const LIFECYCLE_COLUMNS = [
 ];
 
 function LifecycleStatsTable({ rows, onSelect }) {
-  const { TableHead } = window.UI;
+  const { Table } = window.UI;
   const [activeIndex, setActiveIndex] = useStateAg(0);
   // a row with no completion has nothing for the drawer to show → out of the roving order
   const openable = rows.filter((r) => (Number(r.completed_count) || 0) > 0);
 
-  return (
-    <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
-      <table className="tbl tbl--own-face fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-        <thead>
-          <tr>
-            {LIFECYCLE_COLUMNS.map((c) => (
-              <TableHead key={c.key} isSticky className={`text-${c.align} ${HEAD.CLASS.PAIRED}`}>
-                <span title={c.title}>{c.label}</span>
-              </TableHead>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const index = openable.indexOf(r);
-            return (
-              <LifecycleStatsRow
-                key={r.agent_type}
-                row={r}
-                onSelect={index < 0 ? null : onSelect}
-                focusProps={index < 0 ? null : window.UI.getRowFocusProps({
-                  index, activeIndex, count: openable.length, onActivate: () => onSelect(r.agent_type), onActiveChange: setActiveIndex,
-                })}
-              />
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
+  const renderRows = (view) => rows.map((r) => {
+    const index = openable.indexOf(r);
+    return (
+      <LifecycleStatsRow
+        key={r.agent_type}
+        view={view}
+        row={r}
+        onSelect={index < 0 ? null : onSelect}
+        focusProps={index < 0 ? null : window.UI.getRowFocusProps({
+          index, activeIndex, count: openable.length, onActivate: () => onSelect(r.agent_type), onActiveChange: setActiveIndex,
+        })}
+      />
+    );
+  });
+
+  return <Table caption="No completion record" isHeadSticky columns={getPairedColumnsAg(LIFECYCLE_COLUMNS)} bodies={[{ key: 'rows', rows: renderRows }]}/>;
 }
 
-function LifecycleStatsRow({ row, onSelect, focusProps }) {
+function LifecycleStatsRow({ view, row, onSelect, focusProps }) {
   const startCount = Number(row.start_count) || 0;
   const completedCount = Number(row.completed_count) || 0;
   const orphanCount = Math.max(0, startCount - completedCount);
   const orphanRatio = startCount > 0 ? orphanCount / startCount : 0;
   const orphanTone = orphanRatioTone(orphanRatio);
   const p95Sec = row.p95_duration_sec == null ? null : Number(row.p95_duration_sec);
-  const { StatusDot } = window.UI;
+  const { StatusDot, TableRow, TableCell } = window.UI;
 
   const handleClick = onSelect ? () => onSelect(row.agent_type) : undefined;
 
   return (
-    <tr
+    <TableRow
+      view={view}
       {...focusProps}
       onClick={handleClick}
       className={onSelect ? 'cursor-pointer hover:bg-sunken motion-safe:transition-colors motion-safe:duration-[120ms]' : undefined}
       title={`${row.agent_type} — start ${startCount} · stop ${formatIntAg(row.stop_count)} · completed ${completedCount} · orphan ${orphanCount} (${(orphanRatio * 100).toFixed(0)}%)`}>
-      <td className="text-ink truncate" style={{ maxWidth: 160 }}>
+      <TableCell view={view} className="text-ink truncate" style={{ maxWidth: 160 }}>
         <span className="flex items-center gap-1.5">
           <window.UI.AgentName name={row.agent_type} className="truncate"/>
         </span>
-      </td>
-      <td className="text-right text-dim">{formatIntAg(startCount)}</td>
-      <td className="text-right text-dim">{formatIntAg(completedCount)}</td>
-      <td className={`text-right font-semibold ${orphanTone ? 'text-ink' : 'text-dim'}`}>
+      </TableCell>
+      <TableCell view={view} isNumeric textRole="meta" className="text-dim">{formatIntAg(startCount)}</TableCell>
+      <TableCell view={view} isNumeric textRole="meta" className="text-dim">{formatIntAg(completedCount)}</TableCell>
+      <TableCell view={view} isNumeric className={`font-semibold ${orphanTone ? 'text-ink' : 'text-dim'}`}>
         {orphanTone && <StatusDot status={orphanTone}/>}
         {orphanCount > 0 ? `${formatIntAg(orphanCount)} · ${(orphanRatio * 100).toFixed(0)}%` : '0'}
-      </td>
-      <td className="text-right text-dim">
+      </TableCell>
+      <TableCell view={view} isNumeric textRole="meta" className="text-dim">
         {p95Sec == null ? '—' : formatDurationSecAg(p95Sec)}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
