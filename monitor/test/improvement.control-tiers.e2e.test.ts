@@ -213,13 +213,14 @@ describe("the corpus-growth headline sets its figure and unit on one baseline, t
 });
 
 describe("the flagged-results head leads to Task results on the Link atom", () => {
-  test("its one way out is an inline link to #outcomes named by its text, never a button", async () => {
-    const head = await page.locator("#flagged .card-head").evaluate((el) => ({
-      links: [...el.querySelectorAll("a.link")].map((a) => [a.getAttribute("href"), a.textContent]),
-      buttons: el.querySelectorAll(".btn").length,
-    }));
+  test("its one way out is an inline link to #outcomes whose accessible name is Task results, never a button", async () => {
+    const head = page.locator("#flagged .card-head");
+    const link = head.getByRole("link", { name: "Task results", exact: true });
 
-    assert.deepEqual(head, { links: [["#outcomes", "Task results→"]], buttons: 0 });
+    assert.equal(await head.getByRole("link").count(), 1, "the head has one link");
+    assert.equal(await link.count(), 1, "the link's accessible name is Task results");
+    assert.equal(await link.getAttribute("href"), "#outcomes");
+    assert.equal(await head.locator(".btn").count(), 0, "the head has no button");
     assert.ok((await readBox("#flagged .card-head a.link")).height < 32, "the link keeps its inline height");
   });
 });

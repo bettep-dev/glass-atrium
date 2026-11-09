@@ -290,7 +290,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 //
 // confidence_observed × promotion_tier distribution, 30-day window (proposal-side)
 // headline stat + scale bar: overall confidence_observed (weighted mean of the measured lanes) + per-lane table (lane · proposal_count · confidence_avg)
-// no buckets → empty state · error → the view renders one list-payload error banner instead of the card
+// no buckets or no proposals in the window → empty state · error → the view renders one list-payload error banner instead of the card
 
 function ConfidenceDistCardI({ state, confidenceDist }) {
 	const { Card, BulletBar, EmptyState, LoadingPlaceholder, StatRow } = window.UI;
