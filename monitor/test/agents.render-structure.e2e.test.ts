@@ -326,30 +326,33 @@ describe("agents screen at 1440px", () => {
     assert.ok(lifecycle.rowHeights.every((h) => h === ROW_PX), `one-line rows sit on the 40 line — ${JSON.stringify(lifecycle.rowHeights)}`);
   });
 
-  test("the performance card's sort control rides its head: no band between the head and the ledger, centred on the title line", async () => {
+  test("the performance card sorts from its column heads: no select, no band between the head and the ledger, one head sorted", async () => {
     try {
       for (const width of [1440, 1024]) {
         await ctx.page.setViewportSize({ width, height: 900 });
         const geometry = await ctx.page.evaluate((id) => {
           const card = document.getElementById(id)!;
           const head = card.querySelector(".card-head")!;
-          const select = head.querySelector('select[aria-label="Agent sort order"]');
-          // midlines inline: tsx wraps a named const in a __name() helper the page lacks
-          const [selectBox, titleBox] = [select, head.querySelector(".card-title")!].map((el) => el?.getBoundingClientRect());
+          const headRow = card.querySelector("thead tr")!;
           return {
             selectsInCard: card.querySelectorAll("select").length,
-            hasHeadSelect: Boolean(select),
-            band: card.querySelector("thead")!.getBoundingClientRect().top - head.getBoundingClientRect().bottom,
-            centreGap: selectBox ? Math.abs(selectBox.top + selectBox.height / 2 - (titleBox!.top + titleBox!.height / 2)) : null,
+            sorted: [...headRow.querySelectorAll("th[aria-sort]")]
+              .filter((th) => th.getAttribute("aria-sort") !== "none")
+              .map((th) => `${th.getAttribute("aria-sort")}:${th.querySelector("button.tbl-sort")?.textContent?.trim()}`),
+            sortButtons: headRow.querySelectorAll("th[aria-sort] > button.tbl-sort").length,
+            band: headRow.getBoundingClientRect().top - head.getBoundingClientRect().bottom,
+            headRowHeight: headRow.getBoundingClientRect().height,
             headHeight: head.getBoundingClientRect().height,
             headMin: parseFloat(getComputedStyle(head).minHeight),
           };
         }, "agents-summary");
         const label = `${width}: ${JSON.stringify(geometry)}`;
-        assert.ok(geometry.hasHeadSelect, `the sort select is in the card head — ${label}`);
-        assert.equal(geometry.selectsInCard, 1, `no second sort control in the body — ${label}`);
+        assert.equal(geometry.selectsInCard, 0, `no separate sort select — ${label}`);
+        assert.equal(geometry.sortButtons, 5, `every sortable head holds its sort button — ${label}`);
+        assert.equal(geometry.sorted.length, 1, `exactly one head carries the order — ${label}`);
+        assert.match(geometry.sorted[0], /^descending:Failed or blocked/, `the ledger opens on breakages — ${label}`);
+        assert.equal(geometry.headRowHeight, ROW_PX, `the sortable header row sits on the 40 step — ${label}`);
         assert.ok(Math.abs(geometry.band) < 1, `the ledger header starts at the head's bottom edge — ${label}`);
-        assert.ok(geometry.centreGap! <= 1, `the select centres on the title line — ${label}`);
         assert.ok(Math.abs(geometry.headHeight - geometry.headMin) < 1, `the head stays one line at its floor — ${label}`);
       }
     } finally {

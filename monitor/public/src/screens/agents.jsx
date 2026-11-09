@@ -878,13 +878,14 @@ function getNotLoadedTitleAg(what, status) {
   return status === 'error' ? `${what} failed to load` : `${what} still loading`;
 }
 
-const SUMMARY_SORT_OPTIONS = [
-  { value: 'name',     label: 'Name (A–Z)' },
-  { value: 'runs',     label: 'Most runs' },
-  { value: 'success',  label: 'Success rate'   },
-  { value: 'failures', label: 'Most failures'    },
-  { value: 'p95',      label: 'P95 ↓'      },
-];
+// sort key → its one direction, the aria-sort value its column head carries
+const SUMMARY_SORT_DIR = {
+  name: 'ascending',
+  runs: 'descending',
+  success: 'descending',
+  failures: 'descending',
+  p95: 'descending',
+};
 
 const MINIBAR_WIDTH = 50;
 const MINIBAR_HEIGHT = 20;
@@ -897,7 +898,7 @@ function AgentSummaryCard({ failures, state, days, sortBy, onSortChange, selecte
     ? `${totalAgents} active`
     : (window.UI.getRegionView(state) === 'loading' ? 'Loading…' : "Couldn't load");
 
-  // the sort control is the card's action → it rides the head's right cluster (card-head contract), only while there are rows to order
+  // the sort lives on the column heads → the head's right cluster keeps only the fallback-order note, while there are rows to order
   const hasRows = (data?.agents ?? []).length > 0;
 
   return (
@@ -907,13 +908,14 @@ function AgentSummaryCard({ failures, state, days, sortBy, onSortChange, selecte
         sub={subText}
         info={NOTE.NO_RECORD}
         infoLabel="How No record is counted"
-        right={hasRows && <SummarySortAg sortBy={sortBy} onSortChange={onSortChange} note={getSummarySortNoteAg(sortBy, failureStatus)}/>}
+        right={hasRows && <SummarySortNoteAg note={getSummarySortNoteAg(sortBy, failureStatus)}/>}
       />
       <AgentSummaryBody
         failures={failures}
         state={state}
         days={days}
         sortBy={sortBy}
+        onSortChange={onSortChange}
         selectedAgent={selectedAgent}
         onSelect={onSelect}
         onRetry={onRetry}
@@ -933,25 +935,25 @@ function getSummarySortNoteAg(sortBy, failureStatus) {
   return sortBy === 'failures' && failureStatus !== 'ready' ? 'Breakages not loaded — rows in run order' : '';
 }
 
-// The ledger's sort order in the card head: the fallback note (a live region, kept mounted so a change is announced), then the select.
-// The note carries its own trailing gap → while empty it adds no width beside the info button.
-function SummarySortAg({ sortBy, onSortChange, note }) {
+// The fallback-order note in the card head — a live region, kept mounted so a change is announced.
+function SummarySortNoteAg({ note }) {
+  return <span role="status" className="fs-meta text-dim whitespace-nowrap">{note}</span>;
+}
+
+// unread breakages → rows in run order, so the Runs head carries the sort the rows really have
+function getSummarySortKeyAg(sortBy, failureStatus) {
+  return sortBy === 'failures' && failureStatus !== 'ready' ? 'runs' : sortBy;
+}
+
+// A sortable head's label is its sort button: the sorted column draws its arrow, the others the two-way icon.
+function SummarySortButtonAg({ label, isActive, direction, onClick }) {
+  const { Icon } = window.UI;
+  const icon = !isActive ? 'arrow-up-down' : direction === 'ascending' ? 'arrow-up' : 'arrow-down';
   return (
-    <div className="flex items-center fs-meta text-faint">
-      <span role="status" className={`font-mono whitespace-nowrap${note ? ' mr-2' : ''}`}>{note}</span>
-      <div className="flex items-center gap-1">
-        <span>Sort:</span>
-        <select
-          className="field field-select"
-          value={sortBy}
-          onChange={(e) => onSortChange(e.target.value)}
-          aria-label="Agent sort order">
-          {SUMMARY_SORT_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-      </div>
-    </div>
+    <button type="button" className="btn ghost sm tbl-sort" onClick={onClick}>
+      {label}
+      <Icon name={icon} size={12} className={isActive ? '' : 'text-faint'}/>
+    </button>
   );
 }
 
@@ -960,7 +962,7 @@ function CountDefinitionAg({ note }) {
   return <p className="card-body pt-0 mb-0 fs-meta text-dim">{note}</p>;
 }
 
-function AgentSummaryBody({ failures, state, days, sortBy, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
+function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
     return <div className="card-body"><window.UI.LoadingPlaceholder label="agent performance" minHeight={240}/></div>;
@@ -986,6 +988,8 @@ function AgentSummaryBody({ failures, state, days, sortBy, selectedAgent, onSele
         agents={sorted}
         pseudoAgents={pseudoAgents}
         days={days}
+        sortBy={sortBy}
+        onSortChange={onSortChange}
         selectedAgent={selectedAgent}
         onSelect={onSelect}
         trendByAgent={trendByAgent}
@@ -1000,16 +1004,28 @@ function AgentSummaryBody({ failures, state, days, sortBy, selectedAgent, onSele
 
 // Footer colSpan — Agent · Runs · No record · Success · Failed or blocked · P95 · Trend.
 const SUMMARY_COLUMNS = [
-  { key: 'agent', label: <>Agent <span className="text-faint">· activity</span></> },
-  { key: 'runs', isNumeric: true, label: <span title="Times the agent finished and reported a result (outcome records)">Runs</span> },
+  { key: 'agent', sortKey: 'name', label: <>Agent <span className="text-faint">· activity</span></> },
+  { key: 'runs', sortKey: 'runs', isNumeric: true, label: <span title="Times the agent finished and reported a result (outcome records)">Runs</span> },
   { key: 'noRecord', isNumeric: true, label: <span title={NOTE.NO_RECORD}>No record</span> },
-  { key: 'success', isNumeric: true, label: 'Success rate' },
-  { key: 'failed', isNumeric: true, label: <span title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</span> },
-  { key: 'p95', isNumeric: true, label: <span title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</span> },
+  { key: 'success', sortKey: 'success', isNumeric: true, label: 'Success rate' },
+  { key: 'failed', sortKey: 'failures', isNumeric: true, label: <span title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</span> },
+  { key: 'p95', sortKey: 'p95', isNumeric: true, label: <span title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</span> },
   { key: 'trend', label: 'Trend' },
 ];
 
-function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
+function getSummaryColumnsAg(sortKey, onSortChange) {
+  return SUMMARY_COLUMNS.map((column) => (column.sortKey ? {
+    ...column,
+    sort: column.sortKey === sortKey ? SUMMARY_SORT_DIR[sortKey] : 'none',
+    label: <SummarySortButtonAg
+      label={column.label}
+      isActive={column.sortKey === sortKey}
+      direction={SUMMARY_SORT_DIR[column.sortKey]}
+      onClick={() => onSortChange(column.sortKey)}/>,
+  } : column));
+}
+
+function AgentSummaryTable({ agents, pseudoAgents, days, sortBy = 'failures', onSortChange = () => {}, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
   const { Table } = window.UI;
   const [showPseudo, setShowPseudo] = useStateAg(false);
   const [activeIndex, setActiveIndex] = useStateAg(0);
@@ -1061,18 +1077,19 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
   };
   const bodies = [{ key: 'agents', rows: agents.map(renderRow) }, ...(pseudoRows.length > 0 ? [pseudoBody] : [])];
 
-  return <Table caption="Performance by agent" isHeadSticky columns={SUMMARY_COLUMNS} bodies={bodies}/>;
+  const columns = getSummaryColumnsAg(getSummarySortKeyAg(sortBy, failureStatus), onSortChange);
+  return <Table caption="Performance by agent" isHeadSticky columns={columns} bodies={bodies}/>;
 }
 
 function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95WarnSec = P95_AGENT.WARN_SEC, failureStatus = 'ready', trendStatus = 'ready' }) {
-  const { MiniBars, Bar, BulletBar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
+  const { MiniBars, Bar, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
   const isUnknownAgent = isNonActionableAgentAg(agent.agent_id);
   const nonActionableLabel = isSyntheticAgent ? SYNTHETIC_SENTINEL_LABEL : UNKNOWN_AGENT_LABEL;
   const nonActionableTitle = isSyntheticAgent ? SYNTHETIC_SENTINEL_TITLE : UNKNOWN_AGENT_TITLE;
   const {
-    successPct, needsContextCount, denominator: successDenominator, numerator: successNumerator, isLowSample, tone: failShareTone,
+    needsContextCount, denominator: successDenominator, numerator: successNumerator, isLowSample, tone: failShareTone,
   } = getSummaryRateAg(agent);
   const successTitle = successDenominator > 0
     ? `passed ${successNumerator} ÷ denominator ${successDenominator} (done+dwc+blocked+fail) · needs_context ${needsContextCount} excluded${isLowSample ? ` · small sample (n=${successDenominator} < ${LOW_N_MIN})` : ''}`
@@ -1133,23 +1150,12 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
       <td className="num" title={`${noRecord.title} · ${formatInvocationsTitle(invocations, days)}`}>
         {noRecord.count == null ? <span className="text-faint">—</span> : formatIntAg(noRecord.count)}
       </td>
-      <td className="num tbl-bar-cell" title={successTitle}>
+      <td className="num" title={successTitle}>
         <span className="inline-flex items-center justify-end gap-1">
           <FailShareGlyph tone={failShareTone}/>
-          <span className={successDenominator > 0 ? '' : 'text-faint'}>
-            {formatPctWithDenominator(successNumerator, successDenominator)}
-          </span>
+          <span className={successDenominator > 0 ? '' : 'text-faint'}>{formatRateAg(successNumerator, successDenominator)}</span>
           {isLowSample && <span className="fs-meta text-faint">low sample</span>}
         </span>
-        {successDenominator > 0 && (
-          <BulletBar
-            value={getSuccessWindowAg(successPct)}
-            target={SUCCESS_WINDOW.TARGET}
-            tone={failShareTone || 'neutral'}
-            showValue={false}
-            ariaLabel={`success rate ${successPct.toFixed(1)}% · bar spans ${SUCCESS_WINDOW.FLOOR_PCT}–100%, tick at 95%`}
-          />
-        )}
       </td>
       <td className="num tbl-bar-cell" title={failTitle}>
         {!isFailureRead ? (
@@ -3468,11 +3474,11 @@ function getFailShareTone(failedCount, denominator) {
   return outcomeShareTone(failedCount, denominator, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit');
 }
 
-// Success rates cluster near the top of the scale, where a 0–100 bar reads flat → a 90–100 window, the 95% target mid-bar.
-const SUCCESS_WINDOW = { FLOOR_PCT: 90, TARGET: 0.5 };
-
-function getSuccessWindowAg(pct) {
-  return Math.min(Math.max((pct - SUCCESS_WINDOW.FLOOR_PCT) / (100 - SUCCESS_WINDOW.FLOOR_PCT), 0), 1);
+// a rate alone — its passed ÷ denominator fraction stays in the cell's tooltip
+function formatRateAg(numerator, denominator) {
+  const den = Number(denominator);
+  if (!Number.isFinite(den) || den <= 0) return '—';
+  return `${(((Number(numerator) || 0) / den) * 100).toFixed(1)}%`;
 }
 
 // Summary-row counts — passed ÷ (done+dwc+blocked+fail), the server success_pct population.
@@ -3646,7 +3652,7 @@ function buildAgentTrendMap(rows) {
   return trendMap;
 }
 
-// SUMMARY_SORT_OPTIONS value → comparator. p95 null 은 가장 뒤로 (음수 magic 으로 sentinel).
+// SUMMARY_SORT_DIR key → comparator. p95 null 은 가장 뒤로 (음수 magic 으로 sentinel).
 // failures comparator 는 외부 map 의존 → sortAgentSummary 에서 closure 로 wrapping.
 const AGENT_SUMMARY_COMPARATORS = {
   name:    (a, b) => String(a.agent_name || '').localeCompare(String(b.agent_name || '')),

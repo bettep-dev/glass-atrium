@@ -443,7 +443,7 @@ test("the ledger and instrumentation card adopt the shared labels", async () => 
   const table = renderScreen(
     React.createElement(mod.AgentSummaryTable as Component, { agents: [], pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }),
   );
-  const headers = findColumnHeads(table).map((n) => collectText(n));
+  const headers = findColumnHeads(table).map((n) => collectText(n).trim());
   assert.ok(headers.includes("Failed or blocked"), `ledger headers: ${headers.join(" | ")}`);
   assert.ok(!headers.includes("Breakages"));
 
@@ -573,9 +573,8 @@ test("the ledger opens sorted by breakages, riskiest agents first", async () => 
   const tree = await renderScreenAgents({ status: "ready", data, error: null, busy: false });
   const order = findNodes(tree, (n) => n.type === "AgentSummaryRow").map((n) => (n.props.agent as { agent_id: string }).agent_id);
   assert.deepEqual(order, ["glass-atrium-dev-risky", "glass-atrium-dev-busy"], "the agent with breakages leads the busier one");
-  const [head] = findNodes(tree, (n) => n.props?.atom === "CardHead" && n.props.title === "Performance by agent");
-  const [select] = findNodes(renderScreen(head?.props.right), (n) => n.type === "select");
-  assert.equal(select?.props.value, "failures", "the sort control opens on breakages");
+  const sorted = readSortHeads(tree).filter(([, sort]) => sort !== "none" && sort != null);
+  assert.deepEqual(sorted, [["Failed", "descending", "arrow-down"]], "the Failed or blocked head shows the breakage sort it opens on");
 });
 
 const NOT_LOADED_WORD = "not loaded";
@@ -641,15 +640,45 @@ function renderSortedBody(mod: Record<string, unknown>, failureStatus: string): 
   return [...order, `note:${note}`];
 }
 
-test("the sort control sits in the card head, so no band divides the head from the ledger", async () => {
+// each column head as [label start, aria-sort, sort icon] → the heads the ledger sorts from
+function readSortHeads(tree: RenderedNode | string | null): Array<[string, unknown, unknown]> {
+  return findColumnHeads(tree).map((th) => [
+    collectText(th).trim().split(/\s/)[0],
+    th.props["aria-sort"],
+    findAtoms(th, "Icon")[0]?.props.name,
+  ]);
+}
+
+test("the ledger sorts from its column heads: the sorted head carries its arrow and aria-sort, every other sortable head the two-way icon", async () => {
   const mod = await loadAgentsScreen();
   const tree = renderSortedCard(mod, "ready");
-  const [select] = findNodes(renderHeadRight(tree), (n) => n.type === "select");
-  assert.ok(select, "the head carries the sort select");
-  assert.equal(select.props["aria-label"], "Agent sort order");
-  assert.equal(select.props.value, "failures");
-  assert.equal(findNodes(tree, (n) => n.type === "select").length, 0, "the card body draws no second sort control");
+  assert.deepEqual(readSortHeads(tree), [
+    ["Agent", "none", "arrow-up-down"],
+    ["Runs", "none", "arrow-up-down"],
+    ["No", undefined, undefined],
+    ["Success", "none", "arrow-up-down"],
+    ["Failed", "descending", "arrow-down"],
+    ["P95", "none", "arrow-up-down"],
+    ["Trend", undefined, undefined],
+  ]);
+  assert.equal(findNodes(tree, (n) => n.type === "select").length, 0, "no separate sort select remains");
   assert.equal(findNodes(tree, (n) => n.props?.role === "status").length, 0, "the note lives in the head, not in a band above the rows");
+});
+
+test("a sortable head asks for its own key, and the name sort reads ascending", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const asked: string[] = [];
+  const tree = renderScreen(React.createElement(mod.AgentSummaryTable as Component, {
+    agents: [{ agent_id: "glass-atrium-dev-node", agent_name: "dev-node", status: "active", runs: 12 }],
+    pseudoAgents: [], days: 30, sortBy: "name", onSortChange: (key: string) => asked.push(key),
+    selectedAgent: null, onSelect: () => {}, failureStatus: "ready", trendStatus: "ready",
+  }));
+  assert.deepEqual(readSortHeads(tree)[0], ["Agent", "ascending", "arrow-up"]);
+  for (const button of findNodes(tree, (n) => n.type === "button" && /tbl-sort/.test(String(n.props.className)))) {
+    (button.props.onClick as () => void)();
+  }
+  assert.deepEqual(asked, ["name", "runs", "success", "failures", "p95"]);
 });
 
 test("the card head offers no sort while there is no row to order", async () => {
@@ -663,7 +692,8 @@ test("the card head offers no sort while there is no row to order", async () => 
       state, days: 30, sortBy: "failures", onSortChange: () => {}, selectedAgent: null, onSelect: () => {}, onRetry: () => {},
       trendByAgent: null, failureByAgent: null, overageByAgent: null, failureStatus: "ready", trendStatus: "ready",
     }));
-    assert.equal(findNodes(renderHeadRight(tree), (n) => n.type === "select").length, 0, `${state.status}: no sort select`);
+    assert.equal(findNodes(tree, (n) => n.type === "th" && n.props["aria-sort"] != null).length, 0, `${state.status}: no sortable head`);
+    assert.equal(findNodes(renderHeadRight(tree), (n) => n.props?.role === "status").length, 0, `${state.status}: no sort note`);
   }
 });
 
@@ -677,6 +707,8 @@ test("the breakage sort orders by breakages only once they are read, and says so
     const [first, , note] = renderSortedBody(mod, status);
     assert.equal(first, "glass-atrium-dev-busy", `${status}: unread breakages fall back to run order`);
     assert.match(note, /breakages not loaded/i, `${status}: the fallback order is announced`);
+    const sorted = readSortHeads(renderSortedCard(mod, status)).filter(([, sort]) => sort !== "none" && sort != null);
+    assert.deepEqual(sorted.map(([label]) => label), ["Runs"], `${status}: the Runs head carries the order the rows really have`);
   }
 });
 
@@ -956,7 +988,7 @@ test("the ledger's activity mark names activity under a labelled column, never a
   const table = renderScreen(
     React.createElement(mod.AgentSummaryTable as Component, { agents: [], pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }),
   );
-  const headers = findColumnHeads(table).map((n) => collectText(n));
+  const headers = findColumnHeads(table).map((n) => collectText(n).trim());
   assert.ok(headers.some((h) => /activity/i.test(h)), `ledger headers: ${headers.join(" | ")}`);
 
   const rows = [
@@ -1103,7 +1135,7 @@ test("the ledger carries Runs and No record as columns instead of a per-row expa
       trendByAgent: null, failureByAgent: null, overageByAgent: null, failureStatus: "ready", trendStatus: "ready",
     }),
   );
-  const headers = findColumnHeads(tree).map((n) => collectText(n));
+  const headers = findColumnHeads(tree).map((n) => collectText(n).trim());
   assert.ok(headers.includes("Runs") && headers.includes("No record"), `ledger headers: ${headers.join(" | ")}`);
   assert.equal(findAtoms(tree, "DisclosureChevron").length, 0, "no per-row expander");
   const cells = findNodes(tree, (n) => n.type === "td" && /^no completion record/.test(String(n.props?.title ?? "")));
@@ -1484,20 +1516,19 @@ test("every ledger row reads the fleet P95 cut, and only a p95 above it takes th
   assert.equal(glyphOf(1150), "text-dim", "above the fleet cut takes the warn glyph");
 });
 
-test("the success bar reads a 90-100% window with the 95% target at its midpoint", async () => {
+test("the success cell shows the rate alone, its fraction kept in the tooltip", async () => {
   const mod = await loadAgentsScreen();
   const rows = [
-    { name: "a perfect rate fills the bar", pct: 100, value: 1 },
-    { name: "97% sits past the target", pct: 97, value: 0.7 },
-    { name: "95% sits on the target", pct: 95, value: 0.5 },
-    { name: "a rate under the window floor empties the bar", pct: 80, value: 0 },
+    { name: "a measured rate", agent: { success_pct: 97.5, runs: 40, needs_context_count: 0 }, text: "97.5%", title: /^passed 39 ÷ denominator 40 / },
+    { name: "no outcome to rate", agent: { success_pct: 0, runs: 0, needs_context_count: 0 }, text: "—", title: /success rate undefined/ },
   ];
   for (const row of rows) {
-    const cell = findCellByTitle(renderToneRow(mod, { success_pct: row.pct, runs: 100, needs_context_count: 0 }, null), /^passed/);
-    const bar = findAtoms(cell, "BulletBar")[0];
-    assert.ok(Math.abs(Number(bar?.props.value) - row.value) < 1e-9, `${row.name}: ${bar?.props.value}`);
-    assert.equal(bar?.props.target, 0.5, `${row.name}: target tick`);
-    assert.match(String(bar?.props.ariaLabel), new RegExp(`success rate ${row.pct}\\.0%`), `${row.name}: label keeps the true rate`);
+    const cell = findCellByTitle(renderToneRow(mod, row.agent, null), /^passed|success rate undefined/);
+    const text = collectText(cell);
+    assert.ok(text.includes(row.text), `${row.name}: ${text}`);
+    assert.doesNotMatch(text, /\(\d/, `${row.name}: no fraction in the cell`);
+    assert.match(String(cell?.props.title), row.title, `${row.name}: the tooltip keeps the fraction`);
+    assert.equal(findAtoms(cell, "BulletBar").length, 0, `${row.name}: no bar beside the rate`);
   }
 });
 

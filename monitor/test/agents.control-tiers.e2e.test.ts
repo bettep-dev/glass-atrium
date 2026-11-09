@@ -52,7 +52,6 @@ const MATRIX = getMarkup("SuccessRateMatrixCard", {
   state: { status: "ready", data: { rows: [], truncated: true }, error: null }, days: DAYS, onRetry: noop,
 });
 
-const SORT = getMarkup("SummarySortAg", { sortBy: "runs", onSortChange: noop, note: "" });
 // a display name longer than the 160 agent cell → the link has to keep the cell's ellipsis
 const LONG_AGENT = "glass-atrium-dev-front-with-a-display-name-past-the-agent-cell";
 const PAIRS = getMarkup("TopNFailingAgentsTable", {
@@ -65,7 +64,6 @@ const PAIRS = getMarkup("TopNFailingAgentsTable", {
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="lifecycle" style="width: 560px; padding: 24px;">${LIFECYCLE}</div>
   <div id="matrix" style="width: 560px; padding: 24px;">${MATRIX}</div>
-  <div id="sort" style="padding: 24px;">${SORT}</div>
   <div id="pairs" style="width: 640px; padding: 24px;">${PAIRS}</div>
 </body></html>`;
 
@@ -106,16 +104,6 @@ describe("a static pill in a card head stands on the head's 32 control height", 
     assert.match(await readText(selector), /Row limit hit/);
     assert.equal((await readBox(selector)).height, 32);
     assert.match(await page.$eval(selector, (el) => el.getAttribute("title") ?? ""), /matrix incomplete/);
-  });
-});
-
-describe("the ledger head's Sort label sits on the label-to-group step", () => {
-  test("Sort: is 4 from its select and shares its centre line", async () => {
-    const label = await readBox("#sort span:not([role])");
-    const select = await readBox("#sort select");
-    assert.match(await readText("#sort span:not([role])"), /^Sort:$/);
-    assert.equal(select.left - label.right, 4);
-    assert.ok(Math.abs(centreOf(label) - centreOf(select)) < 0.5, "one centre line");
   });
 });
 
