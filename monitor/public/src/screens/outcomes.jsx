@@ -250,28 +250,16 @@ function AttributionDevScopeO({ devScope }) {
   const total = Number(devScope.total_attributed) || 0;
   if (total <= 0) return null;
   const truncCount = Number(devScope.budget_truncation_count) || 0;
+  const { Stack, StatRow } = window.UI;
+  const stats = [
+    { key: 'budget_kill', label: 'Budget-kill rate', value: formatRateO(devScope.budget_truncation_rate), context: `${formatIntO(truncCount)} of ${formatIntO(total)}` },
+    { key: 'synthesized', label: 'Synthesized rate', value: formatRateO(devScope.synthesized_rate), context: 'recovered from missing report' },
+  ];
   return (
-    <div className="mt-3 pt-3 border-t border-line">
-      <div className="fs-meta text-faint uppercase tracking-wider mb-1.5">
-        DEV agents · truncation baseline
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div
-          className="bg-elev rounded-md p-3 border border-line"
-          title="Rate at which DEV agents ran out of budget before reporting a result over the selected window — the rolling baseline to watch for recurrence">
-          <div className="fs-meta text-dim">Budget-kill rate</div>
-          <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.budget_truncation_rate)}</div>
-          <div className="fs-meta font-mono text-dim mt-0.5">{formatIntO(truncCount)} of {formatIntO(total)}</div>
-        </div>
-        <div
-          className="bg-elev rounded-md p-3 border border-line"
-          title="Synthesized-outcome rate for DEV agents — harness recovery when the agent reported no result (not a failure, a recovery artifact)">
-          <div className="fs-meta text-dim">Synthesized rate</div>
-          <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.synthesized_rate)}</div>
-          <div className="fs-meta font-mono text-dim mt-0.5">recovered from missing report</div>
-        </div>
-      </div>
-    </div>
+    <Stack gap="label">
+      <div className="fs-meta text-dim">DEV agents, truncation baseline</div>
+      <StatRow stats={stats}/>
+    </Stack>
   );
 }
 
@@ -279,20 +267,19 @@ function AttributionDevScopeO({ devScope }) {
 //   빈 배열/부재 → null (저볼륨 신호라 non-empty 일 때만 노출 · 빈-상태 clutter 회피).
 function AttributionBudgetKillListO({ rows }) {
   if (!Array.isArray(rows) || rows.length === 0) return null;
+  const { Stack } = window.UI;
   return (
-    <div className="mt-3 pt-3 border-t border-line">
-      <div className="fs-meta text-faint uppercase tracking-wider mb-1.5">
-        Budget-killed subagents (7d)
-      </div>
-      <div className="flex flex-col gap-0.5">
+    <Stack gap="label">
+      <div className="fs-meta text-dim">Budget-killed subagents (7d)</div>
+      <Stack gap="stack">
         {rows.map((r) => (
-          <div key={r.agent} className="flex items-center justify-between fs-meta font-mono">
+          <div key={r.agent} className="flex items-center justify-between fs-meta tabular-nums">
             <span className="text-dim truncate" style={{ maxWidth: 220 }} title={r.agent}><window.UI.AgentName name={r.agent}/></span>
             <span className="text-ink font-semibold tabular-nums">{formatIntO(r.count)}</span>
           </div>
         ))}
-      </div>
-    </div>
+      </Stack>
+    </Stack>
   );
 }
 
@@ -1275,10 +1262,10 @@ function AgentFailureBodyO({ state, onRetry, shared, stickyStyle }) {
             <tr key={row.agent} className="outcome-row">
               <td className="text-left text-ink px-3 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
               <AgentFailureRateCellO row={row}/>
-              <td className={`${NUM_ALIGN_O} text-ink font-mono px-3 border-b border-line`}>{formatIntO(row.failed)}</td>
-              <td className={`${NUM_ALIGN_O} text-ink font-mono px-3 border-b border-line`}>{formatIntO(row.blocked)}</td>
+              <td className={`${NUM_ALIGN_O} text-ink px-3 border-b border-line`}>{formatIntO(row.failed)}</td>
+              <td className={`${NUM_ALIGN_O} text-ink px-3 border-b border-line`}>{formatIntO(row.blocked)}</td>
               <OpenCaveatCellO count={row.openCaveats}/>
-              <td className={`${NUM_ALIGN_O} text-faint font-mono px-3 border-b border-line`}>{formatIntO(row.total)}</td>
+              <td className={`${NUM_ALIGN_O} text-faint px-3 border-b border-line`}>{formatIntO(row.total)}</td>
             </tr>
           ))}
         </tbody>
@@ -1307,7 +1294,7 @@ function AgentFailureRateCellO({ row }) {
           <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${getFailureRateFillO(row)}))` }}/>
         </span>
         <LowSampleMark n={row.total}/>
-        <span className={`${NUM_ALIGN_O} font-mono ${row.isLowSample ? 'text-faint' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
+        <span className={`${NUM_ALIGN_O} ${row.isLowSample ? 'text-faint' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
       </span>
     </td>
   );
@@ -1318,7 +1305,7 @@ function OpenCaveatCellO({ count }) {
   const isLoaded = count !== null;
   return (
     <td
-      className={`${NUM_ALIGN_O} text-ink font-mono px-3 border-b border-line`}
+      className={`${NUM_ALIGN_O} text-ink px-3 border-b border-line`}
       title={isLoaded ? undefined : 'Not loaded — only the top 10 agents by volume carry an open-caveat count'}>
       {isLoaded ? formatIntO(count) : '—'}
     </td>
@@ -1378,9 +1365,9 @@ function AttributionHealthBody({ state, onRetry, shared }) {
   }
 
   return (
-    <div>
+    <window.UI.Stack>
       <AttributionSummaryRow summary={summary} totalAttributed={totalAttributed}/>
-      <div className="fs-meta text-faint mt-2 leading-relaxed">
+      <div className="fs-meta text-faint leading-relaxed">
         <span className="inline-flex items-center gap-1">
           <span style={{ color: `rgb(var(${ATTRIBUTION_CATEGORY_META.attribution_loss.colorVar}))` }} aria-hidden="true">
             <GlyphO name={ATTRIBUTION_CATEGORY_META.attribution_loss.icon}/>
@@ -1389,7 +1376,7 @@ function AttributionHealthBody({ state, onRetry, shared }) {
         </span>
       </div>
       <AttributionDevScopeO devScope={summary?.dev_scope}/>
-    </div>
+    </window.UI.Stack>
   );
 }
 
@@ -1406,11 +1393,11 @@ function AttributionBreakdownO({ state }) {
   const series = Array.isArray(state.data?.days_series) ? state.data.days_series : [];
 
   return (
-    <div>
+    <window.UI.Stack>
       <AttributionDailyChart grid={buildAttributionGridO(series, ATTRIBUTION_GRID_BARS)}/>
       <AttributionLegend/>
       <AttributionBudgetKillListO rows={summary.budget_truncation_by_agent}/>
-    </div>
+    </window.UI.Stack>
   );
 }
 
@@ -1420,31 +1407,19 @@ function AttributionBreakdownO({ state }) {
 function AttributionSummaryRow({ summary, totalAttributed }) {
   const omissionBreakdown = buildLiteralOmissionBreakdownO(summary?.literal_omission_breakdown);
   const omissionMeta = ATTRIBUTION_CATEGORY_META.literal_omission;
+  const { Stack, StatRow } = window.UI;
+  const stats = ATTRIBUTION_CATEGORY_ORDER.map((key) => {
+    const meta = ATTRIBUTION_CATEGORY_META[key];
+    const rate = summary ? summary[`${key}_rate`] : null;
+    const count = Math.round((Number(rate) || 0) * totalAttributed);
+    return { key, label: <StatGlyphLabelO meta={meta}/>, value: formatRateO(rate), context: `${formatIntO(count)} runs` };
+  });
   return (
-    <div className="mb-4">
-      <div className="grid grid-cols-4 gap-2">
-        {ATTRIBUTION_CATEGORY_ORDER.map((key) => {
-          const meta = ATTRIBUTION_CATEGORY_META[key];
-          const rate = summary ? summary[`${key}_rate`] : null;
-          const count = Math.round((Number(rate) || 0) * totalAttributed);
-          return (
-            <div key={key} className="bg-elev rounded-md p-3 border border-line min-w-0" role="group"
-              aria-label={`${meta.label}: ${formatRateO(rate)}, ${formatIntO(count)} runs`}>
-              <div className="flex items-start gap-1.5 fs-meta min-h-[2.2em]">
-                <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-                <span className="text-dim min-w-0" title={meta.label}>{meta.label}</span>
-              </div>
-              <div className="fs-stat font-semibold text-ink mt-1 font-mono">
-                {formatRateO(rate)}
-              </div>
-              <div className="fs-meta font-mono text-dim mt-0.5">{formatIntO(count)}</div>
-            </div>
-          );
-        })}
-      </div>
+    <Stack gap="label">
+      <StatRow stats={stats}/>
       {omissionBreakdown && (
         <div
-          className="fs-meta text-dim mt-1.5 leading-relaxed"
+          className="fs-meta text-dim leading-relaxed"
           title={`Missing report breakdown — budget kill ${formatIntO(omissionBreakdown.budget)}, truncated completion ${formatIntO(omissionBreakdown.truncated)}, completion missing ${formatIntO(omissionBreakdown.missing)} (sums to the Missing report count; the rate is unchanged)`}>
           {/* glyph + label as one unbreakable unit → the × never wraps onto a line of its own */}
           <span className="inline-flex items-center gap-0.5 whitespace-nowrap mr-1">
@@ -1454,8 +1429,16 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
           budget-kill {formatIntO(omissionBreakdown.budget)} · truncated {formatIntO(omissionBreakdown.truncated)} · missing {formatIntO(omissionBreakdown.missing)}
         </div>
       )}
-    </div>
+    </Stack>
   );
+}
+
+// a stat label led by its category glyph — colour + glyph + word, never colour alone
+function StatGlyphLabelO({ meta }) {
+  return <span className="inline-flex items-start gap-1.5">
+    <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
+    {meta.label}
+  </span>;
 }
 
 // 일별 stacked-bar — 각 일자 1막대, 4-category 비례 stack (inline SVG, 외부 라이브러리 없음).
@@ -1626,7 +1609,7 @@ const EMPTY_DAY_LABEL_NOT_READ = 'Not read (before the data window)';
 // dual-encoded 범례 — 색상 + 기호 + 라벨 3중 부호화 (color-blind safety).
 function AttributionLegend() {
   return (
-    <div className="flex flex-wrap gap-3 fs-meta text-faint pt-3 border-t border-line mt-3">
+    <div className="flex flex-wrap gap-3 fs-meta text-faint">
       {ATTRIBUTION_CATEGORY_ORDER.map((key) => {
         const meta = ATTRIBUTION_CATEGORY_META[key];
         return (
@@ -1796,7 +1779,9 @@ function ChannelLivenessRow({ channel, days }) {
 //   목적: 측정 산물(unverified/legacy)을 품질 실패로 오독하지 않게 측정 신호를 명시 노출.
 
 function GraderBreakdownCard({ state, onRetry, shared }) {
-  const { CardHead } = window.UI;
+  const { CardHead, getRegionView } = window.UI;
+  // the foot footnotes the drawn breakdown → absent while the body shows loading, error or empty
+  const isReady = getRegionView(state) === 'ready' && Boolean(state.data?.overall?.grader_breakdown);
 
   return (
     <div id={REGION_CARD_IDS.checks} className="card mb-4">
@@ -1804,6 +1789,7 @@ function GraderBreakdownCard({ state, onRetry, shared }) {
       <div className="card-body">
         <GraderBreakdownBody state={state} onRetry={onRetry} shared={shared}/>
       </div>
+      {isReady && <DowngradeBreakdownRowO breakdown={state.data.overall.downgrade_breakdown}/>}
     </div>
   );
 }
@@ -1828,36 +1814,20 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
   }
 
   const gradedTotal = Number(breakdown.graded_total) || 0;
-  const tileKeys = getGraderTileKeysO(breakdown);
+  const stats = getGraderTileKeysO(breakdown).map((key) => {
+    const meta  = GRADER_BREAKDOWN_META[key];
+    const count = Number(breakdown[key]) || 0;
+    // not_measured (legacy NULL) sits outside the graded_total denominator → no share
+    const pct   = key !== 'not_measured' && gradedTotal > 0 ? (count / gradedTotal * 100) : null;
+    return { key, label: <StatGlyphLabelO meta={meta}/>, value: formatIntO(count), context: pct != null ? `${pct.toFixed(1)}%` : 'not in share denominator' };
+  });
 
   return (
-    <>
+    <window.UI.Stack gap="label">
       {/* open, not folded → the column matches the cross table beside it instead of leaving one sentence over a blank card */}
-      <p className="fs-body text-ink mb-2">{getGraderSentenceO(breakdown)}</p>
-      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${tileKeys.length}, minmax(0, 1fr))` }}>
-        {tileKeys.map((key) => {
-          const meta  = GRADER_BREAKDOWN_META[key];
-          const count = Number(breakdown[key]) || 0;
-          // not_measured(레거시 NULL)는 graded_total 분모 밖 → 비율 표기 생략 (오해 차단).
-          const pct   = key !== 'not_measured' && gradedTotal > 0 ? (count / gradedTotal * 100) : null;
-          return (
-            <div
-              key={key}
-              className="p-3 border border-line"
-              style={{ borderRadius: 'var(--radius-tile)' }}
-              title={`${meta.label}: ${formatIntO(count)}${pct != null ? ` (${pct.toFixed(1)}%)` : ' (legacy — not in share denominator)'}`}>
-              <div className="inline-flex items-start gap-1 fs-meta min-h-[2.2em] text-dim">
-                <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-                {meta.label}
-              </div>
-              <div className="mt-1 font-mono fs-title text-ink">{formatIntO(count)}</div>
-              <div className="fs-meta text-faint">{pct != null ? `${pct.toFixed(1)}%` : 'not in share denominator'}</div>
-            </div>
-          );
-        })}
-      </div>
-      <DowngradeBreakdownRowO breakdown={state.data?.overall?.downgrade_breakdown}/>
-    </>
+      <p className="fs-body text-ink">{getGraderSentenceO(breakdown)}</p>
+      <window.UI.StatRow stats={stats}/>
+    </window.UI.Stack>
   );
 }
 
@@ -1880,7 +1850,7 @@ function DowngradeBreakdownRowO({ breakdown }) {
   if (segments.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-line fs-meta font-mono">
+    <div className="card-foot flex-wrap fs-meta tabular-nums">
       <span className="text-faint">Where each verdict came from</span>
       {segments.map(({ key, count }) => {
         const meta = DOWNGRADE_BREAKDOWN_META[key];
@@ -1932,7 +1902,7 @@ function TaskTypeGraderCrosstabO({ rows }) {
 function TaskTypeGraderGroupO({ label, rows, maxTotal, isMuted }) {
   return (
     <div>
-      <div className="fs-meta text-faint uppercase tracking-wider mb-1">{label}</div>
+      <div className="fs-meta text-faint mb-1">{label}</div>
       <div className="flex flex-col gap-1">
         {rows.map((row) => <TaskTypeGraderBarO key={row.task_type} row={row} maxTotal={maxTotal} isMuted={isMuted}/>)}
       </div>
@@ -1968,7 +1938,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
           </div>
         )}
       </div>
-      <span className="fs-meta font-mono text-dim" style={{ width: 56, flexShrink: 0, textAlign: 'right' }}>
+      <span className="fs-meta tabular-nums text-dim" style={{ width: 56, flexShrink: 0, textAlign: 'right' }}>
         {total > 0 ? formatIntO(total) : '—'}
       </span>
     </div>
@@ -2245,8 +2215,8 @@ function LoopEventsBody({ state, onRetry, shared }) {
                       {meta.label}
                     </span>
                   </td>
-                  <td className={`${NUM_ALIGN_O} text-dim font-mono px-2 py-1.5 border-b border-line`}>+{formatIntO(Number(e.changes_added ?? 0))}</td>
-                  <td className={`${NUM_ALIGN_O} text-dim font-mono px-2 py-1.5 border-b border-line`}>-{formatIntO(Number(e.changes_removed ?? 0))}</td>
+                  <td className={`${NUM_ALIGN_O} text-dim px-2 py-1.5 border-b border-line`}>+{formatIntO(Number(e.changes_added ?? 0))}</td>
+                  <td className={`${NUM_ALIGN_O} text-dim px-2 py-1.5 border-b border-line`}>-{formatIntO(Number(e.changes_removed ?? 0))}</td>
                 </tr>
               );
             })}

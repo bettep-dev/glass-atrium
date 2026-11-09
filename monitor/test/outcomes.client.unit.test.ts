@@ -749,6 +749,7 @@ describe("ResultTableCard: the head's 'shown' count is the drawn set the drawer 
 
 interface DensitySandboxO {
   GraderBreakdownBody: (props: { state: Record<string, unknown> }) => RecordedElementO;
+  GraderBreakdownCard: (props: { state: Record<string, unknown> }) => RecordedElementO;
   buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string }>;
 }
 const density = rendered as unknown as DensitySandboxO;
@@ -758,9 +759,28 @@ describe("Task results density: the columns beside a taller card carry their own
     const breakdown = { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 };
     const elements = flattenO(density.GraderBreakdownBody({ state: { status: "ready", data: { overall: { grader_breakdown: breakdown } } } }));
     assert.equal(elements.some((el) => el.props.kind === "detail"), false, "no detail fold");
-    const tileKeys = elements.map((el) => el.props.key).filter((key) => ["verified_pass", "unverified", "verified_fail"].includes(String(key)));
-    assert.equal(tileKeys.length, 3);
+    const stats = elements.find((el) => Array.isArray(el.props.stats))?.props.stats as Array<{ key: string }> | undefined;
+    // vm-realm array → copy into this realm before a deep compare
+    assert.deepEqual(Array.from(stats ?? [], (stat) => stat.key).sort(), ["unverified", "verified_fail", "verified_pass"]);
   });
+});
+
+describe("Automatic check results: where each verdict came from is the card's foot, drawn only under a drawn breakdown", () => {
+  const overall = { grader_breakdown: { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 }, downgrade_breakdown: { writer_true_downgraded: 2 } };
+  const rows = [
+    { name: "a landed breakdown ends the card with the foot", state: { status: "ready", data: { overall } }, hasFoot: true },
+    { name: "a loading card draws no foot", state: { status: "loading" }, hasFoot: false },
+    { name: "a landed payload with no breakdown draws no foot", state: { status: "ready", data: { overall: { downgrade_breakdown: overall.downgrade_breakdown } } }, hasFoot: false },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const card = density.GraderBreakdownCard({ state: row.state });
+      const children = (Array.isArray(card.props.children) ? card.props.children : [card.props.children]).filter(Boolean) as RecordedElementO[];
+      const last = children[children.length - 1];
+      const drawn = typeof last.type === "function" ? (last.type as (props: unknown) => RecordedElementO | null)(last.props) : last;
+      assert.equal(String(drawn?.props.className ?? "").split(" ").includes("card-foot"), row.hasFoot);
+    });
+  }
 });
 
 interface ChartSandboxO {

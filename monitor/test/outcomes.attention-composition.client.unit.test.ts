@@ -1304,7 +1304,7 @@ describe("sub-tables: every numeric value and its header are right-aligned, tabu
     const share = rateLine.children.filter((child) => child !== null && child !== false && child !== undefined).at(-1) as RenderNode;
     assert.strictEqual(renderText(share).trim(), "9.1%", "the share ends the rate cell");
     assertB5(share, "the failure-rate share");
-    assert.match(String(share.props?.className), /\bfont-mono\b/, "the share keeps its mono face");
+    assert.doesNotMatch(String(share.props?.className), /\bfont-mono\b/, "the share reads in the sans face, its digits tabular");
   });
 
   test("the cross table: no centred count, header, cell or total", () => {

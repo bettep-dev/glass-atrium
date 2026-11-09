@@ -101,13 +101,12 @@ for (const row of foldRows) {
   });
 }
 
-test("each reporting-health tile is a named group, so a tab or reader lands on one unit", () => {
+test("each reporting-health category is one stat whose name, share and run count read together", () => {
   const summary = { healthy_rate: 0.9, attribution_loss_rate: 0.05, literal_omission_rate: 0.03, synthesized_rate: 0.02 };
-  const tree = render("AttributionSummaryRow", { summary, totalAttributed: 100 });
-  const tiles = findNodes(tree, (n) => n.props.role === "group");
-  const names = tiles.map((n) => String(n.props["aria-label"]));
-  for (const label of ["Recorded properly", "Untraceable"]) {
-    assert.ok(names.some((name) => name.startsWith(label)), `no group named ${label}: ${names.join(" | ")}`);
+  const tree = render("AttributionSummaryRow", { summary, totalAttributed: 200 });
+  const stats = findNodes(tree, (n) => n.props.className === "stat").map((n) => collectText(n));
+  for (const [label, share, runs] of [["Recorded properly", "90.0%", "180 runs"], ["Untraceable", "5.0%", "10 runs"]]) {
+    assert.ok(stats.some((text) => text.includes(label) && text.includes(share) && text.includes(runs)), `no stat ${label} ${share} ${runs}: ${stats.join(" | ")}`);
   }
 });
 
