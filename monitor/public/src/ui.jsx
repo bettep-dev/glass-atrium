@@ -1036,18 +1036,90 @@ function TableHead({ children, isNumeric = false, isSticky = false, className = 
 }
 
 /**
- * Data table named by its caption (visually hidden unless isCaptionShown) with scoped column headers.
- * @param columns - `{ key, label, isNumeric }` per column; omit to compose the thead yourself.
- * @param children - tbody rows.
+ * Data table named by its caption (visually hidden unless isCaptionShown), inside its own measured wrapper.
+ * The wrapper is one node in both modes → useElementWidth observes it once; a measured width below stackBelowPx stacks the rows.
+ * Rows, bodies and foot take a node or `(view) => rows`; view `{ isStacked, columnCount }` feeds TableRow and TableCell.
+ * @param columns - `{ key, label, isNumeric, sort }` per column, sort → aria-sort; omit to render no thead.
+ * @param widths - CSS width per column → a colgroup, dropped when stacked.
+ * @param bodies - `{ key, rows, isBusy, onKeyDown, className }` per tbody; omit to render children as the one body.
+ * @param foot - tfoot rows, after the last body.
  */
-function Table({ caption, isCaptionShown = false, isHeadSticky = false, columns, children, className = '' }) {
-  return <table className={`tbl ${className}`.trim()}>
-    <caption className={isCaptionShown ? 'section-label text-left pb-2' : 'sr-only'}>{caption}</caption>
-    {columns && <thead><tr>
-      {columns.map((c) => <TableHead key={c.key} isNumeric={c.isNumeric} isSticky={isHeadSticky}>{c.label}</TableHead>)}
-    </tr></thead>}
-    <tbody>{children}</tbody>
-  </table>;
+function Table({ caption, isCaptionShown = false, isHeadSticky = false, columns, widths, stackBelowPx, bodies, foot, children, className = '' }) {
+  const [wrapRef, widthPx] = useElementWidth();
+  const mode = getTableMode(widthPx, stackBelowPx);
+  const view = { isStacked: mode === 'stacked', columnCount: columns?.length ?? widths?.length ?? 0 };
+  const groupRole = view.isStacked ? 'rowgroup' : undefined;
+  const sections = bodies ?? [{ key: 'body', rows: children }];
+  return <div ref={wrapRef} className="tbl-wrap" data-table-mode={mode}>
+    <table role={view.isStacked ? 'table' : undefined} className={`tbl ${view.isStacked ? 'tbl--stacked' : ''} ${className}`.replace(/\s+/g, ' ').trim()}>
+      <caption className={isCaptionShown ? 'section-label text-left pb-2' : 'sr-only'}>{caption}</caption>
+      {widths && !view.isStacked && <colgroup>{widths.map((width, i) => <col key={i} style={{ width }} />)}</colgroup>}
+      {columns && <TableColumns columns={columns} view={view} isSticky={isHeadSticky} />}
+      {sections.map((body) => <tbody key={body.key} role={groupRole} aria-busy={body.isBusy ? 'true' : undefined}
+        onKeyDown={body.onKeyDown} className={body.className}>{getTableRows(body.rows, view)}</tbody>)}
+      {foot && <tfoot role={groupRole}>{getTableRows(foot, view)}</tfoot>}
+    </table>
+  </div>;
+}
+
+// Stacked only for a positive measured width below the threshold → unmeasured (0, absent, non-number) and every non-DOM render stay wide.
+function getTableMode(widthPx, stackBelowPx) {
+  const isMeasured = Number.isFinite(widthPx) && widthPx > 0;
+  return isMeasured && Number.isFinite(stackBelowPx) && widthPx < stackBelowPx ? 'stacked' : 'wide';
+}
+
+function getTableRows(rows, view) {
+  return typeof rows === 'function' ? rows(view) : rows;
+}
+
+function TableColumns({ columns, view, isSticky }) {
+  const role = view.isStacked ? 'columnheader' : undefined;
+  return <thead role={view.isStacked ? 'rowgroup' : undefined}><TableRow view={view}>
+    {columns.map((c) => <TableHead key={c.key} isNumeric={c.isNumeric} isSticky={isSticky} role={role} aria-sort={c.sort}>{c.label}</TableHead>)}
+  </TableRow></thead>;
+}
+
+// Stacked mode restates the row role: table display changes can drop native table semantics.
+function TableRow({ view, children, ...rest }) {
+  return <tr {...rest} role={view?.isStacked ? 'row' : undefined}>{children}</tr>;
+}
+
+/**
+ * One cell of four kinds; stacked mode restates its role and prefixes a meta cell with its column label, aria-hidden.
+ * @param kind - 'data' (textRole 'label' | 'primary' | 'meta') · 'span' (start → rest of the row) · 'row-header' · 'group-header' (heading anchor at level, id)
+ * @param start - columns before a span or group-header cell
+ * @param rest - cell attributes only (title, aria-label)
+ */
+function TableCell({ view, kind = 'data', textRole = 'primary', label, start = 0, level = 3, id, isNumeric = false, className = '', children, ...rest }) {
+  const isStacked = view?.isStacked ?? false;
+  const span = Math.max(1, (view?.columnCount ?? 0) - start);
+  const cellClass = `tbl-cell tbl-cell--${kind === 'data' ? textRole : kind} ${isNumeric ? 'num' : ''} ${className}`.replace(/\s+/g, ' ').trim();
+  if (kind === 'row-header') return <th {...rest} scope="row" role={isStacked ? 'rowheader' : undefined} className={cellClass}>{children}</th>;
+  if (kind === 'group-header') {
+    return <th {...rest} scope="colgroup" colSpan={span} role="heading" aria-level={level} id={id} tabIndex={-1} className={cellClass}>{children}</th>;
+  }
+  const isPrefixed = isStacked && kind === 'data' && textRole === 'meta' && Boolean(label);
+  return <td {...rest} colSpan={kind === 'span' ? span : undefined} role={isStacked ? 'cell' : undefined} className={cellClass}>
+    {isPrefixed && <span aria-hidden="true" className="tbl-cell-label">{label}</span>}
+    {children}
+  </td>;
+}
+
+/**
+ * A row's actions, two at most: the visible action, then the S2a overflow menu only when items exist.
+ * @param label - accessible name of the overflow trigger, naming its row
+ * @param items - MenuPanel action items
+ */
+function RowActions({ label, action, items = [], onPick }) {
+  const menu = useMenuButton();
+  return <div ref={menu.rootRef} className="row-actions">
+    {action}
+    {items.length > 0 && <button type="button" className="row-actions-more" aria-label={label} {...menu.triggerProps}>
+      <Icon name="ellipsis" size={16} />
+    </button>}
+    {menu.isOpen && <MenuPanel id={menu.menuId} label={label} kind="action" items={items}
+      rootRef={menu.rootRef} onPick={onPick} onClose={menu.close} />}
+  </div>;
 }
 
 const DISCLOSURE_CHEVRON_PX = 14;
@@ -2664,7 +2736,7 @@ function resolveOutcomeRate(data) {
 
 window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
-  SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
+  SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, Pagination,
