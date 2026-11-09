@@ -556,7 +556,8 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	cursor: pointer;
 }
 .seg button.active,
-.seg button[aria-pressed="true"] {
+.seg button[aria-pressed="true"],
+.seg button[aria-checked="true"] {
 	background: rgb(var(--surface-raised-2));
 	box-shadow: inset 0 0 0 1px rgb(var(--control-edge));
 	color: rgb(var(--ink));
@@ -571,6 +572,201 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 /* inset ring — .seg clips its children (overflow: hidden) */
 .seg button:focus-visible {
 	outline-offset: calc(var(--focus-ring-width) * -1);
+}
+
+/* tab — label only, no inline padding → the first label sits on the column; selected = ink + a 2px underline drawn inset, so no state resizes it */
+.tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--gap-control-group);
+}
+.tabs [role="tab"] {
+	min-width: var(--space-6); /* a 24px+ target even for a two-letter label */
+	min-height: var(--ctl-min-h);
+	padding: 0;
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	font-weight: 500;
+	background: none;
+	border: none;
+	color: rgb(var(--dim));
+	cursor: pointer;
+}
+.tabs [role="tab"]:hover {
+	color: rgb(var(--ink));
+}
+.tabs [role="tab"][aria-selected="true"] {
+	color: rgb(var(--ink));
+	box-shadow: inset 0 -2px 0 rgb(var(--ink));
+}
+
+/* filter bar — one trigger per axis, wrapping instead of folding axes away; reset on the right column, its slot held while hidden */
+.filter-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--gap-control);
+}
+.filter-bar-reset {
+	margin-inline-start: auto;
+}
+.filter-trigger-root {
+	position: relative;
+	display: inline-flex;
+}
+/* quiet trigger — dim axis + ink value + chevron, no colon, no edge; sunken on hover and while its menu is open */
+.filter-trigger {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--gap-label-inline);
+	min-height: var(--ctl-min-h);
+	padding: 0 var(--space-2);
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	font-weight: 500;
+	background: none;
+	border: none;
+	border-radius: var(--radius-control);
+	cursor: pointer;
+}
+.filter-trigger:hover,
+.filter-trigger[aria-expanded="true"] {
+	background: rgb(var(--sunken));
+}
+.filter-trigger-axis {
+	color: rgb(var(--dim));
+}
+.filter-trigger-value {
+	color: rgb(var(--ink));
+}
+/* value ↔ chevron = the 6 glyph gap of 14px text, over the 4 inline-label gap */
+.filter-trigger > .disclosure-chevron {
+	margin-inline-start: calc(var(--space-1_5) - var(--gap-label-inline));
+}
+
+/* menu — the one menu surface (filter trigger, row-action overflow): label-only items on the card inset and the list gap */
+.menu {
+	--menu-check-w: 1em;
+	position: absolute;
+	top: calc(100% + var(--space-1));
+	left: 0;
+	z-index: calc(var(--z-overlay) - 1);
+	min-width: 100%;
+	width: max-content;
+	max-width: min(360px, calc(100vw - 32px));
+	max-height: 60vh;
+	overflow: auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-list);
+	padding: var(--card-pad);
+	background: rgb(var(--overlay-surface));
+	border: 1px solid rgb(var(--line));
+	border-radius: var(--radius-card);
+	box-shadow: var(--shadow-overlay);
+}
+/* every checkable item holds the ✓ slot → checked and unchecked labels start on one column */
+.menu-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	min-height: var(--ctl-min-h);
+	padding: 0 var(--space-2);
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	font-weight: 500;
+	text-align: start;
+	color: rgb(var(--ink));
+	background: none;
+	border: none;
+	border-radius: var(--radius-control);
+	cursor: pointer;
+}
+.menu-item:hover {
+	background: rgb(var(--sunken));
+}
+.menu-item[aria-checked] {
+	padding-inline-start: calc(var(--space-2) + var(--menu-check-w) + var(--space-1_5));
+}
+.menu-item-check {
+	position: absolute;
+	left: var(--space-2);
+	width: var(--menu-check-w);
+	text-align: center;
+}
+
+/* bar search — sunken fill + leading icon, no border; the fill carries the focus ring, so the field inside draws none */
+.bar-search {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1_5);
+	min-height: var(--ctl-min-h);
+	padding: 0 var(--space-2);
+	background: rgb(var(--sunken));
+	border-radius: var(--radius-control);
+	color: rgb(var(--faint));
+}
+.bar-search:has(> .bar-search-field:focus-visible) {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: var(--focus-ring-offset);
+}
+.bar-search-field {
+	flex: 1;
+	min-width: 0;
+	padding: 0;
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	color: rgb(var(--ink));
+	background: none;
+	border: none;
+}
+.bar-search-field:focus-visible {
+	outline: none;
+}
+.bar-search-field::placeholder {
+	color: rgb(var(--faint));
+}
+
+/* link — navigation: ink text + trailing arrow (the non-colour cue), no box, inline height; underline on hover */
+.link {
+	color: rgb(var(--ink));
+	text-decoration: none;
+}
+.link:hover {
+	text-decoration: underline;
+	text-underline-offset: 0.2em;
+}
+.link-arrow {
+	margin-inline-start: var(--space-1_5);
+}
+
+.field-label {
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	color: rgb(var(--dim));
+}
+
+/* layout primitives — a screen names a spacing role, never a value */
+.stack {
+	display: flex;
+	flex-direction: column;
+}
+.stack--block { gap: var(--gap-block); }
+.stack--label { gap: var(--gap-label); }
+.stack--stack { gap: var(--gap-stack); }
+.stack--list { gap: var(--gap-list); }
+.cluster {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+}
+.cluster--control { gap: var(--gap-control); }
+.cluster--control-group { gap: var(--gap-control-group); }
+
+/* machine string — ids, hashes, paths, config keys: the one mono use, unboxed, breaking anywhere so a long path never scrolls */
+.machine {
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	overflow-wrap: anywhere;
 }
 
 .kpi {
@@ -1033,7 +1229,8 @@ button.kpi:hover {
 	display: inline-flex;
 }
 /* .card clips (overflow: hidden) → lifted only while a panel is open, so a short card never cuts it off */
-.card:has(.popover-panel) {
+.card:has(.popover-panel),
+.card:has(.menu) {
 	overflow: visible;
 }
 .popover-panel {

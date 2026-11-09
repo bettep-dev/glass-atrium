@@ -1372,9 +1372,69 @@ function FilterBar({ label, isApplied, onReset, children, className = '' }) {
 
   return <div ref={barRef} role="group" aria-label={label} className={`filter-bar ${className}`.trim()}>
     {children}
-    <button type="button" className="btn ghost sm" style={isApplied ? undefined : RESET_HIDDEN_STYLE}
-      onClick={onResetClick}>Reset filters</button>
+    <QuietButton className="filter-bar-reset" style={isApplied ? undefined : RESET_HIDDEN_STYLE}
+      onClick={onResetClick}>Reset filters</QuietButton>
   </div>;
+}
+
+// An action inside a bar or header line: no edge or fill at rest, dim label + optional icon.
+function QuietButton({ icon, className = '', children, ...props }) {
+  return <button type="button" className={`btn ghost ${className}`.trim()} {...props}>
+    {icon && <Icon name={icon} size={14} />}{children}
+  </button>;
+}
+
+// Navigation to another page or document: ink text + a trailing arrow the accessible name leaves out.
+function Link({ href, className = '', children, ...props }) {
+  return <a href={href} className={`link ${className}`.trim()} {...props}>
+    {children}<span aria-hidden="true" className="link-arrow">→</span>
+  </a>;
+}
+
+// Free-text filter on a bar: the sunken fill carries the field's focus ring.
+function BarSearch({ label, value, onChange, placeholder, className = '' }) {
+  return <div className={`bar-search ${className}`.trim()}>
+    <Icon name="search" size={14} />
+    <input type="search" className="bar-search-field" aria-label={label} value={value} placeholder={placeholder}
+      onChange={(event) => onChange(event.target.value)} />
+  </div>;
+}
+
+/**
+ * Form select with its visible label above it.
+ * @param options - { key, label }
+ */
+function Select({ id, label, value, options, onChange, className = '' }) {
+  return <Stack gap="label" className={className}>
+    <label htmlFor={id} className="field-label">{label}</label>
+    <select id={id} className="field field-select" value={value} onChange={(event) => onChange(event.target.value)}>
+      {options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+    </select>
+  </Stack>;
+}
+
+const STACK_GAPS = Object.freeze(['block', 'label', 'stack', 'list']);
+const CLUSTER_GAPS = Object.freeze(['control', 'control-group']);
+
+// Vertical flow spaced by a role name: 'block' | 'label' | 'stack' | 'list'.
+function Stack({ gap = 'block', className = '', children }) {
+  return <div className={`${getGapClass('stack', STACK_GAPS, gap)} ${className}`.trim()}>{children}</div>;
+}
+
+// Wrapping row of controls: 'control' inside a group | 'control-group' between groups.
+function Cluster({ gap = 'control', className = '', children }) {
+  return <div className={`${getGapClass('cluster', CLUSTER_GAPS, gap)} ${className}`.trim()}>{children}</div>;
+}
+
+// a number or an unknown role throws → a screen never spaces by value
+function getGapClass(base, gaps, gap) {
+  if (!gaps.includes(gap)) throw new Error(`${base}: "${gap}" is not a gap role (${gaps.join(' | ')})`);
+  return `${base} ${base}--${gap}`;
+}
+
+// Id, hash, path, config key or CLI flag — the one mono use; prose, labels and numbers stay sans.
+function MachineString({ className = '', children }) {
+  return <code className={`machine ${className}`.trim()}>{children}</code>;
 }
 
 const BLANK_FIELD_TEXT = new Set(['', '—', '-', 'unknown', 'n/a', 'null', 'undefined']);
@@ -2543,7 +2603,7 @@ window.UI = {
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
-  Segmented, Tabs, getTabPanelProps, getMenuKeyAction, useMenuButton, MenuPanel, FilterTrigger, FilterBar,
+  Segmented, Tabs, getTabPanelProps, getMenuKeyAction, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,

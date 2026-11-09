@@ -1,5 +1,5 @@
-// Shared bar controls in a real browser: the filter trigger's menu-button keyboard contract, the filter bar's reset slot,
-// and the roving choice sets (segmented range, tabs) — roles and keys as a keyboard or screen-reader user meets them.
+// Shared bar controls and layout primitives in a real browser: the filter trigger's menu-button keyboard contract, the filter bar's reset slot,
+// the roving choice sets (segmented range, tabs), one box per control in every state, and spacing on role tokens.
 // Runner: npx tsx --test test/ui.controls.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
 import test, { after, before, describe } from "node:test";
@@ -12,10 +12,13 @@ import fastifyStatic from "@fastify/static";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
+import { createControlProbe, isSameBox } from "./lib/control-probe.js";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
 interface FocusedItem { role: string | null; text: string; id: string }
+interface LayoutUI { Stack: (props: { gap: unknown }) => unknown; Cluster: (props: { gap: unknown }) => unknown }
 
 let app: FastifyInstance;
 let browser: Browser;
@@ -64,20 +67,35 @@ const MOUNT_FIXTURE = `(fixture) => {
         tabs: [{ key: 'operator', label: 'Operator' }, { key: 'instrumentation', label: 'Instrumentation' }, { key: 'history', label: 'History' }] }),
       h('div', UI.getTabPanelProps('views', value), 'Panel ' + value));
   };
-  const fixtures = { filters: Filters, range: Range, views: Views };
+  const Atoms = () => {
+    const [query, setQuery] = React.useState('');
+    const [model, setModel] = React.useState('opus');
+    return h(UI.Stack, { gap: 'block' },
+      h(UI.Cluster, { gap: 'control' },
+        h(UI.BarSearch, { label: 'Search outcomes', value: query, onChange: setQuery, placeholder: 'Search' }),
+        h(UI.QuietButton, { icon: 'refresh', onClick: () => {} }, 'Refresh')),
+      h('p', null, 'Read the ', h(UI.Link, { href: '#outcomes' }, 'Task results')),
+      h(UI.Select, { id: 'model', label: 'Model', value: model, onChange: setModel,
+        options: [{ key: 'opus', label: 'Opus' }, { key: 'sonnet', label: 'Sonnet' }] }),
+      h('p', null, 'Commit ', h(UI.MachineString, null, '1a251d81')));
+  };
+  const Gaps = () => h('div', { id: 'gaps' },
+    ['block', 'label', 'stack', 'list'].map((gap) => h(UI.Stack, { key: gap, gap }, h('div', null, 'a'), h('div', null, 'b'))),
+    ['control', 'control-group'].map((gap) => h(UI.Cluster, { key: gap, gap }, h('span', null, 'a'), h('span', null, 'b'))));
+  const fixtures = { filters: Filters, range: Range, views: Views, atoms: Atoms, gaps: Gaps };
   const host = document.body.appendChild(document.createElement('div'));
   host.id = 'fixture';
   ReactDOM.createRoot(host).render(h(fixtures[fixture]));
 }`;
 
-type FixtureKind = "filters" | "range" | "views";
+type FixtureKind = "filters" | "range" | "views" | "atoms" | "gaps";
 
 async function openFixture(kind: FixtureKind): Promise<Page> {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
   await page.waitForFunction(() => Boolean((window as unknown as { UI?: unknown; ReactDOM?: unknown }).UI && (window as unknown as { ReactDOM?: unknown }).ReactDOM), null, { timeout: 30_000 });
   await page.evaluate(`(${MOUNT_FIXTURE})(${JSON.stringify(kind)})`);
-  await page.waitForSelector("#fixture [role]", { timeout: 30_000 });
+  await page.waitForSelector("#fixture > *", { timeout: 30_000 });
   return page;
 }
 
@@ -240,6 +258,216 @@ describe("roving choice sets: one Tab stop on the chosen item, an arrow chooses 
 
     assert.equal(await tab.getAttribute("aria-controls"), await panel.getAttribute("id"));
     assert.equal(await panel.getAttribute("aria-labelledby"), await tab.getAttribute("id"));
+    await page.close();
+  });
+});
+
+async function openProbedFixture(kind: FixtureKind) {
+  const page = await openFixture(kind);
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("DOM.enable");
+  await cdp.send("CSS.enable");
+  return { page, probe: createControlProbe(() => page, () => cdp) };
+}
+
+const CONTROL_ROWS: Array<{ name: string; fixture: FixtureKind; selector: string }> = [
+  { name: "filter trigger", fixture: "filters", selector: "#fixture .filter-trigger" },
+  { name: "reset filters", fixture: "filters", selector: "#fixture .filter-bar button:not([aria-haspopup])" },
+  { name: "segmented option", fixture: "range", selector: '#fixture [role="radio"][aria-checked="false"]' },
+  { name: "tab", fixture: "views", selector: '#fixture [role="tab"][aria-selected="false"]' },
+  { name: "quiet button", fixture: "atoms", selector: "#fixture button" },
+  { name: "form select", fixture: "atoms", selector: "#fixture select" },
+];
+
+describe("controls: one box in every state, a 24px+ target", () => {
+  for (const row of CONTROL_ROWS) {
+    test(`${row.name} keeps its box at rest, hover, focus-visible and active`, async () => {
+      const { page, probe } = await openProbedFixture(row.fixture);
+      await probe.assertBoxHeldAcrossStates(row.selector);
+      await page.close();
+    });
+
+    test(`${row.name} is a 24px+ target`, async () => {
+      const { page, probe } = await openProbedFixture(row.fixture);
+      const box = await probe.readBox(row.selector);
+
+      assert.ok(box.width >= 24 && box.height >= 24, `${box.width}x${box.height}`);
+      await page.close();
+    });
+  }
+
+  for (const row of CHOICE_ROWS) {
+    test(`choosing a ${row.name} item keeps every item's box`, async () => {
+      const page = await openFixture(row.fixture);
+      const items = page.locator(`#fixture [role="${row.item}"]`);
+      const readSizes = () => items.evaluateAll((nodes) => nodes.map((node) => { const r = node.getBoundingClientRect(); return [r.width, r.height]; }));
+      const before = await readSizes();
+      await page.locator("#fixture").evaluate((el) => (el.querySelector('[tabindex="0"]') as HTMLElement).focus());
+      await page.keyboard.press("ArrowRight");
+
+      assert.deepEqual(await readSizes(), before);
+      await page.close();
+    });
+  }
+
+  test("opening the filter trigger keeps its box", async () => {
+    const { page, probe } = await openProbedFixture("filters");
+    const closed = await probe.readBox("#fixture .filter-trigger");
+    await openShowMenu(page);
+    const open = await probe.readBox("#fixture .filter-trigger");
+
+    assert.ok(isSameBox(open, closed), `open ${open.width}x${open.height} vs closed ${closed.width}x${closed.height}`);
+    await page.close();
+  });
+
+  test("bar search keeps its box while the field takes focus", async () => {
+    const { page, probe } = await openProbedFixture("atoms");
+    const rest = await probe.readBox("#fixture .bar-search");
+    await page.locator("#fixture").getByRole("searchbox", { name: "Search outcomes" }).focus();
+    const focused = await probe.readBox("#fixture .bar-search");
+
+    assert.ok(isSameBox(focused, rest), `focused ${focused.width}x${focused.height} vs resting ${rest.width}x${rest.height}`);
+    await page.close();
+  });
+});
+
+const BAR_CONTROL_ROWS: Array<{ name: string; fixture: FixtureKind; selector: string }> = [
+  { name: "filter trigger", fixture: "filters", selector: "#fixture .filter-trigger" },
+  { name: "reset filters", fixture: "filters", selector: "#fixture .filter-bar button:not([aria-haspopup])" },
+  { name: "segmented track", fixture: "range", selector: '#fixture [role="radiogroup"]' },
+  { name: "bar search", fixture: "atoms", selector: "#fixture .bar-search" },
+];
+
+describe("bar controls draw no edge at rest", () => {
+  for (const row of BAR_CONTROL_ROWS) {
+    test(row.name, async () => {
+      const page = await openFixture(row.fixture);
+      const edge = await page.locator(row.selector).first().evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { width: style.borderTopWidth, color: style.borderTopColor };
+      });
+
+      assert.ok(edge.width === "0px" || edge.color === "rgba(0, 0, 0, 0)", `${row.name} edge ${edge.width} ${edge.color}`);
+      await page.close();
+    });
+  }
+});
+
+describe("menu surface on role tokens", () => {
+  test("its inset equals --card-pad and its item gap equals --gap-list", async () => {
+    const page = await openFixture("filters");
+    await openShowMenu(page);
+    const metrics = await page.locator('#fixture [role="menu"]').evaluate((menu) => {
+      const root = getComputedStyle(document.documentElement);
+      const style = getComputedStyle(menu);
+      const boxes = [...menu.querySelectorAll('[role^="menuitem"]')].map((el) => el.getBoundingClientRect());
+      return {
+        inset: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft],
+        cardPad: root.getPropertyValue("--card-pad").trim(),
+        gaps: boxes.slice(1).map((box, i) => box.top - boxes[i].bottom),
+        gapList: parseFloat(root.getPropertyValue("--gap-list")),
+      };
+    });
+
+    assert.deepEqual(metrics.inset, Array(4).fill(metrics.cardPad));
+    assert.deepEqual(metrics.gaps, Array(metrics.gaps.length).fill(metrics.gapList));
+    await page.close();
+  });
+
+  test("checked and unchecked items start their labels on one column", async () => {
+    const page = await openFixture("filters");
+    await openShowMenu(page);
+    const starts = await page.locator('#fixture [role="menuitemradio"]').evaluateAll((nodes) => nodes.map((node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node.lastChild as Node);
+      return range.getBoundingClientRect().left;
+    }));
+
+    assert.equal(new Set(starts).size, 1, `label starts ${starts.join(", ")}`);
+    await page.close();
+  });
+});
+
+describe("filter bar reset slot", () => {
+  test("the hidden reset holds the box it shows in, so its neighbours stay still", async () => {
+    const page = await openFixture("filters");
+    const reset = "#fixture .filter-bar button:not([aria-haspopup])";
+    // offsets from the bar's own corner → the app loading above the fixture cannot move the frame
+    const readLayout = () => page.locator("#fixture .filter-bar").evaluate((bar) => {
+      const frame = bar.getBoundingClientRect();
+      const boxes = [bar.querySelector("button:not([aria-haspopup])"), document.getElementById("after")].map((el) => (el as HTMLElement).getBoundingClientRect());
+      return [frame.width, frame.height, ...boxes.flatMap((box) => [box.left - frame.left, box.top - frame.top, box.width, box.height])];
+    });
+    const atDefaults = await readLayout();
+    await openShowMenu(page);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+
+    assert.equal(await page.locator(reset).evaluate((el) => getComputedStyle(el).visibility), "visible");
+    assert.deepEqual(await readLayout(), atDefaults);
+    await page.close();
+  });
+});
+
+describe("markup-only atoms", () => {
+  test("a link is named by its text alone and draws no box", async () => {
+    const page = await openFixture("atoms");
+    const link = page.locator("#fixture").getByRole("link", { name: "Task results", exact: true });
+    const look = await link.evaluate((el) => ({ border: getComputedStyle(el).borderTopWidth, display: getComputedStyle(el).display }));
+
+    assert.equal(await link.getAttribute("href"), "#outcomes");
+    assert.deepEqual(look, { border: "0px", display: "inline" });
+    await page.close();
+  });
+
+  test("bar search is a named search field whose fill carries the focus ring", async () => {
+    const page = await openFixture("atoms");
+    const field = page.locator("#fixture").getByRole("searchbox", { name: "Search outcomes" });
+    await field.focus();
+    const ring = await page.locator("#fixture .bar-search").evaluate((el) => getComputedStyle(el).outlineStyle);
+
+    assert.equal(await field.evaluate((el) => el === document.activeElement), true);
+    assert.equal(ring, "solid");
+    await page.close();
+  });
+
+  test("a form select is labelled by its visible label", async () => {
+    const page = await openFixture("atoms");
+
+    assert.equal(await page.locator("#fixture").getByLabel("Model", { exact: true }).evaluate((el) => el.tagName), "SELECT");
+    await page.close();
+  });
+
+  test("a machine string sets in mono, unboxed", async () => {
+    const page = await openFixture("atoms");
+    const look = await page.locator("#fixture").getByText("1a251d81", { exact: true }).evaluate((el) => ({ font: getComputedStyle(el).fontFamily, border: getComputedStyle(el).borderTopWidth }));
+
+    assert.match(look.font, /JetBrains Mono/);
+    assert.equal(look.border, "0px");
+    await page.close();
+  });
+});
+
+describe("layout primitives space on role tokens", () => {
+  test("each Stack and Cluster gap equals its role token", async () => {
+    const page = await openFixture("gaps");
+    const measured = await page.locator("#gaps").evaluate((root) => [...root.children].map((group) => {
+      const [a, b] = [...group.children].map((el) => el.getBoundingClientRect());
+      return group.children[0].tagName === "SPAN" ? b.left - a.right : b.top - a.bottom;
+    }));
+    const tokens = await page.evaluate(() => ["block", "label", "stack", "list", "control", "control-group"]
+      .map((role) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(`--gap-${role}`))));
+
+    assert.deepEqual(measured, tokens);
+    await page.close();
+  });
+
+  test("a gap that is not a role name is refused", async () => {
+    const page = await openFixture("gaps");
+    const errors = await page.evaluate(() => [(ui: LayoutUI) => ui.Stack({ gap: 16 }), (ui: LayoutUI) => ui.Cluster({ gap: "block" })]
+      .map((render) => { try { render((window as unknown as { UI: LayoutUI }).UI); return "rendered"; } catch (error) { return (error as Error).message; } }));
+
+    assert.deepEqual(errors.map((message) => /gap role/.test(message)), [true, true]);
     await page.close();
   });
 });
