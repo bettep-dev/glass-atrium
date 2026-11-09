@@ -986,13 +986,13 @@ describe("the bulk bar and the whole-word note space on role keys only", () => {
     {
       name: "the bulk bar",
       render: (screen: Record<string, unknown>) => renderScreen((screen.GroupActionBarCD as Component)({ selectionSize: 2, canGroup: true, canUngroup: true })),
-      pick: (n: { props: Record<string, unknown> }) => n.props.role === "toolbar",
+      pick: (n: RenderedNode) => n.props.role === "toolbar",
       rule: ".doc-group-action-bar",
     },
     {
       name: "the whole-word search note",
       render: (screen: Record<string, unknown>) => renderListCard(screen, { isSearchMode: true, state: { status: "ready", data: { bigmEnabled: false } } }),
-      pick: (n: { props: Record<string, unknown> }) => n.props.role === "note" && /Whole-word/.test(collectText(n)),
+      pick: (n: RenderedNode) => n.props.role === "note" && /Whole-word/.test(collectText(n)),
       rule: null,
     },
   ];
@@ -1016,6 +1016,8 @@ describe("a ledger head count and a group toggle space their content on the labe
   const nodes = [
     { name: "a stage section's count", rule: ".doc-stage-section-count", property: "margin", roleClass: "ml-label-inline" },
     { name: "a group root's member toggle", rule: ".doc-group-toggle", property: "gap", roleClass: "gap-label-inline" },
+    { name: "a group root's member toggle hit area", rule: ".doc-group-toggle", property: "padding", roleClass: "p-label-inline" },
+    { name: "a group root's member toggle label", rule: ".doc-group-toggle", property: "font-size", roleClass: "fs-meta" },
   ];
   for (const row of nodes) {
     test(`${row.name} takes ${row.roleClass} and its rule sets no ${row.property}`, async () => {
@@ -1028,6 +1030,19 @@ describe("a ledger head count and a group toggle space their content on the labe
       assert.doesNotMatch(cssRuleBody(getScreenCss(screen), row.rule), new RegExp(`(^|[;\\s])${row.property}(-left)?\\s*:`), row.rule);
     });
   }
+});
+
+test("a search snippet sits under its title on the stack role, with no number in its class or its rule", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const tree = renderListCard(screen, { isSearchMode: true, rows: [row] });
+  const [snippet] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-snippet"));
+
+  assert.ok(snippet, "the snippet renders");
+  assert.match(String(snippet.props.className), /(^|\s)mt-stack(\s|$)/);
+  assert.doesNotMatch(String(snippet.props.className), /(^|\s)-?m[trblxy]?-(\d|\[)/);
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-snippet"), /(^|[;\s])margin-top\s*:/);
 });
 
 test("the last stage actor rides the Status cell's tooltip, never a line under the pill", async () => {
@@ -1054,14 +1069,7 @@ test("the Title header starts at the title text's x: indented by the lead slot p
   assert.equal(value(cssRuleBody(source, ".doc-col-title-text"), "margin-left"), indent);
 });
 
-function renderPipelineCard(screen: Record<string, unknown>, state: Record<string, unknown>) {
-  const props = listCardProps(() => undefined);
-  props.rows = pipelineRows();
-  return renderScreen((screen.DocListCardCD as Component)({ ...props, asOf: "2026-09-30T00:00:00Z", state }));
-}
-
 const SETTLED_LIST = { status: "ready", data: {}, error: null, busy: false };
-const WARM_ERROR_LIST = { status: "ready", data: {}, error: "HTTP 500", busy: false };
 
 describe("the header hands its read state to the shell exactly once, with or without a first read", () => {
   const rows = [
