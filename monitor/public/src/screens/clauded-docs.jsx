@@ -2043,9 +2043,8 @@ function GroupMembersRowsCD({
 					kind="span"
 					start={1}
 					className="fs-meta"
-					style={{ color: "rgb(var(--faint))", padding: "6px 12px" }}
 				>
-					Loading group members…
+					<span className="text-faint">Loading group members…</span>
 				</TableCell>
 			</TableRow>
 		);
@@ -2059,9 +2058,8 @@ function GroupMembersRowsCD({
 					kind="span"
 					start={1}
 					className="fs-meta"
-					style={{ color: "rgb(var(--ink))", padding: "6px 12px" }}
 				>
-					<span className="doc-inline-alert gap-label-inline">
+					<span className="doc-inline-alert gap-label-inline text-ink">
 						<ToneGlyphCD tone="crit" />
 						Couldn't load group members — {memberState.error}
 					</span>
@@ -2078,9 +2076,8 @@ function GroupMembersRowsCD({
 					kind="span"
 					start={1}
 					className="fs-meta"
-					style={{ color: "rgb(var(--faint))", padding: "6px 12px" }}
 				>
-					This group is empty
+					<span className="text-faint">This group is empty</span>
 				</TableCell>
 			</TableRow>
 		);
@@ -2095,7 +2092,6 @@ function GroupMembersRowsCD({
 				kind="span"
 				start={1}
 				className="doc-reorder-error fs-meta"
-				style={{ padding: "4px 12px" }}
 			>
 				<span className="doc-inline-alert gap-label-inline">
 					<ToneGlyphCD tone="crit" />

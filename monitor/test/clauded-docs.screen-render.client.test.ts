@@ -1334,6 +1334,36 @@ describe("a tone in the Documents screen rides a leading glyph while its words s
   }
 });
 
+// table cells are atom-owned padding (plan S3 role tokens) → a member state line restates no inset and takes its colour from a class
+describe("a group member state line keeps the cell atom's padding and colours its words on a class", () => {
+  const member = { id: 21, title: "Member", doc_status: "open", format: "md", audience: "exposed", author: "a", created_at: "2026-09-01T00:00:00Z" };
+  const memberProps = {
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  };
+  const rows = [
+    { name: "loading members", state: { status: "loading", data: null, error: null }, nullAs: null, wordsClass: "text-faint" },
+    { name: "a failed member load", state: { status: "error", data: null, error: "HTTP 500" }, nullAs: null, wordsClass: "text-ink" },
+    { name: "an empty group", state: { status: "ready", data: [], error: null }, nullAs: null, wordsClass: "text-faint" },
+    {
+      name: "a reorder that did not save", state: { status: "ready", data: [member, { ...member, id: 22 }], error: null },
+      nullAs: "Order not saved — reverted", wordsClass: "doc-reorder-error",
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen(stubbedStateReact(row.state, row.nullAs));
+      const tree = renderScreen(inTbody((screen.GroupMembersRowsCD as Component)(memberProps)));
+      const [spanCell] = findNodes(tree, (n) => n.type === "td" && String(n.props.className ?? "").split(/\s+/).includes("tbl-cell--span"));
+      assert.ok(spanCell, `${row.name}: the state line renders in a span cell`);
+      assert.equal(spanCell.props.style, undefined, `${row.name}: no inline style on the span cell`);
+      const classed = findNodes(spanCell, (n) => String(n.props?.className ?? "").split(/\s+/).includes(row.wordsClass));
+      assert.equal(classed.length, 1, `${row.name}: words coloured by ${row.wordsClass}`);
+    });
+  }
+});
+
 test("the version history names the current revision in ink, never in a severity tone", async () => {
   const screen = await loadDocsScreen();
   const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
