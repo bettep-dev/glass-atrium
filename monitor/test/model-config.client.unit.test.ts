@@ -570,17 +570,6 @@ async function loadMcScreens(
     SkeletonRows: (p: Record<string, unknown>) =>
       Array.from({ length: Number(p.rows) }, () => hMc("tr", { "aria-hidden": "true" })),
     TableHead: (p: Record<string, unknown>) => hMc("th", { "data-atom": "TableHead" }, p.children),
-    // freshness resolves through the real shared rule, as in the atom
-    PageVerdict: (p: Record<string, unknown>) => {
-      const verdict = p.freshness
-        ? getFreshnessVerdictMc({ ...(p.freshness as object), tone: p.tone, label: p.label })
-        : { tone: p.tone, label: p.label };
-      return hMc(
-        "div",
-        { "data-atom": "PageVerdict", "data-verdict-tone": verdict.tone, "data-verdict-label": verdict.label, chips: p.chips },
-        p.children,
-      );
-    },
     AgentName: (p: Record<string, unknown>) =>
       hMc("span", { "data-atom": "AgentName", title: p.name }, getAgentDisplayNameMc(p.name)),
     formatKstTime: realUiMc.formatKstTime,
@@ -960,19 +949,19 @@ test("section headers survive every state, and a non-ready body never reads as z
   }
 });
 
-test("the header sync token answers once per state and leaves the as-of stamp to the shared atom", () => {
+test("the header sync token speaks only when the file needs action and leaves the as-of stamp to the shared atom", () => {
   const ready = renderComponentMc(screens.SyncTokenMC, {
     state: "ready",
     sync: "ok",
   });
-  assert.ok(textMc(ready).includes("In sync"), "the state is named in plain text");
-  assert.ok(!textMc(ready).includes("as of"), "the header freshness atom owns the stamp, not the token");
-  assert.strictEqual(tagsMc(ready, "i").length, 0, "the freshness stamp owns the one tick, so the steady state spends no glyph");
+  assert.deepStrictEqual(ready, [], "a file in sync is agreement, so the token renders nothing");
 
   const drifted = renderComponentMc(screens.SyncTokenMC, {
     state: "ready",
     sync: "drift",
   });
+  assert.ok(textMc(drifted).includes("Drift"), "the state is named in plain text");
+  assert.ok(!textMc(drifted).includes("as of"), "the header freshness atom owns the stamp, not the token");
   assert.strictEqual(tagsMc(drifted, "i").length, 1, "tone rides the glyph, not the text");
 
   // Loading and error are distinct readings — neither may look like a settled 'in sync'.
@@ -982,7 +971,7 @@ test("the header sync token answers once per state and leaves the as-of stamp to
   assert.strictEqual(textMc(renderComponentMc(screens.SyncTokenMC, { state: "loading", sync: undefined })), "");
 });
 
-test("a warm read error turns the sync token to the shared 'Last known' wording, never a settled 'In sync'", () => {
+test("a warm read error puts the shared 'Last known' prefix on an alarm and keeps an in-sync file silent", () => {
   const readAt = Date.parse("2026-01-10T12:00:00.000Z");
   const region = { status: "ready", data: {}, error: null, busy: false };
   const tokenFor = (sync: string, error: string | null) =>
@@ -994,22 +983,9 @@ test("a warm read error turns the sync token to the shared 'Last known' wording,
       }),
     );
 
-  assert.strictEqual(tokenFor("ok", null), "In sync", "a fresh read keeps its state word");
-  assert.strictEqual(tokenFor("ok", "HTTP 500"), "Last known", "a stale in-sync read drops to the neutral shared word");
+  assert.strictEqual(tokenFor("ok", "HTTP 500"), "", "a stale in-sync read claims nothing, so it has nothing to date");
+  assert.strictEqual(tokenFor("drift", null), "Drift", "a fresh alarm keeps its state word");
   assert.strictEqual(tokenFor("drift", "HTTP 500"), "Last known: Drift", "a stale alarm keeps its word behind the shared prefix");
-});
-
-test("a warm read error hands the verdict no age note — the alert under it already dates the last good read", () => {
-  const verdictFor = sandboxFnMc<(tone: string, at: number | null, state: object) => Record<string, unknown>>(
-    "getVerdictFreshnessMC",
-  );
-  const settled = { status: "ready", data: {}, error: null, busy: false };
-
-  assert.ok("freshness" in verdictFor("ok", 1, settled), "a clean read keeps the ticking freshness input");
-  const warm = verdictFor("ok", 1, { ...settled, error: "HTTP 500" });
-  assert.ok(!("freshness" in warm), "a warm error carries no freshness, so no 'Read Ns ago' note");
-  assert.strictEqual(warm.label, "Last known");
-  assert.strictEqual(warm.tone, "neutral", "an ok verdict never stays green over the error");
 });
 
 test("the drift banner carries exactly one remedy, matched to its cause", () => {
@@ -1661,59 +1637,21 @@ test("a live value the payload does not carry is left out, never shown as a plac
   assert.strictEqual(textMc([liveCellMc(tree)]), "", "an absent live value renders nothing");
 });
 
-type VerdictMc = { tone: string; text: string; chips: { label: string; targetId: string }[] };
-
-describe("the page verdict is ok exactly when every row matches and the file is in sync", () => {
-  const getPageVerdictMc = sandboxFnMc<(data: unknown) => VerdictMc>("getPageVerdictMC");
-  const clean = { daemon_config_sync: "ok", domains: THREE_TIERS_MC, budgets: BUDGET_ROW_FIXTURE_MC };
+describe("a ledger card head counts the rows whose live value was not read, since such a row renders nothing", () => {
+  const unreadTier = THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, actual: null, drift: false } : d));
   const rows = [
-    { name: "every row matching reads as one ok line with both totals", data: clean, tone: "ok", names: ["3/3 tiers", "1/1 caps", "config file in sync"], section: null },
-    {
-      name: "a drifted tier is named and its chip jumps to the model ledger",
-      data: { ...clean, domains: THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, drift: true } : d)) },
-      tone: "warn",
-      names: ["1 tier drifting", "Dev agents"],
-      section: "DomainsSectionMC",
-    },
-    {
-      name: "a drifted cap is named and its chip jumps to the cap ledger",
-      data: { ...clean, budgets: [{ ...BUDGET_ROW_FIXTURE_MC[0], drift: true }] },
-      tone: "warn",
-      names: ["1 cap drifting", "Self-improve + wiki call cap"],
-      section: "BudgetsSectionMC",
-    },
-    {
-      name: "a tier whose live value was not read is named, never counted as matching",
-      data: { ...clean, domains: THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, actual: null, drift: false } : d)) },
-      tone: "warn",
-      names: ["1 tier not read", "Dev agents"],
-      section: "DomainsSectionMC",
-    },
-    {
-      name: "a cap whose live value was not read is named, never counted as matching",
-      data: { ...clean, budgets: [{ ...BUDGET_ROW_FIXTURE_MC[0], actual: null, drift: false }] },
-      tone: "warn",
-      names: ["1 cap not read", "Self-improve + wiki call cap"],
-      section: "BudgetsSectionMC",
-    },
-    { name: "a missing config file warns even when every row matches", data: { ...clean, daemon_config_sync: "file-missing" }, tone: "warn", names: ["File missing"], section: null },
-    { name: "an empty roster claims nothing", data: { daemon_config_sync: "ok", domains: [], budgets: [] }, tone: "neutral", names: [], section: null },
+    { name: "every model row read: the head stays silent", section: "DomainsSectionMC", props: domainsPropsMc(THREE_TIERS_MC), mark: null },
+    { name: "a drifted model row: the row carries it, the head stays silent", section: "DomainsSectionMC", props: domainsPropsMc(THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, drift: true } : d))), mark: null },
+    { name: "an unread model row: the head names it", section: "DomainsSectionMC", props: domainsPropsMc(unreadTier), mark: "1 not read" },
+    { name: "an unread cap row: the head names it", section: "BudgetsSectionMC", props: budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: null, drift: false }]), mark: "1 not read" },
+    { name: "a loading ledger claims nothing", section: "DomainsSectionMC", props: { ...domainsPropsMc(unreadTier), state: "loading" }, mark: null },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const verdict = getPageVerdictMc(row.data);
-      assert.strictEqual(verdict.tone, row.tone);
-      assert.strictEqual(verdict.text.includes("match saved"), row.tone === "ok", "only an ok verdict claims a match");
-      for (const name of row.names) assert.ok(verdict.text.includes(name), `names '${name}'`);
-      if (row.section === null) {
-        assert.strictEqual(verdict.chips.length, 0, "no chip without a drifted ledger");
-        return;
-      }
-      assert.strictEqual(verdict.chips.length, 1, "one chip per drifted ledger");
-      const props = row.section === "DomainsSectionMC" ? domainsPropsMc() : budgetsPropsMc();
-      const tree = renderComponentMc(screens[row.section], props);
-      const targets = findAllMc(tree, (n) => n.props.id === verdict.chips[0].targetId);
-      assert.strictEqual(targets.length, 1, "the chip targets the ledger holding the drifted row");
+      const tree = renderComponentMc(screens[row.section], row.props);
+      const head = textMc(findAllMc(tree, (n) => n.props["data-atom"] === "Card").flatMap((card) => card.children.slice(0, 1)));
+      assert.strictEqual(head.includes("not read"), row.mark !== null, `head: ${head}`);
+      if (row.mark) assert.ok(head.includes(row.mark), `names '${row.mark}'`);
     });
   }
 });
@@ -1991,13 +1929,11 @@ describe("a config read that failed after an earlier read shows the last good re
     test(row.name, async () => {
       const config = { ...(realUiMc.INITIAL_REGION_STATE as object), ...row.region };
       const tree = await renderSeededScreenMc({ config, form, asOfAt: Date.now() - 60_000 });
-      const [verdict] = findAllMc(tree, (n) => n.props["data-atom"] === "PageVerdict");
       const alerts = findAllMc(tree, (n) => n.props.role === "alert");
       const [card] = findAllMc(alerts, (n) => n.props["data-atom"] === "RegionUnavailable");
-      const label = String(verdict?.props["data-verdict-label"]);
+      const text = textMc(tree);
 
-      assert.strictEqual(label.startsWith("Last known"), row.isLastKnown, `verdict label: ${label}`);
-      assert.strictEqual(verdict?.props["data-verdict-tone"] === "ok", !row.isLastKnown, "only a fresh read is toned ok");
+      assert.ok(!text.includes("In sync") && !text.includes("match saved"), "no line claims the saved config is in force");
       assert.strictEqual(textMc(alerts).includes("last good read"), row.isLastKnown, "the banner names the held data");
       if (!row.isLastKnown) return;
       assert.strictEqual(card?.props.isBusy, row.region.busy, "the Retry reports its own request");

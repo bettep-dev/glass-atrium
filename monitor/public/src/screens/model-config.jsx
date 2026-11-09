@@ -1,5 +1,5 @@
 // Screen 12 — Models & budgets (/api/model-config GET 단일 fetch + 명시 Save PUT).
-// Layout: header sync token → page verdict → model ledger | per-call budget cap ledger (side by side at xl).
+// Layout: header sync token → model ledger | per-call budget cap ledger (side by side at xl).
 // DB(saved target) = UI SoT · actual = 소비 지점 실측 — 차이는 drift 배지로 공시 (spec doc 36166 D2).
 // 예산 = per-call HARD CAP (claude -p --max-budget-usd) — OAuth 구독이라 월 청구 상한이 아님 (단일 폭주 호출 차단).
 // Hooks MC-suffix aliased — window-scope 충돌 방지.
@@ -139,11 +139,6 @@ const APPLY_MODE_META_MC = {
 };
 
 const SYNC_META_MC = {
-	ok: {
-		label: "In sync",
-		tone: "ok",
-		desc: "daemon-config.json matches the saved settings",
-	},
 	drift: {
 		label: "Drift",
 		tone: "warn",
@@ -235,7 +230,7 @@ const SAVE_ERROR_BODY_MAX_MC = 300;
 // 테이블 행 순서 — 미지의 도메인은 뒤에 그대로 덧붙임.
 const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
 
-// Verdict chips scroll to these ledger ids.
+// Ledger anchors — a failed read's Retry hands focus to the model ledger.
 const MODELS_SECTION_ID_MC = "mc-models";
 const BUDGETS_SECTION_ID_MC = "mc-budgets";
 
@@ -263,7 +258,6 @@ function ScreenModelConfig() {
 		putRegionRequest,
 		putRegionData,
 		putRegionFailure,
-		PageVerdict,
 		SplitRow,
 		SplitColumn,
 		formatKstTime,
@@ -434,7 +428,6 @@ function ScreenModelConfig() {
 		: configState.status === "loading"
 			? "loading"
 			: "unavailable";
-	const verdict = ready ? getPageVerdictMC(data) : null;
 	const freshness = getFreshnessInputMC(asOfAt, configState);
 
 	return (
@@ -468,15 +461,6 @@ function ScreenModelConfig() {
 			<div className="sr-only" role="status" aria-live="polite">
 				{getReadAnnouncementMC(configState, asOfAt, refreshTick)}
 			</div>
-
-			{verdict && (
-				<PageVerdict
-					{...getVerdictFreshnessMC(verdict.tone, asOfAt, configState)}
-					chips={verdict.chips}
-					className="mb-4">
-					{verdict.text}
-				</PageVerdict>
-			)}
 
 			{hasAlarm && (
 				<div
@@ -627,8 +611,8 @@ function ScreenModelConfig() {
 function SyncTokenMC({ state, sync, freshness }) {
 	const { Icon, getFreshnessVerdict } = window.UI;
 
-	// the freshness stamp beside it already reads '… loading' → one ellipsis, not two
-	if (state === "loading") return null;
+	// the freshness stamp beside it already reads '… loading' → one ellipsis, not two · agreement is silence
+	if (state === "loading" || sync === "ok") return null;
 	if (state !== "ready") {
 		return <span className="fs-meta text-faint">Sync state unavailable</span>;
 	}
@@ -639,12 +623,12 @@ function SyncTokenMC({ state, sync, freshness }) {
 		tone: "neutral",
 	};
 
-	// a read the stamp calls stale takes the shared 'Last known' wording, never a settled 'In sync'
+	// a read the stamp calls stale takes the shared 'Last known' prefix
 	const label = freshness
 		? getFreshnessVerdict({ ...freshness, tone: meta.tone, label: meta.label }).label
 		: meta.label;
 	// the freshness stamp owns the one tick → only a state needing action spends a glyph
-	const glyph = sync === "ok" || sync === "empty" ? null : "warn";
+	const glyph = sync === "empty" ? null : "warn";
 
 	return (
 		<span
@@ -664,15 +648,6 @@ function SyncTokenMC({ state, sync, freshness }) {
 
 function getFreshnessInputMC(asOfAt, state) {
 	return { at: asOfAt, regions: [state] };
-}
-
-// A warm error's alert already dates the last good read → the verdict settles to 'Last known' without its own age note.
-function getVerdictFreshnessMC(tone, asOfAt, state) {
-	const freshness = getFreshnessInputMC(asOfAt, state);
-	if (state.error == null) return { tone, freshness };
-
-	const verdict = window.UI.getFreshnessVerdict({ ...freshness, tone });
-	return { tone: verdict.tone, label: verdict.label };
 }
 
 /**
@@ -756,9 +731,12 @@ function DomainsSectionMC({
 				}
 				infoLabel={SETTINGS_INFO_LABEL_MC}
 				right={
-					<a href="#cost" className={`fs-meta ${LINK_TARGET_CLASS_MC}`}>
-						Cost & usage
-					</a>
+					<span className="flex items-center gap-3">
+						{state === "ready" && <UnreadMarkMC rows={rows} />}
+						<a href="#cost" className={`fs-meta ${LINK_TARGET_CLASS_MC}`}>
+							Cost & usage
+						</a>
+					</span>
 				}
 				foot={mix ? <span className="truncate min-w-0" title={mix}>{mix}</span> : null}
 				isFlush={state !== "unavailable"}>
@@ -1219,6 +1197,7 @@ function BudgetsSectionMC({
 			<Card
 				size="M"
 				title="Per-call budget caps"
+				right={state === "ready" ? <UnreadMarkMC rows={rows} /> : null}
 				foot={<SourceFootMC source={DAEMON_CONFIG_FILE_MC} />}
 				sub={timing.meta}
 				info={
@@ -1706,6 +1685,20 @@ function ErrorBannerMC({ title, detail, onRetry }) {
 	);
 }
 
+// Card-head count of rows whose live value was not read — such a row renders nothing, unlike a drifted one.
+function UnreadMarkMC({ rows }) {
+	const { Icon } = window.UI;
+	const count = rows.filter((row) => !row.drift && row.actual == null).length;
+	if (count === 0) return null;
+
+	return (
+		<span className="fs-meta text-dim flex items-center gap-1">
+			<Icon name="warn" size={12} className="text-warn" />
+			{`${count} not read`}
+		</span>
+	);
+}
+
 // Unavailable must read as 'not read', never as zero — the cause rides the alarm lane.
 function SectionUnavailableMC() {
 	return (
@@ -1841,57 +1834,6 @@ function resyncPayloadMC(data, edits) {
 		if (Object.keys(targets).length > 0) payload[group] = targets;
 	}
 	return Object.keys(payload).length > 0 ? payload : null;
-}
-
-// Page verdict — answers "does what I saved run?" once, before any row is read.
-function getPageVerdictMC(data) {
-	const domains = data?.domains || [];
-	const budgets = data?.budgets || [];
-	if (domains.length + budgets.length === 0) {
-		return { tone: "neutral", text: "No model tiers or budget caps were reported.", chips: [] };
-	}
-
-	const issues = getVerdictIssuesMC(domains, budgets, data.daemon_config_sync);
-	if (issues.length > 0) {
-		return {
-			tone: "warn",
-			text: issues.map((issue) => issue.text).join(" · "),
-			chips: issues.flatMap((issue) => (issue.chip ? [issue.chip] : [])),
-		};
-	}
-	return {
-		tone: "ok",
-		text: `${domains.length}/${domains.length} tiers and ${budgets.length}/${budgets.length} caps match saved · config file in sync`,
-		chips: [],
-	};
-}
-
-// Each drifted or unread ledger names its rows + jumps to its section; a file state other than in-sync is named last.
-function getVerdictIssuesMC(domains, budgets, sync) {
-	const tierLedger = { meta: DOMAIN_META_MC, noun: "tier", chip: { label: "Model assignment", targetId: MODELS_SECTION_ID_MC } };
-	const capLedger = { meta: BUDGET_META_MC, noun: "cap", chip: { label: "Budget caps", targetId: BUDGETS_SECTION_ID_MC } };
-	const issues = [...getLedgerIssuesMC(domains, tierLedger), ...getLedgerIssuesMC(budgets, capLedger)];
-
-	if (sync !== "ok") {
-		issues.push({ text: sync ? `config file: ${SYNC_META_MC[sync]?.label ?? sync}` : "config file state not reported" });
-	}
-	return issues;
-}
-
-// A null actual (unreadable file, missing key) carries drift=false server-side, so it is named apart, never counted as a match.
-function getLedgerIssuesMC(rows, ledger) {
-	const labelOf = (row) => ledger.meta[row.domain]?.label ?? row.domain;
-	const drifted = rows.filter((row) => row.drift).map(labelOf);
-	const unread = rows.filter((row) => !row.drift && row.actual == null).map(labelOf);
-	const texts = [];
-
-	if (drifted.length > 0) texts.push(`${countNounMC(drifted.length, ledger.noun)} drifting: ${drifted.join(", ")}`);
-	if (unread.length > 0) texts.push(`${countNounMC(unread.length, ledger.noun)} not read: ${unread.join(", ")}`);
-	return texts.length > 0 ? [{ text: texts.join(" · "), chip: ledger.chip }] : [];
-}
-
-function countNounMC(n, noun) {
-	return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
 // Family + version from the id ("claude-opus-5-5" → "Opus 5.5"); an id outside the pattern has none.
