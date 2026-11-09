@@ -891,13 +891,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
            모든 행에 동일폭 slot 예약 → 제목 컬럼 정렬 통일 + 행 높이 차이 제거. */
         .title-cell .doc-title-row { display: flex; align-items: center; gap: var(--space-1_5); }
         .doc-title-lead { flex: 0 0 ${DOC_LEAD_SLOT_PX_CD}px; width: ${DOC_LEAD_SLOT_PX_CD}px; display: flex; align-items: center; justify-content: center; min-height: 20px; }
-        .doc-title-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; }
+        .doc-title-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: nowrap; }
         /* 1줄 클램프 — 제목·작성자 셀 공용. 초과분은 말줄임, 전체 값은 title= 툴팁이 운반.
            white-space:nowrap 대신 클램프인 사유 — auto-layout 표에서 nowrap 은 셀 min-content 를
            문자열 전체 폭으로 키워 그 컬럼이 제목 폭을 빼앗는다. */
         .doc-title-text, .doc-cell-clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
-        /* 표 셀 2차 정보 텍스트 (작성자/날짜/랭크) — meta 레벨 토큰 통일 (ad-hoc text-[11/11.5px] 대체). */
-        .doc-meta-text { font-size: var(--fs-meta); }
         /* 태그 셀 폭 상한 — 칩이 nowrap 이라 상한이 없으면 셀이 칩 합까지 벌어진다.
            위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정 — 상한을 풀면 제목 본문 상자가 343→340px 로 깎이고 나머지는 가로 스크롤로 나간다.
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
@@ -1030,8 +1028,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
            border-box + 수직 center 정렬로 양 모드 픽셀 동일. flex-wrap 제거 (좁은 폭에서 2줄
            래핑이 다시 높이 변동 유발 → 단일행 유지 + 버튼이 reserved 높이 초과 차단). */
         .doc-group-action-bar { box-sizing: border-box; min-height: 44px; background: rgb(var(--sunken)); border-top: 1px solid rgb(var(--line)); display: flex; align-items: center; }
-        .doc-group-action-bar.is-hint { color: rgb(var(--faint)); font-size: var(--fs-meta); }
-        .doc-group-action-bar .selection-count { font-size: var(--fs-body); font-weight: 600; color: rgb(var(--ink)); font-variant-numeric: tabular-nums; }
+        .doc-group-action-bar .selection-count { color: rgb(var(--ink)); }
         /* 버튼이 reserved 44px 를 넘기지 않도록 상한 — 초과 시 bar 자체가 늘어나 점프 재발. */
         .doc-group-action-bar .btn.sm { max-height: 30px; }
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
@@ -1052,7 +1049,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         tr.doc-row.is-group-member.is-dragging { opacity: 0.5; box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.5); }
         /* reorder rollback error beside its group — the crit glyph carries the tone, the message stays ink */
         .doc-reorder-error { color: rgb(var(--ink)); }
-        .doc-inline-alert { display: inline-flex; align-items: center; gap: 6px; }
+        .doc-inline-alert { display: inline-flex; align-items: center; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
         /* header text at the title text's x — lead slot + title row gap */
         .doc-col-title-text { margin-left: calc(${DOC_LEAD_SLOT_PX_CD}px + var(--space-1_5)); }
@@ -1109,7 +1106,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
         /* a section head is a 40 row like the ledger rows (its th takes the td row height) → every section starts at one height */
         tr.doc-stage-section > th { height: var(--row-h); padding-block: var(--space-3) var(--space-1); text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
-        .doc-stage-section-count { font-size: var(--fs-meta); color: rgb(var(--faint)); font-variant-numeric: tabular-nums; }
+        .doc-stage-section-count { color: rgb(var(--faint)); }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -1290,7 +1287,7 @@ function DocTagsCellCD({ view, audience, format, commonFormat, commonAudience = 
 function DocAuthorCellCD({ view, author }) {
 	const { TableCell, AgentName } = window.UI;
 	return (
-		<TableCell view={view} textRole="meta" label="Author" className="doc-meta-text" style={{ color: "rgb(var(--dim))" }}>
+		<TableCell view={view} textRole="meta" label="Author" className="fs-meta" style={{ color: "rgb(var(--dim))" }}>
 			<span className="doc-cell-clamp" title={author}>
 				<AgentName name={author} />
 			</span>
@@ -1415,7 +1412,7 @@ function DocListCardCD({
 			<TableRow view={view} className="doc-stage-section">
 				<TableCell view={view} kind="group-header" level={2}>
 					{entry ? entry.label : "stage unavailable"}
-					<span className="doc-stage-section-count ml-label-inline">
+					<span className="doc-stage-section-count ml-label-inline fs-meta tabular-nums">
 						{formatIntCD(sectionCounts.get(rank) || 0)}
 					</span>
 				</TableCell>
@@ -1618,7 +1615,7 @@ function DocListCardCD({
 														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
 												</TableCell>
-											<TableCell view={view} textRole="meta" label="ID" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+											<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num" style={{ color: "rgb(var(--dim))" }}>
 													<window.UI.MachineString>#{row.id}</window.UI.MachineString>
 												</TableCell>
 											<TableCell view={view} className="title-cell">
@@ -1649,7 +1646,7 @@ function DocListCardCD({
 															</button>
 														)}
 													</span>
-													<span className="doc-title-main">
+													<span className="doc-title-main gap-label-inline">
 														{isPending && <ToneGlyphCD tone="crit" />}
 														<span className="doc-title-text" title={row.title}>
 															{row.title}
@@ -1685,7 +1682,7 @@ function DocListCardCD({
 												</div>
 												{snippetText && (
 													<div
-														className="doc-snippet doc-meta-text mt-stack"
+														className="doc-snippet fs-meta mt-stack"
 														style={{ color: "rgb(var(--dim))" }}
 													>
 														{parseSnippetCD(snippetText)}
@@ -1821,7 +1818,7 @@ function DocAgeCellCD({ view, createdAt, age, isStale }) {
 			textRole="meta"
 			label="Created"
 			isNumeric
-			className="doc-age-cell doc-meta-text doc-col-num"
+			className="doc-age-cell fs-meta doc-col-num"
 			style={{ color: "rgb(var(--dim))" }}
 			title={`Created ${formatDateCD(createdAt)}`}>
 			<div className="doc-age-line">
@@ -1868,7 +1865,7 @@ function GroupActionBarCD({
 			role="toolbar"
 			aria-label="Bulk group actions"
 		>
-			<span className="selection-count">{selectionSize} selected</span>
+			<span className="selection-count fs-body font-semibold tabular-nums">{selectionSize} selected</span>
 			<button
 				type="button"
 				className="btn ghost sm"
@@ -2064,7 +2061,7 @@ function GroupMembersRowsCD({
 					className="fs-meta"
 					style={{ color: "rgb(var(--ink))", padding: "6px 12px" }}
 				>
-					<span className="doc-inline-alert">
+					<span className="doc-inline-alert gap-label-inline">
 						<ToneGlyphCD tone="crit" />
 						Couldn't load group members — {memberState.error}
 					</span>
@@ -2100,7 +2097,7 @@ function GroupMembersRowsCD({
 				className="doc-reorder-error fs-meta"
 				style={{ padding: "4px 12px" }}
 			>
-				<span className="doc-inline-alert">
+				<span className="doc-inline-alert gap-label-inline">
 					<ToneGlyphCD tone="crit" />
 					{reorderError}
 				</span>
@@ -2208,7 +2205,7 @@ function GroupMembersRowsCD({
 						</span>
 					)}
 				</TableCell>
-				<TableCell view={view} textRole="meta" label="ID" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+				<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num" style={{ color: "rgb(var(--dim))" }}>
 					<window.UI.MachineString>#{member.id}</window.UI.MachineString>
 				</TableCell>
 				<TableCell view={view} className="title-cell">
@@ -2229,7 +2226,7 @@ function GroupMembersRowsCD({
 								</span>
 							)}
 						</span>
-						<span className="doc-title-main">
+						<span className="doc-title-main gap-label-inline">
 							{isPending && <ToneGlyphCD tone="crit" />}
 							<span className="doc-title-text" title={member.title}>
 								{member.title}
@@ -2248,7 +2245,7 @@ function GroupMembersRowsCD({
 					/>
 				)}
 				<DocAuthorCellCD view={view} author={member.author} />
-				<TableCell view={view} textRole="meta" label="Created" isNumeric className="doc-meta-text doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+				<TableCell view={view} textRole="meta" label="Created" isNumeric className="fs-meta doc-col-num" style={{ color: "rgb(var(--dim))" }}>
 					{formatDateCD(member.created_at)}
 				</TableCell>
 			</TableRow>
@@ -3108,7 +3105,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 				)}
 				{predState.status === "error" && (
 					<div
-						className="fs-meta doc-inline-alert"
+						className="fs-meta doc-inline-alert gap-label-inline"
 						style={{ color: "rgb(var(--ink))" }}
 						role="alert"
 					>

@@ -940,7 +940,7 @@ test("'rev of #N' trails the title as a pill that never wraps or shrinks, so the
   const tree = renderListCard(screen, {});
   const [revisionRow] = findNodes(tree, (n) => n.type === "tr" && n.props["aria-label"] === "Doc 11");
 
-  const [titleMain] = findNodes(revisionRow, (n) => n.props.className === "doc-title-main");
+  const [titleMain] = findNodes(revisionRow, (n) => String(n.props.className ?? "").split(/\s+/).includes("doc-title-main"));
   const lineage = findNodes(titleMain, (n) => String(n.props.className ?? "").includes("doc-lineage"));
   assert.equal(lineage.length, 1);
   assert.match(collectText(lineage[0]), /^rev of #\s*7$/);
@@ -969,7 +969,6 @@ describe("the list sets only the document id in the machine-string face", () => 
 
   const sansRules = [
     { name: "a stage section's count", selector: ".doc-stage-section-count" },
-    { name: "the bulk bar hint", selector: ".doc-group-action-bar.is-hint" },
     { name: "the bulk bar selection count", selector: ".doc-group-action-bar .selection-count" },
     { name: "a reorder rollback message", selector: ".doc-reorder-error" },
   ];
@@ -1019,6 +1018,8 @@ describe("a ledger head count and a group toggle space their content on the labe
     { name: "a group root's member toggle", rule: ".doc-group-toggle", property: "gap", roleClass: "gap-label-inline" },
     { name: "a group root's member toggle hit area", rule: ".doc-group-toggle", property: "padding", roleClass: "inline-target" },
     { name: "a group root's member toggle label", rule: ".doc-group-toggle", property: "font-size", roleClass: "fs-meta" },
+    { name: "a ledger title line", rule: ".doc-title-main", property: "gap", roleClass: "gap-label-inline" },
+    { name: "a stage section's count size", rule: ".doc-stage-section-count", property: "font-size", roleClass: "fs-meta" },
   ];
   for (const row of nodes) {
     test(`${row.name} takes ${row.roleClass} and its rule sets no ${row.property}`, async () => {
@@ -1070,6 +1071,30 @@ test("a search snippet sits under its title on the stack role, with no number in
   assert.match(String(snippet.props.className), /(^|\s)mt-stack(\s|$)/);
   assert.doesNotMatch(String(snippet.props.className), /(^|\s)-?m[trblxy]?-(\d|\[)/);
   assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-snippet"), /(^|[;\s])margin-top\s*:/);
+});
+
+// a list type size is the type-scale class on its node → no screen rule restates it
+test("a ledger row's meta cells and its search snippet take fs-meta, and no screen rule sets their size", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const tree = renderListCard(screen, { isSearchMode: true, rows: [row] });
+  const classOf = (n: RenderedNode) => String(n.props?.className ?? "");
+  const metaCells = findNodes(tree, (n) => n.type === "td" && /(^|\s)tbl-cell--meta(\s|$)/.test(classOf(n)));
+  const [snippet] = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("doc-snippet"));
+
+  assert.equal(metaCells.length, 3, "Author, ID and Created render as meta cells");
+  for (const node of [...metaCells, snippet]) assert.match(classOf(node), /(^|\s)fs-meta(\s|$)/, classOf(node));
+  assert.doesNotMatch(getScreenCss(screen), /\.doc-meta-text\s*\{/);
+});
+
+test("the bulk bar selection count takes fs-body and its rule sets no size or weight", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.GroupActionBarCD as Component)({ selectionSize: 2, canGroup: true, canUngroup: true }));
+  const [count] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("selection-count"));
+
+  assert.match(String(count.props.className), /(^|\s)fs-body(\s|$)/);
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-group-action-bar .selection-count"), /(^|[;\s])font-(size|weight)\s*:/);
 });
 
 test("the last stage actor rides the Status cell's tooltip, never a line under the pill", async () => {
@@ -1276,6 +1301,16 @@ describe("a tone in the Documents screen rides a leading glyph while its words s
       assert.equal(glyphs.length, 1, `${row.name}: one ${row.tone} glyph`);
       const tonedInline = findNodes(tree, (n) => /--(?:crit|warn|ok|info)\)/.test(String((n.props.style as { color?: unknown } | undefined)?.color ?? "")));
       assert.deepEqual(tonedInline.map((n) => collectText(n)), [], `${row.name}: no word painted in a tone`);
+    });
+  }
+  // the glyph → words gap is the label-inline role on the alert line, never a number in the screen rule
+  for (const row of rows.filter((r) => r.tone === "crit")) {
+    test(`${row.name} spaces its glyph and words on the label-inline role`, async () => {
+      const screen = await loadDocsScreen(row.react());
+      const [alert] = findNodes(renderScreen(row.render(screen)), (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-inline-alert"));
+      assert.ok(alert, `${row.name}: the alert line renders`);
+      assert.match(String(alert.props.className), /(^|\s)gap-label-inline(\s|$)/);
+      assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-inline-alert"), /(^|[;\s])gap\s*:/);
     });
   }
 });
