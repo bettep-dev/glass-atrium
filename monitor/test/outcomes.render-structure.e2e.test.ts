@@ -99,8 +99,8 @@ describe("outcomes crosstab header", () => {
   });
 });
 
-// The status band and the ledger as painted: a stretched "Needs you" hero keeps its body at the top,
-// each prior range paints whole on one line, and every summary starts at one x beside its row's pill.
+// The status band and the ledger as painted: the band is one stat row card with no tile inside it,
+// no stat states the prior range, and every summary starts at one x beside its row's pill.
 const BAND_AGENT = "glass-atrium-dev-react";
 const BAND_OVERALL = {
   total: 400, reconstructed_total: 0, excluded_poisoned_count: 0,
@@ -154,7 +154,7 @@ describe("outcomes status band and ledger as painted", () => {
   });
 
   for (const width of [800, 1440]) {
-    test(`the hero body sits at the top, no tile states a range, every summary starts at one x at ${width}px`, async () => {
+    test(`the band is one stat row, no stat states a range, every summary starts at one x at ${width}px`, async () => {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       try {
         await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
@@ -162,26 +162,24 @@ describe("outcomes status band and ledger as painted", () => {
         await page.waitForFunction(() => / pt\b|\bLevel\b/.test(document.body.innerText), null, { timeout: 30_000 });
         await page.evaluate(() => document.fonts.ready);
         const painted = await page.evaluate(() => {
-          const hero = [...document.querySelectorAll<HTMLElement>(".kpi")].find((tile) => /Needs you/.test(tile.textContent ?? ""))!;
-          const heroStyle = getComputedStyle(hero);
-          const ranges = [...document.querySelectorAll<HTMLElement>(".kpi .whitespace-nowrap")]
+          const band = [...document.querySelectorAll<HTMLElement>(".stat-row")].find((row) => /Needs you/.test(row.textContent ?? ""));
+          const ranges = [...(band?.querySelectorAll<HTMLElement>(".whitespace-nowrap") ?? [])]
             .filter((span) => /^\d\d-\d\d – \d\d-\d\d$/.test(span.textContent ?? ""));
           const summaries = [...document.querySelectorAll<HTMLTableRowElement>("tr.outcome-row")].map((tr) => ({
             rowH: tr.getBoundingClientRect().height,
             x: tr.cells[tr.cells.length - 1].querySelector(".truncate")!.getBoundingClientRect().x,
           }));
           return {
-            heroH: hero.getBoundingClientRect().height,
-            headOffset: hero.querySelector(".kpi-head")!.getBoundingClientRect().y - hero.getBoundingClientRect().y,
-            headFloor: parseFloat(heroStyle.borderTopWidth) + parseFloat(heroStyle.paddingTop),
+            stats: band?.querySelectorAll(":scope > .stat").length ?? 0,
+            tiles: band?.closest(".card")?.querySelectorAll(".kpi").length ?? -1,
             ranges: ranges.length,
             summaries,
           };
         });
 
-        assert.ok(painted.heroH > 200, `the hero stretches beside the volume column: ${painted.heroH}px`);
-        assert.ok(Math.abs(painted.headOffset - painted.headFloor) <= 1, `label row ${painted.headOffset}px below the tile top, not ${painted.headFloor}px`);
-        assert.strictEqual(painted.ranges, 0, "the comparison window sits in the band's ⓘ, never on a tile");
+        assert.strictEqual(painted.stats, 4, "needs you, failed or blocked and the two volume facts sit in one stat row");
+        assert.strictEqual(painted.tiles, 0, "the band card holds no KPI tile");
+        assert.strictEqual(painted.ranges, 0, "the comparison window sits in the band's ⓘ, never on a stat");
         // the needs-you read answers with the same fixture rows → the ledger paints at least every fixture row
         assert.ok(painted.summaries.length >= LEDGER_ROWS.length, `ledger rows painted: ${painted.summaries.length}`);
         const xs = painted.summaries.map((row) => row.x);

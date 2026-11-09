@@ -687,7 +687,6 @@ interface WordingSandboxO {
     windowNeedsYou: { rows: Array<Record<string, unknown>>; total: number; windowLabel: string } | null,
     needsYouCap: number | null,
   ) => Array<{ key: string; heading: string; rows: unknown[] }>;
-  getRateVerdictO: (rate: Record<string, unknown>, windowLabel: string) => { chips: Array<{ label: string }> };
   buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string; label: string }>;
 }
 const wording = rendered as unknown as WordingSandboxO;
@@ -748,19 +747,9 @@ describe("ResultTableCard: the head's 'shown' count is the drawn set the drawer 
   }
 });
 
-describe("getRateVerdictO: the verdict chip names the jump, never a status tile's label again", () => {
-  test("a failing window's chip label differs from every status tile label", () => {
-    const verdict = wording.getRateVerdictO({ status: "ok", tone: "crit", breakage: 20, openCaveats: 5, writerTotal: 100 }, "last 7d");
-    const tileLabels = new Set(wording.buildStatusBandTilesO({ overall: { total: 100 } }, 3).map((tile) => tile.label));
-    assert.ok(verdict.chips.length > 0);
-    for (const chip of verdict.chips) assert.ok(!tileLabels.has(chip.label), chip.label);
-  });
-});
-
 interface DensitySandboxO {
   GraderBreakdownBody: (props: { state: Record<string, unknown> }) => RecordedElementO;
   buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string }>;
-  getVolumeTilesO: (tiles: Array<{ key: string }>) => Array<{ key: string }>;
 }
 const density = rendered as unknown as DensitySandboxO;
 
@@ -771,13 +760,6 @@ describe("Task results density: the columns beside a taller card carry their own
     assert.equal(elements.some((el) => el.props.kind === "detail"), false, "no detail fold");
     const tileKeys = elements.map((el) => el.props.key).filter((key) => ["verified_pass", "unverified", "verified_fail"].includes(String(key)));
     assert.equal(tileKeys.length, 3);
-  });
-
-  test("the volume column beside the hero carries the failed-or-blocked count, never the hero again", () => {
-    const tiles = density.buildStatusBandTilesO({ overall: { total: 100 }, byResultCount: { fail: 2, done: 90 } }, 3);
-    const keys = density.getVolumeTilesO(tiles).map((tile) => tile.key);
-    assert.ok(keys.includes("broken"), keys.join(","));
-    assert.ok(!keys.includes("attention"), keys.join(","));
   });
 });
 

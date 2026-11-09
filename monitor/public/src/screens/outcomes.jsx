@@ -712,9 +712,6 @@ function ScreenOutcomes({ onNav }) {
         </div>
       )}
 
-      <PageVerdictO analyticsState={analyticsState} channelLivenessState={channelLivenessState} attentionState={attentionState}
-        windowDays={analyticsPeriod} freshness={freshness}/>
-
       <AlarmLaneO channelLivenessState={channelLivenessState} searchState={searchState}/>
 
       <StatusBandO
@@ -879,8 +876,6 @@ function loopEventsSummaryO(loopEventsState) {
 
 // Needs-you tile → ledger 의 창 전체 Needs-you 헤딩 (hash 라우터라 href 앵커 대신 focus 이동).
 const LEDGER_NEEDS_YOU_ID = 'ledger-needs-you';
-// the hero tile already names the set → the verdict chip names the jump, so 'Needs you' reads once above the ledger
-const LEDGER_JUMP_CHIP_O = { key: 'needs-you', label: 'Show in ledger', targetId: LEDGER_NEEDS_YOU_ID };
 // focus lands on a region's card when a focused Retry leaves on recovery
 const REGION_CARD_IDS = {
   statusBand: 'outcomes-status-band',
@@ -985,18 +980,10 @@ function getBandTrendO(tile, priorTile) {
   return `${points > 0 ? '+' : '\u2212'}${Math.abs(points).toFixed(1)} pt`;
 }
 
+// One stat row card — needs you · failed or blocked · the volume facts; the window once in the sub-line.
 function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry, shared }) {
-  const { getRegionView, getFreshnessVerdict, CardInfo } = window.UI;
+  const { getRegionView, getFreshnessVerdict, Card, StatRow } = window.UI;
   const view = getRegionView(analyticsState);
-  if (view === 'loading') {
-    return (
-      <div className="grid grid-cols-4 gap-card mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
-        {/* hero + volume column, as loaded → nothing shifts on arrival */}
-        <KpiSkeletonO loadingLabel="needs you" className="col-span-3"/>
-        <KpiSkeletonO loadingLabel="volume"/>
-      </div>
-    );
-  }
   // blocked 는 레인의 장애 배너가 원인을 소유 → 여기선 '적재 실패' 만. 그 밖의 실패는 band 자리의 배너 하나.
   if (analyticsState.status === 'blocked') {
     return (
@@ -1013,45 +1000,33 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
     );
   }
 
+  const isLoading = view === 'loading';
   // attention payload 가 아직/영영 없을 때 0 을 그리면 '해결됨' 으로 읽힌다 → null → em-dash.
   const attentionCount = attentionState.status === 'ready'
     ? (Number(attentionState.data?.total) || 0)
     : null;
   const bandTiles = buildStatusBandTilesO(analyticsState.data, attentionCount);
-  const trends = buildBandTrendsO(analyticsState.data, bandTiles, attentionState.data?.priorTotal ?? null);
+  const trends = isLoading ? {} : buildBandTrendsO(analyticsState.data, bandTiles, attentionState.data?.priorTotal ?? null);
   const prior = analyticsState.data?.overall?.prior_window;
   const priorRange = prior ? window.UI.formatDayRange(prior) : null;
-  const getTrendTile = (tile) => ({ ...tile, trend: trends[tile.key] ?? null });
-  // stale or partial read → an ok tile drops to neutral, warn/crit kept (the verdict's rule)
+  // stale or partial read → an ok tile drops to neutral, warn/crit kept (the freshness rule)
   const tiles = bandTiles
-    .map(getTrendTile)
+    .map((tile) => ({ ...tile, trend: trends[tile.key] ?? null }))
     .map((tile) => (freshness ? { ...tile, tone: getFreshnessVerdict({ ...freshness, tone: tile.tone }).tone } : tile));
-  // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.
-  const windowLabel = `${windowDays}d`;
-
+  const reasons = buildNeedsYouReasonsO(analyticsState.data, attentionState.status === 'ready' ? attentionState.data : null);
+  const unloadedText = getUnloadedSummaryO(attentionState.status);
+  const stats = tiles.map((tile) => buildBandStatO(tile, isLoading, tile.key === 'attention' ? unloadedText : '—'));
   const isAttentionFailed = getRegionView(attentionState) === 'error';
-  const heroTile = tiles.find((tile) => tile.key === 'attention');
-  const volumeTiles = getVolumeTilesO(tiles);
-  const labelId = `${REGION_CARD_IDS.statusBand}-label`;
-  // a jumpable hero is a button → the rules ⓘ sits in the volume column, never inside a tile control
-  const info = (
-    <CardInfo label="How the status band is counted" describedBy={labelId}>
-      <BandRulesO tiles={tiles} priorRange={priorRange}/>
-    </CardInfo>
-  );
 
   return (
     <div id={REGION_CARD_IDS.statusBand} className="mb-4 flex-shrink-0">
-      <span id={labelId} className="sr-only">Status band</span>
-      <div className="grid grid-cols-4 gap-card" role="group" aria-labelledby={labelId}>
-        <BandTileO
-          tile={heroTile}
-          windowLabel={windowLabel}
-          unloadedText={getUnloadedSummaryO(attentionState.status)}
-          reasons={buildNeedsYouReasonsO(analyticsState.data, attentionState.status === 'ready' ? attentionState.data : null)}
-          className="col-span-3"/>
-        <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel} info={info}/>
-      </div>
+      {/* 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 → sub-line 이 모든 stat 의 창을 한 번 말한다 */}
+      <Card title="Status" sub={`Last ${windowDays} days`} infoLabel="How the status band is counted"
+        info={!isLoading && <BandRulesO tiles={tiles} reasons={reasons} priorRange={priorRange}/>}>
+        <div aria-busy={isLoading ? 'true' : undefined}>
+          <StatRow stats={stats}/>
+        </div>
+      </Card>
       {isAttentionFailed && (
         <RegionErrorO source="the needs-you count" state={attentionState} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.statusBand}/>
       )}
@@ -1059,43 +1034,48 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   );
 }
 
-// unloadedText → a pending or failed count says so instead of a dash that reads as data
-// One KPI anatomy: label row · count · share and trend under it · the reasons as the split detail column.
-function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, className = '' }) {
-  const { KPI } = window.UI;
-  const glyph = getBandTileGlyphO(tile.tone);
-  const loaded = tile.count !== null && tile.count !== undefined;
-  // the count is the tile's value → the share carries no fraction
-  const share  = loaded ? formatShareO(tile.count, tile.population) : '—';
-  const canJump = Boolean(tile.jumpTo) && loaded && tile.count > 0;
-  const reasonText = reasons
-    ? ` — reasons: ${reasons.map((r) => `${r.label} ${r.count === null ? 'not loaded' : r.count}`).join(', ')}`
-    : '';
-  const trendText = tile.trend ? ` — ${tile.trend} against the prior window` : '';
-  const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'}${trendText}${reasonText} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
+// tile model → one StatRow stat: the tone glyph on the label, the share and its delta on the one context line
+function buildBandStatO(tile, isLoading, unloadedText) {
+  const isLoaded = !isLoading && tile.count !== null && tile.count !== undefined;
+  const share = isLoaded && tile.population > 0 ? formatShareO(tile.count, tile.population) : null;
+  const context = share ? [share, tile.trend].filter(Boolean).join(' · ') : null;
+  return {
+    key: tile.key,
+    label: <BandStatLabelO tile={tile}/>,
+    value: <BandStatValueO tile={tile} isLoading={isLoading} unloadedText={unloadedText}/>,
+    context,
+  };
+}
 
+// ok/neutral carry no glyph; warn/crit name their tone, so the glyph is never colour alone
+function BandStatLabelO({ tile }) {
+  const glyph = getBandTileGlyphO(tile.tone);
+  if (!glyph) return tile.label;
   return (
-    <KPI
-      label={
-        <span className="inline-flex items-center gap-1">
-          {glyph && (
-            <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
-              <GlyphO name={glyph} size={12}/>
-            </span>
-          )}
-          {tile.label}
-        </span>
-      }
-      value={loaded ? formatIntO(tile.count) : <span className="fs-body text-dim">{unloadedText}</span>}
-      delta={
-        <>
-          <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
-          {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
-        </>
-      }
-      hint={reasons && <NeedsYouReasonsO reasons={reasons}/>} hintFace="" isSplit={Boolean(reasons)}
-      onClick={canJump ? () => focusLedgerSectionO(tile.jumpTo) : undefined}
-      aria-label={ariaLabel} className={className}/>
+    <span className="inline-flex items-center gap-1">
+      <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}>
+        <GlyphO name={glyph} size={12}/>
+      </span>
+      {tile.label}
+    </span>
+  );
+}
+
+// a reachable count jumps to its ledger section → a link-styled control, never a button tile
+// unloadedText → a pending or failed count says so instead of a dash that reads as data
+function BandStatValueO({ tile, isLoading, unloadedText }) {
+  const { LoadingPlaceholder } = window.UI;
+  if (isLoading) {
+    return <span className="inline-flex"><LoadingPlaceholder label={tile.label.toLowerCase()}/></span>;
+  }
+  if (tile.count === null || tile.count === undefined) return <span className="fs-body text-dim">{unloadedText}</span>;
+  const count = formatIntO(tile.count);
+  if (!tile.jumpTo || tile.count === 0) return count;
+  return (
+    <button type="button" className="link" onClick={() => focusLedgerSectionO(tile.jumpTo)}
+      aria-label={`${tile.label}: ${count} — show them in the ledger`}>
+      {count}<span aria-hidden="true" className="link-arrow">↓</span>
+    </button>
   );
 }
 
@@ -1118,120 +1098,13 @@ function buildNeedsYouReasonsO(data, attention) {
   return remainder <= 0 ? reasons : [...reasons, { key: 'other', label: 'Changed between reads', count: remainder, tone: 'neutral' }];
 }
 
-/**
- * Page verdict = the Dashboard's resolveOutcomeRate judgment as shares.
- * A stopped recording channel outranks it, since every count it reads is understated; the lane row below names the channel only.
- * The all-clear waits for the liveness read.
- * @param freshness - the shared rule: unread reads No signal, a stale or partial read reads Last known
- */
-function PageVerdictO({ analyticsState, channelLivenessState, attentionState, windowDays, freshness }) {
-  const { PageVerdict, getRegionView } = window.UI;
-  const view = getRegionView(analyticsState);
-  const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
-
-  if (silent.length > 0) {
-    return <PageVerdict tone="crit" freshness={freshness} className="mb-4">{`Recording stopped on ${silent.join(', ')} — every count here is understated.`}</PageVerdict>;
-  }
-  if (view !== 'ready') {
-    const reason = view === 'loading' ? 'the window totals are still loading' : "the window totals didn't load";
-    return <PageVerdict tone="neutral" freshness={freshness} className="mb-4">{`Task-result health is unknown — ${reason}.`}</PageVerdict>;
-  }
-
-  const rateVerdict = getRateVerdictO(window.UI.resolveOutcomeRate(analyticsState.data?.overall), `last ${windowDays}d`);
-  const verdict = getHeroFloorVerdictO(rateVerdict, analyticsState.data, attentionState);
-  if (verdict.tone !== 'ok' || channelLivenessState.status === 'ready') {
-    return <PageVerdict tone={verdict.tone} chips={verdict.chips} freshness={freshness} className="mb-4">{verdict.text}</PageVerdict>;
-  }
-  // the unchecked state rides the tone word → the shares keep the one-line cap
-  const label = channelLivenessState.status === 'loading' ? 'Checking channels' : "Couldn't check channels";
-  return <PageVerdict tone="neutral" label={label} freshness={freshness} className="mb-4">{verdict.text}</PageVerdict>;
-}
-
-const TONE_RANK_O = { neutral: 0, ok: 1, warn: 2, crit: 3 };
-
-// verdict and hero judge one window → the sentence never reads greener than the Needs-you tile
-function getHeroFloorVerdictO(verdict, data, attentionState) {
-  if (verdict.tone === 'neutral' || attentionState?.status !== 'ready') return verdict;
-  const count = Number(attentionState.data?.total) || 0;
-  const hero = buildStatusBandTilesO(data, count).find((tile) => tile.key === 'attention');
-  if (TONE_RANK_O[hero.tone] <= TONE_RANK_O[verdict.tone]) return verdict;
-  return {
-    tone: hero.tone,
-    chips: [LEDGER_JUMP_CHIP_O],
-    text: `${formatShareO(count, hero.population)} need you · ${verdict.text}`,
-  };
-}
-
-function getRateVerdictO(rate, windowLabel) {
-  const { LOW_N_MIN, formatInt } = window.UI;
-  if (rate.status === 'empty' || rate.status === 'unavailable') {
-    return { tone: 'neutral', chips: [], text: `No task results written by agents in the ${windowLabel} to judge.` };
-  }
-  if (rate.status === 'low-n') {
-    return { tone: 'neutral', chips: [], text: `Only ${formatInt(rate.writerTotal)} records, ${windowLabel} — too few to judge (needs ${LOW_N_MIN}).` };
-  }
-  return {
-    tone: rate.tone,
-    chips: rate.tone === 'ok' ? [] : [LEDGER_JUMP_CHIP_O],
-    text: `${formatShareO(rate.breakage, rate.writerTotal)} failed or blocked · ${formatShareO(rate.openCaveats, rate.writerTotal)} caveat open · ${formatInt(rate.writerTotal)} records, ${windowLabel}.`,
-  };
-}
-
 function formatShareO(count, population) {
   if (!(population > 0)) return '—';
   return `${((count / population) * 100).toFixed(1)}%`;
 }
 
-function NeedsYouReasonsO({ reasons }) {
-  return (
-    <span className="block fs-meta">
-      <span className="block text-faint">Reasons</span>
-      {reasons.map((reason) => {
-        const glyph = getBandTileGlyphO(reason.tone);
-        return (
-          <span key={reason.key} className="flex items-center gap-1 text-dim">
-            {glyph && <span className={`text-${reason.tone}`} aria-hidden="true"><GlyphO name={glyph} size={12}/></span>}
-            {reason.label}
-            <span className="ml-auto font-mono text-ink">{reason.count === null ? '—' : formatIntO(reason.count)}</span>
-          </span>
-        );
-      })}
-    </span>
-  );
-}
-
-// every fact but the hero → the column beside the taller hero carries the breakage count the verdict states as a share
-function getVolumeTilesO(tiles) {
-  return tiles.filter((tile) => tile.key !== 'attention');
-}
-
-// volume facts demoted beside the hero; the Self-reported glyph stays the missing-report grade channel
-// a fact-list KPI: the ⓘ on the label row, level with the hero's label; the facts start where the hero's value does
-function VolumeTilesO({ tiles, windowLabel, info = null }) {
-  const { KPI } = window.UI;
-  return (
-    <KPI hasValue={false} info={info} aria-label={`Volume · ${windowLabel}`} hintFace=""
-      hint={
-        <div className="flex flex-col gap-2">
-          {tiles.map((tile) => {
-            const glyph = getBandTileGlyphO(tile.tone);
-            return (
-              <div key={tile.key} className="flex flex-wrap items-center gap-x-1 text-dim">
-                {glyph && <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}><GlyphO name={glyph} size={12}/></span>}
-                {tile.label}
-                <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
-                <span className="w-full text-right font-mono text-faint">{formatShareO(tile.count, tile.population)}</span>
-                {tile.trend && <span className="w-full text-right">{tile.trend}</span>}
-              </div>
-            );
-          })}
-        </div>
-      }/>
-  );
-}
-
 // the counting method and the delta's comparison window live here, never on a tile
-function BandRulesO({ tiles, priorRange }) {
+function BandRulesO({ tiles, reasons, priorRange }) {
   const { DateRange, LOW_N_MIN } = window.UI;
   return (
     <dl className="fs-body flex flex-col gap-3">
@@ -1244,6 +1117,16 @@ function BandRulesO({ tiles, priorRange }) {
       <div>
         <dt className="text-ink">Reasons</dt>
         <dd className="text-dim">Each record counted once, flags first</dd>
+        {reasons.map((reason) => {
+          const glyph = getBandTileGlyphO(reason.tone);
+          return (
+            <dd key={reason.key} className="flex items-center gap-1 text-dim">
+              {glyph && <span className={`text-${reason.tone}`} aria-hidden="true"><GlyphO name={glyph} size={12}/></span>}
+              {reason.label}
+              <span className="ml-auto tabular-nums text-ink">{reason.count === null ? '—' : formatIntO(reason.count)}</span>
+            </dd>
+          );
+        })}
       </div>
       {priorRange && (
         <div>
@@ -1440,12 +1323,6 @@ function OpenCaveatCellO({ count }) {
       {isLoaded ? formatIntO(count) : '—'}
     </td>
   );
-}
-
-// the band's loading state is the KPI's own: strut + placeholder in the value row, aria-busy on the tile
-function KpiSkeletonO({ loadingLabel, className = '' }) {
-  const { KPI } = window.UI;
-  return <KPI state="loading" loadingLabel={loadingLabel} className={className}/>;
 }
 
 // ----- Attribution Health (텔레메트리 귀속 품질) ------------------------------

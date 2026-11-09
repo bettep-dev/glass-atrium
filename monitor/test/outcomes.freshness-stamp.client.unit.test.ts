@@ -79,30 +79,6 @@ function render(name: string, props: Record<string, unknown>): RenderedNode {
 
 const OK_OVERALL = { total: 200, reconstructed_total: 0, by_result: [{ result: "done", count: 200 }] };
 const settled: RegionState = { ...first, status: "ready", data: { overall: OK_OVERALL }, busy: false };
-const warmError: RegionState = { ...settled, error: "HTTP 500" };
-const channelsOk: RegionState = { ...first, status: "ready", data: { alerting: [] }, busy: false };
-
-function getVerdictText(analytics: RegionState, at: string | null, regions: RegionState[]): string {
-  const tree = render("PageVerdictO", {
-    analyticsState: analytics, channelLivenessState: regions.includes(first) ? first : channelsOk,
-    windowDays: 7, freshness: { at, regions, now: NOW },
-  });
-  return collectText(tree);
-}
-
-const verdictRows = [
-  { name: "a settled fresh read with an ok rate reads Healthy", analytics: settled, at: READ_AT, regions: [settled, channelsOk], has: "Healthy", lacks: "Last known" },
-  { name: "a warm error over an ok rate reads Last known, never Healthy", analytics: warmError, at: READ_AT, regions: [warmError, channelsOk], has: "Last known", lacks: "Healthy" },
-  { name: "a cold load reads No signal with a checking note, never Healthy", analytics: first, at: null, regions: [first, first], has: "No signal", lacks: "Healthy" },
-];
-
-for (const row of verdictRows) {
-  test(`the verdict: ${row.name}`, () => {
-    const text = getVerdictText(row.analytics, row.at, row.regions);
-    assert.ok(text.includes(row.has), `expected "${row.has}" in: ${text}`);
-    assert.ok(!text.includes(row.lacks), `unexpected "${row.lacks}" in: ${text}`);
-  });
-}
 
 test("a cold-error Retry in flight keeps the status band's failure card instead of a loader", () => {
   const retrying: RegionState = { ...first, status: "loading", busy: true, error: "HTTP 500" };

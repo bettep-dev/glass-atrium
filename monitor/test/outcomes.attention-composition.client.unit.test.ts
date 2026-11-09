@@ -70,7 +70,6 @@ interface OutcomesHelpers {
     windowDays: number;
     onRetry?: () => void;
   }) => RenderNode;
-  KpiSkeletonO: unknown;
   PayloadUnavailableO: unknown;
   buildAgentFailureRowsO: (
     agentStack: unknown,
@@ -79,7 +78,6 @@ interface OutcomesHelpers {
   getGraderSentenceO: (breakdown: Record<string, unknown> | null | undefined) => string | null;
   getConfidentFailedO: (crosstab: { total: number; byCell: Record<string, { count: number }> } | null) => { count: number; share: number } | null;
   getCrosstabVisibleRowsO: (byCell: Record<string, { count: number }>) => string[];
-  PageVerdictO: (props: { analyticsState: PayloadState<unknown>; channelLivenessState: PayloadState<{ alerting?: string[] }>; windowDays: number }) => RenderNode | null;
   buildNeedsYouReasonsO: (data: unknown, attention: unknown) => { key: string; label: string; count: number | null; tone: string }[];
   buildAnalyticsDataO: (overall: unknown) => { overall: { by_agent_top_10?: unknown }; agentStack: unknown };
   isNeedsYouRowO: (row: LedgerRow, closedAt: string | null) => boolean;
@@ -88,8 +86,6 @@ interface OutcomesHelpers {
     closure?: ClosureState,
     needsYou?: { rows: LedgerRow[]; total: number; windowLabel: string } | null,
   ) => { key: string; label: string; heading: string; rows: LedgerRow[]; anchorId?: string }[];
-  BandTileO: (props: { tile: BandTile; windowLabel: string }) => RenderNode;
-  VolumeTilesO: (props: { tiles: BandTile[]; windowLabel: string; info?: unknown }) => RenderNode;
   BandRulesO: (props: { tiles: BandTile[]; priorRange: string | null }) => RenderNode;
   ResultTable: (props: Record<string, unknown>) => RenderNode;
   ResultTableRow: (props: { row: LedgerRow & { agent: string; task_type: string }; onRowClick: () => void; closure?: ClosureState }) => RenderNode;
@@ -103,8 +99,10 @@ interface OutcomesHelpers {
   buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
   isFilterAppliedO: (filter: Record<string, unknown>, includeAll: boolean) => boolean;
   buildAgentOptionsO: (agents: string[], chosen: string) => { value: string; label: string }[];
+  BandStatValueO: (props: { tile: BandTile; isLoading: boolean; unloadedText: string }) => RenderNode | string;
+  BandRulesO: (props: { tiles: BandTile[]; reasons: { key: string; label: string; count: number | null; tone: string }[]; priorRange: string | null }) => RenderNode;
   getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
-  window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; PageVerdict: unknown; CardInfo: unknown } };
+  window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; Card: unknown; StatRow: unknown } };
 }
 
 interface RenderNode {
@@ -298,11 +296,10 @@ test("StatusBandO: an analytics failure draws its own banner in place, never the
     windowDays: 30,
   }));
   const loading = render("loading");
-  assert.ok(loading.some((n) => n.type === helpers.KpiSkeletonO), "loading draws the pulsing skeleton");
+  assert.ok(loading.some((n) => n.props?.["aria-busy"] === "true"), "loading marks the stat row busy");
   assert.deepStrictEqual(bannerTitles(loading), [], "loading raises no banner");
   for (const status of ["error", "unavailable"] as PayloadStatus[]) {
     const nodes = render(status);
-    assert.ok(!nodes.some((n) => n.type === helpers.KpiSkeletonO), `${status} draws no skeleton`);
     assert.ok(!nodes.some((n) => n.type === helpers.PayloadUnavailableO), `${status} is not a text panel`);
     assert.strictEqual(bannerTitles(nodes).length, 1, `${status}: one banner for the band's payload`);
     assert.ok(!nodes.some((n) => n.props?.["aria-busy"] === true || n.props?.["aria-busy"] === "true"), `${status} is not busy`);
@@ -391,15 +388,13 @@ test("buildStatusBandTilesO: the missing-report level honours the same low-N flo
   );
 });
 
-test("StatusBandO: the loading skeleton takes the same column spans as the loaded band", () => {
-  const spansOf = (node: RenderNode): string[] => {
-    const grid = flattenNodes(node).find((n) => String(n.props?.className ?? "").includes("grid-cols-4"))!;
-    return grid.children.flat()
-      .filter((child): child is RenderNode => child !== null && typeof child === "object")
-      .map((child) => /col-span-(\d)/.exec(String(child.props?.className ?? ""))?.[1] ?? "1");
+test("StatusBandO: the loading stat row names the same stats, in the same order, as the loaded one", () => {
+  const statKeysOf = (node: RenderNode): string[] => {
+    const row = flattenNodes(node).find((n) => n.type === helpers.window.UI.StatRow)!;
+    return (row.props!.stats as { key: string }[]).map((stat) => stat.key);
   };
-  const loading = spansOf(helpers.StatusBandO({ analyticsState: { status: "loading" }, attentionState: { status: "loading" }, windowDays: 30 }));
-  const loaded = spansOf(helpers.StatusBandO({
+  const loading = statKeysOf(helpers.StatusBandO({ analyticsState: { status: "loading" }, attentionState: { status: "loading" }, windowDays: 30 }));
+  const loaded = statKeysOf(helpers.StatusBandO({
     analyticsState: { status: "ready", data: aboveFloor({ done: 150, fail: 4 }) },
     attentionState: { status: "ready", data: { total: 5 } },
     windowDays: 30,
@@ -491,114 +486,6 @@ test("buildAttentionParamsO: each part narrows the needs-you query without dropp
     [params.get("needs_attention"), params.get("review_flag"), params.get("result"), params.get("limit"), params.get("days")],
     ["true", "false", "blocked", "1", "30"],
   );
-});
-
-// --- page verdict: one sentence answering "is this fine?", on the Dashboard's shared rate rule ---
-
-describe("PageVerdictO: the Task results verdict follows the shared outcome-rate rule", () => {
-  const byResult = (counts: Record<string, number>, open = 0) =>
-    Object.entries(counts).map(([result, count]) => ({ result, count, writer_open_count: result === "done_with_concerns" ? open : 0 }));
-  const ready = (counts: Record<string, number>, open = 0) => {
-    const total = Object.values(counts).reduce((a, b) => a + b, 0);
-    return { status: "ready" as const, data: { overall: { total, reconstructed_total: 0, by_result: byResult(counts, open) }, byResultCount: counts } };
-  };
-  const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
-  const healthyWindow = ready({ done: 195, fail: 2, done_with_concerns: 3 }, 1);
-  const rows = [
-    { name: "breakage at or above 5% is crit", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: recording, tone: "crit", text: /6\.0% failed or blocked .*200 records/ },
-    { name: "open caveats at or above 10% alone are warn", state: ready({ done: 170, done_with_concerns: 30 }, 25), liveness: recording, tone: "warn", text: /12\.5% caveat open/ },
-    { name: "both shares under their steps are ok", state: healthyWindow, liveness: recording, tone: "ok", text: /1\.0% failed or blocked .*200 records/ },
-    { name: "a sample under the low-N floor claims no tone", state: ready({ fail: 10 }), liveness: recording, tone: "neutral", text: /too few to judge/ },
-    { name: "an empty window claims no tone", state: ready({}), liveness: recording, tone: "neutral", text: /No task results/ },
-    { name: "a failed read is unknown, never all-clear", state: { status: "error" as const, error: "boom" }, liveness: recording, tone: "neutral", text: /unknown/ },
-    { name: "a stopped recording channel is crit over an ok rate", state: healthyWindow, liveness: { status: "ready" as const, data: { alerting: ["subagent-stop"] } }, tone: "crit", text: /Recording stopped on subagent-stop .*understated/ },
-    { name: "an unchecked recording channel holds back the all-clear and says so in the tone word", state: healthyWindow, liveness: { status: "error" as const, error: "boom" }, tone: "neutral", text: /1\.0% failed or blocked/, label: "Couldn't check channels" },
-    { name: "a recording channel still loading holds back the all-clear and says so in the tone word", state: healthyWindow, liveness: { status: "loading" as const }, tone: "neutral", text: /1\.0% failed or blocked/, label: "Checking channels" },
-    { name: "a flagged rate stands while the recording channels are still loading", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: { status: "loading" as const }, tone: "crit", text: /failed or blocked/ },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      const node = helpers.PageVerdictO({ analyticsState: row.state, channelLivenessState: row.liveness, windowDays: 30 }) as RenderNode;
-      assert.strictEqual(node.type, helpers.window.UI.PageVerdict, "renders the shared PageVerdict atom");
-      assert.strictEqual(node.props!.tone, row.tone);
-      assert.strictEqual(node.props!.label, (row as { label?: string }).label, "only an unchecked channel replaces the tone word");
-      assert.match(String(node.children.join("")), row.text);
-    });
-  }
-});
-
-// copy cap: a verdict is one line → numbers first, at most 90 characters at a five-digit window
-describe("PageVerdictO: a judged verdict leads with its shares and fits the 90-character line cap", () => {
-  const VERDICT_CAP = 90;
-  const windowOf = (counts: Record<string, number>, open: number) => {
-    const total = Object.values(counts).reduce((a, b) => a + b, 0);
-    return {
-      status: "ready" as const,
-      data: {
-        overall: { total, reconstructed_total: 0, by_result: Object.entries(counts).map(([result, count]) => ({ result, count, writer_open_count: result === "done_with_concerns" ? open : 0 })) },
-        byResultCount: counts,
-      },
-    };
-  };
-  const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
-  const okWindow = windowOf({ done: 11200, fail: 52, done_with_concerns: 100 }, 40);
-  const unreadHero = { status: "loading" as const };
-  const rows = [
-    { name: "a crit rate", analytics: windowOf({ done: 10500, fail: 652, done_with_concerns: 200 }, 120), attention: unreadHero, liveness: recording },
-    { name: "an ok rate", analytics: okWindow, attention: unreadHero, liveness: recording },
-    { name: "an ok rate raised by the hero", analytics: okWindow, attention: { status: "ready" as const, data: { total: 3405, parts: { flagged: 3405, fail: 0, blocked: 0, open: 0 } } }, liveness: recording },
-    { name: "an ok rate while the recording channels are still loading", analytics: okWindow, attention: unreadHero, liveness: { status: "loading" as const } },
-    { name: "an ok rate whose recording channels couldn't be checked", analytics: okWindow, attention: unreadHero, liveness: { status: "error" as const, error: "boom" } },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      const node = helpers.PageVerdictO({ analyticsState: row.analytics, channelLivenessState: row.liveness, attentionState: row.attention, windowDays: 30 } as never) as RenderNode;
-      const text = String(node.children.join(""));
-      assert.match(text, /^\d+\.\d% /, `leads with a share: "${text}"`);
-      assert.ok(text.length <= VERDICT_CAP, `"${text}" is ${text.length} chars`);
-    });
-  }
-});
-
-describe("PageVerdictO: the verdict is never greener than the needs-you hero", () => {
-  const TONE_RANK: Record<string, number> = { neutral: 0, ok: 1, warn: 2, crit: 3 };
-  const counts = (c: Record<string, number>, open: number) => ({
-    status: "ready" as const,
-    data: {
-      overall: {
-        total: 200,
-        reconstructed_total: 0,
-        by_result: Object.entries(c).map(([result, count]) => ({ result, count, writer_open_count: result === "done_with_concerns" ? open : 0 })),
-      },
-      byResultCount: c,
-    },
-  });
-  const healthy = counts({ done: 195, fail: 2, done_with_concerns: 3 }, 1);
-  const broken = counts({ done: 180, fail: 12, done_with_concerns: 8 }, 2);
-  const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
-  const attention = (total: number) => ({ status: "ready" as const, data: { total, parts: { flagged: total, fail: 0, blocked: 0, open: 0 } } });
-  const rows = [
-    { name: "an ok rate under a warn hero rises to warn", analytics: healthy, attention: attention(60), tone: "warn" },
-    { name: "an ok rate under an ok hero stays ok", analytics: healthy, attention: attention(5), tone: "ok" },
-    { name: "a crit rate keeps crit over a warn hero", analytics: broken, attention: attention(60), tone: "crit" },
-    { name: "an unread hero claims nothing, so the rate stands", analytics: healthy, attention: { status: "loading" as const }, tone: "ok" },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      const node = helpers.PageVerdictO({ analyticsState: row.analytics, channelLivenessState: recording, attentionState: row.attention, windowDays: 30 } as never) as RenderNode;
-      const heroTone = row.attention.status === "ready"
-        ? tileOf(helpers.buildStatusBandTilesO(row.analytics.data, row.attention.data!.total), "attention").tone
-        : "neutral";
-      assert.strictEqual(node.props!.tone, row.tone);
-      assert.ok(TONE_RANK[String(node.props!.tone)] >= TONE_RANK[heroTone], `verdict ${String(node.props!.tone)} under a ${heroTone} hero`);
-    });
-  }
-
-  test("a verdict raised by the hero leads with the needs-you share and links to it", () => {
-    const node = helpers.PageVerdictO({ analyticsState: healthy, channelLivenessState: recording, attentionState: attention(60), windowDays: 30 } as never) as RenderNode;
-    assert.match(String(node.children.join("")), /^30\.0% need you · /);
-    assert.ok((node.props!.chips as { key: string }[]).some((chip) => chip.key === "needs-you"));
-  });
 });
 
 test("buildAnalyticsDataO → buildAgentFailureRowsO: every failing registry agent gets a row, however low its volume", () => {
@@ -859,64 +746,46 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
   assert.strictEqual(heading.props!.role, "heading", "the target is a heading");
   assert.strictEqual(heading.props!.tabIndex, -1, "the heading can take focus without joining the tab order");
 
-  const asRendered = (tile: BandTile) => renderKpiO(helpers.BandTileO({ tile, windowLabel: "30d" }));
-  const live = asRendered(attention);
+  const asRendered = (tile: BandTile) => helpers.BandStatValueO({ tile, isLoading: false, unloadedText: "—" });
+  const live = asRendered(attention) as RenderNode;
   assert.strictEqual(live.type, "button", "a reachable count is an operable control");
+  assert.strictEqual(live.props!.className, "link", "styled as a link, never a button tile");
   assert.strictEqual(typeof live.props!.onClick, "function");
   for (const count of [0, null]) {
-    assert.strictEqual(asRendered({ ...attention, count }).type, "div", `count ${count} offers no jump`);
+    assert.notStrictEqual((asRendered({ ...attention, count }) as RenderNode).type, "button", `count ${count} offers no jump`);
   }
-  assert.strictEqual(asRendered(tileOf(tiles, "broken")).type, "div", "tiles without a target stay static");
+  const broken = tileOf(tiles, "broken");
+  assert.strictEqual(asRendered(broken), String(broken.count), "a stat without a target is its plain count");
 });
 
-// the band tiles are thin wrappers over the shared KPI anatomy → render that KPI one level to reach its elements
-function renderKpiO(node: RenderNode): RenderNode {
-  assert.strictEqual(node.type, (helpers.window.UI as unknown as Record<string, unknown>).KPI, "the tile is the shared KPI");
-  return (node.type as (props: unknown) => RenderNode)({ ...node.props, children: node.children });
-}
-
 // design.md copy rule: a definition over a cap opens from a focusable ⓘ, never a hover-only title
-describe("StatusBandO: the tile rules open from one focusable ⓘ described by the band label, never from a hover-only title", () => {
+describe("StatusBandO: the stat rules and the needs-you reasons open from the card's one ⓘ", () => {
   const data = aboveFloor({ done: 150, fail: 8, blocked: 4 });
   const tiles = helpers.buildStatusBandTilesO(data, 25);
-  const band = helpers.StatusBandO({ analyticsState: { status: "ready", data }, attentionState: { status: "ready", data: { total: 25, parts: { flagged: 25, fail: 0, blocked: 0, open: 0 } } as { total: number } }, windowDays: 30 });
-  const bandNodes = flattenNodes(band);
-  const volume = bandNodes.find((n) => n.type === helpers.VolumeTilesO)!;
-  const info = volume.props!.info as RenderNode;
-  const hoverTitled = (node: RenderNode) => flattenNodes(node).filter((n) => n.props?.title != null);
+  const band = helpers.StatusBandO({ analyticsState: { status: "ready", data }, attentionState: { status: "ready", data: { total: 25, parts: { flagged: 20, fail: 3, blocked: 0, open: 2 } } as { total: number } }, windowDays: 30 });
+  const card = flattenNodes(band).find((n) => n.type === helpers.window.UI.Card)!;
+  const info = card.props!.info as RenderNode;
 
-  test("no tile carries a hover-only title", () => {
-    const hero = tileOf(tiles, "attention");
-    const rendered = [
-      { name: "a jumpable hero", node: renderKpiO(helpers.BandTileO({ tile: hero, windowLabel: "30d" })) },
-      { name: "a static hero", node: renderKpiO(helpers.BandTileO({ tile: { ...hero, count: 0 }, windowLabel: "30d" })) },
-      { name: "the volume column", node: renderKpiO(helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d" })) },
-    ];
-    for (const row of rendered) assert.deepStrictEqual(hoverTitled(row.node).length, 0, `${row.name} has no hover-only title`);
+  test("no stat carries a hover-only title", () => {
+    const stats = flattenNodes(card).find((n) => n.type === helpers.window.UI.StatRow)!.props!.stats as { label: unknown; value: unknown }[];
+    const titled = expandNodes(stats.flatMap((stat) => [stat.label, stat.value])).filter((n) => n.props?.title != null);
+    assert.strictEqual(titled.length, 0);
   });
 
-  test("the hero's accessible name still carries its rule", () => {
-    const hero = tileOf(tiles, "attention");
-    assert.ok(String(helpers.BandTileO({ tile: hero, windowLabel: "30d" }).props!["aria-label"]).includes(hero.hint));
+  test("the window is stated once, in the card sub-line", () => {
+    assert.strictEqual(card.props!.sub, "Last 30 days");
   });
 
-  test("the ⓘ sits outside every tile button, is described by the band label, and its drawer names every tile's rule", () => {
-    assert.strictEqual(info.type, helpers.window.UI.CardInfo, "the shared ⓘ trigger");
-    const label = bandNodes.find((n) => n.props?.id === info.props!.describedBy);
-    assert.ok(label, "the ⓘ points at an element in the band");
-    assert.strictEqual(renderText(label).trim(), "Status band");
-    assert.ok(bandNodes.some((n) => n.props?.role === "group" && n.props["aria-labelledby"] === label!.props!.id), "the band is named by the same label");
-    const drawer = renderText(info.children);
+  test("the ⓘ names every stat's rule and counts every reason", () => {
+    assert.strictEqual(info.type, helpers.BandRulesO, "the band rules are the card's ⓘ");
+    const drawer = renderText(helpers.BandRulesO(info.props as never));
     for (const tile of tiles) {
       assert.ok(drawer.includes(tile.label), `the drawer names ${tile.key}`);
       assert.ok(drawer.includes(tile.hint), `the drawer states ${tile.key}'s rule`);
     }
-  });
-
-  test("the volume column renders the ⓘ it is handed", () => {
-    const marker = { type: "marker", props: {}, children: [] };
-    const column = renderKpiO(helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d", info: marker }));
-    assert.ok(flattenNodes(column).includes(marker as RenderNode));
+    for (const reason of ["Flagged for review 20", "Failed or blocked 3", "Caveat still open 2"]) {
+      assert.ok(drawer.includes(reason), `the drawer counts ${reason}: ${drawer}`);
+    }
   });
 });
 
@@ -1277,28 +1146,12 @@ const buildBand = (prior: unknown, priorTotal: number | null): unknown => helper
   windowDays: 30,
 });
 
-// one tile's subtree → a change line there cannot hide behind another tile's text
-const findTile = (node: unknown, key: string): RenderNode | null => {
-  if (Array.isArray(node)) return node.map((child) => findTile(child, key)).find(Boolean) ?? null;
-  if (node === null || typeof node !== "object" || !("type" in node)) return null;
-  const el = node as RenderNode;
-  if ((el.props as { tile?: { key?: string } } | null)?.tile?.key === key) return el;
-  return findTile(el.children, key);
-};
-
-// one band fact's own text, the ⓘ left out → a range or method there cannot pass for the tile's
-const findVolumeTiles = (node: unknown): BandTile[] => {
-  if (Array.isArray(node)) return node.flatMap(findVolumeTiles);
-  if (node === null || typeof node !== "object" || !("type" in node)) return [];
-  const el = node as RenderNode;
-  if (el.type === helpers.VolumeTilesO) return (el.props as { tiles: BandTile[] }).tiles;
-  return findVolumeTiles(el.children);
-};
+// one band stat's own text, the ⓘ left out → a range or method there cannot pass for the stat's
 const getTileText = (band: unknown, key: string): string => {
-  const hero = findTile(band, key);
-  if (hero) return renderText(hero);
-  const tile = findVolumeTiles(band).find((entry) => entry.key === key);
-  return tile ? renderText(helpers.VolumeTilesO({ tiles: [tile], windowLabel: "30d" })) : "";
+  const row = flattenNodes(band as RenderNode).find((n) => n.type === helpers.window.UI.StatRow);
+  const stats = (row?.props!.stats ?? []) as { key: string; label: unknown; value: unknown; context: string | null }[];
+  const stat = stats.find((entry) => entry.key === key);
+  return stat ? `${renderText(stat.label)} ${renderText(stat.value)} ${stat.context ?? ""}` : "";
 };
 const BAND_KEYS = ["attention", "broken", "recorded", "done"];
 const getBandText = (band: unknown): string => BAND_KEYS.map((key) => getTileText(band, key)).join(" | ");
@@ -1342,7 +1195,7 @@ describe("StatusBandO: every tile states one share delta, its comparison window 
   });
   test("the band's ⓘ names the comparison window whole in one nowrap span and the reasons' counting method", () => {
     const tiles = helpers.buildStatusBandTilesO({ overall: { total: 200 }, byResultCount: {} }, 30);
-    const rules = helpers.BandRulesO({ tiles, priorRange: "08-02 – 08-31" });
+    const rules = helpers.BandRulesO({ tiles, reasons: [], priorRange: "08-02 – 08-31" });
     const ranges = expandNodes(rules).filter((n) => /\bwhitespace-nowrap\b/.test(String(n.props?.className ?? ""))
       && renderText(n) === "08-02 – 08-31");
     assert.strictEqual(ranges.length, 1, `nowrap range spans: ${ranges.length}`);
@@ -1351,7 +1204,7 @@ describe("StatusBandO: every tile states one share delta, its comparison window 
   });
   test("without a prior window the band's ⓘ states no comparison window", () => {
     const tiles = helpers.buildStatusBandTilesO({ overall: { total: 200 }, byResultCount: {} }, 30);
-    assert.doesNotMatch(renderText(helpers.BandRulesO({ tiles, priorRange: null })), /compar/i);
+    assert.doesNotMatch(renderText(helpers.BandRulesO({ tiles, reasons: [], priorRange: null })), /compar/i);
   });
 });
 
