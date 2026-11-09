@@ -195,11 +195,11 @@ ga_init_env() {
 
   # expected hook->event bindings the user MUST register in settings.json for the deployed hooks to fire.
   # Each entry = "<event>\t<hook-basename>\t<matcher>" (events: PreToolUse / PostToolUse / SessionStart /
-  # UserPromptSubmit / Stop / SubagentStart / SubagentStop / PreCompact). Matched against the live
+  # UserPromptSubmit / Stop / SubagentStart / SubagentStop / PreCompact / SessionEnd). Matched against the live
   # settings.json .hooks[<event>][].hooks[].command by basename, SCOPED to its matcher
   # (command-WITHIN-matcher — the doctor binding check + wire_hooks idempotency key). The 3rd column
   # (matcher) is BOTH the UPSERT selector AND the bound/dormant scoping key; an empty 3rd column = "no
-  # matcher key" (SessionStart/Stop/UserPromptSubmit are unmatched). Per-matcher, so the SAME hook may
+  # matcher key" (SessionStart/SessionEnd/Stop/UserPromptSubmit are unmatched). Per-matcher, so the SAME hook may
   # appear in TWO rows under one event with different matchers
   # (e.g. validate-secret-scan.sh on Write|Edit AND Bash) — each wired + tracked independently.
   # Add a row here when a new hook is deployed. SINGLE SoT — wire_hooks/run_doctor AND unwire_hooks/verify_clean
@@ -257,6 +257,7 @@ ga_init_env() {
     "SessionStart	inject-session-context.sh	"
     "SessionStart	prune-security-warnings-state.sh	"
     "SessionStart	prune-session-spawns.sh	"
+    "SessionStart	queue-session-register.sh	"
     "SessionStart	validate-compliance-matrix.sh	"
     "UserPromptSubmit	inject-reply-language.sh	"
     "Stop	advisory-preedit-facts.sh	"
@@ -281,6 +282,7 @@ ga_init_env() {
     "SubagentStop	post-edit-typecheck.sh	"
     "SubagentStop	track-outcome.sh	"
     "PreCompact	pre-compact.sh	"
+    "SessionEnd	queue-session-deregister.sh	"
   )
   readonly EXPECTED_HOOK_BINDINGS
 

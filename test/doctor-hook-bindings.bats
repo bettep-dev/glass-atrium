@@ -99,6 +99,7 @@ write_full_settings() {
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-session-context.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-security-warnings-state.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-session-spawns.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-session-register.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-compliance-matrix.sh" } ] }
     ],
     "UserPromptSubmit": [
@@ -133,6 +134,9 @@ write_full_settings() {
     ],
     "PreCompact": [
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/pre-compact.sh" } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-session-deregister.sh" } ] }
     ]
   }
 }
@@ -318,7 +322,7 @@ drop_group() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE binding set across all 8 events, and the total
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE binding set across all 9 events, and the total
   # asserted below is read from the populated array (set_binding_figures), never restated here.
   # The total is counted per FLATTENED matcher-leaf, NOT per unique hook basename:
   # validate-secret-scan.sh AND enforce-harness-critical.sh

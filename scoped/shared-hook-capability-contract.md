@@ -15,7 +15,8 @@ What each Claude Code lifecycle event can observe, what it can mutate, and which
 | PreToolUse | `tool_input` only (via `updatedInput`) | `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`, `tool_name`, `tool_input`, `agent_id` | channel a for every block here (measured) · stdout `hookSpecificOutput.permissionDecision`, not `decision` (docs-only) | Cannot read the agent's prose/reasoning. Agent calls: `PreToolUse(Agent) measured record`. |
 | PostToolUse | none — observe-only (no `updatedOutput`) | `tool_name`, `tool_response`/output, `tool_input` | channel a, or channel b (stdout `{"decision":"block"}` only) | May only block, or advise via stderr, after the tool ran. |
 | `Stop` / `SubagentStop` | none — observe-only | terminal turn / subagent transcript metadata | none (advisory lifecycle; `exit 2` does not rewind a finished turn) | Post-completion accounting only (`cost-tracker.sh`, `track-outcome.sh`). |
-| `SessionStart` | injects turn-0 context via stdout (additive, never a mutation) | drained stdin (payload unused by current hooks) | none — an `exit 2` here is an audit signal that rewinds nothing | `inject-session-context.sh` injects; `validate-compliance-matrix.sh` exits 2 on a confirmed matrix or roster mismatch |
+| `SessionStart` | injects turn-0 context via stdout (additive, never a mutation) | stdin payload: `queue-session-register.sh` reads `permission_mode` as a display hint only (its presence on SessionStart is unprobed); the other hooks drain it unused · session env `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CONFIG_DIR` | none — an `exit 2` here is an audit signal that rewinds nothing | `inject-session-context.sh` injects; `validate-compliance-matrix.sh` exits 2 on a confirmed matrix or roster mismatch; `queue-session-register.sh` registers the session with the owner queue and adds one count-only pointer line, fail-open, always `exit 0` |
+| `SessionEnd` | none — observe-only | drained stdin (payload unused by current hooks) · session env `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, `CLAUDE_CODE_MESSAGING_SOCKET` (presence in the hook env unprobed) | none (docs-only: the session is already ending) | `queue-session-deregister.sh` deregisters the session and removes its token file, fail-open, always `exit 0`. Whether it fires on interactive exit, `claude stop` and `-p` exit is unprobed; a missed run is covered by the monitor's dead-session rule |
 | `SubagentStart` | injects child context via stdout `hookSpecificOutput.additionalContext` (additive) | `agent_type`, `agent_id` | none (cannot block a spawn — context-injection only) | `inject-scope-rules.sh` delivers the marker blocks to its rostered children; fail-open, always `exit 0`. |
 | `UserPromptSubmit` | injects context via stdout `hookSpecificOutput.additionalContext` (additive) | `prompt`, `transcript_path`, `prompt_id`; never `agent_id`; `source` absent on CLI 2.1.283 | `exit 2` erases the prompt — unused: the registered hook never blocks | `inject-reply-language.sh` — see Event Registration Status. |
 
@@ -79,13 +80,13 @@ Worked cases, keyed by disposition:
 
 ### Picking a disposition
 
-- **Disposition is event-capability-bound**: an event with no block channel (`Stop`/`SubagentStop`/`SessionStart`/`SubagentStart`) can only `filter`, `fix`, `noop`, or `reask` (via a later spawn) — never `exception`.
+- **Disposition is event-capability-bound**: an event with no block channel (`Stop`/`SubagentStop`/`SessionStart`/`SessionEnd`/`SubagentStart`) can only `filter`, `fix`, `noop`, or `reask` (via a later spawn) — never `exception`.
   - A SessionStart audit `exit 2` stops nothing, so it is not an `exception`.
   - Naming a disposition grants no capability the registering event lacks.
 
 ## Event Registration Status (file-verified)
 
-- Events with at least one registered hook in `settings.json`: `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStart`, `SubagentStop`, `PreCompact`, `SessionStart`, `UserPromptSubmit`.
+- Events with at least one registered hook in `settings.json`: `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStart`, `SubagentStop`, `PreCompact`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`.
 - **`UserPromptSubmit` carries one hook, `inject-reply-language.sh`**, which adds one context line:
   - it recognises a machine-written prompt by `source` first, then by the prompt's wrapper shape; a typed slash command is the user's own prompt, never recognised by its leading slash;
   - it screens nothing: `validate-prompt.sh` (prompt-injection + zero-width Unicode screening) runs at `PreToolUse(Write|Edit)` on content written to files, not on raw user prompts.
@@ -99,7 +100,7 @@ Worked cases, keyed by disposition:
 - **Channel discipline**: pick channel a or channel b per the registering event's contract, and document which in the hook header.
   - Never swap them unverified: `## Block Channels` → **Non-substitutability**.
   - Mixing is allowed only where an existing hook already does so deliberately (`validate-output.sh`).
-- **Fail-open default**: a lifecycle hook that cannot block (`SessionStart`, `SubagentStart`, `Stop`/`SubagentStop`) MUST `exit 0` on internal error — never break a session on hook failure.
+- **Fail-open default**: a lifecycle hook that cannot block (`SessionStart`, `SessionEnd`, `SubagentStart`, `Stop`/`SubagentStop`) MUST `exit 0` on internal error — never break a session on hook failure.
   - Exception: `~/.glass-atrium/autoagent/` pipeline hooks follow the loud-fail principle (`rules/glass-atrium/shared-self-improve-hygiene.md` → `## Precondition Loud-Fail Principle`).
 - **No secret/PII in hook output**: hook stdout/stderr is session-visible — never echo `.env` contents, tokens, or PII.
 
