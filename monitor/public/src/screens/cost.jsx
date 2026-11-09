@@ -55,10 +55,10 @@ const PARSE_ERROR_CRIT_THRESHOLD = 0.05;
 const ROLLING_WINDOW = 7;
 const ANOMALY_SIGMA = 2;
 
-function ScreenCost({ onNav }) {
+function ScreenCost() {
   const {
     PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE, getRegionSummary,
-    PageVerdict, SplitRow, Disclosure,
+    SplitRow, Disclosure,
   } = window.UI;
 
   const [days, setDays] = useStateC(30);
@@ -88,7 +88,6 @@ function ScreenCost({ onNav }) {
     latestOutsideBand,
     parseError: getParseErrorDayCounts(errorState),
   });
-  const spendVerdict = getSpendVerdictC({ hot: hotVerdict, latestOutsideBand, kpiStatus: kpiState.status });
 
   useEffectC(() => {
     const ctrl = new AbortController();
@@ -124,16 +123,6 @@ function ScreenCost({ onNav }) {
     <div className="cost-screen flex flex-col">
       {/* 공유 타입스케일(--fs 토큰 + fs 클래스) 마운트 — SPA 단일 screen 모델: cost 활성 시 토큰·클래스 가용화 (ui.jsx 정의 소비, 미정의 시 클래스 no-op 회귀 차단). */}
       <TypeScaleStyle/>
-      {/* Screen-scoped readability layer (W3-T5):
-          - .cost-tbl: 본문 셀 --faint→--dim 으로 승격 (산문 가독 tier) · 행 높이는 공용 --row-h.
-          - .cost-foot: 카드 하단 footnote/helper line — fs-meta --dim (text-faint mono 보다 한 단 밝게, 읽기용).
-          - .kpi-hint --dim override: KPI 타일 sub-caption 을 --faint 에서 --dim 으로 (ui.jsx 정의 셀프 보존, cost 화면만 승격). */}
-      <style>{`
-        .cost-tbl tbody td { color: rgb(var(--dim)); }
-        .cost-tbl tbody td.num { color: rgb(var(--dim)); }
-        .cost-foot { font-size: var(--fs-meta); line-height: 1.5; color: rgb(var(--dim)); }
-        .cost-screen .kpi-hint { color: rgb(var(--dim)); }
-      `}</style>
       <div className="flex-shrink-0">
         <PageHeader
           title="Cost & usage"
@@ -158,54 +147,50 @@ function ScreenCost({ onNav }) {
         />
       </div>
 
-      {sourceFailures.banner && (
-        <div className="mb-4">
+      {/* Decision tier — the facts a spend decision is made on, in priority order; the spend state reads on tile 1 or the lane */}
+      <div className="flex flex-col gap-section">
+        {sourceFailures.banner && (
           <PageErrorBanner sources={sourceFailures.banner.sources} error={sourceFailures.banner.error} onRetry={triggerRefresh}
             isBusy={isRetrying} focusTargetId={COST_REGION_IDS.kpis}/>
-        </div>
-      )}
+        )}
 
-      <PageVerdict id="cost-verdict" tone={spendVerdict.tone} label={spendVerdict.label} freshness={freshnessInput} className="mb-4">
-        {spendVerdict.text}
-      </PageVerdict>
+        <AlarmLaneC rows={alarmRows}/>
 
-      <AlarmLaneC rows={alarmRows}/>
-
-      {/* Decision tier — the facts a spend decision is made on, in priority order. */}
-      <RefreshingRegionC id={COST_REGION_IDS.kpis} states={[kpiState, tokenState, modelState]}>
-        <KpiRowC
-          kpiState={kpiState}
-          hot={hotVerdict}
-          trendState={tokenState}
-          modelState={modelState}
-          days={days}
-          onRetry={triggerRefresh}
-          failures={sourceFailures}
-        />
-      </RefreshingRegionC>
-
-      <RefreshingRegionC id={COST_REGION_IDS.trend} states={[tokenState]}>
-        <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
-      </RefreshingRegionC>
-
-      <SplitRow ratio="1:1" layout="equal" className="mb-4">
-        <RefreshingRegionC id={COST_REGION_IDS.models} states={[modelState]}>
-          <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} failures={sourceFailures} onNav={onNav}/>
+        <RefreshingRegionC id={COST_REGION_IDS.kpis} states={[kpiState, tokenState, modelState]}>
+          <KpiRowC
+            kpiState={kpiState}
+            hot={hotVerdict}
+            trendState={tokenState}
+            modelState={modelState}
+            days={days}
+            onRetry={triggerRefresh}
+            failures={sourceFailures}
+          />
         </RefreshingRegionC>
-        <RefreshingRegionC id={COST_REGION_IDS.sessions} states={[sessionState]}>
-          <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh} failures={sourceFailures} onNav={onNav}/>
+
+        <RefreshingRegionC id={COST_REGION_IDS.trend} states={[tokenState]}>
+          <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
         </RefreshingRegionC>
-      </SplitRow>
+
+        <SplitRow ratio="1:1" layout="equal">
+          <RefreshingRegionC id={COST_REGION_IDS.models} states={[modelState]}>
+            <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
+          </RefreshingRegionC>
+          <RefreshingRegionC id={COST_REGION_IDS.sessions} states={[sessionState]}>
+            <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
+          </RefreshingRegionC>
+        </SplitRow>
+      </div>
 
       {/* Instrumentation tier — status summaries, open by default and foldable. */}
       <InstrumentationTierC>
         <Disclosure kind="status" level={3} title="Token volume" sub="By category, with cache hit rate"
-          className="cost-inst mb-4">
+          className="cost-inst">
           <RefreshingRegionC id={COST_REGION_IDS.tokens} states={[tokenState]}>
             <TokenStackedBody state={tokenState} days={days} onRetry={triggerRefresh}
               failures={sourceFailures}/>
           </RefreshingRegionC>
-          <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-4">
+          <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-block">
             <CacheHitBody state={cacheState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
           </RefreshingRegionC>
         </Disclosure>
@@ -270,9 +255,9 @@ function InstrumentationTierC({ children }) {
   const { SectionLabel } = window.UI;
 
   return (
-    <section aria-labelledby="cost-instrumentation" className="mb-4">
-      <SectionLabel id="cost-instrumentation" className="mb-2">Instrumentation</SectionLabel>
-      {children}
+    <section aria-labelledby="cost-instrumentation" className="mt-group-above">
+      <SectionLabel id="cost-instrumentation" className="mb-group-below">Instrumentation</SectionLabel>
+      <div className="flex flex-col gap-section">{children}</div>
     </section>
   );
 }
@@ -305,33 +290,6 @@ function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
 function getHotToneC(hot, latestOutsideBand) {
   if (hot.isHot) return 'crit';
   return hot.isPaceHot || latestOutsideBand ? 'warn' : null;
-}
-
-// The verdict lives in one place: the lane when a hot trigger fires it, tile 1 otherwise.
-function getTileVerdictTextC(hot) {
-  return hot.isHot || hot.isPaceHot ? 'Running hot — see the alert above.' : hot.verdict;
-}
-
-/**
- * Page headline — names the spend state only; the figures stay in the lane or on tile 1.
- * Tone mirrors the lane's hot row, so the two never disagree. No budget exists in the payload → no over-budget state.
- */
-function getSpendVerdictC({ hot, latestOutsideBand, kpiStatus }) {
-  const cut = `${HOT_RATIO_CUT}x the 7-day daily normal`;
-
-  if (kpiStatus !== 'ready' || hot.ratio === null) {
-    const reason = kpiStatus === 'loading' ? 'Reading today\'s spend.'
-      : kpiStatus === 'error' ? 'Today\'s spend is unavailable.' : 'No 7-day cost to compare today against.';
-    return { tone: 'neutral', text: reason };
-  }
-
-  const tone = getHotToneC(hot, latestOutsideBand);
-
-  if (tone === null) return { tone: 'ok', label: 'On pace', text: `Today's spend is under ${cut}.` };
-  const text = hot.isHot ? `Today's spend has passed ${cut}.`
-    : hot.isPaceHot ? 'Today is running above normal — the alert below has the figures.'
-    : 'The newest day ran outside its own normal band.';
-  return { tone, label: 'Above normal', text };
 }
 
 function getHotAlarmText(hot, latestOutsideBand) {
@@ -378,7 +336,7 @@ function AlarmLaneC({ rows }) {
   }
 
   return (
-    <div className="mb-4 border-y border-line">
+    <div className="border-y border-line">
       {rows.map((r) => (
         <div key={r.key} role="alert" className="alarm-row" data-tone={r.tone}>
           <span className="alarm-row-glyph"><Icon name="warn" size={16}/></span>
@@ -393,12 +351,6 @@ function AlarmLaneC({ rows }) {
 
 // "Running hot" cut — today ≥ 1.25x the 7-day daily normal · defined once, inherited by the Dashboard.
 const HOT_RATIO_CUT = 1.25;
-
-// Bullet-bar zones over today / (normal x 2) → 0.5 = the normal · only the hot band carries a tone.
-const HOT_BULLET_ZONES = [
-  { upTo: HOT_RATIO_CUT / 2, tone: 'neutral' },
-  { upTo: 1.0,               tone: 'crit'    },
-];
 
 // Finite number or null — a missing or NaN payload field stays distinguishable from a real 0.
 function toFiniteOrNull(value) {
@@ -546,7 +498,28 @@ function computeCacheShare(modelState) {
 }
 
 function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetry }) {
-  const { getRegionView, RegionFailure } = window.UI;
+  const { getRegionView, RegionFailure, Card, StatRow } = window.UI;
+  const stats = buildSpendStatsC({ kpiState, hot, trendState, modelState, days });
+  const notes = stats.filter((stat) => stat.info);
+
+  return (
+    <>
+      {/* Payload failure is reported at the owning group — the KPI payload feeds stats 1 and 3. */}
+      {getRegionView(kpiState) === 'error' && (
+        <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
+          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
+      )}
+      <Card title="Spend" info={notes.length > 0 && <SpendStatNotesC stats={notes}/>} infoLabel="How these figures are read">
+        <div aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
+          <StatRow stats={stats.map(buildStatC)}/>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+// Four spend stats — each window rides its label, so the windows compare at one glance; a fixed window is named in ⓘ.
+function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
   const kpi = kpiState.status === 'ready' ? (kpiState.data || {}) : {};
   const windowTotal = computeWindowTotal(trendState);
   const cacheShare = computeCacheShare(modelState);
@@ -554,72 +527,48 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
   const doneCount = toFiniteOrNull(kpi.done_count_7d) ?? 0;
   const trendDays = getShownDays(trendState, days);
   const modelDays = getShownDays(modelState, days);
-
-  return (
-    <>
-      {/* Payload failure is reported at the owning group — the KPI payload feeds tiles 1 and 3. */}
-      {getRegionView(kpiState) === 'error' && (
-        <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
-          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures} className="mb-4"/>
-      )}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-card mb-4">
-        <CostTileC
-          id="cost-tile-today"
-          label="Today vs. normal"
-          windowTag="today"
-          status={getTileStatus(kpiState, hot.ratio, false)}
-          value={hot.todayCost === null ? '—' : formatUsdC(hot.todayCost)}
-          hint={hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`}
-          unavailableNote="No cost in the last 7 days — no normal to compare against."
-          delta={<HotBulletC hot={hot}/>}/>
-
-        <CostTileC
-          id="cost-tile-window"
-          label={`Cost, last ${trendDays} days`}
-          windowTag={`${trendDays}d`}
-          status={getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty)}
-          value={windowTotal.total === null ? '—' : formatUsdC(windowTotal.total)}
-          hint={windowTotal.total === null
-            ? ''
-            : `${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
-          info="Recorded cost: the sum of the cost events recorded on each day of the window, today's partial day included. The average divides that total by the days shown; the peak is the costliest single day."
-          unavailableNote="Trend payload carries no cost figure."
-          delta={<TrendDeltaC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>}/>
-
-        <CostTileC
-          id="cost-tile-per-task"
-          label="Cost per finished task"
-          windowTag="7d fixed"
-          status={getTileStatus(kpiState, costPerDone, false)}
-          value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
-          hint={`7-day cost / ${formatIntC(doneCount)} finished`}
-          unavailableNote="No finished task in the last 7 days."
-          foot={<div className="cost-foot"><window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens></div>}/>
-
-        <CostTileC
-          id="cost-tile-cache"
-          label="Cache share of cost"
-          windowTag={`${modelDays}d`}
-          status={getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty)}
-          value={cacheShare.share === null ? '—' : `${(cacheShare.share * 100).toFixed(0)}%`}
-          hint={cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`}
-          unavailableNote="No priced model cost in this window."
-          foot={
-            <div className="cost-foot">
-              {/* the window ("30 days") stays one token; the sentence wraps around it */}
-              <window.UI.DateRange range={getDaySpanC(modelDays)}>
-                {getCacheTotalNoteC({
-                  listTotal: cacheShare.totalCost,
-                  recordedTotal: trendDays === modelDays ? windowTotal.total : null,
-                  days: modelDays,
-                })}
-              </window.UI.DateRange>
-            </div>
-          }/>
-      </div>
-    </>
-  );
+  return [
+    {
+      key: 'today', label: 'Today vs. normal', tone: getHotToneC(hot, false),
+      status: getTileStatus(kpiState, hot.ratio, false),
+      value: formatUsdC(hot.todayCost),
+      hint: hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`,
+      unavailableNote: 'No cost in the last 7 days — no normal to compare against.',
+    },
+    {
+      key: 'window', label: `Cost, last ${trendDays} days`,
+      status: getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty),
+      value: formatUsdC(windowTotal.total),
+      context: <TrendDeltaTextC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>,
+      info: windowTotal.total === null ? WINDOW_COST_RULE_C
+        : `${WINDOW_COST_RULE_C} This window: ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}.`,
+      unavailableNote: 'Trend payload carries no cost figure.',
+    },
+    {
+      key: 'per-task', label: 'Cost per finished task',
+      status: getTileStatus(kpiState, costPerDone, false),
+      value: formatUsdC(costPerDone),
+      hint: `7-day cost / ${formatIntC(doneCount)} finished`,
+      info: <window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens>,
+      unavailableNote: 'No finished task in the last 7 days.',
+    },
+    {
+      key: 'cache', label: `Cache share, last ${modelDays} days`,
+      status: getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty),
+      value: cacheShare.share === null ? null : `${(cacheShare.share * 100).toFixed(0)}%`,
+      hint: cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`,
+      // the window ("30 days") stays one token; the sentence wraps around it
+      info: cacheShare.totalCost === null ? null : (
+        <window.UI.DateRange range={getDaySpanC(modelDays)}>
+          {getCacheTotalNoteC({ listTotal: cacheShare.totalCost, recordedTotal: trendDays === modelDays ? windowTotal.total : null, days: modelDays })}
+        </window.UI.DateRange>
+      ),
+      unavailableNote: 'No priced model cost in this window.',
+    },
+  ];
 }
+
+const WINDOW_COST_RULE_C = 'Recorded cost: the sum of the cost events recorded on each day of the window, today\'s partial day included. The average divides that total by the days shown; the peak is the costliest single day.';
 
 // a day count + its unit — one unbreakable token in the copy that names it
 function getDaySpanC(days) {
@@ -645,75 +594,77 @@ function getShownDays(state, requestedDays) {
   return match ? Number(match[1]) : requestedDays;
 }
 
-// Cost tile status → the shared KPI state: a window holding nothing and an underivable measure both read as the unknown dash.
-const COST_TILE_KPI_STATE = { loading: 'loading', error: 'error', empty: 'empty', unavailable: 'empty' };
-
-/**
- * One Cost tile on the shared KPI anatomy — the window tag rides the label row's right edge on every tile,
- * so the four windows compare at one glance; a non-ready tile says why in its hint, under the unknown dash.
- * delta → the comparison under the value (tile 1's bar, tile 2's prior-window line) · foot → the tile's footnote.
- */
-function CostTileC({ id, label, info, windowTag, status, value, hint, unavailableNote, delta = null, foot = null }) {
-  const { KPI, CardInfo, DayTokens } = window.UI;
-  const isReady = status === 'ready';
-  // the hint or the state note, one plain string → it keeps its title and clamp, and its day tokens stay whole
-  const note = isReady ? (hint || null) : getTileNote(status, unavailableNote);
-  // the ⓘ is described by the label alone; the tile's group name is the whole label row, window tag included
-  const nameId = `${id}-name`;
-
+// counting rules and windows → the card's one ⓘ, each note led by its stat label
+function SpendStatNotesC({ stats }) {
   return (
-    <KPI labelId={`${id}-label`} label={<span id={nameId}>{label}</span>} labelTitle={label}
-      aside={windowTag} asideClassName="kpi-window ml-auto fs-meta font-mono text-faint"
-      info={info && <CardInfo label={`How ${label} is counted`} describedBy={nameId}>{info}</CardInfo>}
-      state={COST_TILE_KPI_STATE[status] ?? 'ready'} loadingLabel={label.toLowerCase()}
-      value={isReady ? value : undefined}
-      delta={isReady ? delta : null}
-      hint={note && <DayTokens>{note}</DayTokens>} hintTitle={typeof note === 'string' ? note : undefined}
-      isHintClamped={typeof note === 'string'} hintFace=""
-      foot={isReady ? foot : null}/>
+    <>
+      {stats.map((stat) => (
+        <p key={stat.key} className="m-0">
+          <strong className="font-medium text-ink">{stat.label}</strong>
+          {' — '}{stat.info}
+        </p>
+      ))}
+    </>
   );
 }
 
-/**
- * Bullet bar carries the alarm tone, the sentence under it repeats the verdict in words.
- * The pace figure lives in that sentence alone → it can never colour the bar.
- */
-function HotBulletC({ hot }) {
-  const { BulletBar } = window.UI;
-  // today / (normal x 2) — the normal sits at 0.5, the 1.25x cut at 0.625, anything beyond clamps to 1.
-  const valueNorm = Math.min(hot.ratio / 2, 1);
+// stat model → one StatRow stat; a non-ready stat says why on its context line, under the unknown dash
+function buildStatC(stat) {
+  const { DayTokens } = window.UI;
+  const isReady = stat.status === 'ready';
+  // the hint or the state note, one plain string → its title carries it whole, and its day tokens stay whole
+  const note = isReady ? (stat.hint || null) : getTileNote(stat.status, stat.unavailableNote);
+  const context = isReady && stat.context ? stat.context
+    : note && <span title={note}><DayTokens>{note}</DayTokens></span>;
+  return { key: stat.key, label: stat.label, value: <SpendStatValueC stat={stat}/>, context: context || null };
+}
 
+// Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm lane holds the words.
+function SpendStatValueC({ stat }) {
+  const { Icon, TONE_ICON, LoadingPlaceholder } = window.UI;
+  // loading is stated once, through the shared placeholder — inline-flex keeps it on the stat's start edge
+  if (stat.status === 'loading') {
+    return <div className="inline-flex"><LoadingPlaceholder label={stat.label.toLowerCase()}/></div>;
+  }
+  // the unknown dash names its cause on the context line; a failed read is named here as well
+  if (stat.status !== 'ready') {
+    const isFailed = stat.status === 'error';
+    return (
+      <span className="text-faint">
+        <span aria-hidden={isFailed ? 'true' : undefined}>—</span>
+        {isFailed && <span className="sr-only">Not loaded</span>}
+      </span>
+    );
+  }
+  if (!stat.tone) return stat.value;
+  const toneLabel = stat.tone === 'crit' ? 'Running hot' : 'Heading above normal';
   return (
-    <div>
-      <BulletBar
-        value={valueNorm}
-        target={0.5}
-        zones={HOT_BULLET_ZONES}
-        ariaLabel={`Today ${formatUsdC(hot.todayCost)} against a 7-day normal of ${formatUsdC(hot.normalDaily)} per day`}
-        showValue={false}
-      />
-      <div className="cost-foot mt-1.5"><window.UI.DayTokens>{getTileVerdictTextC(hot)}</window.UI.DayTokens></div>
-    </div>
+    <>
+      <span className={`text-${stat.tone} mr-label-inline`} aria-hidden="true" title={toneLabel}><Icon name={TONE_ICON[stat.tone]} size={13}/></span>
+      <span className="sr-only">{`${toneLabel}:`}</span>
+      {stat.value}
+    </>
   );
+}
+
+// Window change on its own block line — the token card's foot.
+function TrendDeltaC({ delta, prior, noun }) {
+  return <div className="fs-meta text-dim mt-stack"><TrendDeltaTextC delta={delta} prior={prior} noun={noun}/></div>;
 }
 
 // Window change — direction rides on the glyph, never on the text colour.
-function TrendDeltaC({ delta, prior, noun }) {
-  if (!prior) {
-    return <div className="cost-foot mt-1.5">No comparison — the prior window did not arrive with this range.</div>;
-  }
-  const span = `the ${prior.days} days before ${prior.period_end.slice(5)}`;
+function TrendDeltaTextC({ delta, prior, noun }) {
   const { DayTokens } = window.UI;
-  if (delta === null) {
-    return <div className="cost-foot mt-1.5"><DayTokens>{`No comparison — ${span} held no ${noun}.`}</DayTokens></div>;
-  }
+  if (!prior) return 'No comparison — the prior window did not arrive with this range.';
+  const span = `the ${prior.days} days before ${prior.period_end.slice(5)}`;
+  if (delta === null) return <DayTokens>{`No comparison — ${span} held no ${noun}.`}</DayTokens>;
   const [glyph, direction] = delta > 0 ? ['\u25b2', 'up'] : delta < 0 ? ['\u25bc', 'down'] : ['\u2014', 'unchanged'];
   return (
-    <div className="cost-foot mt-1.5">
-      <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
+    <>
+      <span className="mr-label-inline" aria-hidden="true">{glyph}</span>
       <span className="sr-only">{direction} </span>
       <DayTokens>{`${Math.abs(delta).toFixed(0)}% vs ${span}, cut at this time of day`}</DayTokens>
-    </div>
+    </>
   );
 }
 
@@ -723,15 +674,14 @@ function TrendDeltaC({ delta, prior, noun }) {
  * the very series already drawn.
  */
 function CostTrendCard({ state, days, failures, onRetry }) {
-  const { CardHead } = window.UI;
+  const { Card } = window.UI;
   const [bandOn, setBandOn] = useStateC(false);
 
   const points = getTrendPoints(state);
   const bandAvailable = points.length >= ROLLING_WINDOW;
 
   return (
-    <div className="card mb-4">
-      <CardHead
+    <Card
         title="Cost over time"
         right={
           <button
@@ -745,12 +695,9 @@ function CostTrendCard({ state, days, failures, onRetry }) {
             onClick={() => setBandOn((v) => !v)}>
             Normal range
           </button>
-        }
-      />
-      <div className="card-body">
-        <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry} failures={failures}/>
-      </div>
-    </div>
+        }>
+      <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry} failures={failures}/>
+    </Card>
   );
 }
 
@@ -964,23 +911,23 @@ function renderPartialDot({ cx, cy, index, payload }) {
 function CostTrendLegendC({ bandOn, rows }) {
   const gapLabel = getNoDataLabelC(rows.map((row) => row.actual));
   return (
-    <div className="flex items-center gap-3 flex-wrap mt-2 fs-meta text-dim">
-      <span className="flex items-center gap-1.5">
+    <div className="flex items-center gap-x-block gap-y-list flex-wrap mt-label fs-meta text-dim">
+      <span className="flex items-center gap-label-inline">
         <span aria-hidden="true" style={{ width: 14, height: 2, background: 'rgb(var(--accent))' }}/>
         Daily cost
       </span>
-      <span className="flex items-center gap-1.5">
+      <span className="flex items-center gap-label-inline">
         <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', border: '1.5px solid rgb(var(--accent))' }}/>
         Today so far
       </span>
       {bandOn && (
-        <span className="flex items-center gap-1.5">
+        <span className="flex items-center gap-label-inline">
           <span aria-hidden="true" style={{ width: 14, borderTop: '1.5px dashed rgb(var(--dim))' }}/>
           7-day average
         </span>
       )}
       {bandOn && (
-        <span className="flex items-center gap-1.5">
+        <span className="flex items-center gap-label-inline">
           <span aria-hidden="true" className="w-2.5 h-2.5 rounded-sm" style={{ background: 'rgb(var(--faint) / 0.35)' }}/>
           Normal range (7-day)
         </span>
@@ -998,26 +945,26 @@ function CostTrendTooltipC({ active, payload, bandOn }) {
   const hasBand = bandOn && row.rollingMean !== null && row.rollingMean !== undefined;
 
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
-      <div style={tooltipRowStyle}>
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
+      <div className={tooltip.rowClassName}>
+        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
         {row.isPartial ? 'Today so far' : 'Daily cost'} {row.actual === null ? 'no data' : formatUsdC(row.actual)}
       </div>
       {hasBand && (
-        <div style={{ color: 'rgb(var(--faint))', marginTop: 4 }}>
+        <div className="mt-stack text-faint">
           Normal range {formatUsdC(row.lowerBand)} – {formatUsdC(row.upperBand)}
         </div>
       )}
       {typeof row.session_count === 'number' && (
-        <div style={{ color: 'rgb(var(--dim))' }}>Sessions {formatIntC(row.session_count)}</div>
+        <div className="text-dim">Sessions {formatIntC(row.session_count)}</div>
       )}
     </div>
   );
 }
 
 function TokenStackedBody({ state, days, failures, onRetry }) {
-  const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionFailure, Stack } = window.UI;
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="token trend" minHeight={300}/>;
@@ -1038,13 +985,11 @@ function TokenStackedBody({ state, days, failures, onRetry }) {
   const dayPoints = getTokenDayPoints(points);
 
   return (
-    <>
-      {/* 세 수치 동일 크기(display 토큰 22px) — 위계는 강조(기간 합계=semibold·기본색 / 토큰·세션=text-dim)로만 표현 → 베이스라인 정렬.
-          카드 지배 hero — 기존 20px 가 fs-stat(18) 로 축소됐던 것을 display 로 승격 → dashboard hero 와 크기 일치. */}
-      <div className="flex items-start gap-4 mb-3">
+    <Stack gap="block">
+      <div className="flex items-start gap-block">
         <div>
           <div className="fs-meta text-dim">Tokens</div>
-          <div className="font-mono fs-display text-dim tracking-tight">{formatTokenCompactC(totalTokens)}</div>
+          <div className="fs-display text-dim tabular-nums">{formatTokenCompactC(totalTokens)}</div>
           <TrendDeltaC {...computeTokenWindowDelta(state, totalTokens)} noun="tokens"/>
         </div>
       </div>
@@ -1054,7 +999,7 @@ function TokenStackedBody({ state, days, failures, onRetry }) {
         {...window.UI.getChartImageProps(getGapNameC('Daily tokens', dayPoints), dayPoints, formatTokenCompactC)}>
         {days === 7 ? <TokenStackedColumn points={points} order={order}/> : <TokenStackedArea points={points} order={order}/>}
       </div>
-    </>
+    </Stack>
   );
 }
 
@@ -1135,11 +1080,11 @@ function formatTokenShareC(share) {
 // Input/Output are invisible against cache read on the shared axis → their shares stated as text.
 function TokenShareRowC({ shares }) {
   return (
-    <div className="flex items-center gap-x-4 gap-y-1 flex-wrap mb-3">
+    <div className="flex items-center gap-x-block gap-y-stack flex-wrap">
       {shares.map((r) => (
-        <span key={r.key} className="flex items-center gap-1.5 fs-meta text-dim">
+        <span key={r.key} className="flex items-center gap-label-inline fs-meta text-dim">
           <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
-          {r.label} <span className="font-mono">{formatTokenShareC(r.share)}</span> · {formatTokenCompactC(r.total)}
+          {r.label} <span className="tabular-nums">{formatTokenShareC(r.share)}</span> · {formatTokenCompactC(r.total)}
         </span>
       ))}
     </div>
@@ -1239,23 +1184,23 @@ function TokenTooltipC({ active, payload }) {
   }
   const row = payload[0].payload;
   if (row.isNoData) {
-    return <div style={tooltipStyle}><div style={{ color: 'rgb(var(--ink))', fontWeight: 600 }}>{row.fullDate}</div>No data</div>;
+    return <div className={tooltip.className} style={tooltip.style}><div className="mb-label text-ink font-semibold">{row.fullDate}</div>No data</div>;
   }
   const totalTokens =
     row.input_tokens + row.output_tokens + row.cache_read_tokens + row.cache_creation_tokens;
 
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
+      <div className="text-dim">
         Cost {formatUsdC(row.cost_usd)} · sessions {formatIntC(row.session_count)}
       </div>
-      <div style={{ color: 'rgb(var(--dim))', marginBottom: 6 }}>
+      <div className="mb-label text-dim">
         Total tokens {formatTokenCompactC(totalTokens)}
       </div>
       {TOKEN_CATEGORIES.slice().reverse().map((cat) => (
-        <div key={cat.key} style={tooltipRowStyle}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: `rgb(var(${cat.colorVar}))` }}/>
+        <div key={cat.key} className={tooltip.rowClassName}>
+          <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: `rgb(var(${cat.colorVar}))` }}/>
           {cat.label} {formatTokenCompactC(row[cat.key])}
         </div>
       ))}
@@ -1296,11 +1241,11 @@ function computeCategoryCostRows(modelCostRows) {
 function CategoryShareRowC({ rows }) {
   const total = rows.reduce((s, r) => s + r.cost, 0);
   if (total <= 0) {
-    return <div className="cost-foot mb-3">No priced token cost in this window — category split unavailable.</div>;
+    return <div role="note" className="fs-meta text-dim">No priced token cost in this window — category split unavailable.</div>;
   }
 
   return (
-    <div className="mb-3">
+    <div>
       <div
         className="flex h-2 rounded-sm overflow-hidden bg-sunken"
         role="img"
@@ -1309,9 +1254,9 @@ function CategoryShareRowC({ rows }) {
           <div key={r.key} style={{ width: `${r.pct * 100}%`, background: `rgb(var(${r.colorVar}) / 0.8)` }}/>
         ))}
       </div>
-      <div className="flex items-center gap-3 flex-wrap mt-1.5">
+      <div className="flex items-center gap-x-block gap-y-stack flex-wrap mt-label">
         {rows.map((r) => (
-          <span key={r.key} className="flex items-center gap-1.5 fs-meta text-dim">
+          <span key={r.key} className="flex items-center gap-label-inline fs-meta text-dim">
             <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
             {r.label} {(r.pct * 100).toFixed(0)}% · {formatUsdC(r.cost)}
           </span>
@@ -1332,8 +1277,8 @@ function isUnattributedModel(model) {
   return UNATTRIBUTED_MODEL_KEYS.has(model);
 }
 
-function ModelCostCard({ state, days, failures, onRetry, onNav }) {
-  const { Badge, Card } = window.UI;
+function ModelCostCard({ state, days, failures, onRetry }) {
+  const { Card, Link } = window.UI;
   const [isShowingAll, setShowingAll] = useStateC(false);
 
   const rows = state.status === 'ready' ? (state.data?.rows ?? []) : [];
@@ -1344,28 +1289,26 @@ function ModelCostCard({ state, days, failures, onRetry, onNav }) {
   // getTokenRate = exact + family-prefix → date-suffixed id 는 family 단가로 해소되므로 실제 miss 만 카운트.
   const fallbackCount = rows.reduce(
     (s, r) => s + (!isUnattributedModel(r.model) && !window.getTokenRate(r.model) ? 1 : 0), 0);
-  const { other } = rollupModelRows(buildModelCostRows(rows), getListBudgetC(CARD_SIZE.MODEL));
+  const modelRows = buildModelCostRows(rows);
+  const { other } = rollupModelRows(modelRows, getListBudgetC(CARD_SIZE.MODEL));
+  const fallbackNote = fallbackCount > 0
+    ? ` est. rate — ${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price, so the cost split falls back to the token-count ratio.`
+    : '';
 
   return (
     <Card
       size={CARD_SIZE.MODEL}
       title="Cost by model"
       isFlush={window.UI.hasRegionRows(state, state.data?.rows ?? [])}
-      info="Cost per agent is not available — cost events carry a model, not an agent. A session using several models counts under each, so the Total row carries no session count."
+      info={`Cost per agent is not available — cost events carry a model, not an agent. A session using several models counts under each, so the Total row carries no session count.${fallbackNote}`}
       foot={other && (
-        <ModelCostFootC other={other} modelCount={rows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+        <ModelCostFootC other={other} modelCount={modelRows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
       )}
       right={
-          <div className="flex items-center gap-2">
-            {fallbackCount > 0 && (
-              <Badge role="metadata" className="pill--ctl-h"
-                title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
-                {fallbackCount} est. rate
-              </Badge>
-            )}
-            <button type="button" className="btn sm" onClick={() => onNav('model-config')}>
-              Models &amp; budgets ›
-            </button>
+          <div className="flex items-center gap-control">
+            {/* the reason sits behind the card's ⓘ → the attribute stays plain text */}
+            {fallbackCount > 0 && <span className="fs-meta text-dim">{fallbackCount} est. rate</span>}
+            <Link href="#model-config">Models &amp; budgets</Link>
           </div>
         }>
       <ModelCostBody state={state} days={days} onRetry={onRetry} failures={failures} isShowingAll={isShowingAll}/>
@@ -1407,16 +1350,15 @@ function rollupModelRows(modelRows, topN) {
   const other = rest.reduce(
     (acc, r) => ({
       cost_usd: acc.cost_usd + r.cost_usd,
-      session_count: acc.session_count + r.session_count,
       count: acc.count + 1,
     }),
-    { cost_usd: 0, session_count: 0, count: 0 },
+    { cost_usd: 0, count: 0 },
   );
   return { top, other };
 }
 
 function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false }) {
-  const { getRegionView, LoadingPlaceholder, RegionFailure, SectionLabel, TableHead } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionFailure, SectionLabel, Stack, Table, TableRow, TableCell } = window.UI;
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="cost by model" minHeight={300}/>;
@@ -1436,77 +1378,81 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
 
   return (
-    <>
-      {/* the body is flush for the ledger → the share block and the footnote take the card padding themselves */}
-      <div className="px-4 pt-4">
-        <SectionLabel level={3} className="mb-2">By token type</SectionLabel>
+    // the body is flush for the ledger → the labels and the share block take the card padding themselves
+    <Stack gap="block" className="pt-card-pad">
+      <Stack gap="label" className="px-card-pad">
+        <SectionLabel level={3}>By token type</SectionLabel>
         <CategoryShareRowC rows={computeCategoryCostRows(modelRows)}/>
-        <SectionLabel level={3} className="mb-2 mt-4">By model</SectionLabel>
-      </div>
-      <table className="tbl cost-tbl">
-        <caption className="sr-only">{`Cost by model, last ${days} days — the costliest ${top.length} of ${modelRows.length}`}</caption>
-        <thead>
-          <tr>
-            <TableHead isSticky>Model</TableHead>
-            <TableHead isNumeric isSticky>Cost</TableHead>
-            <TableHead isNumeric isSticky>Sessions</TableHead>
-            <TableHead isNumeric isSticky>Avg / session</TableHead>
-          </tr>
-        </thead>
-        <tbody>
-          {top.map((r) => (
-            <ModelCostRow key={r.fullModel} r={r}/>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr style={{ borderTop: '2px solid rgb(var(--line))' }}>
-            <td className="font-semibold">Total</td>
-            <td className="num font-semibold">{formatUsdC(totalCost)}</td>
-            {/* A session spanning several models sits in each model's count → the column does not sum. */}
-            <td className="num text-dim">—</td>
-            <td className="num text-dim">—</td>
-          </tr>
-        </tfoot>
-      </table>
-      {/* Named gap, never proxied — the per-agent gap sits behind the card's info button. */}
-      <div className="cost-foot px-4 pt-2 pb-4">Multi-model sessions count once per model</div>
-    </>
+      </Stack>
+      <Stack gap="label">
+        <SectionLabel level={3} className="px-card-pad">By model</SectionLabel>
+        <Table caption={`Cost by model, last ${days} days — the costliest ${top.length} of ${modelRows.length}`}
+          columns={MODEL_COLUMNS} isHeadSticky
+          foot={(view) => (
+            <TableRow view={view}>
+              <TableCell view={view} kind="row-header">Total</TableCell>
+              <TableCell view={view} textRole="meta" label="Cost" isNumeric className="font-semibold">{formatUsdC(totalCost)}</TableCell>
+              {/* A session spanning several models sits in each model's count → the column does not sum. */}
+              <TableCell view={view} textRole="meta" label="Sessions" isNumeric><NoneCellC/></TableCell>
+              <TableCell view={view} textRole="meta" label="Avg / session" isNumeric><NoneCellC/></TableCell>
+            </TableRow>
+          )}>
+          {(view) => top.map((r) => <ModelCostRow key={r.fullModel} r={r} view={view}/>)}
+        </Table>
+      </Stack>
+    </Stack>
   );
+}
+
+const MODEL_COLUMNS = Object.freeze([
+  { key: 'model', label: 'Model' },
+  { key: 'cost', label: 'Cost', isNumeric: true },
+  { key: 'sessions', label: 'Sessions', isNumeric: true },
+  { key: 'avg', label: 'Avg / session', isNumeric: true },
+]);
+
+// an empty cell reads None in faint ink, never blank or a dash
+function NoneCellC() {
+  return <span className="text-faint">None</span>;
 }
 
 /**
  * One ledger row — token columns behind the row's own expand.
  * The default table stays at the four columns a spend decision needs.
  */
-function ModelCostRow({ r }) {
-  const { DisclosureChevron } = window.UI;
+function ModelCostRow({ r, view }) {
+  const { DisclosureChevron, TableRow, TableCell } = window.UI;
   const [expanded, setExpanded] = useStateC(false);
   const avgPerSession = r.session_count > 0 ? r.cost_usd / r.session_count : null;
 
   return (
     <>
-      <tr>
-        <td>
+      <TableRow view={view}>
+        <TableCell view={view}>
           <button
             type="button"
-            className="group inline-target gap-1 text-left"
+            className="group inline-target gap-label-inline text-left"
             aria-expanded={expanded}
             title={r.fullModel}
             onClick={() => setExpanded((v) => !v)}>
             <DisclosureChevron isOpen={expanded}/>
             <span>{r.model}</span>
           </button>
-        </td>
-        <td className="num">{formatUsdC(r.cost_usd)}</td>
-        <td className="num">{formatIntC(r.session_count)}</td>
-        <td className="num text-dim">{avgPerSession === null ? '—' : formatUsdC(avgPerSession)}</td>
-      </tr>
+        </TableCell>
+        <TableCell view={view} textRole="meta" label="Cost" isNumeric>{formatUsdC(r.cost_usd)}</TableCell>
+        <TableCell view={view} textRole="meta" label="Sessions" isNumeric>
+          {r.session_count === null ? <NoneCellC/> : formatIntC(r.session_count)}
+        </TableCell>
+        <TableCell view={view} textRole="meta" label="Avg / session" isNumeric>
+          {avgPerSession === null ? <NoneCellC/> : formatUsdC(avgPerSession)}
+        </TableCell>
+      </TableRow>
       {expanded && (
-        <tr>
-          <td colSpan={4} className="fs-meta text-dim font-mono pl-6">
+        <TableRow view={view}>
+          <TableCell view={view} kind="span" className="fs-meta text-dim tabular-nums">
             <span aria-hidden="true">└ </span>{getModelTokenDetail(r)}
-          </td>
-        </tr>
+          </TableCell>
+        </TableRow>
       )}
     </>
   );
@@ -1522,7 +1468,7 @@ function getModelTokenDetail(r) {
 // 토큰 COUNT 비율은 카테고리간 단가차(output vs cache_read ~50배) 무시 → output 과소표시 → 단가 가중으로 교정.
 // 단가 미상 모델(카탈로그 키 부재) → rate=1 = COUNT 비율 폴백 + rateFallback 마킹 (silent degrade 차단, F28).
 function buildModelCostRows(rows) {
-  return rows.map((r) => {
+  return mergeUnattributedRowsC(rows.map((r) => {
     const inputN  = Number(r.input_tokens) || 0;
     const outputN = Number(r.output_tokens) || 0;
     const cacheR  = Number(r.cache_read_tokens) || 0;
@@ -1558,7 +1504,29 @@ function buildModelCostRows(rows) {
       cost_cache_read: split(weights.cache_read),
       cost_cache_creation: split(weights.cache_creation),
     };
-  });
+  }));
+}
+
+const SUMMED_MODEL_KEYS = Object.freeze([
+  'cost_usd', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens',
+  'cost_input', 'cost_output', 'cost_cache_read', 'cost_cache_creation',
+]);
+
+/**
+ * Every unattributed bucket reads "Unattributed" → one ledger row.
+ * A session can sit in several buckets → a summed count would overcount, so the merged row carries none.
+ */
+function mergeUnattributedRowsC(modelRows) {
+  const unattributed = modelRows.filter((r) => r.unattributed);
+  if (unattributed.length < 2) return modelRows;
+  const merged = {
+    ...unattributed[0],
+    fullModel: unattributed.map((r) => r.fullModel).join(' + '),
+    rateFallback: unattributed.some((r) => r.rateFallback),
+    session_count: null,
+  };
+  for (const key of SUMMED_MODEL_KEYS) merged[key] = unattributed.reduce((sum, r) => sum + r[key], 0);
+  return [...modelRows.filter((r) => !r.unattributed), merged];
 }
 
 // C2 결정(차트→테이블 전환 KEEP)으로 ModelCostChart / ModelCostTooltipC 제거 — 모델별 비용은
@@ -1568,7 +1536,7 @@ function buildModelCostRows(rows) {
 const CACHE_HIT_LINE_COLOR = `rgb(var(${TOKEN_CATEGORIES.find((c) => c.key === 'cache_read_tokens').colorVar}))`;
 
 function CacheHitBody({ state, days, failures, onRetry }) {
-  const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionFailure, Stack } = window.UI;
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="cache hit rate" minHeight={220}/>;
@@ -1609,9 +1577,9 @@ function CacheHitBody({ state, days, failures, onRetry }) {
   const ratePoints = chartRows.map((r) => ({ label: r.fullDate, value: r.rate_pct }));
 
   return (
-    <>
-      <div className="flex items-baseline gap-3 mb-3">
-        <div className="font-mono fs-stat font-semibold tracking-tight">
+    <Stack gap="block">
+      <div className="flex items-baseline gap-label">
+        <div className="fs-stat font-semibold tabular-nums">
           {pooledRate === null ? '—' : (pooledRate * 100).toFixed(1) + '%'}
         </div>
         <div className="fs-meta text-dim">pooled hit rate</div>
@@ -1625,7 +1593,7 @@ function CacheHitBody({ state, days, failures, onRetry }) {
       ) : (
         <div className="fs-meta text-dim">{`Flat at ${formatRatePctC(flatRate)} every day with data — no line to draw.`}</div>
       )}
-    </>
+    </Stack>
   );
 }
 
@@ -1723,12 +1691,12 @@ function CacheHitTooltipC({ active, payload }) {
   const row = payload[0].payload;
   const ratePct = row.rate_pct;
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
+      <div className="text-dim">
         Hit rate {ratePct === null || ratePct === undefined ? 'no data' : ratePct.toFixed(1) + '%'}
       </div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+      <div className="text-dim">
         cache_read {formatTokenCompactC(row.total_cache_read)} · input {formatTokenCompactC(row.total_input)}
       </div>
     </div>
@@ -1764,12 +1732,12 @@ function getSpendConcentration(sessions, topN) {
 function getSpendConcentrationText(concentration, sessionCount) {
   if (!concentration) return null;
   const pct = Math.round(concentration.share * 100);
-  const who = concentration.count === 1 ? 'Top 1' : `Top ${concentration.count}`;
-  return `${who} of ${formatIntC(sessionCount)} = ${pct}% of spend`;
+  const who = concentration.count === 1 ? 'The costliest session' : `The costliest ${concentration.count} sessions`;
+  return `${who} of ${formatIntC(sessionCount)} ${concentration.count === 1 ? 'holds' : 'hold'} ${pct}% of the spend in this window.`;
 }
 
-function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
-  const { Card, Pill } = window.UI;
+function SessionDistributionCard({ state, days, failures, onRetry }) {
+  const { Card } = window.UI;
   const [histogramOpen, setHistogramOpen] = useStateC(false);
   const truncated = state.status === 'ready' && state.data?.truncated === true;
   const totalCount = state.status === 'ready' ? Number(state.data?.total_session_count) || 0 : 0;
@@ -1786,11 +1754,11 @@ function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
       size={CARD_SIZE.SESSION}
       title="Most expensive sessions"
       isFlush={window.UI.hasRegionRows(state, rollup.top)}
-      sub={state.status === 'ready'
-        ? concentrationText || `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}`
-        : undefined}
+      sub={state.status === 'ready' ? `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}` : undefined}
+      info={concentrationText ?? undefined}
+      infoLabel="How spend concentrates"
       right={truncated
-        ? <Pill className="pill--ctl-h" title={`Showing ${sessions.length} of ${totalCount} sessions`}>{`${sessions.length} of ${totalCount} loaded`}</Pill>
+        ? <span className="fs-meta text-dim" title={`Showing ${sessions.length} of ${totalCount} sessions`}>{`${sessions.length} of ${totalCount} loaded`}</span>
         : null}
       foot={rollup.other && (
         <>
@@ -1803,7 +1771,7 @@ function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
           </button>
         </>
       )}>
-      <SessionDistributionBody state={state} rows={rollup.top} days={days} onRetry={onRetry} failures={failures} onNav={onNav}/>
+      <SessionDistributionBody state={state} rows={rollup.top} days={days} onRetry={onRetry} failures={failures}/>
       {histogramOpen && (
         <SessionHistogramDrawerC bins={bins} total={rollup.total} onClose={() => setHistogramOpen(false)}/>
       )}
@@ -1820,7 +1788,7 @@ const SESSION_COLUMNS = [
 ];
 
 // rows = the card's budgeted top sessions; the rest is the card foot's Other line.
-function SessionDistributionBody({ state, rows = [], days, failures, onRetry, onNav }) {
+function SessionDistributionBody({ state, rows = [], days, failures, onRetry }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure, Table, getRowFocusProps } = window.UI;
   const [openSession, setOpenSession] = useStateC(null);
   const [activeRow, setActiveRow] = useStateC(0);
@@ -1843,13 +1811,13 @@ function SessionDistributionBody({ state, rows = [], days, failures, onRetry, on
 
   return (
     <>
-      <Table caption={`Most expensive sessions, last ${days} days — open a row for its details`} columns={SESSION_COLUMNS} className="cost-tbl">
-        {rows.map((s, i) => (
-          <SessionRowC key={s.session_id} session={s} focusProps={getFocusProps(i)} onOpen={() => openRow(i)}/>
+      <Table caption={`Most expensive sessions, last ${days} days — open a row for its details`} columns={SESSION_COLUMNS}>
+        {(view) => rows.map((s, i) => (
+          <SessionRowC key={s.session_id} session={s} view={view} focusProps={getFocusProps(i)} onOpen={() => openRow(i)}/>
         ))}
       </Table>
       {openSession && (
-        <SessionDetailDrawerC session={openSession} onClose={() => setOpenSession(null)} onNav={onNav}/>
+        <SessionDetailDrawerC session={openSession} onClose={() => setOpenSession(null)}/>
       )}
     </>
   );
@@ -1881,7 +1849,7 @@ function getSessionFactsC(session, nowMs) {
   const { formatKstFull, hasFieldValue } = window.UI;
   const lastSeen = getClampedInstantC(session.last_event_at, nowMs);
   const facts = [
-    ['Session', session.session_id],
+    ['Session', session.session_id, true],
     ['Model', getModelLabelC(session.top_model)],
     ['Cost', formatUsdC(session.total_cost_usd)],
     ['Tokens', formatTokenCompactC(session.total_tokens)],
@@ -1891,48 +1859,49 @@ function getSessionFactsC(session, nowMs) {
   return facts.filter(([, value]) => hasFieldValue(value));
 }
 
-function SessionRowC({ session, focusProps, onOpen }) {
-  const { formatRelativeTime, formatKstFull } = window.UI;
+function SessionRowC({ session, view, focusProps, onOpen }) {
+  const { formatRelativeTime, formatKstFull, MachineString, TableRow, TableCell } = window.UI;
   const modelLabel = getModelLabelC(session.top_model);
   const shortId = getSessionShortId(session.session_id);
   const lastSeen = getClampedInstantC(session.last_event_at, Date.now());
 
   return (
-    <tr
+    <TableRow
+      view={view}
       {...focusProps}
       className="cursor-pointer"
       aria-label={`Session ${shortId}, ${modelLabel}, ${formatUsdC(session.total_cost_usd)} — open details`}
       onClick={onOpen}>
-      <td className="font-mono" title={session.session_id}>{shortId}</td>
-      <td>{modelLabel}</td>
-      <td className="num font-mono text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</td>
-      <td className="num font-mono">{formatTokenCompactC(session.total_tokens)}</td>
-      <td className="num" title={lastSeen ? formatKstFull(lastSeen) : undefined}>
-        {lastSeen ? formatRelativeTime(lastSeen) : '—'}
-      </td>
-    </tr>
+      <TableCell view={view} title={session.session_id}><MachineString>{shortId}</MachineString></TableCell>
+      <TableCell view={view} textRole="meta" label="Model">{modelLabel}</TableCell>
+      <TableCell view={view} textRole="meta" label="Cost" isNumeric className="text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</TableCell>
+      <TableCell view={view} textRole="meta" label="Tokens" isNumeric>{formatTokenCompactC(session.total_tokens)}</TableCell>
+      <TableCell view={view} textRole="meta" label="Last seen" isNumeric title={lastSeen ? formatKstFull(lastSeen) : undefined}>
+        {lastSeen ? formatRelativeTime(lastSeen) : <NoneCellC/>}
+      </TableCell>
+    </TableRow>
   );
 }
 
-function SessionDetailDrawerC({ session, onClose, onNav }) {
-  const { DetailSurface } = window.UI;
+function SessionDetailDrawerC({ session, onClose }) {
+  const { Cluster, DetailSurface, Link, MachineString } = window.UI;
   const facts = getSessionFactsC(session, Date.now());
 
   return (
     <DetailSurface open onClose={onClose} variant="drawer" title="Session cost">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 fs-meta">
-        {facts.map(([term, value]) => (
+      <dl className="grid grid-cols-[auto_1fr] gap-x-block gap-y-list fs-meta">
+        {facts.map(([term, value, isMachine]) => (
           <React.Fragment key={term}>
             <dt className="text-dim">{term}</dt>
-            <dd className="font-mono text-ink break-all">{value}</dd>
+            <dd className="text-ink break-all tabular-nums">{isMachine ? <MachineString>{value}</MachineString> : value}</dd>
           </React.Fragment>
         ))}
       </dl>
-      <div className="flex flex-wrap gap-2 mt-4">
+      <Cluster gap="control" className="mt-block">
         <SessionIdCopyC id={session.session_id}/>
         {/* Task results has no session filter → label the unscoped list, never imply this session's rows */}
-        <button type="button" className="btn sm" onClick={() => onNav('outcomes')}>All task results ›</button>
-      </div>
+        <Link href="#outcomes">All task results</Link>
+      </Cluster>
     </DetailSurface>
   );
 }
@@ -1979,9 +1948,9 @@ function SessionHistogramLegendC() {
   ];
 
   return (
-    <ul className="flex flex-wrap gap-4 mt-3 fs-meta text-dim" aria-label="Histogram legend">
+    <ul className="flex flex-wrap gap-x-block gap-y-list mt-label fs-meta text-dim" aria-label="Histogram legend">
       {items.map((item) => (
-        <li key={item.key} className="flex items-center gap-2">
+        <li key={item.key} className="flex items-center gap-label-inline">
           <span className="inline-block w-3 h-3 rounded-sm" style={{ background: item.color }} aria-hidden="true"/>
           {item.label}
         </li>
@@ -2031,15 +2000,15 @@ function SessionBinTooltipC({ active, payload }) {
   }
   const bin = payload[0].payload;
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{bin.label}</div>
-      <div style={{ color: 'rgb(var(--dim))' }}>{bin.count.toLocaleString('en-US')} sessions</div>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{bin.label}</div>
+      <div className="text-dim">{bin.count.toLocaleString('en-US')} sessions</div>
     </div>
   );
 }
 
 function ParseErrorBody({ state, days, failures, onRetry }) {
-  const { getRegionView, Badge, LoadingPlaceholder, RegionFailure } = window.UI;
+  const { getRegionView, Badge, LoadingPlaceholder, RegionFailure, Stack, StatRow } = window.UI;
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="unreadable log entries" minHeight={220}/>;
@@ -2071,49 +2040,34 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
   const { crit: critDays, total: dayCount } = getParseErrorDayCounts(state);
 
   return (
-    <>
-      {/* KPI 2-col (총 발생 + 마지막 발생) → 0건 분기에선 차트 생략 (action-trigger 부재). */}
-      <div className="grid grid-cols-2 gap-3 mb-3">
-        <div>
-          <div className="fs-meta text-dim">Unreadable entries</div>
-          <div className="font-mono fs-stat font-semibold tracking-tight">
-            {formatIntC(totalErrors)}
-          </div>
-        </div>
-        <div>
-          <div className="fs-meta text-dim">Last seen</div>
-          {/* 날짜 = 보조 stat — fs-stat(18px). */}
-          <div className="font-mono fs-stat text-fg/80">
-            {lastErrorDate
-              ? <span title={lastErrorDate}>{getDaysAgoText(lastErrorDate)}</span>
-              : <span className="text-dim">—</span>}
-          </div>
-        </div>
-      </div>
+    <Stack gap="block">
+      {/* 총 발생 + 마지막 발생 = stat row · 0건 → 차트 대신 빈 상태 (action-trigger 부재) */}
+      <StatRow stats={[
+        { label: 'Unreadable entries', value: formatIntC(totalErrors) },
+        { label: 'Last seen', value: lastErrorDate && <span title={lastErrorDate}>{getDaysAgoText(lastErrorDate)}</span> },
+      ]}/>
       {totalErrors > 0 ? (
         <>
           {critDays > 0 && (
-            <div className="mb-2">
+            <div>
               {/* The lane owns this alarm; inside the disclosure the count is a neutral fact. */}
               <Badge role="metadata">{critDays} of <window.UI.NoWrap>{dayCount} days</window.UI.NoWrap> over threshold</Badge>
             </div>
           )}
-          <div style={{ width: '100%', height: window.UI.CARD_SLOTS.M.plotPx }}
-            {...window.UI.getChartImageProps('Daily unreadable log entries',
-              rows.map((r) => ({ label: r.event_date, value: Number(r.error_count) || 0 })), formatIntC)}>
-            <ParseErrorChart rows={chartRows}/>
-          </div>
-          <ParseErrorLegendC hasCritDay={critDays > 0}/>
+          <Stack gap="label">
+            <div style={{ width: '100%', height: window.UI.CARD_SLOTS.M.plotPx }}
+              {...window.UI.getChartImageProps('Daily unreadable log entries',
+                rows.map((r) => ({ label: r.event_date, value: Number(r.error_count) || 0 })), formatIntC)}>
+              <ParseErrorChart rows={chartRows}/>
+            </div>
+            <ParseErrorLegendC hasCritDay={critDays > 0}/>
+          </Stack>
         </>
       ) : (
-        <div className="fs-body text-dim text-center py-8" aria-label="no parse_error — chart omitted">
-          No parse_error in the last <window.UI.NoWrap>{days} days</window.UI.NoWrap>.
-          <div className="fs-meta text-faint mt-2 font-mono">
-            <window.UI.NoWrap>{rows.length} days</window.UI.NoWrap> analyzed · {formatIntC(totalEvents)} events total
-          </div>
-        </div>
+        <EmptyStateC message={`No parse_error in the last ${days} days.`}
+          hint={`${rows.length} days analyzed · ${formatIntC(totalEvents)} events total`}/>
       )}
-    </>
+    </Stack>
   );
 }
 
@@ -2150,15 +2104,15 @@ const PARSE_ERROR_COLOR = {
 };
 
 function ParseErrorLegendC({ hasCritDay }) {
-  const swatchClass = 'inline-block w-2.5 h-2.5 rounded-sm mr-1.5';
+  const swatchClass = 'inline-block w-2.5 h-2.5 rounded-sm';
   return (
-    <ul className="flex flex-wrap gap-4 mt-2 fs-meta text-dim" aria-label="Log integrity legend">
-      <li><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.bar }}/>Unreadable entries</li>
+    <ul className="flex flex-wrap gap-x-block gap-y-list mt-label fs-meta text-dim" aria-label="Log integrity legend">
+      <li className="flex items-center gap-label-inline"><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.bar }}/>Unreadable entries</li>
       {hasCritDay && (
-        <li><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/>Day over threshold</li>
+        <li className="flex items-center gap-label-inline"><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/>Day over threshold</li>
       )}
-      <li>
-        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, marginRight: 6, verticalAlign: 'middle', borderTop: `2px dashed ${PARSE_ERROR_COLOR.threshold}` }}/>
+      <li className="flex items-center gap-label-inline">
+        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, borderTop: `2px dashed ${PARSE_ERROR_COLOR.threshold}` }}/>
         {PARSE_ERROR_THRESHOLD_LABEL}
       </li>
     </ul>
@@ -2214,12 +2168,12 @@ function ParseErrorTooltipC({ active, payload }) {
   }
   const row = payload[0].payload;
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
+      <div className="text-dim">
         Errors {formatIntC(row.error_count)} / total {formatIntC(row.total_count)}
       </div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+      <div className="text-dim">
         Rate {row.error_ratio_pct.toFixed(2)}% · threshold {formatIntC(Math.ceil(row.threshold_count))}{row.isCrit ? ' · over threshold' : ''}
       </div>
     </div>
@@ -2299,7 +2253,7 @@ function pointCostC(p) {
 
 // Axis style hoist — JSX inline-object 할당 회피.
 // CSS style, not the font-size attribute — an SVG presentation attribute cannot resolve the --fs-meta token
-const axisTickStyle = { style: { fontSize: 'var(--fs-meta)' }, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' };
+const axisTickStyle = { style: { fontSize: 'var(--fs-meta)', fontVariantNumeric: 'tabular-nums' }, fill: 'rgb(var(--faint))' };
 const anomalyAxisLineStyle = { stroke: 'rgb(var(--line))' };
 
 // Turn statistics body — /api/cost/turn-stats: stop_reason 분포 + turns 집계.
@@ -2320,7 +2274,7 @@ function turnStopReasonMeta(reason) {
 }
 
 function TurnStatsBody({ state, days, failures, onRetry }) {
-  const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionFailure, Stack } = window.UI;
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="turn statistics" minHeight={220}/>;
@@ -2344,14 +2298,14 @@ function TurnStatsBody({ state, days, failures, onRetry }) {
   // Stacked, never split: the card is the 2fr side of a pair from lg → a table column beside the
   // aggregates would sit below the table's own minimum width.
   return (
-    <>
+    <Stack gap="block" className="pt-card-pad">
       {turns && <TurnAggregateRow turns={turns} sessionPopulation={sessionPopulation}/>}
       <TurnStopReasonTable
         rows={stopReasons}
         maxEvents={maxEvents}
         totalEvents={totalEvents}
         sessionPopulation={sessionPopulation}/>
-    </>
+    </Stack>
   );
 }
 
@@ -2381,21 +2335,17 @@ function TurnAggregateRow({ turns, sessionPopulation }) {
     { label: 'Total turns', value: formatIntC(Number(turns.total_turns) || 0) },
   ];
 
+  const { Stack, StatRow } = window.UI;
+
   return (
-    <div className="px-4 mb-4">
-      <div className="flex items-baseline gap-2 flex-wrap">
-        {headline.value && <span className="font-mono fs-display font-semibold tracking-tight">{headline.value}</span>}
+    // the body is flush for the stop-reason table → the aggregates take the card padding themselves
+    <Stack gap="label" className="px-card-pad">
+      <div className="flex items-baseline gap-label flex-wrap">
+        {headline.value && <span className="fs-display font-semibold tabular-nums">{headline.value}</span>}
         <span className="fs-meta text-dim">{headline.note}</span>
       </div>
-      <dl className="grid grid-cols-3 gap-3 mt-2">
-        {secondary.map((item) => (
-          <div key={item.label} className="min-w-0">
-            <dt className="fs-meta text-dim">{item.label}</dt>
-            <dd className="font-mono fs-stat text-dim tracking-tight">{item.value}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
+      <StatRow stats={secondary}/>
+    </Stack>
   );
 }
 
@@ -2405,92 +2355,79 @@ function getStopReasonSessionShare(sessionCount, population) {
 }
 
 function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }) {
-  const { TableHead } = window.UI;
+  const { Table, TableRow, TableCell } = window.UI;
 
   return (
-    <table className="tbl cost-tbl">
-      <caption className="fs-meta text-dim text-left px-4 pb-2">
-        Counted once per stop reason
-      </caption>
-      <thead>
-        <tr>
-          <TableHead>Stop reason</TableHead>
-          <TableHead isNumeric>Events</TableHead>
-          <TableHead isNumeric>Sessions</TableHead>
-          <TableHead isNumeric>Event share</TableHead>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => {
-          const meta = turnStopReasonMeta(r.stop_reason);
-          const events = Number(r.event_count) || 0;
-          const sessions = Number(r.session_count) || 0;
-          const pct = totalEvents > 0 ? (events / totalEvents) : 0;
-          const sessionShare = getStopReasonSessionShare(sessions, sessionPopulation);
-          const barPct = maxEvents > 0 ? (events / maxEvents) * 100 : 0;
-          return (
-            <tr key={r.stop_reason}>
-              {/* 라벨+desc 단일행 고정 — 좁은 뷰포트서 desc 래핑→행높이 1↔2줄 점프 차단:
-                  flex 1행 + desc truncate(min-w-0) + 전문 title= 툴팁 보존. */}
-              {/* w-full + max-w-0 → the column takes the leftover width instead of the desc's nowrap width, so truncate engages */}
-              <td className="w-full max-w-0">
-                <div className="flex items-center min-w-0" title={[meta.label, meta.desc, meta.raw].filter(Boolean).join(' — ')}>
-                  <span
-                    className="inline-block w-[3px] h-3 rounded-sm mr-3 shrink-0"
-                    style={{ background: `rgb(var(${meta.colorVar}))` }}
-                  />
-                  <span className="shrink-0">{meta.label}</span>
-                  <span className="fs-meta text-dim ml-2 truncate">{meta.desc}</span>
-                </div>
-              </td>
-              <td className="num">
-                {/* 인라인 정규화 막대 — max 대비 폭 (sandbox-safe, JS 차트 미사용). */}
-                <div className="flex items-center justify-end gap-2">
-                  <span
-                    className="inline-block h-1.5 rounded-sm"
-                    style={{ width: `${Math.max(barPct, 2)}%`, maxWidth: 120, background: `rgb(var(${meta.colorVar}) / 0.7)` }}
-                  />
-                  <span className="font-mono">{formatIntC(events)}</span>
-                </div>
-              </td>
-              <td className="num">
-                {formatIntC(sessions)}
-                {sessionShare !== null && (
-                  <span className="text-dim"> · {(sessionShare * 100).toFixed(0)}%</span>
-                )}
-              </td>
-              <td className="num text-dim">{(pct * 100).toFixed(1)}%</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <Table caption="Counted once per stop reason" isCaptionShown columns={STOP_REASON_COLUMNS}>
+      {(view) => rows.map((r) => {
+        const meta = turnStopReasonMeta(r.stop_reason);
+        const events = Number(r.event_count) || 0;
+        const sessions = Number(r.session_count) || 0;
+        const pct = totalEvents > 0 ? (events / totalEvents) : 0;
+        const sessionShare = getStopReasonSessionShare(sessions, sessionPopulation);
+        const barPct = maxEvents > 0 ? (events / maxEvents) * 100 : 0;
+        return (
+          <TableRow key={r.stop_reason} view={view}>
+            {/* one line → desc truncates (full text in title), so a narrow view never jumps the row height;
+                w-full + max-w-0 → the column takes the leftover width instead of the desc's nowrap width */}
+            <TableCell view={view} className="w-full max-w-0">
+              <div className="flex items-center gap-label min-w-0" title={[meta.label, meta.desc, meta.raw].filter(Boolean).join(' — ')}>
+                <span
+                  className="inline-block w-[3px] h-3 rounded-sm shrink-0"
+                  style={{ background: `rgb(var(${meta.colorVar}))` }}
+                />
+                <span className="shrink-0">{meta.label}</span>
+                <span className="fs-meta text-dim truncate">{meta.desc}</span>
+              </div>
+            </TableCell>
+            <TableCell view={view} textRole="meta" label="Events" isNumeric>
+              {/* inline bar normalised to the max row (sandbox-safe, no chart runtime) */}
+              <div className="flex items-center justify-end gap-label">
+                <span
+                  className="inline-block h-1.5 rounded-sm"
+                  style={{ width: `${Math.max(barPct, 2)}%`, maxWidth: 120, background: `rgb(var(${meta.colorVar}) / 0.7)` }}
+                />
+                <span className="tabular-nums">{formatIntC(events)}</span>
+              </div>
+            </TableCell>
+            <TableCell view={view} textRole="meta" label="Sessions" isNumeric>
+              {formatIntC(sessions)}
+              {sessionShare !== null && (
+                <span className="text-dim"> · {(sessionShare * 100).toFixed(0)}%</span>
+              )}
+            </TableCell>
+            <TableCell view={view} textRole="meta" label="Event share" isNumeric>{(pct * 100).toFixed(1)}%</TableCell>
+          </TableRow>
+        );
+      })}
+    </Table>
   );
 }
 
+const STOP_REASON_COLUMNS = Object.freeze([
+  { key: 'reason', label: 'Stop reason' },
+  { key: 'events', label: 'Events', isNumeric: true },
+  { key: 'sessions', label: 'Sessions', isNumeric: true },
+  { key: 'share', label: 'Event share', isNumeric: true },
+]);
+
 // 공통 chrome
-function EmptyStateC({ message }) {
+function EmptyStateC({ message, hint }) {
   const { EmptyState } = window.UI;
-  return <EmptyState message={message} />;
+  return <EmptyState message={message} hint={hint} />;
 }
 
 // 순수 helper
-const tooltipStyle = {
-  background: 'rgb(var(--overlay-surface))',
-  border: '1px solid rgb(var(--line))',
-  borderRadius: 'var(--radius-tile)',
-  padding: '8px 12px',
-  // 툴팁 = HTML DOM div → fs-meta 보조 콘텐츠 tier.
-  fontSize: 'var(--fs-meta)',
-  fontFamily: 'JetBrains Mono, monospace',
-  boxShadow: 'var(--shadow-overlay)',
-};
-
-const tooltipRowStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  color: 'rgb(var(--dim))',
+// 툴팁 = HTML DOM div → fs-meta 보조 콘텐츠 tier · padding = base.css 오버레이 면(.popover-panel / .menu)과 같은 card-pad
+const tooltip = {
+  className: 'p-card-pad border border-line fs-meta tabular-nums',
+  rowClassName: 'flex items-center gap-label-inline text-dim',
+  // 오버레이 면 칠만 인라인 — overlay-surface 는 Tailwind 색 키에 없음
+  style: {
+    background: 'rgb(var(--overlay-surface))',
+    borderRadius: 'var(--radius-tile)',
+    boxShadow: 'var(--shadow-overlay)',
+  },
 };
 
 async function fetchJsonC(url, signal) {
