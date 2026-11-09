@@ -306,22 +306,24 @@ describe("ledger keys walk rows and a row's controls, never leaving the ledger f
   }
 });
 
-test("the opened viewer settles focus on Close after the dialog's own first-control focus, never leaving it on Delete", async () => {
+// the viewer is a DetailSurface → it opens on its panel like every other; its actions bar moves focus nowhere
+test("mounting the viewer's actions bar focuses none of its controls, so the opened viewer stays on its panel", async () => {
   const effects: Array<() => void> = [];
   const react = { ...createReactStub(), useEffect: (fn: () => void) => { effects.push(fn); } };
   const screen = await loadDocsScreen(react);
   const tree = renderScreen((screen.ViewerActionsCD as Component)({
-    doc: { id: 9, title: "Doc 9" }, pendingDelete: null, onDelete: () => undefined, onClose: () => undefined, showToast: () => undefined,
+    doc: { id: 9, title: "Doc 9" }, onClose: () => undefined, showToast: () => undefined,
   }));
-  const close = findNodes(tree, (n) => n.props["aria-label"] === "Close viewer")[0];
   const focused: string[] = [];
-  (close.props.ref as { current: unknown }).current = { focus: () => focused.push("close") };
+  const refHolders = findNodes(tree, (n) => n.props.ref != null);
+  for (const node of refHolders) {
+    (node.props.ref as { current: unknown }).current = { focus: () => focused.push(String(node.props["aria-label"])) };
+  }
 
   for (const effect of effects) effect();
-  focused.push("dialog-first-control");
   await new Promise((settle) => setImmediate(settle));
 
-  assert.deepEqual(focused, ["dialog-first-control", "close"]);
+  assert.deepEqual(focused, []);
 });
 
 // the width at which Tags hides is owned by the e2e rail table → this pins only the column hook it hides by

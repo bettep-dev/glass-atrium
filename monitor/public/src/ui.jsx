@@ -876,7 +876,7 @@ function PopoverPanel({ id, title, rootRef, onClose, children }) {
 
 /**
  * Focus target that keeps Tab inside a modal panel; null leaves the move to the browser.
- * @param active - focused element, or null on open (initial focus)
+ * @param active - element holding focus at the Tab press
  * @param panel - dialog node, the fallback target when it holds no control
  */
 function getTrapFocusTarget({ focusables, active, panel, shiftKey }) {

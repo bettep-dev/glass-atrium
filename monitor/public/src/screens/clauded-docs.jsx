@@ -2502,11 +2502,6 @@ function parseContentDispositionFilenameCD(headerValue) {
 function ViewerActionsCD({ doc, onClose, showToast }) {
 	const { Icon } = window.UI;
 	const [isExporting, setIsExporting] = useStateCD(false);
-	const closeRef = useRefCD(null);
-	// DetailSurface's open effect focuses the first control (Download) → a microtask lands after it, on Close
-	useEffectCD(() => {
-		Promise.resolve().then(() => closeRef.current?.focus());
-	}, []);
 	// 단일 문서 HTML 내려받기 — headless chromium 렌더 대기 구간이 있어 fetch→blob 흐름으로 in-flight 피드백 확보.
 	//   · 네이티브 <a download> 는 완료 시점을 JS 가 못 잡음 → exportSelectionAsZip 의 blob 패턴 mirror.
 	//   · 저장명: Content-Disposition filename 보존 (헤더 부재 시 title/id 폴백) — 모든 포맷(HTML/YAML/JSON/TXT) 지원.
@@ -2568,7 +2563,6 @@ function ViewerActionsCD({ doc, onClose, showToast }) {
 			</button>
 			{onClose && (
 				<button
-					ref={closeRef}
 					type="button"
 					className="btn ghost sm icon"
 					onClick={onClose}
