@@ -1,4 +1,4 @@
-// Display atoms measured in a real browser: the page header's line box, a card's bars on one inline column per side, the current-page look, the stat row's hairlines, the badge chip and the drawer fact row.
+// Display atoms measured in a real browser: the page header's line box and its gap to the content, the two empty states, a card's bars on one inline column per side, the current-page look, the stat row's hairlines, the badge chip and the drawer fact row.
 // Runner: npx tsx --test test/ui.display-atoms.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -48,10 +48,14 @@ const getHeader = (id: string, title: string) => renderToStaticMarkup(h("div", {
   freshness: h("span", { className: "fs-meta" }, "read 2m ago"),
   refresh: h(UI.RefreshButton, { onRefresh: noop }),
   primary: h("button", { type: "button", className: "btn" }, "Save"),
-})));
+}), h("p", { className: "head-next" }, "content")));
+const empties = renderToStaticMarkup(h("div", null,
+  h(UI.EmptyState, { message: "No runs yet", hint: "the wiki compiles nightly at 04:30" }),
+  h(UI.EmptyState, { kind: "no-results", hint: "Widen the date range" }),
+));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div style="padding: 24px; width: 900px;">${statRow}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div style="padding: 24px; width: 900px;">${statRow}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -162,6 +166,46 @@ describe("the page header", () => {
 
     assert.ok(line.cluster.top >= line.lead.bottom - 1, `cluster top ${line.cluster.top} vs lead bottom ${line.lead.bottom}`);
     assert.ok(Math.abs(line.cluster.right - line.head.right) < 1 && Math.abs(ends.right - line.head.right) < 1, `cluster ends ${line.head.right - line.cluster.right}px, last control ${line.head.right - ends.right}px from the edge`);
+  });
+});
+
+describe("the content below a page header", () => {
+  for (const id of ["head-wide", "head-narrow"]) {
+    test(`starts 16px under the header: ${id}`, async () => {
+      await page.setViewportSize({ width: 1024, height: 900 });
+      const head = await boxOf(`#${id} .page-head`);
+      const next = await boxOf(`#${id} .head-next`);
+      assert.equal(next.top - head.bottom, 16);
+    });
+  }
+});
+
+describe("an empty state", () => {
+  test("first use and no results both read a 14 ink message over a 13 dim hint, left at the card inset, with no border or fill", async () => {
+    const looks = await page.$$eval("#empties > div > *", (states) => states.map((state) => {
+      const [message, hint] = [...state.children].map((el) => getComputedStyle(el));
+      const box = getComputedStyle(state);
+      return {
+        message: { size: message.fontSize, color: message.color },
+        hint: { size: hint.fontSize, color: hint.color },
+        box: { align: box.textAlign, padding: box.paddingLeft, border: box.borderTopWidth, background: box.backgroundColor },
+      };
+    }));
+    const tone = await page.evaluate(() => Object.fromEntries(["ink", "dim"].map((name) => {
+      const probe = document.createElement("span");
+      probe.style.color = `rgb(var(--${name}))`;
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return [name, color];
+    })));
+
+    assert.equal(looks.length, 2);
+    for (const look of looks) assert.deepEqual(look, {
+      message: { size: "14px", color: tone.ink },
+      hint: { size: "13px", color: tone.dim },
+      box: { align: "left", padding: `${CARD_PAD_PX}px`, border: "0px", background: "rgba(0, 0, 0, 0)" },
+    });
   });
 });
 

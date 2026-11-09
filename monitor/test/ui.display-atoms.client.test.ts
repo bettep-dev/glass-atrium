@@ -69,6 +69,7 @@ describe("pagination", () => {
     { name: "first page", page: 0, pageSize: 20, total: 1284, range: "1–20 of 1,284" },
     { name: "middle page", page: 3, pageSize: 20, total: 1284, range: "61–80 of 1,284" },
     { name: "short last page ends at the total", page: 64, pageSize: 20, total: 1284, range: "1,281–1,284 of 1,284" },
+    { name: "a page past the end after the total shrank reads the last page", page: 70, pageSize: 20, total: 1284, range: "1,281–1,284 of 1,284" },
   ];
   for (const row of rows) {
     test(`the range covers exactly the page's rows: ${row.name}`, () => {
@@ -90,6 +91,15 @@ describe("pagination", () => {
     assert.equal(getButton(first, "Previous page").props["aria-disabled"], "true");
     assert.equal(getButton(last, "Next page").props["aria-disabled"], "true");
     assert.equal(getButton(first, "Previous page").props.disabled, undefined);
+  });
+
+  test("a page past the end steps from the last page: Next is inert and Previous lands one before it", () => {
+    const calls: number[] = [];
+    const past = render("Pagination", { page: 70, pageSize: 20, total: 50, onPageChange: (next: number) => calls.push(next) });
+    press(getButton(past, "Next page"));
+    press(getButton(past, "Previous page"));
+    assert.deepEqual(calls, [1]);
+    assert.equal(getButton(past, "Next page").props["aria-disabled"], "true");
   });
 
   test("the current page is marked for assistive tech with its number", () => {

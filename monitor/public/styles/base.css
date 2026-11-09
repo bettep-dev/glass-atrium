@@ -279,7 +279,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 /* ── Badge shell — 단일 canonical FORM (전 role/변형 공용) ────────────────────
    window.UI.Badge(ui.jsx) 의 styling layer. 모든 role 이 이 neutral shell FORM 을 공유한다:
    neutral(--sunken/--dim, 테두리 없음) · height 20 + padding-block 0 / inline 8 · gap 4 (border-box) · --radius-inline · --fs-meta · weight 500.
-   20 → information, never height-matched to a 32px control (spec §3 Badge).
+   20 → 정보 표기, 32px 컨트롤 높이에 맞추지 않음 (spec §3 Badge).
    tone 은 shell 에 칠하지 않는다 — 내부 심볼(Icon/glyph)에 text-{tone} 로만 (dead .pill.crit/.warn/.info/.ok 제거). */
 .pill {
 	display: inline-flex;
@@ -1473,12 +1473,18 @@ button.kpi:hover {
 }
 
 /* TODO(mon-ui/43942): deprecated for the EmptyState component — delete once no caller remains */
-/* the one empty-state form — borderless, left-aligned at the card inset, message in ink at the control size */
+/* the one empty-state form — borderless, left-aligned at the card inset, message in ink at the control size, hint 13 dim under it */
 .placeholder {
 	padding: var(--card-pad);
 	color: rgb(var(--ink));
 	text-align: left;
 	font-size: var(--fs-control);
+}
+.placeholder-hint {
+	margin-top: var(--space-1);
+	font-size: var(--fs-meta);
+	line-height: 1.4;
+	color: rgb(var(--dim));
 }
 
 /* prefers-reduced-motion 계약 (§8.4) — 모든 신규/기존 모션 게이트.

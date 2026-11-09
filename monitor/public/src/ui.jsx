@@ -117,9 +117,9 @@ function Pill({ children, tone='neutral', title, className }) {
 }
 
 // 공용 빈-상태 atom (canonical) — 화면별 EmptyState* 복제 + 보드 dashed-col idiom 의 단일 SoT.
-//   .placeholder(base.css) dashed 관용구 재사용 → repo 전역 단일 빈-상태 표기.
+//   .placeholder(base.css) 무테두리·무배경 폼 재사용 → repo 전역 단일 빈-상태 표기.
 //   message = 핵심 원인 한 줄 · hint = 다음 단계/부연(선택) · action = 슬롯(재시도 버튼 등, 선택).
-//   타입은 스케일 토큰(fs-meta)로 고정 — 화면별 off-scale px 리터럴 제거.
+//   타입은 atom 소유 — message 14 ink(.placeholder) · hint 13 dim(.placeholder-hint), 유틸 클래스로 덮지 않음.
 //   kind 'no-results' → one fixed sentence + a quiet reset (only with onReset); 'first-use' → the caller's message.
 const NO_RESULTS_MESSAGE = 'No records match these filters.';
 
@@ -129,8 +129,8 @@ function EmptyState({ kind = 'first-use', message, hint, action, onReset, classN
   const slot = isNoResults && onReset ? <QuietButton onClick={onReset}>Reset filters</QuietButton> : action;
   return (
     <div className={`placeholder ${className}`.trim()}>
-      <div className="fs-meta"><DayTokens>{text}</DayTokens></div>
-      {hint && <div className="fs-meta text-faint mt-1"><DayTokens>{hint}</DayTokens></div>}
+      <div><DayTokens>{text}</DayTokens></div>
+      {hint && <div className="placeholder-hint"><DayTokens>{hint}</DayTokens></div>}
       {slot && <div className="mt-2 flex">{slot}</div>}
     </div>
   );
@@ -1473,17 +1473,18 @@ function MachineString({ className = '', children }) {
 function Pagination({ page, pageSize, total, onPageChange, label = 'Pages', className = '' }) {
   if (!(total > 0)) return null;
   const pageCount = Math.ceil(total / pageSize);
-  const last = Math.min((page + 1) * pageSize, total);
-  const hasPrev = page > 0;
+  const current = Math.min(page, pageCount - 1); // a total that shrank under a held page → read the last page, never a start past the end
+  const last = Math.min((current + 1) * pageSize, total);
+  const hasPrev = current > 0;
   const hasNext = last < total;
   const getStepHandler = (isEnabled, next) => () => { if (isEnabled) onPageChange(next); };
 
   return <nav className={`pagination ${className}`.trim()} aria-label={label}>
-    <span className="pagination-range">{`${formatInt(page * pageSize + 1)}–${formatInt(last)} of ${formatInt(total)}`}</span>
+    <span className="pagination-range">{`${formatInt(current * pageSize + 1)}–${formatInt(last)} of ${formatInt(total)}`}</span>
     <div className="pagination-steps">
-      <QuietButton aria-label="Previous page" aria-disabled={hasPrev ? undefined : 'true'} onClick={getStepHandler(hasPrev, page - 1)}>Previous</QuietButton>
-      <span className="pagination-current" aria-current="page"><span className="sr-only">Page </span>{page + 1}<span className="sr-only">{` of ${pageCount}`}</span></span>
-      <QuietButton aria-label="Next page" aria-disabled={hasNext ? undefined : 'true'} onClick={getStepHandler(hasNext, page + 1)}>Next</QuietButton>
+      <QuietButton aria-label="Previous page" aria-disabled={hasPrev ? undefined : 'true'} onClick={getStepHandler(hasPrev, current - 1)}>Previous</QuietButton>
+      <span className="pagination-current" aria-current="page"><span className="sr-only">Page </span>{current + 1}<span className="sr-only">{` of ${pageCount}`}</span></span>
+      <QuietButton aria-label="Next page" aria-disabled={hasNext ? undefined : 'true'} onClick={getStepHandler(hasNext, current + 1)}>Next</QuietButton>
     </div>
   </nav>;
 }
