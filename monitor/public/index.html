@@ -18,6 +18,20 @@
 <!-- Tailwind CDN (JIT) — viewer R6 path (clauded-docs.jsx L20) 가 React 가 렌더한 className 을 런타임 스캔 후 utility CSS 생성. PostCSS build 로 대체 시 R6 의 runtime utility class silent regression 위험 → 보존. -->
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
+  // one role-gap map for gap, margin and space → the --gap-* family of tokens.css, page excluded (padding only)
+  const roleGaps = {
+    "header":        "var(--gap-header)",
+    "section":       "var(--gap-section)",
+    "block":         "var(--gap-block)",
+    "group-above":   "var(--gap-group-above)",
+    "group-below":   "var(--gap-group-below)",
+    "label":         "var(--gap-label)",
+    "label-inline":  "var(--gap-label-inline)",
+    "stack":         "var(--gap-stack)",
+    "list":          "var(--gap-list)",
+    "control":       "var(--gap-control)",
+    "control-group": "var(--gap-control-group)",
+  };
   tailwind.config = {
     darkMode: ['class', '[data-theme="dark"]'],
     theme: {
@@ -40,11 +54,20 @@
           ok:      { DEFAULT: "rgb(var(--ok) / <alpha-value>)" },
           info:    { DEFAULT: "rgb(var(--info) / <alpha-value>)" },
         },
+        // role keys → tokens.css role tokens; padding holds the two insets, every other kind is atom-owned
+        // no key named "card" → it would collide with base.css .gap-card
+        padding: {
+          "page":     "var(--gap-page)",
+          "card-pad": "var(--card-pad)",
+        },
+        gap:    roleGaps,
+        margin: roleGaps,
+        space:  roleGaps,
       },
     },
   };
 </script>
-<link rel="stylesheet" href="styles/tokens.css?v=6" />
+<link rel="stylesheet" href="styles/tokens.css?v=7" />
 <link rel="stylesheet" href="styles/base.css?v=9" />
 <!-- 스크립트 이전 첫 페인트 = 다크 기본 표면 (Tailwind CDN 의 bg-surface 는 런타임 생성이라 늦다) — Tweaks 가 마운트 후 사용자 테마로 덮는다 -->
 <style>html, body { background: rgb(var(--surface)); }</style>

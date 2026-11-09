@@ -65,6 +65,20 @@
   --space-6:  24px;  /* page gutter · section ↔ section · overlay padding-inline */
   --space-8:  32px;  /* break before a titled section group */
 
+  /* role gaps — screens name the role (Tailwind role keys in index.html), never a ladder step; one value each */
+  --gap-page:          var(--space-6); /* <main> padding, all four sides; 16 at 640px or narrower */
+  --gap-header:        var(--space-4); /* page header → first content row */
+  --gap-section:       var(--space-4); /* between card rows · between cards in a row */
+  --gap-block:         var(--space-4); /* between sub-blocks inside one card body */
+  --gap-group-above:   var(--space-8); /* break above a titled page-level group heading */
+  --gap-group-below:   var(--space-3); /* group heading → its first row */
+  --gap-label:         var(--space-2); /* sub-block or field label → its content */
+  --gap-label-inline:  var(--space-1); /* inline label → value on one line */
+  --gap-stack:         var(--space-1); /* stacked label → value, one fact */
+  --gap-list:          var(--space-2); /* stacked fact list items · button wrap */
+  --gap-control:       var(--space-2); /* controls inside one group */
+  --gap-control-group: var(--space-4); /* between control groups */
+
   /* minimum hit height for every interactive atom */
   --ctl-min-h: 32px;
   /* control line box — what is left of the 32px control after its 6px padding-block and 1px borders,
@@ -96,6 +110,10 @@
   --z-overlay: 100;
   --z-confirm: 150;
   --z-toast:   200;
+}
+/* narrow viewport → the page gutter drops one ladder step */
+@media (max-width: 640px) {
+  :root { --gap-page: var(--space-4); }
 }
 /* surface elevation semantic aliases — var() resolves where declared, so every themed scope (a nested dark chrome too) re-declares them against its own primitives */
 :root, [data-theme] {
