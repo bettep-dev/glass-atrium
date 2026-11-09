@@ -326,8 +326,8 @@ describe("calm fixture — nothing is running hot", () => {
           inset: [Math.round(tableBox.left - cardBox.left - border), Math.round(cardBox.right - border - tableBox.right)],
           edge: [getComputedStyle(firstCell).paddingLeft, getComputedStyle(lastCell).paddingRight],
           headCase: head.textTransform,
-          // the section labels, the turn aggregates and the footnote inset themselves to the card padding
-          contentInsets: Array.from(card.querySelectorAll('.section-label, [role="note"], dl'))
+          // the section labels and the turn aggregates inset themselves to the card padding
+          contentInsets: Array.from(card.querySelectorAll(".section-label, dl"))
             .filter((el) => el.closest("thead, .card-head") === null)
             .map((el) => Math.round(el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft) - cardBox.left - border)),
         };
