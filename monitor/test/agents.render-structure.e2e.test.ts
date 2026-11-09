@@ -412,10 +412,15 @@ describe("agents screen at 1440px, sticky table heads", () => {
         const headStartPx = head.getBoundingClientRect().top - viewTop + target.scrollTop;
         const room = target.scrollHeight - target.clientHeight - headStartPx;
         target.scrollTop = headStartPx + offsetPx;
-        return { canScroll: room > offsetPx && offsetPx >= rowPx, offsetPx: head.getBoundingClientRect().top - viewTop };
+        // any scroll container between head and card binds the sticky head, overflowing or not → only the page may hold it
+        const card = document.getElementById(cardId) as HTMLElement;
+        let isPageScroller = true;
+        for (let el = head.parentElement; el && el !== card.parentElement; el = el.parentElement) if (/(auto|scroll|hidden)/.test(getComputedStyle(el).overflowY)) isPageScroller = false;
+        return { canScroll: room > offsetPx && offsetPx >= rowPx, offsetPx: head.getBoundingClientRect().top - viewTop, isPageScroller };
       }, { cardId: row.cardId, rowPx: ROW_PX });
 
       assert.equal(result.canScroll, true, `${row.name}: the scroller reaches half a body past the head's start`);
+      assert.equal(result.isPageScroller, true, `${row.name}: the head sticks to the page, not to a scroller inside its card`);
       assert.ok(Math.abs(result.offsetPx) <= 1, `${row.name}: head ${result.offsetPx}px off the scroller top`);
     });
   }

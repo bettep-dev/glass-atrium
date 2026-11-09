@@ -156,9 +156,6 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
 
 // 카드 본문 flex 컨테이너 + 스크롤 — inline style 으로 빼두면 JSX 노이즈가 큼.
 const AGENTS_INLINE_CSS = ''
-  // ledger → page scroll only; the card-body 70vh cap cut the last row and hid the Warning agents below it
-  + '.ag-summary > .card-body { max-height: none; overflow-y: visible; } '
-  + '.ag-review-flags > .card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; } '
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
   // row fills its scroller edge to edge → the global outset ring is clipped; inset keeps the focus-ring token visible
   + 'tr[data-roving-row]:focus-visible { outline-offset: calc(var(--focus-ring-width) * -1); }';
@@ -417,7 +414,7 @@ function ScreenAgents() {
         <LifecycleStatsCard failures={sourceFailures} state={lifecycleState} days={days} onSelect={setSelectedAgent} onRetry={triggerRefresh}/>
       </window.UI.SplitRow>
 
-      {/* 의사결정 진입점. 행 클릭 → 우측 슬라이드인 드로어 (인라인 사이드바 폐지 · full-width 테이블). */}
+      {/* 의사결정 진입점. 행 클릭 → 우측 슬라이드인 드로어. */}
         <AgentSummaryCard
           failures={sourceFailures}
           state={summaryState}
@@ -868,7 +865,7 @@ function AgentSummaryCard({ failures, state, revisionState, reviewByAgentState, 
   return (
     <div id={IDS.REGION_CARD.summary} className="min-w-0">
       <Card
-        className="ag-summary"
+        className="[&>.card-body]:max-h-none [&>.card-body]:overflow-y-visible"
         isFlush={window.UI.hasRegionRows(state, data?.agents ?? [])}
         foot={data && <CountDefinitionAg note={NOTE_SHORT.NO_RECORD}/>}
         title="Performance by agent"
@@ -1230,8 +1227,8 @@ function CompatibilityDetailBlock({ compatibility }) {
   const { SubCard } = window.UI;
   if (!compatibility) return null;
   return (
-    <div className="mb-4 agent-compatibility-detail">
-      <div className="fs-meta text-faint mb-2">Requires</div>
+    <div className="mb-block agent-compatibility-detail">
+      <div className="fs-meta text-faint mb-label">Requires</div>
       <SubCard sunken className="fs-body leading-relaxed text-dim">
         {compatibility}
       </SubCard>
@@ -1253,14 +1250,14 @@ function LatencyBars({ agents }) {
   const maxMs = agents.reduce((m, a) => Math.max(m, Number(a.p99_ms) || 0), 0) || 1;
 
   return (
-    <div className="latency-bars space-y-3">
+    <div className="latency-bars space-y-list">
       {agents.map((a) => {
         const p50 = Number(a.p50_ms) || 0;
         const p95 = Number(a.p95_ms) || 0;
         const p99 = Number(a.p99_ms) || 0;
         return (
           <div key={a.agent_id} className="fs-body">
-            <div className="flex items-center gap-2 mb-1.5">
+            <div className="flex items-center gap-label mb-stack">
               <window.UI.AgentName name={a.agent_name} className="flex-1 truncate"/>
               <span className="text-faint fs-meta tnum">P95 {formatDurationMsAg(p95)}</span>
             </div>
@@ -1278,9 +1275,9 @@ function LatencyBars({ agents }) {
           </div>
         );
       })}
-      <div className="flex gap-3 mt-2 fs-meta text-faint pt-2 border-t border-line">
+      <div className="flex gap-control-group mt-block fs-meta text-faint">
         {LATENCY_LAYERS.slice().reverse().map((layer) => (
-          <span key={layer.key} className="flex items-center gap-1">
+          <span key={layer.key} className="flex items-center gap-label-inline">
             <span className="w-2 h-2 bg-info rounded-full" style={{ opacity: layer.opacity }}/>
             {layer.label}
           </span>
@@ -1337,7 +1334,7 @@ function AgentDetailDrawer({
 
   // DetailSurface names the dialog by this whole node → sr-only commas keep name, activity and health apart
   const title = (
-    <span className="flex items-center gap-2 flex-wrap">
+    <span className="flex items-center gap-control flex-wrap">
       <AgentDrawerNameAg name={agentName}/>
       <span className="sr-only">, </span>
       <ActivityMark status={agent?.status} lastRunAt={agent?.last_run_at}/>
@@ -1499,7 +1496,7 @@ function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange
   const { AlertCard, MachineString } = window.UI;
   const matches = value === agentName;
   return (
-    <div className="space-y-4">
+    <div className="space-y-block">
       <AlertCard
         tone="warn"
         surface="inset"
@@ -1508,7 +1505,7 @@ function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange
 
       <div>
         <div className="fs-meta font-medium text-ink">Type the agent name to confirm</div>
-        <div className="fs-meta text-faint mt-0.5 mb-1">
+        <div className="fs-meta text-faint mt-stack mb-label">
           Type <MachineString className="text-ink">{agentName}</MachineString> exactly
         </div>
         <input
@@ -1521,7 +1518,7 @@ function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange
           aria-label="Type the agent name to confirm deletion"
         />
         {value.length > 0 && !matches && (
-          <div className="fs-meta text-crit mt-1">That doesn't match the agent name yet</div>
+          <div className="fs-meta text-crit mt-stack">That doesn't match the agent name yet</div>
         )}
       </div>
 
@@ -1539,14 +1536,14 @@ function AgentCircuitBreakerLine({ agent, summaryState }) {
 
   const view = window.UI.getRegionView(summaryState);
   if (view === 'loading') {
-    return <div className="text-faint fs-meta mb-2" aria-busy="true">Checking circuit-breaker state…</div>;
+    return <div className="text-faint fs-meta" aria-busy="true">Checking circuit-breaker state…</div>;
   }
   if (view === 'error') {
-    return <div className="text-faint fs-meta mb-2">Circuit-breaker state not loaded — the summary request failed.</div>;
+    return <div className="text-faint fs-meta">Circuit-breaker state not loaded — the summary request failed.</div>;
   }
   if (!breaker) {
     return (
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-label">
         <Badge role="status" tone="warn">unavailable</Badge>
         <span className="text-faint fs-meta">circuit-breaker state not loaded for this agent</span>
       </div>
@@ -1554,7 +1551,7 @@ function AgentCircuitBreakerLine({ agent, summaryState }) {
   }
 
   return (
-    <div className="flex items-center gap-2 mb-2">
+    <div className="flex items-center gap-label">
       <Badge role="status" tone={getBreakerTone(breaker)}>{getBreakerLabel(breaker)}</Badge>
       <span className="text-faint fs-meta">
         {formatConsecutiveFails(breaker.consecutive_fails)}
@@ -1642,7 +1639,7 @@ function getDrawerHealthVerdictAg(entry, hasSignal, failure) {
 // 라벨 = proportional · 값 = sans tnum 으로 자릿수 정렬 (#5c).
 function DrawerInfoRow({ label, value, title }) {
   return (
-    <div className="flex items-start justify-between gap-3 fs-body" title={title}>
+    <div className="flex items-start justify-between gap-label fs-body" title={title}>
       <span className="fs-meta text-faint shrink-0">{label}</span>
       <span className="text-dim text-right min-w-0 break-words tnum">{value}</span>
     </div>
@@ -1693,7 +1690,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
   const healthPct = healthHasSignal ? (healthIndex * 100).toFixed(0) : '—';
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-block">
       {/* 식별(이름·뱃지·verdict)은 항상-노출 헤더가 단독 소유 — hero 는 고유 KPI 로 직행 (중복 제거 #dup).
           at-a-glance — success-rate hero(지배 수치, 비대칭 2fr) + health index(축소 보조 1fr).
           두 박스 동일 DetailMetric chrome 공유 → hero 는 값 크기로만 차별 (#3 twin 통합). */}
@@ -1724,7 +1721,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
       <CompatibilityDetailBlock compatibility={agent.compatibility}/>
 
       {/* config 한 줄 — dual-phase + origin pill · 부재 origin 은 dashed muted 변형 → present 데이터보다 조용하게 */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-list flex-wrap">
         <Pill tone="neutral">{phaseLabel}</Pill>
         {agent.origin ? (
           <Pill tone="neutral">origin: {agent.origin}</Pill>
@@ -1778,9 +1775,8 @@ function AgentQualitySignalsSection({ drawerAgent, revisionState, reviewByAgentS
   const flagBarTone = flagRatio >= 0.5 ? 'crit' : flagRatio >= 0.25 ? 'warn' : 'neutral';
 
   return (
-    <div className="space-y-3">
-      {/* 두 info-row = tight pair → 8px (space-y-2, 4-multiple, #5a). */}
-      <div className="space-y-2">
+    <div className="space-y-block">
+      <div className="space-y-list">
         <DrawerInfoRow
           label="reworks"
           value={`${formatIntAg(entry.buckets.weightedRevisions)} in ${formatIntAg(entry.totalRevisions)} runs (avg ${entry.avgRevision.toFixed(2)})`}
@@ -1830,9 +1826,9 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
   const crossing = getCrossingMetricsAg(overageState, overageByAgent, drawerAgent);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-block">
       {/* 단일 2-col 리듬 — success-rate 박스 제거 (hero 소유). */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-block">
         <DetailMetric label="Total runs" value={formatIntAg(agent.runs)}/>
         <DetailMetric label="Launches" value={invocations == null ? '—' : formatIntAg(invocations)}/>
         <DetailMetric label="Needs info" value={formatIntAg(needsContextCount)}/>
@@ -1845,7 +1841,7 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
 
       {/* 7일 성공-기반 추세 — 데이터 없으면 미렌더 (추정값 주입 금지). */}
       <div>
-        <div className="fs-meta text-faint mb-2">Runs per day · last <window.UI.NoWrap>7 days</window.UI.NoWrap></div>
+        <div className="fs-meta text-faint mb-label">Runs per day · last <window.UI.NoWrap>7 days</window.UI.NoWrap></div>
         {hasTrend ? (
           <TrendChart
             label={`${agent.agent_name || drawerAgent} runs per day`}
@@ -1884,8 +1880,8 @@ function AgentLatencyRow({ latency, state, onRetry }) {
   }
   const fmt = (ms) => ms == null ? '—' : formatDurationMsAg(ms);
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-3 gap-3">
+    <div className="space-y-block">
+      <div className="grid grid-cols-3 gap-block">
         <DetailMetric label="P50" value={fmt(latency.p50_ms)}/>
         <DetailMetric label="P95" value={fmt(latency.p95_ms)}/>
         <DetailMetric label="P99" value={fmt(latency.p99_ms)}/>
@@ -1900,10 +1896,9 @@ function AgentLatencyRow({ latency, state, onRetry }) {
 // (a) Breakages = headline pill + Failed/Blocked 2-col + last-breakage + top-concerns + keyword 분류(끝 muted 강등).
 // (b) Lifecycle = unfinished pill + Started/Finished 2-col + duration triplet 1 mono 라인 (2번째 3-box grid 폐지).
 function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureState, detailState, blockedState, lifecycleState, days, onRetry }) {
-  // 단일 separator 전략 (#6b) — top-hairline 은 AgentDrawerSection 경계에만. 두 sub-block 은
-  // 순수 spacing(space-y-6=24px, section step)으로 분리, 내부 border-t 폐지 (divider 어휘 하나).
+  // separator 는 AgentDrawerSection 경계 한 곳 — 두 sub-block 은 gap-block 간격으로만 분리 (divider 어휘 하나)
   return (
-    <div className="space-y-6">
+    <div className="space-y-block">
       <AgentReliabilityBreakages
         drawerAgent={drawerAgent}
         failureByAgent={failureByAgent}
@@ -1942,11 +1937,11 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
   const rateText = failure ? `${(failure.breakage_rate * 100).toFixed(1)}%` : '';
 
   return (
-    <div className="space-y-3">
-      <div className="fs-meta text-faint mb-1">Breakages</div>
+    <div className="space-y-block">
+      <div className="fs-meta text-faint">Breakages</div>
       {failure && failure.total_breakages > 0 ? (
         <>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-list flex-wrap">
             <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate)}>
               {formatIntAg(split.breakages)} failed or blocked{failure.reconstructed > 0 ? '' : ` · ${rateText}`}
             </Badge>
@@ -1970,7 +1965,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
                 All records, {formatIntAg(failure.reconstructed)} reconstructed included · {rateText} of outcomes
               </div>
             )}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-block">
               <DetailMetric label="Failed" value={formatIntAg(failure.fail_count)}/>
               <DetailMetric label="Blocked" value={formatIntAg(failure.blocked_count)}/>
             </div>
@@ -1982,8 +1977,8 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
           />
           {topConcerns.length > 0 && (
             <div>
-              <div className="fs-meta text-faint mb-2">Top concerns</div>
-              <ul className="flex flex-col gap-1">
+              <div className="fs-meta text-faint mb-label">Top concerns</div>
+              <ul className="flex flex-col gap-stack">
                 {topConcerns.map((c, i) => (
                   <li key={i} className="fs-body text-dim leading-snug" style={CONCERN_CLAMP_STYLE} title={c}>{getConcernTextAg(c)}</li>
                 ))}
@@ -2043,8 +2038,8 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
 
   if (!row) {
     return (
-      <div className="space-y-3">
-        <div className="fs-meta text-faint mb-1">Lifecycle</div>
+      <div className="space-y-block">
+        <div className="fs-meta text-faint">Lifecycle</div>
         <DrawerInfoRow label="last active" value={lastRun} title={agent?.last_run_at || undefined}/>
         <DrawerSectionEmpty message="No SubagentStart/Stop lifecycle events for this agent."/>
       </div>
@@ -2064,9 +2059,9 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
   const fmtDur = (sec) => sec == null ? '—' : formatDurationSecAg(sec);
 
   return (
-    <div className="space-y-3">
-      <div className="fs-meta text-faint mb-1">Lifecycle</div>
-      <div className="flex items-center gap-2 flex-wrap">
+    <div className="space-y-block">
+      <div className="fs-meta text-faint">Lifecycle</div>
+      <div className="flex items-center gap-list flex-wrap">
         <Badge role="status" tone={orphanTone}>
           {formatIntAg(orphans)} unfinished · {(orphanRatio * 100).toFixed(0)}%
         </Badge>
@@ -2080,7 +2075,7 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
         />
       )}
       {/* 단일 2-col — Started/Finished (2번째 3-box grid 폐지). */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-block">
         <DetailMetric label="Started" value={formatIntAg(startCount)}/>
         <DetailMetric label="Finished" value={formatIntAg(completedCount)}/>
       </div>
@@ -2128,15 +2123,15 @@ function RecentActivityRow({ row }) {
   const { Badge, Icon, TONE_ICON, MachineString } = window.UI;
   const revision = Number(row.revision_count) || 0;
   return (
-    <div className="flex items-center justify-between gap-2 py-2 fs-body">
-      <div className="flex items-center gap-2 min-w-0">
+    <div className="flex items-center justify-between gap-label min-h-[var(--row-h)] fs-body">
+      <div className="flex items-center gap-label min-w-0">
         <Badge role="status" tone={resultToneAg(row.result)}>{row.result}</Badge>
         <MachineString className="fs-meta text-dim truncate">{row.task_type}</MachineString>
       </div>
-      <div className="flex items-center gap-2 shrink-0 fs-meta text-faint tnum">
+      <div className="flex items-center gap-label shrink-0 fs-meta text-faint tnum">
         {row.confidence && <span title="confidence">{row.confidence}</span>}
         {revision > 0 && (
-          <span title="revision_count" className="inline-flex items-center gap-1">
+          <span title="revision_count" className="inline-flex items-center gap-label-inline">
             <span className="text-warn inline-flex" aria-hidden="true"><Icon name={TONE_ICON.warn} size={11}/></span>
             rev {revision}
           </span>
@@ -2162,7 +2157,7 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
   return (
     <div>
       <div
-        className="fs-meta text-faint mb-2 flex items-center gap-1"
+        className="fs-meta text-faint mb-label flex items-center gap-label-inline"
         title="Combined result IN ('fail','blocked') — same scope as the summary Failed or blocked column (needs_context excluded)">
         <Icon name="x" size={12}/>
         Why tasks failed · fail+blocked ({days}d)
@@ -2186,15 +2181,15 @@ function MergedBreakageBody({ merged, days }) {
 
   return (
     <div>
-      <div className="fs-meta text-dim tnum mb-2">
-        Total {formatIntAg(merged.total)} = <span className="inline-flex items-center gap-1"><span className="text-crit inline-flex" aria-hidden="true"><Icon name="x" size={11}/></span>fail {formatIntAg(merged.failTotal)}</span> + <span className="inline-flex items-center gap-1"><span className="text-info inline-flex" aria-hidden="true"><Icon name="info" size={11}/></span>blocked {formatIntAg(merged.blockedTotal)}</span>
+      <div className="fs-meta text-dim tnum mb-label">
+        Total {formatIntAg(merged.total)} = <span className="inline-flex items-center gap-label-inline"><span className="text-crit inline-flex" aria-hidden="true"><Icon name="x" size={11}/></span>fail {formatIntAg(merged.failTotal)}</span> + <span className="inline-flex items-center gap-label-inline"><span className="text-info inline-flex" aria-hidden="true"><Icon name="info" size={11}/></span>blocked {formatIntAg(merged.blockedTotal)}</span>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-list">
         {merged.reasons.map((r) => {
           const pct = merged.total > 0 ? (r.count / merged.total) * 100 : 0;
           return (
             <div key={r.category} className="fs-body">
-              <div className="flex justify-between mb-1">
+              <div className="flex justify-between mb-stack">
                 <MachineString>{r.category}</MachineString>
                 <span
                   className="text-dim tnum"
@@ -2243,9 +2238,9 @@ function mergeBreakageReasons(failData, blockedData) {
 // Drawer metric — label over a sans tnum value, flat on its section (no card inside the section card); hero enlarges the value only.
 function DetailMetric({ label, value, tone = '', hero = false }) {
   return (
-    <div className="flex flex-col py-1">
+    <div className="flex flex-col">
       <div className="fs-meta text-faint min-h-[2.5em] leading-tight">{label}</div>
-      <div className={`font-semibold mt-0.5 tnum ${hero ? 'hero-stat' : 'fs-title'} ${tone}`}>{value}</div>
+      <div className={`font-semibold mt-stack tnum ${hero ? 'hero-stat' : 'fs-title'} ${tone}`}>{value}</div>
     </div>
   );
 }
@@ -2697,7 +2692,7 @@ function ReviewFlagTimelineCard({ failures, state, days, onRetry }) {
   // id'd wrapper → the region failure's focus target, as on the Most-failing pairs card
   return (
     <div id={IDS.REGION_CARD.reviewFlags} className="flex flex-col min-w-0 min-h-0">
-      <window.UI.Card className="ag-review-flags flex-1 flex flex-col min-h-0" title="Review flags" sub={`Flag reasons and rate · ${days} days`}>
+      <window.UI.Card className="flex-1 [&>.card-body]:flex [&>.card-body]:flex-col [&>.card-body]:overflow-hidden" title="Review flags" sub={`Flag reasons and rate · ${days} days`}>
         <QualityHealthTimeline failures={failures} state={state} onRetry={onRetry}/>
       </window.UI.Card>
     </div>

@@ -202,9 +202,10 @@ test("the ledger grows with the page instead of a nested vertical scroller that 
   assert.match(classOf(region), /\bmin-w-0\b/, "a wide ledger cannot widen the page grid");
   const [card] = findAtoms(region, "Card");
   assert.equal(card.props.isFlush, true, "the ledger sits flush in the shared card");
-  // the ag-summary rule of the screen style block lifts the card-body cap; the page-scroll sticky e2e measures it
-  assert.match(classOf(card), /\bag-summary\b/, "no card-body height cap on the ledger");
-  assert.deepEqual(findNodes(tree, (n) => /\boverflow-/.test(classOf(n))).map(classOf), [], "no screen scroll box around the ledger");
+  // the Card lifts its body cap; the sticky e2e measures that the ledger then scrolls with the page
+  assert.match(classOf(card), /\[&>\.card-body\]:max-h-none/, "no card-body height cap on the ledger");
+  // a child-targeted overflow-y-visible is the cap lift itself, not a scroll box
+  assert.deepEqual(findNodes(tree, (n) => /(^|\s)overflow-|:overflow-(?!y-visible)/.test(classOf(n))).map(classOf), [], "no screen scroll box around the ledger");
   assert.equal(findNodes(tree, (n) => /\btbl-wrap\b/.test(classOf(n))).length, 1, "the Table wrapper holds the ledger");
 });
 
@@ -1171,7 +1172,7 @@ test("the matrix grows with the page instead of a nested vertical scroller that 
   const classOf = (n: RenderedNode) => String(n.props.className ?? "");
   const [body] = findNodes(tree, (n) => /\bcard-body\b/.test(classOf(n)));
   assert.equal((body.props.style as Record<string, unknown>)?.maxHeight, "none", "no card-body height cap on the matrix");
-  const verticalScrollers = findNodes(tree, (n) => /\boverflow-(auto|y-auto|hidden)\b/.test(classOf(n)) || /\bag-card-body\b/.test(classOf(n)));
+  const verticalScrollers = findNodes(tree, (n) => /\boverflow-(auto|y-auto|hidden)\b/.test(classOf(n)));
   assert.deepEqual(verticalScrollers.map(classOf), [], "nothing inside the matrix scrolls or clips vertically");
   assert.ok(findNodes(tree, (n) => /\boverflow-x-auto\b/.test(classOf(n))).length === 1, "wide columns scroll sideways inside the card");
 });
