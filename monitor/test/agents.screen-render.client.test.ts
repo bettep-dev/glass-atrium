@@ -1412,7 +1412,7 @@ test("the review-flag total sits under a card title in every state, never as a h
   ];
   for (const row of rows) {
     const tree = await renderComponent("ReviewFlagTimelineCard", { state: row.state, days: 30, onRetry: () => undefined });
-    const cardHead = findAtoms(tree, "CardHead")[0];
+    const cardHead = findAtoms(tree, "Card")[0];
     assert.equal(cardHead?.props.title, "Review flags", row.name);
     assert.match(String(cardHead?.props.sub), /30 days/, row.name);
   }
@@ -1627,7 +1627,7 @@ test("the failing-pairs header meta counts failing over judged pairs within the 
 
 test("the review-flag and task-type headers keep their meta within the 32-character cap", async () => {
   const headers = [
-    ...findAtoms(await renderComponent("ReviewFlagTimelineCard", { state: LOADING_STATE, days: 90, onRetry: () => undefined }), "CardHead"),
+    ...findAtoms(await renderComponent("ReviewFlagTimelineCard", { state: LOADING_STATE, days: 90, onRetry: () => undefined }), "Card"),
     ...findAtoms(await renderComponent("TaskTypeFold", { state: LOADING_STATE, days: 90, onRetry: () => undefined }), "Disclosure"),
   ];
   assert.equal(headers.length, 2, "both headers render");
@@ -1640,7 +1640,7 @@ test("the review-flag and task-type headers keep their meta within the 32-charac
 test("the review-flag and success-matrix cards keep their titles within the 24-character cap", async () => {
   const props = { state: LOADING_STATE, days: 90, onRetry: () => undefined };
   const heads = [
-    ...findAtoms(await renderComponent("ReviewFlagTimelineCard", props), "CardHead"),
+    ...findAtoms(await renderComponent("ReviewFlagTimelineCard", props), "Card"),
     ...findAtoms(await renderComponent("SuccessRateMatrixCard", { ...props, failures: undefined }), "CardHead"),
   ];
   assert.equal(heads.length, 2, "both card heads render");

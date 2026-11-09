@@ -158,7 +158,7 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
 const AGENTS_INLINE_CSS = ''
   // ledger → page scroll only; the card-body 70vh cap cut the last row and hid the Warning agents below it
   + '.ag-summary > .card-body { max-height: none; overflow-y: visible; } '
-  + '.ag-card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; } '
+  + '.ag-review-flags > .card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; } '
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
   // row fills its scroller edge to edge → the global outset ring is clipped; inset keeps the focus-ring token visible
   + 'tr[data-roving-row]:focus-visible { outline-offset: calc(var(--focus-ring-width) * -1); }';
@@ -2694,14 +2694,12 @@ const QH_TIMELINE = Object.freeze({
 
 // Titled like its Lifecycle sibling → the flagged total never reads as an orphan tile.
 function ReviewFlagTimelineCard({ failures, state, days, onRetry }) {
-  const { CardHead } = window.UI;
-
+  // id'd wrapper → the region failure's focus target, as on the Most-failing pairs card
   return (
-    <div id={IDS.REGION_CARD.reviewFlags} className="card flex flex-col min-h-0">
-      <CardHead title="Review flags" sub={`Flag reasons and rate · ${days} days`}/>
-      <div className="card-body ag-card-body">
+    <div id={IDS.REGION_CARD.reviewFlags} className="flex flex-col min-w-0 min-h-0">
+      <window.UI.Card className="ag-review-flags flex-1 flex flex-col min-h-0" title="Review flags" sub={`Flag reasons and rate · ${days} days`}>
         <QualityHealthTimeline failures={failures} state={state} onRetry={onRetry}/>
-      </div>
+      </window.UI.Card>
     </div>
   );
 }
