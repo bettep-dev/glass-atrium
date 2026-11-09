@@ -117,7 +117,7 @@ function ScreenWiki() {
 				{describeWikiWaveW(waveSections)}
 			</div>
 
-			<div className="flex flex-col gap-4">
+			<div className="flex flex-col gap-section">
 				{outage && (
 					<PageErrorBanner
 						sources={outage.sources}
@@ -276,7 +276,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 
 	return (
 		<ul
-			className="m-0 p-0 list-none"
+			className="list-none"
 			aria-label="Wiki alarms"
 		>
 			{rows.map((alarm) => (
@@ -295,8 +295,13 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 				</li>
 			))}
 			{model.unchecked.length > 0 && (
-				<li className="fs-meta text-faint px-4 py-2">
-					{`Couldn't read ${model.unchecked.join(", ")} — alarms from ${model.unchecked.length === 1 ? "it" : "them"} are not shown.`}
+				<li className="alarm-row" data-tone="neutral">
+					<span className="alarm-row-glyph" aria-hidden="true">
+						<Icon name={TONE_ICON.neutral} size={14} />
+					</span>
+					<span className="fs-meta text-faint min-w-0 break-words">
+						{`Couldn't read ${model.unchecked.join(", ")} — alarms from ${model.unchecked.length === 1 ? "it" : "them"} are not shown.`}
+					</span>
 				</li>
 			)}
 		</ul>
@@ -495,7 +500,7 @@ function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at,
 	const details = tiles.filter((tile) => tile.info);
 
 	return (
-		<div id={WIKI_REGION_IDS.tiles} className="flex flex-col gap-2">
+		<div id={WIKI_REGION_IDS.tiles} className="flex flex-col gap-section">
 			{shown.length > 0 && (
 				<WikiRegionFailureW
 					feeders={shown.map((f) => f.feeder)}
@@ -529,7 +534,7 @@ function WikiStatDetailsW({ tiles }) {
 	return (
 		<>
 			{tiles.map((tile) => (
-				<p key={tile.key} className="m-0">
+				<p key={tile.key}>
 					<strong className="font-medium text-ink">{tile.label}</strong>
 					{` — ${tile.info}`}
 				</p>
@@ -547,7 +552,7 @@ function buildStatW(tile) {
 // Report surface → neutral chrome; a warn/crit stat carries its tone on a glyph beside the
 // figure, leaving tinted containers to the alarm lane.
 function WikiStatValueW({ tile }) {
-	const { Icon, TONE_ICON, LoadingPlaceholder } = window.UI;
+	const { TONE_GLYPH, LoadingPlaceholder } = window.UI;
 	// loading is stated once, through the shared placeholder — never as a "…" figure; inline-flex keeps it on the stat's start edge
 	if (tile.state === "loading") {
 		return (
@@ -569,9 +574,7 @@ function WikiStatValueW({ tile }) {
 	if (tile.tone !== "warn" && tile.tone !== "crit") return tile.value;
 	return (
 		<>
-			<span className={`text-${tile.tone} mr-1.5`} aria-hidden="true" title={tile.toneLabel}>
-				<Icon name={TONE_ICON[tile.tone]} size={13} />
-			</span>
+			<span className={`text-${tile.tone}`} aria-hidden="true" title={tile.toneLabel}>{`${TONE_GLYPH[tile.tone]} `}</span>
 			{tile.toneLabel && <span className="sr-only">{`${tile.toneLabel}:`}</span>}
 			{tile.value}
 		</>
@@ -807,7 +810,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 	);
 
 	return (
-		<div className="flex flex-col gap-2">
+		<div className="flex flex-col gap-section">
 			{model.state === "error" ? (
 				<WikiRegionFailureW
 					feeders={[WIKI_FEEDERS.backlog]}
@@ -840,7 +843,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 						}
 					/>
 				) : (
-					<div className="flex flex-col gap-2">
+					<window.UI.Stack gap="label">
 						{model.isDryRun && (
 							<div className="fs-meta text-dim leading-tight">
 								Dry run — nothing merges until you approve it.
@@ -849,7 +852,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 						<div className="fs-meta text-dim leading-tight">
 							Each proposal merges the notes after the arrow into the note before it.
 						</div>
-						<ul className="m-0 p-0 list-none">
+						<ul className="list-none">
 							{model.proposals.map((proposal, i) => (
 								<MergeSuggestionItem
 									key={proposal.cluster_hash || i}
@@ -862,7 +865,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 								{model.residueLine}
 							</div>
 						)}
-					</div>
+					</window.UI.Stack>
 				)}
 			</WikiDisclosureW>
 
@@ -983,7 +986,7 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 				) : model.rows.length === 0 ? (
 					<EmptyStateW {...describeRunHistoryEmptyW(summaryState)} />
 				) : (
-					<div className="flex flex-col gap-2">
+					<window.UI.Stack gap="block">
 						{/* The window is a fetch bound, not what is drawn → name the days the bars cover. */}
 						<SparseTrendW
 							label={`Notes per day · ${model.spanDays} ${model.spanDays === 1 ? "day" : "days"}`}
@@ -993,7 +996,7 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 						/>
 						{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
 						{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
-					</div>
+					</window.UI.Stack>
 				)}
 			</window.UI.Card>
 		</div>
@@ -1021,9 +1024,9 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 			id={WIKI_REGION_IDS.runTable}
 			label="Per-run table"
 			count={describeRunTableW(reportState, days)}
-			bodyClassName="px-3 pb-3 flex flex-col gap-2"
+			bodyClassName="px-card-pad pb-card-pad flex flex-col gap-label"
 		>
-			<div className="flex items-center gap-2 flex-wrap">
+			<window.UI.Cluster gap="control">
 				<span className="fs-meta text-faint leading-tight">
 					<window.UI.DayTokens>{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}</window.UI.DayTokens>
 				</span>
@@ -1037,7 +1040,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 					onChange={onChangeDays}
 					className="ml-auto"
 				/>
-			</div>
+			</window.UI.Cluster>
 			<WikiReportsBody state={reportState} days={days} shared={shared} onRetry={onRetry} />
 		</WikiDisclosureW>
 	);
@@ -1093,7 +1096,7 @@ function WikiDisclosureW({
 	label,
 	count,
 	tone,
-	bodyClassName = "px-3 pb-3",
+	bodyClassName = "px-card-pad pb-card-pad",
 	children,
 }) {
 	const isAlerting = window.UI.getDisclosureOpen("detail", tone);
@@ -1113,9 +1116,9 @@ function WikiDisclosureW({
 				onFocus={id ? openOnOwnFocusW : undefined}
 				className="w-disclosure"
 			>
-				<summary className="group disclosure select-none px-3 flex-wrap">
+				<summary className="group disclosure select-none px-card-pad flex-wrap">
 					<window.UI.DisclosureChevron />
-					<h2 id={id ? `${id}-title` : undefined} className="m-0 fs-body text-ink font-medium">{label}</h2>
+					<h2 id={id ? `${id}-title` : undefined} className="fs-body text-ink font-medium">{label}</h2>
 					<span className="ml-auto fs-meta text-dim">{count}</span>
 				</summary>
 				<div className={bodyClassName}>{children}</div>
@@ -1164,7 +1167,7 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 				) : rows.length === 0 ? (
 					<EmptyStateW message="No notes indexed yet." />
 				) : (
-					<ul className="w-type-list flex flex-col m-0 p-0 list-none">
+					<ul className="w-type-list flex flex-col list-none">
 						{rows.map((t) => (
 							<li key={t.type} className="w-type-row fs-meta" title={t.type}>
 								<span className="text-dim truncate">{t.label}</span>
@@ -1265,9 +1268,9 @@ function WikiStatusMixW({ mix }) {
 					style={{ width: `${mix.quota}%`, background: "rgb(var(--faint))" }}
 				/>
 			</div>
-			<div className="flex flex-wrap gap-x-3 gap-y-1 fs-meta text-faint mt-1.5">
+			<window.UI.Cluster gap="control" className="fs-meta text-faint mt-label">
 				{["ok", "partial", "error", "quota"].map((k) => (
-					<span key={k} className="inline-flex items-center gap-1">
+					<span key={k} className="inline-flex items-center gap-label-inline">
 						{/* tone shape per status (faint usage limit has none → neutral dot) — the key reads without colour */}
 						<Icon
 							name={TONE_ICON[STATUS_CHIP_META[k].tone] ?? "circle"}
@@ -1277,7 +1280,7 @@ function WikiStatusMixW({ mix }) {
 						{STATUS_CHIP_META[k].label} {mix[k]}%
 					</span>
 				))}
-			</div>
+			</window.UI.Cluster>
 		</>
 	);
 }
@@ -1401,7 +1404,7 @@ function computeStatusMix(rows) {
 function BacklogExplorer({ label, count, payload }) {
 	return (
 		<WikiDisclosureW label={label} count={count}>
-			<pre className="fs-meta text-dim whitespace-pre-wrap m-0 max-h-64 overflow-y-auto">
+			<pre className="fs-meta text-dim whitespace-pre-wrap max-h-64 overflow-y-auto">
 				<window.UI.MachineString>{stringifyPayloadW(payload)}</window.UI.MachineString>
 			</pre>
 		</WikiDisclosureW>
@@ -1423,7 +1426,7 @@ function MergeSuggestionItem({ proposal }) {
 
 	return (
 		<li className="border-b border-line last:border-b-0 py-2">
-			<div className="flex items-baseline gap-2 flex-wrap fs-meta">
+			<div className="flex items-baseline gap-label flex-wrap fs-meta">
 				<MachineString className="text-ink font-medium min-w-0">{target}</MachineString>
 				<span className="inline-flex items-center text-faint">
 					<Icon name="arrow-left" size={12} />
@@ -1434,7 +1437,7 @@ function MergeSuggestionItem({ proposal }) {
 				{similarity && <span className="ml-auto text-dim">{similarity}</span>}
 			</div>
 			{action && (
-				<div className="fs-meta text-faint mt-1 leading-tight break-words whitespace-pre-wrap">
+				<div className="fs-meta text-faint mt-stack leading-tight break-words whitespace-pre-wrap">
 					{action}
 				</div>
 			)}
@@ -1597,9 +1600,11 @@ function SparseTrendW({ label, series, dates, stat }) {
 	const headline = [stat, describePeakW(series, dates)].filter(Boolean).join(" · ");
 
 	return (
-		<div>
-			<div className="fs-body text-ink mb-1">{headline}</div>
-			<div className="card-sub mb-1.5">{label}</div>
+		<window.UI.Stack gap="label">
+			<window.UI.Stack gap="stack">
+				<div className="fs-body text-ink">{headline}</div>
+				<div className="card-sub">{label}</div>
+			</window.UI.Stack>
 			{sparse ? (
 				<div className="placeholder">Too few active days to draw a trend.</div>
 			) : (
@@ -1614,7 +1619,7 @@ function SparseTrendW({ label, series, dates, stat }) {
 					h={112}
 				/>
 			)}
-		</div>
+		</window.UI.Stack>
 	);
 }
 

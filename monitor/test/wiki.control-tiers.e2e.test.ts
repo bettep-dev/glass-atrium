@@ -12,6 +12,7 @@ import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { type Box, createControlProbe, QUARTER_TURN, isSameBox } from "./lib/control-probe.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -27,15 +28,15 @@ const SCREEN_CSS = findNodes(renderScreen((wikiScreen.ScreenWiki as Component)({
   .join("\n");
 
 // The app loads Tailwind preflight and utilities from its CDN; these are the rules the measured geometry depends on, at their shipped values.
+// Spacing comes from the role-key utilities, emitted by the shared shim from the shipped config.
 const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 solid; }
   html { line-height: 1.5; font-family: ui-sans-serif, system-ui, sans-serif; }
-  h2 { font-size: inherit; font-weight: inherit; margin: 0; }
+  h2 { font-size: inherit; font-weight: inherit; margin: 0; } p, pre { margin: 0; } ul { list-style: none; margin: 0; padding: 0; }
   svg { display: block; vertical-align: middle; }
   button { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; background-color: transparent; }
   summary { display: list-item; }
   .flex { display: flex; } .flex-col { flex-direction: column; } .flex-wrap { flex-wrap: wrap; } .items-center { align-items: center; }
-  .gap-2 { gap: 0.5rem; } .ml-auto { margin-left: auto; } .m-0 { margin: 0; } .min-w-0 { min-width: 0; }
-  .px-3 { padding-left: 0.75rem; padding-right: 0.75rem; } .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .pb-3 { padding-bottom: 0.75rem; }
+  .ml-auto { margin-left: auto; } .min-w-0 { min-width: 0; }
   .inline-block { display: inline-block; } .font-medium { font-weight: 500; } .leading-tight { line-height: 1.25; }
   .rounded-md { border-radius: 0.375rem; } .border { border-width: 1px; }`;
 
@@ -70,6 +71,7 @@ before(async () => {
   await page.setContent(PAGE);
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+  await page.addStyleTag({ content: getRoleKeyCss() });
   await page.addStyleTag({ content: SCREEN_CSS });
   cdp = await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
