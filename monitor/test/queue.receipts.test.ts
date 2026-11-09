@@ -240,7 +240,6 @@ describe("listener start and stop", () => {
     await sent;
   });
 
-
   test("the socket dir is created 0700 and the reply address names <dir>/<pid>.sock", async () => {
     const socketDir = path.join(fixtureRoot, "fresh-socks");
     const started = await startReceiptListener({ socketDir, pid: LISTENER_PID });

@@ -130,18 +130,19 @@ async function deleteSocketFile(socketPath: string): Promise<void> {
 interface ConnectionOptions {
   now: () => Date;
   idleTimeoutMs: number;
-  /** Every receipt apply still running, across connections → stop waits for them before the DB client goes. */
-  applies: Set<Promise<void>>;
 }
 
-async function createListener(socketPath: string, options: Omit<ConnectionOptions, "applies">): Promise<ReceiptListener> {
+/** Every receipt still being applied, across connections → stop waits for them before the DB client goes. */
+type PendingReceipts = Set<Promise<void>>;
+
+async function createListener(socketPath: string, options: ConnectionOptions): Promise<ReceiptListener> {
   const sockets = new Set<Socket>();
-  const connectionOptions: ConnectionOptions = { ...options, applies: new Set() };
+  const pendingReceipts: PendingReceipts = new Set();
   // half-open → the peer's end does not close our side before its lines are applied
   const server = createServer({ allowHalfOpen: true }, (socket) => {
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
-    handleConnection(socket, connectionOptions);
+    handleConnection(socket, options, pendingReceipts);
   });
   server.maxConnections = RECEIPT.MAX_CONNECTIONS;
   await new Promise<void>((resolve, reject) => {
@@ -154,22 +155,25 @@ async function createListener(socketPath: string, options: Omit<ConnectionOption
   // an accept failure (EMFILE) after listen → logged; an unhandled server error would end the monitor
   server.on("error", (error) => logger.warn({ err: error, socketPath }, "queue receipt listener error — receipts may be missed"));
   await chmod(socketPath, 0o600);
-  return { socketPath, replyAddress: `uds:${socketPath}`, stop: () => stopListener(server, sockets, connectionOptions.applies, socketPath) };
+  return { socketPath, replyAddress: `uds:${socketPath}`, stop: () => stopListener(server, sockets, pendingReceipts, socketPath) };
 }
 
-async function stopListener(server: Server, sockets: Set<Socket>, applies: Set<Promise<void>>, socketPath: string): Promise<void> {
+async function stopListener(server: Server, sockets: Set<Socket>, pendingReceipts: PendingReceipts, socketPath: string): Promise<void> {
   const closed = new Promise((resolve) => server.close(resolve));
   for (const socket of sockets) socket.destroy();
   await closed;
-  await Promise.allSettled(applies);
+  await Promise.allSettled(pendingReceipts);
   await deleteSocketFile(socketPath);
 }
 
 // Lines apply in arrival order; the connection closes once every line it carried is applied
-function handleConnection(socket: Socket, options: ConnectionOptions): void {
+function handleConnection(socket: Socket, options: ConnectionOptions, pendingReceipts: PendingReceipts): void {
   let applying = Promise.resolve();
   const splitter = new LineSplitter(
-    (line) => (applying = createTrackedApply(applying, line, options)),
+    (line) => {
+      applying = applying.then(() => putReceiptLine(line, options.now));
+      addPendingReceipt(pendingReceipts, applying);
+    },
     (reason) => {
       logger.warn({ reason }, "queue receipt connection dropped");
       socket.destroy();
@@ -184,13 +188,13 @@ function handleConnection(socket: Socket, options: ConnectionOptions): void {
   });
 }
 
-/** Chains one line's apply after the connection's earlier lines and tracks it until it settles. @returns the new chain tail */
-function createTrackedApply(previous: Promise<void>, line: string, options: ConnectionOptions): Promise<void> {
-  const tracked = previous.then(() => putReceiptLine(line, options.now));
-  const untrack = (): boolean => options.applies.delete(tracked);
-  options.applies.add(tracked);
-  void tracked.then(untrack, untrack);
-  return tracked;
+/** Holds the receipt in the set until it settles, fulfilled or rejected. */
+function addPendingReceipt(pendingReceipts: PendingReceipts, receipt: Promise<void>): void {
+  const deleteReceipt = (): void => {
+    pendingReceipts.delete(receipt);
+  };
+  pendingReceipts.add(receipt);
+  void receipt.then(deleteReceipt, deleteReceipt);
 }
 
 /** NDJSON splitter with the line and connection caps; a breach stops all further lines. */
