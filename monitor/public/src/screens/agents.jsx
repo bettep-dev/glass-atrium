@@ -584,23 +584,14 @@ function getReviewFlagTotalsAg(rows) {
 // AgentSummary — row click → drawer · Runs and No record ride their own columns.
 // 추세 셀 = 50×20 MiniBars (runs per day 7d) · 실패 컬럼 = failure-patterns API 흡수 (failureByAgent client-side merge).
 
-// Detail fold toned by its worst pair → a crit pair opens it on load.
+// Untoned detail fold → collapsed on load whatever its pairs: Most-failing pairs is the one first-paint place for a failing pair.
+// Flush body → the matrix edge cells and the inset blocks share one card-pad column.
 function TaskTypeFold({ failures, state, days, onRetry }) {
-  const tone = useMemoAg(() => getTaskTypeTone(state), [state]);
-
   return (
-    <window.UI.Disclosure kind="detail" title="By task type" sub={`Success rate · last ${days} days`} tone={tone}>
+    <window.UI.Disclosure kind="detail" isFlush title="By task type" sub={`Success rate · last ${days} days`}>
       <SuccessRateMatrixRegion failures={failures} state={state} days={days} onRetry={onRetry}/>
     </window.UI.Disclosure>
   );
-}
-
-// unread → no tone, so a fold never claims ok before the matrix loads
-function getTaskTypeTone(state) {
-  if (state.status !== 'ready') return undefined;
-
-  const matrix = buildSuccessRateMatrix(readyData(state)?.rows ?? []);
-  return getOffTargetRowsAg(matrix).length > 0 ? 'crit' : 'ok';
 }
 
 // off-target = a pair at the crit fail-share step · agents in matrix order, pairs in column order, clear agents left out
@@ -2267,20 +2258,27 @@ function DetailMetric({ label, value, tone = '', hero = false }) {
 // Panel 1: Success-rate matrix — the "By task type" fold is its card, so the region draws none of its own
 
 function SuccessRateMatrixRegion({ failures, state, days, onRetry }) {
-  // 서버 SUCCESS_RATE_LIMIT 포화 (M8) — 행이 잘려 매트릭스 불완전 → silent 누락 대신 disclosure (cost.jsx 세션 분포 카드와 동일 규칙).
-  const isTruncated = readyData(state)?.truncated === true;
-
   return (
     <div id={IDS.REGION_CARD.successRates} className="min-w-0">
-      <window.UI.Stack gap="block">
-        {isTruncated && (
-          <window.UI.Pill tone="warn" className="self-start" title="Server row limit hit — matrix incomplete. Shorten the time range for complete data.">
-            Row limit hit — some rows missing
-          </window.UI.Pill>
-        )}
-        <SuccessRateMatrixBody failures={failures} state={state} days={days} onRetry={onRetry}/>
-      </window.UI.Stack>
+      <SuccessRateMatrixBody failures={failures} state={state} days={days} onRetry={onRetry}/>
     </div>
+  );
+}
+
+// non-table blocks of the flush fold → the card-pad inset the table's edge cells carry
+function MatrixInsetAg({ children }) {
+  return <div className="px-card-pad pb-card-pad"><window.UI.Stack gap="block">{children}</window.UI.Stack></div>;
+}
+
+// 서버 SUCCESS_RATE_LIMIT 포화 → 행이 잘려 매트릭스 불완전 · status = glyph + word, tone 은 glyph 에만
+function MatrixRowLimitNote() {
+  const { Icon, TONE_ICON } = window.UI;
+
+  return (
+    <p className="inline-flex items-center gap-label-inline fs-meta text-dim" title="Server row limit hit — matrix incomplete. Shorten the time range for complete data.">
+      <span aria-hidden="true" className="text-warn inline-flex"><Icon name={TONE_ICON.warn} size={12}/></span>
+      Row limit hit — some rows missing
+    </p>
   );
 }
 
@@ -2293,21 +2291,17 @@ function SuccessRateMatrixBody({ failures, state, days, onRetry }) {
 
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <window.UI.LoadingPlaceholder label="success matrix" minHeight={280}/>;
+    return <MatrixInsetAg><window.UI.LoadingPlaceholder label="success matrix" minHeight={280}/></MatrixInsetAg>;
   }
   if (view === 'error') {
-    return <window.UI.RegionFailure source={REGION_FEEDERS.success} region="success rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.successRates} onRetry={onRetry}/>;
-  }
-  if (matrix.agents.length === 0) {
-    return <EmptyStateAg message={`No success-rate events in the last ${days} days.`}/>;
+    return <MatrixInsetAg><window.UI.RegionFailure source={REGION_FEEDERS.success} region="success rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.successRates} onRetry={onRetry}/></MatrixInsetAg>;
   }
 
-  return (
-    <window.UI.Stack gap="block">
-      <SuccessRateOffTargetList rows={getOffTargetRowsAg(matrix)}/>
-      <SuccessRateFullMatrix matrix={matrix}/>
-    </window.UI.Stack>
-  );
+  const notice = readyData(state)?.truncated === true && <MatrixRowLimitNote/>;
+  if (matrix.agents.length === 0) {
+    return <MatrixInsetAg>{notice}<EmptyStateAg message={`No success-rate events in the last ${days} days.`}/></MatrixInsetAg>;
+  }
+  return <SuccessRateFullMatrix matrix={matrix} notice={notice}/>;
 }
 
 function SuccessRateOffTargetList({ rows }) {
@@ -2353,20 +2347,27 @@ function SuccessRateOffTargetPair({ taskType, cell }) {
 
 const MATRIX_FULL_ID = 'agents-success-matrix-full';
 
-// every pair, collapsed by default — mounted only once opened, so its sparklines cost nothing until asked for
-function SuccessRateFullMatrix({ matrix }) {
+// off-target list over every pair, collapsed by default — mounted only once opened, so its sparklines cost nothing until asked for
+function SuccessRateFullMatrix({ matrix, notice }) {
   const [isOpen, setOpen] = useStateAg(false);
   const agentCount = matrix.agents.length;
 
   return (
     <>
-      <window.UI.DisclosureButton
-        isOpen={isOpen}
-        onToggle={() => setOpen((v) => !v)}
-        controls={MATRIX_FULL_ID}
-        className="self-start fs-meta"
-        label={`Full matrix — ${agentCount} ${agentCount === 1 ? 'agent' : 'agents'} × ${TASK_TYPE_COLUMNS.length} task types`}
-      />
+      <MatrixInsetAg>
+        {notice}
+        <SuccessRateOffTargetList rows={getOffTargetRowsAg(matrix)}/>
+        <window.UI.Cluster gap="control-group" className="items-center">
+          <window.UI.DisclosureButton
+            isOpen={isOpen}
+            onToggle={() => setOpen((v) => !v)}
+            controls={MATRIX_FULL_ID}
+            className="fs-meta"
+            label={`Full matrix — ${agentCount} ${agentCount === 1 ? 'agent' : 'agents'} × ${TASK_TYPE_COLUMNS.length} task types`}
+          />
+          <window.UI.CardInfo label="How the task-type matrix is counted"><SuccessRateLegend/></window.UI.CardInfo>
+        </window.UI.Cluster>
+      </MatrixInsetAg>
       <div id={MATRIX_FULL_ID} hidden={!isOpen}>
         {isOpen && <SuccessRateMatrixTable matrix={matrix}/>}
       </div>
@@ -2378,20 +2379,19 @@ const MATRIX_COLUMNS = [
   { key: 'agent', label: 'Agent' },
   ...TASK_TYPE_COLUMNS.map((c) => ({ key: c.key, label: c.label, isNumeric: true })),
 ];
-// agent column + nine sparkline columns with their cell padding → narrower than this, rows stack rather than clip a column
-const MATRIX_STACK_BELOW_PX = 920;
+const MATRIX_AGENT_CELL_PX = 164;
+const MATRIX_CELL_PAD_PX = 12; // --space-3 on each side of a cell
+// agent cell + every sparkline column with its padding → narrower than this, rows stack rather than clip a column
+const MATRIX_STACK_BELOW_PX = MATRIX_AGENT_CELL_PX + TASK_TYPE_COLUMNS.length * (SPARK_WIDTH + 2 * MATRIX_CELL_PAD_PX);
 
 function SuccessRateMatrixTable({ matrix }) {
   return (
-    <window.UI.Stack gap="label">
-      <SuccessRateLegend/>
-      <window.UI.Table
-        caption="Success rate per agent and task type"
-        columns={MATRIX_COLUMNS}
-        isHeadSticky
-        stackBelowPx={MATRIX_STACK_BELOW_PX}
-        bodies={[{ key: 'agents', rows: (view) => matrix.agents.map((agent) => <SuccessRateMatrixRow key={agent} view={view} agent={agent} cells={matrix.cells}/>) }]}/>
-    </window.UI.Stack>
+    <window.UI.Table
+      caption="Success rate per agent and task type"
+      columns={MATRIX_COLUMNS}
+      isHeadSticky
+      stackBelowPx={MATRIX_STACK_BELOW_PX}
+      bodies={[{ key: 'agents', rows: (view) => matrix.agents.map((agent) => <SuccessRateMatrixRow key={agent} view={view} agent={agent} cells={matrix.cells}/>) }]}/>
   );
 }
 
@@ -2413,14 +2413,17 @@ function SuccessRateMatrixRow({ view, agent, cells }) {
   );
 }
 
+// ⓘ body of the task-type fold → glyph legend + counting method off the page
 function SuccessRateLegend() {
   return (
-    <window.UI.Cluster gap="control-group" className="items-center fs-meta text-dim">
-      <span className="text-faint">Legend</span>
-      <LegendSwatch colorVar="--crit"  label={getFailShareLabel()}/>
-      <LegendSwatch colorVar="--faint" label={`below that, or n < ${window.UI.LOW_N_MIN}`}/>
-      <span className="text-faint">n = passed + failed; reconstructed records and other results are left out, so it can sit below the ledger's count</span>
-    </window.UI.Cluster>
+    <window.UI.Stack gap="label" className="fs-meta text-dim">
+      <window.UI.Cluster gap="control-group" className="items-center">
+        <span className="text-faint">Legend</span>
+        <LegendSwatch colorVar="--crit"  label={getFailShareLabel()}/>
+        <LegendSwatch colorVar="--faint" label={`below that, or n < ${window.UI.LOW_N_MIN}`}/>
+      </window.UI.Cluster>
+      <p>n = passed + failed; reconstructed records and other results are left out, so it can sit below the ledger's count</p>
+    </window.UI.Stack>
   );
 }
 
@@ -2445,7 +2448,7 @@ function SuccessRateCell({ view, agent, taskType, cell }) {
   if (!cell || cell.totalCount === 0) {
     return <window.UI.TableCell {...cellProps} title={`${agent} · ${taskType} — no data`}><NoneMarkAg/></window.UI.TableCell>;
   }
-  // 분모 0 (success/fail 외 result 만 존재) → 비율 미정의 — 0% 날조 대신 None (A7).
+  // 분모 0 (success/fail 외 result 만 존재) → 비율 미정의 — 0% 날조 대신 None.
   if (cell.pooledRate === null) {
     return (
       <window.UI.TableCell {...cellProps} title={`${agent} · ${taskType} — nothing conclusive to rate (no success/fail · ${cell.totalCount} total)`}>

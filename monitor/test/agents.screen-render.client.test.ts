@@ -1148,37 +1148,60 @@ function getMatrixRow(agent: string, success: number, failure: number, taskType 
   return { agent, task_type: taskType, event_date: "2026-01-01", total_count: total, success_count: success, failure_count: failure, success_rate: success / total };
 }
 
-const TASK_TYPE_FOLD_ROWS = [
-  { name: "a crit pair opens the fold", rows: [getMatrixRow("a", 19, 1), getMatrixRow("b", 40, 0)], tone: "crit", isOpen: true },
-  { name: "every pair under the step keeps it closed", rows: [getMatrixRow("a", 39, 1), getMatrixRow("b", 40, 0)], tone: "ok", isOpen: false },
-  { name: "a failing small sample stays under the low-N floor and keeps it closed", rows: [getMatrixRow("a", 2, 1)], tone: "ok", isOpen: false },
+const TASK_TYPE_FOLD_STATES = [
+  { name: "a crit pair leaves it closed", state: { status: "ready", data: { rows: [getMatrixRow("a", 19, 1), getMatrixRow("b", 40, 0)] }, error: null } },
+  { name: "an unread matrix leaves it closed", state: LOADING_STATE },
 ];
 
-describe("the By task type fold takes its tone from its worst pair", () => {
-  for (const row of TASK_TYPE_FOLD_ROWS) {
+describe("the By task type fold starts collapsed whatever its pairs, so a failing pair first paints once, in Most-failing pairs", () => {
+  for (const row of TASK_TYPE_FOLD_STATES) {
     test(row.name, async () => {
-      const tree = await renderComponent("TaskTypeFold", { state: { status: "ready", data: { rows: row.rows }, error: null }, days: 30, onRetry: () => undefined });
+      const tree = await renderComponent("TaskTypeFold", { state: row.state, days: 30, onRetry: () => undefined });
       const [fold] = findAtoms(tree, "Disclosure");
       assert.ok(fold, "the fold is the shared Disclosure");
       assert.equal(fold.props.title, "By task type");
-      assert.equal(fold.props.tone, row.tone);
       const getDisclosureOpen = REAL_UI.getDisclosureOpen as (kind: string, tone: unknown) => boolean;
-      assert.equal(getDisclosureOpen(String(fold.props.kind ?? "detail"), fold.props.tone), row.isOpen);
+      assert.equal(getDisclosureOpen(String(fold.props.kind ?? "detail"), fold.props.tone), false);
     });
   }
+});
 
-  test("an unread matrix gives the fold no tone", async () => {
-    const tree = await renderComponent("TaskTypeFold", { state: LOADING_STATE, days: 30, onRetry: () => undefined });
-    const [fold] = findAtoms(tree, "Disclosure");
-    assert.ok(fold, "the fold renders while the matrix loads");
-    assert.equal(fold.props.tone, undefined);
-  });
+const ROW_LIMIT_STATES = [
+  { name: "an empty fleet", rows: [] },
+  { name: "a measured fleet", rows: [getMatrixRow("a", 19, 1)] },
+];
+
+describe("a truncated matrix reports the row limit as a warn glyph and a word with no status container", () => {
+  for (const row of ROW_LIMIT_STATES) {
+    test(row.name, async () => {
+      const tree = await renderComponent("SuccessRateMatrixRegion", { state: { status: "ready", data: { rows: row.rows, truncated: true }, error: null }, days: 30, onRetry: () => undefined });
+      assert.deepEqual([...findAtoms(tree, "Pill"), ...findAtoms(tree, "Badge")].map((n) => n.props.atom), [], "no pill or badge container");
+      const [note] = findNodes(tree, (n) => /matrix incomplete/.test(String(n.props?.title ?? "")));
+      assert.ok(note, "the notice keeps its hover title");
+      assert.match(collectText(note), /Row limit hit/);
+      assert.doesNotMatch(String(note.props.className), /\btext-warn\b/, "the word stays neutral");
+      const glyphs = findNodes(note, (n) => /\btext-warn\b/.test(String(n.props?.className ?? "")));
+      assert.equal(glyphs.length, 1, "the tone rides one glyph");
+      assert.equal(glyphs[0].props["aria-hidden"], "true");
+    });
+  }
+});
+
+test("the matrix legend and its counting method sit behind the fold's info button, never on the page", async () => {
+  const state = { status: "ready", data: { rows: [getMatrixRow("a", 19, 1)] }, error: null };
+  const tree = await renderComponent("SuccessRateMatrixBody", { state, days: 30, onRetry: () => undefined });
+  const swatchCount = (root: RenderedNode | string | null) => findNodes(root, (n) => n.type === "LegendSwatch").length;
+
+  const [info] = findAtoms(tree, "CardInfo");
+  assert.ok(info, "the fold carries an info button");
+  assert.equal(swatchCount(info), 2, "the legend rides the info button");
+  assert.equal(swatchCount(tree), 2, "no second legend on the page");
 });
 
 test("the matrix region draws no card inside its fold and nothing in it scrolls vertically", async () => {
   const tree = await renderComponent("SuccessRateMatrixRegion", { state: { status: "ready", data: { rows: [getMatrixRow("a", 9, 1)] }, error: null }, days: 30, onRetry: () => undefined });
   const classOf = (n: RenderedNode) => String(n.props.className ?? "");
-  const cards = findNodes(tree, (n) => /\bcard(-body|-head)?\b/.test(classOf(n)));
+  const cards = findNodes(tree, (n) => /(^|\s)card(-body|-head)?(\s|$)/.test(classOf(n)));
   assert.deepEqual(cards.map(classOf), [], "the By task type fold is the card — no card in card");
   const verticalScrollers = findNodes(tree, (n) => /\boverflow-(auto|y-auto|hidden)\b/.test(classOf(n)));
   assert.deepEqual(verticalScrollers.map(classOf), [], "nothing inside the matrix scrolls or clips vertically");
@@ -2231,6 +2254,7 @@ test("an unidentified agent reads its label dim in upright type, the row at full
   const rows = [
     { name: "ledger row", atom: "AgentSummaryRow", props: { agent: { agent_id: "unknown", agent_name: "unknown", status: "active", runs: 12 }, days: 30, isSelected: false, onSelect: () => {}, trend: null, failure: null, overage: null } },
     { name: "task-type matrix row", atom: "SuccessRateMatrixRow", props: { agent: "unknown", cells: {} } },
+    { name: "off-target row", atom: "SuccessRateOffTargetRow", props: { agent: "unknown", pairs: [] } },
   ];
   for (const row of rows) {
     const tree = await renderComponent(row.atom, row.props);

@@ -375,9 +375,38 @@ describe("agents screen at 1440px", () => {
 
   test("the task-type matrix shows every column without a sideways scroll", async () => {
     await openTaskTypeFold(ctx.page);
-    const overflow = await ctx.page.locator(MATRIX_SELECTOR).evaluate((el) => (el.querySelector("table") as HTMLElement).getBoundingClientRect().width - el.clientWidth);
+    const result = await ctx.page.locator(MATRIX_SELECTOR).evaluate((el) => ({
+      mode: el.getAttribute("data-table-mode"),
+      overflow: (el.querySelector("table") as HTMLElement).getBoundingClientRect().width - el.clientWidth,
+    }));
 
-    assert.ok(overflow <= 1, `matrix overflows its card by ${overflow}px`);
+    assert.equal(result.mode, "wide", "the matrix keeps its sparkline columns at 1440");
+    assert.ok(result.overflow <= 1, `matrix overflows its card by ${result.overflow}px`);
+  });
+
+  test("every block in the task-type fold starts on the card's one padding column", async () => {
+    await openTaskTypeFold(ctx.page);
+    const insets = await ctx.page.evaluate(() => {
+      const region = document.querySelector("#agents-success-rates") as HTMLElement;
+      const card = region.closest(".card") as HTMLElement;
+      const edge = card.getBoundingClientRect().left + card.clientLeft;
+      // [name, element, measure its content edge rather than its box edge]
+      const blocks: Array<[string, Element | null | undefined, boolean]> = [
+        ["fold head toggle", card.querySelector(":scope > :first-child button"), false],
+        ["first body block", region.querySelector('[aria-label="Off-target pairs per agent"]') ?? region.querySelector("p"), false],
+        ["full matrix toggle", Array.from(region.querySelectorAll("button")).find((b) => /Full matrix/.test(b.textContent ?? "")), false],
+        ["matrix head cell", region.querySelector("thead th"), true],
+        ["matrix row cell", region.querySelector("tbody tr > :first-child"), true],
+      ];
+      const lefts = blocks.map(([name, el, isContent]) => [name, el
+        ? el.getBoundingClientRect().left - edge + (isContent ? parseFloat(getComputedStyle(el).paddingLeft) : 0)
+        : Number.NaN] as const);
+      return { pad: parseFloat(getComputedStyle(card).getPropertyValue("--card-pad")), lefts };
+    });
+
+    for (const [name, left] of insets.lefts) {
+      assert.ok(Math.abs(left - insets.pad) < 0.5, `${name} starts ${left}px in, not on the ${insets.pad}px card padding`);
+    }
   });
 });
 
