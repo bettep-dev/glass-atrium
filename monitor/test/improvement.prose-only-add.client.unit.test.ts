@@ -58,18 +58,22 @@ sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | n
 });
 const slotRowCount = sandbox.window.UI.CARD_SLOTS.S.rowCount;
 
+// a wide two-column view → the rows the card hands its Table
+const WIDE_VIEW = { isStacked: false, columnCount: 2 };
+
 function renderCard(agents: RosterEntry[], isShowingAll: boolean) {
   sandbox.React.useState = () => [isShowingAll, () => {}];
   const total = agents.reduce((sum, entry) => sum + entry.count, 0);
   const card = sandbox.ProseOnlyAddCardI({
     state: { status: "ready", data: {}, error: null },
     summary: { window_days: 30, agents, total },
-  });
-  const agentRows = findElements(card, (el) => el.type === "tr" && el.props.key !== undefined);
-  const foot = findElements(card, (el) => el.props.className === "card-foot")[0];
+  }) as RecordedElement;
+  const [table] = findElements(card, (el) => el.type === sandbox.window.UI.Table);
+  const agentRows = (table.props.children as (view: typeof WIDE_VIEW) => unknown)(WIDE_VIEW);
+  const rows = findElements(agentRows, (el) => el.type === sandbox.window.UI.TableRow);
   return {
-    shownAgents: agentRows.map((row) => getText(findElements(row, (el) => el.type === "td")[0])),
-    foot: foot ? getText(foot) : null,
+    shownAgents: rows.map((row) => getText(findElements(row, (el) => el.type === sandbox.window.UI.TableCell)[0])),
+    foot: card.props.foot ? getText(card.props.foot) : null,
   };
 }
 
@@ -135,10 +139,10 @@ describe("the add-only roster ranks by count, ties by name, before the slot cuts
   }
 });
 
-// R-d: the instrumentation tables sit off .tbl, so their body rows reach the 32 compact step through the shared
-// tbody.tbl-compact atom; a cell carrying its own block padding would move the row off that step
-test("the three instrumentation tables put their body rows on the shared compact atom, no cell padding its own block", () => {
+// the instrumentation tables read like every other table: the house Table and its cell atom, never a raw table or cell
+test("the three instrumentation tables render through the shared Table and its cell atom, no raw table markup", () => {
   const tables = sandbox as unknown as Record<string, (props: Record<string, unknown>) => unknown>;
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
   sandbox.React.useState = () => [false, () => {}];
   // the screen-shared atoms improvement.jsx publishes; the badge only names a mark, which this pin does not read
   (sandbox.window as unknown as Record<string, unknown>).ImprovementShared = {
@@ -153,13 +157,13 @@ test("the three instrumentation tables put their body rows on the shared compact
     { name: "style-ref agents", tree: tables.StyleRefAgentTableI({ rows: [{ agent: "glass-atrium-dev-db", emission_count: 1, emission_total: 2 }] }) },
   ];
   for (const { name, tree } of rendered) {
-    const bodies = findElements(tree, (el) => el.type === "tbody");
-    assert.equal(bodies.length, 1, `${name}: one body`);
-    assert.equal(bodies[0].props.className, "tbl-compact", `${name}: the body takes the compact atom`);
-    const cells = findElements(bodies[0], (el) => el.type === "td");
-    assert.ok(cells.length > 0, `${name}: the body carries cells`);
-    for (const cell of cells) {
-      assert.doesNotMatch(String(cell.props.className ?? ""), /\b(py|pt|pb)-|\bflex\b/, `${name}: a cell stays a plain table cell`);
-    }
+    const houseTables = findElements(tree, (el) => el.type === ui.Table);
+    assert.equal(houseTables.length, 1, `${name}: one house Table`);
+    const rows = (houseTables[0].props.children as (view: typeof WIDE_VIEW) => unknown)(WIDE_VIEW);
+    const cells = findElements(rows, (el) => el.type === ui.TableCell);
+    assert.ok(cells.length > 0, `${name}: the rows carry cell atoms`);
+    const raw = findElements([tree, rows], (el) => ["table", "thead", "tbody", "tr", "td", "th"].includes(String(el.type)));
+    assert.deepEqual(raw.map((el) => el.type), [], `${name}: no raw table markup beside the house Table`);
   }
+
 });

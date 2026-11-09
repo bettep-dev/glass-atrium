@@ -151,13 +151,21 @@ function isElement(value: unknown): value is RecordedElement {
   return typeof value === "object" && value !== null && "props" in value && "type" in value;
 }
 
-// Flattening walk over every prop value; renders view-local components, never the shared UI atoms or the glyph.
+// a wide view for the rows a card hands its Table as a render prop
+const WIDE_VIEW = { isStacked: false, columnCount: 0 };
+
+// Flattening walk over every prop value, the plain data objects a stat row takes and a Table's row render prop included;
+// renders view-local components, never the shared UI atoms or the glyph.
 function viewTree(node: unknown, out: RecordedElement[] = []): RecordedElement[] {
   if (Array.isArray(node)) {
     for (const child of node) viewTree(child, out);
     return out;
   }
-  if (!isElement(node)) return out;
+  if (typeof node === "function" && node !== GlyphMarker) return viewTree((node as (view: unknown) => unknown)(WIDE_VIEW), out);
+  if (!isElement(node)) {
+    if (typeof node === "object" && node !== null) for (const value of Object.values(node)) viewTree(value, out);
+    return out;
+  }
   out.push(node);
   const isViewLocal =
     typeof node.type === "function" &&

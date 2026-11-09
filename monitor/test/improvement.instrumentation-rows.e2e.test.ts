@@ -136,19 +136,19 @@ for (const width of [1440, 1920]) {
 
 // 1280 is the narrowest width where the check-status card sits in a half column
 for (const width of [1280, 1440, 1920]) {
-  test(`every check-status tile label reads on one line at ${width}px`, async () => {
+  test(`every check-status stat label reads on one line at ${width}px`, async () => {
     await withInstrumentationPage(width, async (page) => {
       const labels = await page.evaluate(() => {
         const title = [...document.querySelectorAll<HTMLElement>("#improvement-instrumentation .card-title")].find(
           (heading) => heading.textContent === "Results by check status",
         )!;
-        return [...title.closest(".card")!.querySelectorAll<HTMLElement>(".grid > div .flex > span:last-child")].map((span) => ({
+        return [...title.closest(".card")!.querySelectorAll<HTMLElement>(".stat-row .stat-label")].map((span) => ({
           text: span.textContent ?? "",
           lineCount: Math.round(span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight)),
         }));
       });
 
-      assert.equal(labels.length, 4, "the card shows its four tiles");
+      assert.equal(labels.length, 4, "the card shows its four stats");
       for (const label of labels) {
         assert.equal(label.lineCount, 1, `${width}px: "${label.text}" wraps onto ${label.lineCount} lines`);
       }
