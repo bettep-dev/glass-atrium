@@ -977,6 +977,27 @@ describe("the bulk bar and the whole-word note space on role keys only", () => {
   }
 });
 
+// content inside a ledger cell → its inline gap is the label-inline role; the cell padding stays the table's
+describe("a ledger head count and a group toggle space their content on the label-inline role", () => {
+  const groupRoot = { id: 21, title: "Doc 21", doc_status: "open", format: "md", audience: "exposed", author: "glass-atrium-intel-planner",
+    created_at: "2026-09-01T00:00:00Z", member_count: 3, folder_id: 5 };
+  const nodes = [
+    { name: "a stage section's count", rule: ".doc-stage-section-count", property: "margin", roleClass: "ml-label-inline" },
+    { name: "a group root's member toggle", rule: ".doc-group-toggle", property: "gap", roleClass: "gap-label-inline" },
+  ];
+  for (const row of nodes) {
+    test(`${row.name} takes ${row.roleClass} and its rule sets no ${row.property}`, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderListCard(screen, { rows: [groupRoot] });
+      const className = row.rule.slice(1);
+      const [node] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes(className));
+      assert.ok(node, `${row.name} renders`);
+      assert.match(String(node.props.className), new RegExp(`(^|\\s)${row.roleClass}(\\s|$)`), row.name);
+      assert.doesNotMatch(cssRuleBody(getScreenCss(screen), row.rule), new RegExp(`(^|[;\\s])${row.property}(-left)?\\s*:`), row.rule);
+    });
+  }
+});
+
 test("the last stage actor rides the Status cell's tooltip, never a line under the pill", async () => {
   const screen = await loadDocsScreen();
   const base = listCardProps(() => undefined);

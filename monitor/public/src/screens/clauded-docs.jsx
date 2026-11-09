@@ -1028,7 +1028,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 버튼이 reserved 44px 를 넘기지 않도록 상한 — 초과 시 bar 자체가 늘어나 점프 재발. */
         .doc-group-action-bar .btn.sm { max-height: 30px; }
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
-        .doc-group-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; background: transparent; border: none; padding: 2px 6px; color: rgb(var(--dim)); font-size: var(--fs-meta); border-radius: var(--radius-badge); }
+        .doc-group-toggle { display: inline-flex; align-items: center; cursor: pointer; background: transparent; border: none; padding: 2px 6px; color: rgb(var(--dim)); font-size: var(--fs-meta); border-radius: var(--radius-badge); }
         .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
         .doc-group-toggle.is-expanded .chevron { transform: rotate(90deg); }
         /* member rows — indent + 좌측 가는 가이드 선 (group 소속 시각 hint). */
@@ -1102,7 +1102,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
         /* a section head is a 40 row like the ledger rows (its th takes the td row height) → every section starts at one height */
         tr.doc-stage-section > th { height: var(--row-h); padding-block: var(--space-3) var(--space-1); text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
-        .doc-stage-section-count { margin-left: 8px; font-size: var(--fs-meta); color: rgb(var(--faint)); font-variant-numeric: tabular-nums; }
+        .doc-stage-section-count { font-size: var(--fs-meta); color: rgb(var(--faint)); font-variant-numeric: tabular-nums; }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -1398,7 +1398,7 @@ function DocListCardCD({
 					<span role="heading" aria-level={2}>
 						{entry ? entry.label : "stage unavailable"}
 					</span>
-					<span className="doc-stage-section-count">
+					<span className="doc-stage-section-count ml-label-inline">
 						{formatIntCD(sectionCounts.get(rank) || 0)}
 					</span>
 				</th>
@@ -1629,7 +1629,7 @@ function DocListCardCD({
 														{isGroupRoot && (
 															<button
 																type="button"
-																className={`doc-group-toggle ${isExpanded ? "is-expanded" : ""}`}
+																className={`doc-group-toggle gap-label-inline ${isExpanded ? "is-expanded" : ""}`}
 																{...ROW_CONTROL_PROPS}
 																onClick={(e) => {
 																	e.stopPropagation();
