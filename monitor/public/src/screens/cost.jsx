@@ -58,7 +58,7 @@ const ANOMALY_SIGMA = 2;
 function ScreenCost() {
   const {
     PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE, getRegionSummary,
-    PageVerdict, SplitRow, Disclosure,
+    SplitRow, Disclosure,
   } = window.UI;
 
   const [days, setDays] = useStateC(30);
@@ -88,7 +88,6 @@ function ScreenCost() {
     latestOutsideBand,
     parseError: getParseErrorDayCounts(errorState),
   });
-  const spendVerdict = getSpendVerdictC({ hot: hotVerdict, latestOutsideBand, kpiStatus: kpiState.status });
 
   useEffectC(() => {
     const ctrl = new AbortController();
@@ -158,54 +157,50 @@ function ScreenCost() {
         />
       </div>
 
-      {sourceFailures.banner && (
-        <div className="mb-4">
+      {/* Decision tier — the facts a spend decision is made on, in priority order; the spend state reads on tile 1 or the lane */}
+      <div className="flex flex-col gap-section">
+        {sourceFailures.banner && (
           <PageErrorBanner sources={sourceFailures.banner.sources} error={sourceFailures.banner.error} onRetry={triggerRefresh}
             isBusy={isRetrying} focusTargetId={COST_REGION_IDS.kpis}/>
-        </div>
-      )}
+        )}
 
-      <PageVerdict id="cost-verdict" tone={spendVerdict.tone} label={spendVerdict.label} freshness={freshnessInput} className="mb-4">
-        {spendVerdict.text}
-      </PageVerdict>
+        <AlarmLaneC rows={alarmRows}/>
 
-      <AlarmLaneC rows={alarmRows}/>
-
-      {/* Decision tier — the facts a spend decision is made on, in priority order. */}
-      <RefreshingRegionC id={COST_REGION_IDS.kpis} states={[kpiState, tokenState, modelState]}>
-        <KpiRowC
-          kpiState={kpiState}
-          hot={hotVerdict}
-          trendState={tokenState}
-          modelState={modelState}
-          days={days}
-          onRetry={triggerRefresh}
-          failures={sourceFailures}
-        />
-      </RefreshingRegionC>
-
-      <RefreshingRegionC id={COST_REGION_IDS.trend} states={[tokenState]}>
-        <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
-      </RefreshingRegionC>
-
-      <SplitRow ratio="1:1" layout="equal" className="mb-4">
-        <RefreshingRegionC id={COST_REGION_IDS.models} states={[modelState]}>
-          <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
+        <RefreshingRegionC id={COST_REGION_IDS.kpis} states={[kpiState, tokenState, modelState]}>
+          <KpiRowC
+            kpiState={kpiState}
+            hot={hotVerdict}
+            trendState={tokenState}
+            modelState={modelState}
+            days={days}
+            onRetry={triggerRefresh}
+            failures={sourceFailures}
+          />
         </RefreshingRegionC>
-        <RefreshingRegionC id={COST_REGION_IDS.sessions} states={[sessionState]}>
-          <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
+
+        <RefreshingRegionC id={COST_REGION_IDS.trend} states={[tokenState]}>
+          <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
         </RefreshingRegionC>
-      </SplitRow>
+
+        <SplitRow ratio="1:1" layout="equal">
+          <RefreshingRegionC id={COST_REGION_IDS.models} states={[modelState]}>
+            <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
+          </RefreshingRegionC>
+          <RefreshingRegionC id={COST_REGION_IDS.sessions} states={[sessionState]}>
+            <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
+          </RefreshingRegionC>
+        </SplitRow>
+      </div>
 
       {/* Instrumentation tier — status summaries, open by default and foldable. */}
       <InstrumentationTierC>
         <Disclosure kind="status" level={3} title="Token volume" sub="By category, with cache hit rate"
-          className="cost-inst mb-4">
+          className="cost-inst">
           <RefreshingRegionC id={COST_REGION_IDS.tokens} states={[tokenState]}>
             <TokenStackedBody state={tokenState} days={days} onRetry={triggerRefresh}
               failures={sourceFailures}/>
           </RefreshingRegionC>
-          <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-4">
+          <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-block">
             <CacheHitBody state={cacheState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
           </RefreshingRegionC>
         </Disclosure>
@@ -270,9 +265,9 @@ function InstrumentationTierC({ children }) {
   const { SectionLabel } = window.UI;
 
   return (
-    <section aria-labelledby="cost-instrumentation" className="mb-4">
-      <SectionLabel id="cost-instrumentation" className="mb-2">Instrumentation</SectionLabel>
-      {children}
+    <section aria-labelledby="cost-instrumentation" className="mt-group-above">
+      <SectionLabel id="cost-instrumentation" className="mb-group-below">Instrumentation</SectionLabel>
+      <div className="flex flex-col gap-section">{children}</div>
     </section>
   );
 }
@@ -310,28 +305,6 @@ function getHotToneC(hot, latestOutsideBand) {
 // The verdict lives in one place: the lane when a hot trigger fires it, tile 1 otherwise.
 function getTileVerdictTextC(hot) {
   return hot.isHot || hot.isPaceHot ? 'Running hot — see the alert above.' : hot.verdict;
-}
-
-/**
- * Page headline — names the spend state only; the figures stay in the lane or on tile 1.
- * Tone mirrors the lane's hot row, so the two never disagree. No budget exists in the payload → no over-budget state.
- */
-function getSpendVerdictC({ hot, latestOutsideBand, kpiStatus }) {
-  const cut = `${HOT_RATIO_CUT}x the 7-day daily normal`;
-
-  if (kpiStatus !== 'ready' || hot.ratio === null) {
-    const reason = kpiStatus === 'loading' ? 'Reading today\'s spend.'
-      : kpiStatus === 'error' ? 'Today\'s spend is unavailable.' : 'No 7-day cost to compare today against.';
-    return { tone: 'neutral', text: reason };
-  }
-
-  const tone = getHotToneC(hot, latestOutsideBand);
-
-  if (tone === null) return { tone: 'ok', label: 'On pace', text: `Today's spend is under ${cut}.` };
-  const text = hot.isHot ? `Today's spend has passed ${cut}.`
-    : hot.isPaceHot ? 'Today is running above normal — the alert below has the figures.'
-    : 'The newest day ran outside its own normal band.';
-  return { tone, label: 'Above normal', text };
 }
 
 function getHotAlarmText(hot, latestOutsideBand) {
@@ -378,7 +351,7 @@ function AlarmLaneC({ rows }) {
   }
 
   return (
-    <div className="mb-4 border-y border-line">
+    <div className="border-y border-line">
       {rows.map((r) => (
         <div key={r.key} role="alert" className="alarm-row" data-tone={r.tone}>
           <span className="alarm-row-glyph"><Icon name="warn" size={16}/></span>
@@ -560,9 +533,9 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
       {/* Payload failure is reported at the owning group — the KPI payload feeds tiles 1 and 3. */}
       {getRegionView(kpiState) === 'error' && (
         <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
-          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures} className="mb-4"/>
+          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
       )}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-card mb-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-card">
         <CostTileC
           id="cost-tile-today"
           label="Today vs. normal"
@@ -593,8 +566,8 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
           status={getTileStatus(kpiState, costPerDone, false)}
           value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
           hint={`7-day cost / ${formatIntC(doneCount)} finished`}
-          unavailableNote="No finished task in the last 7 days."
-          foot={<div className="cost-foot"><window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens></div>}/>
+          info={<window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens>}
+          unavailableNote="No finished task in the last 7 days."/>
 
         <CostTileC
           id="cost-tile-cache"
@@ -723,15 +696,14 @@ function TrendDeltaC({ delta, prior, noun }) {
  * the very series already drawn.
  */
 function CostTrendCard({ state, days, failures, onRetry }) {
-  const { CardHead } = window.UI;
+  const { Card } = window.UI;
   const [bandOn, setBandOn] = useStateC(false);
 
   const points = getTrendPoints(state);
   const bandAvailable = points.length >= ROLLING_WINDOW;
 
   return (
-    <div className="card mb-4">
-      <CardHead
+    <Card
         title="Cost over time"
         right={
           <button
@@ -745,12 +717,9 @@ function CostTrendCard({ state, days, failures, onRetry }) {
             onClick={() => setBandOn((v) => !v)}>
             Normal range
           </button>
-        }
-      />
-      <div className="card-body">
-        <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry} failures={failures}/>
-      </div>
-    </div>
+        }>
+      <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry} failures={failures}/>
+    </Card>
   );
 }
 
@@ -1434,7 +1403,7 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
 
   return (
     <>
-      {/* the body is flush for the ledger → the share block and the footnote take the card padding themselves */}
+      {/* the body is flush for the ledger → the share block takes the card padding itself */}
       <div className="px-4 pt-4">
         <SectionLabel level={3} className="mb-2">By token type</SectionLabel>
         <CategoryShareRowC rows={computeCategoryCostRows(modelRows)}/>
@@ -1465,8 +1434,6 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
           </tr>
         </tfoot>
       </table>
-      {/* Named gap, never proxied — the per-agent gap sits behind the card's info button. */}
-      <div className="cost-foot px-4 pt-2 pb-4">Multi-model sessions count once per model</div>
     </>
   );
 }
@@ -1783,8 +1750,8 @@ function getSpendConcentration(sessions, topN) {
 function getSpendConcentrationText(concentration, sessionCount) {
   if (!concentration) return null;
   const pct = Math.round(concentration.share * 100);
-  const who = concentration.count === 1 ? 'Top 1' : `Top ${concentration.count}`;
-  return `${who} of ${formatIntC(sessionCount)} = ${pct}% of spend`;
+  const who = concentration.count === 1 ? 'The costliest session' : `The costliest ${concentration.count} sessions`;
+  return `${who} of ${formatIntC(sessionCount)} ${concentration.count === 1 ? 'holds' : 'hold'} ${pct}% of the spend in this window.`;
 }
 
 function SessionDistributionCard({ state, days, failures, onRetry }) {
@@ -1805,9 +1772,9 @@ function SessionDistributionCard({ state, days, failures, onRetry }) {
       size={CARD_SIZE.SESSION}
       title="Most expensive sessions"
       isFlush={window.UI.hasRegionRows(state, rollup.top)}
-      sub={state.status === 'ready'
-        ? concentrationText || `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}`
-        : undefined}
+      sub={state.status === 'ready' ? `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}` : undefined}
+      info={concentrationText ?? undefined}
+      infoLabel="How spend concentrates"
       right={truncated
         ? <Pill className="pill--ctl-h" title={`Showing ${sessions.length} of ${totalCount} sessions`}>{`${sessions.length} of ${totalCount} loaded`}</Pill>
         : null}

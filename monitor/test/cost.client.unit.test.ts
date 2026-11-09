@@ -131,11 +131,6 @@ interface CostHelpers {
     nowMs: number,
   ) => ReadonlyArray<readonly [string, string]>;
   getTileVerdictTextC: (hot: HotVerdict) => string;
-  getSpendVerdictC: (input: {
-    hot: HotVerdict;
-    latestOutsideBand: boolean;
-    kpiStatus: string;
-  }) => { tone: string; label: string; text: string };
   getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
   markPartialDay: (rows: ReadonlyArray<{ actual: number }>) => ReadonlyArray<{
     actual: number;
@@ -698,41 +693,8 @@ test("the running-hot sentence is stated once — in the lane when it fires, on 
     const hot = { ...CALM, verdict, ...delta };
     const laneTexts = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
       .map((r) => r.text);
-    const pageVerdict = cost.getSpendVerdictC({ hot, latestOutsideBand: outsideBand, kpiStatus: "ready" }).text;
-    assert.ok(!pageVerdict.includes(verdict), `${name}: the page verdict names the state, never the figures`);
     const places = [...laneTexts, cost.getTileVerdictTextC(hot)].filter((t) => t.includes(verdict)).length;
     assert.equal(places, 1, name);
-  }
-});
-
-test("the page verdict carries the lane's hot tone when it fires, and reads on pace when nothing fires", () => {
-  const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
-    ["calm", {}, false],
-    ["so-far ratio", { isHot: true }, false],
-    ["pace only", { isPaceHot: true }, false],
-    ["outlier day only", {}, true],
-    ["so-far and pace", { isHot: true, isPaceHot: true }, true],
-  ];
-  for (const [name, delta, outsideBand] of cases) {
-    const hot = { ...CALM, ...delta };
-    const hotRow = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
-      .find((r) => r.key === "hot");
-    const verdict = cost.getSpendVerdictC({ hot, latestOutsideBand: outsideBand, kpiStatus: "ready" });
-    assert.equal(verdict.tone, hotRow ? hotRow.tone : "ok", name);
-    assert.equal(verdict.label, hotRow ? "Above normal" : "On pace", name);
-  }
-});
-
-test("the page verdict claims no spend state without a measured normal", () => {
-  const rows: ReadonlyArray<{ name: string; hot: HotVerdict; kpiStatus: string }> = [
-    { name: "kpi still loading", hot: CALM, kpiStatus: "loading" },
-    { name: "kpi failed", hot: { ...CALM, isHot: true }, kpiStatus: "error" },
-    { name: "no 7-day normal", hot: { ...CALM, ratio: null, normalDaily: null }, kpiStatus: "ready" },
-  ];
-  for (const row of rows) {
-    const verdict = cost.getSpendVerdictC({ hot: row.hot, latestOutsideBand: true, kpiStatus: row.kpiStatus });
-    assert.equal(verdict.tone, "neutral", row.name);
-    assert.ok(verdict.text.length > 0, `${row.name}: the line still says why there is no verdict`);
   }
 });
 
@@ -1065,14 +1027,14 @@ describe("the page banner's Retry hands focus to a region card every page state 
   ];
 
   for (const row of rows) {
-    test(`${row.name}: the fallback card renders once, outside the banner and the page verdict`, async () => {
+    test(`${row.name}: the fallback card renders once, outside the banner`, async () => {
       const [banner] = findNodes(await renderInState(failed), (n) => n.props.atom === "PageErrorBanner");
       const fallbackId = banner.props.focusTargetId;
       // host nodes and stubbed atoms only — a screen component also carries the id it passes down
       const targets = findNodes(await renderInState(row.state), (n) => /^[a-z]/.test(n.type) && n.props.id === fallbackId);
 
       assert.equal(targets.length, 1, `focus target ${String(fallbackId)} is one rendered element`);
-      assert.ok(!["PageErrorBanner", "PageVerdict"].includes(String(targets[0].props.atom)), "never the banner that unmounts on recovery, never the retiring page verdict");
+      assert.notEqual(targets[0].props.atom, "PageErrorBanner", "never the banner that unmounts on recovery");
     });
   }
 });
@@ -1102,7 +1064,7 @@ describe("the cost banner reads Retrying only while a failed region is re-read",
   }
 });
 
-test("the page verdict over a warm error reads Last known, never the all-clear", async () => {
+test("the header stamp over a warm error reads stale, and no page verdict restates it", async () => {
   const ui = cost.window.UI;
   const now = Date.parse(NOON_UTC);
   const readAt = new Date(now - 60_000).toISOString();
@@ -1113,11 +1075,10 @@ test("the page verdict over a warm error reads Last known, never the all-clear",
     UI: getAtomUi({ INITIAL_REGION_STATE: warmError }), React: react,
   })) as RenderModule;
   const tree = renderIn(mod, "ScreenCost", {});
-  const [verdict] = findNodes(tree, (n) => n.props.id === "cost-verdict");
-  const props = verdict.props as { tone: string; label?: string; freshness?: Record<string, unknown> };
-  const shown = ui.getFreshnessVerdict({ ...props.freshness, tone: props.tone, label: props.label, now });
-  assert.match(String(shown.label), /^Last known/, `the verdict reads ${String(shown.label)}`);
-  assert.notEqual(shown.tone, "ok", "a held read under a failure never reads healthy");
+  const [header] = findNodes(tree, (n) => n.props.atom === "PageHeader");
+  const stamp = header.props.freshness as { props: { at: string | null; regions: readonly PanelState[] } };
+  assert.equal(ui.getFreshnessState({ ...stamp.props, now }), "stale", "a held read under a failure is never fresh");
+  assert.deepEqual(findNodes(tree, (n) => n.props.atom === "PageVerdict"), [], "the stamp is the page's one freshness fact");
 });
 
 // every Recharts part renders as a host node named after it, so a chart's wrapper and data are inspectable
@@ -1290,19 +1251,25 @@ test("the KPI band's 7-day sentences (today hint and verdict, per-task hint and 
   }
 });
 
-test("the window-cost tile keeps its counting rule behind an info trigger described by the tile label", async () => {
+test("each tile with a counting rule keeps it behind an info trigger described by the tile label", async () => {
   const mod = await loadCostRender();
   const kpi = getKpiAtRatio(1, 1);
   const tree = renderIn(mod, "KpiRowC", {
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
     modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
   });
+  const rules = [
+    { label: "Cost, last 30 days", rule: /recorded cost/i },
+    { label: "Cost per finished task", rule: /fixed 7-day window/i },
+  ];
   const infos = findNodes(tree, (n) => n.props.atom === "CardInfo");
-  assert.equal(infos.length, 1, "one tile carries a counting rule");
-  const [info] = infos;
-  const [label] = findNodes(tree, (n) => n.props.id === info.props.describedBy);
-  assert.equal(label ? collectText(label) : null, "Cost, last 30 days");
-  assert.match(collectText(info), /recorded cost/i);
+  assert.equal(infos.length, rules.length, "only the tiles with a counting rule carry an info trigger");
+  for (const info of infos) {
+    const [label] = findNodes(tree, (n) => n.props.id === info.props.describedBy);
+    const row = rules.find((r) => r.label === (label ? collectText(label) : null));
+    assert.ok(row, `an info trigger described by ${label ? collectText(label) : "nothing"}`);
+    assert.match(collectText(info), row.rule, row.label);
+  }
 });
 
 // one row per chart the page draws
@@ -1375,8 +1342,8 @@ test("the token legend is printed once", async () => {
 test("the trend card names its band in plain words and keeps its live echo off screen", async () => {
   const mod = await loadCostRender();
   const tree = renderIn(mod, "CostTrendCard", { state: TREND_WITH_GAP, days: 30, onRetry: () => {} });
-  const [head] = findNodes(tree, (n) => n.props.atom === "CardHead");
-  const toggle = renderScreen(head.props.right) as RenderedNode;
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+  const toggle = renderScreen(card.props.right) as RenderedNode;
   assert.doesNotMatch(collectText(toggle) + String(toggle.props.title ?? ""), /σ/);
   const echoes = findNodes(tree, (n) => n.props["aria-live"] === "polite");
   assert.ok(echoes.length > 0);
