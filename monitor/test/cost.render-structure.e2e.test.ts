@@ -47,6 +47,8 @@ interface CostFixture {
   parseErrorRatio: number;
   // every cost payload route answers 503 → a cold shared outage, nothing ever loaded
   isOutage?: boolean;
+  // every by-model row carries tokens but no priced cost → the share bar yields to its footnote
+  isLedgerUnpriced?: boolean;
 }
 
 // today = ratio x the 7-day daily normal; the burn rate extrapolates to the same ratio.
@@ -116,7 +118,7 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
   app.get("/api/cost/by-model", async () => ({
     rows: LEDGER_MODELS.map((model, i) => ({
       model,
-      cost_usd: 80 - i * 8,
+      cost_usd: fixture.isLedgerUnpriced ? 0 : 80 - i * 8,
       session_count: 12,
       input_tokens: 10_000,
       output_tokens: 5000,
@@ -324,8 +326,8 @@ describe("calm fixture — nothing is running hot", () => {
           inset: [Math.round(tableBox.left - cardBox.left - border), Math.round(cardBox.right - border - tableBox.right)],
           edge: [getComputedStyle(firstCell).paddingLeft, getComputedStyle(lastCell).paddingRight],
           headCase: head.textTransform,
-          // the share block, the turn aggregates and the footnote inset themselves to the card padding
-          contentInsets: Array.from(card.querySelectorAll(".section-label, .cost-foot, dl"))
+          // the section labels, the turn aggregates and the footnote inset themselves to the card padding
+          contentInsets: Array.from(card.querySelectorAll('.section-label, [role="note"], dl'))
             .filter((el) => el.closest("thead, .card-head") === null)
             .map((el) => Math.round(el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft) - cardBox.left - border)),
         };
@@ -667,5 +669,37 @@ describe("cold outage — every cost payload fails before any has loaded", () =>
     assert.ok(settled, `covered slots: ${counts.covered.join(", ")}`);
     assert.equal(counts.banners, 1);
     assert.equal(counts.retries, 1, "the banner's Retry is the only one");
+  });
+});
+
+describe("unpriced ledger — the models carry tokens but no priced cost", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext({ ...getFixture(1, 0), isLedgerUnpriced: true });
+  });
+
+  after(async () => {
+    await closeRenderContext(ctx);
+  });
+
+  test("the category footnote stands in for the share bar and keeps the card padding beside the flush ledger", async () => {
+    await ctx.page.waitForSelector('.cost-screen .card [role="note"]', { timeout: 30_000 });
+    const notes = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll('.cost-screen .card [role="note"]')).flatMap((note) => {
+        const card = note.closest(".card");
+        if (card === null || card.querySelector("table.tbl") === null) return [];
+        const cardLeft = card.getBoundingClientRect().left + parseFloat(getComputedStyle(card).borderLeftWidth);
+        return [{
+          text: (note.textContent || "").trim(),
+          inset: Math.round(note.getBoundingClientRect().left + parseFloat(getComputedStyle(note).paddingLeft) - cardLeft),
+          hasShareBar: card.querySelector('[role="img"]') !== null,
+        }];
+      }),
+    );
+    assert.equal(notes.length, 1, `one footnote, in the model ledger card: ${JSON.stringify(notes)}`);
+    assert.match(notes[0]!.text, /^No priced token cost in this window/);
+    assert.equal(notes[0]!.hasShareBar, false, "the footnote replaces the share bar, never sits beside it");
+    assert.equal(notes[0]!.inset, 16, "the footnote insets to the card padding like the section labels");
   });
 });

@@ -1241,7 +1241,7 @@ function computeCategoryCostRows(modelCostRows) {
 function CategoryShareRowC({ rows }) {
   const total = rows.reduce((s, r) => s + r.cost, 0);
   if (total <= 0) {
-    return <div className="fs-meta text-dim">No priced token cost in this window — category split unavailable.</div>;
+    return <div role="note" className="fs-meta text-dim">No priced token cost in this window — category split unavailable.</div>;
   }
 
   return (
