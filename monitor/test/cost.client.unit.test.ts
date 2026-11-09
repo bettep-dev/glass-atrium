@@ -665,27 +665,23 @@ test("the session drawer's task-results link does not promise a session-scoped v
     type,
     props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
   });
-  const collectButtons = (node: unknown, out: DrawerElement[]): DrawerElement[] => {
+  const collectLinks = (node: unknown, out: DrawerElement[]): DrawerElement[] => {
     if (Array.isArray(node)) {
-      for (const child of node) collectButtons(child, out);
+      for (const child of node) collectLinks(child, out);
       return out;
     }
     if (typeof node !== "object" || node === null || !("props" in node)) return out;
     const el = node as DrawerElement;
-    if (el.type === "button") out.push(el);
-    return collectButtons(el.props.children, out);
+    if (typeof el.props.href === "string") out.push(el);
+    return collectLinks(el.props.children, out);
   };
-  const navCalls: unknown[][] = [];
   const session = { session_id: "12345678-9abc-4def-8123-456789abcdef", total_cost_usd: 1 };
-  const drawer = sandbox.SessionDetailDrawerC({ session, onClose: () => {}, onNav: (...args: unknown[]) => navCalls.push(args) });
+  const drawer = sandbox.SessionDetailDrawerC({ session, onClose: () => {} });
 
-  const [link] = collectButtons(drawer, []).filter((b) => {
-    const before = navCalls.length;
-    (b.props.onClick as () => void)();
-    return navCalls.length > before;
-  });
+  const links = collectLinks(drawer, []);
+  assert.deepEqual(links.map((l) => l.props.href), ["#outcomes"], "the one destination carries no session scope");
+  const [link] = links;
   assert.ok(link, "the drawer still links to Task results");
-  assert.deepEqual(navCalls, [["outcomes"]], "the destination carries no session scope");
   assert.match(String(link.props.children), /^All task results/, "an unscoped destination is labelled as the whole list");
 });
 
@@ -1016,10 +1012,10 @@ test("a cold-failed region keeps its error card mounted and busy while its Retry
     "CostTrendBody", "TokenStackedBody", "ModelCostBody", "CacheHitBody", "SessionDistributionBody", "ParseErrorBody", "TurnStatsBody",
   ];
   // the ids the page renders on its region wrappers, which stay mounted through any recovery
-  const page = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const page = renderIn(mod, "ScreenCost", {});
   const regionIds = new Set(findNodes(page, (n) => n.type === "div" && typeof n.props.id === "string").map((n) => n.props.id));
   for (const name of bodies) {
-    const tree = renderIn(mod, name, { state: retrying, days: 30, onRetry: () => {}, onNav: () => {} });
+    const tree = renderIn(mod, name, { state: retrying, days: 30, onRetry: () => {} });
     const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
     assert.equal(cards.length, 1, `${name} keeps its error card`);
     assert.equal(findNodes(tree, (n) => n.props.atom === "LoadingPlaceholder").length, 0, `${name} never swaps in a loader`);
@@ -1048,7 +1044,7 @@ test("every cost region error card carries the page Retry, so a region the banne
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi({ INITIAL_REGION_STATE: failed }), React: createReactStub(),
   })) as RenderModule;
-  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const tree = renderIn(mod, "ScreenCost", {});
 
   assert.equal(findNodes(tree, (n) => n.props.atom === "PageErrorBanner").length, 1, "the shared outage shows its banner");
   const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
@@ -1061,7 +1057,7 @@ test("every cost region error card carries the page Retry, so a region the banne
 describe("the page banner's Retry hands focus to a region card every page state renders", () => {
   const renderInState = async (state: PanelState) => renderIn((await loadScreenModule(COST_SRC, {
     UI: getAtomUi({ INITIAL_REGION_STATE: state }), React: createReactStub(),
-  })) as RenderModule, "ScreenCost", { onNav: () => {} });
+  })) as RenderModule, "ScreenCost", {});
   const rows = [
     { name: "loading", state: loading },
     { name: "error", state: failed },
@@ -1090,7 +1086,7 @@ function renderCostWithRegions(regions: PanelState[]): Promise<RenderedNode> {
     useState: (initial: unknown) => [initial === regionInitial ? (queue.shift() ?? loading) : initial, () => undefined],
   };
   return loadScreenModule(COST_SRC, { UI: getAtomUi({ INITIAL_REGION_STATE: regionInitial }), React: react })
-    .then((mod) => renderIn(mod as RenderModule, "ScreenCost", { onNav: () => {} }));
+    .then((mod) => renderIn(mod as RenderModule, "ScreenCost", {}));
 }
 
 describe("the cost banner reads Retrying only while a failed region is re-read", () => {
@@ -1116,7 +1112,7 @@ test("the page verdict over a warm error reads Last known, never the all-clear",
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi({ INITIAL_REGION_STATE: warmError }), React: react,
   })) as RenderModule;
-  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const tree = renderIn(mod, "ScreenCost", {});
   const [verdict] = findNodes(tree, (n) => n.props.id === "cost-verdict");
   const props = verdict.props as { tone: string; label?: string; freshness?: Record<string, unknown> };
   const shown = ui.getFreshnessVerdict({ ...props.freshness, tone: props.tone, label: props.label, now });
@@ -1361,14 +1357,14 @@ test("a no-data day is a gap in both trend charts and in their names, never $0",
 test("the pace figure is stated once on the page", async () => {
   const state = ready({ ...getKpiAtRatio(1, 1.5), points: (TREND_WITH_GAP.data as { points: unknown[] }).points, rows: [] });
   const mod = await loadCostRender({ INITIAL_REGION_STATE: state });
-  const text = collectText(renderIn(mod, "ScreenCost", { onNav: () => {} }));
+  const text = collectText(renderIn(mod, "ScreenCost", {}));
   assert.equal(text.match(/\bpace\b|heading past/gi)?.length ?? 0, 1, text);
 });
 
 test("the token legend is printed once", async () => {
   const state = ready({ ...getKpiAtRatio(1, 1), points: (TREND_WITH_GAP.data as { points: unknown[] }).points, rows: [] });
   const mod = await loadCostRender({ INITIAL_REGION_STATE: state });
-  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const tree = renderIn(mod, "ScreenCost", {});
   const [volume] = findNodes(tree, (n) => n.props.atom === "Disclosure" && n.props.title === "Token volume");
   const swatches = findNodes(volume, (n) => String(n.props.className ?? "").includes("rounded-sm") && n.props.style !== undefined);
   const colors = swatches.map((n) => String((n.props.style as { background?: string }).background));
@@ -1452,7 +1448,7 @@ describe("the card pairs share one edge", () => {
 
   test("every pair stretches as peers, and the one lg override names the same split as its ratio", async () => {
     const mod = await loadCostRender();
-    const rows = findNodes(renderIn(mod, "ScreenCost", { onNav: () => {} }), (n) => n.props.atom === "SplitRow");
+    const rows = findNodes(renderIn(mod, "ScreenCost", {}), (n) => n.props.atom === "SplitRow");
     assert.equal(rows.length, 2, "the decision pair and the instrumentation pair");
     assert.deepEqual(rows.map((row) => row.props.layout), ["equal", "equal"]);
     const overrides = rows.flatMap((row) => {
@@ -1469,7 +1465,7 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
       getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
     })) as RenderModule;
-    const tree = renderIn(mod, name, { state: ready(data), days: 30, onRetry: () => {}, onNav: () => {} });
+    const tree = renderIn(mod, name, { state: ready(data), days: 30, onRetry: () => {} });
     const [card] = findNodes(tree, (n) => n.props.atom === "Card");
     assert.ok(card, `${name} renders the shared Card`);
     return card;
@@ -1510,9 +1506,36 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
   ]) {
     test(`models — ${name} ledger carries no foot`, async () => {
       const mod = await loadCostRender();
-      const [card] = findNodes(renderIn(mod, "ModelCostCard", { state, days: 30, onRetry: () => {}, onNav: () => {} }), (n) => n.props.atom === "Card");
+      const [card] = findNodes(renderIn(mod, "ModelCostCard", { state, days: 30, onRetry: () => {} }), (n) => n.props.atom === "Card");
       assert.ok(card, "ModelCostCard renders the shared Card");
       assert.equal(Boolean(card.props.foot), false, "no foot strip without a rolled-up row");
+    });
+  }
+
+  const tokens = { input_tokens: 10, output_tokens: 10, cache_read_tokens: 10, cache_creation_tokens: 10 };
+  const priced = { model: "claude-opus-5-5", cost_usd: 30, session_count: 4, ...tokens };
+  const unattributedCases = [
+    {
+      name: "both unattributed buckets fold into one row — summed cost, no summed session count",
+      rows: [priced, { model: "unknown", cost_usd: 2.5, session_count: 3, ...tokens }, { model: "<synthetic>", cost_usd: 1.25, session_count: 1, ...tokens }],
+      cost: "3.75", sessions: "—",
+    },
+    {
+      name: "a lone unattributed bucket keeps its own session count",
+      rows: [priced, { model: "unknown", cost_usd: 2.5, session_count: 3, ...tokens }],
+      cost: "2.50", sessions: "3",
+    },
+  ];
+  for (const row of unattributedCases) {
+    test(`models — ${row.name}`, async () => {
+      const card = await getCard("ModelCostCard", { rows: row.rows });
+      const ledgerRows = findNodes(card, (n) => n.type === "tr" && findNodes(n, (c) => c.type === "button").length > 0);
+      const unattributed = ledgerRows.filter((tr) => collectText(tr).includes("Unattributed"));
+      assert.equal(ledgerRows.length, 2, "one priced row plus one Unattributed row");
+      assert.equal(unattributed.length, 1, "Unattributed is stated once");
+      const cells = findNodes(unattributed[0]!, (n) => n.type === "td").map((td) => collectText(td));
+      assert.ok(cells[1]!.includes(row.cost), `cost cell ${cells[1]}`);
+      assert.equal(cells[2], row.sessions);
     });
   }
 

@@ -55,7 +55,7 @@ const PARSE_ERROR_CRIT_THRESHOLD = 0.05;
 const ROLLING_WINDOW = 7;
 const ANOMALY_SIGMA = 2;
 
-function ScreenCost({ onNav }) {
+function ScreenCost() {
   const {
     PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE, getRegionSummary,
     PageVerdict, SplitRow, Disclosure,
@@ -190,10 +190,10 @@ function ScreenCost({ onNav }) {
 
       <SplitRow ratio="1:1" layout="equal" className="mb-4">
         <RefreshingRegionC id={COST_REGION_IDS.models} states={[modelState]}>
-          <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} failures={sourceFailures} onNav={onNav}/>
+          <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
         </RefreshingRegionC>
         <RefreshingRegionC id={COST_REGION_IDS.sessions} states={[sessionState]}>
-          <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh} failures={sourceFailures} onNav={onNav}/>
+          <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
         </RefreshingRegionC>
       </SplitRow>
 
@@ -1332,8 +1332,8 @@ function isUnattributedModel(model) {
   return UNATTRIBUTED_MODEL_KEYS.has(model);
 }
 
-function ModelCostCard({ state, days, failures, onRetry, onNav }) {
-  const { Badge, Card } = window.UI;
+function ModelCostCard({ state, days, failures, onRetry }) {
+  const { Card, Link } = window.UI;
   const [isShowingAll, setShowingAll] = useStateC(false);
 
   const rows = state.status === 'ready' ? (state.data?.rows ?? []) : [];
@@ -1344,28 +1344,26 @@ function ModelCostCard({ state, days, failures, onRetry, onNav }) {
   // getTokenRate = exact + family-prefix → date-suffixed id 는 family 단가로 해소되므로 실제 miss 만 카운트.
   const fallbackCount = rows.reduce(
     (s, r) => s + (!isUnattributedModel(r.model) && !window.getTokenRate(r.model) ? 1 : 0), 0);
-  const { other } = rollupModelRows(buildModelCostRows(rows), getListBudgetC(CARD_SIZE.MODEL));
+  const modelRows = buildModelCostRows(rows);
+  const { other } = rollupModelRows(modelRows, getListBudgetC(CARD_SIZE.MODEL));
+  const fallbackNote = fallbackCount > 0
+    ? ` est. rate — ${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price, so the cost split falls back to the token-count ratio.`
+    : '';
 
   return (
     <Card
       size={CARD_SIZE.MODEL}
       title="Cost by model"
       isFlush={window.UI.hasRegionRows(state, state.data?.rows ?? [])}
-      info="Cost per agent is not available — cost events carry a model, not an agent. A session using several models counts under each, so the Total row carries no session count."
+      info={`Cost per agent is not available — cost events carry a model, not an agent. A session using several models counts under each, so the Total row carries no session count.${fallbackNote}`}
       foot={other && (
-        <ModelCostFootC other={other} modelCount={rows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+        <ModelCostFootC other={other} modelCount={modelRows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
       )}
       right={
           <div className="flex items-center gap-2">
-            {fallbackCount > 0 && (
-              <Badge role="metadata" className="pill--ctl-h"
-                title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
-                {fallbackCount} est. rate
-              </Badge>
-            )}
-            <button type="button" className="btn sm" onClick={() => onNav('model-config')}>
-              Models &amp; budgets ›
-            </button>
+            {/* the reason sits behind the card's ⓘ → the attribute stays plain text */}
+            {fallbackCount > 0 && <span className="fs-meta text-dim">{fallbackCount} est. rate</span>}
+            <Link href="#model-config">Models &amp; budgets</Link>
           </div>
         }>
       <ModelCostBody state={state} days={days} onRetry={onRetry} failures={failures} isShowingAll={isShowingAll}/>
@@ -1498,7 +1496,7 @@ function ModelCostRow({ r }) {
           </button>
         </td>
         <td className="num">{formatUsdC(r.cost_usd)}</td>
-        <td className="num">{formatIntC(r.session_count)}</td>
+        <td className={r.session_count === null ? 'num text-dim' : 'num'}>{r.session_count === null ? '—' : formatIntC(r.session_count)}</td>
         <td className="num text-dim">{avgPerSession === null ? '—' : formatUsdC(avgPerSession)}</td>
       </tr>
       {expanded && (
@@ -1522,7 +1520,7 @@ function getModelTokenDetail(r) {
 // 토큰 COUNT 비율은 카테고리간 단가차(output vs cache_read ~50배) 무시 → output 과소표시 → 단가 가중으로 교정.
 // 단가 미상 모델(카탈로그 키 부재) → rate=1 = COUNT 비율 폴백 + rateFallback 마킹 (silent degrade 차단, F28).
 function buildModelCostRows(rows) {
-  return rows.map((r) => {
+  return mergeUnattributedRowsC(rows.map((r) => {
     const inputN  = Number(r.input_tokens) || 0;
     const outputN = Number(r.output_tokens) || 0;
     const cacheR  = Number(r.cache_read_tokens) || 0;
@@ -1558,7 +1556,29 @@ function buildModelCostRows(rows) {
       cost_cache_read: split(weights.cache_read),
       cost_cache_creation: split(weights.cache_creation),
     };
-  });
+  }));
+}
+
+const SUMMED_MODEL_KEYS = Object.freeze([
+  'cost_usd', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens',
+  'cost_input', 'cost_output', 'cost_cache_read', 'cost_cache_creation',
+]);
+
+/**
+ * Every unattributed bucket reads "Unattributed" → one ledger row.
+ * A session can sit in several buckets → a summed count would overcount, so the merged row carries none.
+ */
+function mergeUnattributedRowsC(modelRows) {
+  const unattributed = modelRows.filter((r) => r.unattributed);
+  if (unattributed.length < 2) return modelRows;
+  const merged = {
+    ...unattributed[0],
+    fullModel: unattributed.map((r) => r.fullModel).join(' + '),
+    rateFallback: unattributed.some((r) => r.rateFallback),
+    session_count: null,
+  };
+  for (const key of SUMMED_MODEL_KEYS) merged[key] = unattributed.reduce((sum, r) => sum + r[key], 0);
+  return [...modelRows.filter((r) => !r.unattributed), merged];
 }
 
 // C2 결정(차트→테이블 전환 KEEP)으로 ModelCostChart / ModelCostTooltipC 제거 — 모델별 비용은
@@ -1768,7 +1788,7 @@ function getSpendConcentrationText(concentration, sessionCount) {
   return `${who} of ${formatIntC(sessionCount)} = ${pct}% of spend`;
 }
 
-function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
+function SessionDistributionCard({ state, days, failures, onRetry }) {
   const { Card, Pill } = window.UI;
   const [histogramOpen, setHistogramOpen] = useStateC(false);
   const truncated = state.status === 'ready' && state.data?.truncated === true;
@@ -1803,7 +1823,7 @@ function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
           </button>
         </>
       )}>
-      <SessionDistributionBody state={state} rows={rollup.top} days={days} onRetry={onRetry} failures={failures} onNav={onNav}/>
+      <SessionDistributionBody state={state} rows={rollup.top} days={days} onRetry={onRetry} failures={failures}/>
       {histogramOpen && (
         <SessionHistogramDrawerC bins={bins} total={rollup.total} onClose={() => setHistogramOpen(false)}/>
       )}
@@ -1820,7 +1840,7 @@ const SESSION_COLUMNS = [
 ];
 
 // rows = the card's budgeted top sessions; the rest is the card foot's Other line.
-function SessionDistributionBody({ state, rows = [], days, failures, onRetry, onNav }) {
+function SessionDistributionBody({ state, rows = [], days, failures, onRetry }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure, Table, getRowFocusProps } = window.UI;
   const [openSession, setOpenSession] = useStateC(null);
   const [activeRow, setActiveRow] = useStateC(0);
@@ -1849,7 +1869,7 @@ function SessionDistributionBody({ state, rows = [], days, failures, onRetry, on
         ))}
       </Table>
       {openSession && (
-        <SessionDetailDrawerC session={openSession} onClose={() => setOpenSession(null)} onNav={onNav}/>
+        <SessionDetailDrawerC session={openSession} onClose={() => setOpenSession(null)}/>
       )}
     </>
   );
@@ -1914,8 +1934,8 @@ function SessionRowC({ session, focusProps, onOpen }) {
   );
 }
 
-function SessionDetailDrawerC({ session, onClose, onNav }) {
-  const { DetailSurface } = window.UI;
+function SessionDetailDrawerC({ session, onClose }) {
+  const { DetailSurface, Link } = window.UI;
   const facts = getSessionFactsC(session, Date.now());
 
   return (
@@ -1928,10 +1948,10 @@ function SessionDetailDrawerC({ session, onClose, onNav }) {
           </React.Fragment>
         ))}
       </dl>
-      <div className="flex flex-wrap gap-2 mt-4">
+      <div className="flex flex-wrap items-center gap-2 mt-4">
         <SessionIdCopyC id={session.session_id}/>
         {/* Task results has no session filter → label the unscoped list, never imply this session's rows */}
-        <button type="button" className="btn sm" onClick={() => onNav('outcomes')}>All task results ›</button>
+        <Link href="#outcomes">All task results</Link>
       </div>
     </DetailSurface>
   );

@@ -1,5 +1,5 @@
 // Cost controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the screen's own
-// style block, rendered from the shipped components: the Cost by model head's "est. rate" pill at its control row's height, and the
+// style block, rendered from the shipped components: the Cost by model head's "est. rate" attribute and link off the control height, and the
 // model ledger's row expander as a 24 target that keeps one box collapsed, expanded and in every pointer/keyboard state (§7.16).
 // Runner: npx tsx --test test/cost.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
@@ -11,7 +11,7 @@ import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
-import { type Box, createControlProbe, QUARTER_TURN, isSameBox } from "./lib/control-probe.js";
+import { createControlProbe, QUARTER_TURN, isSameBox } from "./lib/control-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -19,7 +19,7 @@ const COST_SRC = resolve(HERE, "../public/src/screens/cost.jsx");
 
 type Component = (props: unknown) => unknown;
 const ui = await loadScreenModule(resolve(HERE, "../public/src/ui.jsx"));
-// one priced model and one the catalog does not know → the head carries the "est. rate" pill
+// one priced model and one the catalog does not know → the head carries the "est. rate" attribute
 const PRICED = "claude-opus-5-5";
 const getTokenRate = (model: string) => (model === PRICED ? { input: 5, output: 25, cache_read: 0.5, cache_creation: 6.25 } : null);
 const getScreen = (react: Record<string, unknown>) =>
@@ -29,7 +29,7 @@ const closedScreen = await getScreen(createReactStub());
 const openScreen = await getScreen({ ...createReactStub(), useState: (initial: unknown) => [initial === false ? true : initial, () => undefined] });
 const getMarkup = (screen: Record<string, unknown>, component: string, props: Record<string, unknown>): string =>
   getHtml(renderScreen((screen[component] as Component)(props)) as RenderedNode);
-const SCREEN_CSS = findNodes(renderScreen((closedScreen.ScreenCost as Component)({ onNav: () => {} })), (n) => n.type === "style")
+const SCREEN_CSS = findNodes(renderScreen((closedScreen.ScreenCost as Component)({})), (n) => n.type === "style")
   .map((n) => collectText(n))
   .join("\n");
 
@@ -55,7 +55,6 @@ const MODEL_CARD = getMarkup(closedScreen, "ModelCostCard", {
   days: 30,
   failures: {},
   onRetry: noop,
-  onNav: noop,
 });
 const LEDGER_ROW = { ...ROWS[0], fullModel: ROWS[0].model };
 const getLedger = (screen: Record<string, unknown>) =>
@@ -65,7 +64,7 @@ const getLedger = (screen: Record<string, unknown>) =>
 const SESSION_ROW = { session_id: "s-1", cost_usd: 4.2, started_at: "2026-10-29T10:00:00Z", agent_count: 2 };
 const SESSIONS_CARD = getMarkup(closedScreen, "SessionDistributionCard", {
   state: { status: "ready", data: { rows: [SESSION_ROW], truncated: true, total_session_count: 1800 }, error: null },
-  days: 30, failures: {}, onRetry: noop, onNav: noop,
+  days: 30, failures: {}, onRetry: noop,
 });
 
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
@@ -98,19 +97,25 @@ after(async () => {
   await browser?.close();
 });
 
-const centreOf = (box: Box) => box.top + box.height / 2;
-
-describe("the Cost by model head holds one control height", () => {
-  test("the est. rate pill is as tall as the Models & budgets button and shares its centre line", async () => {
-    const pill = await page.$eval("#card .pill", (el) => {
-      const { top, height } = el.getBoundingClientRect();
-      return { top, height, text: el.textContent };
+describe("the Cost by model head states est. rate as an attribute and navigates by a link", () => {
+  test("est. rate is unboxed text under the control height, and Models & budgets is a link, not a button", async () => {
+    const head = await page.$eval("#card .card-head", (el) => {
+      const attribute = [...el.querySelectorAll("span")].find((span) => span.textContent?.trim() === "1 est. rate");
+      const style = attribute ? getComputedStyle(attribute) : null;
+      return {
+        attribute: attribute && style
+          ? { height: attribute.getBoundingClientRect().height, edge: style.borderTopWidth, fill: style.backgroundColor }
+          : null,
+        link: el.querySelector('a.link[href="#model-config"]')?.textContent ?? null,
+        buttonLabels: [...el.querySelectorAll("button")].map((button) => button.textContent ?? ""),
+      };
     });
-    const button = await readBox("#card .btn.sm");
-    assert.match(pill.text ?? "", /1 est\. rate/);
-    assert.equal(pill.height, button.height, `pill ${pill.height} vs button ${button.height}`);
-    assert.equal(button.height, 32);
-    assert.ok(Math.abs(pill.top + pill.height / 2 - centreOf(button)) < 0.5, "one centre line");
+    assert.ok(head.attribute, "the head states the est. rate count");
+    assert.deepEqual([head.attribute.edge, head.attribute.fill], ["0px", "rgba(0, 0, 0, 0)"], "no edge, no fill");
+    assert.ok(head.attribute.height < 32, `attribute ${head.attribute.height} is never height-matched to a control`);
+    assert.match(head.link ?? "", /^Models & budgets/);
+    assert.ok(head.buttonLabels.every((label) => !label.includes("Models")), "navigation is no button");
+    assert.ok((await readBox("#card .card-head a.link")).height < 32, "the link keeps its inline height");
   });
 });
 
