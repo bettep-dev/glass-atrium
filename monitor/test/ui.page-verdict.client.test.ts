@@ -173,7 +173,7 @@ describe("freshness-driven verdict", () => {
     });
   }
 
-  test("stale or partial data never raises an all-clear and never hides an alarm, and the stamp agrees on state and busy", () => {
+  test("stale or partial data never raises an all-clear and never hides an alarm, and the stamp agrees on state, visibility and busy", () => {
     for (const row of rows) {
       for (const tone of ["ok", "warn", "crit"]) {
         const input = { ...row.input, now: NOW, staleAfterMs: STALE_MS };
@@ -184,7 +184,9 @@ describe("freshness-driven verdict", () => {
         const isRead = stampState !== "loading" && stampState !== "not-read";
 
         assert.equal(verdict.state, stampState, `${row.name}/${tone}: one state`);
-        assert.equal(stampRoot.props["aria-busy"] === "true", verdict.isBusy, `${row.name}/${tone}: busy agrees`);
+        // a fresh settled read hides the stamp → the stamp shows exactly the reads the verdict annotates
+        assert.equal(stampRoot !== undefined, verdict.note !== null, `${row.name}/${tone}: stamp shown exactly when the verdict carries a note`);
+        assert.equal(stampRoot?.props["aria-busy"] === "true", stampRoot !== undefined && verdict.isBusy, `${row.name}/${tone}: busy agrees`);
         if (verdict.tone === "ok") assert.ok(stampState === "fresh" || stampState === "refreshing", `${row.name}: ok only over a fresh read`);
         if (tone !== "ok" && isRead) assert.equal(verdict.tone, tone, `${row.name}/${tone}: alarm kept`);
       }

@@ -136,10 +136,11 @@ function EmptyState({ kind = 'first-use', message, hint, action, onReset, classN
   );
 }
 
-// 공용 sub-card primitive — 중첩 섹션/메트릭 타일용 작은 면. ring-1 + rounded-lg + 일정 padding.
-//   발산하던 idiom(드로어 1px-hairline · DetailMetric ring 타일 · .i-card-shadow)이 후속 wave 에서 여기로 수렴.
-//   sunken=true → bg-sunken(더 들어간 면) · 기본 bg-elev(떠오른 면). label 지정 시 uppercase --dim 섹션 라벨.
-// label sits under a card/dialog h2 → h3 by default
+/**
+ * Nested surface inside a card or dialog — sunken → bg-sunken, else bg-elev; label → h3 under the card's h2 by default.
+ * @deprecated since 1.0.0 — a card inside a card breaks the one-surface rule; removed once no screen renders it.
+ *   Replacement: content straight in the `Card` body, or a disclosure that is itself the card. {@link Card}
+ */
 function SubCard({ children, sunken=false, label, labelLevel=3, className='' }) {
   const surface = sunken ? 'bg-sunken' : 'bg-elev';
   return (
@@ -1791,6 +1792,11 @@ function getRegionSummary(regions) {
   };
 }
 
+/** Region states with every in-flight bit cleared → the state the page settles to once its reads land. */
+function getSettledRegions(regions) {
+  return Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
+}
+
 /**
  * Freshness of the last successful read — Fresh only when nothing is in flight or failed.
  * Callers pass only successful-read times as `at`, so a failed read never advances the stamp.
@@ -1816,7 +1822,7 @@ function getFreshnessState({ at, loading = false, failed = false, regions, stale
  */
 function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, failed = false, regions, staleAfterMs = FRESHNESS_STALE_MS, now = Date.now() }) {
   const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
-  const settledRegions = Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
+  const settledRegions = getSettledRegions(regions);
   const settled = getFreshnessState({ at, failed, regions: settledRegions, staleAfterMs, now });
   const isBusy = state === 'loading' || state === 'refreshing';
   const pageLabel = label || VERDICT_TONE_LABEL[tone] || VERDICT_TONE_LABEL.neutral;
@@ -1872,7 +1878,7 @@ function getHarnessRead() {
  * A refresh over held data reports its settled state, so the sidebar never flickers to Checking.
  */
 function getShellPageState({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
-  const settledRegions = Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
+  const settledRegions = getSettledRegions(regions);
   const settled = getFreshnessState({ at, failed, regions: settledRegions, staleAfterMs, now });
   const isInFlight = loading || getRegionSummary(regions).isBusy;
 
@@ -1903,37 +1909,39 @@ function useShellPageState(input) {
 }
 
 /**
- * Shared "as of HH:MM" stamp — a refresh in flight keeps the last stamp and sets aria-busy.
- * A read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
+ * Shared freshness stamp — hidden while the settled read is fresh; otherwise the unread note or "Last known" with the read's age.
+ * A refresh in flight keeps the settled text and sets aria-busy; a read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
  * @param shellRegions - regions handed to the shell when they differ from the rendered set (a region the shell already owns is left out)
  */
 function FreshnessStamp({ at, loading = false, failed = false, regions, shellRegions, staleAfterMs, now }) {
   const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
+  const settled = getFreshnessState({ at, failed, regions: getSettledRegions(regions), staleAfterMs, now });
   useShellPageState({ at, loading, failed, regions: shellRegions ?? regions, staleAfterMs, now });
-  const meta = FRESHNESS_META[state];
-  const glyph = meta.tone ? TONE_GLYPH[meta.tone] : '…';
-  const toneClass = meta.tone ? `text-${meta.tone}` : 'text-faint';
-  const isRead = state !== 'loading' && state !== 'not-read';
-  const isBusy = state === 'loading' || state === 'refreshing';
-  const { failedCount, regionCount } = getRegionSummary(regions);
-  const failedNote = state === 'partial' ? `${failedCount} of ${regionCount} failed` : '';
-  const word = failedNote ? `${meta.word}, ${failedNote}` : meta.word;
-  useFreshnessTick(isRead && now === undefined);
+  useFreshnessTick(settled !== 'not-read' && now === undefined);
+  if (settled === 'fresh') return null;
 
-  const readText = `as of ${formatKstTime(at)}`;
-  const text = !isRead ? word : failedNote ? `${readText} · ${failedNote}` : readText;
-  // unread → the visible text is the word itself; first read → no text, the paired Refresh label already reads "Loading…"
-  const hasSrWord = isRead || state === 'loading';
-  const title = isRead ? `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at)})` : word;
+  const meta = FRESHNESS_META[state];
+  const { failedCount, regionCount } = getRegionSummary(regions);
+  const failedNote = settled === 'partial' ? `${failedCount} of ${regionCount} failed` : '';
+  const word = state === 'partial' ? `${meta.word}, ${failedNote}` : meta.word;
+  const text = getStampText({ settled, at, now, failedNote, hasFailed: failed || failedCount > 0 });
+  const title = settled === 'not-read' ? word : `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at, now)})`;
 
   return (
-    <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={isBusy ? 'true' : undefined}>
-      <span aria-hidden="true" className={`mr-1 ${toneClass}`}>{glyph}</span>
-      {hasSrWord && <span className="sr-only">{word}</span>}
-      {/* the clock time never breaks from "as of", whatever the header cluster around the stamp does */}
+    <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={state === 'loading' || state === 'refreshing' ? 'true' : undefined}>
+      <span aria-hidden="true" className={`mr-1 ${meta.tone ? `text-${meta.tone}` : 'text-faint'}`}>{meta.tone ? TONE_GLYPH[meta.tone] : '…'}</span>
+      <span className="sr-only">{word}</span>
+      {/* first read in flight → no text, the paired Refresh label already reads "Loading…" */}
       {state !== 'loading' && <span data-stamp-text="true" className="whitespace-nowrap">{text}</span>}
     </span>
   );
+}
+
+// visible stamp line for a settled state that is not fresh — the unread note, or "Last known" with the read's age
+function getStampText({ settled, at, now, failedNote, hasFailed }) {
+  if (settled === 'not-read') return getUnreadNote({ isBusy: false, hasFailed });
+  const readText = `Last known · read ${formatRelativeTime(at, now)}`;
+  return failedNote ? `${readText} · ${failedNote}` : readText;
 }
 
 /**
