@@ -88,7 +88,9 @@ run_register() {
 }
 
 run_deregister() {
-  run --separate-stderr "${DEREGISTER_HOOK}" <<<'{"hook_event_name":"SessionEnd","reason":"exit"}'
+  local payload="${1:-}"
+  [[ -n "${payload}" ]] || payload='{"hook_event_name":"SessionEnd","reason":"exit"}'
+  run --separate-stderr "${DEREGISTER_HOOK}" <<<"${payload}"
 }
 
 @test "register sends the session id, pid, cwd and socket path, and no start time" {
@@ -112,6 +114,26 @@ run_deregister() {
     echo "${body}"
     return 1
   }
+}
+
+@test "register takes the cwd and session id the hook payload names, else the process cwd and the session env" {
+  start_stub
+  local start_dir="${BATS_TEST_TMPDIR}/session-start-dir" other_id="9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
+  mkdir -p "${start_dir}"
+  local row name cwd id expected body
+  for row in "payload values|${start_dir}|${other_id}|${start_dir} ${other_id}" \
+    "relative cwd, id not a uuid|session-start-dir|not-a-uuid|${PWD} ${SESSION_ID}" \
+    "cwd no longer a directory, no id|${BATS_TEST_TMPDIR}/gone||${PWD} ${SESSION_ID}"; do
+    IFS='|' read -r name cwd id expected <<<"${row}"
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    run_register "$(jq -nc --arg cwd "${cwd}" --arg id "${id}" \
+      '{hook_event_name: "SessionStart", source: "startup", cwd: $cwd, session_id: $id}')"
+    body="$(request_body /api/queue/sessions/register)"
+    [[ "$(jq -r '"\(.cwd) \(.sessionId)"' <<<"${body}")" == "${expected}" ]] || {
+      echo "row ${name}: ${body}"
+      return 1
+    }
+  done
 }
 
 @test "register sends configDir only when CLAUDE_CONFIG_DIR is set" {
@@ -281,6 +303,20 @@ run_deregister() {
     run_deregister
     [[ "$(request_body /api/queue/sessions/deregister | jq -Sc .)" == "${expected}" ]] || {
       echo "row ${row%%|*}: $(cat "${BATS_TEST_TMPDIR}/requests.log")"
+      return 1
+    }
+  done
+}
+
+@test "deregister names the session the hook payload names, else the session env" {
+  start_stub
+  local other_id="9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d" row name id expected
+  for row in "payload id|${other_id}|${other_id}" "id not a uuid|not-a-uuid|${SESSION_ID}"; do
+    IFS='|' read -r name id expected <<<"${row}"
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    run_deregister "$(jq -nc --arg id "${id}" '{hook_event_name: "SessionEnd", reason: "other", session_id: $id}')"
+    [[ "$(request_body /api/queue/sessions/deregister | jq -r '.sessionId')" == "${expected}" ]] || {
+      echo "row ${name}: $(cat "${BATS_TEST_TMPDIR}/requests.log")"
       return 1
     }
   done

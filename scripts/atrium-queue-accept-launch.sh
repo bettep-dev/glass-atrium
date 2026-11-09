@@ -55,7 +55,11 @@ main() {
   # an empty, relative or root value is never written into, launched from or removed
   # shellcheck disable=SC2310  # a refused value is this script's named failure, never an errexit
   ga_guard_path "${work_dir}" || fail "refusing the temp directory value"
-  [[ -d "${work_dir}" && ! -L "${work_dir}" && -O "${work_dir}" ]] || fail "the temp directory is not this user's own directory"
+  if [[ ! -d "${work_dir}" || -L "${work_dir}" || ! -O "${work_dir}" ]]; then
+    # a refused path is not this wrapper's own → the EXIT cleanup must not remove it
+    work_dir=""
+    fail "the temp directory is not this user's own directory"
+  fi
   chmod 700 "${work_dir}"
   local settings="${work_dir}/accept-settings.json" status=0
   (umask 077 && printf '%s\n' "${ACCEPT_SETTINGS}" >"${settings}")

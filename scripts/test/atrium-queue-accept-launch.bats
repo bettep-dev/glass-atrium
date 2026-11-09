@@ -94,23 +94,27 @@ calls_field() {
   done
 }
 
-@test "a temp dir value forced empty or relative deletes nothing and exits non-zero with no session" {
-  mkdir -p "${BATS_TEST_TMPDIR}/cwd/rel"
+@test "a temp dir value that is empty, relative, a link or no directory deletes nothing and exits non-zero with no session" {
+  mkdir -p "${BATS_TEST_TMPDIR}/cwd/rel" "${BATS_TEST_TMPDIR}/link-target"
   : >"${BATS_TEST_TMPDIR}/cwd/rel/keep"
   : >"${BATS_TEST_TMPDIR}/cwd/keep"
-  local row name value
-  for row in "empty|" "relative|rel"; do
-    IFS='|' read -r name value <<<"${row}"
+  : >"${BATS_TEST_TMPDIR}/plain-file"
+  ln -s "${BATS_TEST_TMPDIR}/link-target" "${BATS_TEST_TMPDIR}/dir-link"
+  local row name value reason kept
+  for row in "empty||refusing|keep" "relative|rel|refusing|rel/keep" \
+    "link to a directory|${BATS_TEST_TMPDIR}/dir-link|not this user's own directory|${BATS_TEST_TMPDIR}/dir-link" \
+    "regular file|${BATS_TEST_TMPDIR}/plain-file|not this user's own directory|${BATS_TEST_TMPDIR}/plain-file"; do
+    IFS='|' read -r name value reason kept <<<"${row}"
     # mktemp stand-in on the wrapper's PATH only (bats' own run needs the real one) → the forced temp dir value
     mkdir -p "${BATS_TEST_TMPDIR}/forced"
     printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s"\n' "${value}" >"${BATS_TEST_TMPDIR}/forced/mktemp"
     chmod 755 "${BATS_TEST_TMPDIR}/forced/mktemp"
     cd "${BATS_TEST_TMPDIR}/cwd"
     run --separate-stderr env PATH="${BATS_TEST_TMPDIR}/forced:${PATH}" "${WRAPPER}"
-    [[ "${status}" -ne 0 && "${stderr}" == *"refusing"* && ! -e "${CALLS}" && -e rel/keep && -e keep &&
+    [[ "${status}" -ne 0 && "${stderr}" == *"${reason}"* && ! -e "${CALLS}" && -e "${kept}" && -e keep &&
       ! -e rel/accept-settings.json ]] || {
       echo "row ${name}: status=${status} ${stderr}"
-      ls -la . rel
+      ls -la . rel "${BATS_TEST_TMPDIR}"
       return 1
     }
   done

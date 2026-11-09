@@ -23,10 +23,16 @@ payload=""
 if [[ ! -t 0 ]]; then
   payload="$(head -c 65536 2>/dev/null)" || payload=""
 fi
-hint="$(jq -r '.permission_mode // empty | strings' <<<"${payload}" 2>/dev/null)" || hint=""
+# <payload key> → its string value, empty when absent or not a string
+get_payload_field() {
+  jq -r --arg key "$1" '.[$key] // empty | strings' <<<"${payload}" 2>/dev/null || true
+}
+hint="$(get_payload_field permission_mode)"
+start_dir="$(get_payload_field cwd)"
+session_id="$(get_payload_field session_id)"
 
 # shellcheck disable=SC2310  # a failed register is the fail-open exit, never an errexit
-count="$(queue_register_session "${hint}" 2>/dev/null)" || exit 0
+count="$(queue_register_session "${hint}" "" "${start_dir}" "${session_id}" 2>/dev/null)" || exit 0
 if ((count > 0)); then
   cli_path="$(queue_get_cli_path)"
   # subshell write → no interrupt from an un-waited child reaches it; the exit stays 0 either way

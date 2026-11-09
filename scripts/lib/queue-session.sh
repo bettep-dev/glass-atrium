@@ -40,10 +40,19 @@ queue_get_token_dir() {
   printf '%s/data/queue/tokens\n' "${root}"
 }
 
-# This session's id from the session env; empty when unset or not a UUID.
+# This session's id: $1 (a hook payload's session_id) when a UUID, else the session env; empty when neither is.
 queue_get_session_id() {
-  local id="${CLAUDE_CODE_SESSION_ID:-}"
+  local id="${1:-}"
+  [[ "${id}" =~ ${QUEUE_UUID_SHAPE} ]] || id="${CLAUDE_CODE_SESSION_ID:-}"
   if [[ "${id}" =~ ${QUEUE_UUID_SHAPE} ]]; then printf '%s\n' "${id}"; fi
+}
+
+# The session's start directory: $1 (a hook payload's cwd) when an absolute directory, else this process's cwd.
+# The server resumes from it and finds the worktree root from it, so a Bash-tool `cd` must never move it.
+queue_get_cwd() {
+  local cwd="${1:-}"
+  [[ "${cwd}" == /* && -d "${cwd}" ]] || cwd="${PWD}"
+  printf '%s\n' "${cwd}"
 }
 
 queue_get_pid() {
@@ -111,16 +120,18 @@ queue_put_messaging_auth() {
 }
 
 # The register step: the token copy, then the register POST → the answered-waiting count on stdout.
-# $1: permission mode hint (optional; dropped unless one the monitor accepts) · $2: max seconds (optional)
+# All optional: $1 permission mode hint (dropped unless one the monitor accepts) · $2 max seconds ·
+# $3 cwd and $4 session id from a hook payload (queue_get_cwd / queue_get_session_id fallbacks)
 queue_register_session() {
-  local hint="${1:-}" max_time="${2:-}" session_id pid socket body reply count
-  session_id="$(queue_get_session_id)"
+  local hint="${1:-}" max_time="${2:-}" cwd session_id pid socket body reply count
+  session_id="$(queue_get_session_id "${4:-}")"
   pid="$(queue_get_pid)"
   [[ -n "${session_id}" && -n "${pid}" ]] || return 1
   [[ "${QUEUE_PERMISSION_HINTS}" == *" ${hint} "* ]] || hint=""
   queue_put_messaging_auth "${session_id}" || true
   socket="$(queue_get_socket_path)"
-  body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${pid}" --arg cwd "${PWD}" \
+  cwd="$(queue_get_cwd "${3:-}")"
+  body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${pid}" --arg cwd "${cwd}" \
     --arg configDir "${CLAUDE_CONFIG_DIR:-}" --arg socketPath "${socket}" --arg permissionHint "${hint}" \
     --arg launchHint "${ATRIUM_QUEUE_ACCEPT_WRAPPER:+accept_wrapper}" \
     '{$sessionId, $pid, $cwd, $configDir, $socketPath, $permissionHint, $launchHint} | with_entries(select(.value != ""))')" || return 1
@@ -131,9 +142,10 @@ queue_register_session() {
 }
 
 # The deregister step: pid, else the socket path (the monitor reads the pid from its name), else the id alone.
+# $1: session id from a hook payload (optional; queue_get_session_id fallback)
 queue_deregister_session() {
   local session_id pid socket body token_file
-  session_id="$(queue_get_session_id)"
+  session_id="$(queue_get_session_id "${1:-}")"
   [[ -n "${session_id}" ]] || return 1
   pid="$(queue_get_pid)"
   socket=""

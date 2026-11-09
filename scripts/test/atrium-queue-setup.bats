@@ -124,7 +124,6 @@ mode_of() {
 }
 
 @test "an entry that is refused writes nothing and exits 1" {
-  local row
   local row name first second reason
   for row in "entries differ|${PASSPHRASE}|${OTHER_PASSPHRASE}|entries differ" \
     "too short|short pass|short pass|12 to 1024 characters"; do

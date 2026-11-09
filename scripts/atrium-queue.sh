@@ -90,7 +90,8 @@ Usage — run by this absolute path, no interpreter or env prefix in front, so t
   ${cli} pending                  claim this session's answered items; prints each one's fetch and ack steps
   ${cli} ack <item-id> <msg-id>   ack a delivery; act on the answer only when it prints "first"
   ${cli} withdraw <item-id>       withdraw an item not in delivery
-  ${cli} register                 register this session (a resumed session runs it after its ack steps)
+  ${cli} register                 register this session (a resumed session runs it after its ack steps);
+                                  run it from the session's start directory: the monitor resumes from it
   ${cli} help
 Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision adds options
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.

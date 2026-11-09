@@ -17,9 +17,11 @@ lib="${self%/*}/../scripts/lib/queue-session.sh"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/queue-session.sh
 source "${lib}" 2>/dev/null || exit 0
 
+payload=""
 if [[ ! -t 0 ]]; then
-  cat >/dev/null 2>&1 || true
+  payload="$(head -c 65536 2>/dev/null)" || payload=""
 fi
+session_id="$(jq -r '.session_id // empty | strings' <<<"${payload}" 2>/dev/null)" || session_id=""
 # shellcheck disable=SC2310  # a failed deregister is the fail-open exit, never an errexit
-queue_deregister_session >/dev/null 2>&1 || true
+queue_deregister_session "${session_id}" >/dev/null 2>&1 || true
 exit 0
