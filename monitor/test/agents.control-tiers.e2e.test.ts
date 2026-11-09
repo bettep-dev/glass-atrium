@@ -1,6 +1,6 @@
 // Agents controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the screen's own
 // style block, rendered from the shipped components: a static pill in a card head stands on the 32 control height beside the head's
-// info button, the ledger's Sort label sits 4 from its select, and a Most-failing pairs agent link is a 24 target in a 40 row (§7.16).
+// info button and a Most-failing pairs agent link is a 24 target in a 40 row (§7.16).
 // Runner: npx tsx --test test/agents.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -12,6 +12,7 @@ import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { createControlProbe, type Box } from "./lib/control-probe.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -48,11 +49,7 @@ const LIFECYCLE = getMarkup("LifecycleStatsCard", {
   state: { status: "ready", data: { rows: [{ agent: "glass-atrium-dev-front", start_count: 12, completed_count: 9 }] }, error: null },
   days: DAYS, onSelect: noop, onRetry: noop,
 });
-const MATRIX = getMarkup("SuccessRateMatrixCard", {
-  state: { status: "ready", data: { rows: [], truncated: true }, error: null }, days: DAYS, onRetry: noop,
-});
 
-const SORT = getMarkup("SummarySortAg", { sortBy: "runs", onSortChange: noop, note: "" });
 // a display name longer than the 160 agent cell → the link has to keep the cell's ellipsis
 const LONG_AGENT = "glass-atrium-dev-front-with-a-display-name-past-the-agent-cell";
 const PAIRS = getMarkup("TopNFailingAgentsTable", {
@@ -64,8 +61,6 @@ const PAIRS = getMarkup("TopNFailingAgentsTable", {
 
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="lifecycle" style="width: 560px; padding: 24px;">${LIFECYCLE}</div>
-  <div id="matrix" style="width: 560px; padding: 24px;">${MATRIX}</div>
-  <div id="sort" style="padding: 24px;">${SORT}</div>
   <div id="pairs" style="width: 640px; padding: 24px;">${PAIRS}</div>
 </body></html>`;
 
@@ -81,6 +76,7 @@ before(async () => {
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
   await page.addStyleTag({ content: SCREEN_CSS });
+  await page.addStyleTag({ content: getRoleKeyCss() });
   cdp = await page.context().newCDPSession(page);
 });
 
@@ -99,23 +95,6 @@ describe("a static pill in a card head stands on the head's 32 control height", 
     assert.equal(info.height, 32);
     assert.equal(pill.height, info.height, `pill ${pill.height} vs info ${info.height}`);
     assert.ok(Math.abs(centreOf(pill) - centreOf(info)) < 0.5, "one centre line");
-  });
-
-  test("Success by agent: the row-limit pill is 32 and carries its own hover title", async () => {
-    const selector = "#matrix .card-head .pill";
-    assert.match(await readText(selector), /Row limit hit/);
-    assert.equal((await readBox(selector)).height, 32);
-    assert.match(await page.$eval(selector, (el) => el.getAttribute("title") ?? ""), /matrix incomplete/);
-  });
-});
-
-describe("the ledger head's Sort label sits on the label-to-group step", () => {
-  test("Sort: is 4 from its select and shares its centre line", async () => {
-    const label = await readBox("#sort span:not([role])");
-    const select = await readBox("#sort select");
-    assert.match(await readText("#sort span:not([role])"), /^Sort:$/);
-    assert.equal(select.left - label.right, 4);
-    assert.ok(Math.abs(centreOf(label) - centreOf(select)) < 0.5, "one centre line");
   });
 });
 
