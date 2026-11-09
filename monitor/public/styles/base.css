@@ -1045,7 +1045,10 @@ button.kpi:hover {
 	max-width: min(360px, calc(100vw - 32px));
 	max-height: 60vh;
 	overflow: auto;
-	padding: 12px;
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-list);
+	padding: var(--card-pad);
 	background: rgb(var(--overlay-surface));
 	border: 1px solid rgb(var(--line));
 	border-radius: var(--radius-card);

@@ -444,7 +444,7 @@
 ### 6.5 기타 표면 · z stack
 
 - **`.sub-card`** (`SubCard`): 중첩 섹션 · 메트릭 타일. `--radius-tile` 8 · padding `--card-pad` 16 · ring = `box-shadow 0 0 0 1px` `--line` (box model 무영향) — one hairline, no shadow or inset in both themes. 면 = `bg-elev` 또는 `sunken`.
-- **`.popover-panel`** (`Popover`, non-modal): 트리거 아래 우측 정렬 (`top: calc(100% + 4px)`) · min 240 · max min(360px, 100vw − 32px) · max-h 60vh · padding 12 · `--overlay-surface` + 1px `--line` + `--radius-card` + `--shadow-overlay`.
+- **`.popover-panel`** (`Popover`, non-modal): 트리거 아래 우측 정렬 (`top: calc(100% + 4px)`) · min 240 · max min(360px, 100vw − 32px) · max-h 60vh · inset `--card-pad` · rows stacked on `--gap-list` · `--overlay-surface` + 1px `--line` + `--radius-card` + `--shadow-overlay`.
   - z = overlay − 1 → 열린 `DetailSurface` 가 덮는다. 열려 있는 동안만 카드가 overflow 를 푼다 (`.card:has(.popover-panel)`).
 - **`.save-banner`**: sticky bottom dirty-state 바 — 불투명 `--elev` + 상단 1px `--line` + `--shadow-overlay` · z 10 · padding 12px 20px.
 - **`.doc-toast`**: 유일한 toast (소비처 clauded-docs · model-config · improvement `ToastI`), z 200 의 overlay 면.
