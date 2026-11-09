@@ -52,7 +52,7 @@ after(async () => {
 async function openApp(): Promise<Page> {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.goto(`${serverUrl}/#model-config`, { waitUntil: "load" });
-  await page.waitForSelector("summary.disclosure.pill--interactive", { timeout: 30_000 });
+  await page.waitForSelector("summary.disclosure", { timeout: 30_000 });
   return page;
 }
 
@@ -275,9 +275,9 @@ describe("focus after a mouse move draws no ring, after a keyboard move draws th
 
   test("a mouse click on the model files disclosure opens it and draws no ring", async () => {
     const page = await openApp();
-    await page.click("summary.disclosure.pill--interactive");
+    await page.click("summary.disclosure");
 
-    assert.equal(await page.$eval("summary.disclosure.pill--interactive", (el) => (el.parentElement as HTMLDetailsElement).open), true);
+    assert.equal(await page.$eval("summary.disclosure", (el) => (el.parentElement as HTMLDetailsElement).open), true);
     const { tag, isFocusVisible, outline } = await readFocus(page);
     assert.deepEqual({ tag, isFocusVisible, outline }, { tag: "SUMMARY", isFocusVisible: false, outline: "none" });
     await page.close();
