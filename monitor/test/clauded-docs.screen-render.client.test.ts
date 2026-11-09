@@ -1034,6 +1034,25 @@ describe("a ledger head count and a group toggle space their content on the labe
   }
 });
 
+test("the list count line spaces its facts on the list role and its rule sets no column gap", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderListCard(screen, { state: { status: "ready", data: {}, error: null, busy: false }, total: 3, docTotal: 3 });
+  const [meta] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-list-meta"));
+  assert.ok(meta, "the count line renders");
+  assert.match(String(meta.props.className), /(^|\s)gap-x-list(\s|$)/);
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-list-meta"), /(^|[;\s])(column-)?gap\s*:/);
+});
+
+// a section head is a house body header → a declaration its rule restates drifts from the table the moment base.css moves
+describe("a stage section head's rule restates nothing the house table header sets", () => {
+  for (const property of ["height", "text-align", "font-size", "color", "background", "border-bottom"]) {
+    test(`it sets no ${property}`, async () => {
+      const screen = await loadDocsScreen();
+      assert.doesNotMatch(cssRuleBody(getScreenCss(screen), "tr.doc-stage-section > th"), new RegExp(`(^|[;\\s])${property}\\s*:`));
+    });
+  }
+});
+
 // a role utility the Tailwind config has no key for emits no CSS → the node silently keeps its UA spacing
 test("every spacing utility on the ledger names a key its Tailwind config section holds", async () => {
   const sectionOf: Record<string, RoleSection> = {

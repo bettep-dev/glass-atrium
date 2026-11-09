@@ -418,4 +418,18 @@ describe("the select column and the stage section heads sit on the ledger's grid
     assert.ok(Math.abs(section - 40) < 0.5, `section row ${section}px`);
     assert.ok(Math.abs(doc - 40) < 0.5, `ledger row ${doc}px`);
   });
+
+  test("a stage section head reads in the house header face at weight 600, its label on a 12 over 4 inset", async () => {
+    const head = await page.$eval("#section > th", (th) => {
+      const style = getComputedStyle(th);
+      const root = getComputedStyle(document.documentElement);
+      return { fontSize: style.fontSize, metaSize: root.getPropertyValue("--fs-meta").trim(), weight: style.fontWeight,
+        paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, background: style.backgroundColor, textAlign: style.textAlign };
+    });
+    assert.equal(head.fontSize, head.metaSize);
+    assert.equal(head.weight, "600");
+    assert.deepEqual([head.paddingTop, head.paddingBottom], ["12px", "4px"]);
+    assert.equal(head.textAlign, "left");
+    assert.notEqual(head.background, "rgba(0, 0, 0, 0)", "the head keeps the sunken header fill");
+  });
 });

@@ -1100,12 +1100,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-trigger-value > * { grid-area: 1 / 1; }
         .doc-trigger-value > .is-idle { visibility: hidden; }
         /* trailing meta → its own right-aligned line in every state: the count's length never picks its line nor hands its room to the search; it breaks inside only once it alone outgrows the row */
-        .doc-list-meta { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; column-gap: var(--space-2); }
+        .doc-list-meta { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
         /* number + unit never split (§5.3) */
         .doc-list-count { white-space: nowrap; }
         /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
-        /* a section head is a 40 row like the ledger rows (its th takes the td row height) → every section starts at one height */
-        tr.doc-stage-section > th { height: var(--row-h); padding-block: var(--space-3) var(--space-1); text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
+        /* a section head = a house body header (40 row, meta face, sunken fill) → only the bottom-anchored label inset and the 600 weight are its own */
+        tr.doc-stage-section > th { padding-block: var(--space-3) var(--space-1); font-weight: 600; }
         .doc-stage-section-count { color: rgb(var(--faint)); }
       `}</style>
 
@@ -1431,7 +1431,7 @@ function DocListCardCD({
 				<div className="control-row">
 					<DocFilterBarCD isSearchMode={isSearchMode} groupCounts={groupCounts} inlineFilterProps={inlineFilterProps} />
 					{(busyText || totalLabel) && (
-						<div className="doc-list-meta">
+						<div className="doc-list-meta gap-x-list">
 							{busyText && (
 								<span className="doc-list-busy fs-meta" role="status" style={{ color: "rgb(var(--dim))" }}>
 									{busyText}

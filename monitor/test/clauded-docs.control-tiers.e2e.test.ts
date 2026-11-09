@@ -43,7 +43,7 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .mx-auto { margin-left: auto; margin-right: auto; } .ml-auto { margin-left: auto; } .min-w-0 { min-width: 0; } .overflow-x-auto { overflow-x: auto; }
   .px-4 { padding-left: 1rem; padding-right: 1rem; } .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .pointer-events-none { pointer-events: none; }
   .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; } .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; }
-  .fs-meta { font-size: var(--fs-meta); line-height: 1.4; }`;
+  .fs-meta { font-size: var(--fs-meta); line-height: 1.4; } .gap-x-list { column-gap: var(--gap-list); }`;
 
 const DAY_MS = 86_400_000;
 const getDaysAgo = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();
@@ -145,6 +145,17 @@ describe("the count meta wraps as one right-aligned unit", () => {
       assert.ok(Math.abs((shared as Box).right - reading.contentRight) <= 1, `meta ends at ${(shared as Box).right}, row content at ${reading.contentRight}`);
     });
   }
+
+  test("the count and the shared tags on one line sit one list gap apart", async () => {
+    await setCardWidth(1300);
+    const { countRight, sharedLeft, listGap } = await page.$eval(TOOLBAR, (row) => ({
+      countRight: row.querySelector("[aria-live]")!.getBoundingClientRect().right,
+      sharedLeft: row.querySelector(".doc-list-shared")!.getBoundingClientRect().left,
+      listGap: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gap-list")),
+    }));
+    assert.equal(listGap, 8);
+    assert.ok(Math.abs(sharedLeft - countRight - listGap) <= 0.5, `count ends at ${countRight}, shared tags start at ${sharedLeft}`);
+  });
 
   test("the counter is one unbroken span that carries its value in a title", async () => {
     await setCardWidth(520);
