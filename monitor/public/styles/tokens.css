@@ -28,10 +28,10 @@
   --overlay-surface: 255 255 255; /* kind A primitive: 모달/팝오버 불투명 면 (= elev, 의미 분리) */
 
   /* ── Tier 2 — Glass / material (신규, §3.2) ─────────────────────── */
-  --glass-border:  255 255 255;   /* deprecated — no caller; S3 close deletes it */
+  --glass-border:  255 255 255;   /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
 
   /* ── Tier 2 — Shadow / depth (신규 합성 그림자, kind B box-shadow) ─ */
-  --shadow-raised:   0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04); /* deprecated — no caller; S3 close deletes it */
+  --shadow-raised:   0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04); /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
   --shadow-raised-2: 0 2px 6px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); /* 라이트 raised-2: elev fill + 강한 그림자 (인버전 회피) */
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
 
@@ -151,9 +151,9 @@
 
   --surface-raised-2: var(--elev-2); /* 다크 raised-2: 휘도 step 으로 떠오름 (36 > 28) */
 
-  --glass-border:  255 255 255;   /* deprecated — no caller; S3 close deletes it */
+  --glass-border:  255 255 255;   /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
 
-  --shadow-raised:   0 1px 4px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2); /* deprecated — no caller; S3 close deletes it */
+  --shadow-raised:   0 1px 4px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2); /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
   --shadow-raised-2: 0 3px 10px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25); /* 다크 raised-2 보조 (주채널은 휘도 step) */
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
 }

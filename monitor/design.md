@@ -306,7 +306,7 @@
 - **Badge 3 role** (`ui.jsx` → `Badge`):
   - `status` — 반응이 필요한 lifecycle/health. 선행 glyph 가 tone, 라벨 `--dim`. `glyph` false 면 tone 없음 (라벨도 neutral). tone 있는 `Pill` → glyph 가 있는 status `Badge`.
   - `metadata` — 서술 속성 (agent-only · md · model id): neutral · glyph 없음 · 소문자.
-  - `count` — 순수 수량: neutral · glyph 없음 · mono tabular; a count in prose or a row retires to a plain sans tnum number (§12.3).
+  - `count` — 순수 수량: neutral · glyph 없음 · mono tabular (retiring → §12.2 / §12.3, S2c); a count in prose or a row retires to a plain sans tnum number (§12.3).
   - 변형: `absent`(무테 · 무배경 · `--faint`) · `interactive`(`<button>`).
 - **alert-card glyph well** (`base.css` → `.alert-card`): light = tone **solid well + `--elev` knock-out glyph** (tinted light well 은 `--warn` glyph 를 0.12 tint 위 3.01 로 떨어뜨린다) · dark = tone 0.12 tinted well + tone glyph.
 - **severity 요소는 glass/blur 위에 두지 않는다** — desaturation 이 응급 신호를 약화 (§6.3).
@@ -443,7 +443,7 @@
 
 ### 6.5 기타 표면 · z stack
 
-- **`.sub-card`** (`SubCard`): 중첩 섹션 · 메트릭 타일. `--radius-tile` 8 · padding 16 · padding `--card-pad` 16 · ring = `box-shadow 0 0 0 1px` `--line` (box model 무영향) — one hairline, no shadow or inset in both themes. 면 = `bg-elev` 또는 `sunken`.
+- **`.sub-card`** (`SubCard`): 중첩 섹션 · 메트릭 타일. `--radius-tile` 8 · padding `--card-pad` 16 · ring = `box-shadow 0 0 0 1px` `--line` (box model 무영향) — one hairline, no shadow or inset in both themes. 면 = `bg-elev` 또는 `sunken`.
 - **`.popover-panel`** (`Popover`, non-modal): 트리거 아래 우측 정렬 (`top: calc(100% + 4px)`) · min 240 · max min(360px, 100vw − 32px) · max-h 60vh · padding 12 · `--overlay-surface` + 1px `--line` + `--radius-card` + `--shadow-overlay`.
   - z = overlay − 1 → 열린 `DetailSurface` 가 덮는다. 열려 있는 동안만 카드가 overflow 를 푼다 (`.card:has(.popover-panel)`).
 - **`.save-banner`**: sticky bottom dirty-state 바 — 불투명 `--elev` + 상단 1px `--line` + `--shadow-overlay` · z 10 · padding 12px 20px.
@@ -513,7 +513,7 @@
 - **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · no border · min-height 24 · padding 0 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
 - tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status) · `title` · `className` 은 그대로 전달.
   - glyph 명암 (`--sunken` shell 위): light warn 3.15 · info 3.38 · ok 3.45 · crit 4.63 · dark ≥ 6.62.
-- 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (mono tabular — retiring → §12.3 Count, S2c; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes · pressed = ink edge + ink text, no fill inversion).
+- 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (mono tabular — retiring → §12.2 / §12.3 Count, S2c; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes · pressed = ink edge + ink text, no fill inversion).
 - glass 위에 올리지 않는다 (AP-6).
 
 ### 7.4 Button — `.btn`
@@ -1090,7 +1090,8 @@
 - Principle 7 and §8 `.live-dot` ambient loop + §7.7 sidebar `.live-dot` → no ambient loop.
 - `PageVerdict` usage (§7.9 neighbourhood) → §12.7.
 - Retiring, marked in place until the owning stream lands:
-  - mono numbers → §12.2 sans tnum: §3.3 `FreshnessStamp` (S2c) · §5.2 chart tick (S2c) · §7.2 `.kpi-delta` / `.kpi-hint` (S2c) · §7.3 `.pill--count` (S2c) · §7.5 `.num` (S2d) · §7.7 `.nav-badge` (S2c)
+  - mono numbers → §12.2 sans tnum: §3.3 `FreshnessStamp` (S2c) · §4.2 `Badge` `count` (S2c, look → §12.3) · §5.2 chart tick (S2c) · §7.3 `.pill--count` (S2c, look → §12.3 Count) · §7.5 `.num` (S2d) · §7.7 `.nav-badge` (S2c)
+  - §7.2 `.kpi-delta` / `.kpi-hint` mono → §12.8 stat row context line (S2c)
   - §7.7 `.nav-badge` 1px `--line` → §12.3 Badge, fill only (S2c)
   - pressed-toggle ✓ glyph (§7.4 · §7.6 · §7.16) → built with the S2a controls
   - tokens `--shadow-raised`, `--glass-border` (§3.1 · §3.2 · §6.4) → no caller; S3 close deletes them
