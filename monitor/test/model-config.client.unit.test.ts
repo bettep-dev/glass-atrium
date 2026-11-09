@@ -574,6 +574,19 @@ async function loadMcScreens(
     SkeletonRows: (p: Record<string, unknown>) =>
       Array.from({ length: Number(p.rows) }, () => hMc("tr", { "aria-hidden": "true" })),
     TableHead: (p: Record<string, unknown>) => hMc("th", { "data-atom": "TableHead" }, p.children),
+    // the atom's wide mode: caption · colgroup from widths · thead of TableHeads from columns · one tbody per body
+    Table: (p: Record<string, unknown>) => {
+      const columns = (p.columns ?? []) as Array<{ key: string; label: unknown }>;
+      const bodies = (p.bodies ?? []) as Array<{ key: string; rows: unknown; isBusy?: boolean }>;
+      return hMc(
+        "table",
+        { className: `tbl ${p.className ?? ""}`.trim(), "data-atom": "Table" },
+        hMc("caption", { className: "sr-only" }, p.caption),
+        p.widths ? hMc("colgroup", null, ...(p.widths as string[]).map((width) => hMc("col", { style: { width } }))) : null,
+        hMc("thead", null, hMc("tr", null, ...columns.map((c) => hMc("th", { "data-atom": "TableHead" }, c.label)))),
+        ...bodies.map((b) => hMc("tbody", { "aria-busy": b.isBusy ? "true" : undefined }, b.rows)),
+      );
+    },
     AgentName: (p: Record<string, unknown>) =>
       hMc("span", { "data-atom": "AgentName", title: p.name }, getAgentDisplayNameMc(p.name)),
     formatKstTime: realUiMc.formatKstTime,
@@ -1457,8 +1470,9 @@ test("both ledgers sit on one column grid, so their Live columns line up", () =>
   assert.strictEqual(tagsMc(domains, "col").length, tagsMc(domains, "th").length, "one col per ledger column");
   assert.strictEqual(gridOf(domains), gridOf(budgets), "identical column widths in both ledgers");
   for (const tree of [domains, budgets]) {
-    const style = tagsMc(tree, "table")[0].props.style as Record<string, unknown> | undefined;
-    assert.strictEqual(style?.tableLayout, "fixed", "widths come from the grid, not the content");
+    const [table] = tagsMc(tree, "table");
+    assert.strictEqual(table.props["data-atom"], "Table", "the ledger is the Table atom");
+    assert.ok(String(table.props.className).split(/\s+/).includes("table-fixed"), "widths come from the grid, not the content");
   }
 });
 
@@ -1472,7 +1486,9 @@ test("all three tier tables take the shared .tbl geometry in the house face, wit
   ] as const) {
     const tree = renderComponentMc(screens[name], props);
     const [table] = tagsMc(tree, "table");
-    assert.strictEqual(table.props.className, "tbl", `${name}: a house .tbl table — no own-face modifier, so the face stays`);
+    const tableClasses = String(table.props.className).split(/\s+/);
+    assert.strictEqual(table.props["data-atom"], "Table", `${name}: the ledger is the Table atom`);
+    assert.ok(tableClasses.includes("tbl") && !tableClasses.includes("tbl--own-face"), `${name}: a house .tbl table — no own-face modifier, so the face stays`);
     const headers = tagsMc(tree, "th");
     assert.strictEqual(headers.length, 3, `${name}: three headers`);
     for (const th of headers) assert.strictEqual(th.props["data-atom"], "TableHead", `${name}: '${textMc(th.children)}' is a TableHead`);
@@ -1889,6 +1905,17 @@ test("mono comes only from the machine-string atom: no element styles itself mon
   for (const tree of trees) {
     const selfMono = findAllMc(tree, (n) => /\bfont-mono\b/.test(String(n.props.className ?? "")));
     assert.deepStrictEqual(selfMono.map((n) => textMc(n.children)), [], "no ad-hoc mono class");
+  }
+  for (const [name, tree] of [
+    ["budgets", trees[1]],
+    ["tiers", renderComponentMc(screens.TiersSectionMC, tiersPropsMc())],
+  ] as const) {
+    const numeric = findAllMc(tree, (n) => n.tag === "input" && ["decimal", "numeric"].includes(String(n.props.inputMode)));
+    assert.ok(numeric.length > 0, `${name}: a numeric field renders`);
+    for (const input of numeric) {
+      const classes = String(input.props.className).split(/\s+/);
+      assert.ok(classes.includes("tabular-nums") && !classes.includes("field--mono"), `${name}: a number field is sans tnum, never mono`);
+    }
   }
   const machine = findAllMc(domains, (n) => n.props["data-atom"] === "MachineString").map((n) => textMc(n.children));
   assert.ok(machine.includes("claude-opus-4-8"), "the file fold's model id is a machine string");

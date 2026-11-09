@@ -46,7 +46,7 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .gap-y-1 { row-gap: 0.25rem; } .mt-1 { margin-top: 0.25rem; } .pl-3 { padding-left: 0.75rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
   .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; } .border { border-width: 1px; } .border-b { border-bottom-width: 1px; }
   .underline { text-decoration-line: underline; } .underline-offset-2 { text-underline-offset: 2px; }
-  .text-right { text-align: right; } .whitespace-nowrap { white-space: nowrap; } .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
+  .text-right { text-align: right; } .table-fixed { table-layout: fixed; } .tabular-nums { font-variant-numeric: tabular-nums; } .whitespace-nowrap { white-space: nowrap; } .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
   .font-medium { font-weight: 500; } .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }`;
 

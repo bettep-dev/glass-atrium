@@ -683,7 +683,8 @@ function SettingsInfoMC({ caveat, lead, title, rows }) {
 const LEDGER_COL_WIDTHS_MC = ["32%", "36%", "32%"];
 // Skeleton columns + empty-row colSpan for both ledgers.
 const LEDGER_COL_COUNT_MC = LEDGER_COL_WIDTHS_MC.length;
-const LEDGER_TABLE_STYLE_MC = { tableLayout: "fixed" };
+// fixed layout → the widths above hold whatever a cell holds
+const LEDGER_TABLE_CLASS_MC = "table-fixed";
 // the inline Reset's 24 target height (§7.15 C24) → the saved/reset slot holds it while empty, so a reset never moves the row
 const SAVED_LINE_STYLE_MC = { minHeight: "24px" };
 // The inline Reset's text-action look — navigation takes the Link atom instead.
@@ -691,14 +692,13 @@ const LINK_CLASS_MC = "text-dim underline underline-offset-2";
 // a link beside a card's or a row's controls → the 24 target (§7.15)
 const LINK_TARGET_CLASS_MC = `inline-target ${LINK_CLASS_MC}`;
 
-function LedgerColsMC() {
-	return (
-		<colgroup>
-			{LEDGER_COL_WIDTHS_MC.map((width, i) => (
-				<col key={i} style={{ width }} />
-			))}
-		</colgroup>
-	);
+// Ledger heads: what the row is · its editable control · the In effect value, its head titled with the read source.
+function getLedgerColumnsMC(subject, control, inEffectTitle) {
+	return [
+		{ key: "subject", label: subject },
+		{ key: "control", label: control },
+		{ key: "live", label: <span title={inEffectTitle}>In effect</span> },
+	];
 }
 
 // 모델 도메인 섹션 — 편집값(Model) vs 실측(Live) + 반영 시점.
@@ -711,7 +711,7 @@ function DomainsSectionMC({
 	errors,
 	onModelChange,
 }) {
-	const { Card, Link, SkeletonRows, TableHead } = window.UI;
+	const { Card, Link, SkeletonRows, Table } = window.UI;
 	const rows = sortDomainsMC(domains || []);
 	const mix = form ? getModelMixMC(rows.map((d) => form.models[d.domain] || d.desired)) : "";
 	const timing = getApplyTimingMC(rows);
@@ -743,20 +743,13 @@ function DomainsSectionMC({
 				{state === "unavailable" ? (
 					<SectionUnavailableMC />
 				) : (
-					<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
-						<caption className="sr-only">Model assignment per agent tier</caption>
-						<LedgerColsMC />
-						<thead>
-							<tr>
-								<TableHead>Agent tier</TableHead>
-								<TableHead>Model</TableHead>
-								<TableHead>
-									<span title={IN_EFFECT_TITLE_MC.models}>In effect</span>
-								</TableHead>
-							</tr>
-						</thead>
-						<tbody aria-busy={state === "loading" ? "true" : undefined}>
-							{state === "loading" ? (
+					<Table
+						caption="Model assignment per agent tier"
+						columns={getLedgerColumnsMC("Agent tier", "Model", IN_EFFECT_TITLE_MC.models)}
+						widths={LEDGER_COL_WIDTHS_MC}
+						className={LEDGER_TABLE_CLASS_MC}
+						bodies={[{ key: "domains", isBusy: state === "loading", rows: (
+							state === "loading" ? (
 								<SkeletonRows
 									rows={DOMAIN_ORDER_MC.length}
 									columns={LEDGER_COL_COUNT_MC}
@@ -780,9 +773,9 @@ function DomainsSectionMC({
 										onChange={(v) => onModelChange(d.domain, v)}
 									/>
 								))
-							)}
-						</tbody>
-					</table>
+							)
+						) }]}
+					/>
 				)}
 			</Card>
 		</div>
@@ -1192,7 +1185,7 @@ function BudgetsSectionMC({
 	errors,
 	onBudgetChange,
 }) {
-	const { Card, SkeletonRows, TableHead } = window.UI;
+	const { Card, SkeletonRows, Table } = window.UI;
 	const rows = sortBudgetsMC(budgets || []);
 	const timing = getApplyTimingMC(rows);
 
@@ -1217,20 +1210,13 @@ function BudgetsSectionMC({
 				{state === "unavailable" ? (
 					<SectionUnavailableMC />
 				) : (
-					<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
-						<caption className="sr-only">Per-call budget cap per background call</caption>
-						<LedgerColsMC />
-						<thead>
-							<tr>
-								<TableHead>Background call</TableHead>
-								<TableHead>Per-call cap</TableHead>
-								<TableHead>
-									<span title={IN_EFFECT_TITLE_MC.budgets}>In effect</span>
-								</TableHead>
-							</tr>
-						</thead>
-						<tbody aria-busy={state === "loading" ? "true" : undefined}>
-							{state === "loading" ? (
+					<Table
+						caption="Per-call budget cap per background call"
+						columns={getLedgerColumnsMC("Background call", "Per-call cap", IN_EFFECT_TITLE_MC.budgets)}
+						widths={LEDGER_COL_WIDTHS_MC}
+						className={LEDGER_TABLE_CLASS_MC}
+						bodies={[{ key: "budgets", isBusy: state === "loading", rows: (
+							state === "loading" ? (
 								<SkeletonRows
 									rows={2}
 									columns={LEDGER_COL_COUNT_MC}
@@ -1253,9 +1239,9 @@ function BudgetsSectionMC({
 										onChange={(v) => onBudgetChange(b.domain, v)}
 									/>
 								))
-							)}
-						</tbody>
-					</table>
+							)
+						) }]}
+					/>
 				)}
 			</Card>
 		</div>
@@ -1297,7 +1283,7 @@ function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChang
 						<input
 							type="text"
 							inputMode="decimal"
-							className="field field--mono text-right"
+							className="field tabular-nums text-right"
 							style={BUDGET_FIELD_STYLE_MC}
 							value={value}
 							placeholder={budgetPlaceholderMC()}
@@ -1349,7 +1335,7 @@ function TiersSectionMC({
 	errors,
 	onTierChange,
 }) {
-	const { Card, SkeletonRows, TableHead } = window.UI;
+	const { Card, SkeletonRows, Table } = window.UI;
 	// server order = TIER_DOMAINS order; an unknown knob renders with fallback meta (never dropped)
 	const rows = tiers || [];
 	const timing = getApplyTimingMC(rows);
@@ -1374,20 +1360,13 @@ function TiersSectionMC({
 			{state === "unavailable" ? (
 				<SectionUnavailableMC />
 			) : (
-				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
-					<caption className="sr-only">Effort level and output-token cap per background call</caption>
-					<LedgerColsMC />
-					<thead>
-						<tr>
-							<TableHead>Background call</TableHead>
-							<TableHead>Setting</TableHead>
-							<TableHead>
-								<span title={IN_EFFECT_TITLE_MC.tiers}>In effect</span>
-							</TableHead>
-						</tr>
-					</thead>
-					<tbody aria-busy={state === "loading" ? "true" : undefined}>
-						{state === "loading" ? (
+				<Table
+					caption="Effort level and output-token cap per background call"
+					columns={getLedgerColumnsMC("Background call", "Setting", IN_EFFECT_TITLE_MC.tiers)}
+					widths={LEDGER_COL_WIDTHS_MC}
+					className={LEDGER_TABLE_CLASS_MC}
+					bodies={[{ key: "tiers", isBusy: state === "loading", rows: (
+						state === "loading" ? (
 							<SkeletonRows
 								rows={Object.keys(TIER_META_MC).length}
 								columns={LEDGER_COL_COUNT_MC}
@@ -1411,9 +1390,9 @@ function TiersSectionMC({
 									onChange={(v) => onTierChange(t.domain, v)}
 								/>
 							))
-						)}
-					</tbody>
-				</table>
+						)
+					) }]}
+				/>
 			)}
 		</Card>
 	);
@@ -1464,7 +1443,7 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 					<input
 						type="text"
 						inputMode="numeric"
-						className={`field field--mono text-right${showError ? " is-error" : ""}`}
+						className={`field tabular-nums text-right${showError ? " is-error" : ""}`}
 						style={TIER_CAP_FIELD_STYLE_MC}
 						value={value === "inherit" ? "" : value}
 						placeholder={CLI_DEFAULT_LABEL_MC}
