@@ -1553,11 +1553,26 @@ test("tier notes show one unfolded entry per described tier", () => {
   assert.ok(textMc(tree).includes("self-improvement loop"), "every description stays reachable");
 });
 
-test("the model glossary names each tier's saved id, which the select shows only by its friendly name", () => {
-  const props = domainsPropsMc(THREE_TIERS_MC.map((d) => ({ ...d, desired: "claude-opus-4-8" })));
+test("the model glossary names each tier's own saved id under its label, and an inherit tier names no id", () => {
+  const desired: Record<string, string> = {
+    "model.dev": "claude-opus-4-8",
+    "model.research": "inherit",
+    "model.meta": "claude-sonnet-5",
+  };
+  const props = domainsPropsMc(THREE_TIERS_MC.map((d) => ({ ...d, desired: desired[d.domain] })));
   const drawer = drawersMc(renderComponentMc(screens.DomainsSectionMC, props))[0];
-  const ids = textsMc(tagsMc(drawer.children, "dd")).filter((text) => text.startsWith("Saved id"));
-  assert.deepStrictEqual(ids, THREE_TIERS_MC.map(() => "Saved id claude-opus-4-8"), "one saved id per tier entry");
+  const entries = tagsMc(drawer.children, "dl")[0].children.filter((n): n is McTag => typeof n !== "string");
+  const savedIdOf = Object.fromEntries(
+    entries.map((entry) => [
+      textsMc(tagsMc(entry.children, "dt"))[0],
+      textsMc(tagsMc(entry.children, "dd")).find((text) => text.startsWith("Saved id")) ?? null,
+    ]),
+  );
+  assert.deepStrictEqual(
+    savedIdOf,
+    { "Dev agents": "Saved id claude-opus-4-8", "Research agent": null, "Meta agent": "Saved id claude-sonnet-5" },
+    "each label carries its own tier's id; inherit is a sentinel the select already words as the session model",
+  );
 });
 
 test("no ledger text drops below the 13px type floor", () => {

@@ -726,7 +726,10 @@ function DomainsSectionMC({
 					<SettingsInfoMC
 						caveat={timing.caveat}
 						title="Who each tier covers"
-						rows={rows.map((d) => DOMAIN_META_MC[d.domain] && { ...DOMAIN_META_MC[d.domain], savedId: d.desired })}
+						rows={rows.map(
+							// inherit = sentinel, no id → the select already words it "Session model"
+							(d) => DOMAIN_META_MC[d.domain] && { ...DOMAIN_META_MC[d.domain], savedId: d.desired === "inherit" ? null : d.desired },
+						)}
 					/>
 				}
 				infoLabel={SETTINGS_INFO_LABEL_MC}
