@@ -44,7 +44,7 @@ export async function createItem(body: PostItemBody): Promise<{ id: number }> {
   });
 }
 
-export async function getItem(id: number, sessionId: string): Promise<QueueItemView> {
+export async function getItemOrThrow(id: number, sessionId: string): Promise<QueueItemView> {
   const item = await getPrisma().queueItem.findFirst({ where: { id: BigInt(id), sessionId } });
   // another session's item answers the same as a missing one → no existence leak
   if (item === null) throw new QueueRequestError(404, "unknown_item", "item not found for this session");

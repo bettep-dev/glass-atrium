@@ -11,7 +11,7 @@ import { respondDbFailure } from "../db-failure.js";
 import { getMonitorPort } from "../monitor-port.js";
 import { QueueEnvironmentError, QueueRequestError } from "../queue/errors.js";
 import { ackItem, claimPendingItems, withdrawItem } from "../queue/delivery.js";
-import { createItem, getCount, getItem } from "../queue/items.js";
+import { createItem, getCount, getItemOrThrow } from "../queue/items.js";
 import { deregisterSession, registerSession } from "../queue/registry.js";
 import { buildHostAllowlistHook, buildQueueKeyHook } from "../queue/request-gate.js";
 import {
@@ -111,7 +111,7 @@ function registerItemRoutes(app: FastifyInstance): void {
       route: "/api/queue/items/:id",
       schema: sessionBodySchema,
       input: request.query,
-      work: (id, query) => getItem(id, query.sessionId),
+      work: (id, query) => getItemOrThrow(id, query.sessionId),
     }),
   );
 }

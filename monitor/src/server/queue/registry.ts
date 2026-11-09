@@ -64,7 +64,7 @@ export async function findWorktreeRoot(cwd: string): Promise<string | null> {
  * @returns the count of answered items now waiting for this session (the SessionStart pointer line)
  */
 export async function registerSession(body: RegisterBody, homeDir: string): Promise<{ answeredWaiting: number }> {
-  const facts = await getSessionFacts(body, homeDir);
+  const facts = await getSessionFactsOrThrow(body, homeDir);
   const identity: ProcessIdentity = { pid: body.pid, startTime: facts.processStartTime };
   return getPrisma().$transaction(async (tx) => {
     const replacedIds = await findReplacedSessionIds(tx, body.sessionId, identity);
@@ -109,14 +109,14 @@ function getDeregisterPid(body: DeregisterBody): number | null {
   return Number(match[1]);
 }
 
-async function getSessionFacts(body: RegisterBody, homeDir: string): Promise<SessionFacts> {
+async function getSessionFactsOrThrow(body: RegisterBody, homeDir: string): Promise<SessionFacts> {
   if (body.socketPath !== undefined && !isConfinedSocketPath(body.socketPath, body.pid)) {
     throw new QueueRequestError(400, "invalid_socket_path", "socket path must be cc-socks/<registered pid>.sock under /tmp");
   }
-  const cwd = await getExistingDirectory(body.cwd, "cwd");
+  const cwd = await getExistingDirectoryOrThrow(body.cwd, "cwd");
   const [worktreeRoot, configDir, processStartTime] = await Promise.all([
     findWorktreeRoot(cwd),
-    body.configDir === undefined ? null : getConfigDir(body.configDir, homeDir),
+    body.configDir === undefined ? null : getConfigDirOrThrow(body.configDir, homeDir),
     getProcessStartTime(body.pid),
   ]);
   if (processStartTime === null) throw new QueueRequestError(400, "invalid_pid", "pid names no running process");
@@ -127,15 +127,15 @@ function isConfinedSocketPath(socketPath: string, pid: number): boolean {
   return CONFINED_SOCKET_PATH.exec(socketPath)?.[1] === String(pid);
 }
 
-async function getConfigDir(configDir: string, homeDir: string): Promise<string> {
-  const [resolved, home] = await Promise.all([getExistingDirectory(configDir, "configDir"), getRealHome(homeDir)]);
+async function getConfigDirOrThrow(configDir: string, homeDir: string): Promise<string> {
+  const [resolved, home] = await Promise.all([getExistingDirectoryOrThrow(configDir, "configDir"), getRealHomeOrThrow(homeDir)]);
   if (path.dirname(resolved) !== home || !CONFIG_DIR_NAME.test(path.basename(resolved))) {
     throw new QueueRequestError(400, "invalid_config_dir", "config dir must resolve to $HOME/.claude or $HOME/.claude-<name>");
   }
   return resolved;
 }
 
-async function getRealHome(homeDir: string): Promise<string> {
+async function getRealHomeOrThrow(homeDir: string): Promise<string> {
   try {
     return await realpath(homeDir);
   } catch (error) {
@@ -143,7 +143,7 @@ async function getRealHome(homeDir: string): Promise<string> {
   }
 }
 
-async function getExistingDirectory(candidate: string, field: string): Promise<string> {
+async function getExistingDirectoryOrThrow(candidate: string, field: string): Promise<string> {
   try {
     const resolved = await realpath(candidate);
     if ((await stat(resolved)).isDirectory()) return resolved;

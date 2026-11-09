@@ -118,9 +118,9 @@ async function getStatus(itemId: bigint): Promise<string> {
 }
 
 function makeFixtureDir(name: string): string {
-  const dir = path.join(fixtureRoot, `${name}-${randomUUID().slice(0, 8)}`);
-  mkdirSync(dir, { recursive: true });
-  return realpathSync(dir);
+  const fixtureDir = path.join(fixtureRoot, `${name}-${randomUUID().slice(0, 8)}`);
+  mkdirSync(fixtureDir, { recursive: true });
+  return realpathSync(fixtureDir);
 }
 
 function registerBody(sessionId: string, extra: object = {}): object {
@@ -413,10 +413,9 @@ describe("pending (pull claim)", () => {
     const response = await send("POST", "/api/queue/pending", { sessionId: caller });
     const deliveries = await getPrisma().queueDelivery.findMany({ where: { itemId: { in: [...answered, open, foreign] } } });
     const claims: Array<{ id: { item: number; msg: string } }> = response.json().items;
-    const claimedIds = claims.map((claim) => BigInt(claim.id.item)).sort();
-    const msgIds = new Set(deliveries.map((row) => row.msgId));
-    assert.deepEqual(claimedIds, [...answered].sort());
-    assert.ok(claims.every((claim) => msgIds.has(claim.id.msg)), "every claim names its own pull delivery");
+    const ids = { claimed: claims.map((claim) => BigInt(claim.id.item)).sort(), msg: new Set(deliveries.map((row) => row.msgId)) };
+    assert.deepEqual(ids.claimed, [...answered].sort());
+    assert.ok(claims.every((claim) => ids.msg.has(claim.id.msg)), "every claim names its own pull delivery");
     assert.deepEqual(await Promise.all(answered.map(getStatus)), ["delivering", "delivering"]);
     assert.deepEqual([await getStatus(open), await getStatus(foreign)], ["open", "answered"]);
     assert.deepEqual(deliveries.map((row) => [row.itemId, row.route, row.attempt]).sort(), [[answered[0], "pull", 2], [answered[1], "pull", 1]].sort());
