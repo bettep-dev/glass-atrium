@@ -12,6 +12,7 @@ import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { type Box, createControlProbe } from "./lib/control-probe.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -30,7 +31,7 @@ const SCREEN_CSS = findNodes(renderScreen((docsScreen.ScreenClaudedDocs as Compo
   .join("\n");
 
 // The app loads Tailwind preflight and utilities from its CDN and .fs-meta from ui.jsx; these are the rules the measured
-// geometry depends on, at their shipped values — ChipGroup and the checkbox lay out on the utilities.
+// geometry depends on, at their shipped values — ChipGroup and the checkbox lay out on the utilities; role keys come from the shim.
 const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 solid; }
   html { line-height: 1.5; font-family: ui-sans-serif, system-ui, sans-serif; }
   svg { display: block; vertical-align: middle; }
@@ -43,13 +44,13 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .mx-auto { margin-left: auto; margin-right: auto; } .ml-auto { margin-left: auto; } .min-w-0 { min-width: 0; } .overflow-x-auto { overflow-x: auto; }
   .px-4 { padding-left: 1rem; padding-right: 1rem; } .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .pointer-events-none { pointer-events: none; }
   .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; } .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; }
-  .fs-meta { font-size: var(--fs-meta); line-height: 1.4; } .gap-x-list { column-gap: var(--gap-list); }
-  .inline-flex { display: inline-flex; } .inline-grid { display: inline-grid; } .flex-none { flex: none; } .gap-label-inline { gap: var(--gap-label-inline); }
-  .gap-x-label-inline { column-gap: var(--gap-label-inline); } .gap-stack { gap: var(--gap-stack); } .gap-list { gap: var(--gap-list); } .gap-control { gap: var(--gap-control); }
-  .mt-label { margin-top: var(--gap-label); } .mt-block { margin-top: var(--gap-block); } .font-sans { font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui; }
+  .fs-meta { font-size: var(--fs-meta); line-height: 1.4; }
+  .inline-flex { display: inline-flex; } .inline-grid { display: inline-grid; } .flex-none { flex: none; }
+  .font-sans { font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui; }
   .flex-auto { flex: 1 1 auto; } .basis-full { flex-basis: 100%; } .justify-end { justify-content: flex-end; }
   .whitespace-nowrap { white-space: nowrap; } .invisible { visibility: hidden; } .text-dim { color: rgb(var(--dim) / 1); }
-  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }`;
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
+  ${getRoleKeyCss()}`;
 
 const DAY_MS = 86_400_000;
 const getDaysAgo = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();

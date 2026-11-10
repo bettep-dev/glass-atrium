@@ -11,6 +11,7 @@ import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 import { compositeOver, contrastRatio, parseColor, type Rgba } from "./lib/wcag-contrast.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -157,14 +158,14 @@ after(async () => {
   await browser?.close();
 });
 
-// hand fixtures carry the page's utility classes → the Tailwind values they resolve to, minus the runtime
+// hand fixtures carry the page's utility classes → the Tailwind values they resolve to, minus the runtime; role keys come from the shim
 const UTILITIES = ".relative { position: relative; } .absolute { position: absolute; } .flex { display: flex; } .items-center { align-items: center; }" +
   " .justify-center { justify-content: center; } .mx-auto { margin-left: auto; margin-right: auto; } .pointer-events-none { pointer-events: none; }" +
   " .flex-auto { flex: 1 1 auto; } .min-w-0 { min-width: 0; } .flex-nowrap { flex-wrap: nowrap; } .text-faint { color: rgb(var(--faint) / 1); }" +
-  " .inline-flex { display: inline-flex; } .justify-end { justify-content: flex-end; } .flex-none { flex: none; } .gap-label-inline { gap: var(--gap-label-inline); }" +
+  " .inline-flex { display: inline-flex; } .justify-end { justify-content: flex-end; } .flex-none { flex: none; }" +
   " .text-dim { color: rgb(var(--dim) / 1); } .text-ink { color: rgb(var(--ink) / 1); }" +
-  " .inline-grid { display: inline-grid; } .gap-x-label-inline { column-gap: var(--gap-label-inline); }" +
-  " .font-sans { font-family: \"Pretendard Variable\", Pretendard, ui-sans-serif, system-ui; }";
+  " .inline-grid { display: inline-grid; }" +
+  " .font-sans { font-family: \"Pretendard Variable\", Pretendard, ui-sans-serif, system-ui; } " + getRoleKeyCss();
 
 describe("ledger row fills under the shared table hover", () => {
   for (const theme of THEMES) {
