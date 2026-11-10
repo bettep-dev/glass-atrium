@@ -1,4 +1,4 @@
-// Element-tree behaviour tests for the Documents screen header and stage pill,
+// Element-tree behaviour tests for the Documents screen header and stage status,
 // exercised through test/lib/render-screen.ts — no DOM, no react-dom, no DB.
 //
 // Runner: npx tsx --test test/clauded-docs.screen-render.client.test.ts
@@ -106,17 +106,13 @@ function cssRuleBodyIfAny(source: string, selector: string): string {
   return source.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
 }
 
-test("a done stage reads in the neutral tone like every other stage, on the pill and on its filter chip", async () => {
+test("a done stage reads in the neutral tone like every other stage, on its status glyph and on its filter chip", async () => {
   const screen = await loadDocsScreen();
-  const source = getScreenCss(screen);
-  for (const selector of [".doc-stage-pill.is-terminal", ".doc-stage-glyph.is-terminal"]) {
-    const rule = source.match(new RegExp(`${selector.replace(/\./g, "\\.")}\\s*\\{([^}]*)\\}`));
-    assert.doesNotMatch(rule ? rule[1] : "", /--ok/, `${selector} carries no success tone`);
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-stage-glyph"), /--ok/, "the stage glyph carries no success tone");
+  for (const docStatus of ["done", "implementing"]) {
+    const glyph = findNodes(renderScreen((screen.DocStageCD as Component)({ docStatus })), (n) => n.props.atom === "Icon")[0];
+    assert.equal(glyph.props.className, "doc-stage-glyph", `${docStatus} glyph takes no per-stage tone class`);
   }
-
-  const donePips = findNodes(renderScreen((screen.DocStagePillCD as Component)({ docStatus: "done" })),
-    (n) => String(n.props.className ?? "").includes("stage-pip"));
-  for (const pip of donePips) assert.doesNotMatch(String(pip.props.className), /is-terminal/, "done pips fill like any stage");
 
   const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
   const showTrigger = findNodes(tree, (n) => n.props.atom === "FilterTrigger" && n.props.axis === "Show")[0];
@@ -125,19 +121,23 @@ test("a done stage reads in the neutral tone like every other stage, on the pill
   assert.equal("style" in doneOption[0], false, "the menu check marks the chosen stage, never a per-stage tint");
 });
 
-test("a done pill renders its check glyph inside the terminal glyph slot and its label outside it", async () => {
-  const screen = await loadDocsScreen();
-  const tree = renderScreen((screen.DocStagePillCD as Component)({ docStatus: "done" }));
-
-  const glyphSlots = findNodes(tree, (node) => node.props.className === "doc-stage-glyph is-terminal");
-  assert.equal(glyphSlots.length, 1);
-  const icons = findNodes(glyphSlots[0], (node) => node.props.atom === "Icon");
-  assert.equal(icons.length, 1);
-  assert.equal(icons[0].props.name, "check");
-
-  const labels = findNodes(tree, (node) => node.props.className === "doc-stage-label");
-  assert.equal(labels.length, 1);
-  assert.equal(findNodes(glyphSlots[0], (node) => node === labels[0]).length, 0);
+describe("a stage status is a glyph and its stage word inline, with no container", () => {
+  const rows = [
+    { name: "the terminal stage takes a check", docStatus: "done", glyph: "check", word: "Done", rank: "stage 5 of 5" },
+    { name: "a non-terminal stage takes an open circle", docStatus: "implementing", glyph: "circle", word: "Implementing", rank: "stage 2 of 5" },
+    { name: "the retired in-flight token reads as the first stage", docStatus: "progress", glyph: "circle", word: "Doc review", rank: "stage 1 of 5" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderScreen((screen.DocStageCD as Component)({ docStatus: row.docStatus, docTitle: "Plan" }));
+      const icons = findNodes(tree, (n) => n.props.atom === "Icon");
+      assert.deepEqual(icons.map((n) => n.props.name), [row.glyph]);
+      assert.deepEqual(findNodes(tree, (n) => n.props.className === "doc-stage-label").map((n) => collectText(n)), [row.word]);
+      assert.match(collectText(tree), new RegExp(`—\\s+${row.rank}\\s*$`), "the rank reaches assistive tech, not the face");
+      assert.equal(findNodes(tree, (n) => /\bpill\b|stage-pip/.test(String(n.props.className ?? ""))).length, 0, "no pill shell, no pip meter");
+    });
+  }
 });
 
 const MARK_SYNTAX = /[#*`|>[\]~]/;
@@ -260,7 +260,9 @@ test("every control inside a ledger row leaves the Tab order as a row control, s
   const names = controls.map((n) => String(n.props["aria-label"] ?? n.props.className));
   assert.ok(names.some((name) => name.includes("doc-lineage")), "the lineage link is among the controls");
   assert.ok(names.some((name) => name.startsWith("Expand group")), "the group toggle is among the controls");
-  assert.ok(names.some((name) => name.includes("change stage")), "the stage pill is among the controls");
+  const stageMenus = rows.flatMap((tr) => findNodes(tr, (n) => n.props.atom === "RowActions"));
+  assert.ok(stageMenus.length > 0, "a stage menu is among the row controls");
+  for (const menu of stageMenus) assert.equal(menu.props.isRowControl, true, `${String(menu.props.label)} leaves the Tab order`);
   for (const control of controls) {
     assert.equal(control.props.tabIndex, -1, `${String(control.props["aria-label"] ?? control.props.className)} leaves the Tab order`);
     assert.equal(control.props["data-row-control"], "", "it is reachable by arrows from its row");
@@ -534,12 +536,12 @@ test("the filter menus and the stage names speak the English of the rest of the 
   }
   assert.doesNotMatch(collectText(tree), HANGUL);
   for (const stage of ["doc_review", "implementing", "impl_review", "impl_done", "done"]) {
-    const pill = renderScreen((screen.DocStagePillCD as Component)({ docStatus: stage }));
-    assert.doesNotMatch(collectText(pill), HANGUL, stage);
+    const status = renderScreen((screen.DocStageCD as Component)({ docStatus: stage }));
+    assert.doesNotMatch(collectText(status), HANGUL, stage);
   }
 });
 
-test("every row pill names its stage in words, inside a stage section as in search", async () => {
+test("every row status names its stage in words, inside a stage section as in search", async () => {
   const screen = await loadDocsScreen();
   const labelsIn = (tree: ReturnType<typeof renderScreen>) => findNodes(tree, (n) => n.props.className === "doc-stage-label");
   const inReview = (props: Record<string, unknown>) => {
@@ -547,21 +549,41 @@ test("every row pill names its stage in words, inside a stage section as in sear
     return props;
   };
   const sectioned = renderScreen((screen.DocListCardCD as Component)(inReview(listCardProps(() => undefined))));
-  const rowPills = findNodes(sectioned, (n) => n.type === "button" && n.props["aria-haspopup"] === "menu");
-  assert.equal(rowPills.length, 2);
-  assert.deepEqual(labelsIn(sectioned).map((n) => collectText(n)), ["Doc review", "Doc review"], "no pill is a bare row of dots");
-  for (const pill of rowPills) assert.match(String(pill.props["aria-label"]), /^Doc review — stage 1 of 5/);
+  const rowMenus = findNodes(sectioned, (n) => n.props.atom === "RowActions");
+  assert.deepEqual(labelsIn(sectioned).map((n) => collectText(n)), ["Doc review", "Doc review"], "no status is a bare glyph");
+  const titles = (listCardProps(() => undefined).rows as Array<{ title: string }>).map((row) => `Change stage of ${row.title}`);
+  assert.deepEqual(rowMenus.map((n) => n.props.label), titles, "each stage menu names its own row");
 
   const searched = renderListCard(screen, { isSearchMode: true, rows: inReview(listCardProps(() => undefined)).rows });
   assert.equal(labelsIn(searched).length, 2);
 });
 
-test("a pill that changes the stage shows a menu caret, and a read-only pill does not", async () => {
-  const screen = await loadDocsScreen();
-  const carets = (props: Record<string, unknown>) =>
-    findNodes(renderScreen((screen.DocStagePillCD as Component)(props)), (n) => n.props.atom === "Icon" && n.props.name === "chevron-down").length;
-  assert.equal(carets({ docStatus: "implementing", onPickStage: () => undefined }), 1);
-  assert.equal(carets({ docStatus: "implementing" }), 0);
+describe("a status that can change its stage offers every other stage on its row menu", () => {
+  const stageMenu = async (props: Record<string, unknown>) => {
+    const screen = await loadDocsScreen();
+    return findNodes(renderScreen((screen.DocStageCD as Component)({ docStatus: "implementing", docTitle: "Plan", ...props })), (n) => n.props.atom === "RowActions")[0];
+  };
+  test("the menu lists the four other stages as moves, never the current one", async () => {
+    const menu = await stageMenu({ onPickStage: noop });
+    assert.equal(menu.props.label, "Change stage of Plan");
+    assert.deepEqual(Array.from(menu.props.items as Array<{ key: string; label: string }>, (item) => [item.key, item.label]),
+      [["doc_review", "Move to Doc review"], ["impl_review", "Move to Impl review"], ["impl_done", "Move to Impl done"], ["done", "Move to Done"]]);
+  });
+  const picks = [
+    { name: "a pick sends the chosen stage", isChanging: false, sent: ["done"] },
+    { name: "a pick while a change is in flight sends nothing", isChanging: true, sent: [] },
+  ];
+  for (const row of picks) {
+    test(row.name, async () => {
+      const sent: string[] = [];
+      const menu = await stageMenu({ onPickStage: (stage: string) => sent.push(stage), isChanging: row.isChanging });
+      (menu.props.onPick as (key: string) => void)("done");
+      assert.deepEqual(sent, row.sent);
+    });
+  }
+  test("a status with no stage handler has no menu", async () => {
+    assert.equal(await stageMenu({}), undefined);
+  });
 });
 
 test("Delete leaves the viewer's icon bar and sits apart in the metadata rail as a labelled button", async () => {
@@ -652,23 +674,6 @@ describe("the filter bar's reset shows only off the entry view", () => {
     (bar.props.onReset as () => void)();
     assert.deepEqual(Object.fromEntries(calls), entry);
   });
-});
-
-describe("a stage pill draws the shared stage pip, filled up to its stage", () => {
-  const rows = [
-    { name: "doc review fills one of five", stage: "doc_review", filled: 1 },
-    { name: "implementing fills two of five", stage: "implementing", filled: 2 },
-    { name: "done fills all five", stage: "done", filled: 5 },
-  ];
-  for (const row of rows) {
-    test(row.name, async () => {
-      const screen = await loadDocsScreen();
-      const pips = findNodes(renderScreen((screen.DocStagePillCD as Component)({ docStatus: row.stage })),
-        (n) => String(n.props.className ?? "").split(" ").includes("stage-pip"));
-      assert.equal(pips.length, 5);
-      assert.equal(pips.filter((n) => String(n.props.className).includes("is-filled")).length, row.filled);
-    });
-  }
 });
 
 test("the Documents style block and the rendered list card's size classes and inline sizes stay at or above the 13px meta floor", async () => {
@@ -1274,14 +1279,14 @@ test("the bulk bar selection count takes fs-body and its rule sets no size or we
   assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), ".doc-group-action-bar .selection-count"), /(^|[;\s])font-(size|weight)\s*:/);
 });
 
-test("the last stage actor rides the Status cell's tooltip, never a line under the pill", async () => {
+test("the last stage actor rides the Status cell's tooltip, never a line under the status", async () => {
   const screen = await loadDocsScreen();
   const base = listCardProps(() => undefined);
   const [first, second] = base.rows as Array<Record<string, unknown>>;
   const tree = renderListCard(screen, { rows: [{ ...first, last_status_model: "operator" }, second] });
 
   assert.equal(findNodes(tree, (n) => String(n.props.className ?? "").includes("doc-stage-actor")).length, 0);
-  const statusCells = findNodes(tree, (n) => n.type === "td" && findNodes(n, (c) => c.type === "DocStagePillCD").length > 0);
+  const statusCells = findNodes(tree, (n) => n.type === "td" && findNodes(n, (c) => c.type === "DocStageCD").length > 0);
   assert.deepEqual(statusCells.map((td) => td.props.title), ["Set by operator", undefined]);
 });
 
@@ -1549,23 +1554,6 @@ test("the Documents style block draws shadows only from the shadow tokens, a 1px
   const shadows = [...css.matchAll(/box-shadow\s*:\s*([^;}]+)/g)].map((m) => m[1].trim());
   const allowed = (value: string) => value === "none" || /^var\(--shadow-[\w-]+\)$/.test(value) || /^inset 0 0 0 1px /.test(value);
   assert.deepEqual(shadows.filter((value) => !allowed(value)), []);
-  assert.match(cssRuleBody(css, ".doc-stage-menu"), /border-radius\s*:\s*var\(--radius-card\)/);
-});
-
-test("the stage menu floats on the opaque overlay surface, ringed by the line token under the overlay shadow", async () => {
-  const menu = cssRuleBody(getScreenCss(await loadDocsScreen()), ".doc-stage-menu");
-  assert.match(menu, /background\s*:\s*rgb\(var\(--overlay-surface\)\)/);
-  assert.match(menu, /border\s*:\s*1px solid rgb\(var\(--line\)\)/);
-  assert.match(menu, /box-shadow\s*:\s*var\(--shadow-overlay\)/);
-});
-
-test("the checked stage-menu item draws the one filled selected state at rest and on hover, never the user-picked accent", async () => {
-  const css = getScreenCss(await loadDocsScreen());
-  const checked = cssRuleBody(css, '.doc-stage-menu-item[aria-checked="true"], .doc-stage-menu-item[aria-checked="true"]:hover');
-  assert.match(checked, /background\s*:\s*rgb\(var\(--selected-fill\)\)/);
-  assert.match(checked, /color\s*:\s*rgb\(var\(--selected-ink\)\)/);
-  assert.doesNotMatch(checked, /--accent/);
-  assert.match(cssRuleBody(css, '.doc-stage-menu-item[aria-checked="true"] .doc-stage-menu-rank'), /color\s*:\s*inherit/);
 });
 
 test("a ledger checkbox draws the shared checkbox on theme tokens: neutral at rest, the one selected state when checked or mixed, and no transition", async () => {

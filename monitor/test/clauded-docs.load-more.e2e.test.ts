@@ -1361,8 +1361,8 @@ describe("Type floor on the Documents screen, its viewer, version history and st
     const versionHistory = metaSide.locator("details.doc-version-history");
     await versionHistory.locator("summary").click();
     await versionHistory.getByText(title.predecessor, { exact: false }).waitFor({ state: "visible" });
-    await metaSide.getByRole("button", { name: /change stage$/ }).first().click();
-    await page.getByRole("menu", { name: "Set stage" }).waitFor({ state: "visible" });
+    await metaSide.getByRole("button", { name: /^Change stage of / }).first().click();
+    await page.getByRole("menu", { name: /^Change stage of / }).waitFor({ state: "visible" });
   }
 
   // every drawn text under the scope root against its composited background; the rendered document is out of scope.
@@ -1415,21 +1415,19 @@ describe("Type floor on the Documents screen, its viewer, version history and st
       }
     });
 
-    test(`every item of the open stage menu clears 4.5:1 in the ${theme} theme, its checked item hovered and marked by a check`, async () => {
+    test(`every item of the open stage menu clears 4.5:1 in the ${theme} theme, its first item hovered`, async () => {
       const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
       try {
         const page: Page = await context.newPage();
         await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
         const row = await revealRowByTitle(page, title.successor);
         await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-        await row.getByRole("button", { name: /change stage$/ }).click();
-        const menu = page.getByRole("menu", { name: "Set stage" });
+        await row.getByRole("button", { name: /^Change stage of / }).click();
+        const menu = page.getByRole("menu", { name: /^Change stage of / });
         await menu.waitFor({ state: "visible" });
-        const checked = menu.getByRole("menuitemradio", { checked: true });
-        await checked.hover();
+        await menu.getByRole("menuitem").first().hover();
         assert.deepEqual(await page.evaluate(getContrastMissesScript('[role="menu"]')), []);
-        assert.equal(await menu.locator(".doc-stage-menu-mark").count(), 1);
-        assert.equal(await checked.locator(".doc-stage-menu-mark").count(), 1);
+        assert.equal(await menu.getByRole("menuitem").count(), 4, "every stage but the current one is a move");
       } finally {
         await context.close();
       }

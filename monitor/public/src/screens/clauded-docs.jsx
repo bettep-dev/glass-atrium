@@ -999,7 +999,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .card button.btn.sm,
         .modal-head button.btn.sm,
         .doc-fs-container button.btn.sm { min-height: 24px; min-width: 24px; }
-        /* (retired) .doc-status-badge — 스테이지 pill 이 .doc-stage-pill 로 대체. */
         /* multi-select + group UI tokens. */
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
         /* the checkbox is block and centered in its cell; the cell takes the select floor (checkbox + edge padding) */
@@ -1053,19 +1052,16 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
-        .doc-stage-picker { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-        /* stage pill on the shared .pill shell (geometry and type: min-height 24 · inline 8 · gap 4 · --radius-badge · 500 / 1; the picker is .pill--interactive at 32)
-           — only the pill's own face stays here: no fill, ink label */
-        .doc-stage-pill { background: transparent; color: rgb(var(--ink)); }
-        .doc-stage-pill.pill--interactive:hover { background: rgb(var(--line) / 0.4); }
-        .doc-stage-glyph.is-terminal { display: inline-flex; color: rgb(var(--dim)); }
         .doc-meta-danger { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgb(var(--line)); }
-        .doc-stage-caret { display: inline-flex; color: rgb(var(--dim)); }
-        .doc-stage-meter { display: inline-flex; align-items: center; gap: var(--space-1); }
+        /* status and its menu share one line (the status track shrinks, the label ellipsizes) → the row keeps its 40 · the note takes a line of its own */
+        .doc-stage-cell { display: inline-grid; grid-template-columns: minmax(0, auto) auto; align-items: center; column-gap: var(--space-1); }
+        .doc-stage-cell > .doc-stage-note { grid-column: 1 / -1; }
+        .doc-stage { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; }
+        .doc-stage-glyph { flex: none; color: rgb(var(--dim)); }
         .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
-        /* a max-width caps the pill's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
-        .doc-ledger .doc-stage-picker, .doc-ledger .doc-stage-pill { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
-        /* the clip cuts at the label's line box → a control line box, so the shell's line-height 1 never clips a descender */
+        /* a max-width caps the status's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
+        .doc-ledger .doc-stage-cell, .doc-ledger .doc-stage { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
+        /* the clip cuts at the label's line box → a control line box, so a tight line-height never clips a descender */
         .doc-ledger .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: var(--lh-ctl); }
         /* numeric columns: ID and Created read right-aligned in tabular figures on one line — each keeps its own typeface */
         .tbl :is(th, td).doc-col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -1076,14 +1072,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* the bar holds full-bleed strips (control row · whole-word note · bulk bar) that own their insets → the slot adds none, only the rule under it */
         .doc-list-card > .card-bar { padding: 0; border-bottom: 1px solid rgb(var(--line)); }
         .doc-stage-note { font-size: var(--fs-meta); color: rgb(var(--dim)); }
-        .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--overlay-surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); box-shadow: var(--shadow-overlay); }
-        .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: var(--radius-badge); color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
-        .doc-stage-menu-item:hover { background: rgb(var(--line) / 0.6); }
-        /* checked → the one filled selected state + a check mark, not accent text: the accent is user-picked, so no text pair on it is bounded */
-        .doc-stage-menu-item[aria-checked="true"], .doc-stage-menu-item[aria-checked="true"]:hover { background: rgb(var(--selected-fill)); color: rgb(var(--selected-ink)); font-weight: 500; }
-        .doc-stage-menu-rank { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); }
-        .doc-stage-menu-item[aria-checked="true"] .doc-stage-menu-rank { color: inherit; }
-        .doc-stage-menu-mark { margin-left: auto; }
         /* the reset's auto margin takes the bar's slack → a trigger value or the search note never resizes the field being typed in */
         .doc-bar-search { flex: 0 1 200px; min-width: 180px; }
         .doc-trigger-value { display: inline-grid; }
@@ -1584,9 +1572,10 @@ function DocListCardCD({
 											{/* optimisticStatusOverrides 우선 — 서버 refresh 도착 전 고른 stage 즉시 반영. */}
 											{/* last stage actor → the cell tooltip + the viewer rail, so the row stays one line · unknown → no tooltip */}
 											<TableCell view={view} textRole="label" title={row.last_status_model ? `Set by ${formatActorCD(row.last_status_model)}` : undefined}>
-													<DocStagePillCD
+													<DocStageCD
 														isRowControl
 														docStatus={shownStage}
+														docTitle={row.title}
 														onPickStage={(stage) => onPickStage(row.id, stage, null)}
 														isChanging={togglingIds.has(row.id)}
 														note={row.group_stage_uniform === false ? "members differ" : null}
@@ -2164,8 +2153,9 @@ function GroupMembersRowsCD({
             onPickStage 주입 (list-row 와 동일 동작). */}
 				<TableCell view={view} textRole="label">
 					{member.doc_status ? (
-						<DocStagePillCD
+						<DocStageCD
 								isRowControl
+								docTitle={member.title}
 								docStatus={
 									optimisticStatusOverrides.get(member.id) ?? member.doc_status
 								}
@@ -2785,8 +2775,9 @@ function DocMetaPanelCD({
 				</div>
 			)}
 			<div className="flex items-center gap-2 mt-2 flex-wrap">
-				{/* onPickStage 미주입 → read-only pill · cachedRow=doc → viewer cache 로 GET 스킵. */}
-				<DocStagePillCD
+				{/* onPickStage absent → status only · cachedRow=doc → the viewer cache skips the GET */}
+				<DocStageCD
+					docTitle={doc.title}
 					docStatus={optimisticStatusOverrides?.get(doc.id) ?? doc.doc_status}
 					onPickStage={
 						typeof onPickStage === "function"
@@ -2836,20 +2827,20 @@ function DocDeleteButtonCD({ docId, pendingDelete, onDelete }) {
 	);
 }
 
-// Stage pill — a monotone 5-step meter + the stage label, and the stage menu it opens.
-//   · tone rides on the meter fill and the terminal glyph, never on the label text (39578 §E).
-//   · every stage, 종료 included, renders in the neutral tone; 종료 adds only the check glyph.
+// Stage status — glyph + word, no container; the stage change rides the shared row-action menu.
+//   · every stage reads in the neutral tone (39578 §E): the terminal stage takes a check, the rest an open circle.
+//   · the rank lives in the accessible name, so the word never carries "N of 5" on screen.
 //   · a token no stage covers renders as unavailable — distinct from a stage and from empty.
-//   · onPickStage 미제공 → read-only 표시 · pending 중 메뉴 차단 (중복 PUT 가드).
-function DocStagePillCD({
+//   · onPickStage absent → status only · a pick while changing is dropped (duplicate PUT guard).
+function DocStageCD({
 	docStatus,
+	docTitle,
 	onPickStage,
-	isChanging,
+	isChanging = false,
 	note,
 	isRowControl = false,
 }) {
-	const { Icon, ROW_CONTROL_PROPS } = window.UI;
-	const [menuOpen, setMenuOpen] = useStateCD(false);
+	const { Icon, RowActions } = window.UI;
 	const entry = stageEntryCD(docStatus);
 
 	if (!entry) {
@@ -2863,90 +2854,34 @@ function DocStagePillCD({
 		);
 	}
 
-	const rank = stageRankCD(entry.value);
-	const isTerminal = entry.value === TERMINAL_STAGE_CD;
-	const accessibleName = `${entry.label} — stage ${rank} of ${DOC_STAGES_CD.length}`;
-	const face = (
-		<>
-			<span className="doc-stage-meter" aria-hidden="true">
-				{DOC_STAGES_CD.map((stage, index) => (
-					<span
-						key={stage.value}
-						className={`stage-pip${index < rank ? " is-filled" : ""}`}
-					/>
-				))}
-			</span>
-			{isTerminal && (
-				<span className="doc-stage-glyph is-terminal" aria-hidden="true">
-					<Icon name="check" size={11} />
-				</span>
-			)}
+	const rankText = `stage ${stageRankCD(entry.value)} of ${DOC_STAGES_CD.length}`;
+	const status = (
+		<span className="doc-stage" title={`${entry.label} — ${rankText}`}>
+			<Icon name={entry.value === TERMINAL_STAGE_CD ? "check" : "circle"} size={12} className="doc-stage-glyph" />
 			<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
-		</>
+			<span className="sr-only"> — {rankText}</span>
+		</span>
 	);
 
-	if (typeof onPickStage !== "function") {
-		return (
-			<span className="pill doc-stage-pill" title={accessibleName}>
-				{face}
-			</span>
-		);
-	}
+	if (typeof onPickStage !== "function") return status;
 
+	// action items, not a radio set: the shared row menu is action-only, and the current stage reads beside it
+	const items = DOC_STAGES_CD.filter((stage) => stage.value !== entry.value).map((stage) => ({
+		key: stage.value,
+		label: `Move to ${stage.label}`,
+	}));
 	return (
-		<span
-			className="doc-stage-picker"
-			onKeyDown={(e) => {
-				if (e.key === "Escape" && menuOpen) {
-					e.stopPropagation();
-					setMenuOpen(false);
-				}
-			}}
-			onBlur={(e) => {
-				// 포커스가 메뉴 밖으로 나가면 닫는다 — 내부 이동은 유지.
-				if (!e.currentTarget.contains(e.relatedTarget)) setMenuOpen(false);
-			}}>
-			<button
-				type="button"
-				className="pill pill--interactive doc-stage-pill"
-				aria-haspopup="menu"
-				aria-expanded={menuOpen}
-				aria-busy={isChanging || undefined}
-				aria-label={`${accessibleName} — change stage`}
-				{...(isRowControl ? ROW_CONTROL_PROPS : null)}
-				title={isChanging ? "Changing stage…" : accessibleName}
-				onClick={(e) => {
-					// row click bubble 차단 — 행 클릭은 뷰어 진입 (의도 충돌).
-					e.stopPropagation();
-					if (!isChanging) setMenuOpen((open) => !open);
-				}}>
-				{face}
-				<span className="doc-stage-caret" aria-hidden="true">
-					<Icon name="chevron-down" size={12} />
-				</span>
-			</button>
+		<span className="doc-stage-cell">
+			{status}
+			<RowActions
+				label={`Change stage of ${docTitle}`}
+				items={items}
+				isRowControl={isRowControl}
+				onPick={(stage) => {
+					if (!isChanging) onPickStage(stage);
+				}}
+			/>
 			{note && <span className="doc-stage-note">{note}</span>}
-			{menuOpen && (
-				<span className="doc-stage-menu" role="menu" aria-label="Set stage">
-					{DOC_STAGES_CD.map((stage, index) => (
-						<button
-							key={stage.value}
-							type="button"
-							role="menuitemradio"
-							aria-checked={stage.value === entry.value}
-							className="doc-stage-menu-item"
-							onClick={(e) => {
-								e.stopPropagation();
-								setMenuOpen(false);
-								if (stage.value !== entry.value) onPickStage(stage.value);
-							}}>
-							<span className="doc-stage-menu-rank">{index + 1}</span>
-							{stage.label}
-							{stage.value === entry.value && <Icon name="check" size={12} stroke={3} className="doc-stage-menu-mark" />}
-						</button>
-					))}
-				</span>
-			)}
 		</span>
 	);
 }

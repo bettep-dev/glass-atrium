@@ -42,11 +42,10 @@ const STATES = {
 } as const;
 type State = keyof typeof STATES;
 
-// the ledger sits in the list card's elev; the cells carry the screen's dim meta text, the group member's faint placeholder, an empty stage pip, the stale flag's warn glyph, the crit glyph and the ink title
+// the ledger sits in the list card's elev; the cells carry the screen's dim meta text, the group member's faint placeholder, the stale flag's warn glyph, the crit glyph and the ink title
 const ledgerPage = (theme: string) => `<!doctype html><html data-theme="${theme}" style="--accent: ${RUNTIME_ACCENT};"><head><style>${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
-      <td><span class="doc-stage-meter"><span class="stage-pip"></span></span></td>
       <td class="doc-age-cell doc-col-num text-dim"><div class="doc-age-line flex justify-end items-center gap-label-inline"><span class="doc-age-value flex-none">15d</span><span class="doc-age-flag relative inline-flex items-center flex-none text-dim"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
       <td><span class="faint" style="color: rgb(var(--faint));">—</span></td>
       <td class="title-cell"><span class="glyph-crit" style="color: rgb(var(--crit));">!</span> <span class="doc-title-text text-ink">Plan</span></td>
@@ -59,7 +58,6 @@ interface RowReading {
   dim: Rgba;
   faint: Rgba;
   ink: Rgba;
-  pip: Rgba;
   glyph: { crit: Rgba; warn: Rgba };
   opacity: number;
   boxShadow: string;
@@ -105,7 +103,7 @@ async function readRow(page: Page, state: State): Promise<RowReading> {
 const readRowStyles = (id: string) => {
   const row = document.getElementById(id)!;
   const style = getComputedStyle(row);
-  const [dim, faint, title, pip, critGlyph, warnGlyph] = [".doc-age-cell", ".faint", ".doc-title-text", ".stage-pip", ".glyph-crit", ".glyph-warn"].map((selector) =>
+  const [dim, faint, title, critGlyph, warnGlyph] = [".doc-age-cell", ".faint", ".doc-title-text", ".glyph-crit", ".glyph-warn"].map((selector) =>
     getComputedStyle(row.querySelector(selector)!),
   );
   return {
@@ -113,7 +111,6 @@ const readRowStyles = (id: string) => {
     dim: dim.color,
     faint: faint.color,
     ink: title.color,
-    pip: pip.backgroundColor,
     glyph: { crit: critGlyph.color, warn: warnGlyph.color },
     opacity: Number(style.opacity),
     boxShadow: style.boxShadow,
@@ -127,7 +124,6 @@ const parseRowStyles = (raw: ReturnType<typeof readRowStyles>): RowReading => ({
   dim: parseColor(raw.dim),
   faint: parseColor(raw.faint),
   ink: parseColor(raw.ink),
-  pip: parseColor(raw.pip),
   glyph: { crit: parseColor(raw.glyph.crit), warn: parseColor(raw.glyph.warn) },
 });
 
@@ -212,12 +208,12 @@ describe("pending-delete cue on every fill the row can paint", () => {
     ),
   );
   for (const row of rows) {
-    test(`${row.name}: paints the fill, text, pip and tone glyphs of its non-pending twin, and strikes the title through`, () => {
+    test(`${row.name}: paints the fill, text and tone glyphs of its non-pending twin, and strikes the title through`, () => {
       const { card, ...readings } = ledgers[row.theme];
       const reading = readings[row.pointer][row.state];
       const twin = readings[row.pointer][TWIN[row.state]];
       const painted = (r: RowReading) =>
-        [paintedFill(r, card), ...[r.dim, r.faint, r.ink, r.pip, r.glyph.crit, r.glyph.warn].map((color) => paintedText(color, r, card))].map(rgbKey);
+        [paintedFill(r, card), ...[r.dim, r.faint, r.ink, r.glyph.crit, r.glyph.warn].map((color) => paintedText(color, r, card))].map(rgbKey);
       assert.deepEqual(painted(reading), painted(twin), `opacity ${reading.opacity}`);
       assert.match(reading.title.decoration, /line-through/);
       assert.doesNotMatch(twin.title.decoration, /line-through/);
@@ -227,7 +223,7 @@ describe("pending-delete cue on every fill the row can paint", () => {
 
 // every pair a row carries clears its WCAG floor on the fill it paints, at rest and hovered
 describe("row-state contrast floors on every fill", () => {
-  const FLOORS = { dim: 4.5, faint: 4.5, ink: 4.5, pip: 3, crit: 3, warn: 3 } as const;
+  const FLOORS = { dim: 4.5, faint: 4.5, ink: 4.5, crit: 3, warn: 3 } as const;
   type Pair = keyof typeof FLOORS;
   const pairColor = (r: RowReading, pair: Pair) => (pair === "crit" || pair === "warn" ? r.glyph[pair] : r[pair]);
   const rows = THEMES.flatMap((theme) =>
@@ -242,7 +238,7 @@ describe("row-state contrast floors on every fill", () => {
       return contrastRatio(paintedText(pairColor(reading, pair), reading, card), paintedFill(reading, card));
     };
 
-    test(`${row.name}: dim, faint and ink ≥ 4.5:1, empty stage pip, crit and warn glyphs ≥ 3:1`, () => {
+    test(`${row.name}: dim, faint and ink ≥ 4.5:1, crit and warn glyphs ≥ 3:1`, () => {
       for (const pair of Object.keys(FLOORS) as Pair[]) {
         assert.ok(ratioOf(pair) >= FLOORS[pair], `${pair} ${ratioOf(pair).toFixed(3)}:1`);
       }
