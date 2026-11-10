@@ -722,9 +722,9 @@ def write_autoagent_proposal(
     carry the daemon's pre-verification verdict; pre_verify_axes is JSONB (dict
     serialized via Jsonb adapter), the other three are scalars.
 
-    Confidence-weighted promotion ladder: 3 fields —
-    confidence_observed (REAL, Beta-Binomial posterior; None → NULL when the
-    feature flag is off), project_key (TEXT, 12-hex isolation key; ""→NULL),
+    Proposal-row labels: 3 fields —
+    confidence_observed (REAL; no producer, None → NULL),
+    project_key (TEXT, 12-hex isolation key; ""→NULL),
     promotion_tier (TEXT, mention/candidate/proposal/instruction-edit/
     skill-candidate; ""→NULL). All NULLable — older rows omit them.
 
@@ -804,7 +804,7 @@ def _get_proposal_params(
     # psycopg serializes {} as "{}" (valid JSON object), None as NULL.
     axes_param = Jsonb(pre_verify_axes) if pre_verify_axes is not None else None
     # Empty-string project_key/promotion_tier → NULL (DDL default).
-    # confidence_observed=None → NULL (feature flag off / cold-start not stored).
+    # confidence_observed=None → NULL (no producer).
     project_key_param = project_key or None
     promotion_tier_param = promotion_tier or None
     # ""→NULL: an unnamed actor is ABSENT, and the conflict arm coalesces it away.

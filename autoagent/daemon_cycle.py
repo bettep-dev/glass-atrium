@@ -1853,9 +1853,9 @@ class PatchResult:
     # when pre-verify did not run, "auto" when verified, "user" when not.
     approval_tier: str = ""
     status: str = ""
-    # Confidence-weighted promotion ladder — run_cycle sets only promotion_tier
-    # (the 'mention' floor); the other two stay at their defaults.
-    #   confidence_observed: Beta-Binomial posterior mean.
+    # Proposal-row labels — run_cycle sets only promotion_tier (the 'mention'
+    # floor); the other two stay at their defaults.
+    #   confidence_observed: no producer → None, stored NULL.
     #   project_key: resolve_project_key().key (12 hex) for project isolation.
     #   promotion_tier: mention/candidate/proposal/instruction-edit/skill-candidate.
     confidence_observed: float | None = None
@@ -6578,9 +6578,8 @@ def _is_soft_negative_outcome(row: dict) -> bool:
 def _smoothed_soft_negative_rate(rows: list[dict]) -> float:
     """Beta(1,1)-smoothed posterior mean of a window's soft-negative rate.
 
-    Smoothing delegates to confidence.beta_smoothed_rate (prior parity with
-    compute_confidence_observed): an empty window degrades to the Beta(1,1)
-    mean 0.5 instead of 0-division.
+    Smoothing delegates to confidence.beta_smoothed_rate: an empty window
+    degrades to the Beta(1,1) mean 0.5 instead of 0-division.
     """
     negative_count = sum(1 for row in rows if _is_soft_negative_outcome(row))
     return beta_smoothed_rate(negative_count, len(rows))
@@ -6592,9 +6591,8 @@ def _split_outcome_windows(
 ) -> tuple[list[dict], list[dict]]:
     """Partition agent outcome rows into (pre, post) windows around the apply.
 
-    A naive record_ts borrows applied_ts's tzinfo (PG returns tz-aware —
-    mirrors confidence._decay_weight); a row without record_ts cannot be
-    placed on either side → skipped.
+    A naive record_ts borrows applied_ts's tzinfo (PG returns tz-aware); a
+    row without record_ts cannot be placed on either side → skipped.
     """
     pre_rows: list[dict] = []
     post_rows: list[dict] = []

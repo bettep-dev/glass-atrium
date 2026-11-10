@@ -264,9 +264,8 @@ def main():
                 "pre_verify_status": patch.get("pre_verify_status", ""),
                 "pre_verify_rationale": patch.get("pre_verify_rationale", ""),
                 "pre_verify_axes": patch.get("pre_verify_axes") or {},
-                # Confidence-weighted promotion ladder. daemon_cycle.py
-                # PatchResult emits 3 fields when the feature flag is on;
-                # absent/None when off (helper treats NULL as no-op).
+                # Proposal-row labels from daemon_cycle.py PatchResult;
+                # confidence_observed has no producer → None (helper stores NULL).
                 "confidence_observed": patch.get("confidence_observed"),
                 "project_key": patch.get("project_key") or "",
                 "promotion_tier": patch.get("promotion_tier") or "",
