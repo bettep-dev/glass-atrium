@@ -161,6 +161,11 @@ after(async () => {
   await browser?.close();
 });
 
+// hand fixtures carry the page's utility classes → the Tailwind values they resolve to, minus the runtime
+const UTILITIES = ".relative { position: relative; } .absolute { position: absolute; } .flex { display: flex; } .items-center { align-items: center; }" +
+  " .justify-center { justify-content: center; } .mx-auto { margin-left: auto; margin-right: auto; } .pointer-events-none { pointer-events: none; }" +
+  " .flex-auto { flex: 1 1 auto; } .min-w-0 { min-width: 0; } .flex-nowrap { flex-wrap: nowrap; } .text-faint { color: rgb(var(--faint) / 1); }";
+
 describe("ledger row fills under the shared table hover", () => {
   for (const theme of THEMES) {
     test(`${theme}: viewer focus, checked and both paint the same fill hovered as at rest`, () => {
@@ -335,16 +340,14 @@ describe("the Created cell keeps its age and stale glyph on one line", () => {
 describe("the select column and the stage section heads sit on the ledger's grid", () => {
   // the shipped DocCheckboxCD; its wrapper lays out on Tailwind utilities, which the app loads from its CDN → their rules ride the page
   const checkbox = getHtml(renderScreen((docsScreen.DocCheckboxCD as (props: unknown) => unknown)({ checked: false, onChange: () => {}, ariaLabel: "Select Plan" })) as RenderedNode);
-  const UTILITIES = ".relative { position: relative; } .absolute { position: absolute; } .flex { display: flex; } .items-center { align-items: center; }" +
-    " .justify-center { justify-content: center; } .mx-auto { margin-left: auto; margin-right: auto; } .pointer-events-none { pointer-events: none; }";
   // the app's preflight sizes boxes border-box → the select floor is the cell's whole width, as it renders
   const gridPage = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; } ${UTILITIES}</style></head><body style="margin: 0;">
     <div style="padding: 48px;"><div class="card"><table class="tbl" style="width: 600px;">
       <thead><tr><th scope="col" class="doc-checkbox-cell" id="head-select">${checkbox}</th><th scope="col">Title</th></tr></thead>
       <tbody>
-        <tr class="doc-stage-section" id="section"><th scope="colgroup" colspan="2" role="heading" aria-level="2" tabindex="-1" class="tbl-cell tbl-cell--group-header">Implementing<span class="doc-stage-section-count ml-label-inline">3</span></th></tr>
+        <tr class="doc-stage-section" id="section"><th scope="colgroup" colspan="2" role="heading" aria-level="2" tabindex="-1" class="tbl-cell tbl-cell--group-header">Implementing<span class="doc-stage-section-count text-faint ml-label-inline">3</span></th></tr>
         <tr class="doc-row" id="doc"><td class="doc-checkbox-cell" id="row-select">${checkbox}</td><td>Plan</td></tr>
-        <tr class="doc-row" id="group"><td class="doc-checkbox-cell"></td><td class="title-cell"><div class="doc-title-row"><span class="doc-title-lead" id="group-lead"><button type="button" class="doc-group-toggle inline-target gap-label-inline" id="group-toggle" aria-label="Expand group (3 documents)"><svg class="chevron" width="10" height="10"></svg></button></span><span class="doc-title-main">Group</span></div></td></tr>
+        <tr class="doc-row" id="group"><td class="doc-checkbox-cell"></td><td class="title-cell"><div class="doc-title-row"><span class="doc-title-lead" id="group-lead"><button type="button" class="doc-group-toggle inline-target gap-label-inline" id="group-toggle" aria-label="Expand group (3 documents)"><svg class="chevron" width="10" height="10"></svg></button></span><span class="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap">Group</span></div></td></tr>
       </tbody>
     </table></div></div>
   </body></html>`;
@@ -436,9 +439,9 @@ describe("the select column and the stage section heads sit on the ledger's grid
 
 describe("a group member nests one lead slot under its root on both table modes", () => {
   const groupRows = (mode: string) => `
-    <tr class="doc-row is-group-root"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-root"><div class="doc-title-row"><span class="doc-title-lead"><button type="button" class="doc-group-toggle inline-target" aria-label="Collapse group (2 documents)"><svg class="chevron" width="10" height="10"></svg></button></span><span class="doc-title-main">Release plan</span></div></td></tr>
-    <tr class="doc-row is-group-member"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-member"><div class="doc-title-row"><span class="doc-title-lead"><span class="doc-drag-handle">⠿</span></span><span class="doc-title-main">Release plan rev 2</span></div></td></tr>`;
-  const nestPage = `<!doctype html><html data-theme="dark"><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; }</style></head><body style="margin: 0;">
+    <tr class="doc-row is-group-root"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-root"><div class="doc-title-row"><span class="doc-title-lead"><button type="button" class="doc-group-toggle inline-target" aria-label="Collapse group (2 documents)"><svg class="chevron" width="10" height="10"></svg></button></span><span class="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap">Release plan</span></div></td></tr>
+    <tr class="doc-row is-group-member"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-member"><div class="doc-title-row"><span class="doc-title-lead"><span class="doc-drag-handle">⠿</span></span><span class="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap">Release plan rev 2</span></div></td></tr>`;
+  const nestPage = `<!doctype html><html data-theme="dark"><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; } ${UTILITIES}</style></head><body style="margin: 0;">
     <div style="padding: 48px;"><div class="card">
       <table class="tbl doc-ledger" style="width: 600px;"><tbody>${groupRows("wide")}</tbody></table>
       <table class="tbl tbl--stacked doc-ledger" style="width: 600px;"><tbody>${groupRows("stacked")}</tbody></table>

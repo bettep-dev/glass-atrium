@@ -99,6 +99,12 @@ function cssRuleBody(source: string, selector: string): string {
   return match[1];
 }
 
+// a rule moved onto utilities has no body → nothing it could set
+function cssRuleBodyIfAny(source: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return source.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+}
+
 test("a done stage reads in the neutral tone like every other stage, on the pill and on its filter chip", async () => {
   const screen = await loadDocsScreen();
   const source = getScreenCss(screen);
@@ -976,7 +982,7 @@ describe("the list sets only the document id in the machine-string face", () => 
   ];
   for (const row of sansRules) {
     test(`${row.name} keeps the sans face`, async () => {
-      assert.doesNotMatch(cssRuleBody(getScreenCss(await loadDocsScreen()), row.selector), /monospace/);
+      assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(await loadDocsScreen()), row.selector), /monospace/);
     });
   }
 });
@@ -1031,7 +1037,7 @@ describe("a ledger head count and a group toggle space their content on the labe
       const [node] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes(className));
       assert.ok(node, `${row.name} renders`);
       assert.match(String(node.props.className), new RegExp(`(^|\\s)${row.roleClass}(\\s|$)`), row.name);
-      assert.doesNotMatch(cssRuleBody(getScreenCss(screen), row.rule), new RegExp(`(^|[;\\s])${row.property}(-left)?\\s*:`), row.rule);
+      assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), row.rule), new RegExp(`(^|[;\\s])${row.property}(-left)?\\s*:`), row.rule);
     });
   }
 });
@@ -1061,6 +1067,38 @@ describe("the filter bar and its count line take their layout and tone from util
       assert.doesNotMatch(getScreenCss(screen), new RegExp(`${row.hook.replace(".", "\\.")}[\\s,.:{]`), `${row.hook} has no screen rule`);
     });
   }
+});
+
+// a ledger text node's tone and inline layout read utilities → a screen rule restating them is a second declaration
+describe("ledger text nodes take their tone and inline layout from utilities, not the screen style block", () => {
+  const groupRoot = { id: 21, title: "Doc 21", doc_status: "open", format: "md", audience: "exposed", author: "glass-atrium-intel-planner",
+    created_at: "2026-09-01T00:00:00Z", member_count: 3, folder_id: 5 };
+  const ledger = (screen: Record<string, unknown>) => renderListCard(screen, { rows: [groupRoot] });
+  const bulkBar = (screen: Record<string, unknown>) =>
+    renderScreen((screen.GroupActionBarCD as Component)({ selectionSize: 2, canGroup: true, canUngroup: true }));
+  const rows = [
+    { name: "a stage section's count", render: ledger, hook: "doc-stage-section-count", rule: ".doc-stage-section-count",
+      utilities: ["text-faint", "fs-meta", "tabular-nums", "ml-label-inline"] },
+    { name: "a ledger title line", render: ledger, hook: "doc-title-main", rule: ".doc-title-main",
+      utilities: ["flex", "flex-auto", "min-w-0", "items-center", "flex-nowrap", "gap-label-inline"] },
+    { name: "the bulk bar selection count", render: bulkBar, hook: "selection-count", rule: ".doc-group-action-bar .selection-count",
+      utilities: ["text-ink", "fs-body", "font-semibold", "tabular-nums"] },
+  ];
+  for (const row of rows) {
+    test(`${row.name} carries its utilities, no inline style, and no screen rule`, async () => {
+      const screen = await loadDocsScreen();
+      const [node] = findNodes(row.render(screen), (n) => String(n.props?.className ?? "").split(/\s+/).includes(row.hook));
+      assert.ok(node, `${row.name} renders`);
+      const classes = String(node.props.className).split(/\s+/);
+      assert.deepEqual(row.utilities.filter((utility) => !classes.includes(utility)), [], row.name);
+      assert.equal(node.props.style, undefined, `${row.name} has no inline style`);
+      assert.equal(cssRuleBodyIfAny(getScreenCss(screen), row.rule), "", `${row.rule} has no screen rule`);
+    });
+  }
+
+  test("a reorder rollback message has no screen rule", async () => {
+    assert.doesNotMatch(getScreenCss(await loadDocsScreen()), /\.doc-reorder-error[\s,.:{]/);
+  });
 });
 
 // a section head is a house body header → a declaration its rule restates drifts from the table the moment base.css moves
@@ -1136,7 +1174,7 @@ test("the bulk bar selection count takes fs-body and its rule sets no size or we
   const [count] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("selection-count"));
 
   assert.match(String(count.props.className), /(^|\s)fs-body(\s|$)/);
-  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-group-action-bar .selection-count"), /(^|[;\s])font-(size|weight)\s*:/);
+  assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), ".doc-group-action-bar .selection-count"), /(^|[;\s])font-(size|weight)\s*:/);
 });
 
 test("the last stage actor rides the Status cell's tooltip, never a line under the pill", async () => {
@@ -1352,8 +1390,9 @@ describe("a tone in the Documents screen rides a leading glyph while its words s
       const screen = await loadDocsScreen(row.react());
       const [alert] = findNodes(renderScreen(row.render(screen)), (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-inline-alert"));
       assert.ok(alert, `${row.name}: the alert line renders`);
-      assert.match(String(alert.props.className), /(^|\s)gap-label-inline(\s|$)/);
-      assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-inline-alert"), /(^|[;\s])gap\s*:/);
+      const classes = String(alert.props.className).split(/\s+/);
+      assert.deepEqual(["inline-flex", "items-center", "gap-label-inline"].filter((utility) => !classes.includes(utility)), []);
+      assert.doesNotMatch(getScreenCss(screen), /\.doc-inline-alert[\s,.:{]/, "the alert line has no screen rule");
     });
   }
 });
@@ -1372,7 +1411,7 @@ describe("a group member state line keeps the cell atom's padding and colours it
     { name: "an empty group", state: { status: "ready", data: [], error: null }, nullAs: null, wordsClass: "text-faint" },
     {
       name: "a reorder that did not save", state: { status: "ready", data: [member, { ...member, id: 22 }], error: null },
-      nullAs: "Order not saved — reverted", wordsClass: "doc-reorder-error",
+      nullAs: "Order not saved — reverted", wordsClass: "text-ink",
     },
   ];
   for (const row of rows) {

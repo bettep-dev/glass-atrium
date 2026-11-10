@@ -893,7 +893,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* spacer slot on the snippet line and the Title header → the title x without the title line's height floor */
         .doc-title-lead.is-spacer { min-height: 0; }
         .doc-title-lead { flex: 0 0 ${DOC_LEAD_SLOT_PX_CD}px; width: ${DOC_LEAD_SLOT_PX_CD}px; display: flex; align-items: center; justify-content: center; min-height: 20px; }
-        .doc-title-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: nowrap; }
         /* 1줄 클램프 — 제목·작성자 셀 공용. 초과분은 말줄임, 전체 값은 title= 툴팁이 운반.
            white-space:nowrap 대신 클램프인 사유 — auto-layout 표에서 nowrap 은 셀 min-content 를
            문자열 전체 폭으로 키워 그 컬럼이 제목 폭을 빼앗는다. */
@@ -1030,7 +1029,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
            border-box + 수직 center 정렬로 양 모드 픽셀 동일. flex-wrap 제거 (좁은 폭에서 2줄
            래핑이 다시 높이 변동 유발 → 단일행 유지 + 버튼이 reserved 높이 초과 차단). */
         .doc-group-action-bar { box-sizing: border-box; min-height: 44px; background: rgb(var(--sunken)); border-top: 1px solid rgb(var(--line)); display: flex; align-items: center; }
-        .doc-group-action-bar .selection-count { color: rgb(var(--ink)); }
         /* 버튼이 reserved 44px 를 넘기지 않도록 상한 — 초과 시 bar 자체가 늘어나 점프 재발. */
         .doc-group-action-bar .btn.sm { max-height: 30px; }
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
@@ -1051,9 +1049,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-drag-handle:active { cursor: grabbing; }
         /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
         tr.doc-row.is-group-member.is-dragging { opacity: 0.5; box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.5); }
-        /* reorder rollback error beside its group — the crit glyph carries the tone, the message stays ink */
-        .doc-reorder-error { color: rgb(var(--ink)); }
-        .doc-inline-alert { display: inline-flex; align-items: center; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
@@ -1100,7 +1095,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
         /* a section head = a house body header (40 row, meta face, sunken fill) → only the bottom-anchored label inset and the 600 weight are its own */
         tr.doc-stage-section > th { padding-block: var(--space-3) var(--space-1); font-weight: 600; }
-        .doc-stage-section-count { color: rgb(var(--faint)); }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -1414,7 +1408,7 @@ function DocListCardCD({
 			<TableRow view={view} className="doc-stage-section">
 				<TableCell view={view} kind="group-header" level={2}>
 					{entry ? entry.label : "stage unavailable"}
-					<span className="doc-stage-section-count ml-label-inline fs-meta tabular-nums">
+					<span className="doc-stage-section-count text-faint ml-label-inline fs-meta tabular-nums">
 						{formatIntCD(sectionCounts.get(rank) || 0)}
 					</span>
 				</TableCell>
@@ -1648,7 +1642,7 @@ function DocListCardCD({
 															</button>
 														)}
 													</span>
-													<span className="doc-title-main gap-label-inline">
+													<span className="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap gap-label-inline">
 														{isPending && <ToneGlyphCD tone="crit" />}
 														<span className="doc-title-text" title={row.title}>
 															{row.title}
@@ -1868,7 +1862,7 @@ function GroupActionBarCD({
 			role="toolbar"
 			aria-label="Bulk group actions"
 		>
-			<span className="selection-count fs-body font-semibold tabular-nums">{selectionSize} selected</span>
+			<span className="selection-count text-ink fs-body font-semibold tabular-nums">{selectionSize} selected</span>
 			<button
 				type="button"
 				className="btn ghost sm"
@@ -2062,7 +2056,7 @@ function GroupMembersRowsCD({
 					start={1}
 					className="fs-meta"
 				>
-					<span className="doc-inline-alert gap-label-inline text-ink">
+					<span className="doc-inline-alert inline-flex items-center gap-label-inline text-ink">
 						<ToneGlyphCD tone="crit" />
 						Couldn't load group members — {memberState.error}
 					</span>
@@ -2094,9 +2088,10 @@ function GroupMembersRowsCD({
 				view={view}
 				kind="span"
 				start={1}
-				className="doc-reorder-error fs-meta"
+				className="doc-reorder-error fs-meta text-ink"
 			>
-				<span className="doc-inline-alert gap-label-inline">
+				{/* the crit glyph carries the tone → the message stays ink */}
+				<span className="doc-inline-alert inline-flex items-center gap-label-inline">
 					<ToneGlyphCD tone="crit" />
 					{reorderError}
 				</span>
@@ -2225,7 +2220,7 @@ function GroupMembersRowsCD({
 								</span>
 							)}
 						</span>
-						<span className="doc-title-main gap-label-inline">
+						<span className="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap gap-label-inline">
 							{isPending && <ToneGlyphCD tone="crit" />}
 							<span className="doc-title-text" title={member.title}>
 								{member.title}
@@ -3104,7 +3099,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 				)}
 				{predState.status === "error" && (
 					<div
-						className="fs-meta doc-inline-alert gap-label-inline"
+						className="fs-meta doc-inline-alert inline-flex items-center gap-label-inline"
 						style={{ color: "rgb(var(--ink))" }}
 						role="alert"
 					>
