@@ -17,11 +17,12 @@ import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { setSocketDeliveryOn } from "../src/server/queue/drift-guard.js";
 import { registerRoutes } from "../src/server/routes/index.js";
-import { registerQueueRoutes } from "../src/server/routes/queue.js";
+import { registerQueueRoutes, resolveQueueRouteOptions } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 
 const PORT = 16145;
+const CLI_PATH = "/opt/atrium-test/scripts/atrium-queue.sh";
 const HOST = `127.0.0.1:${PORT}`;
 const PASSPHRASE = "owner passphrase for tests";
 const QUEUE_KEY = "test-queue-key-0123456789abcdef";
@@ -65,7 +66,7 @@ function writeSecrets(secretsDir: string): void {
 async function buildApp(secretsDir: string): Promise<FastifyInstance> {
   const instance = Fastify({ logger: false });
   instance.get("/api/root-probe", async (request) => ({ hasCookies: "cookies" in request }));
-  await registerQueueRoutes(instance, { secretsDir, port: PORT, homeDir: dir.home });
+  await registerQueueRoutes(instance, { secretsDir, port: PORT, homeDir: dir.home, cliPath: CLI_PATH });
   await instance.ready();
   return instance;
 }
@@ -129,10 +130,12 @@ function seedDecision(sessionId: string, overrides: Partial<Prisma.QueueItemUnch
   return seedItem(sessionId, { kind: "decision", options: DECISION_OPTIONS, recommendedCode: "R1", ...overrides });
 }
 
-async function seedResumeDelivery(itemId: bigint, attempt: number, bgId: string | null = null): Promise<void> {
+type ResumeRowFields = Pick<Prisma.QueueDeliveryUncheckedCreateInput, "result" | "abortReason">;
+
+async function seedResumeDelivery(itemId: bigint, attempt: number, bgId: string | null = null, fields: ResumeRowFields = { result: "sent" }): Promise<void> {
   const sentAt = new Date();
   await getPrisma().queueDelivery.create({
-    data: { msgId: randomUUID(), itemId, route: "resume", attempt, result: "sent", sentAt, ackDeadlineAt: new Date(sentAt.getTime() + ACK_DEADLINE_MS), bgId },
+    data: { msgId: randomUUID(), itemId, route: "resume", attempt, sentAt, ackDeadlineAt: new Date(sentAt.getTime() + ACK_DEADLINE_MS), bgId, ...fields },
   });
 }
 
@@ -518,6 +521,21 @@ describe("list and item detail", () => {
     assert.equal(mixed.skipReason.hasUnmarkedOccupant, true);
   });
 
+  test("the list names the installed queue CLI the pull command runs", async () => {
+    assert.equal((await send("GET", "/api/queue/owner/items?limit=1")).json().cliPath, CLI_PATH);
+  });
+
+  test("the CLI path follows GA_ROOT, so a non-default install shows its own path", () => {
+    const saved = process.env.GA_ROOT;
+    process.env.GA_ROOT = "/Volumes/tools/atrium";
+    try {
+      assert.equal(resolveQueueRouteOptions().cliPath, "/Volumes/tools/atrium/scripts/atrium-queue.sh");
+    } finally {
+      if (saved === undefined) delete process.env.GA_ROOT;
+      else process.env.GA_ROOT = saved;
+    }
+  });
+
   test("an item of a marked session carries the marker with the bg id of the spawn that set it", async () => {
     const sessionId = await seedSession({ state: "exited", exitReason: "dead", resumeAwaitingRegisterAt: new Date() });
     const resumed = await seedDecision(sessionId, { status: "delivering", answerCode: "R1", answeredAt: new Date() });
@@ -526,5 +544,38 @@ describe("list and item detail", () => {
     const detail = (await send("GET", `/api/queue/owner/items/${unacked}`)).json();
     assert.equal(detail.session.marker.bgId, "abc123");
     assert.equal(detail.canResend, false, "no Resend while the marker is set");
+  });
+});
+
+describe("recent automatic resumes", () => {
+  test("lists resume rows newest first with item and account, keeping a resume whose item was delivered", async () => {
+    const sessionId = await seedSession({ state: "exited", exitReason: "dead", profileLabel: ".claude-work", cwd: "/Users/owner/Desktop/git/atrium/hooks" });
+    const delivered = await seedDecision(sessionId, { title: "Pick the index", status: "delivered", answerCode: "R1", answeredAt: new Date(), deliveredAt: new Date() });
+    await seedResumeDelivery(delivered, 1, "bg-41", { result: "acked" });
+    const pending = await seedDecision(sessionId, { title: "Pick the lock order", status: "resume_pending", answerCode: "R2", answeredAt: new Date() });
+    await seedResumeDelivery(pending, 1, null, { result: "aborted", abortReason: "session_returned" });
+    const response = await send("GET", "/api/queue/owner/resumes?limit=2");
+    assert.equal(response.statusCode, 200, response.body);
+    const session = { profileLabel: ".claude-work", cwdTail: "atrium/hooks" };
+    const resumes = (response.json().resumes as Array<Record<string, unknown>>).map(({ sentAt: _sentAt, ...rest }) => rest);
+    assert.deepEqual(resumes, [
+      { attempt: 1, result: "aborted", abortReason: "session_returned", bgId: null, item: { id: Number(pending), title: "Pick the lock order" }, session },
+      { attempt: 1, result: "acked", abortReason: null, bgId: "bg-41", item: { id: Number(delivered), title: "Pick the index" }, session },
+    ]);
+  });
+
+  test("socket and pull rows stay off the resume record", async () => {
+    const itemId = await seedDecision(await seedSession(), { status: "unacked", answerCode: "R1", answeredAt: new Date() });
+    const sentAt = new Date();
+    await getPrisma().queueDelivery.create({
+      data: { msgId: randomUUID(), itemId, route: "socket", attempt: 1, result: "expired", sentAt, ackDeadlineAt: new Date(sentAt.getTime() + ACK_DEADLINE_MS) },
+    });
+    const items = (await send("GET", "/api/queue/owner/resumes?limit=50")).json().resumes as Array<{ item: { id: number } }>;
+    assert.equal(items.some((resume) => resume.item.id === Number(itemId)), false);
+  });
+
+  test("the record needs an owner session and a bounded limit", async () => {
+    assert.equal((await send("GET", "/api/queue/owner/resumes", undefined, { cookie: null })).statusCode, 401);
+    assert.equal((await send("GET", "/api/queue/owner/resumes?limit=51")).statusCode, 400);
   });
 });

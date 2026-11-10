@@ -7,7 +7,7 @@ import { getPrisma } from "../db.js";
 import { isSocketDeliveryOn } from "./drift-guard.js";
 import { QueueRequestError } from "./errors.js";
 import { buildResumeInFlightSql } from "./resume-claim.js";
-import type { OwnerListQuery } from "./schemas.js";
+import type { OwnerListQuery, RecentResumesQuery } from "./schemas.js";
 
 const TERMINAL: QueueItemStatus[] = ["delivered", "seen", "withdrawn"];
 const DEVIATION_STATUSES = new Set<QueueItemStatus>(["unacked", "held", "expired", "resume_pending"]);
@@ -50,6 +50,12 @@ export interface ResumeRecord {
   result: string;
   abortReason: string | null;
   bgId: string | null;
+}
+
+/** A page-level resume record: the item it carried and the session it resumed. */
+export interface RecentResume extends ResumeRecord {
+  item: { id: number; title: string };
+  session: { profileLabel: string; cwdTail: string };
 }
 
 export interface OwnerItemView {
@@ -123,6 +129,26 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
   const items = await buildViews(page);
   const last = page[page.length - 1];
   return { items, nextCursor: rows.length > query.limit && last !== undefined ? Number(last.queuePosition) : null, isSocketDeliveryOn: isSocketDeliveryOn() };
+}
+
+/**
+ * Newest resume Delivery rows across every item, terminal ones included → a resume stays visible after its item is delivered.
+ * Id order = claim order: a resume row's sent time is set by the claim that inserts it.
+ */
+export async function getRecentResumes(query: RecentResumesQuery): Promise<{ resumes: RecentResume[] }> {
+  const rows = await getPrisma().queueDelivery.findMany({
+    where: { route: "resume" },
+    orderBy: { id: "desc" },
+    take: query.limit,
+    include: { item: { select: { id: true, title: true, session: { select: { profileLabel: true, cwd: true } } } } },
+  });
+  return {
+    resumes: rows.map(({ item, ...delivery }) => ({
+      ...toResumeRecord(delivery),
+      item: { id: Number(item.id), title: item.title },
+      session: { profileLabel: item.session.profileLabel, cwdTail: getCwdTail(item.session.cwd) },
+    })),
+  };
 }
 
 export async function getOwnerItemOrThrow(id: number): Promise<OwnerItemView> {

@@ -12,6 +12,7 @@ const OPTION_TEXT = { label: 200, pros: 800, cons: 800 } as const;
 
 const MAX_TEXT = 20_000;
 const MAX_LIST_LIMIT = 200;
+const RECENT_RESUME_LIMIT = { DEFAULT: 10, MAX: 50 } as const;
 
 const sessionId = z.uuid();
 const optionCode = z.string().regex(/^R[1-9]$/);
@@ -103,6 +104,10 @@ export const ownerListQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(MAX_LIST_LIMIT).default(100),
 });
 
+export const recentResumesQuerySchema = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(RECENT_RESUME_LIMIT.MAX).default(RECENT_RESUME_LIMIT.DEFAULT),
+});
+
 export type RegisterBody = z.infer<typeof registerBodySchema>;
 export type DeregisterBody = z.infer<typeof deregisterBodySchema>;
 export type PostItemBody = z.infer<typeof postItemBodySchema>;
@@ -110,3 +115,4 @@ export type AckBody = z.infer<typeof ackBodySchema>;
 export type AnswerBody = z.infer<typeof answerBodySchema>;
 export type ReplyBody = z.infer<typeof replyBodySchema>;
 export type OwnerListQuery = z.infer<typeof ownerListQuerySchema>;
+export type RecentResumesQuery = z.infer<typeof recentResumesQuerySchema>;

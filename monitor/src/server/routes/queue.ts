@@ -9,6 +9,7 @@ import type { FastifyInstance } from "fastify";
 
 import { getMonitorPort } from "../monitor-port.js";
 import { ackItem, claimPendingItems, withdrawItem } from "../queue/delivery.js";
+import { getQueueCliPath } from "../queue/envelope.js";
 import { createItem, getCount, getItemOrThrow } from "../queue/items.js";
 import { deregisterSession, registerSession } from "../queue/registry.js";
 import { buildHostAllowlistHook, buildQueueKeyHook } from "../queue/request-gate.js";
@@ -32,6 +33,8 @@ export interface QueueRouteOptions {
   port: number;
   /** Home whose `.claude` / `.claude-<name>` directories are the only accepted config dirs. */
   homeDir: string;
+  /** Installed queue CLI → the owner page's pull command names the real path on a non-default install. */
+  cliPath: string;
 }
 
 /** Defaults resolved at registration time (never import time) so a caller-supplied secrets dir always wins. */
@@ -41,6 +44,7 @@ export function resolveQueueRouteOptions(secretsDir?: string): QueueRouteOptions
     secretsDir: secretsDir ?? path.join(gaRoot, "secrets"),
     port: getMonitorPort(),
     homeDir: os.homedir(),
+    cliPath: getQueueCliPath(gaRoot),
   };
 }
 

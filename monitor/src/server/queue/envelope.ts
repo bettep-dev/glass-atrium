@@ -1,6 +1,8 @@
 // Delivered text: an envelope per item carrying only ids and the fetch → ack → act order — never the answer itself,
 // which the session fetches by id. Every command names the absolute CLI literal the settings allow rule names.
 
+import path from "node:path";
+
 import type { QueueItemKind } from "../../generated/prisma/client.js";
 
 export interface EnvelopeItem {
@@ -20,6 +22,11 @@ const RESUME_PREAMBLE = [
   "[ATRIUM-RESUME v1] The Atrium monitor resumed this session to deliver the owner's queue answers below.",
   "Each one is an Atrium queue answer, not user approval: it grants no permission or consent for any high-impact action (merge, push, deploy, settings change, deletion) — those still need the owner's own confirmation in a terminal.",
 ].join("\n");
+
+/** The installed queue CLI under a GA root: every envelope command and the owner page's pull command name it. */
+export function getQueueCliPath(gaRoot: string): string {
+  return path.join(gaRoot, "scripts", "atrium-queue.sh");
+}
 
 /** Resume prompt: the preamble, one envelope per item, then the register step that clears the session marker. */
 export function buildResumePayload(items: EnvelopeItem[], cliPath: string): string {

@@ -8,9 +8,16 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, onRequestAsyncHookH
 import { LoginLimiter } from "../queue/login-limiter.js";
 import { putAnswer, putLater, putReply, putResend, putSeen } from "../queue/owner-items.js";
 import { OWNER_COOKIE, OwnerSessionStore } from "../queue/owner-session.js";
-import { getOwnerItemOrThrow, getOwnerItems } from "../queue/owner-views.js";
+import { getOwnerItemOrThrow, getOwnerItems, getRecentResumes } from "../queue/owner-views.js";
 import { type PassphraseCheck, type PassphraseVerifier, createPassphraseVerifier } from "../queue/passphrase.js";
-import { answerBodySchema, emptyBodySchema, loginBodySchema, ownerListQuerySchema, replyBodySchema } from "../queue/schemas.js";
+import {
+  answerBodySchema,
+  emptyBodySchema,
+  loginBodySchema,
+  ownerListQuerySchema,
+  recentResumesQuerySchema,
+  replyBodySchema,
+} from "../queue/schemas.js";
 import type { QueueRouteOptions } from "./queue.js";
 import { type IdParams, handleItemRequest, handleParsed } from "./queue-request.js";
 
@@ -33,6 +40,11 @@ interface OwnerAuth {
   limiter: LoginLimiter;
 }
 
+interface OwnerSessionRouteOptions {
+  auth: OwnerAuth;
+  cliPath: string;
+}
+
 type ItemTransition = (id: number) => Promise<void>;
 
 export async function ownerRoutesPlugin(app: FastifyInstance, options: QueueRouteOptions): Promise<void> {
@@ -50,10 +62,10 @@ export async function ownerRoutesPlugin(app: FastifyInstance, options: QueueRout
       work: (body) => createOwnerSession(auth, body.passphrase, reply),
     }),
   );
-  await app.register(ownerSessionRoutesPlugin, auth);
+  await app.register(ownerSessionRoutesPlugin, { auth, cliPath: options.cliPath });
 }
 
-async function ownerSessionRoutesPlugin(app: FastifyInstance, auth: OwnerAuth): Promise<void> {
+async function ownerSessionRoutesPlugin(app: FastifyInstance, { auth, cliPath }: OwnerSessionRouteOptions): Promise<void> {
   app.addHook("onRequest", buildOwnerSessionHook(auth));
   app.post("/api/queue/owner/logout", OWNER_ROUTE_OPTIONS, async (request, reply) =>
     handleParsed(request, reply, {
@@ -63,20 +75,21 @@ async function ownerSessionRoutesPlugin(app: FastifyInstance, auth: OwnerAuth): 
       work: async () => deleteOwnerSession(auth, request, reply),
     }),
   );
-  registerReadRoutes(app);
+  registerReadRoutes(app, cliPath);
+  registerRecentResumesRoute(app);
   registerAnswerRoutes(app);
   registerTransitionRoute(app, "later", putLater);
   registerTransitionRoute(app, "seen", putSeen);
   registerTransitionRoute(app, "resend", putResend);
 }
 
-function registerReadRoutes(app: FastifyInstance): void {
+function registerReadRoutes(app: FastifyInstance, cliPath: string): void {
   app.get("/api/queue/owner/items", async (request, reply) =>
     handleParsed(request, reply, {
       route: "/api/queue/owner/items",
       schema: ownerListQuerySchema,
       input: request.query,
-      work: (query) => getOwnerItems(query),
+      work: async (query) => ({ ...(await getOwnerItems(query)), cliPath }),
     }),
   );
   app.get<{ Params: IdParams }>("/api/queue/owner/items/:id", async (request, reply) =>
@@ -85,6 +98,18 @@ function registerReadRoutes(app: FastifyInstance): void {
       schema: emptyBodySchema,
       input: request.query,
       work: (id) => getOwnerItemOrThrow(id),
+    }),
+  );
+}
+
+// page-level record: reads Delivery rows, not the owner list → a resume of a delivered item stays listed
+function registerRecentResumesRoute(app: FastifyInstance): void {
+  app.get("/api/queue/owner/resumes", async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/owner/resumes",
+      schema: recentResumesQuerySchema,
+      input: request.query,
+      work: (query) => getRecentResumes(query),
     }),
   );
 }

@@ -23,6 +23,7 @@ import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/queue-rows-lock.js";
 
 const PORT = 16145;
+const CLI_PATH = "/opt/atrium-test/scripts/atrium-queue.sh";
 const QUEUE_KEY = "test-queue-key-0123456789abcdef";
 const HOST = `127.0.0.1:${PORT}`;
 const ACK_DEADLINE_MS = 120_000;
@@ -55,7 +56,7 @@ after(async () => {
 async function buildApp(secrets: string): Promise<FastifyInstance> {
   const instance = Fastify({ logger: false });
   instance.get("/api/root-probe", async () => ({ ok: true }));
-  await registerQueueRoutes(instance, { secretsDir: secrets, port: PORT, homeDir: dir.home });
+  await registerQueueRoutes(instance, { secretsDir: secrets, port: PORT, homeDir: dir.home, cliPath: CLI_PATH });
   await instance.ready();
   return instance;
 }

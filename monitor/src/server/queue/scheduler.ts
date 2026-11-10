@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { logger } from "../logger.js";
 import { createDriftGuard, isSocketDeliveryOn, setSocketDeliveryOn } from "./drift-guard.js";
+import { getQueueCliPath } from "./envelope.js";
 import { getProcessStartTime } from "./process-start-time.js";
 import { deleteLeftoverCaptureDirs, findClaudePath, spawnClaudeLauncher } from "./resume-spawn.js";
 import { connectUnixSocket } from "./socket-channel.js";
@@ -34,7 +35,7 @@ export function getSweepDeps(replyAddress: string | null, gaRoot: string = proce
     ...(claudePath === null ? {} : { driftGuard: createDriftGuard({ claudePath, now: () => new Date(), setDeliveryOn: setSocketDeliveryOn }) }),
     ...(replyAddress === null ? {} : { replyAddress }),
     now: () => new Date(),
-    cliPath: path.join(gaRoot, "scripts", "atrium-queue.sh"),
+    cliPath: getQueueCliPath(gaRoot),
     tokenDir: path.join(gaRoot, "data", "queue", "tokens"),
     ...(claudePath === null ? {} : { resume: { launcher: spawnClaudeLauncher, claudePath, captureDir: path.join(gaRoot, "data", "queue", "resume-capture") } }),
   };
