@@ -1571,6 +1571,41 @@ class TestStoredRowsJudgment(_DeliveryCase):
                 self.assertIn(f"WARN: trial stage — {cause}ConnectionError", warn, name)
                 self.assertIn(unjudged, warn, name)
 
+    def test_a_read_fault_still_voids_a_trial_unstarted_at_its_horizon_and_removes_its_file(
+        self,
+    ) -> None:
+        fault = ConnectionError("server closed the connection")
+        # name, the faulted read's switch
+        rows = (
+            (
+                "the stored-rows read",
+                lambda value: setattr(self.table, "other_hash_read_fault", value),
+            ),
+            ("the salt read", lambda value: self.ledger.fault.update(salt=value)),
+        )
+        self.now = _TRIAL.COMMIT + timedelta(days=84)  # the horizon its pre-registration states
+        for hour, (name, set_fault) in enumerate(rows):
+            with self.subTest(name):
+                self._use_log_dir(hour)
+                self.table.rows.clear()
+                self._open_trial(started_at=None)
+                self._put_canaries((_ROSTER[0],))  # a kill between the write and its start row
+                self._store(self._get_foreign_line())
+                set_fault(fault)
+
+                stderr = self._run_trial_stage()
+                set_fault(None)
+
+                void = {"void": {"reason": "unstarted", "agent": _ROSTER[0]}}
+                self.assertEqual(
+                    [(payload, key) for _, payload, key in self.ledger.rows],
+                    [(void, f"{_TRIAL.KEY}:decision")],
+                    name,
+                )
+                self.assertEqual(self._get_canary_files(), {}, name)
+                (warn,) = [line for line in stderr.splitlines() if "unreadable" in line]
+                self.assertIn("left to its lease unless its unstarted void removes it", warn, name)
+
     def test_a_salt_read_fault_leaves_unjudged_only_a_trial_holding_an_other_hash_row(self) -> None:
         holding, clean = _ROSTER[:2]
         self._open_trial(holding)

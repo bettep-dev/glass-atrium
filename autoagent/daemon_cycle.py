@@ -10726,8 +10726,8 @@ def run_trial_stage() -> frozenset[str]:
       trial's void, its file removed, nothing more for it this stage; a void the ledger refuses
       is not held — the next stage reads the row again
     - the stored rows or their salts unreadable → named WARN, nothing voided; an unjudged
-      trial's canary is not written, renewed or removed — a file in place runs to its lease —
-      and its unstarted void is still written
+      trial's canary is not written or renewed — a file in place runs to its lease unless its
+      unstarted void, still written, removes it
     - core.spawn_manifest without the exposure columns → one WARN naming the migration, every
       open trial unjudged under that same rule until it is applied
     - text: exactly payload["canary"]["text"], salted with the pre-registration row id; a text
@@ -10921,7 +10921,7 @@ def _warn_unjudged(cause: str, span: str) -> None:
     _warn_trial(
         cause,
         f"no open trial judged {span} — no canary written or renewed, a file in place left to "
-        "its lease",
+        "its lease unless its unstarted void removes it",
     )
 
 
@@ -10958,7 +10958,8 @@ def _judge_other_hash_rows(
         _warn_trial(
             f"salt rows unreadable: {_describe_fault(exc)}",
             f"trial(s) {', '.join(sorted(unjudged))} not judged this cycle — no canary written "
-            "or renewed for them, a file in place left to its lease",
+            "or renewed for them, a file in place left to its lease unless its unstarted void "
+            "removes it",
         )
         return StageJudgment(frozenset(), unjudged)
     return StageJudgment(_void_foreign_rows(in_trial, salts, binding), frozenset())
