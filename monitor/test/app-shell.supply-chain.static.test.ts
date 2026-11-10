@@ -14,9 +14,11 @@ import { fileURLToPath } from "node:url";
 import { parse as parseHtml, type HTMLElement } from "node-html-parser";
 
 const PUBLIC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "public");
-const INDEX_PATH = resolve(PUBLIC_ROOT, "index.html");
 const VENDOR_ROOT = resolve(PUBLIC_ROOT, "assets", "vendor");
-const TAILWIND_PROVENANCE_PATH = resolve(VENDOR_ROOT, "tailwindcss-play-cdn.provenance.json");
+const PATH = {
+  INDEX: resolve(PUBLIC_ROOT, "index.html"),
+  TAILWIND_PROVENANCE: resolve(VENDOR_ROOT, "tailwindcss-play-cdn.provenance.json"),
+};
 
 // below this the "every external script" loop could pass on a page that lost its CDN tags
 const EXTERNAL_SCRIPT_FLOOR = 10;
@@ -30,7 +32,7 @@ interface TailwindProvenance {
   license: string;
 }
 
-const html = readFileSync(INDEX_PATH, "utf8");
+const html = readFileSync(PATH.INDEX, "utf8");
 const root = parseHtml(html);
 const scripts = root.querySelectorAll("script");
 const externalScripts = scripts.filter((node) => /^https?:/.test(node.getAttribute("src") ?? ""));
@@ -91,7 +93,7 @@ describe("the shell CSP allows exactly the scripts the shell runs", () => {
 });
 
 describe("the Tailwind runtime is the vendored file its sidecar pins", () => {
-  const provenance = JSON.parse(readFileSync(TAILWIND_PROVENANCE_PATH, "utf8")) as TailwindProvenance;
+  const provenance = JSON.parse(readFileSync(PATH.TAILWIND_PROVENANCE, "utf8")) as TailwindProvenance;
 
   test("the bytes on disk are the bytes the sidecar pins", () => {
     const bytes = readFileSync(resolve(VENDOR_ROOT, provenance.bundle_file));
