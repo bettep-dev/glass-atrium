@@ -212,6 +212,7 @@ test("MODEL_CAP_MC: every described id is priced, and one id alone is the latest
   const latestByLabel = [
     ["Latest Opus", "claude-opus-5-5"],
     ["Latest Sonnet", "claude-sonnet-5-5"],
+    ["Latest Fable", "claude-fable-5-2"],
   ] as const;
   for (const [label, id] of latestByLabel) {
     const latest = Object.keys(caps).filter((key) => caps[key].startsWith(label));
