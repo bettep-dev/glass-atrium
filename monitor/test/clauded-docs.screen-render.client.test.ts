@@ -987,6 +987,19 @@ describe("the list sets only the document id in the machine-string face", () => 
     assert.deepEqual(monoClassed.map((n) => n.props.className), []);
   });
 
+  test("the viewer rail's one machine string is the id, and its labels read sentence case in the body face", async () => {
+    const screen = await loadDocsScreen();
+    const rail = renderScreen((screen.DocMetaPanelCD as Component)({
+      doc: { id: 9, title: "Doc 9", doc_status: "open", format: "md", author: "planner", created_at: "2026-11-09T10:15:42.318Z", supersedes_id: 7 },
+      pendingDelete: null, onDelete: () => undefined, togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+    }));
+    const machine = findNodes(rail, (n) => n.props?.atom === "MachineString").map((n) => collectText(n).replace(/\s+/g, ""));
+    assert.deepEqual(machine, ["#9"]);
+    const styled = findNodes(rail, (n) => /\b(font-mono|uppercase|tracking-\w+)\b/.test(String(n.props?.className ?? "")));
+    assert.deepEqual(styled.map((n) => n.props.className), []);
+    assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-meta-label"), /text-transform|letter-spacing|font-family/);
+  });
+
   const sansRules = [
     { name: "a stage section's count", selector: ".doc-stage-section-count" },
     { name: "the bulk bar selection count", selector: ".doc-group-action-bar .selection-count" },

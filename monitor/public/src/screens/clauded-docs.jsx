@@ -937,7 +937,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-body-isolation pre.mermaid svg :is(.node, .cluster) rect,
         .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; }
         .doc-meta-row { display: grid; grid-template-columns: 88px 1fr; gap: 6px; padding: 4px 0; font-size: var(--fs-meta); }
-        .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
+        .doc-meta-label { font-size: var(--fs-meta); color: rgb(var(--faint)); }
         /* wraps between words; a single over-long token still breaks rather than spill */
         .doc-meta-value { color: rgb(var(--ink)); word-break: normal; overflow-wrap: break-word; font-size: var(--fs-meta); }
         /* .doc-toast → shared SoT in base.css */
@@ -2745,7 +2745,7 @@ function DocMetaPanelCD({
 			{/* ID = AUTHOR/CREATED 와 동급 메타 항목 → 배지 행이 아니라 라벨 행이 운반. */}
 			<div className="doc-meta-row">
 				<span className="doc-meta-label">ID</span>
-				<span className="doc-meta-value font-mono">#{doc.id}</span>
+				<window.UI.MachineString className="doc-meta-value">#{doc.id}</window.UI.MachineString>
 			</div>
 			<div className="doc-meta-row">
 				<span className="doc-meta-label">Author</span>
@@ -2753,7 +2753,7 @@ function DocMetaPanelCD({
 			</div>
 			<div className="doc-meta-row">
 				<span className="doc-meta-label">Created</span>
-				<span className="doc-meta-value font-mono">
+				<span className="doc-meta-value tabular-nums">
 					{formatDateTimeCD(doc.created_at)}
 				</span>
 			</div>
@@ -2992,7 +2992,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 			className="doc-version-history mt-3 pt-3"
 			style={{ borderTop: "1px solid rgb(var(--line))" }}
 		>
-			<summary className="group disclosure fs-meta font-mono uppercase tracking-wider">
+			<summary className="group disclosure fs-meta">
 				<window.UI.DisclosureChevron />
 				<span>Version history</span>
 			</summary>
@@ -3000,7 +3000,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 				{/* 현재 revision — 강조(--ink) · acked 미적용. */}
 				<div className="doc-revision-current">
 					<span
-						className="fs-meta font-mono uppercase tracking-wider"
+						className="fs-meta"
 						style={{ color: "rgb(var(--ink))" }}
 					>
 						Current revision
@@ -3026,14 +3026,11 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 				{predState.status === "ready" && predState.data && (
 					<div className="doc-revision-predecessor acked flex flex-col gap-1">
 						<div className="flex items-center gap-2 flex-wrap">
-							<span
-								className="fs-meta font-mono"
-								style={{ color: "rgb(var(--dim))" }}
-							>
+							<window.UI.MachineString className="fs-meta text-dim">
 								#{predState.data.id}
-							</span>
+							</window.UI.MachineString>
 							<span
-								className="fs-meta font-mono uppercase tracking-wider"
+								className="fs-meta"
 								style={{ color: "rgb(var(--faint))" }}
 							>
 								Previous
@@ -3056,7 +3053,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 							{predState.data.title}
 						</div>
 						<div
-							className="fs-meta font-mono"
+							className="fs-meta tabular-nums"
 							style={{ color: "rgb(var(--faint))" }}
 						>
 							{formatDateTimeCD(predState.data.created_at)} ·{" "}
@@ -3173,7 +3170,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 					>
 						<label className="flex flex-col gap-1">
 							<span
-								className="fs-meta font-mono uppercase tracking-wider"
+								className="field-label"
 								style={{ color: "rgb(var(--faint))" }}
 							>
 								Title
@@ -3190,7 +3187,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 						</label>
 						<label className="flex flex-col gap-1">
 							<span
-								className="fs-meta font-mono uppercase tracking-wider"
+								className="field-label"
 								style={{ color: "rgb(var(--faint))" }}
 							>
 								Author
@@ -3209,7 +3206,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 					</div>
 					<label className="flex flex-col gap-1 mt-3">
 						<span
-							className="fs-meta font-mono uppercase tracking-wider"
+							className="field-label"
 							style={{ color: "rgb(var(--faint))" }}
 						>
 							HTML body
