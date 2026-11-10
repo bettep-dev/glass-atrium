@@ -81,20 +81,22 @@ readonly CLAUDE_CONFIG_PROGRESS_RE='^projects/[^/]+/memory/progress-[^/]*\.md$'
 # Harness-root entry exemption, judged on the remainder below a root. Member classes, any subset:
 #   basename     — CLAUDE.md, MEMORY.md, GLASS_ATRIUM_GLOBAL_RULES.md at the root
 #   runtime-data — data/ projects/ logs/ todos/ shell-snapshots/ statsig/
-#   projects     — projects/ alone
+#   progress     — a progress file directly in a projects/<h>/memory/ dir, nothing else
 #   job          — a background job's scratchpad, jobs/<id>/tmp/
-# A /memory/ segment under a runtime-data or projects entry stays protected except a progress file.
+# A /memory/ segment under a runtime-data entry stays protected except a progress file.
 # Membership is anchored at the remainder's first segment, never a substring search, so a remainder
 # the caller could not strip (a case-varied home) starts with a home component and matches nothing.
 # Voids, each winning over membership: a `..` segment in the written path · an empty remainder or one
-# with a leading `/` · with the hardlink flag, a path that is a regular file with more than one link
-# (realpath cannot see a hardlink, so a scratchpad name could alias a memory file).
+# with a leading `/` · with the hardlink flag, a path that is not absolute (find would read a leading
+# `-` as an expression) or a regular file with more than one link (realpath cannot see a hardlink,
+# so a scratchpad name could alias a memory file).
 # Args: $1=member classes (space-separated)  $2=path as written  $3=root-relative remainder
 #       $4=`hardlink` to apply the hardlink void (optional). Exit 0 = exempt.
 claude_config_is_exempt_entry() {
   local classes=" ${1} " path="${2}" rest="${3}" multi=""
   [[ "/${path}/" != */../* && -n "${rest}" && "${rest}" != /* ]] || return 1
   if [[ "${4:-}" == hardlink ]]; then
+    [[ "${path}" == /* ]] || return 1
     # A missing path exits find non-zero with no output → no hardlink to void.
     multi="$(find "${path}" -maxdepth 0 -type f -links +1 2>/dev/null)" || true
     [[ -z "${multi}" ]] || return 1
@@ -106,8 +108,11 @@ claude_config_is_exempt_entry() {
         && [[ "${rest}" =~ ^jobs/[^/]+/tmp(/|$) ]]
       ;;
     projects)
-      [[ "${classes}" == *" projects "* || "${classes}" == *" runtime-data "* ]] \
-        && claude_config_is_outside_memory "${rest}"
+      if [[ "${classes}" == *" runtime-data "* ]]; then
+        claude_config_is_outside_memory "${rest}"
+      else
+        [[ "${classes}" == *" progress "* && "${rest}" =~ ${CLAUDE_CONFIG_PROGRESS_RE} ]]
+      fi
       ;;
     data | logs | todos | shell-snapshots | statsig)
       [[ "${classes}" == *" runtime-data "* ]] && claude_config_is_outside_memory "${rest}"

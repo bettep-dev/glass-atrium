@@ -676,6 +676,17 @@ PY
   [[ "${output}" == *"HAR-002"* ]] || return 1
 }
 
+# Known false positive: a lexical hook cannot prove a variable path outside home, so a scratch-dir
+# settings path blocks for every caller.
+@test "bash: a settings path under a mktemp scratch dir still blocks as HAR-002 for every caller" {
+  local agent
+  for agent in "" a1; do
+    run_hook "Bash" "$(bash_input 'T=$(mktemp -d); echo x > $T/.claude/settings.json')" "${agent}"
+    [[ "${status}" -eq 2 && "${output}" == *"HAR-002"* ]] \
+      || { echo "row: agent_id=${agent:-none} status=${status}"; echo "${output}"; return 1; }
+  done
+}
+
 @test "bash: redirection append into live settings → block" {
   run_hook "Bash" "$(bash_input 'echo x >> ~/.claude/settings.json')"
   [[ "${status}" -eq 2 ]] || return 1
