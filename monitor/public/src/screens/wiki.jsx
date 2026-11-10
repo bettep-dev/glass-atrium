@@ -1525,9 +1525,10 @@ const WIKI_REPORT_COLUMNS = [
 // Rows flow in page scroll; the Table wrapper clips, so a narrow pane never scrolls the run table sideways.
 function WikiReportsTable({ reports, isLoading = false }) {
 	const { Table, SkeletonRows } = window.UI;
-	// One status across the window → the caption names it once and the column drops (spec §6 Cells, §7).
+	// Every run healthy → the caption names it once and the column drops (spec §6 Cells, §7).
+	// Any other shared status is a deviation, and the caption is sr-only → its cells stay visible.
 	const sharedStatus = isLoading ? null : readSharedRunStatusW(reports);
-	const hasStatusColumn = sharedStatus === null;
+	const hasStatusColumn = sharedStatus === null || wikiStatusToneW(sharedStatus) !== "ok";
 	const columns = hasStatusColumn ? WIKI_REPORT_COLUMNS : WIKI_REPORT_COLUMNS.filter((c) => c.key !== "status");
 	const caption = hasStatusColumn
 		? "Wiki compile runs, newest first, one row per run"

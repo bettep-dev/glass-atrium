@@ -453,18 +453,26 @@ function renderRunRowsOf(mod: ScreenModule, reports: unknown[]): RenderedNode | 
 
 const WIDE_VIEW = { isStacked: false, columnCount: 4 };
 
-describe("the run table carries a Status column only when the window's runs differ in status", () => {
+describe("the run table drops its Status column only when every run in the window is healthy", () => {
   const run = (run_date: string, status: string, deadlinks_count: number) => ({ run_date, status, deadlinks_count, dedup_count: 3 });
   const rows = [
     {
-      name: "a uniform window, its backlog still moving, states the shared status once in the caption",
+      name: "a uniform healthy window, its backlog still moving, states the shared status once in the caption",
       reports: [run("2026-09-26", "ok", 2), run("2026-09-25", "ok", 1), run("2026-09-24", "ok", 1)],
       hasStatusColumn: false,
+      shownWords: [],
     },
     {
       name: "a mixed window states each run's status in its own cell",
       reports: [run("2026-09-26", "ok", 1), run("2026-09-25", "partial", 1), run("2026-09-24", "ok", 1)],
       hasStatusColumn: true,
+      shownWords: ["Healthy", "Warning"],
+    },
+    {
+      name: "a uniform failing window, its backlog still moving, shows the failure in every row",
+      reports: [run("2026-09-26", "fail", 2), run("2026-09-25", "fail", 1), run("2026-09-24", "fail", 1)],
+      hasStatusColumn: true,
+      shownWords: ["Failed"],
     },
   ];
   for (const row of rows) {
@@ -473,11 +481,14 @@ describe("the run table carries a Status column only when the window's runs diff
       const tree = renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports: row.reports }));
       const [table] = findNodes(tree, (n) => n.props.atom === "Table");
       const heads = Array.from(table.props.columns as Array<{ label: string }>, (c) => c.label);
-      const statusCells = findNodes(renderTableRowsOf(mod, tree), (n) => n.props.atom === "TableCell" && n.props.label === "Status");
+      const tbody = renderTableRowsOf(mod, tree);
+      const statusCells = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Status");
 
-      assert.equal(heads.includes("Status"), row.hasStatusColumn, "the Status head follows the window's status spread");
+      assert.equal(heads.includes("Status"), row.hasStatusColumn, "the Status head follows the window's health");
       assert.equal(statusCells.length, row.hasStatusColumn ? row.reports.length : 0, "status cells match the head");
-      assert.equal(/Healthy/.test(String(table.props.caption)), !row.hasStatusColumn, "a shared status is named once, in the caption");
+      assert.equal(/Healthy/.test(String(table.props.caption)), !row.hasStatusColumn, "only a shared healthy status is named once, in the caption");
+      // the caption is sr-only → a non-healthy status must reach sighted users through visible row text
+      for (const word of row.shownWords) assert.match(collectText(tbody), new RegExp(word), `the rows show ${word}`);
     });
   }
 });
