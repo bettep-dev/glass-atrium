@@ -148,9 +148,14 @@
 #     a `<` source); every other such word is judged by the exemption in both forms, and a
 #     non-literal one blocks. A rebinding, an argv consumer (xargs, read, mapfile, parallel) or a
 #     pipe into a segment that is not a stdin-safe consumer, anywhere in the call, voids every read
-#     in it; a variable assigned a home-spelled value is judged as a word. Substitution bodies,
-#     interpreter code strings and heredoc bodies are judged too; text past MAX_SCAN_DEPTH fails
-#     closed.
+#     in it. Variables: a binding pass first collects every assignment, for/select list, array
+#     element and nameref in the call, so each later word — a cd operand included — is judged in
+#     every spelling its plain references take (each bound value, the inherited value, empty);
+#     an operator or indirect reference to a name with a home-spelled value is unprovable, and a
+#     name the call may also set some other way keeps the word's own judgment. An assignment a
+#     child process sees (exported, allexport, an inherited name, a command prefix) is judged as
+#     a word, and a rebound HOME blocks. Substitution bodies, interpreter code strings and heredoc
+#     bodies are judged too; text past MAX_SCAN_DEPTH fails closed.
 #   Residuals, by target (honor-system):
 #     - classification time: the exemption reads the text and the filesystem when the hook runs,
 #       so a link swapped in afterwards — by a watcher an earlier call of the same agent started —
@@ -161,10 +166,14 @@
 #     - a read whose output reaches another command's arguments through a command or process
 #       substitution, a variable assigned from one, or a file (`rm "$(echo <profile>/CLAUDE.md)"`,
 #       `X=$(ls -d <profile>/CLAUDE.md); rm $X`)
+#     - a variable whose value the call sets by a construct the binding pass does not read
+#       (`read`, `printf -v`, `getopts`, `${X:=…}`, zsh `for f (…)`), or that a bound variable's
+#       name reaches through an eval string, when no visible home spelling or in-scope cd marks
+#       the word; a variable a child shell inherits through an assignment the call does not export
 #     - a relative spelling with no cd, resolved against the session cwd
 #       (`echo x > .claude-personal/CLAUDE.md` from a $HOME cwd)
 #     - a non-literal word reaching home with no visible home prefix (a glob over the home path,
-#       an operator default, an unrelated variable, a `${X}aude` plant), and a profile path
+#       a variable the call never binds, a `${X}aude` plant), and a profile path
 #       embedded mid-word outside a code string, a substitution body or a heredoc
 #     - zsh-only expansions the classifier does not model
 #   Main-session gaps (pass today for every caller; follow-up candidates): the quoted command
@@ -1464,6 +1473,20 @@ REBIND_NAME_RE = re.compile(
 )
 ASSIGN_WORD_RE = re.compile(r"^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
 DECLARE_CMDS = ("typeset", "declare", "export", "local", "readonly", "integer", "float")
+# A reference whose value is the bound value itself: `$X`, `${X}`, `${X:?msg}`.
+VAR_REF_RE = re.compile(r"\$(?:\{([A-Za-z_]\w*)(?::?\?[^}]*)?\}|([A-Za-z_]\w*))")
+# Every reference, an operator form (`${X%/*}`, `${X:-y}`, `${#X}`) included.
+VAR_USE_RE = re.compile(r"\$(?:\{(?:\([^)]*\))?[#=~^+!]*)?([A-Za-z_]\w*)")
+# An indirect reference (bash `${!X}`, zsh `${(P)X}`): its value is another variable's.
+INDIRECT_RE = re.compile(r"\$\{(?:!|\([^)]*P)")
+ASSIGN_TAIL_RE = re.compile(r"(?:\[[^\]]*\])?\+?=")
+REF_TAIL_RE = re.compile(r"(?::?\?[^}]*)?\}")
+FOR_NAMES_RE = re.compile(
+    r"(?:^|[\s;&|(){}])(?:for|select|foreach)\s+((?:[A-Za-z_]\w*\s+)*?[A-Za-z_]\w*)\s+in(?=\s|$)")
+ALLEXPORT_RE = re.compile(r"\bset\s+[-+]\w*a|all_?export", re.IGNORECASE)
+# Names the home-spelling and cwd rules own: never expanded from a binding.
+NO_EXPAND = ("HOME", "PWD", "OLDPWD")
+MAX_SPELLINGS = 64
 PREFIX_WORDS = NEUTRAL_PREFIX + ("builtin", "noglob", "nocorrect", "-", "coproc", "nice", "repeat")
 FUNC_DEF_RE = re.compile(r"\(\s*\)|(?:^|[\s;&|{}()])function(?=[\s{]|$)")
 # Readers: command → (allowed option words, operand admission). ANY_OPTION only for a member with no
@@ -1502,7 +1525,15 @@ PIPE_FILTERS = (
 )
 
 AGENT = {"on": False, "triples": [], "keys": set(), "reads": [], "void": False,
-         "cwd": None, "seen": False, "piped": False}
+         "cwd": None, "seen": False, "piped": False, "vars": {}, "opaque": set(), "known": {},
+         "text": "", "array": None, "for_starts": None, "allexport": False}
+
+
+def agent_reset(text, carried):
+    """Fresh walk state; carried = (bindings, opaque names) from the binding pass."""
+    AGENT.update(triples=[], keys=set(), reads=[], void=False, cwd=None, seen=False, piped=False,
+                 vars=carried[0], opaque=carried[1], known={}, text=text, array=None,
+                 for_starts=None, allexport=bool(ALLEXPORT_RE.search(text)))
 
 
 def agent_emit(flag, written, resolved):
@@ -1575,8 +1606,97 @@ def agent_nonliteral(word):
 
 
 def agent_judge(word, cwd):
-    """Route one word that is not a proven read: home-spelled, literal absolute, or relative to a
-    directory an earlier cd named."""
+    """Judge a non-read word in every spelling its variable references may take. A name the call
+    may also set another way keeps the word's own judgment; an operator form of a name whose
+    value may name a profile path is unprovable."""
+    names = VAR_USE_RE.findall(word) if "$" in word else []
+    if not names:
+        judge_word(word, cwd)
+        return
+    spellings = var_spellings(word, 0)
+    operators = list(AGENT["vars"]) if INDIRECT_RE.search(word) else operator_names(word)
+    if spellings is None or any(is_relevant_name(n, cwd) for n in operators):
+        agent_emit("N", word, "")
+        return
+    for spelling in spellings:
+        judge_word(spelling, cwd)
+    if not all(is_known(n) for n in names):
+        judge_word(word, cwd)
+
+
+def var_spellings(word, depth):
+    """Every spelling of a word once each plain reference takes one of its values; None past
+    MAX_SPELLINGS or when a nested value has too many."""
+    spellings = [word]
+    for m in reversed(list(VAR_REF_RE.finditer(word))):
+        name = m.group(1) or m.group(2)
+        if name in NO_EXPAND:
+            continue
+        values = var_values(name, depth)
+        if values is None:
+            return None
+        spellings = [s[:m.start()] + v + s[m.end():] for s in spellings for v in values]
+        if len(spellings) > MAX_SPELLINGS:
+            return None
+    return spellings
+
+
+def var_values(name, depth):
+    """A name's possible values: every binding in the call, the inherited value, and empty."""
+    values = ["", os.environ.get(name, "")]
+    for value in AGENT["vars"].get(name, ()):
+        nested = var_spellings(value, depth + 1) if "$" in value and depth < 3 else [value]
+        if nested is None:
+            return None
+        values.extend(nested)
+    return list(dict.fromkeys(values))
+
+
+def operator_names(word):
+    simple = {m.start() for m in VAR_REF_RE.finditer(word)}
+    return [m.group(1) for m in VAR_USE_RE.finditer(word) if m.start() not in simple]
+
+
+def is_relevant_name(name, cwd):
+    """A name with a value that may name a profile path: home-spelled, an absolute scope
+    candidate, or relative to an in-scope or unknown directory."""
+    dirs = cwd if isinstance(cwd, tuple) else (cwd,)
+    in_scope_cwd = any(d == UNKNOWN_DIR or (d and is_scope_candidate(d)) for d in dirs)
+    return any(home_split(v) is not None or is_scope_candidate(v)
+               or (in_scope_cwd and not v.startswith("/")) for v in var_values(name, 0) or [""])
+
+
+def is_known(name):
+    """A name bound in the call whose every occurrence is a plain or guarded reference, an
+    assignment, or a for-list name — so its bindings, inherited value and empty are all it holds."""
+    if name not in AGENT["known"]:
+        occurrences = re.finditer(r"(?<![\w./-])" + re.escape(name) + r"(?!\w)", AGENT["text"])
+        AGENT["known"][name] = name in AGENT["vars"] and name not in AGENT["opaque"] \
+            and all(is_binding_occurrence(m.start(), m.end()) for m in occurrences)
+    return AGENT["known"][name]
+
+
+def is_binding_occurrence(i, j):
+    text = AGENT["text"]
+    if text[i - 1:i] == "$" or (text[i - 2:i] == "${" and REF_TAIL_RE.match(text, j)):
+        return True
+    return bool(ASSIGN_TAIL_RE.match(text, j)) or i in for_name_starts()
+
+
+def for_name_starts():
+    if AGENT["for_starts"] is None:
+        AGENT["for_starts"] = {m.start(1) + k.start() for m in FOR_NAMES_RE.finditer(AGENT["text"])
+                               for k in re.finditer(r"\w+", m.group(1))}
+    return AGENT["for_starts"]
+
+
+def judge_word(word, cwd):
+    """Route one spelling that is not a proven read: home-spelled, literal absolute, or relative
+    to each directory an earlier cd may have named."""
+    if isinstance(cwd, tuple):
+        for each in cwd:
+            judge_word(word, each)
+        return
     split = home_split(word)
     if split is not None:
         if not split[1]:
@@ -1590,6 +1710,10 @@ def agent_judge(word, cwd):
         if LITERAL_RE.match(word):
             agent_literal(word)
         return
+    judge_relative(word, cwd)
+
+
+def judge_relative(word, cwd):
     if cwd == UNKNOWN_DIR:
         agent_emit("N", word, "")
     elif cwd is not None:
@@ -1606,25 +1730,60 @@ def agent_code_search(code):
 
 
 def agent_cd(name, args, cwd):
-    """The directory after a cd / pushd / popd, home spelling expanded and `..` kept (the exemption
-    voids it). An unnameable one is unknown only after an in-scope cd, else out of scope."""
+    """The directory, or the tuple of directories, after a cd / pushd / popd: home spelling and
+    variables expanded, `..` kept (the exemption voids it). An unnameable one is unknown only
+    after an in-scope cd, else out of scope."""
+    if isinstance(cwd, tuple):
+        return merge_dirs([agent_cd(name, args, each) for each in cwd])
     unnameable = UNKNOWN_DIR if AGENT["seen"] else None
     if name == "popd" or "-" in args or any(ROTATE_ARG_RE.match(a) for a in args):
         return unnameable
     paths = [a for a in args if a and not a.startswith("-")]
     if not paths:
         return unnameable if name == "pushd" else _HOME
-    dest = paths[0]
+    spellings = cd_spellings(paths[0])
+    new = UNKNOWN_DIR if spellings is None \
+        else merge_dirs([cd_dir(dest, cwd, unnameable) for dest in spellings])
+    for each in new if isinstance(new, tuple) else (new,):
+        mark_cd_seen(each)
+    return new
+
+
+def cd_spellings(dest):
+    """A cd operand's spellings: its variable expansions (an empty one leaves the cwd or goes
+    home), plus the word itself while a name it uses may be set another way."""
+    names = VAR_USE_RE.findall(dest) if "$" in dest and home_split(dest) is None else []
+    if not names:
+        return [dest]
+    if operator_names(dest):
+        return None
+    spellings = var_spellings(dest, 0)
+    if spellings is not None and not all(is_known(n) for n in names):
+        spellings.append(dest)
+    return spellings
+
+
+def cd_dir(dest, cwd, unnameable):
+    if not dest:
+        return merge_dirs([cwd, _HOME])
     split = home_split(dest)
     if split is not None:
-        new = (dest if dest.startswith("/") else _HOME + split[0]) if split[1] else UNKNOWN_DIR
-    elif dest.startswith("/") or cwd not in (None, UNKNOWN_DIR):
+        return (dest if dest.startswith("/") else _HOME + split[0]) if split[1] else UNKNOWN_DIR
+    if dest.startswith("/") or cwd not in (None, UNKNOWN_DIR):
         joined = dest if dest.startswith("/") else cwd + "/" + dest
-        new = joined if LITERAL_RE.match(dest) else unnameable
-    else:
-        new = cwd
-    mark_cd_seen(new)
-    return new
+        return joined if LITERAL_RE.match(dest) else unnameable
+    return cwd
+
+
+def merge_dirs(dirs):
+    """One directory, or a tuple of the distinct ones; any unknown one, or too many, is unknown."""
+    flat = []
+    for each in dirs:
+        flat.extend(each if isinstance(each, tuple) else (each,))
+    flat = list(dict.fromkeys(flat))
+    if UNKNOWN_DIR in flat or len(flat) > MAX_SPELLINGS:
+        return UNKNOWN_DIR
+    return flat[0] if len(flat) == 1 else tuple(flat)
 
 
 def mark_cd_seen(new):
@@ -1751,27 +1910,67 @@ def agent_interpreter(name, argv, herestrings, depth, armed, cwd):
 
 
 def agent_segment(toks, depth, armed, glued):
-    """Judge one segment for the agent_id read proof. A reader in a clean command position — behind
-    nothing but CLEAN_RESERVED — reads its admitted operands; every other word is a non-read."""
+    """Judge one segment for the agent_id read proof: a list binds its variable, a reader in a
+    clean command position (behind CLEAN_RESERVED alone) reads, every other word is a non-read."""
     cwd = AGENT["cwd"]
     plain, herestrings, void = agent_redirects(toks, cwd)
-    # A word glued to an unquoted `(` carries a zsh glob qualifier outside this segment.
-    if glued and plain and agent_nonliteral(plain[-1][1]):
+    if glued and plain and agent_glued(plain[-1][1]):
         plain = plain[:-1]
     ci = clean_index(plain)
-    if ci >= len(plain):
+    if ci >= len(plain) or agent_list(plain[ci:]):
         return
     eff_idx, eff_name = effective_command(plain)
     agent_flow(plain, ci, eff_idx, eff_name)
     if eff_name in ("cd", "pushd", "popd"):
         AGENT["cwd"] = agent_cd(eff_name, [t[1] for t in plain[eff_idx + 1:]], cwd)
-    name = reader_name(plain[ci][1])
-    words = [t[1] for t in plain[ci + 1:]]
+    agent_dispatch(plain[ci:], herestrings, void, (depth, armed), cwd)
+
+
+def agent_glued(word):
+    """A word glued to an unquoted `(`: an array assignment binds the elements up to its `)`, a
+    substitution leaves its name opaque, any other word carries a zsh glob qualifier."""
+    m = ASSIGN_WORD_RE.match(word)
+    if m:
+        name = re.match(r"\w+", word).group(0)
+        AGENT["opaque"].add(name)
+        if m.end() == len(word):
+            AGENT["array"] = name
+        return False
+    return agent_nonliteral(word)
+
+
+def agent_list(words):
+    """Bind array elements, or a for / select list, to their names; a list word is no operand."""
+    values = [t[1] for t in words]
+    if AGENT["array"]:
+        for value in values:
+            agent_bind(AGENT["array"], value)
+        return True
+    if words[0][2] or values[0] not in ("for", "select", "foreach") or "in" not in values[2:]:
+        return False
+    k = values.index("in", 2)
+    for name in values[1:k]:
+        if REBIND_NAME_RE.match(name + "="):
+            AGENT["void"] = True
+        for value in values[k + 1:]:
+            agent_bind(name, value)
+    return True
+
+
+def agent_bind(name, value):
+    values = AGENT["vars"].setdefault(name, [])
+    if value not in values:
+        values.append(value)
+
+
+def agent_dispatch(argv, herestrings, void, scan, cwd):
+    name = reader_name(argv[0][1])
+    words = [t[1] for t in argv[1:]]
     reader = None if void else admitted_reader(name, words)
     if reader:
         agent_reads(reader, words, cwd)
     elif is_code_interp(name) or name in INTERP_SHELL:
-        agent_interpreter(name, plain[ci:], herestrings, depth, armed, cwd)
+        agent_interpreter(name, argv, herestrings, scan[0], scan[1], cwd)
     else:
         agent_nonreads(name, words, cwd)
 
@@ -1785,20 +1984,45 @@ def clean_index(plain):
 
 
 def agent_flow(plain, ci, eff_idx, eff_name):
-    """Data flow out of a read. A rebinding, an argv consumer (xargs, read) anywhere in the call,
-    or a pipe into a segment that is not a stdin-safe consumer voids every reader position; a
-    variable bound to a home-spelled value carries that path to every later use, so it is judged."""
+    """Data flow out of a read and into a variable. A rebinding, an argv consumer (xargs, read)
+    anywhere in the call, or a pipe into a segment that is not a stdin-safe consumer voids every
+    reader position."""
     if agent_rebinds(plain) or eff_name in ARGV_CONSUMERS:
         AGENT["void"] = True
     if AGENT["piped"]:
         AGENT["piped"] = False
         if not is_pipe_safe(reader_name(plain[ci][1]), plain[ci:]):
             AGENT["void"] = True
-    bound = plain[:eff_idx] + (plain[eff_idx + 1:] if eff_name in DECLARE_CMDS else [])
-    for tok in bound:
+    if eff_name in DECLARE_CMDS:
+        flags = "".join(t[1] for t in plain[eff_idx + 1:] if t[1].startswith("-"))
+        agent_assign(plain[eff_idx + 1:], eff_name == "export" or "x" in flags,
+                     "nameref" if "n" in flags else "bind")
+    agent_assign(plain[:eff_idx], bool(eff_name) and eff_name not in DECLARE_CMDS,
+                 "prefix" if eff_name else "bind")
+
+
+def agent_assign(toks, exported, mode):
+    """Bind each assignment the shell keeps (`+=` appends to every value, a nameref takes its
+    target's values); judge each value a child process sees — exported, under allexport, an
+    inherited name, or a command's prefix."""
+    for tok in toks:
         m = ASSIGN_WORD_RE.match(tok[1])
-        if m and home_split(tok[1][m.end():]) is not None:
-            agent_judge(tok[1][m.end():], None)
+        if not m:
+            continue
+        name, value = re.match(r"\w+", tok[1]).group(0), tok[1][m.end():]
+        # A rebound HOME moves every later `~` and `$HOME` spelling off the home this text keys on.
+        if name == "HOME" and mode != "prefix":
+            agent_emit("N", tok[1], "")
+        if mode == "bind":
+            appended = tok[1][m.end() - 2:m.end()] == "+="
+            for base in (var_values(name, 0) or [""]) if appended else [""]:
+                agent_bind(name, base + value)
+        else:
+            AGENT["opaque"].add(name)
+            if mode == "nameref" and re.fullmatch(r"[A-Za-z_]\w*", value):
+                agent_bind(name, "${" + value + "}")
+        if exported or AGENT["allexport"] or name in os.environ:
+            agent_judge(value, AGENT["cwd"])
 
 
 def is_pipe_safe(name, argv):
@@ -1849,9 +2073,9 @@ def substitution_bodies(text, quoted_only):
     every backtick body outside single quotes. quoted_only False reads an unquoted-delimiter heredoc
     body, where quotes are literal and every `$(…)` expands."""
     bodies = []
-    i, n = 0, len(text)
+    i = 0
     single = double = False
-    while i < n:
+    while i < len(text):
         ch = text[i]
         if ch == "\\" and not single:
             i += 2
@@ -1860,22 +2084,27 @@ def substitution_bodies(text, quoted_only):
             single = not single
         elif quoted_only and ch == '"' and not single:
             double = not double
-        elif not single and ch == "\x60":
-            j = text.find("\x60", i + 1)
-            j = n if j == -1 else j
-            bodies.append(text[i + 1:j])
-            i = j + 1
-            continue
-        elif not single and text.startswith("$(", i) and (double or not quoted_only):
-            level, j = 1, i + 2
-            while j < n and level:
-                level += {"(": 1, ")": -1}.get(text[j], 0)
-                j += 1
-            bodies.append(text[i + 2:j - 1] if level == 0 else text[i + 2:])
-            i = j
+        elif not single and (ch == "\x60" or (text.startswith("$(", i)
+                                              and (double or not quoted_only))):
+            body, i = substitution_body(text, i)
+            bodies.append(body)
             continue
         i += 1
     return bodies
+
+
+def substitution_body(text, i):
+    """(body, index past it) of the backtick or `$(…)` substitution opening at text[i]; an
+    unclosed one runs to the end."""
+    if text[i] == "\x60":
+        j = text.find("\x60", i + 1)
+        j = len(text) if j == -1 else j
+        return text[i + 1:j], j + 1
+    level, j = 1, i + 2
+    while j < len(text) and level:
+        level += {"(": 1, ")": -1}.get(text[j], 0)
+        j += 1
+    return (text[i + 2:j - 1] if level == 0 else text[i + 2:]), j
 
 
 def agent_extras(code, mask, heredocs, depth, armed):
@@ -1988,8 +2217,10 @@ def scan_text(text, depth, armed):
             AGENT["piped"] = True
         if ch == "(":
             stack.append((armed, AGENT["cwd"]))
-        elif ch == ")" and stack:
-            armed, AGENT["cwd"] = stack.pop()
+        elif ch == ")":
+            AGENT["array"] = None
+            if stack:
+                armed, AGENT["cwd"] = stack.pop()
         start = i + 1
     reason, armed = scan_segment(code[start:], depth, armed)
     if reason:
@@ -2008,15 +2239,26 @@ def detect_bash(tool_input):
     (bash-source-position — still a block, re-labelled so the payload can name the
     read re-spelling), an interpreter code-string write (bash-interp-write), or a
     relative write made from a protected cwd (bash-cwd-relative-write)."""
+    command = tool_input.get("command", "")
+    carried = agent_binding_pass(command) if AGENT["on"] else ({}, set())
     PROT_CD_SEEN[0] = False
-    AGENT.update(triples=[], keys=set(), reads=[], void=False, cwd=None, seen=False, piped=False)
-    reason = scan_command(tool_input.get("command", ""), 0, False)
+    agent_reset(command, carried)
+    reason = scan_command(command, 0, False)
     # A void anywhere in the call: every read operand is a non-read, and its text may be code.
     if AGENT["void"]:
         for word, cwd in AGENT["reads"]:
             agent_judge(word, cwd)
             agent_code_search(word)
     return reason
+
+
+def agent_binding_pass(command):
+    """(bindings, opaque names) of the whole call. A loop runs a use before the assignment below
+    it, so every binding is known before any word is judged."""
+    PROT_CD_SEEN[0] = False
+    agent_reset(command, ({}, set()))
+    scan_command(command, 0, False)
+    return AGENT["vars"], AGENT["opaque"]
 
 
 class NulInCommand(Exception):
@@ -2204,7 +2446,7 @@ block_wording() {
       ;;
     agent-id-bash)
       BLOCK_MSG="Harness-critical command blocked (agent-id-bash): a subagent command names a ~/.claude* profile path it does not provably only read"
-      BLOCK_SUG="A subagent or Workflow agent Bash call may name a profile path only as an operand of a reader command in a clean command position (cat, ls, grep, head, tail, wc, stat, find without -delete/-exec, cd, echo, printf), as a < source, or as a path in its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file. After a cd into a profile path (the job scratchpad included) or into a directory named by a variable (\`cd \"\$T\"\`), every later relative word must be literal: name scratch files without \$var, glob or substitution, pass a glob to a reader (\`cat *.log\`), or cd into the literal path an earlier mktemp printed. A pipe into xargs, a while-read loop, a shell or any other non-filter command, and a variable assigned a profile path, void the read proof: pass the paths to the reader itself. A progress file needs no mkdir — the Write tool creates its memory dir. Re-spell a copy as a read (\`cat <src> > <dest>\`), put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      BLOCK_SUG="A subagent or Workflow agent Bash call may name a profile path only as an operand of a reader command in a clean command position (cat, ls, grep, head, tail, wc, stat, find without -delete/-exec, cd, echo, printf), as a < source, or as a path in its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file. After a cd into a profile path (the job scratchpad included) or into a directory named by a variable (\`cd \"\$T\"\`), every later relative word must be literal: name scratch files without \$var, glob or substitution, pass a glob to a reader (\`cat *.log\`), or cd into the literal path an earlier mktemp printed. A pipe into xargs, a while-read loop, a shell or any other non-filter command voids the read proof: pass the paths to the reader itself. A variable (an assignment, a for-list name) carries every value the call binds it to into each later use, so \`D=<memory dir>; cat \"\$D/x\"\` still reads, while writing through \$D is judged as the path it spells. An assignment a child process sees — export, allexport, an inherited name such as CLAUDE_CONFIG_DIR, a command prefix — itself blocks unless its value is a job-scratchpad or progress path, and so does reassigning HOME. A progress file needs no mkdir — the Write tool creates its memory dir. Re-spell a copy as a read (\`cat <src> > <dest>\`), put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
       ;;
     agent-id-write)
       BLOCK_SUG="A subagent or Workflow agent writes under a ~/.claude* profile root only into its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file in a memory dir — the BASENAME exception is the orchestrator's. Put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
