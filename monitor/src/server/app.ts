@@ -16,6 +16,9 @@ import { registerRequestGuards } from "./request-guards.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "..", "public");
 
+// a meta CSP cannot carry frame-ancestors, and SameSite=Strict ignores the port → a neighbour 127.0.0.1 page could frame the owner actions with the cookie attached
+const STATIC_FRAME_HEADERS = { "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } as const;
+
 export type AppOptions = RegisterRoutesOptions;
 
 export async function buildApp(options: AppOptions = {}): Promise<FastifyInstance> {
@@ -28,6 +31,9 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     root: PUBLIC_ROOT,
     prefix: "/",
     index: ["index.html"],
+    setHeaders: (response) => {
+      for (const [name, value] of Object.entries(STATIC_FRAME_HEADERS)) response.setHeader(name, value);
+    },
   });
 
   await registerRoutes(app, options);

@@ -40,3 +40,20 @@ test("importing the assembly and building an app binds no port, starts no timer 
     deleteDirectory(secretsDir);
   }
 });
+
+test("the shell and its assets are served with framing denied, so no other page can frame the owner actions", async () => {
+  const secretsDir = mkdtempSync(path.join(tmpdir(), "app-assembly-"));
+  const { buildApp } = await import("../src/server/app.js");
+  const app = await buildApp({ secretsDir });
+  try {
+    for (const url of ["/", "/index.html", "/styles/base.css"]) {
+      const response = await app.inject({ method: "GET", url, headers: { host: "127.0.0.1:16145" } });
+      assert.equal(response.statusCode, 200, url);
+      assert.equal(response.headers["content-security-policy"], "frame-ancestors 'none'", url);
+      assert.equal(response.headers["x-frame-options"], "DENY", url);
+    }
+  } finally {
+    await app.close();
+    deleteDirectory(secretsDir);
+  }
+});

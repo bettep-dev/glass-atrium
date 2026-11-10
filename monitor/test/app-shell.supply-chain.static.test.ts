@@ -90,6 +90,12 @@ describe("the shell CSP allows exactly the scripts the shell runs", () => {
     assert.deepEqual(directives.get("object-src"), ["'none'"]);
     assert.deepEqual(directives.get("base-uri"), ["'self'"]);
   });
+
+  test("an injected script cannot send queue text to another origin by fetch or form post", () => {
+    const directives = getDirectives();
+    assert.deepEqual(directives.get("connect-src"), ["'self'"]);
+    assert.deepEqual(directives.get("form-action"), ["'self'"]);
+  });
 });
 
 describe("the Tailwind runtime is the vendored file its sidecar pins", () => {
