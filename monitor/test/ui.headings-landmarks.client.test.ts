@@ -1,17 +1,19 @@
 // Shared heading + landmark pins (plan 39859 S1): page h1 = nav label, card titles = h2, named shell regions.
+// Screen headers are read from each screen's rendered tree, so a screen edit never reaches this file.
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import vm from "node:vm";
-import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { collectText, createReactStub, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(__dirname, "../public/src");
 const APP_SRC = readFileSync(resolve(SRC, "app.jsx"), "utf8");
 
 type Component = (props: Record<string, unknown>) => unknown;
+interface ElementLike { type?: unknown; props?: { children?: unknown } }
 
 async function getNavEntries(): Promise<Array<{ id: string; label: string }>> {
   const app = await loadScreenModule(resolve(SRC, "app.jsx"), {
@@ -22,14 +24,42 @@ async function getNavEntries(): Promise<Array<{ id: string; label: string }>> {
   return vm.runInContext("NAV", app) as Array<{ id: string; label: string }>;
 }
 
+const realUi = ((await loadScreenModule(resolve(SRC, "ui.jsx"))) as { UI: Record<string, unknown> }).UI;
+
+// window.UI stub — components become `ui-atom` nodes carrying their props; helpers and constants stay real
+function getUiStub(): unknown {
+  const getAtom = (name: string) =>
+    Object.defineProperty((props: Record<string, unknown>) => ({ __element: true, type: "ui-atom", props: { ...props, atom: name } }), "name", { value: name });
+  return new Proxy({}, { get: (_target, name: string) => (!/^[A-Z][a-z]/.test(name) && name in realUi ? realUi[name] : getAtom(name)), has: () => true });
+}
+
+// the PageHeader props a screen renders on its first, unread pass
+async function getScreenHeader(id: string): Promise<Record<string, unknown>> {
+  const path = resolve(SRC, "screens", `${id}.jsx`);
+  assert.ok(existsSync(path), `screen file for nav id ${id}`);
+  const screen = await loadScreenModule(path, { UI: getUiStub(), React: createReactStub(), localStorage: { getItem: () => null, setItem: () => {} } });
+  const name = Object.keys(screen).find((key) => /^Screen[A-Z]/.test(key) && typeof screen[key] === "function");
+  assert.ok(name, `${id}.jsx defines a Screen component`);
+  const React = screen.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const headers = findNodes(renderScreen(React.createElement(screen[name], { onNav: () => {} })) as RenderedNode, (n) => n.props.atom === "PageHeader");
+  assert.equal(headers.length, 1, `${id} renders one PageHeader`);
+  return headers[0].props;
+}
+
+// component names in an unrendered element tree — a slot may wrap its atom in a fragment or a screen-local component
+function getElementNames(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(getElementNames);
+  if (!value || typeof value !== "object") return [];
+  const element = value as ElementLike;
+  const name = typeof element.type === "function" ? element.type.name : "";
+  return [name, ...getElementNames(element.props?.children)].filter(Boolean);
+}
+
 test("every screen's page h1 is its nav label", async () => {
   const entries = await getNavEntries();
   assert.ok(entries.length >= 9, `NAV parse found ${entries.length} entries`);
   for (const { id, label } of entries) {
-    const path = resolve(SRC, "screens", `${id}.jsx`);
-    assert.ok(existsSync(path), `screen file for nav id ${id}`);
-    const title = readFileSync(path, "utf8").match(/<PageHeader\b[^>]*?\btitle="([^"]+)"/)?.[1];
-    assert.equal(title, label, `${id}.jsx PageHeader title matches the nav label`);
+    assert.equal((await getScreenHeader(id)).title, label, `${id} PageHeader title matches the nav label`);
   }
 });
 
@@ -39,40 +69,39 @@ const SLOT_ATOMS: Record<string, { freshness: string; refresh: string }> = {
   "clauded-docs": { freshness: "DocHeaderFreshnessCD", refresh: "DocHeaderRefreshCD" },
 };
 
-test("every screen passes its header controls through the named slots, the title ahead of them", async () => {
+test("every screen passes its stamp and Refresh through the named slots, never a free right cluster", async () => {
   const entries = await getNavEntries();
   assert.ok(entries.length >= 9, `NAV parse found ${entries.length} entries`);
   for (const { id } of entries) {
-    const src = readFileSync(resolve(SRC, "screens", `${id}.jsx`), "utf8");
-    // the element runs to the `/>` at its own indent — slot JSX inside self-closes deeper
-    const open = src.match(/^([ \t]*)<PageHeader\b[\s\S]*?\n\1\/>/m)?.[0] ?? "";
-    assert.ok(open, `${id}.jsx renders a PageHeader`);
-    assert.doesNotMatch(open, /\bright=/, `${id}.jsx header carries no free right cluster`);
+    const header = await getScreenHeader(id);
     const atoms = SLOT_ATOMS[id] ?? { freshness: "FreshnessStamp", refresh: "RefreshButton" };
-    assert.match(open, new RegExp(`\\brefresh=\\{\\s*<${atoms.refresh}\\b`), `${id}.jsx Refresh rides the refresh slot`);
-    assert.match(open, new RegExp(`\\bfreshness=\\{[\\s\\S]*?<${atoms.freshness}\\b`), `${id}.jsx stamp rides the freshness slot`);
-    const slotAt = open.search(/\b(?:actions|freshness|range|refresh)=\{/);
-    assert.ok(open.indexOf('title="') < slotAt, `${id}.jsx title comes before the first JSX slot prop`);
+    assert.equal(header.right, undefined, `${id} header carries no free right cluster`);
+    assert.deepEqual(getElementNames(header.refresh), [atoms.refresh], `${id} Refresh rides the refresh slot`);
+    assert.ok(getElementNames(header.freshness).includes(atoms.freshness), `${id} stamp rides the freshness slot`);
   }
 });
 
-test("the header renders only its named slots — a free right cluster is no longer drawn", async () => {
+describe("the page header atom", async () => {
   const ui = await loadScreenModule(resolve(SRC, "ui.jsx"));
   const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
-  const tree = renderScreen(React.createElement(ui.PageHeader as Component, { title: "Wiki", right: "legacy", refresh: "refresh" }));
-  assert.doesNotMatch(collectText(tree), /legacy/, "the retired prop renders nothing");
-  const groups = findNodes(tree, (n) => n.type === "div" && /(^|\s)page-head-group(\s|$)/.test(String(n.props.className ?? "")));
-  assert.deepEqual(groups.map((g) => collectText(g)), ["refresh"], "one status group, holding the refresh slot");
-});
+  const render = (props: Record<string, unknown>) => renderScreen(React.createElement(ui.PageHeader as Component, props)) as RenderedNode;
+  const byClass = (tree: RenderedNode, name: string) =>
+    findNodes(tree, (n) => n.type === "div" && new RegExp(`(^|\\s)${name}(\\s|$)`).test(String(n.props.className ?? "")));
 
-test("the page title line is one control high and its sub-line clears the focus ring", () => {
-  const css = readFileSync(resolve(__dirname, "../public/styles/base.css"), "utf8");
-  const rule = (selector: string) => css.match(new RegExp(`(?:^|(?<!,)\\n)${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
-  assert.match(rule("\\.page-head"), /align-items:\s*flex-start/, "the header row is top-aligned");
-  assert.match(rule("\\.page-head"), /margin-bottom:\s*var\(--space-4\)/, "header → content 16");
-  assert.match(rule("\\.page-head-title"), /line-height:\s*var\(--ctl-min-h\)/, "controls center on the title line");
-  assert.match(rule("\\.page-head-sub"), /margin-top:\s*max\(var\(--space-1\),\s*calc\(var\(--focus-ring-width\)\s*\+\s*var\(--focus-ring-offset\)\)\)/,
-    "title → sub-line gap is the larger of 4 and the ring reach");
+  test("renders only its named slots — a free right cluster is no longer drawn", () => {
+    const tree = render({ title: "Wiki", right: "legacy", refresh: "refresh" });
+    assert.doesNotMatch(collectText(tree), /legacy/, "the retired prop renders nothing");
+    assert.deepEqual(byClass(tree, "page-head-group").map((g) => collectText(g)), ["refresh"], "one status group, holding the refresh slot");
+  });
+
+  test("keeps back link, h1 and status on its lead line and renders no sub-line, whatever the caller passes", () => {
+    const tree = render({ title: "Agents", sub: "Triage — who is unsafe", back: "Back", status: "Draft", primary: "Save" });
+    const [lead] = byClass(tree, "page-head-lead");
+    const [heading] = findNodes(tree, (n) => n.type === "h1");
+    assert.equal(collectText(heading), "Agents");
+    assert.equal(collectText(lead), "Back Agents Draft", "back, then title, then status — nothing else on the lead line");
+    assert.doesNotMatch(collectText(tree), /Triage/, "the retired sub-line renders nothing");
+  });
 });
 
 test("a card heading is a section h2, below the page h1 in the outline", async () => {
@@ -116,7 +145,7 @@ describe("structure atoms carry headings, captions and column scope", async () =
   const render = (name: string, props: Record<string, unknown>, ...children: unknown[]): RenderedNode =>
     (renderScreen(React.createElement(ui[name] as Component, props, ...children)) as RenderedNode).children[0] as RenderedNode;
 
-  test("a section label is an h2 by default and keeps the uppercase section-label style", () => {
+  test("a section label is an h2 by default and carries the section-label style", () => {
     const tree = render("SectionLabel", {}, "Pinned models");
     assert.equal(tree.type, "h2");
     assert.match(String(tree.props.className), /\bsection-label\b/);

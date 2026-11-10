@@ -150,11 +150,11 @@ test("a shared-outage banner leaving with its Retry focused hands focus to the f
   const shared = { sources: ["cost trend", "token trend"], error: "HTTP 500" };
   const rows = [
     { name: "covered regions declared their cards", regionCardIds: ["cost-trend", "cost-tokens"], expected: "cost-trend" },
-    { name: "no covered region declared a card", regionCardIds: [undefined, undefined], expected: "cost-verdict" },
+    { name: "no covered region declared a card", regionCardIds: [undefined, undefined], expected: "cost-region-kpis" },
   ];
   for (const row of rows) {
     fxDoc.reset();
-    for (const id of ["cost-trend", "cost-tokens", "cost-verdict"]) fxDoc.elements.set(id, getFakeCard(id));
+    for (const id of ["cost-trend", "cost-tokens", "cost-region-kpis"]) fxDoc.elements.set(id, getFakeCard(id));
     shared.sources.forEach((source, index) => {
       const covered = renderScreen(fxH(fxUi.RegionFailure, { source, error: shared.error, shared, focusTargetId: row.regionCardIds[index] })) as RenderedNode;
       fxDoc.attached.push(...findNodes(covered, (n) => n.type === "div"));
@@ -162,7 +162,7 @@ test("a shared-outage banner leaving with its Retry focused hands focus to the f
     const retry = { name: "retry" };
     let banner = null as RenderedNode | null;
     const render = () => {
-      banner = renderScreen(fxH(fxUi.PageErrorBanner, { ...shared, onRetry: () => undefined, focusTargetId: "cost-verdict" })) as RenderedNode;
+      banner = renderScreen(fxH(fxUi.PageErrorBanner, { ...shared, onRetry: () => undefined, focusTargetId: "cost-region-kpis" })) as RenderedNode;
       (getRetry(banner).props.ref as { current: unknown }).current = retry;
       return banner;
     };

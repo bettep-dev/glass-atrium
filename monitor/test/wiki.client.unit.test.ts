@@ -134,8 +134,8 @@ test("loading, error and unreported each read as themselves, never as a value", 
     helpers.buildIndexTileW(errored),
     helpers.buildIndexTileW(ready({ has_dirty_flag: false, dirty: false, last_dirty_ms: null })),
   ];
-  const subs = states.map((t) => `${t.value} ${t.sub ?? ""}`);
-  assert.equal(new Set(subs).size, subs.length, `states must read distinctly: ${subs.join(" / ")}`);
+  const reads = states.map((t) => `${t.state} ${t.sub ?? ""}`);
+  assert.equal(new Set(reads).size, reads.length, `states must read distinctly: ${reads.join(" / ")}`);
   for (const tile of states) {
     assert.equal(/\d/.test(tile.value), false, `placeholder must carry no figure: ${tile.value}`);
     assert.equal(tile.tone, "neutral");
@@ -467,13 +467,8 @@ test("the merge-proposal list follows the alarm lane's order", () => {
   );
 });
 
-// Page verdict, tile causes and note-type labels.
+// Tile causes and note-type labels.
 
-interface Verdict {
-  tone: string;
-  text: string;
-  chips: Array<{ label: string; targetId?: string }>;
-}
 interface GlanceTile {
   key: string;
   value: string;
@@ -482,7 +477,6 @@ interface GlanceTile {
   tone: string;
 }
 const glanceHelpers = helpers as unknown as {
-  buildWikiVerdictW: (summary: FetchState, index: FetchState, backlog: FetchState, cycles: FetchState) => Verdict;
   buildCompiledTileW: (summary: FetchState, backlog?: FetchState, cycles?: FetchState) => GlanceTile;
   buildLastRunTileW: (summary: FetchState, at?: string | null) => GlanceTile;
   buildNoteTypeRowsW: (rows: unknown[]) => Array<{ type: string; label: string; pct: number }>;
@@ -498,54 +492,6 @@ function healthySummary(extra: Record<string, unknown> = {}): FetchState {
     ...extra,
   });
 }
-
-describe("the page verdict takes the worst actionable tone and parked proposals never raise it", () => {
-  const clean = ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 });
-  const noBacklog = ready({ backlog: null });
-  const rows = [
-    { name: "a healthy run with nothing waiting reads ok", summary: healthySummary(), index: clean, backlog: noBacklog, tone: "ok" },
-    { name: "a missed daily cycle reads crit", summary: healthySummary({ hours_since_last_cycle: 40 }), index: clean, backlog: noBacklog, tone: "crit" },
-    { name: "a dirty index reads warn", summary: healthySummary(), index: ready({ has_dirty_flag: true, dirty: true, last_dirty_ms: 1 }), backlog: noBacklog, tone: "warn" },
-    { name: "a failed last run reads crit", summary: healthySummary({ last_status: "fail" }), index: clean, backlog: noBacklog, tone: "crit" },
-    { name: "only parked proposals keep ok", summary: healthySummary(), index: clean, backlog: proposalBacklog(["a", "b"], { a: isoDaysAgo(79), b: isoDaysAgo(67) }), tone: "ok" },
-    { name: "a proposal still inside its waiting window reads warn", summary: healthySummary(), index: clean, backlog: proposalBacklog(["a"], { a: isoDaysAgo(1) }), tone: "warn" },
-    { name: "an unloaded summary reads no signal", summary: loading, index: clean, backlog: noBacklog, tone: "neutral" },
-    { name: "an errored index withholds the all-clear", summary: healthySummary(), index: errored, backlog: noBacklog, tone: "neutral" },
-    { name: "an errored backlog withholds the all-clear", summary: healthySummary(), index: clean, backlog: errored, tone: "neutral" },
-    { name: "an index still loading withholds the all-clear", summary: healthySummary(), index: loading, backlog: noBacklog, tone: "neutral" },
-    { name: "a backlog still loading withholds the all-clear", summary: healthySummary(), index: clean, backlog: loading, tone: "neutral" },
-    { name: "an errored feeder never softens a missed cycle already known", summary: healthySummary({ hours_since_last_cycle: 40 }), index: errored, backlog: noBacklog, tone: "crit" },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      assert.equal(glanceHelpers.buildWikiVerdictW(row.summary, row.index, row.backlog, unchangedCycles(30)).tone, row.tone);
-    });
-  }
-});
-
-test("the verdict sentence names each feeder it could not check", () => {
-  const verdict = glanceHelpers.buildWikiVerdictW(healthySummary(), errored, errored, unchangedCycles(30));
-  assert.match(verdict.text, /couldn't check search index, merge proposals$/);
-});
-
-test("parked proposals fold into the verdict sentence with their count, oldest age and one chip to the list", () => {
-  const verdict = glanceHelpers.buildWikiVerdictW(
-    healthySummary(),
-    ready({}),
-    proposalBacklog(["a", "b", "c"], { a: isoDaysAgo(79), b: isoDaysAgo(70), c: isoDaysAgo(67) }),
-    unchangedCycles(30),
-  );
-  assert.match(verdict.text, /3 merges parked, oldest 79d/);
-  assert.match(verdict.text, /0 compiled/);
-  assert.equal(verdict.chips.length, 1);
-  assert.equal(typeof verdict.chips[0].targetId, "string");
-});
-
-test("with no proposals the verdict sentence names no merge and offers no chip", () => {
-  const none = glanceHelpers.buildWikiVerdictW(healthySummary(), ready({}), ready({ backlog: null }), unchangedCycles(30));
-  assert.doesNotMatch(none.text, /merge/);
-  assert.deepEqual([...none.chips], []);
-});
 
 describe("the compiled tile names why it reads zero, adds the window total and tints only when originals wait", () => {
   const cycles = ready({ cycles: [4, 0, 8].map((compiled_count, i) => ({ run_date: isoDaysAgo(i), compiled_count })) });
@@ -736,4 +682,21 @@ test("the compiled tile and Run history name the same span for the same total", 
   const history = h.describeRunHistoryW(cycles, h.buildThroughputModel(cycles), ready({}));
   assert.match(tile.sub ?? "", /\b22 in 29d\b/);
   assert.match(history, /^3 runs in 29d\b/, "runs are counted as runs over the same span");
+});
+
+test("the last-run stat names its cycle date only when the summary records one", () => {
+  const rows = [
+    { name: "dated, on time", date: "2026-09-24", hours: undefined, hint: "Cycle 2026-09-24", subCycle: false },
+    { name: "dated, overdue", date: "2026-09-24", hours: 999, hint: "Cycle 2026-09-24", subCycle: true },
+    { name: "undated, on time", date: null, hours: undefined, hint: undefined, subCycle: false },
+    { name: "undated, overdue", date: null, hours: 999, hint: undefined, subCycle: false },
+  ];
+  for (const row of rows) {
+    const extra = row.hours === undefined ? {} : { hours_since_last_cycle: row.hours };
+    const summary = healthySummary({ last_run_date: row.date, ...extra });
+    const tile = glanceHelpers.buildLastRunTileW(summary) as { sub: string; hint?: string };
+    assert.equal(tile.hint, row.hint, row.name);
+    assert.equal(/· cycle 2026-09-24$/.test(tile.sub), row.subCycle, `${row.name}: cycle date in the context line`);
+    assert.doesNotMatch(tile.sub, /undefined|null/, `${row.name}: the context line holds no missing value`);
+  }
 });

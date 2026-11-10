@@ -17,7 +17,7 @@ type FreshnessInput = { at?: string | null; loading?: boolean; failed?: boolean;
 const ui = await loadScreenModule(UI_SRC);
 const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
 const getFreshnessState = ui.getFreshnessState as (input: FreshnessInput) => string;
-const formatKstTime = ui.formatKstTime as (iso: string) => string;
+const formatRelativeTime = ui.formatRelativeTime as (iso: string | null | undefined, now?: number) => string;
 
 const NOW = Date.parse("2026-09-25T05:30:00.000Z");
 const STALE_MS = 5 * 60_000;
@@ -51,12 +51,11 @@ test("state follows the read history: never read → loading or not read, read �
   }
 });
 
-test("every state carries a distinct decorative glyph and names its state word exactly once", () => {
+test("every shown state carries a distinct decorative glyph and names its state word exactly once", () => {
   const inputs: Array<{ input: FreshnessInput; word: string }> = [
     { input: { at: null, loading: true }, word: "Loading" },
     { input: { at: null }, word: "Not read" },
     { input: { at: isoAgo(STALE_MS + 60_000) }, word: "Stale" },
-    { input: { at: isoAgo(1_000) }, word: "Fresh" },
   ];
   const glyphs = new Set<string>();
   for (const { input, word } of inputs) {
@@ -78,7 +77,7 @@ test("a first read in flight leaves the visible loading label to the paired Refr
 });
 
 test("tone colours the glyph only — the stamp text stays in the neutral ink", () => {
-  for (const input of [{ at: isoAgo(1_000) }, { at: isoAgo(STALE_MS + 1) }, { at: null }]) {
+  for (const input of [{ at: isoAgo(STALE_MS + 1) }, { at: null }, { at: isoAgo(1_000), regions: [{ error: "down" }, {}] }]) {
     const tree = renderStamp(input);
     const toned = findNodes(tree, (n) => /\btext-(ok|warn|crit)\b/.test(String(n.props.className ?? "")));
     assert.equal(toned.length, 1, `${JSON.stringify(input)}: exactly one toned node`);
@@ -86,31 +85,40 @@ test("tone colours the glyph only — the stamp text stays in the neutral ink", 
   }
 });
 
-test("a read stamp shows the display-clock time of the read, whatever its age", () => {
-  for (const ageMs of [1_000, STALE_MS + 1, 3_600_000]) {
-    const at = isoAgo(ageMs);
-    const visible = findNodes(renderStamp({ at }), (n) => n.props["data-stamp-text"] === "true");
-    assert.equal(visible.length, 1);
-    assert.equal(collectText(visible[0]).trim(), `as of ${formatKstTime(at)}`);
+test("the stamp renders exactly when the settled read is not fresh — a refresh over a fresh read stays hidden", () => {
+  const rows: Array<{ name: string; input: FreshnessInput; isShown: boolean }> = [
+    { name: "fresh, idle", input: { at: isoAgo(1_000) }, isShown: false },
+    { name: "fresh at the window edge", input: { at: isoAgo(STALE_MS) }, isShown: false },
+    { name: "fresh, refreshing", input: { at: isoAgo(1_000), loading: true }, isShown: false },
+    { name: "fresh, a region refreshing", input: { at: isoAgo(1_000), regions: [{ busy: true }, {}] }, isShown: false },
+    { name: "past the window", input: { at: isoAgo(STALE_MS + 1) }, isShown: true },
+    { name: "past the window, refreshing", input: { at: isoAgo(STALE_MS + 1), loading: true }, isShown: true },
+    { name: "the last read failed", input: { at: isoAgo(1_000), failed: true }, isShown: true },
+    { name: "some regions failed", input: { at: isoAgo(1_000), regions: [{ error: "down" }, {}] }, isShown: true },
+    { name: "never read", input: { at: null }, isShown: true },
+    { name: "first read in flight", input: { at: null, loading: true }, isShown: true },
+  ];
+  // the component node always wraps its output → shown means it rendered a child
+  for (const row of rows) assert.equal(renderStamp(row.input).children.length > 0, row.isShown, row.name);
+});
+
+test("a stale read reads as last known with its age, whatever input made it stale", () => {
+  for (const input of [{ at: isoAgo(STALE_MS + 60_000) }, { at: isoAgo(3_600_000) }, { at: isoAgo(1_000), failed: true }]) {
+    const visible = findNodes(renderStamp(input), (n) => n.props["data-stamp-text"] === "true");
+    assert.equal(visible.length, 1, JSON.stringify(input));
+    assert.equal(collectText(visible[0]).trim(), `Last known · read ${formatRelativeTime(input.at, NOW)}`, JSON.stringify(input));
   }
 });
 
-test("the success tone appears only on an idle, unfailed, in-window read", () => {
-  const inputs: FreshnessInput[] = [
-    { at: null, loading: true },
-    { at: null },
-    { at: isoAgo(1_000), loading: true },
-    { at: isoAgo(1_000), failed: true },
-    { at: isoAgo(1_000), regions: [{ busy: true }] },
-    { at: isoAgo(1_000), regions: [{ error: "down" }, {}] },
-    { at: isoAgo(1_000), regions: [{ error: "down" }] },
-    { at: isoAgo(STALE_MS + 1) },
-    { at: isoAgo(1_000) },
+test("a never-read stamp shows the unread note, telling a failed first read from one never tried", () => {
+  const rows: Array<{ name: string; input: FreshnessInput; note: string }> = [
+    { name: "never tried", input: { at: null }, note: "Nothing has been read yet." },
+    { name: "first read failed", input: { at: null, failed: true }, note: "The first read failed — nothing to show yet." },
+    { name: "every region failed", input: { at: null, regions: [{ error: "down" }, { error: "down" }] }, note: "The first read failed — nothing to show yet." },
   ];
-  for (const input of inputs) {
-    const isFresh = getFreshnessState({ now: NOW, staleAfterMs: STALE_MS, ...input }) === "fresh";
-    const okNodes = findNodes(renderStamp(input), (n) => /\btext-ok\b/.test(String(n.props.className ?? "")));
-    assert.equal(okNodes.length, isFresh ? 1 : 0, JSON.stringify(input));
+  for (const row of rows) {
+    const visible = findNodes(renderStamp(row.input), (n) => n.props["data-stamp-text"] === "true");
+    assert.equal(collectText(visible[0]).trim(), row.note, row.name);
   }
 });
 
@@ -122,12 +130,12 @@ test("a partial failure names how many regions failed out of how many, in text a
   assert.match(visible, /1 of 3 failed/);
 });
 
-test("a busy region marks the stamp busy and keeps the last stamp, whichever input carries the busy bit", () => {
-  const at = isoAgo(1_000);
+test("a busy region marks a shown stamp busy and keeps the last stamp, whichever input carries the busy bit", () => {
+  const at = isoAgo(STALE_MS + 60_000);
   for (const input of [{ at, loading: true }, { at, regions: [{ busy: true }, {}] }]) {
     const tree = renderStamp(input);
     assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 1, JSON.stringify(input));
-    assert.match(collectText(tree), new RegExp(`as of ${formatKstTime(at)}`));
+    assert.match(collectText(tree), new RegExp(`Last known · read ${formatRelativeTime(at, NOW)}`));
     assert.match(collectText(findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"))[0]), /Refreshing/);
   }
 });
@@ -237,14 +245,14 @@ function createTickHarness(startMs: number) {
   return { clock, effects, timers, globals, getRerenders: () => rerenders };
 }
 
-test("with no injected clock, a read stamp re-checks its own age: time passing alone turns Fresh into Stale", async () => {
+test("with no injected clock, a read stamp re-checks its own age: time passing alone turns a hidden fresh stamp into a shown Stale one", async () => {
   const harness = createTickHarness(NOW);
   const tickUi = await loadScreenModule(UI_SRC, harness.globals);
   const at = isoAgo(1_000);
   const render = () => renderScreen(React.createElement(tickUi.FreshnessStamp as Component, { at, staleAfterMs: STALE_MS })) as RenderedNode;
   const srWord = (tree: RenderedNode) => collectText(findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"))[0]).trim();
 
-  assert.equal(srWord(render()), "Fresh");
+  assert.equal(render().children.length, 0, "fresh → hidden");
   const cleanups = harness.effects.map((effect) => effect());
   const live = harness.timers.filter((t) => !t.cleared);
   assert.equal(live.length, 1, "one tick scheduled");

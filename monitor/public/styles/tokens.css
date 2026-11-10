@@ -28,15 +28,15 @@
   --overlay-surface: 255 255 255; /* kind A primitive: 모달/팝오버 불투명 면 (= elev, 의미 분리) */
 
   /* ── Tier 2 — Glass / material (신규, §3.2) ─────────────────────── */
-  --glass-border:  255 255 255;   /* kind A: 유리 엣지 하이라이트 (alpha 는 사용처) */
+  --glass-border:  255 255 255;   /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
 
   /* ── Tier 2 — Shadow / depth (신규 합성 그림자, kind B box-shadow) ─ */
-  --shadow-raised:   0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-raised:   0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04); /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
   --shadow-raised-2: 0 2px 6px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); /* 라이트 raised-2: elev fill + 강한 그림자 (인버전 회피) */
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
 
   /* ── Badge form (신규 · additive) ─ kind B length: 전 배지 shell 공용 radius (form 통일) */
-  --radius-badge: 6px;
+  --radius-badge: 6px; /* TODO(mon-ui/43942): deprecated — badges take --radius-inline; delete once the clauded-docs editor and menu rules move to role tokens (U10) */
 
   /* type steps — the only scale source, whole px, 13px meta floor */
   --fs-kpi:     32px;
@@ -64,6 +64,20 @@
   --space-4:  16px;  /* card/tile padding · card ↔ card gap · page header → content · edge cell padding-inline */
   --space-6:  24px;  /* page gutter · section ↔ section · overlay padding-inline */
   --space-8:  32px;  /* break before a titled section group */
+
+  /* role gaps — screens name the role (Tailwind role keys in index.html), never a ladder step; one value each */
+  --gap-page:          var(--space-6); /* <main> padding, all four sides; 16 at 640px or narrower */
+  --gap-header:        var(--space-4); /* page header → first content row */
+  --gap-section:       var(--space-4); /* between card rows · between cards in a row */
+  --gap-block:         var(--space-4); /* between sub-blocks inside one card body */
+  --gap-group-above:   var(--space-8); /* break above a titled page-level group heading */
+  --gap-group-below:   var(--space-3); /* group heading → its first row */
+  --gap-label:         var(--space-2); /* sub-block or field label → its content */
+  --gap-label-inline:  var(--space-1); /* inline label → value on one line */
+  --gap-stack:         var(--space-1); /* stacked label → value, one fact */
+  --gap-list:          var(--space-2); /* stacked fact list items · button wrap */
+  --gap-control:       var(--space-2); /* controls inside one group */
+  --gap-control-group: var(--space-4); /* between control groups */
 
   /* minimum hit height for every interactive atom */
   --ctl-min-h: 32px;
@@ -96,6 +110,10 @@
   --z-overlay: 100;
   --z-confirm: 150;
   --z-toast:   200;
+}
+/* narrow viewport → the page gutter drops one ladder step */
+@media (max-width: 640px) {
+  :root { --gap-page: var(--space-4); }
 }
 /* surface elevation semantic aliases — var() resolves where declared, so every themed scope (a nested dark chrome too) re-declares them against its own primitives */
 :root, [data-theme] {
@@ -133,9 +151,9 @@
 
   --surface-raised-2: var(--elev-2); /* 다크 raised-2: 휘도 step 으로 떠오름 (36 > 28) */
 
-  --glass-border:  255 255 255;   /* 다크: 화이트 엣지 (낮은 alpha 로 가시화) */
+  --glass-border:  255 255 255;   /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
 
-  --shadow-raised:   0 1px 4px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+  --shadow-raised:   0 1px 4px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2); /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
   --shadow-raised-2: 0 3px 10px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25); /* 다크 raised-2 보조 (주채널은 휘도 step) */
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
 }

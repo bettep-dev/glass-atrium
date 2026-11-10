@@ -62,3 +62,79 @@ describe("Popover panel inside a card head", () => {
     assert.deepEqual(probe.misses, []);
   });
 });
+
+// three stacked rows in an open panel; `tokens` overrides the role tokens on the wrapper (inherited by the panel)
+function buildRowsPage(tokens: string): string {
+  return `<!doctype html><html data-theme="light"><body>
+  <div style="width: 640px; padding: 24px; ${tokens}">
+    <div class="popover-root" style="float: right;">
+      <button type="button" class="btn ghost sm">Info</button>
+      <div class="popover-panel" id="panel" role="dialog" aria-label="Info">
+        <div class="row" style="height: 24px;">One</div>
+        <div class="row" style="height: 24px;">Two</div>
+        <div class="row" style="height: 24px;">Three</div>
+      </div>
+    </div>
+  </div>
+</body></html>`;
+}
+
+describe("Popover panel spacing follows the role tokens", () => {
+  const rows = [
+    { name: "default tokens", tokens: "" },
+    { name: "tokens overridden on an ancestor", tokens: "--card-pad: 24px; --gap-list: 12px;" },
+  ];
+
+  for (const row of rows) {
+    test(`every side's inset equals --card-pad and every row gap equals --gap-list (${row.name})`, async () => {
+      const rowsPage = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+      try {
+        await rowsPage.setContent(buildRowsPage(row.tokens));
+        await rowsPage.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+        await rowsPage.addStyleTag({ path: resolve(STYLES, "base.css") });
+
+        const probe = await rowsPage.evaluate(() => {
+          const panel = document.getElementById("panel") as HTMLElement;
+          const style = getComputedStyle(panel);
+          // inline callback, never a named local → tsx's __name wrapper stays out of the page
+          const [cardPad, gapList] = ["--card-pad", "--gap-list"].map((name) => {
+            const ruler = document.createElement("div");
+            ruler.style.width = `var(${name})`;
+            panel.appendChild(ruler);
+            const px = ruler.getBoundingClientRect().width;
+            ruler.remove();
+            return px;
+          });
+          const box = panel.getBoundingClientRect();
+          const inner = {
+            top: box.top + parseFloat(style.borderTopWidth),
+            right: box.right - parseFloat(style.borderRightWidth),
+            bottom: box.bottom - parseFloat(style.borderBottomWidth),
+            left: box.left + parseFloat(style.borderLeftWidth),
+          };
+          const rects = [...panel.querySelectorAll(".row")].map((el) => el.getBoundingClientRect());
+          const first = rects[0];
+          const last = rects[rects.length - 1];
+          return {
+            cardPad,
+            gapList,
+            insets: {
+              top: first.top - inner.top,
+              right: inner.right - first.right,
+              bottom: inner.bottom - last.bottom,
+              left: first.left - inner.left,
+            },
+            gaps: rects.slice(1).map((rect, i) => rect.top - rects[i].bottom),
+          };
+        });
+
+        const { cardPad, gapList } = probe;
+        assert.deepEqual(probe.insets, { top: cardPad, right: cardPad, bottom: cardPad, left: cardPad },
+          `inset per side vs --card-pad ${cardPad}px`);
+        assert.deepEqual(probe.gaps, [gapList, gapList], `row gaps vs --gap-list ${gapList}px`);
+      } finally {
+        await rowsPage.close();
+      }
+    });
+  }
+});

@@ -201,8 +201,19 @@ describe("card", () => {
     assert.ok(bodyAt >= 0 && footAt > bodyAt, `parts ${JSON.stringify(parts)}`);
   });
 
-  test("a card with no foot renders no empty foot strip", () => {
-    assert.equal(findNodes(render("Card", { title: "Runs" }, "rows"), (n) => classesOf(n).includes("card-foot")).length, 0);
+  test("the bar sits between the head and the body, so filters read before the rows", () => {
+    const card = findNodes(render("Card", { title: "Runs", bar: "filters" }, "rows"), (n) => classesOf(n).includes("card"))[0];
+    const nodes = card.children.filter((c): c is RenderedNode => typeof c !== "string");
+    const parts = nodes.map((c) => classesOf(c));
+    const headAt = nodes.findIndex((c) => c.props.title === "Runs");
+    const barAt = parts.findIndex((c) => c.includes("card-bar"));
+    const bodyAt = parts.findIndex((c) => c.includes("card-body"));
+    assert.ok(headAt >= 0 && barAt > headAt && bodyAt > barAt, `parts ${JSON.stringify(parts)}`);
+  });
+
+  test("a card with no bar or foot renders neither empty strip", () => {
+    const card = render("Card", { title: "Runs" }, "rows");
+    assert.equal(findNodes(card, (n) => classesOf(n).includes("card-foot") || classesOf(n).includes("card-bar")).length, 0);
   });
 });
 

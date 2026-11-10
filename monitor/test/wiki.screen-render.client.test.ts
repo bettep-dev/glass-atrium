@@ -3,7 +3,7 @@
 //
 // Runner: npx tsx --test test/wiki.screen-render.client.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -45,7 +45,7 @@ function uiStub(): unknown {
 
 type Component = (props: unknown) => unknown;
 interface ScreenModule {
-  React: { createElement: (t: unknown, p: unknown) => unknown };
+  React: { createElement: (t: unknown, p: unknown, ...children: unknown[]) => unknown };
   [name: string]: unknown;
 }
 
@@ -55,6 +55,13 @@ async function loadWikiScreen(): Promise<ScreenModule> {
 
 function classOf(node: RenderedNode): string {
   return String(node.props.className ?? "");
+}
+
+// StatRow is a stub atom here → the band's stats render through the real atom
+function renderStatsOf(mod: ScreenModule, band: RenderedNode | string | null): RenderedNode | string | null {
+  const rows = findNodes(band, (n) => n.props.atom === "StatRow");
+  assert.equal(rows.length, 1, "the band mounts one stat row");
+  return renderScreen(mod.React.createElement(realUi.StatRow, rows[0].props));
 }
 
 test("every disclosure leads its summary with the shared chevron the disclosure atom turns on open", async () => {
@@ -96,6 +103,19 @@ test("the notes-per-day chart fills its panel with one dated bar per day and kee
     );
     assert.ok(collectText(tree).includes(`peak ${peak} on ${peakDate}`), "the visible caption carries the peak value and date");
   }
+});
+
+test("a series with too few active days states the gap through the shared empty state instead of a chart", async () => {
+  const mod = await loadWikiScreen();
+  const dates = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"];
+
+  const tree = renderScreen(mod.React.createElement(mod.SparseTrendW as Component, { label: "Notes per day", series: [0, 3, 0, 5, 1], dates }));
+
+  const empty = findNodes(tree, (n) => n.props.atom === "EmptyState");
+  assert.equal(empty.length, 1, "the shared empty-state atom carries the sparse note");
+  assert.equal(empty[0].props.message, "Too few active days to draw a trend.");
+  assert.equal(findNodes(tree, (n) => n.props.atom === "TrendChart").length, 0, "no chart is drawn for a sparse series");
+  assert.equal(findNodes(tree, (n) => /\bplaceholder\b/.test(classOf(n))).length, 0, "the screen sets no placeholder class of its own");
 });
 
 test("the notes-per-day chart takes its edge labels and y-scale from the shared chart atom", async () => {
@@ -166,6 +186,11 @@ test("detail sections fold behind an h2 in their summary; status sections render
     const summary = findNodes(tree, (n) => n.type === "summary").find((s) => findNodes(s, (n) => n === heading).length > 0);
     assert.ok(summary, `${row.name} keeps its h2 inside the toggling summary`);
     assert.equal((summary?.children[0] as RenderedNode).type, "DisclosureChevron", `${row.name} keeps the chevron first`);
+    const [card] = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("card"));
+    assert.equal(findNodes(card ?? null, (n) => n.type === "details").length, 1, `${row.name}'s fold is itself the card`);
+    for (const node of findNodes(card ?? null, () => true).filter((n) => n !== card)) {
+      assert.doesNotMatch(classOf(node), /(^|\s)(border|bg-sunken|rounded-md)(\s|$)/, `${row.name} draws no second box inside its card`);
+    }
   }
 });
 
@@ -197,6 +222,26 @@ test("the Per-run fold's trend note rides DayTokens, so its N-day window stays w
   const notes = findNodes(tree, (n) => n.props.atom === "DayTokens").map((n) => String(n.props.children));
   assert.equal(notes.length, 1, "one note rides DayTokens");
   assert.match(notes[0], /^The window drives the table only — the trend keeps a fixed \d+-day window\.$/);
+});
+
+test("the Per-run fold body is flush so the table's edge cells hold the one card-pad column, controls on the card bar", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
+  const [fold] = findNodes(tree, (n) => n.type === "details");
+  const [body] = fold.children.filter((child): child is RenderedNode => typeof child !== "string" && child.type !== "summary");
+  const [controls] = findNodes(fold, (n) => n.props.atom === "Cluster");
+
+  assert.doesNotMatch(classOf(body), /\bp[xb]-card-pad\b/, "the body adds no inline inset of its own");
+  assert.match(String(controls.props.className), /\bcard-bar\b/);
+});
+
+test("the Per-run failure block takes the card inset itself inside the flush fold", async () => {
+  const mod = await loadWikiScreen();
+  const failed = { status: "error", data: null, error: OUTAGE, busy: false };
+  const tree = renderScreen(mod.React.createElement(mod.WikiReportsBody as Component, { state: failed, days: 30, shared: null, onRetry: () => {} }));
+  const insets = findNodes(tree, (n) => /\bpx-card-pad\b/.test(classOf(n)) && findNodes(n, (m) => m.props.atom === "RegionFailure").length > 0);
+
+  assert.equal(insets.length, 1);
 });
 
 test("the Per-run fold's ⓘ is described by the fold's own heading", async () => {
@@ -322,23 +367,43 @@ test("a tile-band feeder the banner does not cover keeps its own sentence beside
   assert.equal(cards[0].props.shared, null, "the uncovered feeder is not quieted by the banner");
 });
 
-test("the page banner shows its Retry in flight and hands focus to the verdict, which outlives recovery", async () => {
+// every region of the page starts from this one state
+async function renderWikiInState(region: Record<string, unknown>): Promise<RenderedNode> {
+  const ui = new Proxy(uiStub() as Record<string, unknown>, {
+    get: (target, name: string) => (name === "INITIAL_REGION_STATE" ? region : target[name]),
+  });
+  const mod = (await loadScreenModule(WIKI_SRC, { UI: ui, React: createReactStub() })) as ScreenModule;
+  return renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {})) as RenderedNode;
+}
+
+describe("the page banner's Retry hands focus to a region card every page state renders", () => {
   const initial = realUi.INITIAL_REGION_STATE as Record<string, unknown>;
   // the state putRegionRequest leaves behind when Retry is clicked on a region that never loaded
   const retrying = { ...initial, status: "loading", data: null, error: OUTAGE, busy: true };
-  const ui = new Proxy(uiStub() as Record<string, unknown>, {
-    get: (target, name: string) => (name === "INITIAL_REGION_STATE" ? retrying : target[name]),
-  });
-  const mod = (await loadScreenModule(WIKI_SRC, { UI: ui, React: createReactStub() })) as ScreenModule;
-  const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
+  const getBanners = (tree: RenderedNode) => findNodes(tree, (n) => n.props.atom === "PageErrorBanner");
 
-  const banners = findNodes(tree, (n) => n.props.atom === "PageErrorBanner");
-  assert.equal(banners.length, 1, "every section failing on one cause lifts to one page banner");
-  assert.equal(banners[0].props.isBusy, true, "a Retry in flight marks the banner busy");
-  // host nodes only — a stubbed atom also appears as its component node
-  const targets = findNodes(tree, (n) => /^[a-z]/.test(n.type) && n.props.id === banners[0].props.focusTargetId);
-  assert.equal(targets.length, 1, `focus target ${String(banners[0].props.focusTargetId)} is one rendered element`);
-  assert.notEqual(targets[0].props.atom, "PageErrorBanner", "focus lands outside the banner that unmounts on recovery");
+  test("an outage over every section is one banner with its Retry in flight", async () => {
+    const banners = getBanners(await renderWikiInState(retrying));
+
+    assert.equal(banners.length, 1, "every section failing on one cause lifts to one page banner");
+    assert.equal(banners[0].props.isBusy, true, "a Retry in flight marks the banner busy");
+  });
+
+  const rows = [
+    { name: "loading", region: { ...initial, status: "loading", data: null, error: null, busy: true } },
+    { name: "error with the Retry in flight", region: retrying },
+    { name: "ready", region: { status: "ready", data: {}, error: null, busy: false } },
+  ];
+  for (const row of rows) {
+    test(`${row.name}: the fallback card renders once, outside the banner`, async () => {
+      const fallbackId = getBanners(await renderWikiInState(retrying))[0].props.focusTargetId;
+      // host nodes only — a stubbed atom also appears as its component node
+      const targets = findNodes(await renderWikiInState(row.region), (n) => /^[a-z]/.test(n.type) && n.props.id === fallbackId);
+
+      assert.equal(targets.length, 1, `focus target ${String(fallbackId)} is one rendered element`);
+      assert.notEqual(String(targets[0].props.atom), "PageErrorBanner", "never the banner that unmounts on recovery");
+    });
+  }
 });
 
 test("the page banner covers an outage only when two or more sections fail for one cause", async () => {
@@ -369,7 +434,89 @@ test("the run table sits in page scroll with a caption and scoped column heads",
     const style = (node.props.style ?? {}) as Record<string, unknown>;
     assert.equal(style.maxHeight, undefined, "no inner vertical scroller clips the rows");
     assert.doesNotMatch(classOf(node), /overflow-y-auto|max-h-/, "no inner vertical scroller clips the rows");
+    assert.doesNotMatch(classOf(node), /overflow-x-auto|\bborder\b|rounded-md/, "the Table's own wrapper is the only box");
   }
+});
+
+// Table is a stub atom here → its row function renders against a wide view
+function renderTableRowsOf(mod: ScreenModule, tree: RenderedNode | string | null): RenderedNode | string | null {
+  const [table] = findNodes(tree, (n) => n.props.atom === "Table");
+  // the stub's createElement keeps children as an array → the one child is the row function
+  const [rows] = [table.props.children].flat() as Array<(view: unknown) => unknown>;
+  const columnCount = (table.props.columns as unknown[]).length;
+  return renderScreen(mod.React.createElement("tbody", null, rows({ isStacked: false, columnCount })));
+}
+
+function renderRunRowsOf(mod: ScreenModule, reports: unknown[]): RenderedNode | string | null {
+  return renderTableRowsOf(mod, renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports })));
+}
+
+const WIDE_VIEW = { isStacked: false, columnCount: 4 };
+
+describe("the run table drops its Status column only when every run in the window is healthy", () => {
+  const run = (run_date: string, status: string, deadlinks_count: number) => ({ run_date, status, deadlinks_count, dedup_count: 3 });
+  const rows = [
+    {
+      name: "a uniform healthy window, its backlog still moving, states the shared status once in the caption",
+      reports: [run("2026-09-26", "ok", 2), run("2026-09-25", "ok", 1), run("2026-09-24", "ok", 1)],
+      hasStatusColumn: false,
+      shownWords: [],
+    },
+    {
+      name: "a mixed window states each run's status in its own cell",
+      reports: [run("2026-09-26", "ok", 1), run("2026-09-25", "partial", 1), run("2026-09-24", "ok", 1)],
+      hasStatusColumn: true,
+      shownWords: ["Healthy", "Warning"],
+    },
+    {
+      name: "a uniform failing window, its backlog still moving, shows the failure in every row",
+      reports: [run("2026-09-26", "fail", 2), run("2026-09-25", "fail", 1), run("2026-09-24", "fail", 1)],
+      hasStatusColumn: true,
+      shownWords: ["Failed"],
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadWikiScreen();
+      const tree = renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports: row.reports }));
+      const [table] = findNodes(tree, (n) => n.props.atom === "Table");
+      const heads = Array.from(table.props.columns as Array<{ label: string }>, (c) => c.label);
+      const tbody = renderTableRowsOf(mod, tree);
+      const statusCells = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Status");
+
+      assert.equal(heads.includes("Status"), row.hasStatusColumn, "the Status head follows the window's health");
+      assert.equal(statusCells.length, row.hasStatusColumn ? row.reports.length : 0, "status cells match the head");
+      assert.equal(/Healthy/.test(String(table.props.caption)), !row.hasStatusColumn, "only a shared healthy status is named once, in the caption");
+      // the caption is sr-only → a non-healthy status must reach sighted users through visible row text
+      for (const word of row.shownWords) assert.match(collectText(tbody), new RegExp(word), `the rows show ${word}`);
+    });
+  }
+});
+
+test("a run's status reads as a tone glyph and a word, never a pill", async () => {
+  const mod = await loadWikiScreen();
+  const tbody = renderRunRowsOf(mod, [
+    { run_date: "2026-09-24", status: "fail", deadlinks_count: 0, dedup_count: 0 },
+    { run_date: "2026-09-23", status: "ok", deadlinks_count: 0, dedup_count: 0 },
+  ]);
+  const [status] = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Status");
+  const [glyph] = findNodes(status, (n) => n.props["aria-hidden"] === "true");
+  assert.match(classOf(glyph), /\btext-crit\b/, "the glyph carries the tone");
+  assert.match(collectText(status), /Failed/, "the word names the state");
+  assert.equal(findNodes(tbody, (n) => n.props.atom === "Badge" || /\bpill\b/.test(classOf(n))).length, 0);
+});
+
+test("an unrecorded run cell reads None in faint ink, never a blank or a dash", async () => {
+  const mod = await loadWikiScreen();
+  const tbody = renderRunRowsOf(mod, [{ run_date: "2026-09-24", status: "ok", deadlinks_count: null, dedup_count: 3 }]);
+  const cells = findNodes(tbody, (n) => n.props.atom === "TableCell");
+  const byLabel = (label: string) => cells.find((c) => c.props.label === label) ?? null;
+  for (const label of ["Broken links", "Started"]) {
+    const [none] = findNodes(byLabel(label), (n) => collectText(n) === "None" && n.type === "span");
+    assert.match(classOf(none), /\btext-faint\b/, `${label} reads None in faint ink`);
+  }
+  assert.equal(collectText(byLabel("Duplicates")), "3", "a recorded count reads as itself");
+  assert.doesNotMatch(collectText(tbody), /\u2014/, "no dash stands in for a value");
 });
 
 const ERRORED = { status: "error", data: null, error: "boom" };
@@ -412,16 +559,33 @@ test("the merge-proposals fold opens itself only while it holds a waiting (warn)
   }
 });
 
+// Producer shape: scripts/wiki_dedup.py → DedupProposal, its suggested_action f-string copied verbatim.
+function dedupProposal(target: string, sources: string[], rationale: string) {
+  return {
+    cluster_hash: `c-${target}`,
+    target_slug: target,
+    source_slugs: sources,
+    similarity_score: 0.9312,
+    llm_verdict: "duplicate",
+    llm_rationale: rationale,
+    suggested_action:
+      `Merge content of notes/${sources.join("/notes/")}.md into notes/${target}.md, ` +
+      "then delete source note(s). All wikilinks to source slug(s) need updating. DRY-RUN — requires user approval.",
+  };
+}
+
 test("a merge proposal's reasons wrap in full", async () => {
   const mod = await loadWikiScreen();
-  const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" };
-  const tree = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal }));
+  const proposal = dedupProposal("t", ["s"], "merge because both notes describe one concept");
+  const tree = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal, view: WIDE_VIEW }));
+  const [reason] = findNodes(tree, (n) => n.props.atom === "TableCell" && n.props.label === "Reason");
+  assert.match(classOf(reason), /\bbreak-words\b/, "a long reason breaks inside its cell");
   for (const node of findNodes(tree, () => true)) {
     assert.doesNotMatch(classOf(node), /\btruncate\b/, "no part of the proposal hides behind a hover title");
   }
 });
 
-test("the alarm lane keeps actionable rows only; waiting proposals ride the verdict line instead", async () => {
+test("the alarm lane keeps actionable rows only; waiting proposals stay in their own fold", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const tree = renderScreen(
@@ -438,33 +602,28 @@ test("the alarm lane keeps actionable rows only; waiting proposals ride the verd
   assert.equal(findNodes(tree, (n) => n.type === "button").length, 0);
 });
 
-test("the page opens on one verdict line that carries no signal before anything loads", async () => {
+test("the page mounts no page verdict: each card states its own status", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
-  const verdict = findNodes(tree, (n) => n.props.atom === "PageVerdict");
-  assert.equal(verdict.length, 1);
-  assert.equal(verdict[0].props.tone, "neutral", "nothing loaded yet → no signal");
+  assert.equal(findNodes(tree, (n) => n.props.atom === "PageVerdict").length, 0);
 });
 
-test("the verdict's proposals chip targets the merge-proposals fold, which opens on focus", async () => {
+test("a failed backlog read points its Retry at the merge-proposals fold, which opens on focus", async () => {
   const mod = await loadWikiScreen();
-  const fold = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: READY_BACKLOG, onRetry: () => {} }));
+  const failed = { status: "error", data: null, error: "HTTP 500", busy: false };
+  const fold = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: failed, onRetry: () => {} }));
   const details = findNodes(fold, (n) => n.type === "details")[0];
-  const ready = (data: unknown) => ({ status: "ready", data, error: null });
-  const chip = (mod.buildWikiVerdictW as (...states: unknown[]) => { chips: Array<{ targetId: string }> })(
-    ready({}), ready({}), READY_BACKLOG, ready({ cycles: [] }),
-  ).chips[0];
+  const failure = findNodes(fold, (n) => n.props.atom === "RegionFailure")[0];
   assert.ok(details.props.id, "the fold carries an id");
-  assert.equal(chip.targetId, details.props.id, "the chip's target is the fold itself");
-  assert.equal(typeof details.props.onFocus, "function", "focus from the chip opens the fold");
+  assert.equal(failure.props.focusTargetId, details.props.id, "the Retry target is the fold itself");
+  assert.equal(typeof details.props.onFocus, "function", "focus from the Retry opens the fold");
 });
 
 test("the per-run table gives every run its own row, unchanged runs included", async () => {
   const mod = await loadWikiScreen();
   const dates = ["2026-09-24", "2026-09-23", "2026-09-22"];
   const reports = dates.map((run_date) => ({ run_date, status: "ok", deadlinks_count: 0, dedup_count: 3 }));
-  const tree = renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports }));
-  const rows = findNodes(tree, (n) => n.type === "tr");
+  const rows = findNodes(renderRunRowsOf(mod, reports), (n) => n.props.atom === "TableRow");
   assert.deepEqual(rows.map((row) => dates.find((d) => collectText(row).includes(d))), dates);
 });
 
@@ -490,6 +649,8 @@ test("alarms are flat hairline rows whose tone rides a leading glyph, with no st
     assert.ok(row.props["data-tone"], "each row names its tone");
     assert.equal(findNodes(row, (n) => /\balarm-row-glyph\b/.test(classOf(n))).length, 1);
   }
+  const [list] = findNodes(lane, (n) => n.type === "ul");
+  assert.doesNotMatch(classOf(list), /\b(border|rounded)/, "the lane is rows on the page, never a bordered box");
   const table = renderScreen(
     mod.React.createElement(mod.WikiReportsTable as Component, { reports: [{ run_date: "2026-09-24", status: "error", deadlinks_count: 0, dedup_count: 0 }] }),
   );
@@ -504,10 +665,10 @@ test("wiki text never uses the retired micro type step and words are never set i
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const trees = [
     renderScreen(createElement(mod.WikiAlarmLane, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: true, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }) })),
-    renderScreen(createElement(mod.WikiTileBand, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, onRetry: () => {} })),
+    renderStatsOf(mod, renderScreen(createElement(mod.WikiTileBand, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, onRetry: () => {} }))),
     renderScreen(createElement(mod.WikiRunHistorySection, { cyclesState: ready({ cycles: [] }), summaryState: ready({}), reportState: ready({ reports: [] }), days: 30, onChangeDays: () => {}, onRetry: () => {} })),
     renderScreen(createElement(mod.WikiMaintenanceSection, { backlogState: READY_BACKLOG, onRetry: () => {} })),
-    renderScreen(createElement(mod.MergeSuggestionItem, { proposal: { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" } })),
+    renderScreen(createElement(mod.MergeSuggestionItem, { proposal: dedupProposal("t", ["s"], "merge because both notes describe one concept"), view: WIDE_VIEW })),
   ];
   // Card titles render through the shared atom, outside this stub tree → not listed.
   const words = ["Search index", "Clean", "Merge proposals", "merge because both notes describe one concept"];
@@ -525,18 +686,36 @@ test("wiki text never uses the retired micro type step and words are never set i
   assert.deepEqual(words.filter((w) => !seen.has(w)), [], "every listed word renders, so the mono check ran for each");
 });
 
+test("figures read in sans and only note slugs ride the machine-string atom", async () => {
+  const mod = await loadWikiScreen();
+  const { createElement } = mod.React;
+  const notes = renderScreen(createElement(mod.WikiNotesByTypeSection, { state: { status: "ready", error: null, data: { by_type: [{ note_type: "raw", count: 1204 }] } }, onRetry: () => {} }));
+  const proposal = { cluster_hash: "c1", target_slug: "agent-routing", source_slugs: ["routing-confidence"], similarity_score: 0.91 };
+  const item = renderScreen(createElement(mod.MergeSuggestionItem, { proposal, view: WIDE_VIEW }));
+  const machine = findNodes(item, (n) => n.props.atom === "MachineString").map(collectText);
+
+  assert.deepEqual(machine, ["agent-routing", "routing-confidence"], "the target and source slugs are machine strings");
+  for (const tree of [notes, item]) {
+    for (const node of findNodes(tree, () => true)) assert.doesNotMatch(classOf(node), /\bfont-mono\b/, "mono only through the atom");
+  }
+  const figures = findNodes(notes, (n) => ["1,204", "100%"].includes(collectText(n)) && n.type === "span");
+  assert.equal(figures.length, 2, "both figures render");
+  for (const figure of figures) assert.match(classOf(figure), /\btabular-nums\b/, "a figure aligns on sans tabular digits");
+});
+
 test("cyan tints no wiki text: the similarity reads as a figure and the lane stays uncoloured", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], similarity_score: 1 };
-  const item = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal }));
+  const item = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal, view: WIDE_VIEW }));
   const lane = renderScreen(
     mod.React.createElement(mod.WikiAlarmLane as Component, {
       summaryState: ready({}), indexState: ready({}), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
     }),
   );
-  const sim = findNodes(item, (n) => n.children.join("") === "100% similar").pop();
-  assert.ok(sim, "the similarity reads in words");
+  const [sim] = findNodes(item, (n) => n.props.atom === "TableCell" && n.props.label === "Similarity");
+  assert.equal(collectText(sim), "100%", "the similarity reads as a figure under its column head");
+  assert.equal(sim.props.isNumeric, true, "the figure aligns as a number");
   for (const tree of [item, lane]) {
     for (const node of findNodes(tree, () => true)) assert.doesNotMatch(classOf(node), /\btext-info\b/);
   }
@@ -544,44 +723,130 @@ test("cyan tints no wiki text: the similarity reads as a figure and the lane sta
 
 test("the window control rides the per-run table fold and never the open trend", async () => {
   const mod = await loadWikiScreen();
-  const control = (tree: RenderedNode | string | null) => findNodes(tree, (n) => n.props["aria-label"] === "Run table time range");
+  const control = (tree: RenderedNode | string | null) => findNodes(tree, (n) => n.props.atom === "Segmented" && n.props.label === "Run table time range");
   assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING))).length, 1);
   assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunHistorySection as Component, RUN_HISTORY_LOADING))).length, 0);
 });
 
 test("the dry-run notice is stated once above the proposals instead of on every proposal", async () => {
   const mod = await loadWikiScreen();
-  const action = (slug: string) => `Merge notes/${slug}.md into notes/t.md. DRY-RUN \u2014 requires user approval.`;
   const backlog = {
     status: "ready",
     error: null,
     data: { backlog: { run_date: "2026-09-24", dedup_proposals: { proposals: [
-      { cluster_hash: "c1", target_slug: "t", source_slugs: ["s1"], suggested_action: action("s1") },
-      { cluster_hash: "c2", target_slug: "t", source_slugs: ["s2"], suggested_action: action("s2") },
+      dedupProposal("t1", ["s1"], "Both notes describe one concept."),
+      dedupProposal("t2", ["s2"], "Same source, summarised twice."),
     ] } } },
   };
-  const text = collectText(renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} })));
+  const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} }));
+  const order = findNodes(tree, () => true);
+  const notice = order.findIndex((n) => /^dry[ -]run/i.test(collectText(n)) && n.type === "div");
+  const table = order.findIndex((n) => n.props.atom === "Table");
 
-  assert.equal(text.match(/dry[ -]run/gi)?.length, 1, "one notice for the whole list");
-  assert.ok(text.search(/dry[ -]run/i) < text.indexOf("s1"), "the notice sits above the first proposal");
+  assert.equal(collectText(tree).match(/dry[ -]run/gi)?.length, 1, "one notice for the whole list");
+  assert.doesNotMatch(collectText(renderTableRowsOf(mod, tree)), /dry[ -]run/i, "no row repeats it");
+  assert.ok(notice >= 0 && notice < table, "the notice sits above the proposals table");
 });
 
-test("every merge proposal states in text which note absorbs which, not only by the arrow glyph", async () => {
+test("merge proposals are table rows on the fold's flush body, never bordered boxes", async () => {
   const mod = await loadWikiScreen();
   const backlog = {
     status: "ready",
     error: null,
     data: { backlog: { run_date: "2026-09-24", dedup_proposals: { proposals: [
-      { cluster_hash: "c1", target_slug: "keep-a", source_slugs: ["drop-1"], suggested_action: "Merge notes/drop-1.md into notes/keep-a.md." },
-      { cluster_hash: "c2", target_slug: "keep-b", source_slugs: ["drop-2", "drop-3"], suggested_action: "Merge notes/drop-2.md into notes/keep-b.md." },
+      { cluster_hash: "c1", target_slug: "agent-routing-confidence-thresholds", source_slugs: ["routing-confidence"] },
+      { cluster_hash: "c2", target_slug: "keep-b", source_slugs: ["drop-2", "drop-3"] },
     ] } } },
   };
   const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} }));
-  const rows = findNodes(tree, (n) => n.type === "li").map((n) => collectText(n));
+  const fold = findNodes(tree, (n) => n.type === "details" && n.props.id === "wiki-merge-proposals")[0];
+  const [body] = fold.children.filter((child): child is RenderedNode => typeof child !== "string" && child.type !== "summary");
+  const rows = findNodes(renderTableRowsOf(mod, tree), (n) => n.props.atom === "TableRow");
 
-  assert.equal(rows.length, 2);
-  assert.match(rows[0], /keep-a\s*absorbs\s*drop-1/);
-  assert.match(rows[1], /keep-b\s*absorbs\s*drop-2, drop-3/);
+  assert.doesNotMatch(classOf(body), /\bp[xb]-card-pad\b/, "the body is flush, so the table's edge cells hold the card-pad column");
+  assert.equal(rows.length, 2, "one table row per proposal");
+  assert.equal(findNodes(fold, (n) => n.type === "li" || /\brounded|\bbg-|(^|\s)border(-b)?(\s|$)/.test(classOf(n))).length, 0, "no box, fill or edge of its own");
+});
+
+test("the merge-proposals loading line takes the card inset itself inside the flush fold", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: LOADING, onRetry: () => {} }));
+  const [body] = findNodes(tree, (n) => n.type === "details")[0].children.filter((child): child is RenderedNode => typeof child !== "string" && child.type !== "summary");
+  const insets = findNodes(body, (n) => /\bpx-card-pad\b.*\bpb-card-pad\b/.test(classOf(n)) && findNodes(n, (m) => m.props.atom === "LoadingPlaceholder").length > 0);
+
+  assert.equal(insets.length, 1, "one inset wrapper holds the loading line");
+  assert.notEqual(insets[0], body, "the inset is the loading line's own, not the fold body's");
+});
+
+test("the page's meters share the small radius, never a full pill", async () => {
+  const mod = await loadWikiScreen();
+  const ready = { status: "ready", error: null, data: { by_type: [{ note_type: "raw", count: 3 }] } };
+  const mix = renderScreen(mod.React.createElement(mod.WikiStatusMixW as Component, { mix: { ok: 70, partial: 10, error: 10, quota: 10 } }));
+  const types = renderScreen(mod.React.createElement(mod.WikiNotesByTypeSection as Component, { state: ready, onRetry: () => {} }));
+  const tracks = [...findNodes(mix, (n) => n.props.role === "img"), ...findNodes(types, (n) => /\boverflow-hidden\b/.test(classOf(n)))];
+
+  assert.equal(tracks.length, 2, "the mix bar and the type bar both render");
+  for (const track of tracks) assert.match(classOf(track), /\brounded-sm\b/);
+});
+
+test("the run-history empty state tells a wiki that never ran from a quiet window", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const rows = [
+    { name: "never ran", summaryState: ready({ last_cycle_started_at: null }), message: "No runs yet", hint: /first daily wiki cycle/ },
+    { name: "ran before the window", summaryState: ready({ last_cycle_started_at: "2026-08-01T04:30:00Z", last_run_date: "2026-08-01" }), message: "No runs in the last 30 days", hint: /^Last run 2026-08-01$/ },
+    { name: "summary still loading", summaryState: LOADING, message: "No runs in the last 30 days", hint: null },
+  ];
+  for (const row of rows) {
+    const tree = renderScreen(
+      mod.React.createElement(mod.WikiRunHistorySection as Component, { cyclesState: ready({ cycles: [] }), summaryState: row.summaryState, onRetry: () => {} }),
+    );
+    const [empty] = findNodes(tree, (n) => n.props.atom === "EmptyState");
+    assert.ok(empty, `${row.name}: an empty state renders`);
+    assert.equal(empty.props.message, row.message, row.name);
+    if (row.hint) assert.match(String(empty.props.hint), row.hint, row.name);
+    else assert.equal(empty.props.hint ?? null, null, row.name);
+  }
+});
+
+test("a wiki empty state takes the shared atom's own inset, adding no margin of its own", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const tree = renderScreen(
+    mod.React.createElement(mod.WikiRunHistorySection as Component, { cyclesState: ready({ cycles: [] }), summaryState: ready({ last_cycle_started_at: null }), onRetry: () => {} }),
+  );
+  const [empty] = findNodes(tree, (n) => n.props.atom === "EmptyState");
+  assert.ok(empty, "an empty state renders");
+  assert.doesNotMatch(String(empty.props.className ?? ""), /(^|\s)-?m[trblxy]?-/);
+});
+
+test("every merge proposal states in text which note absorbs which, and why, with the shared merge steps stated once", async () => {
+  const mod = await loadWikiScreen();
+  const backlog = {
+    status: "ready",
+    error: null,
+    data: { backlog: { run_date: "2026-09-24", dedup_proposals: { proposals: [
+      dedupProposal("keep-a", ["drop-1"], "Both notes define routing confidence thresholds with the same 0.7 cut-off."),
+      dedupProposal("keep-b", ["drop-2", "drop-3"], "The three notes summarise one source on prompt caching."),
+    ] } } },
+  };
+  const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} }));
+  const [table] = findNodes(tree, (n) => n.props.atom === "Table");
+  const tbody = renderTableRowsOf(mod, tree);
+  const cells = (kind: string) => findNodes(tbody, (n) => n.props.atom === "TableCell" && (n.props.kind === kind || n.props.label === kind)).map(collectText);
+
+  // the screen module runs in its own realm → copy its array before a strict deep compare
+  const heads = Array.from(table.props.columns as Array<{ label: string }>, (c) => c.label);
+  assert.deepEqual(heads, ["Kept note", "Absorbs", "Similarity", "Reason"]);
+  assert.deepEqual(cells("row-header"), ["keep-a", "keep-b"], "the kept note heads each row");
+  assert.deepEqual(cells("Absorbs"), ["drop-1", "drop-2, drop-3"], "the absorbed notes sit under their own head");
+  assert.deepEqual(
+    cells("Reason"),
+    ["Both notes define routing confidence thresholds with the same 0.7 cut-off.", "The three notes summarise one source on prompt caching."],
+    "each row gives the verifier's own reason",
+  );
+  assert.doesNotMatch(collectText(tbody), /wikilinks|delete/i, "no row repeats the shared merge steps");
+  assert.equal(collectText(tree).match(/links to them need updating/g)?.length, 1, "the shared merge steps are stated once");
 });
 
 test("the missed-cycle alarm states its age in the short relative form", async () => {
@@ -606,12 +871,12 @@ test("the last-run age reads as words, so its space never widens into a mono gap
       indexState: ready({}), backlogState: READY_BACKLOG, onRetry: () => {},
     }),
   );
-  const age = findNodes(band, (n) => n.children.some((c) => typeof c === "string" && /^\d+h ago$/.test(c)));
+  const age = findNodes(renderStatsOf(mod, band), (n) => n.children.some((c) => typeof c === "string" && /^\d+h ago$/.test(c)));
   assert.equal(age.length, 1, "the tile shows the run's age");
   assert.doesNotMatch(classOf(age[0]), /\bfont-mono\b/);
 });
 
-test("tile captions wrap instead of cutting the figure's words, and a one-line label keeps its full text in its title", async () => {
+test("stat context lines wrap instead of cutting the figure's words, and each keeps its full detail in its title", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const band = renderScreen(
@@ -622,15 +887,19 @@ test("tile captions wrap instead of cutting the figure's words, and a one-line l
       onRetry: () => {},
     }),
   );
-  assert.ok(collectText(band).includes("22 in 29d"), "the window total is on the page");
-  for (const node of findNodes(band, () => true)) assert.doesNotMatch(classOf(node), /\btruncate\b/);
-  // the KPI label row is one line (amendment (c)) → its ellipsis fallback is the full label in the title
-  const labels = findNodes(band, (n) => /\bkpi-label-text\b/.test(classOf(n)));
-  assert.equal(labels.length, 4);
-  for (const label of labels) assert.equal(label.props.title, collectText(label));
+  const stats = renderStatsOf(mod, band);
+  assert.ok(collectText(stats).includes("22 in 29d"), "the window total is on the page");
+  for (const node of findNodes(stats, () => true)) assert.doesNotMatch(classOf(node), /\btruncate\b/);
+  const contexts = findNodes(stats, (n) => /\bstat-context\b/.test(classOf(n)));
+  assert.equal(contexts.length, 4);
+  for (const context of contexts) {
+    const [line] = findNodes(context, (n) => typeof n.props.title === "string");
+    assert.ok(line, `"${collectText(context)}" keeps a title`);
+    assert.ok(String(line.props.title).trim().length > 0, `"${collectText(line)}" has an empty title`);
+  }
 });
 
-test("a tile whose detail moved off its caption opens it from an info trigger described by the tile label", async () => {
+test("detail moved off the stat captions opens from the card's one info trigger, each note led by its stat label", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const band = renderScreen(
@@ -641,12 +910,25 @@ test("a tile whose detail moved off its caption opens it from an info trigger de
       onRetry: () => {},
     }),
   );
-  const triggers = findNodes(band, (n) => n.props.atom === "CardInfo");
-  assert.deepEqual(triggers.map((n) => n.props.label), ["How Compiled last cycle is counted", "How Library notes is counted"]);
-  for (const trigger of triggers) {
-    const [label] = findNodes(band, (n) => n.props.id === trigger.props.describedBy);
-    assert.ok(label, `${trigger.props.label}: the described-by id names a rendered label`);
-  }
+  assert.deepEqual(findNodes(band, (n) => n.props.atom === "CardInfo"), [], "no per-stat trigger");
+  const [card] = findNodes(band, (n) => n.props.atom === "Card");
+  const notes = findNodes(renderScreen(card.props.info), (n) => n.type === "p");
+  assert.equal(notes.length, 2);
+  assert.deepEqual(notes.map((n) => collectText(n.children[0] ?? null)), ["Compiled last cycle", "Library notes"]);
+  assert.match(collectText(notes[0]), /13 saved originals are waiting and the last cycle compiled none/);
+});
+
+test("a steady band carries no info trigger, since no stat has detail past its caption", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const band = renderScreen(
+    mod.React.createElement(mod.WikiTileBand as Component, {
+      summaryState: ready({ last_cycle_started_at: new Date().toISOString(), latest_compiled_count: 4, last_status: "ok" }),
+      indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: ready({ backlog: null }), onRetry: () => {},
+    }),
+  );
+  const [card] = findNodes(band, (n) => n.props.atom === "Card");
+  assert.ok(!card.props.info, "a steady band has nothing behind an ⓘ");
 });
 
 test("a feeder the alarm list could not read is named in plain words", async () => {
@@ -672,16 +954,15 @@ test("a loading open card or tile states loading once, through its placeholder, 
   for (const tree of trees.slice(0, 2)) assert.doesNotMatch(collectText(tree), /loading/i);
   assert.equal(findNodes(trees[0], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
   assert.equal(findNodes(trees[1], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
-  // a tile renders the shared KPI anatomy (real here) → its loading state is the KPI's own placeholder in the value row
-  const tiles = findNodes(trees[2], (n) => n.props.role === "group");
-  assert.equal(tiles.length, 4, "four tiles");
-  for (const tile of tiles) {
-    const placeholders = findNodes(tile, (n) => n.type === "LoadingPlaceholder");
-    assert.equal(placeholders.length, 1, "each tile states loading once, through its placeholder");
+  assert.equal(findNodes(trees[2], (n) => n.props["aria-busy"] === "true").length, 1, "the stat row reports busy once");
+  const stats = findNodes(renderStatsOf(mod, trees[2]), (n) => /^stat$/.test(classOf(n)));
+  assert.equal(stats.length, 4, "four stats");
+  for (const stat of stats) {
+    const placeholders = findNodes(stat, (n) => n.props.atom === "LoadingPlaceholder");
+    assert.equal(placeholders.length, 1, "each stat states loading once, through its placeholder");
     const outside = (n: RenderedNode | string): string =>
-      typeof n === "string" ? n : n.type === "LoadingPlaceholder" ? "" : n.children.map(outside).join(" ");
-    assert.doesNotMatch(outside(tile), /loading|…/i, "not through its count or caption");
-    assert.equal(tile.props["aria-busy"], "true", "each tile still reports busy");
+      typeof n === "string" ? n : n.props.atom === "LoadingPlaceholder" ? "" : n.children.map(outside).join(" ");
+    assert.doesNotMatch(outside(stat), /loading|…/i, "not through its count or caption");
   }
 });
 

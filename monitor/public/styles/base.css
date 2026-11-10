@@ -1,8 +1,7 @@
 /* Component classes — light wrappers over Tailwind */
 
 /* the one focus indicator — outline + offset gap, never box-shadow → rings drawn with box-shadow or stroke stay untouched */
-:focus-visible,
-[data-focus-handoff]:focus {
+:focus-visible {
 	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
 	outline-offset: var(--focus-ring-offset);
 }
@@ -66,8 +65,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	color: rgb(var(--selected-ink));
 }
 
-/* page header — top-aligned row; the h1 line box is one control height, so the controls and the
-   freshness line center on the title line with or without a sub-line. Narrow → the cluster wraps below the title. */
+/* page header — one line box: the h1 line is one control height, so back link, status and the cluster center on it.
+   Too narrow → the cluster wraps to a second line, its auto start margin keeping it right-aligned. */
 .page-head {
 	display: flex;
 	flex-wrap: wrap;
@@ -79,9 +78,12 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .page-head-title {
 	line-height: var(--ctl-min-h);
 }
-/* the h1 takes focus on a route change → the sub-line starts past the focus ring's reach */
-.page-head-sub {
-	margin-top: max(var(--space-1), calc(var(--focus-ring-width) + var(--focus-ring-offset)));
+.page-head-lead {
+	min-width: 0;
+	min-height: var(--ctl-min-h);
+	display: flex;
+	align-items: center;
+	column-gap: var(--space-3);
 }
 /* actions group ↔ status group 24; inside a group 12 (freshness · range · refresh) */
 .page-head-cluster,
@@ -103,18 +105,18 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 
 /* flex column → the body takes the remaining height and the foot pins to the bottom edge.
-   Light rests on its 1px border alone (border-first elevation). */
+   One hairline edge in both themes — no shadow, no inset highlight.
+   clip, not hidden → no scroll container, so a sticky inside sticks to the page scroller;
+   min 0 on both axes = the automatic minimum a scroll container had → flex and grid parents lay out unchanged */
 .card {
 	display: flex;
 	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
 	background: rgb(var(--elev));
 	border: 1px solid rgb(var(--line));
 	border-radius: var(--radius-card);
-	overflow: hidden;
-}
-/* 상단 inset 하이라이트는 다크 전용 — 라이트 순백(255) 위 흰선 비가시(§7.1) */
-[data-theme="dark"] .card {
-	box-shadow: var(--shadow-raised), inset 0 1px 0 rgb(var(--glass-border) / 0.06);
+	overflow: clip;
 }
 /* one 48px line: title + meta left, actions right · wraps only when the controls do not fit.
    .control-row = the same geometry for a toolbar that is not the card's head — its direct children are groups, 12 apart */
@@ -197,6 +199,11 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .card-body.flush {
 	padding: 0;
 }
+/* filter bar or toolbar between head and body · on the card's inline column; block 8 around a 32 control → 48 */
+.card-bar {
+	flex: none;
+	padding: var(--space-2) var(--card-pad);
+}
 /* pinned foot — "Show all N" / "Other" / one footnote line up across a stretched row */
 .card-foot {
 	flex: none;
@@ -221,17 +228,13 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	font-size: var(--fs-control);
 	line-height: var(--lh-ctl); /* 6 + line + 6 + borders = exactly --ctl-min-h */
 	font-weight: 500;
-	border: 1px solid rgb(var(--line));
+	border: 1px solid rgb(var(--control-edge));
 	background: rgb(var(--elev));
 	color: rgb(var(--ink));
 	transition:
 		background 0.12s,
 		border-color 0.12s;
 	cursor: pointer;
-}
-/* a toggle rests on the control edge; declared before :hover (equal specificity) so hover still lifts it to --faint */
-.btn[aria-pressed] {
-	border-color: rgb(var(--control-edge));
 }
 .btn:hover {
 	background: rgb(var(--sunken));
@@ -275,43 +278,42 @@ details[open] > summary.disclosure > .disclosure-chevron {
 
 /* ── Badge shell — 단일 canonical FORM (전 role/변형 공용) ────────────────────
    window.UI.Badge(ui.jsx) 의 styling layer. 모든 role 이 이 neutral shell FORM 을 공유한다:
-   neutral(--sunken/--dim/--line) · min-height 24px + padding-block 0 / inline 8 · gap 4 (border-box) · --radius-badge · --fs-meta · weight 500.
+   neutral(--sunken/--dim, 테두리 없음) · height 20 + padding-block 0 / inline 8 · gap 4 (border-box) · --radius-inline · --fs-meta · weight 500.
+   20 → 정보 표기, 32px 컨트롤 높이에 맞추지 않음 (spec §3 Badge).
    tone 은 shell 에 칠하지 않는다 — 내부 심볼(Icon/glyph)에 text-{tone} 로만 (dead .pill.crit/.warn/.info/.ok 제거). */
 .pill {
 	display: inline-flex;
 	align-items: center;
 	gap: var(--space-1);
 	box-sizing: border-box;
-	min-height: 24px;
+	min-height: 20px;
 	padding: 0 var(--space-2);
 	font-size: var(--fs-meta);
 	font-weight: 500;
 	line-height: 1;
-	border-radius: var(--radius-badge);
+	border-radius: var(--radius-inline);
 	background: rgb(var(--sunken));
 	color: rgb(var(--dim));
-	border: 1px solid rgb(var(--line));
 	font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, sans-serif;
 	white-space: nowrap;
 }
-/* absent-data variant — 부재/미기록 값을 present 값보다 조용하게 (dashed + 무배경 + faint). canonical FORM 상속. */
+/* absent-data variant — 부재/미기록 값을 present 값보다 조용하게 (무배경 + faint). canonical FORM 상속. */
 .pill--absent {
 	background: transparent;
 	color: rgb(var(--faint));
-	border: 1px dashed rgb(var(--line));
 }
 /* metadata / count role — neutral(톤 없음), canonical FORM 상속(radius/height/font/weight 공유).
-   divergent radius/font-size/weight 제거 · 유일한 role 구분만 남긴다: meta=소문자 서술 속성 · count=tabular-nums 수량. */
+   divergent radius/font-size/weight 제거 · 유일한 role 구분만 남긴다: meta=소문자 서술 속성 · count=sans tabular-nums 수량. */
 .pill--meta {
 	text-transform: lowercase;
 }
 .pill--count {
-	font-family: "JetBrains Mono", monospace;
 	font-variant-numeric: tabular-nums;
 }
 /* height-match variant — model-config 메타/상태 배지를 같은 행 폼컨트롤(<select> · $ 입력, 둘 다 .field) 과 동일 HEIGHT 로 세로 정렬.
    canonical FORM(너비/폰트/radius) 유지 · HEIGHT 만 --ctl-h 로 .field 와 lockstep — min-height 가 base 24px 를 지배.
    box-sizing 은 base .pill 의 border-box 상속. */
+/* TODO(mon-ui/43942): deprecated — a badge never height-matches a control; delete once no caller remains */
 .pill--ctl-h {
 	height: auto;
 	min-height: var(--ctl-h);
@@ -324,9 +326,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-width: 24px;
 	appearance: none;
 	margin: 0;
+	border: 1px solid transparent; /* the toggle edge's room → no state resizes the chip, and a non-toggle chip stays borderless */
 	cursor: pointer;
 }
-/* a toggle chip rests on the control edge → its box reads at rest, not only once selected; non-toggle pills keep --line */
+/* a toggle chip rests on the control edge → its box reads at rest, not only once selected */
 .pill--interactive[aria-pressed] {
 	border-color: rgb(var(--control-edge));
 }
@@ -336,28 +339,24 @@ details[open] > summary.disclosure > .disclosure-chevron {
    ring 은 box-shadow 로 표현(box model 무영향) — .card 와 달리 1px line 만, 그림자 없음(z-depth 하위). */
 .sub-card {
 	border-radius: var(--radius-tile);
-	padding: 16px;
+	padding: var(--card-pad);
 	box-shadow: 0 0 0 1px rgb(var(--line));
 }
-[data-theme="dark"] .sub-card {
-	box-shadow: 0 0 0 1px rgb(var(--line)), inset 0 1px 0 rgb(var(--glass-border) / 0.04);
-}
-/* 섹션 라벨 — 대문자 --dim, multi-section 뷰의 구획 헤더 (10.5px, letter-spacing). */
+/* 섹션 라벨 — 문장형 대소문자 --dim, multi-section 뷰의 구획 헤더. */
 .sub-card-label,
 .section-label {
 	font-size: var(--fs-meta);
 	font-weight: 600;
 	color: rgb(var(--dim));
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
 }
 .sub-card-label { margin-bottom: var(--space-2); }
 
-/* ── Spacing standard (W1-T3) — 16px 카드 채널 / 24px 섹션 채널 (8px 리듬 배수) ────────
-   카드 그리드/스택 간격은 16px, 독립 섹션 사이는 24px. Tailwind gap/space-y 와 병용 가능. */
-.gap-card { gap: 16px; }
-.space-cards > * + * { margin-top: 16px; }
-.space-sections > * + * { margin-top: 24px; }
+/* ── Spacing standard (W1-T3) — 카드·섹션 채널 모두 --gap-section ────────
+   카드 그리드/스택·독립 섹션 사이 모두 --gap-section. Tailwind gap/space-y 와 병용 가능. */
+/* TODO(mon-ui/43942): deprecated for the Stack role keys — delete once no caller remains */
+.gap-card { gap: var(--gap-section); }
+.space-cards > * + * { margin-top: var(--gap-section); }
+.space-sections > * + * { margin-top: var(--gap-section); }
 
 /* Split row (SplitRow) — one stacked column below xl; ratio-preset columns from xl (1280px, Tailwind xl) */
 .split-row {
@@ -458,8 +457,6 @@ tbody.tbl-compact {
 .tbl:where(:not(.tbl--own-face)) th {
 	font-weight: 500;
 	color: rgb(var(--dim));
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
 	background: rgb(var(--sunken));
 }
 /* a body row header (a group-label row, a row's th) takes the row step too → a label-only row is 40, never its 36 line box */
@@ -494,11 +491,11 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 /* edge cells take the card padding → the first and last column line up with the card head; flush comes from an unpadded card body */
 .tbl th:first-child,
 .tbl td:first-child {
-	padding-inline-start: var(--space-4);
+	padding-inline-start: var(--card-pad);
 }
 .tbl th:last-child,
 .tbl td:last-child {
-	padding-inline-end: var(--space-4);
+	padding-inline-end: var(--card-pad);
 }
 /* control cell — a cell holding a --ctl-min-h control takes the --space-1 step (less half the rule), so the row stays --row-h beside its text cells.
    Block longhands, so the inline edge rule above still applies. A new 32px control class joins this list in the change that creates it.
@@ -536,12 +533,11 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 .tbl:where(:not(.tbl--own-face)) tbody tr:hover {
 	background: rgb(var(--sunken));
 }
-.tbl tbody tr:last-child td {
+.tbl tbody tr:last-child > :is(td, th) {
 	border-bottom: none;
 }
 .tbl td.num,
 .tbl th.num {
-	font-family: "JetBrains Mono", monospace;
 	font-variant-numeric: tabular-nums;
 	text-align: right;
 	white-space: nowrap;
@@ -550,43 +546,460 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 .tbl tbody tr.is-grouped > td {
 	border-bottom: none;
 }
+/* a second body and the foot are their own groups → each opens on a rule; the foot's last row closes on the card edge */
+.tbl :is(tbody + tbody, tfoot) > tr:first-child > :is(td, th) {
+	border-top: var(--tbl-rule) solid rgb(var(--line));
+}
+.tbl tfoot > tr:last-child > :is(td, th) {
+	border-bottom: none;
+}
 
-/* the outline is a shadow ring, not a border → the group is exactly its 32px buttons tall, so it fits the 40 control cell like every other control.
-   The ring takes the control edge and the dividers stay --line → the group reads as one box, not as separate buttons */
+/* Table's own measured wrapper — never a scroll container (clip, not auto), so a sticky th reaches the nearest vertical scroller.
+   min-width 0 → its width comes from its parent, never from the table; positioned → a cell's absolute sr-only span resolves here */
+.tbl-wrap {
+	position: relative;
+	min-width: 0;
+	overflow-x: clip;
+}
+/* lifted only while a row menu is open, as .card is */
+.tbl-wrap:has(.menu) {
+	overflow: visible;
+}
+.tbl > caption.tbl-caption {
+	text-align: left;
+	padding: 0 var(--card-pad) var(--gap-label);
+}
+/* cell atom — a long unbroken name wraps inside its cell instead of widening the table past its wrapper */
+.tbl :is(.tbl-cell--primary, .tbl-cell--row-header, .tbl-cell--span) {
+	overflow-wrap: anywhere;
+}
+/* a body row header reads as the row's primary text, not as a column-header face */
+.tbl :is(tbody, tfoot) > tr > .tbl-cell--row-header {
+	color: rgb(var(--ink));
+	background: none;
+	font-size: var(--fs-control);
+}
+.tbl td:has(> .row-actions) {
+	text-align: right;
+}
+.row-actions {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: var(--gap-control);
+}
+/* the overflow menu opens inward from the row's end → it never crosses the wrapper's clip edge */
+.row-actions > .menu {
+	left: auto;
+	right: 0;
+}
+
+/* stacked mode — each row a two-line item on the card-pad column: line one the row header or primary cell (15 ink),
+   line two the meta facts (13 dim) behind their aria-hidden label. Table roles are restated in markup */
+.tbl--stacked,
+.tbl--stacked > :is(caption, thead, tbody, tfoot) {
+	display: block;
+}
+/* 7.5 + 20 + 20 + 7.5 + 1 = 56 → --row-h-2; the 16 fact gap is the cluster break between groups */
+.tbl--stacked tr {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	column-gap: var(--gap-control-group);
+	min-height: var(--row-h-2);
+	padding: calc((var(--row-h-2) - 2 * var(--lh-row) - var(--tbl-rule)) / 2) var(--card-pad);
+	border-bottom: var(--tbl-rule) solid rgb(var(--line));
+}
+/* the row owns padding and rule → cells drop the wide-mode box; specificity sits above the edge and control-cell rules */
+.tbl.tbl--stacked :is(th, td) {
+	display: block;
+	min-width: 0;
+	height: auto;
+	padding: 0;
+	border: none;
+	background: none;
+	text-align: left;
+}
+/* .tbl doubled → above the wide row-header face */
+.tbl.tbl--stacked :is(.tbl-cell--primary, .tbl-cell--row-header, .tbl-cell--span, .tbl-cell--group-header) {
+	order: -1;
+	flex: 1 0 100%;
+	font-size: var(--fs-body);
+	color: rgb(var(--ink));
+}
+.tbl--stacked :is(.tbl-cell--meta, .tbl-cell--label) {
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+.tbl-cell-label {
+	margin-inline-end: var(--gap-label-inline);
+	font-weight: 500;
+}
+.tbl--stacked td:has(> .row-actions) {
+	margin-inline-start: auto;
+}
+/* head row on the 32 compact step: 5.5 + 20 + 5.5 + 1; elev like the sticky th's own fill → one face whether or not it sticks */
+.tbl--stacked > thead > tr {
+	min-height: var(--row-h-compact);
+	padding-block: var(--tbl-head-pad-block);
+	background: rgb(var(--elev));
+}
+/* a th cannot stick past its flex row → the stacked head sticks as one block */
+.tbl--stacked > thead.is-sticky {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+}
+.tbl--stacked > :is(tbody, tfoot) > tr:last-child {
+	border-bottom: none;
+}
+.tbl--stacked > :is(tbody + tbody, tfoot) > tr:first-child {
+	border-top: var(--tbl-rule) solid rgb(var(--line));
+}
+
+/* sunken track, no outer edge → the selected option is the one boxed thing: a raised thumb + the control edge, drawn inset so no state resizes it */
 .seg {
 	display: inline-flex;
-	box-shadow: 0 0 0 1px rgb(var(--control-edge));
 	border-radius: var(--radius-control);
 	overflow: hidden;
-	background: rgb(var(--elev));
+	background: rgb(var(--sunken));
 }
 .seg button {
 	padding: var(--space-1_5) var(--space-2);
 	min-height: var(--ctl-min-h);
-	font-size: var(--fs-meta);
+	font-size: var(--fs-control);
 	line-height: var(--lh-ctl);
 	font-weight: 500; /* the weight of every state, as .btn and .pill--interactive → selecting an option never widens it */
 	background: none;
 	border: none;
+	border-radius: var(--radius-control);
 	color: rgb(var(--dim));
-	border-right: 1px solid rgb(var(--line));
 	cursor: pointer;
 }
-.seg button:last-child {
-	border-right: none;
-}
-.btn[aria-pressed="true"],
-.btn[aria-pressed="true"]:hover,
 .seg button.active,
 .seg button[aria-pressed="true"],
+.seg button[aria-checked="true"] {
+	background: rgb(var(--surface-raised-2));
+	box-shadow: inset 0 0 0 1px rgb(var(--control-edge));
+	color: rgb(var(--ink));
+}
+/* a pressed toggle keeps its resting fill → an ink edge marks it, never the --selected-fill inversion */
+.btn[aria-pressed="true"],
+.btn[aria-pressed="true"]:hover,
 .pill--interactive[aria-pressed="true"] {
-	background: rgb(var(--selected-fill));
-	color: rgb(var(--selected-ink));
-	border-color: rgb(var(--selected-fill));
+	border-color: rgb(var(--ink));
+	color: rgb(var(--ink));
 }
 /* inset ring — .seg clips its children (overflow: hidden) */
 .seg button:focus-visible {
 	outline-offset: calc(var(--focus-ring-width) * -1);
+}
+
+/* tab — label only, no inline padding → the first label sits on the column; selected = ink + a 2px underline drawn inset, so no state resizes it */
+.tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--gap-control-group);
+}
+.tabs [role="tab"] {
+	min-width: var(--space-6); /* a 24px+ target even for a two-letter label */
+	min-height: var(--ctl-min-h);
+	padding: 0;
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	font-weight: 500;
+	background: none;
+	border: none;
+	color: rgb(var(--dim));
+	cursor: pointer;
+}
+.tabs [role="tab"]:hover {
+	color: rgb(var(--ink));
+}
+.tabs [role="tab"][aria-selected="true"] {
+	color: rgb(var(--ink));
+	box-shadow: inset 0 -2px 0 rgb(var(--ink));
+}
+
+/* filter bar — one trigger per axis, wrapping instead of folding axes away; reset on the right column, its slot held while hidden */
+.filter-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--gap-control);
+}
+.filter-bar-reset {
+	margin-inline-start: auto;
+}
+.filter-trigger-root {
+	position: relative;
+	display: inline-flex;
+}
+/* quiet trigger — dim axis + ink value + chevron, no colon, no edge; sunken on hover and while its menu is open */
+.filter-trigger {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--gap-label-inline);
+	min-height: var(--ctl-min-h);
+	padding: 0 var(--space-2);
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	font-weight: 500;
+	background: none;
+	border: none;
+	border-radius: var(--radius-control);
+	cursor: pointer;
+}
+.filter-trigger:hover,
+.filter-trigger[aria-expanded="true"] {
+	background: rgb(var(--sunken));
+}
+.filter-trigger-axis {
+	color: rgb(var(--dim));
+}
+.filter-trigger-value {
+	color: rgb(var(--ink));
+}
+/* value ↔ chevron = the 6 glyph gap of 14px text, over the 4 inline-label gap */
+.filter-trigger > .disclosure-chevron {
+	margin-inline-start: calc(var(--space-1_5) - var(--gap-label-inline));
+}
+
+/* menu — the one menu surface (filter trigger, row-action overflow): label-only items on the card inset and the list gap; overlay surface shared with .popover-panel */
+.menu {
+	--menu-check-w: 1em;
+	position: absolute;
+	top: calc(100% + var(--space-1));
+	left: 0;
+	min-width: 100%;
+	width: max-content;
+}
+/* every checkable item holds the ✓ slot → checked and unchecked labels start on one column */
+.menu-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	min-height: var(--ctl-min-h);
+	padding: 0 var(--space-2);
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	font-weight: 500;
+	text-align: start;
+	color: rgb(var(--ink));
+	background: none;
+	border: none;
+	border-radius: var(--radius-control);
+	cursor: pointer;
+}
+.menu-item:hover {
+	background: rgb(var(--sunken));
+}
+.menu-item[aria-checked] {
+	padding-inline-start: calc(var(--space-2) + var(--menu-check-w) + var(--space-1_5));
+}
+.menu-item-check {
+	position: absolute;
+	left: var(--space-2);
+	width: var(--menu-check-w);
+	text-align: center;
+}
+
+/* bar search — sunken fill + leading icon, no border; the fill carries the focus ring, so the field inside draws none */
+.bar-search {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1_5);
+	min-height: var(--ctl-min-h);
+	padding: 0 var(--space-2);
+	background: rgb(var(--sunken));
+	border-radius: var(--radius-control);
+	color: rgb(var(--faint));
+}
+.bar-search:has(> .bar-search-field:focus-visible) {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: var(--focus-ring-offset);
+}
+.bar-search-field {
+	flex: 1;
+	align-self: stretch; /* the field fills the 32px fill → the operable target is the whole height */
+	min-width: 0;
+	padding: 0;
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	color: rgb(var(--ink));
+	background: none;
+	border: none;
+}
+.bar-search-field:focus-visible {
+	outline: none;
+}
+.bar-search-field::placeholder {
+	color: rgb(var(--faint));
+}
+
+/* link — navigation: ink text + trailing arrow (the non-colour cue), no box, inline height; underline on hover */
+.link {
+	color: rgb(var(--ink));
+	text-decoration: none;
+}
+.link:hover {
+	text-decoration: underline;
+	text-underline-offset: 0.2em;
+}
+.link-arrow {
+	margin-inline-start: var(--space-1_5);
+}
+
+.field-label {
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	color: rgb(var(--dim));
+}
+
+/* layout primitives — a screen names a spacing role, never a value */
+.stack {
+	display: flex;
+	flex-direction: column;
+}
+.stack--block { gap: var(--gap-block); }
+.stack--label { gap: var(--gap-label); }
+.stack--stack { gap: var(--gap-stack); }
+.stack--list { gap: var(--gap-list); }
+.cluster {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+}
+.cluster--control { gap: var(--gap-control); }
+.cluster--control-group { gap: var(--gap-control-group); }
+
+/* machine string — ids, hashes, paths, config keys: the one mono use, unboxed, breaking anywhere so a long path never scrolls */
+.machine {
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	overflow-wrap: anywhere;
+}
+
+/* drawer fact — one label · value row (spec §6): label 13/500 dim left, value 15 ink right, 32 row; long value wraps, never scrolls */
+.detail-fact {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--gap-control-group);
+	min-height: var(--row-h-compact);
+	margin: 0;
+	padding-block: var(--space-1_5);
+	box-sizing: border-box;
+}
+.detail-fact-label {
+	flex: none;
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	color: rgb(var(--dim));
+}
+.detail-fact-value {
+	min-width: 0;
+	margin: 0;
+	font-size: var(--fs-body);
+	color: rgb(var(--ink));
+	text-align: right;
+	overflow-wrap: anywhere;
+}
+.detail-fact-value .machine { font-size: var(--fs-meta); }
+
+/* pagination — range on the left column, quiet Previous · current · Next on the right */
+.pagination {
+	flex: 1 1 auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--gap-control) var(--gap-control-group);
+}
+.pagination-range {
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+	font-variant-numeric: tabular-nums;
+}
+.pagination-steps {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-control);
+}
+/* O3 current page — sunken square, ink at 500, no border; the weight step is the cue, the fill alone is under 3:1 */
+.pagination-current {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: var(--ctl-min-h);
+	height: var(--ctl-min-h);
+	padding-inline: var(--space-2);
+	border-radius: var(--radius-control);
+	background: rgb(var(--sunken));
+	color: rgb(var(--ink));
+	font-size: var(--fs-control);
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+}
+
+/* stat row — one card's top-line numbers: a hairline between stats, no tile per stat; stacked on a hairline at 640px or narrower */
+.stat-row {
+	display: flex;
+	margin: 0;
+}
+.stat {
+	flex: 1 1 0;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-stack);
+	padding-inline: var(--space-4);
+	border-inline-start: 1px solid rgb(var(--line));
+}
+.stat:first-child {
+	padding-inline-start: 0;
+	border-inline-start: 0;
+}
+.stat:last-child { padding-inline-end: 0; }
+.stat-label {
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	line-height: 1.4;
+	color: rgb(var(--dim));
+}
+.stat-value {
+	margin: 0;
+	font-size: var(--fs-stat);
+	font-weight: 600;
+	line-height: 1.3;
+	font-variant-numeric: tabular-nums;
+	color: rgb(var(--ink));
+}
+.stat-value.text-faint { color: rgb(var(--faint)); }
+.stat-value .unit {
+	margin-left: var(--space-1);
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	color: rgb(var(--dim));
+}
+.stat-context {
+	margin: 0;
+	font-size: var(--fs-meta);
+	line-height: 1.4;
+	color: rgb(var(--dim));
+}
+@media (max-width: 640px) {
+	.stat-row { flex-direction: column; }
+	.stat,
+	.stat:first-child,
+	.stat:last-child {
+		padding: var(--space-2) 0 0;
+		border-inline-start: 0;
+		border-block-start: 1px solid rgb(var(--line));
+	}
+	.stat:first-child {
+		padding-block-start: 0;
+		border-block-start: 0;
+	}
 }
 
 .kpi {
@@ -721,7 +1134,7 @@ button.kpi:hover {
 	font-weight: 600;
 	letter-spacing: -0.025em;
 	margin-top: var(--space-2);
-	font-family: "JetBrains Mono", monospace;
+	font-variant-numeric: tabular-nums;
 }
 .kpi-value .unit {
 	font-size: var(--fs-title); /* half of --fs-kpi → 2:1 figure-to-unit */
@@ -958,17 +1371,6 @@ button.kpi:hover {
 	display: grid;
 	place-items: center;
 }
-/* "smoke" glass — transient backdrop 1장만 합성 (§6.3 ALLOW · §9.2 ≤2 예산).
-   reduce 사용자/미지원 브라우저는 위 솔리드 0.42 유지. */
-@supports (backdrop-filter: blur(1px)) {
-	@media (prefers-reduced-transparency: no-preference) {
-		.modal-backdrop {
-			background: rgb(0 0 0 / 0.35);
-			backdrop-filter: blur(8px);
-			-webkit-backdrop-filter: blur(8px);
-		}
-	}
-}
 .modal {
 	background: rgb(var(--surface-overlay)); /* 오버레이 불투명 면 (텍스트 4.5:1 보장, §7.8) */
 	border-radius: var(--radius-card);
@@ -1010,15 +1412,6 @@ button.kpi:hover {
 	z-index: var(--z-overlay);
 	display: flex;
 }
-@supports (backdrop-filter: blur(1px)) {
-	@media (prefers-reduced-transparency: no-preference) {
-		.detail-overlay {
-			background: rgb(0 0 0 / 0.35);
-			backdrop-filter: blur(8px);
-			-webkit-backdrop-filter: blur(8px);
-		}
-	}
-}
 /* drawer = 우측 정렬 슬라이드인 · fullscreen = 중앙 충만 · confirm = 중앙 소형 */
 .detail-drawer { justify-content: flex-end; }
 .detail-fullscreen { align-items: stretch; justify-content: center; }
@@ -1058,9 +1451,8 @@ button.kpi:hover {
 }
 .page-verdict-chips .btn.ghost:hover { background: rgb(var(--sunken)); }
 
-/* Low-sample marker (LowSampleMark) — muted italic n beside a small-sample rate */
+/* Low-sample marker (LowSampleMark) — muted n beside a small-sample rate */
 .low-sample {
-	font-style: italic;
 	color: rgb(var(--faint));
 }
 
@@ -1069,24 +1461,32 @@ button.kpi:hover {
 	position: relative;
 	display: inline-flex;
 }
-/* .card clips (overflow: hidden) → lifted only while a panel is open, so a short card never cuts it off */
-.card:has(.popover-panel) {
+/* .card clips (overflow: clip) → lifted only while a panel is open, so a short card never cuts it off */
+.card:has(.popover-panel),
+.card:has(.menu) {
 	overflow: visible;
+}
+/* one overlay surface for the popover and the menu → the two cannot drift */
+.popover-panel,
+.menu {
+	z-index: calc(var(--z-overlay) - 1);
+	max-width: min(360px, calc(100vw - 32px));
+	max-height: 60vh;
+	overflow: auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-list);
+	padding: var(--card-pad);
+	background: rgb(var(--overlay-surface));
+	border: 1px solid rgb(var(--line));
+	border-radius: var(--radius-card);
+	box-shadow: var(--shadow-overlay);
 }
 .popover-panel {
 	position: absolute;
 	top: calc(100% + 4px);
 	right: 0;
-	z-index: calc(var(--z-overlay) - 1);
 	min-width: 240px;
-	max-width: min(360px, calc(100vw - 32px));
-	max-height: 60vh;
-	overflow: auto;
-	padding: 12px;
-	background: rgb(var(--overlay-surface));
-	border: 1px solid rgb(var(--line));
-	border-radius: var(--radius-card);
-	box-shadow: var(--shadow-overlay);
 }
 
 .detail-panel {
@@ -1115,6 +1515,12 @@ button.kpi:hover {
 	border: none;
 	border-radius: 0;
 	animation: detailFade 180ms ease-out;
+}
+/* panel over a scrim → ring inset on the panel's own fill: an outer ring lands on the scrim (light 1.64:1) or off the viewport edge */
+.detail-drawer .detail-panel:focus-visible,
+.detail-fullscreen .detail-panel:focus-visible,
+.detail-confirm .detail-panel:focus-visible {
+	outline-offset: calc(var(--focus-ring-width) * -1);
 }
 .detail-confirm .detail-panel {
 	width: min(560px, 92vw);
@@ -1175,14 +1581,19 @@ button.kpi:hover {
 	.detail-confirm .detail-panel { animation-duration: 0.01ms !important; }
 }
 
-/* the one empty-state form — padding 24, left-aligned, sans meta size, dim */
+/* TODO(mon-ui/43942): direct className="placeholder" use in screens deprecated for EmptyState — move each screen caller; .placeholder + .placeholder-hint stay as EmptyState's own styling */
+/* the one empty-state form — borderless, left-aligned at the card inset, message in ink at the control size, hint 13 dim under it */
 .placeholder {
-	padding: var(--space-6);
-	border: 1px dashed rgb(var(--faint) / 0.5);
-	border-radius: var(--radius-tile);
-	color: rgb(var(--dim));
+	padding: var(--card-pad);
+	color: rgb(var(--ink));
 	text-align: left;
+	font-size: var(--fs-control);
+}
+.placeholder-hint {
+	margin-top: var(--space-1);
 	font-size: var(--fs-meta);
+	line-height: 1.4;
+	color: rgb(var(--dim));
 }
 
 /* prefers-reduced-motion 계약 (§8.4) — 모든 신규/기존 모션 게이트.
@@ -1248,8 +1659,7 @@ button.kpi:hover {
 }
 
 /* focus — accent border only; the ring is the global :focus-visible outline. */
-.field:focus-visible,
-.field:focus {
+.field:focus-visible {
 	border-color: rgb(var(--accent));
 }
 
@@ -1264,8 +1674,7 @@ button.kpi:hover {
 .field.is-error {
 	border-color: rgb(var(--crit));
 }
-.field.is-error:focus-visible,
-.field.is-error:focus {
+.field.is-error:focus-visible {
 	border-color: rgb(var(--crit));
 }
 
@@ -1287,8 +1696,7 @@ button.kpi:hover {
 [data-theme="dark"] .field-select {
 	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23a09a96' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 }
-.field-select:focus-visible,
-.field-select:focus {
+.field-select:focus-visible {
 	background-position: right var(--space-2) center; /* focus 시 ring 추가돼도 chevron 고정 */
 }
 /* 옵션 목록은 OS 네이티브 렌더 — 다크 일관성은 [data-theme] 무관(브라우저 소관) */
