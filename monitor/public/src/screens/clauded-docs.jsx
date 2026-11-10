@@ -936,10 +936,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
            CSS 기하 속성이라 표현 속성을 찍는 타입에서도 이김 — 맵이 같은 이유로 쓰는 기제. */
         .doc-body-isolation pre.mermaid svg :is(.node, .cluster) rect,
         .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; }
-        .doc-meta-row { display: grid; grid-template-columns: 88px 1fr; gap: 6px; padding: 4px 0; font-size: var(--fs-meta); }
-        .doc-meta-label { font-size: var(--fs-meta); color: rgb(var(--faint)); }
-        /* wraps between words; a single over-long token still breaks rather than spill */
-        .doc-meta-value { color: rgb(var(--ink)); word-break: normal; overflow-wrap: break-word; font-size: var(--fs-meta); }
+        .doc-meta-row { grid-template-columns: 88px 1fr; }
         /* .doc-toast → shared SoT in base.css */
         .doc-editor-input { width: 100%; padding: var(--space-1_5) var(--space-2); font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
         .doc-editor-input:focus { border-color: rgb(var(--accent)); }
@@ -1047,17 +1044,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-drag-handle:active { cursor: grabbing; }
         /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
         tr.doc-row.is-group-member.is-dragging { opacity: 0.5; box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.5); }
-        /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
-        .doc-meta-danger { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgb(var(--line)); }
         /* status and its menu share one line (the status track shrinks, the label ellipsizes) → the row keeps its 40 · the note takes a line of its own */
-        .doc-stage-cell { display: inline-grid; grid-template-columns: minmax(0, auto) auto; align-items: center; column-gap: var(--space-1); }
+        .doc-stage-cell { grid-template-columns: minmax(0, auto) auto; }
         .doc-stage-cell > .doc-stage-note { grid-column: 1 / -1; }
-        .doc-stage { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; }
-        .doc-stage-glyph { flex: none; color: rgb(var(--dim)); }
-        .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* a max-width caps the status's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
         .doc-ledger .doc-stage-cell, .doc-ledger .doc-stage { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
         /* the clip cuts at the label's line box → a control line box, so a tight line-height never clips a descender */
@@ -1070,7 +1062,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-list-region:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
         /* the bar holds full-bleed strips (control row · whole-word note · bulk bar) that own their insets → the slot adds none, only the rule under it */
         .doc-list-card > .card-bar { padding: 0; border-bottom: 1px solid rgb(var(--line)); }
-        .doc-stage-note { font-size: var(--fs-meta); color: rgb(var(--dim)); }
         /* the reset's auto margin takes the bar's slack → a trigger value or the search note never resizes the field being typed in */
         .doc-bar-search { flex: 0 1 200px; min-width: 180px; }
         .doc-trigger-value { display: inline-grid; }
@@ -2258,22 +2249,24 @@ function ViewerPanelCD({
 			/>
 			{/* superseded 배너 — successor 존재 = 구 revision 열람 중 (superseded 행은 server contract 상 done 고정, F34). */}
 			{isReady && state.data.superseded_by_id != null && (
-				<AlertCard
-					tone="warn"
-					surface="inset"
-					className="mx-4 mb-3"
-					title="A newer version exists — you're viewing an old revision"
-					actions={
-						<button
-							type="button"
-							className="btn sm"
-							onClick={() => onNavigate?.(state.data.superseded_by_id)}
-							aria-label={`View latest revision #${state.data.superseded_by_id}`}
-						>
-							View latest → #{state.data.superseded_by_id}
-						</button>
-					}
-				/>
+				<div className="px-card-pad">
+					<AlertCard
+						tone="warn"
+						surface="inset"
+						className="mb-block"
+						title="A newer version exists — you're viewing an old revision"
+						actions={
+							<button
+								type="button"
+								className="btn sm"
+								onClick={() => onNavigate?.(state.data.superseded_by_id)}
+								aria-label={`View latest revision #${state.data.superseded_by_id}`}
+							>
+								View latest → #{state.data.superseded_by_id}
+							</button>
+						}
+					/>
+				</div>
 			)}
 			</div>
 			{isReady ? (
@@ -2360,7 +2353,7 @@ function ViewerActionsCD({ doc, onClose, showToast }) {
 	// HTML 내려받기 + 닫기 (삭제는 메타 레일). 닫기 = fullscreen 종료 (selectedId 해제) = 키보드 F 단축키 동일 동작.
 	//   · 아이콘 전용 바 — 각 버튼은 aria-label(스크린리더) + title(마우스 툴팁) 2채널로 이름을 운반.
 	return (
-		<div className="flex items-center gap-2 flex-wrap">
+		<div className="flex items-center gap-control flex-wrap">
 			<button
 				type="button"
 				className="btn ghost sm icon"
@@ -2744,26 +2737,26 @@ function DocMetaPanelCD({
 }) {
 	const { Badge } = window.UI;
 	return (
-		<div className="flex flex-col gap-2">
+		<div className="flex flex-col gap-list">
 			{/* ID = AUTHOR/CREATED 와 동급 메타 항목 → 배지 행이 아니라 라벨 행이 운반. */}
-			<div className="doc-meta-row">
-				<span className="doc-meta-label">ID</span>
-				<window.UI.MachineString className="doc-meta-value">#{doc.id}</window.UI.MachineString>
+			<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+				<span className="doc-meta-label text-faint">ID</span>
+				<window.UI.MachineString className="doc-meta-value text-ink break-words">#{doc.id}</window.UI.MachineString>
 			</div>
-			<div className="doc-meta-row">
-				<span className="doc-meta-label">Author</span>
-				<window.UI.AgentName name={doc.author} className="doc-meta-value" />
+			<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+				<span className="doc-meta-label text-faint">Author</span>
+				<window.UI.AgentName name={doc.author} className="doc-meta-value text-ink break-words" />
 			</div>
-			<div className="doc-meta-row">
-				<span className="doc-meta-label">Created</span>
-				<span className="doc-meta-value tabular-nums">
+			<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+				<span className="doc-meta-label text-faint">Created</span>
+				<span className="doc-meta-value text-ink break-words tabular-nums">
 					{formatDateTimeCD(doc.created_at)}
 				</span>
 			</div>
 			{/* 계보는 늘 보이는 텍스트 — 펼쳐야 보이는 이력과 별개. */}
-			<div className="doc-meta-row">
-				<span className="doc-meta-label">Lineage</span>
-				<span className="doc-meta-value">
+			<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+				<span className="doc-meta-label text-faint">Lineage</span>
+				<span className="doc-meta-value text-ink break-words">
 					{doc.supersedes_id != null ? `rev of #${doc.supersedes_id}` : "chain root"}
 					{doc.superseded_by_id != null
 						? ` · superseded by #${doc.superseded_by_id}`
@@ -2772,12 +2765,12 @@ function DocMetaPanelCD({
 			</div>
 			{/* an unrecorded actor is left out, never printed as "unknown" */}
 			{doc.last_status_model && (
-				<div className="doc-meta-row">
-					<span className="doc-meta-label">Last action</span>
-					<span className="doc-meta-value">{formatActorCD(doc.last_status_model)}</span>
+				<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+					<span className="doc-meta-label text-faint">Last action</span>
+					<span className="doc-meta-value text-ink break-words">{formatActorCD(doc.last_status_model)}</span>
 				</div>
 			)}
-			<div className="flex items-center gap-2 mt-2 flex-wrap">
+			<div className="flex items-center gap-control flex-wrap mt-block">
 				{/* onPickStage absent → status only · cachedRow=doc → the viewer cache skips the GET */}
 				<DocStageCD
 					docTitle={doc.title}
@@ -2818,7 +2811,7 @@ function DocDeleteButtonCD({ docId, pendingDelete, onDelete }) {
 	const { Icon } = window.UI;
 	const isPending = Boolean(pendingDelete) && pendingDelete.id === docId;
 	return (
-		<div className="doc-meta-danger">
+		<div className="doc-meta-danger mt-block">
 			<button
 				type="button"
 				className={`btn sm ${isPending ? "danger" : "ghost"}`}
@@ -2858,8 +2851,8 @@ function DocStageCD({
 
 	const rankText = `stage ${stageRankCD(entry.value)} of ${DOC_STAGES_CD.length}`;
 	const status = (
-		<span className="doc-stage" title={`${entry.label} — ${rankText}`}>
-			<Icon name={entry.value === TERMINAL_STAGE_CD ? "check" : "circle"} size={12} className="doc-stage-glyph" />
+		<span className="doc-stage inline-flex items-center gap-label-inline min-w-0 font-sans" title={`${entry.label} — ${rankText}`}>
+			<Icon name={entry.value === TERMINAL_STAGE_CD ? "check" : "circle"} size={12} className="doc-stage-glyph flex-none text-dim" />
 			<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
 			<span className="sr-only"> — {rankText}</span>
 		</span>
@@ -2873,7 +2866,7 @@ function DocStageCD({
 		label: `Move to ${stage.label}`,
 	}));
 	return (
-		<span className="doc-stage-cell">
+		<span className="doc-stage-cell inline-grid items-center gap-x-label-inline">
 			{status}
 			<RowActions
 				label={`Change stage of ${docTitle}`}
@@ -2883,7 +2876,7 @@ function DocStageCD({
 					if (!isChanging) onPickStage(stage);
 				}}
 			/>
-			{note && <span className="doc-stage-note">{note}</span>}
+			{note && <span className="doc-stage-note fs-meta text-dim">{note}</span>}
 		</span>
 	);
 }
@@ -2997,7 +2990,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 				<window.UI.DisclosureChevron />
 				<span>Version history</span>
 			</summary>
-			<div className="mt-2 flex flex-col gap-2">
+			<div className="mt-label flex flex-col gap-list">
 				{/* 현재 revision — 강조(--ink) · acked 미적용. */}
 				<div className="doc-revision-current">
 					<span
@@ -3023,8 +3016,8 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 					</div>
 				)}
 				{predState.status === "ready" && predState.data && (
-					<div className="doc-revision-predecessor acked flex flex-col gap-1">
-						<div className="flex items-center gap-2 flex-wrap">
+					<div className="doc-revision-predecessor acked flex flex-col gap-stack">
+						<div className="flex items-center gap-control flex-wrap">
 							<window.UI.MachineString className="fs-meta text-dim">
 								#{predState.data.id}
 							</window.UI.MachineString>
@@ -3138,7 +3131,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 				}}
 			>
 				<div className="modal-head">
-					<div className="font-semibold text-[14px]">
+					<div className="font-semibold fs-title">
 						{`Edit #${seed?.id ?? ""}`}
 					</div>
 					<button
@@ -3152,19 +3145,20 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 				</div>
 				<div className="modal-body">
 					{seedFetchState.status === "loading" && (
-						<window.UI.LoadingPlaceholder label="the current body" className="mb-label" />
+						<window.UI.LoadingPlaceholder label="the current body" className="mb-block" />
 					)}
 					{seedFetchState.status === "error" && (
 						<ErrorBannerCD
 							title="Couldn't load the current body"
 							detail={seedFetchState.error}
+							className="mb-block"
 						/>
 					)}
 					<div
-						className="grid gap-3"
+						className="grid gap-block"
 						style={{ gridTemplateColumns: "1fr 140px" }}
 					>
-						<label className="flex flex-col gap-1">
+						<label className="flex flex-col gap-label">
 							<span
 								className="field-label"
 							>
@@ -3180,7 +3174,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 								aria-label="Document title"
 							/>
 						</label>
-						<label className="flex flex-col gap-1">
+						<label className="flex flex-col gap-label">
 							<span
 								className="field-label"
 							>
@@ -3198,7 +3192,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 							/>
 						</label>
 					</div>
-					<label className="flex flex-col gap-1 mt-3">
+					<label className="flex flex-col gap-label mt-block">
 						<span
 							className="field-label"
 						>
@@ -3236,7 +3230,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 	);
 }
 
-function ErrorBannerCD({ title, detail, onRetry }) {
+function ErrorBannerCD({ title, detail, onRetry, className }) {
 	const { AlertCard, Icon } = window.UI;
 	const retry = onRetry && (
 		<button type="button" className="btn sm" onClick={onRetry}>
@@ -3244,7 +3238,7 @@ function ErrorBannerCD({ title, detail, onRetry }) {
 			Retry
 		</button>
 	);
-	return <AlertCard tone="crit" surface="inset" title={title} body={detail} actions={retry || undefined} />;
+	return <AlertCard tone="crit" surface="inset" className={className} title={title} body={detail} actions={retry || undefined} />;
 }
 
 // asOf advances on successful list reads only · the region carries busy and failed → stamp never reads Fresh mid-read

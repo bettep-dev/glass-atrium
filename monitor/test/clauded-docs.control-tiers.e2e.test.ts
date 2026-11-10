@@ -44,6 +44,9 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .px-4 { padding-left: 1rem; padding-right: 1rem; } .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .pointer-events-none { pointer-events: none; }
   .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; } .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; }
   .fs-meta { font-size: var(--fs-meta); line-height: 1.4; } .gap-x-list { column-gap: var(--gap-list); }
+  .inline-flex { display: inline-flex; } .inline-grid { display: inline-grid; } .flex-none { flex: none; } .gap-label-inline { gap: var(--gap-label-inline); }
+  .gap-x-label-inline { column-gap: var(--gap-label-inline); } .gap-stack { gap: var(--gap-stack); } .gap-list { gap: var(--gap-list); } .gap-control { gap: var(--gap-control); }
+  .mt-label { margin-top: var(--gap-label); } .mt-block { margin-top: var(--gap-block); } .font-sans { font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui; }
   .flex-auto { flex: 1 1 auto; } .basis-full { flex-basis: 100%; } .justify-end { justify-content: flex-end; }
   .whitespace-nowrap { white-space: nowrap; } .invisible { visibility: hidden; } .text-dim { color: rgb(var(--dim) / 1); }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }`;

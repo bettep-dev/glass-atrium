@@ -108,10 +108,10 @@ function cssRuleBodyIfAny(source: string, selector: string): string {
 
 test("a done stage reads in the neutral tone like every other stage, on its status glyph and on its filter chip", async () => {
   const screen = await loadDocsScreen();
-  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-stage-glyph"), /--ok/, "the stage glyph carries no success tone");
+  assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), ".doc-stage-glyph"), /--ok/, "the stage glyph carries no success tone");
   for (const docStatus of ["done", "implementing"]) {
     const glyph = findNodes(renderScreen((screen.DocStageCD as Component)({ docStatus })), (n) => n.props.atom === "Icon")[0];
-    assert.equal(glyph.props.className, "doc-stage-glyph", `${docStatus} glyph takes no per-stage tone class`);
+    assert.doesNotMatch(String(glyph.props.className), /\btext-(?!dim\b)[a-z]+/, `${docStatus} glyph takes no per-stage tone class`);
   }
 
   const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
@@ -997,7 +997,7 @@ describe("the list sets only the document id in the machine-string face", () => 
     assert.deepEqual(machine, ["#9"]);
     const styled = findNodes(rail, (n) => /\b(font-mono|uppercase|tracking-\w+)\b/.test(String(n.props?.className ?? "")));
     assert.deepEqual(styled.map((n) => n.props.className), []);
-    assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-meta-label"), /text-transform|letter-spacing|font-family/);
+    assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), ".doc-meta-label"), /text-transform|letter-spacing|font-family/);
   });
 
   const sansRules = [
@@ -1560,6 +1560,40 @@ test("the version history sits one block below the predecessor with no divider r
   assert.ok(history, "the version history disclosure");
   assert.ok(hasClass("mt-block")(history), "block gap role key");
   assert.equal(history.props.style, undefined, "no inline border");
+});
+
+// the viewer rail's spacing and type ride role utilities → the screen style block keeps only its grid templates
+describe("the viewer rail spaces and sets type on role utilities, not the screen style block", () => {
+  const nodes = [
+    { name: "a fact row's label-to-value gap", hook: "doc-meta-row", rule: ".doc-meta-row", property: "gap", roleClass: "gap-x-label-inline" },
+    { name: "a fact row's grid", hook: "doc-meta-row", rule: ".doc-meta-row", property: "display", roleClass: "grid" },
+    { name: "a fact row's spacing", hook: "doc-meta-row", rule: ".doc-meta-row", property: "padding", roleClass: "grid" },
+    { name: "a fact row's size", hook: "doc-meta-row", rule: ".doc-meta-row", property: "font-size", roleClass: "fs-meta" },
+    { name: "a fact label's tone", hook: "doc-meta-label", rule: ".doc-meta-label", property: "color", roleClass: "text-faint" },
+    { name: "a fact value's tone", hook: "doc-meta-value", rule: ".doc-meta-value", property: "color", roleClass: "text-ink" },
+    { name: "the delete block's offset", hook: "doc-meta-danger", rule: ".doc-meta-danger", property: "margin", roleClass: "mt-block" },
+    { name: "the delete block's divider", hook: "doc-meta-danger", rule: ".doc-meta-danger", property: "border", roleClass: "mt-block" },
+    { name: "the stage's glyph-to-word gap", hook: "doc-stage", rule: ".doc-stage", property: "gap", roleClass: "gap-label-inline" },
+    { name: "the stage word's face", hook: "doc-stage", rule: ".doc-stage-label", property: "font-family", roleClass: "font-sans" },
+    { name: "the stage glyph's tone", hook: "doc-stage-glyph", rule: ".doc-stage-glyph", property: "color", roleClass: "text-dim" },
+    { name: "the stage-to-menu gap", hook: "doc-stage-cell", rule: ".doc-stage-cell", property: "column-gap", roleClass: "gap-x-label-inline" },
+  ];
+  for (const row of nodes) {
+    test(`${row.name} takes ${row.roleClass} and ${row.rule} sets no ${row.property}`, async () => {
+      const screen = await loadDocsScreen();
+      // the rail mounts its stage as an element → the stage renders on its own
+      const tree = row.hook.startsWith("doc-stage")
+        ? renderScreen((screen.DocStageCD as Component)({ docStatus: "implementing", docTitle: "Plan", onPickStage: noop }))
+        : renderScreen((screen.DocMetaPanelCD as Component)({
+          doc: viewerDoc(), pendingDelete: null, onDelete: noop, onPickStage: noop,
+          togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+        }));
+      const [node] = findNodes(tree, hasClass(row.hook));
+      assert.ok(node, `${row.hook} renders`);
+      assert.ok(hasClass(row.roleClass)(node), row.name);
+      assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), row.rule), new RegExp(`(^|[;\\s])${row.property}[\\w-]*\\s*:`), row.rule);
+    });
+  }
 });
 
 test("the viewer row and a pending delete each carry a non-colour cue: the open row is current, a pending row is busy behind a crit glyph", async () => {
