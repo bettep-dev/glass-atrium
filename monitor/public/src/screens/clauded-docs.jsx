@@ -46,8 +46,8 @@ const LEDGER_CD = {
 	 */
 	FLOOR: {
 		select: 44, // 16px checkbox + edge 28 — .doc-checkbox-cell takes this width
-		status: 199, // widest face, the "Implementing" picker, 174.8px uncapped (macOS, 1440, Pretendard 500: shell 2 + 16 · meter 56 · label 81 · caret 12 · gaps 8) + interior 24 — the ledger caps the pill at this floor minus interior and ellipsizes a wider label → font-independent
-		id: 86, // "#" + 6 digits in 13px mono, 54.6 (7 × 0.6em) + 7.4 slack = 62 + interior 24 — slack held there → floor sum 969 + rail 200 fits the 1440 layout's 1170, so the rail shows at 1440
+		status: 168, // widest face, "Implementing" + its row menu, 139.8px natural (glyph 12 · gap 4 · label 87.8 in the e2e's fallback face, wider than Pretendard's 81 · gap 4 · ⋯ 32) + 4.2 slack + interior 24 — the ledger caps the status at this floor minus interior and ellipsizes a wider label → font-independent
+		id: 86, // "#" + 6 digits in 13px mono, 54.6 (7 × 0.6em) + 7.4 slack = 62 + interior 24 — slack held there → floor sum 938 + rail 200 fits the 1440 layout's 1170, so the rail shows at 1440
 		title: 434, // a title beside its trailing "rev of #N" link · the Documents title floor stays
 		tags: 148, // 124 content allowance + interior 24
 		author: 106, // 82 content allowance + interior 24

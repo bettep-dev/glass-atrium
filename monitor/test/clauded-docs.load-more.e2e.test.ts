@@ -1185,7 +1185,7 @@ test("list card: a mouse click never rings the card, a keyboard-driven handoff r
 });
 
 // mirrors LEDGER_CD.FLOOR in screens/clauded-docs.jsx (browser JSX, outside the test import graph) → a floor change there moves every boundary row below
-const LEDGER_FLOOR = { sum: 969, title: 434, tags: 148, titleNarrow: 240 };
+const LEDGER_FLOOR = { sum: 938, title: 434, tags: 148, titleNarrow: 240 };
 const WIDTH = {
   // app shell beside the card: viewport − shell = the ledger container width (asserted per row)
   SHELL: {
@@ -1241,7 +1241,7 @@ describe("ledger columns: Tags and the title floor follow the ledger's width", (
     // a font wider than the macOS default (Linux CI falls back to one) → the floors still bound every column
     { name: "at the column floors a ledger set in a wider font still keeps every floor", width: THRESHOLD_VIEWPORT.titleFloor, isTagsShown: false, isTitleFloorHeld: true, font: "Verdana, 'DejaVu Sans', sans-serif" },
     { name: "one px below the column floors the ledger drops the title floor", width: THRESHOLD_VIEWPORT.titleFloor - 1, isTagsShown: false, isTitleFloorHeld: false },
-    { name: "at 1220px a ledger narrower than its column floors drops the title floor", width: 1220, isTagsShown: false, isTitleFloorHeld: false },
+    { name: "at 1200px, the first width beside the full sidebar, a ledger narrower than its column floors drops the title floor", width: 1200, isTagsShown: false, isTitleFloorHeld: false },
     { name: "at 1280px the ledger keeps the title floor without Tags", width: 1280, isTagsShown: false, isTitleFloorHeld: true },
     { name: "at 1440px the ledger shows Tags", width: 1440, isTagsShown: true, isTitleFloorHeld: true },
   ] as const;

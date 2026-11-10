@@ -345,6 +345,75 @@ describe("the Created cell keeps its age and stale glyph on one line", () => {
   });
 });
 
+const STAGE_FACES = [
+  ...(vm.runInContext("DOC_STAGES_CD.map((stage) => stage.value)", docsScreen) as string[]).map((docStatus) => ({ id: docStatus, docStatus, isChanging: false })),
+  { id: "changing", docStatus: "implementing", isChanging: true },
+];
+const stageCellHtml = (face: (typeof STAGE_FACES)[number]) =>
+  getHtml(renderScreen((docsScreen.DocStageCD as (props: unknown) => unknown)({ docTitle: "Plan", onPickStage: () => {}, ...face })) as RenderedNode);
+// the Status cell is an interior column → it sits between two neighbours; the capped table carries .doc-ledger (the label cap) at the floor, the natural one neither
+const stageCellPage = (floor: number) => `<!doctype html><html data-theme="dark"><head><style>${AGE_PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
+  <div style="padding: 48px;"><div class="card">
+    <table class="tbl doc-ledger"><thead><tr><th>Sel</th><th style="width: ${floor}px; min-width: ${floor}px;">Status</th><th>Title</th></tr></thead><tbody>
+      ${STAGE_FACES.map((face) => `<tr id="capped-${face.id}" class="doc-row"><td>·</td><td class="status">${stageCellHtml(face)}</td><td>Plan</td></tr>`).join("")}
+    </tbody></table>
+    <table class="tbl"><tbody>
+      ${STAGE_FACES.map((face) => `<tr id="natural-${face.id}" class="doc-row"><td>·</td><td class="status">${stageCellHtml(face)}</td><td>Plan</td></tr>`).join("")}
+    </tbody></table>
+  </div></div>
+</body></html>`;
+
+describe("the Status floor holds the stage glyph, word and row menu on one line", () => {
+  // slack past the widest natural cell: a face a little wider than the measuring one still fits before the label ellipsizes
+  const SLACK_PX = 8;
+  type StageReading = { rowH: number; cellW: number; contentRight: number; triggerRight: number; isClipped: boolean; centers: number[] };
+  const readings: Record<string, StageReading> = {};
+  let floor = 0;
+  let interior = 0;
+
+  before(async () => {
+    floor = vm.runInContext("LEDGER_CD.FLOOR.status", docsScreen) as number;
+    interior = vm.runInContext("LEDGER_CD.PADDING.interior", docsScreen) as number;
+    const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+    await page.setContent(stageCellPage(floor));
+    await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+    await page.addStyleTag({ content: SCREEN_CSS });
+    for (const id of STAGE_FACES.flatMap((face) => [`capped-${face.id}`, `natural-${face.id}`]))
+      // runs in the page → no named helper (see readRowStyles)
+      readings[id] = await page.evaluate((rowId) => {
+        const row = document.getElementById(rowId)!;
+        const td = row.querySelector("td.status")!;
+        const label = row.querySelector<HTMLElement>(".doc-stage-label")!;
+        const parts = [".doc-stage-glyph", ".doc-stage-label", ".row-actions-more"].map((sel) => row.querySelector(sel)!.getBoundingClientRect());
+        return {
+          rowH: row.getBoundingClientRect().height,
+          cellW: row.querySelector(".doc-stage-cell")!.getBoundingClientRect().width,
+          contentRight: td.getBoundingClientRect().right - parseFloat(getComputedStyle(td).paddingRight),
+          triggerRight: parts[2].right,
+          isClipped: label.scrollWidth > label.clientWidth,
+          centers: parts.map((r) => (r.top + r.bottom) / 2),
+        };
+      }, id);
+    await page.close();
+  });
+
+  for (const face of STAGE_FACES)
+    test(`the ${face.id} status shows its word unclipped, its glyph and its row menu on one 40px row inside the Status floor`, () => {
+      const r = readings[`capped-${face.id}`];
+      assert.equal(Math.round(r.rowH), 40, `row height ${r.rowH}`);
+      assert.equal(r.isClipped, false, "the word ellipsizes");
+      assert.ok(r.triggerRight <= r.contentRight + 0.5, `row menu ends at ${r.triggerRight}, past the cell content edge ${r.contentRight}`);
+      assert.ok(Math.max(...r.centers) - Math.min(...r.centers) <= 1, `glyph, word and menu centres ${r.centers.join(" · ")}`);
+    });
+
+  test(`the Status floor is the widest natural status cell plus interior padding, within ${SLACK_PX}px`, () => {
+    const widest = Math.max(...STAGE_FACES.map((face) => readings[`natural-${face.id}`].cellW));
+    const slack = floor - interior - widest;
+    assert.ok(slack >= 0 && slack <= SLACK_PX, `floor ${floor} − interior ${interior} − widest cell ${widest.toFixed(1)} = ${slack.toFixed(1)}px`);
+  });
+});
+
 describe("the select column and the stage section heads sit on the ledger's grid", () => {
   // the shipped DocCheckboxCD; its wrapper lays out on Tailwind utilities, which the app loads from its CDN → their rules ride the page
   const checkbox = getHtml(renderScreen((docsScreen.DocCheckboxCD as (props: unknown) => unknown)({ checked: false, onChange: () => {}, ariaLabel: "Select Plan" })) as RenderedNode);
