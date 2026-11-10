@@ -112,6 +112,8 @@ _SONNET_5_5_RATE = {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_crea
 _FABLE_RATE = {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_creation": 12.5}
 # 5.1 differs from the family rate in cache_read only (litellm-fetched, not a vendor quote).
 _FABLE_5_1_RATE = {"input": 10.0, "output": 50.0, "cache_read": 0.25, "cache_creation": 12.5}
+# 5.2 is vendor-quoted and priced BELOW the fable-5 family on every field.
+_FABLE_5_2_RATE = {"input": 8.0, "output": 40.0, "cache_read": 0.2, "cache_creation": 10.0}
 # Synthetic launch-window rates for tier-mechanics fixtures — no production row carries a tier.
 _WINDOW_STANDARD = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75}
 _WINDOW_INTRO = {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_creation": 2.5}
@@ -581,10 +583,11 @@ class RateForSotTest(_LoaderCase):
         )
 
     def test_minor_versioned_id_resolves_from_its_own_sot_row(self):
-        # A missing own row resolves each id to its family prefix and leaves it unknown → out of the model-config roster.
+        # A missing own row resolves each id to its family-latest row and leaves it unknown → out of the model-config roster.
         rows = [
             ("claude-opus-5-5", _OPUS_5_5_RATE),
             ("claude-sonnet-5-5", _SONNET_5_5_RATE),
+            ("claude-fable-5-2", _FABLE_5_2_RATE),
         ]
         for model, rate in rows:
             with self.subTest(model=model):
