@@ -1,6 +1,6 @@
-# Third-party notices — `mermaid-layout-elk-0.2.3.min.js`
+# Third-party notices — vendored bundles
 
-The vendored bundle beside this file is a minified IIFE re-package built with
+The vendored ELK bundle beside this file (`mermaid-layout-elk-0.2.3.min.js`) is a minified IIFE re-package built with
 `esbuild --legal-comments=none`, which strips every license header the upstream
 sources carried. This file restores those notices. Its entries are the `embedded`
 list of `mermaid-layout-elk.provenance.json`; that sidecar is the source of truth
@@ -64,3 +64,33 @@ OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
 DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
 ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS
 SOFTWARE.
+
+## MIT — `tailwindcss` (`tailwindcss-play-cdn-3.4.17.min.js`)
+
+The Tailwind Play CDN runtime beside this file is the upstream build byte for byte,
+pinned by `tailwindcss-play-cdn.provenance.json`. It keeps the license headers of the
+packages it embeds but carries no Tailwind CSS copyright line, so that notice is
+restored here.
+
+| Package | Version | License | Upstream |
+|---------|---------|---------|----------|
+| `tailwindcss` | 3.4.17 | MIT | https://github.com/tailwindlabs/tailwindcss |
+
+Copyright (c) Tailwind Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in the
+Software without restriction, including without limitation the rights to use, copy,
+modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
