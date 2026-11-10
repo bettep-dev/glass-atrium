@@ -10,13 +10,10 @@ const {
 
 const OWNER_API_Q = "/api/queue/owner";
 const LIST_LIMIT_Q = 100;
-const RECENT_RESUME_LIMIT_Q = 10;
 const SESSION_PREFIX_LENGTH_Q = 8;
 const CARD_ID_PREFIX_Q = "queue-item-";
 const FILTER_AXES_Q = ["profile", "session"];
 const DEFAULT_FILTER_Q = Object.freeze({ profile: "", session: "" });
-// installed CLI the owner runs inside the session (scripts/lib/queue-session.sh → queue_get_cli_path)
-const PENDING_COMMAND_Q = "~/.glass-atrium/scripts/atrium-queue.sh pending";
 
 const DEVIATION_LABEL_Q = {
 	unacked: "Unacked",
@@ -47,6 +44,16 @@ const SKIP_TEXT_Q = {
 	resume_used: "automatic resume used — Resend to try again",
 	shared_worktree: "another session is live or resuming in this worktree: this one resumes automatically once that one has ended",
 };
+// worded cause (the failure card's title) and next step per failed owner answer; the raw status stays behind Details
+const FAILURE_COPY_Q = {
+	network: { cause: "The monitor did not answer", next: "Check that it is running, then try again." },
+	database: { cause: "The monitor's database is unavailable", next: "Try again in a moment." },
+	not_provisioned: { cause: "The queue is not set up", next: "Run the queue setup script once in a terminal, then reload this page." },
+	no_list: { cause: "The monitor's answer carried no queue list", next: "Try again in a moment." },
+	server: { cause: "The monitor hit an error", next: "Try again in a moment." },
+	refused: { cause: "The monitor refused the request", next: "Reload the page, then try again." },
+};
+
 const APPROVAL_NOTE_Q = "Approval: the terminal confirmation is still needed after you answer here.";
 const WRAPPER_RISK_NOTE_Q =
 	"Started through the accept wrapper: on macOS the socket token is optional, so any same-uid process can drive this bypass session with no prompt.";
@@ -109,6 +116,25 @@ async function sendOwnerRequestQ(path, body) {
 	}
 }
 
+function getFailureKindQ({ status, data }) {
+	if (status === 0) return "network";
+	if (data?.error === "database_unavailable") return "database";
+	if (isNotProvisionedQ({ status, data })) return "not_provisioned";
+	if (status >= 200 && status < 300) return "no_list";
+	return status >= 500 ? "server" : "refused";
+}
+
+/** Failed read → `{ cause, next, detail }`: worded cause and next step, the raw answer for Details only. */
+function getReadFailureQ(answer) {
+	return { ...FAILURE_COPY_Q[getFailureKindQ(answer)], detail: getAnswerDetailQ(answer) };
+}
+
+// the status and the server's code, or the network error
+function getAnswerDetailQ({ status, data, error }) {
+	if (status === 0) return error?.message ?? String(error);
+	return typeof data?.error === "string" ? `HTTP ${status} ${data.error}` : `HTTP ${status}`;
+}
+
 // Later → the item goes to the queue's end at once; the server's order replaces this on the next read
 function putLaterQ(items, id) {
 	const moved = items.find((item) => item.id === id);
@@ -125,14 +151,6 @@ function getNextAwaitingIdQ(items, id) {
 function getResumeResultLabelQ(resume) {
 	if (resume.result === "aborted") return ABORT_REASON_LABEL_Q[resume.abortReason] ?? "not spawned";
 	return RESUME_RESULT_LABEL_Q[resume.result] ?? resume.result;
-}
-
-/** Every resume record on the page, newest first, each tagged with its item's account and cwd tail. */
-function getRecentResumesQ(items, limit = RECENT_RESUME_LIMIT_Q) {
-	return items
-		.flatMap((item) => item.resumes.map((resume) => ({ ...resume, itemId: item.id, title: item.title, session: item.session })))
-		.sort((left, right) => Date.parse(right.sentAt) - Date.parse(left.sentAt))
-		.slice(0, limit);
 }
 
 function getConfigPrefixQ(session) {
@@ -242,7 +260,7 @@ function QueueBodyQ({ queue }) {
 	if (queue.auth === "out" || queue.auth === "not_provisioned") {
 		return <LoginFormQ auth={queue.auth} onLogin={queue.login} />;
 	}
-	if (queue.list.status === "error") return <QueueFailureQ error={queue.list.error} onRetry={queue.reload} />;
+	if (queue.list.status === "error") return <QueueFailureQ failure={queue.list.error} onRetry={queue.reload} />;
 	if (queue.list.data === null) return <LoadingPlaceholder label="Loading the queue" />;
 	return <QueueListQ queue={queue} />;
 }
@@ -251,17 +269,41 @@ function QueueBodyQ({ queue }) {
 function useQueueStateQ({ onQueueAuth, onRetryHarness }) {
 	const [auth, putAuth] = useAuthQ(onQueueAuth);
 	const [list, setList] = useStateQ({ status: "loading", data: null, error: null, readAt: null });
+	const [resumes, readResumes] = useRecentResumesQ(putAuth);
 	const [drafts, setDrafts] = useStateQ({});
 	const [filter, setFilter] = useFilterQ();
 	const [focus, setFocus] = useStateQ(null);
-	const reload = useCallbackQ(() => getListQ({ setList, putAuth }), [putAuth]);
+	const reload = useCallbackQ(() => {
+		getListQ({ setList, putAuth });
+		readResumes();
+	}, [putAuth, readResumes]);
 	const loadMore = useCallbackQ(() => getMoreQ({ list, setList, putAuth }), [list, putAuth]);
 	useEffectQ(() => { reload(); }, [reload]);
 	useFocusCardQ(focus);
 	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, putAuth, reload, onRetryHarness });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const login = useCallbackQ((passphrase) => putSessionQ({ passphrase, putAuth, reload }), [putAuth, reload]);
-	return { auth, list, drafts, setDraft, filter, setFilter, reload, loadMore, login, ...actions };
+	return { auth, list, resumes, readResumes, drafts, setDraft, filter, setFilter, reload, loadMore, login, ...actions };
+}
+
+// page-level resume record in its own region → a failed read leaves the list in place
+function useRecentResumesQ(putAuth) {
+	const [resumes, setResumes] = useStateQ(window.UI.INITIAL_REGION_STATE);
+	const readResumes = useCallbackQ(() => getResumesQ({ setResumes, putAuth }), [putAuth]);
+	return [resumes, readResumes];
+}
+
+// newest resume Delivery rows from the server, terminal items included → a delivered item's resume stays listed
+async function getResumesQ({ setResumes, putAuth }) {
+	const { putRegionRequest, putRegionData, putRegionFailure } = window.UI;
+	const request = {};
+	setResumes((state) => putRegionRequest(state, "resumes", request));
+	const answer = await sendOwnerRequestQ("/resumes");
+	putAuth(answer);
+	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.resumes)) {
+		return setResumes((state) => putRegionData(state, request, answer.data.resumes));
+	}
+	setResumes((state) => putRegionFailure(state, request, answer.status === 0 ? answer.error : new Error(getAnswerDetailQ(answer))));
 }
 
 function useFilterQ() {
@@ -300,8 +342,7 @@ async function getListQ({ setList, putAuth }) {
 		return setList({ status: "ready", data: answer.data, error: null, readAt: new Date().toISOString() });
 	}
 	if (answer.status === 401 || isNotProvisionedQ(answer)) return setList((prev) => ({ ...prev, status: "ready" }));
-	const error = answer.error ?? new Error(answer.status < 300 ? "the queue answer carries no item list" : `HTTP ${answer.status}`);
-	setList((prev) => ({ ...prev, status: "error", error }));
+	setList((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
 }
 
 // Show more → the next page after the cursor joins the loaded list; a refused read → the page failure card with Retry
@@ -317,8 +358,7 @@ async function getMoreQ({ list, setList, putAuth }) {
 		return setList((prev) => ({ status: "ready", data: append(prev), error: null, readAt: new Date().toISOString() }));
 	}
 	if (answer.status === 401 || isNotProvisionedQ(answer)) return setList((prev) => ({ ...prev, status: "ready" }));
-	const error = answer.error ?? new Error(answer.status < 300 ? "the queue answer carries no item list" : `HTTP ${answer.status}`);
-	setList((prev) => ({ ...prev, status: "error", error }));
+	setList((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
 }
 
 // focus request `{ id }` → a fresh object per request, so asking for the same card again still moves the focus
@@ -373,14 +413,20 @@ async function sendActionQ({ id, action, body, setBusy, setDrafts, putAuth, relo
 // the server's refusal body is `{ error, reason }`: `reason` is its worded cause, `error` a machine code never shown
 function getActionErrorQ(answer) {
 	if (answer.status === 0) return "The monitor did not answer. Try again.";
+	if (getFailureKindQ(answer) === "database") return getFailureMessageQ(answer);
 	if (answer.status === 409) return "Refused: the item changed state. Refresh to see where it is now.";
 	const reason = answer.data?.reason;
 	return typeof reason === "string" && reason !== "" ? `Refused: ${reason}.` : "The monitor refused this action. Refresh and try again.";
 }
 
-function QueueFailureQ({ error, onRetry }) {
+function getFailureMessageQ(answer) {
+	const { cause, next } = FAILURE_COPY_Q[getFailureKindQ(answer)];
+	return `${cause}. ${next}`;
+}
+
+function QueueFailureQ({ failure, onRetry }) {
 	const { AlertCard, RetryButton } = window.UI;
-	return <AlertCard tone="crit" title="Couldn't read the queue" body={error?.message ?? String(error)} actions={<RetryButton onRetry={onRetry} />} />;
+	return <AlertCard tone="crit" title={failure.cause} body={failure.next} details={failure.detail} actions={<RetryButton onRetry={onRetry} />} />;
 }
 
 function LoginFormQ({ auth, onLogin }) {
@@ -434,8 +480,7 @@ async function putLoginQ(passphrase) {
 	if (answer.status >= 200 && answer.status < 300) return null;
 	if (answer.status === 401) return "Wrong passphrase.";
 	if (answer.status === 429) return `Too many attempts. Try again in ${answer.data?.retryAfterSeconds ?? "a few"} seconds.`;
-	if (answer.status === 0) return "The monitor did not answer. Try again.";
-	return `Sign-in failed (HTTP ${answer.status}).`;
+	return getFailureMessageQ(answer);
 }
 
 function QueueListQ({ queue }) {
@@ -450,9 +495,9 @@ function QueueListQ({ queue }) {
 			{data.items.length > 0 && visible.length === 0 && (
 				<EmptyState kind="no-results" message="No records match these filters." onReset={() => queue.setFilter(DEFAULT_FILTER_Q)} />
 			)}
-			{visible.map((item) => <QueueCardQ key={item.id} item={item} queue={queue} />)}
+			{visible.map((item) => <QueueCardQ key={item.id} item={item} queue={queue} cliPath={data.cliPath} />)}
 			{data.nextCursor !== null && <ShowMoreQ count={data.items.length} isBusy={queue.list.status === "loading"} onMore={queue.loadMore} />}
-			<RecentResumesQ items={data.items} />
+			<RecentResumesQ region={queue.resumes} onRetry={queue.readResumes} />
 		</div>
 	);
 }
@@ -470,7 +515,7 @@ function ShowMoreQ({ count, isBusy, onMore }) {
 	return (
 		<Cluster gap="control">
 			<span className="fs-meta text-dim">{`Showing the first ${count} items in queue order.`}</span>
-			<button type="button" className="btn" disabled={isBusy} onClick={onMore}>Show more</button>
+			<button type="button" className="btn ghost sm" disabled={isBusy} onClick={onMore}>Show more</button>
 		</Cluster>
 	);
 }
@@ -492,7 +537,7 @@ function FilterAxisTriggerQ({ axis, options, value, onPick }) {
 	return <window.UI.FilterTrigger axis={axis} value={label} options={options} chosenKeys={[value]} onPick={onPick} />;
 }
 
-function QueueCardQ({ item, queue }) {
+function QueueCardQ({ item, queue, cliPath }) {
 	const { Card, Stack } = window.UI;
 	const isBusy = queue.busy.id === item.id;
 	const error = queue.busy.error?.id === item.id ? queue.busy.error.message : null;
@@ -504,7 +549,7 @@ function QueueCardQ({ item, queue }) {
 					{item.kind === "decision"
 						? <DecisionBodyQ item={item} draft={draft} onDraft={(patch) => queue.setDraft(item.id, patch)} />
 						: <ReportBodyQ item={item} draft={draft} onDraft={(patch) => queue.setDraft(item.id, patch)} />}
-					<CardStateQ item={item} />
+					<CardStateQ item={item} cliPath={cliPath} />
 					<CardActionsQ item={item} draft={draft} queue={queue} isBusy={isBusy} />
 					{error && <div className="fs-meta text-crit" role="alert"><span aria-hidden="true">✕ </span>{error}</div>}
 					{item.resumes.length > 0 && <ResumeRecordListQ resumes={item.resumes} profileLabel={item.session.profileLabel} />}
@@ -586,8 +631,11 @@ function DraftFieldQ({ id, label, value, onChange }) {
 	);
 }
 
-/** Deviation word, the pull command where the owner must act in the session, precedence notes and the wrapper risk. */
-function CardStateQ({ item }) {
+/**
+ * Deviation word, the pull command where the owner must act in the session, precedence notes and the wrapper risk.
+ * @param cliPath - the installed queue CLI the server resolved (GA_ROOT-aware)
+ */
+function CardStateQ({ item, cliPath }) {
 	const { Stack, MachineString } = window.UI;
 	const notes = getCardNotesQ(item);
 	return (
@@ -598,8 +646,8 @@ function CardStateQ({ item }) {
 					{DEVIATION_LABEL_Q[item.deviation] ?? item.deviation}
 				</p>
 			)}
-			{PULL_DEVIATIONS_Q.has(item.deviation) && (
-				<p className="fs-meta text-dim">Run in that session: <MachineString>{PENDING_COMMAND_Q}</MachineString></p>
+			{PULL_DEVIATIONS_Q.has(item.deviation) && cliPath && (
+				<p className="fs-meta text-dim">Run in that session: <MachineString>{`${cliPath} pending`}</MachineString></p>
 			)}
 			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
 			{item.session.launchHint === "accept_wrapper" && <p className="fs-meta text-dim">{WRAPPER_RISK_NOTE_Q}</p>}
@@ -669,26 +717,30 @@ function ResumeLineQ({ resume, profileLabel }) {
 	return <span>{`Automatic resume ${formatKstDateTime(resume.sentAt)}${account} · attempt ${resume.attempt} · ${getResumeResultLabelQ(resume)}`}</span>;
 }
 
-/**
- * Page-level record: recent automatic resumes newest first → quota spent without a click stays visible.
- * ponytail: read from the loaded owner list, which leaves out terminal items → an acked resume drops off once its item is
- * delivered; upgrade = a server read of recent resume Delivery rows (owner route, S2b).
- */
-function RecentResumesQ({ items }) {
-	const { Card } = window.UI;
-	const recent = getRecentResumesQ(items);
-	if (recent.length === 0) return null;
+/** Page-level record: recent automatic resumes newest first → quota spent without a click stays visible. */
+function RecentResumesQ({ region, onRetry }) {
+	const { Card, RegionUnavailable, getRegionView } = window.UI;
+	const view = getRegionView(region);
+	if (view === "loading" || (view === "ready" && region.data.length === 0)) return null;
 	return (
 		<Card title="Recent automatic resumes">
-			<ul className="fs-body">
-				{recent.map((resume) => (
-					<li key={`${resume.itemId}-${resume.attempt}-${resume.sentAt}`}>
-						<ResumeLineQ resume={resume} profileLabel={`${resume.session.profileLabel} · ${resume.session.cwdTail}`} />
-						<span className="fs-meta text-dim">{` — ${resume.title}`}</span>
-					</li>
-				))}
-			</ul>
+			{view === "error"
+				? <RegionUnavailable source="recent automatic resumes" error={region.error} isBusy={region.busy} onRetry={onRetry} />
+				: <RecentResumeListQ resumes={region.data} />}
 		</Card>
+	);
+}
+
+function RecentResumeListQ({ resumes }) {
+	return (
+		<ul className="fs-body">
+			{resumes.map((resume) => (
+				<li key={`${resume.item.id}-${resume.attempt}-${resume.sentAt}`}>
+					<ResumeLineQ resume={resume} profileLabel={`${resume.session.profileLabel} · ${resume.session.cwdTail}`} />
+					<span className="fs-meta text-dim">{` — ${resume.item.title}`}</span>
+				</li>
+			))}
+		</ul>
 	);
 }
 

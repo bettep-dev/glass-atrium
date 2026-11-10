@@ -46,6 +46,8 @@ const call = <T>(name: string, ...args: unknown[]): T => getPlain((screen[name] 
 const render = (name: string, props: unknown): RenderedNode => renderScreen(screen.React.createElement(screen[name] as Component, props)) as RenderedNode;
 
 const SESSION_ID = "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a42";
+const CLI_PATH = "/Volumes/tools/atrium/scripts/atrium-queue.sh";
+const READY_RESUMES = { status: "ready", data: [], error: null, busy: false };
 
 function buildSession(overrides: Record<string, unknown> = {}) {
   return {
@@ -101,6 +103,8 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
     queue: {
       auth: "in",
       busy: { id: null, error: null },
+      resumes: READY_RESUMES,
+      readResumes: record("readResumes"),
       drafts: {},
       setDraft: record("setDraft"),
       later: record("later"),
@@ -234,9 +238,9 @@ describe("card state lines", () => {
   ];
   for (const row of rows) {
     test(`deviation label: ${row.name}`, () => {
-      const text = collectText(render("CardStateQ", { item: buildItem({ status: "answered", deviation: row.deviation }) }));
+      const text = collectText(render("CardStateQ", { item: buildItem({ status: "answered", deviation: row.deviation }), cliPath: CLI_PATH }));
       assert.ok(text.includes(row.expected), text);
-      assert.equal(text.includes("atrium-queue.sh pending"), row.hasCommand === true, text);
+      assert.equal(text.includes(`${CLI_PATH} pending`), row.hasCommand === true, text);
     });
   }
 
@@ -361,14 +365,54 @@ describe("automatic resume record", () => {
     assert.match(line, /work-dev · attempt 2 · not spawned: session came back/);
   });
 
-  test("the page list holds every item's resumes newest first", () => {
-    const at = (iso: string, attempt: number) => ({ attempt, sentAt: iso, result: "sent", abortReason: null, bgId: null });
-    const items = [
-      buildItem({ id: 1, resumes: [at("2026-11-10T05:01:00.120Z", 1)] }),
-      buildItem({ id: 2, resumes: [at("2026-11-10T06:40:00.870Z", 2), at("2026-11-10T04:10:00.450Z", 1)] }),
-    ];
-    const order = call<Array<{ itemId: number; attempt: number }>>("getRecentResumesQ", items).map((resume) => `${resume.itemId}/${resume.attempt}`);
-    assert.deepEqual(order, ["2/2", "1/1", "2/1"]);
+});
+
+describe("recent automatic resumes", () => {
+  const row = (itemId: number, title: string, attempt: number, result: string) => ({
+    attempt,
+    sentAt: "2026-11-10T06:40:00.870Z",
+    result,
+    abortReason: null,
+    bgId: null,
+    item: { id: itemId, title },
+    session: { profileLabel: ".claude-work", cwdTail: "atrium/hooks" },
+  });
+
+  test("the record lists the server's resume rows in its order, each with account, worktree and item title", () => {
+    const resumes = [row(9, "Pick the lock order", 2, "acked"), row(4, "Pick the index", 1, "sent")];
+    const text = collectText(render("RecentResumesQ", { region: { ...READY_RESUMES, data: resumes }, onRetry: () => undefined }));
+    const lines = text.split("Automatic resume ").slice(1);
+    assert.equal(lines.length, 2, text);
+    assert.match(lines[0] ?? "", /\.claude-work · atrium\/hooks · attempt 2 · spawned · acknowledged\s+— Pick the lock order/);
+    assert.match(lines[1] ?? "", /attempt 1 · spawned\s+— Pick the index/);
+  });
+
+  const views = [
+    { name: "a failed read shows the shared region failure with Retry", region: { status: "error", data: null, error: "HTTP 503 database_unavailable", busy: false }, atom: "RegionUnavailable", isShown: true },
+    { name: "an empty record shows nothing", region: READY_RESUMES, atom: "Card", isShown: false },
+    { name: "a first read in flight shows nothing", region: { status: "loading", data: null, error: null, busy: true }, atom: "Card", isShown: false },
+  ];
+  for (const view of views) {
+    test(view.name, () => {
+      const tree = render("RecentResumesQ", { region: view.region, onRetry: () => undefined });
+      assert.equal(findNodes(tree, (node) => node.props?.atom === view.atom).length > 0, view.isShown);
+    });
+  }
+
+  test("the record is read from the resume route, whatever the owner list holds", async () => {
+    const urls: string[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: realUi },
+      fetch: async (url: string) => {
+        urls.push(url);
+        return { status: 200, json: async () => ({ resumes: [row(9, "Pick the lock order", 1, "acked")] }) };
+      },
+    })) as ScreenModule;
+    let region: unknown = realUi.INITIAL_REGION_STATE;
+    const setResumes = (next: (prev: unknown) => unknown) => { region = next(region); };
+    await (module.getResumesQ as (deps: unknown) => Promise<void>)({ setResumes, putAuth: () => undefined });
+    assert.deepEqual(urls, ["/api/queue/owner/resumes"]);
+    assert.deepEqual((getPlain(region) as { data: Array<{ item: { id: number } }> }).data.map((resume) => resume.item.id), [9]);
   });
 });
 
@@ -533,6 +577,7 @@ describe("action refusal copy", () => {
     { name: "a refusal with no body shows fixed copy", answer: { status: 500, data: null }, expected: "The monitor refused this action. Refresh and try again." },
     { name: "a state change names the refresh", answer: { status: 409, data: { error: "conflict", reason: "item is answered" } }, expected: "Refused: the item changed state. Refresh to see where it is now." },
     { name: "no answer asks to try again", answer: { status: 0, data: null }, expected: "The monitor did not answer. Try again." },
+    { name: "a database outage names the database", answer: { status: 503, data: { error: "database_unavailable" } }, expected: "The monitor's database is unavailable. Try again in a moment." },
   ];
   for (const row of rows) test(row.name, () => assert.equal(call("getActionErrorQ", row.answer), row.expected));
 });
@@ -608,6 +653,11 @@ describe("filter state in the hash", () => {
 });
 
 describe("Show more", () => {
+  test("Show more is the quiet small load-more button every screen uses", () => {
+    const [button] = buttonLabelled(render("ShowMoreQ", { count: 100, isBusy: false, onMore: () => undefined }), "Show more");
+    assert.equal(button?.props.className, "btn ghost sm");
+  });
+
   test("the next page after the cursor joins the loaded list in queue order", async () => {
     const urls: string[] = [];
     const module = (await loadScreenModule(QUEUE_SRC, {
@@ -659,4 +709,35 @@ describe("list read", () => {
     { name: "a 401 hands the page to the sign-in form", status: 401, body: { error: "unauthorized" }, expected: "ready" },
   ];
   for (const row of refusals) test(row.name, async () => assert.equal((await read(row.status, row.body)).status, row.expected));
+});
+
+describe("failure copy names the cause in words", () => {
+  const rows = [
+    { name: "a database outage", answer: { status: 503, data: { error: "database_unavailable" } }, cause: "The monitor's database is unavailable", login: "The monitor's database is unavailable. Try again in a moment." },
+    { name: "an unknown server error", answer: { status: 500, data: { error: "queue_environment_failure" } }, cause: "The monitor hit an error", login: "The monitor hit an error. Try again in a moment." },
+    { name: "an unknown refusal", answer: { status: 415, data: null }, cause: "The monitor refused the request", login: "The monitor refused the request. Reload the page, then try again." },
+    {
+      name: "a sign-in on a queue with no passphrase",
+      answer: { status: 503, data: { error: "not_provisioned" } },
+      cause: "The queue is not set up",
+      login: "The queue is not set up. Run the queue setup script once in a terminal, then reload this page.",
+    },
+    { name: "no answer at all", answer: { status: 0, data: null, error: new Error("Failed to fetch") }, cause: "The monitor did not answer", login: "The monitor did not answer. Check that it is running, then try again." },
+  ];
+  for (const row of rows) {
+    test(`read failure card: ${row.name}`, () => {
+      const failure = call<{ cause: string; next: string; detail: string }>("getReadFailureQ", row.answer);
+      const [card] = findNodes(render("QueueFailureQ", { failure, onRetry: () => undefined }), (node) => node.props?.atom === "AlertCard");
+      assert.equal(card?.props.title, row.cause);
+      assert.doesNotMatch(`${card?.props.title} ${card?.props.body}`, /HTTP|\d{3}|_/);
+      assert.equal(card?.props.details, failure.detail, "the raw answer stays behind Details");
+    });
+    test(`sign-in failure: ${row.name}`, async () => {
+      const module = (await loadScreenModule(QUEUE_SRC, { window: { UI: uiStub() }, fetch: async () => {
+        if (row.answer.status === 0) throw row.answer.error;
+        return { status: row.answer.status, json: async () => row.answer.data };
+      } })) as ScreenModule;
+      assert.equal(await (module.putLoginQ as (passphrase: string) => Promise<string | null>)("owner passphrase"), row.login);
+    });
+  }
 });
