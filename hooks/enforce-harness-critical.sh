@@ -117,6 +117,20 @@
 # SUBSHELL cd into a protected dir keeps a later `cd -`/`popd` conservative
 # outside that subshell; and the copy verbs match segment-wide, so rsync/install
 # naming a protected path as their SOURCE block like a target.
+# HAR-002 KNOWN FALSE POSITIVE (kept on purpose — owner selection): the Bash arm's
+# protected-path pattern is unanchored, so a profile root segment followed by
+# settings.json or hooks matches at ANY directory depth in a write position it
+# recognises — a scratch fixture such as `<mktemp -d dir>/.claude/settings.json`
+# blocks, from any caller. Not narrowed: a pre-exec lexical hook cannot prove a
+# variable or linked path lies outside home —
+#   - shell-maintained parameters ($_, $PWD, $OLDPWD), zsh indirect and table
+#     assignments (${(P)…::=…}, functions[…]=, commands[…]=) and bash
+#     `printf -v<name>` rebind a name with no visible binding;
+#   - a background directory watcher started by an earlier call can link a fresh
+#     random directory into home before the write;
+#   - a hardlink is invisible to realpath.
+# Instead: give a scratch fixture a neutral directory name in place of the profile
+# root segment.
 #
 # Grant: HARNESS_PROTECTION_APPROVE=1 in the hook's LAUNCH environment → pass
 # (parity with CONFIG_PROTECTION_APPROVE). CAVEAT: an in-session
