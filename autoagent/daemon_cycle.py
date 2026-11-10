@@ -15730,24 +15730,7 @@ def run_cycle(
             frozenset[str](),
             "no trial takes a look this cycle",
         )
-        _run_contained_stage(
-            STAGE_AREA.SHADOW,
-            lambda: run_shadow_stage(power, report.cycle_date, judged_trials),
-            None,
-            "the cycle runs on to the A/A stage",
-        )
-        # after every decision writer, before graduation, generation and the push
-        update_decided_trial_proposals()
-        _run_contained_stage(
-            STAGE_AREA.AA,
-            lambda: run_aa_stage(
-                report.cycle_date,
-                manifest_ingest=report.manifest_ingest,
-                agents_dir=agents_dir,
-            ),
-            None,
-            "the cycle runs on to graduation",
-        )
+        _run_post_trial_stages(power, report, agents_dir, judged_trials)
         # the intake above was read before the apply → a called row's agent sits this cycle out
         agent_groups = _drop_graduating_agents(agent_groups, run_graduation_stage())
 
@@ -15871,6 +15854,33 @@ def run_cycle(
     report.cost_guard["state"] = derive_cost_guard_state(report)
 
     return report
+
+
+def _run_post_trial_stages(
+    power: PowerResult,
+    report: CycleReport,
+    agents_dir: Path,
+    judged_trials: frozenset[str],
+) -> None:
+    """The shadow and A/A stages, each contained, around the decided-proposal update."""
+    _run_contained_stage(
+        STAGE_AREA.SHADOW,
+        lambda: run_shadow_stage(power, report.cycle_date, judged_trials),
+        None,
+        "the cycle runs on to the A/A stage",
+    )
+    # after every decision writer, before graduation, generation and the push
+    update_decided_trial_proposals()
+    _run_contained_stage(
+        STAGE_AREA.AA,
+        lambda: run_aa_stage(
+            report.cycle_date,
+            manifest_ingest=report.manifest_ingest,
+            agents_dir=agents_dir,
+        ),
+        None,
+        "the cycle runs on to graduation",
+    )
 
 
 class GenerationRun(NamedTuple):
