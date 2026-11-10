@@ -112,25 +112,27 @@
 # envelope must contain a ".claude" / ".glass-atrium" dir-name literal, else exit 0
 # with zero python3 spawns) shares the same residual: an envelope hiding those
 # literals behind indirection or JSON \uXXXX escapes skips this gate.
-# KNOWN FALSE POSITIVES (over-block — the safe direction, left uncorrected): the
-# entered-a-protected-dir flag is scan-scoped rather than paren-scoped, so a
-# SUBSHELL cd into a protected dir keeps a later `cd -`/`popd` conservative
-# outside that subshell; and the copy verbs match segment-wide, so rsync/install
-# naming a protected path as their SOURCE block like a target.
-# HAR-002 KNOWN FALSE POSITIVE (kept on purpose — owner selection): the Bash arm's
-# protected-path pattern is unanchored, so a profile root segment followed by
-# settings.json or hooks matches at ANY directory depth in a write position it
-# recognises — a scratch fixture such as `<mktemp -d dir>/.claude/settings.json`
-# blocks, from any caller. Not narrowed: a pre-exec lexical hook cannot prove a
-# variable or linked path lies outside home —
-#   - shell-maintained parameters ($_, $PWD, $OLDPWD), zsh indirect and table
-#     assignments (${(P)…::=…}, functions[…]=, commands[…]=) and bash
-#     `printf -v<name>` rebind a name with no visible binding;
-#   - a background directory watcher started by an earlier call can link a fresh
-#     random directory into home before the write;
-#   - a hardlink is invisible to realpath.
-# Instead: give a scratch fixture a neutral directory name in place of the profile
-# root segment.
+# KNOWN FALSE POSITIVES (over-block — the safe direction, left uncorrected):
+#   - entered-a-protected-dir flag scan-scoped, not paren-scoped → a SUBSHELL cd
+#     into a protected dir keeps a later `cd -`/`popd` conservative outside it
+#   - copy verbs matched segment-wide → rsync/install naming a protected path as
+#     their SOURCE block like a target
+#   - HAR-002, kept on purpose: no PROT_RE / PROT_DIR_RE alternative anchored to
+#     home or to the path start → every protected literal (a `.claude`,
+#     `.claude-<branch>` or `.glass-atrium` root segment plus its protected child,
+#     a com.{claude,glass-atrium}.*.plist label, the canary segments) matches at
+#     ANY depth in a recognised write position, from any caller — e.g. a scratch
+#     fixture `<mktemp -d dir>/.claude/settings.json`
+#     - not narrowable lexically: a pre-exec hook cannot prove a variable or
+#       linked path lies outside home
+#       - shell-maintained parameters ($_, $PWD, $OLDPWD), zsh indirect and table
+#         assignments (${(P)…::=…}, functions[…]=, commands[…]=), bash
+#         `printf -v<name>` → a name rebound with no visible binding
+#       - a background directory watcher from an earlier call → a fresh random
+#         directory linked into home before the write
+#       - a hardlink → invisible to realpath
+#     - workaround: a neutral name in a scratch fixture for the matched protected
+#       segment (root directory or plist label)
 #
 # Grant: HARNESS_PROTECTION_APPROVE=1 in the hook's LAUNCH environment → pass
 # (parity with CONFIG_PROTECTION_APPROVE). CAVEAT: an in-session
@@ -150,8 +152,9 @@
 # case-varied spelling onto the protected file. Widening-only — on a case-SENSITIVE
 # volume it blocks more, never less.
 # Block channel: stderr emit_error + exit 2 (shared-hook-capability-contract.md).
-# Scope: LIVE install paths ONLY (HOME-anchored; the canary directory data-root-anchored) —
-# the git repo tree is untouched.
+# Scope: Write|Edit arm — LIVE install paths ONLY (HOME-anchored; the canary directory
+# data-root-anchored), the git repo tree untouched; Bash arm — unanchored (KNOWN FALSE
+# POSITIVES → HAR-002).
 
 set -Eeuo pipefail
 IFS=$'\n\t'
