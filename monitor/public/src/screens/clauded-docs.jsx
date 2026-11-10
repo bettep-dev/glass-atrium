@@ -2991,8 +2991,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 
 	return (
 		<details
-			className="doc-version-history mt-3 pt-3"
-			style={{ borderTop: "1px solid rgb(var(--line))" }}
+			className="doc-version-history mt-block"
 		>
 			<summary className="group disclosure fs-meta">
 				<window.UI.DisclosureChevron />

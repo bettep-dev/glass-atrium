@@ -1553,6 +1553,15 @@ test("the version history names the current revision in ink, never in a severity
   assert.equal(label.props.style, undefined, "no inline colour");
 });
 
+test("the version history sits one block below the predecessor with no divider rule of its own", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
+  const [history] = findNodes(tree, (n) => n.type === "details" && hasClass("doc-version-history")(n));
+  assert.ok(history, "the version history disclosure");
+  assert.ok(hasClass("mt-block")(history), "block gap role key");
+  assert.equal(history.props.style, undefined, "no inline border");
+});
+
 test("the viewer row and a pending delete each carry a non-colour cue: the open row is current, a pending row is busy behind a crit glyph", async () => {
   const screen = await loadDocsScreen();
   const tree = renderListCard(screen, { selectedId: 12, pendingDelete: { id: 11, expiresAt: Date.now() + 5000 } });
