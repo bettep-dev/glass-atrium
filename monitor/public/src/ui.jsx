@@ -2066,6 +2066,7 @@ async function getErrorBody(res) {
 
 const FETCH_ERROR_NEXT_STEP = {
   network: 'The monitor server did not answer. Check that it is running, then retry.',
+  database: "The monitor's database is unavailable. Retry in a moment.",
   server: 'The server hit an error. Retry in a moment.',
   client: 'The server refused this request. Open Details for its answer.',
   unknown: 'Retry in a moment, or open Details for more.',
@@ -2073,11 +2074,14 @@ const FETCH_ERROR_NEXT_STEP = {
 
 // browser fetch rejections: Chromium "Failed to fetch" · Firefox "NetworkError…" · WebKit "Load failed"
 const NETWORK_FAILURE_PATTERN = /failed to fetch|networkerror|load failed/i;
+// a route's database outage body (`db-failure.ts` → DbFailureBody) in the 503 message
+const DATABASE_FAILURE_PATTERN = /\bdatabase_unavailable\b/;
 
 function getErrorCause(error) {
   const detail = typeof error?.message === 'string' ? error.message : String(error ?? '');
   const status = Number(/^HTTP (\d{3})\b/.exec(detail)?.[1]) || null;
 
+  if (status === 503 && DATABASE_FAILURE_PATTERN.test(detail)) return { kind: 'database', status, detail };
   if (status >= 500) return { kind: 'server', status, detail };
   if (status >= 400) return { kind: 'client', status, detail };
   if (NETWORK_FAILURE_PATTERN.test(detail)) return { kind: 'network', status, detail };

@@ -44,14 +44,13 @@ const SKIP_TEXT_Q = {
 	resume_used: "automatic resume used — Resend to try again",
 	shared_worktree: "another session is live or resuming in this worktree: this one resumes automatically once that one has ended",
 };
-// worded cause (the failure card's title) and next step per failed owner answer; the raw status stays behind Details
-const FAILURE_COPY_Q = {
-	network: { cause: "The monitor did not answer", next: "Check that it is running, then try again." },
-	database: { cause: "The monitor's database is unavailable", next: "Try again in a moment." },
-	not_provisioned: { cause: "The queue is not set up", next: "Run the queue setup script once in a terminal, then reload this page." },
-	no_list: { cause: "The monitor's answer carried no queue list", next: "Try again in a moment." },
-	server: { cause: "The monitor hit an error", next: "Try again in a moment." },
-	refused: { cause: "The monitor refused the request", next: "Reload the page, then try again." },
+const LIST_SOURCE_Q = "the queue";
+// outage words come from the shared copy owner (ui.jsx → getErrorCopy) → one outage reads one way across card, region, sign-in and actions
+const OUTAGE_KINDS_Q = new Set(["network", "database", "server"]);
+// sign-in answers the shared copy has no words for: no Details on the form → the next step is spelled out
+const SIGN_IN_COPY_Q = {
+	not_provisioned: "The queue is not set up. Run the queue setup script once in a terminal, then reload this page.",
+	refused: "The monitor refused the request. Reload the page, then try again.",
 };
 
 const APPROVAL_NOTE_Q = "Approval: the terminal confirmation is still needed after you answer here.";
@@ -67,9 +66,12 @@ const WRAPPER_RISK_NOTE_Q =
 function getQueueNavBadge(countState, auth) {
 	const count = getCountBadgeQ(countState);
 	if (count === null) return {};
-	const isSignedOut = auth === "out" || auth === "not_provisioned";
 	const lock = { badge: "", icon: "lock", source: "auth", title: "Signed out of the queue", description: "signed out" };
-	return { queue: { badges: isSignedOut ? [count, lock] : [count] } };
+	return { queue: { badges: isSignedOutQ(auth) ? [count, lock] : [count] } };
+}
+
+function isSignedOutQ(auth) {
+	return auth === "out" || auth === "not_provisioned";
 }
 
 // count slot alone: never read → null · failed or numberless read → "?"
@@ -116,17 +118,15 @@ async function sendOwnerRequestQ(path, body) {
 	}
 }
 
-function getFailureKindQ({ status, data }) {
-	if (status === 0) return "network";
-	if (data?.error === "database_unavailable") return "database";
-	if (isNotProvisionedQ({ status, data })) return "not_provisioned";
-	if (status >= 200 && status < 300) return "no_list";
-	return status >= 500 ? "server" : "refused";
+/** Failed list read → the shared failure copy `{ sentence, next, detail, kind }`, classified from the same detail the resume region stores. */
+function getReadFailureQ(answer) {
+	return window.UI.getErrorCopy(getAnswerDetailQ(answer), LIST_SOURCE_Q);
 }
 
-/** Failed read → `{ cause, next, detail }`: worded cause and next step, the raw answer for Details only. */
-function getReadFailureQ(answer) {
-	return { ...FAILURE_COPY_Q[getFailureKindQ(answer)], detail: getAnswerDetailQ(answer) };
+// no answer, a database outage or a server error → the shared next step; any other answer → null (the caller words it)
+function getOutageStepQ(answer) {
+	const { kind, next } = getReadFailureQ(answer);
+	return answer.status === 0 || OUTAGE_KINDS_Q.has(kind) ? next : null;
 }
 
 // the status and the server's code, or the network error
@@ -239,25 +239,40 @@ function getVisibleItemsQ(items, filter) {
 }
 
 function ScreenQueue({ onQueueAuth, onRetryHarness }) {
-	const { PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton } = window.UI;
+	const { TypeScaleStyle } = window.UI;
 	const queue = useQueueStateQ({ onQueueAuth, onRetryHarness });
-	const { list } = queue;
 	return (
 		<div className="flex flex-col gap-section">
 			<TypeScaleStyle />
-			<PageHeader
-				title="Queue"
-				freshness={<FreshnessStamp at={list.readAt} loading={list.status === "loading"} failed={list.status === "error"} />}
-				refresh={<RefreshButton onRefresh={queue.reload} isBusy={list.status === "loading"} hasRead={list.readAt !== null} label="Refresh queue" />}
-			/>
+			<QueueHeaderQ queue={queue} />
 			<QueueBodyQ queue={queue} />
 		</div>
 	);
 }
 
+// stamp and Refresh read one region summary → a failed resume re-read beside a good list read shows Partial, never Fresh
+function QueueHeaderQ({ queue }) {
+	const { PageHeader, FreshnessStamp, RefreshButton, getRegionSummary } = window.UI;
+	const regions = getShownRegionsQ(queue);
+	const { list } = queue;
+	return (
+		<PageHeader
+			title="Queue"
+			freshness={<FreshnessStamp at={list.readAt} regions={regions} />}
+			refresh={<RefreshButton onRefresh={queue.reload} isBusy={getRegionSummary(regions).isBusy} hasRead={list.readAt !== null} label="Refresh queue" />}
+		/>
+	);
+}
+
+// list read as a region summary input + the resume region; signed out → the sign-in form replaces both, so its refused resume read is no failure
+function getShownRegionsQ({ auth, list, resumes }) {
+	const listRegion = { busy: list.status === "loading", error: list.status === "error" ? list.error : null };
+	return isSignedOutQ(auth) ? [listRegion] : [listRegion, resumes];
+}
+
 function QueueBodyQ({ queue }) {
 	const { LoadingPlaceholder } = window.UI;
-	if (queue.auth === "out" || queue.auth === "not_provisioned") {
+	if (isSignedOutQ(queue.auth)) {
 		return <LoginFormQ auth={queue.auth} onLogin={queue.login} />;
 	}
 	if (queue.list.status === "error") return <QueueFailureQ failure={queue.list.error} onRetry={queue.reload} />;
@@ -412,21 +427,16 @@ async function sendActionQ({ id, action, body, setBusy, setDrafts, putAuth, relo
 
 // the server's refusal body is `{ error, reason }`: `reason` is its worded cause, `error` a machine code never shown
 function getActionErrorQ(answer) {
-	if (answer.status === 0) return "The monitor did not answer. Try again.";
-	if (getFailureKindQ(answer) === "database") return getFailureMessageQ(answer);
+	const outage = getOutageStepQ(answer);
+	if (outage !== null) return outage;
 	if (answer.status === 409) return "Refused: the item changed state. Refresh to see where it is now.";
 	const reason = answer.data?.reason;
 	return typeof reason === "string" && reason !== "" ? `Refused: ${reason}.` : "The monitor refused this action. Refresh and try again.";
 }
 
-function getFailureMessageQ(answer) {
-	const { cause, next } = FAILURE_COPY_Q[getFailureKindQ(answer)];
-	return `${cause}. ${next}`;
-}
-
 function QueueFailureQ({ failure, onRetry }) {
 	const { AlertCard, RetryButton } = window.UI;
-	return <AlertCard tone="crit" title={failure.cause} body={failure.next} details={failure.detail} actions={<RetryButton onRetry={onRetry} />} />;
+	return <AlertCard tone="crit" title={failure.sentence} body={failure.next} details={failure.detail} actions={<RetryButton onRetry={onRetry} />} />;
 }
 
 function LoginFormQ({ auth, onLogin }) {
@@ -480,7 +490,8 @@ async function putLoginQ(passphrase) {
 	if (answer.status >= 200 && answer.status < 300) return null;
 	if (answer.status === 401) return "Wrong passphrase.";
 	if (answer.status === 429) return `Too many attempts. Try again in ${answer.data?.retryAfterSeconds ?? "a few"} seconds.`;
-	return getFailureMessageQ(answer);
+	if (isNotProvisionedQ(answer)) return SIGN_IN_COPY_Q.not_provisioned;
+	return getOutageStepQ(answer) ?? SIGN_IN_COPY_Q.refused;
 }
 
 function QueueListQ({ queue }) {

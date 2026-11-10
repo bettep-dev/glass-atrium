@@ -55,6 +55,8 @@ test("an unreadable response body still yields the status line", async () => {
 test("error copy is one plain sentence naming the source plus a next step, never the raw answer", () => {
   const rows = [
     { name: "server error string", error: SERVER_ERROR, kind: "server" },
+    { name: "database outage", error: new Error("HTTP 503 Service Unavailable — {\"error\":\"database_unavailable\"}"), kind: "database" },
+    { name: "another 503", error: "HTTP 503 Service Unavailable — {\"error\":\"not_provisioned\"}", kind: "server" },
     { name: "client error object", error: new Error("HTTP 404 Not Found — {\"error\":\"no route\"}"), kind: "client" },
     { name: "network failure", error: new TypeError("Failed to fetch"), kind: "network" },
     { name: "unclassified failure", error: "boom", kind: "unknown" },
@@ -68,6 +70,14 @@ test("error copy is one plain sentence naming the source plus a next step, never
     assert.equal(copy.detail, raw, row.name);
     assert.doesNotMatch(`${copy.sentence} ${copy.next}`, /HTTP|\d{3}|—/, row.name);
   }
+});
+
+test("a database outage's next step names the database, never the generic server words", () => {
+  const database = getErrorCopy("HTTP 503 Service Unavailable — {\"error\":\"database_unavailable\"}", "spend");
+  const server = getErrorCopy(SERVER_ERROR, "spend");
+
+  assert.match(database.next, /database/);
+  assert.notEqual(database.next, server.next);
 });
 
 test("a region failure shows the sentence and next step, and keeps the raw answer inside a collapsed Details", () => {
