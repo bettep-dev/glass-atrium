@@ -210,6 +210,22 @@ describe("owner auth", () => {
     assert.equal(renewed?.maxAge, 604_800);
   });
 
+  test("the session check answers the sign-in state and never renews the cookie", async () => {
+    const ended = await loginOrThrow(app);
+    await send("POST", "/api/queue/owner/logout", undefined, { cookie: ended });
+    const rows = [
+      { name: "live session", cookie: undefined, status: 200 },
+      { name: "no cookie", cookie: null, status: 401 },
+      { name: "unknown session id", cookie: randomBytes(32).toString("base64url"), status: 401 },
+      { name: "signed-out session", cookie: ended, status: 401 },
+    ];
+    for (const row of rows) {
+      const response = await send("GET", "/api/queue/owner/session", undefined, { cookie: row.cookie });
+      assert.equal(response.statusCode, row.status, `${row.name}: ${response.body}`);
+      assert.equal(response.cookies.length, 0, `${row.name}: no Set-Cookie`);
+    }
+  });
+
   test("logout ends the owner session", async () => {
     const cookie = await loginOrThrow(app);
     const out = await send("POST", "/api/queue/owner/logout", undefined, { cookie });

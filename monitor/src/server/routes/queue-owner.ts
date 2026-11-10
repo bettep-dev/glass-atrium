@@ -62,6 +62,18 @@ export async function ownerRoutesPlugin(app: FastifyInstance, options: QueueRout
       work: (body) => createOwnerSession(auth, body.passphrase, reply),
     }),
   );
+  // outside the renewing session hook → the shell's mount probe reads the sign-in state without extending it
+  app.get("/api/queue/owner/session", async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/owner/session",
+      schema: emptyBodySchema,
+      input: request.query,
+      work: async () => {
+        const id = request.cookies[OWNER_COOKIE.NAME];
+        return id !== undefined && auth.sessions.isLive(id) ? { ok: true } : sendNoSession(auth, request, reply);
+      },
+    }),
+  );
   await app.register(ownerSessionRoutesPlugin, { auth, cliPath: options.cliPath });
 }
 
@@ -145,7 +157,6 @@ function registerTransitionRoute(app: FastifyInstance, action: "later" | "seen" 
   );
 }
 
-// No live cookie → 401, or 503 while the passphrase is not provisioned so the page can show the setup command
 function buildOwnerSessionHook(auth: OwnerAuth): onRequestAsyncHookHandler {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     const id = request.cookies[OWNER_COOKIE.NAME];
@@ -153,14 +164,19 @@ function buildOwnerSessionHook(auth: OwnerAuth): onRequestAsyncHookHandler {
       reply.setCookie(OWNER_COOKIE.NAME, id, COOKIE_OPTIONS);
       return;
     }
-    try {
-      if (!(await auth.verifier.isProvisioned())) return reply.code(503).send({ error: "not_provisioned" });
-    } catch (error) {
-      request.log.error({ err: error }, "owner passphrase read failed");
-      return reply.code(500).send({ error: "queue_environment_failure" });
-    }
-    return reply.code(401).send({ error: "unauthorized" });
+    return sendNoSession(auth, request, reply);
   };
+}
+
+// No live cookie → 401, or 503 while the passphrase is not provisioned so the page can show the setup command
+async function sendNoSession(auth: OwnerAuth, request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    if (!(await auth.verifier.isProvisioned())) return reply.code(503).send({ error: "not_provisioned" });
+  } catch (error) {
+    request.log.error({ err: error }, "owner passphrase read failed");
+    return reply.code(500).send({ error: "queue_environment_failure" });
+  }
+  return reply.code(401).send({ error: "unauthorized" });
 }
 
 async function createOwnerSession(auth: OwnerAuth, passphrase: string, reply: FastifyReply): Promise<object> {

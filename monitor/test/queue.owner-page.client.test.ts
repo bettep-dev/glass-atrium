@@ -516,6 +516,64 @@ describe("an owner action's answer", () => {
   }
 });
 
+describe("sign out", () => {
+  const run = async (status: number, body: unknown) => {
+    const posts: Array<{ url: string; body: unknown }> = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub() },
+      fetch: async (url: string, init: { body: string }) => {
+        posts.push({ url, body: JSON.parse(init.body) });
+        return { status, json: async () => body };
+      },
+    })) as ScreenModule;
+    const auth: number[] = [];
+    const error = await (module.deleteSessionQ as (putAuth: unknown) => Promise<string | null>)((answer: { status: number }) => auth.push(answer.status));
+    return { error, auth, posts: getPlain(posts) };
+  };
+
+  const rows = [
+    { name: "an ended session signs the owner out", status: 200, body: { ok: true }, auth: [401], error: null },
+    { name: "a session already gone also reads signed out", status: 401, body: { error: "unauthorized" }, auth: [401], error: null },
+    { name: "a database outage keeps the owner signed in and names the outage", status: 503, body: { error: "database_unavailable" }, auth: [503], error: "outage" },
+    { name: "a refusal keeps the owner signed in and says so", status: 403, body: { error: "forbidden" }, auth: [403], error: "The monitor refused the sign-out. Reload the page, then try again." },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const result = await run(row.status, row.body);
+      assert.deepEqual(result.posts, [{ url: "/api/queue/owner/logout", body: {} }]);
+      assert.deepEqual(result.auth, row.auth);
+      if (row.error === "outage") assert.equal(result.error, call("getOutageStepQ", { status: row.status, data: row.body }));
+      else assert.equal(result.error, row.error);
+    });
+  }
+
+  const headerActions = (auth: string, signOut: () => unknown = () => null) => {
+    const [header] = findNodes(render("QueueHeaderQ", { queue: { auth, reload: () => undefined, signOut, list: { status: "ready", data: null, readAt: null }, resumes: READY_RESUMES } }), (node) => node.props?.atom === "PageHeader");
+    const actions = header?.props.actions;
+    return actions ? (renderScreen(actions) as RenderedNode) : null;
+  };
+
+  test("a signed-in header offers Sign out, and its click ends the session", async () => {
+    let calls = 0;
+    const tree = headerActions("in", () => { calls += 1; return Promise.resolve(null); });
+    const [button] = tree ? buttonLabelled(tree, "Sign out") : [];
+    await (button?.props.onClick as () => Promise<void>)();
+    assert.equal(calls, 1);
+  });
+
+  const signedOutRows = [
+    { name: "signed out", auth: "out" },
+    { name: "not provisioned", auth: "not_provisioned" },
+    { name: "not yet read", auth: "unknown" },
+  ];
+  for (const row of signedOutRows) {
+    test(`no Sign out while ${row.name}`, () => {
+      const tree = headerActions(row.auth);
+      assert.equal(tree === null ? 0 : buttonLabelled(tree, "Sign out").length, 0);
+    });
+  }
+});
+
 describe("card buttons", () => {
   const sendRows = [
     { name: "no option and no text leaves Send disabled", draft: {}, body: null },

@@ -35,15 +35,19 @@ export class OwnerSessionStore {
 
   /** Sliding expiry: a live id gets a fresh TTL. @returns false for an unknown or expired id */
   renew(id: string): boolean {
+    if (!this.isLive(id)) return false;
+    this.expiryByDigest.set(digest(id), this.now() + TTL_MS);
+    return true;
+  }
+
+  /** Liveness only, expiry left in place → a passive sign-in probe never keeps a session alive. */
+  isLive(id: string): boolean {
     const key = digest(id);
     const expiresAt = this.expiryByDigest.get(key);
     if (expiresAt === undefined) return false;
-    if (expiresAt <= this.now()) {
-      this.expiryByDigest.delete(key);
-      return false;
-    }
-    this.expiryByDigest.set(key, this.now() + TTL_MS);
-    return true;
+    if (expiresAt > this.now()) return true;
+    this.expiryByDigest.delete(key);
+    return false;
   }
 
   delete(id: string): void {

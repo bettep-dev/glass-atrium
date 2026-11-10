@@ -52,6 +52,18 @@ describe("owner session store", () => {
     assert.equal(store.renew(id), false, "an expired id stays invalid");
   });
 
+  test("a liveness check reads the expiry and never moves it", () => {
+    const clock = createClock();
+    const store = new OwnerSessionStore(clock.now);
+    const id = store.create();
+    clock.advance(SESSION_TTL_MS - 1);
+    assert.equal(store.isLive(id), true, "live one ms before expiry");
+    clock.advance(2);
+    assert.equal(store.isLive(id), false, "the check above left the first expiry in place");
+    assert.equal(store.renew(id), false, "an expired id cannot be renewed after a check");
+    assert.equal(store.isLive(randomBytes(32).toString("base64url")), false, "never issued");
+  });
+
   test("an unknown or deleted id is never valid", () => {
     const store = new OwnerSessionStore(createClock().now);
     const id = store.create();

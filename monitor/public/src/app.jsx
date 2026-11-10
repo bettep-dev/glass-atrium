@@ -44,8 +44,8 @@ const META_TEXT_STYLE = { fontSize: "var(--fs-meta)" };
 const AGENT_SUMMARY_URL = "/api/agents/summary?days=7&order=runs&limit=1";
 // queue nav numeral — count-only route, no owner auth
 const QUEUE_COUNT_URL = "/api/queue/count";
-// one owner read at shell mount → the lock badge knows the sign-in state before the Queue screen opens
-const QUEUE_AUTH_PROBE_URL = "/api/queue/owner/items?limit=1";
+// one sign-in check at shell mount → the lock badge knows the state before the Queue screen opens; the check never renews the session
+const QUEUE_AUTH_PROBE_URL = "/api/queue/owner/session";
 
 // last page input → a route move rings only when a key caused it; a URL-bar or history move sends the page no input
 let lastInputKind = null;

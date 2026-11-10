@@ -48,10 +48,11 @@ const SKIP_TEXT_Q = {
 };
 // outage words come from the shared copy owner (ui.jsx → getErrorCopy) → one outage reads one way across card, region, sign-in and actions
 const OUTAGE_KINDS_Q = new Set(["network", "database", "server"]);
-// sign-in answers the shared copy has no words for: no Details on the form → the next step is spelled out
+// sign-in and sign-out answers the shared copy has no words for: no Details beside them → the next step is spelled out
 const SIGN_IN_COPY_Q = {
 	not_provisioned: "The queue is not set up. Run the queue setup script once in a terminal, then reload this page.",
 	refused: "The monitor refused the request. Reload the page, then try again.",
+	signOutRefused: "The monitor refused the sign-out. Reload the page, then try again.",
 };
 
 const APPROVAL_NOTE_Q = "Approval: the terminal confirmation is still needed after you answer here.";
@@ -272,7 +273,23 @@ function QueueHeaderQ({ queue }) {
 			title="Queue"
 			freshness={<FreshnessStamp at={list.readAt} regions={regions} />}
 			refresh={<RefreshButton onRefresh={queue.reload} isBusy={getRegionSummary(regions).isBusy} hasRead={list.readAt !== null} label="Refresh queue" />}
+			actions={queue.auth === "in" ? <SignOutQ onSignOut={queue.signOut} /> : null}
 		/>
+	);
+}
+
+// a refused sign-out stays signed in → the reason shows beside the button, never silently
+function SignOutQ({ onSignOut }) {
+	const [state, setState] = useStateQ({ isBusy: false, error: null });
+	const onClick = async () => {
+		setState({ isBusy: true, error: null });
+		setState({ isBusy: false, error: await onSignOut() });
+	};
+	return (
+		<>
+			{state.error && <span className="fs-meta text-crit" role="alert">{state.error}</span>}
+			<button type="button" className="btn ghost sm" disabled={state.isBusy} onClick={onClick}>Sign out</button>
+		</>
 	);
 }
 
@@ -310,7 +327,8 @@ function useQueueStateQ({ onQueueAuth, onRetryHarness }) {
 	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, putAuth, reload, onRetryHarness });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const login = useCallbackQ((passphrase) => putSessionQ({ passphrase, putAuth, reload }), [putAuth, reload]);
-	return { auth, list, resumes, readResumes, drafts, setDraft, filter, setFilter, reload, loadMore, login, ...actions };
+	const signOut = useCallbackQ(() => deleteSessionQ(putAuth), [putAuth]);
+	return { auth, list, resumes, readResumes, drafts, setDraft, filter, setFilter, reload, loadMore, login, signOut, ...actions };
 }
 
 // page-level resume record in its own region → a failed read leaves the list in place
@@ -347,6 +365,21 @@ async function putSessionQ({ passphrase, putAuth, reload }) {
 		reload();
 	}
 	return error;
+}
+
+/**
+ * Sign out → the server drops the session and clears the cookie; a session already gone reads signed out too.
+ * @returns null once signed out, else the message shown beside Sign out
+ */
+async function deleteSessionQ(putAuth) {
+	const answer = await sendOwnerRequestQ("/logout", {});
+	if (answer.status >= 200 && answer.status < 300) {
+		putAuth({ status: 401, data: null });
+		return null;
+	}
+	putAuth(answer);
+	if (answer.status === 401 || isNotProvisionedQ(answer)) return null;
+	return getOutageStepQ(answer) ?? SIGN_IN_COPY_Q.signOutRefused;
 }
 
 // auth state + the setter every owner answer feeds; the shell hears each change for its lock badge
