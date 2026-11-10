@@ -19,8 +19,8 @@ import { chromium } from "playwright";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const PAYLOADS: Record<string, unknown> = {
-  ...readPayloads("dashboard-payloads.json"),
-  ...readPayloads("app-shell-data-payloads.json"),
+  ...getPayloads("dashboard-payloads.json"),
+  ...getPayloads("app-shell-data-payloads.json"),
 };
 
 const NAV_ITEM = 'nav[aria-label="Primary"] button';
@@ -34,8 +34,8 @@ const SCRIPT_GLOBALS = [
 // Chromium's console text for a CSP block and for an SRI digest mismatch
 const BLOCKED_CONSOLE = /Content Security Policy|integrity/i;
 
-// ceiling only — a page that never settles fails here instead of passing on a fixed sleep
-const SETTLE_TIMEOUT_MS = 30_000;
+// one ceiling for every wait — a state that never arrives fails here instead of passing on a fixed sleep
+const WAIT_TIMEOUT_MS = 30_000;
 
 // document format → the node its body path leaves once marked / hljs / DOMPurify + mermaid have run
 const RENDERED_BODY: Record<string, string> = {
@@ -64,7 +64,7 @@ let serverUrl: string;
 let browser: Browser;
 let context: BrowserContext;
 
-function readPayloads(file: string): Record<string, unknown> {
+function getPayloads(file: string): Record<string, unknown> {
   return JSON.parse(readFileSync(resolve(HERE, "fixtures", file), "utf8"));
 }
 
@@ -111,7 +111,7 @@ async function openShell(hash: string): Promise<Shell> {
  * Two frames → React commits the last response and runs its effects, so a fetch or lazy script an effect starts is seen.
  */
 async function waitForSettled({ page, pending }: Shell): Promise<void> {
-  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+  const deadline = Date.now() + WAIT_TIMEOUT_MS;
   let wasQuiet = false;
   for (;;) {
     const isBusy = await page.evaluate(() => new Promise<boolean>((done) => {
@@ -132,7 +132,7 @@ async function assertNothingBlocked({ page, errors }: Shell): Promise<void> {
 /** The primary nav as rendered — each item clicked once and read back as its route id and screen label. */
 async function getNavScreens(): Promise<NavScreen[]> {
   const { page } = await openShell("dashboard");
-  await page.waitForSelector(NAV_ITEM, { timeout: 30_000 });
+  await page.waitForSelector(NAV_ITEM, { timeout: WAIT_TIMEOUT_MS });
   const screens: NavScreen[] = [];
   for (const item of await page.locator(NAV_ITEM).all()) {
     await item.click();
@@ -183,7 +183,7 @@ describe("every screen renders under the CSP", () => {
     for (const screen of screens) {
       await t.test(`${screen.label} mounts with no CSP violation, SRI failure or page error`, async () => {
         const shell = await openShell(screen.id);
-        await shell.page.waitForSelector(`[data-screen-label="${screen.label}"] #main-content > :not(.placeholder)`, { timeout: 30_000 });
+        await shell.page.waitForSelector(`[data-screen-label="${screen.label}"] #main-content > :not(.placeholder)`, { timeout: WAIT_TIMEOUT_MS });
         await waitForSettled(shell);
         const painted = await shell.page.$eval("#main-content", (main) => (main.textContent ?? "").trim().length);
         assert.ok(painted > 0, `${screen.label} painted no text`);
@@ -197,7 +197,7 @@ describe("every screen renders under the CSP", () => {
 describe("populated payloads run their render paths under the CSP", () => {
   test("Cost draws its charts from populated payloads", async () => {
     const shell = await openShell("cost");
-    await shell.page.waitForSelector("#main-content .recharts-surface path", { timeout: 30_000 });
+    await shell.page.waitForSelector("#main-content .recharts-surface path", { timeout: WAIT_TIMEOUT_MS });
     await waitForSettled(shell);
     await assertNothingBlocked(shell);
     await shell.page.close();
@@ -208,8 +208,8 @@ describe("populated payloads run their render paths under the CSP", () => {
     test(`a ${format} document body renders in the viewer`, async () => {
       assert.ok(RENDERED_BODY[format], `no rendered-body selector for format ${format}`);
       const shell = await openShell("clauded-docs");
-      await shell.page.click(`tr.doc-row[aria-label="${group.representative_title}"]`, { timeout: 30_000 });
-      await shell.page.waitForSelector(RENDERED_BODY[format], { timeout: 30_000 });
+      await shell.page.click(`tr.doc-row[aria-label="${group.representative_title}"]`, { timeout: WAIT_TIMEOUT_MS });
+      await shell.page.waitForSelector(RENDERED_BODY[format], { timeout: WAIT_TIMEOUT_MS });
       await waitForSettled(shell);
       await assertNothingBlocked(shell);
       await shell.page.close();
