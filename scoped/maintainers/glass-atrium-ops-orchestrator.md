@@ -18,6 +18,14 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 - This H2 stays over the 8 KB H2 cap because it contains the held `### Architecture Patterns [ORCHESTRATOR]`, itself over 8 KB.
 - Every other H3 under it is held to the 3 KB H3 cap, read as 3,000 B (UTF-8, heading to the next H3); re-measure the H2 once that H3's pins retire.
 
+### `### Quality Gates [ORCHESTRATOR]` — Deep-review override linkage
+
+- The H3 has no held cap: byte-measure it before any addition, and move editor detail into this note rather than over 3,000 B.
+- **Orchestrator-forced Deep-review override** single-sites the path-count threshold and the sensitive-path prefix list: other prose files carry a pointer, never a copy.
+- `hooks/enforce-verification-gate.sh` mirrors both as named constants (`DEEP_REVIEW_FILE_THRESHOLD` and the prefix list) and reports counts + matched prefix only.
+  - Its advisory message names `skills/glass-atrium-ops-orchestrator.md → Quality Gates` as the threshold site, so the bullet stays under this H3 unless that hook message moves in the same pass.
+- Machine-checked: `hooks/test/enforce-verification-gate-scope.bats` greps the first `lists ≥ N paths` in the skill and compares it with the hook constant, so the two move together or that suite fails.
+
 ### Held cap exception — `### Architecture Patterns [ORCHESTRATOR]`
 
 - This H3 stays over the 3 KB H3 cap.

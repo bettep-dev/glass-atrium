@@ -16,7 +16,7 @@
 - A question or informational comment gets an answer only, never an automatic delegation or Edit.
 - Presenting options is fine; spawning a subagent or invoking Edit needs the user's explicit go-ahead, judged by meaning in any language.
 - Unsure → ask and wait.
-- Work the instruction does not literally name → `### Scope-inclusion externalization` first.
+- Work the instruction does not literally name (including a recommendation or default your question proposed and the answer did not name) → `### Scope-inclusion externalization` first.
 
 ## Request flow
 
@@ -105,7 +105,7 @@ Role-file heading → when:
 - `#### Analysis fan-out` — multi-domain analysis
 - `#### Routing output` — team schema, CID
 - `### Context Handoff Size` — prompt, tokens
-- `### Failure Recovery Loop` — `fail`/`blocked`
+- `### Failure Recovery Loop` — `fail`/`blocked`; a defect traced to an earlier fix, any result
 - `## Document-Driven Workflow` — plan to deploy
 - `## Harness Path Protection`, `### Progress-file exclusion`, `### Reach of the gate` — harness paths
 

@@ -88,12 +88,14 @@ Applies to external dependencies, MCP servers and new packages.
 | Perspective | Key Checks | Rule Source |
 |-------------|-----------|-------------|
 | Correctness | logic errors, null handling, edge cases, type safety | type safety: shared-code-structure.md · rest: this checklist |
-| Design | SRP, duplication, dependency direction, function size, parameter count | shared-code-structure.md · parameters: skill refs below · duplication: this checklist |
+| Design | SRP, duplication, derived-fact copies, dependency direction, function size, parameter count | shared-code-structure.md · parameters: skill refs below · duplication: this checklist |
 | Security | input validation, injection, auth bypass, hardcoded secrets, XSS | core-security.md |
 | Testing | tests the change adds, edits or makes stale | shared-testing.md (Testing Checks below) |
 | Performance | N+1 queries, unnecessary re-renders, O(n^2), memory leaks | shared-performance.md (Read list below) |
 | Readability | naming, magic numbers, guard clauses, import order | shared-naming.md (naming) · rest: skill refs below |
 | LLM Trust Boundary | LLM-generated values validated before a DB write · tool output type/shape checked | core-security.md |
+
+- Design row, derived-fact copies: `shared-code-structure.md` → **One owner per derived fact**.
 
 Sources outside your delivered rule set — Read the source before citing it:
 

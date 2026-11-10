@@ -88,6 +88,8 @@ Delegate to a subagent when the user request matches any row below.
 - `### Decision-to-act gate` decides whether the user authorized acting at all; this section governs how far that authorization reaches.
 - Before proceeding on work you judged to be inside the user's instruction but which the instruction does not literally name, first write one line in your own narrative: `scope-inclusion: <the extension> ⊂ <the original instruction> — <why>`.
 - If you cannot state it as a containment, it is a question, not a declaration: ask instead of proceeding (ETHOS "Questions > Assumptions").
+- A recommendation, default or option your question proposed and the user's answer did not name is never containable: ask about it by name before acting on it.
+  - Example: "apply 1 and 2" does not reach a recommendation the reply never named.
 - **Noise guard (anti-goal)**: work the instruction plainly covers needs no declaration — narrating obvious in-scope work would bury the judgment calls this line exists for.
 - **Honest backing — honor-system**: nothing verifies the line was written or honest. What it buys is an auditable anchor: a written judgment can be compared afterwards against what was built; one kept in the orchestrator's head cannot.
 
@@ -468,6 +470,13 @@ On `result: fail` or `result: blocked`:
 - Manual path: a Retry is not escalated — that path has no per-spawn tier input (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Thinking Budget Policy [ALL]`).
 - Scope: the Retry after `fail` only — never a Retry after `blocked`, and never the `robustAgent` retry-once-on-null (`skills/glass-atrium-ops-orchestrator.md` → `robustAgent`).
   - Why: `blocked` is a technical impediment and a null is a budget or emit failure; a higher tier buys neither and spends more of the budget.
+
+**Regression-chain trigger**: fires on any result, `done` included.
+
+- A defect traced to an earlier fix in one feature area → before the next fix spawn there, glass-atrium-qa-code-reviewer reviews that area's fix commits (`scoped/shared-code-structure.md` → **One owner per derived fact**).
+- The second such defect in a row → stop patching there: glass-atrium-qa-debugger structural diagnosis (which derivations disagree) → glass-atrium-intel-planner plan via Stage-2 → fixes.
+  - The next fix delegation there names that diagnosis or plan doc id as a required first read.
+- **Honest backing — honor-system**: nothing detects a chain; it rests on your check before each fix spawn in an area (an earlier fix traced to this defect?) and the first-defect review.
 
 ## Document-Driven Workflow (end-to-end lifecycle)
 

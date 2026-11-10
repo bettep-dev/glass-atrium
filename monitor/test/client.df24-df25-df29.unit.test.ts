@@ -180,6 +180,7 @@ test("getTokenRate: claude-fable-5-1 resolves from its own mirror row, not the f
 const OWN_ROW_IDS = [
   { id: "claude-opus-5-5", family: "claude-opus-5", input: 4.0 },
   { id: "claude-sonnet-5-5", family: "claude-sonnet-5", input: 2.0 },
+  { id: "claude-fable-5-2", family: "claude-fable-5", input: 8.0 },
 ] as const;
 
 for (const row of OWN_ROW_IDS) {
@@ -211,6 +212,7 @@ test("MODEL_CAP_MC: every described id is priced, and one id alone is the latest
   const latestByLabel = [
     ["Latest Opus", "claude-opus-5-5"],
     ["Latest Sonnet", "claude-sonnet-5-5"],
+    ["Latest Fable", "claude-fable-5-2"],
   ] as const;
   for (const [label, id] of latestByLabel) {
     const latest = Object.keys(caps).filter((key) => caps[key].startsWith(label));

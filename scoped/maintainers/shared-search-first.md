@@ -16,11 +16,12 @@ Corpus-maintenance companion to that rule file. Nothing here is delivered to an 
 ## Coupled readers — the anchors that must keep their names
 
 - No code reads a literal from the rule file's body; prose citations resolve into it by name.
-- Reserved leads: **Pattern recognition** · **Inconclusive probe** · **Step 1 — Search** · **Step 2 — Read** · **Step 3 — Mirror**.
+- Reserved leads: **Pattern recognition** · **Inconclusive probe** · **Step 1 — Search** · **Step 2 — Read** · **Step 3 — Mirror** · **Fact-ownership search**.
 - Before renaming one, grep the corpus for its bare name and edit every citer.
   - `rules/glass-atrium/core-outcome-record.md` → `### Role-scoped fields` → `style_ref` spells "Step 2 Read / Step 3 Mirror", which a dashed grep misses.
   - `agents/glass-atrium-dev-rag.md` → **Codebase exploration** cites "Pattern recognition → **Inconclusive probe**".
   - `scoped/scope-dev.md` → **Sibling probe (PRIMARY)** cites **Step 3 — Mirror**.
+  - `scoped/scope-dev.md` → **Anchor file (SECONDARY)** cites **Fact-ownership search**.
 
 ## Pair classifications
 

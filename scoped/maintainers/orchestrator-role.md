@@ -87,7 +87,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - under `### Spawn Budget`: Split triggers · HARD SECONDARY · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`) · COUNTER-CAVEAT (over-fragmentation);
   - under `#### Analysis fan-out and team cardinality`: Effort-scaling by task shape;
   - under `### Context Handoff Size`: Attestation-token placement;
-  - under `### Failure Recovery Loop`: Backing honesty (which stages are enforced) · Retry effort escalation;
+  - under `### Failure Recovery Loop`: Backing honesty (which stages are enforced) · Retry effort escalation · Regression-chain trigger;
   - under `## Document-Driven Workflow` step 6: Prompt-file tail.
 - Neither list is exhaustive: grep the corpus for a heading or bolded lead before renaming it.
 

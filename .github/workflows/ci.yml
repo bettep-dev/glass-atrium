@@ -92,7 +92,8 @@ jobs:
   # ---------------------------------------------------------------------------
   gate-lint:
     name: "gate: lint workflows (actionlint)"
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: Playwright ships no chromium build for ubuntu 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -121,7 +122,7 @@ jobs:
   # ---------------------------------------------------------------------------
   gate-typecheck:
     name: "gate: monitor typecheck (no DB)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     permissions:
       contents: read
@@ -165,7 +166,7 @@ jobs:
   # ---------------------------------------------------------------------------
   gate-doctor:
     name: "gate: glass-atrium doctor preflight"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     permissions:
       contents: read
@@ -228,7 +229,7 @@ jobs:
   # ---------------------------------------------------------------------------
   detect-changes:
     name: detect changed stacks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -361,7 +362,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-bash:
     name: "test: bats (${{ matrix.name }})"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -527,7 +528,7 @@ jobs:
           # Point every suite's mktemp -d sandbox (mktemp honors $TMPDIR) at the
           # runner's tmpfs so the I/O-bound installer fixtures — copy/symlink farms
           # + the doctor-auth 1500-file fixture — land in RAM. Linux-CI-only:
-          # /dev/shm always exists on ubuntu-latest; no test file or macOS path changes.
+          # /dev/shm always exists on the ubuntu runner; no test file or macOS path changes.
           TMPDIR: /dev/shm
         run: |
           # bats process start cwd → an empty scratch dir, so every path bats gets is absolute.
@@ -698,7 +699,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-python:
     name: "test: autoagent unittest"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -786,7 +787,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-python-pytest:
     name: "test: scripts pytest"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -861,7 +862,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-monitor:
     name: "test: monitor typecheck + tests (test-only DB)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -1191,7 +1192,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-naming-ratchet:
     name: "test: naming ratchet (ID titles · incident headers)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1242,7 +1243,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-e2e:
     name: "test: sandboxed E2E bootstrap (advisory)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # detect-changes is listed alongside test-monitor because this job's `if:`
     # reads needs.detect-changes.outputs.monitor — a job can only read outputs of
     # jobs in its own needs list, even though test-monitor already transitively
@@ -1320,7 +1321,7 @@ jobs:
   # ===========================================================================
   ci-pass:
     name: ci-pass (required)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     # ci-pass runs no checkout and never uses the token — it only reads upstream
     # job results via the `needs` context (an expression, not a token call). The
