@@ -117,6 +117,15 @@ def _get_called_names(node: ast.AST) -> set[str]:
     return names
 
 
+def _get_functions_reading(source: Path, name: str) -> set[str]:
+    return {
+        node.name
+        for node in _get_tree(source).body
+        if isinstance(node, _FUNCTION_NODES)
+        and any(isinstance(n, ast.Name) and n.id == name for n in ast.walk(node))
+    }
+
+
 def _get_run_cycle_calls() -> set[str]:
     for node in _get_tree(_DAEMON_CYCLE).body:
         if isinstance(node, ast.FunctionDef) and node.name == "run_cycle":
@@ -158,7 +167,7 @@ class Tier1SectionMatchesTheDaemonCode(unittest.TestCase):
     def test_section_carries_no_claim_the_cycle_code_contradicts(self) -> None:
         calls = _get_run_cycle_calls()
         closed_reason = _get_constant(_DAEMON_CYCLE, "_GENERATION_CLOSED_REASON")
-        closed_helper_called = "update_generation_closed_proposals" in _get_production_called_names()
+        closed_reason_readers = _get_functions_reading(_DAEMON_CYCLE, "_GENERATION_CLOSED_REASON")
         rows = (
             (
                 "run_cycle reaches generation",
@@ -171,8 +180,8 @@ class Tier1SectionMatchesTheDaemonCode(unittest.TestCase):
                 ("no auto-apply until live trials", "kept for that reopening"),
             ),
             (
-                "the generation-closed rationale has no production writer",
-                not closed_helper_called,
+                "the generation-closed rationale is read only to classify historical rows",
+                closed_reason_readers == {"classify_failure_rationale"},
                 (f"`{closed_reason}`",),
             ),
         )

@@ -303,7 +303,6 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
             "generate_consolidated_proposal",
             "generate_patch_proposal",
             "run_pre_verify",
-            "update_generation_closed_proposals",
             "alert_post_apply_regression",
         ):
             patcher = mock.patch.object(self.dc, name, self._get_spy(name))
@@ -371,12 +370,6 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
         self.assertEqual(
             json.loads(out.read_text(encoding="utf-8"))["patterns_processed"], 1
         )
-
-    def test_no_cycle_calls_the_generation_closed_terminalization(self) -> None:
-        for skip_loop_emit in (False, True):
-            with self.subTest(skip_loop_emit=skip_loop_emit):
-                self._run(skip_loop_emit=skip_loop_emit)
-                self.assertNotIn("update_generation_closed_proposals", self.calls)
 
     def test_a_writing_cycle_runs_the_post_apply_regression_watch(self) -> None:
         self._run(skip_loop_emit=False)

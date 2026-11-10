@@ -631,8 +631,6 @@ model AutoagentProposal {
   //     `daemon-cycle-parked-guard` — parked guard
   //     `daemon-cycle-supersede` — machine supersede, NOT a review: an unadjudicated
   //       termination gets its own token and never the operator's
-  //     `daemon-cycle-generation-closed` — generation-closed terminalization, NOT a
-  //       review: a stored pending auto row closed while generation is off
   //     `daemon-cycle-trial-decision` — a live trial's decision without a win:
   //       harm / retire → rejected, void → unadjudicated, verdict instant stamped;
   //       a win on an A/A start invalidated since → unadjudicated
@@ -640,6 +638,8 @@ model AutoagentProposal {
   //     `updater-resolved-gap` — updater resolved-gap accountability row
   //     `status-backfill` — status backfill
   //   `reverted` has no writer anywhere in the tree, so no token names it.
+  //   Outside the set, no writer: daemon-cycle-generation-closed, kept on rows a
+  //   retired step closed (stored pending auto rows, while generation was off).
   reviewedAt      DateTime?              @map("reviewed_at") @db.Timestamptz(6)
   reviewedBy      String?                @map("reviewed_by") @db.VarChar(64)
   auditLogId      BigInt?                @map("audit_log_id")

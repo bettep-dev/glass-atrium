@@ -13,11 +13,6 @@ The promotion tier is a label only: whatever tier a candidate carries, the statu
 approval tier and terminalization verdict stay the same, and the tier itself is
 carried through unchanged.
 
-With generation closed, ``daemon_cycle.update_generation_closed_proposals`` closes
-the same limbo for STORED rows: one idempotent statement moves every pending auto
-row to ``unadjudicated`` under the generation-closed reason and actor, and leaves
-every other row as it was.
-
 The one-running-trial gate keeps an agent holding a held live trial — open, or won
 with its row still pending — out of generation: the held trials are read once per
 cycle, a read fault makes no generator call that cycle, and the trial's pending row
@@ -139,126 +134,18 @@ class TestPromotionTierIsALabel(unittest.TestCase):
         self,
     ) -> None:
         # A terminalization is no gate verdict, so it never advances a reject streak.
-        self.assertEqual(
-            dc.classify_failure_rationale(dc._BELOW_FLOOR_REJECT_REASON),
-            dc.FAILURE_CLASS_SKIPPED,
-        )
-
-
-_CLOSED_TARGET = "agents/glass-atrium-dev-python.md"
-_CLOSED_COLUMNS = ("status", "approval_tier", "rationale", "reviewed_by", "reviewed_at")
-# (pattern label, stored ApprovalTier, stored ProposalStatus) — the one pending auto
-# row it closes, then every other stored tier on a pending row and every other
-# stored status on an auto row, each of which it must spare.
-_CLOSED_SEED_ROWS: tuple[tuple[str, str, str], ...] = (
-    ("pending auto", "auto", "pending"),
-    ("pending user-pending", "user-pending", "pending"),
-    ("pending user", "user", "pending"),
-    ("pending llm", "llm", "pending"),
-    ("rejected auto", "auto", "rejected"),
-    ("unadjudicated auto", "auto", "unadjudicated"),
-    ("applied auto", "auto", "applied"),
-    ("approved auto", "auto", "approved"),
-    ("snoozed auto", "auto", "snoozed"),
-    ("reverted auto", "auto", "reverted"),
-)
-_CLOSED_SEED_RATIONALE = "pattern recurred across 5 outcomes"
-
-
-@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
-class TestGenerationClosedStatement(unittest.TestCase):
-    """Only a stored pending auto row closes, once, under the closed reason and actor."""
-
-    def setUp(self) -> None:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.db = Path(tmp.name) / "proposals.sqlite"
-        stub.create_proposals_table(self.db)
-        with closing(sqlite3.connect(self.db)) as db:
-            db.executemany(
-                "INSERT INTO autoagent_proposals (cycle_date, pattern_label, target_file,"
-                " approval_tier, status, rationale) VALUES ('2026-10-03', ?, ?, ?, ?, ?)",
-                [
-                    (label, _CLOSED_TARGET, tier, status, _CLOSED_SEED_RATIONALE)
-                    for label, tier, status in _CLOSED_SEED_ROWS
-                ],
-            )
-            db.commit()
-        self.connects: list[Path] = []
-        self.pg_reach = seal_pg_reach(self)
-
-    def _connect(self) -> object:
-        self.connects.append(self.db)
-        return stub.create_connection(self.db)
-
-    def _close(self, *, has_pg: bool = True) -> tuple[int, str]:
-        """Run the real statement against the stdlib backend → (count, stderr)."""
-        with stub.load_helper(self.db) as helper:
-            fragment = helper.PROPOSAL_STATUS_SQL
-        err = io.StringIO()
-        # The seal bound _pg_connect on both legs; the fragment is unbound only
-        # when the helper import failed.
-        with (
-            mock.patch.object(dc, "HAS_PG_LOOP_WRITE", has_pg),
-            mock.patch.object(dc, "_pg_connect", self._connect),
-            mock.patch.object(
-                dc,
-                "_PG_PROPOSAL_STATUS_SQL",
-                fragment,
-                create=dc._PG_LOOP_IMPORT_EXC is not None,
+        rows = (
+            ("below-floor reject", dc._BELOW_FLOOR_REJECT_REASON),
+            (
+                "stored generation-closed row",
+                f"{dc._GENERATION_CLOSED_REASON}: pattern recurred across 5 outcomes",
             ),
-            contextlib.redirect_stderr(err),
-        ):
-            count = dc.update_generation_closed_proposals()
-        self.assertEqual(self.pg_reach, [])
-        return count, err.getvalue()
-
-    def _rows(self) -> dict[str, dict[str, object]]:
-        return {
-            label: stub.read_proposal(
-                self.db, ("2026-10-03", label, _CLOSED_TARGET), columns=_CLOSED_COLUMNS
-            )
-            for label, _, _ in _CLOSED_SEED_ROWS
-        }
-
-    def test_when_closed_then_only_the_pending_auto_row_terminalizes(self) -> None:
-        before = self._rows()
-        count, _ = self._close()
-        after = self._rows()
-        self.assertEqual(count, 1)
-        self.assertEqual(
-            after["pending auto"],
-            {
-                "status": "unadjudicated",
-                "approval_tier": "auto",
-                "rationale": f"{dc._GENERATION_CLOSED_REASON}: {_CLOSED_SEED_RATIONALE}",
-                "reviewed_by": dc._GENERATION_CLOSED_ACTOR,
-                "reviewed_at": None,
-            },
         )
-        for label, _, _ in _CLOSED_SEED_ROWS[1:]:
-            with self.subTest(row=label):
-                self.assertEqual(after[label], before[label])
-
-    def test_when_closed_twice_then_the_second_run_changes_nothing(self) -> None:
-        self._close()
-        once = self._rows()
-        count, _ = self._close()
-        self.assertEqual(count, 0)
-        self.assertEqual(self._rows(), once)
-
-    def test_when_pg_unavailable_then_no_connection_and_a_named_skip(self) -> None:
-        count, err = self._close(has_pg=False)
-        self.assertEqual(count, 0)
-        self.assertEqual(self.connects, [])
-        self.assertIn("generation-closed terminalization: PG unavailable", err)
-
-    def test_when_closed_then_the_stored_rationale_is_no_gate_verdict(self) -> None:
-        self._close()
-        stored = self._rows()["pending auto"]["rationale"]
-        self.assertIn(
-            dc.classify_failure_rationale(stored), dc._NON_ADJUDICATION_CLASSES
-        )
+        for name, rationale in rows:
+            with self.subTest(row=name):
+                self.assertEqual(
+                    dc.classify_failure_rationale(rationale), dc.FAILURE_CLASS_SKIPPED
+                )
 
 
 _HOLDER = "glass-atrium-dev-python"  # holds an open live trial on its pending row
