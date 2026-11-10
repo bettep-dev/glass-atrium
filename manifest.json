@@ -1153,7 +1153,7 @@
     "autoagent/test/test_removal_exact_match_gate.py": "70ec833f0b68e72631b2b72a5a1adb1ca3735e713a02cf18633c543c3447c9f0",
     "autoagent/test/test_roster_merge.py": "cc0c95d0df832f2e64f4d8bddf3844b377baaf2e33dfff1da650bf65b2214fc0",
     "autoagent/test/test_sensitive_patterns.py": "c84eeee10bc0ac2bd0b0fd5929aed06a1368324bb2f5a8f0c4ce3f64657a327e",
-    "autoagent/test/test_shadow_engine.py": "aa30162d2370ad65bb8d82fc0094487c17ae1092672962bea3a4f4a6ea7664cb",
+    "autoagent/test/test_shadow_engine.py": "9aeee6ecfee43c43619a7c4c3c00987b7ffe98d6c3a30c84edef8dcfa4dfa77c",
     "autoagent/test/test_signal_store_retired.py": "5205c31db50c6797bc04acf29ecce417b68a866b28ad10439e827653abcf95d4",
     "autoagent/test/test_single_regen_reason_line.py": "f7ea6ec917105836f0f5a486b4592dbffa2d7cfd22daf4f80d6722fed5e83ab0",
     "autoagent/test/test_stored_diff_bound.py": "5d30394c90d329bef3a336bb28d734673271ef5a4940fc79b21a3098b78c4b5d",

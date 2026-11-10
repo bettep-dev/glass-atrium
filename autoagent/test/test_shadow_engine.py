@@ -4816,6 +4816,23 @@ class CycleWiringTest(_ShadowFixture):
                     self.stderr.getvalue(),
                 )
 
+    def test_a_graduation_stage_that_raises_ends_the_cycle_ahead_of_generation(self) -> None:
+        # an apply may have reached the row → none of this cycle's agents gets a generator call
+        generated: list[object] = []
+        for name, value in (
+            ("run_trial_stage", lambda: frozenset()),
+            ("run_shadow_stage", lambda *args: None),
+            ("run_aa_stage", lambda *args, **kwargs: None),
+            ("run_graduation_stage", mock.Mock(side_effect=RuntimeError("graduation probe fault"))),
+            ("_run_generation_loop", lambda *args: generated.append(args)),
+        ):
+            self._patch(name, value)
+        self._open_writing_stages()
+
+        with self.assertRaisesRegex(RuntimeError, "graduation probe fault"):
+            self._run_cycle(skip_loop_emit=False)
+        self.assertEqual(generated, [])
+
     def test_an_unusable_stored_live_preregistration_leaves_the_cycle_running_through_the_aa_stage(
         self,
     ) -> None:
