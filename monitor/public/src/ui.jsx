@@ -117,23 +117,30 @@ function Pill({ children, tone='neutral', title, className }) {
 }
 
 // 공용 빈-상태 atom (canonical) — 화면별 EmptyState* 복제 + 보드 dashed-col idiom 의 단일 SoT.
-//   .placeholder(base.css) dashed 관용구 재사용 → repo 전역 단일 빈-상태 표기.
+//   .placeholder(base.css) 무테두리·무배경 폼 재사용 → repo 전역 단일 빈-상태 표기.
 //   message = 핵심 원인 한 줄 · hint = 다음 단계/부연(선택) · action = 슬롯(재시도 버튼 등, 선택).
-//   타입은 스케일 토큰(fs-meta)로 고정 — 화면별 off-scale px 리터럴 제거.
-function EmptyState({ message, hint, action, className='' }) {
+//   타입은 atom 소유 — message 14 ink(.placeholder) · hint 13 dim(.placeholder-hint), 유틸 클래스로 덮지 않음.
+//   kind 'no-results' → 고정 문장 한 줄 + 조용한 reset(onReset 있을 때만) · 'first-use' → 호출자 message.
+const NO_RESULTS_MESSAGE = 'No records match these filters.';
+
+function EmptyState({ kind = 'first-use', message, hint, action, onReset, className='' }) {
+  const isNoResults = kind === 'no-results';
+  const text = isNoResults ? NO_RESULTS_MESSAGE : message;
+  const slot = isNoResults && onReset ? <QuietButton onClick={onReset}>Reset filters</QuietButton> : action;
   return (
     <div className={`placeholder ${className}`.trim()}>
-      <div className="fs-meta"><DayTokens>{message}</DayTokens></div>
-      {hint && <div className="fs-meta text-faint mt-1"><DayTokens>{hint}</DayTokens></div>}
-      {action && <div className="mt-2 flex">{action}</div>}
+      <div><DayTokens>{text}</DayTokens></div>
+      {hint && <div className="placeholder-hint"><DayTokens>{hint}</DayTokens></div>}
+      {slot && <div className="mt-2 flex">{slot}</div>}
     </div>
   );
 }
 
-// 공용 sub-card primitive — 중첩 섹션/메트릭 타일용 작은 면. ring-1 + rounded-lg + 일정 padding.
-//   발산하던 idiom(드로어 1px-hairline · DetailMetric ring 타일 · .i-card-shadow)이 후속 wave 에서 여기로 수렴.
-//   sunken=true → bg-sunken(더 들어간 면) · 기본 bg-elev(떠오른 면). label 지정 시 uppercase --dim 섹션 라벨.
-// label sits under a card/dialog h2 → h3 by default
+/**
+ * Nested surface inside a card or dialog — sunken → bg-sunken, else bg-elev; label → h3 under the card's h2 by default.
+ * @deprecated since 1.0.0 — a card inside a card breaks the one-surface rule; removed once no screen renders it.
+ *   Replacement: content straight in the `Card` body, or a disclosure that is itself the card. {@link Card}
+ */
 function SubCard({ children, sunken=false, label, labelLevel=3, className='' }) {
   const surface = sunken ? 'bg-sunken' : 'bg-elev';
   return (
@@ -670,6 +677,25 @@ function KPI({
   );
 }
 
+/**
+ * One card's top-line numbers, a hairline between stats — never a tile per stat.
+ * @param stats - each { label, value, unit?, context?, href?, key? }: context = the one period or delta line,
+ *   href → the value is a Link to its drill-down; an absent value reads None, a 0 stays 0
+ */
+function StatRow({ stats, className = '' }) {
+  return <dl className={`stat-row ${className}`.trim()}>
+    {stats.map((stat) => {
+      const isAbsent = stat.value == null;
+      const value = <>{isAbsent ? 'None' : stat.value}{!isAbsent && stat.unit && <span className="unit">{stat.unit}</span>}</>;
+      return <div key={stat.key ?? stat.label} className="stat">
+        <dt className="stat-label">{stat.label}</dt>
+        <dd className={`stat-value${isAbsent ? ' text-faint' : ''}`}>{stat.href ? <Link href={stat.href}>{value}</Link> : value}</dd>
+        {stat.context && <dd className="stat-context">{stat.context}</dd>}
+      </div>;
+    })}
+  </dl>;
+}
+
 // 공용 오버레이 surface — variant 로 배치만 전환, 상호작용 계약은 단일 (presentation-only).
 //   drawer     = 우측 슬라이드인 레코드 상세 (기본)
 //   fullscreen = 불투명 장문 리딩 면 (페이드)
@@ -694,10 +720,8 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   useEffect(() => {
     setSurfaceOpen(panelRef, true);
 
-    const panel = panelRef.current;
-    const focusables = panel ? Array.from(panel.querySelectorAll(FOCUSABLE_SELECTOR)) : [];
-    const initialTarget = panel ? getTrapFocusTarget({ focusables, active: null, panel, shiftKey: false }) : null;
-    if (initialTarget) initialTarget.focus();
+    // opens on the panel, never a control → a mouse open rings nothing; Tab enters at the first control
+    panelRef.current?.focus();
 
     const inertTargets = overlayRef.current ? getInertTargets(overlayRef.current) : [];
     for (const node of inertTargets) node.inert = true;
@@ -854,16 +878,21 @@ function PopoverPanel({ id, title, rootRef, onClose, children }) {
   // joins the surface stack → one Esc closes one layer, whichever of popover and modal is on top
   useEffect(() => {
     setSurfaceOpen(panelRef, true);
-    const panel = panelRef.current;
-    const target = panel ? (panel.querySelectorAll(FOCUSABLE_SELECTOR)[0] || panel) : null;
-    if (target) target.focus();
+    // opens on the panel, never a control → a mouse open rings nothing; Tab enters at the first control
+    panelRef.current?.focus();
 
     return () => setSurfaceOpen(panelRef, false);
   }, []);
 
   useDismissFocus({ onDismiss: onClose, isKeyOwner: () => getTopSurface() === panelRef, panelRef });
 
-  // press, not click — closes before the pressed control takes focus; the trigger (inside root) keeps its own toggle.
+  useOutsidePress(rootRef, onClose);
+
+  return <div ref={panelRef} id={id} role="dialog" aria-label={title} tabIndex={-1} className="popover-panel">{children}</div>;
+}
+
+// press, not click — closes before the pressed control takes focus; the trigger (inside root) keeps its own toggle.
+function useOutsidePress(rootRef, onClose) {
   useEffect(() => {
     const onPointerDown = (e) => {
       const root = rootRef.current;
@@ -873,13 +902,11 @@ function PopoverPanel({ id, title, rootRef, onClose, children }) {
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [onClose, rootRef]);
-
-  return <div ref={panelRef} id={id} role="dialog" aria-label={title} tabIndex={-1} className="popover-panel">{children}</div>;
 }
 
 /**
  * Focus target that keeps Tab inside a modal panel; null leaves the move to the browser.
- * @param active - focused element, or null on open (initial focus)
+ * @param active - element holding focus at the Tab press
  * @param panel - dialog node, the fallback target when it holds no control
  */
 function getTrapFocusTarget({ focusables, active, panel, shiftKey }) {
@@ -980,13 +1007,15 @@ function getSlotRows(items, size = 'M') {
 /**
  * Card anatomy: one-line header, a body that fills the card, an optional foot pinned to the bottom edge.
  * @param size - 'S' | 'M' | 'L' slot; S/M bodies never scroll inside the card
+ * @param bar - filter bar or toolbar between the head and the body
  * @param foot - "Show all N" / "Other" / one footnote
  */
-function Card({ size, title, sub, info, infoLabel, right, foot, isFlush = false, children, className = '' }) {
+function Card({ size, title, sub, info, infoLabel, right, bar, foot, isFlush = false, children, className = '' }) {
   const sizeClass = CARD_SLOTS[size] ? `card--${size.toLowerCase()}` : '';
 
   return <div className={`card ${sizeClass} ${className}`.replace(/\s+/g, ' ').trim()}>
     {title && <CardHead title={title} sub={sub} info={info} infoLabel={infoLabel} right={right} />}
+    {bar && <div className="card-bar">{bar}</div>}
     <div className={`card-body ${isFlush ? 'flush' : ''}`.trim()}>{children}</div>
     {foot && <div className="card-foot">{foot}</div>}
   </div>;
@@ -1007,18 +1036,105 @@ function TableHead({ children, isNumeric = false, isSticky = false, className = 
 }
 
 /**
- * Data table named by its caption (visually hidden unless isCaptionShown) with scoped column headers.
- * @param columns - `{ key, label, isNumeric }` per column; omit to compose the thead yourself.
- * @param children - tbody rows.
+ * Data table named by its caption (visually hidden unless isCaptionShown), inside its own measured wrapper.
+ * The wrapper is one node in both modes → useElementWidth observes it once; a measured width below stackBelowPx stacks the rows.
+ * Rows, bodies and foot take a node or `(view) => rows`; view `{ isStacked, columnCount }` feeds TableRow and TableCell.
+ * @param columns - `{ key, label, isNumeric, sort }` per column, sort → aria-sort; omit to render no thead.
+ * @param widths - CSS width per column → a colgroup, dropped when stacked.
+ * @param bodies - `{ key, rows, isBusy, onKeyDown, className }` per tbody; omit to render children as the one body.
+ * @param foot - tfoot rows, after the last body.
  */
-function Table({ caption, isCaptionShown = false, isHeadSticky = false, columns, children, className = '' }) {
-  return <table className={`tbl ${className}`.trim()}>
-    <caption className={isCaptionShown ? 'section-label text-left pb-2' : 'sr-only'}>{caption}</caption>
-    {columns && <thead><tr>
-      {columns.map((c) => <TableHead key={c.key} isNumeric={c.isNumeric} isSticky={isHeadSticky}>{c.label}</TableHead>)}
-    </tr></thead>}
-    <tbody>{children}</tbody>
-  </table>;
+function Table({ caption, isCaptionShown = false, isHeadSticky = false, columns, widths, stackBelowPx, bodies, foot, children, className = '' }) {
+  const [wrapRef, widthPx] = useElementWidth();
+  const mode = getTableMode(widthPx, stackBelowPx);
+  const view = { isStacked: mode === 'stacked', columnCount: columns?.length ?? widths?.length ?? 0 };
+  const groupRole = view.isStacked ? 'rowgroup' : undefined;
+  const sections = bodies ?? [{ key: 'body', rows: children }];
+  return <div ref={wrapRef} className="tbl-wrap" data-table-mode={mode}>
+    <table role={view.isStacked ? 'table' : undefined} className={`tbl ${view.isStacked ? 'tbl--stacked' : ''} ${className}`.replace(/\s+/g, ' ').trim()}>
+      <caption className={isCaptionShown ? 'tbl-caption section-label' : 'sr-only'}>{caption}</caption>
+      {widths && !view.isStacked && <colgroup>{widths.map((width, i) => <col key={i} style={{ width }} />)}</colgroup>}
+      {columns && <TableColumns columns={columns} view={view} isSticky={isHeadSticky} />}
+      {sections.map((body) => <tbody key={body.key} role={groupRole} aria-busy={body.isBusy ? 'true' : undefined}
+        onKeyDown={body.onKeyDown} className={body.className}>{getTableRows(body.rows, view)}</tbody>)}
+      {foot && <tfoot role={groupRole}>{getTableRows(foot, view)}</tfoot>}
+    </table>
+  </div>;
+}
+
+// Stacked only for a positive measured width below the threshold → unmeasured (0, absent, non-number) and every non-DOM render stay wide.
+function getTableMode(widthPx, stackBelowPx) {
+  const isMeasured = Number.isFinite(widthPx) && widthPx > 0;
+  return isMeasured && Number.isFinite(stackBelowPx) && widthPx < stackBelowPx ? 'stacked' : 'wide';
+}
+
+function getTableRows(rows, view) {
+  return typeof rows === 'function' ? rows(view) : rows;
+}
+
+function TableColumns({ columns, view, isSticky }) {
+  const role = view.isStacked ? 'columnheader' : undefined;
+  return <thead role={view.isStacked ? 'rowgroup' : undefined} className={isSticky ? 'is-sticky' : undefined}><TableRow view={view}>
+    {columns.map((c) => <TableHead key={c.key} isNumeric={c.isNumeric} isSticky={isSticky} role={role} aria-sort={c.sort}>{c.label}</TableHead>)}
+  </TableRow></thead>;
+}
+
+// Stacked mode restates the row role: table display changes can drop native table semantics.
+function TableRow({ view, children, ...rest }) {
+  return <tr {...rest} role={view?.isStacked ? 'row' : undefined}>{children}</tr>;
+}
+
+/**
+ * One cell of four kinds; stacked mode restates its role and prefixes a meta cell with its column label, aria-hidden.
+ * @param kind - 'data' (textRole 'label' | 'primary' | 'meta') · 'span' (start → rest of the row) · 'row-header' · 'group-header' (heading anchor at level, id)
+ * @param start - columns before a span or group-header cell; the row's width is view.columnCount, from Table columns or widths → a table with neither spans one column
+ * @param rest - cell attributes only (title, aria-label)
+ */
+function TableCell({ view, kind = 'data', textRole = 'primary', label, start = 0, level = 3, id, isNumeric = false, className = '', children, ...rest }) {
+  const isStacked = view?.isStacked ?? false;
+  const span = Math.max(1, (view?.columnCount ?? 0) - start);
+  const cellClass = `tbl-cell tbl-cell--${kind === 'data' ? textRole : kind} ${isNumeric ? 'num' : ''} ${className}`.replace(/\s+/g, ' ').trim();
+  if (kind === 'row-header') return <th {...rest} scope="row" role={isStacked ? 'rowheader' : undefined} className={cellClass}>{children}</th>;
+  if (kind === 'group-header') {
+    return <th {...rest} scope="colgroup" colSpan={span} role="heading" aria-level={level} id={id} tabIndex={-1} className={cellClass}>{children}</th>;
+  }
+  const isPrefixed = isStacked && kind === 'data' && textRole === 'meta' && Boolean(label);
+  return <td {...rest} colSpan={kind === 'span' ? span : undefined} role={isStacked ? 'cell' : undefined} className={cellClass}>
+    {isPrefixed && <span aria-hidden="true" className="tbl-cell-label">{label}</span>}
+    {children}
+  </td>;
+}
+
+/**
+ * A row's actions, two at most: the visible action, then the S2a overflow menu only when items exist.
+ * The trigger's menu-button keys and every key inside the open menu stop here → a row or body key handler never acts on them.
+ * @param label - accessible name of the overflow trigger, naming its row
+ * @param items - MenuPanel action items
+ * @param isRowControl - the row is a getRowFocusProps row → the trigger leaves the Tab order and ArrowRight reaches it
+ */
+function RowActions({ label, action, items = [], onPick, isRowControl = false }) {
+  const menu = useMenuButton();
+  return <div ref={menu.rootRef} className="row-actions" onKeyDown={(event) => putRowActionsKey(event, menu.close)}>
+    {action}
+    {items.length > 0 && <button type="button" className="btn ghost icon row-actions-more" aria-label={label} {...menu.triggerProps}
+      {...(isRowControl ? ROW_CONTROL_PROPS : null)}>
+      <Icon name="ellipsis" size={16} />
+    </button>}
+    {menu.isOpen && <MenuPanel id={menu.menuId} label={label} kind="action" items={items}
+      rootRef={menu.rootRef} onPick={onPick} onClose={menu.close} />}
+  </div>;
+}
+
+const MENU_TRIGGER_KEYS = Object.freeze(['Enter', ' ', 'ArrowDown']);
+
+function putRowActionsKey(event, onClose) {
+  const isInMenu = event.target.closest('[role="menu"]') !== null;
+  const isTriggerKey = event.target.getAttribute('aria-haspopup') === 'menu' && MENU_TRIGGER_KEYS.includes(event.key);
+
+  if (!isInMenu && !isTriggerKey) return;
+  event.stopPropagation();
+  // stopped → the document dismiss listener never hears this Escape, so the menu closes here
+  if (isInMenu && event.key === 'Escape') onClose();
 }
 
 const DISCLOSURE_CHEVRON_PX = 14;
@@ -1199,6 +1315,273 @@ function ChipGroup({ label, chips, onToggle, className = '' }) {
   </div>;
 }
 
+/**
+ * Arrow press inside a roving single-choice set (segmented range, tabs) → chooses and focuses the next item.
+ * Choice follows focus, so the set keeps one Tab stop on its chosen item.
+ */
+function putRovingChoice(event, keys, onChange) {
+  const items = [...event.currentTarget.querySelectorAll('[data-choice]')];
+  const index = items.indexOf(event.target);
+  const next = getRovingIndex(event.key, index < 0 ? null : index, items.length);
+
+  if (next === undefined) return;
+  event.preventDefault();
+  items[next].focus();
+  onChange(keys[next]);
+}
+
+// A page-wide window (range 7d/30d/90d), never a list filter.
+function Segmented({ label, options, value, onChange, className = '' }) {
+  const chosenIndex = options.findIndex((option) => option.key === value);
+  const keys = options.map((option) => option.key);
+
+  return <div role="radiogroup" aria-label={label} className={`seg ${className}`.trim()}
+    onKeyDown={(event) => putRovingChoice(event, keys, onChange)}>
+    {options.map((option, i) => <button key={option.key} type="button" role="radio" data-choice=""
+      aria-checked={i === chosenIndex} tabIndex={getRovingTabIndex(i, chosenIndex, options.length)}
+      onClick={() => onChange(option.key)}>{option.label}</button>)}
+  </div>;
+}
+
+const getTabId = (id, key) => `${id}-tab-${key}`;
+const getTabPanelId = (id, key) => `${id}-panel-${key}`;
+
+// Switch between distinct views; the caller renders the one panel through getTabPanelProps.
+function Tabs({ id, label, tabs, value, onChange, className = '' }) {
+  const chosenIndex = tabs.findIndex((tab) => tab.key === value);
+  const keys = tabs.map((tab) => tab.key);
+
+  return <div role="tablist" aria-label={label} className={`tabs ${className}`.trim()}
+    onKeyDown={(event) => putRovingChoice(event, keys, onChange)}>
+    {tabs.map((tab, i) => <button key={tab.key} type="button" role="tab" data-choice="" id={getTabId(id, tab.key)}
+      aria-selected={i === chosenIndex} aria-controls={getTabPanelId(id, tab.key)}
+      tabIndex={getRovingTabIndex(i, chosenIndex, tabs.length)} onClick={() => onChange(tab.key)}>{tab.label}</button>)}
+  </div>;
+}
+
+function getTabPanelProps(id, key) {
+  return { role: 'tabpanel', id: getTabPanelId(id, key), 'aria-labelledby': getTabId(id, key), tabIndex: 0 };
+}
+
+const MENU_ITEM_ROLES = Object.freeze({ radio: 'menuitemradio', checkbox: 'menuitemcheckbox', action: 'menuitem' });
+
+/**
+ * Key inside an open menu → { focus: index } or { leave: true } on Tab; undefined = left to the browser.
+ * Escape is the surface stack's (useDismissFocus), Enter and Space click the focused item natively.
+ */
+function getMenuKeyAction(key, index, count) {
+  if (key === 'Tab') return { leave: true };
+  const next = getRovingIndex(key, index, count, 'vertical');
+  return next === undefined ? undefined : { focus: next };
+}
+
+let menuSeq = 0;
+
+/**
+ * Open state + trigger props of a menu button; Enter and Space open through the button's native click, ArrowDown opens too.
+ * Wrap trigger and MenuPanel in an element carrying rootRef → a press on the trigger is never an outside press.
+ */
+function useMenuButton() {
+  const [isOpen, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const idRef = useRef(null);
+
+  if (idRef.current === null) idRef.current = `menu-${++menuSeq}`;
+  const triggerProps = {
+    'aria-haspopup': 'menu',
+    'aria-expanded': isOpen,
+    'aria-controls': isOpen ? idRef.current : undefined,
+    onClick: () => setOpen((v) => !v),
+    onKeyDown: (event) => {
+      if (event.key !== 'ArrowDown' || isOpen) return;
+      event.preventDefault();
+      setOpen(true);
+    },
+  };
+  return { isOpen, close: () => setOpen(false), rootRef, menuId: idRef.current, triggerProps };
+}
+
+/**
+ * Menu surface of a menu button, mounted only while open: focus lands on the first checked item (else the first),
+ * a radio or action pick closes it and focus returns to the trigger, a checkbox pick keeps it open.
+ * @param items - { key, label, isChecked } — isChecked read for the radio and checkbox kinds only
+ */
+function MenuPanel({ id, label, kind = 'action', items, rootRef, onPick, onClose }) {
+  const panelRef = useRef(null);
+  const role = MENU_ITEM_ROLES[kind];
+  const isCheckable = kind !== 'action';
+
+  const openIndex = Math.max(0, isCheckable ? items.findIndex((item) => item.isChecked) : -1);
+
+  useEffect(() => {
+    setSurfaceOpen(panelRef, true);
+    panelRef.current.querySelectorAll('[role^="menuitem"]')[openIndex]?.focus();
+
+    return () => setSurfaceOpen(panelRef, false);
+  }, []);
+
+  useDismissFocus({ onDismiss: onClose, isKeyOwner: () => getTopSurface() === panelRef, panelRef });
+
+  useOutsidePress(rootRef, onClose);
+
+  const onItemClick = (key) => {
+    onPick(key);
+    if (kind !== 'checkbox') onClose();
+  };
+
+  return <div ref={panelRef} id={id} role="menu" aria-label={label} className="menu" onKeyDown={(event) => putMenuKeyFocus(event, onClose)}>
+    {items.map((item) => <button key={item.key} type="button" role={role} tabIndex={-1} className="menu-item"
+      aria-checked={isCheckable ? Boolean(item.isChecked) : undefined} onClick={() => onItemClick(item.key)}>
+      {isCheckable && item.isChecked && <span aria-hidden="true" className="menu-item-check">✓</span>}
+      {item.label}
+    </button>)}
+  </div>;
+}
+
+function putMenuKeyFocus(event, onClose) {
+  const nodes = [...event.currentTarget.querySelectorAll('[role^="menuitem"]')];
+  const action = getMenuKeyAction(event.key, nodes.indexOf(event.target), nodes.length);
+
+  if (!action) return;
+  // Tab keeps its default → focus leaves from the trigger the closed menu hands it back to
+  if (action.leave) {
+    onClose();
+    return;
+  }
+  event.preventDefault();
+  nodes[action.focus].focus();
+}
+
+/**
+ * One filter axis on a bar: dim axis name + ink value, no colon; the menu checks the chosen value(s).
+ * @param kind - 'radio' (one value, a pick closes) | 'checkbox' (several, the menu stays open)
+ * @param chosenKeys - keys of the chosen options
+ */
+function FilterTrigger({ axis, value, kind = 'radio', options, chosenKeys, onPick }) {
+  const menu = useMenuButton();
+  const items = options.map((option) => ({ ...option, isChecked: chosenKeys.includes(option.key) }));
+
+  return <div ref={menu.rootRef} className="filter-trigger-root">
+    <button type="button" className="filter-trigger" {...menu.triggerProps}>
+      <span className="filter-trigger-axis">{axis}</span>
+      <span className="filter-trigger-value">{value}</span>
+      <DisclosureChevron isOpen={menu.isOpen} />
+    </button>
+    {menu.isOpen && <MenuPanel id={menu.menuId} label={axis} kind={kind} items={items}
+      rootRef={menu.rootRef} onPick={onPick} onClose={menu.close} />}
+  </div>;
+}
+
+const RESET_HIDDEN_STYLE = Object.freeze({ visibility: 'hidden' });
+
+/**
+ * Filter triggers in one bar; the quiet reset shows only while a filter is applied and holds its slot at defaults.
+ * A reset moves focus to the bar's first control — the hidden reset would otherwise drop it to the page.
+ */
+function FilterBar({ label, isApplied, onReset, children, className = '' }) {
+  const barRef = useRef(null);
+  const onResetClick = () => {
+    onReset();
+    barRef.current?.querySelector('[aria-haspopup]')?.focus();
+  };
+
+  return <div ref={barRef} role="group" aria-label={label} className={`filter-bar ${className}`.trim()}>
+    {children}
+    <QuietButton className="filter-bar-reset" style={isApplied ? undefined : RESET_HIDDEN_STYLE}
+      onClick={onResetClick}>Reset filters</QuietButton>
+  </div>;
+}
+
+// An action inside a bar or header line: no edge or fill at rest, dim label + optional icon.
+function QuietButton({ icon, className = '', children, ...props }) {
+  return <button type="button" className={`btn ghost ${className}`.trim()} {...props}>
+    {icon && <Icon name={icon} size={14} />}{children}
+  </button>;
+}
+
+// Navigation to another page or document: ink text + a trailing arrow the accessible name leaves out.
+function Link({ href, className = '', children, ...props }) {
+  return <a href={href} className={`link ${className}`.trim()} {...props}>
+    {children}<span aria-hidden="true" className="link-arrow">→</span>
+  </a>;
+}
+
+// Free-text filter on a bar: the sunken fill carries the field's focus ring; a <label> fill → a press on the icon or padding focuses the field.
+function BarSearch({ label, value, onChange, placeholder, className = '' }) {
+  return <label className={`bar-search ${className}`.trim()}>
+    <Icon name="search" size={14} />
+    <input type="search" className="bar-search-field" aria-label={label} value={value} placeholder={placeholder}
+      onChange={(event) => onChange(event.target.value)} />
+  </label>;
+}
+
+/**
+ * Form select with its label above it; extra props (title, aria-describedby) land on the <select>.
+ * @param options - { key, label, title? } — `title` = that option's tooltip
+ * @param isLabelHidden - a row header already names the field on screen → the label stays for assistive tech only, on no line of its own
+ * @param isError - crit edge + aria-invalid; the caller renders the worded message
+ * @param children - entry slot under the select (e.g. a custom-value field), inside the same field group
+ */
+function Select({ id, label, value, options, onChange, isLabelHidden = false, isError = false, className = '', children, ...props }) {
+  return <Stack gap="label" className={className}>
+    <label htmlFor={id} className={isLabelHidden ? 'sr-only' : 'field-label'}>{label}</label>
+    <select id={id} className={`field field-select${isError ? ' is-error' : ''}`} value={value} aria-invalid={isError ? 'true' : undefined}
+      onChange={(event) => onChange(event.target.value)} {...props}>
+      {options.map((option) => <option key={option.key} value={option.key} title={option.title}>{option.label}</option>)}
+    </select>
+    {children}
+  </Stack>;
+}
+
+const STACK_GAPS = Object.freeze(['block', 'label', 'stack', 'list']);
+const CLUSTER_GAPS = Object.freeze(['control', 'control-group']);
+
+// Vertical flow spaced by a role name: 'block' | 'label' | 'stack' | 'list'.
+function Stack({ gap = 'block', className = '', children }) {
+  return <div className={`${getGapClass('stack', STACK_GAPS, gap)} ${className}`.trim()}>{children}</div>;
+}
+
+// Wrapping row of controls: 'control' inside a group | 'control-group' between groups.
+function Cluster({ gap = 'control', className = '', children }) {
+  return <div className={`${getGapClass('cluster', CLUSTER_GAPS, gap)} ${className}`.trim()}>{children}</div>;
+}
+
+// a number or an unknown role throws → a screen never spaces by value
+function getGapClass(base, gaps, gap) {
+  if (!gaps.includes(gap)) throw new Error(`${base}: "${gap}" is not a gap role (${gaps.join(' | ')})`);
+  return `${base} ${base}--${gap}`;
+}
+
+// Id, hash, path, config key or CLI flag — the one mono use; prose, labels and numbers stay sans.
+function MachineString({ className = '', children }) {
+  return <code className={`machine ${className}`.trim()}>{children}</code>;
+}
+
+/**
+ * Pagination bar: the row range left, Previous · current page · Next right; nothing renders for an empty result.
+ * An end step stays focusable (aria-disabled + click guard) → pressing Next onto the last page never drops focus to the body.
+ * @param page - 0-based page index; caller clamps its own held page to `ceil(total / pageSize) - 1` when total shrinks → the rows it slices match the range shown
+ * @param total - matched row count
+ */
+function Pagination({ page, pageSize, total, onPageChange, label = 'Pages', className = '' }) {
+  if (!(total > 0)) return null;
+  const pageCount = Math.ceil(total / pageSize);
+  const current = Math.min(page, pageCount - 1); // a total that shrank under a held page → read the last page, never a start past the end
+  const last = Math.min((current + 1) * pageSize, total);
+  const hasPrev = current > 0;
+  const hasNext = last < total;
+  const getStepHandler = (isEnabled, next) => () => { if (isEnabled) onPageChange(next); };
+
+  return <nav className={`pagination ${className}`.trim()} aria-label={label}>
+    <span className="pagination-range">{`${formatInt(current * pageSize + 1)}–${formatInt(last)} of ${formatInt(total)}`}</span>
+    <div className="pagination-steps">
+      <QuietButton aria-label="Previous page" aria-disabled={hasPrev ? undefined : 'true'} onClick={getStepHandler(hasPrev, current - 1)}>Previous</QuietButton>
+      <span className="pagination-current" aria-current="page"><span className="sr-only">Page </span>{current + 1}<span className="sr-only">{` of ${pageCount}`}</span></span>
+      <QuietButton aria-label="Next page" aria-disabled={hasNext ? undefined : 'true'} onClick={getStepHandler(hasNext, current + 1)}>Next</QuietButton>
+    </div>
+  </nav>;
+}
+
 const BLANK_FIELD_TEXT = new Set(['', '—', '-', 'unknown', 'n/a', 'null', 'undefined']);
 
 // placeholder text counts as empty → the field is hidden instead of printing "unknown"
@@ -1240,13 +1623,13 @@ function getDisplayName(kind, value) {
   return format ? format(text) : text;
 }
 
-// Label + value pair that renders nothing for an empty or placeholder value.
+// One drawer fact as a one-pair dl (valid without a caller's dl wrapper); an empty or placeholder value renders nothing.
 function DetailField({ label, value, mono = false }) {
   if (!hasFieldValue(value)) return null;
-  return <div>
-    <div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">{label}</div>
-    <div className={`fs-body ${mono ? 'font-mono text-dim' : 'text-ink'} break-words`}>{value}</div>
-  </div>;
+  return <dl className="detail-fact">
+    <dt className="detail-fact-label">{label}</dt>
+    <dd className="detail-fact-value">{mono ? <MachineString>{value}</MachineString> : value}</dd>
+  </dl>;
 }
 
 /**
@@ -1255,19 +1638,23 @@ function DetailField({ label, value, mono = false }) {
  * @param freshness - the status group: the FreshnessStamp and any status token read beside it
  * @param range - the time-range control · @param refresh - the RefreshButton
  * @param actions - optional page actions, set apart from the status group
+ * @param back - back link of a detail page, before the h1 · @param status - the record's status pill, after the h1
+ * @param primary - the page's one primary button, right-most
  */
-function PageHeader({ title, sub, actions, freshness, range, refresh }) {
-  const hasSub = sub && sub !== title;
+// O5 one line box: back · h1 · status left, the cluster right; no sub-line (a caller's `sub` renders nothing)
+function PageHeader({ title, back, status, actions, freshness, range, refresh, primary }) {
   const hasStatus = Boolean(freshness || range || refresh);
-  const hasCluster = Boolean(actions || hasStatus);
+  const hasCluster = Boolean(actions || hasStatus || primary);
   return <div className="page-head">
-    <div className="min-w-0">
+    <div className="page-head-lead">
+      {back}
       <h1 className="page-head-title fs-display font-semibold">{title}</h1>
-      {hasSub && <div className="page-head-sub fs-meta font-mono text-faint tracking-wider uppercase">{sub}</div>}
+      {status}
     </div>
     {hasCluster && <div className="page-head-cluster">
       {actions && <div className="page-head-group">{actions}</div>}
       {hasStatus && <div className="page-head-group">{freshness}{range}{refresh}</div>}
+      {primary}
     </div>}
   </div>;
 }
@@ -1517,6 +1904,11 @@ function getRegionSummary(regions) {
   };
 }
 
+/** Region states with every in-flight bit cleared → the state the page settles to once its reads land. */
+function getSettledRegions(regions) {
+  return Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
+}
+
 /**
  * Freshness of the last successful read — Fresh only when nothing is in flight or failed.
  * Callers pass only successful-read times as `at`, so a failed read never advances the stamp.
@@ -1542,7 +1934,7 @@ function getFreshnessState({ at, loading = false, failed = false, regions, stale
  */
 function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, failed = false, regions, staleAfterMs = FRESHNESS_STALE_MS, now = Date.now() }) {
   const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
-  const settledRegions = Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
+  const settledRegions = getSettledRegions(regions);
   const settled = getFreshnessState({ at, failed, regions: settledRegions, staleAfterMs, now });
   const isBusy = state === 'loading' || state === 'refreshing';
   const pageLabel = label || VERDICT_TONE_LABEL[tone] || VERDICT_TONE_LABEL.neutral;
@@ -1578,14 +1970,12 @@ function useFreshnessTick(isEnabled) {
   }, [isEnabled]);
 }
 
-// shell ↔ page bridge — app.jsx registers the sink and the harness reader; pageState is replayed on register (child effects run first)
-const shellBridge = { putPageState: null, readHarness: null, pageState: null, owner: null };
+// shell ↔ page bridge — app.jsx registers its harness reader
+const shellBridge = { readHarness: null };
 
-/** Shell side: registers the sidebar's page-state sink and its coalesced harness read; call with no argument to detach. */
-function setShellBridge({ putPageState = null, readHarness = null } = {}) {
-  shellBridge.putPageState = putPageState;
+/** Shell side: registers its coalesced harness read; call with no argument to detach. */
+function setShellBridge({ readHarness = null } = {}) {
   shellBridge.readHarness = readHarness;
-  putPageState?.(shellBridge.pageState);
 }
 
 /** One shell harness re-read, joined to any read already in flight; never rejects (every source settles). */
@@ -1594,72 +1984,37 @@ function getHarnessRead() {
 }
 
 /**
- * Page read state the shell shows → { state, at }: 'loading' only for a first read in flight, else the settled stamp state.
- * A refresh over held data reports its settled state, so the sidebar never flickers to Checking.
+ * Shared freshness stamp — hidden while the settled read is fresh; otherwise the unread note or "Last known" with the read's age.
+ * A refresh in flight keeps the settled text and sets aria-busy; a read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
  */
-function getShellPageState({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
-  const settledRegions = Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
-  const settled = getFreshnessState({ at, failed, regions: settledRegions, staleAfterMs, now });
-  const isInFlight = loading || getRegionSummary(regions).isBusy;
-
-  if (settled === 'not-read') return { state: isInFlight ? 'loading' : 'not-read', at: null };
-  return { state: settled, at };
-}
-
-/**
- * Hands the page's read state to the shell sidebar and clears it on unmount, so the next page never inherits it.
- * FreshnessStamp calls it; a page whose stamp is gated calls it directly with the stamp's inputs. One caller per page.
- */
-function useShellPageState(input) {
-  const ownerRef = useRef({});
-  const { state, at } = getShellPageState(input);
-  const atMs = at ? new Date(at).getTime() : null;
-
-  useEffect(() => {
-    shellBridge.owner = ownerRef.current;
-    shellBridge.pageState = { state, at };
-    shellBridge.putPageState?.(shellBridge.pageState);
-  }, [state, atMs]);
-  useEffect(() => () => {
-    if (shellBridge.owner !== ownerRef.current) return;
-    shellBridge.owner = null;
-    shellBridge.pageState = null;
-    shellBridge.putPageState?.(null);
-  }, []);
-}
-
-/**
- * Shared "as of HH:MM" stamp — a refresh in flight keeps the last stamp and sets aria-busy.
- * A read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
- * @param shellRegions - regions handed to the shell when they differ from the rendered set (a region the shell already owns is left out)
- */
-function FreshnessStamp({ at, loading = false, failed = false, regions, shellRegions, staleAfterMs, now }) {
+function FreshnessStamp({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
   const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
-  useShellPageState({ at, loading, failed, regions: shellRegions ?? regions, staleAfterMs, now });
-  const meta = FRESHNESS_META[state];
-  const glyph = meta.tone ? TONE_GLYPH[meta.tone] : '…';
-  const toneClass = meta.tone ? `text-${meta.tone}` : 'text-faint';
-  const isRead = state !== 'loading' && state !== 'not-read';
-  const isBusy = state === 'loading' || state === 'refreshing';
-  const { failedCount, regionCount } = getRegionSummary(regions);
-  const failedNote = state === 'partial' ? `${failedCount} of ${regionCount} failed` : '';
-  const word = failedNote ? `${meta.word}, ${failedNote}` : meta.word;
-  useFreshnessTick(isRead && now === undefined);
+  const settled = getFreshnessState({ at, failed, regions: getSettledRegions(regions), staleAfterMs, now });
+  useFreshnessTick(settled !== 'not-read' && now === undefined);
+  if (settled === 'fresh') return null;
 
-  const readText = `as of ${formatKstTime(at)}`;
-  const text = !isRead ? word : failedNote ? `${readText} · ${failedNote}` : readText;
-  // unread → the visible text is the word itself; first read → no text, the paired Refresh label already reads "Loading…"
-  const hasSrWord = isRead || state === 'loading';
-  const title = isRead ? `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at)})` : word;
+  const meta = FRESHNESS_META[state];
+  const { failedCount, regionCount } = getRegionSummary(regions);
+  const failedNote = settled === 'partial' ? `${failedCount} of ${regionCount} failed` : '';
+  const word = state === 'partial' ? `${meta.word}, ${failedNote}` : meta.word;
+  const text = getStampText({ settled, at, now, failedNote, hasFailed: failed || failedCount > 0 });
+  const title = settled === 'not-read' ? word : `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at, now)})`;
 
   return (
-    <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={isBusy ? 'true' : undefined}>
-      <span aria-hidden="true" className={`mr-1 ${toneClass}`}>{glyph}</span>
-      {hasSrWord && <span className="sr-only">{word}</span>}
-      {/* the clock time never breaks from "as of", whatever the header cluster around the stamp does */}
+    <span className="fs-meta text-faint tabular-nums whitespace-nowrap" title={title} aria-busy={state === 'loading' || state === 'refreshing' ? 'true' : undefined}>
+      <span aria-hidden="true" className={`mr-1 ${meta.tone ? `text-${meta.tone}` : 'text-faint'}`}>{meta.tone ? TONE_GLYPH[meta.tone] : '…'}</span>
+      <span className="sr-only">{word}</span>
+      {/* first read in flight → no text, the paired Refresh label already reads "Loading…" */}
       {state !== 'loading' && <span data-stamp-text="true" className="whitespace-nowrap">{text}</span>}
     </span>
   );
+}
+
+// visible stamp line for a settled state that is not fresh — the unread note, or "Last known" with the read's age
+function getStampText({ settled, at, now, failedNote, hasFailed }) {
+  if (settled === 'not-read') return getUnreadNote({ isBusy: false, hasFailed });
+  const readText = `Last known · read ${formatRelativeTime(at, now)}`;
+  return failedNote ? `${readText} · ${failedNote}` : readText;
 }
 
 /**
@@ -1833,7 +2188,7 @@ function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
 }
 
 /**
- * Quiet per-region failure on a neutral surface; keeps the grid slot and shows the raw answer behind Details.
+ * Quiet per-region failure inline in its card, no surface of its own; keeps the grid slot and shows the raw answer behind Details.
  * @param onRetry - omit when a PageErrorBanner already carries the one Retry for this outage
  * @param isBusy - a Retry is in flight; keep rendering this card (see getRegionView) so its Retry keeps focus
  * @param focusTargetId - region card id that takes focus if this card unmounts while its Retry is focused
@@ -1842,8 +2197,8 @@ function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
 function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
   const copy = getErrorCopy(error, source);
   return (
-    <div className={`sub-card bg-sunken flex flex-col gap-1.5 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}>
-      <div className="fs-body flex items-center gap-1.5">
+    <div className={`stack stack--label ${className}`.trim()} style={minHeight ? { minHeight } : undefined}>
+      <div className="fs-body cluster cluster--control">
         <Icon name={TONE_ICON.crit} size={14} className="text-crit"/>
         <span>{copy.sentence}</span>
       </div>
@@ -2270,9 +2625,6 @@ function putCardFocus(id) {
   if (!card) return;
 
   if (!card.hasAttribute('tabindex')) card.setAttribute('tabindex', '-1');
-  // programmatic focus after a mouse Retry misses :focus-visible → the marker draws the ring until the card blurs
-  card.setAttribute('data-focus-handoff', 'true');
-  card.addEventListener('blur', () => card.removeAttribute('data-focus-handoff'), { once: true });
   card.scrollIntoView({ block: 'nearest' });
   card.focus({ preventScroll: true });
 }
@@ -2364,17 +2716,18 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
-  SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
+  SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
+  Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, Pagination,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
-  setShellBridge, getHarnessRead, getShellPageState, useShellPageState,
+  setShellBridge, getHarnessRead,
   getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,

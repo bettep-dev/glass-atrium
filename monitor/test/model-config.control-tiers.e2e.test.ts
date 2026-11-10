@@ -1,5 +1,5 @@
 // Models & budgets controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and type
-// scale, rendered from the shipped components: the file-count fold on the interactive pill, the save-results fold on the disclosure
+// scale, rendered from the shipped components: the file-count fold and the save-results fold on the ghost disclosure
 // atom — each keeps one box closed, open and in every pointer/keyboard state (§7.16) — the Cost & usage links as 24 targets, and a
 // field's inline Reset as a 24 target in a saved line that keeps its height whether the field is overridden or not.
 // Runner: npx tsx --test test/model-config.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
@@ -13,6 +13,7 @@ import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { createControlProbe } from "./lib/control-probe.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -32,7 +33,7 @@ const TYPE_SCALE_CSS = findNodes(renderScreen(UI.TypeScaleStyle({})), (n) => n.t
   .map((n) => collectText(n))
   .join("\n");
 
-// The app loads Tailwind preflight and utilities from its CDN; these are the rules the measured geometry depends on, at their shipped values.
+// The app loads Tailwind preflight and utilities from its CDN; these are the rules the measured geometry depends on, at their shipped values — role keys come from the shared shim.
 const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 solid; }
   html { line-height: 1.5; font-family: ui-sans-serif, system-ui, sans-serif; }
   svg { display: block; vertical-align: middle; }
@@ -42,11 +43,11 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   summary { display: list-item; }
   .flex { display: flex; } .inline-flex { display: inline-flex; } .flex-col { flex-direction: column; } .flex-wrap { flex-wrap: wrap; }
   .items-center { align-items: center; } .min-w-0 { min-width: 0; } .max-w-full { max-width: 100%; } .shrink-0 { flex-shrink: 0; }
-  .gap-1 { gap: 0.25rem; } .gap-1\\.5 { gap: 0.375rem; } .gap-2 { gap: 0.5rem; } .gap-x-2 { column-gap: 0.5rem; } .gap-x-3 { column-gap: 0.75rem; }
-  .gap-y-1 { row-gap: 0.25rem; } .mt-1 { margin-top: 0.25rem; } .pl-3 { padding-left: 0.75rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
+  .gap-1 { gap: 0.25rem; } .gap-1\\.5 { gap: 0.375rem; } .gap-2 { gap: 0.5rem; }
+  .mt-1 { margin-top: 0.25rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
   .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; } .border { border-width: 1px; } .border-b { border-bottom-width: 1px; }
   .underline { text-decoration-line: underline; } .underline-offset-2 { text-underline-offset: 2px; }
-  .text-right { text-align: right; } .whitespace-nowrap { white-space: nowrap; } .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
+  .text-right { text-align: right; } .table-fixed { table-layout: fixed; } .tabular-nums { font-variant-numeric: tabular-nums; } .whitespace-nowrap { white-space: nowrap; } .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
   .font-medium { font-weight: 500; } .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }`;
 
@@ -120,6 +121,7 @@ before(async () => {
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
   await page.addStyleTag({ content: TYPE_SCALE_CSS });
+  await page.addStyleTag({ content: getRoleKeyCss() });
   cdp = await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
   await cdp.send("CSS.enable");
@@ -129,26 +131,23 @@ after(async () => {
   await browser?.close();
 });
 
-describe("the In effect file-count fold sits on the interactive pill", () => {
-  test("its summary is a 32 bordered pill whose chevron alone marks it open", () => assertFoldOnOneBox(FILES, FILES_SUMMARY));
+describe("the In effect file-count fold opens on the ghost disclosure atom", () => {
+  test("its summary is a 32 disclosure whose chevron alone marks it open", () => assertFoldOnOneBox(FILES, FILES_SUMMARY));
 
   test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(FILES_SUMMARY));
 
-  test("it draws the pill edge and inline padding", async () => {
-    assert.equal(await readStyle(FILES_SUMMARY, "border-top-width"), "1px");
-    assert.equal(await readStyle(FILES_SUMMARY, "padding-left"), "8px");
+  test("it draws no pill edge", async () => {
+    assert.equal(await readStyle(FILES_SUMMARY, "border-top-width"), "0px");
   });
 
-  // the pill makes the In effect cell a control cell → its first line still centres on the row's Model select
-  test("the In effect first line centres on the Model select in its row", async () => {
+  // a steady row puts nothing above the fold → the summary itself is the cell's control line
+  test("the fold summary centres on the Model select in its row", async () => {
     const offset = await page.$eval("#models tbody tr", (tr) => {
       const select = tr.querySelector("select")!.getBoundingClientRect();
-      const range = document.createRange();
-      range.selectNodeContents(tr.querySelector("td:last-child .tbl-first-line")!);
-      const line = range.getClientRects()[0];
-      return line.top + line.height / 2 - (select.top + select.height / 2);
+      const summary = tr.querySelector("td details > summary")!.getBoundingClientRect();
+      return summary.top + summary.height / 2 - (select.top + select.height / 2);
     });
-    assert.ok(Math.abs(offset) <= 0.5, `first line ${offset}px off the select centre`);
+    assert.ok(Math.abs(offset) <= 0.5, `fold summary ${offset}px off the select centre`);
   });
 });
 

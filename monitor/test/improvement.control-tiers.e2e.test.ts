@@ -84,6 +84,11 @@ const CORPUS_GROWTH = getMarkup(
   },
   instrumentationScreen,
 );
+const FLAGGED = getMarkup(
+  "FlaggedResultsCardI",
+  { state: { status: "ready", data: { review_flag_last_7d: 3 } }, reviewReasons: null },
+  instrumentationScreen,
+);
 const LEARNING_MEMORY = getMarkup("BucketRowI", {
   state: { status: "ready", busy: false, data: {}, error: null }, buckets: { ctm: 12, epm: 3 }, failures: [], onRetry: noop,
 });
@@ -99,6 +104,7 @@ const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</
   <div id="held" style="width: 420px; padding: 24px;">${HELD_CAUSE}</div>
   <div id="corpus" style="width: 560px; padding: 24px;">${CORPUS_GROWTH}</div>
   <div id="learning-memory" style="width: 560px; padding: 24px;">${LEARNING_MEMORY}</div>
+  <div id="flagged" style="width: 560px; padding: 24px;">${FLAGGED}</div>
 </body></html>`;
 
 const TOGGLE_OPTIONS = ["Operator", "Instrumentation"] as const;
@@ -171,38 +177,51 @@ describe("the held-cause fold opens on the disclosure atom", () => {
   test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(SUMMARY));
 });
 
-// the value row's text items, found by their text: the 24 mono figure, its unit, the delta line
+// the corpus-growth headline stat: the figure with its attached unit, the delta on the stat's context line
 const CORPUS_TEXT = { value: "77,003", unit: "words", delta: "▲ +120 words vs previous" } as const;
 
-describe("the corpus-growth value row sets its figure, unit and delta on one baseline", () => {
-  // a 0 x 0 inline-block appended to an item sits on that item's baseline, so its bottom is the baseline
-  const readTextItem = (text: string) =>
-    page.$eval("[data-testid=corpus-growth-card]", (card, wanted) => {
-      const el = [...card.querySelectorAll("span")].find((span) => span.textContent?.trim() === wanted);
-      if (!el) throw new Error(`no span reads "${wanted}"`);
+describe("the corpus-growth headline sets its figure and unit on one baseline, the delta on the line below", () => {
+  // a 0 x 0 inline-block appended to an element sits on that element's last baseline, so its bottom is the baseline
+  const readStatPart = (selector: string) =>
+    page.$$eval(".card", (cards, partSelector) => {
+      const card = cards.find((el) => el.querySelector(".card-title")?.textContent === "Corpus growth");
+      const el = card?.querySelector<HTMLElement>(partSelector);
+      if (!el) throw new Error(`no ${partSelector} in the Corpus growth card`);
       const probe = document.createElement("span");
       probe.style.cssText = "display: inline-block; width: 0; height: 0;";
       el.append(probe);
       const baseline = probe.getBoundingClientRect().bottom;
       probe.remove();
-      const { left, right } = el.getBoundingClientRect();
-      return { baseline, left, right };
-    }, text);
+      const { top, left, right } = el.getBoundingClientRect();
+      return { text: el.textContent?.trim() ?? "", baseline, top, left, right };
+    }, selector);
 
-  test("the figure, its unit and the delta share one baseline", async () => {
-    const value = await readTextItem(CORPUS_TEXT.value);
-    for (const name of ["unit", "delta"] as const) {
-      const { baseline } = await readTextItem(CORPUS_TEXT[name]);
-      assert.ok(Math.abs(baseline - value.baseline) <= 0.5, `${name} baseline ${baseline} vs figure ${value.baseline}`);
-    }
+  test("the figure and its unit share one baseline, the unit after the figure", async () => {
+    const value = await readStatPart(".stat-value");
+    const unit = await readStatPart(".stat-value .unit");
+    assert.ok(value.text.startsWith(CORPUS_TEXT.value), `figure reads "${value.text}"`);
+    assert.equal(unit.text, CORPUS_TEXT.unit);
+    assert.ok(Math.abs(unit.baseline - value.baseline) <= 0.5, `unit baseline ${unit.baseline} vs figure ${value.baseline}`);
   });
 
-  test("the unit sits 4 from its figure, and the delta one group step (12) after the unit", async () => {
-    const value = await readTextItem(CORPUS_TEXT.value);
-    const unit = await readTextItem(CORPUS_TEXT.unit);
-    const delta = await readTextItem(CORPUS_TEXT.delta);
-    assert.ok(Math.abs(unit.left - value.right - 4) < 0.01, `figure ↔ unit ${unit.left - value.right}`);
-    assert.ok(Math.abs(delta.left - unit.right - 12) < 0.01, `unit ↔ delta ${delta.left - unit.right}`);
+  test("the delta sits on the context line under the figure", async () => {
+    const value = await readStatPart(".stat-value");
+    const delta = await readStatPart(".stat-context");
+    assert.equal(delta.text, CORPUS_TEXT.delta);
+    assert.ok(delta.top >= value.baseline, `delta top ${delta.top} above the figure baseline ${value.baseline}`);
+  });
+});
+
+describe("the flagged-results head leads to Task results on the Link atom", () => {
+  test("its one way out is an inline link to #outcomes whose accessible name is Task results, never a button", async () => {
+    const head = page.locator("#flagged .card-head");
+    const link = head.getByRole("link", { name: "Task results", exact: true });
+
+    assert.equal(await head.getByRole("link").count(), 1, "the head has one link");
+    assert.equal(await link.count(), 1, "the link's accessible name is Task results");
+    assert.equal(await link.getAttribute("href"), "#outcomes");
+    assert.equal(await head.locator(".btn").count(), 0, "the head has no button");
+    assert.ok((await readBox("#flagged .card-head a.link")).height < 32, "the link keeps its inline height");
   });
 });
 

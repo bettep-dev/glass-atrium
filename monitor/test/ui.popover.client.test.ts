@@ -88,10 +88,10 @@ describe("PopoverPanel", () => {
     popover.unmount();
   });
 
-  test("opening moves focus to the first control inside the panel", () => {
+  test("opening focuses the panel itself, never its first control, so Tab enters at that control", () => {
     const popover = mountPanel(() => undefined);
 
-    assert.equal(doc.activeElement, popover.firstControl);
+    assert.equal(doc.activeElement, popover.panel);
     popover.unmount();
   });
 

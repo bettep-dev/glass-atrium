@@ -1,7 +1,6 @@
-// Unit tests for public/src/app.jsx nav-badge routing (T2 · T13a): the sidebar footer, the
-// architecture (System map) nav numeral and the Dashboard lane all read ONE harness fold, so
-// no two of those surfaces can disagree about a harness fact — including on the path where a
-// store fails to answer, which is where a per-surface cache used to keep a stale ALL SYSTEMS.
+// Unit tests for public/src/app.jsx nav-badge routing (T2 · T13a): the architecture (System map)
+// nav numeral and the Dashboard lane read ONE harness fold, so the two surfaces cannot disagree
+// about a harness fact — including when a store fails to answer.
 // The map owns the health readings now, so the Health entry point is gone (T13a).
 //
 // Runner: npx tsx --test test/app.nav-badge.client.unit.test.ts
@@ -35,12 +34,6 @@ interface Badge {
   source?: string;
   title?: string;
 }
-interface Rollup {
-  tone: string;
-  dotClass: string;
-  label: string;
-  glyph?: string | null;
-}
 interface HarnessFold {
   status: string;
   partsOk: number;
@@ -48,33 +41,18 @@ interface HarnessFold {
   partsTotal: number;
   downNames: string[];
   uncheckedNames: string[];
-  daemonsDown: number | null;
   failCount1h: number | null;
   version: string | null;
 }
 interface AppHelpers {
   harnessToNavBadges: (harness: HarnessFold | null) => { architecture?: { badges: Badge[] } | null };
   agentsToNavBadges: (agentsState: unknown) => { agents?: Badge | null };
-  systemsRollup: (harness: HarnessFold | null, pageState?: ShellPageState | null) => Rollup;
   getHarness: (stores: Record<string, unknown>) => HarnessFold & { unreadSources: string[]; error: string | null };
   parseHashScreen: () => string;
   toStoreState: (settled: PromiseSettledResult<unknown>, prev?: unknown) => { status: string; data: unknown };
   readHarnessSources: (read: (url: string) => Promise<unknown>) => Promise<Record<string, PromiseSettledResult<unknown>>>;
 }
-interface ShellPageState {
-  state: string;
-  at: string | null;
-}
-interface StampInput {
-  at?: string;
-  loading?: boolean;
-  failed?: boolean;
-  regions?: { busy: boolean; error: string | null }[];
-  now: number;
-}
 interface UiSurface {
-  getShellPageState: (input: StampInput) => ShellPageState;
-  formatKstTime: (at: string) => string;
   TONE_GLYPH: Record<string, string>;
 }
 interface AppSurface extends AppHelpers {
@@ -142,11 +120,6 @@ async function loadApp(): Promise<AppSurface> {
     "function",
     "harnessToNavBadges must be reachable",
   );
-  assert.strictEqual(
-    typeof h.systemsRollup,
-    "function",
-    "systemsRollup must be reachable",
-  );
   const { HealthModel: healthModel, UI: ui } = ctx.window as {
     HealthModel: { foldHarness: AppSurface["foldHarness"] };
     UI: UiSurface;
@@ -195,7 +168,7 @@ test("routing: '#health' gets no alias — the unknown-hash fallback takes it to
   app.setHash("");
 });
 
-// --- The fold: the ONE reading the nav numeral, the footer and the Dashboard lane share ---
+// --- The fold: the ONE reading the nav numeral and the Dashboard lane share ---
 // The relationship asserted is agreement across an input class, not one hand-picked payload.
 
 // The lane headline counts fold.downNames — every down part, not only daemons — so the numeral must too.
@@ -234,12 +207,10 @@ test("an unpolled harness store leaves its parts unchecked rather than counted h
   assert.equal(fold.partsChecked, 0);
   assert.equal(fold.partsOk, 0);
   assert.equal(fold.uncheckedNames.length, fold.partsTotal);
-  assert.equal(fold.daemonsDown, null, "an unpolled count is null, not 0");
   assert.equal(fold.failCount1h, null);
 });
 
-// First-poll wait and a lost harness are different facts — the tile skeleton and the footer's
-// CHECKING… belong to the wait, 'unavailable' only once every part has answered without a reading.
+// First-poll wait and a lost harness are different facts — the tile skeleton belongs to the wait, 'unavailable' only once every part has answered without a reading.
 test("a fold with nothing checked is loading while any part store is pending, unavailable once none is", () => {
   const rejected = { status: "error", data: null };
   const allRejected = { healthState: rejected, liveState: rejected, hookState: rejected, hookFailState: rejected };
@@ -300,7 +271,6 @@ test("a rejected harness store is unavailable, not a zero reading", () => {
     liveState: { status: "error", data: null },
     healthState: ready({ status: "ok", db: "open", browser: "ok" }),
   });
-  assert.equal(fold.daemonsDown, null, "a failed poll reports unknown, never 0 down");
   assert.equal(fold.partsChecked, 2, "only the parts that answered are in the denominator");
   assert.equal(fold.version, null);
 });
@@ -324,47 +294,9 @@ test("a failed poll keeps the held reading; only a store that never answered bec
   );
 });
 
-// --- AC-T13(c): the footer and the nav numeral are consumers of that same fold ---
-
-test("systemsRollup: an unavailable fold → CHECKING…, never a remembered verdict", () => {
-  for (const fold of [null, app.foldHarness({})]) {
-    const r = app.systemsRollup(fold);
-    assert.strictEqual(r.tone, "neutral");
-    assert.strictEqual(r.dotClass, "bg-faint");
-    assert.strictEqual(r.label, "CHECKING…");
-  }
-});
-
-test("systemsRollup: every part healthy and no failures → ALL SYSTEMS", () => {
-  const r = app.systemsRollup(app.foldHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 0 }) })));
-  assert.strictEqual(r.tone, "ok");
-  assert.strictEqual(r.dotClass, "bg-ok");
-  assert.strictEqual(r.label, "ALL SYSTEMS");
-});
-
-// The footer tone follows the worst alarm: a down part is crit on the lane, so the footer is crit too.
-test("systemsRollup: a down part is crit with the ✕ glyph and the lane's down count", () => {
-  for (const down of [1, 2]) {
-    const fold = app.foldHarness(allHealthy({ liveState: ready(daemonPayload(down)), kpiState: ready({ last_1h_fail_count: 4 }) }));
-    const r = app.systemsRollup(fold);
-    assert.strictEqual(r.tone, "crit", `${down} down outranks the fail count`);
-    assert.strictEqual(r.dotClass, "bg-crit");
-    assert.strictEqual(r.glyph, app.ui.TONE_GLYPH.crit);
-    assert.strictEqual(r.label, `${fold.downNames.length} ${down === 1 ? "PART" : "PARTS"} DOWN`);
-  }
-});
-
-test("systemsRollup: failures with no down part stay warn, with the warn glyph", () => {
-  const r = app.systemsRollup(app.foldHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 4 }) })));
-  assert.strictEqual(r.tone, "warn");
-  assert.strictEqual(r.dotClass, "bg-warn");
-  assert.strictEqual(r.label, "ISSUES DETECTED");
-  assert.strictEqual(r.glyph, app.ui.TONE_GLYPH.warn);
-});
-
-// An unread source is unknown, never healthy: the footer must not keep "ALL SYSTEMS" over a lost store.
-test("a failed harness read turns the footer to STATUS UNKNOWN, fresh or held", () => {
-  assert.strictEqual(app.systemsRollup(app.getHarness(allHealthy())).label, "ALL SYSTEMS");
+// An unread source is unknown, never healthy: a held reading whose re-poll failed is named unread too.
+test("a failed harness read names its source unread, fresh or held", () => {
+  assert.deepEqual([...app.getHarness(allHealthy()).unreadSources], []);
 
   const rows = [
     { name: "cold failure", liveState: { status: "error", data: null, error: "HTTP 500" } },
@@ -374,11 +306,7 @@ test("a failed harness read turns the footer to STATUS UNKNOWN, fresh or held", 
     const harness = app.getHarness(allHealthy({ liveState: row.liveState }));
     assert.deepEqual([...harness.unreadSources], ["daemon status"], row.name);
     assert.strictEqual(harness.error, "HTTP 500", row.name);
-    assert.strictEqual(app.systemsRollup(harness).label, "STATUS UNKNOWN", row.name);
   }
-
-  const known = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), hookState: { status: "error", data: null, error: "x" } }));
-  assert.strictEqual(app.systemsRollup(known).label, "1 PART DOWN", "a known fault still outranks an unread source");
 });
 
 // The harness tile's Retry and the page Refresh run this one read → a source it skipped would stay unread after the Retry.
@@ -509,7 +437,7 @@ const renderSidebar = (harness: unknown, agentsState: unknown): unknown => {
   const stubCreate = surface.React.createElement;
   surface.React.createElement = (type, props, ...children) => ({ type, props, children });
   try {
-    return surface.Sidebar({ active: "dashboard", onNav: () => {}, harness, agentsState, pageState: null });
+    return surface.Sidebar({ active: "dashboard", onNav: () => {}, harness, agentsState });
   } finally {
     surface.React.createElement = stubCreate;
   }
@@ -517,13 +445,12 @@ const renderSidebar = (harness: unknown, agentsState: unknown): unknown => {
 const renderSidebarText = (harness: unknown, agentsState: unknown): string[] =>
   collectText(renderSidebar(harness, agentsState));
 
-test("a failed agent-store read leaves the footer and the System map numeral unchanged", () => {
+test("a failed agent-store read leaves the System map numeral unchanged", () => {
   const harness = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 2 }) }));
   const unread = renderSidebarText(harness, { status: "loading", data: null });
   const failed = renderSidebarText(harness, { status: "error", data: null, error: "HTTP 503" });
   const systemMapNumeral = app.harnessToNavBadges(harness).architecture?.badges[0]?.badge;
   assert.ok(systemMapNumeral && unread.includes(systemMapNumeral), "the render reaches the System map numeral");
-  assert.ok(unread.includes(app.systemsRollup(harness).label), "the render reaches the footer");
   assert.deepStrictEqual(failed, unread);
 });
 
@@ -602,30 +529,20 @@ test("a legacy stale flag on a healthy daemon row adds no System map badge", () 
   assert.strictEqual(app.harnessToNavBadges(fold).architecture, null);
 });
 
-// The sidebar never reads greener than the page in view: the header stamp's read state takes only the ALL SYSTEMS slot.
-test("the sidebar slot follows the page's read state, below every harness word", async (t) => {
-  const at = "2026-09-30T05:05:00Z";
-  const now = Date.parse("2026-09-30T05:06:00Z");
-  const healthy = app.getHarness(allHealthy());
-  const faulted = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)) }));
-  const unread = app.getHarness(allHealthy({ liveState: { status: "error", data: null, error: "HTTP 500" } }));
-  const lastKnown = `LAST KNOWN ${app.ui.formatKstTime(at)}`;
+// One fact, one place: the nav badge is the sidebar's only harness signal, so nothing below the nav repeats it.
+test("outside its nav the sidebar shows only the brand, whatever the harness reads", async (t) => {
+  const pending = { status: "loading", data: null };
   const rows = [
-    { name: "one page source failed, harness healthy → Last known at the page's read time", harness: healthy, stamp: { at, now, regions: [{ busy: false, error: null }, { busy: false, error: "HTTP 500" }] }, label: lastKnown, tone: "neutral" },
-    { name: "the page's refresh failed over held data → Last known", harness: healthy, stamp: { at, now, failed: true }, label: lastKnown, tone: "neutral" },
-    { name: "a failed first page read → Not read", harness: healthy, stamp: { now, failed: true }, label: "NOT READ", tone: "neutral" },
-    { name: "a harness fault outranks a page Last known", harness: faulted, stamp: { at, now, failed: true }, label: "1 PART DOWN", tone: "crit" },
-    { name: "an unread harness source outranks a page Last known", harness: unread, stamp: { at, now, failed: true }, label: "STATUS UNKNOWN", tone: "neutral" },
-    { name: "a first page read in flight still reads Checking", harness: healthy, stamp: { now, loading: true }, label: "CHECKING…", tone: "neutral" },
-    { name: "a refresh over a fresh read keeps All systems", harness: healthy, stamp: { at, now, loading: true }, label: "ALL SYSTEMS", tone: "ok" },
-    { name: "a fresh page read keeps All systems", harness: healthy, stamp: { at, now }, label: "ALL SYSTEMS", tone: "ok" },
+    { name: "first poll in flight", stores: { kpiState: pending, liveState: pending, healthState: pending, hookState: pending, hookFailState: pending } },
+    { name: "every part healthy", stores: allHealthy({ kpiState: ready({ last_1h_fail_count: 0 }) }) },
+    { name: "a down part with failures", stores: allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 3 }) }) },
+    { name: "a source unread", stores: allHealthy({ liveState: { status: "error", data: null, error: "HTTP 500" } }) },
   ];
   for (const row of rows) {
     await t.test(row.name, () => {
-      const rollup = app.systemsRollup(row.harness, app.ui.getShellPageState(row.stamp));
+      const tree = renderSidebar(app.getHarness(row.stores), ready(buildBreakerSummary([])));
 
-      assert.strictEqual(rollup.label, row.label);
-      assert.strictEqual(rollup.tone, row.tone);
+      assert.strictEqual(collectReadText(tree, (n) => n.type === "nav").join("").trim(), "Atrium Monitor");
     });
   }
 });
@@ -648,14 +565,14 @@ test("every toned nav badge carries its tone's glyph, whichever store raised it"
 const getClassTokens = (n: RenderedNode): string[] => String(n.props?.className ?? "").split(/\s+/).filter(Boolean);
 const TONE = { NAMES: ["ok", "warn", "crit", "info"], TEXT_CLASSES: ["text-ok", "text-warn", "text-crit", "text-info"] };
 
-// The badge shell and the rollup words stay neutral on the sunken surface (light warn 2.51, crit 3.52 as tinted text).
-test("the sidebar's nav badges and rollup put their tone on the glyph only, never on the shell or the words", async (t) => {
+// The badge shell and numeral stay neutral on the sunken surface (light warn 2.51, crit 3.52 as tinted text).
+test("the sidebar's nav badges put their tone on the glyph only, never on the shell or the numeral", async (t) => {
   const crit = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 3 }) }));
   const warn = app.getHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 3 }) }));
   const agents = ready(buildBreakerSummary([buildBreakerAlarm("glass-atrium-qa-debugger", "suspended")]));
   const rows = [
-    { name: "a down part with failures and a suspended agent", harness: crit, tone: "crit" },
-    { name: "failures with no down part", harness: warn, tone: "warn" },
+    { name: "a down part with failures and a suspended agent", harness: crit },
+    { name: "failures with no down part", harness: warn },
   ];
   for (const row of rows) {
     await t.test(row.name, () => {
@@ -671,12 +588,6 @@ test("the sidebar's nav badges and rollup put their tone on the glyph only, neve
         assert.strictEqual(badge.props?.style, undefined, `a ${tone} badge paints no inline tone fill`);
         for (const word of words) assert.deepStrictEqual(getClassTokens(word).filter((c) => TONE.TEXT_CLASSES.includes(c)), [], `a ${tone} badge's numeral stays neutral`);
       }
-
-      const rollup = app.systemsRollup(row.harness);
-      const [label] = findNodes(tree, (n) => collectText(n.children).join("") === rollup.label);
-      const [glyph] = findNodes(tree, (n) => collectText(n.children).join("") === rollup.glyph);
-      assert.ok(getClassTokens(label).includes("text-dim"), `the ${row.tone} rollup label reads dim`);
-      assert.ok(getClassTokens(glyph).includes(`text-${row.tone}`), `the ${row.tone} rollup glyph carries the tone`);
     });
   }
 });

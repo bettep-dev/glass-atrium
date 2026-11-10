@@ -18,7 +18,7 @@ const putCardFocus = ui.putCardFocus as (id: string) => void;
 
 // the probe resolves the ring tokens exactly as the shared rule should, so the focused element is compared against it
 const STATES_PAGE = `<!doctype html><html data-theme="light"><body style="margin: 0; padding: 24px;">
-  <button type="button" id="retry">Retry</button>
+  <button type="button" id="retry" onclick="putCardFocus('card')">Retry</button>
   <section id="card">card</section>
   <section id="plain" tabindex="-1">plain card</section>
   <span id="probe" style="outline: var(--focus-ring-width) solid rgb(var(--focus-ring)); outline-offset: var(--focus-ring-offset);"></span>
@@ -76,15 +76,22 @@ describe("the shared focus ring in a real browser", () => {
     assert.equal((await readRing("#plain")).style, "none");
   });
 
-  test("a card focus handoff after a mouse press draws the same ring until the card blurs", async () => {
+  test("a card focus handoff from a mouse press on Retry draws no ring", async () => {
     await pressRetryWithMouse();
-    await page.evaluate(() => (window as unknown as { putCardFocus: (id: string) => void }).putCardFocus("card"));
+
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "card");
+    assert.equal((await readRing("#card")).style, "none");
+  });
+
+  test("a card focus handoff from Tab + Enter on Retry draws the shared ring", async () => {
+    // #plain and the handed card sit outside the tab order → Shift+Tab from #plain lands on Retry
+    await page.focus("#plain");
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Enter");
     const { boxShadow, ...ring } = await readRing("#card");
 
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "card");
     assert.deepEqual(ring, await readProbeRing());
     assert.equal(boxShadow, "none");
-
-    await page.click("#retry");
-    assert.equal((await readRing("#card")).style, "none", "the handoff ring leaves with the focus");
   });
 });

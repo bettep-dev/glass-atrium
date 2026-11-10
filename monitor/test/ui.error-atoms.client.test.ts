@@ -94,6 +94,12 @@ test("a region failure offers Retry only when no page banner already carries it"
   }
 });
 
+test("a region failure sits inline in its card with no surface of its own", () => {
+  const tree = render("RegionUnavailable", { source: "spend", error: SERVER_ERROR });
+
+  assert.doesNotMatch(String((tree.children[0] as RenderedNode).props.className), /\bsub-card\b|\bbg-|\brounded|\bring-/);
+});
+
 test("a region failure reserves the slot height it was given", () => {
   const tree = render("RegionUnavailable", { source: "spend", error: SERVER_ERROR, minHeight: 218 });
 

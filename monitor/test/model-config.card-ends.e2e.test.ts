@@ -112,7 +112,7 @@ test("every tier-table cell takes the shared .tbl padding, a text cell starting 
     await page.waitForSelector(".split-row .split-col table tbody tr td input", { timeout: 30_000 });
     // no named helper inside evaluate — tsx would wrap it in a __name call the page does not define
     const tables = await page.evaluate(() => {
-      const controls = ".btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h, .disclosure";
+      const controls = ".btn, .seg, .field, .field-affix, .disclosure";
       return [...document.querySelectorAll(".split-row table")].map((table) => {
         const th = getComputedStyle(table.querySelector("thead th")!);
         return {
@@ -137,7 +137,7 @@ test("every tier-table cell takes the shared .tbl padding, a text cell starting 
 
     assert.strictEqual(tables.length, 3, "model, cap and call-tier tables render");
     for (const table of tables) {
-      assert.strictEqual(table.header.transform, "uppercase", `${table.caption}: the house header case stays`);
+      assert.strictEqual(table.header.transform, "none", `${table.caption}: headers keep sentence case`);
       assert.ok(table.cells.length >= 6, `${table.caption}: rows render`);
       for (const cell of table.cells) {
         const [top, bottom] = cell.isControl ? [3.5, 3.5] : [3.5 + (32 - 20) / 2, 7.5];
@@ -171,13 +171,18 @@ for (const width of [1024, 1280, 1440, 1920]) {
       await page.waitForSelector(".split-row .split-col table tbody tr td input", { timeout: 30_000 });
       // no named helper inside evaluate — tsx would wrap it in a __name call the page does not define
       const geometry = await page.evaluate(() => {
-        const controls = ".btn, .seg, .field, .field-affix, .pill--interactive, .pill--ctl-h, .disclosure";
+        const controls = ".btn, .seg, .field, .field-affix, .disclosure";
         const offsets: { row: string; offset: number }[] = [];
         for (const tr of document.querySelectorAll<HTMLTableRowElement>("tbody tr.is-top-aligned")) {
           const control = tr.querySelector(controls)!.getBoundingClientRect();
           for (const td of tr.cells) {
             if (td.querySelector(controls)) continue;
-            const first = td.querySelector(".tbl-first-line")!;
+            const first = td.querySelector(".tbl-first-line");
+            // a silent cell has no line to centre · a worded cell without the first-line hook fails as NaN
+            if (!first) {
+              if ((td.textContent ?? "").trim() !== "") offsets.push({ row: tr.cells[0].textContent ?? "", offset: NaN });
+              continue;
+            }
             const range = document.createRange();
             range.selectNodeContents(first);
             const line = range.getClientRects()[0];
@@ -188,12 +193,15 @@ for (const width of [1024, 1280, 1440, 1920]) {
           }
         }
         const canvas = document.createElement("canvas").getContext("2d")!;
-        const selects = [...document.querySelectorAll<HTMLSelectElement>('tbody select[aria-label$=" model"]')].map((select) => {
+        const modelSelects = [...document.querySelectorAll<HTMLSelectElement>("tbody select")].filter((select) =>
+          (select.labels?.[0]?.textContent ?? "").endsWith(" model"),
+        );
+        const selects = modelSelects.map((select) => {
           const style = getComputedStyle(select);
           canvas.font = `${style.fontSize} ${style.fontFamily}`;
           const labels = [...select.options].filter((o) => o.value !== "__custom__").map((o) => o.textContent ?? "");
           return {
-            name: select.getAttribute("aria-label"),
+            name: select.labels?.[0]?.textContent ?? null,
             room: select.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
             longest: Math.max(...labels.map((label) => canvas.measureText(label).width)),
           };

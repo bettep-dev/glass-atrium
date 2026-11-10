@@ -207,7 +207,7 @@ test("every card and fold header on the screen fits the title and header-meta ca
   }
 });
 
-describe("the cross-table header shows its share meta, count in the hover title, only when there are records, and always shows the mismatch badge", () => {
+describe("the cross-table header shows its share meta, count in the hover title, only when there are records, and always shows the mismatch status", () => {
   const rows = [
     {
       name: "a ready cross table with records",
@@ -229,9 +229,10 @@ describe("the cross-table header shows its share meta, count in the hover title,
         title: findNodes(meta, (n) => typeof n.props.title === "string")[0]?.props.title,
       }));
       assert.deepEqual(metas, row.metas);
-      const badges = findNodes(head, (n) => n.type === "Badge");
-      assert.equal(badges.length, 1);
-      assert.match(collectText(badges[0]), new RegExp(`${row.crosstab.polarTotal.toLocaleString("en-US")}\\s+mismatches`));
+      const statuses = findNodes(head, (n) => n.type === "HeadStatusO");
+      assert.equal(statuses.length, 1);
+      assert.equal(findNodes(head, (n) => n.type === "Badge").length, 0, "no badge in the head");
+      assert.match(collectText(statuses[0]), new RegExp(`${row.crosstab.polarTotal.toLocaleString("en-US")}\\s+mismatches`));
     });
   }
 });
@@ -281,6 +282,30 @@ test("a region's error card hands a focused, successful Retry to that region's o
   }
 });
 
+// the error card carries no outer margin → the band's own atoms own its inset and its gap from the Status card
+test("a status band failure takes its inset from a card and its distance from the Status card from the band's block stack", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const failed = { status: "error", busy: false, data: null, error: SERVER_ERROR };
+  const ready = { status: "ready", busy: false, data: { overall: {} }, error: null };
+  const render = (props: Record<string, unknown>) => renderScreen(create(mod.StatusBandO as Component,
+    { windowDays: 30, freshness: null, onRetry: () => undefined, ...props })) as RenderedNode;
+  const isRegionError = (n: RenderedNode) => n.type === "RegionUnavailable";
+
+  const bandFailed = render({ analyticsState: failed, attentionState: ready });
+  const insetCards = findNodes(bandFailed, (n) => n.type === "Card" && findNodes(n, isRegionError).length === 1);
+  assert.equal(insetCards.length, 1, "the band's own failure sits inside one card");
+
+  const countFailed = render({ analyticsState: ready, attentionState: failed });
+  const stacks = findNodes(countFailed, (n) => n.type === "Stack" && findNodes(n, isRegionError).length === 1);
+  assert.equal(stacks.length, 1, "one stack holds the needs-you failure");
+  const [stack] = stacks;
+  assert.equal(stack.props.gap ?? "block", "block", "the stack spaces on the block gap");
+  const [statusCard] = findNodes(stack, (n) => n.type === "Card");
+  assert.ok(statusCard, "the Status card shares the stack");
+  assert.equal(findNodes(statusCard, isRegionError).length, 0, "the failure is the card's sibling, never inside it");
+});
+
 test("a closed caveat row shows its result and its closure as two separate groups", async () => {
   const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
   const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
@@ -313,20 +338,23 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
   const tokensOf = (node: RenderedNode): string[] => String(node.props.className ?? "").split(/\s+/).filter(Boolean);
   const columnHeads = findNodes(tree, (n) => n.type === "th" && n.props.scope === "col");
 
-  test("the ledger is a .tbl table marked own-face, not the shared Table component", () => {
+  test("the ledger is a .tbl table marked own-face, drawn by the shared Table component", () => {
     const tables = findNodes(tree, (n) => n.type === "table");
     assert.equal(tables.length, 1);
     assert.ok(tokensOf(tables[0]).includes("tbl"), "the .tbl cell geometry applies");
     assert.ok(tokensOf(tables[0]).includes("tbl--own-face"), "the house header face and row states stay off");
-    assert.equal(findNodes(tree, (n) => n.type === "Table").length, 0);
+    assert.equal(findNodes(tree, (n) => n.type === "Table").length, 1);
   });
 
   test("every column header is the shared TableHead in the ledger's own sentence-case face, one line each", () => {
     assert.deepEqual(findNodes(tree, (n) => n.type === "TableHead").length, 5);
     assert.deepEqual(columnHeads.map((th) => collectText(th).trim()), ["Time", "Agent", "Task type", "Result", "Summary"]);
+    // the head face rides the table's thead variants → every column head takes it, none spells it out
+    const [table] = findNodes(tree, (n) => n.type === "table");
+    const faces = ["text-dim", "font-medium", "whitespace-nowrap"].map((t) => `[&_thead_th]:${t}`);
+    assert.ok(faces.every((t) => tokensOf(table).includes(t)), `the head face: ${tokensOf(table)}`);
     for (const th of columnHeads) {
       const tokens = tokensOf(th);
-      assert.ok(["text-dim", "font-medium", "whitespace-nowrap"].every((t) => tokens.includes(t)), `'${collectText(th)}' keeps its face: ${tokens}`);
       assert.ok(!tokens.includes("uppercase"), `'${collectText(th)}' is not upper-cased`);
       assert.equal((th.props.style as Record<string, unknown>).position, "sticky");
     }
@@ -377,11 +405,15 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
     }
   });
 
-  test("a section heading keeps its own mono upper-case face", () => {
+  test("a section heading is a level-3 heading on the cell atom's group-header face, sans and sentence case", () => {
     const headings = findNodes(tree, (n) => n.type === "th" && n.props.scope === "colgroup");
     assert.ok(headings.length >= 2, "Needs you and Routine");
     for (const heading of headings) {
-      assert.ok(["font-mono", "uppercase", "tracking-wider", "text-faint"].every((t) => tokensOf(heading).includes(t)));
+      const label = collectText(heading).trim();
+      assert.equal(heading.props.role, "heading", label);
+      assert.equal(heading.props["aria-level"], 3, label);
+      assert.ok(tokensOf(heading).includes("tbl-cell--group-header"), label);
+      assert.deepEqual(tokensOf(heading).filter((t) => ["font-mono", "uppercase", "tracking-wider"].includes(t)), [], label);
     }
   });
 });
@@ -395,13 +427,17 @@ test("a channel row keeps to two single lines, the detail line carrying its full
   };
   const tree = renderScreen(create(mod.ChannelLivenessRow as Component, { channel, days: 30, recencyDays: 7 })) as RenderedNode;
 
-  const lines = getRootHost(tree).children.filter((child): child is RenderedNode => typeof child !== "string");
+  // the glyph owns the first grid column → the two text lines share the second, so the detail aligns under the label
+  const lines = getRootHost(tree).children
+    .filter((child): child is RenderedNode => typeof child !== "string" && child.props["aria-hidden"] !== "true");
   assert.equal(lines.length, 2, "status line + detail line");
   for (const line of lines) {
     assert.match(String(line.props.className ?? ""), /whitespace-nowrap|truncate/, `"${collectText(line)}" cannot wrap`);
   }
   const detail = lines[1];
   assert.match(String(detail.props.className), /truncate/);
+  assert.match(String(detail.props.className), /\bcol-start-2\b/, "the detail sits in the text column, under the label");
+  assert.doesNotMatch(String(detail.props.className), /\bp[lxs]?-\d/, "no indent padding stands in for the column");
   assert.equal(detail.props.title, collectText(detail).trim());
 });
 
@@ -410,14 +446,12 @@ test("the task ledger scrolls with the page, never inside a box of its own", asy
   const [ledger] = findNodes(tree, (n) => n.type === "ResultTableCard");
   assert.ok(ledger, "the ledger card renders");
 
-  const bodies = findNodes(ledger, (n) => String(n.props.className ?? "").split(" ").includes("card-body"));
-  assert.ok(bodies.length > 0, "the ledger has a card body");
-  for (const body of bodies) {
-    // the shared .card-body caps at 70vh with overflow-y auto → the Routine rows would sit in a nested scroller
-    const style = (body.props.style ?? {}) as Record<string, unknown>;
-    assert.equal(style.maxHeight, "none", "no height cap");
-    assert.equal(style.overflowY, "visible", "no inner vertical scroll");
-  }
+  const [card] = findNodes(ledger, (n) => String(n.props.className ?? "").split(" ").includes("card"));
+  assert.ok(card, "the ledger renders a card");
+  // the shared .card-body caps at 70vh with overflow-y auto → the Routine rows would sit in a nested scroller
+  const classes = String(card.props.className).split(" ");
+  assert.ok(classes.includes("[&>.card-body]:max-h-none"), "no height cap on its body");
+  assert.ok(classes.includes("[&>.card-body]:overflow-y-visible"), "no inner vertical scroll");
 });
 
 test("each recording channel's busiest recent day is drawn against the watch floor", async () => {

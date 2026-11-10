@@ -20,6 +20,7 @@ const AGENTS_SRC = resolve(__dirname, "../public/src/screens/agents.jsx");
 const PRICING_SRC = resolve(__dirname, "../public/src/data/pricing.js");
 const PRICING_SOT = resolve(__dirname, "../../hooks/pricing.json");
 const MODEL_CONFIG_SRC = resolve(__dirname, "../public/src/screens/model-config.jsx");
+const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 
 interface Rates {
   input: number; output: number; cache_read: number; cache_creation: number;
@@ -41,7 +42,7 @@ interface AgentsHelpers {
       reconstructed: number; rateDenominator: number; pooledRate: number | null;
     }>;
   };
-  buildTopNFailing: (rows: unknown, threshold: number, limit: number) => {
+  buildTopNFailing: (rows: unknown, limit: number) => {
     failingPairs: Array<{
       agent: string; task_type: string; pooledRate: number;
       rateDenominator: number; successCount: number; reconstructed: number;
@@ -52,7 +53,8 @@ interface AgentsHelpers {
   ) => Array<{ agent: string; healthIndex: number; totalRevisions: number }>;
 }
 
-async function loadScreen(src: string): Promise<Record<string, unknown>> {
+// ui = the window.UI the screen reads (the real ui.jsx export where a helper calls into it)
+async function loadScreen(src: string, ui: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const built = await esbuild.build({
     entryPoints: [src],
     bundle: false,
@@ -78,7 +80,7 @@ async function loadScreen(src: string): Promise<Record<string, unknown>> {
     { get: (t: Record<string, unknown>, p: string) => (p in t ? t[p] : () => ({})) },
   );
   const ctx: Record<string, unknown> = {
-    window: { UI: {} },
+    window: { UI: ui },
     React: reactStub,
     document: { documentElement: {} },
     Intl,
@@ -121,7 +123,10 @@ function loadModelCapMap(): Record<string, string> {
   return ctx.result as Record<string, string>;
 }
 
-const agents = (await loadScreen(AGENTS_SRC)) as unknown as AgentsHelpers;
+const REAL_UI = ((await loadScreen(UI_SRC)).window as { UI: Record<string, unknown> }).UI;
+// only the shipped crit step the failing-pairs rule reads → the rest of window.UI stays empty, as these helpers were written against
+const CRIT_STEP_UI = { outcomeShareTone: REAL_UI.outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE: REAL_UI.OUTCOME_BREAKAGE_CRIT_SHARE };
+const agents = (await loadScreen(AGENTS_SRC, CRIT_STEP_UI)) as unknown as AgentsHelpers;
 const pricing = loadPricing();
 
 // --- DF-25: getTokenRate family-prefix ---
@@ -264,12 +269,12 @@ test("buildSuccessRateMatrix: backward-compat — no reconstructed_count → raw
 
 test("buildTopNFailing: reconstructed successes removed → pooled rate drops below threshold (denom clears min-sample)", () => {
   // Raw pooled = 10/12 ≈ 83%. Writer-emitted: 10 success incl. 7 synthesized →
-  // writerSuccess 3, failure 2, denom 5 (≥ TOPN_MIN_SAMPLE) → 3/5 = 60% (fails a 95% bar).
+  // writerSuccess 3, failure 2, denom 5 (≥ TOPN_MIN_SAMPLE) → 3/5 = 60% (fail share past the crit step).
   const rows = [
     { agent: "dev-q", task_type: "review", event_date: "2026-07-01",
       total_count: 12, success_count: 10, failure_count: 2, reconstructed_count: 7 },
   ];
-  const { failingPairs } = agents.buildTopNFailing(rows, 0.95, 8);
+  const { failingPairs } = agents.buildTopNFailing(rows, 8);
   const pair = failingPairs.find((p) => p.agent === "dev-q");
   assert.ok(pair, "pair present at writer-emitted basis");
   assert.strictEqual(pair.successCount, 3, "writer-emitted success = 10 - 7");
