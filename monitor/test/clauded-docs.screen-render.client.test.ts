@@ -1378,7 +1378,7 @@ test("the viewer chrome resolves the dark theme in either app theme, and the ren
 
 describe("a viewer with no rendered document shows its state inside the dark chrome scope", () => {
   const rows = [
-    { name: "idle", state: { status: "idle" }, shown: hasClass("doc-empty") },
+    { name: "idle", state: { status: "idle" }, shown: isAtom("EmptyState") },
     { name: "loading", state: { status: "loading" }, shown: isAtom("LoadingPlaceholder") },
     { name: "failed read", state: { status: "error", error: "HTTP 500" }, shown: isAtom("RegionUnavailable") },
     { name: "body that cannot render", state: { status: "ready", data: viewerDoc({ format: "md", body: "# x" }) }, shown: isAtom("AlertCard") },
@@ -1547,7 +1547,10 @@ test("the version history names the current revision in ink, never in a severity
   const screen = await loadDocsScreen();
   const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
   const [label] = findNodes(tree, (n) => n.type === "span" && collectText(n).trim() === "Current revision");
-  assert.equal((label.props.style as { color: string }).color, "rgb(var(--ink))");
+  const classes = String(label.props.className ?? "").split(/\s+/);
+  assert.ok(classes.includes("text-ink"), "ink utility");
+  assert.equal(classes.some((c) => /^text-(crit|warn|ok|info)$/.test(c)), false, "no severity tone");
+  assert.equal(label.props.style, undefined, "no inline colour");
 });
 
 test("the viewer row and a pending delete each carry a non-colour cue: the open row is current, a pending row is busy behind a crit glyph", async () => {

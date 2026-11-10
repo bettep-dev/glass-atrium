@@ -941,7 +941,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* wraps between words; a single over-long token still breaks rather than spill */
         .doc-meta-value { color: rgb(var(--ink)); word-break: normal; overflow-wrap: break-word; font-size: var(--fs-meta); }
         /* .doc-toast → shared SoT in base.css */
-        .doc-empty { padding: var(--space-6); border: 1px dashed rgb(var(--faint) / 0.5); border-radius: 8px; color: rgb(var(--faint)); text-align: center; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-body); }
         .doc-editor-input { width: 100%; padding: var(--space-1_5) var(--space-2); font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
         .doc-editor-input:focus { border-color: rgb(var(--accent)); }
         .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: var(--space-2); font-size: var(--fs-meta); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
@@ -2163,7 +2162,7 @@ function GroupMembersRowsCD({
 								isChanging={togglingIds.has(member.id)}
 							/>
 					) : (
-						<span className="fs-meta" style={{ color: "rgb(var(--faint))" }}>
+						<span className="fs-meta text-faint">
 							—
 						</span>
 					)}
@@ -2655,19 +2654,23 @@ function ViewerBodyCD({ state }) {
 
 	// every state other than the rendered document is viewer chrome → the dark scope (see ViewerPanelCD)
 	if (state.status === "idle") {
-		return <div data-theme="dark" className="doc-empty m-4">Select a document from the list</div>;
+		return (
+			<div data-theme="dark">
+				<window.UI.EmptyState message="Select a document from the list" />
+			</div>
+		);
 	}
 	if (state.status === "loading") {
 		return (
 			<div data-theme="dark">
-				<window.UI.LoadingPlaceholder label="the document" minHeight={260} className="m-4" />
+				<window.UI.LoadingPlaceholder label="the document" minHeight={260} className="p-card-pad" />
 			</div>
 		);
 	}
 	if (state.status === "error") {
 		return (
 			<div data-theme="dark">
-				<window.UI.RegionUnavailable source="this document" error={state.error} className="m-4" />
+				<window.UI.RegionUnavailable source="this document" error={state.error} className="p-card-pad" />
 			</div>
 		);
 	}
@@ -2697,7 +2700,7 @@ function ViewerBodyCD({ state }) {
 	}
 	if (renderError || rendered == null) {
 		return (
-			<div data-theme="dark">
+			<div data-theme="dark" className="p-card-pad">
 				<ErrorBannerCD
 					title="Couldn't render the document body"
 					detail={
@@ -2846,8 +2849,7 @@ function DocStageCD({
 	if (!entry) {
 		return (
 			<span
-				className="fs-meta"
-				style={{ color: "rgb(var(--faint))" }}
+				className="fs-meta text-faint"
 				title={`Stage unavailable — stored '${docStatus ?? "none"}'`}>
 				stage unavailable
 			</span>
@@ -3000,8 +3002,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 				{/* 현재 revision — 강조(--ink) · acked 미적용. */}
 				<div className="doc-revision-current">
 					<span
-						className="fs-meta"
-						style={{ color: "rgb(var(--ink))" }}
+						className="fs-meta text-ink"
 					>
 						Current revision
 					</span>
@@ -3012,8 +3013,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 				)}
 				{predState.status === "error" && (
 					<div
-						className="fs-meta doc-inline-alert inline-flex items-center gap-label-inline"
-						style={{ color: "rgb(var(--ink))" }}
+						className="fs-meta doc-inline-alert inline-flex items-center gap-label-inline text-ink"
 						role="alert"
 					>
 						<ToneGlyphCD tone="warn" />
@@ -3030,8 +3030,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 								#{predState.data.id}
 							</window.UI.MachineString>
 							<span
-								className="fs-meta"
-								style={{ color: "rgb(var(--faint))" }}
+								className="fs-meta text-faint"
 							>
 								Previous
 							</span>
@@ -3047,14 +3046,12 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 							)}
 						</div>
 						<div
-							className="fs-body mt-1"
-							style={{ color: "rgb(var(--ink))", overflowWrap: "break-word" }}
+							className="fs-body mt-stack text-ink break-words"
 						>
 							{predState.data.title}
 						</div>
 						<div
-							className="fs-meta tabular-nums"
-							style={{ color: "rgb(var(--faint))" }}
+							className="fs-meta tabular-nums text-faint"
 						>
 							{formatDateTimeCD(predState.data.created_at)} ·{" "}
 							<window.UI.AgentName name={predState.data.author} />
@@ -3156,7 +3153,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 				</div>
 				<div className="modal-body">
 					{seedFetchState.status === "loading" && (
-						<div className="doc-empty mb-3">Loading current body…</div>
+						<window.UI.LoadingPlaceholder label="the current body" className="mb-label" />
 					)}
 					{seedFetchState.status === "error" && (
 						<ErrorBannerCD
@@ -3171,7 +3168,6 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 						<label className="flex flex-col gap-1">
 							<span
 								className="field-label"
-								style={{ color: "rgb(var(--faint))" }}
 							>
 								Title
 							</span>
@@ -3188,7 +3184,6 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 						<label className="flex flex-col gap-1">
 							<span
 								className="field-label"
-								style={{ color: "rgb(var(--faint))" }}
 							>
 								Author
 							</span>
@@ -3207,7 +3202,6 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 					<label className="flex flex-col gap-1 mt-3">
 						<span
 							className="field-label"
-							style={{ color: "rgb(var(--faint))" }}
 						>
 							HTML body
 						</span>
@@ -3251,7 +3245,7 @@ function ErrorBannerCD({ title, detail, onRetry }) {
 			Retry
 		</button>
 	);
-	return <AlertCard tone="crit" surface="inset" className="m-4" title={title} body={detail} actions={retry || undefined} />;
+	return <AlertCard tone="crit" surface="inset" title={title} body={detail} actions={retry || undefined} />;
 }
 
 // asOf advances on successful list reads only · the region carries busy and failed → stamp never reads Fresh mid-read
