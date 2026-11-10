@@ -13,6 +13,8 @@ const LIST_LIMIT_Q = 100;
 const RECENT_RESUME_LIMIT_Q = 10;
 const SESSION_PREFIX_LENGTH_Q = 8;
 const CARD_ID_PREFIX_Q = "queue-item-";
+const FILTER_AXES_Q = ["profile", "session"];
+const DEFAULT_FILTER_Q = Object.freeze({ profile: "", session: "" });
 // installed CLI the owner runs inside the session (scripts/lib/queue-session.sh → queue_get_cli_path)
 const PENDING_COMMAND_Q = "~/.glass-atrium/scripts/atrium-queue.sh pending";
 
@@ -168,17 +170,42 @@ function getCardNotesQ(item) {
 	return hasGeneric ? [...marked, SKIP_TEXT_Q.shared_worktree] : marked;
 }
 
-/** Account and session filter choices from the loaded items; "" = every value. */
-function getFilterOptionsQ(items) {
+/**
+ * Account and session filter choices from the loaded items; "" = All.
+ * A chosen value no loaded item carries (a hash link) stays an option → the trigger still names it.
+ */
+function getFilterOptionsQ(items, filter = DEFAULT_FILTER_Q) {
 	const profiles = [...new Set(items.map((item) => item.session.profileLabel))].sort();
-	const sessions = [...new Map(items.map((item) => [item.session.id, item.session])).values()];
+	const sessions = new Map(items.map((item) => [item.session.id, `${item.session.cwdTail} · ${item.session.id.slice(0, SESSION_PREFIX_LENGTH_Q)}`]));
+	if (filter.profile && !profiles.includes(filter.profile)) profiles.unshift(filter.profile);
+	if (filter.session && !sessions.has(filter.session)) sessions.set(filter.session, filter.session.slice(0, SESSION_PREFIX_LENGTH_Q));
 	return {
-		profile: [{ key: "", label: "All accounts" }, ...profiles.map((label) => ({ key: label, label }))],
-		session: [
-			{ key: "", label: "All sessions" },
-			...sessions.map((session) => ({ key: session.id, label: `${session.cwdTail} · ${session.id.slice(0, SESSION_PREFIX_LENGTH_Q)}` })),
-		],
+		profile: [{ key: "", label: "All" }, ...profiles.map((label) => ({ key: label, label }))],
+		session: [{ key: "", label: "All" }, ...[...sessions].map(([key, label]) => ({ key, label }))],
 	};
+}
+
+function isFilterAppliedQ(filter) {
+	return FILTER_AXES_Q.some((axis) => filter[axis] !== DEFAULT_FILTER_Q[axis]);
+}
+
+// #queue?profile=…&session=… → the filter survives a reload; an absent query → defaults
+function getFilterFromHashQ() {
+	const hash = window.location.hash.slice(1);
+	const queryIndex = hash.indexOf("?");
+	if (queryIndex < 0) return DEFAULT_FILTER_Q;
+	const params = new URLSearchParams(hash.slice(queryIndex + 1));
+	return Object.fromEntries(FILTER_AXES_Q.map((axis) => [axis, params.get(axis) ?? DEFAULT_FILTER_Q[axis]]));
+}
+
+// replaceState → a filter change adds no history entry; defaults leave a bare #queue
+function setFilterHashQ(filter) {
+	const hash = window.location.hash.slice(1);
+	const queryIndex = hash.indexOf("?");
+	const screenId = queryIndex < 0 ? hash : hash.slice(0, queryIndex);
+	const search = new URLSearchParams(FILTER_AXES_Q.filter((axis) => filter[axis]).map((axis) => [axis, filter[axis]])).toString();
+	const next = `#${search ? `${screenId}?${search}` : screenId}`;
+	if (window.location.hash !== next) window.history.replaceState(null, "", next);
 }
 
 function getVisibleItemsQ(items, filter) {
@@ -219,15 +246,22 @@ function useQueueStateQ({ onQueueAuth, onRetryHarness }) {
 	const [auth, putAuth] = useAuthQ(onQueueAuth);
 	const [list, setList] = useStateQ({ status: "loading", data: null, error: null, readAt: null });
 	const [drafts, setDrafts] = useStateQ({});
-	const [filter, setFilter] = useStateQ({ profile: "", session: "" });
+	const [filter, setFilter] = useFilterQ();
 	const [focusId, setFocusId] = useStateQ(null);
 	const reload = useCallbackQ(() => getListQ({ setList, putAuth }), [putAuth]);
+	const loadMore = useCallbackQ(() => getMoreQ({ list, setList, putAuth }), [list, putAuth]);
 	useEffectQ(() => { reload(); }, [reload]);
 	useFocusCardQ(focusId);
 	const actions = useQueueActionsQ({ list, setList, setDrafts, setFocusId, putAuth, reload, onRetryHarness });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const login = useCallbackQ((passphrase) => putSessionQ({ passphrase, putAuth, reload }), [putAuth, reload]);
-	return { auth, list, drafts, setDraft, filter, setFilter, reload, login, ...actions };
+	return { auth, list, drafts, setDraft, filter, setFilter, reload, loadMore, login, ...actions };
+}
+
+function useFilterQ() {
+	const [filter, setFilter] = useStateQ(getFilterFromHashQ);
+	useEffectQ(() => { setFilterHashQ(filter); }, [filter]);
+	return [filter, setFilter];
 }
 
 // login → the held drafts stay in page state, so the owner sends the interrupted action again
@@ -258,6 +292,23 @@ async function getListQ({ setList, putAuth }) {
 	putAuth(answer);
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
 		return setList({ status: "ready", data: answer.data, error: null, readAt: new Date().toISOString() });
+	}
+	if (answer.status === 401 || isNotProvisionedQ(answer)) return setList((prev) => ({ ...prev, status: "ready" }));
+	const error = answer.error ?? new Error(answer.status < 300 ? "the queue answer carries no item list" : `HTTP ${answer.status}`);
+	setList((prev) => ({ ...prev, status: "error", error }));
+}
+
+// Show more → the next page after the cursor joins the loaded list; a refused read → the page failure card with Retry
+// ponytail: a reload (Refresh, or after an answer) reads the first page again → Show more again past 100 items; upgrade = server-side filters
+async function getMoreQ({ list, setList, putAuth }) {
+	const cursor = list.data?.nextCursor;
+	if (cursor === null || cursor === undefined) return;
+	setList((prev) => ({ ...prev, status: "loading" }));
+	const answer = await sendOwnerRequestQ(`/items?limit=${LIST_LIMIT_Q}&after=${cursor}`);
+	putAuth(answer);
+	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
+		const append = (prev) => ({ ...prev.data, items: [...prev.data.items, ...answer.data.items], nextCursor: answer.data.nextCursor });
+		return setList((prev) => ({ status: "ready", data: append(prev), error: null, readAt: new Date().toISOString() }));
 	}
 	if (answer.status === 401 || isNotProvisionedQ(answer)) return setList((prev) => ({ ...prev, status: "ready" }));
 	const error = answer.error ?? new Error(answer.status < 300 ? "the queue answer carries no item list" : `HTTP ${answer.status}`);
@@ -382,10 +433,10 @@ function QueueListQ({ queue }) {
 			<QueueFilterBarQ items={data.items} filter={queue.filter} onFilter={queue.setFilter} />
 			{data.items.length === 0 && <EmptyState message="Nothing waiting for you" hint="Sessions post decisions and reports here; the nav badge counts them." />}
 			{data.items.length > 0 && visible.length === 0 && (
-				<EmptyState kind="no-results" message="No records match these filters." onReset={() => queue.setFilter({ profile: "", session: "" })} />
+				<EmptyState kind="no-results" message="No records match these filters." onReset={() => queue.setFilter(DEFAULT_FILTER_Q)} />
 			)}
 			{visible.map((item) => <QueueCardQ key={item.id} item={item} queue={queue} />)}
-			{data.nextCursor !== null && <p className="fs-meta text-dim">{`Showing the first ${data.items.length} items in queue order.`}</p>}
+			{data.nextCursor !== null && <ShowMoreQ count={data.items.length} isBusy={queue.list.status === "loading"} onMore={queue.loadMore} />}
 			<RecentResumesQ items={data.items} />
 		</Stack>
 	);
@@ -399,15 +450,31 @@ function DegradedBannerQ() {
 	);
 }
 
-function QueueFilterBarQ({ items, filter, onFilter }) {
-	const { Cluster, Select } = window.UI;
-	const options = getFilterOptionsQ(items);
+function ShowMoreQ({ count, isBusy, onMore }) {
+	const { Cluster } = window.UI;
 	return (
-		<Cluster gap="control-group">
-			<Select id="queue-filter-profile" label="Account" value={filter.profile} options={options.profile} onChange={(profile) => onFilter({ ...filter, profile })} />
-			<Select id="queue-filter-session" label="Session" value={filter.session} options={options.session} onChange={(session) => onFilter({ ...filter, session })} />
+		<Cluster gap="control">
+			<span className="fs-meta text-dim">{`Showing the first ${count} items in queue order.`}</span>
+			<button type="button" className="btn" disabled={isBusy} onClick={onMore}>Show more</button>
 		</Cluster>
 	);
+}
+
+function QueueFilterBarQ({ items, filter, onFilter }) {
+	const { FilterBar } = window.UI;
+	const options = getFilterOptionsQ(items, filter);
+	return (
+		<FilterBar label="Queue filters" isApplied={isFilterAppliedQ(filter)} onReset={() => onFilter(DEFAULT_FILTER_Q)}>
+			<FilterAxisTriggerQ axis="Account" options={options.profile} value={filter.profile} onPick={(profile) => onFilter({ ...filter, profile })} />
+			<FilterAxisTriggerQ axis="Session" options={options.session} value={filter.session} onPick={(session) => onFilter({ ...filter, session })} />
+		</FilterBar>
+	);
+}
+
+// One radio axis — "" (All) is a real option, so the trigger always names the value in force
+function FilterAxisTriggerQ({ axis, options, value, onPick }) {
+	const label = options.find((option) => option.key === value)?.label ?? value;
+	return <window.UI.FilterTrigger axis={axis} value={label} options={options} chosenKeys={[value]} onPick={onPick} />;
 }
 
 function QueueCardQ({ item, queue }) {

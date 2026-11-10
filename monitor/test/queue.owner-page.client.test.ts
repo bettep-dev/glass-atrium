@@ -36,7 +36,10 @@ interface ScreenModule {
   [name: string]: unknown;
 }
 
-const screen = (await loadScreenModule(QUEUE_SRC, { window: { UI: uiStub() } })) as ScreenModule;
+const screen = (await loadScreenModule(QUEUE_SRC, {
+  URLSearchParams,
+  window: { UI: uiStub(), location: { hash: "#queue" }, history: { replaceState: () => undefined } },
+})) as ScreenModule;
 // vm-realm values → this realm's prototypes, so deepEqual compares content
 const getPlain = <T>(value: T): T => (value === undefined ? value : JSON.parse(JSON.stringify(value)));
 const call = <T>(name: string, ...args: unknown[]): T => getPlain((screen[name] as (...a: unknown[]) => T)(...args));
@@ -348,6 +351,98 @@ describe("screen", () => {
     assert.equal(findNodes(tree, (node) => node.type === "DegradedBannerQ").length, 1);
     const [link] = findNodes(tree, (node) => node.props.atom === "Link");
     assert.equal(link?.props.href, "#clauded-docs?doc=43944");
+  });
+});
+
+describe("queue filter bar", () => {
+  const items = [
+    buildItem({ id: 1, session: buildSession({ profileLabel: "work-dev" }) }),
+    buildItem({ id: 2, session: buildSession({ id: "9b2e7c41-0d3a-4c55-8e1f-2a6b9c4d7e10", profileLabel: "personal", cwdTail: "wt/owner-queue" }) }),
+  ];
+  const renderBar = (filter: Record<string, string>) => {
+    const picks: unknown[] = [];
+    const tree = render("QueueFilterBarQ", { items, filter, onFilter: (next: unknown) => picks.push(next) });
+    const [bar] = findNodes(tree, (node) => node.props.atom === "FilterBar");
+    const triggers = Object.fromEntries(findNodes(tree, (node) => node.props.atom === "FilterTrigger").map((node) => [node.props.axis, node.props]));
+    return { bar, triggers, picks };
+  };
+
+  const rows = [
+    { name: "at defaults each trigger reads All and the reset stays hidden", filter: { profile: "", session: "" }, account: "All", session: "All", isApplied: false },
+    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal", session: "" }, account: "personal", session: "All", isApplied: true },
+    {
+      name: "a chosen session names its worktree tail and id prefix",
+      filter: { profile: "", session: SESSION_ID },
+      account: "All",
+      session: "git/glass-atrium · 6f1c2a9e",
+      isApplied: true,
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const { bar, triggers } = renderBar(row.filter);
+      assert.equal(triggers.Account?.value, row.account);
+      assert.equal(triggers.Session?.value, row.session);
+      assert.equal(bar?.props.isApplied, row.isApplied);
+    });
+  }
+
+  test("Reset filters returns both axes to All", () => {
+    const { bar, picks } = renderBar({ profile: "personal", session: SESSION_ID });
+    (bar?.props.onReset as () => void)();
+    assert.deepEqual(getPlain(picks), [{ profile: "", session: "" }]);
+  });
+
+  test("a chosen value no loaded item carries stays an option, so its trigger still names it", () => {
+    const { triggers } = renderBar({ profile: "archived", session: "" });
+    assert.equal(triggers.Account?.value, "archived");
+    assert.ok((triggers.Account?.options as Array<{ key: string }>).some((option) => option.key === "archived"));
+  });
+});
+
+describe("filter state in the hash", () => {
+  const load = async (hash: string) => {
+    const location = { hash };
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      URLSearchParams,
+      window: { UI: uiStub(), location, history: { replaceState: (_state: unknown, _title: string, url: string) => { location.hash = url; } } },
+    })) as ScreenModule;
+    return { module, location };
+  };
+  const rows = [
+    { name: "both axes round-trip through the screen query", start: "#queue", filter: { profile: "work-dev", session: SESSION_ID } },
+    { name: "one axis round-trips and the other stays All", start: "#queue?profile=old", filter: { profile: "", session: SESSION_ID } },
+    { name: "defaults leave a bare screen hash and read back as defaults", start: "#queue?profile=personal", filter: { profile: "", session: "" } },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const { module, location } = await load(row.start);
+      (module.setFilterHashQ as (filter: unknown) => void)(row.filter);
+      assert.ok(location.hash.startsWith("#queue"), location.hash);
+      assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), row.filter);
+    });
+  }
+});
+
+describe("Show more", () => {
+  test("the next page after the cursor joins the loaded list in queue order", async () => {
+    const urls: string[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub() },
+      fetch: async (url: string) => {
+        urls.push(url);
+        return { status: 200, json: async () => ({ items: [buildItem({ id: 3 })], nextCursor: null, isSocketDeliveryOn: true }) };
+      },
+    })) as ScreenModule;
+    let list: Record<string, unknown> = { status: "ready", data: { items: [buildItem({ id: 1 }), buildItem({ id: 2 })], nextCursor: 12, isSocketDeliveryOn: true } };
+    const setList = (next: unknown) => {
+      list = typeof next === "function" ? (next as (prev: unknown) => Record<string, unknown>)(list) : (next as Record<string, unknown>);
+    };
+    await (module.getMoreQ as (deps: unknown) => Promise<void>)({ list, setList, putAuth: () => undefined });
+    const data = getPlain(list.data) as { items: Array<{ id: number }>; nextCursor: number | null };
+    assert.match(urls[0] ?? "", /[?&]after=12(&|$)/);
+    assert.deepEqual(data.items.map((item) => item.id), [1, 2, 3]);
+    assert.equal(data.nextCursor, null);
   });
 });
 
