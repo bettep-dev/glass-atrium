@@ -897,7 +897,7 @@ test("Created shows relative age with the date in a tooltip, and only an open ro
   assert.match(String(staleCell.props.title), /^Created date\(/);
   assert.match(collectText(staleCell), /stale/i, "stale is said in words, not colour alone");
   // the Created floor holds the glyph only → the word is screen-reader text, and the glyph's tooltip says it too
-  const flag = findNodes(staleCell, (n) => n.type === "span" && n.props.className === "doc-age-flag")[0];
+  const flag = findNodes(staleCell, (n) => n.type === "span" && String(n.props.className).split(/\s+/).includes("doc-age-flag"))[0];
   assert.ok(flag, "the stale flag sits inline in the age line");
   assert.match(String(flag.props.title), /stale/i);
   assert.equal(collectText(findNodes(flag, (n) => n.props.className === "sr-only")[0]), "stale");
@@ -1076,7 +1076,15 @@ describe("ledger text nodes take their tone and inline layout from utilities, no
   const ledger = (screen: Record<string, unknown>) => renderListCard(screen, { rows: [groupRoot] });
   const bulkBar = (screen: Record<string, unknown>) =>
     renderScreen((screen.GroupActionBarCD as Component)({ selectionSize: 2, canGroup: true, canUngroup: true }));
+  const staleAgeCell = (screen: Record<string, unknown>) =>
+    renderScreen((screen.DocAgeCellCD as Component)({ createdAt: "2026-10-04T00:00:00Z", age: { label: "15d" }, isStale: true }));
   const rows = [
+    { name: "a Created cell's age line", render: staleAgeCell, hook: "doc-age-line", rule: ".doc-age-line",
+      utilities: ["flex", "justify-end", "items-center", "gap-label-inline"] },
+    { name: "a Created cell's age value", render: staleAgeCell, hook: "doc-age-value", rule: ".doc-age-value",
+      utilities: ["flex-none"] },
+    { name: "a Created cell's stale flag", render: staleAgeCell, hook: "doc-age-flag", rule: ".doc-age-flag",
+      utilities: ["relative", "inline-flex", "items-center", "flex-none", "text-dim"] },
     { name: "a stage section's count", render: ledger, hook: "doc-stage-section-count", rule: ".doc-stage-section-count",
       utilities: ["text-faint", "fs-meta", "tabular-nums", "ml-label-inline"] },
     { name: "a ledger title line", render: ledger, hook: "doc-title-main", rule: ".doc-title-main",
@@ -1095,6 +1103,11 @@ describe("ledger text nodes take their tone and inline layout from utilities, no
       assert.equal(cssRuleBodyIfAny(getScreenCss(screen), row.rule), "", `${row.rule} has no screen rule`);
     });
   }
+
+  // a grouped selector (".doc-age-value, .doc-age-flag") escapes the per-row rule lookup → match any selector naming the hook
+  test("a Created cell's age line, value and stale flag have no screen rule", async () => {
+    assert.doesNotMatch(getScreenCss(await loadDocsScreen()), /\.doc-age-(line|value|flag)[\s,.:{]/);
+  });
 
   test("a reorder rollback message has no screen rule", async () => {
     assert.doesNotMatch(getScreenCss(await loadDocsScreen()), /\.doc-reorder-error[\s,.:{]/);

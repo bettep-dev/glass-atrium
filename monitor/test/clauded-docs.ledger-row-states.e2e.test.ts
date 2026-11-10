@@ -43,11 +43,11 @@ const STATES = {
 type State = keyof typeof STATES;
 
 // the ledger sits in the list card's elev; the cells carry the screen's dim meta text, the group member's faint placeholder, an empty stage pip, the stale flag's warn glyph, the crit glyph and the ink title
-const ledgerPage = (theme: string) => `<!doctype html><html data-theme="${theme}" style="--accent: ${RUNTIME_ACCENT};"><body style="margin: 0;">
+const ledgerPage = (theme: string) => `<!doctype html><html data-theme="${theme}" style="--accent: ${RUNTIME_ACCENT};"><head><style>${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
       <td><span class="doc-stage-meter"><span class="stage-pip"></span></span></td>
-      <td class="doc-age-cell doc-col-num dim" style="color: rgb(var(--dim));"><div class="doc-age-line"><span class="doc-age-value">15d</span><span class="doc-age-flag"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
+      <td class="doc-age-cell doc-col-num dim" style="color: rgb(var(--dim));"><div class="doc-age-line flex justify-end items-center gap-label-inline"><span class="doc-age-value flex-none">15d</span><span class="doc-age-flag relative inline-flex items-center flex-none text-dim"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
       <td><span class="faint" style="color: rgb(var(--faint));">—</span></td>
       <td class="title-cell"><span class="glyph-crit" style="color: rgb(var(--crit));">!</span> <span class="doc-title-text" style="color: rgb(var(--ink));">Plan</span></td>
     </tr>`).join("")}
@@ -164,7 +164,9 @@ after(async () => {
 // hand fixtures carry the page's utility classes → the Tailwind values they resolve to, minus the runtime
 const UTILITIES = ".relative { position: relative; } .absolute { position: absolute; } .flex { display: flex; } .items-center { align-items: center; }" +
   " .justify-center { justify-content: center; } .mx-auto { margin-left: auto; margin-right: auto; } .pointer-events-none { pointer-events: none; }" +
-  " .flex-auto { flex: 1 1 auto; } .min-w-0 { min-width: 0; } .flex-nowrap { flex-wrap: nowrap; } .text-faint { color: rgb(var(--faint) / 1); }";
+  " .flex-auto { flex: 1 1 auto; } .min-w-0 { min-width: 0; } .flex-nowrap { flex-wrap: nowrap; } .text-faint { color: rgb(var(--faint) / 1); }" +
+  " .inline-flex { display: inline-flex; } .justify-end { justify-content: flex-end; } .flex-none { flex: none; } .gap-label-inline { gap: var(--gap-label-inline); }" +
+  " .text-dim { color: rgb(var(--dim) / 1); }";
 
 describe("ledger row fills under the shared table hover", () => {
   for (const theme of THEMES) {
@@ -256,7 +258,7 @@ const ageCellHtml = (label: string) =>
 const AGE_PREFLIGHT =
   "*, ::before, ::after { box-sizing: border-box; border: 0 solid; } html { line-height: 1.5; } svg { display: block; vertical-align: middle; } table { border-collapse: collapse; }" +
   " .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }";
-const ageCellPage = (floor: number) => `<!doctype html><html data-theme="dark"><head><style>${AGE_PREFLIGHT}</style></head><body style="margin: 0;">
+const ageCellPage = (floor: number) => `<!doctype html><html data-theme="dark"><head><style>${AGE_PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px; width: 600px;"><div class="card"><table class="tbl"><thead><tr><th>Title</th><th class="doc-col-num" style="width: ${floor}px; min-width: ${floor}px;">Created</th></tr></thead><tbody>
     <tr id="two-digit" class="doc-row"><td>Plan</td>${ageCellHtml("15d")}</tr>
     <tr id="three-digit" class="doc-row"><td>Plan</td>${ageCellHtml("120d")}</tr>
@@ -268,6 +270,8 @@ describe("the Created cell keeps its age and stale glyph on one line", () => {
   type AgeReading = {
     rowH: number;
     lineW: number;
+    gap: number;
+    roleGap: number;
     valueTop: number;
     valueBottom: number;
     flagTop: number;
@@ -298,9 +302,16 @@ describe("the Created cell keeps its age and stale glyph on one line", () => {
         const glyph = row.querySelector(".doc-age-flag svg")!.getBoundingClientRect();
         const wordEl = row.querySelector(".doc-age-flag .sr-only")!;
         const word = wordEl.getBoundingClientRect();
+        const probe = document.createElement("div");
+        probe.style.columnGap = "var(--gap-label-inline)";
+        row.append(probe);
+        const roleGap = parseFloat(getComputedStyle(probe).columnGap);
+        probe.remove();
         return {
           rowH: row.getBoundingClientRect().height,
           lineW: flag.right - value.left,
+          gap: flag.left - value.right,
+          roleGap,
           valueTop: value.top,
           valueBottom: value.bottom,
           flagTop: flag.top,
@@ -315,11 +326,12 @@ describe("the Created cell keeps its age and stale glyph on one line", () => {
   });
 
   for (const id of ["two-digit", "three-digit"])
-    test(`a ${id} stale age shows its glyph beside the value on one 40px row, inside the Created floor`, () => {
+    test(`a ${id} stale age shows its glyph one inline-label gap beside the value on one 40px row, inside the Created floor`, () => {
       const r = readings[id];
       assert.equal(Math.round(r.rowH), 40, `row height ${r.rowH}`);
       assert.ok(Math.abs((r.flagTop + r.flagBottom) / 2 - (r.valueTop + r.valueBottom) / 2) <= 1, `flag ${r.flagTop}–${r.flagBottom} off the value's line ${r.valueTop}–${r.valueBottom}`);
       assert.ok(r.lineW <= content, `age line ${r.lineW}px past the ${content}px floor content`);
+      assert.ok(r.roleGap > 0 && Math.abs(r.gap - r.roleGap) <= 0.5, `value ↔ glyph ${r.gap}px, role gap ${r.roleGap}px`);
       assert.ok(r.glyphShown, "the glyph shows");
     });
 

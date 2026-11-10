@@ -1069,11 +1069,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-ledger-scroll .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: var(--lh-ctl); }
         /* numeric columns: ID and Created read right-aligned in tabular figures on one line — each keeps its own typeface */
         .tbl :is(th, td).doc-col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-        /* age, then the stale glyph inline on one line, never stacked */
-        .doc-age-line { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-1); }
-        .doc-age-value, .doc-age-flag { flex: none; }
-        /* the Created floor holds no room for the word → glyph-only; "stale" rides the title and sr-only text (relative → the sr-only box resolves here) */
-        .doc-age-flag { position: relative; display: inline-flex; align-items: center; color: rgb(var(--dim)); }
         /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
         .card.doc-list-card { scroll-margin-top: 96px; }
         /* clip trims an outside ring → the card ring drawn inset */
@@ -1818,10 +1813,14 @@ function DocAgeCellCD({ view, createdAt, age, isStale }) {
 			className="doc-age-cell fs-meta doc-col-num"
 			style={{ color: "rgb(var(--dim))" }}
 			title={`Created ${formatDateCD(createdAt)}`}>
-			<div className="doc-age-line">
-				<span className="doc-age-value">{age ? age.label : "—"}</span>
+			{/* age, then the stale glyph inline on one line, never stacked */}
+			<div className="doc-age-line flex justify-end items-center gap-label-inline">
+				<span className="doc-age-value flex-none">{age ? age.label : "—"}</span>
+				{/* the Created floor holds no room for the word → glyph-only; "stale" rides the title and sr-only text (relative → the sr-only box resolves here) */}
 				{isStale && (
-					<span className="doc-age-flag" title={`Stale: open over ${STALE_AGE_DAYS_CD} days`}>
+					<span
+						className="doc-age-flag relative inline-flex items-center flex-none text-dim"
+						title={`Stale: open over ${STALE_AGE_DAYS_CD} days`}>
 						<ToneGlyphCD tone="warn" />
 						<span className="sr-only">stale</span>
 					</span>
