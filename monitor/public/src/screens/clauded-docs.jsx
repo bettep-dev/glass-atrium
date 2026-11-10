@@ -48,7 +48,7 @@ const LEDGER_CD = {
 		select: 44, // 16px checkbox + edge 28 — .doc-checkbox-cell takes this width
 		status: 199, // widest face, the "Implementing" picker, 174.8px uncapped (macOS, 1440, Pretendard 500: shell 2 + 16 · meter 56 · label 81 · caret 12 · gaps 8) + interior 24 — the ledger caps the pill at this floor minus interior and ellipsizes a wider label → font-independent
 		id: 86, // "#" + 6 digits in 13px mono, 54.6 (7 × 0.6em) + 7.4 slack = 62 + interior 24 — slack held there → floor sum 969 + rail 200 fits the 1440 layout's 1170, so the rail shows at 1440
-		title: 434, // a title beside its trailing "rev of #N" pill · the Documents title floor stays
+		title: 434, // a title beside its trailing "rev of #N" link · the Documents title floor stays
 		tags: 148, // 124 content allowance + interior 24
 		author: 106, // 82 content allowance + interior 24
 		created: 100, // 72 content allowance (a 3-digit age, then the stale glyph inline: gap 4 · glyph 12 — the word rides the glyph's title and sr-only text) + edge 28
@@ -1620,7 +1620,7 @@ function DocListCardCD({
 														{row.supersedes_id != null && (
 															<button
 																type="button"
-																className="doc-lineage pill pill--interactive pill--count"
+																className="doc-lineage link inline-target fs-meta"
 																{...ROW_CONTROL_PROPS}
 																title={`Open #${row.supersedes_id}, which this replaces`}
 																onClick={(e) => {

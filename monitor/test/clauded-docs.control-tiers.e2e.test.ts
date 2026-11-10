@@ -249,17 +249,17 @@ describe("no Show, Audience or search state moves the Documents search, a trigge
   }
 });
 
-describe("the ledger's pills sit on the interactive pill tier", () => {
+describe("the ledger's row controls keep their tier boxes", () => {
   const LINEAGE = "#docs-list button.doc-lineage";
 
-  test("the lineage pill is a 32 control and its row stays 40 like a row without one", async () => {
+  test("the lineage link is a 24 inline target and its row stays 40 like a row without one", async () => {
     await setCardWidth(1300);
-    assert.equal((await readBox(LINEAGE)).height, 32);
+    assert.equal((await readBox(LINEAGE)).height, 24);
     const heights = await page.$$eval("#docs-list tr.doc-row", (rows) => rows.map((tr) => tr.getBoundingClientRect().height));
     for (const height of heights) assert.ok(Math.abs(height - 40) < 0.5, `ledger rows ${heights.join(", ")}`);
   });
 
-  test("hover, focus-visible and active keep the lineage pill's box", () => assertBoxHeldAcrossStates(LINEAGE));
+  test("hover, focus-visible and active keep the lineage link's box", () => assertBoxHeldAcrossStates(LINEAGE));
 
   test("the clamped stage label keeps its face's descenders inside its box", async () => {
     const labels = await page.$$eval("#docs-list .doc-ledger .doc-stage-label", (els) => els.map((el) => ({ scroll: el.scrollHeight, client: el.clientHeight })));

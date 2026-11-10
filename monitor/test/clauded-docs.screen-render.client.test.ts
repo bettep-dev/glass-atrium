@@ -954,7 +954,7 @@ describe("the header speaks about loading only after a first read; before it the
   }
 });
 
-test("'rev of #N' trails the title as a pill that never wraps or shrinks, so the ID cell holds the id alone", async () => {
+test("'rev of #N' trails the title as an unboxed link that never wraps or shrinks, so the ID cell holds the id alone", async () => {
   const screen = await loadDocsScreen();
   const tree = renderListCard(screen, {});
   const [revisionRow] = findNodes(tree, (n) => n.type === "tr" && n.props["aria-label"] === "Doc 11");
@@ -963,7 +963,8 @@ test("'rev of #N' trails the title as a pill that never wraps or shrinks, so the
   const lineage = findNodes(titleMain, (n) => String(n.props.className ?? "").includes("doc-lineage"));
   assert.equal(lineage.length, 1);
   assert.match(collectText(lineage[0]), /^rev of #\s*7$/);
-  assert.match(String(lineage[0].props.className), /\bpill\b/);
+  assert.match(String(lineage[0].props.className), /\blink\b/);
+  assert.doesNotMatch(String(lineage[0].props.className), /\bpill/, "no pill box around the link");
   assert.match(cssRuleBody(getScreenCss(screen), ".doc-lineage"), /flex\s*:\s*none/);
 
   const idCell = findNodes(revisionRow, (n) => n.type === "td" && findNodes(n, (c) => c.props?.atom === "MachineString").length > 0)[0];
