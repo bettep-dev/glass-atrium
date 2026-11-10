@@ -2008,7 +2008,7 @@ def agent_dispatch(argv, eff_argv, herestrings, void, scan, cwd):
         agent_reads(reader, words, cwd)
         return
     if eff_name == "eval" or is_code_interp(eff_name) or eff_name in INTERP_SHELL:
-        agent_nonreads(name, words[:len(words) - len(eff_argv)], cwd)
+        agent_nonreads(name, [t[1] for t in argv[1:len(argv) - len(eff_argv)]], cwd)
     if eff_name == "eval":
         agent_eval(eff_argv, scan, cwd)
     elif is_code_interp(eff_name) or eff_name in INTERP_SHELL:
