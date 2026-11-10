@@ -43,7 +43,9 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .mx-auto { margin-left: auto; margin-right: auto; } .ml-auto { margin-left: auto; } .min-w-0 { min-width: 0; } .overflow-x-auto { overflow-x: auto; }
   .px-4 { padding-left: 1rem; padding-right: 1rem; } .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; } .pointer-events-none { pointer-events: none; }
   .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; } .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; }
-  .fs-meta { font-size: var(--fs-meta); line-height: 1.4; } .gap-x-list { column-gap: var(--gap-list); }`;
+  .fs-meta { font-size: var(--fs-meta); line-height: 1.4; } .gap-x-list { column-gap: var(--gap-list); }
+  .flex-auto { flex: 1 1 auto; } .basis-full { flex-basis: 100%; } .justify-end { justify-content: flex-end; }
+  .whitespace-nowrap { white-space: nowrap; } .invisible { visibility: hidden; } .text-dim { color: rgb(var(--dim) / 1); }`;
 
 const DAY_MS = 86_400_000;
 const getDaysAgo = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();

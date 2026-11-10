@@ -1092,19 +1092,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-menu-rank { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); }
         .doc-stage-menu-item[aria-checked="true"] .doc-stage-menu-rank { color: inherit; }
         .doc-stage-menu-mark { margin-left: auto; }
-        /* the bar takes the row beside the meta line; the reset's auto margin takes its slack → a trigger value or the search note never resizes the field being typed in */
-        .doc-filter-bar { flex: 1 1 auto; min-width: 0; }
+        /* the reset's auto margin takes the bar's slack → a trigger value or the search note never resizes the field being typed in */
         .doc-bar-search { flex: 0 1 200px; min-width: 180px; }
-        /* idle → hidden from sight and the accessibility tree, slot kept */
-        .doc-show-note { color: rgb(var(--dim)); white-space: nowrap; }
-        .doc-show-note.is-idle { visibility: hidden; }
         .doc-trigger-value { display: inline-grid; }
         .doc-trigger-value > * { grid-area: 1 / 1; }
         .doc-trigger-value > .is-idle { visibility: hidden; }
-        /* trailing meta → its own right-aligned line in every state: the count's length never picks its line nor hands its room to the search; it breaks inside only once it alone outgrows the row */
-        .doc-list-meta { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
-        /* number + unit never split (§5.3) */
-        .doc-list-count { white-space: nowrap; }
         /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
         /* a section head = a house body header (40 row, meta face, sunken fill) → only the bottom-anchored label inset and the 600 weight are its own */
         tr.doc-stage-section > th { padding-block: var(--space-3) var(--space-1); font-weight: 600; }
@@ -1441,19 +1433,19 @@ function DocListCardCD({
 				<div className="control-row">
 					<DocFilterBarCD isSearchMode={isSearchMode} groupCounts={groupCounts} inlineFilterProps={inlineFilterProps} />
 					{(busyText || totalLabel) && (
-						<div className="doc-list-meta gap-x-list">
+						<div className="doc-list-meta basis-full flex flex-wrap justify-end items-center gap-x-list">
 							{busyText && (
-								<span className="doc-list-busy fs-meta" role="status" style={{ color: "rgb(var(--dim))" }}>
+								<span className="doc-list-busy fs-meta text-dim" role="status">
 									{busyText}
 								</span>
 							)}
 							{totalLabel && (
-								<span className="doc-list-count fs-meta tabular-nums" style={{ color: "rgb(var(--dim))" }} title={totalLabel} aria-live="polite">
+								<span className="doc-list-count fs-meta tabular-nums whitespace-nowrap text-dim" title={totalLabel} aria-live="polite">
 									{totalLabel}
 								</span>
 							)}
 							{totalLabel && sharedTagsLabel && (
-								<span className="doc-list-shared fs-meta" style={{ color: "rgb(var(--dim))" }}>
+								<span className="doc-list-shared fs-meta text-dim">
 									{hasTagsColumn ? `${sharedTagsLabel} unless tagged` : `all ${sharedTagsLabel}`}
 								</span>
 							)}
@@ -1777,14 +1769,15 @@ function DocFilterBarCD({ isSearchMode, groupCounts, inlineFilterProps }) {
 	};
 
 	return (
-		<FilterBar label="Document filters" isApplied={isFilterAppliedCD(inlineFilterProps)} onReset={resetFilters} className="doc-filter-bar">
+		<FilterBar label="Document filters" isApplied={isFilterAppliedCD(inlineFilterProps)} onReset={resetFilters} className="flex-auto min-w-0">
 			<BarSearch label="Search documents" value={keyword} onChange={inlineFilterProps.onKeywordChange} placeholder="Search…" className="doc-bar-search" />
 			<FilterTrigger axis="Show" value={<DocTriggerValueCD options={DOC_STATUS_OPTIONS_CD} chosenKey={docStatusFilter} />} options={getStageOptionsCD(groupCounts)}
 				chosenKeys={[docStatusFilter]} onPick={inlineFilterProps.onDocStatusChange} />
 			<FilterTrigger axis="Audience" value={<DocTriggerValueCD options={AUDIENCE_OPTIONS_CD} chosenKey={audienceFilter} />}
 				options={AUDIENCE_OPTIONS_CD.map((option) => ({ key: option.value, label: option.label }))}
 				chosenKeys={[audienceFilter]} onPick={inlineFilterProps.onAudienceChange} />
-			<span className={`doc-show-note fs-meta${isSearchMode ? "" : " is-idle"}`}>All stages while searching</span>
+			{/* idle → invisible, slot kept → starting a search never reflows the bar */}
+			<span className={`doc-show-note fs-meta text-dim whitespace-nowrap${isSearchMode ? "" : " invisible"}`}>All stages while searching</span>
 		</FilterBar>
 	);
 }

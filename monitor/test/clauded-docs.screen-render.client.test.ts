@@ -793,10 +793,10 @@ test("while searching, a note says every stage is read, the stored stage stays c
   const findNote = (tree: ReturnType<typeof renderScreen>) => findNodes(tree, (n) => String(n.props.className ?? "").includes("doc-show-note"));
   const [note] = findNote(searching);
   assert.match(collectText(note), /All stages while searching/);
-  assert.doesNotMatch(String(note.props.className), /is-idle/, "the note shows while searching");
+  assert.doesNotMatch(String(note.props.className), /(^|\s)invisible(\s|$)/, "the note shows while searching");
   assert.deepEqual([...(findTriggers(searching)[0].props.chosenKeys as string[])], ["open"], "the stored stage applies once the search clears");
   const [listed] = findNote(renderListCard(screen, { inlineFilterProps: filters }));
-  assert.match(String(listed.props.className), /is-idle/, "outside search mode the note keeps its slot, idle");
+  assert.match(String(listed.props.className), /(^|\s)invisible(\s|$)/, "outside search mode the note keeps its slot, idle");
 
   const empty = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: true, inlineFilterProps: filters }));
   const [state] = findNodes(empty, (n) => n.props.atom === "EmptyState");
@@ -1036,13 +1036,31 @@ describe("a ledger head count and a group toggle space their content on the labe
   }
 });
 
-test("the list count line spaces its facts on the list role and its rule sets no column gap", async () => {
-  const screen = await loadDocsScreen();
-  const tree = renderListCard(screen, { state: { status: "ready", data: {}, error: null, busy: false }, total: 3, docTotal: 3 });
-  const [meta] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-list-meta"));
-  assert.ok(meta, "the count line renders");
-  assert.match(String(meta.props.className), /(^|\s)gap-x-list(\s|$)/);
-  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-list-meta"), /(^|[;\s])(column-)?gap\s*:/);
+// the filter bar and its count line lay out and tone on house utilities → the screen style block holds no rule a utility already ships
+describe("the filter bar and its count line take their layout and tone from utilities, not the screen style block", () => {
+  const rows = [
+    { name: "the count line", find: (n: RenderedNode) => hasClass(n, "doc-list-meta"), hook: ".doc-list-meta",
+      utilities: ["basis-full", "flex", "flex-wrap", "justify-end", "items-center", "gap-x-list"] },
+    { name: "the document count", find: (n: RenderedNode) => hasClass(n, "doc-list-count"), hook: ".doc-list-count",
+      utilities: ["whitespace-nowrap", "text-dim", "fs-meta", "tabular-nums"] },
+    { name: "the search note", find: (n: RenderedNode) => hasClass(n, "doc-show-note"), hook: ".doc-show-note",
+      utilities: ["text-dim", "whitespace-nowrap", "fs-meta"] },
+    { name: "the filter bar", find: (n: RenderedNode) => n.props?.atom === "FilterBar", hook: ".doc-filter-bar",
+      utilities: ["flex-auto", "min-w-0"] },
+  ];
+  const hasClass = (n: RenderedNode, name: string) => String(n.props?.className ?? "").split(/\s+/).includes(name);
+  for (const row of rows) {
+    test(`${row.name} carries its utilities, no inline style, and no screen rule`, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderListCard(screen, { state: { status: "ready", data: {}, error: null, busy: false }, total: 3, docTotal: 3 });
+      const [node] = findNodes(tree, row.find);
+      assert.ok(node, `${row.name} renders`);
+      const classes = String(node.props.className ?? "").split(/\s+/);
+      assert.deepEqual(row.utilities.filter((utility) => !classes.includes(utility)), [], row.name);
+      assert.equal(node.props.style, undefined, `${row.name} has no inline style`);
+      assert.doesNotMatch(getScreenCss(screen), new RegExp(`${row.hook.replace(".", "\\.")}[\\s,.:{]`), `${row.hook} has no screen rule`);
+    });
+  }
 });
 
 // a section head is a house body header → a declaration its rule restates drifts from the table the moment base.css moves
