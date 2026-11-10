@@ -155,7 +155,10 @@
 #     name the call may also set some other way keeps the word's own judgment. An assignment a
 #     child process sees (exported, allexport, an inherited name, a command prefix) is judged as
 #     a word, and a rebound HOME blocks. Substitution bodies, interpreter code strings and heredoc
-#     bodies are judged too; text past MAX_SCAN_DEPTH fails closed.
+#     bodies are judged too, a variable spelled inside them in every spelling it takes, and from an
+#     in-scope cwd each path-shaped string literal in them relative to it; an eval string, past
+#     assignments and prefix words, is re-scanned as shell code whose cd carries out; text past
+#     MAX_SCAN_DEPTH fails closed.
 #   Residuals, by target (honor-system):
 #     - classification time: the exemption reads the text and the filesystem when the hook runs,
 #       so a link swapped in afterwards — by a watcher an earlier call of the same agent started —
@@ -167,9 +170,13 @@
 #       substitution, a variable assigned from one, or a file (`rm "$(echo <profile>/CLAUDE.md)"`,
 #       `X=$(ls -d <profile>/CLAUDE.md); rm $X`)
 #     - a variable whose value the call sets by a construct the binding pass does not read
-#       (`read`, `printf -v`, `getopts`, `${X:=…}`, zsh `for f (…)`), or that a bound variable's
-#       name reaches through an eval string, when no visible home spelling or in-scope cd marks
-#       the word; a variable a child shell inherits through an assignment the call does not export
+#       (`read`, `printf -v`, `getopts`, `${X:=…}`, zsh `for f (…)`), when no visible home
+#       spelling or in-scope cd marks the word; a variable a child shell inherits through an
+#       assignment the call does not export
+#     - positional parameters, never expanded: `set -- <profile>/jobs/a/tmp; rm "$1/../x"`, a
+#       function argument (`f() { rm "$1/x"; }; f <profile>`), `bash -c '…' _ <profile>`
+#     - a path an interpreter's code builds at run time (concatenation, a format string, a value
+#       it reads), beyond the literals and variable spellings visible in its code text
 #     - a relative spelling with no cd, resolved against the session cwd
 #       (`echo x > .claude-personal/CLAUDE.md` from a $HOME cwd)
 #     - a non-literal word reaching home with no visible home prefix (a glob over the home path,
@@ -1459,6 +1466,8 @@ CODE_HOME_RE = re.compile(
     + "".join("|(?i:" + re.escape(h) + ")" for h in HOMES)
     + r")[^\s'\"\x60;|&()<>,\[\]{}]*"
 )
+# A variable reference anywhere in code text, with the path tail glued to it.
+CODE_VAR_RE = re.compile(r"\$(?:\{[^}\s]*\}|[A-Za-z_]\w*)[^\s'\"\x60;|&()<>,\[\]{}]*")
 # A directory this text cannot name, entered after an in-scope one: every later word is unprovable.
 UNKNOWN_DIR = "\x00unknown"
 CLEAN_RESERVED = ("do", "then", "else", "elif", "{", "!", "while", "until", "if")
@@ -1526,14 +1535,15 @@ PIPE_FILTERS = (
 
 AGENT = {"on": False, "triples": [], "keys": set(), "reads": [], "void": False,
          "cwd": None, "seen": False, "piped": False, "vars": {}, "opaque": set(), "known": {},
-         "text": "", "array": None, "for_starts": None, "allexport": False}
+         "text": "", "array": None, "for_starts": None, "allexport": False, "cwds": [],
+         "codes": []}
 
 
 def agent_reset(text, carried):
     """Fresh walk state; carried = (bindings, opaque names) from the binding pass."""
     AGENT.update(triples=[], keys=set(), reads=[], void=False, cwd=None, seen=False, piped=False,
                  vars=carried[0], opaque=carried[1], known={}, text=text, array=None,
-                 for_starts=None, allexport=bool(ALLEXPORT_RE.search(text)))
+                 for_starts=None, allexport=bool(ALLEXPORT_RE.search(text)), cwds=[], codes=[])
 
 
 def agent_emit(flag, written, resolved):
@@ -1663,8 +1673,7 @@ def operator_names(word):
 def is_relevant_name(name, cwd, depth=0):
     """A name with a value that may name a profile path: home-spelled, an absolute scope
     candidate, relative to an in-scope or unknown directory, or holding such a name."""
-    dirs = cwd if isinstance(cwd, tuple) else (cwd,)
-    in_scope_cwd = any(d == UNKNOWN_DIR or (d and is_scope_candidate(d)) for d in dirs)
+    in_scope_cwd = is_scope_dir(cwd)
     for value in list(AGENT["vars"].get(name, ())) + ["", os.environ.get(name, "")]:
         if home_split(value) is not None or is_scope_candidate(value) \
                 or (in_scope_cwd and not value.startswith("/")):
@@ -1673,6 +1682,12 @@ def is_relevant_name(name, cwd, depth=0):
                              for n in VAR_USE_RE.findall(value) if n != name):
             return True
     return False
+
+
+def is_scope_dir(cwd):
+    """A cwd, or any of a tuple of them, that is unknown or names a path under a profile root."""
+    dirs = cwd if isinstance(cwd, tuple) else (cwd,)
+    return any(d == UNKNOWN_DIR or (d and is_scope_candidate(d)) for d in dirs)
 
 
 def is_known(name):
@@ -1731,10 +1746,19 @@ def judge_relative(word, cwd):
             agent_emit("N", word, "")
 
 
-def agent_code_search(code):
-    """Each visible home spelling inside code text is a non-read word."""
-    for m in CODE_HOME_RE.finditer(code or ""):
+def agent_code_search(code, cwd=None):
+    """Each visible home spelling and each variable spelling inside code text is a non-read word;
+    run from an in-scope directory, so is each path-shaped or variable-bearing string literal."""
+    code = code or ""
+    for m in CODE_HOME_RE.finditer(code):
         agent_judge(m.group(0), None)
+    for m in CODE_VAR_RE.finditer(code):
+        agent_judge(m.group(0), None)
+    if not is_scope_dir(cwd):
+        return
+    for literal in quoted_literals(code):
+        if "$" in literal or (LITERAL_RE.match(literal) and literal[:1] not in ("", "/")):
+            agent_judge(literal, cwd)
 
 
 def agent_cd(name, args, cwd):
@@ -1899,7 +1923,7 @@ def agent_interpreter(name, argv, herestrings, depth, armed, cwd):
             if scan_command(text, depth + 1, armed):
                 agent_emit("N", text[:200], "")
         else:
-            agent_code_search(text)
+            agent_code_search(text, cwd)
     if code is None:
         operands = [w for w in words if not w.startswith("-")]
         for w in operands[1:]:
@@ -1909,7 +1933,7 @@ def agent_interpreter(name, argv, herestrings, depth, armed, cwd):
         if scan_command(code, depth + 1, armed):
             agent_emit("N", code[:200], "")
     else:
-        agent_code_search(code)
+        agent_code_search(code, cwd)
     rest = list(words)
     if code in rest:
         rest.remove(code)
@@ -1931,7 +1955,9 @@ def agent_segment(toks, depth, armed, glued):
     agent_flow(plain, ci, eff_idx, eff_name)
     if eff_name in ("cd", "pushd", "popd"):
         AGENT["cwd"] = agent_cd(eff_name, [t[1] for t in plain[eff_idx + 1:]], cwd)
-    agent_dispatch(plain[ci:], herestrings, void, (depth, armed), cwd)
+        new = AGENT["cwd"]
+        AGENT["cwds"].extend(new if isinstance(new, tuple) else (new,))
+    agent_dispatch(plain[ci:], plain[max(eff_idx, ci):], herestrings, void, (depth, armed), cwd)
 
 
 def agent_glued(word):
@@ -1971,16 +1997,37 @@ def agent_bind(name, value):
         values.append(value)
 
 
-def agent_dispatch(argv, herestrings, void, scan, cwd):
+def agent_dispatch(argv, eff_argv, herestrings, void, scan, cwd):
+    """A reader reads from the clean position alone; eval and interpreters are found past
+    assignments and prefix words, whose own words stay non-reads."""
     name = reader_name(argv[0][1])
     words = [t[1] for t in argv[1:]]
     reader = None if void else admitted_reader(name, words)
+    eff_name = reader_name(eff_argv[0][1]) if eff_argv else ""
     if reader:
         agent_reads(reader, words, cwd)
-    elif is_code_interp(name) or name in INTERP_SHELL:
-        agent_interpreter(name, argv, herestrings, scan[0], scan[1], cwd)
+        return
+    if eff_name == "eval" or is_code_interp(eff_name) or eff_name in INTERP_SHELL:
+        agent_nonreads(name, words[:len(words) - len(eff_argv)], cwd)
+    if eff_name == "eval":
+        agent_eval(eff_argv, scan, cwd)
+    elif is_code_interp(eff_name) or eff_name in INTERP_SHELL:
+        agent_interpreter(eff_name, eff_argv, herestrings, scan[0], scan[1], cwd)
     else:
         agent_nonreads(name, words, cwd)
+
+
+def agent_eval(argv, scan, cwd):
+    """eval re-parses its joined operands as shell code in this shell: re-scan them, and keep any
+    directory the re-scan enters as a possible cwd afterwards."""
+    words = [t[1] for t in argv[1:]]
+    code = " ".join(words)
+    entered = len(AGENT["cwds"])
+    if scan_command(code, scan[0] + 1, scan[1]):
+        agent_emit("N", code[:200], "")
+    if len(AGENT["cwds"]) > entered:
+        AGENT["cwd"] = merge_dirs([cwd] + AGENT["cwds"][entered:])
+    agent_nonreads("eval", words, cwd)
 
 
 def clean_index(plain):
@@ -2124,6 +2171,7 @@ def agent_extras(code, mask, heredocs, depth, armed):
             subs.extend(substitution_bodies(body, False))
         if is_code_interp(name) or name in INTERP_SHELL:
             agent_code_search(body)
+            AGENT["codes"].append(body)
     for body in subs:
         if scan_command(body, depth + 1, armed):
             agent_emit("N", body[:200], "")
@@ -2252,6 +2300,10 @@ def detect_bash(tool_input):
         for word, cwd in AGENT["reads"]:
             agent_judge(word, cwd)
             agent_code_search(word)
+    # An interpreter heredoc body is walked before any cd, so judge it from every dir entered.
+    for body in AGENT["codes"]:
+        for cwd in dict.fromkeys(AGENT["cwds"]):
+            agent_code_search(body, cwd)
     return reason
 
 
@@ -2449,7 +2501,7 @@ block_wording() {
       ;;
     agent-id-bash)
       BLOCK_MSG="Harness-critical command blocked (agent-id-bash): a subagent command names a ~/.claude* profile path it does not provably only read"
-      BLOCK_SUG="A subagent or Workflow agent Bash call may name a profile path only as an operand of a reader command in a clean command position (cat, ls, grep, head, tail, wc, stat, find without -delete/-exec, cd, echo, printf), as a < source, or as a path in its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file. After a cd into a profile path (the job scratchpad included) or into a directory named by a variable (\`cd \"\$T\"\`), every later relative word must be literal: name scratch files without \$var, glob or substitution, pass a glob to a reader (\`cat *.log\`), or cd into the literal path an earlier mktemp printed. A pipe into xargs, a while-read loop, a shell or any other non-filter command voids the read proof: pass the paths to the reader itself. A variable (an assignment, a for-list name) carries every value the call binds it to into each later use, so \`D=<memory dir>; cat \"\$D/x\"\` still reads, while writing through \$D is judged as the path it spells. An assignment a child process sees — export, allexport, an inherited name such as CLAUDE_CONFIG_DIR, a command prefix — itself blocks unless its value is a job-scratchpad or progress path, and so does reassigning HOME. A progress file needs no mkdir — the Write tool creates its memory dir. Re-spell a copy as a read (\`cat <src> > <dest>\`), put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      BLOCK_SUG="A subagent or Workflow agent Bash call may name a profile path only as an operand of a reader command in a clean command position (cat, ls, grep, head, tail, wc, stat, find without -delete/-exec, cd, echo, printf), as a < source, or as a path in its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file. After a cd into a profile path (the job scratchpad included) or into a directory named by a variable (\`cd \"\$T\"\`), every later relative word must be literal: name scratch files without \$var, glob or substitution, pass a glob to a reader (\`cat *.log\`), or cd into the literal path an earlier mktemp printed. A pipe into xargs, a while-read loop, a shell or any other non-filter command voids the read proof: pass the paths to the reader itself. A variable (an assignment, a for-list name) carries every value the call binds it to into each later use, so \`D=<memory dir>; cat \"\$D/x\"\` still reads, while writing through \$D — in a shell word, a code string, a heredoc body or an eval string — is judged as the path it spells. An assignment a child process sees — export, allexport, an inherited name such as CLAUDE_CONFIG_DIR, a command prefix — itself blocks unless its value is a job-scratchpad or progress path, and so does reassigning HOME. A progress file needs no mkdir — the Write tool creates its memory dir. Re-spell a copy as a read (\`cat <src> > <dest>\`), put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
       ;;
     agent-id-write)
       BLOCK_SUG="A subagent or Workflow agent writes under a ~/.claude* profile root only into its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file in a memory dir — the BASENAME exception is the orchestrator's. Put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
