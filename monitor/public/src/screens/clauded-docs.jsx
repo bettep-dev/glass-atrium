@@ -2735,42 +2735,44 @@ function DocMetaPanelCD({
 	optimisticStatusOverrides,
 	onNavigate,
 }) {
-	const { Badge } = window.UI;
+	const { Badge, Stack } = window.UI;
 	return (
-		<div className="flex flex-col gap-list">
-			{/* ID = AUTHOR/CREATED 와 동급 메타 항목 → 배지 행이 아니라 라벨 행이 운반. */}
-			<div className="doc-meta-row grid gap-x-label-inline fs-meta">
-				<span className="doc-meta-label text-faint">ID</span>
-				<window.UI.MachineString className="doc-meta-value text-ink break-words">#{doc.id}</window.UI.MachineString>
-			</div>
-			<div className="doc-meta-row grid gap-x-label-inline fs-meta">
-				<span className="doc-meta-label text-faint">Author</span>
-				<window.UI.AgentName name={doc.author} className="doc-meta-value text-ink break-words" />
-			</div>
-			<div className="doc-meta-row grid gap-x-label-inline fs-meta">
-				<span className="doc-meta-label text-faint">Created</span>
-				<span className="doc-meta-value text-ink break-words tabular-nums">
-					{formatDateTimeCD(doc.created_at)}
-				</span>
-			</div>
-			{/* 계보는 늘 보이는 텍스트 — 펼쳐야 보이는 이력과 별개. */}
-			<div className="doc-meta-row grid gap-x-label-inline fs-meta">
-				<span className="doc-meta-label text-faint">Lineage</span>
-				<span className="doc-meta-value text-ink break-words">
-					{doc.supersedes_id != null ? `rev of #${doc.supersedes_id}` : "chain root"}
-					{doc.superseded_by_id != null
-						? ` · superseded by #${doc.superseded_by_id}`
-						: ""}
-				</span>
-			</div>
-			{/* an unrecorded actor is left out, never printed as "unknown" */}
-			{doc.last_status_model && (
+		<Stack gap="block">
+			<Stack gap="list">
+				{/* ID = AUTHOR/CREATED 와 동급 메타 항목 → 배지 행이 아니라 라벨 행이 운반. */}
 				<div className="doc-meta-row grid gap-x-label-inline fs-meta">
-					<span className="doc-meta-label text-faint">Last action</span>
-					<span className="doc-meta-value text-ink break-words">{formatActorCD(doc.last_status_model)}</span>
+					<span className="doc-meta-label text-faint">ID</span>
+					<window.UI.MachineString className="doc-meta-value text-ink break-words">#{doc.id}</window.UI.MachineString>
 				</div>
-			)}
-			<div className="flex items-center gap-control flex-wrap mt-block">
+				<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+					<span className="doc-meta-label text-faint">Author</span>
+					<window.UI.AgentName name={doc.author} className="doc-meta-value text-ink break-words" />
+				</div>
+				<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+					<span className="doc-meta-label text-faint">Created</span>
+					<span className="doc-meta-value text-ink break-words tabular-nums">
+						{formatDateTimeCD(doc.created_at)}
+					</span>
+				</div>
+				{/* 계보는 늘 보이는 텍스트 — 펼쳐야 보이는 이력과 별개. */}
+				<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+					<span className="doc-meta-label text-faint">Lineage</span>
+					<span className="doc-meta-value text-ink break-words">
+						{doc.supersedes_id != null ? `rev of #${doc.supersedes_id}` : "chain root"}
+						{doc.superseded_by_id != null
+							? ` · superseded by #${doc.superseded_by_id}`
+							: ""}
+					</span>
+				</div>
+				{/* an unrecorded actor is left out, never printed as "unknown" */}
+				{doc.last_status_model && (
+					<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+						<span className="doc-meta-label text-faint">Last action</span>
+						<span className="doc-meta-value text-ink break-words">{formatActorCD(doc.last_status_model)}</span>
+					</div>
+				)}
+			</Stack>
+			<div className="flex items-center gap-control flex-wrap">
 				{/* onPickStage absent → status only · cachedRow=doc → the viewer cache skips the GET */}
 				<DocStageCD
 					docTitle={doc.title}
@@ -2801,7 +2803,7 @@ function DocMetaPanelCD({
 			{typeof onDelete === "function" && (
 				<DocDeleteButtonCD docId={doc.id} pendingDelete={pendingDelete} onDelete={onDelete} />
 			)}
-		</div>
+		</Stack>
 	);
 }
 
@@ -2811,7 +2813,7 @@ function DocDeleteButtonCD({ docId, pendingDelete, onDelete }) {
 	const { Icon } = window.UI;
 	const isPending = Boolean(pendingDelete) && pendingDelete.id === docId;
 	return (
-		<div className="doc-meta-danger mt-block">
+		<div className="doc-meta-danger">
 			<button
 				type="button"
 				className={`btn sm ${isPending ? "danger" : "ghost"}`}
@@ -2983,9 +2985,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 	}, [predecessorId]);
 
 	return (
-		<details
-			className="doc-version-history mt-block"
-		>
+		<details className="doc-version-history">
 			<summary className="group disclosure fs-meta">
 				<window.UI.DisclosureChevron />
 				<span>Version history</span>

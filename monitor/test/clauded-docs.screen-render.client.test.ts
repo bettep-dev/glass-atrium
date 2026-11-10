@@ -1553,26 +1553,14 @@ test("the version history names the current revision in ink, never in a severity
   assert.equal(label.props.style, undefined, "no inline colour");
 });
 
-test("the version history sits one block below the predecessor with no divider rule of its own", async () => {
-  const screen = await loadDocsScreen();
-  const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
-  const [history] = findNodes(tree, (n) => n.type === "details" && hasClass("doc-version-history")(n));
-  assert.ok(history, "the version history disclosure");
-  assert.ok(hasClass("mt-block")(history), "block gap role key");
-  assert.equal(history.props.style, undefined, "no inline border");
-});
-
 // the viewer rail's spacing and type ride role utilities → the screen style block keeps only its grid templates
 describe("the viewer rail spaces and sets type on role utilities, not the screen style block", () => {
   const nodes = [
     { name: "a fact row's label-to-value gap", hook: "doc-meta-row", rule: ".doc-meta-row", property: "gap", roleClass: "gap-x-label-inline" },
     { name: "a fact row's grid", hook: "doc-meta-row", rule: ".doc-meta-row", property: "display", roleClass: "grid" },
-    { name: "a fact row's spacing", hook: "doc-meta-row", rule: ".doc-meta-row", property: "padding", roleClass: "grid" },
     { name: "a fact row's size", hook: "doc-meta-row", rule: ".doc-meta-row", property: "font-size", roleClass: "fs-meta" },
     { name: "a fact label's tone", hook: "doc-meta-label", rule: ".doc-meta-label", property: "color", roleClass: "text-faint" },
     { name: "a fact value's tone", hook: "doc-meta-value", rule: ".doc-meta-value", property: "color", roleClass: "text-ink" },
-    { name: "the delete block's offset", hook: "doc-meta-danger", rule: ".doc-meta-danger", property: "margin", roleClass: "mt-block" },
-    { name: "the delete block's divider", hook: "doc-meta-danger", rule: ".doc-meta-danger", property: "border", roleClass: "mt-block" },
     { name: "the stage's glyph-to-word gap", hook: "doc-stage", rule: ".doc-stage", property: "gap", roleClass: "gap-label-inline" },
     { name: "the stage word's face", hook: "doc-stage", rule: ".doc-stage-label", property: "font-family", roleClass: "font-sans" },
     { name: "the stage glyph's tone", hook: "doc-stage-glyph", rule: ".doc-stage-glyph", property: "color", roleClass: "text-dim" },
@@ -1595,6 +1583,37 @@ describe("the viewer rail spaces and sets type on role utilities, not the screen
     });
   }
 });
+
+// a flex child's margin adds to its Stack's gap → one sub-block margin turns the 16 block gap into 24, no role value
+test("the viewer rail parts its sub-blocks by one block gap and its facts by one list gap, and no sub-block adds a margin or rule of its own", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocMetaPanelCD as Component)({
+    doc: viewerDoc({ supersedes_id: 7 }), pendingDelete: null, onDelete: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  }));
+  const [rail, ...innerStacks] = findNodes(tree, isAtom("Stack"));
+  assert.equal(rail?.props.gap, "block", "the rail is a block Stack");
+  const facts = innerStacks.find((n) => findNodes(n, hasClass("doc-meta-row")).length > 0);
+  assert.ok(facts, "the facts sit in a Stack");
+  assert.equal(facts.props.gap, "list", "a list Stack");
+  assert.equal(findNodes(facts, hasClass("doc-meta-row")).length, findNodes(tree, hasClass("doc-meta-row")).length, "every fact row is in it");
+  const subBlocks = rail.children.filter((c): c is RenderedNode => typeof c !== "string").map(getHostNode);
+  assert.equal(subBlocks.length, 4, "facts, stage, version history, delete");
+  for (const block of subBlocks) {
+    assert.doesNotMatch(String(block.props.className ?? ""), /(^|\s)m[tbylrx]?-/, `${block.type} margin class`);
+    assert.equal(block.props.style, undefined, `${block.type} inline style`);
+  }
+  for (const rule of [".doc-meta-row", ".doc-meta-danger", ".doc-version-history"]) {
+    assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), rule), /(^|[;\s])(margin|padding|border)[\w-]*\s*:/, rule);
+  }
+});
+
+// a component node wraps the element it renders → the element that takes the layout classes
+function getHostNode(node: RenderedNode): RenderedNode {
+  const [only] = node.children;
+  const isWrapper = node.type !== "ui-atom" && /^[A-Z]/.test(node.type) && node.children.length === 1;
+  return isWrapper && only !== undefined && typeof only !== "string" ? getHostNode(only) : node;
+}
 
 test("the viewer row and a pending delete each carry a non-colour cue: the open row is current, a pending row is busy behind a crit glyph", async () => {
   const screen = await loadDocsScreen();
