@@ -811,14 +811,14 @@ test("while searching, a note says every stage is read, the stored stage stays c
   assert.match(String(state.props.hint), /“plan”/);
 });
 
-// one applied rule with the filter bar → reset shows only off the entry view (open stage, all audiences, no query)
-describe("an empty list picks the spec's no-results state only while a filter is applied, else a reset-free entry state", () => {
+// an empty corpus → first use in every view · else the bar's applied rule picks no-results + reset, off the entry view (open stage, all audiences, no query)
+describe("an empty list shows first use on an empty corpus, else no-results only while a filter is applied", () => {
   const entry = { keyword: "", docStatusFilter: "open", audienceFilter: "all" };
   const rows = [
-    { name: "the entry view on an empty corpus", filters: entry, groupCounts: { open: 0, done: 0, total: 0 }, kind: undefined, hasReset: false, hint: /once an agent posts/ },
-    { name: "the entry view while done documents exist", filters: entry, groupCounts: { open: 0, done: 3, total: 3 }, kind: undefined, hasReset: false, hint: /All in Show/ },
-    { name: "the all stage", filters: { ...entry, docStatusFilter: "" }, groupCounts: null, kind: "no-results", hasReset: true, hint: undefined },
-    { name: "an audience", filters: { ...entry, audienceFilter: "agent-only" }, groupCounts: null, kind: "no-results", hasReset: true, hint: /audience:/ },
+    { name: "the entry view on an empty corpus", filters: entry, groupCounts: { open: 0, done: 0, total: 0 }, kind: undefined, hasReset: false, isApplied: false, hint: /once an agent posts/ },
+    { name: "the entry view while done documents exist", filters: entry, groupCounts: { open: 0, done: 3, total: 3 }, kind: undefined, hasReset: false, isApplied: false, hint: /All in Show/ },
+    { name: "the all stage on an empty corpus", filters: { ...entry, docStatusFilter: "" }, groupCounts: { open: 0, done: 0, total: 0 }, kind: undefined, hasReset: false, isApplied: true, hint: /once an agent posts/ },
+    { name: "an audience", filters: { ...entry, audienceFilter: "agent-only" }, groupCounts: null, kind: "no-results", hasReset: true, isApplied: true, hint: /audience:/ },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -831,7 +831,7 @@ describe("an empty list picks the spec's no-results state only while a filter is
       assert.equal(states.length, 1);
       assert.equal(states[0].props.kind, row.kind);
       assert.equal(typeof states[0].props.onReset === "function", row.hasReset);
-      assert.equal((screen.isFilterAppliedCD as (f: unknown) => boolean)(filters), row.hasReset, "the bar's applied rule agrees");
+      assert.equal((screen.isFilterAppliedCD as (f: unknown) => boolean)(filters), row.isApplied, "the bar keeps its own applied rule");
       if (row.hint) assert.match(String(states[0].props.hint), row.hint);
     });
   }
@@ -994,8 +994,9 @@ describe("the list sets only the document id in the machine-string face", () => 
 });
 
 // spacing reads the role-key ladder (index.html tailwind config) → a number or a px value in a list node or its rule is drift
+const NUMERIC_SPACING_CLASS = /(^|\s)-?(p|m|gap|space)(x|y|t|r|b|l|s|e)?-(\d|\[)/;
+
 describe("the bulk bar and the whole-word note space on role keys only", () => {
-  const numericSpacing = /(^|\s)-?(p|m|gap|space)(x|y|t|r|b|l|s|e)?-(\d|\[)/;
   const nodes = [
     {
       name: "the bulk bar",
@@ -1017,7 +1018,7 @@ describe("the bulk bar and the whole-word note space on role keys only", () => {
       assert.ok(container, `${row.name} renders`);
       assert.match(String(container.props.className ?? ""), /(^|\s)px-card-pad(\s|$)/, row.name);
       const classes = findNodes(container, () => true).map((n) => String(n.props?.className ?? ""));
-      assert.deepEqual(classes.filter((c) => numericSpacing.test(c)), [], row.name);
+      assert.deepEqual(classes.filter((c) => NUMERIC_SPACING_CLASS.test(c)), [], row.name);
       if (row.rule) assert.doesNotMatch(cssRuleBody(getScreenCss(screen), row.rule), /(^|[;\s])(padding|gap)\s*:/, row.rule);
     });
   }
@@ -1025,7 +1026,6 @@ describe("the bulk bar and the whole-word note space on role keys only", () => {
 
 // every list-card state → role keys and atom slots space it, never a number or an inline px
 describe("the list card spaces on role keys in every state", () => {
-  const numericSpacing = /(^|\s)-?(p|m|gap|space)(x|y|t|r|b|l|s|e)?-(\d|\[)/;
   const rows = [
     { name: "ready with Load More", overrides: { canLoadMore: true, loadMoreRemaining: 40, rows: undefined } },
     { name: "a failed read", overrides: { state: { status: "error", data: null, error: new Error("down"), busy: false }, rows: [] } },
@@ -1036,7 +1036,7 @@ describe("the list card spaces on role keys in every state", () => {
       const screen = await loadDocsScreen();
       const overrides = Object.fromEntries(Object.entries(row.overrides).filter(([, v]) => v !== undefined));
       const nodes = findNodes(renderListCard(screen, overrides), () => true);
-      assert.deepEqual(nodes.map((n) => String(n.props?.className ?? "")).filter((c) => numericSpacing.test(c)), [], row.name);
+      assert.deepEqual(nodes.map((n) => String(n.props?.className ?? "")).filter((c) => NUMERIC_SPACING_CLASS.test(c)), [], row.name);
       assert.deepEqual(nodes.filter((n) => n.props?.style && /(min|max)?(width|height|padding|margin)/i.test(Object.keys(n.props.style as object).join(" ")) && n.type === "button"), [], `${row.name}: no sized button`);
     });
   }

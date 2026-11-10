@@ -1394,57 +1394,57 @@ function DocListCardCD({
 
 	const bar = (
 		<>
-				{/* one control row — the filter bar (search · Show · Audience · reset) · the count meta on its own right-aligned line */}
-				<div className="control-row">
-					<DocFilterBarCD isSearchMode={isSearchMode} groupCounts={groupCounts} inlineFilterProps={inlineFilterProps} />
-					{(busyText || totalLabel) && (
-						<div className="doc-list-meta basis-full flex flex-wrap justify-end items-center gap-x-list">
-							{busyText && (
-								<span className="doc-list-busy fs-meta text-dim" role="status">
-									{busyText}
-								</span>
-							)}
-							{totalLabel && (
-								<span className="doc-list-count fs-meta tabular-nums whitespace-nowrap text-dim" title={totalLabel} aria-live="polite">
-									{totalLabel}
-								</span>
-							)}
-							{totalLabel && sharedTagsLabel && (
-								<span className="doc-list-shared fs-meta text-dim">
-									{hasTagsColumn ? `${sharedTagsLabel} unless tagged` : `all ${sharedTagsLabel}`}
-								</span>
-							)}
-						</div>
-					)}
-				</div>
-				{/* pg_bigm 부재 disclosure (M6) — 서버는 startup warn 로그만 남겨 한글 부분일치
+			{/* one control row — the filter bar (search · Show · Audience · reset) · the count meta on its own right-aligned line */}
+			<div className="control-row">
+				<DocFilterBarCD isSearchMode={isSearchMode} groupCounts={groupCounts} inlineFilterProps={inlineFilterProps} />
+				{(busyText || totalLabel) && (
+					<div className="doc-list-meta basis-full flex flex-wrap justify-end items-center gap-x-list">
+						{busyText && (
+							<span className="doc-list-busy fs-meta text-dim" role="status">
+								{busyText}
+							</span>
+						)}
+						{totalLabel && (
+							<span className="doc-list-count fs-meta tabular-nums whitespace-nowrap text-dim" title={totalLabel} aria-live="polite">
+								{totalLabel}
+							</span>
+						)}
+						{totalLabel && sharedTagsLabel && (
+							<span className="doc-list-shared fs-meta text-dim">
+								{hasTagsColumn ? `${sharedTagsLabel} unless tagged` : `all ${sharedTagsLabel}`}
+							</span>
+						)}
+					</div>
+				)}
+			</div>
+			{/* pg_bigm 부재 disclosure (M6) — 서버는 startup warn 로그만 남겨 한글 부분일치
             저하(tsvector 단어 단위만 매칭)가 사용자에게 비가시 → 검색 모드에서 화면에 명시.
             === false 엄격 비교 — 필드 부재(groups 응답 · 구 서버) 시 미노출. */}
-				{isSearchMode &&
-					state.status === "ready" &&
-					state.data?.bigmEnabled === false && (
-						<div
-							className="px-card-pad mb-label fs-meta text-faint"
-							role="note">
-							Whole-word matches only — Korean partial-word search is unavailable.
-						</div>
-					)}
-				{/* doc_type 필터/배지 서브시스템 전면 제거.
+			{isSearchMode &&
+				state.status === "ready" &&
+				state.data?.bigmEnabled === false && (
+					<div
+						className="px-card-pad mb-label fs-meta text-faint"
+						role="note">
+						Whole-word matches only — Korean partial-word search is unavailable.
+					</div>
+				)}
+			{/* doc_type 필터/배지 서브시스템 전면 제거.
             · 사유: server monitor.documents 의 doc_type 컬럼 DROP → ?doc_type 필터 no-op · GET /:id 응답 키 부재 → 배지 항상 null.
               GOLDEN RULE — 모니터를 시스템(컬럼 부재)에 정합. doc_status(progress/done) 는 별개 live 축으로 유지. */}
-				{/* GroupActionBar (multi-select bulk action).
+			{/* GroupActionBar (multi-select bulk action).
             · selectionSize == 0 → hint bar ("문서 2건 이상 선택 후 그룹 만들기")
             · selectionSize ≥ 1 → 선택 N건 표시 + 그룹 해제 활성 + (≥2 시) 그룹 만들기 활성
             · search mode 에서도 노출 (사용자가 search 결과로 group 의도 가능 — 정합) */}
-				<GroupActionBarCD
-					selectionSize={selectionSize}
-					canGroup={canGroup}
-					canUngroup={canUngroup}
-					onGroup={() => onGroupCreate(Array.from(selectedIds))}
-					onUngroup={() => onUngroup(Array.from(selectedIds))}
-					onExportZip={onExportZip}
-					onClear={onClearSelection}
-				/>
+			<GroupActionBarCD
+				selectionSize={selectionSize}
+				canGroup={canGroup}
+				canUngroup={canUngroup}
+				onGroup={() => onGroupCreate(Array.from(selectedIds))}
+				onUngroup={() => onUngroup(Array.from(selectedIds))}
+				onExportZip={onExportZip}
+				onClear={onClearSelection}
+			/>
 		</>
 	);
 	// Load More — groups mode only, while server groups remain · the label cell keeps its widest value → no width jump on loading
@@ -3327,15 +3327,15 @@ function getFreshnessInputCD(asOf, listState) {
 	return { at: asOf, regions: [listState] };
 }
 
-// spec §5 empty states — applied (isFilterAppliedCD) → no-results + echo + the bar's reset · entry view → first use, or a pointer to Show All while other stages hold documents
+// spec §5 empty states — empty corpus → first use in every view, nothing to narrow · applied (isFilterAppliedCD) → no-results + echo + the bar's reset · entry view → a pointer to Show All while other stages hold documents
 //   docStatus is ignored while searching → never echoed as applied
 function DocEmptyStateCD({ isSearchMode, groupCounts, inlineFilterProps }) {
 	const { EmptyState } = window.UI;
-	if (!isFilterAppliedCD(inlineFilterProps)) {
-		const hasOtherStages = (groupCounts?.total ?? 0) > 0;
+	if (groupCounts?.total === 0 || !isFilterAppliedCD(inlineFilterProps)) {
+		const hasDocuments = (groupCounts?.total ?? 0) > 0;
 		return (
 			<div role="status" aria-live="polite">
-				{hasOtherStages ? (
+				{hasDocuments ? (
 					<EmptyState message="No open documents" hint="Pick All in Show to list done documents too." />
 				) : (
 					<EmptyState message="No documents yet" hint="A report or plan appears here once an agent posts it." />
