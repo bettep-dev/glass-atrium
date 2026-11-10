@@ -1270,7 +1270,7 @@ function DocTagsCellCD({ view, audience, format, commonFormat, commonAudience = 
 function DocAuthorCellCD({ view, author }) {
 	const { TableCell, AgentName } = window.UI;
 	return (
-		<TableCell view={view} textRole="meta" label="Author" className="fs-meta" style={{ color: "rgb(var(--dim))" }}>
+		<TableCell view={view} textRole="meta" label="Author" className="fs-meta text-dim">
 			<span className="doc-cell-clamp" title={author}>
 				<AgentName name={author} />
 			</span>
@@ -1606,13 +1606,12 @@ function DocListCardCD({
 														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
 												</TableCell>
-											<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+											<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num text-dim">
 													<window.UI.MachineString>#{row.id}</window.UI.MachineString>
 												</TableCell>
 											<TableCell view={view} className="title-cell">
 												<div
-													className="doc-title-row font-medium fs-body"
-													style={{ color: "rgb(var(--ink))" }}
+													className="doc-title-row font-medium fs-body text-ink"
 												>
 													{/* 고정폭 leading slot — group-root 시 chevron, 그 외 빈칸 (제목 시작 x 통일). */}
 													<span className="doc-title-lead">
@@ -1674,7 +1673,7 @@ function DocListCardCD({
 												{snippetText && (
 													<div className="doc-title-row mt-stack">
 														<span className="doc-title-lead is-spacer" />
-														<div className="doc-snippet fs-meta" style={{ color: "rgb(var(--dim))" }}>
+														<div className="doc-snippet fs-meta text-dim">
 															{parseSnippetCD(snippetText)}
 														</div>
 													</div>
@@ -1796,7 +1795,7 @@ function getStageOptionsCD(groupCounts) {
 		const count = groupCounts?.[option.countKey];
 		return {
 			key: option.value,
-			label: typeof count === "number" ? <>{option.label} <span className="tabular-nums" style={{ color: "rgb(var(--dim))" }}>{formatIntCD(count)}</span></> : option.label,
+			label: typeof count === "number" ? <>{option.label} <span className="tabular-nums text-dim">{formatIntCD(count)}</span></> : option.label,
 		};
 	});
 }
@@ -1810,8 +1809,7 @@ function DocAgeCellCD({ view, createdAt, age, isStale }) {
 			textRole="meta"
 			label="Created"
 			isNumeric
-			className="doc-age-cell fs-meta doc-col-num"
-			style={{ color: "rgb(var(--dim))" }}
+			className="doc-age-cell fs-meta doc-col-num text-dim"
 			title={`Created ${formatDateCD(createdAt)}`}>
 			{/* age, then the stale glyph inline on one line, never stacked */}
 			<div className="doc-age-line flex justify-end items-center gap-label-inline">
@@ -2198,13 +2196,12 @@ function GroupMembersRowsCD({
 						</span>
 					)}
 				</TableCell>
-				<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+				<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num text-dim">
 					<window.UI.MachineString>#{member.id}</window.UI.MachineString>
 				</TableCell>
 				<TableCell view={view} className="title-cell">
 					<div
-						className="doc-title-row font-medium fs-title"
-						style={{ color: "rgb(var(--ink))" }}
+						className="doc-title-row font-medium fs-title text-ink"
 					>
 						{/* 멤버 행 leading slot — 재정렬 가능 시 drag handle(⠿), 아니면 빈칸 (제목 시작 x 통일). */}
 						<span className="doc-title-lead">
@@ -2238,7 +2235,7 @@ function GroupMembersRowsCD({
 					/>
 				)}
 				<DocAuthorCellCD view={view} author={member.author} />
-				<TableCell view={view} textRole="meta" label="Created" isNumeric className="fs-meta doc-col-num" style={{ color: "rgb(var(--dim))" }}>
+				<TableCell view={view} textRole="meta" label="Created" isNumeric className="fs-meta doc-col-num text-dim">
 					{formatDateCD(member.created_at)}
 				</TableCell>
 			</TableRow>

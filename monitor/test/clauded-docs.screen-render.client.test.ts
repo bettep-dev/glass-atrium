@@ -1114,6 +1114,55 @@ describe("ledger text nodes take their tone and inline layout from utilities, no
   });
 });
 
+// a ledger text tone is the house utility on its node → an inline color is a second declaration of the same token
+describe("ledger meta cells, title lines, the search snippet and the Show counts tone through utilities, never an inline color", () => {
+  const member = { id: 21, title: "Member", doc_status: "open", format: "md", audience: "exposed", author: "glass-atrium-intel-planner",
+    created_at: "2026-09-01T00:00:00Z" };
+  // a factory: the shared noop stub is declared further down the file
+  const memberProps = () => ({
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  });
+  const classOf = (n: RenderedNode) => String(n.props?.className ?? "").split(/\s+/);
+  const rootLedger = async () =>
+    renderListCard(await loadDocsScreen(), { isSearchMode: true, rows: [{ ...member, id: 31, snippet: "the <mark>auth</mark> gate ships" }] });
+  const memberRows = async () => {
+    const screen = await loadDocsScreen(stubbedStateReact({ status: "ready", data: [member, { ...member, id: 22 }], error: null }));
+    return renderScreen(inTbody((screen.GroupMembersRowsCD as Component)(memberProps())));
+  };
+  const showCounts = async () => {
+    const react = createReactStub();
+    const screen = await loadDocsScreen(react);
+    const options = (screen.getStageOptionsCD as (counts: Record<string, number>) => Array<{ label: unknown }>)({ open: 3, done: 1, total: 4 });
+    return renderScreen((react.createElement as (...args: unknown[]) => unknown)("div", null, ...options.map((option) => option.label)));
+  };
+  const rows = [
+    { name: "a root row's Author, ID and Created cells", render: rootLedger, utility: "text-dim", count: 3,
+      find: (n: RenderedNode) => n.type === "td" && classOf(n).includes("tbl-cell--meta") },
+    { name: "a member row's Author, ID and Created cells", render: memberRows, utility: "text-dim", count: 6,
+      find: (n: RenderedNode) => n.type === "td" && classOf(n).includes("tbl-cell--meta") },
+    { name: "a root row's search snippet", render: rootLedger, utility: "text-dim", count: 1,
+      find: (n: RenderedNode) => classOf(n).includes("doc-snippet") },
+    { name: "each Show option's document count", render: showCounts, utility: "text-dim", count: 3,
+      find: (n: RenderedNode) => n.type === "span" && classOf(n).includes("tabular-nums") },
+    { name: "a root row's title line", render: rootLedger, utility: "text-ink", count: 1,
+      find: (n: RenderedNode) => classOf(n).includes("doc-title-row") && classOf(n).includes("font-medium") },
+    { name: "a member row's title line", render: memberRows, utility: "text-ink", count: 2,
+      find: (n: RenderedNode) => classOf(n).includes("doc-title-row") && classOf(n).includes("font-medium") },
+  ];
+  for (const row of rows) {
+    test(`${row.name} take ${row.utility} and carry no inline color`, async () => {
+      const nodes = findNodes(await row.render(), row.find);
+      assert.equal(nodes.length, row.count, `${row.name} render`);
+      for (const node of nodes) {
+        assert.ok(classOf(node).includes(row.utility), `${row.name}: ${classOf(node).join(" ")}`);
+        assert.equal((node.props.style as { color?: string } | undefined)?.color, undefined, `${row.name}: no inline color`);
+      }
+    });
+  }
+});
+
 // a section head is a house body header → a declaration its rule restates drifts from the table the moment base.css moves
 describe("a stage section head's rule restates nothing the house table header sets", () => {
   for (const property of ["height", "text-align", "font-size", "color", "background", "border-bottom"]) {

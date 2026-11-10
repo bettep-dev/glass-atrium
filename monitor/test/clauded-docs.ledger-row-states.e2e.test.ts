@@ -47,9 +47,9 @@ const ledgerPage = (theme: string) => `<!doctype html><html data-theme="${theme}
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
       <td><span class="doc-stage-meter"><span class="stage-pip"></span></span></td>
-      <td class="doc-age-cell doc-col-num dim" style="color: rgb(var(--dim));"><div class="doc-age-line flex justify-end items-center gap-label-inline"><span class="doc-age-value flex-none">15d</span><span class="doc-age-flag relative inline-flex items-center flex-none text-dim"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
+      <td class="doc-age-cell doc-col-num text-dim"><div class="doc-age-line flex justify-end items-center gap-label-inline"><span class="doc-age-value flex-none">15d</span><span class="doc-age-flag relative inline-flex items-center flex-none text-dim"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
       <td><span class="faint" style="color: rgb(var(--faint));">—</span></td>
-      <td class="title-cell"><span class="glyph-crit" style="color: rgb(var(--crit));">!</span> <span class="doc-title-text" style="color: rgb(var(--ink));">Plan</span></td>
+      <td class="title-cell"><span class="glyph-crit" style="color: rgb(var(--crit));">!</span> <span class="doc-title-text text-ink">Plan</span></td>
     </tr>`).join("")}
   </tbody></table></div></div>
 </body></html>`;
@@ -105,7 +105,7 @@ async function readRow(page: Page, state: State): Promise<RowReading> {
 const readRowStyles = (id: string) => {
   const row = document.getElementById(id)!;
   const style = getComputedStyle(row);
-  const [dim, faint, title, pip, critGlyph, warnGlyph] = [".dim", ".faint", ".doc-title-text", ".stage-pip", ".glyph-crit", ".glyph-warn"].map((selector) =>
+  const [dim, faint, title, pip, critGlyph, warnGlyph] = [".doc-age-cell", ".faint", ".doc-title-text", ".stage-pip", ".glyph-crit", ".glyph-warn"].map((selector) =>
     getComputedStyle(row.querySelector(selector)!),
   );
   return {
@@ -166,7 +166,7 @@ const UTILITIES = ".relative { position: relative; } .absolute { position: absol
   " .justify-center { justify-content: center; } .mx-auto { margin-left: auto; margin-right: auto; } .pointer-events-none { pointer-events: none; }" +
   " .flex-auto { flex: 1 1 auto; } .min-w-0 { min-width: 0; } .flex-nowrap { flex-wrap: nowrap; } .text-faint { color: rgb(var(--faint) / 1); }" +
   " .inline-flex { display: inline-flex; } .justify-end { justify-content: flex-end; } .flex-none { flex: none; } .gap-label-inline { gap: var(--gap-label-inline); }" +
-  " .text-dim { color: rgb(var(--dim) / 1); }";
+  " .text-dim { color: rgb(var(--dim) / 1); } .text-ink { color: rgb(var(--ink) / 1); }";
 
 describe("ledger row fills under the shared table hover", () => {
   for (const theme of THEMES) {
