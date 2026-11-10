@@ -123,10 +123,11 @@ function getReadFailureQ(answer) {
 	return window.UI.getErrorCopy(getAnswerDetailQ(answer), LIST_SOURCE_Q);
 }
 
-// no answer, a database outage or a server error → the shared next step; any other answer → null (the caller words it)
+// no answer in any browser wording → the network step (these lines carry no Details) · a database outage or a server error → the shared next step · any other answer → null (the caller words it)
 function getOutageStepQ(answer) {
+	if (answer.status === 0) return window.UI.FETCH_ERROR_NEXT_STEP.network;
 	const { kind, next } = getReadFailureQ(answer);
-	return answer.status === 0 || OUTAGE_KINDS_Q.has(kind) ? next : null;
+	return OUTAGE_KINDS_Q.has(kind) ? next : null;
 }
 
 // the status and the server's code, or the network error

@@ -759,6 +759,16 @@ describe("one outage reads one way across the page", () => {
     });
   }
 
+  // sign-in and action lines carry no Details → an unanswered request in any browser wording reads as the server not answering
+  test("a sign-in and an owner action on an unanswered request in unrecognised browser wording name the server, never Details", async () => {
+    const answer = { status: 0, data: null, error: new TypeError("The network connection was lost.") };
+    const { next } = getCard(outages[0].answer).failure;
+    const module = (await loadScreenModule(QUEUE_SRC, { window: { UI: uiStub() }, fetch: fetchFor(answer) })) as ScreenModule;
+    const lines = [await (module.putLoginQ as (passphrase: string) => Promise<string | null>)("owner passphrase"), call<string>("getActionErrorQ", answer)];
+    assert.deepEqual(lines, [next, next]);
+    assert.doesNotMatch(lines.join(" "), /Details/);
+  });
+
   test("a database outage names the database on the card and in the region", async () => {
     const answer = { status: 503, data: { error: "database_unavailable" } };
     assert.match(String(getCard(answer).card?.props.body), /database/);
