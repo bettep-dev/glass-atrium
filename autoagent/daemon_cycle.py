@@ -1654,7 +1654,7 @@ def resolve_floor_terminalization(
     to a terminal 'unadjudicated' row here instead — a hold is not a gate verdict, so
     it never takes 'rejected'.
 
-    The posterior's promotion tier is a label only: it never decides the verdict
+    The promotion tier is a label only: it never decides the verdict
     and passes through unchanged. Only the unbound (approval_tier='auto',
     status='pending') shape is rewritten. Safety tier (approval_tier='safety') and
     already-terminal rows (rejected / snoozed) pass through unchanged — the human

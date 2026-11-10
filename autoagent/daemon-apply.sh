@@ -1197,8 +1197,8 @@ WHERE approval_tier      = 'auto'::core."ApprovalTier"
         promotion_tier IS NULL
      OR promotion_tier IN (
             '',                  -- BYPASS (operator OFF, floorless)
-            'candidate',         -- above floor (posterior >= candidate threshold)
-            'proposal',          -- above floor (intermediate ladder rung)
+            'candidate',         -- above floor (label only)
+            'proposal',          -- above floor (label only)
             'instruction-edit',  -- terminal: Tier-1 Auto (non-frontmatter)
             'skill-candidate'    -- terminal: Tier-2 user_pending (frontmatter)
         )
