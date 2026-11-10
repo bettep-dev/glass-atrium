@@ -1318,32 +1318,6 @@ test("the Title header starts at the title text's x: its label follows an empty 
   assert.doesNotMatch(getScreenCss(screen), /\.doc-col-title-text\s*\{/);
 });
 
-const SETTLED_LIST = { status: "ready", data: {}, error: null, busy: false };
-
-describe("the header hands its read state to the shell exactly once, with or without a first read", () => {
-  const rows = [
-    { name: "a failed first read reaches the shell directly", asOf: null, state: { status: "error", data: null, error: "HTTP 500", busy: false }, direct: 1 },
-    { name: "a first read in flight reaches the shell directly", asOf: null, state: { status: "loading", data: null, error: null, busy: true }, direct: 1 },
-    { name: "after a read the stamp reaches the shell, so the page does not", asOf: "2026-09-30T00:00:00Z", state: SETTLED_LIST, direct: 0 },
-  ];
-
-  for (const row of rows) {
-    test(row.name, async () => {
-      const calls: unknown[] = [];
-      const screen = await loadScreenModule(DOCS_SRC, {
-        UI: uiStub({ ...SHIPPED_ATOMS, useShellPageState: (input: unknown) => calls.push(input) }),
-        React: createReactStub(),
-      });
-      const tree = renderHeaderSlots(screen, { asOf: row.asOf, listState: row.state, onRefresh: () => undefined });
-
-      const stamps = findNodes(tree, (n) => n.props.atom === "FreshnessStamp").length;
-      assert.equal(calls.length + stamps, 1, "one shell caller");
-      assert.equal(calls.length, row.direct);
-      if (row.direct) assert.deepEqual(plain(calls[0]), { at: null, regions: [row.state] });
-    });
-  }
-});
-
 const noop = () => undefined;
 const isDarkScope = (n: RenderedNode) => n.props["data-theme"] === "dark";
 const hasClass = (name: string) => (n: RenderedNode) => String(n.props.className ?? "").split(/\s+/).includes(name);

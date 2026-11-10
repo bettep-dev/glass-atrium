@@ -1200,11 +1200,10 @@ function ToneGlyphCD({ tone }) {
 }
 
 // before the first read the list placeholder is the one loading label → no stamp, and Refresh is not busy yet
-// the freshness slot: the stamp after a first read, otherwise the page hands the shell its read state itself
+// the freshness slot: the stamp after a first read only
 function DocHeaderFreshnessCD({ asOf, listState }) {
 	const { FreshnessStamp } = window.UI;
-	const freshness = getFreshnessInputCD(asOf, listState);
-	return asOf != null ? <FreshnessStamp {...freshness} /> : <ShellPageStateCD input={freshness} />;
+	return asOf != null ? <FreshnessStamp {...getFreshnessInputCD(asOf, listState)} /> : null;
 }
 
 // the refresh slot: busy only over a held read
@@ -1219,12 +1218,6 @@ function DocHeaderRefreshCD({ asOf, listState, onRefresh }) {
 			label="Refresh documents"
 		/>
 	);
-}
-
-// no stamp before a first read → the page hands the shell its loading or failed-first-read state itself
-function ShellPageStateCD({ input }) {
-	window.UI.useShellPageState(input);
-	return null;
 }
 
 // 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.

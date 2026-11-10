@@ -1970,14 +1970,12 @@ function useFreshnessTick(isEnabled) {
   }, [isEnabled]);
 }
 
-// shell ↔ page bridge — app.jsx registers the sink and the harness reader; pageState is replayed on register (child effects run first)
-const shellBridge = { putPageState: null, readHarness: null, pageState: null, owner: null };
+// shell ↔ page bridge — app.jsx registers its harness reader
+const shellBridge = { readHarness: null };
 
-/** Shell side: registers the sidebar's page-state sink and its coalesced harness read; call with no argument to detach. */
-function setShellBridge({ putPageState = null, readHarness = null } = {}) {
-  shellBridge.putPageState = putPageState;
+/** Shell side: registers its coalesced harness read; call with no argument to detach. */
+function setShellBridge({ readHarness = null } = {}) {
   shellBridge.readHarness = readHarness;
-  putPageState?.(shellBridge.pageState);
 }
 
 /** One shell harness re-read, joined to any read already in flight; never rejects (every source settles). */
@@ -1986,49 +1984,12 @@ function getHarnessRead() {
 }
 
 /**
- * Page read state the shell shows → { state, at }: 'loading' only for a first read in flight, else the settled stamp state.
- * A refresh over held data reports its settled state, so the sidebar never flickers to Checking.
- */
-function getShellPageState({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
-  const settledRegions = getSettledRegions(regions);
-  const settled = getFreshnessState({ at, failed, regions: settledRegions, staleAfterMs, now });
-  const isInFlight = loading || getRegionSummary(regions).isBusy;
-
-  if (settled === 'not-read') return { state: isInFlight ? 'loading' : 'not-read', at: null };
-  return { state: settled, at };
-}
-
-/**
- * Hands the page's read state to the shell sidebar and clears it on unmount, so the next page never inherits it.
- * FreshnessStamp calls it; a page whose stamp is gated calls it directly with the stamp's inputs. One caller per page.
- */
-function useShellPageState(input) {
-  const ownerRef = useRef({});
-  const { state, at } = getShellPageState(input);
-  const atMs = at ? new Date(at).getTime() : null;
-
-  useEffect(() => {
-    shellBridge.owner = ownerRef.current;
-    shellBridge.pageState = { state, at };
-    shellBridge.putPageState?.(shellBridge.pageState);
-  }, [state, atMs]);
-  useEffect(() => () => {
-    if (shellBridge.owner !== ownerRef.current) return;
-    shellBridge.owner = null;
-    shellBridge.pageState = null;
-    shellBridge.putPageState?.(null);
-  }, []);
-}
-
-/**
  * Shared freshness stamp — hidden while the settled read is fresh; otherwise the unread note or "Last known" with the read's age.
  * A refresh in flight keeps the settled text and sets aria-busy; a read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
- * @param shellRegions - regions handed to the shell when they differ from the rendered set (a region the shell already owns is left out)
  */
-function FreshnessStamp({ at, loading = false, failed = false, regions, shellRegions, staleAfterMs, now }) {
+function FreshnessStamp({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
   const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
   const settled = getFreshnessState({ at, failed, regions: getSettledRegions(regions), staleAfterMs, now });
-  useShellPageState({ at, loading, failed, regions: shellRegions ?? regions, staleAfterMs, now });
   useFreshnessTick(settled !== 'not-read' && now === undefined);
   if (settled === 'fresh') return null;
 
@@ -2766,7 +2727,7 @@ window.UI = {
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
-  setShellBridge, getHarnessRead, getShellPageState, useShellPageState,
+  setShellBridge, getHarnessRead,
   getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,

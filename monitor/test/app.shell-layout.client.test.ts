@@ -11,7 +11,6 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
   createReactStub,
-  collectText,
   findNodes,
   loadScreenModule,
   renderScreen,
@@ -112,7 +111,7 @@ type ScreenFactory = (react: StatefulReact, ui: Record<string, unknown>) => Reco
 const readyOnceAnswered = (stores: Record<string, { status: string }>) =>
   Object.values(stores).some((store) => store.status === "loading")
     ? { status: "loading" }
-    : { status: "ready", downNames: [], daemonsDown: 0, failCount1h: 0 };
+    : { status: "ready", downNames: [], failCount1h: 0 };
 
 async function mountShell({ fetch = () => new Promise(() => undefined), createRoot = () => ({ render: () => undefined }), screens }: {
   fetch?: (url: string) => Promise<unknown>;
@@ -299,35 +298,7 @@ function createHarnessFetch({ isHealthy }: { isHealthy: boolean }) {
   return { fetch, settle, state };
 }
 
-const sidebarText = (tree: RenderedNode) => collectText(findNodes(tree, (n) => n.type === "aside")[0]);
 const clickNode = (node: RenderedNode) => (node.props.onClick as (e: unknown) => void)({});
-const classOf = (node: RenderedNode) => String(node.props.className ?? "");
-
-// the footer status is prose, not a machine string: whatever state it reads, sentence case in the sans face beside a dot that never blinks
-test("the sidebar footer status reads in sentence case in the body face beside a static dot", async (t) => {
-  const rows = [
-    { name: "first poll in flight → Checking", isAnswered: false, isHealthy: true },
-    { name: "every source healthy → All systems", isAnswered: true, isHealthy: true },
-    { name: "a source unread → Status unknown", isAnswered: true, isHealthy: false },
-  ];
-  for (const row of rows) {
-    await t.test(row.name, async () => {
-      const harnessFetch = createHarnessFetch({ isHealthy: row.isHealthy });
-      const { render } = await mountShell({ fetch: harnessFetch.fetch, screens: () => ({}) });
-      render();
-      if (row.isAnswered) await harnessFetch.settle();
-      const [aside] = findNodes(render(), (n) => n.type === "aside");
-      const [footer] = findNodes(aside, (n) => n.type === "div" && /\bborder-t\b/.test(classOf(n)));
-
-      const label = collectText(footer).trim();
-      assert.match(label, /^[A-Z][^A-Z]*$/, `"${label}" is sentence case`);
-      assert.deepEqual(findNodes(footer, (n) => /\b(font-mono|uppercase)\b/.test(classOf(n))).map(classOf), [], "no mono or uppercase face");
-      const dots = findNodes(footer, (n) => /\brounded-full\b/.test(classOf(n)));
-      assert.equal(dots.length, 1, "one status dot");
-      assert.doesNotMatch(classOf(dots[0]), /\blive-dot\b/, "the dot is static");
-    });
-  }
-});
 
 test("a Refresh off the Dashboard starts one harness read, and concurrent requests join it", async () => {
   const harnessFetch = createHarnessFetch({ isHealthy: true });
@@ -357,31 +328,24 @@ test("a Refresh off the Dashboard starts one harness read, and concurrent reques
   await dashboardRead;
 });
 
-test("a Retry that recovers the page and the harness clears Status unknown on that action", async () => {
+test("a page Retry also re-reads the harness, so a recovered harness reaches the nav on that action", async () => {
   const harnessFetch = createHarnessFetch({ isHealthy: false });
-  const page: { at: string | null; failed: boolean } = { at: null, failed: true };
   const { render, navigateByHash } = await mountShell({
     fetch: harnessFetch.fetch,
     screens: (react, ui) => ({
       ScreenCost: function ScreenCost() {
-        const onRetry = () => Object.assign(page, { at: new Date().toISOString(), failed: false });
-        return react.createElement("div", null,
-          react.createElement(ui.FreshnessStamp, { at: page.at, failed: page.failed }),
-          react.createElement(ui.RetryButton, { onRetry }));
+        return react.createElement(ui.RetryButton, { onRetry: () => undefined });
       },
     }),
   });
   render();
   await harnessFetch.settle();
   navigateByHash("#cost");
-  render();
-  const failedTree = render();
-  assert.match(sidebarText(failedTree), /Status unknown/, "an unread harness outranks the page's failed read");
+  const [retry] = findNodes(mainRegion(render()), (n) => n.type === "button");
+  const readsBefore = harnessFetch.state.kpiReads;
 
-  harnessFetch.state.isHealthy = true;
-  clickNode(findNodes(mainRegion(failedTree), (n) => n.type === "button")[0]);
+  clickNode(retry);
+
+  assert.equal(harnessFetch.state.kpiReads - readsBefore, 1);
   await harnessFetch.settle();
-  render();
-
-  assert.match(sidebarText(render()), /All systems/);
 });

@@ -322,7 +322,6 @@
   - finder 3 (full-opacity tone **fill** — `background` · SVG `fill` · `bg-<tone>`): `grep -rnE "(background(-color)?|fill) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info|alert-tone)\)\)|(background|backgroundColor|fill) *[:=] *[\"'{][^\"'}]*rgb\(var\(--(crit|warn|ok|info)\)\)|bg-(crit|warn|ok|info)\b[^/]" public/src public/styles`.
     - 허용 hit — full-opacity tone fill 의 전체 목록:
       - 차트 data mark: `wiki.jsx` status mix 막대 · `agents.jsx` latency `bg-info` 막대와 범례 swatch · quality-health 차트 (`RATIO` 축 라벨 · tooltip key swatch).
-      - 사이드바 시스템 롤업 dot (§7.7 `dotClass`) — 롤업 단어 · glyph 와 짝.
       - light alert-card glyph well (`--alert-well-fill`, 위 alert-card 항목) — `--elev` knock-out glyph 를 담는 glyph carrier. dark 는 0.12 tint 라 hit 아님.
       - destructive action `.btn.danger` (§7.4) · System map 링 badge glyph (`text.arch-ring-glyph` fill = glyph 의 tone).
 
@@ -559,10 +558,6 @@
 - 면: `bg-elev` 불투명 · `border-r` · sticky, glass 금지.
 - `.nav-item`: `--fs-control` · `--dim` · padding 6px 10px · `--radius-control` · Icon 14 · hover/active = `--sunken` + `--ink`, active 500.
 - `.nav-badge`: mono `--fs-meta` · `--sunken` · 1px `--line` · pill radius (mono and border retiring → §12.2 sans + §12.3 Badge fill only, S2c) — tone 과 무관한 neutral shell. 내용 = tone glyph (`text-<tone>`, aria-hidden, tone 있는 배지는 모두) + 값 + sr-only 설명 (`title` 동반).
-- 시스템 롤업 (`app.jsx` → `systemsRollup`, retiring with its dot — it repeats the nav badge, §12.7): 라벨 `--dim` + tone glyph (✕ crit · ⚠ warn) + 6px dot. 라벨 = sentence case, 본문 sans (mono 아님 — machine string 이 아니다).
-  - dot = full-opacity tone fill (`dotClass` `bg-crit` · `bg-warn` · `bg-ok`, neutral `bg-faint`) — §4.2 의 허용 fill. 짝 = 롤업 단어 (crit · warn 은 glyph 도).
-  - < 1200px rail 에선 glyph · 라벨이 clip → 보이는 건 dot 뿐, 단어는 접근 이름으로 남는다.
-  - dot 는 정적 — no ambient loop (§12.9).
 
 ### 7.8 DetailSurface — drawer · fullscreen · confirm (`.detail-*`)
 
@@ -824,7 +819,7 @@
 - [ ] 목록은 S/M/L slot 의 row budget + `Show all N` foot, stretched 행 안 중첩 스크롤 없음.
 
 **색 · severity**
-- [ ] severity = glyph + 색 + 단어. tone 은 glyph 에만 — shell · stripe · fill · border 아님 (예외는 §4.2 의 허용 예외 · finder 허용 hit 목록 그대로 — 롤업 dot · light alert-card well 포함). §4.2 finder 1 · 1b · 2 · 3 은 허용 hit 만.
+- [ ] severity = glyph + 색 + 단어. tone 은 glyph 에만 — shell · stripe · fill · border 아님 (예외는 §4.2 의 허용 예외 · finder 허용 hit 목록 그대로 — light alert-card well 포함). §4.2 finder 1 · 1b · 2 · 3 은 허용 hit 만.
 - [ ] accent 는 링크 · focus ring 에만, selected · current mark 는 ink (§12.4) · 한 view 에 한 fact 한 자리 (§12.7).
 - [ ] severity 요소를 glass/blur 위에 올리지 않음 · `--cat-*` 는 분류(차트)에만, cat-2/4 text 금지 · focus 는 `--focus-ring` (`--accent` 아님).
 

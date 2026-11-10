@@ -117,18 +117,13 @@ function toPayloadRows(payload) {
   });
 }
 
-// 셸이 폴링한 harness 스토어 → 단일 harness 상태. 풋터 롤업 · System map nav 숫자 ·
-// Dashboard 레인/타일이 모두 이 결과 하나만 읽는다 → 같은 사실에 대해 세 표면이 어긋날 수 없음.
+// 셸이 폴링한 harness 스토어 → 단일 harness 상태. System map nav 숫자 ·
+// Dashboard 레인/타일이 모두 이 결과 하나만 읽는다 → 같은 사실에 대해 두 표면이 어긋날 수 없음.
 // 파트 분모는 '셸이 실제로 관측한' 파트뿐 — 미관측 파트를 ok 로 세지 않는다.
 
 // 스토어가 ready 일 때만 값 추출 — 미수신을 0/빈값으로 꾸미지 않음 (unknown → null).
 function readReady(state, pick) {
   return state && state.status === 'ready' ? pick(state.data) : null;
-}
-
-// Daemon down = effective_status ≠ ok → feeds only the footer ISSUES flag (app.jsx); the nav badge reads downNames.
-function countDaemonsDown(livePayload) {
-  return (livePayload?.daemons || []).filter((d) => d.effective_status !== 'ok').length;
 }
 
 // tone → 파트 관측 결과. ok=정상 · crit/warn=고장 · 그 외(info·비ready)=관측 못 함(null).
@@ -167,13 +162,12 @@ function foldHarness(states = {}) {
     partsTotal: parts.length,
     downNames: down.map((p) => p.name),
     uncheckedNames: parts.filter((p) => p.ok === null).map((p) => p.name),
-    daemonsDown: readReady(states.liveState, countDaemonsDown),
     failCount1h: readReady(states.kpiState, (d) => Number(d?.last_1h_fail_count) || 0),
     version: readReady(states.healthState, (d) => d?.version || null),
   };
 }
 
-// Nothing checked + a store still pending → first-poll wait, not a lost reading (tile skeleton ↔ footer Checking…).
+// Nothing checked + a store still pending → first-poll wait, not a lost reading (the tile skeleton).
 function resolveFoldStatus(checkedCount, cardStates) {
   if (checkedCount > 0) return 'ready';
   return Object.values(cardStates).some((state) => state.status === 'loading') ? 'loading' : 'unavailable';

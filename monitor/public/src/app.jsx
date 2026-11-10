@@ -80,9 +80,8 @@ function parseHashScreen() {
 	return NAV.some((n) => n.id === raw) ? raw : "dashboard";
 }
 
-function Sidebar({ active, onNav, harness, agentsState, pageState }) {
+function Sidebar({ active, onNav, harness, agentsState }) {
 	const { Icon } = window.UI;
-	const systems = systemsRollup(harness, pageState);
 	const dynamicBadges = { ...harnessToNavBadges(harness), ...agentsToNavBadges(agentsState) };
 	return (
 		<aside aria-label="Sidebar" className="shell-sidebar flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
@@ -143,20 +142,6 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 					})}
 				</div>
 			</nav>
-			<div className="p-3 border-t border-line">
-				<div className="bg-sunken rounded-md p-3" style={META_TEXT_STYLE}>
-					<div className="flex items-center gap-1.5 mb-1">
-						{/* 라이브 롤업 파생 — 정적 dot, no ambient loop (design.md §12.9) · 라벨 = sentence-case 본문 서체 */}
-						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}`}></span>
-						{systems.glyph && (
-							<span aria-hidden="true" className={`rail-hide text-${systems.tone}`}>
-								{systems.glyph}
-							</span>
-						)}
-						<span className="rail-hide text-dim">{systems.label}</span>
-					</div>
-				</div>
-			</div>
 		</aside>
 	);
 }
@@ -240,7 +225,7 @@ function harnessToNavBadges(harness) {
 
 /**
  * Agents nav slot = agents unsafe to route now (suspended + on a fail streak), the Agents screen's alarm set.
- * Own store, outside the harness fold → an unread summary never moves the footer or the System map numeral.
+ * Own store, outside the harness fold → an unread summary never moves the System map numeral.
  * Never read → no key · unavailable or zero → null: never a zero that was not loaded.
  */
 function agentsToNavBadges(agentsState) {
@@ -261,40 +246,6 @@ function agentsToNavBadges(agentsState) {
 	return { agents: { badge: String(unsafeCount), badgeTone, glyph, source: "breaker", title, description: title } };
 }
 
-// All systems 풋터 도트 = 레인/타일과 같은 harness fold 파생. 폴링이 실패한 순간에도
-// 두 표면이 어긋나지 않는다 — 첫 폴 대기는 neutral 'Checking…', 읽기 실패는 'Status unknown'.
-// 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
-// pageState = the page header stamp's read state (ui.jsx → getShellPageState): outranks only All systems.
-function systemsRollup(harness, pageState = null) {
-	if (!harness || harness.status === "loading") return getNeutralRollup("Checking…");
-
-	const isReady = harness.status === "ready";
-	const downCount = isReady ? harness.downNames.length : 0;
-	// tone = worst alarm severity: a down part is the lane's crit harness alarm
-	if (downCount > 0) {
-		const label = `${downCount} ${downCount === 1 ? "part" : "parts"} down`;
-		return { tone: "crit", dotClass: "bg-crit", glyph: window.UI.TONE_GLYPH.crit, label };
-	}
-	const issues = isReady && (harness.daemonsDown > 0 || harness.failCount1h > 0);
-	if (issues) return { tone: "warn", dotClass: "bg-warn", glyph: window.UI.TONE_GLYPH.warn, label: "Issues detected" };
-	// an unread source could hide a fault → unknown, never All systems
-	if (!isReady || harness.unreadSources?.length > 0) return getNeutralRollup("Status unknown");
-	return getPageRollup(pageState) ?? { tone: "ok", dotClass: "bg-ok", label: "All systems" };
-}
-
-// page read state in the stamp's own words, neutral tone — a read fact, not a harness verdict; fresh → null
-function getPageRollup(pageState) {
-	const { state, at } = pageState ?? {};
-	if (state === "loading") return getNeutralRollup("Checking…");
-	if (state === "not-read") return getNeutralRollup("Not read");
-	if (state === "stale" || state === "partial") return getNeutralRollup(`Last known ${window.UI.formatKstTime(at)}`);
-	return null;
-}
-
-function getNeutralRollup(label) {
-	return { tone: "neutral", dotClass: "bg-faint", label };
-}
-
 function App() {
 	// tweaks → data-theme / --accent / data-density 동기화
 	const [tweaks, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
@@ -302,7 +253,7 @@ function App() {
 	const [active, setActive] = useS(parseHashScreen);
 
 	// harness 원본 스토어 — 셸이 한 cadence 로 읽고 fold 가 단일 상태로 접는다.
-	// 화면은 이 fold 만 받는다: 스크린이 같은 payload 를 다시 해석하면 풋터와 어긋난다.
+	// 화면은 이 fold 만 받는다: 스크린이 같은 payload 를 다시 해석하면 nav 숫자와 어긋난다.
 	const [kpiState, setKpiState] = useS(HARNESS_STORE_INITIAL);
 	const [liveState, setLiveState] = useS(HARNESS_STORE_INITIAL);
 	const [healthState, setHealthState] = useS(HARNESS_STORE_INITIAL);
@@ -372,10 +323,9 @@ function App() {
 		};
 	}, [pollHarness]);
 
-	// page read state from the header stamp (ui.jsx → useShellPageState); the stamp clears it on unmount
-	const [pageState, setPageState] = useS(null);
+	// shared Refresh/Retry → the shell's coalesced harness read (ui.jsx → getHarnessRead)
 	useE(() => {
-		window.UI.setShellBridge({ putPageState: setPageState, readHarness: pollHarness });
+		window.UI.setShellBridge({ readHarness: pollHarness });
 		return () => window.UI.setShellBridge();
 	}, [pollHarness]);
 
@@ -402,7 +352,7 @@ function App() {
 		}
 	};
 
-	// 풋터 · nav 숫자 · Dashboard 레인이 읽는 단일 harness 사실.
+	// nav 숫자 · Dashboard 레인이 읽는 단일 harness 사실.
 	const harness = getHarness({
 		kpiState,
 		liveState,
@@ -425,7 +375,7 @@ function App() {
 			<a href={`#${MAIN_CONTENT_ID}`} className="skip-link" onClick={onSkipToContent}>
 				Skip to content
 			</a>
-			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState} pageState={pageState} />
+			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState} />
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (

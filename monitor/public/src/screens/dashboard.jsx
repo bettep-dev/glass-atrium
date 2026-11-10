@@ -97,7 +97,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const retryTile = useCallbackD((region) => getTileRetry(loadRegion, rereadHarness)(region), [loadRegion, rereadHarness]);
   const refetchUpdateJob = useCallbackD(() => loadRegion('updateJob'), [loadRegion]);
 
-  // harness 판독은 셸 fold 가 공급 — 여기서 재요청하지 않는다(풋터와 어긋나는 원인).
+  // harness 판독은 셸 fold 가 공급 — 여기서 재요청하지 않는다(nav 숫자와 어긋나는 원인).
   useEffectD(() => {
     let isCurrentWave = true;
     Promise.all(DASH_WAVE_REGIONS.map(loadRegion)).then((results) => {
@@ -1187,9 +1187,8 @@ function describeVersion(harness) {
 
 // wave regions + the shell harness — update-job polls on its own, so it stays out and never moves the stamp
 // the stamp also answers for the harness tile → a pending harness read keeps it busy, a failed one keeps it off Fresh
-// the shell owns the harness read → its page state leaves that region out, so a harness-only failure is reported once
 function getFreshnessInputD(settledAt, waveStates, harness) {
-  return { at: settledAt, regions: [...waveStates, toHarnessRegion(harness)], shellRegions: waveStates };
+  return { at: settledAt, regions: [...waveStates, toHarnessRegion(harness)] };
 }
 
 // the shell fold carries no busy flag → its read in flight is status 'loading'
