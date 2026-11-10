@@ -1228,7 +1228,7 @@ describe("ledger columns: Tags and the title floor follow the ledger's width", (
     const context: BrowserContext = await browser.newContext({ viewport: { width, height: 900 } });
     const page: Page = await context.newPage();
     await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-    if (font) await page.addStyleTag({ content: `.doc-ledger-scroll, .doc-ledger-scroll * { font-family: ${font} !important; }` });
+    if (font) await page.addStyleTag({ content: `.doc-ledger, .doc-ledger * { font-family: ${font} !important; }` });
     await page.locator("table.tbl").waitFor({ state: "visible" });
     return { context, page };
   }
@@ -1308,6 +1308,23 @@ describe("ledger columns: Tags and the title floor follow the ledger's width", (
       }
     });
   }
+
+  // two boxes → a padding on one would move a floor step off the stacked threshold it must precede
+  test("the column floors and the stacked switch read one box, the Table's measured wrapper", async () => {
+    const { context, page } = await openLedger(1440);
+    try {
+      const host = await page.evaluate(() => {
+        const wrap = document.querySelector("table.tbl")?.parentElement;
+        if (!wrap) throw new Error("ledger wrapper missing");
+        const style = getComputedStyle(wrap);
+        return { mode: wrap.getAttribute("data-table-mode"), name: style.containerName, type: style.containerType };
+      });
+      assert.equal(host.mode, "wide", "the ledger table's parent is the wrapper Table measures");
+      assert.deepEqual({ name: host.name, type: host.type }, { name: "doc-ledger", type: "inline-size" }, "the floor-step queries resolve on that wrapper");
+    } finally {
+      await context.close();
+    }
+  });
 });
 
 // The 13px meta floor covers every drawn text node on the Documents screen: the ledger with its bulk action bar, and the full-screen viewer with its metadata side, version history and stage menu open.

@@ -261,7 +261,7 @@ describe("the ledger's pills sit on the interactive pill tier", () => {
   test("hover, focus-visible and active keep the lineage pill's box", () => assertBoxHeldAcrossStates(LINEAGE));
 
   test("the clamped stage label keeps its face's descenders inside its box", async () => {
-    const labels = await page.$$eval("#docs-list .doc-ledger-scroll .doc-stage-label", (els) => els.map((el) => ({ scroll: el.scrollHeight, client: el.clientHeight })));
+    const labels = await page.$$eval("#docs-list .doc-ledger .doc-stage-label", (els) => els.map((el) => ({ scroll: el.scrollHeight, client: el.clientHeight })));
     assert.ok(labels.length > 0);
     for (const { scroll, client } of labels) assert.ok(scroll <= client, `label content ${scroll} in a ${client} box`);
   });

@@ -1015,8 +1015,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-ledger--tags:not(.tbl--stacked) thead th:nth-child(5) { width: ${LEDGER_CD.FLOOR.tags}px; min-width: ${LEDGER_CD.FLOOR.tags}px; }
         .doc-ledger:not(.tbl--stacked) thead th:nth-last-child(2) { width: ${LEDGER_CD.FLOOR.author}px; min-width: ${LEDGER_CD.FLOOR.author}px; }
         .doc-ledger:not(.tbl--stacked) thead th:last-child { width: ${LEDGER_CD.FLOOR.created}px; min-width: ${LEDGER_CD.FLOOR.created}px; }
-        /* column floors + Tags → a narrower ledger drops Tags, the viewer still carries it */
-        .doc-ledger-scroll { container: doc-ledger / inline-size; }
+        /* Table's measured wrapper hosts the floor steps → they and the stacked switch read one box · column floors + Tags → a narrower ledger drops Tags, the viewer still carries it */
+        .tbl-wrap:has(> .doc-ledger) { container: doc-ledger / inline-size; }
         @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum + LEDGER_CD.FLOOR.tags}px) { .doc-col-tags, .doc-ledger--tags thead th:nth-child(5) { display: none; } }
         /* a ledger under its column floors → the title floor narrows */
         @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum}px) { .doc-ledger:not(.tbl--stacked) thead th:nth-child(4) { min-width: ${LEDGER_CD.FLOOR.titleNarrow}px; } }
@@ -1064,9 +1064,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-meter { display: inline-flex; align-items: center; gap: var(--space-1); }
         .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* a max-width caps the pill's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
-        .doc-ledger-scroll .doc-stage-picker, .doc-ledger-scroll .doc-stage-pill { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
+        .doc-ledger .doc-stage-picker, .doc-ledger .doc-stage-pill { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
         /* the clip cuts at the label's line box → a control line box, so the shell's line-height 1 never clips a descender */
-        .doc-ledger-scroll .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: var(--lh-ctl); }
+        .doc-ledger .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: var(--lh-ctl); }
         /* numeric columns: ID and Created read right-aligned in tabular figures on one line — each keeps its own typeface */
         .tbl :is(th, td).doc-col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
         /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
@@ -1502,8 +1502,6 @@ function DocListCardCD({
 					/>
 				)}
 				{state.status === "ready" && rows.length > 0 && (
-					// own x-scroll → a table wider than the card scrolls here, never the page
-					<div className="doc-ledger-scroll min-w-0 flex-1">
 					<Table
 						caption="Documents ledger. Up and Down move between rows, Right reaches a row's controls, Enter opens the focused document."
 						columns={getLedgerColumnsCD({
@@ -1716,7 +1714,6 @@ function DocListCardCD({
 								);
 							}) }]}
 					/>
-					</div>
 				)}
 				{/* Load More 버튼.
             · canLoadMore = !isSearchMode AND ready AND consumedCount < total (server groups consumed, not deduped rows)
