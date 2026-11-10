@@ -165,20 +165,25 @@ async function clickAndWaitForListResponse(
   await Promise.all([respPromise, action()]);
 }
 
-// stage 필터 chip 클릭 helper.
-//   · stage filter chip ('Open' / 'Done' / 'All') → /api/clauded-docs/groups 호출 + ?doc_status= 송신.
-//   · chip 변경 → currentOffset=0 리셋 → offset 파라미터 미포함 응답이 reset 완료 시그널.
+// Show filter pick helper.
+//   · Show trigger → menu → menuitemradio ('Open' / 'Done' / 'All') → /api/clauded-docs/groups 호출 + ?doc_status= 송신.
+//   · 변경 → currentOffset=0 리셋 → offset 파라미터 미포함 응답이 reset 완료 시그널.
 //   · 응답 path: managedData.groups[] 정규화 후 setLoadedRows.
-async function clickDocStatusChip(page: Page, label: string): Promise<void> {
+async function pickDocStatus(page: Page, label: string): Promise<void> {
   await clickAndWaitForListResponse(
     page,
     async () => {
-      const within = page.getByRole("toolbar", { name: "Stage filter" });
-      // 칩 접근명은 라벨 + 그룹 단위 건수 → 부분 일치로 잡는다 (exact 는 건수 때문에 미스).
-      await within.getByRole("button", { name: label }).click();
+      await filterTrigger(page, "Show").click();
+      // 항목 접근명은 라벨 + 그룹 단위 건수 → 라벨로 시작하는 이름으로 잡는다 (exact 는 건수 때문에 미스).
+      await page.getByRole("menu", { name: "Show" }).getByRole("menuitemradio", { name: new RegExp(`^✓?${label}\\b`) }).click();
     },
     (url) => !url.includes("offset="),
   );
+}
+
+// the page's own filter bar → its triggers, never the Load More "Show N more" button
+function filterTrigger(page: Page, axis: "Show" | "Audience") {
+  return page.getByRole("group", { name: "Document filters" }).locator(".filter-trigger", { hasText: axis });
 }
 
 // helper — Load More 버튼 locator. aria-label `Show ${N} more` (N = formatIntCD 콤마 포함) —
@@ -303,7 +308,7 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
 
       // 'All' chip 으로 filter 변경 → offset 리셋 + 새 첫 50 fetch.
       // 누적된 60+ 행이 사라지고 최대 50 행만 표시되어야 (리셋 증거).
-      // clickDocStatusChip 는 offset 미포함 응답 대기 → reset 완료 시그널.
+      // pickDocStatus 는 offset 미포함 응답 대기 → reset 완료 시그널.
       // a reset that lands one render late still fires a stale offset=50 request first, which the row count alone cannot see
       const offsetRequests: string[] = [];
       page.on("request", (req) => {
@@ -312,7 +317,7 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
           offsetRequests.push(url.search);
         }
       });
-      await clickDocStatusChip(page, "All");
+      await pickDocStatus(page, "All");
       await waitForRowCountAtMost(page, 50);
       assert.deepStrictEqual(offsetRequests, [], "the chip change requests only the first page");
     } finally {
@@ -509,7 +514,7 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
       // '종료' chip → /groups?doc_status=done 호출 → done 상태 그룹만 가시화.
-      await clickDocStatusChip(page, "Done");
+      await pickDocStatus(page, "Done");
 
       // B + C 가 done 필터에서 가시 — server cascade 의 UI 가시화 확인.
       // 단, B/C 는 folder_id 가 동일하므로 group 1개 (representative_id=B 또는 C — created_at DESC 기준) → 1 row 가시.
@@ -1015,7 +1020,7 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
 
       // 검색 모드 — relevance 컬럼이 빠진 뒤로 컬럼 구성은 목록 모드와 같으나, 제목 하한은 따로 잰다.
       // stage 섹션 머리 소멸 = 모드 전환 완료 신호 (섹션은 목록 모드 열림/전체 필터 전용).
-      await page.locator("input.doc-search-input").fill("widthpin");
+      await page.locator("input.bar-search-field").fill("widthpin");
       await page.waitForFunction(
         () => document.querySelectorAll("tr.doc-stage-section").length === 0,
         undefined,
@@ -1033,17 +1038,48 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
   }
 });
 
-test("search mode: entering and leaving it moves neither the focused search field nor the Audience group", async () => {
-  // a search response carries no group counts → this pins that the stage chips keep theirs, and so their width, across it
+test("search mode: the snippet line and the Title header label start at the title text's x", async () => {
+  const title = `${SUITE_MARKER} alignpin row`;
+  const doc = await postCreate({ title, author: "load-more-tester", html_body: makeHtmlBody("alignpin snippet words") });
+  try {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      await page.locator("input.bar-search-field").fill("alignpin");
+      const row = page.locator("tr.doc-row", { hasText: "alignpin" }).first();
+      await row.locator(".doc-snippet").waitFor({ state: "visible" });
+
+      const titleBox = await row.locator(".doc-title-text").boundingBox();
+      const snippet = await row.locator(".doc-snippet").boundingBox();
+      const header = await page.locator(".doc-ledger thead th").getByText("Title", { exact: true }).boundingBox();
+      assert.ok(titleBox && snippet && header, "title, snippet and header label all render");
+      assert.ok(Math.abs(snippet.x - titleBox.x) < 0.5, `snippet x ${snippet.x} = title x ${titleBox.x}`);
+      assert.ok(Math.abs(header.x - titleBox.x) < 0.5, `header label x ${header.x} = title x ${titleBox.x}`);
+    } finally {
+      await context.close();
+    }
+  } finally {
+    await deleteDoc(doc.id);
+  }
+});
+
+test("search mode: entering and leaving it moves neither the focused search field nor the Show and Audience triggers", async () => {
+  // a search response carries no group counts → this pins that the Show trigger keeps its width, and the note lands after the triggers
   const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page: Page = await context.newPage();
   try {
     await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-    const search = page.locator("input.doc-search-input");
-    const audience = page.getByRole("toolbar", { name: "Audience filter" });
+    const search = page.locator("input.bar-search-field");
+    const show = filterTrigger(page, "Show");
+    const audience = filterTrigger(page, "Audience");
     const count = page.locator(".doc-list-count");
-    await page.getByRole("toolbar", { name: "Stage filter" }).locator(".doc-chip-count").first().waitFor();
-    const readBoxes = async () => ({ search: await search.boundingBox(), audience: await audience.boundingBox() });
+    await count.filter({ hasText: /documents/ }).waitFor();
+    const readBoxes = async () => ({
+      search: await search.boundingBox(),
+      show: await show.boundingBox(),
+      audience: await audience.boundingBox(),
+    });
     const listed = await readBoxes();
 
     await clickAndWaitForListResponse(page, () => search.fill(`modepin${randomUUID().slice(0, 8)}`), (url) => url.includes("/search?"));
@@ -1055,7 +1091,7 @@ test("search mode: entering and leaving it moves neither the focused search fiel
     const relisted = await readBoxes();
 
     for (const [phase, boxes] of [["while searching", searching], ["after the query clears", relisted]] as const) {
-      for (const name of ["search", "audience"] as const) {
+      for (const name of ["search", "show", "audience"] as const) {
         for (const key of ["x", "y", "width", "height"] as const) {
           const [before, now] = [listed[name]![key], boxes[name]![key]];
           assert.ok(Math.abs(now - before) <= 0.5, `${phase}: ${name} ${key} ${now} vs ${before} in list mode`);
@@ -1104,41 +1140,6 @@ test("list rows: a row with a lineage, a stage actor or both is one row-height l
   }
 });
 
-// open-summary rail beside the ledger: one label/count grid, the Oldest open link aligned to the labels
-test("open-summary rail: beside the ledger (1920px) labels and counts share one two-column grid and Oldest open starts at the label edge", async () => {
-  const ids = await seedManyDocs(3, "grid");
-  try {
-    const context: BrowserContext = await browser.newContext({ viewport: { width: 1920, height: 900 } });
-    const page: Page = await context.newPage();
-    try {
-      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-      const rail = page.locator("aside.doc-open-summary");
-      await rail.waitFor({ state: "visible" });
-      const columns = await rail.locator(".doc-open-summary-group").first().evaluate((el) => {
-        const tracks = getComputedStyle(el).gridTemplateColumns.split(" ").filter(Boolean);
-        const [label, count] = [el.querySelector("dt"), el.querySelector("dd")].map((c) => c?.getBoundingClientRect());
-        return { tracks: tracks.length, sameRow: !!label && !!count && Math.abs(label.top - count.top) < 2 };
-      });
-      assert.equal(columns.tracks, 2, "labels and counts share one two-column grid");
-      assert.ok(columns.sameRow, "a count sits on its label's row");
-
-      // the link's text, not its box: the small-button box hangs its padding into the rail gutter
-      const edges = await rail.evaluate((el) => {
-        const link = el.querySelector(".doc-open-oldest");
-        const text = link ? document.createRange() : null;
-        text?.selectNodeContents(link!);
-        return { label: el.querySelector("dt")?.getBoundingClientRect().left, oldest: text?.getBoundingClientRect().left };
-      });
-      assert.ok(edges.label != null && edges.oldest != null, "rail shows a label and an Oldest open link");
-      assert.ok(Math.abs(edges.oldest - edges.label) < 1, `Oldest open's text starts at the label edge (${edges.oldest} vs ${edges.label})`);
-    } finally {
-      await context.close();
-    }
-  } finally {
-    for (const id of ids) await deleteDoc(id);
-  }
-});
-
 // the list card keeps tabindex=-1 after a Retry handoff → :focus-visible alone draws its ring
 test("list card: a mouse click never rings the card, a keyboard-driven handoff rings it inside the clipped edge", async () => {
   const ids = await seedManyDocs(3, "ring");
@@ -1147,7 +1148,7 @@ test("list card: a mouse click never rings the card, a keyboard-driven handoff r
     const page: Page = await context.newPage();
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-      const card = page.locator(".card.doc-list-card");
+      const card = page.locator("#docs-list");
       await card.waitFor({ state: "visible" });
       const ring = () => card.evaluate((el) => {
         const style = getComputedStyle(el);
@@ -1155,7 +1156,8 @@ test("list card: a mouse click never rings the card, a keyboard-driven handoff r
       });
 
       await card.evaluate((el) => el.setAttribute("tabindex", "-1"));
-      await card.click({ position: { x: 2, y: 2 } });
+      // inside the bar inset, below the rounded corner → lands on the card, never on a control
+      await card.click({ position: { x: 4, y: 24 } });
       const clicked = await ring();
       assert.ok(clicked.focused, "the click focuses the card itself");
       assert.equal(clicked.style, "none", "a plain mouse focus draws no ring");
@@ -1183,33 +1185,36 @@ test("list card: a mouse click never rings the card, a keyboard-driven handoff r
 });
 
 // mirrors LEDGER_CD.FLOOR in screens/clauded-docs.jsx (browser JSX, outside the test import graph) → a floor change there moves every boundary row below
-const LEDGER_FLOOR = { sum: 969, title: 434, tags: 148 };
+const LEDGER_FLOOR = { sum: 938, title: 434, tags: 148, titleNarrow: 240 };
 const WIDTH = {
-  OPEN_SUMMARY_RAIL: 200,
-  // app shell beside the card: viewport − shell = the doc-layout container width (asserted per row)
-  SHELL: 270,
+  // app shell beside the card: viewport − shell = the ledger container width (asserted per row)
+  SHELL: {
+    SIDEBAR: 270,
+    // < 1200px viewport → the sidebar collapses to its icon rail (base.css `.shell-sidebar`)
+    ICON_RAIL: 106,
+  },
 };
 // first viewport width at which each container threshold holds
 const THRESHOLD_VIEWPORT = {
-  railBeside: WIDTH.SHELL + LEDGER_FLOOR.sum + WIDTH.OPEN_SUMMARY_RAIL,
-  tagsShownBeside: WIDTH.SHELL + WIDTH.OPEN_SUMMARY_RAIL + LEDGER_FLOOR.sum + LEDGER_FLOOR.tags,
-  titleFloorStacked: WIDTH.SHELL + LEDGER_FLOOR.sum,
+  tagsShown: WIDTH.SHELL.SIDEBAR + LEDGER_FLOOR.sum + LEDGER_FLOOR.tags,
+  titleFloor: WIDTH.SHELL.SIDEBAR + LEDGER_FLOOR.sum,
+  stacked: WIDTH.SHELL.ICON_RAIL + LEDGER_FLOOR.sum - LEDGER_FLOOR.title + LEDGER_FLOOR.titleNarrow,
 };
 
-// the rail sits beside the ledger only while the ledger keeps its column floors there → never a sideways scroll
-describe("open-summary rail: placement follows the ledger's minimum width", () => {
+// the ledger keeps its column floors at every width → never a sideways scroll
+describe("ledger columns: Tags and the title floor follow the ledger's width", () => {
   const seedIds: number[] = [];
-  const mixedFormatTitle = makeTitle("rail-md", 0);
+  const mixedFormatTitle = makeTitle("ledger-md", 0);
   // formatActorCD passes an unknown id through raw → the longest stage actor a real row carries, in its Status cell tooltip
   const widestActor = "gpt_4o_mini_2024_07_18_preview";
 
   before(async () => {
-    seedIds.push(...(await seedManyDocs(29, "rail")));
+    seedIds.push(...(await seedManyDocs(29, "ledger")));
     // newest row in a format other than the page majority → the Tags column is on, as with real mixed data
     const mixedFormatDoc = await postCreate({
       title: mixedFormatTitle,
       author: "load-more-tester",
-      md_body: "# rail-md\n\nmixed-format row",
+      md_body: "# ledger-md\n\nmixed-format row",
       doc_status: "implementing",
       last_status_model: widestActor,
     });
@@ -1224,70 +1229,56 @@ describe("open-summary rail: placement follows the ledger's minimum width", () =
     const context: BrowserContext = await browser.newContext({ viewport: { width, height: 900 } });
     const page: Page = await context.newPage();
     await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-    if (font) await page.addStyleTag({ content: `.doc-ledger-scroll, .doc-ledger-scroll * { font-family: ${font} !important; }` });
-    await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
+    if (font) await page.addStyleTag({ content: `.doc-ledger, .doc-ledger * { font-family: ${font} !important; }` });
+    await page.locator("table.tbl").waitFor({ state: "visible" });
     return { context, page };
   }
 
-  const rows = {
-    placement: [
-      { name: "one px below the rail switch the rail stacks and the wide ledger keeps Tags", width: THRESHOLD_VIEWPORT.railBeside - 1, placement: "stacked", isTagsShown: true, isTitleFloorHeld: true },
-      { name: "at the rail switch the rail sits beside a ledger exactly its column floors wide", width: THRESHOLD_VIEWPORT.railBeside, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
-      // a font wider than the macOS default (Linux CI falls back to one) → the floors still bound every column
-      { name: "at the rail switch a ledger set in a wider font is still exactly its column floors wide", width: THRESHOLD_VIEWPORT.railBeside, placement: "beside", isTagsShown: false, isTitleFloorHeld: true, font: "Verdana, 'DejaVu Sans', sans-serif" },
-      { name: "one px below room for Tags beside the rail the ledger drops the column", width: THRESHOLD_VIEWPORT.tagsShownBeside - 1, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
-      { name: "at room for Tags beside the rail the ledger shows the column", width: THRESHOLD_VIEWPORT.tagsShownBeside, placement: "beside", isTagsShown: true, isTitleFloorHeld: true },
-      { name: "one px below the column floors a stacked ledger drops the title floor", width: THRESHOLD_VIEWPORT.titleFloorStacked - 1, placement: "stacked", isTagsShown: false, isTitleFloorHeld: false },
-      { name: "at the column floors a stacked ledger keeps the title floor", width: THRESHOLD_VIEWPORT.titleFloorStacked, placement: "stacked", isTagsShown: false, isTitleFloorHeld: true },
-      { name: "at 1220px a stacked ledger narrower than its column floors drops the title floor", width: 1220, placement: "stacked", isTagsShown: false, isTitleFloorHeld: false },
-      { name: "at 1280px the rail stacks above the ledger", width: 1280, placement: "stacked", isTagsShown: false, isTitleFloorHeld: true },
-      { name: "at 1440px the rail sits beside the ledger", width: 1440, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
-      { name: "at 1920px the rail sits beside the ledger with Tags shown", width: 1920, placement: "beside", isTagsShown: true, isTitleFloorHeld: true },
-    ] as const,
-    sticky: [
-      { name: "at 1280px the stacked rail scrolls away with the page", width: 1280, isPinned: false },
-      { name: "at 1440px the rail beside the ledger stays in view on page scroll", width: 1440, isPinned: true },
-      { name: "at 1920px the rail beside the ledger stays in view on page scroll", width: 1920, isPinned: true },
-    ] as const,
-  };
+  const rows = [
+    { name: "one px below room for Tags the ledger drops the column", width: THRESHOLD_VIEWPORT.tagsShown - 1, isTagsShown: false, isTitleFloorHeld: true },
+    { name: "at room for Tags the ledger shows the column", width: THRESHOLD_VIEWPORT.tagsShown, isTagsShown: true, isTitleFloorHeld: true },
+    { name: "at the column floors the ledger keeps the title floor", width: THRESHOLD_VIEWPORT.titleFloor, isTagsShown: false, isTitleFloorHeld: true },
+    // a font wider than the macOS default (Linux CI falls back to one) → the floors still bound every column
+    { name: "at the column floors a ledger set in a wider font still keeps every floor", width: THRESHOLD_VIEWPORT.titleFloor, isTagsShown: false, isTitleFloorHeld: true, font: "Verdana, 'DejaVu Sans', sans-serif" },
+    { name: "one px below the column floors the ledger drops the title floor", width: THRESHOLD_VIEWPORT.titleFloor - 1, isTagsShown: false, isTitleFloorHeld: false },
+    { name: "at 1200px, the first width beside the full sidebar, a ledger narrower than its column floors drops the title floor", width: 1200, isTagsShown: false, isTitleFloorHeld: false },
+    { name: "at 1280px the ledger keeps the title floor without Tags", width: 1280, isTagsShown: false, isTitleFloorHeld: true },
+    { name: "at 1440px the ledger shows Tags", width: 1440, isTagsShown: true, isTitleFloorHeld: true },
+  ] as const;
 
-  for (const row of rows.placement) {
+  for (const row of rows) {
     test(`${row.name}, and the ledger fits without a sideways scroll`, async () => {
       const { context, page } = await openLedger(row.width, "font" in row ? row.font : undefined);
       try {
         const mixedFormatRow = await revealRowByTitle(page, mixedFormatTitle);
-        await page.locator("table.tbl th.doc-col-tags").waitFor({ state: "attached" });
+        await page.locator("table.tbl thead th", { hasText: "Tags" }).waitFor({ state: "attached" });
         await mixedFormatRow.locator(`td[title="Set by ${widestActor}"]`).waitFor({ state: "visible" });
 
         const layout = await page.evaluate(() => {
-          const layoutBox = document.querySelector(".doc-layout")?.getBoundingClientRect();
           const scroller = document.querySelector("table.tbl")?.parentElement;
-          const railBox = document.querySelector("aside.doc-open-summary")?.getBoundingClientRect();
-          const titleBox = document.querySelector("table.tbl th.doc-col-title")?.getBoundingClientRect();
-          if (!layoutBox || !scroller || !railBox || !titleBox) throw new Error("layout, ledger scroller, rail or title header missing");
+          const headers = [...document.querySelectorAll("table.tbl thead th")];
+          // inline finds, no named helper → tsx's keepNames `__name` wrapper never reaches the page
+          const titleBox = headers.find((th) => th.textContent?.trim() === "Title")?.getBoundingClientRect();
+          if (!scroller || !titleBox) throw new Error("ledger scroller or title header missing");
           const ledgerBox = scroller.getBoundingClientRect();
           const columns = [...document.querySelectorAll("table.tbl thead th")]
             .map((th) => `${th.textContent?.trim() || "select"}=${Math.round(th.getBoundingClientRect().width)}`)
             .join(" ");
-          const placement =
-            railBox.left >= ledgerBox.right - 0.5 ? "beside" : railBox.bottom <= ledgerBox.top + 0.5 ? "stacked" : "overlapping";
-          const isTagsShown = (document.querySelector("table.tbl th.doc-col-tags")?.getBoundingClientRect().width ?? 0) > 0;
+          const isTagsShown = (headers.find((th) => th.textContent?.trim() === "Tags")?.getBoundingClientRect().width ?? 0) > 0;
           return {
-            layoutWidth: Math.round(layoutBox.width),
+            ledgerWidth: Math.round(ledgerBox.width),
             scrollWidth: scroller.scrollWidth,
             clientWidth: scroller.clientWidth,
             titleWidth: titleBox.width,
             columns,
-            placement,
             isTagsShown,
           };
         });
-        assert.equal(layout.layoutWidth, row.width - WIDTH.SHELL, `doc-layout width at ${row.width}px — the shell width the boundary rows derive from`);
+        assert.equal(layout.ledgerWidth, row.width - WIDTH.SHELL.SIDEBAR, `ledger width at ${row.width}px — the shell width the boundary rows derive from`);
         assert.ok(
           layout.scrollWidth <= layout.clientWidth,
           `ledger overflows its column (${layout.scrollWidth} > ${layout.clientWidth}; ${layout.columns}) → last header clipped`,
         );
-        assert.equal(layout.placement, row.placement, `rail placement at ${row.width}px (${layout.columns})`);
         assert.equal(layout.isTagsShown, row.isTagsShown, `Tags column shown at ${row.width}px (${layout.columns})`);
         assert.equal(layout.titleWidth >= LEDGER_FLOOR.title - 0.5, row.isTitleFloorHeld, `title column ≥ its ${LEDGER_FLOOR.title}px floor at ${row.width}px (${layout.columns})`);
       } finally {
@@ -1296,30 +1287,48 @@ describe("open-summary rail: placement follows the ledger's minimum width", () =
     });
   }
 
-  for (const row of rows.sticky) {
-    test(row.name, async () => {
+  const modeRows = [
+    { name: "at the narrowest wide layout the ledger keeps its columns", width: THRESHOLD_VIEWPORT.stacked, mode: "wide" },
+    { name: "one px below the narrowest wide layout the ledger stacks its rows", width: THRESHOLD_VIEWPORT.stacked - 1, mode: "stacked" },
+  ] as const;
+  for (const row of modeRows) {
+    test(`${row.name}, and never scrolls sideways`, async () => {
       const { context, page } = await openLedger(row.width);
       try {
-        await waitForRowCountAtLeast(page, seedIds.length);
-        const rail = page.locator("aside.doc-open-summary");
-        const restingTop = await rail.evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
-        // past the rail's resting offset → only a rail pinned beside the ledger is still in view
-        const scrollBy = Math.ceil(restingTop) + 200;
-
-        await page.evaluate((y) => window.scrollTo(0, y), scrollBy);
-        await page.waitForFunction((y) => window.scrollY >= y, scrollBy);
-
-        const railTop = await rail.evaluate((el) => el.getBoundingClientRect().top);
-        assert.equal(railTop >= 0, row.isPinned, `rail top ${railTop} after page scroll at ${row.width}px`);
+        await revealRowByTitle(page, mixedFormatTitle);
+        const layout = await page.evaluate(() => {
+          const wrap = document.querySelector("table.tbl")?.parentElement;
+          if (!wrap) throw new Error("ledger wrapper missing");
+          return { mode: wrap.getAttribute("data-table-mode"), width: Math.round(wrap.getBoundingClientRect().width), scrollWidth: wrap.scrollWidth, clientWidth: wrap.clientWidth };
+        });
+        assert.equal(layout.width, row.width - WIDTH.SHELL.ICON_RAIL, `ledger width at ${row.width}px beside the icon rail`);
+        assert.equal(layout.mode, row.mode, `table mode at ${layout.width}px`);
+        assert.ok(layout.scrollWidth <= layout.clientWidth, `ledger overflows (${layout.scrollWidth} > ${layout.clientWidth})`);
       } finally {
         await context.close();
       }
     });
   }
+
+  // two boxes → a padding on one would move a floor step off the stacked threshold it must precede
+  test("the column floors and the stacked switch read one box, the Table's measured wrapper", async () => {
+    const { context, page } = await openLedger(1440);
+    try {
+      const host = await page.evaluate(() => {
+        const wrap = document.querySelector("table.tbl")?.parentElement;
+        if (!wrap) throw new Error("ledger wrapper missing");
+        const style = getComputedStyle(wrap);
+        return { mode: wrap.getAttribute("data-table-mode"), name: style.containerName, type: style.containerType };
+      });
+      assert.equal(host.mode, "wide", "the ledger table's parent is the wrapper Table measures");
+      assert.deepEqual({ name: host.name, type: host.type }, { name: "doc-ledger", type: "inline-size" }, "the floor-step queries resolve on that wrapper");
+    } finally {
+      await context.close();
+    }
+  });
 });
 
-// The 13px meta floor covers every drawn text node on the Documents screen: the ledger with its open-summary rail and
-// bulk action bar, and the full-screen viewer with its metadata side, version history and stage menu open.
+// The 13px meta floor covers every drawn text node on the Documents screen: the ledger with its bulk action bar, and the full-screen viewer with its metadata side, version history and stage menu open.
 describe("Type floor on the Documents screen, its viewer, version history and stage menu included", () => {
   const title = { predecessor: makeTitle("floor-pred", 0), successor: makeTitle("floor-succ", 0) };
   const seedIds: number[] = [];
@@ -1341,7 +1350,7 @@ describe("Type floor on the Documents screen, its viewer, version history and st
   });
 
   async function openLedgerWithSelection(page: Page): Promise<void> {
-    await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
+    await page.locator("table.tbl").waitFor({ state: "visible" });
     await checkRowByTitle(page, title.successor);
     await page.getByRole("toolbar", { name: "Bulk group actions" }).waitFor({ state: "visible" });
   }
@@ -1352,8 +1361,8 @@ describe("Type floor on the Documents screen, its viewer, version history and st
     const versionHistory = metaSide.locator("details.doc-version-history");
     await versionHistory.locator("summary").click();
     await versionHistory.getByText(title.predecessor, { exact: false }).waitFor({ state: "visible" });
-    await metaSide.getByRole("button", { name: /change stage$/ }).first().click();
-    await page.getByRole("menu", { name: "Set stage" }).waitFor({ state: "visible" });
+    await metaSide.getByRole("button", { name: /^Change stage of / }).first().click();
+    await page.getByRole("menu", { name: /^Change stage of / }).waitFor({ state: "visible" });
   }
 
   // every drawn text under the scope root against its composited background; the rendered document is out of scope.
@@ -1406,30 +1415,50 @@ describe("Type floor on the Documents screen, its viewer, version history and st
       }
     });
 
-    test(`every item of the open stage menu clears 4.5:1 in the ${theme} theme, its checked item hovered and marked by a check`, async () => {
+    test(`every item of the open stage menu clears 4.5:1 in the ${theme} theme, its first item hovered`, async () => {
       const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
       try {
         const page: Page = await context.newPage();
         await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
         const row = await revealRowByTitle(page, title.successor);
         await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-        await row.getByRole("button", { name: /change stage$/ }).click();
-        const menu = page.getByRole("menu", { name: "Set stage" });
+        await row.getByRole("button", { name: /^Change stage of / }).click();
+        const menu = page.getByRole("menu", { name: /^Change stage of / });
         await menu.waitFor({ state: "visible" });
-        const checked = menu.getByRole("menuitemradio", { checked: true });
-        await checked.hover();
+        await menu.getByRole("menuitem").first().hover();
         assert.deepEqual(await page.evaluate(getContrastMissesScript('[role="menu"]')), []);
-        assert.equal(await menu.locator(".doc-stage-menu-mark").count(), 1);
-        assert.equal(await checked.locator(".doc-stage-menu-mark").count(), 1);
+        assert.equal(await menu.getByRole("menuitem").count(), 4, "every stage but the current one is a move");
       } finally {
         await context.close();
       }
     });
   }
 
+  test("a press on the open row menu's padding, between its items, never opens that row in the viewer", async () => {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const page: Page = await context.newPage();
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      const row = await revealRowByTitle(page, title.successor);
+      await row.getByRole("button", { name: /^Change stage of / }).click();
+      const menu = row.getByRole("menu", { name: /^Change stage of / });
+      await menu.waitFor({ state: "visible" });
+      const padding = await menu.evaluate((el) => parseFloat(getComputedStyle(el).paddingTop));
+      assert.ok(padding >= 4, `the menu has padding to press (${padding}px)`);
+      await menu.click({ position: { x: padding / 2, y: padding / 2 } });
+      // a discrete click commits synchronously → two frames later a row selection would show
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await row.getAttribute("aria-current"), null, "the row stays unselected");
+      await row.locator(".doc-title-text").first().click();
+      await page.locator('tr.doc-row[aria-current="true"]', { hasText: title.successor }).waitFor({ state: "attached" });
+    } finally {
+      await context.close();
+    }
+  });
+
   const rows = [
-    { name: "the ledger with its rail and bulk action bar", open: openLedgerWithSelection, width: 1024 },
-    { name: "the ledger with its rail and bulk action bar", open: openLedgerWithSelection, width: 1440 },
+    { name: "the ledger with its bulk action bar", open: openLedgerWithSelection, width: 1024 },
+    { name: "the ledger with its bulk action bar", open: openLedgerWithSelection, width: 1440 },
     { name: "the viewer with version history and the stage menu open", open: openViewerPanels, width: 1024 },
     { name: "the viewer with version history and the stage menu open", open: openViewerPanels, width: 1440 },
   ];
