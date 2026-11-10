@@ -9,7 +9,7 @@ const {
 } = React;
 
 const OWNER_API_Q = "/api/queue/owner";
-const LIST_LIMIT_Q = 100;
+const LIST_Q = { LIMIT: 100, SOURCE: "the queue" };
 const SESSION_PREFIX_LENGTH_Q = 8;
 const CARD_ID_PREFIX_Q = "queue-item-";
 const FILTER_AXES_Q = ["profile", "session"];
@@ -44,7 +44,6 @@ const SKIP_TEXT_Q = {
 	resume_used: "automatic resume used — Resend to try again",
 	shared_worktree: "another session is live or resuming in this worktree: this one resumes automatically once that one has ended",
 };
-const LIST_SOURCE_Q = "the queue";
 // outage words come from the shared copy owner (ui.jsx → getErrorCopy) → one outage reads one way across card, region, sign-in and actions
 const OUTAGE_KINDS_Q = new Set(["network", "database", "server"]);
 // sign-in answers the shared copy has no words for: no Details on the form → the next step is spelled out
@@ -120,7 +119,7 @@ async function sendOwnerRequestQ(path, body) {
 
 /** Failed list read → the shared failure copy `{ sentence, next, detail, kind }`, classified from the same detail the resume region stores. */
 function getReadFailureQ(answer) {
-	return window.UI.getErrorCopy(getAnswerDetailQ(answer), LIST_SOURCE_Q);
+	return window.UI.getErrorCopy(getAnswerDetailQ(answer), LIST_Q.SOURCE);
 }
 
 // no answer in any browser wording → the network step (these lines carry no Details) · a database outage or a server error → the shared next step · any other answer → null (the caller words it)
@@ -352,7 +351,7 @@ function useAuthQ(onQueueAuth) {
 
 async function getListQ({ setList, putAuth }) {
 	setList((prev) => ({ ...prev, status: "loading" }));
-	const answer = await sendOwnerRequestQ(`/items?limit=${LIST_LIMIT_Q}`);
+	const answer = await sendOwnerRequestQ(`/items?limit=${LIST_Q.LIMIT}`);
 	putAuth(answer);
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
 		return setList({ status: "ready", data: answer.data, error: null, readAt: new Date().toISOString() });
@@ -367,7 +366,7 @@ async function getMoreQ({ list, setList, putAuth }) {
 	const cursor = list.data?.nextCursor;
 	if (cursor === null || cursor === undefined) return;
 	setList((prev) => ({ ...prev, status: "loading" }));
-	const answer = await sendOwnerRequestQ(`/items?limit=${LIST_LIMIT_Q}&after=${cursor}`);
+	const answer = await sendOwnerRequestQ(`/items?limit=${LIST_Q.LIMIT}&after=${cursor}`);
 	putAuth(answer);
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
 		const append = (prev) => ({ ...prev.data, items: [...prev.data.items, ...answer.data.items], nextCursor: answer.data.nextCursor });
