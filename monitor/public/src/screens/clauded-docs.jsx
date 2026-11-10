@@ -1529,10 +1529,10 @@ function DocListCardCD({
 											view={view}
 											className={rowClass}
 											onClick={(e) => {
-												// checkbox / action 버튼 클릭은 row click 으로 buble 시키지 않음.
+												// checkbox · buttons · the row menu (its padding too) → never a row select
 												if (
 													e.target.closest(
-														'input[type="checkbox"], button, .doc-group-toggle',
+														'input[type="checkbox"], button, .doc-group-toggle, .row-actions',
 													)
 												)
 													return;
@@ -2125,7 +2125,7 @@ function GroupMembersRowsCD({
 				onDragEnd={isReorderable ? () => setDraggingId(null) : undefined}
 				onClick={(e) => {
 					if (
-						e.target.closest('input[type="checkbox"], button, .doc-drag-handle')
+						e.target.closest('input[type="checkbox"], button, .doc-drag-handle, .row-actions')
 					)
 						return;
 					onSelect(member.id);

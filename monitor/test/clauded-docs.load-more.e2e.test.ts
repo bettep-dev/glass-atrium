@@ -1434,6 +1434,28 @@ describe("Type floor on the Documents screen, its viewer, version history and st
     });
   }
 
+  test("a press on the open row menu's padding, between its items, never opens that row in the viewer", async () => {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const page: Page = await context.newPage();
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      const row = await revealRowByTitle(page, title.successor);
+      await row.getByRole("button", { name: /^Change stage of / }).click();
+      const menu = row.getByRole("menu", { name: /^Change stage of / });
+      await menu.waitFor({ state: "visible" });
+      const padding = await menu.evaluate((el) => parseFloat(getComputedStyle(el).paddingTop));
+      assert.ok(padding >= 4, `the menu has padding to press (${padding}px)`);
+      await menu.click({ position: { x: padding / 2, y: padding / 2 } });
+      // a discrete click commits synchronously → two frames later a row selection would show
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await row.getAttribute("aria-current"), null, "the row stays unselected");
+      await row.locator(".doc-title-text").first().click();
+      await page.locator('tr.doc-row[aria-current="true"]', { hasText: title.successor }).waitFor({ state: "attached" });
+    } finally {
+      await context.close();
+    }
+  });
+
   const rows = [
     { name: "the ledger with its bulk action bar", open: openLedgerWithSelection, width: 1024 },
     { name: "the ledger with its bulk action bar", open: openLedgerWithSelection, width: 1440 },
