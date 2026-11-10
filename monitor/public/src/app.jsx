@@ -41,12 +41,31 @@ const META_TEXT_STYLE = { fontSize: "var(--fs-meta)" };
 // circuit-breaker source for the Agents nav numeral — same cheap one-row read as the Dashboard's
 const AGENT_SUMMARY_URL = "/api/agents/summary?days=7&order=runs&limit=1";
 
+// last page input → a route move rings only when a key caused it; a URL-bar or history move sends the page no input
+let lastInputKind = null;
+
+function trackInputKind() {
+	const onKeyDown = () => { lastInputKind = "keyboard"; };
+	const onPointerDown = () => { lastInputKind = "pointer"; };
+	// window-only blur (no capture): leaving for the URL bar or another app ends the page's input
+	const onWindowBlur = () => { lastInputKind = null; };
+	window.addEventListener("keydown", onKeyDown, true);
+	window.addEventListener("pointerdown", onPointerDown, true);
+	window.addEventListener("blur", onWindowBlur);
+	return () => {
+		window.removeEventListener("keydown", onKeyDown, true);
+		window.removeEventListener("pointerdown", onPointerDown, true);
+		window.removeEventListener("blur", onWindowBlur);
+	};
+}
+
 // page h1 → focus target (tabindex -1 = programmatic only, authored value kept); no h1 → the region
+// focusVisible from the input → Chromium otherwise rings a script focus the page got no pointer input before
 function focusRouteHeading(region) {
 	if (!region) return;
 	const target = region.querySelector("h1") || region;
 	if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
-	target.focus();
+	target.focus({ focusVisible: lastInputKind === "keyboard" });
 }
 
 // the hash is the route key → cancel the #main-content navigation, move focus instead
@@ -361,6 +380,8 @@ function App() {
 	}, [pollHarness]);
 
 	const displayTimezone = useDisplayTimezone(healthState.data?.timezone);
+
+	useE(trackInputKind, []);
 
 	// route change → page heading focus (drill + sidebar + back/forward); first mount excluded
 	const focusedRoute = useR(active);

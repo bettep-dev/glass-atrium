@@ -224,15 +224,34 @@ describe("a keyboard-focused panel ring reaches 3:1 against the colours it is dr
   }
 });
 
-describe("focus after a mouse move draws no ring, after a keyboard move draws the shared ring", () => {
-  test("a nav click moves focus to the new route's h1 without a ring", async () => {
-    const page = await openApp();
-    await page.click("button.nav-item:not(.active)");
-    await page.waitForFunction(() => document.activeElement?.tagName === "H1", null, { timeout: 30_000 });
+// the route h1 rings only when a key moved the route; a pointer move or a move the page got no input for draws none
+const ROUTE_MOVE_ROWS: Array<{ name: string; move: (page: Page) => Promise<unknown>; isFocusVisible: boolean; outline: string }> = [
+  { name: "a nav click moves focus to the new route's h1 without a ring", move: (page) => page.click("button.nav-item:not(.active)"), isFocusVisible: false, outline: "none" },
+  {
+    name: "Enter on a nav item moves focus to the new route's h1 with the ring",
+    move: async (page) => { await page.focus("button.nav-item:not(.active)"); await page.keyboard.press("Enter"); },
+    isFocusVisible: true,
+    outline: "solid",
+  },
+  {
+    name: "a hash URL opened in the tab with no page input moves focus to its h1 without a ring",
+    move: (page) => page.goto(`${serverUrl}/#agents`, { waitUntil: "load" }),
+    isFocusVisible: false,
+    outline: "none",
+  },
+];
 
-    assert.deepEqual(await readFocus(page).then(({ isFocusVisible, outline }) => ({ isFocusVisible, outline })), { isFocusVisible: false, outline: "none" });
-    await page.close();
-  });
+describe("focus after a mouse move draws no ring, after a keyboard move draws the shared ring", () => {
+  for (const row of ROUTE_MOVE_ROWS) {
+    test(row.name, async () => {
+      const page = await openApp();
+      await row.move(page);
+      await page.waitForFunction(() => document.activeElement?.tagName === "H1", null, { timeout: 30_000 });
+
+      assert.deepEqual(await readFocus(page).then(({ isFocusVisible, outline }) => ({ isFocusVisible, outline })), { isFocusVisible: row.isFocusVisible, outline: row.outline });
+      await page.close();
+    });
+  }
 
   test("ArrowRight from a mouse-focused row moves into its control and rings it", async () => {
     const page = await openApp();
