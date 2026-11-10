@@ -40,7 +40,8 @@ const CUSTOM_OPTION_MC = "__custom__";
 const MODEL_CAP_MC = {
 	"claude-opus-5-5": "Latest Opus — agentic coding, long-horizon work",
 	"claude-opus-5": "Prior Opus — agentic coding, superseded by 5.5",
-	"claude-fable-5-1": "Highest capability — deep reasoning, long-horizon agents",
+	"claude-fable-5-2": "Latest Fable — highest capability, deep reasoning, long-horizon agents",
+	"claude-fable-5-1": "Prior Fable — deep reasoning, superseded by 5.2",
 	"claude-fable-5": "Prior Fable — deep reasoning, superseded by 5.1",
 	"claude-opus-4-8": "Strong default — implementation, review, design",
 	"claude-sonnet-5-5": "Latest Sonnet — balanced speed/cost",

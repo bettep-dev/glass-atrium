@@ -569,14 +569,14 @@ Apply the matching visual only.
 | Content shape | Required visual |
 |---|---|
 | process / DAG / relationship / state / sequence | Mermaid — **Mermaid row**, below the table |
-| 2+ alternatives | comparison / decision table — semantic `thead`/`tbody`/`th scope`, JetBrains Mono numerics |
+| 2+ alternatives | comparison / decision table — semantic `thead`/`tbody`/`th scope`, JetBrains Mono numerics right-aligned |
 | a real quantified claim | KPI/stat card — **KPI row**, below the table |
 | described UI | structural mockup with labeled placeholders |
 | data shapes suited to one | CSS-only bar charts (flex-height, or horizontal table-inlay) |
 
 - **Mermaid row**: the block and its external runtime, per `## Absolute Rules` → Pre-Emission HTML Gates; the type per `### Pre-drawing decision core`.
   - Every diagram carries 3-layer a11y: `accTitle` + `accDescr` inside the block, plus an adjacent visible text description.
-- **KPI row**: 5-component, dual-encoded delta, optional `aria-hidden` inline-SVG sparkline; the value text carries the data.
+- **KPI row**: 5-component, each value with its unit, period and source, dual-encoded delta, optional `aria-hidden` inline-SVG sparkline drawn from a real series; the value text carries the data.
 
 ### Restraint (part of the standard, not an exception)
 
@@ -617,7 +617,7 @@ Apply the matching visual only.
 
 ### Decision Matrix (planner-specific — MUST when Alternatives requirement applies)
 
-Rows = criteria · columns = options (within the column cap) · cells = R-coded badge + score, closed by an adoption row.
+Rows = criteria · columns = options (within the column cap) · cells = symbol + word + score as colored text, never a badge chip in every cell · closed by an adoption row.
 
   | Criterion | R1 | R2 | R3 |
   |-----------|----|----|----|

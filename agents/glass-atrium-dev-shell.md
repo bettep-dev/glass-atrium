@@ -58,7 +58,7 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 - Never bury a Bats assertion in a mid-body bare `[[ ]]` — use `&&` chains for compound logic and let the assertion be the final command.
   - Bats bodies run under errexit (`set -e`) on both platforms; bash 3.2 alone exempts mid-body `[[ ]]`, while `[ ]`/`test`/`false`/a failing `grep` fail everywhere.
   - A macOS failure is real on both platforms; a macOS pass proves nothing about CI.
-- Before each incremental commit run only the affected test paths, and the full suite once before the final commit — this overrides the per-commit full pass of `scoped/shared-testing.md` → `## 3-Tier Test Hierarchy`, because a full Bats run per file-group exhausts the budget.
+- Which tests each commit needs: `scoped/shared-testing.md` → `## 3-Tier Test Hierarchy` → **Incremental commits**.
 
 ### Change hygiene
 
