@@ -1,0 +1,376 @@
+{
+  "/api/cost/by-model": {
+    "rows": [
+      {
+        "model": "claude-opus-5-5",
+        "cost_usd": 2961.42,
+        "session_count": 61,
+        "input_tokens": 2521557,
+        "output_tokens": 1153022,
+        "cache_read_tokens": 145241244,
+        "cache_creation_tokens": 8553115
+      },
+      {
+        "model": "claude-opus-5",
+        "cost_usd": 1184.07,
+        "session_count": 37,
+        "input_tokens": 1529469,
+        "output_tokens": 699374,
+        "cache_read_tokens": 88097148,
+        "cache_creation_tokens": 5187955
+      },
+      {
+        "model": "claude-sonnet-5-5",
+        "cost_usd": 402.88,
+        "session_count": 54,
+        "input_tokens": 2232198,
+        "output_tokens": 1020708,
+        "cache_read_tokens": 128574216,
+        "cache_creation_tokens": 7571610
+      },
+      {
+        "model": "claude-fable-5-1",
+        "cost_usd": 97.31,
+        "session_count": 22,
+        "input_tokens": 909414,
+        "output_tokens": 415844,
+        "cache_read_tokens": 52382088,
+        "cache_creation_tokens": 3084730
+      },
+      {
+        "model": "claude-haiku-4-5-20251001",
+        "cost_usd": 12.64,
+        "session_count": 118,
+        "input_tokens": 4877766,
+        "output_tokens": 2230436,
+        "cache_read_tokens": 280958472,
+        "cache_creation_tokens": 16545370
+      },
+      {
+        "model": "unknown",
+        "cost_usd": 0,
+        "session_count": 3,
+        "input_tokens": 124011,
+        "output_tokens": 56706,
+        "cache_read_tokens": 7143012,
+        "cache_creation_tokens": 420645
+      }
+    ]
+  },
+  "/api/cost/cache-hit": {
+    "rows": [
+      {
+        "event_date": "2026-08-13",
+        "cache_hit_rate": 0.962,
+        "total_cache_read": 1731902307,
+        "total_input": 22793
+      },
+      {
+        "event_date": "2026-08-14",
+        "cache_hit_rate": 0.948,
+        "total_cache_read": 1830016513,
+        "total_input": 25911
+      },
+      {
+        "event_date": "2026-08-15",
+        "cache_hit_rate": 0.971,
+        "total_cache_read": 1928130719,
+        "total_input": 29029
+      },
+      {
+        "event_date": "2026-08-16",
+        "cache_hit_rate": 0.9,
+        "total_cache_read": 2026244925,
+        "total_input": 32147
+      },
+      {
+        "event_date": "2026-08-17",
+        "cache_hit_rate": 0.955,
+        "total_cache_read": 2124359131,
+        "total_input": 35265
+      },
+      {
+        "event_date": "2026-08-18",
+        "cache_hit_rate": 0.983,
+        "total_cache_read": 2222473337,
+        "total_input": 38383
+      },
+      {
+        "event_date": "2026-08-19",
+        "cache_hit_rate": 0.937,
+        "total_cache_read": 2320587543,
+        "total_input": 41501
+      }
+    ]
+  },
+  "/api/cost/session-distribution": {
+    "rows": [
+      {
+        "session_id": "7d2e1a3f-4c1b-9e0a-b12c4d",
+        "total_cost_usd": 412.37,
+        "agent": "glass-atrium-dev-front",
+        "started_at": "2026-08-13T00:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e1e10-4c1b-9e0a-b14b3c",
+        "total_cost_usd": 206.19,
+        "agent": "glass-atrium-dev-node",
+        "started_at": "2026-08-14T01:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e21e1-4c1b-9e0a-b16a2b",
+        "total_cost_usd": 137.46,
+        "agent": "glass-atrium-qa-code-reviewer",
+        "started_at": "2026-08-15T02:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e25b2-4c1b-9e0a-b1891a",
+        "total_cost_usd": 103.09,
+        "agent": "glass-atrium-intel-planner",
+        "started_at": "2026-08-16T03:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e2983-4c1b-9e0a-b1a809",
+        "total_cost_usd": 82.47,
+        "agent": "glass-atrium-dev-front",
+        "started_at": "2026-08-17T04:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e2d54-4c1b-9e0a-b1c6f8",
+        "total_cost_usd": 68.73,
+        "agent": "glass-atrium-dev-node",
+        "started_at": "2026-08-18T05:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e3125-4c1b-9e0a-b1e5e7",
+        "total_cost_usd": 58.91,
+        "agent": "glass-atrium-qa-code-reviewer",
+        "started_at": "2026-08-19T06:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e34f6-4c1b-9e0a-b204d6",
+        "total_cost_usd": 51.55,
+        "agent": "glass-atrium-intel-planner",
+        "started_at": "2026-08-13T07:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e38c7-4c1b-9e0a-b223c5",
+        "total_cost_usd": 45.82,
+        "agent": "glass-atrium-dev-front",
+        "started_at": "2026-08-14T08:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e3c98-4c1b-9e0a-b242b4",
+        "total_cost_usd": 41.24,
+        "agent": "glass-atrium-dev-node",
+        "started_at": "2026-08-15T09:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e4069-4c1b-9e0a-b261a3",
+        "total_cost_usd": 37.49,
+        "agent": "glass-atrium-qa-code-reviewer",
+        "started_at": "2026-08-16T00:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e443a-4c1b-9e0a-b28092",
+        "total_cost_usd": 34.36,
+        "agent": "glass-atrium-intel-planner",
+        "started_at": "2026-08-17T01:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e480b-4c1b-9e0a-b29f81",
+        "total_cost_usd": 31.72,
+        "agent": "glass-atrium-dev-front",
+        "started_at": "2026-08-18T02:14:52.000Z"
+      },
+      {
+        "session_id": "7d2e4bdc-4c1b-9e0a-b2be70",
+        "total_cost_usd": 29.46,
+        "agent": "glass-atrium-dev-node",
+        "started_at": "2026-08-19T03:14:52.000Z"
+      }
+    ],
+    "total_session_count": 207,
+    "truncated": true
+  },
+  "/api/cost/parse-errors": {
+    "rows": [
+      {
+        "day": "2026-08-13",
+        "error_ratio": 0,
+        "error_count": 0,
+        "total_count": 812
+      },
+      {
+        "day": "2026-08-14",
+        "error_ratio": 0.004,
+        "error_count": 3,
+        "total_count": 760
+      },
+      {
+        "day": "2026-08-15",
+        "error_ratio": 0,
+        "error_count": 0,
+        "total_count": 694
+      },
+      {
+        "day": "2026-08-16",
+        "error_ratio": 0.012,
+        "error_count": 11,
+        "total_count": 903
+      },
+      {
+        "day": "2026-08-17",
+        "error_ratio": 0.002,
+        "error_count": 2,
+        "total_count": 841
+      },
+      {
+        "day": "2026-08-18",
+        "error_ratio": 0,
+        "error_count": 0,
+        "total_count": 777
+      },
+      {
+        "day": "2026-08-19",
+        "error_ratio": 0.007,
+        "error_count": 6,
+        "total_count": 866
+      }
+    ]
+  },
+  "/api/cost/turn-stats": {
+    "stop_reasons": [
+      {
+        "stop_reason": "end_turn",
+        "event_count": 9310,
+        "session_count": 560
+      },
+      {
+        "stop_reason": "tool_use",
+        "event_count": 1204,
+        "session_count": 188
+      },
+      {
+        "stop_reason": "max_tokens",
+        "event_count": 17,
+        "session_count": 9
+      }
+    ],
+    "stop_reason_session_count": 582,
+    "turns": {
+      "total_turns": 23450,
+      "avg_turns": 4,
+      "max_turns": 212,
+      "avg_turns_per_session": 91.25,
+      "turn_session_count": 257
+    }
+  },
+  "/api/clauded-docs/groups": {
+    "total": 3,
+    "doc_total": 3,
+    "hidden_doc_total": 1,
+    "groups": [
+      {
+        "folder_id": null,
+        "representative_id": 43951,
+        "representative_title": "S5a app-shell hardening — review notes",
+        "representative_author": "glass-atrium-dev-front",
+        "representative_doc_status": "doc_review",
+        "representative_audience": "exposed",
+        "representative_format": "md",
+        "representative_created_at": "2026-08-19T06:42:11.318Z",
+        "representative_supersedes_id": null,
+        "member_count": 1,
+        "group_latest_at": "2026-08-19T06:42:11.318Z"
+      },
+      {
+        "folder_id": null,
+        "representative_id": 43952,
+        "representative_title": "dev-front outcome payload — s5a fix round",
+        "representative_author": "glass-atrium-dev-front",
+        "representative_doc_status": "doc_review",
+        "representative_audience": "hidden",
+        "representative_format": "json",
+        "representative_created_at": "2026-08-19T06:42:11.318Z",
+        "representative_supersedes_id": null,
+        "member_count": 1,
+        "group_latest_at": "2026-08-19T06:42:11.318Z"
+      },
+      {
+        "folder_id": null,
+        "representative_id": 43953,
+        "representative_title": "Shell trust boundary — diagram",
+        "representative_author": "glass-atrium-dev-front",
+        "representative_doc_status": "doc_review",
+        "representative_audience": "exposed",
+        "representative_format": "html",
+        "representative_created_at": "2026-08-19T06:42:11.318Z",
+        "representative_supersedes_id": null,
+        "member_count": 1,
+        "group_latest_at": "2026-08-19T06:42:11.318Z"
+      }
+    ],
+    "filter": {
+      "doc_status": null,
+      "author": null,
+      "limit": 50,
+      "offset": 0
+    },
+    "fetched_at": "2026-08-19T06:42:11.318Z"
+  },
+  "/api/clauded-docs/43951": {
+    "id": 43951,
+    "title": "S5a app-shell hardening — review notes",
+    "author": "glass-atrium-dev-front",
+    "created_at": "2026-08-19T06:42:11.318Z",
+    "content_hash": "sha256-fixture-43951",
+    "html_path": "/clauded-docs/43951.md",
+    "md_copy_path": null,
+    "last_synced_at": null,
+    "audience": "exposed",
+    "format": "md",
+    "supersedes_id": null,
+    "superseded_by_id": null,
+    "doc_status": "doc_review",
+    "folder_id": null,
+    "display_order": null,
+    "body": "---\ndoc_status: doc_review\n---\n\n# S5a app-shell hardening — review notes\n\n## Script set\n\nThe shell pins **12** CDN scripts by `sha384` and loads the Tailwind runtime from `assets/vendor/`.\n\n| Directive | Sources |\n|---|---|\n| `script-src` | `'self'`, 12 URLs, 2 inline hashes |\n| `object-src` | `'none'` |\n\n```ts\nconst policy = document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]');\n```\n\n- [x] SRI on every versioned CDN script\n- [ ] Queue nav item (S5b)"
+  },
+  "/api/clauded-docs/43952": {
+    "id": 43952,
+    "title": "dev-front outcome payload — s5a fix round",
+    "author": "glass-atrium-dev-front",
+    "created_at": "2026-08-19T06:42:11.318Z",
+    "content_hash": "sha256-fixture-43952",
+    "html_path": "/clauded-docs/43952.json",
+    "md_copy_path": null,
+    "last_synced_at": null,
+    "audience": "hidden",
+    "format": "json",
+    "supersedes_id": null,
+    "superseded_by_id": null,
+    "doc_status": "doc_review",
+    "folder_id": null,
+    "display_order": null,
+    "body": "{\n  \"result\": \"done\",\n  \"task_type\": \"feature\",\n  \"metric_pass\": true,\n  \"files\": [\n    \"monitor/public/index.html\"\n  ],\n  \"token_usage\": {\n    \"input\": 48213,\n    \"output\": 9124\n  }\n}"
+  },
+  "/api/clauded-docs/43953": {
+    "id": 43953,
+    "title": "Shell trust boundary — diagram",
+    "author": "glass-atrium-dev-front",
+    "created_at": "2026-08-19T06:42:11.318Z",
+    "content_hash": "sha256-fixture-43953",
+    "html_path": "/clauded-docs/43953.html",
+    "md_copy_path": null,
+    "last_synced_at": null,
+    "audience": "exposed",
+    "format": "html",
+    "supersedes_id": null,
+    "superseded_by_id": null,
+    "doc_status": "doc_review",
+    "folder_id": null,
+    "display_order": null,
+    "body": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Shell trust boundary — diagram</title></head><body class=\"bg-zinc-950\"><h1>Shell trust boundary</h1><p>Every script below runs with the owner session cookie.</p><pre class=\"mermaid doc-diagram-body\" data-probe=\"trust-boundary\" data-diagram-type=\"flowchart\">flowchart TD\n  Cdn[Pinned CDN scripts] --> Shell[App shell origin]\n  Vendor[Vendored Tailwind runtime] --> Shell\n  Shell --> Owner[Owner routes]</pre></body></html>"
+  }
+}
