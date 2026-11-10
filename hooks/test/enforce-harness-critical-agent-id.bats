@@ -278,6 +278,7 @@ run_bash() {
     'cd to a variable bound to jobs tmp, then a relative write|D=~/.claude/jobs/j/tmp; cd "$D" && echo x > a.txt|0|0'
     'guarded rm under a variable bound to jobs tmp|D=~/.claude/jobs/j/tmp; rm -rf "${D:?}/x"|0|0'
     'guarded rm under a quoted mktemp variable|T="$(mktemp -d)"; rm -rf "${T:?}/x"|0|0'
+    'self-referencing accumulator past the spelling cap|ok=""; ok="$ok a"; ok="$ok b"; ok="$ok c"; ok="$ok d"; git -C /tmp log "$ok"|0|0'
     'progress file by tilde|echo x > ~/.claude/projects/p/memory/progress-x.md|0|0'
     'progress file by $HOME|echo x > $HOME/.claude/projects/p/memory/progress-x.md|0|0'
     'progress file by literal home|echo x > @H@/.claude/projects/p/memory/progress-x.md|0|0'
