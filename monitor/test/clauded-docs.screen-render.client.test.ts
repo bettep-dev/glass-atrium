@@ -60,6 +60,7 @@ const SHIPPED_ATOMS = {
   getRegionView: shippedUi.getRegionView,
   TONE_GLYPH: shippedUi.TONE_GLYPH,
   TONE_ICON: shippedUi.TONE_ICON,
+  Card: shippedUi.Card,
   Table: shippedUi.Table,
   TableRow: shippedUi.TableRow,
   TableCell: shippedUi.TableCell,
@@ -464,7 +465,7 @@ test("a list error hands its Retry focus to the list card, so a successful Retry
     assert.equal(typeof targetId, "string", `${row.name}: Retry names a focus target`);
     const targets = findNodes(tree, (n) => n.props.id === targetId);
     assert.equal(targets.length, 1, `${row.name}: the target id is on the page`);
-    assert.match(String(targets[0].props.className), /\bcard\b/, `${row.name}: the target is the list card`);
+    assert.equal(findNodes(targets[0], (n) => /(^|\s)card(\s|$)/.test(String(n.props.className ?? ""))).length, 1, `${row.name}: the target wraps the list card`);
     assert.equal(findNodes(targets[0], (n) => n === card).length, 1, `${row.name}: the card holds the failed Retry`);
   }
 });
@@ -810,28 +811,33 @@ test("while searching, a note says every stage is read, the stored stage stays c
   assert.match(String(state.props.hint), /“plan”/);
 });
 
-describe("an empty list picks the spec's no-results state when any filter applies, else the first-use state", () => {
+// one applied rule with the filter bar → reset shows only off the entry view (open stage, all audiences, no query)
+describe("an empty list picks the spec's no-results state only while a filter is applied, else a reset-free entry state", () => {
+  const entry = { keyword: "", docStatusFilter: "open", audienceFilter: "all" };
   const rows = [
-    { name: "nothing applied", filters: { keyword: "", docStatusFilter: "", audienceFilter: "all" }, kind: undefined, hasReset: false },
-    { name: "the default open stage", filters: { keyword: "", docStatusFilter: "open", audienceFilter: "all" }, kind: "no-results", hasReset: true },
-    { name: "an audience", filters: { keyword: "", docStatusFilter: "", audienceFilter: "agent-only" }, kind: "no-results", hasReset: true },
+    { name: "the entry view on an empty corpus", filters: entry, groupCounts: { open: 0, done: 0, total: 0 }, kind: undefined, hasReset: false, hint: /once an agent posts/ },
+    { name: "the entry view while done documents exist", filters: entry, groupCounts: { open: 0, done: 3, total: 3 }, kind: undefined, hasReset: false, hint: /All in Show/ },
+    { name: "the all stage", filters: { ...entry, docStatusFilter: "" }, groupCounts: null, kind: "no-results", hasReset: true, hint: undefined },
+    { name: "an audience", filters: { ...entry, audienceFilter: "agent-only" }, groupCounts: null, kind: "no-results", hasReset: true, hint: /audience:/ },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const screen = await loadDocsScreen();
       const props = listCardProps(() => undefined);
       const filters = { ...(props.inlineFilterProps as Record<string, unknown>), ...row.filters };
-      const tree = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: false, inlineFilterProps: filters }));
+      const tree = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: false, groupCounts: row.groupCounts, inlineFilterProps: filters }));
 
       const states = findNodes(tree, (n) => n.props.atom === "EmptyState");
       assert.equal(states.length, 1);
       assert.equal(states[0].props.kind, row.kind);
       assert.equal(typeof states[0].props.onReset === "function", row.hasReset);
+      assert.equal((screen.isFilterAppliedCD as (f: unknown) => boolean)(filters), row.hasReset, "the bar's applied rule agrees");
+      if (row.hint) assert.match(String(states[0].props.hint), row.hint);
     });
   }
 });
 
-test("resetting an empty filtered list clears search, stage and audience", async () => {
+test("resetting an empty filtered list returns search, stage and audience to the entry view", async () => {
   const screen = await loadDocsScreen();
   const calls: string[] = [];
   const filters = {
@@ -843,7 +849,7 @@ test("resetting an empty filtered list clears search, stage and audience", async
   const tree = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: false, inlineFilterProps: filters }));
   const [state] = findNodes(tree, (n) => n.props.atom === "EmptyState");
   (state.props.onReset as () => void)();
-  assert.deepEqual(calls, ["keyword=", "stage=", "audience=all"]);
+  assert.deepEqual(calls, ["keyword=", "stage=open", "audience=all"]);
 });
 
 const DAY_MS = 86_400_000;
@@ -1015,6 +1021,35 @@ describe("the bulk bar and the whole-word note space on role keys only", () => {
       if (row.rule) assert.doesNotMatch(cssRuleBody(getScreenCss(screen), row.rule), /(^|[;\s])(padding|gap)\s*:/, row.rule);
     });
   }
+});
+
+// every list-card state → role keys and atom slots space it, never a number or an inline px
+describe("the list card spaces on role keys in every state", () => {
+  const numericSpacing = /(^|\s)-?(p|m|gap|space)(x|y|t|r|b|l|s|e)?-(\d|\[)/;
+  const rows = [
+    { name: "ready with Load More", overrides: { canLoadMore: true, loadMoreRemaining: 40, rows: undefined } },
+    { name: "a failed read", overrides: { state: { status: "error", data: null, error: new Error("down"), busy: false }, rows: [] } },
+    { name: "an empty filtered list", overrides: { rows: [], inlineFilterProps: undefined } },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const overrides = Object.fromEntries(Object.entries(row.overrides).filter(([, v]) => v !== undefined));
+      const nodes = findNodes(renderListCard(screen, overrides), () => true);
+      assert.deepEqual(nodes.map((n) => String(n.props?.className ?? "")).filter((c) => numericSpacing.test(c)), [], row.name);
+      assert.deepEqual(nodes.filter((n) => n.props?.style && /(min|max)?(width|height|padding|margin)/i.test(Object.keys(n.props.style as object).join(" ")) && n.type === "button"), [], `${row.name}: no sized button`);
+    });
+  }
+});
+
+test("Load More sits in the card foot and keeps one label cell for both states", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderListCard(screen, { canLoadMore: true, loadMoreRemaining: 1200, isLoadingMore: true });
+  const [foot] = findNodes(tree, (n) => n.props.className === "card-foot");
+  assert.ok(foot, "the Card renders a foot");
+  const [button] = findNodes(foot, (n) => n.type === "button");
+  assert.equal(button.props["aria-label"], "Loading more");
+  assert.match(collectText(button), /Show 1200 more/, "the idle label holds the width while loading");
 });
 
 // content inside a ledger cell → its inline gap is the label-inline role; the cell padding stays the table's

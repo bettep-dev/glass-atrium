@@ -1148,7 +1148,7 @@ test("list card: a mouse click never rings the card, a keyboard-driven handoff r
     const page: Page = await context.newPage();
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-      const card = page.locator(".card.doc-list-card");
+      const card = page.locator("#docs-list");
       await card.waitFor({ state: "visible" });
       const ring = () => card.evaluate((el) => {
         const style = getComputedStyle(el);
@@ -1156,7 +1156,8 @@ test("list card: a mouse click never rings the card, a keyboard-driven handoff r
       });
 
       await card.evaluate((el) => el.setAttribute("tabindex", "-1"));
-      await card.click({ position: { x: 2, y: 2 } });
+      // inside the bar inset, below the rounded corner → lands on the card, never on a control
+      await card.click({ position: { x: 4, y: 24 } });
       const clicked = await ring();
       assert.ok(clicked.focused, "the click focuses the card itself");
       assert.equal(clicked.style, "none", "a plain mouse focus draws no ring");

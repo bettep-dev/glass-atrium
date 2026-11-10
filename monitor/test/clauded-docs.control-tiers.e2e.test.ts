@@ -77,7 +77,7 @@ const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</
 </body></html>`;
 
 // the toolbar is the list card's first row, whatever class it carries
-const TOOLBAR = "#docs-list > div:first-child > div:first-child";
+const TOOLBAR = "#docs-list .card-bar > .control-row";
 // card widths: the rail layout, then the 1024–1280 band the audit wrapped in, then the 820 viewport's card and below
 const CARD_WIDTHS = [1300, 1100, 960, 760, 640, 520] as const;
 

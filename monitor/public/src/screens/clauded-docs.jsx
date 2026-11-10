@@ -1070,9 +1070,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* numeric columns: ID and Created read right-aligned in tabular figures on one line — each keeps its own typeface */
         .tbl :is(th, td).doc-col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
         /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
-        .card.doc-list-card { scroll-margin-top: 96px; }
+        .doc-list-region { scroll-margin-top: 96px; border-radius: var(--radius-card); }
         /* clip trims an outside ring → the card ring drawn inset */
-        .card.doc-list-card:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
+        .doc-list-region:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
+        /* the bar holds full-bleed strips (control row · whole-word note · bulk bar) that own their insets → the slot adds none, only the rule under it */
+        .doc-list-card > .card-bar { padding: 0; border-bottom: 1px solid rgb(var(--line)); }
         .doc-stage-note { font-size: var(--fs-meta); color: rgb(var(--dim)); }
         .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--overlay-surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); box-shadow: var(--shadow-overlay); }
         .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: var(--radius-badge); color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
@@ -1100,7 +1102,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 				/>
 			</div>
 
-			{/* single column — search + facets + meta live in the DocListCardCD toolbar header · full height = flex-1 + card-body maxHeight:'none' override */}
+			{/* single column — search + facets + meta live in the DocListCardCD bar · full height = flex-1, card body uncapped */}
 			<div
 				className="flex"
 				style={{ minHeight: 0, flex: "1 1 auto", width: "100%" }}
@@ -1256,7 +1258,7 @@ function DocTagsCellCD({ view, audience, format, commonFormat, commonAudience = 
 		// no chip → no label: a stacked row never prints a bare "Tags"
 		<TableCell view={view} textRole="meta" label={isAudienceShown || isFormatShown ? "Tags" : undefined} className="doc-tags-cell doc-col-tags">
 			{/* nowrap — 칩이 2줄로 접히면 행 높이가 튄다. */}
-			<span className="inline-flex items-center gap-1 whitespace-nowrap">
+			<span className="inline-flex items-center gap-label-inline whitespace-nowrap">
 				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
 				{isAudienceShown && <Badge role="metadata">agent-only</Badge>}
 				{/* format = 서술 속성 → neutral metadata pill. */}
@@ -1282,27 +1284,6 @@ function DocAuthorCellCD({ view, author }) {
 const DOC_LIST_CARD_ID_CD = "docs-list";
 
 // Center list card — toolbar (search + facets + count) + ledger · ledger scroll = page scroll
-// Ledger columns in render order; Tags only while a row carries a tag of its own.
-function getLedgerColumnsCD({ hasTagsColumn, selectAll }) {
-	return [
-		{ key: "select", label: selectAll },
-		{ key: "status", label: "Status" },
-		{ key: "id", label: "ID", isNumeric: true },
-		{
-			key: "title",
-			label: (
-				<span className="doc-title-row">
-					<span className="doc-title-lead is-spacer" />
-					<span>Title</span>
-				</span>
-			),
-		},
-		hasTagsColumn && { key: "tags", label: "Tags" },
-		{ key: "author", label: "Author" },
-		{ key: "created", label: "Created", isNumeric: true },
-	].filter(Boolean);
-}
-
 function DocListCardCD({
 	state,
 	rows,
@@ -1335,7 +1316,7 @@ function DocListCardCD({
 	onSelect,
 	onRetry,
 }) {
-	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, getRegionView, Table, TableRow, TableCell } = window.UI;
+	const { Card, Icon, Badge, MachineString, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, getRegionView, Table, TableRow, TableCell } = window.UI;
 	const [focusRowId, setFocusRowId] = useStateCD(null);
 	// load-more keeps its own button spinner → only a first-page read dims the held rows
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
@@ -1411,13 +1392,8 @@ function DocListCardCD({
 		);
 	};
 
-	return (
-		<div
-			id={DOC_LIST_CARD_ID_CD}
-			className="card doc-list-card flex flex-col min-h-0"
-			style={{ height: "100%", flex: "1 1 auto", width: "100%" }}
-		>
-			<div style={{ borderBottom: "1px solid rgb(var(--line))" }}>
+	const bar = (
+		<>
 				{/* one control row — the filter bar (search · Show · Audience · reset) · the count meta on its own right-aligned line */}
 				<div className="control-row">
 					<DocFilterBarCD isSearchMode={isSearchMode} groupCounts={groupCounts} inlineFilterProps={inlineFilterProps} />
@@ -1469,18 +1445,29 @@ function DocListCardCD({
 					onExportZip={onExportZip}
 					onClear={onClearSelection}
 				/>
-			</div>
+		</>
+	);
+	// Load More — groups mode only, while server groups remain · the label cell keeps its widest value → no width jump on loading
+	const foot = state.status === "ready" && canLoadMore && (
+		<button
+			type="button"
+			className="btn ghost sm mx-auto"
+			onClick={onLoadMore}
+			disabled={isLoadingMore}
+			aria-label={isLoadingMore ? "Loading more" : `Show ${formatIntCD(loadMoreRemaining)} more`}
+		>
+			<DocTriggerValueCD
+				options={[{ value: "idle", label: `Show ${formatIntCD(loadMoreRemaining)} more` }, { value: "busy", label: "Loading…" }]}
+				chosenKey={isLoadingMore ? "busy" : "idle"}
+			/>
+		</button>
+	);
 
-			<div
-				className="card-body flush"
-				style={{
-					maxHeight: "none",
-					flex: "1 1 auto",
-					minHeight: 0,
-					// the list grows with the page → the page scrolls, never this body · x-overflow belongs to the table wrapper
-					overflow: "visible",
-				}}
-			>
+	return (
+		// Card takes no id → the region wrapper holds the Retry focus target
+		<div id={DOC_LIST_CARD_ID_CD} className="doc-list-region flex flex-col flex-auto min-h-0 w-full">
+			{/* the list grows with the page → the page scrolls, never this body · x-overflow belongs to the table wrapper */}
+			<Card isFlush bar={bar} foot={foot} className="doc-list-card flex-auto min-h-0 [&>.card-body]:max-h-none [&>.card-body]:overflow-y-visible">
 				{getRegionView(state) === "loading" && <LoadingPlaceholder label="documents" minHeight={240} />}
 				{state.error != null && (
 					<div role="alert">
@@ -1490,7 +1477,7 @@ function DocListCardCD({
 							onRetry={onRetry}
 							isBusy={state.busy === true}
 							focusTargetId={DOC_LIST_CARD_ID_CD}
-							className="m-4"
+							className="p-card-pad"
 						/>
 					</div>
 				)}
@@ -1498,6 +1485,7 @@ function DocListCardCD({
 					/* WCAG 4.1.3 → the empty state announces itself */
 					<DocEmptyStateCD
 						isSearchMode={isSearchMode}
+						groupCounts={groupCounts}
 						inlineFilterProps={inlineFilterProps}
 					/>
 				)}
@@ -1605,7 +1593,7 @@ function DocListCardCD({
 													/>
 												</TableCell>
 											<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num text-dim">
-													<window.UI.MachineString>#{row.id}</window.UI.MachineString>
+													<MachineString>#{row.id}</MachineString>
 												</TableCell>
 											<TableCell view={view} className="title-cell">
 												<div
@@ -1715,46 +1703,38 @@ function DocListCardCD({
 							}) }]}
 					/>
 				)}
-				{/* Load More 버튼.
-            · canLoadMore = !isSearchMode AND ready AND consumedCount < total (server groups consumed, not deduped rows)
-            · isLoadingMore = offset>0 진행 중 — 버튼 label 'loading' 으로 전환 + disabled */}
-				{state.status === "ready" && canLoadMore && (
-					<div className="flex justify-center py-3 px-4">
-						<button
-							type="button"
-							className="btn ghost sm"
-							onClick={onLoadMore}
-							disabled={isLoadingMore}
-							aria-label={
-								isLoadingMore
-									? "Loading more"
-									: `Show ${formatIntCD(loadMoreRemaining)} more`
-							}
-							style={{ minHeight: 32, minWidth: 120 }}
-						>
-							{isLoadingMore
-								? "Loading…"
-								: `Show ${formatIntCD(loadMoreRemaining)} more`}
-						</button>
-					</div>
-				)}
-			</div>
+			</Card>
 		</div>
 	);
 }
 
-// search reads every stage → a note after the triggers says so; its slot is kept in list mode, so entering search moves nothing and wraps nothing. The Show value applies once the search clears
+// Ledger columns in render order; Tags only while a row carries a tag of its own.
+function getLedgerColumnsCD({ hasTagsColumn, selectAll }) {
+	return [
+		{ key: "select", label: selectAll },
+		{ key: "status", label: "Status" },
+		{ key: "id", label: "ID", isNumeric: true },
+		{
+			key: "title",
+			label: (
+				<span className="doc-title-row">
+					<span className="doc-title-lead is-spacer" />
+					<span>Title</span>
+				</span>
+			),
+		},
+		hasTagsColumn && { key: "tags", label: "Tags" },
+		{ key: "author", label: "Author" },
+		{ key: "created", label: "Created", isNumeric: true },
+	].filter(Boolean);
+}
+
+// search → every stage read, so a trailing note says so · note slot kept in list mode → no move or wrap on search · Show value applies once search clears
 function DocFilterBarCD({ isSearchMode, groupCounts, inlineFilterProps }) {
 	const { FilterBar, FilterTrigger, BarSearch } = window.UI;
 	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
-	const resetFilters = () => {
-		inlineFilterProps.onKeywordChange(DEFAULT_FILTERS_CD.keyword);
-		inlineFilterProps.onDocStatusChange(DEFAULT_FILTERS_CD.docStatusFilter);
-		inlineFilterProps.onAudienceChange(DEFAULT_FILTERS_CD.audienceFilter);
-	};
-
 	return (
-		<FilterBar label="Document filters" isApplied={isFilterAppliedCD(inlineFilterProps)} onReset={resetFilters} className="flex-auto min-w-0">
+		<FilterBar label="Document filters" isApplied={isFilterAppliedCD(inlineFilterProps)} onReset={() => setDefaultFiltersCD(inlineFilterProps)} className="flex-auto min-w-0">
 			<BarSearch label="Search documents" value={keyword} onChange={inlineFilterProps.onKeywordChange} placeholder="Search…" className="doc-bar-search" />
 			<FilterTrigger axis="Show" value={<DocTriggerValueCD options={DOC_STATUS_OPTIONS_CD} chosenKey={docStatusFilter} />} options={getStageOptionsCD(groupCounts)}
 				chosenKeys={[docStatusFilter]} onPick={inlineFilterProps.onDocStatusChange} />
@@ -1773,6 +1753,12 @@ function isFilterAppliedCD({ keyword, docStatusFilter, audienceFilter }) {
 		docStatusFilter !== DEFAULT_FILTERS_CD.docStatusFilter ||
 		audienceFilter !== DEFAULT_FILTERS_CD.audienceFilter
 	);
+}
+
+function setDefaultFiltersCD(inlineFilterProps) {
+	inlineFilterProps.onKeywordChange(DEFAULT_FILTERS_CD.keyword);
+	inlineFilterProps.onDocStatusChange(DEFAULT_FILTERS_CD.docStatusFilter);
+	inlineFilterProps.onAudienceChange(DEFAULT_FILTERS_CD.audienceFilter);
 }
 
 // every option label in one cell, only the chosen one seen → the trigger keeps its widest value's width, so a pick never moves or wraps the bar
@@ -1930,8 +1916,7 @@ function GroupMembersRowsCD({
 	togglingIds,
 	optimisticStatusOverrides,
 }) {
-	const { TableRow, TableCell } = window.UI;
-	const { Icon } = window.UI;
+	const { TableRow, TableCell, Icon, MachineString } = window.UI;
 	const [memberState, setMemberState] = useStateCD({
 		status: "loading",
 		data: null,
@@ -2194,7 +2179,7 @@ function GroupMembersRowsCD({
 					)}
 				</TableCell>
 				<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num text-dim">
-					<window.UI.MachineString>#{member.id}</window.UI.MachineString>
+					<MachineString>#{member.id}</MachineString>
 				</TableCell>
 				<TableCell view={view} className="title-cell">
 					<div
@@ -3342,10 +3327,22 @@ function getFreshnessInputCD(asOf, listState) {
 	return { at: asOf, regions: [listState] };
 }
 
-// spec §5 two empty states — any applied filter (incl. default 'open' stage) → no-results + echo + reset · none → first use
+// spec §5 empty states — applied (isFilterAppliedCD) → no-results + echo + the bar's reset · entry view → first use, or a pointer to Show All while other stages hold documents
 //   docStatus is ignored while searching → never echoed as applied
-function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
+function DocEmptyStateCD({ isSearchMode, groupCounts, inlineFilterProps }) {
 	const { EmptyState } = window.UI;
+	if (!isFilterAppliedCD(inlineFilterProps)) {
+		const hasOtherStages = (groupCounts?.total ?? 0) > 0;
+		return (
+			<div role="status" aria-live="polite">
+				{hasOtherStages ? (
+					<EmptyState message="No open documents" hint="Pick All in Show to list done documents too." />
+				) : (
+					<EmptyState message="No documents yet" hint="A report or plan appears here once an agent posts it." />
+				)}
+			</div>
+		);
+	}
 	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
 	const statusLabel = (
 		DOC_STATUS_OPTIONS_CD.find((o) => o.value === docStatusFilter) || {}
@@ -3358,19 +3355,9 @@ function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
 	if (docStatusFilter && !isSearchMode) activeFilters.push(`status: ${statusLabel}`);
 	if (audienceFilter !== "all") activeFilters.push(`audience: ${audienceLabel}`);
 
-	const resetFilters = () => {
-		inlineFilterProps.onKeywordChange("");
-		inlineFilterProps.onDocStatusChange("");
-		inlineFilterProps.onAudienceChange("all");
-	};
-
 	return (
 		<div role="status" aria-live="polite">
-			{activeFilters.length > 0 ? (
-				<EmptyState kind="no-results" hint={`Filters: ${activeFilters.join(" · ")}`} onReset={resetFilters} />
-			) : (
-				<EmptyState message="No documents yet" hint="A report or plan appears here once an agent posts it." />
-			)}
+			<EmptyState kind="no-results" hint={activeFilters.length > 0 ? `Filters: ${activeFilters.join(" · ")}` : undefined} onReset={() => setDefaultFiltersCD(inlineFilterProps)} />
 		</div>
 	);
 }
