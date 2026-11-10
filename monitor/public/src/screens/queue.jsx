@@ -135,39 +135,41 @@ function getConfigPrefixQ(session) {
 	return session.configDir ? `CLAUDE_CONFIG_DIR=${session.configDir} ` : "";
 }
 
-/** Marker text: captured-id form when the spawn recorded a bg id, else the listing form. */
-function getMarkerTextQ(session) {
+/** Marker note: captured-id form when the spawn recorded a bg id, else the listing form; `{ machine }` parts render mono. */
+function getMarkerNoteQ(session) {
 	const prefix = getConfigPrefixQ(session);
 	const lead = `the resumed session may still be running in the background: under profile ${session.profileLabel}, `;
 	const bgId = session.marker?.bgId;
 	if (bgId) {
-		return `${lead}check it with \`${prefix}claude logs ${bgId}\`, and resume it yourself in a terminal only after \`${prefix}claude stop ${bgId}\``;
+		return [`${lead}check it with `, { machine: `${prefix}claude logs ${bgId}` }, ", and resume it yourself in a terminal only after ", { machine: `${prefix}claude stop ${bgId}` }];
 	}
-	return (
-		`${lead}check \`${prefix}claude agents --json --cwd ${session.cwd}\` for the entry of session ${session.id}, ` +
-		`and resume it yourself in a terminal only once that entry is no longer listed, or after \`${prefix}claude stop <id>\` with that entry's id`
-	);
+	return [
+		`${lead}check `, { machine: `${prefix}claude agents --json --cwd ${session.cwd}` }, " for the entry of session ", { machine: session.id },
+		", and resume it yourself in a terminal only once that entry is no longer listed, or after ", { machine: `${prefix}claude stop <id>` }, " with that entry's id",
+	];
 }
 
-function getMarkedOccupantTextQ(occupant) {
-	return (
-		`waiting on ${occupant.profileLabel} · ${occupant.cwdTail} · ${occupant.sessionIdPrefix}, whose automatic resume has not registered: ` +
-		"this one waits until that session registers or is resumed in a terminal (see its card), and resumes automatically once that session has then ended"
-	);
+function getMarkedOccupantNoteQ(occupant) {
+	return [
+		`waiting on ${occupant.profileLabel} · ${occupant.cwdTail} · `, { machine: occupant.sessionIdPrefix },
+		", whose automatic resume has not registered: this one waits until that session registers or is resumed in a terminal (see its card), " +
+			"and resumes automatically once that session has then ended",
+	];
 }
 
 /**
- * Lines shown in place of (or beside) Resend, by card precedence: the marker on every card of a marked session,
+ * Notes shown in place of (or beside) Resend, by card precedence: the marker on every card of a marked session,
  * then the server's sweep skip reason; a resume in flight shows nothing.
+ * @returns one array of parts per note — a string is prose, `{ machine }` a command or id
  */
 function getCardNotesQ(item) {
-	if (item.session.marker) return [getMarkerTextQ(item.session)];
+	if (item.session.marker) return [getMarkerNoteQ(item.session)];
 	const skip = item.skipReason;
 	if (!skip || skip.kind === "in_flight" || skip.kind === "marker") return [];
-	if (skip.kind !== "shared_worktree") return [SKIP_TEXT_Q[skip.kind]];
-	const marked = skip.markedOccupants.map(getMarkedOccupantTextQ);
+	if (skip.kind !== "shared_worktree") return [[SKIP_TEXT_Q[skip.kind]]];
+	const marked = skip.markedOccupants.map(getMarkedOccupantNoteQ);
 	const hasGeneric = skip.hasUnmarkedOccupant || marked.length === 0;
-	return hasGeneric ? [...marked, SKIP_TEXT_Q.shared_worktree] : marked;
+	return hasGeneric ? [...marked, [SKIP_TEXT_Q.shared_worktree]] : marked;
 }
 
 /**
@@ -357,10 +359,12 @@ function useSendQ({ setDrafts, putAuth, reload, onRetryHarness }) {
 	return { busy, send };
 }
 
+// the server's refusal body is `{ error, reason }`: `reason` is its worded cause, `error` a machine code never shown
 function getActionErrorQ(answer) {
 	if (answer.status === 0) return "The monitor did not answer. Try again.";
 	if (answer.status === 409) return "Refused: the item changed state. Refresh to see where it is now.";
-	return answer.data?.message ?? answer.data?.error ?? `The monitor refused this (HTTP ${answer.status}).`;
+	const reason = answer.data?.reason;
+	return typeof reason === "string" && reason !== "" ? `Refused: ${reason}.` : "The monitor refused this action. Refresh and try again.";
 }
 
 function QueueFailureQ({ error, onRetry }) {
@@ -373,7 +377,7 @@ function LoginFormQ({ auth, onLogin }) {
 	if (auth === "not_provisioned") {
 		return (
 			<Card title="Queue not set up">
-				<p className="fs-control">No owner passphrase is set. Run the queue setup script once in a terminal, then reload this page.</p>
+				<p className="fs-body">No owner passphrase is set. Run the queue setup script once in a terminal, then reload this page.</p>
 			</Card>
 		);
 	}
@@ -424,11 +428,11 @@ async function putLoginQ(passphrase) {
 }
 
 function QueueListQ({ queue }) {
-	const { EmptyState, Stack } = window.UI;
+	const { EmptyState } = window.UI;
 	const data = queue.list.data;
 	const visible = getVisibleItemsQ(data.items, queue.filter);
 	return (
-		<Stack gap="block">
+		<div className="flex flex-col gap-section">
 			{!data.isSocketDeliveryOn && <DegradedBannerQ />}
 			<QueueFilterBarQ items={data.items} filter={queue.filter} onFilter={queue.setFilter} />
 			{data.items.length === 0 && <EmptyState message="Nothing waiting for you" hint="Sessions post decisions and reports here; the nav badge counts them." />}
@@ -438,7 +442,7 @@ function QueueListQ({ queue }) {
 			{visible.map((item) => <QueueCardQ key={item.id} item={item} queue={queue} />)}
 			{data.nextCursor !== null && <ShowMoreQ count={data.items.length} isBusy={queue.list.status === "loading"} onMore={queue.loadMore} />}
 			<RecentResumesQ items={data.items} />
-		</Stack>
+		</div>
 	);
 }
 
@@ -510,7 +514,7 @@ function DecisionBodyQ({ item, draft, onDraft }) {
 	const isOpen = item.status === "open";
 	return (
 		<Stack gap="stack">
-			<p className="fs-control whitespace-pre-wrap">{item.body}</p>
+			<p className="fs-body whitespace-pre-wrap">{item.body}</p>
 			{item.isApprovalClass && <p className="fs-meta text-dim">{APPROVAL_NOTE_Q}</p>}
 			<fieldset disabled={!isOpen}>
 				<legend className="sr-only">Options</legend>
@@ -529,17 +533,18 @@ function DecisionBodyQ({ item, draft, onDraft }) {
 }
 
 function DecisionOptionQ({ itemId, option, isRecommended, isChecked, onPick }) {
+	const { Cluster } = window.UI;
 	const id = `queue-option-${itemId}-${option.code}`;
 	return (
-		<div className="flex gap-2 items-start">
-			<input id={id} type="radio" name={`queue-options-${itemId}`} checked={isChecked} onChange={onPick} className="mt-1" />
-			<label htmlFor={id} className="fs-control">
+		<Cluster gap="control" className="flex-nowrap items-baseline">
+			<input id={id} type="radio" name={`queue-options-${itemId}`} checked={isChecked} onChange={onPick} />
+			<label htmlFor={id} className="fs-body">
 				<span className="font-semibold">{`${option.code} · ${option.label}`}</span>
 				{isRecommended && <span className="fs-meta text-dim">{" · recommended"}</span>}
 				{option.pros && <span className="block fs-meta text-dim">{`Pros: ${option.pros}`}</span>}
 				{option.cons && <span className="block fs-meta text-dim">{`Cons: ${option.cons}`}</span>}
 			</label>
-		</div>
+		</Cluster>
 	);
 }
 
@@ -547,13 +552,13 @@ function ReportBodyQ({ item, draft, onDraft }) {
 	const { Stack, Link } = window.UI;
 	return (
 		<Stack gap="stack">
-			<p className="fs-control whitespace-pre-wrap">{item.body}</p>
+			<p className="fs-body whitespace-pre-wrap">{item.body}</p>
 			{item.linkedDocIds.length > 0 && (
-				<ul className="fs-control">
+				<ul className="fs-body">
 					{item.linkedDocIds.map((docId) => <li key={docId}><Link href={`#clauded-docs?doc=${docId}`}>{`Document ${docId} →`}</Link></li>)}
 				</ul>
 			)}
-			{item.status === "open" && (
+			{item.isFreeTextAllowed && item.status === "open" && (
 				<DraftFieldQ id={`queue-reply-${item.id}`} label="Reply (optional)" value={draft.text ?? ""} onChange={(text) => onDraft({ text })} />
 			)}
 		</Stack>
@@ -585,10 +590,19 @@ function CardStateQ({ item }) {
 			{PULL_DEVIATIONS_Q.has(item.deviation) && (
 				<p className="fs-meta text-dim">Run in that session: <MachineString>{PENDING_COMMAND_Q}</MachineString></p>
 			)}
-			{notes.map((note) => <p key={note} className="fs-meta text-dim">{note}</p>)}
+			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
 			{item.session.launchHint === "accept_wrapper" && <p className="fs-meta text-dim">{WRAPPER_RISK_NOTE_Q}</p>}
 		</Stack>
 	);
+}
+
+function getNoteKeyQ(parts) {
+	return parts.map((part) => (typeof part === "string" ? part : part.machine)).join("");
+}
+
+function NotePartsQ({ parts }) {
+	const { MachineString } = window.UI;
+	return <>{parts.map((part, index) => (typeof part === "string" ? part : <MachineString key={index}>{part.machine}</MachineString>))}</>;
 }
 
 function CardActionsQ({ item, draft, queue, isBusy }) {
@@ -651,7 +665,7 @@ function RecentResumesQ({ items }) {
 	if (recent.length === 0) return null;
 	return (
 		<Card title="Recent automatic resumes">
-			<ul className="fs-control">
+			<ul className="fs-body">
 				{recent.map((resume) => (
 					<li key={`${resume.itemId}-${resume.attempt}-${resume.sentAt}`}>
 						<ResumeLineQ resume={resume} profileLabel={`${resume.session.profileLabel} · ${resume.session.cwdTail}`} />

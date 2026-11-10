@@ -232,16 +232,26 @@ describe("card state lines", () => {
 
 describe("card precedence notes", () => {
   const occupant = { profileLabel: "personal", cwdTail: "wt/owner-queue", sessionIdPrefix: "9b2e7c41" };
-  const markedLine =
-    "waiting on personal · wt/owner-queue · 9b2e7c41, whose automatic resume has not registered: this one waits until that session registers " +
-    "or is resumed in a terminal (see its card), and resumes automatically once that session has then ended";
-  const generic = "another session is live or resuming in this worktree: this one resumes automatically once that one has ended";
+  // a note's parts: a string is prose, { machine } renders through MachineString
+  const markedLine = [
+    "waiting on personal · wt/owner-queue · ",
+    { machine: "9b2e7c41" },
+    ", whose automatic resume has not registered: this one waits until that session registers " +
+      "or is resumed in a terminal (see its card), and resumes automatically once that session has then ended",
+  ];
+  const generic = ["another session is live or resuming in this worktree: this one resumes automatically once that one has ended"];
+  const capturedIdNote = [
+    "the resumed session may still be running in the background: under profile work-dev, check it with ",
+    { machine: "claude logs bg-7f3a" },
+    ", and resume it yourself in a terminal only after ",
+    { machine: "claude stop bg-7f3a" },
+  ];
   const markedSession = (bgId: string | null, configDir: string | null = null) =>
     buildSession({ marker: { setAt: "2026-11-10T06:20:11.204Z", bgId }, configDir });
   const pending = (skipReason: unknown, extra: Record<string, unknown> = {}) => buildItem({ status: "resume_pending", skipReason, ...extra });
   const rows = [
-    { name: "a used attempt asks for Resend", item: pending({ kind: "resume_used" }), expected: ["automatic resume used — Resend to try again"] },
-    { name: "an approval item needs the terminal", item: pending({ kind: "approval" }), expected: ["approval needs your terminal: resume the session yourself"] },
+    { name: "a used attempt asks for Resend", item: pending({ kind: "resume_used" }), expected: [["automatic resume used — Resend to try again"]] },
+    { name: "an approval item needs the terminal", item: pending({ kind: "approval" }), expected: [["approval needs your terminal: resume the session yourself"]] },
     { name: "a resume in flight shows no text", item: pending({ kind: "in_flight" }), expected: [] },
     { name: "no marked occupant gives the generic worktree line", item: pending({ kind: "shared_worktree", markedOccupants: [], hasUnmarkedOccupant: true }), expected: [generic] },
     { name: "a marked occupant is named", item: pending({ kind: "shared_worktree", markedOccupants: [occupant], hasUnmarkedOccupant: false }), expected: [markedLine] },
@@ -250,44 +260,49 @@ describe("card precedence notes", () => {
       item: pending({ kind: "shared_worktree", markedOccupants: [occupant], hasUnmarkedOccupant: true }),
       expected: [markedLine, generic],
     },
-    {
-      name: "the captured-id marker form names the bg id and the profile",
-      item: pending({ kind: "marker" }, { session: markedSession("bg-7f3a") }),
-      expected: [
-        "the resumed session may still be running in the background: under profile work-dev, check it with `claude logs bg-7f3a`, " +
-          "and resume it yourself in a terminal only after `claude stop bg-7f3a`",
-      ],
-    },
+    { name: "the captured-id marker form names the bg id and the profile", item: pending({ kind: "marker" }, { session: markedSession("bg-7f3a") }), expected: [capturedIdNote] },
     {
       name: "the listing marker form names the cwd and the full session id",
       item: pending({ kind: "marker" }, { session: markedSession(null) }),
       expected: [
-        "the resumed session may still be running in the background: under profile work-dev, check `claude agents --json --cwd " +
-          `/Users/owner/Desktop/git/glass-atrium\` for the entry of session ${SESSION_ID}, and resume it yourself in a terminal only once that ` +
-          "entry is no longer listed, or after `claude stop <id>` with that entry's id",
+        [
+          "the resumed session may still be running in the background: under profile work-dev, check ",
+          { machine: "claude agents --json --cwd /Users/owner/Desktop/git/glass-atrium" },
+          " for the entry of session ",
+          { machine: SESSION_ID },
+          ", and resume it yourself in a terminal only once that entry is no longer listed, or after ",
+          { machine: "claude stop <id>" },
+          " with that entry's id",
+        ],
       ],
     },
     {
       name: "the marker on an unacked card of a marked session replaces any skip text",
       item: buildItem({ status: "unacked", deviation: "unacked", session: markedSession("bg-7f3a") }),
-      expected: [
-        "the resumed session may still be running in the background: under profile work-dev, check it with `claude logs bg-7f3a`, " +
-          "and resume it yourself in a terminal only after `claude stop bg-7f3a`",
-      ],
+      expected: [capturedIdNote],
     },
   ];
   for (const row of rows) test(row.name, () => assert.deepEqual(call("getCardNotesQ", row.item), row.expected));
 
   const configRows = [
-    { name: "captured-id form carries the recorded config dir", bgId: "bg-7f3a", count: 2 },
-    { name: "listing form carries the recorded config dir", bgId: null, count: 2 },
+    { name: "captured-id form carries the recorded config dir in each command", bgId: "bg-7f3a" },
+    { name: "listing form carries the recorded config dir in each command", bgId: null },
   ];
   for (const row of configRows) {
     test(row.name, () => {
-      const [note] = call<string[]>("getCardNotesQ", buildItem({ session: markedSession(row.bgId, "/Users/owner/.claude-work-dev") }));
-      assert.equal(note?.split("CLAUDE_CONFIG_DIR=/Users/owner/.claude-work-dev claude ").length, row.count + 1, note);
+      const [note] = call<Array<Array<string | { machine: string }>>>("getCardNotesQ", buildItem({ session: markedSession(row.bgId, "/Users/owner/.claude-work-dev") }));
+      const commands = (note ?? []).flatMap((part) => (typeof part === "string" || !part.machine.includes("claude ") ? [] : [part.machine]));
+      assert.equal(commands.length, 2, String(commands));
+      for (const command of commands) assert.ok(command.startsWith("CLAUDE_CONFIG_DIR=/Users/owner/.claude-work-dev claude "), command);
     });
   }
+
+  test("a note's commands and ids render through MachineString and its prose carries no backticks", () => {
+    const tree = render("CardStateQ", { item: pending({ kind: "marker" }, { session: markedSession("bg-7f3a") }) });
+    const machine = findNodes(tree, (node) => node.props.atom === "MachineString").map((node) => collectText(node));
+    assert.deepEqual(machine, ["claude logs bg-7f3a", "claude stop bg-7f3a"]);
+    assert.doesNotMatch(collectText(tree), /`/);
+  });
 
   test("a marked session with a used attempt shows the marker reason and no Resend", () => {
     const item = pending({ kind: "marker" }, { session: markedSession("bg-7f3a"), canResend: false, resumes: [{ attempt: 1, sentAt: "2026-11-10T06:20:11.204Z", result: "sent", abortReason: null, bgId: "bg-7f3a" }] });
@@ -352,6 +367,30 @@ describe("screen", () => {
     const [link] = findNodes(tree, (node) => node.props.atom === "Link");
     assert.equal(link?.props.href, "#clauded-docs?doc=43944");
   });
+});
+
+describe("report reply", () => {
+  const rows = [
+    { name: "a report that takes a reply shows the reply field", isFreeTextAllowed: true, fields: 1 },
+    { name: "a report that takes no reply shows no reply field", isFreeTextAllowed: false, fields: 0 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = render("ReportBodyQ", { item: buildItem({ kind: "report", isFreeTextAllowed: row.isFreeTextAllowed }), draft: {}, onDraft: () => undefined });
+      assert.equal(findNodes(tree, (node) => node.type === "textarea").length, row.fields);
+    });
+  }
+});
+
+describe("action refusal copy", () => {
+  const rows = [
+    { name: "the server's worded reason is shown", answer: { status: 400, data: { error: "free_text_not_allowed", reason: "this report takes no reply" } }, expected: "Refused: this report takes no reply." },
+    { name: "a refusal with no reason shows fixed copy", answer: { status: 400, data: { error: "invalid_input", issues: [] } }, expected: "The monitor refused this action. Refresh and try again." },
+    { name: "a refusal with no body shows fixed copy", answer: { status: 500, data: null }, expected: "The monitor refused this action. Refresh and try again." },
+    { name: "a state change names the refresh", answer: { status: 409, data: { error: "conflict", reason: "item is answered" } }, expected: "Refused: the item changed state. Refresh to see where it is now." },
+    { name: "no answer asks to try again", answer: { status: 0, data: null }, expected: "The monitor did not answer. Try again." },
+  ];
+  for (const row of rows) test(row.name, () => assert.equal(call("getActionErrorQ", row.answer), row.expected));
 });
 
 describe("queue filter bar", () => {
