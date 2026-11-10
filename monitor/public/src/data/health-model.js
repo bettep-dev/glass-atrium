@@ -173,7 +173,7 @@ function foldHarness(states = {}) {
   };
 }
 
-// Nothing checked + a store still pending → first-poll wait, not a lost reading (tile skeleton ↔ footer CHECKING…).
+// Nothing checked + a store still pending → first-poll wait, not a lost reading (tile skeleton ↔ footer Checking…).
 function resolveFoldStatus(checkedCount, cardStates) {
   if (checkedCount > 0) return 'ready';
   return Object.values(cardStates).some((state) => state.status === 'loading') ? 'loading' : 'unavailable';

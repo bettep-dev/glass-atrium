@@ -1,7 +1,7 @@
 // Unit tests for public/src/app.jsx nav-badge routing (T2 · T13a): the sidebar footer, the
 // architecture (System map) nav numeral and the Dashboard lane all read ONE harness fold, so
 // no two of those surfaces can disagree about a harness fact — including on the path where a
-// store fails to answer, which is where a per-surface cache used to keep a stale ALL SYSTEMS.
+// store fails to answer, which is where a per-surface cache used to keep a stale All systems.
 // The map owns the health readings now, so the Health entry point is gone (T13a).
 //
 // Runner: npx tsx --test test/app.nav-badge.client.unit.test.ts
@@ -239,7 +239,7 @@ test("an unpolled harness store leaves its parts unchecked rather than counted h
 });
 
 // First-poll wait and a lost harness are different facts — the tile skeleton and the footer's
-// CHECKING… belong to the wait, 'unavailable' only once every part has answered without a reading.
+// Checking… belong to the wait, 'unavailable' only once every part has answered without a reading.
 test("a fold with nothing checked is loading while any part store is pending, unavailable once none is", () => {
   const rejected = { status: "error", data: null };
   const allRejected = { healthState: rejected, liveState: rejected, hookState: rejected, hookFailState: rejected };
@@ -326,20 +326,20 @@ test("a failed poll keeps the held reading; only a store that never answered bec
 
 // --- AC-T13(c): the footer and the nav numeral are consumers of that same fold ---
 
-test("systemsRollup: an unavailable fold → CHECKING…, never a remembered verdict", () => {
+test("systemsRollup: an unavailable fold → Checking…, never a remembered verdict", () => {
   for (const fold of [null, app.foldHarness({})]) {
     const r = app.systemsRollup(fold);
     assert.strictEqual(r.tone, "neutral");
     assert.strictEqual(r.dotClass, "bg-faint");
-    assert.strictEqual(r.label, "CHECKING…");
+    assert.strictEqual(r.label, "Checking…");
   }
 });
 
-test("systemsRollup: every part healthy and no failures → ALL SYSTEMS", () => {
+test("systemsRollup: every part healthy and no failures → All systems", () => {
   const r = app.systemsRollup(app.foldHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 0 }) })));
   assert.strictEqual(r.tone, "ok");
   assert.strictEqual(r.dotClass, "bg-ok");
-  assert.strictEqual(r.label, "ALL SYSTEMS");
+  assert.strictEqual(r.label, "All systems");
 });
 
 // The footer tone follows the worst alarm: a down part is crit on the lane, so the footer is crit too.
@@ -350,7 +350,7 @@ test("systemsRollup: a down part is crit with the ✕ glyph and the lane's down 
     assert.strictEqual(r.tone, "crit", `${down} down outranks the fail count`);
     assert.strictEqual(r.dotClass, "bg-crit");
     assert.strictEqual(r.glyph, app.ui.TONE_GLYPH.crit);
-    assert.strictEqual(r.label, `${fold.downNames.length} ${down === 1 ? "PART" : "PARTS"} DOWN`);
+    assert.strictEqual(r.label, `${fold.downNames.length} ${down === 1 ? "part" : "parts"} down`);
   }
 });
 
@@ -358,13 +358,13 @@ test("systemsRollup: failures with no down part stay warn, with the warn glyph",
   const r = app.systemsRollup(app.foldHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 4 }) })));
   assert.strictEqual(r.tone, "warn");
   assert.strictEqual(r.dotClass, "bg-warn");
-  assert.strictEqual(r.label, "ISSUES DETECTED");
+  assert.strictEqual(r.label, "Issues detected");
   assert.strictEqual(r.glyph, app.ui.TONE_GLYPH.warn);
 });
 
-// An unread source is unknown, never healthy: the footer must not keep "ALL SYSTEMS" over a lost store.
-test("a failed harness read turns the footer to STATUS UNKNOWN, fresh or held", () => {
-  assert.strictEqual(app.systemsRollup(app.getHarness(allHealthy())).label, "ALL SYSTEMS");
+// An unread source is unknown, never healthy: the footer must not keep "All systems" over a lost store.
+test("a failed harness read turns the footer to Status unknown, fresh or held", () => {
+  assert.strictEqual(app.systemsRollup(app.getHarness(allHealthy())).label, "All systems");
 
   const rows = [
     { name: "cold failure", liveState: { status: "error", data: null, error: "HTTP 500" } },
@@ -374,11 +374,11 @@ test("a failed harness read turns the footer to STATUS UNKNOWN, fresh or held", 
     const harness = app.getHarness(allHealthy({ liveState: row.liveState }));
     assert.deepEqual([...harness.unreadSources], ["daemon status"], row.name);
     assert.strictEqual(harness.error, "HTTP 500", row.name);
-    assert.strictEqual(app.systemsRollup(harness).label, "STATUS UNKNOWN", row.name);
+    assert.strictEqual(app.systemsRollup(harness).label, "Status unknown", row.name);
   }
 
   const known = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), hookState: { status: "error", data: null, error: "x" } }));
-  assert.strictEqual(app.systemsRollup(known).label, "1 PART DOWN", "a known fault still outranks an unread source");
+  assert.strictEqual(app.systemsRollup(known).label, "1 part down", "a known fault still outranks an unread source");
 });
 
 // The harness tile's Retry and the page Refresh run this one read → a source it skipped would stay unread after the Retry.
@@ -602,23 +602,23 @@ test("a legacy stale flag on a healthy daemon row adds no System map badge", () 
   assert.strictEqual(app.harnessToNavBadges(fold).architecture, null);
 });
 
-// The sidebar never reads greener than the page in view: the header stamp's read state takes only the ALL SYSTEMS slot.
+// The sidebar never reads greener than the page in view: the header stamp's read state takes only the All systems slot.
 test("the sidebar slot follows the page's read state, below every harness word", async (t) => {
   const at = "2026-09-30T05:05:00Z";
   const now = Date.parse("2026-09-30T05:06:00Z");
   const healthy = app.getHarness(allHealthy());
   const faulted = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)) }));
   const unread = app.getHarness(allHealthy({ liveState: { status: "error", data: null, error: "HTTP 500" } }));
-  const lastKnown = `LAST KNOWN ${app.ui.formatKstTime(at)}`;
+  const lastKnown = `Last known ${app.ui.formatKstTime(at)}`;
   const rows = [
     { name: "one page source failed, harness healthy → Last known at the page's read time", harness: healthy, stamp: { at, now, regions: [{ busy: false, error: null }, { busy: false, error: "HTTP 500" }] }, label: lastKnown, tone: "neutral" },
     { name: "the page's refresh failed over held data → Last known", harness: healthy, stamp: { at, now, failed: true }, label: lastKnown, tone: "neutral" },
-    { name: "a failed first page read → Not read", harness: healthy, stamp: { now, failed: true }, label: "NOT READ", tone: "neutral" },
-    { name: "a harness fault outranks a page Last known", harness: faulted, stamp: { at, now, failed: true }, label: "1 PART DOWN", tone: "crit" },
-    { name: "an unread harness source outranks a page Last known", harness: unread, stamp: { at, now, failed: true }, label: "STATUS UNKNOWN", tone: "neutral" },
-    { name: "a first page read in flight still reads Checking", harness: healthy, stamp: { now, loading: true }, label: "CHECKING…", tone: "neutral" },
-    { name: "a refresh over a fresh read keeps All systems", harness: healthy, stamp: { at, now, loading: true }, label: "ALL SYSTEMS", tone: "ok" },
-    { name: "a fresh page read keeps All systems", harness: healthy, stamp: { at, now }, label: "ALL SYSTEMS", tone: "ok" },
+    { name: "a failed first page read → Not read", harness: healthy, stamp: { now, failed: true }, label: "Not read", tone: "neutral" },
+    { name: "a harness fault outranks a page Last known", harness: faulted, stamp: { at, now, failed: true }, label: "1 part down", tone: "crit" },
+    { name: "an unread harness source outranks a page Last known", harness: unread, stamp: { at, now, failed: true }, label: "Status unknown", tone: "neutral" },
+    { name: "a first page read in flight still reads Checking", harness: healthy, stamp: { now, loading: true }, label: "Checking…", tone: "neutral" },
+    { name: "a refresh over a fresh read keeps All systems", harness: healthy, stamp: { at, now, loading: true }, label: "All systems", tone: "ok" },
+    { name: "a fresh page read keeps All systems", harness: healthy, stamp: { at, now }, label: "All systems", tone: "ok" },
   ];
   for (const row of rows) {
     await t.test(row.name, () => {

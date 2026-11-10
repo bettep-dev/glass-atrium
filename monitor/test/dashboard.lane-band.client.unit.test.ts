@@ -286,7 +286,7 @@ test("the fleet tile reads unavailable when the breaker state is, never a zero s
   }
 });
 
-// The footer reads CHECKING… for the first-poll wait; the tile must not call the same wait 'unavailable'.
+// The footer reads Checking… for the first-poll wait; the tile must not call the same wait 'unavailable'.
 test("the harness tile is loading exactly while the fold is, and unavailable only after", () => {
   const empty = { ...HEALTHY, partsOk: 0, partsChecked: 0, uncheckedNames: ["PostgreSQL"] };
   for (const [foldStatus, expected] of [["loading", "loading"], ["unavailable", "unavailable"]]) {

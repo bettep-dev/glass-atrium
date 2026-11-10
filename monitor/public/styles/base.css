@@ -1599,10 +1599,6 @@ button.kpi:hover {
 /* prefers-reduced-motion 계약 (§8.4) — 모든 신규/기존 모션 게이트.
    브라우저/OS 가 자동 반영. transform 기반 enter/reorder 는 transition 제거로 즉시 적용. */
 @media (prefers-reduced-motion: reduce) {
-	.live-dot {
-		animation: none;
-		opacity: 0.8;
-	}
 	.alert-card {
 		animation: none;
 	}

@@ -146,14 +146,14 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 			<div className="p-3 border-t border-line">
 				<div className="bg-sunken rounded-md p-3" style={META_TEXT_STYLE}>
 					<div className="flex items-center gap-1.5 mb-1">
-						{/* 라이브 롤업 파생 — ok 상태만 pulse(live-dot), 그 외 정적 (가짜 상시-green 제거). */}
-						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}${systems.tone === "ok" ? " live-dot" : ""}`}></span>
+						{/* 라이브 롤업 파생 — 정적 dot, no ambient loop (design.md §12.9) · 라벨 = sentence-case 본문 서체 */}
+						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}`}></span>
 						{systems.glyph && (
-							<span aria-hidden="true" className={`rail-hide font-mono text-${systems.tone}`}>
+							<span aria-hidden="true" className={`rail-hide text-${systems.tone}`}>
 								{systems.glyph}
 							</span>
 						)}
-						<span className="rail-hide font-mono text-dim">{systems.label}</span>
+						<span className="rail-hide text-dim">{systems.label}</span>
 					</div>
 				</div>
 			</div>
@@ -261,33 +261,33 @@ function agentsToNavBadges(agentsState) {
 	return { agents: { badge: String(unsafeCount), badgeTone, glyph, source: "breaker", title, description: title } };
 }
 
-// ALL SYSTEMS 풋터 도트 = 레인/타일과 같은 harness fold 파생. 폴링이 실패한 순간에도
-// 두 표면이 어긋나지 않는다 — 첫 폴 대기는 neutral 'CHECKING…', 읽기 실패는 'STATUS UNKNOWN'.
+// All systems 풋터 도트 = 레인/타일과 같은 harness fold 파생. 폴링이 실패한 순간에도
+// 두 표면이 어긋나지 않는다 — 첫 폴 대기는 neutral 'Checking…', 읽기 실패는 'Status unknown'.
 // 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
-// pageState = the page header stamp's read state (ui.jsx → getShellPageState): outranks only ALL SYSTEMS.
+// pageState = the page header stamp's read state (ui.jsx → getShellPageState): outranks only All systems.
 function systemsRollup(harness, pageState = null) {
-	if (!harness || harness.status === "loading") return getNeutralRollup("CHECKING…");
+	if (!harness || harness.status === "loading") return getNeutralRollup("Checking…");
 
 	const isReady = harness.status === "ready";
 	const downCount = isReady ? harness.downNames.length : 0;
 	// tone = worst alarm severity: a down part is the lane's crit harness alarm
 	if (downCount > 0) {
-		const label = `${downCount} ${downCount === 1 ? "PART" : "PARTS"} DOWN`;
+		const label = `${downCount} ${downCount === 1 ? "part" : "parts"} down`;
 		return { tone: "crit", dotClass: "bg-crit", glyph: window.UI.TONE_GLYPH.crit, label };
 	}
 	const issues = isReady && (harness.daemonsDown > 0 || harness.failCount1h > 0);
-	if (issues) return { tone: "warn", dotClass: "bg-warn", glyph: window.UI.TONE_GLYPH.warn, label: "ISSUES DETECTED" };
-	// an unread source could hide a fault → unknown, never ALL SYSTEMS
-	if (!isReady || harness.unreadSources?.length > 0) return getNeutralRollup("STATUS UNKNOWN");
-	return getPageRollup(pageState) ?? { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
+	if (issues) return { tone: "warn", dotClass: "bg-warn", glyph: window.UI.TONE_GLYPH.warn, label: "Issues detected" };
+	// an unread source could hide a fault → unknown, never All systems
+	if (!isReady || harness.unreadSources?.length > 0) return getNeutralRollup("Status unknown");
+	return getPageRollup(pageState) ?? { tone: "ok", dotClass: "bg-ok", label: "All systems" };
 }
 
 // page read state in the stamp's own words, neutral tone — a read fact, not a harness verdict; fresh → null
 function getPageRollup(pageState) {
 	const { state, at } = pageState ?? {};
-	if (state === "loading") return getNeutralRollup("CHECKING…");
-	if (state === "not-read") return getNeutralRollup("NOT READ");
-	if (state === "stale" || state === "partial") return getNeutralRollup(`LAST KNOWN ${window.UI.formatKstTime(at)}`);
+	if (state === "loading") return getNeutralRollup("Checking…");
+	if (state === "not-read") return getNeutralRollup("Not read");
+	if (state === "stale" || state === "partial") return getNeutralRollup(`Last known ${window.UI.formatKstTime(at)}`);
 	return null;
 }
 

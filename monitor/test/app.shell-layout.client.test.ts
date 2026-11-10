@@ -301,6 +301,33 @@ function createHarnessFetch({ isHealthy }: { isHealthy: boolean }) {
 
 const sidebarText = (tree: RenderedNode) => collectText(findNodes(tree, (n) => n.type === "aside")[0]);
 const clickNode = (node: RenderedNode) => (node.props.onClick as (e: unknown) => void)({});
+const classOf = (node: RenderedNode) => String(node.props.className ?? "");
+
+// the footer status is prose, not a machine string: whatever state it reads, sentence case in the sans face beside a dot that never blinks
+test("the sidebar footer status reads in sentence case in the body face beside a static dot", async (t) => {
+  const rows = [
+    { name: "first poll in flight → Checking", isAnswered: false, isHealthy: true },
+    { name: "every source healthy → All systems", isAnswered: true, isHealthy: true },
+    { name: "a source unread → Status unknown", isAnswered: true, isHealthy: false },
+  ];
+  for (const row of rows) {
+    await t.test(row.name, async () => {
+      const harnessFetch = createHarnessFetch({ isHealthy: row.isHealthy });
+      const { render } = await mountShell({ fetch: harnessFetch.fetch, screens: () => ({}) });
+      render();
+      if (row.isAnswered) await harnessFetch.settle();
+      const [aside] = findNodes(render(), (n) => n.type === "aside");
+      const [footer] = findNodes(aside, (n) => n.type === "div" && /\bborder-t\b/.test(classOf(n)));
+
+      const label = collectText(footer).trim();
+      assert.match(label, /^[A-Z][^A-Z]*$/, `"${label}" is sentence case`);
+      assert.deepEqual(findNodes(footer, (n) => /\b(font-mono|uppercase)\b/.test(classOf(n))).map(classOf), [], "no mono or uppercase face");
+      const dots = findNodes(footer, (n) => /\brounded-full\b/.test(classOf(n)));
+      assert.equal(dots.length, 1, "one status dot");
+      assert.doesNotMatch(classOf(dots[0]), /\blive-dot\b/, "the dot is static");
+    });
+  }
+});
 
 test("a Refresh off the Dashboard starts one harness read, and concurrent requests join it", async () => {
   const harnessFetch = createHarnessFetch({ isHealthy: true });
@@ -349,12 +376,12 @@ test("a Retry that recovers the page and the harness clears Status unknown on th
   navigateByHash("#cost");
   render();
   const failedTree = render();
-  assert.match(sidebarText(failedTree), /STATUS UNKNOWN/, "an unread harness outranks the page's failed read");
+  assert.match(sidebarText(failedTree), /Status unknown/, "an unread harness outranks the page's failed read");
 
   harnessFetch.state.isHealthy = true;
   clickNode(findNodes(mainRegion(failedTree), (n) => n.type === "button")[0]);
   await harnessFetch.settle();
   render();
 
-  assert.match(sidebarText(render()), /ALL SYSTEMS/);
+  assert.match(sidebarText(render()), /All systems/);
 });

@@ -559,10 +559,10 @@
 - 면: `bg-elev` 불투명 · `border-r` · sticky, glass 금지.
 - `.nav-item`: `--fs-control` · `--dim` · padding 6px 10px · `--radius-control` · Icon 14 · hover/active = `--sunken` + `--ink`, active 500.
 - `.nav-badge`: mono `--fs-meta` · `--sunken` · 1px `--line` · pill radius (mono and border retiring → §12.2 sans + §12.3 Badge fill only, S2c) — tone 과 무관한 neutral shell. 내용 = tone glyph (`text-<tone>`, aria-hidden, tone 있는 배지는 모두) + 값 + sr-only 설명 (`title` 동반).
-- 시스템 롤업 (`app.jsx` → `systemsRollup`, retiring with its dot — it repeats the nav badge, §12.7): 라벨 `--dim` + tone glyph (✕ crit · ⚠ warn) + 6px dot.
+- 시스템 롤업 (`app.jsx` → `systemsRollup`, retiring with its dot — it repeats the nav badge, §12.7): 라벨 `--dim` + tone glyph (✕ crit · ⚠ warn) + 6px dot. 라벨 = sentence case, 본문 sans (mono 아님 — machine string 이 아니다).
   - dot = full-opacity tone fill (`dotClass` `bg-crit` · `bg-warn` · `bg-ok`, neutral `bg-faint`) — §4.2 의 허용 fill. 짝 = 롤업 단어 (crit · warn 은 glyph 도).
   - < 1200px rail 에선 glyph · 라벨이 clip → 보이는 건 dot 뿐, 단어는 접근 이름으로 남는다.
-  - dot 는 정적 — no ambient loop (§12.9); `.live-dot` is deprecated and leaves with the rollup.
+  - dot 는 정적 — no ambient loop (§12.9).
 
 ### 7.8 DetailSurface — drawer · fullscreen · confirm (`.detail-*`)
 
@@ -726,7 +726,7 @@
 
 ## 8. 모션 (Motion — 절제된 라이브 마이크로 인터랙션)
 
-- **No ambient loop** — a status mark never blinks or pulses (§12.9). `.live-dot` (`liveBlink`) is deprecated and leaves with the sidebar rollup.
+- **No ambient loop** — a status mark never blinks or pulses (§12.9).
 - **로딩 표시** (로딩 중에만 돈다, 모두 reduced-motion 게이트 필수 §8.4):
   - skeleton pulse 1.4s ease-in-out — 화면 `<style>` class 로만 (inline `animation` 은 reduce 블록이 덮지 못해 금지): `.skel-pulse-c`(cost) · `.skel-pulse-o`(outcomes).
   - spinner: `.ga-spin` 0.9s (dashboard) · `.doc-action-spinner` 900ms (clauded-docs) · `.i-act-spin` 0.7s (improvement) · `RefreshButton` · `LoadingPlaceholder` icon `motion-safe:animate-spin` (Tailwind 1s).
@@ -757,7 +757,7 @@
 ### 8.4 prefers-reduced-motion 계약 (필수)
 
 - 모든 모션은 `@media (prefers-reduced-motion: reduce)` 게이트를 갖는다. reduce 범위:
-  - `base.css` (파일 순서): `DetailSurface` 3 variant 진입 (`.detail-drawer` · `.detail-fullscreen` · `.detail-confirm` 의 `.detail-panel`) `animation-duration: 0.01ms !important` · `.live-dot` (deprecated) `animation: none` + opacity 0.8 · `.alert-card` 애니메이션 정지 · `.btn` · `.kpi` transition 제거 · `.field` · `.field-affix` transition 제거.
+  - `base.css` (파일 순서): `DetailSurface` 3 variant 진입 (`.detail-drawer` · `.detail-fullscreen` · `.detail-confirm` 의 `.detail-panel`) `animation-duration: 0.01ms !important` · `.alert-card` 애니메이션 정지 · `.btn` · `.kpi` transition 제거 · `.field` · `.field-affix` transition 제거.
   - 화면별 `<style>`: `.ga-spin` · `.skel-pulse-c` · `.skel-pulse-o` · `.outcome-row` · `.doc-action-spinner` · `.doc-row` · `.tbl.doc-ledger-busy` · `.i-act-spin` (`animation-duration: 0.01ms`) · `.i-tile-hover` · architecture 노드 · dev-only `.twk-seg-thumb` · `.twk-toggle` (`__TWEAKS_STYLE`).
   - Tailwind 유틸: `motion-safe:` prefix 가 게이트 (`animate-spin` · `transition-colors` · `transition-opacity`).
 - **finder** (merged tree 에서 허용 hit 만):
