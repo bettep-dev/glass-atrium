@@ -210,7 +210,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const [currentOffset, setCurrentOffset] = useStateCD(0);
 	// server rows consumed so far → next Load More offset (deduped loadedRows runs short of the server position)
 	const [consumedCount, setConsumedCount] = useStateCD(0);
-	const [selectedId, setSelectedId] = useStateCD(null);
+	const [selectedId, setSelectedId] = useStateCD(getHashDocIdCD);
 	const [viewerState, setViewerState] = useStateCD({
 		status: "idle",
 		data: null,
@@ -256,7 +256,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	});
 
 	// 전체화면 토글 — CSS-only position:fixed · 네이티브 Fullscreen API 미사용 (iframe sandbox 우회 방지).
-	const [isFullscreen, setIsFullscreen] = useStateCD(false);
+	const [isFullscreen, setIsFullscreen] = useStateCD(() => getHashDocIdCD() !== null);
 
 	// AbortController — 목록 / 뷰어 fetch 독립 취소.
 	const listAbortRef = useRefCD(null);
@@ -3309,6 +3309,13 @@ function getCollapsedSearchRowsCD(hits) {
 		if (hit.id > chain.newest.id) chain.newest = hit;
 	}
 	return Array.from(chains.values(), ({ newest, count }) => ({ ...newest, revision_count: count - 1 }));
+}
+
+// `#clauded-docs?doc=<id>` deep link (Queue report cards) → that document opens in the viewer on mount
+function getHashDocIdCD() {
+	const match = /[?&]doc=(\d+)(?:&|$)/.exec(window.location?.hash ?? "");
+	const id = match === null ? 0 : Number(match[1]);
+	return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
 function buildListUrlCD({ q, docStatus, offset = 0 }) {

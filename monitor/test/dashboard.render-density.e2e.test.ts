@@ -315,10 +315,11 @@ describe("Type floor on the Dashboard page, shell and Tweaks panel included", ()
     const sizes = await page.evaluate(() => {
       const control = getComputedStyle(document.documentElement).getPropertyValue("--fs-control").trim();
       const labels = Array.from(document.querySelectorAll(".nav-item .rail-hide")).map((el) => getComputedStyle(el).fontSize);
-      return { control, labels };
+      return { control, labels, itemCount: document.querySelectorAll(".nav-item").length };
     });
     await page.close();
-    assert.equal(sizes.labels.length, 9, "one label per nav item");
+    assert.ok(sizes.itemCount > 0, "the nav rendered its items");
+    assert.equal(sizes.labels.length, sizes.itemCount, "one label per nav item");
     for (const size of sizes.labels) assert.equal(size, sizes.control, `a nav label draws at ${size}, not ${sizes.control}`);
   });
 });

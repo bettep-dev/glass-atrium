@@ -12,6 +12,7 @@ const NAV = [
 	{ id: "wiki", label: "Wiki", icon: "brain" },
 	{ id: "architecture", label: "System map", icon: "git" },
 	{ id: "clauded-docs", label: "Documents", icon: "file-text" },
+	{ id: "queue", label: "Queue", icon: "inbox" },
 ];
 
 // EDITMODE 마커 — host 프로토콜이 디스크 위 JSON 블록 재기록
@@ -32,6 +33,7 @@ const Screens = {
 	wiki: window.ScreenWiki,
 	architecture: window.ScreenArchitecture,
 	"clauded-docs": window.ScreenClaudedDocs,
+	queue: window.ScreenQueue,
 };
 
 const NAV_BADGE_POLL_MS = 60_000;
@@ -40,6 +42,10 @@ const MAIN_CONTENT_ID = "main-content";
 const META_TEXT_STYLE = { fontSize: "var(--fs-meta)" };
 // circuit-breaker source for the Agents nav numeral — same cheap one-row read as the Dashboard's
 const AGENT_SUMMARY_URL = "/api/agents/summary?days=7&order=runs&limit=1";
+// queue nav numeral — count-only route, no owner auth
+const QUEUE_COUNT_URL = "/api/queue/count";
+// one owner read at shell mount → the lock badge knows the sign-in state before the Queue screen opens
+const QUEUE_AUTH_PROBE_URL = "/api/queue/owner/items?limit=1";
 
 // last page input → a route move rings only when a key caused it; a URL-bar or history move sends the page no input
 let lastInputKind = null;
@@ -80,9 +86,9 @@ function parseHashScreen() {
 	return NAV.some((n) => n.id === raw) ? raw : "dashboard";
 }
 
-function Sidebar({ active, onNav, harness, agentsState }) {
+function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 	const { Icon } = window.UI;
-	const dynamicBadges = { ...harnessToNavBadges(harness), ...agentsToNavBadges(agentsState) };
+	const dynamicBadges = { ...harnessToNavBadges(harness), ...agentsToNavBadges(agentsState), ...queueBadges };
 	return (
 		<aside aria-label="Sidebar" className="shell-sidebar flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
 			<div className="shell-brand px-4 py-4 border-b border-line">
@@ -133,6 +139,7 @@ function Sidebar({ active, onNav, harness, agentsState }) {
 									>
 										{/* neutral shell + numeral, tone on the glyph only · description = what AT hears instead of the bare numeral */}
 										{b.glyph && <span aria-hidden="true" className={`text-${b.badgeTone}`}>{`${b.glyph} `}</span>}
+										{b.icon && <Icon name={b.icon} size={12} />}
 										<span aria-hidden={b.description ? "true" : undefined}>{b.badge}</span>
 										{b.description && <span className="sr-only">{`, ${b.description}`}</span>}
 									</span>
@@ -260,6 +267,8 @@ function App() {
 	const [hookState, setHookState] = useS(HARNESS_STORE_INITIAL);
 	const [hookFailState, setHookFailState] = useS(HARNESS_STORE_INITIAL);
 	const [agentsState, setAgentsState] = useS(HARNESS_STORE_INITIAL);
+	const [queueCountState, setQueueCountState] = useS(HARNESS_STORE_INITIAL);
+	const queueAuth = useQueueAuth();
 
 	// density 는 attribute 만 노출, CSS 매핑은 차후
 	useE(() => {
@@ -297,8 +306,8 @@ function App() {
 	const harnessReadRef = useR(null);
 	const pollHarness = useC(() => {
 		if (harnessReadRef.current) return harnessReadRef.current;
-		harnessReadRef.current = Promise.allSettled([readHarnessSources(), fetchJson(AGENT_SUMMARY_URL)])
-			.then(([harnessRead, agentsRead]) => {
+		harnessReadRef.current = Promise.allSettled([readHarnessSources(), fetchJson(AGENT_SUMMARY_URL), fetchJson(QUEUE_COUNT_URL)])
+			.then(([harnessRead, agentsRead, queueCountRead]) => {
 				if (!isHarnessMountedRef.current) return;
 				const settled = harnessRead.value; // readHarnessSources settles every source → never rejects
 				setKpiState((prev) => toStoreState(settled.kpiState, prev));
@@ -307,6 +316,7 @@ function App() {
 				setHookState((prev) => toStoreState(settled.hookState, prev));
 				setHookFailState((prev) => toStoreState(settled.hookFailState, prev));
 				setAgentsState((prev) => toStoreState(agentsRead, prev));
+				setQueueCountState((prev) => toStoreState(queueCountRead, prev));
 			})
 			.finally(() => {
 				harnessReadRef.current = null;
@@ -375,11 +385,12 @@ function App() {
 			<a href={`#${MAIN_CONTENT_ID}`} className="skip-link" onClick={onSkipToContent}>
 				Skip to content
 			</a>
-			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState} />
+			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState}
+				queueBadges={window.QueueNav?.getQueueNavBadge(queueCountState, queueAuth.state) ?? {}} />
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (
-						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} />
+						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onQueueAuth={queueAuth.setState} />
 					) : (
 						<div className="placeholder">Coming soon — '{active}'</div>
 					)}
@@ -388,6 +399,23 @@ function App() {
 			<TweaksUI tweaks={tweaks} setTweak={setTweak} />
 		</div>
 	);
+}
+
+/**
+ * Owner sign-in state for the queue lock badge: one probe at mount, then every Queue screen answer.
+ * 'unknown' until the probe answers → no lock shown for a state not yet read.
+ */
+function useQueueAuth() {
+	const [state, setState] = useS("unknown");
+	useE(() => {
+		let isMounted = true;
+		fetch(QUEUE_AUTH_PROBE_URL, { headers: { Accept: "application/json" } })
+			.then((response) => isMounted && setState((prev) => (prev === "unknown" ? window.QueueNav?.getAuthFromStatusQ(response.status) ?? prev : prev)))
+			// no answer → the state stays unknown, so no lock is claimed for a sign-in state never read
+			.catch(() => undefined);
+		return () => { isMounted = false; };
+	}, []);
+	return { state, setState };
 }
 
 /**

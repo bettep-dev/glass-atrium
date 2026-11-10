@@ -1662,3 +1662,19 @@ test("a loading previous revision shows the shared loading placeholder, never an
   assert.equal(findNodes(tree, isAtom("LoadingPlaceholder")).length, 1);
   assert.deepEqual(findNodes(tree, (n) => (n.props.style as { animation?: unknown } | undefined)?.animation != null), []);
 });
+
+describe("a #clauded-docs?doc=<id> link opens that document in the viewer", () => {
+  const rows = [
+    { name: "a doc id in the hash query", hash: "#clauded-docs?doc=43944", expected: 43944 },
+    { name: "the doc id beside another query key", hash: "#clauded-docs?q=plan&doc=12", expected: 12 },
+    { name: "no doc key", hash: "#clauded-docs?q=plan", expected: null },
+    { name: "a non-numeric doc value", hash: "#clauded-docs?doc=abc", expected: null },
+    { name: "a zero id", hash: "#clauded-docs?doc=0", expected: null },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadScreenModule(DOCS_SRC, { UI: uiStub(SHIPPED_ATOMS), React: createReactStub(), location: { hash: row.hash } });
+      assert.equal((screen.getHashDocIdCD as () => number | null)(), row.expected);
+    });
+  }
+});
