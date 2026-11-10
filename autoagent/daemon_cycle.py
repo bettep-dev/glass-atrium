@@ -123,8 +123,8 @@ from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop abo
 )
 
 # Runtime data roots via the shared ga_paths seam (.glass-atrium default,
-# GA_DATA_ROOT-overridable) — the SAME store project_key.py / learning-aggregator.py
-# resolve after the .claude→.glass-atrium data migration.
+# GA_DATA_ROOT-overridable) — the SAME store learning-aggregator.py resolves
+# after the .claude→.glass-atrium data migration.
 DEFAULT_REPORTS_DIR = ga_paths.get_data_root() / "daemon-reports"
 # Optional-dependency import degradation is CAPTURED here, NOT written to stderr
 # at import time: a bare CLI import of this module (autoagent/lib/sensitive_patterns.py

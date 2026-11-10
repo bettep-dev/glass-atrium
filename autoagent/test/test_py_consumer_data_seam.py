@@ -11,7 +11,7 @@ FRESH under a HOME sandbox (with no GA_DATA_ROOT) and asserts:
     (daemon_config's DAEMON_CONFIG default path);
 (3) GA_DATA_ROOT redirects the root (env-override parity with the shell seam).
 
-Covered: the original set (project_key.py / learning-aggregator.py /
+Covered: the original set (learning-aggregator.py /
 autoagent-status-backfill.py) PLUS the seam-completion
 consumers that previously still resolved the legacy ``.claude`` store:
 daemon_config.py (CONFIG_PATH + the DAEMON_CONFIG override), compliance_telemetry.py
@@ -92,16 +92,6 @@ def _load_daemon_cycle():
 
 class DefaultResolutionTest(unittest.TestCase):
     """No GA_DATA_ROOT — every consumer anchors on $HOME/.glass-atrium, not .claude."""
-
-    def test_project_key_learning_root_under_glass_atrium(self) -> None:
-        with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
-            os.environ.pop("GA_DATA_ROOT", None)
-            m = _load_fresh(_LIB / "project_key.py", "project_key_probe")
-            self.assertEqual(
-                m._LEARNING_ROOT,
-                Path(_SANDBOX_HOME) / ".glass-atrium" / "data" / "learning",
-            )
-            self.assertNotIn(".claude", str(m._LEARNING_ROOT))
 
     def test_learning_aggregator_data_dir_under_glass_atrium(self) -> None:
         with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
@@ -204,17 +194,6 @@ class DefaultResolutionTest(unittest.TestCase):
 
 class OverrideParityTest(unittest.TestCase):
     """GA_DATA_ROOT redirects the consumer root — shell-seam override parity."""
-
-    def test_ga_data_root_redirects_project_key(self) -> None:
-        with mock.patch.dict(
-            "os.environ",
-            {"GA_DATA_ROOT": "/var/atrium-alt", "HOME": _SANDBOX_HOME},
-            clear=False,
-        ):
-            m = _load_fresh(_LIB / "project_key.py", "project_key_override_probe")
-            self.assertEqual(
-                m._LEARNING_ROOT, Path("/var/atrium-alt") / "data" / "learning"
-            )
 
     def test_ga_data_root_redirects_daemon_config(self) -> None:
         with mock.patch.dict(
