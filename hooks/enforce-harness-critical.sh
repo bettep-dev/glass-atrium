@@ -117,12 +117,12 @@
 #     into a protected dir keeps a later `cd -`/`popd` conservative outside it
 #   - copy verbs matched segment-wide → rsync/install naming a protected path as
 #     their SOURCE block like a target
-#   - HAR-002, kept on purpose: no PROT_RE / PROT_DIR_RE alternative anchored to
-#     home or to the path start → every protected literal (a `.claude`,
-#     `.claude-<branch>` or `.glass-atrium` root segment plus its protected child,
-#     a com.{claude,glass-atrium}.*.plist label, the canary segments) matches at
-#     ANY depth in a recognised write position, from any caller — e.g. a scratch
-#     fixture `<mktemp -d dir>/.claude/settings.json`
+#   - unanchored protected literals, kept on purpose: no PROT_RE / PROT_DIR_RE
+#     alternative anchored to home or to the path start → every protected literal
+#     (a `.claude`, `.claude-<branch>` or `.glass-atrium` root segment plus its
+#     protected child, a com.{claude,glass-atrium}.*.plist label, the canary
+#     segments) matches at ANY depth in a recognised write position, from any
+#     caller — e.g. a scratch fixture `<mktemp -d dir>/.claude/settings.json`
 #     - not narrowable lexically: a pre-exec hook cannot prove a variable or
 #       linked path lies outside home
 #       - shell-maintained parameters ($_, $PWD, $OLDPWD), zsh indirect and table
@@ -154,7 +154,7 @@
 # Block channel: stderr emit_error + exit 2 (shared-hook-capability-contract.md).
 # Scope: Write|Edit arm — LIVE install paths ONLY (HOME-anchored; the canary directory
 # data-root-anchored), the git repo tree untouched; Bash arm — unanchored (KNOWN FALSE
-# POSITIVES → HAR-002).
+# POSITIVES → unanchored protected literals).
 
 set -Eeuo pipefail
 IFS=$'\n\t'
