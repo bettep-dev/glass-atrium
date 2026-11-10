@@ -1896,6 +1896,11 @@ const REVIEW_ACTOR_OPERATOR = "monitor-user";
 //        not be computed) AFTER the bytes landed and the row flipped applied — answered
 //        200 applied + record_missing; the JSONL applied row holds the record and stderr
 //        names the cause token
+//   27 = live-trial refusal (a live trial pre-registered the proposal; its decision state,
+//        not the click, picks the actor; nothing applied, row untouched) — 409. Its
+//        unread-state leg prints no REFUSED line → a failed read, answered as infra
+//   28 = approval-tier refusal (tier not auto for a non-click actor, or unreadable;
+//        nothing applied, row untouched) — 409
 //   2 = bad arg · 3 = no psql · 6 = DB update failed · 17 = parked-pattern guard gave
 //       no verdict (infra-class failures)
 const APPLY_EXIT_APPLIED = 0;
@@ -1913,6 +1918,8 @@ const APPLY_EXIT_QUERY_FAILED = 21;
 const APPLY_EXIT_ROW_UNREADABLE = 23;
 const APPLY_EXIT_RECORD_TABLE_UNCONFIRMED = 25;
 const APPLY_EXIT_RECORD_NOT_WRITTEN = 26;
+const APPLY_EXIT_LIVE_TRIAL = 27;
+const APPLY_EXIT_TIER_NOT_AUTO = 28;
 
 // Approve-only exit-18 refusal — route-local like RestoreErrorBody
 interface ApproveRefusalBody {
@@ -2093,6 +2100,12 @@ async function handleApprove(
       id,
       reason: `use Reject — generation outcome${outcomeText} is not ok-prefixed, nothing applied (override: AUTOAGENT_ALLOW_HAIKU_SKIP=1)`,
     };
+  }
+  const policyRefusal = getPolicyRefusal(exitCode, stderr, id);
+  if (policyRefusal) {
+    request.log.warn({ ...logBase, stderr }, `approve refused (${policyRefusal.status} — row left as it was)`);
+    reply.code(409);
+    return policyRefusal;
   }
   if (exitCode === APPLY_EXIT_QUERY_FAILED) {
     request.log.error({ ...logBase, stderr }, "approve failed — proposal DB query failed (nothing applied)");
@@ -3154,6 +3167,25 @@ function parseParkedRows(stderr: string): string | undefined {
 function parseGenerationOutcome(stderr: string): string | undefined {
   const match = /use Reject — proposal id=\d+ generation outcome haiku_status=([\w:.<>-]{1,32}) is not ok-prefixed/.exec(stderr);
   return match?.[1];
+}
+
+type PolicyRefusalBody = Extract<ImprovementMutationErrorBody, { status: "live_trial" | "tier_not_auto" }>;
+
+// Exit-27/28 refusal → its body; exit 27 with no REFUSED line is a failed read → undefined (infra).
+// Captured tokens only — no free stderr text rides into the reason.
+function getPolicyRefusal(exitCode: number, stderr: string, id: number): PolicyRefusalBody | undefined {
+  if (exitCode === APPLY_EXIT_LIVE_TRIAL) {
+    const state = /REFUSED proposal id=\d+ actor=[\w-]+ — its live trial is (open|won|decided)\b/.exec(stderr)?.[1];
+    if (!state) return undefined;
+    const reason = `nothing applied — its live trial is ${state}; the trial's decision, not Approve, picks who applies it`;
+    return { status: "live_trial", id, reason };
+  }
+  if (exitCode !== APPLY_EXIT_TIER_NOT_AUTO) return undefined;
+  const tier = /REFUSED proposal id=\d+ actor=[\w-]+ — its approval tier is ([a-z-]{1,16}), not auto/.exec(stderr)?.[1];
+  if (tier) return { status: "tier_not_auto", id, reason: `nothing applied — approval tier is ${tier}, not auto` };
+  const isUnread = stderr.includes("approval tier could not be read");
+  const leg = isUnread ? "approval tier could not be read" : "approval tier is not auto";
+  return { status: "tier_not_auto", id, reason: `nothing applied — ${leg}` };
 }
 
 // Exit-26 cause token — value charset only, so no free stderr text rides into the reason
