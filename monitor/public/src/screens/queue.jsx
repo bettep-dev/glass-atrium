@@ -12,6 +12,8 @@ const OWNER_API_Q = "/api/queue/owner";
 const LIST_Q = { LIMIT: 100, SOURCE: "the queue" };
 const SESSION_PREFIX_LENGTH_Q = 8;
 const CARD_ID_PREFIX_Q = "queue-item-";
+// characters a POSIX shell never treats as syntax in an unquoted word
+const SHELL_SAFE_Q = /^[A-Za-z0-9_@%+=:,./-]+$/;
 const FILTER_AXES_Q = ["profile", "session"];
 const DEFAULT_FILTER_Q = Object.freeze({ profile: "", session: "" });
 
@@ -153,8 +155,17 @@ function getResumeResultLabelQ(resume) {
 	return RESUME_RESULT_LABEL_Q[resume.result] ?? resume.result;
 }
 
+/**
+ * POSIX single-quote form → the shell reads the value as one literal word: a path the owner pastes never expands or splits.
+ * A value inside the plain-path set stays bare, so a common path reads as typed.
+ */
+function quoteShellQ(value) {
+	const text = String(value);
+	return SHELL_SAFE_Q.test(text) ? text : `'${text.replaceAll("'", "'\\''")}'`;
+}
+
 function getConfigPrefixQ(session) {
-	return session.configDir ? `CLAUDE_CONFIG_DIR=${session.configDir} ` : "";
+	return session.configDir ? `CLAUDE_CONFIG_DIR=${quoteShellQ(session.configDir)} ` : "";
 }
 
 /** Marker note: captured-id form when the spawn recorded a bg id, else the listing form; `{ machine }` parts render mono. */
@@ -163,10 +174,11 @@ function getMarkerNoteQ(session) {
 	const lead = `the resumed session may still be running in the background: under profile ${session.profileLabel}, `;
 	const bgId = session.marker?.bgId;
 	if (bgId) {
-		return [`${lead}check it with `, { machine: `${prefix}claude logs ${bgId}` }, ", and resume it yourself in a terminal only after ", { machine: `${prefix}claude stop ${bgId}` }];
+		const id = quoteShellQ(bgId);
+		return [`${lead}check it with `, { machine: `${prefix}claude logs ${id}` }, ", and resume it yourself in a terminal only after ", { machine: `${prefix}claude stop ${id}` }];
 	}
 	return [
-		`${lead}check `, { machine: `${prefix}claude agents --json --cwd ${session.cwd}` }, " for the entry of session ", { machine: session.id },
+		`${lead}check `, { machine: `${prefix}claude agents --json --cwd ${quoteShellQ(session.cwd)}` }, " for the entry of session ", { machine: session.id },
 		", and resume it yourself in a terminal only once that entry is no longer listed, or after ", { machine: `${prefix}claude stop <id>` }, " with that entry's id",
 	];
 }
@@ -658,7 +670,7 @@ function CardStateQ({ item, cliPath }) {
 				</p>
 			)}
 			{PULL_DEVIATIONS_Q.has(item.deviation) && cliPath && (
-				<p className="fs-meta text-dim">Run in that session: <MachineString>{`${cliPath} pending`}</MachineString></p>
+				<p className="fs-meta text-dim">Run in that session: <MachineString>{`${quoteShellQ(cliPath)} pending`}</MachineString></p>
 			)}
 			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
 			{item.session.launchHint === "accept_wrapper" && <p className="fs-meta text-dim">{WRAPPER_RISK_NOTE_Q}</p>}
