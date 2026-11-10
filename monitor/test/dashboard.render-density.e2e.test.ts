@@ -298,7 +298,7 @@ async function openDashboardWithTweaks(viewport: Viewport): Promise<Page> {
   return page;
 }
 
-// The 13px meta floor covers every rendered text node: the page, the shell's nav rail and footer,
+// The 13px meta floor covers every rendered text node: the page, the shell's nav rail,
 // and the Tweaks panel the shell mounts in edit mode.
 describe("Type floor on the Dashboard page, shell and Tweaks panel included", () => {
   for (const viewport of [{ width: 1024, height: 768 }, { width: 1440, height: 900 }]) {

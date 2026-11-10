@@ -113,10 +113,11 @@ const readyOnceAnswered = (stores: Record<string, { status: string }>) =>
     ? { status: "loading" }
     : { status: "ready", downNames: [], failCount1h: 0 };
 
-async function mountShell({ fetch = () => new Promise(() => undefined), createRoot = () => ({ render: () => undefined }), screens }: {
+async function mountShell({ fetch = () => new Promise(() => undefined), createRoot = () => ({ render: () => undefined }), screens, foldHarness }: {
   fetch?: (url: string) => Promise<unknown>;
   createRoot?: () => { render: (node: unknown) => void };
   screens?: ScreenFactory;
+  foldHarness?: (stores: Record<string, { status: string; error?: string | null }>) => unknown;
 } = {}) {
   const { react, flushEffects, resetCursor } = createStatefulReact();
   let displayTimezone = "Asia/Seoul";
@@ -146,7 +147,7 @@ async function mountShell({ fetch = () => new Promise(() => undefined), createRo
       documentElement: { setAttribute: () => undefined, style: { setProperty: () => undefined } },
     },
     useTweaks: () => [{ theme: "dark", density: "comfortable", accent: "#3b82f6" }, () => undefined],
-    HealthModel: { foldHarness: screens ? readyOnceAnswered : () => ({ status: "loading" }) },
+    HealthModel: { foldHarness: foldHarness ?? (screens ? readyOnceAnswered : () => ({ status: "loading" })) },
     UI: {
       ...ui,
       Icon: () => null,
@@ -328,10 +329,20 @@ test("a Refresh off the Dashboard starts one harness read, and concurrent reques
   await dashboardRead;
 });
 
+// Harness fold stand-in: a part down while any store's latest read failed, no fault once every store answered.
+const downWhileUnread = (stores: Record<string, { status: string; error?: string | null }>) => ({
+  status: "ready",
+  downNames: Object.values(stores).some((store) => store.error != null) ? ["PostgreSQL"] : [],
+  failCount1h: 0,
+});
+
+const findNavBadges = (tree: RenderedNode) => findNodes(tree, (n) => /\bnav-badge\b/.test(String(n.props.className ?? "")));
+
 test("a page Retry also re-reads the harness, so a recovered harness reaches the nav on that action", async () => {
   const harnessFetch = createHarnessFetch({ isHealthy: false });
   const { render, navigateByHash } = await mountShell({
     fetch: harnessFetch.fetch,
+    foldHarness: downWhileUnread,
     screens: (react, ui) => ({
       ScreenCost: function ScreenCost() {
         return react.createElement(ui.RetryButton, { onRetry: () => undefined });
@@ -341,11 +352,15 @@ test("a page Retry also re-reads the harness, so a recovered harness reaches the
   render();
   await harnessFetch.settle();
   navigateByHash("#cost");
-  const [retry] = findNodes(mainRegion(render()), (n) => n.type === "button");
+  const faulted = render();
+  const [retry] = findNodes(mainRegion(faulted), (n) => n.type === "button");
+  assert.equal(findNavBadges(faulted).length, 1, "precondition: the faulted harness shows on the nav");
   const readsBefore = harnessFetch.state.kpiReads;
+  harnessFetch.state.isHealthy = true;
 
   clickNode(retry);
-
-  assert.equal(harnessFetch.state.kpiReads - readsBefore, 1);
   await harnessFetch.settle();
+
+  assert.equal(harnessFetch.state.kpiReads - readsBefore, 1, "the Retry starts one harness read");
+  assert.deepEqual(findNavBadges(render()), [], "the recovered harness clears the nav badge");
 });
