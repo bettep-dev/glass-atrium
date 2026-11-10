@@ -118,6 +118,7 @@ describe("queue nav slot", () => {
   const rows = [
     { name: "a count never read gives no slot, so no zero that was not loaded", countState: { status: "loading" }, auth: "in", expected: undefined },
     { name: "an unread count shows a question mark rather than a blank badge", countState: { status: "error" }, auth: "in", expected: ["?"] },
+    { name: "an unread count keeps the lock for a signed-out owner", countState: { status: "error" }, auth: "out", expected: ["?", "lock"] },
     { name: "zero awaiting still shows the numeral", countState: ready(0, 0), auth: "in", expected: ["0"] },
     { name: "a signed-out owner sees the same count plus a lock badge", countState: ready(3, 0), auth: "out", expected: ["3", "lock"] },
     { name: "an unprovisioned passphrase also shows the lock", countState: ready(2, 1), auth: "not_provisioned", expected: ["2", "lock"] },
@@ -184,6 +185,27 @@ describe("after Send the focus moves to the next awaiting card", () => {
     { name: "no other awaiting card leaves the focus where it is", id: 1, list: [buildItem({ id: 1 }), buildItem({ id: 2, status: "answered" })], expected: null },
   ];
   for (const row of rows) test(row.name, () => assert.equal(call("getNextAwaitingIdQ", row.list ?? items, row.id), row.expected));
+});
+
+test("after Send the focus skips a card the active filter hides", async () => {
+  const module = (await loadScreenModule(QUEUE_SRC, {
+    window: { UI: uiStub() },
+    fetch: async () => ({ status: 200, json: async () => ({ ok: true }) }),
+  })) as ScreenModule;
+  const personal = buildSession({ id: "9b2e7c41-0d3a-4c55-8e1f-2a6b9c4d7e10", profileLabel: "personal" });
+  const items = [buildItem({ id: 1 }), buildItem({ id: 2, session: personal }), buildItem({ id: 3 })];
+  const focus: unknown[] = [];
+  const actions = (module.useQueueActionsQ as (deps: unknown) => { answerItem: (id: number, body: unknown) => Promise<void> })({
+    list: { status: "ready", data: { items, nextCursor: null, isSocketDeliveryOn: true } },
+    filter: { profile: "work-dev", session: "" },
+    setList: () => undefined,
+    setDrafts: () => undefined,
+    setFocus: (next: unknown) => focus.push(next),
+    putAuth: () => undefined,
+    reload: () => undefined,
+  });
+  await actions.answerItem(1, { code: "R1" });
+  assert.deepEqual(getPlain(focus), [{ id: 3 }]);
 });
 
 describe("signed out", () => {

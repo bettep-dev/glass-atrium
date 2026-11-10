@@ -58,20 +58,24 @@ const WRAPPER_RISK_NOTE_Q =
  * @param auth - owner auth: 'unknown' | 'in' | 'out' | 'not_provisioned'
  */
 function getQueueNavBadge(countState, auth) {
-	if (countState?.status === "error") {
-		return { queue: { badges: [{ badge: "?", title: "Queue count unavailable", description: "queue count unavailable" }] } };
-	}
-	if (countState?.status !== "ready") return {};
+	const count = getCountBadgeQ(countState);
+	if (count === null) return {};
+	const isSignedOut = auth === "out" || auth === "not_provisioned";
+	const lock = { badge: "", icon: "lock", source: "auth", title: "Signed out of the queue", description: "signed out" };
+	return { queue: { badges: isSignedOut ? [count, lock] : [count] } };
+}
+
+// count slot alone: never read → null · failed or numberless read → "?"
+function getCountBadgeQ(countState) {
+	if (countState?.status !== "ready" && countState?.status !== "error") return null;
 	const { awaiting, deviations } = countState.data ?? {};
-	if (!Number.isInteger(awaiting) || !Number.isInteger(deviations)) return getQueueNavBadge({ status: "error" }, auth);
+	if (countState.status === "error" || !Number.isInteger(awaiting) || !Number.isInteger(deviations)) {
+		return { badge: "?", title: "Queue count unavailable", description: "queue count unavailable" };
+	}
 	const parts = [`${awaiting} awaiting you`, deviations > 0 && `${deviations} ${deviations === 1 ? "deviation" : "deviations"}`];
 	const title = parts.filter(Boolean).join(", ");
 	const glyph = deviations > 0 ? window.UI.TONE_GLYPH.warn : undefined;
-	const badges = [{ badge: String(awaiting), badgeTone: "warn", glyph, source: "queue", title, description: title }];
-	if (auth === "out" || auth === "not_provisioned") {
-		badges.push({ badge: "", icon: "lock", source: "auth", title: "Signed out of the queue", description: "signed out" });
-	}
-	return { queue: { badges } };
+	return { badge: String(awaiting), badgeTone: "warn", glyph, source: "queue", title, description: title };
 }
 
 /**
@@ -249,12 +253,12 @@ function useQueueStateQ({ onQueueAuth, onRetryHarness }) {
 	const [list, setList] = useStateQ({ status: "loading", data: null, error: null, readAt: null });
 	const [drafts, setDrafts] = useStateQ({});
 	const [filter, setFilter] = useFilterQ();
-	const [focusId, setFocusId] = useStateQ(null);
+	const [focus, setFocus] = useStateQ(null);
 	const reload = useCallbackQ(() => getListQ({ setList, putAuth }), [putAuth]);
 	const loadMore = useCallbackQ(() => getMoreQ({ list, setList, putAuth }), [list, putAuth]);
 	useEffectQ(() => { reload(); }, [reload]);
-	useFocusCardQ(focusId);
-	const actions = useQueueActionsQ({ list, setList, setDrafts, setFocusId, putAuth, reload, onRetryHarness });
+	useFocusCardQ(focus);
+	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, putAuth, reload, onRetryHarness });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const login = useCallbackQ((passphrase) => putSessionQ({ passphrase, putAuth, reload }), [putAuth, reload]);
 	return { auth, list, drafts, setDraft, filter, setFilter, reload, loadMore, login, ...actions };
@@ -317,24 +321,26 @@ async function getMoreQ({ list, setList, putAuth }) {
 	setList((prev) => ({ ...prev, status: "error", error }));
 }
 
-function useFocusCardQ(focusId) {
+// focus request `{ id }` → a fresh object per request, so asking for the same card again still moves the focus
+function useFocusCardQ(focus) {
 	useEffectQ(() => {
-		if (focusId === null) return;
-		document.getElementById(`${CARD_ID_PREFIX_Q}${focusId}`)?.focus();
-	}, [focusId]);
+		if (focus === null) return;
+		document.getElementById(`${CARD_ID_PREFIX_Q}${focus.id}`)?.focus();
+	}, [focus]);
 }
 
-function useQueueActionsQ({ list, setList, setDrafts, setFocusId, putAuth, reload, onRetryHarness }) {
+function useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, putAuth, reload, onRetryHarness }) {
 	const { busy, send } = useSendQ({ setDrafts, putAuth, reload, onRetryHarness });
-	const items = list.data?.items ?? [];
+	// next card from the filtered list → the focus never lands on a card the filter hides
+	const items = getVisibleItemsQ(list.data?.items ?? [], filter);
 	const later = useCallbackQ((id) => {
 		setList((prev) => (prev.data ? { ...prev, data: { ...prev.data, items: putLaterQ(prev.data.items, id) } } : prev));
 		return send(id, "later");
 	}, [send, setList]);
 	const answerItem = useCallbackQ(async (id, body) => {
 		const nextId = getNextAwaitingIdQ(items, id);
-		if ((await send(id, "answer", body)) && nextId !== null) setFocusId(nextId);
-	}, [send, items, setFocusId]);
+		if ((await send(id, "answer", body)) && nextId !== null) setFocus({ id: nextId });
+	}, [send, items, setFocus]);
 	return { busy, send, later, answerItem };
 }
 
