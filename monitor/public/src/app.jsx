@@ -410,7 +410,8 @@ function useQueueAuth() {
 	useE(() => {
 		let isMounted = true;
 		fetch(QUEUE_AUTH_PROBE_URL, { headers: { Accept: "application/json" } })
-			.then((response) => isMounted && setState((prev) => (prev === "unknown" ? window.QueueNav?.getAuthFromStatusQ(response.status) ?? prev : prev)))
+			.then(async (response) => ({ status: response.status, data: await response.json().catch(() => null) }))
+			.then((answer) => isMounted && setState((prev) => (prev === "unknown" ? window.QueueNav?.getAuthFromAnswerQ(answer) ?? prev : prev)))
 			// no answer → the state stays unknown, so no lock is claimed for a sign-in state never read
 			.catch(() => undefined);
 		return () => { isMounted = false; };

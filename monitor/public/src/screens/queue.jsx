@@ -72,11 +72,18 @@ function getQueueNavBadge(countState, auth) {
 	return { queue: { badges } };
 }
 
-/** Owner HTTP status → auth state; any other status leaves it unchanged (null). */
-function getAuthFromStatusQ(status) {
+/**
+ * Owner answer → auth state; any other answer leaves it unchanged (null).
+ * 503 is also a database outage (`database_unavailable`) → only the body's code means not provisioned.
+ */
+function getAuthFromAnswerQ({ status, data }) {
 	if (status === 401) return "out";
-	if (status === 503) return "not_provisioned";
+	if (isNotProvisionedQ({ status, data })) return "not_provisioned";
 	return status >= 200 && status < 300 ? "in" : null;
+}
+
+function isNotProvisionedQ({ status, data }) {
+	return status === 503 && data?.error === "not_provisioned";
 }
 
 /**
@@ -227,7 +234,7 @@ function useQueueStateQ({ onQueueAuth, onRetryHarness }) {
 async function putSessionQ({ passphrase, putAuth, reload }) {
 	const error = await putLoginQ(passphrase);
 	if (error === null) {
-		putAuth(200);
+		putAuth({ status: 200, data: null });
 		reload();
 	}
 	return error;
@@ -236,8 +243,8 @@ async function putSessionQ({ passphrase, putAuth, reload }) {
 // auth state + the setter every owner answer feeds; the shell hears each change for its lock badge
 function useAuthQ(onQueueAuth) {
 	const [auth, setAuth] = useStateQ("unknown");
-	const putAuth = useCallbackQ((status) => {
-		const next = getAuthFromStatusQ(status);
+	const putAuth = useCallbackQ((answer) => {
+		const next = getAuthFromAnswerQ(answer);
 		if (next === null) return;
 		setAuth(next);
 		onQueueAuth?.(next);
@@ -248,11 +255,11 @@ function useAuthQ(onQueueAuth) {
 async function getListQ({ setList, putAuth }) {
 	setList((prev) => ({ ...prev, status: "loading" }));
 	const answer = await sendOwnerRequestQ(`/items?limit=${LIST_LIMIT_Q}`);
-	putAuth(answer.status);
+	putAuth(answer);
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
 		return setList({ status: "ready", data: answer.data, error: null, readAt: new Date().toISOString() });
 	}
-	if (answer.status === 401 || answer.status === 503) return setList((prev) => ({ ...prev, status: "ready" }));
+	if (answer.status === 401 || isNotProvisionedQ(answer)) return setList((prev) => ({ ...prev, status: "ready" }));
 	const error = answer.error ?? new Error(answer.status < 300 ? "the queue answer carries no item list" : `HTTP ${answer.status}`);
 	setList((prev) => ({ ...prev, status: "error", error }));
 }
@@ -285,7 +292,7 @@ function useSendQ({ setDrafts, putAuth, reload, onRetryHarness }) {
 		async (id, action, body) => {
 			setBusy({ id, error: null });
 			const answer = await sendOwnerRequestQ(`/items/${id}/${action}`, body ?? {});
-			putAuth(answer.status);
+			putAuth(answer);
 			const isDone = answer.status >= 200 && answer.status < 300;
 			setBusy({ id: null, error: isDone || answer.status === 401 ? null : { id, message: getActionErrorQ(answer) } });
 			if (!isDone) return false;
@@ -591,4 +598,4 @@ function RecentResumesQ({ items }) {
 
 window.ScreenQueue = ScreenQueue;
 // shell reads: the nav slot and the auth mapping its mount probe shares with this page
-window.QueueNav = { getQueueNavBadge, getAuthFromStatusQ };
+window.QueueNav = { getQueueNavBadge, getAuthFromAnswerQ };

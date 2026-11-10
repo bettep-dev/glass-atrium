@@ -137,14 +137,16 @@ describe("queue nav slot", () => {
   });
 });
 
-describe("owner auth from an HTTP status", () => {
+describe("owner auth from an owner answer", () => {
   const rows = [
-    { name: "401 signs the owner out", status: 401, expected: "out" },
-    { name: "503 means the passphrase is not provisioned", status: 503, expected: "not_provisioned" },
-    { name: "a 2xx answer means signed in", status: 200, expected: "in" },
-    { name: "a conflict leaves the state unchanged", status: 409, expected: null },
+    { name: "401 signs the owner out", status: 401, data: { error: "unauthorized" }, expected: "out" },
+    { name: "a 503 naming not_provisioned means the passphrase is not set", status: 503, data: { error: "not_provisioned" }, expected: "not_provisioned" },
+    { name: "a 503 database outage leaves the sign-in state unchanged", status: 503, data: { error: "database_unavailable" }, expected: null },
+    { name: "a 503 with no body leaves the sign-in state unchanged", status: 503, data: null, expected: null },
+    { name: "a 2xx answer means signed in", status: 200, data: { ok: true }, expected: "in" },
+    { name: "a conflict leaves the state unchanged", status: 409, data: { error: "conflict" }, expected: null },
   ];
-  for (const row of rows) test(row.name, () => assert.equal(call("getAuthFromStatusQ", row.status), row.expected));
+  for (const row of rows) test(row.name, () => assert.equal(call("getAuthFromAnswerQ", { status: row.status, data: row.data }), row.expected));
 });
 
 describe("Later", () => {
@@ -372,4 +374,11 @@ describe("list read", () => {
     assert.equal(list.status, "error");
     assert.equal(list.data, null);
   });
+
+  const refusals = [
+    { name: "a 503 database outage is a read failure with Retry", status: 503, body: { error: "database_unavailable" }, expected: "error" },
+    { name: "a 503 naming not_provisioned hands the page to the setup card", status: 503, body: { error: "not_provisioned" }, expected: "ready" },
+    { name: "a 401 hands the page to the sign-in form", status: 401, body: { error: "unauthorized" }, expected: "ready" },
+  ];
+  for (const row of refusals) test(row.name, async () => assert.equal((await read(row.status, row.body)).status, row.expected));
 });
