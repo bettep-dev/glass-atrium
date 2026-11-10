@@ -389,23 +389,9 @@ needs_staged_lane() {
   if [[ "${relative}" == true && ! -e "${root_dir}/${first}" && ! -L "${root_dir}/${first}" && "${config_entries}" != *" ${first} "* ]]; then
     return 1
   fi
-  exempt_entry "${first}" && return 1
+  # The foreground member set is today's: BASENAME files and runtime data (lib predicate).
+  claude_config_is_exempt_entry "basename runtime-data" "${written}" "${remainder}" && return 1
   return 0
-}
-
-# BASENAME file, runtime-DATA subdir, or a progress checkpoint directly in a memory dir. Exit 0 = exempt.
-exempt_entry() {
-  case "${1}" in
-    claude.md | memory.md | glass_atrium_global_rules.md) return 0 ;;
-    data | projects | logs | todos | shell-snapshots | statsig)
-      # The memory dir nests under projects/ → a /memory/ segment keeps it protected; `/…/` frames globs.
-      case "/${remainder}/" in
-        */memory/*) [[ "${remainder}" =~ ${progress_re} ]] ;;
-        *) return 0 ;;
-      esac
-      ;;
-    *) return 1 ;;
-  esac
 }
 
 # Walk one spelling from walk_p / walk_lex / walk_rest. Exit 0 = it reaches a protected path.
@@ -548,7 +534,6 @@ candidate_blocks() {
 # Any other entry, created from $HOME, is a file no session reads → no misconfiguration, no block.
 config_entries=' settings.json settings.local.json keybindings.json agents agent-memory commands skills hooks rules plugins output-styles projects '
 tilde_re='^~[a-z0-9._-]*(/|$)'
-progress_re='^projects/[^/]+/memory/progress-[^/]*\.md$'
 readonly glob_level_cap=1024 glob_path_budget=16384
 glob_paths_spent=0
 

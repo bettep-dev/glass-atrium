@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # claude-config-dirs.sh — the `~/.claude*` config-root grammar, declared once. Declaration-only,
-# sourced by enforce-foreground-harness.sh (Rule-2 path scan + BASENAME-exception strip),
+# sourced by enforce-foreground-harness.sh (Rule-2 path scan + entry exemption),
 # validate-scope-drift.sh (system-path short-circuit), enforce-harness-critical.sh (Write/Edit
 # dispatch) and lib/ga-doctor.sh (§27 profile-branch link scan), so no consumer can lag behind a
-# newly created profile branch. Bash 3.2+ (macOS stock).
+# newly created profile branch. It also owns the harness-root entry exemption both harness hooks
+# judge with, so the foreground and critical gates cannot drift apart on it. Bash 3.2+ (macOS stock).
 #
-# `nocasematch` is deliberately never touched here: every predicate uses [[ ]], so each consumer's
-# AMBIENT setting governs — the critical hook's shell-global nocasematch keeps its case-insensitive
-# contract while the foreground hook stays case-sensitive, from one code path.
+# `nocasematch` is deliberately never touched here: every predicate uses [[ ]] or `case`, so each
+# consumer's AMBIENT setting governs. Both harness hooks fold case — the critical hook through its
+# shell-global nocasematch, the foreground hook through the nocasematch it keeps on for its lexical
+# root and exemption tests — so one code path serves both, and a case-sensitive consumer stays exact.
 
 # Double-source guard.
 # shellcheck disable=SC2317
@@ -69,4 +71,56 @@ claude_config_is_hooks_dir_path() {
 # Args: $1=path. Exit status = containment.
 claude_config_is_branch_path() {
   [[ "${1}" =~ /${CLAUDE_CONFIG_ROOT_RE} ]]
+}
+
+# Progress checkpoint directly in a memory dir — the one memory-dir entry an agent may write.
+# shellcheck disable=SC2034
+#   CLAUDE_CONFIG_PROGRESS_RE is also read by the source-er's own checks — an intended export.
+readonly CLAUDE_CONFIG_PROGRESS_RE='^projects/[^/]+/memory/progress-[^/]*\.md$'
+
+# Harness-root entry exemption, judged on the remainder below a root. Member classes, any subset:
+#   basename     — CLAUDE.md, MEMORY.md, GLASS_ATRIUM_GLOBAL_RULES.md at the root
+#   runtime-data — data/ projects/ logs/ todos/ shell-snapshots/ statsig/
+#   projects     — projects/ alone
+#   job          — a background job's scratchpad, jobs/<id>/tmp/
+# A /memory/ segment under a runtime-data or projects entry stays protected except a progress file.
+# Membership is anchored at the remainder's first segment, never a substring search, so a remainder
+# the caller could not strip (a case-varied home) starts with a home component and matches nothing.
+# Voids, each winning over membership: a `..` segment in the written path · an empty remainder or one
+# with a leading `/` · with the hardlink flag, a path that is a regular file with more than one link
+# (realpath cannot see a hardlink, so a scratchpad name could alias a memory file).
+# Args: $1=member classes (space-separated)  $2=path as written  $3=root-relative remainder
+#       $4=`hardlink` to apply the hardlink void (optional). Exit 0 = exempt.
+claude_config_is_exempt_entry() {
+  local classes=" ${1} " path="${2}" rest="${3}" multi=""
+  [[ "/${path}/" != */../* && -n "${rest}" && "${rest}" != /* ]] || return 1
+  if [[ "${4:-}" == hardlink ]]; then
+    # A missing path exits find non-zero with no output → no hardlink to void.
+    multi="$(find "${path}" -maxdepth 0 -type f -links +1 2>/dev/null)" || true
+    [[ -z "${multi}" ]] || return 1
+  fi
+  case "${rest%%/*}" in
+    CLAUDE.md | MEMORY.md | GLASS_ATRIUM_GLOBAL_RULES.md) [[ "${classes}" == *" basename "* ]] ;;
+    jobs)
+      [[ "${classes}" == *" job "* && "/${rest}/" != */./* && "/${rest}/" != */../* ]] \
+        && [[ "${rest}" =~ ^jobs/[^/]+/tmp(/|$) ]]
+      ;;
+    projects)
+      [[ "${classes}" == *" projects "* || "${classes}" == *" runtime-data "* ]] \
+        && claude_config_is_outside_memory "${rest}"
+      ;;
+    data | logs | todos | shell-snapshots | statsig)
+      [[ "${classes}" == *" runtime-data "* ]] && claude_config_is_outside_memory "${rest}"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# A runtime-data remainder outside every memory dir, or a progress file directly in one.
+# `/…/` framing also catches a memory segment at either end. Args: $1=remainder. Exit 0 = admitted.
+claude_config_is_outside_memory() {
+  case "/${1}/" in
+    */memory/*) [[ "${1}" =~ ${CLAUDE_CONFIG_PROGRESS_RE} ]] ;;
+    *) return 0 ;;
+  esac
 }
