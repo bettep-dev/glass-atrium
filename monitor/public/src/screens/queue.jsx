@@ -669,7 +669,11 @@ function ResumeLineQ({ resume, profileLabel }) {
 	return <span>{`Automatic resume ${formatKstDateTime(resume.sentAt)}${account} · attempt ${resume.attempt} · ${getResumeResultLabelQ(resume)}`}</span>;
 }
 
-/** Page-level record: recent automatic resumes newest first → quota spent without a click stays visible. */
+/**
+ * Page-level record: recent automatic resumes newest first → quota spent without a click stays visible.
+ * ponytail: read from the loaded owner list, which leaves out terminal items → an acked resume drops off once its item is
+ * delivered; upgrade = a server read of recent resume Delivery rows (owner route, S2b).
+ */
 function RecentResumesQ({ items }) {
 	const { Card } = window.UI;
 	const recent = getRecentResumesQ(items);

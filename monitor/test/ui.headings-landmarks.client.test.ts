@@ -37,7 +37,15 @@ function getUiStub(): unknown {
 async function getScreenHeader(id: string): Promise<Record<string, unknown>> {
   const path = resolve(SRC, "screens", `${id}.jsx`);
   assert.ok(existsSync(path), `screen file for nav id ${id}`);
-  const screen = await loadScreenModule(path, { UI: getUiStub(), React: createReactStub(), localStorage: { getItem: () => null, setItem: () => {} } });
+  // browser globals a screen reads on mount: storage, and the hash its filters persist in
+  const screen = await loadScreenModule(path, {
+    UI: getUiStub(),
+    React: createReactStub(),
+    localStorage: { getItem: () => null, setItem: () => {} },
+    location: { hash: `#${id}` },
+    history: { replaceState: () => {} },
+    URLSearchParams,
+  });
   const name = Object.keys(screen).find((key) => /^Screen[A-Z]/.test(key) && typeof screen[key] === "function");
   assert.ok(name, `${id}.jsx defines a Screen component`);
   const React = screen.React as { createElement: (t: unknown, p: unknown) => unknown };
