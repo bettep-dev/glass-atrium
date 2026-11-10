@@ -852,7 +852,8 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 								</div>
 							)}
 							<div className="fs-meta text-dim leading-tight">
-								Each proposal merges the absorbed notes into the kept note.
+								{/* suggested_action is this same instruction on every row (scripts/wiki_dedup.py) → stated once here */}
+								Each proposal merges the absorbed notes into the kept note, then deletes them; links to them need updating.
 							</div>
 						</window.UI.Stack>
 						<WikiProposalsTable proposals={model.proposals} />
@@ -1105,6 +1106,7 @@ function WikiDisclosureW({
 	}, [isAlerting]);
 
 	// The fold is itself the card (spec §6) → its body holds content directly, never a second box.
+	// Hand-built shell: UI.Disclosure has no id anchor or count slot, which Retry focus and the h2 describedBy need.
 	return (
 		<div className="card">
 			<details
@@ -1446,22 +1448,14 @@ function MergeSuggestionItem({ proposal, view }) {
 				<WikiCellValueW value={similarity} />
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Reason" className="break-words whitespace-pre-wrap">
-				<WikiCellValueW value={readProposalActionW(proposal) || null} />
+				<WikiCellValueW value={proposal.llm_rationale?.trim() || null} />
 			</TableCell>
 		</TableRow>
 	);
 }
 
-// The cleaner tags every action DRY-RUN → the list states it once, each row keeps its own action.
+// The cleaner tags every action DRY-RUN → the list states it once above the table.
 const DRY_RUN_TAIL_W = /\s*DRY-RUN\b[\s\S]*$/;
-
-// "Merge notes/a.md into notes/b.md." restates the row's kept note and absorbed notes → the column heads already say it.
-const MERGE_RESTATEMENT_W = /^Merge\s+\S.*\s+into\s+\S+$/i;
-
-function readProposalActionW(proposal) {
-	const action = (proposal.suggested_action || proposal.llm_verdict || "").replace(DRY_RUN_TAIL_W, "").trim();
-	return MERGE_RESTATEMENT_W.test(action) ? "" : action;
-}
 
 function isDryRunProposalW(proposal) {
 	return DRY_RUN_TAIL_W.test(proposal.suggested_action || "");
@@ -1531,28 +1525,45 @@ const WIKI_REPORT_COLUMNS = [
 // Rows flow in page scroll; the Table wrapper clips, so a narrow pane never scrolls the run table sideways.
 function WikiReportsTable({ reports, isLoading = false }) {
 	const { Table, SkeletonRows } = window.UI;
+	// One status across the window → the caption names it once and the column drops (spec §6 Cells, §7).
+	const sharedStatus = isLoading ? null : readSharedRunStatusW(reports);
+	const hasStatusColumn = sharedStatus === null;
+	const columns = hasStatusColumn ? WIKI_REPORT_COLUMNS : WIKI_REPORT_COLUMNS.filter((c) => c.key !== "status");
+	const caption = hasStatusColumn
+		? "Wiki compile runs, newest first, one row per run"
+		: `Wiki compile runs, newest first, one row per run, every run ${wikiStatusLabelW(sharedStatus)}`;
 
 	return (
-		<Table caption="Wiki compile runs, newest first, one row per run" columns={WIKI_REPORT_COLUMNS}>
+		<Table caption={caption} columns={columns}>
 			{isLoading
-				? <SkeletonRows rows={5} columns={WIKI_REPORT_COLUMNS.length} rowHeight={36} />
-				: (view) => reports.map((report) => <WikiReportRow key={report.run_date} report={report} view={view} />)}
+				? <SkeletonRows rows={5} columns={columns.length} rowHeight={36} />
+				: (view) => reports.map((report) => (
+					<WikiReportRow key={report.run_date} report={report} view={view} hasStatusColumn={hasStatusColumn} />
+				))}
 		</Table>
 	);
 }
 
+// The status every run shares, or null when the window's runs differ (or there are none).
+function readSharedRunStatusW(reports) {
+	const statuses = new Set(reports.map((r) => r.status));
+	return statuses.size === 1 ? [...statuses][0] ?? "" : null;
+}
+
 // Status = tone glyph + word, no pill; the backlog columns are snapshots re-stamped each run.
-function WikiReportRow({ report, view }) {
+function WikiReportRow({ report, view, hasStatusColumn }) {
 	const { TableRow, TableCell, TONE_GLYPH } = window.UI;
 	const tone = wikiStatusToneW(report.status);
 
 	return (
 		<TableRow view={view}>
 			<TableCell view={view} kind="row-header" className="tabular-nums">{report.run_date}</TableCell>
-			<TableCell view={view} textRole="meta" label="Status">
-				<span className={tone === "neutral" ? "text-dim" : `text-${tone}`} aria-hidden="true">{`${TONE_GLYPH[tone]} `}</span>
-				{wikiStatusLabelW(report.status)}
-			</TableCell>
+			{hasStatusColumn && (
+				<TableCell view={view} textRole="meta" label="Status">
+					<span className={tone === "neutral" ? "text-dim" : `text-${tone}`} aria-hidden="true">{`${TONE_GLYPH[tone]} `}</span>
+					{wikiStatusLabelW(report.status)}
+				</TableCell>
+			)}
 			<TableCell view={view} textRole="meta" label="Broken links" isNumeric>
 				<WikiCellValueW value={report.deadlinks_count} />
 			</TableCell>

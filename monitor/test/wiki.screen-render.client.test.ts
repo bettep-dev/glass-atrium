@@ -453,9 +453,41 @@ function renderRunRowsOf(mod: ScreenModule, reports: unknown[]): RenderedNode | 
 
 const WIDE_VIEW = { isStacked: false, columnCount: 4 };
 
+describe("the run table carries a Status column only when the window's runs differ in status", () => {
+  const run = (run_date: string, status: string, deadlinks_count: number) => ({ run_date, status, deadlinks_count, dedup_count: 3 });
+  const rows = [
+    {
+      name: "a uniform window, its backlog still moving, states the shared status once in the caption",
+      reports: [run("2026-09-26", "ok", 2), run("2026-09-25", "ok", 1), run("2026-09-24", "ok", 1)],
+      hasStatusColumn: false,
+    },
+    {
+      name: "a mixed window states each run's status in its own cell",
+      reports: [run("2026-09-26", "ok", 1), run("2026-09-25", "partial", 1), run("2026-09-24", "ok", 1)],
+      hasStatusColumn: true,
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadWikiScreen();
+      const tree = renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports: row.reports }));
+      const [table] = findNodes(tree, (n) => n.props.atom === "Table");
+      const heads = Array.from(table.props.columns as Array<{ label: string }>, (c) => c.label);
+      const statusCells = findNodes(renderTableRowsOf(mod, tree), (n) => n.props.atom === "TableCell" && n.props.label === "Status");
+
+      assert.equal(heads.includes("Status"), row.hasStatusColumn, "the Status head follows the window's status spread");
+      assert.equal(statusCells.length, row.hasStatusColumn ? row.reports.length : 0, "status cells match the head");
+      assert.equal(/Healthy/.test(String(table.props.caption)), !row.hasStatusColumn, "a shared status is named once, in the caption");
+    });
+  }
+});
+
 test("a run's status reads as a tone glyph and a word, never a pill", async () => {
   const mod = await loadWikiScreen();
-  const tbody = renderRunRowsOf(mod, [{ run_date: "2026-09-24", status: "fail", deadlinks_count: 0, dedup_count: 0 }]);
+  const tbody = renderRunRowsOf(mod, [
+    { run_date: "2026-09-24", status: "fail", deadlinks_count: 0, dedup_count: 0 },
+    { run_date: "2026-09-23", status: "ok", deadlinks_count: 0, dedup_count: 0 },
+  ]);
   const [status] = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Status");
   const [glyph] = findNodes(status, (n) => n.props["aria-hidden"] === "true");
   assert.match(classOf(glyph), /\btext-crit\b/, "the glyph carries the tone");
@@ -516,9 +548,24 @@ test("the merge-proposals fold opens itself only while it holds a waiting (warn)
   }
 });
 
+// Producer shape: scripts/wiki_dedup.py → DedupProposal, its suggested_action f-string copied verbatim.
+function dedupProposal(target: string, sources: string[], rationale: string) {
+  return {
+    cluster_hash: `c-${target}`,
+    target_slug: target,
+    source_slugs: sources,
+    similarity_score: 0.9312,
+    llm_verdict: "duplicate",
+    llm_rationale: rationale,
+    suggested_action:
+      `Merge content of notes/${sources.join("/notes/")}.md into notes/${target}.md, ` +
+      "then delete source note(s). All wikilinks to source slug(s) need updating. DRY-RUN — requires user approval.",
+  };
+}
+
 test("a merge proposal's reasons wrap in full", async () => {
   const mod = await loadWikiScreen();
-  const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" };
+  const proposal = dedupProposal("t", ["s"], "merge because both notes describe one concept");
   const tree = renderScreen(mod.React.createElement(mod.MergeSuggestionItem as Component, { proposal, view: WIDE_VIEW }));
   const [reason] = findNodes(tree, (n) => n.props.atom === "TableCell" && n.props.label === "Reason");
   assert.match(classOf(reason), /\bbreak-words\b/, "a long reason breaks inside its cell");
@@ -610,7 +657,7 @@ test("wiki text never uses the retired micro type step and words are never set i
     renderStatsOf(mod, renderScreen(createElement(mod.WikiTileBand, { summaryState: ready({}), indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: READY_BACKLOG, onRetry: () => {} }))),
     renderScreen(createElement(mod.WikiRunHistorySection, { cyclesState: ready({ cycles: [] }), summaryState: ready({}), reportState: ready({ reports: [] }), days: 30, onChangeDays: () => {}, onRetry: () => {} })),
     renderScreen(createElement(mod.WikiMaintenanceSection, { backlogState: READY_BACKLOG, onRetry: () => {} })),
-    renderScreen(createElement(mod.MergeSuggestionItem, { proposal: { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" }, view: WIDE_VIEW })),
+    renderScreen(createElement(mod.MergeSuggestionItem, { proposal: dedupProposal("t", ["s"], "merge because both notes describe one concept"), view: WIDE_VIEW })),
   ];
   // Card titles render through the shared atom, outside this stub tree → not listed.
   const words = ["Search index", "Clean", "Merge proposals", "merge because both notes describe one concept"];
@@ -672,13 +719,12 @@ test("the window control rides the per-run table fold and never the open trend",
 
 test("the dry-run notice is stated once above the proposals instead of on every proposal", async () => {
   const mod = await loadWikiScreen();
-  const action = (slug: string) => `Merge notes/${slug}.md into notes/t.md. DRY-RUN \u2014 requires user approval.`;
   const backlog = {
     status: "ready",
     error: null,
     data: { backlog: { run_date: "2026-09-24", dedup_proposals: { proposals: [
-      { cluster_hash: "c1", target_slug: "t", source_slugs: ["s1"], suggested_action: action("s1") },
-      { cluster_hash: "c2", target_slug: "t", source_slugs: ["s2"], suggested_action: action("s2") },
+      dedupProposal("t1", ["s1"], "Both notes describe one concept."),
+      dedupProposal("t2", ["s2"], "Same source, summarised twice."),
     ] } } },
   };
   const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} }));
@@ -763,25 +809,33 @@ test("a wiki empty state takes the shared atom's own inset, adding no margin of 
   assert.doesNotMatch(String(empty.props.className ?? ""), /(^|\s)-?m[trblxy]?-/);
 });
 
-test("every merge proposal states in text which note absorbs which, through its column heads", async () => {
+test("every merge proposal states in text which note absorbs which, and why, with the shared merge steps stated once", async () => {
   const mod = await loadWikiScreen();
   const backlog = {
     status: "ready",
     error: null,
     data: { backlog: { run_date: "2026-09-24", dedup_proposals: { proposals: [
-      { cluster_hash: "c1", target_slug: "keep-a", source_slugs: ["drop-1"], suggested_action: "Merge notes/drop-1.md into notes/keep-a.md." },
-      { cluster_hash: "c2", target_slug: "keep-b", source_slugs: ["drop-2", "drop-3"], suggested_action: "Merge notes/drop-2.md into notes/keep-b.md." },
+      dedupProposal("keep-a", ["drop-1"], "Both notes define routing confidence thresholds with the same 0.7 cut-off."),
+      dedupProposal("keep-b", ["drop-2", "drop-3"], "The three notes summarise one source on prompt caching."),
     ] } } },
   };
   const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} }));
   const [table] = findNodes(tree, (n) => n.props.atom === "Table");
-  const cells = (kind: string) => findNodes(renderTableRowsOf(mod, tree), (n) => n.props.atom === "TableCell" && (n.props.kind === kind || n.props.label === kind)).map(collectText);
+  const tbody = renderTableRowsOf(mod, tree);
+  const cells = (kind: string) => findNodes(tbody, (n) => n.props.atom === "TableCell" && (n.props.kind === kind || n.props.label === kind)).map(collectText);
 
   // the screen module runs in its own realm → copy its array before a strict deep compare
   const heads = Array.from(table.props.columns as Array<{ label: string }>, (c) => c.label);
-  assert.deepEqual(heads.slice(0, 2), ["Kept note", "Absorbs"]);
+  assert.deepEqual(heads, ["Kept note", "Absorbs", "Similarity", "Reason"]);
   assert.deepEqual(cells("row-header"), ["keep-a", "keep-b"], "the kept note heads each row");
   assert.deepEqual(cells("Absorbs"), ["drop-1", "drop-2, drop-3"], "the absorbed notes sit under their own head");
+  assert.deepEqual(
+    cells("Reason"),
+    ["Both notes define routing confidence thresholds with the same 0.7 cut-off.", "The three notes summarise one source on prompt caching."],
+    "each row gives the verifier's own reason",
+  );
+  assert.doesNotMatch(collectText(tbody), /wikilinks|delete/i, "no row repeats the shared merge steps");
+  assert.equal(collectText(tree).match(/links to them need updating/g)?.length, 1, "the shared merge steps are stated once");
 });
 
 test("the missed-cycle alarm states its age in the short relative form", async () => {
