@@ -338,25 +338,30 @@ function useQueueActionsQ({ list, setList, setDrafts, setFocusId, putAuth, reloa
 	return { busy, send, later, answerItem };
 }
 
-/** One owner action: a 401 keeps the card draft for the re-login, any other refusal shows on the card. */
 function useSendQ({ setDrafts, putAuth, reload, onRetryHarness }) {
 	const [busy, setBusy] = useStateQ({ id: null, error: null });
 	const send = useCallbackQ(
-		async (id, action, body) => {
-			setBusy({ id, error: null });
-			const answer = await sendOwnerRequestQ(`/items/${id}/${action}`, body ?? {});
-			putAuth(answer);
-			const isDone = answer.status >= 200 && answer.status < 300;
-			setBusy({ id: null, error: isDone || answer.status === 401 ? null : { id, message: getActionErrorQ(answer) } });
-			if (!isDone) return false;
-			setDrafts((prev) => ({ ...prev, [id]: undefined }));
-			reload();
-			onRetryHarness?.();
-			return true;
-		},
+		(id, action, body) => sendActionQ({ id, action, body, setBusy, setDrafts, putAuth, reload, onRetryHarness }),
 		[putAuth, setDrafts, reload, onRetryHarness],
 	);
 	return { busy, send };
+}
+
+/**
+ * One owner action: a 401 keeps the card draft for the re-login, any other refusal shows on the card.
+ * @returns true once the server took the action
+ */
+async function sendActionQ({ id, action, body, setBusy, setDrafts, putAuth, reload, onRetryHarness }) {
+	setBusy({ id, error: null });
+	const answer = await sendOwnerRequestQ(`/items/${id}/${action}`, body ?? {});
+	putAuth(answer);
+	const isDone = answer.status >= 200 && answer.status < 300;
+	setBusy({ id: null, error: isDone || answer.status === 401 ? null : { id, message: getActionErrorQ(answer) } });
+	if (!isDone) return false;
+	setDrafts((prev) => ({ ...prev, [id]: undefined }));
+	reload();
+	onRetryHarness?.();
+	return true;
 }
 
 // the server's refusal body is `{ error, reason }`: `reason` is its worded cause, `error` a machine code never shown

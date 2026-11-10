@@ -369,6 +369,128 @@ describe("screen", () => {
   });
 });
 
+describe("an owner action's answer", () => {
+  const draft = { 41: { code: "R2", text: "keep the shadow DB" } };
+  const run = async (status: number, body: unknown) => {
+    const posts: Array<{ url: string; body: unknown }> = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub() },
+      fetch: async (url: string, init: { body: string }) => {
+        posts.push({ url, body: JSON.parse(init.body) });
+        return { status, json: async () => body };
+      },
+    })) as ScreenModule;
+    let drafts: Record<string, unknown> = { ...draft };
+    let busy: unknown = null;
+    const auth: unknown[] = [];
+    const counts = { reload: 0 };
+    const isDone = await (module.sendActionQ as (deps: unknown) => Promise<boolean>)({
+      id: 41,
+      action: "answer",
+      body: { code: "R2", text: "keep the shadow DB" },
+      setBusy: (next: unknown) => { busy = next; },
+      setDrafts: (next: (prev: Record<string, unknown>) => Record<string, unknown>) => { drafts = next(drafts); },
+      putAuth: (answer: { status: number }) => auth.push(answer.status),
+      reload: () => { counts.reload += 1; },
+    });
+    return { isDone, drafts: getPlain(drafts), busy: getPlain(busy), auth, posts: getPlain(posts), reloads: counts.reload };
+  };
+
+  test("a taken answer posts the card's body, clears its draft and re-reads the list", async () => {
+    const result = await run(200, { ok: true });
+    assert.deepEqual(result.posts, [{ url: "/api/queue/owner/items/41/answer", body: { code: "R2", text: "keep the shadow DB" } }]);
+    assert.equal(result.isDone, true);
+    assert.equal(result.drafts[41], undefined);
+    assert.equal(result.reloads, 1);
+  });
+
+  const refusals = [
+    { name: "a 401 keeps the draft for the re-login, signs the owner out and shows no card error", status: 401, body: { error: "unauthorized" }, error: null },
+    {
+      name: "a refusal keeps the draft and shows the reason on the card",
+      status: 400,
+      body: { error: "unknown_option", reason: "the code is not one of this item's options" },
+      error: { id: 41, message: "Refused: the code is not one of this item's options." },
+    },
+  ];
+  for (const row of refusals) {
+    test(row.name, async () => {
+      const result = await run(row.status, row.body);
+      assert.equal(result.isDone, false);
+      assert.deepEqual(result.drafts, draft);
+      assert.deepEqual(result.auth, [row.status]);
+      assert.deepEqual(result.busy, { id: null, error: row.error });
+      assert.equal(result.reloads, 0);
+    });
+  }
+});
+
+describe("card buttons", () => {
+  const sendRows = [
+    { name: "no option and no text leaves Send disabled", draft: {}, body: null },
+    { name: "whitespace-only text leaves Send disabled", draft: { text: "   " }, body: null },
+    { name: "a picked option alone sends its code", draft: { code: "R1" }, body: { code: "R1" } },
+    { name: "text alone sends the text", draft: { text: "hold until Friday" }, body: { text: "hold until Friday" } },
+    { name: "an option and text send both", draft: { code: "R2", text: "after the deploy" }, body: { code: "R2", text: "after the deploy" } },
+  ];
+  for (const row of sendRows) {
+    test(row.name, () => {
+      const { calls, queue } = buildQueue();
+      const [send] = buttonLabelled(render("CardActionsQ", { item: buildItem(), draft: row.draft, queue, isBusy: false }), "Send");
+      assert.equal(send?.props.disabled, row.body === null);
+      if (row.body !== null) (send?.props.onClick as () => void)();
+      assert.deepEqual(getPlain(calls), row.body === null ? [] : [["answerItem", 41, row.body]]);
+    });
+  }
+
+  test("Seen on a report sends the seen action", () => {
+    const { calls, queue } = buildQueue();
+    const [seen] = buttonLabelled(render("CardActionsQ", { item: buildItem({ kind: "report" }), draft: {}, queue, isBusy: false }), "Seen");
+    (seen?.props.onClick as () => void)();
+    assert.deepEqual(getPlain(calls), [["send", 41, "seen"]]);
+  });
+
+  const replyRows = [
+    { name: "a typed reply offers Send reply with the typed text", draft: { text: "thanks, merged" }, calls: [["send", 41, "reply", { text: "thanks, merged" }]] },
+    { name: "a blank reply offers no Send reply", draft: { text: "  " }, calls: null },
+  ];
+  for (const row of replyRows) {
+    test(row.name, () => {
+      const { calls, queue } = buildQueue();
+      const [reply] = buttonLabelled(render("CardActionsQ", { item: buildItem({ kind: "report" }), draft: row.draft, queue, isBusy: false }), "Send reply");
+      assert.equal(reply === undefined, row.calls === null);
+      (reply?.props.onClick as (() => void) | undefined)?.();
+      assert.deepEqual(getPlain(calls), row.calls ?? []);
+    });
+  }
+});
+
+// spacing reads the role-key ladder (index.html tailwind config) → a number or a px value in a queue node is drift
+const NUMERIC_SPACING_CLASS = /(^|\s)-?(p|m|gap|space)(x|y|t|r|b|l|s|e)?-(\d|\[)/;
+
+describe("the queue page spaces on role keys only", () => {
+  const data = {
+    items: [
+      buildItem({ id: 1, isApprovalClass: true, deviation: "delivery_off", resumes: [{ attempt: 1, sentAt: "2026-11-10T06:20:11.204Z", result: "sent", abortReason: null, bgId: null }] }),
+      buildItem({ id: 2, kind: "report", linkedDocIds: [43944], session: buildSession({ launchHint: "accept_wrapper", marker: { setAt: "2026-11-10T06:20:11.204Z", bgId: null } }) }),
+    ],
+    nextCursor: 9,
+    isSocketDeliveryOn: false,
+  };
+  const states = [
+    { name: "a loaded list with cards, the banner and Show more", node: () => render("QueueListQ", { queue: { ...buildQueue().queue, list: { status: "ready", data }, filter: { profile: "", session: "" }, setFilter: () => undefined } }) },
+    { name: "a card with a refusal", node: () => render("QueueCardQ", { item: data.items[0], queue: buildQueue({ busy: { id: null, error: { id: 1, message: "Refused: x." } } }).queue }) },
+    { name: "the sign-in form", node: () => render("PassphraseFormQ", { onLogin: async () => null }) },
+    { name: "the setup card", node: () => render("LoginFormQ", { auth: "not_provisioned", onLogin: async () => null }) },
+  ];
+  for (const row of states) {
+    test(row.name, () => {
+      const classes = findNodes(row.node(), () => true).map((node) => String(node.props?.className ?? ""));
+      assert.deepEqual(classes.filter((value) => NUMERIC_SPACING_CLASS.test(value)), []);
+    });
+  }
+});
+
 describe("report reply", () => {
   const rows = [
     { name: "a report that takes a reply shows the reply field", isFreeTextAllowed: true, fields: 1 },
