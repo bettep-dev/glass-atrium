@@ -1257,12 +1257,13 @@ class BoundPayloadTest(_ShadowFixture):
         self,
     ) -> None:
         [power_pass] = self._check_power().passes
-        # the recorded 0.019, 0.050 and 0.056 follow-ups per spawn at three spawn baselines
-        rows = (("a 6.2% primary rate", 62, 0.019), ("16.6%", 166, 0.050), ("18.5%", 185, 0.056))
-        for name, events, margin in rows:
+        # synthetic primary rates over 10000 baseline spawns → margin = 0.3 × rate
+        rows = (("a 12.78% primary rate", 1278), ("21.83%", 2183), ("27.45%", 2745))
+        for name, events in rows:
             with self.subTest(name):
-                baseline = power_pass.baseline._replace(events=events, spawns=1000)
-                self.assertEqual(round(self._get_row([], baseline=baseline)["margin"], 3), margin)
+                baseline = power_pass.baseline._replace(events=events, spawns=10000)
+                margin = self._get_row([], baseline=baseline)["margin"]
+                self.assertAlmostEqual(margin, 0.3 * events / 10000, places=12)
         blind_spots = self._get_row([])["blind_spots"]
         [watch] = [text for text in blind_spots if text.startswith("watch")]
         self.assertIn("separation is shorter than the design's", watch)
