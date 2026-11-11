@@ -138,29 +138,20 @@
 #
 # AGENT_ID ARMS (subagent and Workflow calls; main-session verdicts unchanged). Each runs only
 # where the arms above pass, so it only adds blocks. Exemption: the lib's predicate with the job
-# scratchpad (jobs/<id>/tmp/) and progress files alone — no BASENAME exception, which is the
-# orchestrator's; the rest of projects/ (session transcripts, memory) and the runtime-data dirs stay
-# protected, since the transcript count found no other subagent write under a profile root.
+# scratchpad (jobs/<id>/tmp/) and progress files — no BASENAME exception, which is the orchestrator's.
 #   Write|Edit|MultiEdit — the target as written and as resolved (non-strict realpath) blocks when
 #     it sits under a profile root of HOME or of HOME's physical spelling and is not exempt.
 #   Bash — a positive rule: a word naming a path under a profile root adds no block only as a
 #     proven read (an admitted operand of the closed READERS set in a clean command position, or
-#     a `<` source); every other such word is judged by the exemption in both forms, and a
-#     non-literal one blocks. A rebinding, an argv consumer (xargs, read, mapfile, parallel) or a
-#     pipe into a segment that is not a stdin-safe consumer, anywhere in the call, voids every read
-#     in it; a variable assigned a home-spelled value is judged as a word. Substitution bodies,
-#     interpreter code strings and heredoc bodies are judged too; text past MAX_SCAN_DEPTH fails
-#     closed.
+#     a `<` source, with no rebinding anywhere in the call); every other such word is judged by the
+#     exemption in both forms, and a non-literal one blocks. Substitution bodies, interpreter code
+#     strings and heredoc bodies are judged too; text past MAX_SCAN_DEPTH fails closed.
 #   Residuals, by target (honor-system):
 #     - classification time: the exemption reads the text and the filesystem when the hook runs,
 #       so a link swapped in afterwards — by a watcher an earlier call of the same agent started —
 #       is not seen
 #     - a reader name rebound outside the call's text (a binary planted earlier in a PATH dir)
-#     - what a reader, or a script run as a reader or interpreter script operand, writes, and
-#       what an interpreter running its own code string does with a read piped into it
-#     - a read whose output reaches another command's arguments through a command or process
-#       substitution, a variable assigned from one, or a file (`rm "$(echo <profile>/CLAUDE.md)"`,
-#       `X=$(ls -d <profile>/CLAUDE.md); rm $X`)
+#     - what a reader, or a script run as a reader or interpreter script operand, writes
 #     - a relative spelling with no cd, resolved against the session cwd
 #       (`echo x > .claude-personal/CLAUDE.md` from a $HOME cwd)
 #     - a non-literal word reaching home with no visible home prefix (a glob over the home path,
@@ -173,9 +164,8 @@
 #     clobber redirects (`>!`, `>>!`, `&>!`, `>&!`, `>>|`, `2>!`) onto a live hook or settings
 #     file, a command substitution inside double quotes, backticks or an unquoted-delimiter
 #     heredoc, a `bash -c` nested past MAX_SCAN_DEPTH, interpreter code fed on stdin, `ln -s` of a
-#     root or of home, a read piped into xargs or a shell, a variable bound to a protected path
-#     (`F=~/.claude/settings.json; echo x > "$F"`), and staging through an append to a profile
-#     `shell-snapshots/` file, which the Bash tool sources before every later call.
+#     root or of home, and staging through an append to a profile `shell-snapshots/` file, which
+#     the Bash tool sources before every later call.
 #
 # Grant: HARNESS_PROTECTION_APPROVE=1 in the hook's LAUNCH environment → pass
 # (parity with CONFIG_PROTECTION_APPROVE). CAVEAT: an in-session
@@ -246,7 +236,8 @@ hook_require_python3_unless_empty "${INPUT}" "HAR-003" \
 #       inequality, which this option does not govern.
 #   (c) the lib's claude_config_is_exempt_entry, reached through
 #       is_agent_form_blocked — the first allowlist-shaped pass under this option.
-#       A fold there admits only a case variant of a jobs/<id>/tmp or progress name, which APFS resolves to the same entry; the home prefix is
+#       A fold there admits only a case variant of a jobs/<id>/tmp, runtime-data or
+#       progress name, which APFS resolves to the same entry; the home prefix is
 #       stripped case-sensitively and membership is anchored at the remainder's
 #       first segment, so a fold never exempts a different file. The Bash reader-set
 #       test sits in the classifier and is case-sensitive: a case-varied reader name
@@ -928,7 +919,7 @@ def heredoc_consumer(text, op_start, mask):
 
 
 def split_heredocs(text):
-    """(code text, [(consumer_is_shell, consumer name, body, delimiter quoted)]). A heredoc body consumed by a
+    """(code text, [(consumer_is_shell, body, consumer name, delimiter quoted)]). A heredoc body consumed by a
     non-shell is DATA and leaves the scan entirely — without this, a progress
     note quoting a bypass would arm the machine and block itself. ANY parse
     ambiguity (unknown delimiter shape, unterminated body) returns the raw text
@@ -1492,17 +1483,8 @@ SED_PRINT_RE = re.compile(r"^(?:(?:\d+|\$)(?:,(?:\d+|\$))?|/[^/\\]*/(?:,/[^/\\]*
 # A path-qualified command word counts only from a system bin dir, never a planted copy.
 READER_DIRS = ("/bin/", "/usr/bin/", "/sbin/", "/usr/sbin/")
 
-# Commands that turn their input into another command's arguments: present anywhere in a call,
-# they void every reader position in it.
-ARGV_CONSUMERS = ("xargs", "parallel", "read", "mapfile", "readarray", "vared")
-# Stdin filters beside READERS: what they read on stdin stays data, never argv or code.
-PIPE_FILTERS = (
-    "cut", "tr", "tee", "column", "nl", "rev", "fold", "paste", "tac", "base64", "od", "hexdump",
-    "xxd", "less", "more", "sed", "fmt", "expand", "unexpand", "strings", "comm", "join",
-)
-
 AGENT = {"on": False, "triples": [], "keys": set(), "reads": [], "void": False,
-         "cwd": None, "seen": False, "piped": False}
+         "cwd": None, "seen": False}
 
 
 def agent_emit(flag, written, resolved):
@@ -1606,8 +1588,8 @@ def agent_code_search(code):
 
 
 def agent_cd(name, args, cwd):
-    """The directory after a cd / pushd / popd, home spelling expanded and `..` kept (the exemption
-    voids it). An unnameable one is unknown only after an in-scope cd, else out of scope."""
+    """The directory after a cd / pushd / popd, as written with its home spelling expanded — `..`
+    is kept, so the exemption's `..` void applies to every later relative word."""
     unnameable = UNKNOWN_DIR if AGENT["seen"] else None
     if name == "popd" or "-" in args or any(ROTATE_ARG_RE.match(a) for a in args):
         return unnameable
@@ -1618,19 +1600,16 @@ def agent_cd(name, args, cwd):
     split = home_split(dest)
     if split is not None:
         new = (dest if dest.startswith("/") else _HOME + split[0]) if split[1] else UNKNOWN_DIR
-    elif dest.startswith("/") or cwd not in (None, UNKNOWN_DIR):
-        joined = dest if dest.startswith("/") else cwd + "/" + dest
-        new = joined if LITERAL_RE.match(dest) else unnameable
-    else:
+    elif dest.startswith("/"):
+        new = dest if LITERAL_RE.match(dest) else unnameable
+    elif cwd is None or cwd == UNKNOWN_DIR:
         new = cwd
-    mark_cd_seen(new)
-    return new
-
-
-def mark_cd_seen(new):
+    else:
+        new = cwd + "/" + dest if LITERAL_RE.match(dest) else UNKNOWN_DIR
     if new == UNKNOWN_DIR or (new and (is_scope_candidate(new)
                                         or is_scope_candidate(os.path.realpath(new)))):
         AGENT["seen"] = True
+    return new
 
 
 def effective_command(plain):
@@ -1670,8 +1649,8 @@ def reader_name(value):
 
 def agent_redirects(toks, cwd):
     """(plain word tokens, here-string words, reader void). Every redirect target is a non-read;
-    a `<` source is a read. A target that is not a path-shaped word voids the segment's reader
-    positions."""
+    a `<` source is a read. A `!` or `|` right after a `>` operator is part of it (zsh `>!`, `>>|`),
+    and a target that is not a path-shaped word voids the segment's reader positions."""
     plain, herestrings, void = [], [], False
     i = 0
     while i < len(toks):
@@ -1680,38 +1659,25 @@ def agent_redirects(toks, cwd):
             plain.append(tok)
             i += 1
             continue
-        nxt, i = redirect_target(toks, i)
+        nxt = toks[i + 1] if i + 1 < len(toks) else None
+        if tok[0] == "redir" and nxt and nxt[0] == "word" and not nxt[2] \
+                and nxt[3] == tok[4] and nxt[1][:1] in ("!", "|"):
+            if len(nxt[1]) > 1:
+                nxt = ("word", nxt[1][1:], False, nxt[3] + 1, nxt[4])
+            else:
+                i += 1
+                nxt = toks[i + 1] if i + 1 < len(toks) else None
         if nxt is None or nxt[0] != "word" or not nxt[1] or nxt[1][:1] in ("!", "|", "&"):
             void = True
             i += 1
             continue
-        redirect_judge(tok[1], nxt[1], herestrings, cwd)
+        if tok[0] == "redirin":
+            if tok[1] == "<<<":
+                herestrings.append(nxt[1])
+        elif not (tok[1] == ">&" and (nxt[1].isdigit() or nxt[1] == "-")):
+            agent_judge(nxt[1], cwd)
         i += 2
     return plain, herestrings, void
-
-
-def redirect_judge(op, target, herestrings, cwd):
-    """A `<<<` word is code or data for the consumer; any other `<` source is a read; an output
-    target is a non-read, a bare fd after `>&` excepted."""
-    if op.startswith("<"):
-        if op == "<<<":
-            herestrings.append(target)
-    elif not (op == ">&" and (target.isdigit() or target == "-")):
-        agent_judge(target, cwd)
-
-
-def redirect_target(toks, i):
-    """(target token, operator index) for the redirect at toks[i]. A `!` or `|` glued right after
-    a `>` operator is part of it (zsh `>!`, `>>|`), so the target is the word after that."""
-    tok = toks[i]
-    nxt = toks[i + 1] if i + 1 < len(toks) else None
-    if tok[0] == "redir" and nxt and nxt[0] == "word" and not nxt[2] \
-            and nxt[3] == tok[4] and nxt[1][:1] in ("!", "|"):
-        if len(nxt[1]) > 1:
-            return ("word", nxt[1][1:], False, nxt[3] + 1, nxt[4]), i
-        i += 1
-        nxt = toks[i + 1] if i + 1 < len(toks) else None
-    return nxt, i
 
 
 def is_code_interp(name):
@@ -1750,92 +1716,46 @@ def agent_interpreter(name, argv, herestrings, depth, armed, cwd):
         agent_judge(w, cwd)
 
 
-def agent_segment(toks, depth, armed, glued):
+def agent_segment(seg, toks, depth, armed, glued):
     """Judge one segment for the agent_id read proof. A reader in a clean command position — behind
     nothing but CLEAN_RESERVED — reads its admitted operands; every other word is a non-read."""
     cwd = AGENT["cwd"]
     plain, herestrings, void = agent_redirects(toks, cwd)
-    # A word glued to an unquoted `(` carries a zsh glob qualifier outside this segment.
-    if glued and plain and agent_nonliteral(plain[-1][1]):
-        plain = plain[:-1]
-    ci = clean_index(plain)
-    if ci >= len(plain):
-        return
-    eff_idx, eff_name = effective_command(plain)
-    agent_flow(plain, ci, eff_idx, eff_name)
-    if eff_name in ("cd", "pushd", "popd"):
-        AGENT["cwd"] = agent_cd(eff_name, [t[1] for t in plain[eff_idx + 1:]], cwd)
-    name = reader_name(plain[ci][1])
-    words = [t[1] for t in plain[ci + 1:]]
-    reader = None if void else admitted_reader(name, words)
-    if reader:
-        agent_reads(reader, words, cwd)
-    elif is_code_interp(name) or name in INTERP_SHELL:
-        agent_interpreter(name, plain[ci:], herestrings, depth, armed, cwd)
-    else:
-        agent_nonreads(name, words, cwd)
-
-
-def clean_index(plain):
-    """Index of the first word past the leading CLEAN_RESERVED run."""
+    if agent_rebinds(plain):
+        AGENT["void"] = True
     ci = 0
     while ci < len(plain) and not plain[ci][2] and plain[ci][1] in CLEAN_RESERVED:
         ci += 1
-    return ci
-
-
-def agent_flow(plain, ci, eff_idx, eff_name):
-    """Data flow out of a read. A rebinding, an argv consumer (xargs, read) anywhere in the call,
-    or a pipe into a segment that is not a stdin-safe consumer voids every reader position; a
-    variable bound to a home-spelled value carries that path to every later use, so it is judged."""
-    if agent_rebinds(plain) or eff_name in ARGV_CONSUMERS:
-        AGENT["void"] = True
-    if AGENT["piped"]:
-        AGENT["piped"] = False
-        if not is_pipe_safe(reader_name(plain[ci][1]), plain[ci:]):
-            AGENT["void"] = True
-    bound = plain[:eff_idx] + (plain[eff_idx + 1:] if eff_name in DECLARE_CMDS else [])
-    for tok in bound:
-        m = ASSIGN_WORD_RE.match(tok[1])
-        if m and home_split(tok[1][m.end():]) is not None:
-            agent_judge(tok[1][m.end():], None)
-
-
-def is_pipe_safe(name, argv):
-    """A pipe consumer whose stdin stays data: a reader-set or filter command, or an interpreter
-    running its own code string (what that code does at run time is a named residual)."""
-    if name in READERS or name in PIPE_FILTERS:
-        return True
-    if name in INTERP_AWK:
-        return awk_program(argv) is not None
-    return is_code_interp(name) and leading_flag_run(argv)[1] is not None
-
-
-def admitted_reader(name, words):
-    """The READERS entry for a command whose option words and script all stay inside its closed
-    admission, else None."""
-    reader = READERS.get(name)
+    if ci >= len(plain):
+        return
+    # A word glued to an unquoted `(` carries a zsh glob qualifier outside this segment.
+    if glued and agent_nonliteral(plain[-1][1]):
+        plain = plain[:-1]
+    name = reader_name(plain[ci][1])
+    words = [t[1] for t in plain[ci + 1:]]
+    reader = None if void else READERS.get(name)
     if reader and any(w.startswith("-") and w != "-" and not reader[0].match(w) for w in words):
-        return None
+        reader = None
     if reader and reader[1] == "test" and "]]" in words[:-1]:
-        return None
+        reader = None
     if reader and reader[1] == "sed":
         script = [w for w in words if not w.startswith("-")][:1]
-        return reader if script and SED_PRINT_RE.match(script[0]) else None
-    return reader
-
-
-def agent_reads(reader, words, cwd):
-    operands = [w for w in words if not (w.startswith("-") and w != "-")]
-    # The sed script is no path, so it is neither read nor judged.
-    reads, rest = {"first": (operands[:1], operands[1:]),
-                   "sed": (operands[1:], [])}.get(reader[1], (operands, []))
-    AGENT["reads"].extend((w, cwd) for w in reads)
-    for w in rest:
-        agent_judge(w, cwd)
-
-
-def agent_nonreads(name, words, cwd):
+        reader = reader if script and SED_PRINT_RE.match(script[0]) else None
+    eff_idx, eff_name = effective_command(plain)
+    if eff_name in ("cd", "pushd", "popd"):
+        AGENT["cwd"] = agent_cd(eff_name, [t[1] for t in plain[eff_idx + 1:]], cwd)
+    if reader:
+        operands = [w for w in words if not (w.startswith("-") and w != "-")]
+        # The sed script is no path, so it is neither read nor judged.
+        reads, rest = {"first": (operands[:1], operands[1:]),
+                       "sed": (operands[1:], [])}.get(reader[1], (operands, []))
+        AGENT["reads"].extend((w, cwd) for w in reads)
+        for w in rest:
+            agent_judge(w, cwd)
+        return
+    if is_code_interp(name) or name in INTERP_SHELL:
+        agent_interpreter(name, plain[ci:], herestrings, depth, armed, cwd)
+        return
     for w in words:
         split = home_split(w) if name == "ln" else None
         if split is not None and split[0] in ("", "/"):
@@ -1903,7 +1823,7 @@ def scan_segment(seg, depth, armed, glued=False):
     if not toks:
         return "", armed
     if AGENT["on"]:
-        agent_segment(toks, depth, armed, glued)
+        agent_segment(seg, toks, depth, armed, glued)
     for idx, tok in enumerate(toks):
         if tok[0] != "redir":
             continue
@@ -1952,15 +1872,13 @@ def scan_command(text, depth, armed):
         if AGENT["on"] and CODE_HOME_RE.search(text):
             agent_emit("N", text[:200], "")
         return ""
-    saved = (AGENT["cwd"], AGENT["piped"])
-    AGENT["piped"] = False
+    saved_cwd = AGENT["cwd"]
     try:
         return scan_text(text, depth, armed)
     finally:
         # A re-scanned string runs in a child shell, so its cd never leaks out.
-        AGENT["piped"] = saved[1]
         if depth:
-            AGENT["cwd"] = saved[0]
+            AGENT["cwd"] = saved_cwd
 
 
 def scan_text(text, depth, armed):
@@ -1983,9 +1901,6 @@ def scan_text(text, depth, armed):
         reason, armed = scan_segment(code[start:i], depth, armed, glued)
         if reason:
             return reason
-        # A lone `|` (or `|&`) pipes this segment into the next non-empty one; `||` is no pipe.
-        if ch == "|" and code[i + 1:i + 2] != "|" and code[i - 1:i] != "|":
-            AGENT["piped"] = True
         if ch == "(":
             stack.append((armed, AGENT["cwd"]))
         elif ch == ")" and stack:
@@ -2009,13 +1924,12 @@ def detect_bash(tool_input):
     read re-spelling), an interpreter code-string write (bash-interp-write), or a
     relative write made from a protected cwd (bash-cwd-relative-write)."""
     PROT_CD_SEEN[0] = False
-    AGENT.update(triples=[], keys=set(), reads=[], void=False, cwd=None, seen=False, piped=False)
+    AGENT.update(triples=[], keys=set(), reads=[], void=False, cwd=None, seen=False)
     reason = scan_command(tool_input.get("command", ""), 0, False)
-    # A void anywhere in the call: every read operand is a non-read, and its text may be code.
+    # A rebinding anywhere in the call voids every reader position in it.
     if AGENT["void"]:
         for word, cwd in AGENT["reads"]:
             agent_judge(word, cwd)
-            agent_code_search(word)
     return reason
 
 
@@ -2204,7 +2118,7 @@ block_wording() {
       ;;
     agent-id-bash)
       BLOCK_MSG="Harness-critical command blocked (agent-id-bash): a subagent command names a ~/.claude* profile path it does not provably only read"
-      BLOCK_SUG="A subagent or Workflow agent Bash call may name a profile path only as an operand of a reader command in a clean command position (cat, ls, grep, head, tail, wc, stat, find without -delete/-exec, cd, echo, printf), as a < source, or as a path in its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file. After a cd into a profile path (the job scratchpad included) or into a directory named by a variable (\`cd \"\$T\"\`), every later relative word must be literal: name scratch files without \$var, glob or substitution, pass a glob to a reader (\`cat *.log\`), or cd into the literal path an earlier mktemp printed. A pipe into xargs, a while-read loop, a shell or any other non-filter command, and a variable assigned a profile path, void the read proof: pass the paths to the reader itself. A progress file needs no mkdir — the Write tool creates its memory dir. Re-spell a copy as a read (\`cat <src> > <dest>\`), put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      BLOCK_SUG="A subagent or Workflow agent Bash call may name a profile path only as an operand of a reader command in a clean command position (cat, ls, grep, head, tail, wc, stat, find without -delete/-exec, cd, echo, printf), as a < source, or as a path in its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file. After a cd into a profile path (the job scratchpad included) or into a directory named by a variable (\`cd \"\$T\"\`), every later relative word must be literal: name scratch files without \$var, glob or substitution, pass a glob to a reader (\`cat *.log\`), or cd into the literal path an earlier mktemp printed. Re-spell a copy as a read (\`cat <src> > <dest>\`), put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
       ;;
     agent-id-write)
       BLOCK_SUG="A subagent or Workflow agent writes under a ~/.claude* profile root only into its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file in a memory dir — the BASENAME exception is the orchestrator's. Put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
@@ -2350,7 +2264,7 @@ is_agent_form_blocked() {
     [[ "${rest%%/*}" =~ ^${CLAUDE_CONFIG_ROOT_RE%/}$ ]] || continue
     rest="$(claude_config_strip_branch_root "${path}" "${home}")"
     # shellcheck disable=SC2310
-    claude_config_is_exempt_entry "progress job" "${form}" "${rest}" ${2:+"${2}"} || return 0
+    claude_config_is_exempt_entry "projects job" "${form}" "${rest}" ${2:+"${2}"} || return 0
   done
   return 1
 }

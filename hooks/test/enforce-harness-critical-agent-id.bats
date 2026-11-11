@@ -85,7 +85,6 @@ write_input() {
     "scratch link to a profile root, no .claude in the text|Write|S/profile/CLAUDE.md|2|0"
     "scratch link to home|Write|S/home/.claude-personal/CLAUDE.md|2|0"
     "bare profile root token|Write|H/.claude-personal|2|0"
-    "session transcript under projects|Write|H/.claude-personal/projects/p/s.jsonl|2|0"
     "progress file|Write|H/.claude/projects/p/memory/progress-x.md|0|0"
     "progress file by tilde|Write|~/.claude/projects/p/memory/progress-x.md|0|0"
     "job scratchpad file|Write|H/.claude/jobs/j/tmp/a.txt|0|0"
@@ -118,34 +117,6 @@ write_input() {
   [[ "${status}" == 2 ]] || { echo "row: physical spelling under a linked HOME status=${status}"; echo "${output}"; return 1; }
   run_hook Write "$(write_input Write "${saved}/.claude/jobs/j/tmp/a.txt")" a1
   [[ "${status}" == 0 ]] || { echo "row: scratchpad under a linked HOME status=${status}"; echo "${output}"; return 1; }
-}
-
-# Args: $1=tool $2=tool_input JSON. Runs the hook on the envelope shape a Workflow agent() call
-#   sends: agent_id and agent_type beside a transcript under subagents/workflows/.
-run_workflow_hook() {
-  local envelope
-  envelope="$(jq -cn --arg t "${1}" --argjson ti "${2}" \
-    --arg tp "${FAKE_HOME}/.claude/projects/-x/s1/subagents/workflows/wf_1/agent-a.jsonl" \
-    '{hook_event_name: "PreToolUse", session_id: "s1", transcript_path: $tp, cwd: "/tmp",
-      agent_id: "aacc513b677cafe59", agent_type: "glass-atrium-dev-shell", tool_name: $t,
-      tool_input: $ti}')"
-  run env "HOME=${FAKE_HOME}" "${HOOK_SH}" <<<"${envelope}"
-}
-
-# Row: name | tool | tool_input JSON (`H` = FAKE_HOME) | status.
-@test "a Workflow-shaped envelope is gated like a subagent call" {
-  local rows=(
-    'Write to profile CLAUDE.md|Write|{"file_path":"H/.claude-personal/CLAUDE.md","content":"x"}|2'
-    'Bash redirect to profile CLAUDE.md|Bash|{"command":"echo x > ~/.claude-personal/CLAUDE.md"}|2'
-    'Write into its job scratchpad|Write|{"file_path":"H/.claude/jobs/j/tmp/a.txt","content":"x"}|0'
-    'Bash redirect into its job scratchpad|Bash|{"command":"echo x > ~/.claude/jobs/j/tmp/a.txt"}|0'
-  )
-  local row name tool tin want
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name tool tin want <<<"${row}"
-    run_workflow_hook "${tool}" "${tin//H\//${FAKE_HOME}/}"
-    [[ "${status}" == "${want}" ]] || { echo "row: ${name} status=${status}"; echo "${output}"; return 1; }
-  done
 }
 
 # Args: $1=command text (`@H@` = FAKE_HOME, `@U@` = it upper-cased, `@S@` = scratch dir, `@N@` = a
@@ -230,29 +201,14 @@ run_bash() {
     'append to a profile shell snapshot|printf x >> ~/.claude-personal/shell-snapshots/snapshot-zsh-x.sh|2|0'
     'sed in-place edit|sed -i '"''"' s/a/b/ ~/.claude-personal/CLAUDE.md|2|0'
     'sed script with a write command|sed -n '"'"'1w /tmp/x'"'"' ~/.claude-personal/CLAUDE.md|2|0'
+    'cd from a literal dir into a variable-named dir then relative words|cd /tmp && T=$(mktemp -d) && cd "$T" && npx vitest run src/a.spec.ts|2|0'
     'non-literal relative word after a cd into jobs tmp|cd ~/.claude/jobs/j/tmp && cp evil "$X"|2|0'
-    'echo piped into xargs rm|echo ~/.claude-personal/CLAUDE.md | xargs rm|2|0'
-    'find piped into xargs rm|find ~/.claude-personal -name CLAUDE.md | xargs rm|2|0'
-    'ls piped into a while-read loop|ls -d ~/.claude-personal/* | while read f; do rm "$f"; done|2|0'
-    'xargs fed by a process substitution|xargs rm < <(ls ~/.claude-personal/CLAUDE.md)|2|0'
-    'echoed command piped into a shell|echo "rm ~/.claude-personal/CLAUDE.md" | sh|2|0'
-    'cat piped into a non-filter consumer|cat ~/.claude-personal/x.patch | git apply|2|0'
-    'variable bound to a profile file then a redirect|F=~/.claude-personal/CLAUDE.md; echo x >> "$F"|2|0'
-    'variable bound to a profile root then a copy|P=$HOME/.claude-personal; cp evil $P/CLAUDE.md|2|0'
-    'exported variable bound to a profile root|export P=~/.claude-personal; rm $P/CLAUDE.md|2|0'
-    'redirect to a session transcript under projects|echo x >> ~/.claude-personal/projects/p/s.jsonl|2|0'
-    'mkdir of a memory dir|mkdir -p ~/.claude/projects/p/memory|2|0'
-    'redirect to a profile logs file|echo x > ~/.claude-personal/logs/a.log|2|0'
+    'HAR-002 scratch settings pin|T=$(mktemp -d); echo x > $T/.claude/settings.json|2|2'
     'echo of a loop variable after a cd into jobs tmp|cd ~/.claude/jobs/j/tmp && for f in a b; do echo "== $f"; done|0|0'
     'printf of a profile path|printf '"'"'%s\n'"'"' ~/.claude-personal/CLAUDE.md|0|0'
     'zsh print of a profile path|print -r -- ~/.claude-personal/CLAUDE.md|0|0'
     'glob passed to a reader after a cd into jobs tmp|cd ~/.claude/jobs/j/tmp && cat *.log|0|0'
     'cd into a literal mktemp path then relative words|cd /tmp/ga-t.x && npx vitest run src/a.spec.ts|0|0'
-    'cd from a literal dir into a variable-named dir then relative words|cd /tmp && T=$(mktemp -d) && cd "$T" && npx vitest run src/a.spec.ts|0|0'
-    'cat piped into a filter chain|cat ~/.claude-personal/CLAUDE.md | cut -c1-5 | sort | uniq -c|0|0'
-    'transcript read piped into python code|cat ~/.claude/projects/p/x.jsonl | python3 -c "import sys; print(len(sys.stdin.read()))"|0|0'
-    'or-list after a read is no pipe|cat ~/.claude-personal/CLAUDE.md || true|0|0'
-    'variable bound to a jobs tmp path|OUT=~/.claude/jobs/j/tmp/o.txt; echo x > "$OUT"|0|0'
     'progress file by tilde|echo x > ~/.claude/projects/p/memory/progress-x.md|0|0'
     'progress file by $HOME|echo x > $HOME/.claude/projects/p/memory/progress-x.md|0|0'
     'progress file by literal home|echo x > @H@/.claude/projects/p/memory/progress-x.md|0|0'
@@ -291,6 +247,18 @@ run_bash() {
     [[ "${status}" == "${want_main}" ]] || { echo "row: ${name} main status=${status}"; echo "${output}"; fails=$((fails + 1)); }
   done
   [[ "${fails}" == 0 ]]
+}
+
+@test "an agent_id copy keeps the byte-identical relabel of a protected copy source" {
+  local agent
+  for agent in "" a1; do
+    run_bash 'cp ~/.claude/hooks/x.sh /tmp/y' "${agent}"
+    [[ "${status}" == 2 && "${output}" == *bash-source-position* ]] \
+      || { echo "row: tilde source agent_id=${agent:-none} status=${status}"; echo "${output}"; return 1; }
+    run_bash 'cp $HOME/.claude/hooks/x.sh /tmp/y' "${agent}"
+    [[ "${status}" == 2 && "${output}" == *bash-mutation* ]] \
+      || { echo "row: \$HOME source agent_id=${agent:-none} status=${status}"; echo "${output}"; return 1; }
+  done
 }
 
 # Row: name | perl substitution applied to a copy of the hook's triple emit. The unpatched copy

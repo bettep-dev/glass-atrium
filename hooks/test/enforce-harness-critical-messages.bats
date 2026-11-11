@@ -61,11 +61,10 @@ scope: DEV
 MD
 }
 
-# Args: $1=tool_name $2=tool_input JSON object $3=agent_id (optional, "" = main session).
 run_hook() {
-  local tool="${1}" tin="${2}" agent="${3:-}" envelope
-  envelope="$(jq -cn --arg t "${tool}" --arg a "${agent}" --argjson ti "${tin}" \
-    '{tool_name: $t, tool_input: $ti} + (if $a == "" then {} else {agent_id: $a} end)')"
+  local tool="${1}" tin="${2}" envelope
+  envelope="$(jq -cn --arg t "${tool}" --argjson ti "${tin}" \
+    '{tool_name: $t, tool_input: $ti}')"
   run env "HOME=${FAKE_HOME}" "${HOOK_SH}" <<<"${envelope}"
 }
 
@@ -196,18 +195,6 @@ name: glass-atrium-dev-shell" "name: glass-atrium-dev-shell")"
       echo "expected bash-mutation for: ${cmd} (got $(payload_field 'context.class'))"
       return 1
     }
-  done
-}
-
-@test "R2 relabel of a protected copy source is byte-identical for a subagent and the main session" {
-  local agent
-  for agent in "" a1; do
-    run_hook "Bash" "$(bash_input 'cp ~/.claude/hooks/x.sh /tmp/y')" "${agent}"
-    [[ "${status}" -eq 2 && "$(payload_field 'context.class')" == bash-source-position ]] \
-      || { echo "row: tilde source agent_id=${agent:-none} status=${status}"; echo "${output}"; return 1; }
-    run_hook "Bash" "$(bash_input 'cp $HOME/.claude/hooks/x.sh /tmp/y')" "${agent}"
-    [[ "${status}" -eq 2 && "$(payload_field 'context.class')" == bash-mutation ]] \
-      || { echo "row: \$HOME source agent_id=${agent:-none} status=${status}"; echo "${output}"; return 1; }
   done
 }
 

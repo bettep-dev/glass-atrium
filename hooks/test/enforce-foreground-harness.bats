@@ -173,17 +173,6 @@ list_bashes() {
   done
 }
 
-@test "a hardlinked progress file stays exempt, since the foreground gate never applies the hardlink void" {
-  local home="${BATS_TEST_TMPDIR}/home/u" mem
-  mem="${home}/.claude/projects/-Users-x/memory"
-  mkdir -p "${mem}" "${home}/scratch"
-  printf 'p\n' >"${mem}/progress-foo.md"
-  ln "${mem}/progress-foo.md" "${home}/scratch/progress-foo.md"
-  HOME="${home}" GA_DATA_ROOT="${home}/.glass-atrium" run_agent \
-    'Persist ~/.claude/projects/-Users-x/memory/progress-foo.md now.' omit
-  [[ "${status}" -eq 0 ]] || { echo "row: hardlinked progress file · status ${status}: ${output}"; return 1; }
-}
-
 @test "a .. segment voids every exemption" {
   local row name prompt
   for row in \
