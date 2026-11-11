@@ -35,7 +35,7 @@
 # tool_uses beyond (min 1 step; default 40 → 40,48,56,...). WHY durable: a maxTurns hard-kill fires
 # NO SubagentStop, so synthesis yields zero rows for that death mode; the overage row is written
 # BEFORE death, the self-improvement loop's only surviving signal. agent_type recovered from the
-# agent-<agent_id>.meta.json sidecar (same pattern as block-doc-routing-leak.sh). The write goes
+# agent-<agent_id>.meta.json sidecar. The write goes
 # through _pg-write.py: any DB/driver/jq error NEVER fails the hook. Cost spent only on a crossing.
 
 set -Eeuo pipefail
@@ -61,9 +61,9 @@ overage_writer="${SUBAGENT_OVERAGE_WRITER:-${DEFAULT_OVERAGE_WRITER}}"
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# recover_agent_type — resolve agent_type from the agent-<agent_id>.meta.json sidecar (same pattern as
-# block-doc-routing-leak.sh). Echoes agentType on success, empty on ANY failure (null fallback,
-# accepted). Args: $1=transcript_path $2=session_id $3=agent_key.
+# recover_agent_type — resolve agent_type from the agent-<agent_id>.meta.json sidecar. Echoes
+# agentType on success, empty on ANY failure (null fallback, accepted).
+# Args: $1=transcript_path $2=session_id $3=agent_key.
 recover_agent_type() {
   local transcript_val="${1}" session_val="${2}" agent_key="${3}"
   # Need agent_key AND at least one resolution anchor.

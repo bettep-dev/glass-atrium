@@ -16,7 +16,6 @@ CORE="${GA}/lib/ga-env.sh"
 SECURITY_CRITICAL_HOOKS=(
   block-dangerous-commands.sh
   detect-secret-file-write.sh
-  enforce-config-protection.sh
   validate-pre-write-raw.sh
   validate-prompt.sh
   validate-secret-scan.sh

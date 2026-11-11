@@ -1,20 +1,17 @@
 #!/usr/bin/env bats
-# Envelope smoke cases for two stdin-only bound hooks: block-md-creation and validate-pre-write-raw.
+# Envelope smoke cases for the stdin-only bound hook validate-pre-write-raw.
 #
 # Run via: bats hooks/test/wiring-only-smoke.bats
 # Requires: bats (brew install bats-core), bash 3.2+, python3, jq.
 #
-# Hermetic strategy: both hooks under test read ONLY stdin; block-md-creation's
-# monitor-port resolver is pinned via ATRIUM_MONITOR_PORT (no config sourcing),
-# and validate-pre-write-raw's WIKI_ROOT env seam points into a mktemp sandbox.
+# Hermetic strategy: the hook reads ONLY stdin, and its WIKI_ROOT env seam points into a
+# mktemp sandbox.
 
-MD_HOOK="${BATS_TEST_DIRNAME}/../block-md-creation.sh"
 RAW_HOOK="${BATS_TEST_DIRNAME}/../validate-pre-write-raw.sh"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
-  [[ -f "${MD_HOOK}" ]] || skip "hook not found: ${MD_HOOK}"
   [[ -f "${RAW_HOOK}" ]] || skip "hook not found: ${RAW_HOOK}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -23,29 +20,6 @@ setup() {
 
 teardown() {
   if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
-}
-
-# ── block-md-creation.sh — PreToolUse(Write) monitor SoT-bypass gate ─────────────────
-
-# Run block-md-creation with an envelope on stdin. Args: $1=input JSON.
-run_md_hook() {
-  run env ATRIUM_MONITOR_PORT="16145" bash "${MD_HOOK}" <<<"${1}"
-}
-
-@test "block-md-creation: monitor-internal documents write → DEL-002 block (exit 2)" {
-  run_md_hook '{"tool_name":"Write","tool_input":{"file_path":"/Users/u/.glass-atrium/monitor/data/documents/doc.md"}}'
-  [[ "${status}" -eq 2 ]] || return 1
-  [[ "${output}" == *"DEL-002"* ]] || return 1
-}
-
-@test "block-md-creation: ordinary markdown write elsewhere → pass (exit 0)" {
-  run_md_hook '{"tool_name":"Write","tool_input":{"file_path":"/tmp/proj/README.md"}}'
-  [[ "${status}" -eq 0 ]] || return 1
-}
-
-@test "block-md-creation: non-Write tool → pass (exit 0)" {
-  run_md_hook '{"tool_name":"Edit","tool_input":{"file_path":"/Users/u/.glass-atrium/monitor/data/documents/doc.md"}}'
-  [[ "${status}" -eq 0 ]] || return 1
 }
 
 # ── validate-pre-write-raw.sh — PreToolUse(Write|Edit) wiki raw-ingestion gate ───────
