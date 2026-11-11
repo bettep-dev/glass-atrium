@@ -6,7 +6,7 @@
 # behind a newly created profile branch. Bash 3.2+ (macOS stock).
 #
 # `nocasematch` is deliberately never touched here: every predicate uses [[ ]], so each consumer's
-# AMBIENT setting governs, from one code path; each consumer states its own case mode.
+# AMBIENT setting governs, from one code path.
 
 # Double-source guard.
 # shellcheck disable=SC2317
