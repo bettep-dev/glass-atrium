@@ -266,6 +266,28 @@ rewrite_hook_paths() {
   log "rewrite_hook_paths: repointed ${pending} hook command(s) ${old_dir} -> ${new_dir} (backup: ${backup})"
 }
 
+# Live Atrium-owned settings.json bindings as event<US>basename<US>matcher keys, sorted unique — a command under
+# either Atrium hooks dir; a foreign user hook is never listed. Basename via split("/")|last (never a regex — a $HOME
+# with metachars stays byte-safe); a leading '~' normalized by string slicing, mirroring retire_hook_binding.
+# Empty on a malformed settings.json or a jq failure (callers treat empty as "nothing bound"). Read-only.
+get_live_hook_bindings() {
+  # shellcheck disable=SC2312  # a jq failure yields empty output by design (see above)
+  jq -r --arg home "${HOME}" \
+    --arg d1 "${HOME}/.claude/hooks/" --arg d2 "${HOME}/.glass-atrium/hooks/" '
+    def norm: (. // "") | (if startswith("~/") then $home + .[1:] else . end);
+    (.hooks // {}) | to_entries[]
+    | select((.value | type) == "array")
+    | .key as $ev
+    | .value[]
+    | ((.matcher // "") | tostring) as $m
+    | (.hooks // [])[]?
+    | select((.command | type) == "string")
+    | (.command | norm)
+    | select(startswith($d1) or startswith($d2))
+    | [ $ev, (split("/") | last), $m ] | join("\u001f")
+  ' -- "${SETTINGS_JSON}" 2>/dev/null | sort -u || printf ''
+}
+
 # wire reconcile primitive: DROP a stale-matcher binding left behind by a matcher change.
 # WHY: the wire loop is ADD-ONLY — is_hook_bound is (event, matcher, basename)-scoped, so when a hook's EXPECTED_HOOK_BINDINGS matcher CHANGES (validate-pre-write-raw.sh Write -> Write|Edit) the new row is ADDED while the OLD-matcher row survives → the hook DOUBLE-FIRES on every matching tool call. This pass removes every Atrium binding whose (event, basename) IS expected but whose matcher is NOT.
 # NARROW predicate (deliberate): an (event, basename) pair with NO expected row at all is a RETIRED or hand-wired hook and is LEFT ALONE — that surface belongs to retire_hook_binding, and unwire_hooks documents that surplus Atrium bindings legitimately exist. A sibling row whose matcher IS expected survives untouched (validate-secret-scan.sh and enforce-harness-critical.sh each legitimately hold TWO matcher rows under PreToolUse).
@@ -289,26 +311,8 @@ reconcile_stale_hook_matchers() {
     expected_pair+="${event}"$'\x1f'"${hook}"$'\n'
   done
 
-  # enumerate the LIVE Atrium-owned bindings as event/basename/matcher keys. Basename via split("/")|last (never a regex — a $HOME with metachars stays byte-safe); the leading '~' normalized by string slicing, mirroring retire_hook_binding.
   local live
-  # jq status masked by the pipeline BY DESIGN: a malformed settings.json already died in wire_hooks, so any residual failure yields empty output → the emptiness guard below returns a clean no-op rather than a bogus drop list (SC2312).
-  # shellcheck disable=SC2312
-  live="$(
-    jq -r --arg home "${HOME}" \
-      --arg d1 "${HOME}/.claude/hooks/" --arg d2 "${HOME}/.glass-atrium/hooks/" '
-      def norm: (. // "") | (if startswith("~/") then $home + .[1:] else . end);
-      (.hooks // {}) | to_entries[]
-      | select((.value | type) == "array")
-      | .key as $ev
-      | .value[]
-      | ((.matcher // "") | tostring) as $m
-      | (.hooks // [])[]?
-      | select((.command | type) == "string")
-      | (.command | norm)
-      | select(startswith($d1) or startswith($d2))
-      | [ $ev, (split("/") | last), $m ] | join("\u001f")
-    ' -- "${SETTINGS_JSON}" 2>/dev/null | sort -u || printf ''
-  )"
+  live="$(get_live_hook_bindings)"
   [[ -n "${live}" ]] || return 0
 
   # stale = the basename IS expected under this event, but THIS matcher is not.

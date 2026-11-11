@@ -192,6 +192,9 @@ ga_init_env() {
   # installer deploys the hook FILES; the user wires them via these bindings. The doctor check (run_doctor
   # §6) reads settings.json read-only + WARNS per missing binding (a deployed-but-unwired hook is dormant).
   readonly SETTINGS_JSON="${TARGET_HOME}/settings.json"
+  # latest harness integrity verdict (lib/ga-doctor.sh → set_integrity_verdict); hooks/inject-session-context.sh
+  # reads the same path, pinned by hooks/test/inject-session-context.bats
+  readonly INTEGRITY_VERDICT="${GA_DATA_ROOT}/data/integrity/last-verdict"
 
   # expected hook->event bindings the user MUST register in settings.json for the deployed hooks to fire.
   # Each entry = "<event>\t<hook-basename>\t<matcher>" (events: PreToolUse / PostToolUse / SessionStart /

@@ -172,6 +172,15 @@ warn_total_of_output() {
   esac
 }
 
+# The warning total less the harness-integrity term: the unanswerable case adds an agent body the
+# manifest does not list, a surplus file that row counts by design (kind A), independent of this section.
+warn_total_less_integrity() {
+  local total term
+  total="$(warn_total_of_output)" || return 1
+  term="$(printf '%s\n' "${output}" | sed -n 's/.* \([0-9][0-9]*\) harness-integrity .*/\1/p')"
+  printf '%s' "$((total - ${term:-0}))"
+}
+
 @test "AC1 a drifted mirror is reported on an info row naming the drifted agent" {
   seed_registry Read
   run_doctor_sandbox
@@ -216,21 +225,21 @@ warn_total_of_output() {
   local synced drifted unavailable unanswerable
   seed_registry Read Grep
   run_doctor_sandbox
-  synced="$(warn_total_of_output)"
+  synced="$(warn_total_less_integrity)"
 
   seed_registry Read
   run_doctor_sandbox
-  drifted="$(warn_total_of_output)"
+  drifted="$(warn_total_less_integrity)"
   assert_output_has "tools mirror drift"
 
   stub_python_without_yaml
   run_doctor_sandbox "${STUB_BIN}:${PATH}"
-  unavailable="$(warn_total_of_output)"
+  unavailable="$(warn_total_less_integrity)"
 
   seed_registry Read Grep
   seed_unparseable_agent
   run_doctor_sandbox
-  unanswerable="$(warn_total_of_output)"
+  unanswerable="$(warn_total_less_integrity)"
 
   [[ "${synced}" == "${drifted}" && "${synced}" == "${unavailable}" && "${synced}" == "${unanswerable}" ]] || {
     echo "kind-B violation: warning total moved — synced=${synced} drifted=${drifted} unavailable=${unavailable} unanswerable=${unanswerable}" >&2
