@@ -35,8 +35,7 @@ INPUT=$(hook_read_input)
 # phrase into harmless fragments; stripping it lets the phrase reassemble across the NUL.
 # No fail-open handler by design: malformed / non-object JSON, or python3 absent → the parse
 # command fails → set -e exits non-zero, the fail-hard (loud-fail) behavior on bad input.
-# Waited file capture, not <( ): bash 3.2 cannot wait on a process substitution, and its late exit
-# SIGCHLD can interrupt the advisory write below.
+# Waited file capture, not <( ): the parse's own exit status reaches set -e (a <( ) child's is lost).
 PARSED_FIELDS="$(mktemp)"
 # shellcheck disable=SC2329  # invoked from the EXIT trap string
 delete_parsed_fields() {

@@ -1,39 +1,5 @@
 #!/usr/bin/env bats
-# Wiring-only-coverage reconciliation + cheap smoke cases (plan clauded-docs/284 T5).
-#
-# RECONCILIATION RECORD (test/doctor-hook-bindings.bats roster vs hooks/test/ behavioral
-# coverage, computed on this branch — the T5 AC's enumerate-before-authoring step):
-#
-#   Roster = 37 unique hook basenames across the 44 EXPECTED_HOOK_BINDINGS leaves.
-#   Verified WIRING-ONLY set (bound in doctor, executed by NO hooks/test suite) = 11:
-#     security five — block-dangerous-commands · detect-secret-file-write
-#                    · validate-secret-scan · enforce-config-protection · inject-session-context
-#     plus       — advisory-preedit-facts · advisory-spawn-budget · block-md-creation
-#                    · post-edit-outcome-sync · validate-compliance-matrix · validate-pre-write-raw
-#   NOT wiring-only (adjacent-suite behavioral coverage confirmed by execution, not mention):
-#     advisory-context-budget + advisory-spawn-cost → advisory-read-cache.bats (fires both)
-#     post-edit-typecheck → hook-utils-fields.bats (migration-parity cases execute it)
-#     prune-session-spawns + prune-security-warnings-state → prune-mtime-portable.bats
-#   DELTA vs the review's count of 11: +1 — advisory-spawn-budget. Its only hooks/test
-#     reference is a prose comment in enforce-verification-gate.bats (never executed),
-#     so it IS wiring-only; the review's 11 evidently classed it covered.
-#
-#   Coverage AFTER this change: the security five each gain a dedicated smoke suite
-#   (block-dangerous-commands.bats · detect-secret-file-write.bats
-#   · validate-secret-scan.bats · enforce-config-protection.bats · inject-session-context.bats);
-#   block-md-creation + validate-pre-write-raw gain cheap envelope smokes BELOW (both are
-#   stdin-only with env seams — no fixture cost).
-#
-#   DOCUMENTED RESIDUAL GAP (4, each needs a non-trivial fixture — backlog per plan
-#   Non-Goals, owner dev-shell):
-#     advisory-preedit-facts    — Stop-only transcript-tail advisory; needs a JSONL
-#                                 transcript corpus fixture.
-#     advisory-spawn-budget     — PreToolUse(Agent) cumulative spawn-count advisory;
-#                                 needs a seeded session-spawns append-trace fixture.
-#     post-edit-outcome-sync    — PostToolUse(Write) outcome→progress status flip;
-#                                 needs paired outcome + open-progress file fixtures.
-#     validate-compliance-matrix — SessionStart matrix parser (Layer A drift + Layer B
-#                                 consistency); needs a rules-tree + matrix-doc fixture.
+# Envelope smoke cases for two stdin-only bound hooks: block-md-creation and validate-pre-write-raw.
 #
 # Run via: bats hooks/test/wiring-only-smoke.bats
 # Requires: bats (brew install bats-core), bash 3.2+, python3, jq.
