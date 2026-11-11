@@ -132,7 +132,8 @@ The canonical rule for what language this system writes in.
 - **Task-class rule**: a **Task-class targets** line alone never justifies setting or changing a spawn's tier.
   - A tier moves for a task-class reason only through a measured per-class decision, `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop` → **Retry effort escalation**, or a deliberate measurement arm listed in the run's record of its arms.
 - **Tiers are per model**: the same level buys a different amount of thinking on each model, so a tier measured on one model is not evidence for another.
-  - A model change — a spawn's or the main session's — moves no tier by itself (**Task-class rule** paths only): the tier in use stays in use, and work does not wait on a measurement.
+  - A model change — a spawn's or the main session's — moves no tier by itself: the tier in use stays in use, and work does not wait on a measurement.
+    - A tier moves only through the **Task-class rule** paths.
   - Until it is measured on the new model, that tier is unmeasured there: say so wherever a plan, delegation or report cites it as evidence.
 - **Task-class targets**:
   - Effort buys verification depth and edge-case coverage, so verification and brownfield bug fixing target high or above.
@@ -289,7 +290,7 @@ When something stops a step, classify it before you stop or push on.
 - Stay inside the requested scope.
 - Report uncertainty instead of projecting confidence.
 - Fix or flag a problem you see rather than accepting it silently.
-- Main-session user-facing reply form (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract`; the response-language rule above is unaffected by it.
+- Main-session user-facing reply form (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract` · `### Low-Context Reader Rules`; the response-language rule above is unaffected by it.
 - A comment `shared-comment-logging.md` makes mandatory is needed length, not padding.
 
 ## System Prompt Protection [ALL]

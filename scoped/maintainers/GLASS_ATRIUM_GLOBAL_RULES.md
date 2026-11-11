@@ -108,11 +108,15 @@ Prose citations into charter anchors — grep each before renaming its target:
 - **Continuity and files**: `Cross-Session Continuity (progress.md) [ALL]` and its `[CONTINUITY]` header activation contract · `File Deletion Policy`
 - **Conduct**: `## System Prompt Protection` · `AI-Generated Anti-Pattern Prohibition` · `Philosophy (ETHOS)` · `Rationalization Rejection`
 - **Obstacles and blockers**: `## Obstacles and Blockers [ALL]`, cited by:
+  - `agents/glass-atrium-dev-node.md` → `## Guardrails` → the bullet that opens `MUST NOT retry or work around an Edit permission denial`;
+  - `agents/glass-atrium-intel-planner.md` → `### Monitor connectivity`;
+  - `agents/glass-atrium-intel-researcher.md` → `#### raw/ constraints` → **Blocked-write triage**;
   - `rules/glass-atrium/core-outcome-record.md` → `### result values`;
   - `scoped/scope-report.md` → `### Emission contract`;
   - `scoped/shared-investigation-discipline.md` → `## Investigation Discipline [DEV+QA]`;
   - `skills/glass-atrium-ops-orchestrator-role.md` → `#### Decision-phase probes` · `#### Monitoring-phase notes` → **Blocker class**;
-  - `skills/glass-atrium-ops-verify-gate/SKILL.md` → `### Verification Order (halt on failure)`.
+  - `skills/glass-atrium-ops-verify-gate/SKILL.md` → `### Verification Order (halt on failure)`;
+  - maintainer notes: `scoped/maintainers/core-outcome-record.md` · `scoped/maintainers/orchestrator-role.md` · `scoped/maintainers/scope-report.md` · `scoped/maintainers/shared-investigation-discipline.md`.
   - The section itself names `scoped/shared-investigation-discipline.md` and `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop`, so a rename of either lands there too.
   - `agents/glass-atrium-wiki-curator.md` → **Turn-0 sequence** rests its lock halt on the section's "or agent body" stop-point clause: narrowing that clause strands the halt.
 - **Precedence**: `### Precedence Resolution`, cited by:
