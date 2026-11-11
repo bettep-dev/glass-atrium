@@ -380,12 +380,19 @@ _record_skip() {
   printf '%s\t%s\n' "${_base}" "$(date -u +%Y-%m-%d)" >>"${_record}"
 }
 
-# True when a staged pair body is exactly this run's skip sentinel (one line, optional CR) — the
-# model's one way to decline a raw; the per-run nonce keeps raw text from forging it.
-_is_skip_body() {
-  local _content
+# Kind of a staged pair body: skip = exactly this run's skip sentinel (one line, optional CR), the
+# model's one way to decline a raw · garbled-skip = the sentinel amid other text, neither a clean
+# decline nor a note · note = anything else. The per-run nonce keeps raw text from forging it.
+_get_body_kind() {
+  local _content _sentinel="-----GA-WIKI-NOTE-SKIP nonce=${2}-----"
   _content="$(<"$1")"
-  [[ "${_content%$'\r'}" == "-----GA-WIKI-NOTE-SKIP nonce=${2}-----" ]]
+  if [[ "${_content%$'\r'}" == "${_sentinel}" ]]; then
+    printf 'skip\n'
+  elif [[ "${_content}" == *"${_sentinel}"* ]]; then
+    printf 'garbled-skip\n'
+  else
+    printf 'note\n'
+  fi
 }
 
 # True when any processed test holds. Args: raw file, note-url set, collision set, note-source_raw
@@ -958,8 +965,14 @@ for file in "${UNPROCESSED[@]}"; do
     echo "[wiki-daily-compile] WARN: no compiled note returned for ${w_base}" >&2
     continue
   fi
-  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
-  if _is_skip_body "$w_body" "$NONCE"; then
+  w_kind=$(_get_body_kind "${w_body}" "${NONCE}")
+  if [[ "${w_kind}" == "garbled-skip" ]]; then
+    # promote → sentinel indexed as a note · record → an unclean decline dropped → left unprocessed
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARN: garbled skip returned for idx=${w_idx} basename=${w_base} — the skip sentinel must be the pair's only line; left unprocessed for the next run" >>"${LOG_FILE}"
+    echo "[wiki-daily-compile] WARN: garbled skip returned for ${w_base}" >&2
+    continue
+  fi
+  if [[ "${w_kind}" == "skip" ]]; then
     # shellcheck disable=SC2310  # status branched on below — a failed record write is a WARN, not an abort
     if _record_skip "$SKIP_RECORD" "$w_base"; then
       echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] skip recorded for idx=${w_idx} basename=${w_base} in ${SKIP_RECORD} — delete its line to return it to the backlog" >>"$LOG_FILE"

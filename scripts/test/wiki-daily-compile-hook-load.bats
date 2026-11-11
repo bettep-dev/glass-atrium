@@ -614,6 +614,37 @@ load_ancestor_walk() {
   grep -q '"status":"ok"' "${PG_RECORD}"
 }
 
+@test "a skip sentinel amid other text writes no note and no skip record, and leaves its raw for the next run" {
+  make_sandbox
+  seed_raw alpha.md
+  seed_raw beta.md
+  write_template \
+    '-----GA-WIKI-NOTE-BEGIN nonce=@NONCE@ idx=1-----' \
+    '---' \
+    'title: compiled' \
+    '---' \
+    '-----GA-WIKI-NOTE-END nonce=@NONCE@ idx=1-----' \
+    '-----GA-WIKI-NOTE-BEGIN nonce=@NONCE@ idx=2-----' \
+    '-----GA-WIKI-NOTE-SKIP nonce=@NONCE@-----' \
+    'Declined: not a source page.' \
+    '-----GA-WIKI-NOTE-END nonce=@NONCE@ idx=2-----' \
+    '-----GA-WIKI-ENVELOPE-DONE nonce=@NONCE@ count=2-----'
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [ "$status" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
+
+  local garbled
+  garbled="$(idx_basename 2)"
+  [ "$(notes_file_count)" -eq 1 ]
+  [ ! -f "${NOTES_DIR}/${garbled}" ]
+  [ ! -e "${WIKI_ROOT}/index/compile-skips.tsv" ]
+  log_body | grep -q "WARN: garbled skip returned for idx=2 basename=${garbled}"
+  grep -q '"status":"partial"' "${PG_RECORD}"
+}
+
 # ---------------------------------------------------------------------------
 # AC3 / AC5 — hostile and oversize envelopes abort having written nothing
 # ---------------------------------------------------------------------------

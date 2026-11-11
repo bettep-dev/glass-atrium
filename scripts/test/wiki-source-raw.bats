@@ -312,26 +312,30 @@ collisions() { _collect_collision_source_urls "${RAW_DIR}"; }
   [[ -z "${output}" ]]
 }
 
-@test "_is_skip_body: only a body that is exactly this run's skip sentinel is a skip" {
+@test "_get_body_kind: an exact skip sentinel is a skip, the sentinel amid other text is garbled, anything else a note" {
   local nonce="0123456789abcdef0123456789abcdef"
   local sentinel="-----GA-WIKI-NOTE-SKIP nonce=${nonce}-----"
-  # name|body bytes (printf %b)|expected status
+  # name|body bytes (printf %b)|expected kind
   local rows=(
-    "the sentinel alone|${sentinel}\n|0"
-    "the sentinel with a CR line end|${sentinel}\r\n|0"
-    "another run's nonce|-----GA-WIKI-NOTE-SKIP nonce=fedcba9876543210fedcba9876543210-----\n|1"
-    "the sentinel followed by note text|${sentinel}\n# note\n|1"
-    "a note body|---\ntitle: t\n---\n|1"
-    "an empty body||1"
+    "the sentinel alone|${sentinel}\n|skip"
+    "the sentinel with a CR line end|${sentinel}\r\n|skip"
+    "the sentinel followed by a reason line|${sentinel}\nnot a source page\n|garbled-skip"
+    "a blank line before the sentinel|\n${sentinel}\n|garbled-skip"
+    "a space before the sentinel| ${sentinel}\n|garbled-skip"
+    "another run's nonce|-----GA-WIKI-NOTE-SKIP nonce=fedcba9876543210fedcba9876543210-----\n|note"
+    "a note body|---\ntitle: t\n---\n|note"
+    "an empty body||note"
   )
   local row name bytes want got
   for row in "${rows[@]}"; do
     IFS='|' read -r name bytes want <<<"${row}"
     write_raw_bytes "${WORK}/body" "${bytes}"
-    got=0
-    _is_skip_body "${WORK}/body" "${nonce}" || got=$?
+    got="$(_get_body_kind "${WORK}/body" "${nonce}")" || {
+      echo "${name}: _get_body_kind failed"
+      return 1
+    }
     [[ "${got}" == "${want}" ]] || {
-      echo "${name}: status ${got}, want ${want}"
+      echo "${name}: kind '${got}', want '${want}'"
       return 1
     }
   done
