@@ -14,19 +14,19 @@
 #   3) entry-miss WARNING (emit_error stderr JSON, severity warn, code VGATE-ENTRY-001) — a DEV spawn with
 #      NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss). Non-DEV
 #      spawns exit 0 silently; plan-bearing spawns clear THIS branch (but still face surface 2).
-#   Surfaces 1-3 end the hook after their warning, so a spawn draws at most one of them.
+#   Surfaces 1 and 3 exclude each other (plan-reference or none); surface 2 can join either. No
+#      warning ends the hook: every warned spawn still reaches surfaces 4-6.
 #   SIMPLE-TASK ENTRY — a spawn carrying [ENTRY-CLASS] simple-task and NO plan-reference exits 0
 #      silently before surfaces 2-5: it owes no other attestation token and no reviewer.
 #   4) scope-miss ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin DEV spawn whose
-#      prompt carries no bare line-opening [SCOPE] declaration. Emitted only where surfaces 1-3
-#      stay silent.
+#      prompt carries no bare line-opening [SCOPE] declaration, whatever surfaces 1-3 reported.
 #   5) deep-review ADVISORY (stderr, exit 0 — never a block) — a carried [SCOPE] declaration listing
 #      DEEP_REVIEW_FILE_THRESHOLD or more paths, or any path under DEEP_REVIEW_SENSITIVE_PREFIXES,
 #      nudges the orchestrator to compose a Deep (4-pass) review whatever confidence the writer
 #      reports. Counts through the shared scope_decl_files parser; an unparseable declaration is
 #      silence, never a guess. The routing decision itself stays orchestrator prose (honor-system).
 #   6) implementing ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin, plan-referencing
-#      DEV spawn past the reviewer check whose cited plan (authored by glass-atrium-intel-planner) is
+#      DEV spawn whose cited plan (authored by glass-atrium-intel-planner) is
 #      still at doc_review is nudged to record the `implementing` stage, so the session-start open-plan
 #      list carries the plan until it closes. Another author's document is never named — a stage write
 #      would pin a reporter's standing tracker to that list for good. The hook's only monitor read;
@@ -176,13 +176,12 @@ emit_gate_trace() {
   ) 2>/dev/null || true
 }
 
-# warn_and_exit CODE REASON FIX CONTEXT_JSON TRACE_TAG — the single terminal path of surfaces 1-3
-# (VGATE-SIZE-001 / VGATE-REVIEWER-001 / VGATE-ENTRY-001): structured warning, trace line, exit 0.
-warn_and_exit() {
+# warn_tripped_check CODE REASON FIX CONTEXT_JSON TRACE_TAG — the shared warning of surfaces 1-3
+# (VGATE-SIZE-001 / VGATE-REVIEWER-001 / VGATE-ENTRY-001): structured warning + one trace line; returns.
+warn_tripped_check() {
   local code="${1}" reason="${2}" fix="${3}" ctx="${4}" trace_tag="${5}"
   emit_error "${code}" "warn" "${reason}" "${fix}" "${ctx}"
   emit_gate_trace "${trace_tag}" "${subagent_type:-}"
-  exit 0
 }
 
 # Named aggregation query over the trace sink — reports tripped-check counts by verdict tag.
@@ -370,7 +369,7 @@ warn_deep_review() {
     "${count}" "${prefix_note}" >&2
 }
 
-# Surfaces 4+5 emitter. Called only where surfaces 1-3 stay silent. A missing declaration is nudged; a present one is sized.
+# Surfaces 4+5 emitter, after any surface 1-3 warning. A missing declaration is nudged; a present one is sized.
 # [SCOPE] = the orchestrator's record of the delegation's literal scope, checked for PRESENCE only —
 # a line the shared scope_decl_select accepts, so a quoted `[SCOPE]` mention does not silence the nudge.
 # Selector status 2 = the declaration was never read → reported as unread, neither nudged nor sized.
@@ -455,7 +454,7 @@ warn_unstarted_plan() {
 # 1. READ reviewer-present snapshot from PRIOR EXECUTED spawns (PostToolUse stamps only — DF-5).
 # Sequential reviewer→DEV: the reviewer's PostToolUse durably commits the qa-code-reviewer line when
 # it completes → this DEV spawn's PreToolUse read observes it → pass. Same-batch parallel reviewer+DEV:
-# the reviewer has not completed at the DEV read → snapshot absent → VGATE-REVIEWER-001 block on
+# the reviewer has not completed at the DEV read → snapshot absent → VGATE-REVIEWER-001 warning on
 # orchestrator origin, stderr advisory on a nested sub-worker origin (surface 1). This PreToolUse read is
 # used only by the verdict logic below; the marker is never written on PreToolUse. (Append is
 # O_APPEND atomic per line.)
@@ -563,14 +562,15 @@ fi
 if [[ "${orchestrator_origin}" == true ]] && ! has_size_est_token "${prompt_full}"; then
   size_reason="Spawning DEV agent '${subagent_type}' from the orchestrator with NO [SIZE-EST] self-attestation token — a DEV spawn that is not an [ENTRY-CLASS] simple-task entry MUST declare its delegation-size estimate (skills/glass-atrium-ops-orchestrator-role.md ### Spawn Budget)."
   size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. On a borderline count, round up: an under-estimate hides an oversized delegation from the split discipline. A genuinely simple task with no plan-reference records [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> instead: that alone clears this gate and every other token check."
-  warn_and_exit "VGATE-SIZE-001" "${size_reason}" "${size_fix}" \
+  warn_tripped_check "VGATE-SIZE-001" "${size_reason}" "${size_fix}" \
     "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"size-est-miss\"}" "block-sizeest"
 fi
 
 # Entry-decision branch — three mutually exclusive paths:
-#   plan-ref present       → task entered the flow → fall through to the reviewer check.
+#   plan-ref present       → task entered the flow → the reviewer check.
 #   [ENTRY-CLASS] token    → orchestrator consciously classified it simple → exited 0 silent above.
 #   NEITHER                → silent entry-miss → VGATE-ENTRY-001 warning.
+# Both remaining paths fall through to surfaces 4-6.
 # SC2310: references_plan/has_simple_task_token are pure predicates — set -e disable under `if`
 # intended (same posture as is_dev_agent above).
 # shellcheck disable=SC2310
@@ -588,31 +588,31 @@ if references_plan "${prompt_full}"; then
     (printf '[enforce-verification-gate] Plan-referencing spawn of %s carries no [PLAN-SUBSET] token. If this delegation is a strict subset of the plan, classify each included task'"'"'s declared predecessors first and record [PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=<edges|n/a>. Advisory only — absence is correct for a whole-plan delegation.\n' \
       "${subagent_type}") >&2 || true
   fi
-  # Reviewer durably recorded BEFORE this spawn (sequential reviewer→DEV) → gate satisfied.
-  if [[ "${reviewer_present}" == true ]]; then
-    warn_scope_advisories
-    warn_unstarted_plan
-    exit 0
+  # 4. Reviewer-miss: a plan-referencing DEV spawn with no qa-code-reviewer recorded before it
+  # (sequential reviewer→DEV satisfies it). An orchestrator-origin spawn (agent_id absent) composes
+  # the Stage-2 {qa-code-reviewer, DEV} team, so it gets the structured VGATE-REVIEWER-001 warning; a
+  # NESTED sub-worker origin gets the plain line only. "no qa-code-reviewer recorded" stays verbatim
+  # in both, so a downstream log scan keys on one phrase.
+  if [[ "${reviewer_present}" != true ]]; then
+    reviewer_reason="Verification-gate reviewer-miss: spawning DEV agent '${subagent_type}' on a plan-referencing task, but no qa-code-reviewer recorded in this session. Complex plans require a {qa-code-reviewer, DEV} Plan Direction Verification team before implementation entry (skills/glass-atrium-ops-orchestrator-role.md Stage-2 gate)."
+    if [[ "${orchestrator_origin}" == true ]]; then
+      reviewer_fix="Spawn glass-atrium-qa-code-reviewer FIRST (sequentially, before this DEV spawn) so its PostToolUse stamp records the Stage-2 verdict — the later DEV spawn then reads clean. If this task is genuinely simple/exempt, record [ENTRY-CLASS] simple-task in the prompt instead of a plan-reference."
+      warn_tripped_check "VGATE-REVIEWER-001" "${reviewer_reason}" "${reviewer_fix}" \
+        "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"reviewer-miss\"}" "block-reviewer"
+    else
+      printf '[enforce-verification-gate] %s\n' "${reviewer_reason}" >&2
+    fi
   fi
-  # 4. Reviewer-miss: a plan-referencing DEV spawn with no qa-code-reviewer recorded. An orchestrator-
-  # origin spawn (agent_id absent) composes the Stage-2 {qa-code-reviewer, DEV} team, so it gets the
-  # structured VGATE-REVIEWER-001 warning; a NESTED sub-worker origin gets the plain line only. "no
-  # qa-code-reviewer recorded" stays verbatim in both, so a downstream log scan keys on one phrase.
-  reviewer_reason="Verification-gate reviewer-miss: spawning DEV agent '${subagent_type}' on a plan-referencing task, but no qa-code-reviewer recorded in this session. Complex plans require a {qa-code-reviewer, DEV} Plan Direction Verification team before implementation entry (skills/glass-atrium-ops-orchestrator-role.md Stage-2 gate)."
-  if [[ "${orchestrator_origin}" == true ]]; then
-    reviewer_fix="Spawn glass-atrium-qa-code-reviewer FIRST (sequentially, before this DEV spawn) so its PostToolUse stamp records the Stage-2 verdict — the later DEV spawn then reads clean. If this task is genuinely simple/exempt, record [ENTRY-CLASS] simple-task in the prompt instead of a plan-reference."
-    warn_and_exit "VGATE-REVIEWER-001" "${reviewer_reason}" "${reviewer_fix}" \
-      "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"reviewer-miss\"}" "block-reviewer"
-  fi
-  # Nested sub-worker origin → plain informational line.
-  printf '[enforce-verification-gate] %s\n' "${reviewer_reason}" >&2
-  exit 0
+else
+  # 5. Entry-miss — no plan-reference AND no [ENTRY-CLASS] simple-task classification (the silent
+  # entry-miss): DEV ∧ !references_plan ∧ !has_simple_task_token; the simple-task token exited above.
+  entry_reason="Spawning DEV agent '${subagent_type}' with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — sizable DEV work MUST enter the Document-Driven Workflow (author a plan first)."
+  entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scoped/maintainers/scope-dev.md -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this check. NOTE: a plan-referencing spawn must ALSO carry a [SIZE-EST] bundles=N tool_uses~=N — <1-line> delegation-size token (checked separately by VGATE-SIZE-001); a simple-task spawn needs no other token."
+  warn_tripped_check "VGATE-ENTRY-001" "${entry_reason}" "${entry_fix}" \
+    "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"entry-miss\"}" "block-entry"
 fi
 
-# 5. Entry-miss — no plan-reference AND no [ENTRY-CLASS] simple-task classification (the silent
-# entry-miss): DEV ∧ !references_plan ∧ !has_simple_task_token. Every other path exited above; the
-# [ENTRY-CLASS] simple-task token silences it.
-entry_reason="Spawning DEV agent '${subagent_type}' with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — sizable DEV work MUST enter the Document-Driven Workflow (author a plan first)."
-entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scoped/maintainers/scope-dev.md -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this check. NOTE: a plan-referencing spawn must ALSO carry a [SIZE-EST] bundles=N tool_uses~=N — <1-line> delegation-size token (checked separately by VGATE-SIZE-001); a simple-task spawn needs no other token."
-warn_and_exit "VGATE-ENTRY-001" "${entry_reason}" "${entry_fix}" \
-  "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"entry-miss\"}" "block-entry"
+# 6. Surfaces 4-6 — every DEV spawn that reaches here, warned or not.
+warn_scope_advisories
+warn_unstarted_plan
+exit 0

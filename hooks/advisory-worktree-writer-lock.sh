@@ -6,7 +6,8 @@
 # SubagentStop branch; the lock primitive itself lives in lib/worktree-lock.sh.
 #
 # ADVISORY ONLY — exits 0 on EVERY path, including contention: there is no block path and no retry
-# contract. The value is measurement: disjoint-ownership fan-outs should NEVER contend, so an observed contention is a real race the prose rule was masking.
+# contract. The value is measurement: disjoint-ownership fan-outs should NEVER contend, so an
+# observed contention is a real race the prose rule was masking.
 #
 # WHY a lock rather than prose: one worktree has exactly ONE git index, so two concurrent writers
 # there is a race that file-set partitioning cannot prevent (skills/glass-atrium-ops-orchestrator-role.md, Automatic
@@ -43,10 +44,11 @@
 #     is only worth reading at zero FALSE POSITIVES. Closing it properly needs a Stop-wired release arm.
 #
 # WIRED as of this commit: `PreToolUse<TAB>advisory-worktree-writer-lock.sh<TAB>Write|Edit` in
-# EXPECTED_HOOK_BINDINGS (lib/ga-env.sh), so wire_hooks registers the acquire arm. The release arm was already live
-# (agent-tracker.sh). Two caveats on when firing actually STARTS: settings.json is written by
-# wire_hooks (an install/update run), and Claude Code snapshots the hook config at SESSION START — so
-# the first data point comes from a fresh session after the next release lands, not from this commit.
+# EXPECTED_HOOK_BINDINGS (lib/ga-env.sh), so wire_hooks registers the acquire arm. The release arm
+# was already live (agent-tracker.sh). Two caveats on when firing actually STARTS: settings.json is
+# written by wire_hooks (an install/update run), and Claude Code snapshots the hook config at SESSION
+# START — so the first data point comes from a fresh session after the next release lands, not from
+# this commit.
 # MultiEdit is deliberately NOT in the matcher: it has zero registrations on the recorded host
 # (test/hook-matcher-shape-invariant.bats), so binding it would add a dead token — that file's
 # one-token legacy allowlist exists precisely to stop the set widening. Re-check before relying on

@@ -35,7 +35,7 @@ setup() {
   mkdir -p "${DATA_DIR}/session-spawns"
   # Refused loopback port — the gate's monitor read (surface 6) fails open here, never reaching the live monitor.
   export VGATE_MONITOR_URL='http://127.0.0.1:9/api/clauded-docs'
-  # DSH-D06 block firing-trace sink, isolated per test via the hook's VGATE_FIRED_LOG override.
+  # DSH-D06 firing-trace sink, isolated per test via the hook's VGATE_FIRED_LOG override.
   SINK="${BATS_TEST_TMPDIR}/verification-gate-fired.log"
   # Canonical ` · ` [SCOPE] grammar — carried by the regression guards that assert EMPTY output, so
   # the pass-path scope advisory (owned by enforce-verification-gate-scope.bats) has nothing to say.
@@ -87,7 +87,7 @@ assert_empty() {
   }
 }
 
-# DSH-D06 variant: the standard plan-ref prompt with the block firing-trace sink pinned to $2
+# DSH-D06 variant: the standard plan-ref prompt with the firing-trace sink pinned to $2
 # (default ${SINK}).
 run_hook_sink() {
   run bash -c 'printf "%s" "$1" | HOOK_DATA_DIR="$2" VGATE_FIRED_LOG="$4" "$3"' \
@@ -95,7 +95,7 @@ run_hook_sink() {
     "${DATA_DIR}" "${HOOK_SH}" "${2:-${SINK}}"
 }
 
-# --- FAIL-AT-HEAD: reviewer-miss on a plan-ref DEV spawn now BLOCKS (exit 2) ---
+# --- reviewer-miss on a plan-ref DEV spawn → WARNING (exit 0) ---
 
 @test "plan-ref DEV spawn, no reviewer → reviewer-miss WARNING (exit 0)" {
   run_hook "glass-atrium-dev-react" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
@@ -125,7 +125,7 @@ run_hook_sink() {
   assert_not_contains "VGATE-SIZE-001"
 }
 
-# --- REGRESSION GUARDS: the no-false-block envelope (GREEN at HEAD and after) ---
+# --- REGRESSION GUARDS: the no-false-warning envelope (GREEN at HEAD and after) ---
 
 @test "reviewer-present plan-ref DEV spawn → exit 0 (compliant reviewer-first composition)" {
   seed_reviewer
@@ -143,7 +143,7 @@ run_hook_sink() {
   assert_empty
 }
 
-@test "non-DEV plan-ref spawn → exit 0 (gate only blocks DEV)" {
+@test "non-DEV plan-ref spawn → exit 0 (gate only warns on DEV)" {
   run_hook "glass-atrium-qa-code-reviewer" "review plan clauded-docs/290"
   assert_status 0
   assert_empty

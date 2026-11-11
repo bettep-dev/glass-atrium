@@ -223,7 +223,7 @@ mint_bad_sink() {
   esac
 }
 
-# (a) BLOCK: dev-* spawn, no plan-ref, no token → entry-miss block (exit 2)
+# (a) WARN: dev-* spawn, no plan-ref, no token → entry-miss warning (exit 0)
 
 @test "dev spawn, no plan-ref, no token (SIZE-EST present) → entry-miss WARNING (exit 0 + stderr JSON)" {
   run_hook "glass-atrium-dev-nestjs" "implement the auth refactor across the service layer [SIZE-EST] bundles=1 tool_uses~=20 — service-layer auth work"
@@ -242,7 +242,7 @@ mint_bad_sink() {
 
 # (a'') PLAN-REF WORD-BOUNDARY (#28) — the plan-slug alternations are word-anchored so an incidental
 # token that merely CONTAINS the slug (workplan-2026) does NOT silently satisfy references_plan and
-# thereby convert an entry-miss BLOCK into a pass; a real slug (plan-6569) still matches. Keep-in-sync
+# thereby turn an entry-miss warning into a silent pass; a real slug (plan-6569) still matches. Keep-in-sync
 # with the enforce-workflow-verify-stage.sh PLAN_REF_RE mirror.
 
 @test "plan-ref word-boundary (#28): 'workplan-2026' does NOT satisfy references_plan → entry-miss WARNING" {
@@ -346,7 +346,7 @@ mint_bad_sink() {
   assert_not_contains "entry-miss"
 }
 
-# A spawn with neither entry signal meets this block first, so its message names the simple-task path too.
+# A spawn with neither entry signal meets this warning first, so its message names the simple-task path too.
 @test "orchestrator DEV, plain prompt, NO [SIZE-EST] → VGATE-SIZE-001 WARNING naming the simple-task path (exit 0)" {
   run_hook "glass-atrium-dev-nestjs" "implement the auth refactor across the service layer"
   assert_status 0
@@ -372,7 +372,7 @@ mint_bad_sink() {
   assert_empty
 }
 
-# (d) ALLOW: non-dev spawn → exit 0 (gate only blocks DEV)
+# (d) ALLOW: non-dev spawn → exit 0 silent (gate only warns on DEV)
 
 @test "non-dev subagent_type, no plan-ref, no token → silent, exit 0 (not a DEV spawn)" {
   run_hook "glass-atrium-intel-planner" "draft a plan for the auth refactor"
@@ -386,7 +386,7 @@ mint_bad_sink() {
   assert_empty
 }
 
-# (e) FAIL-OPEN on the hook's OWN errors → exit 0 (never block on internal/input faults)
+# (e) FAIL-OPEN on the hook's OWN errors → exit 0 (never warn on internal/input faults)
 
 @test "fail-open: empty payload → exit 0 silent" {
   run bash -c 'printf "%s" "" | HOOK_DATA_DIR="$2" bash "$1"' _ "${HOOK_SH}" "${DATA_DIR}"
@@ -457,23 +457,26 @@ mint_bad_sink() {
   assert_marker_absent "glass-atrium-dev-react"
 }
 
-# (g) DSH-D06 — BLOCK FIRING TRACE (durable, observability-only) + its reader.
+# (g) DSH-D06 — WARNING FIRING TRACE (durable, observability-only) + its reader.
 # The gate's ERR trap exits ZERO, so the load-bearing property under test is not "a line is written"
-# but "a broken sink can never convert a BLOCK into a PASS". Every block path therefore carries BOTH
-# a delta-exactly-1 case and an unwritable-sink exit-2 case.
+# but "a broken sink can never swallow the warning". Every warning path therefore carries BOTH a
+# delta-exactly-1 case and an unwritable-sink case.
 
 @test "D06 writer: every warning path appends exactly 1 line carrying its own verdict tag" {
-  # One row per warning path — the three differ only in (subagent_type, prompt, code, tag).
+  # One row per warning path — they differ in (subagent_type, prompt, code, tag, reviewer seed); the
+  # size-est row seeds a reviewer so its warning is the only one.
   local -a table=(
-    'glass-atrium-dev-nestjs|implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc|VGATE-ENTRY-001|block-entry'
-    'glass-atrium-dev-react|implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl|VGATE-REVIEWER-001|block-reviewer'
-    'glass-atrium-dev-python|implement per plan clauded-docs/1234|VGATE-SIZE-001|block-sizeest'
+    'glass-atrium-dev-nestjs|implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc|VGATE-ENTRY-001|block-entry|'
+    'glass-atrium-dev-react|implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl|VGATE-REVIEWER-001|block-reviewer|'
+    'glass-atrium-dev-python|implement per plan clauded-docs/1234|VGATE-SIZE-001|block-sizeest|seed-reviewer'
   )
-  local row stype prompt code tag
+  local row stype prompt code tag seed
   for row in "${table[@]}"; do
-    IFS='|' read -r stype prompt code tag <<<"${row}"
+    IFS='|' read -r stype prompt code tag seed <<<"${row}"
     echo "row=${row}"
     if ga_guard_path "${SINK}"; then rm -f -- "${SINK:?}"; fi
+    if ga_guard_path "${DATA_DIR}"; then rm -f -- "${DATA_DIR:?}/session-spawns/sess-test-001"; fi
+    if [[ "${seed}" == "seed-reviewer" ]]; then seed_reviewer; fi
     run_hook_trace "${stype}" "${prompt}"
     assert_status 0
     assert_contains '"severity":"warn"'
@@ -481,6 +484,16 @@ mint_bad_sink() {
     assert_sink_count 1
     assert_sink_tag "${tag}"
   done
+}
+
+@test "D06 writer: a size-est miss on a reviewer-less plan spawn draws both warnings, one trace line each" {
+  run_hook_trace "glass-atrium-dev-python" "implement per plan clauded-docs/1234"
+  assert_status 0
+  assert_contains "VGATE-SIZE-001"
+  assert_contains "VGATE-REVIEWER-001"
+  assert_sink_count 2
+  assert_sink_tag "block-sizeest"
+  assert_sink_tag "block-reviewer"
 }
 
 @test "D06 writer: the trace line carries the spawn's subagent_type" {

@@ -63,11 +63,11 @@ run_gate() {
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged a nested origin -- ${output}" >&2; return 1; }
 }
 
-@test "missing [SCOPE] alongside a real violation: the warning still wins, unaccompanied" {
+@test "missing [SCOPE] alongside a real violation: the warning prints and the nudge still follows" {
   run_gate "Implement clauded-docs/3854 with no size attestation."
   [[ "${status}" -eq 0 ]] || { echo "status was ${status}" >&2; return 1; }
   [[ "${output}" == *"VGATE-SIZE-001"* && "${output}" == *'"severity":"warn"'* ]] || { echo "wrong verdict -- ${output}" >&2; return 1; }
-  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "advisory reached a warning path -- ${output}" >&2; return 1; }
+  [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || { echo "the warning swallowed the [SCOPE] nudge -- ${output}" >&2; return 1; }
 }
 
 @test "entry-miss warns unchanged when the declaration is also absent" {
