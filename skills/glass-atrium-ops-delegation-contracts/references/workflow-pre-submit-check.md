@@ -4,7 +4,7 @@
 
 ## Check table
 
-Every `Fails as` cell is a warning or an advisory: no check blocks the Workflow call.
+Every `Fails as` cell except the JS parse hazards row is a warning or an advisory, so its check never stops the Workflow call.
 
 | Check | Pass when | Fails as |
 |---|---|---|
@@ -14,7 +14,7 @@ Every `Fails as` cell is a warning or an advisory: no check blocks the Workflow 
 | verify clause carries the DEV hard-gate | team form: reviewer + exactly one `dev-*` · or upstream form with `<N>` cited by a plan-ref token | `block-noverifydev` · `block-upstream` · `lint` |
 | declaration matches the code | declared roles all spawn · code dev types all declared · `impl-computed:` types have data literals | `block-declspawn` · `block-undecl` · `block-computed` · `lint` |
 | reviewer present and first | a reviewer spawn exists, and no declared impl `dev-*` spawn precedes every reviewer | `block-norev` · `block-order` · `lint` |
-| JS parse hazards | no bash `${…}` form and no nested backtick inside `${…}` in a template literal | Workflow parse error |
+| JS parse hazards | no bash `${…}` form and no nested backtick inside `${…}` in a template literal | `lint-workflow-template-literal.sh` block · Workflow parse error |
 | `implementing` write | the plan the plan-ref cites is at `implementing` or a later stage before submit | `implementing` advisory — stderr only |
 | close token | the close form with a terminal Reconcile & Close phase, or the deferral form naming the closing step | close-token advisory — stderr only |
 

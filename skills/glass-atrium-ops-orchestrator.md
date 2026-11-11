@@ -836,14 +836,14 @@ The deterministic Workflow-tool execution path: the orchestrator authors a JS wo
 
 Items 1-4 are the co-equal requirements ①-④ of `##### DEV-spawn 4-requirement pre-flight checklist` (this file), which holds each one's backstop and detail.
 
-- The **`implementing` write** and **close token** items stand outside that checklist: no gate blocks on either, and each is backed by an advisory only.
+- The **`implementing` write** and **close token** items stand outside that checklist, and each is backed by an advisory only.
 
 1. **entry-classify** — sizable → plan-ref · simple → `log('[ENTRY-CLASS] simple-task: <reason>')` / `meta.description`; with no plan-ref, items 2-4 then become optional (**Simple-task entry** in that checklist).
    - Sizable criteria: `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Workflow` Decision `SIZABLE =` row.
 2. **`[SIZE-EST]` self-attestation** — at every plan-backed DEV spawn, in the same `log()` / `meta.description` home as the entry token.
 3. **DEV spawn** → {glass-atrium-qa-code-reviewer, dev-*} verify-stage before the first dev-*.
 4. **`[AGENT-COMPOSITION]` declaration** — every plan-backed DEV-spawning script carries exactly one declaration block in a `/* */` comment.
-5. **encode Decision outcomes into the script** — routed agentType per spawn, scoped target paths, the four probe verdicts.
+5. **encode Decision outcomes into the script** — routed agentType per spawn, scoped target paths, the Decision-phase probe verdicts.
    - The probes run before authoring, and the engine never substitutes for one.
 6. **typed agentType on every spawn**.
 7. **author within the engine's runtime self-cap** — the script sets no concurrency number of its own.
@@ -875,7 +875,7 @@ Boundary rule: **pre-enumerable condition → engine; semantic interpretation �
       - Why: in schema mode the engine frames StructuredOutput as the sole deliverable, so the agent does not reliably raw-save without the grant.
       - It departs from side-effect-free stages on purpose: building the wiki is glass-atrium-intel-researcher's core function.
       - Agent side: `glass-atrium-intel-researcher.md` → `### Raw Source Storage Pipeline` (Schema/Workflow-mode persistence clause).
-  - **Quality gates as explicit verify-stages** — the four Decision-phase probes, Plan Direction Verification (Stage-2 gate), Sprint Contract Gate, Pipeline Acceptance Criteria. The engine infers none of them; the orchestrator encodes each as a gate stage.
+  - **Quality gates as explicit verify-stages** — the Decision-phase probes, Plan Direction Verification (Stage-2 gate), Sprint Contract Gate, Pipeline Acceptance Criteria. The engine infers none of them; the orchestrator encodes each as a gate stage.
 - **Non-brittleness**: Dynamic Workflows is a research preview — describe the layering principle, and do not hardcode preview-specific field names likely to churn.
 
 #### Hook layer split under the engine
