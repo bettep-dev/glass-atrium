@@ -132,7 +132,9 @@ The canonical rule for what language this system writes in.
 - **Task-class rule**: a **Task-class targets** line alone never justifies setting or changing a spawn's tier.
   - A tier moves for a task-class reason only through a measured per-class decision, `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop` → **Retry effort escalation**, or a deliberate measurement arm listed in the run's record of its arms.
 - **Tiers are per model**: the same level buys a different amount of thinking on each model, so a tier measured on one model is not evidence for another.
-  - When a spawn's model changes, its tier is measured again before it is relied on.
+  - A model change — a spawn's or the main session's — moves no tier by itself: the tier in use stays in use, and work does not wait on a measurement.
+  - Until it is measured on the new model, that tier is unmeasured there: say so wherever a plan, delegation or report cites it as evidence.
+  - It is measured, or moved, only through the paths the **Task-class rule** bullet names.
 - **Task-class targets**:
   - Effort buys verification depth and edge-case coverage, so verification and brownfield bug fixing target high or above.
   - Above high the gain is uneven and task-dependent: xhigh suits autonomous end-to-end builds and other long-horizon work where a gain was measured.
@@ -211,7 +213,10 @@ When something stops a step, classify it before you stop or push on.
   - It never does what another rule forbids — finding the monitor by scanning, for example (`## Absolute Rules [ALL]` → **Monitor address**).
   - Retries stay bounded (`rules/glass-atrium/core-security.md` → **Unbounded consumption [LLM10:2025]**).
   - A stop point your scope sets for repeated failure outranks it — the DEV · QA second-failure stop (`scoped/shared-investigation-discipline.md`) and the orchestrator's `### Failure Recovery Loop` (`skills/glass-atrium-ops-orchestrator-role.md`).
-- **Diagnosis decides the class**: a message that names a hook, a rule, a permission or an approval marks a deliberate blocker.
+- **Diagnosis decides the class**: a message marks a deliberate blocker when it reports a control refusing your own action — a hook block or deny verdict on your call, a permission or sandbox denial of your request, an approval your action waits on.
+  - A message that only names a hook, a rule, a permission or an approval does not mark one.
+    - A lint error naming its rule and a failing suite that tests a hook are ordinary obstacles.
+    - A hook advisory that lets the call through is a warning to weigh, not a blocker.
   - Still unsure after diagnosing → treat it as a deliberate blocker and report it.
 - A budget ceiling is neither class: the `Turn Budget & Graceful Exit` section under `## Cross-Session Continuity (progress.md) [ALL]` governs it.
 - Why: stopping at an ordinary obstacle leaves owed work undone, while working around a deliberate blocker defeats the control that placed it.
