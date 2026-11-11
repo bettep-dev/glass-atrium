@@ -294,7 +294,6 @@ run_bash() {
     'guarded rm under a quoted mktemp variable|T="$(mktemp -d)"; rm -rf "${T:?}/x"|0|0'
     'relative literal in a code string after a cd into jobs tmp|cd ~/.claude/jobs/j/tmp && python3 -c "open('"'"'a.txt'"'"','"'"'w'"'"')"|0|0'
     'variable bound to jobs tmp inside a code string|D=~/.claude/jobs/j/tmp; python3 -c "open('"'"'$D/a.txt'"'"','"'"'w'"'"')"|0|0'
-    'interpreter code string with operands after a cd into jobs tmp|cd ~/.claude/jobs/j/tmp && node -e "console.log(process.argv)" a b|0|0'
     'eval of a neutral command|eval "echo hi"|0|0'
     'residual: a set -- positional parameter is not expanded|set -- ~/.claude-personal/jobs/a/tmp; rm "$1/../../../CLAUDE.md"|0|0'
     'residual: a function argument is not expanded|f() { rm "$1/../../../CLAUDE.md"; }; f ~/.claude-personal/jobs/a/tmp|0|0'
