@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # enforce-delegation.bats — Bats suite for the PreToolUse(Write|Edit) delegation
-#   gate: an orchestrator write passes unless it targets a sensitive file, a new document or
-#   an implementing plan's Target File. A subagent, an allowed basename and a */memory/*
+#   gate: an orchestrator write passes unless it targets a sensitive file. A subagent, an
+#   allowed basename and a */memory/*
 #   session-state path pass first; a "memory/" nested directly under a protected dir name
 #   (agents/, rules/, hooks/, skills/, autoagent/, monitor/, scripts/) gets no session-state
 #   exemption, so the later checks decide it.
@@ -16,7 +16,6 @@ HOOK_SH="${HOOKS_DIR}/enforce-delegation.sh"
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-delegation.sh not found: ${HOOK_SH}"
   source "${BATS_TEST_DIRNAME}/lib/no-python3.bash"
-  export DELEGATION_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   # A fixed HOME keeps the /Users/x/... rows below independent of the runner's home.
   export HOME="/Users/x"
   # Every test sandboxes HOME, so the hook's logs/data land on a per-test root, never the run-wide one.
@@ -145,37 +144,12 @@ run_raw_envelope() {
   [[ "${output}" == *"DEL-004"* ]] || return 1
 }
 
-# Orchestrator direct work: a tiny edit passes, while sensitive, new-document and
-# implementing-plan targets stay blocked. Hermetic: the monitor is a curl PATH shim serving the
-# list from LIST_JSON_FILE and each plan from DOC_JSON_DIR/<id>.json; any other URL fails.
+# Orchestrator direct work: every write passes except a sensitive target.
 
-setup_monitor() {
+setup_work() {
   WORK="$(mktemp -d)"
-  mkdir -p "${WORK}/bin" "${WORK}/docs" "${WORK}/src"
-  export LIST_JSON_FILE="${WORK}/list.json" DOC_JSON_DIR="${WORK}/docs"
-  printf '%s\n' '{"total":0,"rows":[]}' >"${LIST_JSON_FILE}"
-  cat >"${WORK}/bin/curl" <<'SH'
-#!/usr/bin/env bash
-url=""
-for a in "$@"; do
-  case "${a}" in
-    http*) url="${a}" ;;
-  esac
-done
-case "${url}" in
-  */clauded-docs\?*) cat "${LIST_JSON_FILE}" ;;
-  */clauded-docs/*)
-    doc="${DOC_JSON_DIR}/${url##*/}.json"
-    [[ -f "${doc}" ]] || exit 22
-    cat "${doc}"
-    ;;
-  *) exit 22 ;;
-esac
-SH
-  chmod +x "${WORK}/bin/curl"
-  export PATH="${WORK}/bin:${PATH}"
+  mkdir -p "${WORK}/src"
   : >"${WORK}/src/existing.sh"
-  : >"${WORK}/src/owned.sh"
   : >"${WORK}/notes.md"
 }
 
@@ -186,11 +160,6 @@ teardown() {
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
-# Serve one implementing plan. Args: $1=id  $2=format  $3=body (JSON string contents).
-seed_plan() {
-  printf '{"id":%s,"format":"%s","body":"%s"}\n' "${1}" "${2}" "${3}" >"${DOC_JSON_DIR}/${1}.json"
-}
-
 # Orchestrator write with stderr merged, so the emitted error code is assertable. Args: $1=file_path.
 write_capturing() {
   run bash -c '
@@ -198,38 +167,36 @@ write_capturing() {
   ' _ "${1}" "${HOOK_SH}"
 }
 
-@test "an orchestrator edit to an existing code file passes when no implementing plan lists it" {
-  setup_monitor
-  printf '%s\n' '{"total":1,"rows":[{"id":7,"doc_status":"implementing"}]}' >"${LIST_JSON_FILE}"
+@test "an orchestrator write that is not sensitive passes with no record, a new document included" {
+  setup_work
   local rows=(
-    "another file listed|## Target Files\\n- \`hooks/other.sh\` — not this file\\n## Next\\n"
-    "file named only in prose under the list|## Target Files\\n- \`hooks/other.sh\`\\nSee \`src/existing.sh\` for context.\\n"
-    "plan declares no Target Files|## Goal\\nno list here\\n"
-    "list holds no path-like item|## Target Files\\n- none\\n- \`.\`\\n"
+    "existing code file|${WORK}/src/existing.sh"
+    "new markdown document|${WORK}/report.md"
+    "new html document, upper-case extension|${WORK}/plan.HTML"
+    "new document in a new dir|${WORK}/docs-new/adr.md"
   )
-  local row name body
+  local row name path
   for row in "${rows[@]}"; do
-    IFS='|' read -r name body <<<"${row}"
-    seed_plan 7 md "${body}"
-    write_capturing "${WORK}/src/existing.sh"
-    [[ "${status}" -eq 0 ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+    IFS='|' read -r name path <<<"${row}"
+    write_capturing "${path}"
+    [[ "${status}" -eq 0 && -z "${output}" ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
   done
 }
 
 @test "an orchestrator edit to an existing markdown document passes" {
-  setup_monitor
+  setup_work
   write_capturing "${WORK}/notes.md"
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
 }
 
 @test "an orchestrator write creating a new code file passes" {
-  setup_monitor
+  setup_work
   write_capturing "${WORK}/src/new-helper.sh"
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
 }
 
-@test "a subagent write to a sensitive or plan-owned path passes as before" {
-  setup_monitor
+@test "a subagent write to a sensitive path passes" {
+  setup_work
   run bash -c '
     printf "%s" "{\"agent_id\":\"a1\",\"tool_input\":{\"file_path\":\"$1\"}}" | bash "$2" 2>&1
   ' _ "${WORK}/.env" "${HOOK_SH}"
@@ -237,7 +204,7 @@ write_capturing() {
 }
 
 @test "a symlink to a sensitive file or into a sensitive dir stays blocked by its physical path" {
-  setup_monitor
+  setup_work
   mkdir -p "${WORK}/home/.ssh"
   : >"${WORK}/home/.ssh/config"
   : >"${WORK}/.env"
@@ -258,7 +225,7 @@ write_capturing() {
 }
 
 @test "sensitive files stay blocked for the orchestrator" {
-  setup_monitor
+  setup_work
   local rows=(
     "dotenv|${WORK}/.env"
     "dotenv variant|${WORK}/.env.local"
@@ -279,82 +246,8 @@ write_capturing() {
   done
 }
 
-@test "an orchestrator write creating a new document file stays blocked as authoring" {
-  setup_monitor
-  local rows=(
-    "markdown|${WORK}/report.md"
-    "html upper-case extension|${WORK}/plan.HTML"
-    "htm|${WORK}/spec.htm"
-    "markdown in a new dir|${WORK}/docs-new/adr.md"
-  )
-  local row name path
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name path <<<"${row}"
-    write_capturing "${path}"
-    [[ "${status}" -eq 2 && "${output}" == *"DEL-005"* && "${output}" == *"intel-"* ]] \
-      || { echo "${name}: exit ${status}: ${output}"; return 1; }
-  done
-}
-
-@test "a Target File of an implementing plan stays blocked, naming the plan" {
-  setup_monitor
-  local rows=(
-    "md plan, backticked entry|md|## Target Files\\n- \`src/owned.sh\` — owned by the plan\\n## Next\\n"
-    "html plan|html|<section id=\\\"target-files\\\"><ul><li>src/owned.sh</li></ul></section>"
-  )
-  local row name format body
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name format body <<<"${row}"
-    printf '%s\n' '{"total":2,"rows":[{"id":7,"doc_status":"implementing"},{"id":8,"doc_status":"implementing"}]}' \
-      >"${LIST_JSON_FILE}"
-    seed_plan 7 md '## Target Files\n- `hooks/other.sh`\n'
-    seed_plan 8 "${format}" "${body}"
-    write_capturing "${WORK}/src/owned.sh"
-    [[ "${status}" -eq 2 && "${output}" == *"DEL-006"* && "${output}" == *"clauded-docs/8"* ]] \
-      || { echo "${name}: exit ${status}: ${output}"; return 1; }
-  done
-}
-
-@test "an unreadable implementing-plan list blocks the orchestrator edit (fail closed)" {
-  setup_monitor
-  local rows=(
-    "monitor refused|list|"
-    "malformed list|list|not json"
-    "no rows array|list|{\"total\":0}"
-    "page shorter than total|list|{\"total\":3,\"rows\":[]}"
-    "plan GET fails|list|{\"total\":1,\"rows\":[{\"id\":99,\"doc_status\":\"implementing\"}]}"
-    "plan GET body not JSON|plan|not json"
-    "unknown plan format|plan|{\"id\":5,\"format\":\"pdf\",\"body\":\"x\"}"
-  )
-  local row name kind value
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name kind value <<<"${row}"
-    export LIST_JSON_FILE="${WORK}/list.json"
-    if [[ "${kind}" == list && -z "${value}" ]]; then
-      LIST_JSON_FILE="${WORK}/absent.json"
-    elif [[ "${kind}" == list ]]; then
-      printf '%s\n' "${value}" >"${LIST_JSON_FILE}"
-    else
-      printf '%s\n' '{"total":1,"rows":[{"id":5,"doc_status":"implementing"}]}' >"${LIST_JSON_FILE}"
-      printf '%s\n' "${value}" >"${DOC_JSON_DIR}/5.json"
-    fi
-    write_capturing "${WORK}/src/existing.sh"
-    [[ "${status}" -eq 2 && "${output}" == *"DEL-007"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
-  done
-}
-
-@test "curl absent blocks the orchestrator edit (fail closed)" {
-  setup_monitor
-  local bindir
-  bindir="$(minimal_bin_without_python3 bash cat grep basename tr sed env mktemp dirname python3 jq readlink)"
-  run env "PATH=${bindir}" bash -c '
-    printf "%s" "{\"tool_input\":{\"file_path\":\"$1\"}}" | bash "$2" 2>&1
-  ' _ "${WORK}/src/existing.sh" "${HOOK_SH}"
-  [[ "${status}" -eq 2 && "${output}" == *"DEL-007"* ]] || { echo "exit ${status}: ${output}"; return 1; }
-}
-
 @test "a symlink chain to a sensitive path stays blocked at every hop, an unresolvable loop included" {
-  setup_monitor
+  setup_work
   local home="${WORK}/home"
   mkdir -p "${home}/.ssh"
   : >"${home}/.ssh/config"
@@ -380,99 +273,36 @@ write_capturing() {
   done
 }
 
-@test "a Target File binds only a path-like token, by whole-component suffix, never a basename or substring" {
-  setup_monitor
-  mkdir -p "${WORK}/repo/hooks" "${WORK}/repo/skills" "${WORK}/repo/myskills"
-  local f
-  for f in README.md hooks/foo.sh hooks/foo.sh.bak skills/x.md myskills/x.md abs.sh; do
-    : >"${WORK}/repo/${f}"
-  done
-  printf '%s\n' '{"total":1,"rows":[{"id":9,"doc_status":"implementing"}]}' >"${LIST_JSON_FILE}"
-  seed_plan 9 md '## Target Files\n- `README.md`\n'
-  write_capturing "${WORK}/repo/README.md"
-  [[ "${status}" -eq 0 ]] || { echo "plan listing only a bare README.md: exit ${status}: ${output}"; return 1; }
-  seed_plan 9 md "## Target Files\\n- \`README.md\`\\n- \`hooks/foo.sh\`\\n- \`skills/\`\\n- \`${WORK}/repo/abs.sh\`\\n"
-  local rows=(
-    "bare basename binds nothing|0|README.md"
-    "file token|2|hooks/foo.sh"
-    "file token is no prefix of a longer name|0|hooks/foo.sh.bak"
-    "directory token|2|skills/x.md"
-    "directory token only at a component boundary|0|myskills/x.md"
-    "absolute entry|2|abs.sh"
-  )
-  local row name want path
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name want path <<<"${row}"
-    write_capturing "${WORK}/repo/${path}"
-    [[ "${status}" -eq "${want}" ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
-    [[ "${want}" -eq 0 || "${output}" == *"DEL-006"* ]] || { echo "${name}: ${output}"; return 1; }
-  done
-}
-
-@test "an unreachable monitor emits one DEL-007 record naming the real cause" {
-  setup_monitor
-  LIST_JSON_FILE="${WORK}/absent.json"
-  write_capturing "${WORK}/src/existing.sh"
-  local records
-  records="$(printf '%s\n' "${output}" | grep -c 'DEL-007' || true)"
-  [[ "${status}" -eq 2 && "${records}" == 1 && "${output}" == *"could not be read"* \
-    && "${output}" != *"internal error"* ]] || { echo "exit ${status}, ${records} records: ${output}"; return 1; }
-}
-
-@test "an html Target Files section with a nested <section> blocks with one DEL-007 record naming the cause" {
-  setup_monitor
-  printf '%s\n' '{"total":1,"rows":[{"id":5,"doc_status":"implementing"}]}' >"${LIST_JSON_FILE}"
-  seed_plan 5 html '<section id=\"target-files\"><section><h3>x</h3></section><ul><li>src/owned.sh</li></ul></section>'
-  write_capturing "${WORK}/src/owned.sh"
-  local records
-  records="$(printf '%s\n' "${output}" | grep -c 'DEL-007' || true)"
-  [[ "${status}" -eq 2 && "${records}" == 1 && "${output}" == *"nested <section>"* \
-    && "${output}" == *"clauded-docs/5"* && "${output}" != *"internal error"* ]] \
-    || { echo "exit ${status}, ${records} records: ${output}"; return 1; }
-}
-
 @test "a relative path cannot be judged against the sensitive-file rule and blocks (fail closed)" {
-  setup_monitor
+  setup_work
   write_capturing "src/existing.sh"
   [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* && "${output}" == *"relative path"* ]] \
     || { echo "exit ${status}: ${output}"; return 1; }
 }
 
-@test "a memory/ nested under a protected dir name gets no session-state exemption, so later checks decide it" {
-  setup_monitor
-  LIST_JSON_FILE="${WORK}/absent.json"
+@test "a memory/ nested under a protected dir name gets no session-state exemption, so the sensitive-file check decides it" {
+  setup_work
   local rows=(
-    "plain memory/ keeps the exemption past an unreachable monitor|0||${WORK}/proj/memory/x.sh"
-    "agents/memory, new document|2|DEL-005|${WORK}/proj/agents/memory/x.md"
-    "rules/memory, new document|2|DEL-005|${WORK}/proj/rules/memory/x.md"
-    "skills/memory, new document|2|DEL-005|${WORK}/proj/skills/memory/x.md"
-    "hooks/memory, unreadable plan list|2|DEL-007|${WORK}/proj/hooks/memory/x.sh"
-    "autoagent/memory, unreadable plan list|2|DEL-007|${WORK}/proj/autoagent/memory/x.py"
-    "monitor/memory, unreadable plan list|2|DEL-007|${WORK}/proj/monitor/memory/x.ts"
-    "scripts/memory, unreadable plan list|2|DEL-007|${WORK}/proj/scripts/memory/x.sh"
-    "agents/memory, sensitive file|2|DEL-004|${WORK}/proj/agents/memory/.env"
+    "plain memory/ keeps the exemption|0|${WORK}/proj/memory/.env"
+    "agents/memory|2|${WORK}/proj/agents/memory/.env"
+    "rules/memory|2|${WORK}/proj/rules/memory/.env"
+    "hooks/memory|2|${WORK}/proj/hooks/memory/.env"
+    "skills/memory|2|${WORK}/proj/skills/memory/.env"
+    "autoagent/memory|2|${WORK}/proj/autoagent/memory/.env"
+    "monitor/memory|2|${WORK}/proj/monitor/memory/.env"
+    "scripts/memory|2|${WORK}/proj/scripts/memory/.env"
   )
-  local row name want code path
+  local row name want path
   for row in "${rows[@]}"; do
-    IFS='|' read -r name want code path <<<"${row}"
+    IFS='|' read -r name want path <<<"${row}"
     write_capturing "${path}"
-    [[ "${status}" -eq "${want}" && "${output}" == *"${code}"* ]] \
-      || { echo "${name}: exit ${status}: ${output}"; return 1; }
+    [[ "${status}" -eq "${want}" ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+    [[ "${want}" -eq 0 || "${output}" == *"DEL-004"* ]] || { echo "${name}: ${output}"; return 1; }
   done
 }
 
 @test "a .. traversal cannot forge a session-state memory/ segment" {
-  setup_monitor
-  LIST_JSON_FILE="${WORK}/absent.json"
-  write_capturing "${WORK}/proj/memory/../hooks/x.sh"
-  [[ "${status}" -eq 2 && "${output}" == *"DEL-007"* ]] || { echo "exit ${status}: ${output}"; return 1; }
-}
-
-@test "the Target Files extractors live once in lib/target-files.sh, sourced by both hooks" {
-  local lib="${HOOKS_DIR}/lib/target-files.sh" drift="${HOOKS_DIR}/validate-scope-drift.sh"
-  grep -q '^extract_target_files_section() {' "${lib}" \
-    && grep -q '^extract_target_files_heading() {' "${lib}" \
-    && ! grep -q '^extract_target_files_' "${HOOK_SH}" "${drift}" "${HOOKS_DIR}/lib/scope-match.sh" \
-    && grep -qF 'source "${BASH_SOURCE%/*}/lib/target-files.sh"' "${HOOK_SH}" \
-    && grep -qF 'source "${BASH_SOURCE%/*}/lib/target-files.sh"' "${drift}"
+  setup_work
+  write_capturing "${WORK}/proj/memory/../hooks/.env"
+  [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* ]] || { echo "exit ${status}: ${output}"; return 1; }
 }

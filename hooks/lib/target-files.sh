@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# target-files.sh — the plan Target Files extractors, one definition for every reader: the drift
-# advisory (validate-scope-drift.sh, SCOPE-070) and the delegation gate (enforce-delegation.sh,
-# DEL-006). Kept out of lib/scope-match.sh, an A/A scope file (autoagent/daemon_cycle.py
-# AA.SCOPE.FILES), so a change here leaves the A/A fingerprint alone.
+# target-files.sh — the plan Target Files extractors read by the drift advisory
+# (validate-scope-drift.sh, SCOPE-070). Kept out of lib/scope-match.sh, an A/A scope file
+# (autoagent/daemon_cycle.py AA.SCOPE.FILES), so a change here leaves the A/A fingerprint alone.
 # Requires drain_after (lib/pipe-drain.sh) in the sourcing shell. Bash 3.2+ (macOS stock).
 #
 # extract_target_files_section — html `<section id="target-files">` slice → newline list.
