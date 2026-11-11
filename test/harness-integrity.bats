@@ -108,6 +108,26 @@ run_file_drift() {
   done
 }
 
+@test "a listed file that is missing or unreadable on disk reads as one drift" {
+  local row name edit report
+  local -a rows=(
+    "listed hook missing on disk|mv hooks/hook-a.sh \"\${SANDBOX:?}/hook-a.moved\"|listed file missing on disk: hooks/hook-a.sh"
+    "listed agent body missing on disk|mv agents/dev-a.md \"\${SANDBOX:?}/dev-a.moved\"|listed file missing on disk: agents/dev-a.md"
+    "listed hook not readable|chmod 000 hooks/hook-a.sh|listed file not readable: hooks/hook-a.sh"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name edit report <<<"${row}"
+    chmod 644 "${ROOT}/hooks/hook-a.sh" 2>/dev/null || true
+    seed_release
+    (cd "${ROOT}" && SANDBOX="${SANDBOX}" eval "${edit}")
+    run_file_drift
+    [[ "${status}" -eq 0 && "${output}" == "1" && "${stderr}" == *"${report}"* ]] || {
+      echo "${name}: status ${status}, drift '${output}': ${stderr}"
+      return 1
+    }
+  done
+}
+
 @test "a changed identity key is named in the drift report" {
   perl -pi -e 's/^tools: Read, Grep/tools: Read, Grep, Bash/' "${ROOT}/agents/dev-a.md"
 
@@ -224,7 +244,8 @@ get_expected_bindings() {
     echo "surplus row: ${stderr}"
     return 1
   }
-  [[ "${stderr}" != *"my-hook.sh"* && "${output}" == "3" ]] || {
+  # the moved binding counts twice — its expected matcher missing, its live matcher altered — as the doctor counts it
+  [[ "${stderr}" != *"my-hook.sh"* && "${output}" == "4" ]] || {
     echo "count '${output}': ${stderr}"
     return 1
   }
@@ -264,7 +285,74 @@ get_expected_bindings() {
   }
 }
 
-@test "the update preflight logs each finding and its count, and never fails the update" {
+@test "a profile branch whose settings.json is not a link to the target settings reads as drift" {
+  local row name setup want branch="${FAKE_HOME}/.claude-work"
+  local -a rows=(
+    "branch linked to the target settings|ln -s \"\${FAKE_HOME}/.claude/settings.json\" settings.json|0"
+    "branch holding its own settings file|printf '{}\n' >settings.json|1"
+    "branch linked elsewhere|printf '{}\n' >other.json && ln -s \"\${PWD}/other.json\" settings.json|1"
+    "branch with no settings.json|true|1"
+    "never-launched dir without .claude.json|rm -f .claude.json && printf '{}\n' >settings.json|0"
+  )
+  printf '{}\n' >"${FAKE_HOME}/.claude/settings.json"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name setup want <<<"${row}"
+    if ga_guard_path "${branch}"; then rm -rf -- "${branch:?}"; fi
+    mkdir -p "${branch}" && printf '{}\n' >"${branch}/.claude.json"
+    (cd "${branch}" && FAKE_HOME="${FAKE_HOME}" eval "${setup}")
+    run_detector get_profile_settings_drift
+    [[ "${status}" -eq 0 && "${output}" == "${want}" ]] || {
+      echo "${name}: status ${status}, drift '${output}', expected ${want}: ${stderr}"
+      return 1
+    }
+  done
+}
+
+@test "the doctor records the same verdict count as the update preflight for one install state" {
+  local -a expected=()
+  local row name live_from want doctor preflight line
+  while IFS= read -r line; do expected+=("${line}"); done < <(get_expected_bindings)
+  local -a rows=(
+    "bindings as expected|0|0"
+    "one matcher facet unwired|1|1"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name live_from want <<<"${row}"
+    write_settings "${expected[@]:${live_from}}"
+    run_detector _doctor_report_integrity 0 0
+    IFS=$'\t' read -r _ doctor _ <"${SANDBOX}/data/data/integrity/last-verdict"
+    run_detector get_integrity_drift
+    IFS=$'\t' read -r _ preflight _ <"${SANDBOX}/data/data/integrity/last-verdict"
+    [[ "${doctor}" == "${want}" && "${preflight}" == "${want}" ]] || {
+      echo "${name}: doctor recorded '${doctor}', preflight recorded '${preflight}', expected ${want}"
+      return 1
+    }
+  done
+}
+
+@test "a doctor run whose comparison could not run records the verdict unread" {
+  local line
+  local -a expected=()
+  while IFS= read -r line; do expected+=("${line}"); done < <(get_expected_bindings)
+  write_settings "${expected[@]}"
+
+  run_detector _doctor_report_integrity 0 1
+
+  IFS=$'\t' read -r _ line _ <"${SANDBOX}/data/data/integrity/last-verdict"
+  [[ "${status}" -eq 0 && "${line}" == "unread" ]] || {
+    echo "status ${status}, verdict '${line}': ${stderr}"
+    return 1
+  }
+}
+
+# Run update.sh's integrity report for stage $1 against the scratch install.
+run_update_report() {
+  run --separate-stderr env GA_ROOT="${ROOT}" GA_LIB_DIR="${GA}/scripts/lib" HOME="${FAKE_HOME}" \
+    GA_DATA_ROOT="${SANDBOX}/data" ATRIUM_UPDATE_STATE_DIR="${STATE}" GA_TARGET_HOME="${FAKE_HOME}/.claude" \
+    bash -c 'set -Eeuo pipefail; source "$1/scripts/update.sh"; update_report_integrity "$2"' _ "${GA}" "$1"
+}
+
+@test "the update integrity report logs each finding and its count" {
   local -a expected=()
   local line
   while IFS= read -r line; do expected+=("${line}"); done < <(get_expected_bindings)
@@ -274,20 +362,40 @@ get_expected_bindings() {
   ln -s "${GA}/autoagent" "${ROOT}/autoagent"
   printf 'tampered\n' >>"${ROOT}/hooks/hook-a.sh"
 
-  run --separate-stderr env GA_ROOT="${ROOT}" GA_LIB_DIR="${GA}/scripts/lib" HOME="${FAKE_HOME}" \
-    GA_DATA_ROOT="${SANDBOX}/data" ATRIUM_UPDATE_STATE_DIR="${STATE}" GA_TARGET_HOME="${FAKE_HOME}/.claude" \
-    bash -c 'set -Eeuo pipefail; source "$1/scripts/update.sh"; update_report_integrity_preflight' _ "${GA}"
+  run_update_report before
 
   [[ "${status}" -eq 0 ]] || {
     echo "status ${status}: ${stderr}"
     return 1
   }
-  [[ "${stderr}" == *"integrity preflight: warn : manifest DRIFT — content hash mismatch: hooks/hook-a.sh"* ]] || {
+  [[ "${stderr}" == *"integrity before update: warn : manifest DRIFT — content hash mismatch: hooks/hook-a.sh"* ]] || {
     echo "${stderr}"
     return 1
   }
-  [[ "${stderr}" == *"integrity preflight: 1 finding(s) before this update"* ]] || {
+  [[ "${stderr}" == *"integrity before update: 1 finding(s)"* ]] || {
     echo "${stderr}"
     return 1
   }
+}
+
+@test "an update integrity report that cannot run is one log line and never fails the update" {
+  local row name engine want
+  local -a rows=(
+    "engine absent from the install root|none|lib/ga-core.sh absent"
+    "engine fails to load|return 1|the check could not run"
+    "engine init fails|ga_init_env() { return 1; }|the check could not run"
+    "report ends in no count|ga_init_env() { :; }; get_integrity_drift() { echo garbage; }|the check could not run"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name engine want <<<"${row}"
+    if ga_guard_path "${ROOT}/lib"; then rm -rf -- "${ROOT:?}/lib"; fi
+    if [[ "${engine}" != "none" ]]; then
+      mkdir -p "${ROOT}/lib" && printf '%s\n' "${engine}" >"${ROOT}/lib/ga-core.sh"
+    fi
+    run_update_report after
+    [[ "${status}" -eq 0 && "${stderr}" == *"integrity after update: "*"${want}"* ]] || {
+      echo "${name}: status ${status}: ${stderr}"
+      return 1
+    }
+  done
 }

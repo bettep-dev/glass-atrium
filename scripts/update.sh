@@ -3581,35 +3581,40 @@ update_launchd_jobs_from_ga_env() {
   )
 }
 
-# Integrity preflight — the harness tamper report (lib/ga-doctor.sh → get_integrity_drift) logged before
-# anything is fetched or applied, so what this update is about to restore is on record. Detection only:
-# an unrunnable check is one log line and the update proceeds. Isolated subshell for the reason
-# update_launchd_jobs_from_ga_env gives: ga-env.sh's readonly globals must not reach this script.
-update_report_integrity_preflight() {
-  local root report line count
+# Harness tamper report (lib/ga-doctor.sh → get_integrity_drift), logged and recorded for the
+# session-start line. $1 = before (preflight: what this update is about to restore is on record) or
+# after (the restored state, so the session line is current). Detection only: an unrunnable check is
+# one log line and the update proceeds.
+update_report_integrity() {
+  local stage="$1" root report line count
   root="$(update_ga_root)"
   if [[ ! -f "${root}/lib/ga-core.sh" ]]; then
-    update_log "integrity preflight: skipped — ${root}/lib/ga-core.sh absent"
+    update_log "integrity ${stage} update: skipped — ${root}/lib/ga-core.sh absent"
     return 0
   fi
   # GA-ABSORB[handled@the could-not-run line below]: a failed source or init is reported, never fatal
-  report="$(
-    trap - ERR
-    # shellcheck source=/dev/null
-    source "${root}/lib/ga-core.sh" >/dev/null 2>&1 || exit 1
-    ga_init_env "${root}" >/dev/null 2>&1 || exit 1
-    get_integrity_drift 2>&1
-  )" || report=""
+  report="$(update_get_integrity_report "${root}")" || report=""
   count="${report##*$'\n'}"
   if [[ ! "${count}" =~ ^[0-9]+$ ]]; then
-    update_log "integrity preflight: the check could not run — run 'glass-atrium doctor' after this update"
+    update_log "integrity ${stage} update: the check could not run — run 'glass-atrium doctor'"
     return 0
   fi
   while IFS= read -r line; do
-    if [[ -n "${line}" && "${line}" != "${count}" ]]; then update_log "integrity preflight: ${line#"${line%%[![:space:]]*}"}"; fi
+    if [[ -n "${line}" && "${line}" != "${count}" ]]; then update_log "integrity ${stage} update: ${line#"${line%%[![:space:]]*}"}"; fi
   done <<<"${report%$'\n'*}"
-  update_log "integrity preflight: ${count} finding(s) before this update (detection only — the apply restores release files)"
+  update_log "integrity ${stage} update: ${count} finding(s) (detection only — 'glass-atrium doctor' lists the current ones)"
 }
+
+# get_integrity_drift's report (stderr findings + the stdout count) from install root $1, rc 1 when
+# the engine cannot load. Isolated subshell for the reason update_launchd_jobs_from_ga_env gives:
+# ga-env.sh's readonly globals must not reach this script.
+update_get_integrity_report() (
+  trap - ERR
+  # shellcheck source=/dev/null
+  source "${1}/lib/ga-core.sh" >/dev/null 2>&1 || exit 1
+  ga_init_env "${1}" >/dev/null 2>&1 || exit 1
+  get_integrity_drift 2>&1
+)
 
 # Re-deploy + reload EVERY resident (already-loaded) com.glass-atrium.* launchd job whose
 # deployed plist has DRIFTED from the freshly-rendered SoT, so a renderer / PATH /
@@ -4496,7 +4501,7 @@ update_run() {
   update_headless_load_claude_auth
 
   # Step 1.5 — integrity preflight: report-only tamper record before the apply.
-  update_report_integrity_preflight
+  update_report_integrity before
 
   # Step 2 — download + stage the latest release.
   work="$(mktemp -d -t glass-atrium-update.XXXXXX)"
@@ -4586,6 +4591,7 @@ update_run() {
     # the "update available" badge (DF-10) — the full-apply path persists via
     # update_refresh_mirror_farm, which this early return never reaches.
     update_persist_root_manifest "${manifest}" "${root}"
+    update_report_integrity after
     update_finalize_success 0
     return 0
   fi
@@ -4639,6 +4645,9 @@ update_run() {
   # never runs over an older schema). Loud-fails with the named code 15 and leaves
   # the applied files in place — see update_migrate_deploy_post_apply.
   update_migrate_deploy_post_apply
+
+  # Step 9.5 — record the restored state, so the session-start line stops showing the preflight count.
+  update_report_integrity after
 
   # Headless success finalize: install-parity post-step (monitor rebuild + launchd
   # refresh) then mark the update_job row completed. Interactive mode rebuilds a

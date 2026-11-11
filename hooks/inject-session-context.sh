@@ -122,15 +122,42 @@ fi
 # Harness integrity — one line from the verdict the doctor or update preflight last recorded
 #   · writer and path: lib/ga-doctor.sh → set_integrity_verdict at lib/ga-env.sh → INTEGRITY_VERDICT (pinned by this hook's bats)
 #   · never a hash walk here (~0.2 s+ over ~1000 files): a jq + one find, so the leg stays inside the ~1 s budget
-#   · a manifest-listed file, the agents/ or hooks/ dir, or settings.json newer than the verdict → named as changed since
+#   · a manifest-listed file, the agents/ or hooks/ dir, settings.json or a profile branch's settings.json newer than the verdict → named as changed since
 #   · detection only — the doctor is the authoritative surface; any failure prints the unread line
 readonly INTEGRITY_VERDICT="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/integrity/last-verdict"
+
+# The [INTEGRITY] line, rc 1 on an unreadable verdict.
+get_integrity_line() {
+  local stamp count root settings changed
+  if [[ ! -e "${INTEGRITY_VERDICT}" ]]; then
+    printf '%s' "[INTEGRITY] not checked yet — run 'glass-atrium doctor' for the harness integrity verdict"
+    return 0
+  fi
+  IFS=$'\t' read -r stamp count root settings <"${INTEGRITY_VERDICT}" || return 1
+  [[ "${stamp}" =~ ^[0-9]+$ && -n "${root}" ]] || return 1
+  # shellcheck disable=SC2310,SC2312  # an unrecognised count is the unread line
+  get_verdict_text "${count}" "$((($(date +%s) - stamp) / 3600))h ago" || return 1
+  # shellcheck disable=SC2310  # an unlistable manifest only drops the suffix
+  changed="$(get_changed_count "${root}" "${settings}")" || changed=0
+  [[ "${changed:-0}" -eq 0 ]] || printf '%s' " · ${changed} tracked file(s) changed since — re-run 'glass-atrium doctor' for a fresh verdict"
+}
+
+# Verdict count $1 aged $2 → the line's head; rc 1 on a count the writer never records.
+get_verdict_text() {
+  case "$1" in
+    0) printf '%s' "[INTEGRITY] clean at the last check ($2) — install files match manifest.json and the Atrium hook bindings match" ;;
+    unread) printf '%s' "[INTEGRITY] the last check could not run ($2) — run 'glass-atrium doctor'" ;;
+    *[!0-9]* | '') return 1 ;;
+    *) printf '%s' "[INTEGRITY] $1 finding(s) at the last check ($2) — 'glass-atrium doctor' lists them; 'glass-atrium update' restores" ;;
+  esac
+}
 
 # Count of tracked paths modified after the verdict file; rc 1 when the manifest cannot be listed.
 get_changed_count() {
   local root="$1" settings="$2" listed line changed
   local -a paths=("${root}/agents" "${root}/hooks" "${root}/manifest.json" "${settings}")
   listed="$(jq -r --arg r "${root}" '(.files // [])[] | $r + "/" + .' -- "${root}/manifest.json" 2>/dev/null)" || return 1
+  listed+=$'\n'"$(get_branch_settings "${settings}")"
   while IFS= read -r line; do
     [[ -z "${line}" ]] || paths+=("${line}")
   done <<<"${listed}"
@@ -139,25 +166,14 @@ get_changed_count() {
   grep -c . <<<"${changed}" || true
 }
 
-# The [INTEGRITY] line, rc 1 on an unreadable verdict.
-get_integrity_line() {
-  local stamp count root settings changed age
-  if [[ ! -e "${INTEGRITY_VERDICT}" ]]; then
-    printf '%s' "[INTEGRITY] not checked yet — run 'glass-atrium doctor' for the harness integrity verdict"
-    return 0
-  fi
-  IFS=$'\t' read -r stamp count root settings <"${INTEGRITY_VERDICT}" || return 1
-  [[ "${stamp}" =~ ^[0-9]+$ && -n "${root}" ]] || return 1
-  age="$((($(date +%s) - stamp) / 3600))h ago"
-  case "${count}" in
-    0) printf '%s' "[INTEGRITY] clean at the last check (${age}) — install files match manifest.json and the Atrium hook bindings match" ;;
-    unread) printf '%s' "[INTEGRITY] the last check could not run (${age}) — run 'glass-atrium doctor'" ;;
-    *[!0-9]* | '') return 1 ;;
-    *) printf '%s' "[INTEGRITY] ${count} finding(s) at the last check (${age}) — 'glass-atrium doctor' lists them; 'glass-atrium update' restores" ;;
-  esac
-  # shellcheck disable=SC2310  # an unlistable manifest only drops the suffix
-  changed="$(get_changed_count "${root}" "${settings}")" || changed=0
-  [[ "${changed:-0}" -eq 0 ]] || printf '%s' " · ${changed} tracked file(s) changed since — re-run 'glass-atrium doctor' for a fresh verdict"
+# settings.json of every profile branch beside the target home of settings file $1 — the doctor's
+# branch set: a `.claude-*` sibling holding a .claude.json. A replaced link is newer than the verdict.
+get_branch_settings() {
+  local home="${1%/*}" branch
+  for branch in "${home%/*}"/.claude-*; do
+    [[ -f "${branch}/.claude.json" && ! "${branch}" -ef "${home}" ]] || continue
+    [[ ! -e "${branch}/settings.json" && ! -L "${branch}/settings.json" ]] || printf '%s\n' "${branch}/settings.json"
+  done
 }
 
 # shellcheck disable=SC2310  # any failure is answered by the unread line below

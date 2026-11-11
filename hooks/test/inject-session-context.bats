@@ -528,7 +528,9 @@ record_integrity_verdict() {
     "findings recorded|3||[INTEGRITY] 3 finding(s) at the last check"
     "check could not run|unread||[INTEGRITY] the last check could not run"
     "tracked file changed after the verdict|0|hooks/hook-a.sh|1 tracked file(s) changed since"
+    "profile branch settings replaced after the verdict|0|../home/.claude-work/settings.json|1 tracked file(s) changed since"
   )
+  mkdir -p "${FAKE_HOME}/.claude-work" && printf '{}\n' >"${FAKE_HOME}/.claude-work/.claude.json"
   for row in "${rows[@]}"; do
     IFS='|' read -r name verdict touch want <<<"${row}"
     if ga_guard_path "${FAKE_HOME}/.glass-atrium/data"; then rm -rf -- "${FAKE_HOME:?}/.glass-atrium/data"; fi
