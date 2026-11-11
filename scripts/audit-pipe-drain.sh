@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# audit-pipe-drain.sh — audit of pipe readers that can stop before EOF in the hooks/ shell files
+# audit-pipe-drain.sh — audit of pipe readers that can stop before EOF in the hooks/ and autoagent/ shell files
 # Usage: audit-pipe-drain.sh [--path <file>]... [--root <dir>] [--quiet] [--advisory|--strict]
 #
 # Why: under `set -Eeuo pipefail` a reader that exits early (grep -q, grep -m, head, awk exit) leaves a writer with
@@ -7,7 +7,8 @@
 # A multi-write writer races at any output size; a single write within the 64 KiB pipe capacity is the safe case.
 #
 # Behavior:
-#   1. Walk the shell files under hooks/ (libraries included, hooks/test/ excluded), or the --path overrides
+#   1. Walk the shell files under each scope root in SCOPE_DIRS (libraries included, each root's test/ subtree
+#      excluded), or the --path overrides
 #   2. Join each logical line (a trailing backslash, a trailing pipe or a still-open single quote continues
 #      it); skip comments, heredoc bodies and quoted text, where quotes nest inside `$( )` and backticks
 #   3. At every pipe stage, find a reader that can stop before EOF: grep with -q/-m (or --quiet,
@@ -25,7 +26,7 @@
 #   0 = audit completed with no blocking findings (or an advisory-surface run)
 #   1 = blocking run reporting an UNDRAINED site
 #   2 = usage error
-#   3 = IO/scope error (the hooks tree or a --path target is missing or unreadable)
+#   3 = IO/scope error (a scope root or a --path target is missing or unreadable)
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -36,8 +37,9 @@ readonly SCRIPT_DIR
 source "${SCRIPT_DIR}/lib/audit-cli.sh"
 audit_cli_init 'audit-pipe-drain.sh' 'directories' 1 10
 
-readonly SCOPE_DIR=hooks
-readonly EXCLUDED_PREFIX=hooks/test/
+# Default scope roots; each test/ subtree skipped — test code (assertions, fixtures), never a production verdict path
+SCOPE_DIRS=(hooks autoagent)
+readonly SCOPE_DIRS
 # Functions whose body ends in an early-exit reader of their stdin, so a pipe into them races the same way.
 READER_HELPERS=(scope_decl_select)
 readonly READER_HELPERS
@@ -67,7 +69,15 @@ code_text=""
 is_code_current=0
 
 audit_tree() {
-  local abs="${root_dir}/${SCOPE_DIR}" found="" sorted="" file="" rel=""
+  local dir=""
+  for dir in "${SCOPE_DIRS[@]}"; do
+    audit_scope_dir "${dir}"
+  done
+}
+
+# Audits the shell files under scope root $1, its test/ subtree excluded.
+audit_scope_dir() {
+  local dir="${1}" abs="${root_dir}/${1}" found="" sorted="" file="" rel=""
   if [[ ! -d "${abs}" || ! -r "${abs}" ]] || ! found="$(find "${abs}" -type f)"; then
     printf 'ERROR: scope directory missing or unwalkable: %s\n' "${abs}" >&2
     exit 3
@@ -77,7 +87,7 @@ audit_tree() {
   while IFS= read -r file; do
     rel="${file#"${root_dir}/"}"
     # shellcheck disable=SC2310  # predicate of tests and expansions only — nothing for errexit to catch
-    if [[ "${rel}" == "${EXCLUDED_PREFIX}"* ]] || ! is_shell_file "${file}"; then
+    if [[ "${rel}" == "${dir}/test/"* ]] || ! is_shell_file "${file}"; then
       continue
     fi
     audit_file "${rel}" "${file}"

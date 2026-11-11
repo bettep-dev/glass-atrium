@@ -1,7 +1,8 @@
 """Parity pin between the learning-log rule's approval-tier text and the daemon code it describes.
 
-The Tier 1 span must state what the cycle code ships — trial, graduation and a dry
-regression gate — and carry no claim that code contradicts; its numbers and literals
+The Tier 1 span must state what the cycle code ships — trial, graduation, a dry regression
+gate, the two ways an A/A opens and the power hold without a passed one — and carry no
+claim that code contradicts; its numbers and literals
 must equal the code constants; every function it cites must have a production caller;
 the Tier-2 trigger lines stay byte-identical. Sources are read and AST-parsed, never
 imported, so the pin cannot skip.
@@ -106,15 +107,16 @@ def _get_constant(source: Path, name: str) -> object:
 
 
 def _get_called_names(node: ast.AST) -> set[str]:
-    names: set[str] = set()
-    for call in ast.walk(node):
-        if isinstance(call, ast.Call):
-            func = call.func
-            if isinstance(func, ast.Name):
-                names.add(func.id)
-            elif isinstance(func, ast.Attribute):
-                names.add(func.attr)
-    return names
+    return {callee for call in ast.walk(node) if isinstance(call, ast.Call) and (callee := _get_callee(call))}
+
+
+def _get_callee(call: ast.Call) -> str | None:
+    func = call.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
 
 
 def _get_functions_reading(source: Path, name: str) -> set[str]:
@@ -127,10 +129,99 @@ def _get_functions_reading(source: Path, name: str) -> set[str]:
 
 
 def _get_run_cycle_calls() -> set[str]:
+    return _get_called_names(_get_function("run_cycle"))
+
+
+def _get_function(name: str) -> ast.FunctionDef:
     for node in _get_tree(_DAEMON_CYCLE).body:
-        if isinstance(node, ast.FunctionDef) and node.name == "run_cycle":
-            return _get_called_names(node)
-    raise LookupError("daemon_cycle.py defines no top-level run_cycle")
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise LookupError(f"daemon_cycle.py defines no top-level {name}")
+
+
+def _is_called_only_when_none(function: ast.FunctionDef, callee: str, subject: str) -> bool:
+    # every call of callee sits in the body of a `<subject> is None` branch (elif bodies sit in orelse)
+    guarded: set[int] = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.If) and _is_none_check(node.test, subject):
+            guarded.update(id(n) for stmt in node.body for n in ast.walk(stmt))
+    calls = [n for n in ast.walk(function) if isinstance(n, ast.Call) and _get_callee(n) == callee]
+    return bool(calls) and all(id(call) in guarded for call in calls)
+
+
+def _is_none_check(test: ast.expr, subject: str) -> bool:
+    return (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name)
+        and test.left.id == subject
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Is)
+        and isinstance(test.comparators[0], ast.Constant)
+        and test.comparators[0].value is None
+    )
+
+
+def _get_assigned_name(function: ast.FunctionDef, producer: str) -> str:
+    # the one local name bound to a call of producer
+    names = [
+        target.id
+        for node in ast.walk(function)
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and _get_callee(node.value) == producer
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    ]
+    if len(names) != 1:
+        raise LookupError(f"{function.name} binds {producer}() to {names}, expected one name")
+    return names[0]
+
+
+def _get_callers(callee: str) -> set[str]:
+    # every top-level daemon_cycle.py statement calling callee; a module-level call → "<module>"
+    return {
+        node.name if isinstance(node, (*_FUNCTION_NODES, ast.ClassDef)) else "<module>"
+        for node in _get_tree(_DAEMON_CYCLE).body
+        if callee in _get_called_names(node)
+    }
+
+
+def _is_aa_start_written_only_by_its_two_openers() -> bool:
+    # writer ← {start_aa ← the --aa-start owner, _start_first_aa ← run_aa_stage}, no other path
+    return (
+        _get_callers("_write_aa_start") == {"start_aa", "_start_first_aa"}
+        and _get_callers("start_aa") == _get_flag_owners("--aa-start")
+        and _get_callers("_start_first_aa") == {"run_aa_stage"}
+    )
+
+
+def _get_flag_owners(flag: str) -> set[str]:
+    # top-level functions declaring the argparse flag
+    return {
+        node.name
+        for node in _get_tree(_DAEMON_CYCLE).body
+        if isinstance(node, ast.FunctionDef)
+        and any(
+            isinstance(n, ast.Call)
+            and _get_callee(n) == "add_argument"
+            and bool(n.args)
+            and isinstance(n.args[0], ast.Constant)
+            and n.args[0].value == flag
+            for n in ast.walk(node)
+        )
+    }
+
+
+def _get_keyword_constant(owner: str, keyword: str) -> object:
+    # literal keyword value anywhere inside a top-level assignment (a nested namespace member)
+    for node in _get_tree(_DAEMON_CYCLE).body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == owner for t in node.targets):
+            for item in ast.walk(node.value):
+                if isinstance(item, ast.keyword) and item.arg == keyword:
+                    return ast.literal_eval(item.value)
+    raise LookupError(f"{owner} assigns no {keyword} keyword in daemon_cycle.py")
+
+
+def _is_attribute_read(function: ast.FunctionDef, attribute: str) -> bool:
+    return any(isinstance(n, ast.Attribute) and n.attr == attribute for n in ast.walk(function))
 
 
 def _get_production_sources() -> Iterator[Path]:
@@ -205,6 +296,33 @@ class Tier1SectionMatchesTheDaemonCode(unittest.TestCase):
             with self.subTest(name):
                 self.assertTrue(code_fact, f"run_cycle no longer calls the stage behind: {name}")
                 self.assertTrue(statement in section, f"the rule text does not state {statement}")
+
+    def test_section_states_what_opens_an_aa_and_what_holds_generation_shut_without_one(self) -> None:
+        aa_stage = _get_function("run_aa_stage")
+        aa_state = _get_assigned_name(aa_stage, "_read_aa_state")
+        design_unmeasured = _get_keyword_constant("POWER", "DESIGN_UNMEASURED")
+        rows = (
+            (
+                "an empty ledger opens the first A/A at a writing cycle",
+                _is_called_only_when_none(aa_stage, "_start_first_aa", aa_state),
+                ("first writing cycle", "`daemon_cycle.py` → `_start_first_aa`"),
+            ),
+            (
+                "after a close only the hand-run --aa-start opens another",
+                _is_aa_start_written_only_by_its_two_openers(),
+                ("`daemon_cycle.py --aa-start`", "`daemon_cycle.py` → `start_aa`"),
+            ),
+            (
+                "no design effect from a passed A/A never passes the power check",
+                _is_attribute_read(_get_function("get_power_check"), "DESIGN_UNMEASURED"),
+                (f"`{design_unmeasured}`", "`daemon_cycle.py` → `get_power_check`"),
+            ),
+        )
+        section = _get_tier1_span()
+        for name, code_fact, statements in rows:
+            with self.subTest(name):
+                self.assertTrue(code_fact, f"code fact no longer holds: {name} — rewrite the rule and this row")
+                self.assertEqual([s for s in statements if s not in section], [], "the rule text does not state")
 
     def test_section_numbers_and_literals_equal_the_code_constants(self) -> None:
         section = _get_tier1_span()

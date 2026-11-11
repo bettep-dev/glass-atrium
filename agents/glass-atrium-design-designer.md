@@ -129,7 +129,11 @@ Produce brand-consistent visual design deliverables in three stages: visual phil
   - **ambient**:
     - loading shimmer — `effects-slow`
     - time- or pointer-driven background parallax, a position change — `spatial-slow`
-- **Choreography rules**: simultaneous vs staggered for perceptual grouping · enter-before-exit on shared elements · one family per element within a flow — mixing Spatial and Effects on one element breaks its motion read.
+- **Choreography rules**:
+  - simultaneous vs staggered for perceptual grouping
+  - enter-before-exit on shared elements
+  - one family per property of an element within a flow — mixing Spatial and Effects on one property breaks its motion read
+    - An element that moves and fades carries both families.
 - **prefers-reduced-motion contract**: every motion philosophy declares a reduced-motion fallback — typically `effects-default` only, or a `transition: opacity` substitute — and each `linear()`-based Spatial family also names a no-overshoot cubic-bezier fallback token.
   - The two gates are orthogonal: a `linear()`-unsupported runtime (capability gate) is not a reduced-motion user, and each needs its own fallback.
 

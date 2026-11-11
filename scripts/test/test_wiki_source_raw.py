@@ -172,7 +172,9 @@ class TestDetectUnprocessedSourceRaw(unittest.TestCase):
         (self._root / "notes").mkdir()
 
     def tearDown(self) -> None:
-        for sub in ("raw", "notes"):
+        for sub in ("raw", "notes", "index"):
+            if not (self._root / sub).is_dir():
+                continue
             for entry in (self._root / sub).iterdir():
                 entry.unlink()
             (self._root / sub).rmdir()
@@ -234,6 +236,27 @@ class TestDetectUnprocessedSourceRaw(unittest.TestCase):
         self._write_raw("two-2026", source_url=shared)
         self._write_note("one-renamed.md", source_raw="one-2026.md", source_url=shared)
         self.assertIn("two-2026", self._unprocessed_slugs())
+
+    def test_skip_record_moves_only_its_listed_note_less_raws_out_of_the_backlog(
+        self,
+    ) -> None:
+        # The batch script's skip record is the same fact for both detectors: a
+        # listed raw with no note leaves the backlog, an unlisted one stays.
+        self._write_raw("declined-2026")
+        self._write_raw("fresh-2026")
+        record = self._root / wdc.SKIP_RECORD_RELPATH
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text("declined-2026.md\t2026-02-01\n", encoding="utf-8")
+        unprocessed = self._unprocessed_slugs()
+        self.assertNotIn("declined-2026", unprocessed)
+        self.assertIn("fresh-2026", unprocessed)
+
+    def test_skip_record_path_is_the_one_the_batch_script_writes(self) -> None:
+        script = (_SCRIPTS_ROOT / "wiki-daily-compile.sh").read_text(encoding="utf-8")
+        match = re.search(r'^SKIP_RECORD="\$WIKI_ROOT/(.+)"$', script, re.MULTILINE)
+        self.assertIsNotNone(match, "no SKIP_RECORD assignment in wiki-daily-compile.sh")
+        assert match is not None  # narrowed for the type checker; asserted above
+        self.assertEqual(wdc.SKIP_RECORD_RELPATH, match.group(1))
 
     def test_basename_fallback_still_marks_processed(self) -> None:
         # The additive change must not regress the basename identity: a note whose

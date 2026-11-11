@@ -175,10 +175,12 @@ The canonical rule for what language this system writes in.
 | a command the agent runs, anywhere | a path guard inside the command | none — a command has no site to annotate, so move the target to `~/.Trash/` instead |
 
 - Exception: `rm` may delete a single named entry directly in `~/.Trash/` — one literal name, no glob, no deeper path, no trailing slash — and for that delete this exception overrides the table's "a command the agent runs" row, so no path guard is required; the Trash directory itself, a path below an entry, and anything outside the Trash keep the move-to-Trash rule.
+  - Run that delete as `~/.glass-atrium/scripts/ga-trash-purge.sh <entry>`, only for an entry you moved there yourself: every live profile denies a direct `rm`, and the script applies this exception's own check before it deletes.
 
 ### Temporary Files [ALL]
 
 - Default: create temporary files and directories with bare `mktemp` / `mktemp -d` — no template path — so they land under the per-user `$TMPDIR`.
+- Trash purge: permanently deleting scratch you moved to `~/.Trash/` follows `### File Deletion Policy [ALL]` → the `~/.Trash/` exception.
 
 ## Context Management [ALL]
 

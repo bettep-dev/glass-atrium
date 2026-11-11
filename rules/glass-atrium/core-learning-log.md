@@ -33,6 +33,16 @@ The self-improvement loop (`autoagent/daemon_cycle.py`) has two approval tiers, 
   - `autoagent/daemon-apply.sh` batch mode selects and applies nothing; `--proposal-id` is the only apply path.
 - Generation:
   - Only a pattern passing the power check reaches the generator; any other verdict parks it for that cycle (`daemon_cycle.py` → `check_pattern_power`).
+  - A pattern whose agent and metric key hold no design-effect row from a passed A/A never passes — the verdict naming that cause is `design-unmeasured` (`daemon_cycle.py` → `get_power_check`).
+  - What opens an A/A, or restarts its window, follows the ledger's A/A state (`daemon_cycle.py` → `run_aa_stage`):
+
+    | A/A state | Opened or restarted by |
+    |---|---|
+    | no `aa-start` row — a fresh install | its first writing cycle (`daemon_cycle.py` → `_start_first_aa`) |
+    | closed, a failed A/A included | only `daemon_cycle.py --aa-start`, run by hand (`daemon_cycle.py` → `start_aa`) |
+    | open, installed fingerprint changed by a deploy | the next writing cycle restarts the window; no operator step (`daemon_cycle.py` → `_get_aa_restart`) |
+
+  - A refused start writes nothing: the cycle WARNs and runs on; `--aa-start` exits non-zero naming the reason.
   - Generation skips an agent holding a live trial — open, or won with its row still pending.
   - A verified non-safety candidate is stored pending `auto`, bound to a live pre-registration.
   - An `auto` candidate bound to no live pre-registration is rewritten to the terminal `unadjudicated` status (`daemon_cycle.py` → `resolve_floor_terminalization`).
