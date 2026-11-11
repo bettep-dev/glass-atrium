@@ -49,6 +49,8 @@ Success Criteria:
   - The retry is bounded: each attempt that ends without the stage running counts as a fail toward the Stage 0 **Loop termination cap**.
     - A stage that still cannot run when the cap is reached halts the pipeline: report it as FAIL with its cause, never as SKIP or OK.
   - A stage a deliberate blocker stops is not retried: it halts the pipeline, reported as FAIL with its cause.
+    - Outcome Record emit: `result: blocked`, never `fail` — FAIL here is the `### Result Format` stage status only.
+      - Why: the orchestrator reports a `blocked` deliberate blocker to the user, while a `fail` enters Retry and Fallback, which route around the control.
 
 ### Result Format
 
