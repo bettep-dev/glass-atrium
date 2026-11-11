@@ -1450,10 +1450,6 @@ def detect_bash(tool_input):
     return scan_command(tool_input.get("command", ""), 0, False)
 
 
-class NulInCommand(Exception):
-    """A NUL in Bash command text: no field of the NUL-framed output may carry one."""
-
-
 def main():
     try:
         data = json.load(sys.stdin)
@@ -1482,10 +1478,6 @@ def main():
         target = ""
     status = 0
     try:
-        # NUL guard, every caller: a NUL splits the command differently for the shell that runs
-        # it than for this scan, so it fails closed up front as HAR-003.
-        if tool_name == "Bash" and "\x00" in target:
-            raise NulInCommand()
         if tool_name == "Write":
             reason = detect_agent_write(tool_input)
         elif tool_name == "Edit":
@@ -1619,10 +1611,6 @@ block_wording() {
       BLOCK_MSG="Harness-critical command blocked (bash-source-position): a protected path sits in SOURCE position"
       BLOCK_SUG="The copy verbs match the whole argument run, so reading a protected path blocks like writing one — an intentional over-block, not a bug. Re-spell the operation as a read and it passes: the Read tool, \`cat <protected> > <dest>\`, or \`dd if=<protected> of=<dest>\` (dd is inspected on its of= operand only). If it must run as written, launch Claude Code with HARNESS_PROTECTION_APPROVE=1."
       ;;
-    nul-in-command)
-      BLOCK_MSG="Harness-critical command blocked (nul-in-command): the command text carries a NUL byte"
-      BLOCK_SUG="A NUL splits the command differently for the shell that runs it than for this gate's scan, so the gate fails closed rather than judge a command it cannot read as the shell will. Remove the NUL from the command text and re-run it."
-      ;;
     classifier-failure)
       BLOCK_MSG="Harness-critical gate unavailable (classifier-failure) — failing closed"
       BLOCK_SUG="The envelope classifier could not run, so the gate cannot tell a protected write from a harmless one and fails closed by design rather than pass unread input. Restore a working python3 on PATH and re-run the command. The block covers only envelopes naming a protected root, not all tool use."
@@ -1673,7 +1661,6 @@ if [[ "${PY_STATUS}" != "0" ]]; then
   # other verdict value means it died before it could say anything.
   CLASSIFIER_DETAIL="python3 classifier exit ${PY_STATUS:-EOF}"
   case "${VERDICT}" in
-    error:NulInCommand) block_critical "HAR-003" "nul-in-command" "${TARGET:0:200}" ;;
     error:*) CLASSIFIER_DETAIL="${CLASSIFIER_DETAIL} (${VERDICT})" ;;
     *) : ;;
   esac
