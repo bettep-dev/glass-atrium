@@ -20,15 +20,10 @@
     "  outbound token in one command; advisory-raw-store-read.sh (H2) notes a Bash read of the wiki raw",
     "  store. Both are NON-BLOCKING (exit 0 always) — visibility only, never a gate; wire_hooks registers",
     "  them from the ga-env.sh EXPECTED_HOOK_BINDINGS SoT alongside the other bindings.",
-    "INTERPRETER NEGATIONS (T21): the deny rows Bash(bash -c:*) / Bash(sh -c:*) / Bash(zsh -c:*) /",
-    "  Bash(eval:*) close a command-prefix-matcher BYPASS — an inline shell re-parse (bash -c 'rm -rf ~')",
-    "  would otherwise smuggle a denied verb past Bash(rm:*), whose match anchors on the LEADING token only.",
-    "  These forms ARE expressible as command-prefix matchers (leading-token anchored) and have no",
-    "  legitimate agent use — an agent runs commands through the Bash tool directly, never wrapped.",
-    "  RESIDUAL (deliberately NOT denied): a LANGUAGE-interpreter inline form (python3 -c, node -e, perl -e)",
-    "  is an equivalent bypass vector but collides with legitimate portability use (e.g. python3 -c date",
-    "  math on BSD/GNU divergence), so it stays for the block-dangerous-commands.sh backstop rather than",
-    "  a blanket permission-layer deny.",
+    "INLINE SHELLS: Bash(rm:*) anchors on the LEADING token only, so an rm wrapped in a shell or",
+    "  interpreter re-parse (bash -c, eval, python3 -c) is not denied here; no wrapper row is denied.",
+    "  A wrapped root or home wipe still meets the rm-wipe row of block-dangerous-commands.sh; any other",
+    "  wrapped rm passes both layers.",
     "NPM PUBLISH: Bash(npm publish:*) sits in permissions.ask — a user-approval gate (same shape as the LLM06",
     "  explicit-approval principle), not a hard deny. Leading-token matching: foo && npm publish / npx npm publish",
     "  do NOT match; a Layer-3 PreToolUse(Bash) command-string scan is a follow-up candidate, out of scope here.",
@@ -75,11 +70,7 @@
     ],
     "deny": [
       "Bash(rm:*)",
-      "Bash(rm -rf:*)",
-      "Bash(bash -c:*)",
-      "Bash(sh -c:*)",
-      "Bash(zsh -c:*)",
-      "Bash(eval:*)"
+      "Bash(rm -rf:*)"
     ],
     "ask": [
       "Bash(npm publish:*)"

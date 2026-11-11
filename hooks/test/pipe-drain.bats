@@ -103,7 +103,7 @@ set_consumer_rows() {
   cred_fixture="${cred_fixture}=supersecret123"
   printf '%s\n' "${aws_fixture}" >"${BATS_TEST_TMPDIR}/leak.env"
   CONSUMER_ROWS=(
-    "dangerous command|block-dangerous-commands.sh|bash|chmod -R 777 /|2|SEC-010"
+    "dangerous command|block-dangerous-commands.sh|bash|dd if=/dev/zero of=/dev/disk0|2|SEC-010"
     "destructive git|enforce-commit-guard.sh|bash|git reset --hard|2|GIT-002"
     "credential write|validate-secret-scan.sh|bash|echo ${cred_fixture} > .env|2|SEC-016"
     "dangerous output|validate-output.sh|response|${sql_fixture}|2|SEC-012"

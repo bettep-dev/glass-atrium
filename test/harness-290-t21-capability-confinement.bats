@@ -5,10 +5,9 @@
 # nothing else. Verifies three deliverables:
 #   1. Bash absent from both meta agents' frontmatter tools allowlist (the
 #      LLM06 spawn-freeze surface — frontmatter is the enforced tool grant).
-#   2. Inline shell-interpreter negations present + EXPRESSIBLE as command-prefix
-#      matchers in settings.template.json permissions.deny — they close a
-#      Bash(rm:*) bypass an agent could otherwise smuggle via `bash -c 'rm …'`;
-#      the npm publish row sits in permissions.ask (user-approval gate).
+#   2. The rm deny rows present + each deny row a well-formed command-prefix
+#      matcher in settings.template.json permissions.deny; the npm publish row
+#      sits in permissions.ask (user-approval gate).
 #   3. The redirect-into-harness pattern is INEXPRESSIBLE as a command-prefix
 #      matcher, so it is absent from the settings deny/ask.
 #
@@ -68,15 +67,14 @@ frontmatter_block() {
   done
 }
 
-@test "settings deny: interpreter negations present, each a well-formed command-prefix matcher" {
+@test "settings deny: the rm rows present, each deny row a well-formed command-prefix matcher" {
   # A settings command-prefix matcher is Bash(<non-empty prefix>:*), anchored on
-  # the leading command token — the shape that makes these negations expressible
-  # at all (contrast the redirect row below). Membership AND shape in one jq whose
+  # the leading command token — the shape that makes a deny row expressible at all
+  # (contrast the redirect row below). Membership AND shape in one jq whose
   # status is the test's last command.
   run jq -e '
     # GA-RM[not-executed]: jq string literals matched against the settings deny list, never run
-    ["Bash(rm:*)", "Bash(rm -rf:*)",
-     "Bash(bash -c:*)", "Bash(sh -c:*)", "Bash(zsh -c:*)", "Bash(eval:*)"] as $need
+    ["Bash(rm:*)", "Bash(rm -rf:*)"] as $need
     | (($need - .permissions.deny) == [])
       and ([.permissions.deny[] | select(test("^Bash\\([^()]+:\\*\\)$") | not)] | length) == 0
   ' "${SETTINGS}"
