@@ -194,8 +194,9 @@ Classify every DEV task against the Decision SIZABLE criteria above, a condensed
 The probes run during the Decision phase, before the spawn: Permission · Capability · Compatibility.
 
 - Each probe gates independently: any single failure halts delegation.
-  - A failed probe is a deliberate blocker (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`): report it with its remediation.
+  - Treat a failed probe as a deliberate blocker, whatever caused it: report it with its remediation (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
     - Never clear it on your own — by retrying in another spelling, widening a grant or starting a service.
+    - Why: the remediation — a grant, a service start — is the user's to make, even where nothing placed the failure on purpose (a daemon that is down).
   - An error in running the probe itself — a mistyped path, a timeout — is an ordinary obstacle: fix the probe and run it again.
 - A probe whose trigger is absent (no target path, no `compatibility` field) is a no-op.
 - The Visual-Weight Probe is not one of these, despite its name.
@@ -460,7 +461,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 ### Failure Recovery Loop
 
-On `fail`, or `blocked` by an obstacle:
+On `fail`, or `blocked` via **Blocker class**:
 
 **Retry** (same agent, max 2 attempts with refined prompt) → **Fallback** (alternative agent if domain coverage allows) → **Escalate** to glass-atrium-qa-debugger (2 consecutive fail = immediate escalation) → **Circuit-breaker** (same agent emits 3 consecutive fail → suspend agent, report to user).
 

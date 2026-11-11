@@ -220,7 +220,8 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The bolded lead **Retry effort escalation** under `### Failure Recovery Loop` has no other maintained copy.
   - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Thinking Budget Policy [ALL]` → **Task-class rule** cites it by name as one tier mover.
   - `references/failure-recovery.md` carries no Retry or tier text.
-- The deliberate-blocker exception to the loop sits at `#### Monitoring-phase notes` → **Blocker class**, not under this H3, which is at its cap; the loop's opening line names only the case it takes.
+- The deliberate-blocker exception to the loop sits at `#### Monitoring-phase notes` → **Blocker class**, not under this H3, which is at its cap; the loop's opening line names that bullet as the only way a `blocked` result enters.
+  - `#### Decision-phase probes` states a handling policy — treat a failed probe as a deliberate blocker — and leaves the class definition to the charter section.
   - That bullet and `#### Decision-phase probes` cite `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`: a rename of that heading lands in both.
 - The rule file carries no pointer to `skills/glass-atrium-ops-orchestrator.md` → `### Self-Improvement User-Approval Trigger`.
   - The orchestrator reaches that section through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier.

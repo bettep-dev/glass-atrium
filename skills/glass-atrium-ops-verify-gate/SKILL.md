@@ -9,6 +9,7 @@ Sequentially verifies code quality in 6 stages before committing, enforcing evid
 
 - No stage is skipped without a documented reason.
 - A failed check at any stage halts the pipeline.
+  - So does a stage that still cannot run after its retry: `### Verification Order (halt on failure)`.
 
 ## When to Use
 
@@ -45,6 +46,9 @@ Success Criteria:
 6. **Git status**: `git status` + `git diff --stat` — report commit-readiness status
 
 - A stage that could not run — a missing command, a timeout, a locked file — is an ordinary obstacle, not a failed check: diagnose it and run the stage again (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
+  - The retry is bounded: each attempt that ends without the stage running counts as a fail toward the Stage 0 **Loop termination cap**.
+    - A stage that still cannot run when the cap is reached halts the pipeline: report it as FAIL with its cause, never as SKIP or OK.
+  - A stage a deliberate blocker stops is not retried: it halts the pipeline, reported as FAIL with its cause.
 
 ### Result Format
 
@@ -81,6 +85,7 @@ See [red-flag.md](references/red-flag.md) for the evidence each claim requires a
 ## Red Flags
 
 - A stage marked SKIP without a documented reason
+- A stage that could not run reported as SKIP or OK
 - Build output not read after execution (command run but result ignored)
 - Exit code not checked — only partial output scanned for "success" keywords
 - Console.log warnings dismissed without removal
@@ -90,6 +95,6 @@ See [red-flag.md](references/red-flag.md) for the evidence each claim requires a
 
 - [ ] **Sequential execution**: All 6 stages ran in order — no stage skipped without documented reason
 - [ ] **Exit code evidence**: Each stage's exit code (0 or non-zero) is explicitly reported
-- [ ] **Failure halt**: If any stage failed, subsequent stages were not executed
+- [ ] **Failure halt**: If any stage failed, or still could not run, subsequent stages were not executed
 - [ ] **Result format**: Final output matches the `VERIFICATION: [PASS/FAIL]` template with per-stage status
 - [ ] **No red-flag language**: Completion declaration is accompanied by tool output evidence, not speculative language
