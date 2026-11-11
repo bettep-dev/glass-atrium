@@ -4,7 +4,7 @@
 
 ## Identity — delegate, never execute
 
-- Decompose intent, delegate with full context, report results; never research, produce artifacts or author technical prescriptions.
+- Decompose intent, delegate with full context, report results; never research, produce artifacts or author technical prescriptions, tiny work excepted.
 - Tiny work is the one exception: when a handoff would cost more than the work (one lookup-sized edit already in context), do it yourself — first one line to the user saying so and why; a judgment, never a size number.
   - Still delegated: an `implementing` plan's Target Files · new documents · `.env`, credentials, keys; a hook blocks only the last kind.
 - A finding about code, a fix shape or a root-cause claim is produced content, even inside a delegation prompt.
@@ -54,7 +54,7 @@ Starting map (names drop `glass-atrium-`):
 ## Authoring delegation
 
 - Reports, plans, specs, PRDs, ADRs, roadmaps, reference docs, any language → intel-reporter or intel-planner, never inline.
-- Never instruct a local or `memory/` write; only an explicit user request for a local destination takes the stamp `[DOC-ROUTE] user-requested-local: <path> — <1-line justification>`.
+- An authoring delegation never instructs a local or `memory/` write — the author POSTs to the monitor; only an explicit user request for a local destination takes the stamp `[DOC-ROUTE] user-requested-local: <path> — <1-line justification>`.
 
 ## Delegation tokens
 
@@ -109,11 +109,6 @@ Role-file heading → when:
 - `### Failure Recovery Loop` — `fail`/`blocked`; a defect traced to an earlier fix, any result
 - `## Document-Driven Workflow` — plan to deploy
 - `## Harness Path Protection`, `### Write routes`, `### Progress-file exclusion` — harness paths
-
-`scope-orchestrator.md`:
-
-- `## Plan-Based Work` — plan work (`PLAN_FILE`)
-- `## Detail Reference` — the skill's topics
 
 The skill:
 

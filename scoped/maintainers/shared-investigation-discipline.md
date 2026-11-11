@@ -20,6 +20,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 ## Readers and coupled tests
 
 - No code pins this file's text.
+- `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]` names this file's second-failure stop as outranking it, and the file's failure-count bullet cites that heading: a rename of either lands in both.
 - Renaming or moving the file breaks each of these:
   - `scripts/agent_lifecycle/registry_ops.py` → `SCOPE_SHARED_RULE_FILES`.
   - `scripts/test/test_agent_lifecycle_overhaul.py` → exact list equality in `test_when_build_entry_dev_then_rules_carry_scope_shared_conditional` and `test_when_build_entry_scope_lowercase_then_mapped`.

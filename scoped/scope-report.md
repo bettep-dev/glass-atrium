@@ -59,7 +59,9 @@ Canonical in `agents/glass-atrium-intel-reporter.md`: the dark canvas and light 
 - Delegation phrasing does not override this routing.
 - **The one sanctioned carve-out is the delegation-side stamp** `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')`, attesting that the user explicitly asked for that local destination.
   - Absent the stamp, the author bodies' turn-0 refusal of an orchestrator-supplied local target stands.
-- On a user-requested HTML generation failure, halt for scope clarification — an automatic non-HTML fallback is forbidden.
+- A user-requested HTML generation failure is an ordinary obstacle first: diagnose it, fix the request and retry (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
+  - Still failing → halt for scope clarification.
+  - An automatic non-HTML fallback is forbidden at every point, because the user asked for HTML by name.
 - **Sensitivity self-check before the POST of an exposed HTML primary** — exposed by either HTML request test signal, including an explicit format request without share intent.
   - Record one line before POSTing: `sensitivity_scan: clear` or `sensitivity_scan: N items (category §locator, …)`.
   - Any finding blocks the POST until the user confirms; zero findings is a silent pass, and a generic "may contain sensitive data" caveat is forbidden.
@@ -181,7 +183,7 @@ An agent-only record is not required to carry any layer or the summary table: ad
 - **Skim layer**: summary table + 3-line conclusion, decision-ready without further reading.
 - **Scan layer**: per-section digest + recommendation list.
 - **Read layer**: full analysis + complete source list.
-- Burying the conclusion in body paragraphs is FORBIDDEN.
+- A user-requested report never leaves its conclusion only in body paragraphs: a skim-only reader stops before them.
 
 ## Self-Evaluation Obligation [REPORT]
 

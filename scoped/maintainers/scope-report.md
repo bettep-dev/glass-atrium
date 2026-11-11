@@ -63,7 +63,12 @@ Each entry is keyed by the rule text; its copies change with it.
   - the `### Emission contract` carve-out bullet;
   - `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing`, the exception lead inside the turn-0 routing hard gate;
   - `agents/glass-atrium-intel-planner.md` → `### Turn-0 routing hard gate`, the stamp table and the `The stamp attests` bullet;
-  - the delegation-side canonical `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria`.
+  - the delegation-side canonical `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria`;
+  - the main-session copy `scoped/orchestrator-core.md` → `## Authoring delegation`.
+- **HTML generation failure**:
+  - the `### Emission contract` bullet that opens `A user-requested HTML generation failure` (canonical), which cites `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`;
+  - `agents/glass-atrium-intel-reporter.md` → `## Absolute Rules`, the `never a silent MD fallback` sub-bullet, which cites it;
+  - `agents/glass-atrium-intel-planner.md` → `### Three emission modes (evaluate in order)` → **Fallback**.
 - **Document lifecycle**:
   - `agents/glass-atrium-intel-reporter.md` → the bolded lead `**Document lifecycle duties — you are the completing agent and you own these:**`, the reporter-only deltas;
   - `agents/glass-atrium-intel-planner.md` → `### Document lifecycle duties (delivered copy — the completing agent owns these)` + its sibling `### Document stages and closing`.

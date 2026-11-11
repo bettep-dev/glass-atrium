@@ -14,8 +14,11 @@ Mandatory bug fix sequence: **Confirm symptoms → Formulate cause hypothesis �
 - Begin fix — only after the prior three steps are complete
 
 - "Just try fixing it" / hypothesis-free fixes are forbidden
+- A failure, for the 1st-failure and 2nd-failure rules, is a fix attempt that did not resolve the bug.
+  - An error, timeout or empty result met while investigating is an ordinary obstacle and adds no count: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`.
 - 1st failure → reformulate hypothesis + retry
-- 2nd failure → STOP and hand the bug to glass-atrium-qa-debugger. Stopping is your duty; routing the escalation, and rejecting a debugger conclusion that carries no logs, reproduction or code reference, is the orchestrator's — that half is `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop`.
+- 2nd failure → stop and hand the bug to glass-atrium-qa-debugger.
+  - Stopping is your duty; routing the escalation, and rejecting a debugger conclusion that carries no logs, reproduction or code reference, is the orchestrator's — that half is `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop`.
 
 ## Common Rationalizations
 

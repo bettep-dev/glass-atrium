@@ -107,6 +107,11 @@ Prose citations into charter anchors — grep each before renaming its target:
 - **Absolute Rules**: `## Absolute Rules [ALL]` · `Absolute Rules → Output Language` · `Absolute Rules → the response-language rule` · `Anchor by symbol`
 - **Continuity and files**: `Cross-Session Continuity (progress.md) [ALL]` and its `[CONTINUITY]` header activation contract · `File Deletion Policy`
 - **Conduct**: `## System Prompt Protection` · `AI-Generated Anti-Pattern Prohibition` · `Philosophy (ETHOS)` · `Rationalization Rejection`
+- **Obstacles and blockers**: `## Obstacles and Blockers [ALL]`, cited by:
+  - `rules/glass-atrium/core-outcome-record.md` → `### result values`;
+  - `scoped/scope-report.md` → `### Emission contract`;
+  - `scoped/shared-investigation-discipline.md` → `## Investigation Discipline [DEV+QA]`.
+  - The section itself names `scoped/shared-investigation-discipline.md` and `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop`, so a rename of either lands there too.
 - **Precedence**: `### Precedence Resolution`, cited by:
   - rule prose: `scoped/scope-meta.md` · `scoped/scope-planning.md` · the `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` stub;
   - skill references: `skills/glass-atrium-ops-delegation-contracts/references/delegation-prompt.md` · `skills/glass-atrium-ops-delegation-contracts/references/architecture-patterns.md`;
