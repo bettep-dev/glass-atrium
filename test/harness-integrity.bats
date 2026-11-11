@@ -263,3 +263,31 @@ get_expected_bindings() {
     return 1
   }
 }
+
+@test "the update preflight logs each finding and its count, and never fails the update" {
+  local -a expected=()
+  local line
+  while IFS= read -r line; do expected+=("${line}"); done < <(get_expected_bindings)
+  write_settings "${expected[@]}"
+  ln -s "${GA}/lib" "${ROOT}/lib"
+  ln -s "${GA}/scripts" "${ROOT}/scripts"
+  ln -s "${GA}/autoagent" "${ROOT}/autoagent"
+  printf 'tampered\n' >>"${ROOT}/hooks/hook-a.sh"
+
+  run --separate-stderr env GA_ROOT="${ROOT}" GA_LIB_DIR="${GA}/scripts/lib" HOME="${FAKE_HOME}" \
+    GA_DATA_ROOT="${SANDBOX}/data" ATRIUM_UPDATE_STATE_DIR="${STATE}" GA_TARGET_HOME="${FAKE_HOME}/.claude" \
+    bash -c 'set -Eeuo pipefail; source "$1/scripts/update.sh"; update_report_integrity_preflight' _ "${GA}"
+
+  [[ "${status}" -eq 0 ]] || {
+    echo "status ${status}: ${stderr}"
+    return 1
+  }
+  [[ "${stderr}" == *"integrity preflight: warn : manifest DRIFT — content hash mismatch: hooks/hook-a.sh"* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  [[ "${stderr}" == *"integrity preflight: 1 finding(s) before this update"* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+}

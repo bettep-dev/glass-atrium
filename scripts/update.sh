@@ -3581,6 +3581,36 @@ update_launchd_jobs_from_ga_env() {
   )
 }
 
+# Integrity preflight — the harness tamper report (lib/ga-doctor.sh → get_integrity_drift) logged before
+# anything is fetched or applied, so what this update is about to restore is on record. Detection only:
+# an unrunnable check is one log line and the update proceeds. Isolated subshell for the reason
+# update_launchd_jobs_from_ga_env gives: ga-env.sh's readonly globals must not reach this script.
+update_report_integrity_preflight() {
+  local root report line count
+  root="$(update_ga_root)"
+  if [[ ! -f "${root}/lib/ga-core.sh" ]]; then
+    update_log "integrity preflight: skipped — ${root}/lib/ga-core.sh absent"
+    return 0
+  fi
+  # GA-ABSORB[handled@the could-not-run line below]: a failed source or init is reported, never fatal
+  report="$(
+    trap - ERR
+    # shellcheck source=/dev/null
+    source "${root}/lib/ga-core.sh" >/dev/null 2>&1 || exit 1
+    ga_init_env "${root}" >/dev/null 2>&1 || exit 1
+    get_integrity_drift 2>&1
+  )" || report=""
+  count="${report##*$'\n'}"
+  if [[ ! "${count}" =~ ^[0-9]+$ ]]; then
+    update_log "integrity preflight: the check could not run — run 'glass-atrium doctor' after this update"
+    return 0
+  fi
+  while IFS= read -r line; do
+    if [[ -n "${line}" && "${line}" != "${count}" ]]; then update_log "integrity preflight: ${line#"${line%%[![:space:]]*}"}"; fi
+  done <<<"${report%$'\n'*}"
+  update_log "integrity preflight: ${count} finding(s) before this update (detection only — the apply restores release files)"
+}
+
 # Re-deploy + reload EVERY resident (already-loaded) com.glass-atrium.* launchd job whose
 # deployed plist has DRIFTED from the freshly-rendered SoT, so a renderer / PATH /
 # EnvironmentVariables fix from render-parity actually reaches the loaded definition.
@@ -4464,6 +4494,9 @@ update_run() {
   # token so the merge stage's gap arbiter inherits it (no-ops interactively).
   update_job_begin
   update_headless_load_claude_auth
+
+  # Step 1.5 — integrity preflight: report-only tamper record before the apply.
+  update_report_integrity_preflight
 
   # Step 2 — download + stage the latest release.
   work="$(mktemp -d -t glass-atrium-update.XXXXXX)"

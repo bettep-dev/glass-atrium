@@ -506,3 +506,38 @@ get_pointer_quote() {
     return 1
   }
 }
+
+# Record a verdict through the engine's own writer, so the hook and lib/ga-env.sh → INTEGRITY_VERDICT
+# cannot drift apart unseen. HOME differs from the data root's parent: the writer skips a sandbox
+# target writing to the default data root.
+record_integrity_verdict() {
+  local root="${SANDBOX}/ga"
+  mkdir -p "${root}/agents" "${root}/hooks"
+  printf '{"files":["hooks/hook-a.sh"],"hashes":{}}\n' >"${root}/manifest.json"
+  printf 'exit 0\n' >"${root}/hooks/hook-a.sh"
+  env HOME="${SANDBOX}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" GA_LIB_DIR="${BATS_TEST_DIRNAME}/../../scripts/lib" \
+    GA_TARGET_HOME="${FAKE_HOME}/.claude" bash -c 'source "$1/lib/ga-core.sh"; ga_init_env "$2"; set_integrity_verdict "$3"' \
+    _ "${BATS_TEST_DIRNAME}/../.." "${root}" "$1"
+}
+
+@test "the integrity line reports the last recorded verdict and any tracked change since" {
+  local row name verdict touch want
+  local -a rows=(
+    "no verdict recorded|||[INTEGRITY] not checked yet"
+    "clean verdict|0||[INTEGRITY] clean at the last check"
+    "findings recorded|3||[INTEGRITY] 3 finding(s) at the last check"
+    "check could not run|unread||[INTEGRITY] the last check could not run"
+    "tracked file changed after the verdict|0|hooks/hook-a.sh|1 tracked file(s) changed since"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name verdict touch want <<<"${row}"
+    if ga_guard_path "${FAKE_HOME}/.glass-atrium/data"; then rm -rf -- "${FAKE_HOME:?}/.glass-atrium/data"; fi
+    [[ -z "${verdict}" ]] || record_integrity_verdict "${verdict}"
+    [[ -z "${touch}" ]] || touch -t 209901010000 "${SANDBOX}/ga/${touch}"
+    run_hook
+    [[ "${status}" -eq 0 && "${output}" == *"${want}"* ]] || {
+      echo "${name}: status ${status}, no '${want}' in: $(printf '%s\n' "${output}" | grep -F '[INTEGRITY]')"
+      return 1
+    }
+  done
+}

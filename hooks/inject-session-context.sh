@@ -119,6 +119,51 @@ if [[ -r "${_PROGRESS_TRACKER}" ]]; then
   [[ -z "${_continuity}" ]] || _continuity="[CONTINUITY] open progress files: ${_continuity}"
 fi
 
+# Harness integrity — one line from the verdict the doctor or update preflight last recorded
+#   · writer and path: lib/ga-doctor.sh → set_integrity_verdict at lib/ga-env.sh → INTEGRITY_VERDICT (pinned by this hook's bats)
+#   · never a hash walk here (~0.2 s+ over ~1000 files): a jq + one find, so the leg stays inside the ~1 s budget
+#   · a manifest-listed file, the agents/ or hooks/ dir, or settings.json newer than the verdict → named as changed since
+#   · detection only — the doctor is the authoritative surface; any failure prints the unread line
+readonly INTEGRITY_VERDICT="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/integrity/last-verdict"
+
+# Count of tracked paths modified after the verdict file; rc 1 when the manifest cannot be listed.
+get_changed_count() {
+  local root="$1" settings="$2" listed line changed
+  local -a paths=("${root}/agents" "${root}/hooks" "${root}/manifest.json" "${settings}")
+  listed="$(jq -r --arg r "${root}" '(.files // [])[] | $r + "/" + .' -- "${root}/manifest.json" 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] || paths+=("${line}")
+  done <<<"${listed}"
+  # a start point that no longer exists makes find exit 1 after listing the rest — the verdict reports it at the next check
+  changed="$(find "${paths[@]}" -maxdepth 0 -newer "${INTEGRITY_VERDICT}" -print 2>/dev/null)" || true
+  grep -c . <<<"${changed}" || true
+}
+
+# The [INTEGRITY] line, rc 1 on an unreadable verdict.
+get_integrity_line() {
+  local stamp count root settings changed age
+  if [[ ! -e "${INTEGRITY_VERDICT}" ]]; then
+    printf '%s' "[INTEGRITY] not checked yet — run 'glass-atrium doctor' for the harness integrity verdict"
+    return 0
+  fi
+  IFS=$'\t' read -r stamp count root settings <"${INTEGRITY_VERDICT}" || return 1
+  [[ "${stamp}" =~ ^[0-9]+$ && -n "${root}" ]] || return 1
+  age="$((($(date +%s) - stamp) / 3600))h ago"
+  case "${count}" in
+    0) printf '%s' "[INTEGRITY] clean at the last check (${age}) — install files match manifest.json and the Atrium hook bindings match" ;;
+    unread) printf '%s' "[INTEGRITY] the last check could not run (${age}) — run 'glass-atrium doctor'" ;;
+    *[!0-9]* | '') return 1 ;;
+    *) printf '%s' "[INTEGRITY] ${count} finding(s) at the last check (${age}) — 'glass-atrium doctor' lists them; 'glass-atrium update' restores" ;;
+  esac
+  # shellcheck disable=SC2310  # an unlistable manifest only drops the suffix
+  changed="$(get_changed_count "${root}" "${settings}")" || changed=0
+  [[ "${changed:-0}" -eq 0 ]] || printf '%s' " · ${changed} tracked file(s) changed since — re-run 'glass-atrium doctor' for a fresh verdict"
+}
+
+# shellcheck disable=SC2310  # any failure is answered by the unread line below
+_integrity="$(get_integrity_line 2>/dev/null)" || _integrity=""
+[[ -n "${_integrity}" ]] || _integrity="[INTEGRITY] unread — ${INTEGRITY_VERDICT} could not be read; run 'glass-atrium doctor'"
+
 # Hook-context cap: 10,000 UTF-16 units (measured record: hooks/inject-scope-rules.sh -> INJECT_CTX_MAX_BYTES)
 #   · over it the host delivers a ~2 KB preview → the core outranks the open-plan list, which yields to one overflow line
 readonly CONTEXT_CAP_UNITS=10000
@@ -135,7 +180,7 @@ get_utf16_units() {
 }
 
 readonly WIKI_LINE='[WIKI] wiki search available: ~/.glass-atrium/scripts/wiki-query.sh "keywords"'
-_context="${_core}"$'\n'"${_banner%$'\n'}${_pointer:+$'\n'${_pointer}}"$'\n'"${WIKI_LINE}"
+_context="${_core}"$'\n'"${_banner%$'\n'}${_pointer:+$'\n'${_pointer}}"$'\n'"${WIKI_LINE}"$'\n'"${_integrity}"
 _units="$(get_utf16_units "${_context}"$'\n'"${_open_plans}${_continuity:+$'\n'${_continuity}}")"
 if ((_units > CONTEXT_CAP_UNITS)); then
   _open_plans="[OPEN PLANS] omitted — the session context would be ${_units} UTF-16 units, $((_units - CONTEXT_CAP_UNITS)) over the ${CONTEXT_CAP_UNITS}-unit hook cap; read the list with GET /api/clauded-docs?${OPEN_PLANS_QUERY}"

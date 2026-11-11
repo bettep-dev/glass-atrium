@@ -2621,12 +2621,14 @@ get_integrity_drift() {
 
 # Record the latest integrity verdict for hooks/inject-session-context.sh: one line
 # `epoch<TAB>count<TAB>GA_ROOT<TAB>SETTINGS_JSON` at INTEGRITY_VERDICT, replaced atomically (the temp
-# file sits beside it so the rename never crosses a filesystem). A sandbox target writing to the
-# default data root skips, so a test run never overwrites the live verdict. A write miss is a note.
+# file sits beside it so the rename never crosses a filesystem). A sandbox target or a non-default
+# install root (a source tree, a test root) writing to the default data root skips, so only the live
+# install ever records the live verdict. A write miss is a note.
 set_integrity_verdict() {
   local tmp="" now dir="${INTEGRITY_VERDICT%/*}"
   # shellcheck disable=SC2310,SC2312
-  if [[ "$(is_sandbox_target)" == "yes" && "${GA_DATA_ROOT}" == "${HOME}/.glass-atrium" ]]; then
+  if [[ "${GA_DATA_ROOT}" == "${HOME}/.glass-atrium" ]] \
+    && [[ "${GA_ROOT}" != "${HOME}/.glass-atrium" || "$(is_sandbox_target)" == "yes" ]]; then
     return 0
   fi
   now="$(date +%s)"
