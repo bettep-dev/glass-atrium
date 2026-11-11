@@ -130,15 +130,15 @@ TARGET="$(hook_normalize_path "${FILE_PATH}")"
 
 # memory/progress-*.md is the checkpoint path a NON-index-owner agent is INSTRUCTED to write while
 # sharing a worktree (core-git-workflow.md), so locking it would warn on exactly the prescribed
-# behaviour. The three basenames are the harness-write exemption enforce-delegation.sh already
+# behaviour. The three basenames are the allowed-basename exemption enforce-delegation.sh already
 # carries; keeping the two exemption sets aligned avoids contradicting a sanctioned write.
 #
 # The seven-arm carve-out is enforce-delegation.sh's, mirrored VERBATIM (its step 3) rather than
 # approximated: a "memory" segment nested directly under a protected harness dir is not a
-# session-state root, which is why that gate BLOCKS those forms. Exempting them here would have been
-# the opposite of the alignment this comment claims — and would have hidden concurrent writes to
-# agents/memory/ and rules/memory/, which are real shared surfaces, behind a rule written for a
-# checkpoint file. The "/${TARGET}/" wrapping is that gate's form too, so the two read the same.
+# session-state root, so that gate withholds its session-state exemption from those forms and leaves
+# them to its later checks. Exempting them here would hide concurrent writes to agents/memory/ and
+# rules/memory/, which are real shared surfaces, behind a rule written for a checkpoint file. The
+# "/${TARGET}/" wrapping is that gate's form too, so the two read the same.
 #
 # DRIFT HAZARD (deferred, not overlooked): "verbatim" is maintained BY HAND. These seven arms have no
 # shared source with enforce-delegation.sh's copy and no test compares the two lists, so an eighth

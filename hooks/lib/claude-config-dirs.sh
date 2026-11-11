@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # claude-config-dirs.sh — the `~/.claude*` config-root grammar, declared once. Declaration-only,
-# sourced by validate-scope-drift.sh (system-path short-circuit), enforce-delegation.sh and
-# lib/ga-doctor.sh (§27 profile-branch link scan), so no consumer can lag behind a newly created
-# profile branch. Bash 3.2+ (macOS stock).
+# sourced by validate-scope-drift.sh (system-path short-circuit) and lib/ga-doctor.sh (§27
+# profile-branch link scan), so no consumer can lag behind a newly created profile branch.
+# Bash 3.2+ (macOS stock).
 #
 # `nocasematch` is deliberately never touched here: every predicate uses [[ ]], so each consumer's
 # AMBIENT setting governs.
