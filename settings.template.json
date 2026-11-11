@@ -13,7 +13,7 @@
     "  by the dangerous-command hook.",
     "HOOKS: the \"hooks\" block below documents the edit-time syntax gate (validate-edit-syntax.sh), a",
     "  PreToolUse(Write|Edit) advisory that runs bash -n / node --check / py_compile by extension allowlist.",
-    "  It is advisory-first (warns on a syntax error; set SYNTAX_GATE_BLOCK=1 to block after burn-in) and",
+    "  It is advisory only (warns on a syntax error, never blocks) and",
     "  exempts templates. wire_hooks (from the ga-env.sh EXPECTED_HOOK_BINDINGS SoT) wires it automatically",
     "  with an absolute command path; this block is the manual-reference form.",
     "ADVISORY(Bash): advisory-egress-secret.sh (H3) notes a credential-shaped literal co-occurring with an",
