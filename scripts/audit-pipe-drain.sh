@@ -37,8 +37,7 @@ readonly SCRIPT_DIR
 source "${SCRIPT_DIR}/lib/audit-cli.sh"
 audit_cli_init 'audit-pipe-drain.sh' 'directories' 1 10
 
-# Default scope roots; each root's test/ subtree is skipped — its bats suites plant undrained readers as fixture
-# text on purpose, and none of it is a production verdict path.
+# Default scope roots; each test/ subtree skipped — test code (assertions, fixtures), never a production verdict path
 SCOPE_DIRS=(hooks autoagent)
 readonly SCOPE_DIRS
 # Functions whose body ends in an early-exit reader of their stdin, so a pipe into them races the same way.
