@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # claude-config-dirs.sh — the `~/.claude*` config-root grammar, declared once. Declaration-only,
-# sourced by enforce-foreground-harness.sh (Rule-2 path scan + BASENAME-exception strip),
-# validate-scope-drift.sh (system-path short-circuit), enforce-harness-critical.sh (Write/Edit
-# dispatch) and lib/ga-doctor.sh (§27 profile-branch link scan), so no consumer can lag behind a
-# newly created profile branch. Bash 3.2+ (macOS stock).
+# sourced by enforce-foreground-harness.sh (Rule-2 root-name scan), enforce-delegation.sh (harness-
+# path test), validate-scope-drift.sh (system-path short-circuit), enforce-harness-critical.sh
+# (Write/Edit dispatch) and lib/ga-doctor.sh (§27 profile-branch link scan), so no consumer can lag
+# behind a newly created profile branch. Bash 3.2+ (macOS stock).
 #
 # `nocasematch` is deliberately never touched here: every predicate uses [[ ]], so each consumer's
-# AMBIENT setting governs — the critical hook's shell-global nocasematch keeps its case-insensitive
-# contract while the foreground hook stays case-sensitive, from one code path.
+# AMBIENT setting governs, from one code path; each consumer states its own case mode.
 
 # Double-source guard.
 # shellcheck disable=SC2317
