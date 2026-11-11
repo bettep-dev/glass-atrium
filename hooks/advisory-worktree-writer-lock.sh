@@ -5,11 +5,8 @@
 # on STDERR when a DIFFERENT agent already holds it. The release arm lives in agent-tracker.sh's
 # SubagentStop branch; the lock primitive itself lives in lib/worktree-lock.sh.
 #
-# ADVISORY-FIRST — exits 0 on EVERY path, including contention. There is no block path and therefore
-# no retry contract in this version: promotion to exit 2 is a LATER, EXPLICIT step, gated on a clean
-# advisory measurement window (zero false positives), the same deferred-then-promote pattern
-# scripts/audit-absorption.sh followed. Until then the value is measurement: disjoint-ownership
-# fan-outs should NEVER contend, so an observed contention is a real race the prose rule was masking.
+# ADVISORY ONLY — exits 0 on EVERY path, including contention: there is no block path and no retry
+# contract. The value is measurement: disjoint-ownership fan-outs should NEVER contend, so an observed contention is a real race the prose rule was masking.
 #
 # WHY a lock rather than prose: one worktree has exactly ONE git index, so two concurrent writers
 # there is a race that file-set partitioning cannot prevent (skills/glass-atrium-ops-orchestrator-role.md, Automatic
@@ -42,12 +39,11 @@
 #     still needs can therefore vanish, after which a second writer enters silently and NO
 #     LOCK-ADV-001 fires though two writers are really present. That false negative is the accepted
 #     side of a deliberate trade (worktree-lock.sh, Collision note case 2): not folding would make
-#     every id-less lock unreleasable and warn every later writer for 6 h, and this hook's promotion
-#     gate is keyed on zero FALSE POSITIVES. Closing it properly needs a Stop-wired release arm.
+#     every id-less lock unreleasable and warn every later writer for 6 h, and a measurement advisory
+#     is only worth reading at zero FALSE POSITIVES. Closing it properly needs a Stop-wired release arm.
 #
 # WIRED as of this commit: `PreToolUse<TAB>advisory-worktree-writer-lock.sh<TAB>Write|Edit` in
-# EXPECTED_HOOK_BINDINGS (lib/ga-env.sh), so wire_hooks registers the acquire arm and the advisory
-# measurement window its promotion gate depends on can accumulate. The release arm was already live
+# EXPECTED_HOOK_BINDINGS (lib/ga-env.sh), so wire_hooks registers the acquire arm. The release arm was already live
 # (agent-tracker.sh). Two caveats on when firing actually STARTS: settings.json is written by
 # wire_hooks (an install/update run), and Claude Code snapshots the hook config at SESSION START — so
 # the first data point comes from a fresh session after the next release lands, not from this commit.
@@ -185,7 +181,7 @@ emit_error "LOCK-ADV-001" "warn" \
   "${CTX}"
 
 printf '%s\n' \
-  "[worktree-writer-lock] ADVISORY ONLY — this hook never blocks (exit 0); promotion to a block is a later explicit step." \
+  "[worktree-writer-lock] ADVISORY ONLY — this hook never blocks (exit 0)." \
   "  worktree : ${WORKTREE_ROOT}" \
   "  holder   : ${OTHER}" \
   "  writer   : ${HOLDER}" \
