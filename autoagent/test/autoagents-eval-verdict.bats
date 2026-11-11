@@ -101,6 +101,16 @@ assert_eval_rows() {
   assert_eval_rows
 }
 
+@test "a failed claude run is a FAIL in both modes even when its partial output reads PASS" {
+  write_eval_output PASS "None" lines
+  printf '%s\n' '#!/bin/sh' "cat \"${EVAL_OUTPUT}\"" 'exit 3' >"${CLAUDE_STUB}"
+  ROWS=(
+    'unstaged|1|RESULT: FAIL*REASON: claude -p execution failed'
+    'default|1|'
+  )
+  assert_eval_rows
+}
+
 @test "a FAIL report keeps its DIAG-FIX hints when the issue text runs past one pipe buffer" {
   write_eval_output FAIL "- probe.md: Korean prose in the body and an unparseable YAML frontmatter" wide
   ROWS=(

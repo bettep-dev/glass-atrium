@@ -223,11 +223,11 @@ EVAL_RESULT=$(OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none CLAUDE_CODE_ENA
   --output-format text \
   "$EVAL_PROMPT" 2>/dev/null | sed '/^{$/,/^}$/d' || echo "EVAL_ERROR") # GA-ABSORB[handled@EVAL_ERROR-sentinel-branch]: a failed run yields the sentinel that the branch below turns into RESULT: FAIL
 
-log "eval result: $(echo "$EVAL_RESULT" | head -5)"
+log "eval result: $(echo "$EVAL_RESULT" | sed -n '1,5p')"
 
 # ── 3. post-commit mode: emit eval result on stdout then exit ─
 if [ "$POST_COMMIT_MODE" -eq 1 ]; then
-  if echo "$EVAL_RESULT" | grep -q "EVAL_ERROR"; then
+  if [[ "${EVAL_RESULT}" == *EVAL_ERROR* ]]; then
     echo "RESULT: FAIL"
     echo "REASON: claude -p execution failed"
     log "post-commit FAIL (claude execution failed)"
@@ -236,7 +236,7 @@ if [ "$POST_COMMIT_MODE" -eq 1 ]; then
   ISSUES_LINES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:\|^$' | head -10 || true) # GA-ABSORB[handled@empty-ISSUES_LINES-PASS-branch]: on PASS grep -v filters everything → exit 1; the -z test on the next line is the real signal
   if (shopt -s nocasematch && [[ "${EVAL_RESULT}" == *"RESULT: PASS"* ]]) || [ -z "$ISSUES_LINES" ]; then
     echo "RESULT: PASS"
-    SUMMARY=$(echo "$EVAL_RESULT" | sed -n 's/^SUMMARY:[[:space:]]*//p' | head -1)
+    SUMMARY=$(echo "$EVAL_RESULT" | sed -n 's/^SUMMARY:[[:space:]]*//p' | sed -n '1p')
     [ -n "$SUMMARY" ] && echo "SUMMARY: $SUMMARY"
     log "post-commit PASS"
     exit 0
@@ -258,7 +258,7 @@ fi
 
 # ── 4. default mode: verdict + commit/report ──────────────────
 
-if echo "$EVAL_RESULT" | grep -q "EVAL_ERROR"; then
+if [[ "${EVAL_RESULT}" == *EVAL_ERROR* ]]; then
   log "claude -p execution failed"
   exit 1
 fi
