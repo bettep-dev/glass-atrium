@@ -70,4 +70,4 @@ cd ~/.glass-atrium/scripts && python3 -m agent_lifecycle sync-inject
 ## Prohibitions
 
 - **No in-session array edit** — never edit `hooks/inject-scope-rules.sh` or `hooks/lib/styleref-roster.sh` via in-session Edit/Write/sed. The only sanctioned mutation path is the CLI subprocess (`.bak` backup + atomic write + rollback).
-  - Backing: `hooks/enforce-harness-critical.sh` blocks in-session writes under the live `~/.glass-atrium/hooks/`.
+  - Backing: honor-system — no hook blocks the edit; a live edit to either file is reported afterwards as drift (`rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**).

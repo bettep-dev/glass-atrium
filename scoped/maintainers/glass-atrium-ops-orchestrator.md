@@ -38,7 +38,7 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 | `##### Absolute schema-cap rules` | the rule phrases `orchestrator-skill-schema-example.bats` greps in this file |
 | `##### Copyable helper (robustAgent)` | its `js` fence, replayed by `workflow-gate-completion-channel.bats` |
 | `##### Stage gates` | revision caps cited by `references/review-rounds.md` · `scoped/maintainers/orchestrator-role.md` |
-| `###### Copyable skeletons — 2-phase (verify → implement) and its 3-phase variant` | `###### Machine-checked skeletons` suites · the gate hook header's promotion condition |
+| `###### Copyable skeletons — 2-phase (verify → implement) and its 3-phase variant` | `###### Machine-checked skeletons` suites |
 | `##### Entry-class token placement (ultracode — DEV workflow)` | its declaration fence, read by the same suites |
 
 #### Relocated — `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]`
@@ -50,7 +50,6 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 - Citers of the moved section:
   - `references/delegation-prompt.md` → `## Resource Budget` (the floor bullet) · `## Read-Extent Discipline` → **Scope of this duty**.
   - the skill's **Print-block-then-emit** bullet (via the kept heading).
-  - `hooks/enforce-workflow-verify-stage.sh` → `PROMOTION CONDITION` — both sentences name the reference beside the skill; verbatim pin: `enforce-workflow-verify-stage.bats` → `schema-cap(promotion)`.
 
 ### Relocated — Agent selection and delegation-prompt detail
 

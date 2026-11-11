@@ -10,7 +10,7 @@ Applies to all agents.
   - **Issue / ticket references**: a footer block after a blank line, as `Refs: #123` or `Refs: PROJ-123`.
 - Commit only after the tests pass — an intermediate work-unit commit needs its affected tests (`scoped/shared-testing.md` → **Incremental commits**); the run's final commit, fully tested, is the working base for whoever builds on it
 - `--no-verify` / `--no-gpg-sign` are forbidden in normal flow: they skip the git hooks (pre-commit, pre-push, …) and signing that vet every change
-  - Honest backing: `hooks/block-no-verify.sh` blocks them on `git commit`; the ban binds every other spelling.
+  - Honest backing: honor-system — no hook blocks either flag.
   - Agent execution context without configured signing key → configure SSH/GPG key or set `git config commit.gpgsign false` explicitly (silent `--no-verify` bypass remains forbidden)
 - Stage changed files by explicit path — `git add .` / `git add -A` are forbidden: they sweep in unrelated files and other tracks' work
 
@@ -62,6 +62,7 @@ Applies to all agents.
 - **Naming**: features `feature/<feature-name>` · bugs `fix/<issue-name>`
 - **Merging**: direct push to main is forbidden
   - Merging goes through a PR, where review and CI run.
+  - Honest backing: honor-system — no hook blocks a push to main.
 
 ## Pull Requests
 

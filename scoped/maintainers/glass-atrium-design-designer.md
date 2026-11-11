@@ -14,9 +14,8 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | Reader | What it reads | Consequence |
 |---|---|---|
 | `hooks/inject-scope-rules.sh` → `read_max_turns` | `^maxTurns:` at column 0 of the frontmatter | the turn-budget meter is sized from it |
-| `hooks/enforce-harness-critical.sh` | live frontmatter identity keys (name, tools, scope) | live edits to them are blocked for every caller (LLM06) |
+| `lib/ga-doctor.sh` → `get_integrity_drift` | live frontmatter identity keys (name, tools, scope) and text outside EDITABLE regions | a live edit to either is reported as drift, never blocked |
 | `autoagent/lib/editable_merge.py` | EDITABLE region count, local vs release | a count change routes the merge to the manual structural-change ceremony |
-| `hooks/test/enforce-harness-critical-frontmatter.bats`, `-pathnorm.bats` | `hooks/test/corpus/agents-blocklist/glass-atrium-design-designer.md`, a frontmatter copy | its body is synthetic, so body edits are invisible to it; mirror a frontmatter edit there |
 | `manifest.json` | the body's sha256 | any edit needs a manifest regeneration |
 
 - No suite reads this body's prose; `scripts/test/test_inject_sync.py` and `hooks/test/h2-untrusted-ingest.bats` name the agent in injector rosters only.
@@ -41,7 +40,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | `### Figma Make + MCP Integration Guardrails` (LLM Output Validation line · Vendor-Routing line) | `scoped/maintainers/scope-design.md` |
 | `## Pre-Execution Verification` contrast row | `scoped/maintainers/scope-design.md` |
 
-- **AI Slop Tropes citers**: `git grep 'AI Slop Tropes'`; the `hooks/test/` hits are the frontmatter copy's `skills:` comment and `rationale` literal (`## Machine constraints on the body`), plus the `AC-B7 containment` fixture in `enforce-harness-critical-frontmatter.bats`, quoting the rationale.
+- **AI Slop Tropes citers**: `git grep 'AI Slop Tropes'`.
 - **Admin-console tropes citers** (citers of the heading and of its `#####` rows by path): `git grep 'Admin-console tropes'`.
   - Hits: `skills/glass-atrium-design-anti-slop/SKILL.md` · `agents/glass-atrium-intel-reporter.md` → `### Comparison Tables (MUST ≤5 columns)` why line · `scoped/scope-report.md` → `### Visual-Maximization Floor` → **SoT**.
   - Body-internal: `## Pre-Emit 5-Axis Self-Critique` → **Admin-console recheck** · **Lucide/Hero Icons uniform stroke-width** → **Source IDs**.

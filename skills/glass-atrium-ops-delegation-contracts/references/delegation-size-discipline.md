@@ -11,7 +11,7 @@
   - Placement: `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size` → Attestation-token placement.
   - **Honesty framing** — why the file-head **Pointer site** rounds a borderline count up: an under-estimate is the dangerous error, masking an oversized delegation past the split triggers; an over-estimate is the safe error.
     - It covers `bundles`/`tool_uses` here and `reads~`/`fields` at an analysis-mode spawn (`## Analysis-mode token`).
-  - Enforcement — both paths block a DEV spawn missing the token:
+  - Backing — both paths warn on a DEV spawn missing the token, and neither blocks it:
     - manual: `enforce-verification-gate.sh` reads it from `.tool_input.prompt`, guarded by `hook_is_subagent` so it fires on orchestrator-origin spawns only;
     - ultracode: `enforce-workflow-verify-stage.sh`, DEV-gated, raw-scanning the script.
     - Except a simple-task entry with no plan-ref, which both pass silently (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` → **Simple-task waiver**).

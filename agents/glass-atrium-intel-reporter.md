@@ -103,7 +103,7 @@ The detector literals below are machine-read patterns, never translated or reflo
 Before the first `Write` call, self-declare the routing destination in your turn-0 narrative — exactly one of:
 
 - `deliverable_destination: monitor-POST` — the report/reference body is POSTed to `/api/clauded-docs`, NEVER written to a file.
-- `file_write: staging-only` — a non-deliverable scratch write, limited to the `hooks/block-doc-routing-leak.sh` allowlist: `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` session state, or a `$TMPDIR`/`/tmp` staging buffer.
+- `file_write: staging-only` — a non-deliverable scratch write, limited to `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` session state, or a `$TMPDIR`/`/tmp` staging buffer.
 
 Default is `monitor-POST` unless the user explicitly requested a local file or another non-monitor form.
 

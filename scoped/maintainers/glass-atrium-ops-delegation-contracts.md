@@ -22,7 +22,6 @@ Maintainer-facing material for that skill's `SKILL.md` and its `references/` fil
   - `hooks/test/orchestrator-skill-schema-example.bats` requires `const AnalysisSchema = {`, `findings: 'string'` and `completion_block: 'string'`, the last as a declared member inside that fence.
     - It also requires the capped-property notation and the withdrawn per-row cap-sizing floor literal absent.
   - `hooks/test/workflow-gate-completion-channel.bats` replays every `js` fence in the file through the gate, so a fence added there must pass it unmodified.
-  - The path is pinned verbatim: the `hooks/enforce-workflow-verify-stage.sh` header promotion condition names it, and `hooks/test/enforce-workflow-verify-stage.bats` asserts that header text.
 - **Revise carve-out duty placement** (`references/managed-document-completion.md` → `## Supersede vs new document`): the duty stays in the completing agent's own loaded rules, never in the delegation asking for the edit — a control the acting agent can suspend by phrasing is not a control.
 - **Reference Index**: a pointer-site or reference-file SoT change edits its row in `SKILL.md` → `## Reference Index`.
   - `scoped/maintainers/orchestrator-role.md` cites those tables as the split authority, so they stay.

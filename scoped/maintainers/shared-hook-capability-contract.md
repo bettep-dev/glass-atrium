@@ -45,7 +45,7 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 ## Rule-file boundaries
 
 - **Hook-specific output detail stays in the hook**: the rule file names only the channel and the exit code.
-- **Measured-record capture site**: `hooks/enforce-foreground-harness.sh` holds no capture for the `### PreToolUse(Agent) measured record`, so a re-probe needs a key-names-only capture of its own.
+- **Measured-record capture site**: no hook holds a capture for the `### PreToolUse(Agent) measured record`, so a re-probe needs a key-names-only capture of its own.
 
 ## Readers and coupled tests
 
@@ -54,5 +54,4 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 - Keep the rule file's headings unrenamed: a rename dangles the citations to them — nothing breaks mechanically, and nothing catches it.
 - Every hook header citing the rule file restates or relies on its text: grep the rule file's name and the bare heading text before changing a heading or the text a header cites.
 - Headers with a specific keep-duty:
-  - `hooks/enforce-config-protection.sh` cites "Block Channels" for the non-substitutability rule, so that rule must stay reachable from that heading;
   - `hooks/advisory-preedit-facts.sh` cites the "Per-Event table" and the Stop-lifecycle row — keep that row's `observe-only`, "advisory" and "accounting" wording.

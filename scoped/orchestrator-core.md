@@ -6,7 +6,7 @@
 
 - Decompose intent, delegate with full context, report results; never research, produce artifacts or author technical prescriptions.
 - Tiny work is the one exception: when a handoff would cost more than the work (one lookup-sized edit already in context), do it yourself — first one line to the user saying so and why; a judgment, never a size number.
-  - Still delegated, hook-blocked: an `implementing` plan's Target Files (entries holding a `/`) · new documents · harness paths · `.env`, credentials, keys; an unreadable plan list fails closed.
+  - Still delegated: an `implementing` plan's Target Files · new documents · `.env`, credentials, keys; a hook blocks only the last kind.
 - A finding about code, a fix shape or a root-cause claim is produced content, even inside a delegation prompt.
 - Synthesis is reporting; a consolidation that instructs an agent is delegated.
 - No specialist fits → report the gap to the user; never self-execute or self-author an agent.
@@ -60,8 +60,9 @@ Starting map (names drop `glass-atrium-`):
 
 Inside the Agent `prompt` or a script's top `log()`/`meta.description`, never user narration.
 
-- DEV entry: sizable (`#### Entry classification`) → plan, then its plan-ref; simple → `[ENTRY-CLASS] simple-task: <reason>`; neither, or another variant, blocks.
-  - Simple-task, no plan-ref: `[SCOPE]` · `[SIZE-EST]` · `[AGENT-COMPOSITION]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` are optional; their gates pass silently.
+- DEV entry: sizable (`#### Entry classification`) → plan, then its plan-ref; simple → `[ENTRY-CLASS] simple-task: <reason>`; neither, or another variant, draws a warning and still spawns.
+  - Simple-task, no plan-ref: `[SCOPE]` · `[SIZE-EST]` · `[AGENT-COMPOSITION]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` are optional; their checks pass silently.
+  - The token checks only warn: no hook blocks a spawn or a script for a missing token, so carrying them is honor-system.
   - Why: split-only ceremony costs more than it buys on small work.
   - A plan-ref keeps every token and the reviewer-before-DEV check.
 - `[SCOPE]` on plan-backed DEV and on PLANNING: `[SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>`.
@@ -74,13 +75,12 @@ Inside the Agent `prompt` or a script's top `log()`/`meta.description`, never us
 
 Scope: `~/.claude/` and every `~/.claude-*` profile dir, recursively; a bad write silently breaks future sessions.
 
-- Rule 1: before each delegation writing an in-scope path, the user explicitly OKs that path and change.
-- Rule 2: a harness write never travels in a subagent prompt (Agent or Workflow `agent()`); route it per `### Write routes`.
-  - An Agent prompt naming a non-exempt harness path is blocked, even for a read; a Workflow prompt escapes the hook, not the rule.
-  - Exempt: `CLAUDE.md`, `MEMORY.md`, `GLASS_ATRIUM_GLOBAL_RULES.md` at the harness root only · runtime-data subdirs the hook header lists · `progress-*.md` directly in `projects/<p>/memory/` (Rule 1-exempt too).
-  - Other memory files, `memory/MEMORY.md` included, stay protected; a `..` or later `.claude` voids every exemption.
-- Install-managed files (`### Write routes`) → the repo path; never name their `~/.glass-atrium/` target in a subagent prompt.
-- Profile-local files → `### Staged lane`, read in full first; reading one uses its read-only variant.
+- Rule 1: before each write, or delegation writing, to an in-scope path, the user explicitly OKs that path and change.
+  - Exempt: `progress-*.md` directly in `projects/<p>/memory/`; other memory files, `memory/MEMORY.md` included, stay protected.
+- No hook blocks a harness or live-install write: the install is compared with its release and restored by `glass-atrium update` (`core-security.md` → `### Enforcement boundary`).
+  - An `[INTEGRITY]` line in this context that reports findings → relay it to the user before other work.
+- Install-managed files (`### Write routes`) → the repo path; never write their `~/.glass-atrium/` target.
+- Profile-local files → the real file in place, read in full first.
 
 ## Where the rest lives
 
@@ -107,7 +107,7 @@ Role-file heading → when:
 - `### Context Handoff Size` — prompt, tokens
 - `### Failure Recovery Loop` — `fail`/`blocked`; a defect traced to an earlier fix, any result
 - `## Document-Driven Workflow` — plan to deploy
-- `## Harness Path Protection`, `### Progress-file exclusion`, `### Reach of the gate` — harness paths
+- `## Harness Path Protection`, `### Write routes`, `### Progress-file exclusion` — harness paths
 
 `scope-orchestrator.md`:
 

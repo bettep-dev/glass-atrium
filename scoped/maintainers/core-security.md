@@ -25,15 +25,22 @@
   - `## Secret Management`, `## Input Validation`, `## Execution Security`, `## Dependency Auditing`, `## OWASP Top 10`, `## Prompt & Tool Input Security [LLM01:2025]`: code comments, skills, agent bodies and other maintainer notes.
   - `## Agent Tool Authorization [LLM06:2025]` → `### Enforcement boundary`, Unbounded consumption: code comments, skills and other maintainer notes.
   - Inline `[LLMxx:2025]` tags: cited bare from agent bodies, skills, hook and daemon comments, so each of the ten stays at its rule.
-- Canonical + mirror: `### Enforcement boundary` → protected surfaces restate `hooks/enforce-harness-critical.sh` → its header list; change them together.
+- Canonical + mirror: `### Enforcement boundary` → **Harness integrity** restates what `lib/ga-doctor.sh` → `get_integrity_drift` compares; change them together.
+  - The rule compresses the compared kinds, because its chars count toward the startup budget; the detector's full set:
+    - install files against the `manifest.json` hashes, and the vendor-owned part of each file the updater merges (agent bodies, the roster files);
+    - `agents/*.md` and top-level `hooks/*.sh` on disk that the manifest does not list;
+    - `manifest.json` against the updater's record of the applied release;
+    - the Atrium hook bindings in the target `settings.json` — missing, altered or surplus;
+    - each profile branch's `settings.json` being a link to that file.
+  - The doctor is the independent surface: the session-start line is itself one of the compared bindings.
+  - A surplus file or binding is not restored by the update; it is removed by hand or with `glass-atrium retire-hook-bindings <basename>`.
 
 ## Runtime per-agent tool-grant layer — why it is not built
 
 - The rule file keeps only the not-implemented lead, as its honest backing; the rationale and the entry gate live here because no agent acts on them.
 - Not because the caller is unidentifiable: the caller's `agent_type` is recoverable at pre-tool time from the `agent-<agent_id>.meta.json` sidecar, even though the `tool_use` envelope carries only an opaque `agent_id`.
-  - `hooks/block-doc-routing-leak.sh` blocks on it; `hooks/advisory-subagent-budget.sh` only records it on its overage row.
+  - `hooks/advisory-subagent-budget.sh` records it on its overage row.
 - That recovery fails open (missing sidecar / unresolved anchor / absent `jq` → empty type → the call proceeds), so a layer built on it is detective, never preventive.
-  - The one blocking use is a single hardcoded file-routing rule keyed on two agent types, not a per-agent tool-grant allowlist.
 - Deferred, not impossible: the entry gate is a measurement of sidecar-resolution success across real spawns, which does not exist yet.
 
 ## Restructure + diet pass — dispositions

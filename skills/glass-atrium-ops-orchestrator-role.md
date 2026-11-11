@@ -17,18 +17,14 @@ The orchestrator is the **strategic control plane**: it selects among agent-prod
   - The test is that judgment with its reason, never a size number: before the edit, state both to the user in one line.
   - Why: a subagent whose handoff costs more than its work is folded back into the main loop; verifying the result is normal operation, not a reason to delegate.
   - It is an Edit like any other: the user's go-ahead under `### Decision-to-act gate` still comes first.
-  - Still delegated however small — `hooks/enforce-delegation.sh` blocks each with exit 2:
-    - a harness path (`DEL-001`) — `~/.claude`, every `~/.claude-*` profile dir, the `~/.glass-atrium` install root and its physical path, or a project's `.claude/settings*.json` (its hook wiring);
-      - a project's other `.claude/` content, such as a file in a `.claude/worktrees/<checkout>/`, is not a harness path and is judged like any other path;
-      - the path is judged as written and as its physical path with every symlink hop followed, so a link chain ending at `~/.claude/settings.json` blocks;
-      - a chain that cannot be read or passes 40 hops blocks, as do a relative path and an unset or relative `HOME`;
-    - a sensitive file — `.env`-class, secrets, credentials, private keys, or anything under `.ssh` / `.aws` / `.gnupg` (`DEL-004`);
-    - a new document file (`md`, `html`, `txt` and the other document extensions) — creating one is report/plan/spec authoring, which `### Authoring delegation is MANDATORY (never the inline path)` keeps delegated (`DEL-005`);
-    - a Target File of any plan at `implementing`, whichever repo it targets — plan work stays delegated (`DEL-006`):
-      - only an entry holding a `/` binds — a file entry when the path ends with `/<entry>`, a directory entry (ending in `/`) when the path holds `/<entry>`, both at a component boundary; an absolute entry compares from the root;
-      - a bare basename entry (`README.md`) binds nothing, and nothing matches by substring;
-      - an md plan's entries are the list items under its Target Files heading, so a path named in prose binds nothing; a plan that declares no Target Files adds no restriction;
-      - when the implementing plans' lists cannot be read, the hook fails closed with one `DEL-007` record naming what could not be read — the plan list or the one plan.
+  - Still delegated however small:
+    - a sensitive file — `.env`-class, secrets, credentials, private keys, or anything under `.ssh` / `.aws` / `.gnupg`;
+      - `hooks/enforce-delegation.sh` blocks this write with exit 2 (`DEL-004`);
+      - the path is judged as written and as its physical path with every symlink hop followed, so a link chain ending at a sensitive file blocks;
+      - a relative path blocks, as does a chain that cannot be read or passes 40 hops;
+    - a new document file (`md`, `html`, `txt` and the other document extensions) — creating one is report/plan/spec authoring, which `### Authoring delegation is MANDATORY (never the inline path)` keeps delegated;
+    - a Target File of any plan at `implementing`, whichever repo it targets — plan work stays delegated;
+    - the document and plan-file kinds are honor-system: no hook blocks either.
 - **What counts as produced content, not coordination** — each item below is produced content **including when it appears only inside a delegation prompt**:
   - a finding about the nature or behaviour of code
   - a fix shape ("extract a helper named X", "point these three tests at Y")
@@ -40,13 +36,11 @@ The orchestrator is the **strategic control plane**: it selects among agent-prod
   - Pass the reviews by file path, not by pasting them — N full reviews plus the artifact are the bulk material `### Context Handoff Size` sends by file path.
 - If no specialist exists for a task, report to the user rather than self-execute.
 - **Pattern**: Manager Pattern (centralized synthesis). Handoff Pattern (agent-to-agent control transfer) is not supported.
-- **Honest backing**: `hooks/enforce-delegation.sh` gates orchestrator direct **Write/Edit tool** writes — it is registered on the `Write|Edit` matcher only.
+- **Honest backing**: `hooks/enforce-delegation.sh` blocks one kind of orchestrator direct **Write/Edit tool** write, the sensitive file — it is registered on the `Write|Edit` matcher only.
   - It passes a subagent call and the basenames `CLAUDE.md` / `MEMORY.md` / `GLASS_ATRIUM_GLOBAL_RULES.md`.
-  - Any other orchestrator write passes unless it is a still-delegated kind under **Tiny direct work**.
-  - A `*/memory/*` path passes before those kinds are checked, unless nested directly under `agents/`, `rules/`, `hooks/`, `skills/`, `autoagent/`, `monitor/` or `scripts/`.
-    - The memory pass runs before the harness check, so `## Harness Path Protection` → Rule 1 alone protects a harness memory file other than `progress-*.md`: honor-system.
-  - It checks permission only: whether the work is truly tiny, and the one line to the user before it, are honor-system.
-  - Live harness surfaces and agent frontmatter identity keys stay guarded for every caller by `hooks/enforce-harness-critical.sh`.
+  - A `*/memory/*` path passes too, unless nested directly under `agents/`, `rules/`, `hooks/`, `skills/`, `autoagent/`, `monitor/` or `scripts/`.
+  - Every other orchestrator write passes, so the rest of **Tiny direct work** is honor-system: its document and plan-file kinds, whether the work is truly tiny, and the one line to the user before it.
+  - No hook blocks a write to a harness path or to the live install: `## Harness Path Protection` → **Detection, not a block**.
   - A Bash-mediated write (`sed -i`, `cat >`, `tee`) is out of its reach, and no hook reads a prescription written as prose into a delegation prompt or a reply: the prose half is honor-system.
 
 ## Delegation Criteria
@@ -164,15 +158,16 @@ Delegate to a subagent when the user request matches any row below.
 
 Classify every DEV task against the Decision SIZABLE criteria above, a condensed copy of the canonical at `scoped/maintainers/scope-dev.md` → `## Sprint Contract Gate (orchestrator side)`, which also holds the spawn-time entry gate.
 
-- **Classify-always**: a delegation carrying neither a plan-ref nor an `[ENTRY-CLASS]` token is blocked at spawn time, exit 2, on both paths.
+- **Classify-always**: every DEV delegation carries a plan-ref or an `[ENTRY-CLASS]` token.
   - Placement: `### Context Handoff Size` → Attestation-token placement.
-- **ENTRY-CLASS negative**: `simple-task` is the only recognized `[ENTRY-CLASS]` literal — any other variant blocks, so sizable work carries a plan-ref instead.
+  - Honest backing: a delegation carrying neither draws an entry-miss warning at spawn time on both paths, and the spawn still runs — no hook blocks it.
+- **ENTRY-CLASS negative**: `simple-task` is the only recognized `[ENTRY-CLASS]` literal — any other variant draws the same warning, so sizable work carries a plan-ref instead.
 - **Simple-task waiver**: a DEV delegation carrying `[ENTRY-CLASS] simple-task` and no plan-ref owes no other attestation token.
-  - `[SCOPE]` · `[SIZE-EST]` · `[AGENT-COMPOSITION]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` are optional, and their gates and advisories pass silently on both paths.
+  - `[SCOPE]` · `[SIZE-EST]` · `[AGENT-COMPOSITION]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` are optional, and their checks pass silently on both paths.
   - Why: ceremony that exists only because work is split across agents costs more than it buys on small work.
   - A plan-ref keeps every token and the reviewer-before-DEV check, whatever classification rides beside it.
   - Carrying an optional token anyway is allowed.
-  - Exception: `[DOC-ROUTE]` and the doc-routing gate are untouched by the waiver.
+  - Exception: `[DOC-ROUTE]` and the doc-routing warning are untouched by the waiver.
   - Honest backing: the hooks read token presence, never whether the work is simple, so the classification is honor-system.
 
 #### Plan edge discovery (Decision phase — fires for any delegation derived from a persisted plan, whole or subset)
@@ -195,24 +190,21 @@ Classify every DEV task against the Decision SIZABLE criteria above, a condensed
 
 #### Decision-phase probes
 
-The probes run during the Decision phase, before the spawn: Permission · Foreground · Capability · Compatibility.
+The probes run during the Decision phase, before the spawn: Permission · Capability · Compatibility.
 
 - Each probe gates independently: any single failure halts delegation.
 - A probe whose trigger is absent (no target path, no `compatibility` field) is a no-op.
-- The Visual-Weight Probe is not one of these four, despite its name.
+- The Visual-Weight Probe is not one of these, despite its name.
 
 - **Permission Probe (advisory checklist, pre-delegation)**: for each target path, attempt a minimal Read/Glob.
   - EPERM → halt delegation and report the failing path, its likely cause and the remediation.
-- **Foreground Probe (pre-delegation)**: scan each target path declared in delegation scope against harness scope (`## Harness Path Protection` → Scope).
-  - A non-exempt match takes its route in `### Write routes`, and the harness path stays out of the subagent prompt.
-  - Exemptions and authority: Rule 2.
 - **Capability Probe (advisory checklist, pre-delegation)**: enumerate the tools the delegation requires and check them against the target subagent's frontmatter `tools:` array in `~/.claude/agents/<name>.md`.
   - A missing tool → halt delegation and report the gap.
 - **Compatibility Probe (advisory checklist, pre-delegation)**: read each candidate's `compatibility` frontmatter field (or its `agent-registry.json` mirror).
   - A declared precondition that is unmet → halt before spawn and report it with its remediation.
   - A declared precondition binds every mode it covers.
-- **Probe strength (distinct kinds — do not merge them)**: the **Foreground Probe** alone is mechanically enforced (`enforce-foreground-harness.sh`), on Agent-tool spawns only — the Workflow-tool gap: `### Reach of the gate`.
-  - The three advisory probes are honor-system.
+- **Probe strength**: every probe is an advisory checklist on the honor system — no hook runs one.
+  - A target path in harness scope takes `## Harness Path Protection` → Rule 1 before the spawn.
 - Causes, remediation lists, reasons and the worked compatibility case: `skills/glass-atrium-ops-delegation-contracts/references/decision-phase-probes.md`.
 
 ### Deliverable Exposure
@@ -306,9 +298,10 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 #### Backstop asymmetry (manual vs. ultracode)
 
 - The policy is identical on both paths; only the backstop kind differs.
-- **Manual**: `enforce-verification-gate.sh` blocks (exit 2) an orchestrator-origin, plan-referencing DEV spawn with no glass-atrium-qa-code-reviewer spawn recorded in the session — presence-only and fail-open.
-- **Ultracode**: `enforce-workflow-verify-stage.sh` blocks (exit 2) a missing, malformed or code-inconsistent `[AGENT-COMPOSITION]` declaration, except on a simple-task entry.
-- The authoring obligation — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage before any DEV implementation, gated on `pass`+`feasible` — remains primary; never describe ultracode as "fully enforced".
+- Neither backstop blocks: each prints a warning on stderr and records a trace line, and the spawn or script still runs.
+- **Manual**: `enforce-verification-gate.sh` warns on an orchestrator-origin, plan-referencing DEV spawn with no glass-atrium-qa-code-reviewer spawn recorded in the session — presence-only.
+- **Ultracode**: `enforce-workflow-verify-stage.sh` warns on a missing, malformed or code-inconsistent `[AGENT-COMPOSITION]` declaration, except on a simple-task entry.
+- The authoring obligation — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage before any DEV implementation, gated on `pass`+`feasible` — remains primary; never describe either path as enforced.
 
 #### Ultracode declaration contract (the mechanically-enforced facet of this gate — `[AGENT-COMPOSITION]`)
 
@@ -536,71 +529,36 @@ A write in this scope is a harness/memory configuration change, and the user MUS
 
 - **Rationale**: harness/memory misconfiguration silently breaks future sessions.
 - **Scope**: `~/.claude/` and every `~/.claude-*` profile branch config dir (`-work`, `-personal`, `-work-dev`, a dormant backup dir, any future branch), all subdirectories.
-- **BASENAME exception**: `CLAUDE.md`, `MEMORY.md`, `GLASS_ATRIUM_GLOBAL_RULES.md` may be written directly (memory-index + root-rule updates) — `enforce-delegation.sh` passes these names on an orchestrator Write/Edit, and `enforce-foreground-harness.sh` exempts them at the harness root.
-- **Sub-agent path**: sub-agents bypass `enforce-delegation.sh` automatically (it passes any call carrying an `agent_id`); Rule 1 and Rule 2 below govern **orchestrator delegation behavior only**.
-- **Rule 1 — User approval (governance / social-contract, not hook-enforced)**: before each delegation that writes to an in-scope path, the user must explicitly OK the specific path + change; a sub-agent delegation alone is insufficient.
+- **BASENAME exception**: `CLAUDE.md`, `MEMORY.md`, `GLASS_ATRIUM_GLOBAL_RULES.md` may be written directly by the main session, undelegated (memory-index + root-rule updates); Rule 1 still applies.
+- **Sub-agent path**: Rule 1 governs **orchestrator behavior only** — its own write and its delegations; a sub-agent acts on the delegation it received.
+- **Rule 1 — User approval (governance / social-contract, not hook-enforced)**: before each write, or delegation that writes, to an in-scope path, the user must explicitly OK the specific path + change; a sub-agent delegation alone is insufficient.
   - Backing: honor-system — no hook verifies that the approval occurred.
   - Exempt: `### Progress-file exclusion`.
-- **Rule 2 — Staged lane mandatory (enforcement, hook-backed)**: a harness write never travels through a subagent prompt — an Agent-tool prompt or a Workflow-tool `agent()` prompt; it takes its route in `### Write routes`.
-  - `enforce-foreground-harness.sh` (PreToolUse) blocks every Agent spawn whose prompt names a non-exempt harness path, whatever `run_in_background` holds or omits.
-    - Why: the model sends or omits that field on its own, so neither its value nor its absence is evidence of how the agent launches.
-  - Exempt: the BASENAME exception, the runtime-data subdirs the hook header lists, and `### Progress-file exclusion`.
-    - A `..` segment, or any `.claude` text after the harness root, in the path as written voids every exemption.
-  - Honest backing: the hook reaches only what `### Reach of the gate` states.
+- **Detection, not a block**: no hook stops a write in this scope or to the live install, for any caller.
+  - An approved change is an ordinary edit — **Tiny direct work** or a delegation — on its route in `### Write routes`.
+  - What guards the harness instead: `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
 
 ### Write routes
 
 | Target | Route |
 |---|---|
 | install-managed — a harness symlink into `~/.glass-atrium/` | edit the repo path; it ships through manifest regeneration and the updater |
-| not install-managed — profile `settings*.json`, other profile-local files | `### Staged lane` |
-| read, install-managed | read the repo path |
-| read, not install-managed | the staged lane's read-only variant |
+| not install-managed — profile `settings*.json`, other profile-local files | edit the real file in place, after Rule 1 |
 
 - Install-managed files: agent bodies, `rules/glass-atrium/*`, `skills/glass-atrium-*` and `GLASS_ATRIUM_GLOBAL_RULES.md`.
-- In a subagent prompt, name a repo path that contains `.claude` by its absolute form.
-  - Why: a relative one is judged as if read from `$HOME`, and can block.
-- Naming the resolved `~/.glass-atrium/` target of a harness symlink in a subagent prompt is FORBIDDEN: it writes the live install outside the updater.
-
-### Staged lane
-
-Each step builds on the previous.
-
-1. **Copy out**: the main session copies the real target file into a staging dir — a read of the harness, never a write.
-   - Read form: `cat <real> > <stage>/<name>` — the only sanctioned form.
-   - `cp`, `rsync` and `install` from a protected path are blocked by HAR-002 (`hooks/enforce-harness-critical.sh`).
-   - Staging dir: a lane-created dir inside the session's working-directory tree, with no `.claude*` path segment, outside git tracking.
-     - Why: a bare `mktemp -d` lands under `$TMPDIR`, which may sit outside a background agent's allowed directories.
-2. **Edit**: a subagent edits only the staging copy, named in its prompt by absolute path (why: `### Write routes`).
-3. **Approve**: the main session shows the diff, and the user OKs the specific path and change (Rule 1).
-   - The approval names the real target file and every profile that links to it: one settings file is shared by more than one profile.
-4. **Apply**: the user runs the apply command the main session prints, in the user's own terminal outside the CLI.
-   - Why user-run: `hooks/enforce-harness-critical.sh` blocks live `settings*.json` writes for every caller, the main session included, and the orchestrator never writes a harness path.
-
-- **Apply safety** — the printed apply runs each check below before it writes:
-  - A named target that is a symlink is refused as named; the lane resolves it, and the real file becomes the target.
-  - Resolution compares physical paths: resolve the directory with `cd -P <dir> && pwd -P`, then follow any final-component link.
-  - A resolved real file inside the install root (`~/.glass-atrium/` by default) is refused: it is install-managed and takes the repo route.
-  - A staged JSON file must pass `jq -e .` before the in-place write.
-  - The apply writes the content in place; a rename or `mv` over a link or a file is FORBIDDEN.
-    - Why: a rename over a link replaces the link with a regular file, so the profiles that shared it diverge; a rename over the resolved real file swaps in the temp file's inode, mode and owner. Writing the real file in place avoids both.
-- **Read-only variant**: Copy out alone, with no apply; the agent reads the staging copy.
-- **Honest backing**: honor-system — no hook runs the apply-safety checks, because the user runs the printed apply outside the CLI.
+- Writing the resolved `~/.glass-atrium/` target of a harness symlink, directly or through a subagent prompt, is FORBIDDEN: it changes the live install outside the updater.
+  - Why: the integrity comparison reports the edit as drift, and the next `glass-atrium update` restores the release copy over it.
+  - Backing: honor-system — no hook blocks the write.
+- A profile `settings.json`:
+  - The approval names the real file and every profile that links to it: one settings file is shared by more than one profile.
+  - Write the real file in place; a rename or `mv` over a link or a file is FORBIDDEN.
+    - Why: a rename over a link replaces the link with a regular file, so the profiles that shared it diverge.
+  - The edited file must pass `jq -e .`.
+  - Only its Atrium hook bindings are compared against the release; every other key is the user's own to change.
 
 ### Progress-file exclusion
 
-- A `progress-*.md` file sitting directly in a profile's `projects/<p>/memory/` dir is outside both Rule 1 and Rule 2: one filename after `memory/` and no further segment.
+- A `progress-*.md` file sitting directly in a profile's `projects/<p>/memory/` dir is outside Rule 1: one filename after `memory/` and no further segment.
 - Every other memory file stays protected — the `MEMORY.md` index there, `feedback_*.md` and the rest.
-- What voids this exclusion: `## Harness Path Protection` → Rule 2 → Exempt.
 - Why: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Cross-Session Continuity (progress.md) [ALL]` mandates that every agent write these files as session-internal state, and a checkpoint must land before the turn cap ends the run, so a per-write approval or staging it defeats it.
 - The owner may override this exclusion.
-
-### Reach of the gate
-
-The hook takes candidate paths from the Agent prompt's text and resolves each against the filesystem, so it reaches only the harness paths that text names. Outside its reach, Rule 2 still binds on the honor system alone:
-
-- a write the prompt does not name, or a path it hides — variable indirection, encoding, a deeper `cd`, or text the hook does not read as naming a harness root;
-- a Workflow-tool `agent()` spawn — measured: it does not pass PreToolUse(Agent), so the gate cannot see Workflow spawns (record: `scoped/shared-hook-capability-contract.md` → `PreToolUse(Agent) measured record`);
-- a prompt naming the resolved install target of a harness symlink, which `### Write routes` forbids — the hook scans only `.claude` paths.
-
-- The scan cannot tell a read from a write, so a prompt naming a harness path only to read it is blocked too: use the read-only variant.

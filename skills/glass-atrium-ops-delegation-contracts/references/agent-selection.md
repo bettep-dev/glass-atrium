@@ -21,9 +21,9 @@ Each step consumes the previous step's output.
 
 - The phase sort permits spawning a `dual_phase` DEV assigned phase-2 analysis ahead of a phase-5 reviewer.
 - Under ultracode a directly spawned pre-verify analysis DEV is truthfully a declared `impl:` spawn, and that — not spawn order alone — trips `block-order`: the gate working, not a false positive.
-  - Verdict: `references/ultracode-declaration-contract.md` → Exit-2 verdicts → `block-order`.
+  - Verdict: `references/ultracode-declaration-contract.md` → Verdicts → `block-order`.
 - Fix: either route of `skills/glass-atrium-ops-orchestrator.md` → ``### Pre-verify Discovery `dev-*` order guard (ultracode)``.
-  - The plain reorder the `block-order` exit-2 message (`hooks/enforce-workflow-verify-stage.sh`) also offers rarely applies, because the analysis has to come first.
+  - The plain reorder the `block-order` warning (`hooks/enforce-workflow-verify-stage.sh`) also offers rarely applies, because the analysis has to come first.
 - Why `impl-computed:` is wrong here: it is the key for indirectly spawned types, so declaring this direct spawn under it is a false declaration, whether or not the gate accepts it.
 
 ## Compound Task Examples

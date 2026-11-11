@@ -99,7 +99,8 @@ Systematically identify root causes through hypothesis-disproof cycles, and pres
   - identify related PRs/commits (intent + context);
   - cross-analyze the deployment timeline against issue timing;
   - trace env/config change history.
-- **Never-started vs started-then-failed (delegation forensics)**: a spawn blocked by a pre-tool gate never ran, so it leaves no outcome row and no spawn marker — check the durable block traces before concluding an agent ran and failed.
+- **Never-started vs started-then-failed (delegation forensics)**: a spawn with no outcome row and no spawn marker never ran — establish that before concluding an agent ran and failed.
+  - The spawn gates only warn: a line in the traces below marks a spawn that tripped a check and still ran, never a blocked one.
   - Manual Agent-tool path: `~/.glass-atrium/hooks/enforce-verification-gate.sh --block-counts` (counts by verdict tag) over `data/verification-gate-fired.log`.
   - Workflow path: `data/workflow-gate-fired.log`.
   - Both are observability-only — never a verdict source.

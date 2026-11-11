@@ -4,10 +4,12 @@
 
 ## Check table
 
+Every `Fails as` cell is a warning or an advisory: no check blocks the Workflow call.
+
 | Check | Pass when | Fails as |
 |---|---|---|
-| entry token | a plan-ref or `[ENTRY-CLASS] simple-task: <reason>` token (any placement) | entry-miss BLOCK · `lint` |
-| `[SIZE-EST]` presence | a `[SIZE-EST]` token at every `dev-*` spawn — presence only, never correctness | size-est-miss BLOCK · `lint` |
+| entry token | a plan-ref or `[ENTRY-CLASS] simple-task: <reason>` token (any placement) | entry-miss WARNING · `lint` |
+| `[SIZE-EST]` presence | a `[SIZE-EST]` token at every `dev-*` spawn — presence only, never correctness | size-est-miss WARNING · `lint` |
 | declaration present + well-formed | exactly one `[AGENT-COMPOSITION]` block in a `/* */` comment, parsing under the contract grammar | `block-nodecl` · `block-grammar` · `lint` |
 | verify clause carries the DEV hard-gate | team form: reviewer + exactly one `dev-*` · or upstream form with `<N>` cited by a plan-ref token | `block-noverifydev` · `block-upstream` · `lint` |
 | declaration matches the code | declared roles all spawn · code dev types all declared · `impl-computed:` types have data literals | `block-declspawn` · `block-undecl` · `block-computed` · `lint` |

@@ -15,11 +15,10 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 |---|---|---|
 | `hooks/test/inject-scope-rules-nodrop.bats` | frontmatter `maxTurns`; its own `BUDGET_DEV_CARRIERS` literal | carrier status; meter bytes count into a pinned worst-case DEV assembly total |
 | `hooks/inject-scope-rules.sh` → `read_max_turns` | `^maxTurns:` at column 0 | turn-budget meter sizing |
-| `hooks/enforce-harness-critical.sh` | live frontmatter identity keys (name, tools, scope) and the fence-line count | edits to them blocked for every caller (LLM06) |
+| `lib/ga-doctor.sh` → `get_integrity_drift` | live frontmatter identity keys (name, tools, scope) and text outside EDITABLE regions | a live edit to either is reported as drift, never blocked |
 | `autoagent/daemon_cycle.py` → `match_sensitive_diff` | added lines of any patch to this body | `## Destructive-literal convention` |
 | `scripts/audit-inert-assert.sh` header | cites `### Bats + test-run discipline` as its convention SoT | keep the heading text |
 
-- Several harness-critical suites write a fake-HOME copy of this filename as a fixture; repo-tree edits do not affect them.
 - `scoped/maintainers/shared-testing.md` also cites `### Bats + test-run discipline`, for the shared bash 3.2 errexit reason.
 
 ## Budget-sizing bullets — why they are not a mirror

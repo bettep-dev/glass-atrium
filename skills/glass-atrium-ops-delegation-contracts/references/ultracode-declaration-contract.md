@@ -13,7 +13,7 @@
     - **Upstream form** — `upstream clauded-docs/<N>`: this workflow executes an already-verified persisted plan.
   - `impl:` = literal dev spawn types | `none`.
   - `impl-computed:` = indirectly-spawned dev types (config-array / ternary / wrapper indirection).
-- **Exit-2 verdicts** — each one blocks the Workflow call:
+- **Verdicts** — each one prints a warning and records its trace tag; none blocks the Workflow call:
 
   | Script condition | Verdict |
   |---|---|
@@ -37,11 +37,11 @@
   - SoT: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` → **Simple-task waiver**.
 - **Upstream waiver scope**: the upstream form waives the in-script pair-mapping and ordering only; `block-norev` still fires under upstream.
   - Why: a fake upstream line can never remove reviewer presence.
-- **HONESTY**: declaration presence, grammar and declaration↔code consistency are mechanical; role truthfulness is honor-system — the accepted floor.
+- **HONESTY**: declaration presence, grammar and declaration↔code consistency are checked mechanically and reported as warnings; role truthfulness is honor-system — the accepted floor.
   - A lying declaration passes — the same trust model as the `[ENTRY-CLASS]` / `[SIZE-EST]` / `[DOC-ROUTE]` / plan-ref tokens.
   - Never describe this gate as semantic enforcement of the verify contract.
 - **A legitimate pre-verify Discovery/Design phase stays compliant** by either route below.
-  - A Discovery `dev-*` is truthfully a declared `impl:` spawn; bound as an impl slot ahead of every reviewer, it trips `block-order` (**Exit-2 verdicts** → the `block-order` bullet).
+  - A Discovery `dev-*` is truthfully a declared `impl:` spawn; bound as an impl slot ahead of every reviewer, it trips `block-order` (**Verdicts** → the `block-order` bullet).
   - **(a) non-DEV Discovery** — run pre-verify analysis with `glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / Explore, so no dev-* precedes the reviewer.
   - **(b) reviewer-first Contract phase** — before any Discovery dev-*, front-load a `{glass-atrium-qa-code-reviewer, DEV}` verify: a real Contract phase, never a lone reviewer inserted only to satisfy ordering.
   - Honest scope: a first-spawned Discovery `dev-*` of the verify-dev type is bound as the verify slot, which the gate does not catch — there the routes are an honor-system duty.

@@ -15,7 +15,6 @@ Corpus-maintenance companion to that rule file. Nothing here is delivered to an 
 - Renaming the file is a multi-site edit: grep the stem `git-workflow`, which also catches `scripts/audit-context.sh` → `rule_tier`.
   - `rules/glass-atrium/core-compliance-matrix.md` lists the path as a Tier-1 bullet and a matrix row; `hooks/validate-compliance-matrix.sh` pairs the two.
 - Code that cites the rule file — reword the cited rule and these go stale:
-  - `hooks/block-no-verify.sh` names `core-git-workflow.md -> Commits` in its block message and repeats the signing-key remedy.
   - `hooks/advisory-worktree-writer-lock.sh` cites the SHARED contract's `memory/progress-*.md` checkpoint path as a sanctioned write.
   - `autoagent/daemon_cycle.py` → `_SAFETY_SENSITIVE_DIFF_PATTERNS`: a comment names a git-workflow rule-prose line as a residual force-push fire.
     - No line in the rule file carries `git push`; correct the comment when `autoagent/daemon_cycle.py` is next edited.

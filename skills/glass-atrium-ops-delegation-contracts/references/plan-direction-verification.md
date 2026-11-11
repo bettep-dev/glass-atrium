@@ -34,11 +34,12 @@
 
 - **Identical policy**: covers team composition · DEV hard gate · complex-only scope · max-1 revision.
 - **Manual backstop**: `enforce-verification-gate.sh` runs on `PreToolUse(Agent)`.
-  - It blocks with `VGATE-REVIEWER-001`; any earlier reviewer spawn in the session satisfies it, whatever plan or verdict it carried.
+  - It warns with `VGATE-REVIEWER-001` and the spawn still runs; any earlier reviewer spawn in the session satisfies it, whatever plan or verdict it carried.
   - A nested sub-worker origin gets a stderr advisory only.
-  - Reviewer + DEV spawned in one message race (write-after-read): the DEV read precedes the reviewer's completion stamp, so the DEV spawn is blocked.
+  - Reviewer + DEV spawned in one message race (write-after-read): the DEV read precedes the reviewer's completion stamp, so the DEV spawn draws the warning.
   - So the manual discipline is sequential: spawn the reviewer, then the DEV once the reviewer's verdict is in.
   - Absent under ultracode: `skills/glass-atrium-ops-orchestrator.md` → `#### Hook layer split under the engine`.
 - **Ultracode backstop**: `enforce-workflow-verify-stage.sh` runs on `PreToolUse(Workflow)` and checks the declaration of `skills/glass-atrium-ops-orchestrator-role.md` → `#### Ultracode declaration contract`.
+  - It warns and never blocks the Workflow call.
   - Mechanical surface: declaration presence + line grammar (the DEV hard gate included, `block-noverifydev`) + declaration↔code consistency, fail-open on any parse uncertainty.
   - It does not validate DEV-verdict or gating-expression correctness, and role truthfulness is honor-system (`references/ultracode-declaration-contract.md` → **HONESTY**).

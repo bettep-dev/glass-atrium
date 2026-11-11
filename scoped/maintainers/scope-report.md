@@ -107,7 +107,7 @@ Each entry is keyed by the rule text; its copies change with it.
 - **Live-file pin**: `agent-frontmatter-identity.bats` is the only suite that reads this file; it skips outside a git work tree and on a shallow clone, and CI runs it at full depth.
 - **Indifferent suites** — they name the agent in a roster or fixture and never read the body:
   - `scripts/test/doctrine-budget-parity.bats` reads `scoped/scope-report.md`, `scoped/scope-planning.md` and two monitor sources, never this body — keep the body a pointer, so no unjudged copy can drift.
-  - `hooks/test/block-doc-routing-leak.bats` and the other hook rosters · `scripts/test/test_inject_sync.py`.
+  - the hook roster suites · `scripts/test/test_inject_sync.py`.
   - the `monitor/test/model-config.*` and `monitor/test/clauded-docs.*` suites, driven by their own fixtures — a body claim contradicting the server goes unnoticed until a 400.
 - **Body headings and leads cited from outside** — a rename edits every citer in the same pass:
   - `## Output Format Routing` · `### Turn-0 Format Guard` · `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` · `## Designer Handoff Contract`

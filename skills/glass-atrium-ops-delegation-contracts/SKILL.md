@@ -32,7 +32,7 @@ description: 'Delegation contracts behind pointers in skills/glass-atrium-ops-or
 | Writing a managed document's stage, or choosing supersede vs new for new content | Managed Document Completion |
 | Confirming a DEV-spawning script's pre-submit checks, or mapping a failed check to its verdict | Pre-submit check table |
 | Reading a `block-*` verdict | Ultracode declaration contract |
-| A spawn gate blocked or advised on `[AGENT-COMPOSITION]`, `[SIZE-EST]`, `[SCOPE]` or `[PLAN-SUBSET]` | the row whose Topic names that token |
+| A spawn gate warned or advised on `[AGENT-COMPOSITION]`, `[SIZE-EST]`, `[SCOPE]` or `[PLAN-SUBSET]` | the row whose Topic names that token |
 
 ## Reference Index
 

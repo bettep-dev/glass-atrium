@@ -260,9 +260,8 @@ These bind every workflow output schema you author. The failure they prevent (`S
   - Re-sending the identical tight schema reproduces the identical cap-exceeded failure.
 
 - **Backstop**: a non-blocking `PreToolUse(Workflow)` schema-cap advisory in `hooks/enforce-workflow-verify-stage.sh` (stderr-only — it never alters a verdict or an exit code).
-  - Its verbatim promotion-to-blocking condition is recorded in that hook's header — read it there.
 - **Machine-checked repetition** — rewording a rule out of existence turns these suites red:
-  - `hooks/test/orchestrator-skill-schema-example.bats` greps this live file for each rule phrase above, the backstop hook's filename and the promotion-condition pointer in the **Backstop** bullet.
+  - `hooks/test/orchestrator-skill-schema-example.bats` greps this live file for each rule phrase above and the backstop hook's filename in the **Backstop** bullet.
   - `hooks/test/schema-cap-authority-single-site.bats` requires this section's heading, its parent section's heading and the no-`maxLength` phrase to survive here, as the target the charter and the META body point at.
 
 ##### Authoring idioms that implement those rules
@@ -419,26 +418,29 @@ Verify the prior stage's output against its row before the next stage enters.
 
 This is the single list the turn-0 `[WORKFLOW PRE-FLIGHT]` reminder and the Pre-submit self-check both point at. Every plan-backed DEV-spawning Workflow script MUST carry all four co-equal requirements before submission, and a downstream digest never drops one:
 
-- **Simple-task entry**: a script carrying `[ENTRY-CLASS] simple-task` and no plan-ref owes ① alone; ②-④ are optional and their blocks pass (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` → **Simple-task waiver**).
+- **Simple-task entry**: a script carrying `[ENTRY-CLASS] simple-task` and no plan-ref owes ① alone; ②-④ are optional and their checks pass (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` → **Simple-task waiver**).
 
 - **① entry token** — a plan-ref (sizable) or `[ENTRY-CLASS] simple-task: <reason>` (simple), in the canonical home (`log()` / `meta.description`).
-  - Backstop: entry-miss block (exit 2).
+  - Backstop: the entry-miss warning (`block-entry`).
   - Detail: "Entry-class token placement" below.
 - **② `[SIZE-EST]` token** — `[SIZE-EST] bundles=N tool_uses~=N — <reason>` at every `dev-*` spawn, same canonical home (sibling to `[ENTRY-CLASS]`).
-  - Backstop: size-est-miss block (exit 2), presence-only.
+  - Backstop: the size-est-miss warning (`block-sizeest`), presence-only.
   - Detail: "[SIZE-EST] token placement" below; format + honesty framing = `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 - **③ verify-stage** — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage preceding the first `dev-*` implementation spawn, gated on `pass`+`feasible`.
-  - Backstop: the declaration contract's ordering + consistency checks (`block-order` et al., exit 2).
+  - Backstop: the declaration contract's ordering + consistency warnings (`block-order` et al.).
   - Detail: "In-script verify-stage" below + the Pre-submit self-check in `## Red Flags`.
 - **④ `[AGENT-COMPOSITION]` declaration block** — exactly one comment-resident `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block declaring the verify team + implementation spawns (team form or upstream form).
-  - Backstop: absence → `block-nodecl` · malformed → `block-grammar` · declaration↔code mismatch → `block-declspawn`/`block-undecl`/`block-computed`/`block-order`/`block-upstream` (all exit 2).
+  - Backstop: absence → `block-nodecl` · malformed → `block-grammar` · declaration↔code mismatch → `block-declspawn`/`block-undecl`/`block-computed`/`block-order`/`block-upstream` (each a warning under that trace tag).
   - Detail: "In-script verify-stage" below (grammar + worked declaration blocks in the skeletons).
 
-Backing: authoring the tokens, the stage and the declaration is the primary obligation — every exit-2 gate checks presence, grammar and code-consistency only; declaration truthfulness and estimate correctness are never verified.
+Backing: authoring the tokens, the stage and the declaration is the primary obligation, on the honor system — every backstop above warns and none blocks: the script still runs.
+
+- The `block-*` names are trace tags the warnings record, not block verdicts.
+- Each check reads presence, grammar and code-consistency only; declaration truthfulness and estimate correctness are never verified.
 
 ##### In-script verify-stage (ultracode)
 
-Authoring obligation: honor-system primary, mechanically backstopped by the declaration contract.
+Authoring obligation: honor-system; the declaration contract's check warns on a miss and never blocks.
 
 - **Contract SoT**: the declaration contract itself is canonical at `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`.
 - **Standing-obligation site**: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Ultracode declaration contract`.
@@ -457,9 +459,9 @@ Exactly one `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home
 
 ###### Grammar and verdicts
 
-The line grammar (`verify` team/upstream forms · `impl` · `impl-computed`), the exit-2 verdict table and the upstream waiver scope are canonical at the contract. Deltas the skeletons rely on:
+The line grammar (`verify` team/upstream forms · `impl` · `impl-computed`), the verdict table and the upstream waiver scope are canonical at the contract. Deltas the skeletons rely on:
 
-- **impl-computed negative**: omit the `impl-computed` line entirely when there are no computed spawns — only `impl:` accepts the `none` literal; `impl-computed: none` is malformed and blocks as `block-grammar` (unknown-name).
+- **impl-computed negative**: omit the `impl-computed` line entirely when there are no computed spawns — only `impl:` accepts the `none` literal; `impl-computed: none` is malformed and warns as `block-grammar` (unknown-name).
 - `block-order` slot binding (greedy-earliest, same-type dual-role): the first spawn token of a declared verify-dev type is the verify slot, the remaining declared-impl-type tokens are impl slots, and some reviewer must precede the first impl slot.
 
 ###### Three scan surfaces — do not conflate them
@@ -634,7 +636,7 @@ A DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: 
 
 ##### [SIZE-EST] token placement (ultracode — DEV workflow)
 
-Same home and raw-scan convention as `[ENTRY-CLASS]`, but an independent presence gate: a plan-backed `dev-*` spawn missing `[SIZE-EST]` blocks (exit 2) even with a valid entry token; a simple-task entry with no plan-ref does not.
+Same home and raw-scan convention as `[ENTRY-CLASS]`, but an independent presence check: a plan-backed `dev-*` spawn missing `[SIZE-EST]` draws the size-est warning even with a valid entry token; a simple-task entry with no plan-ref does not.
 
 - Format, placement on both paths and honesty framing: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 
@@ -647,7 +649,7 @@ When the user explicitly requested a local destination for a deliverable (new fi
   - Routing rule: `scoped/scope-report.md` → `## Output Format Routing [REPORT]`.
 - Same raw-scan convention as `[ENTRY-CLASS]` above (any placement passes).
 - The stamp MUST carry the actual `<path>` after the colon — a bare stamp clears nothing; path-scoping mechanics live in `enforce-workflow-verify-stage.sh`.
-- Never stamp without an actual explicit user request — stamping to silence the doc-routing gate is a violation (self-check: `## Red Flags`).
+- Never stamp without an actual explicit user request — stamping to silence the doc-routing warning is a violation (self-check: `## Red Flags`).
 
 #### Agent Teams Hybrid [ORCHESTRATOR]
 
@@ -661,10 +663,9 @@ When the user explicitly requested a local destination for a deliverable (new fi
   - The simple-task waiver relaxes attestation tokens, never delegation (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` → **Simple-task waiver**).
 - Exception (low-risk only): the orchestrator MAY directly write `memory/*` files (session-internal state).
   - Agent instruction files (`~/.claude/agents/*.md`) are not in this exception — prompts = code, and frontmatter (name/tools/scope) is a Safety-tier surface, so they MUST be edited via glass-atrium-meta-prompt-engineer delegation, never by direct orchestrator write.
-  - The `enforce-delegation.sh` hook enforces this split on Write/Edit: it passes `memory/*` and blocks `~/.claude/agents/*.md` as a harness path (`DEL-001`); `hooks/enforce-harness-critical.sh` guards live frontmatter identity keys for every caller.
-    - An existing `agents/*.md` in a repo checkout is not a harness path: the hook passes an edit to it unless it is a plan Target File, so there this rule is honor-system.
-  - This exception does not bypass Harness Path Protection: a direct write under `~/.claude/` still requires the Rule 1 user approval.
-    - A harness write is never handed to a subagent prompt instead (`skills/glass-atrium-ops-orchestrator-role.md` → `## Harness Path Protection` → Rule 1 and Rule 2).
+  - Honest backing: honor-system — `enforce-delegation.sh` blocks no agent-file write, live or in a repo checkout.
+    - A changed live identity key is reported afterwards: `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
+  - This exception does not bypass Harness Path Protection: a direct write under `~/.claude/` still requires the Rule 1 user approval (`skills/glass-atrium-ops-orchestrator-role.md` → `## Harness Path Protection` → Rule 1).
 
 ### Entropy Management (Janitor) [ORCHESTRATOR]
 
@@ -1107,7 +1108,7 @@ Signals that an orchestration is defective: the scan list, then the named guards
 
 A DEV-spawning workflow without a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage preceding the first DEV implementation stage, gated on the combined `pass`+`feasible` verdict → **halt and re-author**.
 
-- `#### Pre-submit self-check` is honor-system primary; the declaration-contract gate backstops it (scope: `##### In-script verify-stage (ultracode)` → **What backstops it**).
+- `#### Pre-submit self-check` is honor-system; the declaration-contract check backs it with warnings only (scope: `##### In-script verify-stage (ultracode)` → **What backstops it**).
 - Skeletons: `#### Pipeline Acceptance Criteria` → "In-script verify-stage".
 - **Simple-plan exemption**: a simple plan skips the Stage-2 gate by entering as `[ENTRY-CLASS] simple-task` with no plan-ref (**Simple-task entry**).
   - One that keeps its plan-ref keeps the reviewer-before-DEV check and all four requirements of `##### DEV-spawn 4-requirement pre-flight checklist`.
@@ -1118,7 +1119,7 @@ A DEV-spawning workflow without a `{glass-atrium-qa-code-reviewer, DEV}` verify-
 - Then confirm every row of `skills/glass-atrium-ops-delegation-contracts/references/workflow-pre-submit-check.md` → `## Check table`.
   - By hand: the rows the lint leaves — JS parse hazards, the `implementing` write, the close token.
 - A simple-task entry with no plan-ref confirms the entry-token and JS-parse rows only (`##### DEV-spawn 4-requirement pre-flight checklist` → **Simple-task entry**).
-- The doc-routing leak is a separate gate branch: `### Reflexive [DOC-ROUTE] stamping guard`.
+- The doc-routing leak is a separate warning branch: `### Reflexive [DOC-ROUTE] stamping guard`.
 
 Obligations the gate cannot verify:
 
@@ -1135,7 +1136,7 @@ A `dev-*` used for Discovery/Design analysis ahead of the `glass-atrium-qa-code-
 
 ### Reflexive [DOC-ROUTE] stamping guard
 
-A `[DOC-ROUTE] user-requested-local:` token stamped without an actual explicit user request for that local destination (new file or edit of an existing user file) → violation: the token carries a real user redirect and never silences the doc-routing gate.
+A `[DOC-ROUTE] user-requested-local:` token stamped without an actual explicit user request for that local destination (new file or edit of an existing user file) → violation: the token carries a real user redirect and never silences the doc-routing warning.
 
 - Halt, remove the stamp, and route the deliverable per `scoped/scope-report.md` → `## Output Format Routing [REPORT]`.
 - Canonical form and placement: `#### Pipeline Acceptance Criteria` → "[DOC-ROUTE] token placement".

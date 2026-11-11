@@ -61,7 +61,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - the `[SIZE-EST]` key names on the `#### Delegation-size discipline` pointer;
   - the `[SCOPE]` grammar;
   - the six-plus-`7th` delegation-element count — `scoped/orchestrator-core.md` → `## Request flow` mirrors the six, so the two move together;
-  - `Rule 2` and the three BASENAME names;
+  - `Rule 1` and the three BASENAME names;
   - `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh`;
   - the Document-Driven Workflow step numbers.
 - The statement of this duty for that skill's editors, covering `references/ultracode-declaration-contract.md` and `references/delegation-size-discipline.md`: `scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Machine-read literals**.
@@ -72,7 +72,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - **Verdict names** — `block-nodecl` · `block-grammar` · `block-norev` · `block-noverifydev` · `block-declspawn` · `block-undecl` · `block-computed` · `block-order` · `block-upstream`.
   - Each is a trace tag `hooks/enforce-workflow-verify-stage.sh` emits. The rule file names them; the hook defines them.
 - **Headings** cited by name elsewhere in the corpus:
-  - `## Orchestrator Identity` · `## Delegation Criteria` · `## Delegation Workflow` · `## Document-Driven Workflow` · `## Harness Path Protection` (with its `Rule 2`, `### Write routes`, `### Staged lane`, `### Progress-file exclusion`, `### Reach of the gate`).
+  - `## Orchestrator Identity` · `## Delegation Criteria` · `## Delegation Workflow` · `## Document-Driven Workflow` · `## Harness Path Protection` (with its `Rule 1`, `### Write routes`, `### Progress-file exclusion`).
   - `### Phase Notes`, with `#### Entry classification (DEV delegations)` · `#### Plan edge discovery`.
   - `#### Decision-phase probes` · `#### Deliverable exposure and designer composition` · `#### Monitoring-phase notes` · `#### Scan boundary and provenance`.
   - `### Plan Direction Verification (Stage-2 gate)` · `### Spawn Budget` (with Delegation-size discipline) · `#### Automatic Parallelization` (with guardrail `(a)`) · `### Context Handoff Size` · the Cost-Tier Selection heading · `### Failure Recovery Loop`.
@@ -81,7 +81,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - Cited from `scoped/orchestrator-core.md` and `skills/glass-atrium-ops-orchestrator.md`: `#### Depth and concurrency ceilings`.
 - **Bolded leads** cited by name:
   - under the phase-note H4s:
-    - `#### Decision-phase probes`: Foreground Probe · Capability Probe · Compatibility Probe;
+    - `#### Decision-phase probes`: Capability Probe · Compatibility Probe;
     - `#### Deliverable exposure and designer composition (Decision phase)`: Exposure Determination · Visual-Weight Probe;
     - `#### Monitoring-phase notes`: Verbatim forward-relay · glass-atrium-dev-front markup-exception Monitoring judgment;
   - under `### Spawn Budget`: Split triggers · HARD SECONDARY · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`) · COUNTER-CAVEAT (over-fragmentation);
@@ -151,7 +151,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 - The gate-operation canonical is the pointer plus `references/plan-direction-verification.md`.
 - The participant-duty canonicals are the two scope-file headings the pointer's **Ownership** line names.
-- The hooks quote only the gate heading (`hooks/enforce-verification-gate.sh` reviewer-miss reason, `hooks/enforce-workflow-verify-stage.sh` DEV hard-gate block), which stays.
+- The hooks quote only the gate heading (`hooks/enforce-verification-gate.sh` reviewer-miss reason, `hooks/enforce-workflow-verify-stage.sh` DEV hard-gate warning), which stays.
 - The reference's cited `##` headings, text and level fixed: `scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Cited headings**.
   - Citer naming the `##` level: `scoped/maintainers/scope-qa.md` (two Team-composition citations).
 - Location-only citer that stays: `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` → the Stage 2 bullet names the gate heading for team composition, DEV hard gate, activation scope and direction-not-completeness. The pointer keeps all four.
@@ -238,12 +238,6 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 ### `## Harness Path Protection`
 
-- Hook internals behind Rule 2 and `### Reach of the gate`, kept here because the orchestrator acts on none of them:
-  - A directory symlink the walk crosses before entering a root, leading inside a root rather than onto the root itself, voids every exemption.
-  - Outside the scan's reach: a home written as a run-time expansion the hook does not read as home · a glob standing in for a root letter · a root named only as a bare word in prose, the file named relative to it.
-  - The hook does not examine a symlink inside a root it has entered: it judges the rest of the path as written.
-  - Past its candidate cap, the hook blocks fail-safe rather than leave candidates unresolved.
-  - On the resolved-install-target route, no hook guards the install's `rules/` and `scoped/` trees.
-- The layer meant to catch the writes the prompt scan cannot see is a Write/Edit/Bash gate on calls carrying an `agent_id`.
-  - Not built; its home is `hooks/enforce-harness-critical.sh`.
-  - It is also the candidate cover for the Workflow-tool `agent()` gap: whether a Workflow agent's Write/Edit/Bash calls carry an `agent_id` is unmeasured.
+- No hook stands behind the section: Rule 1 is honor-system, and no write in its scope is blocked.
+- The detection statement is single-sited at `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
+  - The section, `scoped/orchestrator-core.md` → `## Harness path protection` and `references/deploy-safety-idiom.md` each point there; none restates the compared kinds.
