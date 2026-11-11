@@ -188,7 +188,7 @@ run_file_drift() {
   local -a rows=(
     "manifest as applied|true|0"
     "hash row rewritten in the live manifest|jq '.hashes[\"hooks/hook-a.sh\"]=\"00\"' manifest.json >m.tmp && mv m.tmp manifest.json|1"
-    "no applied-release record yet|rm -f -- \"\${STATE:?}/baseline-manifest.json\"|0"
+    "no applied-release record yet|mv -- \"\${STATE}/baseline-manifest.json\" \"\${STATE}/baseline-manifest.json.gone\"|0"
   )
   for row in "${rows[@]}"; do
     IFS='|' read -r name edit want <<<"${row}"
@@ -292,7 +292,7 @@ get_expected_bindings() {
     "branch holding its own settings file|printf '{}\n' >settings.json|1"
     "branch linked elsewhere|printf '{}\n' >other.json && ln -s \"\${PWD}/other.json\" settings.json|1"
     "branch with no settings.json|true|1"
-    "never-launched dir without .claude.json|rm -f .claude.json && printf '{}\n' >settings.json|0"
+    "never-launched dir without .claude.json|mv .claude.json claude.json.gone && printf '{}\n' >settings.json|0"
   )
   printf '{}\n' >"${FAKE_HOME}/.claude/settings.json"
   for row in "${rows[@]}"; do
@@ -367,7 +367,7 @@ run_whole_doctor() {
   )
   for row in "${rows[@]}"; do
     IFS='|' read -r name assign setup <<<"${row}"
-    if ga_guard_path "${ROOT}/.git"; then rm -rf -- "${ROOT:?}/.git"; fi
+    if ga_guard_path "${ROOT}"; then rm -rf -- "${ROOT:?}/.git"; fi
     seed_release
     write_settings "${expected[@]}"
     (cd "${ROOT}" && eval "${setup}")
@@ -426,7 +426,7 @@ run_update_report() {
   )
   for row in "${rows[@]}"; do
     IFS='|' read -r name engine want <<<"${row}"
-    if ga_guard_path "${ROOT}/lib"; then rm -rf -- "${ROOT:?}/lib"; fi
+    if ga_guard_path "${ROOT}"; then rm -rf -- "${ROOT:?}/lib"; fi
     if [[ "${engine}" != "none" ]]; then
       mkdir -p "${ROOT}/lib" && printf '%s\n' "${engine}" >"${ROOT}/lib/ga-core.sh"
     fi

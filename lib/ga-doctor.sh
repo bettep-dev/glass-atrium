@@ -2736,7 +2736,7 @@ set_integrity_verdict() {
   fi
   log "  note : integrity verdict not recorded (${INTEGRITY_VERDICT} unwritable) — the session-start line will read it as not yet checked"
   # shellcheck disable=SC2310
-  if [[ -n "${tmp}" ]] && ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
+  if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
   return 0
 }
 

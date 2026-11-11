@@ -533,7 +533,7 @@ record_integrity_verdict() {
   mkdir -p "${FAKE_HOME}/.claude-work" && printf '{}\n' >"${FAKE_HOME}/.claude-work/.claude.json"
   for row in "${rows[@]}"; do
     IFS='|' read -r name verdict touch want <<<"${row}"
-    if ga_guard_path "${FAKE_HOME}/.glass-atrium/data"; then rm -rf -- "${FAKE_HOME:?}/.glass-atrium/data"; fi
+    if ga_guard_path "${FAKE_HOME}"; then rm -rf -- "${FAKE_HOME:?}/.glass-atrium/data"; fi
     [[ -z "${verdict}" ]] || record_integrity_verdict "${verdict}"
     [[ -z "${touch}" ]] || touch -t 209901010000 "${SANDBOX}/ga/${touch}"
     run_hook
