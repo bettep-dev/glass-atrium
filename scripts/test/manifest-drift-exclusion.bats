@@ -3,17 +3,17 @@
 # merge-claim predicate scripts/lib/apply-spine.sh::spine_is_merge_claimed_path.
 #
 # The drift report compares live content to manifest.hashes for every row the merge does NOT
-# claim, and skips that comparison for every row it does. The rows it claims carry live content
-# by design — daemon-written EDITABLE regions and an operator `model:` pin in an agent body, a
-# union of vendor and live rows in each roster file — so a whole-file hash reads them as drift
-# under a remedy that cannot clear it.
+# claim, and hands every claimed row whose hash moved to the vendor-owned-part comparison. The rows
+# it claims carry live content by design — daemon-written EDITABLE regions and an operator `model:`
+# pin in an agent body, a union of vendor and live rows in each roster file — so a whole-file hash
+# alone cannot tell that evolution from tamper. Which evolution reads clean against the base@install
+# anchor: test/harness-integrity.bats.
 #
-# The agreement gate is the test named "the exclusion and the claim predicate agree on every
+# The routing gate is the test named "the hash comparison and the claim predicate agree on every
 # manifest row" — named rather than numbered, because an ordinal renumbers on the next insertion.
-# It iterates the manifest and drives BOTH sides per row
-# (mutate → is it reported, ask the predicate → is it claimed), so a family added to one side and
-# not the other fails here rather than silently converting a loud false warning into a quiet
-# wrong one. Neither implementation is inspected.
+# It iterates the manifest and drives BOTH sides per row (mutate → which comparison reported it,
+# ask the predicate → is it claimed), so a family added to one side and not the other fails here.
+# Neither implementation is inspected.
 #
 # Run via: bats scripts/test/manifest-drift-exclusion.bats
 # Requires: bats >= 1.5.0, jq, shasum, bash 3.2+
@@ -109,7 +109,7 @@ write_manifest() {
 # Echo the doctor's drift COUNT over the current fixture tree. Sources the REAL lib with only the
 # globals manifest_hash_drift consumes; the lib resolves the spine itself.
 doctor_drift_count() {
-  bash -c '
+  ATRIUM_UPDATE_STATE_DIR="${WORK}.state" bash -c '
     set -Eeuo pipefail
     log() { printf "%s\n" "$*" >&2; }
     GA_ROOT="$1"; MANIFEST="$2"
@@ -120,7 +120,7 @@ doctor_drift_count() {
 
 # Echo the doctor's report lines (stderr) for the current fixture tree.
 doctor_drift_detail() {
-  bash -c '
+  ATRIUM_UPDATE_STATE_DIR="${WORK}.state" bash -c '
     set -Eeuo pipefail
     log() { printf "%s\n" "$*" >&2; }
     GA_ROOT="$1"; MANIFEST="$2"
@@ -139,32 +139,8 @@ claim_verdict() {
   ' _ "${REAL_SPINE}" "$1"
 }
 
-# Daemon-shaped evolution: a learned bullet inside the EDITABLE region.
-evolve_editable_region() {
-  local file="${WORK}/agents/evolvable.md" tmp="${WORK}/agents/evolvable.mut"
-  awk '{ print } /^Learned goal line\.$/ { print "- a newly learned bullet" }' \
-    "${file}" >"${tmp}"
-  mv -f -- "${tmp}" "${file}"
-}
-
-# Operator-shaped evolution: the live-only `model:` frontmatter pin.
-pin_model_key() {
-  local file="${WORK}/agents/evolvable.md" tmp="${WORK}/agents/evolvable.mut"
-  awk '{ print } /^tools: Read, Write$/ { print "model: pinned-model-id" }' \
-    "${file}" >"${tmp}"
-  mv -f -- "${tmp}" "${file}"
-}
-
 @test "a pristine tree reports zero drift" {
   [[ "$(doctor_drift_count)" -eq 0 ]] || return 1
-}
-
-@test "region content and a live-only frontmatter pin are NOT drift" {
-  evolve_editable_region
-  pin_model_key
-  printf 'live-only roster row\n' >>"${WORK}/hooks/lib/styleref-roster.sh"
-  [[ "$(doctor_drift_count)" -eq 0 ]] || return 1
-  [[ "$(doctor_drift_detail)" == *"excluded from the content comparison"* ]] || return 1
 }
 
 @test "an altered non-agent file is still reported" {
@@ -179,8 +155,8 @@ pin_model_key() {
   [[ "$(doctor_drift_detail)" == *"listed file missing on disk: agents/evolvable.md"* ]] || return 1
 }
 
-# The split scope-rule channel's claim partition, asserted BY NAME. The row above proves the two
-# sides of the exclusion agree with each other; it cannot prove that a given family sits on the
+# The split scope-rule channel's claim partition, asserted BY NAME. The routing gate proves the doctor
+# and the predicate agree with each other; it cannot prove that a given family sits on the
 # side it was designed for, because it derives both verdicts from the same predicate.
 #
 # Why the partition is load-bearing in both directions:
@@ -232,18 +208,22 @@ pin_model_key() {
   }
 }
 
-@test "the exclusion and the claim predicate agree on every manifest row" {
-  local rel reported claimed claimed_rows=0 compared_rows=0
+@test "the hash comparison and the claim predicate agree on every manifest row" {
+  local rel count hashed claimed claimed_rows=0 compared_rows=0
   while IFS= read -r rel; do
     printf 'mutation\n' >>"${WORK}/${rel}"
-    reported=no
-    if [[ "$(doctor_drift_count)" -eq 1 ]]; then reported=yes; fi
+    count="$(doctor_drift_count)"
+    hashed=no
+    if [[ "$(doctor_drift_detail)" == *"content hash mismatch: ${rel}"* ]]; then hashed=yes; fi
     cp -p -- "${PRISTINE}/${rel}" "${WORK}/${rel}"
     claimed=no
     if claim_verdict "${rel}"; then claimed=yes; fi
-    # reported XOR claimed, per row: a claimed row is excluded from the comparison, an unclaimed
-    # one is compared. Equal verdicts mean the two sides disagree about this family.
-    [[ "${reported}" != "${claimed}" ]] || return 1
+    # every row's mutation is one drift; hashed XOR claimed, per row: a claimed row goes to the
+    # vendor-part comparison, an unclaimed one to the hash. Equal verdicts mean the two sides disagree.
+    [[ "${count}" == "1" && "${hashed}" != "${claimed}" ]] || {
+      echo "${rel}: drift ${count}, hash-compared ${hashed}, claimed ${claimed}"
+      return 1
+    }
     if [[ "${claimed}" == "yes" ]]; then
       claimed_rows=$((claimed_rows + 1))
     else

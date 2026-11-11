@@ -15,6 +15,8 @@ source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || skip "shasum/sha256sum required"
   SANDBOX="$(mktemp -d)"
@@ -217,7 +219,7 @@ write_settings() {
 
 # Every expected binding, read from the engine itself.
 get_expected_bindings() {
-  env GA_LIB_DIR="${GA}/scripts/lib" HOME="${FAKE_HOME}" bash -c 'source "$1/lib/ga-env.sh"; ga_init_env "$2"; printf "%s\n" "${EXPECTED_HOOK_BINDINGS[@]}"' _ "${GA}" "${ROOT}"
+  env GA_LIB_DIR="${GA}/scripts/lib" HOME="${FAKE_HOME}" GA_DATA_ROOT="${SANDBOX}/data" bash -c 'source "$1/lib/ga-env.sh"; ga_init_env "$2"; printf "%s\n" "${EXPECTED_HOOK_BINDINGS[@]}"' _ "${GA}" "${ROOT}"
 }
 
 @test "hook bindings report missing, altered and surplus Atrium bindings and ignore foreign hooks" {
