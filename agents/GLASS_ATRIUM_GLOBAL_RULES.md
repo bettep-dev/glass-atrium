@@ -179,6 +179,7 @@ The canonical rule for what language this system writes in.
 ### Temporary Files [ALL]
 
 - Default: create temporary files and directories with bare `mktemp` / `mktemp -d` — no template path — so they land under the per-user `$TMPDIR`.
+- Trash purge: to permanently delete scratch you moved to `~/.Trash/`, run `~/.glass-atrium/scripts/ga-trash-purge.sh <entry>` — one entry per call, and only an entry you moved there yourself.
 
 ## Context Management [ALL]
 
