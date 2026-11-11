@@ -207,18 +207,15 @@ shopt -s nocasematch
 # Canary directory below the data root — the directory inject-scope-rules.sh reads as its CANARY_DIR.
 readonly CANARY_DIR_SUFFIX="learning/canary"
 
-# Hot-path prefilter (pure bash, zero spawns): every protected class of the
-# agent_id-independent arms textually requires one of the two protected-root dir-name literals in the raw envelope, or
+# Hot-path prefilter (pure bash, zero spawns): every protected class textually
+# requires one of the two protected-root dir-name literals in the raw envelope, or
 # the canary directory's own name — a relocated data root carries no root literal.
 # PROT_RE and the deterministic path classes literal-match on them, and traversal
 # forms still contain them. No literal → nothing this gate can block → exit 0.
 # Residual shared with the Bash arm: indirection / JSON \uXXXX escaping of the
 # literals skips this gate (see header).
-# An agent_id envelope skips it: a resolved-form target can hold no root literal at all (a write
-# through a link planted earlier to a profile root), so for the agent_id write gate this premise
-# fails. A false key match costs one classifier spawn, never a verdict.
 case "${INPUT}" in
-  *'"agent_id"'* | *".claude"* | *".glass-atrium"* | *"${CANARY_DIR_SUFFIX##*/}"*) : ;;
+  *".claude"* | *".glass-atrium"* | *"${CANARY_DIR_SUFFIX##*/}"*) : ;;
   *) exit 0 ;;
 esac
 
@@ -506,18 +503,6 @@ def normalize_path(path):
             continue
         out.append(seg)
     return lead + "/".join(out)
-
-
-def resolved_form(path):
-    """Non-strict realpath of a target as written, only a leading ~ / ~/ expanded — never the
-    normalize_path output, which collapses `..` lexically where the kernel follows a link first.
-    Non-strict follows a dangling final link and keeps a nonexistent tail. Relative → ""."""
-    home = os.environ.get("HOME", "")
-    if path == "~" and home:
-        path = home
-    elif path.startswith("~/") and home:
-        path = home + "/" + path[2:]
-    return os.path.realpath(path) if path.startswith("/") else ""
 
 
 def strip_inline_comment(text):
@@ -1480,9 +1465,7 @@ def main():
     if not isinstance(tool_input, dict):
         tool_input = {}
     tool_name = str(data.get("tool_name", ""))
-    agent_id = str(data.get("agent_id", "") or "")
     raw_target = ""
-    resolved = ""
     if tool_name in ("Write", "Edit", "MultiEdit"):
         # Normalisation is the FIRST operation on the parsed envelope — ahead of
         # every disk read and arm dispatch. A tilde/traversal spelling reaching
@@ -1499,8 +1482,6 @@ def main():
         target = ""
     status = 0
     try:
-        if tool_name in ("Write", "Edit", "MultiEdit"):
-            resolved = resolved_form(raw_target)
         # NUL guard, every caller: a NUL splits the command differently for the shell that runs
         # it than for this scan, so it fails closed up front as HAR-003.
         if tool_name == "Bash" and "\x00" in target:
@@ -1524,7 +1505,7 @@ def main():
         status = 3
     # NUL-strip mirrors hook_get_fields (a JSON string MAY carry \u0000; an embedded
     # NUL would truncate the `read -r -d ''` consumer mid-value).
-    for field in (tool_name, target, verdict, raw_target, agent_id, resolved):
+    for field in (tool_name, target, verdict, raw_target):
         sys.stdout.write(field.rstrip("\n").replace("\x00", "") + "\0")
     sys.stdout.flush()
     if status:
@@ -1642,9 +1623,6 @@ block_wording() {
       BLOCK_MSG="Harness-critical command blocked (nul-in-command): the command text carries a NUL byte"
       BLOCK_SUG="A NUL splits the command differently for the shell that runs it than for this gate's scan, so the gate fails closed rather than judge a command it cannot read as the shell will. Remove the NUL from the command text and re-run it."
       ;;
-    agent-id-write)
-      BLOCK_SUG="A subagent or Workflow agent writes under a ~/.claude* profile root only into its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file in a memory dir — the BASENAME exception is the orchestrator's. Put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
-      ;;
     classifier-failure)
       BLOCK_MSG="Harness-critical gate unavailable (classifier-failure) — failing closed"
       BLOCK_SUG="The envelope classifier could not run, so the gate cannot tell a protected write from a harmless one and fails closed by design rather than pass unread input. Restore a working python3 on PATH and re-run the command. The block covers only envelopes naming a protected root, not all tool use."
@@ -1666,7 +1644,7 @@ block_critical() {
 }
 
 # One detector pass over the hook INPUT, fail-CLOSED: the producer appends the
-# classifier's exit status as a SEVENTH NUL-framed field, and the gate below
+# classifier's exit status as a FIFTH NUL-framed field, and the gate below
 # compares it against the LITERAL zero string — non-zero, EMPTY, or misaligned all
 # block, so a classifier crashing mid-stream can never smuggle a pass through
 # partial output. A SIGPIPE (141) blocks too, which is the correct direction.
@@ -1684,8 +1662,6 @@ block_critical() {
   IFS= read -r -d '' TARGET || true
   IFS= read -r -d '' VERDICT || true
   IFS= read -r -d '' RAW_TARGET || true
-  IFS= read -r -d '' AGENT_ID || true
-  IFS= read -r -d '' RESOLVED_TARGET || true
   IFS= read -r -d '' PY_STATUS || true
 } < <(
   st=0
@@ -1712,44 +1688,6 @@ config_dirs_lib="${BASH_SOURCE%/*}/lib/claude-config-dirs.sh"
 if [[ ! -r "${config_dirs_lib}" ]] || ! source "${config_dirs_lib}"; then
   block_critical "HAR-003" "classifier-failure" "lib/claude-config-dirs.sh unreadable"
 fi
-
-# agent_id write gate (Write/Edit/MultiEdit): a subagent or Workflow agent writes under a profile root
-# only into its job scratchpad or a progress file — no BASENAME exception, which serves orchestrator
-# memory-index and root-rule updates. Called only where today's arm would pass, so it adds blocks
-# only. The target is judged as written and as resolved: a link or hardlink planted earlier under
-# jobs/<id>/tmp/ cannot alias a protected entry. Main-session calls never reach it.
-agent_write_arm() {
-  [[ -n "${AGENT_ID}" ]] || return 0
-  HOME_PHYS="$(cd -P -- "${HOME}" 2>/dev/null && pwd -P)" || HOME_PHYS=""
-  # Intended predicate calls (exit status IS the answer) → SC2310 disabled.
-  # shellcheck disable=SC2310
-  if is_agent_form_blocked "${RAW_TARGET}" ""; then
-    block_critical "HAR-001" "agent-id-write" "${RAW_TARGET}"
-  fi
-  # shellcheck disable=SC2310
-  if [[ -n "${RESOLVED_TARGET}" ]] && is_agent_form_blocked "${RESOLVED_TARGET}" hardlink; then
-    block_critical "HAR-001" "agent-id-write" "${RESOLVED_TARGET}" "${RAW_TARGET}"
-  fi
-}
-
-# One form of a target against every profile root of HOME and of its physical spelling (a home behind
-# a link realpaths elsewhere). Scope folds case under the shell-global nocasematch; the remainder is
-# stripped case-sensitively, so a case-varied home keeps a home component and matches no member.
-# Args: $1=path form  $2=`hardlink` for the resolved form. Exit 0 = in scope and not exempt.
-is_agent_form_blocked() {
-  local form="${1}" path="${1}" home rest
-  [[ "${path}" == /System/Volumes/Data/* ]] && path="${path:20}"
-  path="$(hook_normalize_path "${path}")"
-  for home in "${HOME}" "${HOME_PHYS}"; do
-    [[ -n "${home}" && "${path}" == "${home}/"* ]] || continue
-    rest="${path:${#home}+1}"
-    [[ "${rest%%/*}" =~ ^${CLAUDE_CONFIG_ROOT_RE%/}$ ]] || continue
-    rest="$(claude_config_strip_branch_root "${path}" "${home}")"
-    # shellcheck disable=SC2310
-    claude_config_is_exempt_entry "projects job" "${form}" "${rest}" ${2:+"${2}"} || return 0
-  done
-  return 1
-}
 
 write_edit_arm() {
   local norm raw
@@ -1795,10 +1733,7 @@ write_edit_arm() {
   # Only agents/*.md continues to the identity inspection; everything else passes.
   case "${norm}" in
     "${GA_DIR}/agents/"*.md | "${CLAUDE_DIR}/agents/"*.md) : ;;
-    *)
-      agent_write_arm
-      exit 0
-      ;;
+    *) exit 0 ;;
   esac
 
   # Creation is not a Write-only shape — an absent target is the creation signal
@@ -1810,10 +1745,7 @@ write_edit_arm() {
   fi
   case "${VERDICT}" in
     block:*) block_critical "HAR-001" "${VERDICT#block:}" "${norm}" ;;
-    *)
-      agent_write_arm
-      exit 0
-      ;;
+    *) exit 0 ;;
   esac
 }
 
