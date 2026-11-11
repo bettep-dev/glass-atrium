@@ -10,7 +10,7 @@
 #   the retained entry / size-est / docroute gates, and the accepted honor-system floor (a lying
 #   declaration passes).
 #
-# Decision channel = exit code only (PreToolUse): exit 0 PASS / exit 2 BLOCK.
+# Decision channel: exit 0 on every path; PASS vs warning = the stderr `] WARNING (` line (assert_outcome).
 # Input is the real PreToolUse(Workflow) envelope: {"tool_name":"Workflow",
 #   "tool_input":{"script":"<js>"}}, built with jq so arbitrary quotes/parens in the script body are
 #   escaped safely. WORKFLOW_GATE_FIRED_LOG is redirected to a temp path so the trace never touches the
@@ -100,7 +100,14 @@ assert_trace_empty() { [[ ! -s "${TRACE_LOG}" ]]; }
 # Shared docroute assertion tails — status + "doc-routing leak" stderr pair combined into ONE
 # command so they gate as the final command (or via `|| return 1`).
 assert_docroute_pass() { [[ "${status}" -eq 0 && ! "${output}" =~ "doc-routing leak" ]]; }
-assert_docroute_block() { [[ "${status}" -eq 2 && "${output}" =~ "doc-routing leak" ]]; }
+assert_docroute_warn() { [[ "${status}" -eq 0 && "${output}" == *"] WARNING (doc-routing leak)"* ]]; }
+
+# Outcome assertion — the hook exits 0 on every path, so pass vs warn is whether a WARNING line printed.
+assert_outcome() {
+  local outcome=pass
+  [[ "${output}" == *"] WARNING ("* ]] && outcome=warn
+  [[ "${status}" -eq 0 && "${outcome}" == "${1}" ]]
+}
 
 # A recognized plan-reference token — every DEV-spawning PASS fixture needs one (or an [ENTRY-CLASS]
 # token) to clear the entry-miss gate.
@@ -122,7 +129,7 @@ impl: glass-atrium-dev-nestjs
 
 @test "failopen: empty script → PASS (nothing to inspect) + pass-noscript trace" {
   run_hook ""
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass-noscript || return 1
 }
 
@@ -130,14 +137,14 @@ impl: glass-atrium-dev-nestjs
   run bash -c '
     printf "%s" "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/tmp/x\"}}" | WORKFLOW_GATE_FIRED_LOG="$2" bash "$1"
   ' _ "${HOOK_SH}" "${TRACE_LOG}"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
 }
 
 @test "failopen: garbage non-JSON stdin → PASS (jq fails, fail-open)" {
   run bash -c '
     printf "%s" "not json at all <<<" | WORKFLOW_GATE_FIRED_LOG="$2" bash "$1"
   ' _ "${HOOK_SH}" "${TRACE_LOG}"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
 }
 
 # VERDICT-PLUMBING TRAP (runtime half): a python-side verdict token missing from the bash enumerated
@@ -154,7 +161,7 @@ impl: glass-atrium-dev-nestjs
     payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
     printf "%s" "${payload}" | PATH="${stub}:${PATH}" WORKFLOW_GATE_FIRED_LOG="${trace}" bash "${hook}"
   ' _ "pipeline(agent('glass-atrium-dev-nestjs',{goal:'implement'}))" "${HOOK_SH}" "${TRACE_LOG}" "${stub_dir}"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
 }
 
 # TRACE PRUNE — firing log bounded to its line cap via an atomic sibling-temp swap
@@ -176,7 +183,7 @@ run_hook_over_cap() {
 @test "trace prune: a trace log over the line cap is bounded at or below the cap" {
   local after
   run_hook_over_cap ""
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   after="$(grep -c '' "${TRACE_LOG}")"
   [[ "${after}" -le 5 ]] || {
     echo "expected the trace log bounded at or below cap 5, got ${after}" >&2
@@ -190,7 +197,7 @@ run_hook_over_cap() {
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexit 1\n' "${mv_log}" >"${stub_dir}/mv"
   chmod +x "${stub_dir}/mv"
   run_hook_over_cap "${stub_dir}:"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   grep -qF "${TRACE_LOG}.prune." "${mv_log}" || {
     echo "the prune never attempted its swap" >&2
     return 1
@@ -208,25 +215,25 @@ run_hook_over_cap() {
 
 @test "exempt: doc-only workflow (reporter + reviewer, no DEV) → PASS (Stage-2 exempt)" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'doc'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
 }
 
 @test "exempt: non-member intel-researcher alone → PASS (not a DEV spawn)" {
   run_hook "agent('glass-atrium-intel-researcher',{goal:'research only'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
 }
 
 # F7 accepted-FN pin (KNOWN LIMITATION disclosure, hook header): a fully-COMPUTED agentType spawn
 # (agentType resolved at runtime) with ZERO dev-* literals ANYWHERE is invisible to Tier A → the
 # script reads as non-DEV → Stage-2 EXEMPT → PASS. Pre-existing Tier-A-blind blind spot, retained
 # UNCHANGED by the declaration contract (accepted fail-open false-negative — a missed bypass beats a
-# false BLOCK). If this ever flips to exit 2, the disclosed accepted floor moved silently.
+# false BLOCK). If this ever starts warning, the disclosed accepted floor moved silently.
 @test "exempt(F7 accepted-FN): computed agentType + ZERO dev literals anywhere → PASS (Tier-A blind spot)" {
   run_hook "log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 const chosen = pickAgent()
 pipeline(agent('build it',{agentType: chosen}))"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass || return 1
 }
 
@@ -239,16 +246,16 @@ pipeline(agent('build it',{agentType: chosen}))"
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"missing composition declaration"* ]] || return 1
   assert_trace block-nodecl || return 1
 }
 
 # Presence parity: even a REAL in-script {qa, dev} verify pair does NOT satisfy the gate without the
 # declaration block (the block is the mandatory self-attestation, like [ENTRY-CLASS] / [SIZE-EST]).
-@test "nodecl: valid in-script verify pair but NO declaration → BLOCK_NODECL (absence blocks)" {
+@test "nodecl: valid in-script verify pair but NO declaration → BLOCK_NODECL (absence warns)" {
   run_hook "parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-nodecl || return 1
 }
 
@@ -256,7 +263,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 # BLOCK_NODECL. Fails RED if dev-swift is ever dropped from the runtime DEV_SET roster.
 @test "nodecl: dev-swift impl, no declaration → BLOCK_NODECL (synced DEV member recognized)" {
   run_hook "agent('glass-atrium-dev-swift',{goal:'implement the swift module'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-nodecl || return 1
 }
 
@@ -270,7 +277,7 @@ verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-shell
 impl: glass-atrium-dev-shell
 [/AGENT-COMPOSITION]\`;
 agent('glass-atrium-dev-shell',{goal:GOAL})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"missing composition declaration"* ]] || return 1
   [[ "${output}" == *"STRING-RESIDENCY"* ]] || return 1
   assert_trace block-nodecl || return 1
@@ -289,7 +296,7 @@ verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
 bogus: something
 [/AGENT-COMPOSITION] */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"malformed composition declaration"* ]] || return 1
   assert_trace block-grammar || return 1
 }
@@ -301,7 +308,7 @@ impl: glass-atrium-dev-nestjs
 impl: glass-atrium-dev-react
 [/AGENT-COMPOSITION] */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-grammar || return 1
 }
 
@@ -311,7 +318,7 @@ verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-bogus
 impl: glass-atrium-dev-nestjs
 [/AGENT-COMPOSITION] */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-grammar || return 1
 }
 
@@ -324,7 +331,7 @@ verify: glass-atrium-qa-code-reviewer glass-atrium-dev-nestjs
 impl: glass-atrium-dev-nestjs
 [/AGENT-COMPOSITION] */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-grammar || return 1
 }
 
@@ -334,7 +341,7 @@ verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
 this line has no key colon
 [/AGENT-COMPOSITION] */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-grammar || return 1
 }
 
@@ -343,7 +350,7 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-d
 verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
 impl: glass-atrium-dev-nestjs */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-grammar || return 1
 }
 
@@ -357,7 +364,7 @@ verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-react
 impl: glass-atrium-dev-react
 [/AGENT-COMPOSITION] */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-grammar || return 1
 }
 
@@ -367,7 +374,7 @@ verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs, glass-atrium-dev
 impl: glass-atrium-dev-nestjs
 [/AGENT-COMPOSITION] */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-grammar || return 1
 }
 
@@ -377,7 +384,7 @@ verify: upstream something-bogus
 impl: glass-atrium-dev-shell
 [/AGENT-COMPOSITION] */
 agent('glass-atrium-qa-code-reviewer',{goal:'r'});agent('glass-atrium-dev-shell',{goal:'i'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-grammar || return 1
 }
 
@@ -416,7 +423,7 @@ log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass || return 1
 }
 
@@ -428,7 +435,7 @@ log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass || return 1
 }
 
@@ -437,7 +444,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 @test "extract(mask): string-resident OPENING mention only, NO real block → BLOCK_NODECL (mention inert)" {
   run_hook "const NOTE = 'the [AGENT-COMPOSITION] token appears only inside this string'
 agent('glass-atrium-dev-shell',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"missing composition declaration"* ]] || return 1
   assert_trace block-nodecl || return 1
 }
@@ -455,7 +462,7 @@ verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-react
 impl: glass-atrium-dev-react
 [/AGENT-COMPOSITION] */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"malformed composition declaration"* ]] || return 1
   assert_trace block-grammar || return 1
 }
@@ -468,7 +475,7 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-d
 verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
 impl: glass-atrium-dev-nestjs */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-grammar || return 1
 }
 
@@ -484,7 +491,7 @@ impl: glass-atrium-dev-shell
 [/AGENT-COMPOSITION] */
 log('${SIZE_EST}')
 agent('glass-atrium-qa-code-reviewer',{goal:'final review'});agent('glass-atrium-dev-shell',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass || return 1
 }
 
@@ -501,7 +508,7 @@ impl: glass-atrium-dev-shell
 log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 agent('glass-atrium-qa-code-reviewer',{goal:'review'});agent('glass-atrium-dev-shell',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"verify team lacks the DEV half"* ]] || return 1
   assert_trace block-noverifydev || return 1
 }
@@ -519,7 +526,7 @@ impl: glass-atrium-dev-nestjs
 log('${SIZE_EST}')
 log('plan-ref: clauded-docs/7')
 agent('glass-atrium-dev-nestjs',{goal:'implement, but NO reviewer spawned anywhere'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-norev || return 1
 }
 
@@ -535,7 +542,7 @@ impl: glass-atrium-dev-shell
 log('${SIZE_EST}')
 log('plan-ref: clauded-docs/3')
 agent('glass-atrium-dev-shell',{goal:'implement per the verified plan'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"does NOT waive it"* ]] || return 1
   assert_trace block-norev || return 1
 }
@@ -554,7 +561,7 @@ log('${SIZE_EST}')
 log('plan-ref: clauded-docs/3')
 const REVIEWER_NOTE = 'glass-atrium-qa-code-reviewer'
 agent('glass-atrium-dev-shell',{goal:'implement per the verified plan'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-norev || return 1
 }
 
@@ -572,7 +579,7 @@ impl: glass-atrium-dev-react
 log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 agent('glass-atrium-qa-code-reviewer',{goal:'review'});agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-declspawn || return 1
 }
 
@@ -589,7 +596,7 @@ log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 async function robustAgent(agentType, opts) { return agent(opts.goal, { ...opts, agentType }).catch(() => null); }
 agent('glass-atrium-qa-code-reviewer',{goal:'review'});robustAgent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-declspawn || return 1
 }
 
@@ -604,7 +611,7 @@ log('plan-ref: ${PLAN_REF}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})
 agent('glass-atrium-dev-python',{goal:'also implement, UNDECLARED'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-undecl || return 1
 }
 
@@ -620,7 +627,7 @@ log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))
 agent('glass-atrium-dev-nestjs',{goal:\"delegate to 'glass-atrium-dev-python' later\"})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"PROSE-MENTION"* ]] || return 1
   [[ "${output}" == *"ONE-EDIT"* ]] || return 1
   assert_trace block-undecl || return 1
@@ -639,7 +646,7 @@ log('plan-ref: ${PLAN_REF}')
 const BATCHES=[{id:'H1',agent:'glass-atrium-dev-python'}]
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-undecl || return 1
 }
 
@@ -652,7 +659,7 @@ impl-computed: glass-atrium-dev-swift
 log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-computed || return 1
 }
 
@@ -666,7 +673,7 @@ log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 agent('glass-atrium-dev-react',{goal:'implement BEFORE any review (ungated)'})
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-order || return 1
 }
 
@@ -679,7 +686,7 @@ impl: glass-atrium-dev-shell
 [/AGENT-COMPOSITION] */
 log('${SIZE_EST}')
 agent('glass-atrium-qa-code-reviewer',{goal:'final review'});agent('glass-atrium-dev-shell',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-upstream || return 1
 }
 
@@ -693,7 +700,7 @@ log('plan-ref: ${PLAN_REF}')
 agent('glass-atrium-intel-planner',{goal:'author plan'})
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement per verified plan'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass || return 1
 }
 
@@ -708,7 +715,7 @@ log('plan-ref: ${PLAN_REF}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 const CFG = [{ a: 'glass-atrium-dev-shell' }]
 pipeline(CFG, (b) => agent('impl', { agentType: b.a }))"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
 }
 
 # (a-count / #27) SAME-TYPE DUAL-ROLE with a SINGLE spawn, impl-first — the type is declared in BOTH
@@ -725,7 +732,7 @@ log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 agent('glass-atrium-dev-nestjs',{goal:'implement BEFORE review, the ONLY dual-role spawn'})
 agent('glass-atrium-qa-code-reviewer',{goal:'review after'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-declspawn || return 1
 }
 
@@ -741,7 +748,7 @@ log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 parallel(agent('glass-atrium-dev-nestjs',{goal:'feasible verdict'}),agent('glass-atrium-qa-code-reviewer',{goal:'judge'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement per verified plan'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass || return 1
 }
 
@@ -757,7 +764,7 @@ impl: glass-atrium-dev-shell
 log('${SIZE_EST}')
 log('plan-ref: clauded-docs/3')
 agent('glass-atrium-qa-code-reviewer',{goal:'final review'});agent('glass-atrium-dev-shell',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
 }
 
 # =====================================================================================================
@@ -777,7 +784,7 @@ const pad='filler stage padding '
 agent('glass-atrium-dev-shell',{goal:'scattered impl 1'})
 const pad2='filler stage padding '
 agent('glass-atrium-dev-node',{goal:'scattered impl 2'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-nodecl || return 1
 }
 
@@ -793,7 +800,7 @@ log('${SIZE_EST}')
 agent('glass-atrium-qa-code-reviewer',{goal:'standalone audit note, NOT a verify partner'})
 const pad='filler stage padding '
 agent('glass-atrium-dev-shell',{goal:'scattered impl'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"verify team lacks the DEV half"* ]] || return 1
   assert_trace block-noverifydev || return 1
 }
@@ -820,7 +827,7 @@ const pad='filler stage padding '
 agent('glass-atrium-dev-shell',{goal:'scattered impl 1, LIED as the verify dev'})
 const pad2='filler stage padding '
 agent('glass-atrium-dev-node',{goal:'scattered impl 2'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass || return 1
 }
 
@@ -840,7 +847,7 @@ log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 const norm = (s) => s.replace(/\/\//g, '/'); parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass || return 1
 }
 
@@ -857,7 +864,7 @@ log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass || return 1
 }
 
@@ -869,7 +876,7 @@ log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 const SEP = /[/]/; parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass || return 1
 }
 
@@ -882,7 +889,7 @@ log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 // agent('glass-atrium-qa-code-reviewer',{goal:'this reviewer spawn is commented out'})
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   assert_trace block-norev || return 1
 }
 
@@ -923,7 +930,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" =~ "entry-miss" ]] || return 1
   assert_trace block-entry || return 1
 }
@@ -934,7 +941,7 @@ log('${SIZE_EST}')
 log('[ENTRY-CLASS] simple-task: trivial config edit')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" =~ "entry-miss" ]] || return 1
 }
 
@@ -944,7 +951,7 @@ log('${SIZE_EST}')
 log('plan-ref: clauded-docs/4821')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" =~ "entry-miss" ]] || return 1
 }
 
@@ -954,21 +961,21 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 @test "entry: only a simple-task script without a plan-reference waives the other attestation tokens" {
   local dev="agent('glass-atrium-dev-shell',{goal:'fix'});"
   local rows=(
-    "simple-task, no other token|log('[ENTRY-CLASS] simple-task: one file');\n${dev}|0|"
-    "simple-task, malformed declaration and oversize [SIZE-EST]|/* [AGENT-COMPOSITION]\nverify: nobody\n[/AGENT-COMPOSITION] */\nlog('[ENTRY-CLASS] simple-task: one file');\nlog('[SIZE-EST] bundles=1 tool_uses~=99 — one file');\n${dev}|0|"
-    "plan-reference, no other token|log('plan-ref: clauded-docs/4821');\n${dev}|2|BLOCKED"
-    "plan-reference beside simple-task, no other token|log('plan-ref: clauded-docs/4821 [ENTRY-CLASS] simple-task: noise');\n${dev}|2|BLOCKED"
-    "neither entry signal|log('fix the thing');\n${dev}|2|NEITHER a plan-reference"
+    "simple-task, no other token|log('[ENTRY-CLASS] simple-task: one file');\n${dev}|pass|"
+    "simple-task, malformed declaration and oversize [SIZE-EST]|/* [AGENT-COMPOSITION]\nverify: nobody\n[/AGENT-COMPOSITION] */\nlog('[ENTRY-CLASS] simple-task: one file');\nlog('[SIZE-EST] bundles=1 tool_uses~=99 — one file');\n${dev}|pass|"
+    "plan-reference, no other token|log('plan-ref: clauded-docs/4821');\n${dev}|warn|WARNING"
+    "plan-reference beside simple-task, no other token|log('plan-ref: clauded-docs/4821 [ENTRY-CLASS] simple-task: noise');\n${dev}|warn|WARNING"
+    "neither entry signal|log('fix the thing');\n${dev}|warn|NEITHER a plan-reference"
   )
   local row name script want_status want_phrase
   for row in "${rows[@]}"; do
     IFS='|' read -r name script want_status want_phrase <<<"${row}"
     script="${script//'\n'/$'\n'}"
     run_hook "${script}"
-    [[ "${status}" -eq "${want_status}" ]] || { echo "${name}: status ${status} -- ${output}"; return 1; }
+    assert_outcome "${want_status}" || { echo "${name}: status ${status} -- ${output}"; return 1; }
     if [[ -z "${want_phrase}" ]]; then
-      [[ "${output}" != *BLOCKED* && "${output}" != *"scope declaration"* && "${output}" != *"[SIZE-EST] plausibility"* ]] \
-        || { echo "${name}: expected no token block or advisory -- ${output}"; return 1; }
+      [[ "${output}" != *"scope declaration"* && "${output}" != *"[SIZE-EST] plausibility"* ]] \
+        || { echo "${name}: expected no token advisory -- ${output}"; return 1; }
     else
       [[ "${output}" == *"${want_phrase}"* ]] || { echo "${name}: expected ${want_phrase} -- ${output}"; return 1; }
     fi
@@ -984,7 +991,7 @@ log('${SIZE_EST}')
 log('advance the workplan-2026 milestone note')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" =~ "entry-miss" ]] || return 1
   assert_trace block-entry || return 1
 }
@@ -996,7 +1003,7 @@ log('${SIZE_EST}')
 log('implement per plan-6569')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" =~ "entry-miss" ]] || return 1
   assert_trace pass || return 1
 }
@@ -1005,10 +1012,10 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 # lands on block-nodecl AND appends the entry-format addendum (both needs surfaced in one pass).
 @test "entry: no declaration + no entry signal → BLOCK_NODECL WITH entry-format addendum" {
   run_hook "parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"missing composition declaration"* ]] || return 1
   [[ "${output}" == *"entry classification / plan-reference also required"* ]] || return 1
-  [[ "${output}" == *"path (2) alone clears the block above"* ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"path (2) alone clears the warning above"* ]] || { echo "${output}"; return 1; }
   assert_trace block-nodecl || return 1
 }
 
@@ -1022,7 +1029,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 log('plan-ref: clauded-docs/55')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"size-attestation miss"* ]] || return 1
   assert_trace block-sizeest || return 1
 }
@@ -1033,7 +1040,7 @@ log('plan-ref: clauded-docs/55')
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"size-attestation miss"* ]] || return 1
 }
 
@@ -1043,13 +1050,13 @@ log('plan-ref: clauded-docs/55')
 /* [SIZE-EST] bundles=3 tool_uses~=30 */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"size-attestation miss"* ]] || return 1
 }
 
 @test "sizeest: non-DEV doc workflow with NO [SIZE-EST] → PASS (DEV-gated)" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize the findings'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"size-attestation miss"* ]] || return 1
 }
 
@@ -1072,7 +1079,7 @@ run_docroute_row() {
   run_hook "${script}"
   case "${verdict}" in
     pass) assert_docroute_pass ;;
-    block) assert_docroute_block ;;
+    block) assert_docroute_warn ;;
     *) echo "unknown verdict: ${verdict}" && return 1 ;;
   esac
 }
@@ -1155,26 +1162,26 @@ continues */ pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report
 # docroute + a dev-* spawn + ENTRY_ADVISORY → BLOCK_DOCROUTE with the entry-format addendum (the
 # addendum rides the block-docroute verdict via the ADR-2 allowlist). Fixture purity: NO clauded-docs
 # token (would suppress docroute AND flip entry_marker).
-@test "docroute F1: leak + dev-* spawn + ENTRY_ADVISORY → BLOCK with entry-format addendum" {
+@test "docroute F1: leak + dev-* spawn + ENTRY_ADVISORY → warning with entry-format addendum" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE to ~/r.md'}), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"doc-routing leak"* ]] || return 1
   [[ "${output}" == *"entry classification / plan-reference also required"* ]] || return 1
   assert_trace block-docroute || return 1
 }
 
 
-@test "docroute F1: pure leak, NO dev-* spawn → BLOCK, NO entry addendum (no spurious nudge)" {
+@test "docroute F1: pure leak, NO dev-* spawn → warning, NO entry addendum (no spurious nudge)" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE to ~/r.md'}))"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"doc-routing leak"* ]] || return 1
   [[ "${output}" != *"entry classification / plan-reference also required"* ]] || return 1
 }
 
 
-@test "docroute-gate: 'save the finished report to <path>.md' → BLOCK + stamp taught" {
+@test "docroute-gate: 'save the finished report to <path>.md' → warning + stamp taught" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the finished report to ~/reports/q3.md'}))"
-  assert_docroute_block || return 1
+  assert_docroute_warn || return 1
   [[ "${output}" == *"log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')"* ]] || return 1
 }
 
@@ -1190,7 +1197,7 @@ log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge with a schema-bound verdict'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
@@ -1200,7 +1207,7 @@ log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge with schema'}).catch(()=>null),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
@@ -1210,7 +1217,7 @@ log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
@@ -1219,7 +1226,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 # (advisory NEVER blocks; the script is non-DEV → Stage-2 exempt → PASS verdict).
 @test "resilience(#widen): non-DEV doc workflow with schema, no catch → PASS + advisory fires" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize with a schema-shaped output'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
@@ -1228,7 +1235,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 @test "resilience(guard): custom-named wrapper, bare agent({schema}), .catch-chained call → PASS, NO advisory" {
   run_hook "async function myWrap(t,o){ return agent(o.goal,{...o,agentType:t,schema:S}); }
 const r = await parallel(items.map((i) => myWrap('glass-atrium-intel-reporter', mk(i)).catch(()=>null)))"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
@@ -1237,7 +1244,7 @@ const r = await parallel(items.map((i) => myWrap('glass-atrium-intel-reporter', 
 @test "resilience(guard-neg): custom wrapper, invocation NOT catch-chained → PASS + advisory fires" {
   run_hook "async function myWrap(t,o){ return agent(o.goal,{...o,agentType:t,schema:S}); }
 const r = await parallel(items.map((i) => myWrap('glass-atrium-intel-reporter', mk(i))))"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
@@ -1251,7 +1258,7 @@ impl: glass-atrium-dev-nestjs
 log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 agent('glass-atrium-dev-nestjs',{goal:'implement with a schema output'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"ADVISORY (resilience"* ]] || return 1
   assert_trace block-norev || return 1
 }
@@ -1268,7 +1275,7 @@ log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge with schema'}).catch(()=>null),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement with a schema output'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
@@ -1279,7 +1286,7 @@ log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge with schema'}).catch(()=>null),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement with a schema output'}).catch(()=>null)"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
@@ -1296,7 +1303,7 @@ log('${SIZE_EST}')
 async function robustAgent(agentType, opts) { return agent(opts.goal, { ...opts, agentType }).catch(() => null); }
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 robustAgent('glass-atrium-dev-nestjs', { goal: 'implement', schema: OutSchema })"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
@@ -1305,7 +1312,7 @@ robustAgent('glass-atrium-dev-nestjs', { goal: 'implement', schema: OutSchema })
 # at opposite polarity on this one fixture (spawns a schema-mode agent beside declares NO schema site).
 @test "resilience(absent value): schema: undefined spawn → NO resilience advisory, no co-emission" {
   run_hook "await agent('glass-atrium-intel-reporter', { schema: undefined });"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (resilience"* ]] &&
     [[ "${output}" == *"ADVISORY (completion channel absent"* ]] || return 1
 }
@@ -1321,7 +1328,7 @@ robustAgent('glass-atrium-dev-nestjs', { goal: 'implement', schema: OutSchema })
 # CORE PIN — a schema-mode non-DEV analysis fan-out (reporter + reviewer) with NO [SIZE-EST] nudges.
 @test "analysis-size: non-DEV schema analysis workflow, NO [SIZE-EST] → PASS + analysis advisory fires" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize with a schema-shaped output',schema:Out}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
 }
 
@@ -1329,7 +1336,7 @@ robustAgent('glass-atrium-dev-nestjs', { goal: 'implement', schema: OutSchema })
 @test "analysis-size: non-DEV schema analysis workflow WITH analysis [SIZE-EST] → PASS, NO advisory" {
   run_hook "log('[SIZE-EST] reads~=8 fields=2 effort=medium scope=allowlist')
 pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize',schema:Out}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
 }
 
@@ -1337,7 +1344,7 @@ pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize',schema:Out}), ag
 # scope (the terminal-StructuredOutput failure class does not apply) → silent.
 @test "analysis-size: non-DEV workflow with NO schema token → PASS, NO advisory (schema-gated)" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
 }
 
@@ -1345,18 +1352,18 @@ pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize',schema:Out}), ag
 # not a DEV_SET member; no second hardcoded analysis list is consulted.
 @test "analysis-size: reviewer-only schema audit, NO [SIZE-EST] → PASS + analysis advisory fires" {
   run_hook "agent('glass-atrium-qa-code-reviewer',{goal:'audit the whole tree',schema:Verdict})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
 }
 
-# DEV PATH UNCHANGED (a) — a DEV workflow missing [SIZE-EST] still hard-blocks BLOCK_SIZEEST (exit 2)
+# DEV PATH UNCHANGED (a) — a DEV workflow missing [SIZE-EST] still draws the BLOCK_SIZEEST warning
 # and does NOT ALSO fire the analysis advisory (dev_present excludes it — no double-signal).
-@test "analysis-size: DEV workflow schema, NO [SIZE-EST] → BLOCK_SIZEEST (exit 2), NO analysis advisory" {
+@test "analysis-size: DEV workflow schema, NO [SIZE-EST] → BLOCK_SIZEEST warning, NO analysis advisory" {
   run_hook "${DECL_TEAM}
 log('plan-ref: clauded-docs/55')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge',schema:X}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"size-attestation miss"* ]] || return 1
   [[ ! "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
   assert_trace block-sizeest || return 1
@@ -1369,14 +1376,14 @@ log('plan-ref: clauded-docs/55')
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge',schema:X}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
 }
 
 # --lint --template teaches the analysis-mode [SIZE-EST] form (author self-attestation scaffold parity).
 @test "analysis-size: --lint --template includes the analysis-mode [SIZE-EST] form" {
   run bash -c 'bash "$1" --lint --template' _ "${HOOK_SH}"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"reads~=N fields=N effort="* ]] || return 1
 }
 
@@ -1394,7 +1401,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 # full multi-line block, so schema compliance and rule compliance are mutually exclusive at any cap).
 @test "schema-cap(R1): maxLength on a completion_block property → PASS + schema-cap advisory fires" {
   run_hook_exec "const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 1200 } } };"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
 }
 
@@ -1402,14 +1409,14 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 # element re-balances and overflows another): the non-converging shape that burns all five retries.
 @test "schema-cap(R2): maxLength inside an items object → PASS + schema-cap advisory fires" {
   run_hook_exec "const Out = { type: 'object', properties: { findings: { type: 'array', items: { type: 'object', properties: { detail: { type: 'string', maxLength: 800 } } } } } };"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
 }
 
 # R3 — a numeric maxLength strictly inside the 64/300 risk band (both edges exclusive).
 @test "schema-cap(R3): maxLength value strictly between 64 and 300 → PASS + schema-cap advisory fires" {
   run_hook_exec "const Out = { type: 'object', properties: { summary: { type: 'string', maxLength: 260 } } };"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
 }
 
@@ -1418,13 +1425,13 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 # passes trivially at 02e7d9e, which is inherent to a negative assertion rather than a defect.
 @test "schema-cap(non-flag): low cap / generous cap / top-level maxItems → PASS, NO advisory" {
   run_hook_exec "const Out = { type: 'object', properties: { verdict: { type: 'string', maxLength: 40 } } };"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
   run_hook_exec "const Out = { type: 'object', properties: { notes: { type: 'string', maxLength: 500 } } };"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
   run_hook_exec "const Out = { type: 'object', properties: { findings: { type: 'array', maxItems: 8, items: { type: 'object' } } } };"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
 }
 
@@ -1437,7 +1444,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   local skeleton
   skeleton=$'// retry cannot hit the same maxLength/shape validator; keep { detail: { maxLength: 120 } } out of it\nconst AnalysisSchema = { findings: \'string(maxLength)\', completion_block: \'string\' };\nconst g = `RETRY — respect every maxLength/maxItems cap; the example { completion_block: { maxLength: 600 } } is illustrative only`;'
   run_hook_exec "${skeleton}"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
 }
 
@@ -1477,18 +1484,18 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
     payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
     printf "%s" "${payload}" | PATH="${stub}:${PATH}" WORKFLOW_GATE_FIRED_LOG="${trace}" "${hook}"
   ' _ "const Out = { properties: { completion_block: { maxLength: 600 } } };" "${HOOK_SH}" "${TRACE_LOG}" "${stub_dir}"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ ! "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
 }
 
-# DISARM REGRESSION GUARD — the ONE test that catches a scan failure silently converting a BLOCK into
-# a fail-open PASS. A DEV-bearing script with NO composition declaration must STILL exit 2, and the
-# advisory must ride along on that block (the printers sit before both the entry-miss block and the
+# DISARM REGRESSION GUARD — the ONE test that catches a scan failure silently converting a warning into
+# a fail-open PASS. A DEV-bearing script with NO composition declaration must STILL warn, and the
+# advisory must ride along on that warning (the printers sit before both the entry-miss check and the
 # verdict case dispatch, so an advisory rides ANY verdict without touching the exit code).
-@test "schema-cap(disarm): flagged cap + missing declaration on a DEV workflow → exit 2 AND advisory" {
+@test "schema-cap(disarm): flagged cap + missing declaration on a DEV workflow → warning AND advisory" {
   run_hook_exec "const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 600 } } };
 agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
   [[ "${output}" == *"missing composition declaration"* ]] || return 1
   assert_trace block-nodecl || return 1
@@ -1499,7 +1506,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
 # promotion on a message rewrite.
 @test "schema-cap(text): advisory names all three rules, their one-edit fixes, and the non-flag list" {
   run_hook_exec "const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 1200 } } };"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"(R1)"* && "${output}" == *"(R2)"* && "${output}" == *"(R3)"* ]] || return 1
   [[ "${output}" == *"DROP the cap"* ]] || return 1
   [[ "${output}" == *"single top-level item-count cap"* ]] || return 1
@@ -1522,7 +1529,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
 # LINT PARITY — the offline preview surfaces the same advisory and stays side-effect-free (zero trace).
 @test "schema-cap(lint): capped script previewed via --lint → advisory, exit 0, zero trace" {
   run_lint_exec "const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 900 } } };"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
   assert_trace_empty || return 1
 }
@@ -1533,33 +1540,33 @@ agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
 #   durable regression anchor.
 # =====================================================================================================
 
-# One corpus row: file|exit|trace. The trace log is truncated per row so the tag assertion is scoped
+# One corpus row: file|outcome|trace. The trace log is truncated per row so the tag assertion is scoped
 # to this row's firing, and the file name is echoed first so a failing row names itself.
 run_corpus_row() {
-  local row="$1" file exit_code tag rest
+  local row="$1" file want tag rest
   file="${row%%|*}"
   rest="${row#*|}"
-  exit_code="${rest%%|*}"
+  want="${rest%%|*}"
   tag="${rest#*|}"
   echo "row=${file}"
   : >"${TRACE_LOG}"
   run_hook_file "${CORPUS_DIR}/${file}"
-  [[ "${status}" -eq "${exit_code}" ]] && assert_trace "${tag}"
+  assert_outcome "${want}" && assert_trace "${tag}"
 }
 
 # file|exit|trace triples. The 3 undeclared originals are missing-declaration BLOCK pins; the 4
 # declared variants cover BOTH declaration forms (upstream and in-script team), so the corpus is not
 # a single-path one. passed_9599_resubmit.js blocks despite its name — a naming artifact of commit
 # 054e59f, recorded at its observed behaviour and NOT a regression.
-@test "corpus: archived-script fixture table (file, exit, trace)" {
+@test "corpus: archived-script fixture table (file, outcome, trace)" {
   local -a table=(
-    "blocked_9599.js|2|block-nodecl"
-    "blocked_7938.js|2|block-nodecl"
-    "passed_9599_resubmit.js|2|block-nodecl"
-    "variant_A.js|0|pass"
-    "variant_B.js|0|pass"
-    "variant_resubmit.js|0|pass"
-    "variant_team.js|0|pass"
+    "blocked_9599.js|warn|block-nodecl"
+    "blocked_7938.js|warn|block-nodecl"
+    "passed_9599_resubmit.js|warn|block-nodecl"
+    "variant_A.js|pass|pass"
+    "variant_B.js|pass|pass"
+    "variant_resubmit.js|pass|pass"
+    "variant_team.js|pass|pass"
   )
   local row
   for row in "${table[@]}"; do
@@ -1638,7 +1645,7 @@ agent('glass-atrium-dev-python',{goal:'undeclared'})"
     hook="$1"; trace="$2"
     WORKFLOW_GATE_FIRED_LOG="${trace}" bash "${hook}" --lint --template
   ' _ "${HOOK_SH}" "${TRACE_LOG}"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   [[ "${output}" == *"verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs"* ]] || return 1
   [[ "${output}" == *"verify: upstream clauded-docs/<N>"* ]] || return 1
   [[ "${output}" == *"[SIZE-EST]"* ]] || return 1
@@ -1659,7 +1666,7 @@ log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
 }
 
 # (4): file-arg and stdin --lint modes agree on the verdict (both read RAW script text).
@@ -1671,7 +1678,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   local stdin_status="${status}"
   run_lint_file "${f}"
   [[ "${status}" -eq "${stdin_status}" ]] || return 1
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
 }
 
 # (5): an EXPLICIT file arg that is missing/unreadable must fail LOUD — exit 2 + stderr naming the
@@ -1691,17 +1698,17 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 
 @test "cross-tab: every fixture yields its declaration-contract ground-truth exit (0 BLOCK-intent PASS)" {
   local cases=(
-    # --- PASS-intent (exit 0) ---
-    "0::"
-    "0::pipeline(agent('glass-atrium-intel-reporter',{goal:'doc'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
-    "0::agent('glass-atrium-intel-researcher',{goal:'research only'})"
-    "0::${DECL_TEAM}
+    # --- pass-intent ---
+    "pass::"
+    "pass::pipeline(agent('glass-atrium-intel-reporter',{goal:'doc'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
+    "pass::agent('glass-atrium-intel-researcher',{goal:'research only'})"
+    "pass::${DECL_TEAM}
 log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
     # upstream PASS (reviewer + body plan-ref)
-    "0::/* [AGENT-COMPOSITION]
+    "pass::/* [AGENT-COMPOSITION]
 verify: upstream clauded-docs/3
 impl: glass-atrium-dev-shell
 [/AGENT-COMPOSITION] */
@@ -1709,7 +1716,7 @@ log('${SIZE_EST}')
 log('plan-ref: clauded-docs/3')
 agent('glass-atrium-qa-code-reviewer',{goal:'final review'});agent('glass-atrium-dev-shell',{goal:'implement'})"
     # lying accepted-floor PASS
-    "0::/* [AGENT-COMPOSITION]
+    "pass::/* [AGENT-COMPOSITION]
 verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-shell
 impl: glass-atrium-dev-node
 [/AGENT-COMPOSITION] */
@@ -1718,46 +1725,46 @@ log('plan-ref: ${PLAN_REF}')
 agent('glass-atrium-qa-code-reviewer',{goal:'audit'})
 agent('glass-atrium-dev-shell',{goal:'impl1 lied as verify'})
 agent('glass-atrium-dev-node',{goal:'impl2'})"
-    # --- BLOCK-intent (exit 2) ---
-    "2::log('plan-ref: ${PLAN_REF}')
+    # --- warn-intent ---
+    "warn::log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-    "2::agent('glass-atrium-dev-swift',{goal:'implement the swift module'})"
-    "2::/* [AGENT-COMPOSITION]
+    "warn::agent('glass-atrium-dev-swift',{goal:'implement the swift module'})"
+    "warn::/* [AGENT-COMPOSITION]
 verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
 bogus: x
 [/AGENT-COMPOSITION] */
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
-    "2::/* [AGENT-COMPOSITION]
+    "warn::/* [AGENT-COMPOSITION]
 verify: glass-atrium-qa-code-reviewer
 impl: glass-atrium-dev-shell
 [/AGENT-COMPOSITION] */
 log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 agent('glass-atrium-qa-code-reviewer',{goal:'r'});agent('glass-atrium-dev-shell',{goal:'i'})"
-    "2::/* [AGENT-COMPOSITION]
+    "warn::/* [AGENT-COMPOSITION]
 verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
 impl: glass-atrium-dev-nestjs
 [/AGENT-COMPOSITION] */
 log('${SIZE_EST}')
 log('plan-ref: clauded-docs/7')
 agent('glass-atrium-dev-nestjs',{goal:'no reviewer spawned'})"
-    "2::/* [AGENT-COMPOSITION]
+    "warn::/* [AGENT-COMPOSITION]
 verify: upstream clauded-docs/3
 impl: glass-atrium-dev-shell
 [/AGENT-COMPOSITION] */
 log('${SIZE_EST}')
 log('plan-ref: clauded-docs/3')
 agent('glass-atrium-dev-shell',{goal:'implement, ZERO reviewer'})"
-    "2::/* [AGENT-COMPOSITION]
+    "warn::/* [AGENT-COMPOSITION]
 verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-react
 impl: glass-atrium-dev-react
 [/AGENT-COMPOSITION] */
 log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 agent('glass-atrium-qa-code-reviewer',{goal:'r'});agent('glass-atrium-dev-nestjs',{goal:'i'})"
-    "2::/* [AGENT-COMPOSITION]
+    "warn::/* [AGENT-COMPOSITION]
 verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
 impl: glass-atrium-dev-react
 [/AGENT-COMPOSITION] */
@@ -1771,7 +1778,7 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-d
     expected="${entry%%::*}"
     script="${entry#*::}"
     run_hook "${script}"
-    [[ "${status}" -eq "${expected}" ]] || {
+    assert_outcome "${expected}" || {
       echo "CROSS-TAB REGRESSION: expected ${expected}, got ${status} for: ${script}" >&2
       return 1
     }
@@ -1792,7 +1799,7 @@ SKILL_MD="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-orchestrator.md"
 # stderr example is the author's only repair channel — a drift to an invalid grammar fails RED here.
 @test "self-consistency(T5): BLOCK_NODECL stderr scaffold pasted into a DEV script → PASS" {
   run_hook "parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'})), agent('glass-atrium-dev-nestjs',{goal:'i'})"
-  [[ "${status}" -eq 2 ]] || return 1
+  assert_outcome warn || return 1
   [[ "${output}" == *"missing composition declaration"* ]] || return 1
   local decl
   decl="$(printf '%s\n' "${output}" | awk '/\/\* \[AGENT-COMPOSITION\]/{grab=1} grab{print} /\[\/AGENT-COMPOSITION\] \*\//{if(grab)exit}')"
@@ -1802,7 +1809,7 @@ log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  [[ "${status}" -eq 0 ]] || return 1
+  assert_outcome pass || return 1
   assert_trace pass || return 1
 }
 
@@ -1846,65 +1853,6 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
     run_hook_file "${outdir}/fence_${i}.js"
     [[ "${status}" -eq 0 ]] || {
       echo "SKILL SKELETON ${i} did NOT PASS (exit ${status})" >&2
-      return 1
-    }
-  done
-}
-
-# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
-source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
-
-@test "nodecl: an interrupted block write still exits 2, the reason once on stderr and not in the trace" {
-  local script trace
-  script="log('plan-ref: ${PLAN_REF}')
-log('${SIZE_EST}')
-log('[SCOPE] files=a.sh · deliverable=fix · out=none')
-log('[PLAN-CLOSE] in-script')
-parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
-agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  jq -n --arg s "${script}" '{tool_name:"Workflow",tool_input:{script:$s}}' >"${BATS_TEST_TMPDIR}/envelope"
-  run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope" "WORKFLOW_GATE_FIRED_LOG=${TRACE_LOG}"
-  assert_forced_block "BLOCKED (missing composition declaration)" || return 1
-  # a held reason flushed by the trace append would land in the log ahead of the trace line
-  trace="$(cat -- "${TRACE_LOG}")"
-  [[ "${trace}" == *"verdict=block-nodecl"* && "${trace}" != *$'\n'* && "${trace}" != *"composition declaration"* ]] || {
-    echo "trace log: ${trace}"
-    return 1
-  }
-}
-
-@test "norev: an advisory write interrupted ahead of the block still exits 2, advisory and reason once each" {
-  # row = name|advisory label|line that trips only that advisory, prepended to a DEV script with no reviewer spawn
-  local rows=(
-    "resilience|ADVISORY (resilience|agent('glass-atrium-dev-nestjs',{goal:'draft with a schema output'})"
-    "schema-cap|ADVISORY (schema-cap|const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 1200 } } };"
-  )
-  local row name label lead script rest trace
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name label lead <<<"${row}"
-    script="${lead}
-/* [AGENT-COMPOSITION]
-verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
-impl: glass-atrium-dev-nestjs
-[/AGENT-COMPOSITION] */
-log('plan-ref: ${PLAN_REF}')
-log('${SIZE_EST}')
-agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-    jq -n --arg s "${script}" '{tool_name:"Workflow",tool_input:{script:$s}}' >"${BATS_TEST_TMPDIR}/envelope"
-    TRACE_LOG="${BATS_TEST_TMPDIR}/trace-${name}.log"
-    run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope" "WORKFLOW_GATE_FIRED_LOG=${TRACE_LOG}"
-    assert_forced_block "BLOCKED (no reviewer" || {
-      echo "row ${name}"
-      return 1
-    }
-    rest="${output#*"${label}"}"
-    [[ "${output}" == *"${label}"* && "${rest}" != *"${label}"* ]] || {
-      echo "row ${name}: advisory not exactly once: ${output}"
-      return 1
-    }
-    trace="$(cat -- "${TRACE_LOG}")"
-    [[ "${trace}" == *"verdict=block-norev"* && "${trace}" == *"advisory=${name}"* && "${trace}" != *$'\n'* && "${trace}" != *"ADVISORY"* ]] || {
-      echo "row ${name}: trace log: ${trace}"
       return 1
     }
   done

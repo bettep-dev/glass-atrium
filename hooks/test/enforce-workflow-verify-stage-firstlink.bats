@@ -2,8 +2,8 @@
 # enforce-workflow-verify-stage-firstlink.bats — pins the first-link revision-cycle ADVISORY
 # (seventh advisory pass).
 #
-# ADVISORY ONLY (stderr + exit 0), emitted on the PASS arm so it can mask no verdict: the blocking
-# fixture below asserts the block still wins with the nudge absent.
+# ADVISORY ONLY (stderr + exit 0), emitted on the PASS arm so it can mask no verdict: the warning
+# fixture below asserts the warning still wins with the nudge absent.
 #
 # Hermetic: the monitor loopback is a counting `curl` PATH shim serving a canned three-document
 # supersede chain — no live monitor, no background child, no live-install read (the full-URL override
@@ -212,14 +212,14 @@ agent('glass-atrium-intel-researcher',{goal:'survey'});"
   [[ "$(curl_count)" == "0" ]] || { echo "walked a non-DEV workflow: $(curl_count) GETs" >&2; return 1; }
 }
 
-@test "a blocking verdict still wins, with no nudge and no walk (PASS-arm siting)" {
+@test "a warning verdict still wins, with no nudge and no walk (PASS-arm siting)" {
   run_hook "log('plan-ref: clauded-docs/103');
 log('${SIZE_EST}');
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}));
 agent('glass-atrium-dev-nestjs',{goal:'implement'});"
-  [[ "${status}" -eq 2 ]] || { echo "declaration-less DEV script must block, status ${status}" >&2; return 1; }
-  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudge masked a block -- ${output}" >&2; return 1; }
-  [[ "$(curl_count)" == "0" ]] || { echo "blocked script paid for a walk: $(curl_count) GETs" >&2; return 1; }
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || { echo "declaration-less DEV script must warn, status ${status}" >&2; return 1; }
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudge masked a warning -- ${output}" >&2; return 1; }
+  [[ "$(curl_count)" == "0" ]] || { echo "warned script paid for a walk: $(curl_count) GETs" >&2; return 1; }
 }
 
 @test "--lint preview reaches the same verdict and writes no trace line" {

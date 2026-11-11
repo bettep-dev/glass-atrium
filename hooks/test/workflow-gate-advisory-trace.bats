@@ -113,7 +113,7 @@ last_advisory() {
   run_hook_exec "${CAP_R1}"
   [[ "${status}" -eq 0 ]] || return 1
   run_hook_exec "const s = { schema: {} }; agent('glass-atrium-dev-shell', { goal: 'x' });"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   run python3 -c '
 import sys
 sys.path.insert(0, sys.argv[1])

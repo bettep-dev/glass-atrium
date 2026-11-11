@@ -178,15 +178,15 @@ size_token() { printf "log('[SIZE-EST] bundles=1 tool_uses~=10 — %s');\n" "${1
 # ===================================================================================================
 # AC4 — the two highest-volume verdicts pinned directly.
 # ===================================================================================================
-@test "AC4(norev): a declaration whose reviewer is never spawned blocks as block-norev" {
+@test "AC4(norev): a declaration whose reviewer is never spawned warns as block-norev" {
   run_hook_file_exec "${VERDICT_DIR}/block-norev.js"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "$(last_field verdict)" == "block-norev" ]] || return 1
 }
 
-@test "AC4(declspawn): a declared role with no spawn-position token blocks as block-declspawn" {
+@test "AC4(declspawn): a declared role with no spawn-position token warns as block-declspawn" {
   run_hook_file_exec "${VERDICT_DIR}/block-declspawn.js"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "$(last_field verdict)" == "block-declspawn" ]] || return 1
 }
 
@@ -221,7 +221,7 @@ size_token() { printf "log('[SIZE-EST] bundles=1 tool_uses~=10 — %s');\n" "${1
   # count would clear that gate, so the AC6-ADV' verdict-identity clause is inapplicable to this row
   # and the pre-existing token is asserted exactly instead.
   run_hook_file_exec "${VERDICT_DIR}/block-sizeest.js"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "$(last_field impl_slots)" == "1" ]] || return 1
   [[ "$(last_field advisory)" == *"size-map"* ]] || return 1
   [[ "$(last_field verdict)" == "block-sizeest" ]] || return 1
@@ -431,7 +431,7 @@ await agent('glass-atrium-dev-shell', { goal: 'implement', hint: worked });
 EOF
   )"
   run_hook_exec "${script}"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "$(last_field verdict)" == "block-nodecl" ]] || return 1
 }
 
@@ -526,7 +526,7 @@ EOF
 # AC15' — `impl-computed: none` remains malformed. Pins the corrected key table against the tool so
 # the two cannot drift apart again.
 # ===================================================================================================
-@test "AC15'(none): impl-computed: none blocks as block-grammar" {
+@test "AC15'(none): impl-computed: none warns as block-grammar" {
   local script
   script="$(cat <<'EOF'
 /* [AGENT-COMPOSITION]
@@ -544,7 +544,7 @@ await agent('glass-atrium-dev-nestjs', { goal: 'implement' });
 EOF
   )"
   run_hook_exec "${script}"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "$(last_field verdict)" == "block-grammar" ]] || return 1
 }
 
@@ -613,7 +613,7 @@ EOF
 # no fixture's decision. The expected column is the re-adjudicated one above plus the eleven novel
 # fixtures, each named with its own token.
 # ===================================================================================================
-@test "neutrality: every novel fixture blocks with exactly its named verdict token" {
+@test "neutrality: every novel fixture warns with exactly its named verdict token" {
   local f expected actual
   for f in "${VERDICT_DIR}"/block-*.js; do
     expected="$(basename "${f}" .js)"

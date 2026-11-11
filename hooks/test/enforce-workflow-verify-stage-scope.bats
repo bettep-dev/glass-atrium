@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # enforce-workflow-verify-stage-scope.bats — pins the [SCOPE] presence ADVISORY (fourth advisory pass).
 #
-# ADVISORY ONLY (stderr + exit 0), emitted on the PASS arm so it can mask no verdict: the blocking
-# fixture below asserts the block still wins with the nudge absent. The --lint case pins AC6 —
+# ADVISORY ONLY (stderr + exit 0), emitted on the PASS arm so it can mask no verdict: the warning
+# fixture below asserts the warning still wins with the nudge absent. The --lint case pins AC6 —
 # the offline preview stays side-effect-free (zero trace lines) while still printing the nudge.
 #
 # BATS GATING NOTE (measured, bats 1.13.0 both legs): a mid-body `[[ ]]` gates on Linux bash 5 but
@@ -78,11 +78,11 @@ ${padding}"
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged a non-DEV workflow -- ${output}" >&2; return 1; }
 }
 
-@test "a blocking DEV workflow still blocks, with the advisory absent" {
+@test "a warned DEV workflow keeps its warning, with the advisory absent" {
   run_hook "${DEV_BODY}"
-  [[ "${status}" -eq 2 ]] || { echo "block lost, status ${status}" >&2; return 1; }
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || { echo "warning lost, status ${status}" >&2; return 1; }
   [[ "${output}" == *"missing composition declaration"* ]] || { echo "wrong verdict -- ${output}" >&2; return 1; }
-  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "advisory reached a block path -- ${output}" >&2; return 1; }
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "advisory reached a warning path -- ${output}" >&2; return 1; }
 }
 
 @test "--lint prints the advisory and still writes zero trace lines" {

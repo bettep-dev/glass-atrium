@@ -91,9 +91,9 @@ EOF
   [[ "$(last_advisory)" != *"sizeest-bounds"* ]] || return 1
 }
 
-@test "bounds(no-double-advise): a token-absent DEV script still blocks and carries no bounds tag" {
+@test "bounds(no-double-advise): a token-absent DEV script still warns and carries no bounds tag" {
   run_hook_exec "$(four_slot_script "log('no sizing token here');")"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "${output}" != *"ADVISORY ([SIZE-EST] plausibility"* ]] || return 1
   [[ "$(last_advisory)" != *"sizeest-bounds"* ]] || return 1
 }

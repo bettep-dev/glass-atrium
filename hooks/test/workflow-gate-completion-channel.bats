@@ -510,33 +510,33 @@ const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema:
 # PRECEDENCE SPLIT — a DEV script blocked BEFORE the terminal emit carries no tag (the block is the
 # louder signal), while one blocked AT the terminal emit carries it. The counterfactual is what proves
 # the advisory decides nothing: the same script with the property declared blocks identically.
-@test "completion-channel(precedence): a DEV script blocked before the terminal emit carries no tag" {
+@test "completion-channel(precedence): a DEV script warned before the terminal emit carries no tag" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   run_hook_exec "const s = { schema: {} };
 agent('glass-atrium-dev-shell', { goal: 'x' });"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "${output}" == *"missing composition declaration"* ]] || return 1
   [[ "$(last_advisory)" != *"completion-channel"* ]] || {
-    echo "pre-empted block still tagged: $(last_advisory)" >&2
+    echo "pre-empted warning still tagged: $(last_advisory)" >&2
     return 1
   }
 }
 
-@test "completion-channel(precedence): a terminal-emit block keeps its exit with and without the nudge" {
+@test "completion-channel(precedence): a terminal-emit warning keeps its verdict with and without the nudge" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   run_hook_exec "${DECL_TEAM}
 ${SCHEMA_SITE}"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "${output}" == *"size-attestation miss"* ]] || return 1
   [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
-    echo "the nudge must ride a terminal-emit block -- ${output}" >&2
+    echo "the nudge must ride a terminal-emit warning -- ${output}" >&2
     return 1
   }
   # Counterfactual: property declared → same verdict, same exit, no nudge → the advisory decided nothing.
   run_hook_exec "${DECL_TEAM}
 const S = { completion_block: 'string' };
 const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: S });"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "${output}" == *"size-attestation miss"* ]] || return 1
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
     echo "nudged despite the declared property -- ${output}" >&2
