@@ -35,7 +35,7 @@ Canonical in `agents/glass-atrium-intel-reporter.md`: the baseline requirement l
   - `rgba(0,0,0,X)` shadows on dark surfaces
   - at most 1 gradient per layer, 2 stops max
   - decoration stacking (one treatment per element)
-- **SoT**: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`, which carries the purple/indigo gradient and gradient-text patterns, for admin consoles only (`#### Admin-console tropes (data screens)` → `##### Color, type and decoration`); the residual list covers document HTML.
+- **SoT**: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`, which carries the purple/indigo gradient and gradient-text patterns for admin consoles only; the residual list covers document HTML.
   - Glassmorphism is not on the residual list: the over-text readability case is a baseline item, and the broader blur+gradient+shadow case is the SoT's **Glassmorphism overuse** entry.
 
 ### Dark base default
@@ -61,7 +61,7 @@ Canonical in `agents/glass-atrium-intel-reporter.md`: the dark canvas and light 
   - Absent the stamp, the author bodies' turn-0 refusal of an orchestrator-supplied local target stands.
 - A user-requested HTML generation failure is an ordinary obstacle first: diagnose it, fix the request and retry (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
   - Still failing → halt for scope clarification.
-  - An automatic non-HTML fallback is forbidden at every point, because the user asked for HTML by name.
+  - Never fall back to non-HTML on your own: the user asked for HTML by name.
 - **Sensitivity self-check before the POST of an exposed HTML primary** — exposed by either HTML request test signal, including an explicit format request without share intent.
   - Record one line before POSTing: `sensitivity_scan: clear` or `sensitivity_scan: N items (category §locator, …)`.
   - Any finding blocks the POST until the user confirms; zero findings is a silent pass, and a generic "may contain sensitive data" caveat is forbidden.

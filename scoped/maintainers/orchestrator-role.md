@@ -192,6 +192,11 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - Guardrail (a)'s agent-binding rules, the index-mutation class and the mechanisms they answer live in Tier-1 `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** · **Worktree occupancy**, which reaches every agent on the host channel.
   - Never copy them back into the rule file: its opening line tells subagents to ignore it, so a rule placed there loses its agent audience.
 - `skills/glass-atrium-ops-orchestrator.md` cites the Tier-1 home and the leads of `references/automatic-parallelization.md` directly. Before renaming such a lead, grep for its citers (`scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Cited leads**).
+- Main-session copies in `scoped/orchestrator-core.md` → `## Routing` move with their rule-file sites:
+  - the compound-request line ↔ the `## Delegation Workflow` Forbidden row `Collapsing compound requests into a single agent`.
+    - The core line carries the scope: one agent takes only the parts it fits and its context can carry, in step with `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Sub-Agent Spawn Policy [ALL]`.
+  - the parallel-by-default line ↔ `#### Automatic Parallelization` → **Standing obligation**.
+    - Decided keep: it orders sub-tasks already split and keeps both conditions (independent, non-overlapping), so the spawn policy still decides the split; reword it only on observed over-delegation.
 
 ## Linkage — handoff and recovery
 

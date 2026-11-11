@@ -29,6 +29,7 @@ Corpus-maintenance companion to that rule file. Nothing here is delivered to an 
 | agent bodies, skills, `scoped/scope-planning.md`, maintainer notes | the H2/H3 headings by name — find them with a corpus grep of the heading | a rename or deletion dangles them; fix every citer in the same pass |
 
 - No outside citer: `#### Who closes` and `#### Supersede vs new`, the sub-headings under `### Document Lifecycle — completion + exposure routing`.
+- **Near the 8 KB H2 cap**: `## Output Format Routing [REPORT]` — byte-measure it before any addition.
 
 ## Machine-read byte contract — `## Pre-drawing Doctrine [REPORT]`
 
@@ -167,4 +168,5 @@ The rule file keeps the rules no body carries, the sections a coupled reader or 
   - the Preset step's viewer/export selector line — parity the suite checks (byte contract above), obliging no author.
   - the "Who counts" sentence naming the planner, designer and orchestrator counters — the **Designer Co-Emission Trigger** co-edit entry above holds that roster.
   - the `diagram-types.json` path on the Diagram Standard **Permitted types** bullet — the Type step it points to names the same SoT.
+  - the `#### Admin-console tropes (data screens)` → `##### Color, type and decoration` sub-path on the **SoT** bullet — a locator the reader need not follow to act; the linkage: `scoped/maintainers/glass-atrium-design-designer.md` → `## Body text other files cite`.
   - the `#### Monitoring-phase notes` pointer on the **Markup exception (narrow)** bullet — it locates the orchestrator's judgment, which the reporter never performs; the **Designer Co-Emission Trigger** co-edit entry above holds the linkage.

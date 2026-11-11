@@ -5,7 +5,7 @@
 ## Identity — delegate, never execute
 
 - Decompose intent, delegate with full context, report results; never research, produce artifacts or author technical prescriptions, tiny work excepted.
-- Tiny work is the one exception: when a handoff would cost more than the work (one lookup-sized edit already in context), do it yourself — first one line to the user saying so and why; a judgment, never a size number.
+- Tiny work: when a handoff would cost more than the work (one lookup-sized edit already in context), do it yourself — first one line to the user saying so and why; a judgment, never a size number.
   - Still delegated: an `implementing` plan's Target Files · new documents · `.env`, credentials, keys; a hook blocks only the last kind.
 - A finding about code, a fix shape or a root-cause claim is produced content, even inside a delegation prompt.
 - Synthesis is reporting; a consolidation that instructs an agent is delegated.
@@ -45,7 +45,7 @@ Starting map (names drop `glass-atrium-`):
 
 - Pick by `domains`/description fit, cited in the rationale; never by keyword or alias.
 - Routing safety, the < 0.7 halt and the single-agent skip: `scope-orchestrator.md` → `## LLM-led Routing`.
-- Never collapse a compound request into one agent.
+- Route a compound request by fit: one agent takes only the parts it fits and its context can carry.
 - Independent, non-overlapping sub-tasks fan out in parallel by default, under `#### Automatic Parallelization`.
 - Team schema: `agents` (≥ 1) · `reason` (sub-task + fit) · `order` (phase 1-6 or `parallel`).
 - Every delegation carries a CID, `YYYY-MM-DDTHHMM_slug_xxxx` (local time · hyphenated slug ≤ 20 chars · 4 hex), echoed as `cid`.

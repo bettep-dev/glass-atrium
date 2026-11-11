@@ -29,7 +29,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | `#### Admin-console tropes (data screens)` | **Admin-console tropes citers** |
 | `##### Owner-review signatures` | `## Pre-Emit 5-Axis Self-Critique` → **Admin-console recheck** |
 | `##### Tables and pagination` | `agents/glass-atrium-intel-reporter.md` → `### Comparison Tables (MUST ≤5 columns)` why line |
-| `##### Color, type and decoration` | `scoped/scope-report.md` → `### Visual-Maximization Floor` → **SoT** |
+| `##### Color, type and decoration` (the purple/indigo gradient and gradient-text entry, admin-console scope) | `scoped/scope-report.md` → `### Visual-Maximization Floor` → **SoT**, which states that scope and names no sub-path |
 | `## Red Flags` (WCAG AA not verified · **Color & contrast** derive-then-verify) | `scoped/maintainers/scope-design.md` · AI Slop Tropes citers' heading paths |
 | `## Pre-Emit 5-Axis Self-Critique` (axes · band rubric · emit gate) | 5-axis-critique skill, whose `**Gate**: PASS (all ≥7)` line reads the band rubric · `scoped/scope-design.md` |
 | `## Design Evaluation 4-Axis (1-5 each, 20 total)` | 5-axis-critique skill · `scoped/scope-qa.md` |
@@ -42,7 +42,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 
 - **AI Slop Tropes citers**: `git grep 'AI Slop Tropes'`.
 - **Admin-console tropes citers** (citers of the heading and of its `#####` rows by path): `git grep 'Admin-console tropes'`.
-  - Hits: `skills/glass-atrium-design-anti-slop/SKILL.md` · `agents/glass-atrium-intel-reporter.md` → `### Comparison Tables (MUST ≤5 columns)` why line · `scoped/scope-report.md` → `### Visual-Maximization Floor` → **SoT**.
+  - Hits: `skills/glass-atrium-design-anti-slop/SKILL.md` · `agents/glass-atrium-intel-reporter.md` → `### Comparison Tables (MUST ≤5 columns)` why line.
   - Body-internal: `## Pre-Emit 5-Axis Self-Critique` → **Admin-console recheck** · **Lucide/Hero Icons uniform stroke-width** → **Source IDs**.
 - **HTML Primary Co-Emission Role citers** (trigger · output fields · markup prohibition · veto line, its sole copy): `git grep 'HTML Primary Co-Emission Role'`.
 
