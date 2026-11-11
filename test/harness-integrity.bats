@@ -309,16 +309,23 @@ get_expected_bindings() {
 }
 
 @test "the doctor records the same verdict count as the update preflight for one install state" {
-  local -a expected=()
-  local row name live_from want doctor preflight line
+  local -a expected=() live=()
+  local row name dropped want doctor preflight line
   while IFS= read -r line; do expected+=("${line}"); done < <(get_expected_bindings)
+  # dropped = one expected row left unwired; the secret-scan hook stays wired under its other matcher
   local -a rows=(
-    "bindings as expected|0|0"
-    "one matcher facet unwired|1|1"
+    "bindings as expected||0"
+    "one matcher facet of a two-matcher hook unwired|PreToolUse	validate-secret-scan.sh	Bash|1"
   )
   for row in "${rows[@]}"; do
-    IFS='|' read -r name live_from want <<<"${row}"
-    write_settings "${expected[@]:${live_from}}"
+    IFS='|' read -r name dropped want <<<"${row}"
+    live=()
+    for line in "${expected[@]}"; do [[ "${line}" == "${dropped}" ]] || live+=("${line}"); done
+    [[ -z "${dropped}" || "${#live[@]}" -eq $((${#expected[@]} - 1)) ]] || {
+      echo "${name}: '${dropped}' is not an expected binding row"
+      return 1
+    }
+    write_settings "${live[@]}"
     run_detector _doctor_report_integrity 0 0
     IFS=$'\t' read -r _ doctor _ <"${SANDBOX}/data/data/integrity/last-verdict"
     run_detector get_integrity_drift
@@ -330,19 +337,50 @@ get_expected_bindings() {
   done
 }
 
-@test "a doctor run whose comparison could not run records the verdict unread" {
-  local line
+# A sha256 stub that fails every call, prepended to PATH so the doctor's resolver picks it.
+seed_failing_shasum() {
+  mkdir -p "${SANDBOX}/stub-bin"
+  printf '%s\n' '#!/bin/sh' 'echo "stub-shasum: refused" >&2' 'exit 1' >"${SANDBOX}/stub-bin/shasum"
+  chmod +x "${SANDBOX}/stub-bin/shasum"
+}
+
+# Run the real run_doctor against the scratch install; extra `env` assignments come first.
+run_whole_doctor() {
+  run --separate-stderr env GA_MANIFEST="${ROOT}/manifest.json" "$@" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT:-1}" \
+    GA_LIB_DIR="${GA}/scripts/lib" HOME="${FAKE_HOME}" GA_DATA_ROOT="${SANDBOX}/data" ATRIUM_UPDATE_STATE_DIR="${STATE}" \
+    GA_TARGET_HOME="${FAKE_HOME}/.claude" bash -c 'set -Eeuo pipefail; source "$1/lib/ga-core.sh"; ga_init_env "$2"; run_doctor' \
+    _ "${GA}" "${ROOT}"
+}
+
+@test "a doctor run whose file comparison could not run records the verdict unread" {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
+  local row name assign setup line verdict
+  local verdict_file="${SANDBOX}/data/data/integrity/last-verdict"
   local -a expected=()
   while IFS= read -r line; do expected+=("${line}"); done < <(get_expected_bindings)
-  write_settings "${expected[@]}"
+  seed_failing_shasum
+  local -a rows=(
+    "the sha256 tool fails over the manifest rows|PATH=${SANDBOX}/stub-bin:${PATH}|:"
+    "a consumer install whose manifest is absent|GA_MANIFEST=${SANDBOX}/no-manifest.json|:"
+    "a source tree whose manifest generator is not executable|GA_ROW=generator|mkdir .git"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name assign setup <<<"${row}"
+    if ga_guard_path "${ROOT}/.git"; then rm -rf -- "${ROOT:?}/.git"; fi
+    seed_release
+    write_settings "${expected[@]}"
+    (cd "${ROOT}" && eval "${setup}")
+    mkdir -p "${verdict_file%/*}" && printf '0\tstale\n' >"${verdict_file}"
 
-  run_detector _doctor_report_integrity 0 1
+    run_whole_doctor "${assign}"
 
-  IFS=$'\t' read -r _ line _ <"${SANDBOX}/data/data/integrity/last-verdict"
-  [[ "${status}" -eq 0 && "${line}" == "unread" ]] || {
-    echo "status ${status}, verdict '${line}': ${stderr}"
-    return 1
-  }
+    IFS=$'\t' read -r _ verdict _ <"${verdict_file}"
+    [[ "${verdict}" == "unread" ]] || {
+      echo "${name}: verdict '${verdict}', status ${status}: ${output} ${stderr}"
+      return 1
+    }
+  done
 }
 
 # Run update.sh's integrity report for stage $1 against the scratch install.

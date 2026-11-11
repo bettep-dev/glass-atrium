@@ -1617,9 +1617,10 @@ run_doctor() {
 
   # 30. harness integrity — the tamper detector beside §6 (missing bindings) and §8 (file content):
   #     surplus agent/hook files, the manifest vs the applied-release record (consumer install only:
-  #     a source tree's manifest names the NEXT release), and altered or surplus Atrium bindings.
-  #     Registration kind A, never FAIL — detection, not a gate. Also records the whole verdict
-  #     (§6 + §8 + this) for the session-start line (hooks/inject-session-context.sh).
+  #     a source tree's manifest names the NEXT release), altered or surplus Atrium bindings, and
+  #     profile settings.json files not linked to the target one. Registration kind A, never FAIL —
+  #     detection, not a gate. Also records the whole verdict (§8 drift + these findings + every
+  #     binding kind, or `unread`) for the session-start line (hooks/inject-session-context.sh).
   local integrity_drift=0
   # shellcheck disable=SC2311
   integrity_drift="$(_doctor_report_integrity "${drift}" "${integrity_unread}")"
@@ -2415,7 +2416,7 @@ _get_batched_hex() {
 # The anchor counts only at the release hash, so a stale or hand-edited anchor reads as unverified,
 # never as clean. Logs each finding; stdout = the finding count. Args: the claimed rel paths.
 _get_vendor_part_drift() {
-  local py_src findings kind rel detail count=0 lib="${BASH_SOURCE[0]%/*}/../autoagent/lib"
+  local py_src findings rel lib="${BASH_SOURCE[0]%/*}/../autoagent/lib"
   local -a roster=()
   # shellcheck disable=SC2311,SC2312
   while IFS= read -r rel; do roster+=("${rel}"); done <<<"$(spine_get_roster_paths)"
@@ -2431,6 +2432,12 @@ _get_vendor_part_drift() {
     printf '%d\n' "$#"
     return 0
   fi
+  _report_vendor_part_findings <<<"${findings}"
+}
+
+# Stdin rows `changed|unverified<TAB>rel<TAB>why`: logs each finding; stdout = the finding count.
+_report_vendor_part_findings() {
+  local kind rel detail count=0
   while IFS=$'\t' read -r kind rel detail; do
     [[ -n "${kind}" ]] || continue
     if [[ "${kind}" == "changed" ]]; then
@@ -2439,7 +2446,7 @@ _get_vendor_part_drift() {
       log "  warn : manifest DRIFT — vendor-owned part unverified: ${rel} (${detail}; 'glass-atrium update' re-seeds the anchor)"
     fi
     count=$((count + 1))
-  done <<<"${findings}"
+  done
   printf '%d\n' "${count}"
 }
 
