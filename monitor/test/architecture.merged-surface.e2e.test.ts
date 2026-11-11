@@ -1818,7 +1818,7 @@ const HOOK_FIXTURE_EVENTS: HealthHookChainResponse["events"] = [
 			{
 				matcher: "Write|Edit",
 				hooks: [
-					{ command: "hooks/enforce-harness-critical.sh", type: "command", timeout: 5 },
+					{ command: "hooks/validate-secret-scan.sh", type: "command", timeout: 5 },
 					{ command: "hooks/enforce-delegation.sh", type: "command", timeout: null },
 				],
 			},
