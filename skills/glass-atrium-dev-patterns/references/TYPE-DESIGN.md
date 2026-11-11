@@ -3,7 +3,8 @@
 ## Type Design [DEV]
 
 - **any/dynamic/Object forbidden**
-  - Scope: each one as a declared escape-hatch type, in a language that has it.
+  - Scope: each one used as a type, written or inferred, in a language that has it.
+    - Inferred: a value the checker types that way with no annotation, such as an un-annotated parameter or an untyped `JSON.parse` result.
   - Why: such a type switches checking off for every value it types, and the gap spreads to each caller.
 - Nullable → express in function name and type
 
