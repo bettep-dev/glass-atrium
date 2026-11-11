@@ -1466,8 +1466,6 @@ READERS = {name: (ANY_OPTION, "all") for name in (
     "cat", "ls", "grep", "egrep", "fgrep", "head", "tail", "wc", "stat", "readlink", "realpath",
     "du", "test", "[", "cmp", "diff", "cd", "pushd", "popd", "jq", "shasum", "md5", "basename",
     "dirname",
-    # No operand is a file: what these print reaches a file only through a redirect, judged apart.
-    "echo", "printf", "print",
 )}
 READERS["[["] = (ANY_OPTION, "test")
 READERS["find"] = (re.compile(
@@ -2118,7 +2116,7 @@ block_wording() {
       ;;
     agent-id-bash)
       BLOCK_MSG="Harness-critical command blocked (agent-id-bash): a subagent command names a ~/.claude* profile path it does not provably only read"
-      BLOCK_SUG="A subagent or Workflow agent Bash call may name a profile path only as an operand of a reader command in a clean command position (cat, ls, grep, head, tail, wc, stat, find without -delete/-exec, cd, echo, printf), as a < source, or as a path in its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file. After a cd into a profile path (the job scratchpad included) or into a directory named by a variable (\`cd \"\$T\"\`), every later relative word must be literal: name scratch files without \$var, glob or substitution, pass a glob to a reader (\`cat *.log\`), or cd into the literal path an earlier mktemp printed. Re-spell a copy as a read (\`cat <src> > <dest>\`), put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      BLOCK_SUG="A subagent or Workflow agent Bash call may name a profile path only as an operand of a reader command in a clean command position (cat, ls, grep, head, tail, wc, stat, find without -delete/-exec, cd), as a < source, or as a path in its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file. Re-spell a copy as a read (\`cat <src> > <dest>\`), put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
       ;;
     agent-id-write)
       BLOCK_SUG="A subagent or Workflow agent writes under a ~/.claude* profile root only into its job scratchpad (jobs/<id>/tmp/) or a progress-*.md file in a memory dir — the BASENAME exception is the orchestrator's. Put scratch files in \$TMPDIR (bare mktemp), and return a harness or memory change to the orchestrator. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
