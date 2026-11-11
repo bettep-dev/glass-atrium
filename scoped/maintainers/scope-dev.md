@@ -165,11 +165,10 @@ A DEV task is **SIZABLE** — it MUST enter the Document-Driven Workflow (plan a
 - **contract** — the change alters a public API signature, a persisted data schema, or a cross-agent / cross-service contract; a 1-file change can still be sizable through ripple, not line count.
 - **SIMPLE** (entry-exempt) = none of the four holds — typically a single-file typo / import addition / config-value edit / formatting, or a 1-2 file behavior-preserving change with no contract impact.
 
-### Spawn-time entry gate (BLOCKING — exit 2)
+### Spawn-time entry gate (warning only — exit 0)
 
 A DEV implementation spawn carrying neither a plan reference nor an `[ENTRY-CLASS] simple-task` token draws an entry-miss warning at spawn time (stderr, exit 0), and the spawn still runs.
 
-- **Nothing blocks**: the heading keeps its text only because other files cite it.
 - **Both delegation paths are covered**: manual via the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook (reads `subagent_type` from the spawn payload) · ultracode via the `enforce-workflow-verify-stage.sh` static scan of the workflow script.
 - **The `[ENTRY-CLASS] simple-task: <reason>` token is the escape hatch** for legitimate small DEV work: a spawn judged simple emits it to clear the warning (`skills/glass-atrium-ops-orchestrator-role.md` Decision phase classify-always rule).
 - **Ultracode placement**: on that path the token is recorded in the workflow script (canonical home: a `log()` string or `meta.description`), not in a delegation prompt.
@@ -185,7 +184,7 @@ A DEV implementation spawn carrying neither a plan reference nor an `[ENTRY-CLAS
 
 ### Sibling token — `[SIZE-EST]`
 
-- `[SIZE-EST]` answers "how big is this delegation?" (bundle count + rough tool_use estimate, gating a packing split); `### Spawn-time entry gate (BLOCKING — exit 2)` answers "is this DEV spawn classified?".
+- `[SIZE-EST]` answers "how big is this delegation?" (bundle count + rough tool_use estimate, gating a packing split); `### Spawn-time entry gate (warning only — exit 0)` answers "is this DEV spawn classified?".
 - Contract SoT: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token** (do not restate the format here).
 - Standing obligation and split triggers: `skills/glass-atrium-ops-orchestrator-role.md` → `### Spawn Budget` → Delegation-size discipline.
 - Both tokens' presence, never the estimate's correctness, is hook-checked, as a warning:

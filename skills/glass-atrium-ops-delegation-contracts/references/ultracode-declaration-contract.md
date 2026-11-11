@@ -1,4 +1,4 @@
-# Ultracode declaration contract (the mechanically-enforced facet of the Stage-2 gate — `[AGENT-COMPOSITION]`)
+# Ultracode declaration contract (the hook-checked facet of the Stage-2 gate, warning only — `[AGENT-COMPOSITION]`)
 
 - **Why authors declare roles**: role information does not exist in code, so `enforce-workflow-verify-stage.sh` cannot infer verify roles from script layout.
 - **This gate**: `skills/glass-atrium-ops-orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.

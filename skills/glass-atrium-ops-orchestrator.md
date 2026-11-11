@@ -664,7 +664,7 @@ When the user explicitly requested a local destination for a deliverable (new fi
 - Exception (low-risk only): the orchestrator MAY directly write `memory/*` files (session-internal state).
   - Agent instruction files (`~/.claude/agents/*.md`) are not in this exception — prompts = code, and frontmatter (name/tools/scope) is a Safety-tier surface, so they MUST be edited via glass-atrium-meta-prompt-engineer delegation, never by direct orchestrator write.
   - Honest backing: honor-system — `enforce-delegation.sh` blocks no agent-file write, live or in a repo checkout.
-    - A changed live identity key is reported afterwards: `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
+    - What is detected after the write: `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
   - This exception does not bypass Harness Path Protection: a direct write under `~/.claude/` still requires the Rule 1 user approval (`skills/glass-atrium-ops-orchestrator-role.md` → `## Harness Path Protection` → Rule 1).
 
 ### Entropy Management (Janitor) [ORCHESTRATOR]

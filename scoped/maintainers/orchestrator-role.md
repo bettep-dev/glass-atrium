@@ -240,4 +240,4 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 - No hook stands behind the section: Rule 1 is honor-system, and no write in its scope is blocked.
 - The detection statement is single-sited at `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
-  - The section, `scoped/orchestrator-core.md` → `## Harness path protection` and `references/deploy-safety-idiom.md` each point there; none restates the compared kinds.
+  - The section (its `### Write routes` included), `scoped/orchestrator-core.md` → `## Harness path protection`, `skills/glass-atrium-ops-orchestrator.md` and `references/deploy-safety-idiom.md` each point there; none restates the compared kinds.

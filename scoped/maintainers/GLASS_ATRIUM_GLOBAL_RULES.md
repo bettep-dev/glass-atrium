@@ -94,7 +94,7 @@ Beyond the suites in `## Machine-read shapes (moved out of the charter body)`:
 | Reader | Reads | Consequence of a careless edit |
 |---|---|---|
 | `scripts/test/deploy-coverage-partition.bats` | deploy partition | pins that the EDITABLE merge loop skips this basename |
-| `hooks/enforce-delegation.sh` | basename allowlist | a Harness Path Protection BASENAME exception; renaming the file drops its pass |
+| `hooks/enforce-delegation.sh` | basename allowlist | an early pass ahead of the DEL-004 sensitive-file check; the name is not sensitive, so a rename changes no verdict — keep the literal in step with the file name |
 | `autoagent/daemon_cycle.py` | `GLOBAL_RULES_FILE`, sensitive-path regex, C2 prompt slot | path-keyed: a move breaks the Tier-2 safety trigger and the C2 excerpt |
 | `scripts/lib/apply-spine.sh` | basename literal | classifies the charter as a non-agent file |
 | `scripts/lib/path-guard.sh` → `ga_guard_path` | nothing — one-way: `File Deletion Policy` restates its refusal set | a guard-only change splits the two sets, and no test compares them — change both in one edit |

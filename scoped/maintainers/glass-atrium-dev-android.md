@@ -21,7 +21,6 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 
 - No suite reads this body's prose.
   - `hooks/test/inject-scope-rules-nodrop.bats` and `hooks/test/inject-scope-single-delivery.bats` read the real `maxTurns` for the meter.
-  - `hooks/test/corpus/agents-blocklist/glass-atrium-dev-android.md` is a standalone fixture, not a copy of the body's frontmatter; a body edit does not reach it.
   - Other suites that name the agent use the name as roster or fixture data.
 
 ## Body text other files cite

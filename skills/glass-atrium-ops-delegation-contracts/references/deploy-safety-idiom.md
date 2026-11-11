@@ -4,9 +4,11 @@
 
 ## Reach the destination through a sanctioned flow FIRST
 
-- No hook blocks a direct write into the live harness surface, so a delegation that just `cp`s there lands — and leaves the install in drift.
-  - The integrity comparison reports it and the next update restores the release copy: `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
+- No hook blocks a direct write into the live harness surface, so a delegation that just `cp`s there lands.
   - Live harness surface: `~/.glass-atrium/{hooks,agents,autoagent,scripts,skills}/`, `~/.claude/{hooks,agents}/`, `settings.json`, the `com.*.plist` files.
+  - Reported afterwards only where the integrity comparison looks: `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
+    - A deployed `com.*.plist` is outside it: the doctor's launchd deploy-drift check (`lib/ga-doctor.sh` → `launchd_deploy_drift`) compares those.
+    - Any other path in the surface is compared by neither, so a stray copy there goes unreported.
 
 Pick one of these flows:
 

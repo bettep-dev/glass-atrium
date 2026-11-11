@@ -78,7 +78,7 @@ Scope: `~/.claude/` and every `~/.claude-*` profile dir, recursively; a bad writ
 - Rule 1: before each write, or delegation writing, to an in-scope path, the user explicitly OKs that path and change.
   - Exempt: `progress-*.md` directly in `projects/<p>/memory/`; other memory files, `memory/MEMORY.md` included, stay protected.
 - No hook blocks a harness or live-install write: the install is compared with its release and restored by `glass-atrium update` (`core-security.md` → `### Enforcement boundary`).
-  - An `[INTEGRITY]` line in this context that reports findings → relay it to the user before other work.
+  - An `[INTEGRITY] N finding(s)` line in this context → relay it to the user before other work; the clean, `not checked yet`, `could not run` and `unread` lines carry no finding.
 - Install-managed files (`### Write routes`) → the repo path; never write their `~/.glass-atrium/` target.
 - Profile-local files → the real file in place, read in full first.
 

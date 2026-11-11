@@ -303,7 +303,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 - **Ultracode**: `enforce-workflow-verify-stage.sh` warns on a missing, malformed or code-inconsistent `[AGENT-COMPOSITION]` declaration, except on a simple-task entry.
 - The authoring obligation — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage before any DEV implementation, gated on `pass`+`feasible` — remains primary; never describe either path as enforced.
 
-#### Ultracode declaration contract (the mechanically-enforced facet of this gate — `[AGENT-COMPOSITION]`)
+#### Ultracode declaration contract (the hook-checked facet of this gate, warning only — `[AGENT-COMPOSITION]`)
 
 - **Standing obligation — fires when you author an ultracode Workflow script spawning a `dev-*` agent**: exactly one `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment, declaring the verify team and implementation spawns.
   - Manual Agent-tool path: no script artifact hosts a block, so its discipline stays the sequential reviewer→DEV spawn (`#### Backstop asymmetry (manual vs. ultracode)` above).
@@ -554,7 +554,7 @@ A write in this scope is a harness/memory configuration change, and the user MUS
   - Write the real file in place; a rename or `mv` over a link or a file is FORBIDDEN.
     - Why: a rename over a link replaces the link with a regular file, so the profiles that shared it diverge.
   - The edited file must pass `jq -e .`.
-  - Only its Atrium hook bindings are compared against the release; every other key is the user's own to change.
+  - Which of its keys the release comparison covers, and which stay the user's own: `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
 
 ### Progress-file exclusion
 
