@@ -127,6 +127,7 @@ Delegate to a subagent when the user request matches any row below.
 | Delegation | Literal strings injected into target files keep their own language, set apart in backticks or a blockquote |
 | Delegation | When prompt quality matters, route the prompt through glass-atrium-meta-prompt-engineer first |
 | Monitoring | Check the `[COMPLETION]` block |
+| Monitoring | Read what stopped a `blocked` agent before recovery (`#### Monitoring-phase notes` → **Blocker class**) |
 | Monitoring | Escalate `blocked`/`fail` to the user or glass-atrium-qa-debugger |
 | Monitoring | Relay `done_with_concerns` |
 | Monitoring | Verify intent-result alignment |
@@ -138,7 +139,7 @@ Delegate to a subagent when the user request matches any row below.
 | Investigation | Delegating without investigation |
 | Decision | Habitual delegation without rationale |
 | Decision | Keyword/alias-based routing |
-| Decision | Collapsing compound requests into a single agent |
+| Decision | Collapsing compound requests into a single agent that does not fit every part |
 | Decision | Spawning a subagent on unprobed paths, or one whose compatibility preconditions are unmet |
 | Decision | Oversized single delegation (>2 bundles / est ≳40 tool_uses) |
 | Decision | Delegating plan-backed DEV or any PLANNING work with no `[SCOPE]` line |
@@ -193,6 +194,9 @@ Classify every DEV task against the Decision SIZABLE criteria above, a condensed
 The probes run during the Decision phase, before the spawn: Permission · Capability · Compatibility.
 
 - Each probe gates independently: any single failure halts delegation.
+  - A failed probe is a deliberate blocker (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`): report it with its remediation.
+    - Never clear it on your own — by retrying in another spelling, widening a grant or starting a service.
+  - An error in running the probe itself — a mistyped path, a timeout — is an ordinary obstacle: fix the probe and run it again.
 - A probe whose trigger is absent (no target path, no `compatibility` field) is a no-op.
 - The Visual-Weight Probe is not one of these, despite its name.
 
@@ -235,6 +239,15 @@ The probes run during the Decision phase, before the spawn: Permission · Capabi
   - Why: re-summarizing loses fidelity and burns tokens.
   - Scope: consumable deliverable bodies only; a record/accounting block, the `[COMPLETION]` block included, stays summarized.
   - Verify intent-result alignment first: never forward an unverified or `blocked`/`fail` result as if final.
+
+- **Blocker class (Monitoring phase)**: before recovery on a `blocked` result, read what stopped the agent (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
+
+  | What stopped it | Orchestrator action |
+  |---|---|
+  | a deliberate blocker | report it to the user with what would open it — no Retry, no Fallback |
+  | an ordinary obstacle | `### Failure Recovery Loop`, as written |
+
+  - Why: a refined prompt or another agent would route around a control placed on purpose.
 
 > Detail: skills/glass-atrium-ops-orchestrator.md → Completion signals (the three signals that establish a delegated agent's state — returned payload · terminal on-disk record · liveness ledger — plus the forbidden proxies and the reversible-action escape)
 
@@ -374,6 +387,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - Each agent carries its own read allowlist, a condensed-return instruction and a bounded analysis-mode `[SIZE-EST]`.
   - NEVER spawn one broad agent and split reactively after a non-emit.
     - Why: the reactive split first pays the full cost of the failed broad spawn.
+  - A target one agent's budget carries stays one agent: **COUNTER-CAVEAT (over-fragmentation)**.
   - Partition and size per `#### Automatic Parallelization` below.
 - **Effort-scaling by task shape** — at team composition, pick the agent count from the task's reasoning shape, not from per-agent budget; table: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → `## Effort-scaling table`.
 
@@ -404,7 +418,9 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
     - **Dependency-linked includes a predecessor edge declared anywhere in a persisted plan, not only an output-as-input dependency.**
     - A predecessor and its dependent never share a parallel wave, whatever their file sets.
 - Partition by ownership first, then size each track per `[SIZE-EST]` and **Effort-scaling by task shape**.
-- The default is no license to fragment: COUNTER-CAVEAT (over-fragmentation) still applies.
+- The default orders sub-tasks already split; it is no license to split or to fragment.
+  - Whether to split at all: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Sub-Agent Spawn Policy [ALL]`.
+  - COUNTER-CAVEAT (over-fragmentation) still applies.
 - SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`.
 
 ## Handoff and Failure Recovery
@@ -444,7 +460,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 ### Failure Recovery Loop
 
-On `result: fail` or `result: blocked`:
+On `fail`, or `blocked` by an obstacle:
 
 **Retry** (same agent, max 2 attempts with refined prompt) → **Fallback** (alternative agent if domain coverage allows) → **Escalate** to glass-atrium-qa-debugger (2 consecutive fail = immediate escalation) → **Circuit-breaker** (same agent emits 3 consecutive fail → suspend agent, report to user).
 

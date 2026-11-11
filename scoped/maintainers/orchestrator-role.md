@@ -193,10 +193,12 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - Never copy them back into the rule file: its opening line tells subagents to ignore it, so a rule placed there loses its agent audience.
 - `skills/glass-atrium-ops-orchestrator.md` cites the Tier-1 home and the leads of `references/automatic-parallelization.md` directly. Before renaming such a lead, grep for its citers (`scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Cited leads**).
 - Main-session copies in `scoped/orchestrator-core.md` → `## Routing` move with their rule-file sites:
-  - the compound-request line ↔ the `## Delegation Workflow` Forbidden row `Collapsing compound requests into a single agent`.
-    - The core line carries the scope: one agent takes only the parts it fits and its context can carry, in step with `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Sub-Agent Spawn Policy [ALL]`.
+  - the compound-request line ↔ the `## Delegation Workflow` Forbidden row `Collapsing compound requests into a single agent that does not fit every part` ↔ `skills/glass-atrium-ops-orchestrator.md` → `#### Selection procedure` ("route it by fit").
+    - The core line carries the full scope: one agent takes only the parts it fits and its context can carry, in step with `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Sub-Agent Spawn Policy [ALL]`.
+    - The row and the skill line state its short form.
   - the parallel-by-default line ↔ `#### Automatic Parallelization` → **Standing obligation**.
     - Decided keep: it orders sub-tasks already split and keeps both conditions (independent, non-overlapping), so the spawn policy still decides the split; reword it only on observed over-delegation.
+    - The bullet under that H4 that opens `The default orders sub-tasks already split` states that reading and points at the spawn policy.
 
 ## Linkage — handoff and recovery
 
@@ -218,6 +220,8 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The bolded lead **Retry effort escalation** under `### Failure Recovery Loop` has no other maintained copy.
   - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Thinking Budget Policy [ALL]` → **Task-class rule** cites it by name as one tier mover.
   - `references/failure-recovery.md` carries no Retry or tier text.
+- The deliberate-blocker exception to the loop sits at `#### Monitoring-phase notes` → **Blocker class**, not under this H3, which is at its cap; the loop's opening line names only the case it takes.
+  - That bullet and `#### Decision-phase probes` cite `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`: a rename of that heading lands in both.
 - The rule file carries no pointer to `skills/glass-atrium-ops-orchestrator.md` → `### Self-Improvement User-Approval Trigger`.
   - The orchestrator reaches that section through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier.
 

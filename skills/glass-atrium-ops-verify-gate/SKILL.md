@@ -8,7 +8,7 @@ description: Pre-commit 6-stage sequential verification covering build, types, l
 Sequentially verifies code quality in 6 stages before committing, enforcing evidence-based completion claims.
 
 - No stage is skipped without a documented reason.
-- Failure at any stage halts the pipeline.
+- A failed check at any stage halts the pipeline.
 
 ## When to Use
 
@@ -43,6 +43,8 @@ Success Criteria:
 4. **Tests**: `npm test` / `./gradlew test` — on failure, report failure list and **halt**
 5. **Console.log residuals**: Grep across `*.ts/*.tsx/*.js` — warn if found
 6. **Git status**: `git status` + `git diff --stat` — report commit-readiness status
+
+- A stage that could not run — a missing command, a timeout, a locked file — is an ordinary obstacle, not a failed check: diagnose it and run the stage again (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
 
 ### Result Format
 

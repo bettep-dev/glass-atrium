@@ -62,7 +62,7 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 ## `## Orchestrator On-Demand Mechanisms` — linkage and held cap
 
 - The group is split across these H2s so each H2 without a held H3 stays within the 8 KB cap:
-  - `## Orchestrator On-Demand Mechanisms` — the ceremony and `### Reply Form Contract (main-session user-facing replies)`.
+  - `## Orchestrator On-Demand Mechanisms` — the ceremony, `### Reply Form Contract (main-session user-facing replies)` and `### Low-Context Reader Rules`.
   - `## Workflow-Tool Execution (On-Demand)` — `### Ultracode / Workflow-tool Mode` alone.
   - `## Approval Protocols (On-Demand)` — `### Scope-Expansion Approval Protocol` and `### Self-Improvement User-Approval Trigger`.
   - Every citer names an H3, never one of these H2s; the first H2's lead names each of them and the two `## Managed Document …` sections.
@@ -70,6 +70,9 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
   - `autoagent/daemon_cycle.py` also cites that heading by name (frozen; keep it byte-identical).
 - `### Reply Form Contract (main-session user-facing replies)` is the canonical; `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition holds its one pointer.
   - Single-siting is checked only at PR review (diff inspection).
+- `### Low-Context Reader Rules` is the canonical for the low-context-reader and standalone-recap rules; the contract's **Composes with** bullet holds its one pointer.
+  - The skill reaches no subagent, so an agent body that authors reports or handoff documents mirrors both rules instead of pointing here.
+  - No pin holds it: byte-measure it, the contract and their H2 against the caps after any edit.
 
 ### Held cap exception — `### Ultracode / Workflow-tool Mode`
 

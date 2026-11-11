@@ -9,7 +9,7 @@ when_to_use: Use when composing multi-agent teams, deciding execution patterns (
 The per-stage detail behind `skills/glass-atrium-ops-orchestrator-role.md`, read on demand: how the orchestrator composes teams, picks an execution pattern, sizes a delegation, and gates a deliverable.
 
 - That rule file is the lifecycle SoT. This file details its stages; where a digest is unavoidable, it names the canonical beside it.
-- The orchestrator never implements directly — it routes, coordinates, and verifies (`skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity`).
+- The orchestrator routes, coordinates and verifies; it implements nothing itself outside **Tiny direct work** (`skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity`).
 
 ## When to Use
 
@@ -29,7 +29,7 @@ The standing rules that bind every delegation, in the order a delegation moves: 
 #### Selection procedure
 
 - Every routing decision runs four steps in order — Task Decomposition → Capability Consultation → Team Composition Decision → Execution.
-  - A 2+-element verb/conjunction request is compound, never one agent.
+  - A 2+-element verb/conjunction request is compound: route it by fit.
   - Detail: `skills/glass-atrium-ops-delegation-contracts/references/agent-selection.md` → `## Selection procedure`.
 
 #### Ordering caveat (ultracode verify-gate — reconciles pre-verify phase-2 DEV analysis with the declaration contract)
@@ -778,11 +778,11 @@ Finished means a terminal record, never an inference. Three signals establish a 
 
 Governs the form of the orchestrator's user-facing reply — the prose that replaces the raw `[COMPLETION]` block (`skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Workflow`). Main-session replies only.
 
-- **Composes with, never replaces**: the response-language rule (every slot in the user's language) · the clarification flow (Re-ground → Simplify → Recommend → Options) · Position Bias Mitigation at 3+ options.
+- **Composes with, never replaces**: the response-language rule (every slot in the user's language) · the clarification flow (Re-ground → Simplify → Recommend → Options) · Position Bias Mitigation at 3+ options · `### Low-Context Reader Rules` below.
 
 #### The four slots, in order
 
-Slots 1-3 are unconditional — an absent next step or blocker is stated, never silently dropped; slot 4 is conditional on divergence.
+Slots 1-3 are unconditional — an absent next step or blocker is stated, never silently dropped.
 
 1. **BLUF** — outcome + the decision or ask, on the first line, before any process narration; "Nothing needed from you" is a valid BLUF.
 2. **Delta** — what changed since the previous report, or since the ask on the first report: the context anchor every reply self-locates against.
@@ -820,6 +820,19 @@ AFTER — same facts, contract shape; the contract fixes the slots, not the mark
 > - 완료: /simplify Phase 1 — 리뷰 4건 병렬 착수
 > - 진행: watch-rollout (PR #61 라이브 반영)
 > - 다음: 리뷰 4건 + rollout 결과 종합 보고
+
+### Low-Context Reader Rules
+
+Bind every main-session reply under the Reply Form Contract above, and every report or handoff document: the reader saw none of the work.
+
+- **Low-context reader**: write for an intelligent reader who saw none of the tool calls, agent returns or files behind the text.
+  - Lead with the key points; a first line never leans on something explained only further down.
+  - Say what a thing is in plain words; define a label coined during the work at first use, or leave it out.
+  - Name a file or result and say what it holds — "as above" and "the earlier output" resolve to nothing for this reader.
+- **Standalone recap**: the last message of a job stands on its own — what was found, what was done, what comes next — so a reader of only that message has the full picture.
+  - In a main-session reply it fills slots 1-3 and adds no slot; a mid-job status reply keeps the Delta form.
+  - Length still follows `#### Shape constraints (bind every slot)`: keep the context a cold reader needs, drop process narration.
+- **Honest backing**: honor-system; this file reaches no subagent, so a report or handoff author is bound only through its own agent body.
 
 ## Workflow-Tool Execution (On-Demand)
 

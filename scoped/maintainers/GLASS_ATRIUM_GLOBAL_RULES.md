@@ -110,7 +110,9 @@ Prose citations into charter anchors — grep each before renaming its target:
 - **Obstacles and blockers**: `## Obstacles and Blockers [ALL]`, cited by:
   - `rules/glass-atrium/core-outcome-record.md` → `### result values`;
   - `scoped/scope-report.md` → `### Emission contract`;
-  - `scoped/shared-investigation-discipline.md` → `## Investigation Discipline [DEV+QA]`.
+  - `scoped/shared-investigation-discipline.md` → `## Investigation Discipline [DEV+QA]`;
+  - `skills/glass-atrium-ops-orchestrator-role.md` → `#### Decision-phase probes` · `#### Monitoring-phase notes` → **Blocker class**;
+  - `skills/glass-atrium-ops-verify-gate/SKILL.md` → `### Verification Order (halt on failure)`.
   - The section itself names `scoped/shared-investigation-discipline.md` and `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop`, so a rename of either lands there too.
 - **Precedence**: `### Precedence Resolution`, cited by:
   - rule prose: `scoped/scope-meta.md` · `scoped/scope-planning.md` · the `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` stub;

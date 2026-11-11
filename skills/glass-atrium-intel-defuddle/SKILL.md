@@ -11,7 +11,7 @@ description: Extract clean markdown content from web pages using Defuddle CLI, r
 
 ## Core Process
 
-If not installed: `npm install -g defuddle`
+If not installed: ask before installing it (`npm install -g defuddle`) and use WebFetch meanwhile — installation is a Confirm-tier action (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## 3-Tier Boundary [ALL]`).
 
 | Need | Command |
 |------|---------|
