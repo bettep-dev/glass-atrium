@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 # enforce-commit-guard.bats — pins the PreToolUse(Bash) dangerous-git-command gate.
 #
-# Protects: the RULES table's US (0x1F) field delimiter — the force-push (GIT-001)
+# Protects: the RULES table's US (0x1F) field delimiter — the force-push
 # regex carries '|' alternation, which a '|' delimiter would truncate mid-regex — and
-# the per-pattern compile lint (GIT-000) that fails closed on a malformed pattern.
+# the per-pattern compile lint that fails closed on a malformed pattern.
 #
 # Decision channel = exit code: 0 PASS (not blocked) / 2 BLOCK. Block detail (the
 # JSON error object) is emitted to stderr → captured into GUARD_ERR.

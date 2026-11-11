@@ -1,14 +1,14 @@
 #!/usr/bin/env bats
 # enforce-verification-gate.bats — Bats suite for the PreToolUse(Agent) verification-gate hook.
 #   Every surface is advisory: the hook exits 0 on every path.
-#     1) reviewer-miss WARNING (emit_error stderr JSON, severity warn, VGATE-REVIEWER-001) —
+#     1) reviewer-miss WARNING (emit_error stderr JSON, severity warn) —
 #        orchestrator-origin plan-ref DEV spawn, no qa-code-reviewer recorded. A nested sub-worker
 #        origin gets a plain informational line instead.
-#     2) size-est-miss WARNING (emit_error stderr JSON, severity warn, VGATE-SIZE-001) —
+#     2) size-est-miss WARNING (emit_error stderr JSON, severity warn) —
 #        ORCHESTRATOR-ORIGIN DEV spawn (agent_id absent) with NO [SIZE-EST] token; a nested sub-worker
 #        origin is never warned. Applies to every DEV spawn, plan-ref included, except a simple-task
 #        entry — so the other DEV-spawn fixtures below carry a [SIZE-EST] token to clear it.
-#     3) entry-miss WARNING (emit_error stderr JSON, severity warn, VGATE-ENTRY-001) — DEV spawn with
+#     3) entry-miss WARNING (emit_error stderr JSON, severity warn) — DEV spawn with
 #        NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss).
 #     4) scope-miss ADVISORY (stderr, exit 0) — an orchestrator-origin DEV spawn carrying no [SCOPE]
 #        declaration, emitted on the PASS paths. Owned by enforce-verification-gate-scope.bats; here
@@ -245,14 +245,14 @@ mint_bad_sink() {
 # thereby turn an entry-miss warning into a silent pass; a real slug (plan-6569) still matches. Keep-in-sync
 # with the enforce-workflow-verify-stage.sh PLAN_REF_RE mirror.
 
-@test "plan-ref word-boundary (#28): 'workplan-2026' does NOT satisfy references_plan → entry-miss WARNING" {
+@test "plan-ref word-boundary: 'workplan-2026' does NOT satisfy references_plan → entry-miss WARNING" {
   run_hook "glass-atrium-dev-nestjs" "advance the workplan-2026 milestone across the service layer [SIZE-EST] bundles=1 tool_uses~=20 — service work"
   assert_status 0
   assert_contains '"severity":"warn"'
   assert_contains "entry-miss"
 }
 
-@test "plan-ref word-boundary (#28): real 'plan-6569' slug satisfies references_plan → reviewer-miss WARNING, exit 0" {
+@test "plan-ref word-boundary: real 'plan-6569' slug satisfies references_plan → reviewer-miss WARNING, exit 0" {
   run_hook "glass-atrium-dev-react" "implement per plan-6569 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
   assert_status 0
   assert_contains '"severity":"warn"'
@@ -433,7 +433,7 @@ mint_bad_sink() {
   assert_marker_present "glass-atrium-qa-code-reviewer"
 }
 
-@test "DF-5: PreToolUse DEV entry-miss WARNING (exit 0) leaves NO marker line (no counter inflation)" {
+@test "PreToolUse DEV entry-miss WARNING (exit 0) leaves NO marker line (no counter inflation)" {
   run_hook_event "PreToolUse" "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc"
   assert_status 0
   assert_contains '"severity":"warn"'
@@ -449,7 +449,7 @@ mint_bad_sink() {
   assert_empty
 }
 
-@test "DF-5: PreToolUse DEV plan-ref spawn (reviewer-miss WARNING) does NOT stamp itself (read-only on PreToolUse)" {
+@test "PreToolUse DEV plan-ref spawn (reviewer-miss WARNING) does NOT stamp itself (read-only on PreToolUse)" {
   run_hook_event "PreToolUse" "glass-atrium-dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
   assert_status 0
   assert_contains '"severity":"warn"'
@@ -462,7 +462,7 @@ mint_bad_sink() {
 # but "a broken sink can never swallow the warning". Every warning path therefore carries BOTH a
 # delta-exactly-1 case and an unwritable-sink case.
 
-@test "D06 writer: every warning path appends exactly 1 line carrying its own verdict tag" {
+@test "trace writer: every warning path appends exactly 1 line carrying its own verdict tag" {
   # One row per warning path — they differ in (subagent_type, prompt, code, tag, reviewer seed); the
   # size-est row seeds a reviewer so its warning is the only one.
   local -a table=(
@@ -486,7 +486,7 @@ mint_bad_sink() {
   done
 }
 
-@test "D06 writer: a size-est miss on a reviewer-less plan spawn draws both warnings, one trace line each" {
+@test "trace writer: a size-est miss on a reviewer-less plan spawn draws both warnings, one trace line each" {
   run_hook_trace "glass-atrium-dev-python" "implement per plan clauded-docs/1234"
   assert_status 0
   assert_contains "VGATE-SIZE-001"
@@ -558,7 +558,7 @@ mint_bad_sink() {
 
 # WARNING PRESERVATION — a trace-write failure must never swallow the operator-facing warning.
 
-@test "D06 warning-preservation: an unwritable sink never drops the warning" {
+@test "warning-preservation: an unwritable sink never drops the warning" {
   # Three sink shapes over three warning paths: each warning path meets an unwritable sink, and the two
   # further shapes re-run already-covered paths against a different reason the append fails.
   local -a table=(

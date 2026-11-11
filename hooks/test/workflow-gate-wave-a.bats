@@ -178,13 +178,13 @@ size_token() { printf "log('[SIZE-EST] bundles=1 tool_uses~=10 — %s');\n" "${1
 # ===================================================================================================
 # AC4 — the two highest-volume verdicts pinned directly.
 # ===================================================================================================
-@test "AC4(norev): a declaration whose reviewer is never spawned warns as block-norev" {
+@test "norev: a declaration whose reviewer is never spawned warns as block-norev" {
   run_hook_file_exec "${VERDICT_DIR}/block-norev.js"
   [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "$(last_field verdict)" == "block-norev" ]] || return 1
 }
 
-@test "AC4(declspawn): a declared role with no spawn-position token warns as block-declspawn" {
+@test "declspawn: a declared role with no spawn-position token warns as block-declspawn" {
   run_hook_file_exec "${VERDICT_DIR}/block-declspawn.js"
   [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "$(last_field verdict)" == "block-declspawn" ]] || return 1
@@ -529,7 +529,7 @@ EOF
 # AC15' — `impl-computed: none` remains malformed. Pins the corrected key table against the tool so
 # the two cannot drift apart again.
 # ===================================================================================================
-@test "AC15'(none): impl-computed: none warns as block-grammar" {
+@test "impl-computed: none warns as block-grammar" {
   local script
   script="$(cat <<'EOF'
 /* [AGENT-COMPOSITION]

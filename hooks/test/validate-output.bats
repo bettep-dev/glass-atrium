@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# validate-output.bats — the PostToolUse output validator's LLM07 leak advisory (advisory only,
+# validate-output.bats — the PostToolUse output validator's system-prompt leak advisory (advisory only,
 # never a block decision):
-#   * DETECTION (a): every LLM07 pattern fires SEC-072 + exit 0 (all 8 individually, a non-match
+#   * DETECTION (a): every leak pattern fires its warning code + exit 0 (all 8 individually, a non-match
 #     control, case-fold, embedded NUL); code-injection text in Bash output draws no block.
 #   * FAIL-HARD: malformed / non-object input exits non-zero and leaves no scratch file.
 #   * PERF (b): one python3 parse and one alternation grep per call — measured with counting

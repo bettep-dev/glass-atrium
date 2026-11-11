@@ -168,7 +168,7 @@ readonly RE_SHELLCHECK_DIRECTIVE='^#[[:space:]]*shellcheck[[:space:]]'
 
 # The emitters live under hooks/; an absent root (a fixture tree, a partial install) defines nothing.
 readonly PRODUCT_DIRS=(hooks lib scripts autoagent)
-readonly EMITTERS_FIRST='emit_error|block_critical|block_and_exit|hook_require_python3'
+readonly EMITTERS_FIRST='emit_error|warn_tripped_check|hook_require_python3'
 readonly RE_CODE='^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+$'
 readonly RE_CODE_HEAD='(^|[^[:alnum:]_])(([A-Z][A-Z0-9]*-)+)$'
 readonly RE_CODE_TAIL='^((-[A-Z0-9]+)+)([^[:alnum:]_]|$)'

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # enforce-verification-gate-reviewer-block.bats — the reviewer-miss surface: a plan-referencing DEV
-# spawn with no qa-code-reviewer recorded draws a VGATE-REVIEWER-001 warning (exit 0) with a
+# spawn with no qa-code-reviewer recorded draws the reviewer-miss coded warning (exit 0) with a
 # reviewer-miss reason phrase, distinct from entry-miss / size-est-miss.
 # REGRESSION GUARDS — silent exit 0 for:
 #   * a reviewer-present plan-ref DEV spawn.
@@ -11,11 +11,11 @@
 #   * the hook contains no spawn-depth predicate (dropped, not deferred).
 #   * the header records that nested spawns remain ungated and why.
 #
-# Contract: reviewer-miss coded warning is VGATE-REVIEWER-001, reason phrase reviewer-miss.
+# Contract: the reviewer-miss coded warning carries its own code and the reason phrase reviewer-miss.
 #
 # Harness mirrors enforce-verification-gate.bats: the real PreToolUse(Agent)
 # envelope is built with jq, HOOK_DATA_DIR is sandboxed, and every DEV prompt
-# carries a [SIZE-EST] marker so the VGATE-SIZE-001 gate never masks the branch
+# carries a [SIZE-EST] marker so the size-est check never masks the branch
 # under test. Run via: bats hooks/test/enforce-verification-gate-reviewer-block.bats
 #
 # BATS GATING NOTE (measured, bats 1.13.0 on both legs): @test bodies run under
@@ -182,7 +182,7 @@ run_hook_sink() {
 
 # --- DSH-D06: the reviewer-miss warning leaves a durable trace, and never trades the warning for it ---
 
-@test "D06: reviewer-miss WARNING appends exactly one block-reviewer trace line" {
+@test "reviewer-miss WARNING appends exactly one block-reviewer trace line" {
   run_hook_sink "glass-atrium-dev-react"
   assert_status 0
   assert_contains '"severity":"warn"'
@@ -204,7 +204,7 @@ run_hook_sink() {
   }
 }
 
-@test "D06 warning-preservation: an unwritable sink must NOT drop the reviewer-miss warning" {
+@test "warning-preservation: an unwritable sink must NOT drop the reviewer-miss warning" {
   blocker="${BATS_TEST_TMPDIR}/blocker"
   : >"${blocker}"
   run_hook_sink "glass-atrium-dev-nestjs" "${blocker}/fired.log"

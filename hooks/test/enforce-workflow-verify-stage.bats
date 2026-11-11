@@ -1162,7 +1162,7 @@ continues */ pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report
 # docroute + a dev-* spawn + ENTRY_ADVISORY → BLOCK_DOCROUTE with the entry-format addendum (the
 # addendum rides the block-docroute verdict via the ADR-2 allowlist). Fixture purity: NO clauded-docs
 # token (would suppress docroute AND flip entry_marker).
-@test "docroute F1: leak + dev-* spawn + ENTRY_ADVISORY → warning with entry-format addendum" {
+@test "docroute: leak + dev-* spawn + ENTRY_ADVISORY → warning with entry-format addendum" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE to ~/r.md'}), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   assert_outcome warn || return 1
   [[ "${output}" == *"doc-routing leak"* ]] || return 1
@@ -1171,7 +1171,7 @@ continues */ pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report
 }
 
 
-@test "docroute F1: pure leak, NO dev-* spawn → warning, NO entry addendum (no spurious nudge)" {
+@test "docroute: pure leak, NO dev-* spawn → warning, NO entry addendum (no spurious nudge)" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE to ~/r.md'}))"
   assert_outcome warn || return 1
   [[ "${output}" == *"doc-routing leak"* ]] || return 1

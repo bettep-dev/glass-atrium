@@ -178,13 +178,13 @@ done
 CODES=(SEC-001 SEC-002)
 emit_error "${CODES[${i}]}" "block" "secret found"
 case "${verdict}" in
-  block:*) block_critical "HAR-001" "harness file" ;;
+  block:*) warn_tripped_check "HAR-001" "harness file" ;;
 esac
 hook_require_python3 "SEC-017" "python3 required"
 hook_require_python3_unless_empty "${INPUT}" "SEC-018" "python3 required"
-block_and_exit "VGATE-SIZE-001" "plan too large"
+warn_tripped_check "VGATE-SIZE-001" "plan too large"
 # emit_error "TKT-12" is how the ticket fix would read
-true # block_critical "TKT-13"
+true # warn_tripped_check "TKT-13"
 EOF
   write_fixture "${tree}/hooks/test/fixture.sh" <<'EOF'
 emit_error "TST-001" "block" "fixture only"
@@ -192,7 +192,7 @@ EOF
   local -a table=(
     $'codes from a read table an emitter consumes\x1fbats\x1fGIT-001 and GIT-004 block the command\x1f0'
     $'a code from a bash array an emitter consumes\x1fbats\x1fSEC-002 blocks a token\x1f0'
-    $'a quoted literal of a case-arm block_critical call\x1fbats\x1fHAR-001 blocks a harness write\x1f0'
+    $'a quoted literal of a case-arm warn_tripped_check call\x1fbats\x1fHAR-001 blocks a harness write\x1f0'
     $'the first argument of hook_require_python3\x1fbats\x1fSEC-017 needs python3\x1f0'
     $'the second argument of hook_require_python3_unless_empty\x1fbats\x1fSEC-018 needs python3\x1f0'
     $'a compound code matched whole\x1fbats\x1fVGATE-SIZE-001 caps the plan\x1f0'

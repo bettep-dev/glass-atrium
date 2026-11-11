@@ -59,43 +59,6 @@ ID_TITLE @test AC-4.5 the eight non-writer channels never flag
 ID_TITLE @test AC-4.5 the three writer channels flag an absent probe reference
 ID_TITLE @test AC-4.6 the style-ref roster is declared exactly once across the hooks tree
 ID_TITLE @test AC-4.7 each channel set is declared exactly once across the hooks tree
-ID_TITLE @test AC-A1 tilde identity Edit widening tools → HAR-001 block (exit 2)
-ID_TITLE @test AC-A2 tilde and absolute forms of ONE identity Edit agree (status + reason)
-ID_TITLE @test AC-A3 traversal-bearing tilde identity Edit → HAR-001 block (exit 2)
-ID_TITLE @test AC-A4 body Edit (absolute form) → pass
-ID_TITLE @test AC-A4 body Edit (tilde form) → pass
-ID_TITLE @test AC-A4 body bullet add (tilde form, block-list file) → pass
-ID_TITLE @test AC-B1 block-list Edit granting Bash to the META agent → HAR-001 block (exit 2)
-ID_TITLE @test AC-B1 block-list Edit granting WebSearch to the shell agent → HAR-001 block (exit 2)
-ID_TITLE @test AC-B1b/AC-B4-5 column-0 block list widened → HAR-001 block (exit 2)
-ID_TITLE @test AC-B2 full-file Write widening a block list, key lines identical → HAR-001 block (exit 2)
-ID_TITLE @test AC-B4-1 plain scalar: description reword → pass
-ID_TITLE @test AC-B4-1 plain scalar: name rename → block
-ID_TITLE @test AC-B4-10 blank line in the region: a widening edit after it still blocks
-ID_TITLE @test AC-B4-2 quoted scalar: name value change → block
-ID_TITLE @test AC-B4-2 quoted scalar: same value re-quoted → pass (ruled non-change)
-ID_TITLE @test AC-B4-3 folded scalar under a non-guarded key: continuation edit → pass
-ID_TITLE @test AC-B4-4 block list (2-space): reorder → pass
-ID_TITLE @test AC-B4-4 block list (2-space): widen → block
-ID_TITLE @test AC-B4-6 inline flow: widen → block
-ID_TITLE @test AC-B4-7 full-line comment in the region: a widening edit below it still blocks
-ID_TITLE @test AC-B4-7 full-line comment in the region: editing the comment text → pass
-ID_TITLE @test AC-B4-8 inline comment after a list item: adding an item that carries one → block
-ID_TITLE @test AC-B4-8 inline comment after a list item: appending a comment to an item → pass
-ID_TITLE @test AC-B4-9 nested map under a non-guarded key: edit → pass, no unparseable verdict
-ID_TITLE @test AC-B5 folded description continuation edit (dev-rag) → pass
-ID_TITLE @test AC-B5 maxTurns edit (dev-rag) → pass
-ID_TITLE @test AC-B5 model pin edit (shapes) → pass
-ID_TITLE @test AC-B5 non-guarded list-item edit with inline comment (designer skills) → pass
-ID_TITLE @test AC-B5 non-guarded nested-map value edit (designer skills_policy) → pass
-ID_TITLE @test AC-B6 body bullet duplicating a tools item → block (fail-closed, unreachable in practice)
-ID_TITLE @test AC-B6 body prose edits pass on every corpus file (remove + add)
-ID_TITLE @test AC-B7 containment: anchor under a non-guarded key → pass, not unparseable
-ID_TITLE @test AC-B7 containment: body-only Edit not overlapping an unparseable region → pass
-ID_TITLE @test AC-B7 containment: folded scalar under a non-guarded key → pass, not unparseable
-ID_TITLE @test AC-B7 containment: nested map under a non-guarded key → pass, not unparseable
-ID_TITLE @test AC-B7 out-of-contract frontmatter forms → frontmatter-unparseable (form × tool)
-ID_TITLE @test AC-B7 unparseable frontmatter surfaces as HAR-001, never HAR-003
 ID_TITLE @test AC-C1-C the barrier manifest carries the retired array and drops the files[] row
 ID_TITLE @test AC-C2 GA_DB_BACKUP_DIR outranks the config and never warns
 ID_TITLE @test AC-C2 the WARN is emitted once per shell, not once per resolution
@@ -116,34 +79,9 @@ ID_TITLE @test AC-C2(6f) canonicalization never rescues a RELATIVE value
 ID_TITLE @test AC-C2(6g) a directory the invoking user OWNS at 1777 is still declined
 ID_TITLE @test AC-C2(6h) the canonicalizer TERMINATES on a relative operand
 ID_TITLE @test AC-C2(6i) an unreadable MODE declines under its own reason, not ownership
-ID_TITLE @test AC-M1 widening in the LAST edits element → identity block
-ID_TITLE @test AC-M10 body-only element with replace_all honoured → pass
-ID_TITLE @test AC-M2 widening in the FIRST edits element → identity block
-ID_TITLE @test AC-M3 benign multi-element body-only MultiEdit → pass
-ID_TITLE @test AC-M4 staged widening across two elements → identity block
-ID_TITLE @test AC-M5 edits element carries a non-string old_string → frontmatter-unparseable
-ID_TITLE @test AC-M5 edits element is not an object → frontmatter-unparseable
-ID_TITLE @test AC-M5 edits is a string, not an array → frontmatter-unparseable
-ID_TITLE @test AC-M5 edits is an EMPTY array → frontmatter-unparseable
-ID_TITLE @test AC-M5 edits key absent → frontmatter-unparseable
-ID_TITLE @test AC-M6 MultiEdit creating a NEW agents/*.md → new-agent-creation block
-ID_TITLE @test AC-M7 MultiEdit on live settings.json → live-settings block
-ID_TITLE @test AC-M8 MultiEdit removing the closing fence → frontmatter-fence-edit
-ID_TITLE @test AC-M9 MultiEdit on an unprotected .glass-atrium path → pass
-ID_TITLE @test AC-Q1 containment: body prose spelling a quoted guarded key at column 0 → pass
-ID_TITLE @test AC-Q1 duplicate UNQUOTED tools key line, identical value → frontmatter-unparseable
-ID_TITLE @test AC-Q1 duplicate already on disk: body-only Write → frontmatter-unparseable
-ID_TITLE @test AC-Q1 quoted NON-guarded key line → pass, not unparseable
-ID_TITLE @test AC-Q1 quoted duplicate of tools: Edit appending one → frontmatter-unparseable
-ID_TITLE @test AC-Q1 quoted duplicate of tools: full-file Write carrying one → frontmatter-unparseable
-ID_TITLE @test AC-Q1 quoted name key changed by an Edit → identity-frontmatter-edit
-ID_TITLE @test AC-Q1 quoted tools key widened by a Write → identity-frontmatter-write
-ID_TITLE @test AC-Q1 quoted-key file, body-only Write → pass
-ID_TITLE @test AC-Q1 unreadable key token (unbalanced quote) at column 0 → frontmatter-unparseable
 ID_TITLE @test AC-S1.3a: wrapper carries no literal port default (16145 / 7842)
 ID_TITLE @test AC-S1.3b: GA root resolved through the wrapper's symlink (parent has no scripts/)
 ID_TITLE @test AC-S1.3b: relative symlink target also resolves to the real GA root
-ID_TITLE @test AC-S2 lifecycle-scaffold frontmatter form parses clean → pass
 ID_TITLE @test AC1 byte-identical: embedded-NUL value stripped, matching hook_get_tool_input
 ID_TITLE @test AC1 byte-identical: probe VALUE equals hook_get_tool_input for every field kind
 ID_TITLE @test AC1 every template key has exactly one census row
@@ -152,12 +90,9 @@ ID_TITLE @test AC1 registered-but-unlisted agent is named and exits 2
 ID_TITLE @test AC1 spot-checks: type coercion + trailing-newline strip + embedded-newline keep
 ID_TITLE @test AC1 the invocation confines MCP discovery with --strict-mcp-config
 ID_TITLE @test AC1 the model invocation carries a Write-less tool set
-ID_TITLE @test AC10 shell lib and classifier classify the shared root corpus identically
 ID_TITLE @test AC10'(fires): the same spawn WITHOUT the bare token still records analysis-size
 ID_TITLE @test AC10'(silent): a non-DEV schema spawn WITH the bare token records no analysis-size tag
 ID_TITLE @test AC10: an absent apply script composes the same value as a non-executable one
-ID_TITLE @test AC11 a Write inside a git checkout of this repo → pass
-ID_TITLE @test AC11 a redirect inside a git checkout of this repo → pass
 ID_TITLE @test AC11(absent): no python3 on PATH at all still exits 0
 ID_TITLE @test AC11: a healthy apply still composes exactly ok with no unavailability line
 ID_TITLE @test AC11: an unusable python3 on PATH still exits 0 (fail-open preserved)
@@ -174,7 +109,6 @@ ID_TITLE @test AC14'(slot correctness): both dispatch branches report the litera
 ID_TITLE @test AC14'(tally): the verdict tally over a mixed-format log is unchanged by the new fields
 ID_TITLE @test AC14: a dry run records provenance naming the dry run
 ID_TITLE @test AC15'(impl none): the none literal on impl: remains valid
-ID_TITLE @test AC15'(none): impl-computed: none blocks as block-grammar
 ID_TITLE @test AC15'(omitted): the same declaration with the line omitted passes
 ID_TITLE @test AC15: a missing helper records its own reason, not the dry-run one
 ID_TITLE @test AC16: an enum-absent skip records the reason and names the missing labels
@@ -236,8 +170,6 @@ ID_TITLE @test AC4 an absent Scope Legend section fails open with an advisory no
 ID_TITLE @test AC4 an absent matrix in --roster-check is named absent, not merely unreadable
 ID_TITLE @test AC4 an unreadable registry path fails open with an advisory note
 ID_TITLE @test AC4 fail-open: python3 absent → state=empty (today's silent allow), NOT unrecognized
-ID_TITLE @test AC4(declspawn): a declared role with no spawn-position token blocks as block-declspawn
-ID_TITLE @test AC4(norev): a declaration whose reviewer is never spawned blocks as block-norev
 ID_TITLE @test AC4: a --proposal-id run with one eligible row writes the per-patch row only, no heartbeat
 ID_TITLE @test AC4: a clean doctor verdict is recorded and raises no failure
 ID_TITLE @test AC4: a mode that never ran the apply stage writes no apply health
@@ -253,16 +185,11 @@ ID_TITLE @test AC5: a present digest tool records a digest field
 ID_TITLE @test AC5: an absent digest tool writes the manifest line without a digest field
 ID_TITLE @test AC5: the heartbeat row's status literal is inside the set §14's producer pin fixes
 ID_TITLE @test AC5: the model id resolves through the shared helper; a missing lib is empty and loud
-ID_TITLE @test AC6 Edit of settings.local.json under a branch root → live-settings block
-ID_TITLE @test AC6 Write of settings.json under every branch root → live-settings block
 ID_TITLE @test AC6 a Layer B fault survives a clean Layer C at the Layer-A-OK exit point
 ID_TITLE @test AC6 a Layer B fault survives a clean Layer C at the drift-report exit point
 ID_TITLE @test AC6 a Layer B fault survives a clean Layer C at the rules-dir-missing exit point
 ID_TITLE @test AC6 a Layer C mismatch exits 2 through the full run when Layer B is clean
-ID_TITLE @test AC6 branch hooks/ dir write → live-hooks-dir block
-ID_TITLE @test AC6 case-varied branch spelling still blocks (nocasematch contract)
 ID_TITLE @test AC6 golden envelope: notes are shell-written to array-derived paths, stamped, and synced
-ID_TITLE @test AC6 suffix-lookalike roots are not config roots → pass
 ID_TITLE @test AC6'(i): 4 literal impl spawns vs 1 sizing entry — slots=4, size-map fires, verdict unchanged
 ID_TITLE @test AC6'(ii): the same script with 4 sizing entries — slots=4, size-map silent
 ID_TITLE @test AC6'(iii): 1 impl spawn vs 0 sizing entries — slots=1, size-map fires
@@ -279,9 +206,6 @@ ID_TITLE @test AC7 a clean matrix exits 0 with the Layer A OK banner
 ID_TITLE @test AC7 a present-but-unreadable matrix is named unreadable, not absent
 ID_TITLE @test AC7 an absent matrix emits BOTH enforcement layers' advisories on stderr
 ID_TITLE @test AC7 an unreadable matrix still short-circuits to exit 0
-ID_TITLE @test AC7 cp into a branch hooks dir → block
-ID_TITLE @test AC7 interpreter write of a branch settings file → block
-ID_TITLE @test AC7 redirect into a branch settings file → block
 ID_TITLE @test AC7 the prompt the model receives carries the untrusted-data clause, the nonce line and the envelope grammar
 ID_TITLE @test AC7(negative): simple-task alongside 3 implementation slots records no such tag
 ID_TITLE @test AC7(positive): simple-task alongside 4 implementation slots records entry-cardinality
@@ -291,8 +215,6 @@ ID_TITLE @test AC7: an absent or empty report keeps a clean cycle clean and name
 ID_TITLE @test AC7: coverage distinguishes a spawn that kept a block from one that shed it
 ID_TITLE @test AC7: the reader reads an absent sink as zero records, not missing data
 ID_TITLE @test AC7: the reader reports per-agent block coverage matching the fixture
-ID_TITLE @test AC8 an agent BODY edit below the frontmatter fence passes
-ID_TITLE @test AC8 branch jobs/, projects/ and memory writes pass
 ID_TITLE @test AC8 no file on the exemption list reaches undeclared-present
 ID_TITLE @test AC8 the injection-text source is exempt, so Layer A stops reporting it
 ID_TITLE @test AC8(6 slots): a larger cardinality still exits 0 — the tag is advisory at any count
@@ -303,11 +225,6 @@ ID_TITLE @test AC8: a sentinel WITHOUT the run nonce survives as body bytes
 ID_TITLE @test AC8: manifest_block_kept case arms equal the MANIFEST_BLOCK_LABELS roster
 ID_TITLE @test AC8: the gate field is additive — the pinned status-literal set is untouched
 ID_TITLE @test AC9: an apply script with its executable bit cleared composes apply_unavailable
-ID_TITLE @test ArmB-neg cd into rules/ or scoped/ then relative write → pass (H1-D1)
-ID_TITLE @test BASENAME CLAUDE.md on a branch root (tilde) + bg=true → NOT blocked (AC2)
-ID_TITLE @test BASENAME CLAUDE.md on the backup dir + bg=true → NOT blocked (AC2)
-ID_TITLE @test BASENAME GLASS_ATRIUM_GLOBAL_RULES.md on a branch root (bare) + bg=true → NOT blocked (AC2)
-ID_TITLE @test BASENAME MEMORY.md on a branch root (absolute-\$HOME) + bg=true → NOT blocked (AC2)
 ID_TITLE @test C0 setup_suite discovery sentinel is exported
 ID_TITLE @test C1 same (record_ts,agent,task_type) collides → 1 survivor (last writer), sequence gapped
 ID_TITLE @test C1 the charter no longer instructs authors to cap EVERY schema field
@@ -322,8 +239,6 @@ ID_TITLE @test C4 end-to-end: evaluative_signal=-1 WITHOUT directive_hint writes
 ID_TITLE @test C4 the charter's pointer is an IMPERATIVE to read the canonical rules, not a bare token
 ID_TITLE @test C5 end-to-end: two same-(agent,task_type) subagents both persist with DISTINCT record_ts
 ID_TITLE @test C5 the charter explicitly disclaims prescribing a cap of its own
-ID_TITLE @test D06 block-preservation: an unwritable sink must NOT convert the reviewer-miss block into a pass
-ID_TITLE @test D06 block-preservation: an unwritable sink never converts a block into a pass
 ID_TITLE @test D06 default sink: with no VGATE_FIRED_LOG override the trace lands under the data root
 ID_TITLE @test D06 negative: a spawn the gate passes appends NOTHING to the sink
 ID_TITLE @test D06 negative: nested sub-worker advisory (exit 0) appends NOTHING to the sink
@@ -334,9 +249,7 @@ ID_TITLE @test D06 reader: read-only — invoking it appends nothing to the sink
 ID_TITLE @test D06 reader: reports without draining stdin (no operator hang)
 ID_TITLE @test D06 register-once: PostToolUse DEV spawn appends NOTHING to the block sink
 ID_TITLE @test D06 register-once: PostToolUse stamp appends NOTHING to the block sink
-ID_TITLE @test D06 writer: every block path appends exactly 1 line carrying its own verdict tag
 ID_TITLE @test D06 writer: the trace line carries the spawn's subagent_type
-ID_TITLE @test D06: reviewer-miss BLOCK appends exactly one block-reviewer trace line
 ID_TITLE @test D06: reviewer-present pass appends NO trace line (delta 0)
 ID_TITLE @test D1 the defective capped-property notation is absent from the analysis-schema example
 ID_TITLE @test D13: the seven pre-existing corpus fixtures produce their re-adjudicated verdicts
@@ -344,18 +257,9 @@ ID_TITLE @test D2 the analysis-schema example declares its properties UNCAPPED
 ID_TITLE @test D3 the withdrawn per-row cap-sizing floor is gone (no per-element cap endorsement)
 ID_TITLE @test DF-5: PostToolUse reviewer spawn stamps reviewer-present (only an executed spawn records)
 ID_TITLE @test DF-5: PostToolUse-stamped reviewer → later PreToolUse DEV plan-ref spawn passes silently
-ID_TITLE @test DF-5: PreToolUse DEV entry-miss BLOCK (exit 2) leaves NO marker line (no counter inflation)
-ID_TITLE @test DF-5: PreToolUse DEV plan-ref spawn (reviewer-miss BLOCK) does NOT stamp itself (read-only on PreToolUse)
 ID_TITLE @test DF-5: PreToolUse reviewer spawn does NOT stamp → blocked-spawn leaves no reviewer-present
-ID_TITLE @test E1 non-Write tool → allow (exit 0)
-ID_TITLE @test E2 Write with no agent_id → fail-open (exit 0)
 ID_TITLE @test E2E (T23): one release combining a non-agent change, an only-vendor merge, a NON-CONFLICTING both-changed merge, a CONTESTED both-changed decline, and a roster add
-ID_TITLE @test E3 Write with a fully-stripped agent_id → fail-open (exit 0)
-ID_TITLE @test E4 Write + valid agent_id but no recoverable agent_type → fail-open (exit 0)
-ID_TITLE @test E5 Write + non-doc agent recovered via sidecar → allow-non-doc-agent (exit 0)
 ID_TITLE @test E5 commit: a row through a symlinked directory rolls back and creates nothing outside
-ID_TITLE @test E6 Write + doc agent + empty file_path → fail-open (exit 0)
-ID_TITLE @test E7 Write + doc agent + non-target extension → allow-non-target-ext (exit 0)
 ID_TITLE @test EMIT + METER combined stays < 2048 bytes (~2KB persistence-preview survival, T1)
 ID_TITLE @test F10: || exit 0 is required in a sourced library, not in an executed script
 ID_TITLE @test F11: missing --path target and scope drift both exit 3
@@ -374,28 +278,7 @@ ID_TITLE @test F7: hook_require_python3 comment's derivation recipe excludes the
 ID_TITLE @test F7: surfaced stderr channels (2>&1, 2>>) are not sites
 ID_TITLE @test F8: token accepted one line above, never two
 ID_TITLE @test F9: continuation walk accepts the token on the statement's first line
-ID_TITLE @test G1 MultiEdit ADDING a body --- hr → pass (fence delta is span-scoped)
-ID_TITLE @test G2 MultiEdit REMOVING a body --- hr → pass (same old/new as the Edit row)
-ID_TITLE @test G3 MultiEdit inserting a fence INSIDE the frontmatter → still block
-ID_TITLE @test G4 CHARACTERIZATION f3 second ---…--- block after the closing fence → pass
-ID_TITLE @test H1 Edit into autoagent/ → block (agent cannot rewrite scheduled code)
-ID_TITLE @test H1 Edit into rules/ → pass (excluded)
-ID_TITLE @test H1 Edit into scoped/ → pass (excluded)
-ID_TITLE @test H1 Edit into scripts/ → block
-ID_TITLE @test H1 Edit into skills/ → block
-ID_TITLE @test H1 Write into autoagent/ → HAR-001 scheduled-exec block
-ID_TITLE @test H1 Write into rules/ → pass (excluded, hand-edited live)
-ID_TITLE @test H1 Write into scoped/ → pass (excluded)
-ID_TITLE @test H1 Write into scripts/ → block
-ID_TITLE @test H1 Write into skills/ → block
-ID_TITLE @test H1 bash cp into scripts/ → block
-ID_TITLE @test H1 bash redirect into autoagent/ → HAR-002 block
-ID_TITLE @test H1 bash tee into skills/ → block
 ID_TITLE @test JSON-fallback: a body-auto patch WITHOUT pre_verify_passed is EXCLUDED (DF-17 fail-closed)
-ID_TITLE @test K0 setup_suite discovery sentinel is exported
-ID_TITLE @test K1 kill switch SET → bypass before any verdict is written (exit 0)
-ID_TITLE @test K2 kill switch UNSET → the same input blocks (exit 2)
-ID_TITLE @test K3 an ambient kill-switch export cannot green this suite (hermeticity proof)
 ID_TITLE @test L1 a marked body lands at the release, keeps its model line, and consumes the request
 ID_TITLE @test L10 a consume failure takes its consume-failed code and writes the ledger row
 ID_TITLE @test L11 a release that adds region lines reports deleted and added lines separately
@@ -408,11 +291,6 @@ ID_TITLE @test L6 a request id that was already consumed exits 16 before anythin
 ID_TITLE @test L7 a request left behind after a landing resolves already-at-release and the body keeps updating
 ID_TITLE @test L8 a base entry that moved since the request was reviewed WARNs and flags base_drift
 ID_TITLE @test L9 a stale body absent from the release is refused and retained while the rest land
-ID_TITLE @test LLM05 block parity: 5 dangerous patterns on Bash tool → exit 2 + decision:block
-ID_TITLE @test LLM05 clean Bash output → exit 0, not blocked
-ID_TITLE @test LLM05 embedded-NUL: os.\u0000system( NUL-split (Bash) → block (NUL stripped, not truncated)
-ID_TITLE @test LLM05 embedded-newline: ^os.system( on its own line (Bash) → block (newline preserved)
-ID_TITLE @test LLM05 non-Bash pass-through: DROP TABLE under a Read tool → exit 0, NOT blocked
 ID_TITLE @test LLM07 embedded-NUL: NUL-split leak phrase still fires SEC-072 (NUL stripped, not truncated)
 ID_TITLE @test M1 the META body no longer prescribes output-shape constraints of its own
 ID_TITLE @test M1: a forced shed emits exactly one fixed-width marker naming the shed block (>=1 named)
@@ -437,12 +315,6 @@ ID_TITLE @test O6 cancel moves the request aside and a later run leaves the body
 ID_TITLE @test O7 restore puts the body and its base entry back to their pre-reset images
 ID_TITLE @test O8 restore refuses a body edited after the reset unless --allow-live-moved
 ID_TITLE @test O9 a before-image that cannot be written retains the body in the request
-ID_TITLE @test P0-2 tilde + traversal Edit into live GA hooks dir → block
-ID_TITLE @test P0-2 tilde Edit into autoagent/ → HAR-001 block (tilde no longer dodges)
-ID_TITLE @test P0-2 tilde Write onto live settings.json → HAR-001 block
-ID_TITLE @test P0-2 tilde path NOT under monitor root still blocks (expansion is not a blanket allow)
-ID_TITLE @test P0-2 tilde path under env monitor root → allow-monitor-root-env (exit 0)
-ID_TITLE @test P0-2 ~user form stays literal → pass (deliberately not expanded)
 ID_TITLE @test P2 single-trap teardown: the lock is released and the private run dir is removed
 ID_TITLE @test P3 headless: ATRIUM_UPDATE_JOB_ID adopts the route-created row (no INSERT, heartbeat only)
 ID_TITLE @test P3 headless: a 2nd concurrent in-progress INSERT (partial unique index violation) loud-fails exit 8
@@ -466,63 +338,10 @@ ID_TITLE @test P3: install-parity post-step is idempotent (loaded→kickstart -k
 ID_TITLE @test P3: the decoupled one-shot launchd plist renders with the update-oneshot label + --headless args
 ID_TITLE @test P7: DONE count=0 with TOTAL>=1 aborts 5 despite matching zero captures
 ID_TITLE @test P7: a zero-byte envelope is a structural violation, not an empty run
-ID_TITLE @test R1 bash classes never carry the frontmatter sentence
-ID_TITLE @test R1 classifier-failure: fail-closed wording, no deployment remedies
-ID_TITLE @test R1 every block class: expected verdict, distinct suggestion, frontmatter-sentence rule
-ID_TITLE @test R1 live-settings suggestion omits update.sh and the frontmatter sentence
-ID_TITLE @test R2 AC1 cp source-position: still blocks, no 'write blocked', read-respelling remedy
-ID_TITLE @test R2 AC2 re-spelling: cat redirect to an unprotected dest passes
-ID_TITLE @test R2 AC2 re-spelling: dd reading the protected path passes
-ID_TITLE @test R2 AC2 re-spelling: the Read tool passes
-ID_TITLE @test R2 AC3 direction pair: source position vs target position
-ID_TITLE @test R2 AC4 ambiguous grammar falls back to bash-mutation, never to a pass
-ID_TITLE @test R2 source-position also recognised for mv / install / rsync
-ID_TITLE @test R2-1 json round-trip: load(protected) + dump(/tmp) → pass · dump(protected) → block
-ID_TITLE @test R2-1 node writeFileSync(/tmp, readFileSync(protected)) → pass · swapped → block
-ID_TITLE @test R2-1 open('/tmp','w').write(open(protected).read()) → pass · swapped → block
-ID_TITLE @test R2-1 perl open: read handle on a protected path → pass · '>' handle → block
-ID_TITLE @test R2-1 ruby File.write('/tmp', File.read(protected)) → pass · swapped → block
-ID_TITLE @test R2-1 shutil.copy: FROM a protected path → pass · INTO one → block
-ID_TITLE @test R2-1 shutil.move OUT of a protected path → block (source is destroyed)
-ID_TITLE @test R2-2 cp into a protected dir: no trailing slash AND trailing slash → block
-ID_TITLE @test R2-2 redirect whose target is a bare protected dir → block
-ID_TITLE @test R2-2-neg cp into a longer sibling dir name → pass (boundary lookahead)
-ID_TITLE @test R2-4 &> redirect into live settings → block (separator-form, pinned)
-ID_TITLE @test R2-4 >& redirect into a live hook file → block
-ID_TITLE @test R2-4 clobber redirect >| into live settings → HAR-002 block
-ID_TITLE @test R2-4-neg fd dup 2>&1 while armed → pass (no false relative target)
-ID_TITLE @test R2-5 cd - back toward a protected dir → block (unknown return re-arms)
-ID_TITLE @test R2-5 popd back toward a protected dir → block
-ID_TITLE @test R2-5-neg cd - / popd with no protected dir in the history → pass
-ID_TITLE @test R2-6 cp -t into a protected dir → block (target precedes the sources)
-ID_TITLE @test R2-6 dd of= a protected path → block · dd if= a protected path → pass
-ID_TITLE @test R2-6 install / rsync / truncate onto a protected path → block
-ID_TITLE @test R2-6 sed --in-place on a protected path → block (long twin of sed -i)
-ID_TITLE @test R2-6-neg the added verbs on unprotected paths → pass (no false blocks)
 ID_TITLE @test R2: Bash-holding wiki-reader spawn → clause body present in additionalContext
 ID_TITLE @test R2: code-DEV agent gets NO clause, ZERO drops, within ceiling (nodrop invariant intact)
 ID_TITLE @test R2: injected clause covers unmarked legacy raw content explicitly
 ID_TITLE @test R2: non-Bash agent (sec-guard) receives no clause
-ID_TITLE @test R3-1 ruby File.delete/unlink (ALL_ARGS) → block, incl. the multi-arg form
-ID_TITLE @test R3-1 ruby FileUtils.chmod (TAIL_ARGS) → block on any tail argument
-ID_TITLE @test R3-1 ruby FileUtils.rm_rf/rm_r/rm/mkdir_p/mkdir (ALL_ARGS) → block
-ID_TITLE @test R3-1-neg the same sentinel rules on unprotected paths → pass (no blanket block)
-ID_TITLE @test R3-2 injected classifier exception on a Write envelope → HAR-003 block
-ID_TITLE @test R3-2 injected classifier exception → HAR-003 block naming the exception
-ID_TITLE @test R3-2-neg Write to a new unprotected file → pass (absence is not a defect)
-ID_TITLE @test R3-2-neg injected classifier exception on a NON-protected envelope → pass
-ID_TITLE @test R3-3 node createWriteStream / openSync with template literals → block
-ID_TITLE @test R3-3 node writeFileSync with a template-literal target → block
-ID_TITLE @test R3-3-neg node template-literal READ of a protected path → pass
-ID_TITLE @test R3-3-neg ruby backtick stays shell text, not a string literal → pass
-ID_TITLE @test R3-4 Path(protected).open write modes → block
-ID_TITLE @test R3-4 json.dump into Path(protected).open('w') → block
-ID_TITLE @test R3-4-neg Path(protected).open() with no mode or a read mode → pass
-ID_TITLE @test R3-5 variable-bound target inside a code string → pass (documented residual)
-ID_TITLE @test R3-6 bare pushd back toward a protected dir → block (stack swap re-arms)
-ID_TITLE @test R3-6 pushd +N / -N rotation back toward a protected dir → block
-ID_TITLE @test R3-6-neg bare cd out of a protected dir → pass (HOME is nameable)
-ID_TITLE @test R3-6-neg bare pushd / rotation with no protected dir in the history → pass
 ID_TITLE @test R3: Bash command reading wiki/raw/ → advisory note, exit 0
 ID_TITLE @test R3: literal wiki/raw/ token in command → advisory note, exit 0
 ID_TITLE @test R3: non-Bash tool → exit 0, silent
@@ -542,23 +361,8 @@ ID_TITLE @test S1: labelled write via dot-dot traversal → permitted, exit 0
 ID_TITLE @test S1: symlink from outside pointing INTO raw/ is triggered → blocked (SCOPE-008)
 ID_TITLE @test S2 inject-scope-rules.sh carries the marker
 ID_TITLE @test S2 the skill still carries that section and its absolute cap rules
-ID_TITLE @test S2.4 adding scope where absent → block
-ID_TITLE @test S2.4 append an inline comment to an inline-form key line → pass (ruled non-change)
-ID_TITLE @test S2.4 duplicate an already-granted inline item → pass (ruled non-change)
-ID_TITLE @test S2.4 inline tools reorder → pass (ruled non-change)
-ID_TITLE @test S2.4 quote a block-list item → pass (ruled non-change)
-ID_TITLE @test S2.4 quote an inline item → pass (ruled non-change)
-ID_TITLE @test S2.4 reorder the guarded key LINES → pass (ruled non-change)
-ID_TITLE @test S2.4 scope absent on BOTH sides compares equal → pass
-ID_TITLE @test S2.4 unbalanced quote is taken literally → block (values differ)
 ID_TITLE @test S3 glass-atrium-qa-code-reviewer.md carries the marker
 ID_TITLE @test S3 the META body names the canonical site (path + section) it points at
-ID_TITLE @test S4 bash -c with a copy verb → block (was a bypass at HEAD)
-ID_TITLE @test S4 sh -c with a nested cd + relative redirect → block (was a bypass at HEAD)
-ID_TITLE @test S4-neg bash with a script-file argument → pass (no code flag)
-ID_TITLE @test S4-neg shell -c with a non-protected cd → pass
-ID_TITLE @test S5 REGRESSION GUARD: awk in-program redirect still blocks after the mask
-ID_TITLE @test S5 REGRESSION GUARD: bash -c with a redirect still blocks after the mask
 ID_TITLE @test T-ALW-1: an atom at exactly the allowance renders inside the BUDGET, not into the reserve
 ID_TITLE @test T-ALW-2: the allowance charges the index width, so a wider index costs allowance
 ID_TITLE @test T-CAP-1: every part of every registry agent is at or under the cap, wrapper included
@@ -594,45 +398,6 @@ ID_TITLE @test T1 link: a link row whose target is NOT staged stages as a link a
 ID_TITLE @test T1 link: a staging copy that FAILS on a link row loud-fails the stage
 ID_TITLE @test T1 link: an apply carrying BOTH the link row and its target row lands both
 ID_TITLE @test T1 link: with the link-preserving copy reverted the same fixture stages a REGULAR file
-ID_TITLE @test T1-1.a redirect: dot segment into the settings file → block
-ID_TITLE @test T1-1.a redirect: dot-dot backtrack into the settings file → block
-ID_TITLE @test T1-1.a redirect: double separator into the settings file → block
-ID_TITLE @test T1-1.b awk redirect target with a double separator → block
-ID_TITLE @test T1-1.b copy verb with a double separator (command-text site) → block
-ID_TITLE @test T1-1.b dd output operand with a double separator → block
-ID_TITLE @test T1-1.b nested shell code flag with a double separator → block
-ID_TITLE @test T1-1.b node code-flag write with a dot segment → block
-ID_TITLE @test T1-1.b permission verb with a double separator (command-text site) → block
-ID_TITLE @test T1-1.b python code-flag write with a double separator → block
-ID_TITLE @test T1-1.c cwd arming through a dot-dot intermediate, then a relative write → block
-ID_TITLE @test T1-1.c cwd arming with a dot segment, then a relative write → block
-ID_TITLE @test T1-1.c cwd arming with a double separator, then a relative write → block
-ID_TITLE @test T1-1.d known false positive: copying a protected file to a backup stays blocked
-ID_TITLE @test T1-1.d legitimate baseline commands → pass (one row per command)
-ID_TITLE @test T1-1.e redirect resolving OUT of the protected tree → pass
-ID_TITLE @test T1-1.f cwd arming that resolves OUT of the protected tree → pass
-ID_TITLE @test T1-1.f cwd arming that resolves to an unprotected parent → pass
-ID_TITLE @test T1-1.h the header's residual paragraph states what the repair does and does not cover
-ID_TITLE @test T1-1.i case-varied cwd arming with a dot segment → block
-ID_TITLE @test T1-1.i case-varied directory form at a command-text site → block
-ID_TITLE @test T1-1.i case-varied file form with a double separator → block
-ID_TITLE @test T1-1.j a copy verb naming the before-image store → pass
-ID_TITLE @test T1-1.j a copy verb naming the development checkout → pass
-ID_TITLE @test T1-1.j a dotted sibling of a protected directory → pass
-ID_TITLE @test T1-1.j a suffixed sibling of a protected directory → pass
-ID_TITLE @test T1-1.j the live rollback before-image store → pass
-ID_TITLE @test T1-1.j this repository's own development checkout → pass
-ID_TITLE @test T1-BC case-varied protected paths, Bash arm → block (one row per class)
-ID_TITLE @test T1-BC13 non-protected .claude/data path, Bash arm → still pass
-ID_TITLE @test T1-BC13w non-protected .claude/data path, Write arm → still pass
-ID_TITLE @test T1-K case-varied protected paths, Write arm → block (one row per class)
-ID_TITLE @test T1-K1 case-varied .MD extension, MultiEdit widening → block
-ID_TITLE @test T1-K10 case-varied live-settings block payload carries the raw target
-ID_TITLE @test T1-K2 case-varied agents DIRECTORY, MultiEdit widening → block
-ID_TITLE @test T1-K3 case-varied protected ROOT, MultiEdit widening → block
-ID_TITLE @test T1-K5 case-varied .MD Edit widening the identity trio → block
-ID_TITLE @test T1-neg case-varied .MD under an EXCLUDED rules dir → still pass
-ID_TITLE @test T1-neg case-varied .MD under the excluded rules dir → still pass
 ID_TITLE @test T10 AC1: a failed DB write spools the envelope and the hook still exits 0
 ID_TITLE @test T10 AC2: a successful write drains a non-empty spool (each entry removed on confirmed write)
 ID_TITLE @test T10 AC3: entries older than the max age are pruned
@@ -678,30 +443,16 @@ ID_TITLE @test T3 R2-positive: no [COMPLETION] + terminal consumed StructuredOut
 ID_TITLE @test T3 a non-take-release verdict leaves the tripwire silent
 ID_TITLE @test T3 done with an empty cid leaves the consumer inert (zero HTTP calls)
 ID_TITLE @test T3 the same file resolved twice on one day lands ONE row that tracks the LAST outcome
-ID_TITLE @test T3-E1 DEFENSIVE (host-rejected) Edit carrying edits[] → fail-closed, not folded
-ID_TITLE @test T3-E2 LIVE Edit old_string:'' with evil frontmatter on an EXISTING agent file → block
-ID_TITLE @test T3-E3 LIVE Edit old_string:'' creating a NEW agent file → block
-ID_TITLE @test T3-E3b LIVE Edit old_string:'' creating a NEW agent file (subagent) → block
-ID_TITLE @test T3-E5 DEFENSIVE (host-rejected) Edit with old_string ABSENT → fail-closed block
-ID_TITLE @test T3-E6 DEFENSIVE (host-rejected) Edit with old_string null → fail-closed block
-ID_TITLE @test T3-ctl Edit old_string:'' on a NON-agent path → still pass (no global false positive)
-ID_TITLE @test T3-ctl Edit old_string:'' under the EXCLUDED rules dir → still pass
-ID_TITLE @test T3-ctl legitimate body Edit on an agent file → still pass
 ID_TITLE @test T3: a missing prisma CLI exits 15 naming the path, the dependency fix and db-setup
 ID_TITLE @test T4 AC2 drift (malformed JSON) → DEL-003 error + exit 0
 ID_TITLE @test T4 AC2 drift (tool_input non-object) → DEL-003 error + exit 0
 ID_TITLE @test T4 AC2 drift (tool_input renamed) → DEL-003 error + exit 0 (loud, not silent disarm)
-ID_TITLE @test T4 AC3 well-formed blocked path → exit 2 with DEL-001 (drift path did not cannibalize the block)
 ID_TITLE @test T4 a non-zero CLI exit warns once and continues the update
 ID_TITLE @test T4 degenerate empty object '{}' (python3 present) → silent allow (nothing to guard, no drift)
 ID_TITLE @test T4 distinctness: legitimately-empty field → silent allow (exit 0, NO DEL-003)
 ID_TITLE @test T4 monitor DOWN keeps the hook exit code at zero and prints the recovery token
 ID_TITLE @test T4 order flip: counter at budget (40) + consumed StructuredOutput ⇒ structuredoutput-derived wins
 ID_TITLE @test T4 the tripwire is advisory — rc 0 and no write outside its own ledger
-ID_TITLE @test T4-M10 edits element missing old_string → frontmatter-unparseable
-ID_TITLE @test T4-M14 edits element with BOTH keys missing → frontmatter-unparseable
-ID_TITLE @test T4-M14neg control: present-but-empty old_string on an EXISTING file → pass
-ID_TITLE @test T4-M9 edits element missing new_string → frontmatter-unparseable
 ID_TITLE @test T4: the step runs 'migrate deploy' with the monitor root as cwd
 ID_TITLE @test T5 a cid with nothing open makes one call and prints no closed line
 ID_TITLE @test T5 an absent dual-write helper warns and continues
@@ -751,24 +502,17 @@ ID_TITLE @test consistency(a-count #27): honest dev-first-parallel dual-role, 2 
 ID_TITLE @test consistency(a-count #27): same-type dual-role SINGLE spawn, impl-first → BLOCK_DECLSPAWN
 ID_TITLE @test consistency(b' config-array): undeclared config-array dev literal → BLOCK_UNDECL (R3 hole closed)
 ID_TITLE @test cwd is the owned agents dir and never /tmp (pin E1)
-ID_TITLE @test docroute F1: leak + dev-* spawn + ENTRY_ADVISORY → BLOCK with entry-format addendum
-ID_TITLE @test docroute F1: pure leak, NO dev-* spawn → BLOCK, NO entry addendum (no spurious nudge)
-ID_TITLE @test dormant backup dir config path + bg=true → BLOCKED (AC4)
 ID_TITLE @test drop record format: ISO8601 UTC timestamp, script basename, site slug, exit status
 ID_TITLE @test entry(#28): 'workplan-2026' does NOT satisfy plan-ref → BLOCK_ENTRY
 ID_TITLE @test entry(#28): real 'plan-6569' slug satisfies plan-ref → PASS
 ID_TITLE @test exempt(F7 accepted-FN): computed agentType + ZERO dev literals anywhere → PASS (Tier-A blind spot)
 ID_TITLE @test feature: existing NON-test files only → unverified (W1 — existence of unrelated files promotes nothing)
 ID_TITLE @test generate: modes map records a symlink's TARGET mode, not its lstat bits (FB-2)
-ID_TITLE @test git checkout hooks path + bg=true → NOT blocked (AC11)
 ID_TITLE @test header: cross-references UD-1
 ID_TITLE @test leak parity: all 8 LLM07 patterns each trigger SEC-072 advisory + exit 0
 ID_TITLE @test norev(#26): upstream form + reviewer PROSE-MENTION only (no real spawn) → BLOCK_NOREV
 ID_TITLE @test permit path: Write over an existing raw file → exit 0, silent (no SCOPE-009, no SCOPE-008)
-ID_TITLE @test plan-ref word-boundary (#28): 'workplan-2026' does NOT satisfy references_plan → entry-miss BLOCK
-ID_TITLE @test plan-ref word-boundary (#28): real 'plan-6569' slug satisfies references_plan → reviewer-miss BLOCK, exit 2
 ID_TITLE @test plumbing: ADR-2 addendum allowlist includes block-grammar, excludes block-entry/block-sizeest
-ID_TITLE @test python3 absent + orchestrator harness write → BLOCKED (H-3 fail-closed)
 ID_TITLE @test regex(#29 i): /\\/\\//g before the reviewer spawn on the same line → PASS (was block-norev)
 ID_TITLE @test regex(#29 ii): backtick char-class regex + multi-line template before the declaration → PASS (was block-nodecl)
 ID_TITLE @test regex(#29 iii): char-class regex /[/]/ on a spawn-bearing line → PASS
@@ -793,13 +537,7 @@ ID_TITLE @test the header records that nested spawns remain ungated [FAIL-AT-HEA
 ID_TITLE @test update-in-place with '&' in docs path renders the exact path (S-1)
 ID_TITLE @test update-in-place with backslash in docs path renders the exact path (S-1)
 ID_TITLE @test ~/.claude-personal/ path → silent short-circuit (AC5)
-ID_TITLE @test ~/.claude-personal/logs/ reference + bg=true → NOT blocked (AC3)
 ID_TITLE @test ~/.claude-work-dev/ path → silent short-circuit (AC5)
-ID_TITLE @test ~/.claude-work-dev/data/ reference + bg=true → NOT blocked (AC3)
-ID_TITLE @test ~/.claude-work-dev/hooks/x.sh + bg=true → BLOCKED (AC1)
-ID_TITLE @test ~/.claude-work-dev/projects/<proj>/memory/ write + bg=true → STILL blocked (AC3 memory guard)
-ID_TITLE @test ~/.claude-work-dev/settings.json + bg=true → BLOCKED (AC1)
-ID_TITLE @test ~/.claude-work-dev/shell-snapshots/ reference + bg=true → NOT blocked (AC3)
 ID_TITLE test #20 replyUpdateCasConflict: concurrent delete (row gone) → 404 not_found + body restored
 ID_TITLE test #20 replyUpdateCasConflict: concurrent hash race → 409 + loser's body restored on disk (no DB/FS divergence)
 ID_TITLE test #20 replyUpdateCasConflict: re-SELECT DB failure → 503 database_unavailable (restore still ran first)
@@ -1056,7 +794,6 @@ ID_TITLE test success-rate: days=7 윈도우 day-set 경계 — 오늘 포함 �
 ID_TITLE test the P95 warn cut follows the fleet's upper quartile, so warn stays rare while the 10-minute floor holds
 ID_TITLE test the removal ledger, its exclusions and the survivors hold in one tracked-tree scan (AC-B2-5d · AC-B2-6d · AC-B2-6b · ADR-20 · AC-12 · 39739-R1 · 39731-S1 · 39731-S4)
 INCIDENT_HEADER #      loses BOTH keys); the S-1 cases pin metachar-safe in-place rewrites.
-INCIDENT_HEADER #     1) reviewer-miss BLOCK (channel-a: emit_error stderr JSON + exit 2, VGATE-REVIEWER-001) —
 INCIDENT_HEADER #     AC1  a registered agent absent from the Scope Legend is NAMED and exits 2.
 INCIDENT_HEADER #     update_die — the D6 R1 anti-masking property the skip must not become a
 INCIDENT_HEADER #   (CID 2026-07-02T1055_pricing-sot_e7b2, plan task P5; supersedes the T13a
@@ -1075,7 +812,6 @@ INCIDENT_HEADER #   T1-T2b the three documented no-ops (the GA_SKIP_DB_SETUP opt
 INCIDENT_HEADER #   closed block, clean tag line       ->  T1=hit  T2=hit  INLINE=miss  GUARD=n/a     tier=1
 INCIDENT_HEADER #   verified_fail — the SINGLE narrow LLM09 zero-evidence path ONLY
 INCIDENT_HEADER #  #25 — validity-aware LAST-preference over ALL tier-1 matches. A subagent that quotes the
-INCIDENT_HEADER # (OWASP LLM05/LLM07) after its single-pass refactor:
 INCIDENT_HEADER # (doc#4 T9). track-outcome.sh formerly open()+json.loads'd the SUBAGENT's OWN transcript up to
 INCIDENT_HEADER # (incident #58325 systemic fix): the install / update / manifest-regeneration
 INCIDENT_HEADER # ADVISORY ONLY: every row asserts `status -eq 0` alongside the presence/absence of LOCK-ADV-001, so
@@ -1083,7 +819,6 @@ INCIDENT_HEADER # C1/C4 (charter) and M1/M3/M4 (META body) pin the prescriptive-
 INCIDENT_HEADER # CLASS (2026-07-02 incident): launchd invokes the daemon scripts THROUGH the
 INCIDENT_HEADER # Contract pinned (R3 "print-block-then-emit"): a schema-mode agent terminates its run on a
 INCIDENT_HEADER # FROZEN HEAD OBSERVATION (produced by RUNNING the hook at f5c4883 against the R1 fixture below, not
-INCIDENT_HEADER # Focus (Thread C / T10-T11): the runtime-DATA false-positive fix. The hook is a
 INCIDENT_HEADER # LC_ALL=ko_KR.UTF-8 succeeds interactively). So instead of reproducing the
 INCIDENT_HEADER # Pins the CURRENT safe collision behavior of the H-3 atomic per-file symlink
 INCIDENT_HEADER # Pins the T3 contract: the value-only hook_get_tool_input returns empty for BOTH a legitimately
@@ -1091,7 +826,6 @@ INCIDENT_HEADER # Raw-ingestion gate: V7 Edit immutability, V8 destination state
 INCIDENT_HEADER # SCOPE-070 advisory. Coverage now derives from the single-sited root grammar in
 INCIDENT_HEADER # SCOPE-080), on the staged+unstaged split (300+150=450 → advisory), and on binary dashes (0).
 INCIDENT_HEADER # WHY: F1 emission discipline is a documentation contract split across three files. The stable
-INCIDENT_HEADER # Wiring-only-coverage reconciliation + cheap smoke cases (plan clauded-docs/284 T5).
 INCIDENT_HEADER # advisory-context-budget.sh — threshold-vs-cited-onset reconciliation coverage (T17).
 INCIDENT_HEADER # advisory-egress-secret.sh — egress-correlation advisory coverage (plan H3 · LLM02).
 INCIDENT_HEADER # advisory-subagent-budget-split-limit.bats — T1c fail-at-HEAD coverage for T5
@@ -1100,7 +834,6 @@ INCIDENT_HEADER # apply-lock.sh suite (P1-T7) — pins the shared stale-reclaim 
 INCIDENT_HEADER # apply-spine.sh suite — pins the E3 safe-apply spine library contract:
 INCIDENT_HEADER # autoagents-eval.sh headless arg-combo proxy suite (F1 plan pins E1/E2, AC10/AC12).
 INCIDENT_HEADER # block-dangerous-commands.sh — envelope-driven smoke (plan clauded-docs/284 T5).
-INCIDENT_HEADER # block-no-verify.sh — envelope-driven smoke (plan clauded-docs/284 T5).
 INCIDENT_HEADER # cluster (hooks/test/lib/ephemeral-pg.bash) with the N36 names unset; HOME, GA_DATA_ROOT, TMPDIR
 INCIDENT_HEADER # code-based-grader-crosscheck.bats — acceptance spec for the T2 Step 4-5 transcript
 INCIDENT_HEADER # code-based-grader-files-evidence.bats — T1c fail-at-HEAD coverage for T2
@@ -1116,18 +849,7 @@ INCIDENT_HEADER # data-root-seam-gaps.bats — pins FIX #3: routes 4 legacy-hard
 INCIDENT_HEADER # data-root-seam.bats — pins the T1 shell data/log-root seam: the HOME-anchored
 INCIDENT_HEADER # detect-secret-file-write.sh — envelope-driven smoke (plan clauded-docs/284 T5).
 INCIDENT_HEADER # enforce-commit-guard-live-child-advisory.bats — pins the C1-H/C2-H commit-time live-child note.
-INCIDENT_HEADER # enforce-config-protection.sh — envelope-driven smoke (plan clauded-docs/284 T5).
-INCIDENT_HEADER # enforce-harness-critical.sh — A-set: envelope path normalisation (clauded-docs/743 P0-A).
-INCIDENT_HEADER # enforce-harness-critical.sh — B-set: frontmatter structure (clauded-docs/743 P0-B).
-INCIDENT_HEADER # enforce-harness-critical.sh — Bash-arm protected-path normalisation (clauded-docs/774 T1-1).
-INCIDENT_HEADER # enforce-harness-critical.sh — M-set: the MultiEdit envelope (clauded-docs/748 T7).
-INCIDENT_HEADER # enforce-harness-critical.sh — block PAYLOAD suite (clauded-docs/2112 R1 + R2).
-INCIDENT_HEADER # enforce-harness-critical.sh — envelope-driven suite (plan clauded-docs/285 T2).
-INCIDENT_HEADER # enforce-harness-critical.sh — profile-branch coverage set (clauded-docs/2119 W2).
 INCIDENT_HEADER # enforce-verification-gate-plan-subset.bats — pins the C3-H [PLAN-SUBSET] presence NUDGE.
-INCIDENT_HEADER # enforce-verification-gate-reviewer-block.bats — T1c fail-at-HEAD coverage for T6
-INCIDENT_HEADER # fixture below asserts the block still wins with the nudge absent. The --lint case pins AC6 —
-INCIDENT_HEADER # force-push (GIT-001) and push-to-main (GIT-006) regexes contain '|' alternation.
 INCIDENT_HEADER # git-txn-restore-outcome.bats — T1c fail-at-HEAD coverage for T11 (Propagate
 INCIDENT_HEADER # glass-atrium-dispatch suite — pins the T08 `glass-atrium update` subcommand
 INCIDENT_HEADER # glass-atrium-update E2E suite (T23) — drives the FULL update flow ONCE in a
