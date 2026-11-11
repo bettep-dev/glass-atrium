@@ -40,7 +40,7 @@ What a PreToolUse hook receives on an `Agent` tool call. Agent calls only: no ot
 - **Non-substitutability**: never swap one channel for the other without re-verifying the registering event's contract.
   - Why: each block shows the model one reason text, and the event plus the JSON content decide which surface supplies it (**What the model sees at `exit 2`**, below).
 - **Channel a — stderr `emit_error` JSON + `exit 2`**: the hook writes a structured JSON error to stderr (`hook-utils.sh` → `hook_emit_error`), then exits 2.
-  - Used by `validate-secret-scan.sh`, `block-dangerous-commands.sh`, `enforce-commit-guard.sh`, `enforce-delegation.sh`, and the no-progress brake of `advisory-subagent-budget.sh` (`NOPROGRESS-001`).
+  - Used by `validate-secret-scan.sh`, `block-dangerous-commands.sh`, `enforce-commit-guard.sh`, `enforce-delegation.sh`, `validate-pre-write-raw.sh`, `lint-workflow-template-literal.sh` (plain-text reason), and the no-progress brake of `advisory-subagent-budget.sh` (`NOPROGRESS-001`).
   - A plain-text stderr reason + `exit 2` with silent stdout is the same channel.
 - **Channel b — stdout `{"decision":"block"}` + exit**: the hook prints a JSON object carrying `"decision":"block"` to stdout, then exits, on PostToolUse — no registered hook uses it.
 - **`"advisory"` is not a channel-b form**: the PostToolUse decision schema rejects it (`"Hook JSON output validation failed"`), so a non-blocking advisory emits a stderr `emit_error` + `exit 0` instead — `validate-output.sh`'s LLM07 path is the worked case.
@@ -71,7 +71,7 @@ A one-word vocabulary for a failed check's disposition — a description only, n
 
 Worked cases, keyed by disposition:
 
-- **exception**: the fail-closed hooks — `validate-secret-scan.sh` · `block-dangerous-commands.sh` · `enforce-commit-guard.sh` · `enforce-delegation.sh`'s sensitive-file block.
+- **exception**: the blocking hooks — `validate-secret-scan.sh` · `block-dangerous-commands.sh` · `enforce-commit-guard.sh` · `enforce-delegation.sh`'s sensitive-file block · `validate-pre-write-raw.sh` · `lint-workflow-template-literal.sh`.
   - Also an exception: the no-progress brake of `advisory-subagent-budget.sh` (`NOPROGRESS-001`, armed by default) — the one block in an otherwise advisory hook.
 - **fix**: the post-write repair hooks — `post-edit-format.sh` · `post-edit-typecheck.sh`.
 - **filter**: the resilient-workflow join `.filter(Boolean)` dropping a null agent result · `track-outcome.sh` synthesizing a fallback `done_with_concerns` record on a degraded `[COMPLETION]` parse.
