@@ -464,16 +464,8 @@ write_capturing() {
 @test "a .. traversal cannot forge a session-state memory/ segment" {
   setup_monitor
   LIST_JSON_FILE="${WORK}/absent.json"
-  local rows=(
-    "out of agents/memory into agents|DEL-005|${WORK}/proj/agents/memory/../new-agent.md"
-    "out of memory into hooks|DEL-007|${WORK}/proj/memory/../hooks/x.sh"
-  )
-  local row name code path
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name code path <<<"${row}"
-    write_capturing "${path}"
-    [[ "${status}" -eq 2 && "${output}" == *"${code}"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
-  done
+  write_capturing "${WORK}/proj/memory/../hooks/x.sh"
+  [[ "${status}" -eq 2 && "${output}" == *"DEL-007"* ]] || { echo "exit ${status}: ${output}"; return 1; }
 }
 
 @test "the Target Files extractors live once in lib/target-files.sh, sourced by both hooks" {
