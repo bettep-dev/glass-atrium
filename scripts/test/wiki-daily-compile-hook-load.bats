@@ -594,6 +594,26 @@ load_ancestor_walk() {
   grep -q '"compiled_count":1' "${PG_RECORD}"
 }
 
+@test "a skip-sentinel pair writes no note, lists its raw in the skip record, and counts as handled" {
+  make_sandbox
+  seed_raw alpha.md
+  write_template \
+    '-----GA-WIKI-NOTE-BEGIN nonce=@NONCE@ idx=1-----' \
+    '-----GA-WIKI-NOTE-SKIP nonce=@NONCE@-----' \
+    '-----GA-WIKI-NOTE-END nonce=@NONCE@ idx=1-----' \
+    '-----GA-WIKI-ENVELOPE-DONE nonce=@NONCE@ count=1-----'
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [ "$status" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
+
+  [ "$(notes_file_count)" -eq 0 ]
+  [ "$(cut -f1 "${WIKI_ROOT}/index/compile-skips.tsv")" = "$(idx_basename 1)" ]
+  grep -q '"status":"ok"' "${PG_RECORD}"
+}
+
 # ---------------------------------------------------------------------------
 # AC3 / AC5 — hostile and oversize envelopes abort having written nothing
 # ---------------------------------------------------------------------------

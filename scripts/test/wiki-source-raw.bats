@@ -260,3 +260,134 @@ collisions() { _collect_collision_source_urls "${RAW_DIR}"; }
     }
   done
 }
+
+# ---------------------------------------------------------------------------
+# skip record — a batch-declined raw leaves the backlog until its line goes
+# ---------------------------------------------------------------------------
+
+@test "_classify_raw: the skip record moves exactly its listed, note-less raws out of the backlog" {
+  write_raw_bytes "${RAW_DIR}/2026-02-01-declined.md" '---\nsource_url: http://declined\n---\n'
+  write_raw_bytes "${RAW_DIR}/2026-02-01-compiled.md" '---\nsource_url: http://compiled\n---\n'
+  write_raw_bytes "${NOTES_DIR}/compiled-renamed.md" '---\nsource_raw: 2026-02-01-compiled.md\n---\n'
+  write_raw_bytes "${RAW_DIR}/2026-02-01-fresh.md" '---\nsource_url: http://fresh\n---\n'
+  local record="${WORK}/index/compile-skips.tsv"
+  _record_skip "${record}" "2026-02-01-declined.md"
+  _record_skip "${record}" "2026-02-01-compiled.md"
+  # name|raw basename|expected
+  local rows=(
+    "listed, no note|2026-02-01-declined.md|skipped"
+    "listed, note present|2026-02-01-compiled.md|processed"
+    "unlisted, no note|2026-02-01-fresh.md|unprocessed"
+  )
+  local row name base want got
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name base want <<<"${row}"
+    got="$(_classify_raw "${RAW_DIR}/${base}" "$(note_urls)" "$(collisions)" "$(note_raws)" \
+      "$(_collect_skipped_raws "${record}")")"
+    [[ "${got}" == "${want}" ]] || {
+      echo "${name}: got '${got}', want '${want}'"
+      return 1
+    }
+  done
+}
+
+@test "_record_skip: recording one raw twice leaves one line in the record" {
+  local record="${WORK}/index/compile-skips.tsv"
+  _record_skip "${record}" "2026-02-02-twice.md"
+  _record_skip "${record}" "2026-02-02-twice.md"
+  run _collect_skipped_raws "${record}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == "2026-02-02-twice.md" ]]
+}
+
+@test "_collect_skipped_raws: an absent record reads as an empty set" {
+  run _collect_skipped_raws "${WORK}/index/compile-skips.tsv"
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ -z "${output}" ]]
+}
+
+@test "_is_skip_body: only a body that is exactly this run's skip sentinel is a skip" {
+  local nonce="0123456789abcdef0123456789abcdef"
+  local sentinel="-----GA-WIKI-NOTE-SKIP nonce=${nonce}-----"
+  # name|body bytes (printf %b)|expected status
+  local rows=(
+    "the sentinel alone|${sentinel}\n|0"
+    "the sentinel with a CR line end|${sentinel}\r\n|0"
+    "another run's nonce|-----GA-WIKI-NOTE-SKIP nonce=fedcba9876543210fedcba9876543210-----\n|1"
+    "the sentinel followed by note text|${sentinel}\n# note\n|1"
+    "a note body|---\ntitle: t\n---\n|1"
+    "an empty body||1"
+  )
+  local row name bytes want got
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name bytes want <<<"${row}"
+    write_raw_bytes "${WORK}/body" "${bytes}"
+    got=0
+    _is_skip_body "${WORK}/body" "${nonce}" || got=$?
+    [[ "${got}" == "${want}" ]] || {
+      echo "${name}: status ${got}, want ${want}"
+      return 1
+    }
+  done
+}
+
+# ---------------------------------------------------------------------------
+# curator body ↔ _classify_raw — the spawned curator's only copy of the tests
+# ---------------------------------------------------------------------------
+
+@test "the curator body's Unprocessed tests are exactly the processed paths _classify_raw takes" {
+  local body="${GA}/agents/glass-atrium-wiki-curator.md"
+  write_raw_bytes "${RAW_DIR}/2026-03-01-raw.md" '---\nsource_url: http://raw\n---\n'
+  # body sub-bullet|note file|note bytes — each note alone satisfies only its own test
+  local rows=(
+    "  - Some note's \`source_raw\` equals the raw's basename.|renamed.md|---\nsource_raw: 2026-03-01-raw.md\n---\n"
+    "  - \`notes/<raw basename>\` exists.|2026-03-01-raw.md|---\ntitle: t\n---\n"
+    "  - Some note's \`source_url\` equals the raw's \`source_url\`, and no other raw carries that URL.|renamed.md|---\nsource_url: http://raw\n---\n"
+  )
+  local want="" i=0 row bullet note bytes got
+  for row in "${rows[@]}"; do
+    IFS='|' read -r bullet note bytes <<<"${row}"
+    want="${want}${bullet}"$'\n'
+    i=$((i + 1))
+    NOTES_DIR="${WORK}/notes-${i}"
+    mkdir -p "${NOTES_DIR}"
+    write_raw_bytes "${NOTES_DIR}/${note}" "${bytes}"
+    got="$(_classify_raw "${RAW_DIR}/2026-03-01-raw.md" "$(note_urls)" "$(collisions)" "$(note_raws)" "")"
+    [[ "${got}" == "processed" ]] || {
+      echo "${bullet}: the function says '${got}' for a raw this test alone covers"
+      return 1
+    }
+  done
+  # the body's sub-bullets under **Unprocessed**, in order
+  got="$(awk '/^- \*\*Unprocessed\*\*:/ { on=1; next } on && /^  - / { print; next } on { exit }' "${body}")"$'\n'
+  [[ "${got}" == "${want}" ]] || {
+    printf 'body:\n%s\nwant:\n%s' "${got}" "${want}"
+    return 1
+  }
+  # one success return per test → a test the predicate gains has no body bullet
+  got="$(awk '/^_is_processed_raw\(\) \{/ { on=1 } on && /return 0/ { n++ } on && /^\}/ { print n + 0; exit }' "${REAL_SCRIPT}")"
+  [[ "${got}" -eq "${#rows[@]}" ]] || {
+    echo "_is_processed_raw has ${got} processed paths, the body ${#rows[@]}"
+    return 1
+  }
+}
+
+@test "the curator body cites the skip record at the path the script writes it" {
+  local body="${GA}/agents/glass-atrium-wiki-curator.md" rel
+  # shellcheck disable=SC2016  # $WIKI_ROOT is the literal text of the script line, not an expansion
+  rel="$(sed -n 's|^SKIP_RECORD="\$WIKI_ROOT/\(.*\)"$|\1|p' "${REAL_SCRIPT}")"
+  [[ -n "${rel}" ]] || {
+    echo "no SKIP_RECORD assignment in ${REAL_SCRIPT}"
+    return 1
+  }
+  grep -qF -- "\`${rel}\`" "${body}" || {
+    echo "body does not cite \`${rel}\`"
+    return 1
+  }
+}

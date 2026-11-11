@@ -122,17 +122,17 @@ This body reaches two readers, told apart by their tool grant.
   - Link first occurrence only
 
 ### Incremental Compilation
-- **Unprocessed**: one definition, owned by `scripts/wiki-daily-compile.sh` → `_classify_raw` — a raw is processed when any test below holds, and unprocessed otherwise.
+- **Unprocessed**: one definition, owned by `scripts/wiki-daily-compile.sh` → `_classify_raw` — a raw is processed when any test below holds, skipped when only `index/compile-skips.tsv` lists it, and unprocessed otherwise.
   - Some note's `source_raw` equals the raw's basename.
   - `notes/<raw basename>` exists.
   - Some note's `source_url` equals the raw's `source_url`, and no other raw carries that URL.
-  - These tests mirror the function: where the two differ, the function is right, and the difference is reported in `concerns`.
 - 1 raw file = 1 transaction (no partial artifacts)
 - **1:1 mapping**: one raw → one wiki note, or one reported skip
 
 ### Exclusion Criteria
 - Excluded: project code snippets · one-off debugging logs · plain copies of official docs or API reference that a link replaces
 - Rule: "Remove project name — reusable knowledge remains?" No → exclude: write no note, and report the raw as skipped with the reason (`## Run Paths` → Report).
+  - A batch skip lands in `index/compile-skips.tsv`, written by the script; deleting a raw's line returns it to the backlog.
 
 ### 6 Health Checks
 - Missing backlinks

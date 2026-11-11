@@ -79,10 +79,12 @@ Each duty already lives at the site named.
 
 - `## Run Paths` is the single site for what differs between the spawned curator and the batch reader; a change to the batch `PROMPT` or to what `scripts/wiki-daily-compile.sh` does around the call is checked against that table.
 - `### Incremental Compilation` → **Unprocessed** mirrors `scripts/wiki-daily-compile.sh` → `_classify_raw` — a canonical + mirror pair, because the spawned curator cannot call the function.
-  - A change to the function's tests changes the body's three tests in the same commit.
+  - Bound by `scripts/test/wiki-source-raw.bats`: the body's tests, in order, against `_is_processed_raw`'s paths, and the cited skip-record path against `SKIP_RECORD`.
+- The skip record `index/compile-skips.tsv` is one fact read by `_classify_raw` and `scripts/wiki_daemon_cycle.py` → `detect_unprocessed_raw`; `scripts/test/test_wiki_source_raw.py` binds the two paths.
 - The **Frontmatter** `category` sub-bullet mirrors `scripts/wiki_deadlinks.py` → `_parse_topic_map_categories` — a canonical + mirror pair, because the curator sets `category` while authoring a note, before the checker can read it.
+  - Bound by `scripts/test/test_wiki_deadlinks.py`: the body's heading level against the levels the function reads.
 - The **Frontmatter** `source_raw` key is written on the interactive path only: `_inject_source_raw` leaves an existing key untouched, so a value the batch model wrote would outrank the script's stamp.
-- No test pins a literal from the curator body or from `skills/glass-atrium-wiki-compiler/SKILL.md`.
+- No other literal of the curator body, and none of `skills/glass-atrium-wiki-compiler/SKILL.md`, is pinned by a test.
 
 ## Curator body — machine readers and placement
 
