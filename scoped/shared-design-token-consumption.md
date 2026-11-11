@@ -43,7 +43,8 @@ Writing a hex / rgb / oklch / px / dp literal without first checking whether a t
   - Fallback: swap the element's Spatial family for the matching Effects family (overshoot removed), or go opacity-only.
   - A hard cut — an instant jump, or the animation stripped entirely — is FORBIDDEN: keep a non-spatial cue.
   - Concrete tokens come from the project's `motion-philosophy.md` reduced-motion contract.
-- **Mixing**: mixing the Spatial and Effects families on one element within a flow is FORBIDDEN.
+- **Mixing**: mixing the Spatial and Effects families on one property of an element within a flow is FORBIDDEN.
+  - One element may carry both families on different properties: an element that moves and fades takes a Spatial family on its position and an Effects family on its opacity.
 
 ## DTCG 2025.10 Awareness
 
