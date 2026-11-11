@@ -29,7 +29,7 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
-  # Refused loopback port → the PASS arm's monitor reads fail open; no fixture reaches the live monitor.
+  # Refused loopback port → the trailing advisories' monitor reads fail open; no fixture reaches the live monitor.
   export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   : >"${TRACE_LOG}"
 }
@@ -440,15 +440,18 @@ EOF
 # any divergence is zero-tolerance.
 # ===================================================================================================
 @test "AC13: --lint exit status equals the live gate decision for every corpus script" {
-  local f lint_status live_status
+  local f lint_status live_status live_verdict expected_lint
   for f in "${CORPUS_DIR}"/*.js "${VERDICT_DIR}"/*.js; do
     run_lint_file "${f}"
     lint_status="${status}"
     : >"${TRACE_LOG}"
     run_hook_file_exec "${f}"
     live_status="${status}"
-    [[ "${lint_status}" -eq "${live_status}" ]] || {
-      echo "AC13 divergence on $(basename "${f}"): lint=${lint_status} live=${live_status}" >&2
+    live_verdict="$(last_field verdict)"
+    expected_lint=0
+    [[ "${live_verdict}" == block* ]] && expected_lint=1
+    [[ "${live_status}" -eq 0 && "${lint_status}" -eq "${expected_lint}" ]] || {
+      echo "AC13 divergence on $(basename "${f}"): lint=${lint_status} live=${live_status} verdict=${live_verdict}" >&2
       return 1
     }
   done

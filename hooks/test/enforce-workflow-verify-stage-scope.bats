@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # enforce-workflow-verify-stage-scope.bats — pins the [SCOPE] presence ADVISORY (fourth advisory pass).
 #
-# ADVISORY ONLY (stderr + exit 0), emitted on the PASS arm so it can mask no verdict: the warning
-# fixture below asserts the warning still wins with the nudge absent. The --lint case pins AC6 —
+# ADVISORY ONLY (stderr + exit 0), emitted after any cause warning so it can mask none: the warning
+# fixture below asserts the warning and the nudge both print. The --lint case pins AC6 —
 # the offline preview stays side-effect-free (zero trace lines) while still printing the nudge.
 #
 # BATS GATING NOTE (measured, bats 1.13.0 both legs): a mid-body `[[ ]]` gates on Linux bash 5 but
@@ -16,7 +16,7 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
-  # Refused loopback port → the PASS arm's monitor reads fail open; no fixture reaches the live monitor.
+  # Refused loopback port → the trailing advisories' monitor reads fail open; no fixture reaches the live monitor.
   export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   DECL_TEAM="/* [AGENT-COMPOSITION]
 verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
@@ -78,11 +78,11 @@ ${padding}"
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged a non-DEV workflow -- ${output}" >&2; return 1; }
 }
 
-@test "a warned DEV workflow keeps its warning, with the advisory absent" {
+@test "a warned DEV workflow keeps its warning and still draws the advisory" {
   run_hook "${DEV_BODY}"
   [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || { echo "warning lost, status ${status}" >&2; return 1; }
   [[ "${output}" == *"missing composition declaration"* ]] || { echo "wrong verdict -- ${output}" >&2; return 1; }
-  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "advisory reached a warning path -- ${output}" >&2; return 1; }
+  [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || { echo "the warning swallowed the advisory -- ${output}" >&2; return 1; }
 }
 
 @test "--lint prints the advisory and still writes zero trace lines" {

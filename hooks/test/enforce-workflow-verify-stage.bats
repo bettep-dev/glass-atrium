@@ -33,7 +33,7 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
-  # Refused loopback port → the PASS arm's monitor reads fail open; no fixture reaches the live monitor.
+  # Refused loopback port → the trailing advisories' monitor reads fail open; no fixture reaches the live monitor.
   export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
 }
 
@@ -1577,14 +1577,14 @@ run_corpus_row() {
 # =====================================================================================================
 # SECTION P0 — OFFLINE --lint mode (the verified prevention). --lint reuses the IDENTICAL verdict helper
 #   + dispatch, so the previewed verdict == the gate verdict BY CONSTRUCTION. These pin: (1) verdict/exit
-#   PARITY across the 5 block shapes + a passing form between --lint and the real envelope path; (2) the
+#   PARITY across the 5 warning shapes + a passing form (lint exit 1 exactly where the hook warns); (2) the
 #   side-effect-free contract (zero trace lines written); (3) --lint --template exits 0, contains both
 #   declaration forms, and writes zero trace; (4) file-arg and stdin lint modes agree.
 # =====================================================================================================
 
-# (1) + (2): each shape yields the SAME exit code in --lint as in the envelope path, AND --lint writes
-# zero trace lines (the LINT_MODE emit_trace guard). Same-code-path parity is the load-bearing property.
-@test "lint(parity+side-effect-free): 5 block shapes + 1 pass form → identical exit vs hook mode, zero trace" {
+# (1) + (2): --lint exits 1 exactly where the envelope path prints a cause WARNING (which still exits 0),
+# AND --lint writes zero trace lines (the LINT_MODE emit_trace guard).
+@test "lint(parity+side-effect-free): 5 warning shapes + 1 pass form → lint exit 1 iff the hook warns, zero trace" {
   local pass_form="${DECL_TEAM}
 log('plan-ref: ${PLAN_REF}')
 log('${SIZE_EST}')
@@ -1620,15 +1620,17 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-d
 agent('glass-atrium-dev-nestjs',{goal:'implement'})
 agent('glass-atrium-dev-python',{goal:'undeclared'})"
   local shapes=("${pass_form}" "${nodecl}" "${grammar}" "${norev}" "${noverifydev}" "${undecl}")
-  local s hook_status lint_status
+  local s expected_lint lint_status
   for s in "${shapes[@]}"; do
     run_hook "${s}"
-    hook_status="${status}"
+    [[ "${status}" -eq 0 ]] || { echo "hook exit ${status} for: ${s}" >&2; return 1; }
+    expected_lint=0
+    [[ "${output}" == *"] WARNING ("* ]] && expected_lint=1
     : >"${TRACE_LOG}"
     run_lint "${s}"
     lint_status="${status}"
-    [[ "${lint_status}" -eq "${hook_status}" ]] || {
-      echo "LINT PARITY MISMATCH: hook=${hook_status} lint=${lint_status} for: ${s}" >&2
+    [[ "${lint_status}" -eq "${expected_lint}" ]] || {
+      echo "LINT PARITY MISMATCH: expected lint=${expected_lint} got ${lint_status} for: ${s}" >&2
       return 1
     }
     assert_trace_empty || {
@@ -1678,11 +1680,11 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   local stdin_status="${status}"
   run_lint_file "${f}"
   [[ "${status}" -eq "${stdin_status}" ]] || return 1
-  assert_outcome warn || return 1
+  [[ "${status}" -eq 1 && "${output}" == *"] WARNING ("* ]] || { echo "status ${status} -- ${output}"; return 1; }
 }
 
 # (5): an EXPLICIT file arg that is missing/unreadable must fail LOUD — exit 2 + stderr naming the
-# path — NOT swallow the read error into an empty script that reads as a clean "exit 0 = will pass".
+# path — NOT swallow the read error into an empty script that reads as a clean exit 0.
 @test "lint(file-missing): --lint with a nonexistent path → exit 2, stderr names the path" {
   local missing="${BATS_TEST_TMPDIR}/does_not_exist.js"
   run_lint_file "${missing}"

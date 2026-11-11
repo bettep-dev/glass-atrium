@@ -70,7 +70,7 @@
 #
 # FOURTH ADVISORY PASS (scope declaration, PRESENCE-ONLY, advisory — NEVER exit 2): flags a DEV
 # workflow carrying no [SCOPE] declaration. Decided in bash off the raw script (the helper's fixed
-# output-line contract is untouched) and emitted on the PASS arm only, so it can mask no verdict.
+# output-line contract is untouched) and emitted after any cause warning, so it can mask none.
 #
 # FIFTH ADVISORY PASS (completion channel, advisory — NEVER exit 2): flags a script declaring a
 # schema-mode spawn while the reserved completion-channel property is absent from that script.
@@ -98,7 +98,7 @@
 #             message-asserting fixture moves. Consequence, stated rather than implied: a DEV script
 #             warned earlier carries NO completion-channel tag — the earlier warning is the louder signal.
 # ADDENDUM-ALLOWLIST MEMBERSHIP (decided here, not deferred): EXCLUDED. This is an advisory VALUE on
-# the multiplexed flag line and never reaches warn_and_exit's tag argument, so an entry would be
+# the multiplexed flag line and never reaches print_cause_warning's tag argument, so an entry would be
 # inert; a promotion to a block cause decides membership at that time.
 # KNOWN FALSE POSITIVES — the FULL measured list, not a sample, because this text is what a promotion
 # decision reads (each remediable by declaring the property inline): a schema bound in ANOTHER module
@@ -157,7 +157,7 @@
 #
 # SEVENTH ADVISORY PASS (first-link question on a REVISION cycle, advisory — NEVER exit 2): flags a DEV
 # workflow that EXECUTES a revised plan while its text carries no first-link question. Decided in bash
-# off the raw script plus a LIVE monitor read, on the PASS arm only (siting rationale at the call site).
+# off the raw script plus a LIVE monitor read, after any cause warning (siting at the call site).
 # PREDICATE, four conjuncts in cost order so the compliant case pays nothing:
 #   (1) a DEV workflow (dev=yes) — the question is the Stage-2 DEV participant's verdict-gating job;
 #   (2) FIRST_LINK_LITERAL absent from the RAW script — raw, not comment-stripped, because the literal's
@@ -200,7 +200,7 @@
 # carries neither [PLAN-CLOSE] form (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size).
 #   Predicate → in the helper, raw scan: dev_present AND the entry gate's PLAN_REF_RE AND no form match;
 #     `deferred:` needs a named step, so an empty value or an unfilled <placeholder> fires.
-#   Siting → rendered on the PASS arm only (twelfth helper line), so it can mask no verdict.
+#   Siting → rendered after any cause warning (twelfth helper line), so it can mask none.
 #   Why advisory, stated as a ceiling → a multi-script track legitimately closes in a later script, and
 #     whether a close form is truthful (a terminal Reconcile & Close phase exists) is honor-system.
 #
@@ -215,7 +215,7 @@
 #   Shared reads → both walks read through get_monitor_doc, one read per id per invocation, failed
 #     reads included, so a hung monitor costs one timeout across the pair.
 #   Fail-open → curl or jq absent, no resolvable URL, a failed or non-JSON read: silence, never
-#     checked-and-clean. Siting → PASS arm only, after the first-link walk.
+#     checked-and-clean. Siting → after any cause warning, after the first-link walk.
 #   Cost → one read per cited id up to the first planner document, with no count cap of its own.
 #
 # MULTIPLEXED ADVISORY LINE (the helper's TENTH output line, COMPLETION_FLAG): the completion-channel
@@ -339,7 +339,8 @@
 #   consistency-check causes above · zero-reviewer (block-norev) · verify-team-lacks-DEV
 #   (block-noverifydev) · doc-routing leak (block-docroute) · entry-miss (block-entry) ·
 #   size-attestation-miss (block-sizeest).
-# --lint: 0 on every verdict (read the stderr WARNING lines) · 2 only for an unreadable file argument.
+# --lint: 0 = no cause warning · 1 = at least one cause WARNING line (advisories alone stay 0) · 2 = an
+#   unreadable file argument.
 # fail-open: script absent/empty/unparseable · no DEV spawn (simple workflow, Stage-2 exempt) ·
 #            wrong tool_name · any internal error → exit 0.
 
@@ -427,9 +428,8 @@ monitor_doc_ids=()
 monitor_doc_bodies=()
 
 # advisory_trace — parent-scope accumulator of the advisory tags fired on this invocation, read by
-# emit_trace for the trailing `advisory=` field. Every advisory emitter runs BEFORE the pass-path trace
-# emit and before warn_and_exit, so a tag set here is always visible inside emit_trace's subshell and
-# nothing needs to escape it. Empty (no advisory fired, or a path that never reaches the advisory
+# emit_trace for the trailing `advisory=` field. Every advisory emitter runs BEFORE the trace emit, so a
+# tag set here is always visible inside emit_trace's subshell and nothing needs to escape it. Empty (no advisory fired, or a path that never reaches the advisory
 # printers such as pass-noscript) records as `none`.
 advisory_trace=""
 
@@ -497,9 +497,9 @@ emit_trace() {
   ) 2>/dev/null || true
 }
 
-# warn_and_exit REASON TRACE_TAG — terminal warning: stderr reason + firing trace + exit 0, the
-# Workflow still runs. Shared by every tripped check — only the reason text and the trace tag differ.
-# ${script_len} is read from the global set after the script decode.
+# print_cause_warning REASON TRACE_TAG — the stderr warning of a tripped check; returns, so the
+# trailing advisories and the one trace line still follow. Shared by every tripped check — only the
+# reason text and the trace tag differ.
 #
 # CENTRALIZED ENTRY ADDENDUM (message-only) — when the warning is one that SUPPRESSES the dedicated
 # entry-miss warning (a composition/verify cause tag or the docroute verdict all pre-empt the
@@ -514,7 +514,7 @@ emit_trace() {
 # the global with an empty value and silently disable the addendum on every path); the :- default keeps
 # set -u from tripping the ERR trap, which would drop the warning. The addendum is a single-quoted
 # heredoc (no expansion -> injection-safe).
-warn_and_exit() {
+print_cause_warning() {
   local reason="${1}"
   local addendum_allowed
   case "${2}" in
@@ -531,8 +531,6 @@ EOF
   # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
   # An interrupted in-shell write would hold the reason and flush it later into emit_trace's log.
   (printf '%s\n' "${reason}") >&2 || true
-  emit_trace "${2}" "${script_len}"
-  exit 0
 }
 
 # print_resilience_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
@@ -835,7 +833,7 @@ EOF
 # skill for RECONCILE_GOAL rather than copying the goal text, so the skill skeleton stays its one home.
 print_lint_template() {
   cat <<'EOF'
-[enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE entry token. A plan-referencing script also needs ONE [AGENT-COMPOSITION] form in a /* */ block comment and the [SIZE-EST] token; an [ENTRY-CLASS] simple-task script with no plan-reference needs neither. Then preview with: enforce-workflow-verify-stage.sh --lint <file> (no WARNING line = every check passes). The fourth section is CONDITIONAL rather than universal — it applies to a schema-mode spawn only, and a DEV verify stage is deliberately text-mode, declares no schema and needs none of it. The fifth section applies to a plan-referencing script: ONE close-token form, plus the terminal phase when the script closes the plan itself.
+[enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE entry token. A plan-referencing script also needs ONE [AGENT-COMPOSITION] form in a /* */ block comment and the [SIZE-EST] token; an [ENTRY-CLASS] simple-task script with no plan-reference needs neither. Then preview with: enforce-workflow-verify-stage.sh --lint <file> (exit 0 = no warning · exit 1 = a WARNING line names what to fix). The fourth section is CONDITIONAL rather than universal — it applies to a schema-mode spawn only, and a DEV verify stage is deliberately text-mode, declares no schema and needs none of it. The fifth section applies to a plan-referencing script: ONE close-token form, plus the terminal phase when the script closes the plan itself.
 
 [AGENT-COMPOSITION] declaration (pick ONE form):
 EOF
@@ -1935,8 +1933,8 @@ COMPLETION_PROPERTY_ABSENT = "COMPLETION_ADVISE:property-absent"
 COMPLETION_PER_SITE_GAP = "COMPLETION_ADVISE:per-site-gap"
 COMPLETION_SCHEMA_ABSENT = "COMPLETION_ADVISE:schema-absent"
 
-# CLOSE_TOKEN_FLAG — the close-token nudge, printed as the TWELFTH output line and rendered on the shell
-# PASS arm only. Decided here so plan-referencing means the entry-gate PLAN_REF_RE itself, never a copy.
+# CLOSE_TOKEN_FLAG — the close-token nudge, printed as the TWELFTH output line and rendered by the shell
+# after any cause warning. Decided here so plan-referencing means the entry-gate PLAN_REF_RE itself, never a copy.
 CLOSE_TOKEN_FLAG = "CLOSE_TOKEN_SILENT"
 # The two [PLAN-CLOSE] forms (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size). A deferral must
 # name its closing step → an empty value or an unfilled placeholder is neither form.
@@ -2482,7 +2480,7 @@ PY
 
   # CARDINALITY ADVISORIES (trace-only — no stderr nudge, deliberately). These record a measurement;
   # they do NOT nudge, do not name a fix, and NOTHING below reads them. Placed with the other advisory
-  # emitters so the tag is set before any trace emit or warn_and_exit, and after the flags are read.
+  # emitters so the tag is set before the trace emit, and after the flags are read.
   # size-map fires when the [SIZE-EST] occurrence count differs from the implementation-slot count in
   # EITHER direction; entry-cardinality fires when an [ENTRY-CLASS] simple-task classification
   # co-occurs with 4 or more implementation slots. Whether either is worth acting on is unknown —
@@ -2494,6 +2492,8 @@ PY
     add_advisory "entry-cardinality"
   fi
 
+  trace_tag=""
+  reason=""
   # ENTRY-MISS WARNING. Fires ONLY when the verdict is NOT already a BLOCK_* cause token (unquoted
   # BLOCK* glob — fully DECOUPLED) AND the entry signal is ENTRY_ADVISORY (DEV spawn with no plan-ref
   # AND no [ENTRY-CLASS] token). It can NEVER fire when entry_ok holds. Any python helper error yields
@@ -2508,16 +2508,17 @@ COPY-PASTE SCAFFOLD (fill the <…> placeholders, persist the plan, then paste p
 EOF
       emit_entry_token_scaffold
     )"
-    warn_and_exit "${entry_reason}" "block-entry"
+    reason="${entry_reason}"
+    trace_tag="block-entry"
   fi
 
   # Verdict-token → (trace_tag, reason) dispatch. Each BLOCK_* cause token (a tripped check, never a
-  # block) carries its own dedicated stderr remediation. Default (PASS / any unenumerated token) → fail-open: emit_trace "pass" + exit 0. The
-  # `*)` default is the VERDICT-PLUMBING TRAP guard's other half: every python-side BLOCK token MUST
-  # have a case arm here (AND a warn_and_exit ADR-2 allowlist entry AND a trace tag) or it silently
-  # falls to PASS — the enumerated arms below cover the identical token set the helper can emit.
-  trace_tag=""
-  reason=""
+  # block) carries its own dedicated stderr remediation. Default (PASS / any unenumerated token) →
+  # fail-open: no cause warning, trace "pass". The `*)` default is the VERDICT-PLUMBING TRAP guard's
+  # other half: every python-side BLOCK token MUST have a case arm here (AND a print_cause_warning
+  # ADR-2 allowlist entry AND a trace tag) or it silently falls to PASS — the enumerated arms below
+  # cover the identical token set the helper can emit. An entry-miss leaves verdict at PASS, so it
+  # reaches the default arm with its reason already set.
   case "${verdict}" in
     BLOCK_NODECL)
       trace_tag="block-nodecl"
@@ -2630,64 +2631,76 @@ EOF
 EOF
       )"
       ;;
-    *)
-      # SCOPE ADVISORY — on the PASS arm only, so a fault in this newest check can never mask one of
-      # the warnings above. Ordered before emit_trace so the tag rides the pass trace line.
-      # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-      # A simple-task entry (ENTRY_SIMPLE) owes no [SCOPE] declaration.
-      if [[ "${dev_flag}" == "yes" && "${entry_marker}" != "ENTRY_SIMPLE" ]] \
-        && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
-        print_scope_advisory
-        add_advisory "scope"
-      fi
-      # CLOSE-TOKEN ADVISORY — PASS arm only, same siting reason as the scope advisory; the predicate is
-      # the helper's (header -> EIGHTH ADVISORY PASS).
-      if [[ "${close_token_flag}" == "CLOSE_TOKEN_ADVISE" ]]; then
-        print_close_token_advisory
-        add_advisory "close-token"
-      fi
-      # FIRST-LINK ADVISORY — PASS arm only, for the scope advisory's reason AND one of its own: the two
-      # monitor walks are the only network reads here, so a warned script never pays a loopback GET. The
-      # three cheap conjuncts are ordered ahead of the walk, so a compliant or plan-ref-less workflow
-      # issues zero chain GETs. Predicate + full fail-open list: header -> SEVENTH ADVISORY PASS.
-      # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | drain_after grep -qF "${FIRST_LINK_LITERAL}"; then
-        local plan_refs first_link_plan_id
-        # The first clauded-docs/<N> id in file order — the SHAPE, unanchored to any plan-ref token, so
-        # an earlier mention supplies it instead (header -> KNOWN FALSE NEGATIVES). No `head` in the pipe:
-        # a SIGPIPE'd grep under pipefail would trip the fail-open ERR trap, so the whole match set is
-        # captured and sliced in bash.
-        plan_refs="$(printf '%s' "${script_src}" | grep -oE 'clauded-docs/[0-9]+' || true)"
-        first_link_plan_id="${plan_refs%%$'\n'*}"
-        first_link_plan_id="${first_link_plan_id##*/}"
-        # shellcheck disable=SC2310
-        #   Predicate call — the exit status IS the answer (chain resolved vs fail-open).
-        if [[ -n "${first_link_plan_id}" ]] && get_supersede_chain "${first_link_plan_id}" \
-          && ((CHAIN_DEPTH >= 1)); then
-          print_first_link_advisory "${CHAIN_DEPTH}" "${CHAIN_ROOT_ID}"
-          add_advisory "first-link"
-        fi
-      fi
-      # IMPLEMENTING ADVISORY — after the first-link walk, whose reads it reuses. Predicate: header ->
-      # NINTH ADVISORY PASS.
-      # shellcheck disable=SC2310
-      #   Predicate call — the exit status IS the answer (unstarted plan found vs silence).
-      if [[ "${dev_flag}" == "yes" ]] && get_unstarted_plan_id; then
-        print_implementing_advisory "${UNSTARTED_PLAN_ID}"
-        add_advisory "implementing"
-      fi
-      emit_trace "pass" "${script_len}"
-      exit 0
-      ;;
+    *) ;;
   esac
 
-  warn_and_exit "${reason}" "${trace_tag}"
+  if [[ -n "${reason}" ]]; then
+    print_cause_warning "${reason}" "${trace_tag}"
+  fi
+  # Trailing advisories follow every verdict, warned or not. `|| true` keeps an advisory fault from
+  # firing the fail-open ERR trap, which would drop the trace line and with it a trip's record.
+  # shellcheck disable=SC2310  # deliberate: each advisory step guards its own failure
+  print_trailing_advisories || true
+  emit_trace "${trace_tag:-pass}" "${script_len}"
+  # --lint has no tool call to let through: a cause warning is a finding → exit 1.
+  if [[ "${LINT_MODE}" == "1" && -n "${trace_tag}" ]]; then
+    exit 1
+  fi
+  exit 0
+}
+
+# print_trailing_advisories — the scope, close-token, first-link and implementing nudges; each tags the
+# trace. Reads the globals the verdict helper set (dev_flag, entry_marker, close_token_flag, script_src).
+print_trailing_advisories() {
+  # SCOPE ADVISORY — runs after the cause warning has printed, so a fault here cannot mask it.
+  # Ordered before emit_trace so the tag rides the trace line.
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  # A simple-task entry (ENTRY_SIMPLE) owes no [SCOPE] declaration.
+  if [[ "${dev_flag}" == "yes" && "${entry_marker}" != "ENTRY_SIMPLE" ]] \
+    && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
+    print_scope_advisory
+    add_advisory "scope"
+  fi
+  # CLOSE-TOKEN ADVISORY — the predicate is the helper's (header -> EIGHTH ADVISORY PASS).
+  if [[ "${close_token_flag}" == "CLOSE_TOKEN_ADVISE" ]]; then
+    print_close_token_advisory
+    add_advisory "close-token"
+  fi
+  # FIRST-LINK ADVISORY — the two monitor walks are the only network reads here; the cheap conjuncts
+  # are ordered ahead of the walk, so a compliant or plan-ref-less workflow issues zero chain GETs.
+  # Predicate + full fail-open list: header -> SEVENTH ADVISORY PASS.
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | drain_after grep -qF "${FIRST_LINK_LITERAL}"; then
+    local plan_refs first_link_plan_id
+    # The first clauded-docs/<N> id in file order — the SHAPE, unanchored to any plan-ref token, so
+    # an earlier mention supplies it instead (header -> KNOWN FALSE NEGATIVES). No `head` in the pipe:
+    # a SIGPIPE'd grep under pipefail would trip the fail-open ERR trap, so the whole match set is
+    # captured and sliced in bash.
+    plan_refs="$(printf '%s' "${script_src}" | grep -oE 'clauded-docs/[0-9]+' || true)"
+    first_link_plan_id="${plan_refs%%$'\n'*}"
+    first_link_plan_id="${first_link_plan_id##*/}"
+    # shellcheck disable=SC2310
+    #   Predicate call — the exit status IS the answer (chain resolved vs fail-open).
+    if [[ -n "${first_link_plan_id}" ]] && get_supersede_chain "${first_link_plan_id}" \
+      && ((CHAIN_DEPTH >= 1)); then
+      print_first_link_advisory "${CHAIN_DEPTH}" "${CHAIN_ROOT_ID}"
+      add_advisory "first-link"
+    fi
+  fi
+  # IMPLEMENTING ADVISORY — after the first-link walk, whose reads it reuses. Predicate: header ->
+  # NINTH ADVISORY PASS.
+  # shellcheck disable=SC2310
+  #   Predicate call — the exit status IS the answer (unstarted plan found vs silence).
+  if [[ "${dev_flag}" == "yes" ]] && get_unstarted_plan_id; then
+    print_implementing_advisory "${UNSTARTED_PLAN_ID}"
+    add_advisory "implementing"
+  fi
 }
 
 # ==== entry point — arg parse MUST precede the unconditional stdin drain =============================
 # --lint [script-file] : OFFLINE preview. Reads RAW script text from a file arg OR stdin (no JSON
 #   envelope, no jq/tool_name stage) and runs the IDENTICAL verdict helper + dispatch, so its stderr
-#   WARNING lines are exactly the hook's; exit 0 on every verdict. Side-effect-free: LINT_MODE guards emit_trace (no
+#   WARNING lines are exactly the hook's; exit 1 on a cause warning, else 0. Side-effect-free: LINT_MODE guards emit_trace (no
 #   trace line written). --lint --template : print the canonical author-attestation scaffold and exit 0.
 if [[ "${1:-}" == "--lint" ]]; then
   LINT_MODE=1

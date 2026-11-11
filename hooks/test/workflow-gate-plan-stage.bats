@@ -19,7 +19,7 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
-  # Port 9 on loopback refuses (curl rc 7) → every monitor read on the PASS arm fails open.
+  # Port 9 on loopback refuses (curl rc 7) → every trailing-advisory monitor read fails open.
   export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   FIXTURE_DIR="${BATS_TEST_TMPDIR}/clauded-docs"
   mkdir -p "${FIXTURE_DIR}"
@@ -132,7 +132,7 @@ agent('glass-atrium-intel-researcher',{goal:'survey'});"
   }
 }
 
-@test "close token: a warned DEV workflow keeps its warning and carries no nudge (PASS-arm siting)" {
+@test "close token: a warned DEV workflow keeps its warning and still carries the nudge" {
   run_hook_exec "log('plan-ref: clauded-docs/100');
 log('[SIZE-EST] bundles=1 tool_uses~=10 — one file');
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}));
@@ -141,8 +141,8 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'});"
     echo "declaration-less DEV script must warn, status ${status} -- ${output}"
     return 1
   }
-  [[ "${output}" != *"${CLOSE_PHRASE}"* ]] || {
-    echo "nudge rode a warning -- ${output}"
+  [[ "${output}" == *"${CLOSE_PHRASE}"* ]] || {
+    echo "the warning swallowed the nudge -- ${output}"
     return 1
   }
 }
@@ -289,15 +289,15 @@ SH
   }
 }
 
-@test "implementing: a non-DEV or warned workflow citing an unstarted plan is never nudged" {
+@test "implementing: a warned DEV workflow citing an unstarted plan is still nudged, a non-DEV one never" {
   use_fixture_monitor
   local -a rows=(
-    "non-DEV workflow|pass|log('plan-ref: clauded-docs/101'); agent('glass-atrium-intel-researcher',{goal:'survey'});"
-    "declaration-less DEV workflow|warn|log('plan-ref: clauded-docs/101'); log('[SIZE-EST] bundles=1 tool_uses~=10 — one file'); parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})); agent('glass-atrium-dev-nestjs',{goal:'implement'});"
+    "non-DEV workflow|pass|none|log('plan-ref: clauded-docs/101'); agent('glass-atrium-intel-researcher',{goal:'survey'});"
+    "declaration-less DEV workflow|warn|nudge|log('plan-ref: clauded-docs/101'); log('[SIZE-EST] bundles=1 tool_uses~=10 — one file'); parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})); agent('glass-atrium-dev-nestjs',{goal:'implement'});"
   )
-  local row name want script outcome
+  local row name want nudge script outcome nudged
   for row in "${rows[@]}"; do
-    IFS='|' read -r name want script <<<"${row}"
+    IFS='|' read -r name want nudge script <<<"${row}"
     run_hook_exec "${script}"
     outcome=pass
     [[ "${output}" == *"] WARNING ("* ]] && outcome=warn
@@ -305,8 +305,10 @@ SH
       echo "${name}: status ${status}, outcome ${outcome}, expected ${want} -- ${output}"
       return 1
     }
-    [[ "${output}" != *"${STAGE_PHRASE}"* ]] || {
-      echo "${name}: nudged -- ${output}"
+    nudged=none
+    [[ "${output}" == *"${STAGE_PHRASE}"* ]] && nudged=nudge
+    [[ "${nudged}" == "${nudge}" ]] || {
+      echo "${name}: expected ${nudge}, got ${nudged} -- ${output}"
       return 1
     }
   done

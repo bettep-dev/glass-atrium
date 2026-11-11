@@ -6,7 +6,7 @@
 # at a refused loopback port — no case reaches the live monitor.
 #
 # Fixtures carry a [SIZE-EST] attestation, a line-opening [SCOPE] declaration and a pre-stamped
-# qa-code-reviewer marker, so a plan-referencing spawn reaches the pass arm the leg lives on.
+# qa-code-reviewer marker, so a plan-referencing spawn draws no warning beside the nudge.
 
 HOOK_SH="${VGATE_SH:-${BATS_TEST_DIRNAME}/../enforce-verification-gate.sh}"
 NUDGE_PHRASE='is still at doc_review'
